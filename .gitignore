@@ -1,0 +1,27 @@
+# dependencies
+/node_modules
+
+# build output
+/dist
+/build
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# environment — secrets stay local, commit .env.example instead
+.env
+.env.*.local
+
+# IDE / OS
+.idea
+.vscode
+.DS_Store
+
+# test / coverage
+/coverage
+
+# Prisma generated client (regenerated via `prisma generate`)
+# (kept out by default; uncomment if you generate into the repo)
+# /generated

@@ -1,0 +1,10 @@
+# pnpm settings. In pnpm v10+, build-script approval lives here (no longer in
+# package.json). These packages are allowed to run their install/postinstall
+# scripts — Prisma needs this to download/build its query engine.
+allowBuilds:
+  '@nestjs/core': true
+  '@prisma/client': true
+  '@prisma/engines': true
+  bcrypt: true
+  prisma: true
+  unrs-resolver: true
