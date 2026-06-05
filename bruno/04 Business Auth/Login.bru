@@ -1,0 +1,52 @@
+meta {
+  name: Login
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "identifier": "{{adminPhone}}",
+    "password": "{{adminTempPassword}}",
+    "tenantSlug": "{{tenantSlug}}"
+  }
+}
+
+vars:pre-request {
+  adminPhone: +919812345678
+  adminTempPassword: Fzgsey39
+  tenantSlug: acme-diagnostics
+}
+
+script:post-response {
+  if (res.getStatus() === 200 || res.getStatus() === 201) {
+    const data = res.getBody() && res.getBody().data;
+    if (data) {
+      if (data.accessToken) bru.setEnvVar("businessAccessToken", data.accessToken);
+      if (data.refreshToken) bru.setEnvVar("businessRefreshToken", data.refreshToken);
+    }
+  }
+}
+
+docs {
+  Business-user login. `identifier` is resolved in precedence order
+  phone -> email -> system_username. `tenantSlug` sets the tenant context
+  (required for staff login).
+  
+  Returns access (15m) + refresh (30d) tokens. Captures `businessAccessToken`
+  and `businessRefreshToken`.
+  
+  Defaults here use the tenant admin phone + temp password captured by
+  **Create Tenant**. On first login the temp password may need changing via
+  **Change Password**.
+}

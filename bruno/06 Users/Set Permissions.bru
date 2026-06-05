@@ -1,0 +1,36 @@
+meta {
+  name: Set Permissions
+  type: http
+  seq: 10
+}
+
+put {
+  url: {{baseUrl}}/users/{{staffPersonId}}/permissions
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "profileKey": "lab_technician",
+    "branchId": "{{branchId}}",
+    "overrides": [
+      { "code": "lab:result:write", "override": "allow" },
+      { "code": "lab:result:delete", "override": "deny" }
+    ]
+  }
+}
+
+docs {
+  Replace the permission overrides for a profile assignment. Each override
+  `override` is one of `allow`, `deny`, or `inherit` (inherit = no override,
+  the row is dropped). Omit `branchId` for tenant-level profiles.
+}

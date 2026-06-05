@@ -1,0 +1,953 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kalnostics New — API Reference</title>
+<style>
+  :root {
+    --bg:#0f172a; --panel:#1e293b; --muted:#94a3b8; --text:#e2e8f0; --line:#334155;
+    --get:#22c55e; --post:#3b82f6; --patch:#f59e0b; --put:#8b5cf6; --delete:#ef4444;
+    --code:#0b1222; --accent:#38bdf8;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.6 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+         background:var(--bg); color:var(--text); }
+  a { color:var(--accent); text-decoration:none; }
+  header { padding:28px 32px; border-bottom:1px solid var(--line); background:#0b1222; }
+  header h1 { margin:0 0 6px; font-size:24px; }
+  header p { margin:0; color:var(--muted); }
+  .layout { display:flex; align-items:flex-start; }
+  nav { position:sticky; top:0; width:280px; height:100vh; overflow:auto; padding:20px 16px;
+        border-right:1px solid var(--line); background:#0b1222; flex:none; }
+  nav h3 { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:18px 0 8px; }
+  nav a { display:block; padding:4px 8px; border-radius:6px; color:var(--text); font-size:13px; }
+  nav a:hover { background:var(--panel); }
+  main { flex:1; padding:28px 36px; max-width:980px; }
+  h2 { margin-top:40px; padding-bottom:8px; border-bottom:1px solid var(--line); font-size:20px; }
+  h3 { font-size:16px; }
+  code, pre { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  pre { background:var(--code); border:1px solid var(--line); border-radius:8px; padding:14px 16px;
+        overflow:auto; font-size:13px; }
+  table { border-collapse:collapse; width:100%; margin:12px 0; font-size:14px; }
+  th,td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; }
+  .ep { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin:18px 0; }
+  .ep .path { font-family:ui-monospace,monospace; font-size:15px; }
+  .m { display:inline-block; font-weight:700; font-size:12px; padding:2px 8px; border-radius:5px; margin-right:8px; color:#fff; }
+  .m.get{background:var(--get);} .m.post{background:var(--post);} .m.patch{background:var(--patch);}
+  .m.put{background:var(--put);} .m.delete{background:var(--delete);}
+  .tags { margin:8px 0; }
+  .tag { display:inline-block; font-size:11px; padding:2px 8px; border:1px solid var(--line);
+         border-radius:999px; color:var(--muted); margin-right:6px; }
+  .tag.pub { color:#22c55e; border-color:#14532d; }
+  .tag.biz { color:#38bdf8; border-color:#075985; }
+  .tag.sa  { color:#f59e0b; border-color:#78350f; }
+  .lbl { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.06em; margin:14px 0 4px; }
+  .pill { font-family:ui-monospace,monospace; font-size:12px; background:var(--code); padding:1px 6px; border-radius:4px; border:1px solid var(--line); }
+  .note { background:#0b2330; border:1px solid #075985; border-radius:8px; padding:12px 16px; margin:14px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Kalnostics New — API Reference</h1>
+  <p>Multi-tenant Laboratory Management System backend · NestJS + Prisma + PostgreSQL · Base URL <code>/api/v1</code></p>
+</header>
+<div class="layout">
+<nav>
+  <h3>Manual</h3>
+  <a href="#overview">Overview</a>
+  <a href="#setup">Setup &amp; run</a>
+  <a href="#architecture">Architecture</a>
+  <a href="#structure">Project structure</a>
+  <h3>Conventions</h3>
+  <a href="#auth-model">Authentication model</a>
+  <a href="#envelopes">Response &amp; error envelopes</a>
+  <a href="#pagination">Pagination</a>
+  <a href="#enums">Enums &amp; constants</a>
+  <h3>Roles &amp; permissions</h3>
+  <a href="#profiles">Business profiles &amp; branches</a>
+  <a href="#perm-matrix">Profile permission matrix</a>
+  <a href="#sa-roles">SiteAdmin role matrix</a>
+  <a href="#all-perms">All permission keys</a>
+  <a href="#authz">API authorization matrix</a>
+  <h3>Data model</h3>
+  <a href="#data-model">Models &amp; tiers</a>
+  <a href="#tables">Tables &amp; sample data</a>
+  <h3>Business auth</h3>
+  <a href="#auth-login">POST /auth/login</a>
+  <a href="#auth-refresh">POST /auth/refresh</a>
+  <a href="#auth-switch">POST /auth/switch-profile</a>
+  <a href="#auth-changepw">POST /auth/change-password</a>
+  <a href="#auth-logout">POST /auth/logout</a>
+  <a href="#auth-me">GET /auth/me</a>
+  <h3>Branches</h3>
+  <a href="#branch-create">POST /branches</a>
+  <a href="#branch-list">GET /branches</a>
+  <a href="#branch-get">GET /branches/:id</a>
+  <a href="#branch-update">PATCH /branches/:id</a>
+  <a href="#branch-delete">DELETE /branches/:id</a>
+  <h3>Users</h3>
+  <a href="#user-register">POST /users</a>
+  <a href="#staff-list">GET /users/staff</a>
+  <a href="#staff-register">POST /users/staff</a>
+  <a href="#user-get">GET /users/:id</a>
+  <a href="#user-update">PATCH /users/:id</a>
+  <a href="#user-assign">POST /users/:id/profiles</a>
+  <a href="#user-revoke">DELETE /users/:id/profiles</a>
+  <a href="#user-default">PATCH /users/:id/default-profile</a>
+  <a href="#user-perms-get">GET /users/:id/permissions</a>
+  <a href="#user-perms-set">PUT /users/:id/permissions</a>
+  <a href="#user-rd-get">GET /users/:id/receptionist-doctors</a>
+  <a href="#user-rd-set">PUT /users/:id/receptionist-doctors</a>
+  <a href="#user-resetpw">POST /users/:id/reset-password</a>
+  <h3>SiteAdmin</h3>
+  <a href="#sa-login">POST /siteadmin/auth/login</a>
+  <a href="#sa-me">GET /siteadmin/me</a>
+  <a href="#sa-create">POST /siteadmin/users</a>
+  <a href="#sa-list">GET /siteadmin/users</a>
+  <a href="#sa-pw">PATCH /siteadmin/users/:id/password</a>
+  <a href="#sa-deact">PATCH /siteadmin/users/:id/deactivate</a>
+  <h3>Tenants (SiteAdmin)</h3>
+  <a href="#tenant-create">POST /siteadmin/tenants</a>
+  <a href="#tenant-list">GET /siteadmin/tenants</a>
+  <a href="#tenant-get">GET /siteadmin/tenants/:id</a>
+  <a href="#tenant-update">PATCH /siteadmin/tenants/:id</a>
+  <a href="#tenant-admin">GET /siteadmin/tenants/:id/admin</a>
+  <a href="#tenant-adminpw">POST .../admin/reset-password</a>
+</nav>
+<main>
+
+<h2 id="overview">Overview</h2>
+<p>All routes are served under <span class="pill">/api/v1</span>. There are <b>two independent
+authentication systems</b>: business users (clinic staff &amp; patients) and platform SiteAdmins.
+Each uses its own JWT and Passport strategy.</p>
+<table>
+  <tr><th>Area</th><th>Auth</th><th>Notes</th></tr>
+  <tr><td>Business (auth, users, branches)</td><td>Business JWT</td><td>Global guard; <code>@Public()</code> opts out</td></tr>
+  <tr><td>SiteAdmin + Tenant management</td><td>SiteAdmin JWT</td><td>Role/permission guard</td></tr>
+</table>
+<div class="note">Tenant data isolation is enforced by <b>PostgreSQL Row-Level Security</b> on
+<code>tenant_id</code>; services also scope every query by tenant as defence in depth. All deletes
+are <b>soft</b> (<code>deleted_at</code>).</div>
+
+<h2 id="setup">Setup &amp; run</h2>
+<ol>
+  <li>Install dependencies: <code>pnpm install</code></li>
+  <li>Configure <code>.env</code> — required: <code>DATABASE_URL</code>, <code>JWT_SECRET</code> (≥ 32 chars).
+      Optional (defaults shown): <code>JWT_ACCESS_TTL=15m</code>, <code>JWT_REFRESH_TTL_DAYS=30</code>,
+      <code>SITEADMIN_TOKEN_TTL=8h</code>, <code>BCRYPT_ROUNDS=12</code>, <code>PORT=3000</code>.</li>
+  <li>Generate the Prisma client: <code>pnpm prisma generate</code></li>
+  <li>Create the schema: <code>pnpm prisma migrate dev --name init</code></li>
+  <li>Enable Row-Level Security: <code>psql "$DATABASE_URL" -f prisma/rls.sql</code>
+      (run the app with a least-privilege DB role — not the table owner — so RLS is enforced).</li>
+  <li>Start the API: <code>pnpm start:dev</code> → <code>http://localhost:3000/api/v1</code></li>
+</ol>
+<div class="note"><b>Bootstrapping order:</b> a <code>SUPER_OWNER</code> SiteAdmin is seeded directly in the
+DB (it cannot be created via the API). The SiteAdmin then creates tenants
+(<code>POST /siteadmin/tenants</code>), and each tenant's auto-created <code>business_admin</code> logs in to
+manage branches and staff.</div>
+
+<h2 id="architecture">Architecture</h2>
+<table>
+  <tr><th>Concern</th><th>Decision</th></tr>
+  <tr><td>Stack</td><td>NestJS · Prisma ORM · PostgreSQL · TypeScript (strict)</td></tr>
+  <tr><td>Model tiers</td><td><b>Platform-level</b> (no <code>tenant_id</code>) vs <b>tenant-scoped</b> (<code>tenant_id</code> + RLS)</td></tr>
+  <tr><td>Tenant isolation</td><td>Postgres RLS on <code>app.current_tenant_id</code> (set per request by <code>PrismaService.withTenant</code>); services also pass <code>tenantId</code> in every query (defence in depth)</td></tr>
+  <tr><td>Auth</td><td>Two JWTs: business (<code>'jwt'</code>) &amp; SiteAdmin (<code>'jwt-siteadmin'</code>, discriminated by <code>type:'siteadmin'</code>)</td></tr>
+  <tr><td>Data access</td><td>Services call Prisma <b>directly</b> — no repository layer</td></tr>
+  <tr><td>Errors</td><td>Typed <code>KaltrosException</code> (code + message + server-only context)</td></tr>
+  <tr><td>Responses</td><td>Global interceptor → <code>{ success, data, meta }</code> envelope</td></tr>
+  <tr><td>IDs / delete</td><td>UUID v4 primary keys; soft delete via nullable <code>deletedAt</code></td></tr>
+  <tr><td>Ownership</td><td><code>persons.owner_tenant_id</code> = first business to register a person; phone/email are global de-dup keys</td></tr>
+</table>
+
+<h2 id="structure">Project structure</h2>
+<pre>src/
+├── main.ts                      # bootstrap: helmet, compression, ValidationPipe,
+│                                #   global filter + interceptor, /api/v1 prefix
+├── app.module.ts                # wiring + global JwtAuthGuard (APP_GUARD)
+├── common/
+│   ├── dto/                     # PaginationQueryDto, PaginatedResult
+│   ├── exceptions/              # KaltrosException + common exceptions
+│   ├── filters/                 # global exception filter (error envelope)
+│   ├── interceptors/            # ResponseInterceptor (meta envelope)
+│   ├── decorators/ guards/ pipes/ utils/
+├── config/                      # @nestjs/config + Joi env validation
+├── prisma/                      # PrismaService (+ withTenant) + PrismaModule
+└── modules/
+    ├── security/                # PasswordService, UsernameGeneratorService
+    ├── permissions/constants/   # profile registry, branch matrix, catalog, baselines
+    ├── branch/                  # branch CRUD (tenant-scoped)
+    ├── tenant/                  # tenant + business-info + business_admin onboarding
+    ├── users/                   # persons, staff, profiles, permissions, mappings
+    ├── auth/                    # business login/refresh/switch + JWT strategy/guard
+    └── siteadmin/               # siteadmin auth + RBAC guard + sub-admin mgmt
+prisma/
+├── schema.prisma                # 10 models + enums
+└── rls.sql                      # Row-Level Security policies</pre>
+
+<h2 id="auth-model">Authentication model</h2>
+<p>Send the token as <span class="pill">Authorization: Bearer &lt;token&gt;</span>.</p>
+
+<p class="lbl">Business access-token payload (15&nbsp;min; refresh 30&nbsp;days)</p>
+<pre>{
+  "person_id": "uuid",
+  "tenant_id": "uuid",
+  "active_branch_id": "uuid | null",
+  "active_branch_type": "DIAGNOSTIC | CLINIC | HOSPITAL | PHARMACY | COLLECTION_CENTER | null",
+  "active_profile_key": "business_admin | doctor | ... | null",
+  "is_patient_context": false,
+  "profiles": [
+    { "branch_id": "uuid|null", "branch_name": "string|null", "branch_type": "…|null",
+      "profile_key": "doctor", "profile_label": "Doctor", "is_default": true }
+  ],
+  "is_patient": false,
+  "platform_mrn": "KAL-YYYYMMDD-XXXXXXXX | null",
+  "iat": 0, "exp": 0
+}</pre>
+
+<p class="lbl">SiteAdmin access-token payload (8&nbsp;h)</p>
+<pre>{
+  "type": "siteadmin",
+  "siteadmin_id": "uuid",
+  "email": "admin@kalnostics.com",
+  "role": "CONTENT_ADMIN | OPERATIONS_ADMIN | FULL_ADMIN | SUPER_OWNER",
+  "iat": 0, "exp": 0
+}</pre>
+
+<table>
+  <tr><th>Policy</th><th>Value</th></tr>
+  <tr><td>Account lockout</td><td>10 failed attempts → locked 15 minutes (auto-unlock)</td></tr>
+  <tr><td>Password policy</td><td>min 8 chars, ≥1 uppercase, ≥1 digit; bcrypt cost 12</td></tr>
+  <tr><td>Temp password format</td><td>1 upper + 5 lower + 2 digits, excludes <code>I O 0 1</code></td></tr>
+  <tr><td>System username</td><td><code>{ISO2}{3 alpha}-{5 digits}</code> e.g. <code>INABC-12345</code></td></tr>
+  <tr><td>Login identifier precedence</td><td>phone → email → system_username</td></tr>
+</table>
+
+<h2 id="envelopes">Response &amp; error envelopes</h2>
+<p class="lbl">Success</p>
+<pre>{ "success": true, "data": &lt;payload&gt;, "meta": { "timestamp": "2026-06-04T10:00:00.000Z" } }</pre>
+<p class="lbl">Paginated success (list endpoints)</p>
+<pre>{ "success": true, "data": [ ... ],
+  "meta": { "total": 100, "page": 1, "limit": 20, "totalPages": 5, "timestamp": "…" } }</pre>
+<p class="lbl">Error</p>
+<pre>{ "success": false, "error": { "code": "TENANT_NOT_FOUND", "message": "Tenant not found" } }</pre>
+<table>
+  <tr><th>HTTP</th><th>Example codes</th></tr>
+  <tr><td>400 / 422</td><td><code>VALIDATION_ERROR</code>, <code>INVALID_PASSWORD</code>, <code>PROFILE_INVALID_FOR_BRANCH</code></td></tr>
+  <tr><td>401 / 423</td><td><code>INVALID_CREDENTIALS</code>, <code>UNAUTHORISED</code>, <code>ACCOUNT_LOCKED</code></td></tr>
+  <tr><td>403</td><td><code>FORBIDDEN</code>, <code>NOT_OWNER_TENANT</code></td></tr>
+  <tr><td>404</td><td><code>TENANT_NOT_FOUND</code>, <code>PERSON_NOT_FOUND</code>, <code>BRANCH_NOT_FOUND</code></td></tr>
+  <tr><td>409</td><td><code>TENANT_SLUG_TAKEN</code>, <code>PERSON_PHONE_TAKEN</code>, <code>SITEADMIN_EMAIL_TAKEN</code></td></tr>
+</table>
+
+<h2 id="pagination">Pagination</h2>
+<p>Offset-based via query params <span class="pill">?page=1&amp;limit=20</span> (page ≥ 1, limit 1–100).
+Pagination metadata is returned in <code>meta</code>.</p>
+
+<h2 id="enums">Enums &amp; constants</h2>
+<table>
+  <tr><th>Enum</th><th>Values</th></tr>
+  <tr><td>BranchType</td><td>DIAGNOSTIC, CLINIC, HOSPITAL, PHARMACY, COLLECTION_CENTER</td></tr>
+  <tr><td>SubscriptionStatus</td><td>TRIALING, ACTIVE, GRACE_PERIOD, SUSPENDED, CANCELLED</td></tr>
+  <tr><td>SiteAdminRole</td><td>CONTENT_ADMIN, OPERATIONS_ADMIN, FULL_ADMIN, SUPER_OWNER (cumulative)</td></tr>
+  <tr><td>Gender</td><td>MALE, FEMALE, OTHER, PREFER_NOT_TO_SAY</td></tr>
+  <tr><td>BloodGroup</td><td>A_POS, A_NEG, B_POS, B_NEG, O_POS, O_NEG, AB_POS, AB_NEG, UNKNOWN</td></tr>
+  <tr><td>Profile keys</td><td>business_admin, branch_admin, doctor, lab_technician, receptionist, patient</td></tr>
+</table>
+
+<h2 id="profiles">Business profiles &amp; branches</h2>
+<p>A person holds one or more <b>profiles</b> (roles) via <code>user_branch_profiles</code>. Branch-level
+profiles must match the branch's <code>branchType</code> (the <code>PROFILE_BRANCH_MATRIX</code>); tenant-level
+profiles have <code>branch_id = NULL</code>.</p>
+<table>
+  <tr><th>Profile key</th><th>Label</th><th>Level</th><th>Valid branch types</th></tr>
+  <tr><td><code>business_admin</code></td><td>Business Admin</td><td>Tenant-level</td><td>— (no branch)</td></tr>
+  <tr><td><code>branch_admin</code></td><td>Branch Admin</td><td>Branch</td><td>DIAGNOSTIC, CLINIC, HOSPITAL, PHARMACY, COLLECTION_CENTER</td></tr>
+  <tr><td><code>doctor</code></td><td>Doctor</td><td>Branch</td><td>CLINIC, HOSPITAL, DIAGNOSTIC</td></tr>
+  <tr><td><code>lab_technician</code></td><td>Lab Technician</td><td>Branch</td><td>DIAGNOSTIC, HOSPITAL</td></tr>
+  <tr><td><code>receptionist</code></td><td>Receptionist</td><td>Branch</td><td>DIAGNOSTIC, CLINIC, HOSPITAL, PHARMACY, COLLECTION_CENTER</td></tr>
+  <tr><td><code>patient</code></td><td>Patient</td><td>Tenant-level</td><td>— (no branch)</td></tr>
+</table>
+
+<h2 id="perm-matrix">Profile permission matrix</h2>
+<p>Each profile grants a <b>baseline</b> set of permissions. The effective set per assignment =
+baseline ± per-assignment overrides (<code>allow</code> / <code>deny</code> / <code>inherit</code>), resolved by
+<code>GET /users/:id/permissions</code> and edited via <code>PUT /users/:id/permissions</code>.</p>
+<p class="lbl">Permission catalogue</p>
+<table>
+  <tr><th>Group</th><th>Codes</th></tr>
+  <tr><td>Patients</td><td><code>patient:read</code>, <code>patient:create</code>, <code>patient:update</code></td></tr>
+  <tr><td>Orders</td><td><code>order:read</code>, <code>order:create</code>, <code>order:update</code></td></tr>
+  <tr><td>Reports</td><td><code>report:read</code>, <code>report:verify</code></td></tr>
+  <tr><td>Staff</td><td><code>staff:read</code>, <code>staff:manage</code></td></tr>
+  <tr><td>Billing</td><td><code>billing:read</code>, <code>billing:manage</code></td></tr>
+</table>
+<p class="lbl">Baseline permissions per profile</p>
+<table>
+  <tr><th>Profile</th><th>Baseline permissions</th></tr>
+  <tr><td><code>business_admin</code></td><td>all 12 (patient:read/create/update, order:read/create/update, report:read/verify, staff:read/manage, billing:read/manage)</td></tr>
+  <tr><td><code>branch_admin</code></td><td>patient:read/create/update, order:read/create/update, report:read, staff:read/manage, billing:read</td></tr>
+  <tr><td><code>doctor</code></td><td>patient:read, order:read/create, report:read/verify</td></tr>
+  <tr><td><code>lab_technician</code></td><td>order:read/update, report:read</td></tr>
+  <tr><td><code>receptionist</code></td><td>patient:read/create, order:read/create, billing:read</td></tr>
+  <tr><td><code>patient</code></td><td>report:read</td></tr>
+</table>
+
+<h2 id="sa-roles">SiteAdmin role matrix</h2>
+<p>SiteAdmin roles are <b>cumulative</b> — each includes every permission of the roles below it. Routes
+declare requirements via <code>@RequireSiteAdminPermission()</code>; the guard AND-checks them.</p>
+<table>
+  <tr><th>Role</th><th>Adds these permissions (on top of lower roles)</th></tr>
+  <tr><td><code>CONTENT_ADMIN</code></td><td><code>master-data:read</code>, <code>master-data:write</code></td></tr>
+  <tr><td><code>OPERATIONS_ADMIN</code></td><td><code>business:create</code>, <code>business:read</code>, <code>business:suspend</code>, <code>business:reactivate</code>, <code>audit-logs:read</code>, <code>reports:operational</code></td></tr>
+  <tr><td><code>FULL_ADMIN</code></td><td><code>reports:finance</code></td></tr>
+  <tr><td><code>SUPER_OWNER</code></td><td><code>system:config</code>, <code>subscription-plans:write</code>, <code>encryption:tools</code>, <code>siteadmin:manage</code></td></tr>
+</table>
+<div class="note">Tenant management endpoints require <code>business:create</code> (writes) or <code>business:read</code>
+(reads) — i.e. <code>OPERATIONS_ADMIN</code> and above. SiteAdmin sub-account management requires
+<code>siteadmin:manage</code> — <code>SUPER_OWNER</code> only.</div>
+
+<h2 id="all-perms">All permission keys</h2>
+<p class="lbl">Business permissions (12) — which profiles grant them at baseline</p>
+<table>
+  <tr><th>Permission key</th><th>Granted to (baseline)</th></tr>
+  <tr><td><code>patient:read</code></td><td>business_admin, branch_admin, doctor, receptionist</td></tr>
+  <tr><td><code>patient:create</code></td><td>business_admin, branch_admin, receptionist</td></tr>
+  <tr><td><code>patient:update</code></td><td>business_admin, branch_admin</td></tr>
+  <tr><td><code>order:read</code></td><td>business_admin, branch_admin, doctor, lab_technician, receptionist</td></tr>
+  <tr><td><code>order:create</code></td><td>business_admin, branch_admin, doctor, receptionist</td></tr>
+  <tr><td><code>order:update</code></td><td>business_admin, branch_admin, lab_technician</td></tr>
+  <tr><td><code>report:read</code></td><td>business_admin, branch_admin, doctor, lab_technician, patient</td></tr>
+  <tr><td><code>report:verify</code></td><td>business_admin, doctor</td></tr>
+  <tr><td><code>staff:read</code></td><td>business_admin, branch_admin</td></tr>
+  <tr><td><code>staff:manage</code></td><td>business_admin, branch_admin</td></tr>
+  <tr><td><code>billing:read</code></td><td>business_admin, branch_admin, receptionist</td></tr>
+  <tr><td><code>billing:manage</code></td><td>business_admin</td></tr>
+</table>
+<p class="lbl">SiteAdmin permissions (13) — minimum role that holds them (cumulative)</p>
+<table>
+  <tr><th>Permission key</th><th>Minimum role</th></tr>
+  <tr><td><code>master-data:read</code></td><td>CONTENT_ADMIN</td></tr>
+  <tr><td><code>master-data:write</code></td><td>CONTENT_ADMIN</td></tr>
+  <tr><td><code>business:create</code></td><td>OPERATIONS_ADMIN</td></tr>
+  <tr><td><code>business:read</code></td><td>OPERATIONS_ADMIN</td></tr>
+  <tr><td><code>business:suspend</code></td><td>OPERATIONS_ADMIN</td></tr>
+  <tr><td><code>business:reactivate</code></td><td>OPERATIONS_ADMIN</td></tr>
+  <tr><td><code>audit-logs:read</code></td><td>OPERATIONS_ADMIN</td></tr>
+  <tr><td><code>reports:operational</code></td><td>OPERATIONS_ADMIN</td></tr>
+  <tr><td><code>reports:finance</code></td><td>FULL_ADMIN</td></tr>
+  <tr><td><code>system:config</code></td><td>SUPER_OWNER</td></tr>
+  <tr><td><code>subscription-plans:write</code></td><td>SUPER_OWNER</td></tr>
+  <tr><td><code>encryption:tools</code></td><td>SUPER_OWNER</td></tr>
+  <tr><td><code>siteadmin:manage</code></td><td>SUPER_OWNER</td></tr>
+</table>
+
+<h2 id="authz">API authorization matrix</h2>
+<div class="note"><b>How authorization works today:</b> <u>SiteAdmin</u> routes are enforced by
+<code>SiteAdminPermissionGuard</code> — the listed permission/role is <b>required</b>.
+<u>Business</u> routes are gated by the global <code>JwtAuthGuard</code> (any authenticated business
+user); the "intended permission" column reflects the profile permission the action maps to —
+used for frontend gating and ready for a future business permission guard. The user-update route
+additionally enforces an <b>ownership rule</b> in the service.</div>
+<table>
+  <tr><th>Endpoint</th><th>Auth</th><th>Required / intended authorization</th></tr>
+  <tr><td>POST /auth/login</td><td>Public</td><td>—</td></tr>
+  <tr><td>POST /auth/refresh</td><td>Public</td><td>—</td></tr>
+  <tr><td>POST /auth/switch-profile</td><td>Business JWT</td><td>self — must hold the target branch+profile</td></tr>
+  <tr><td>POST /auth/change-password</td><td>Business JWT</td><td>self</td></tr>
+  <tr><td>POST /auth/logout</td><td>Business JWT</td><td>self</td></tr>
+  <tr><td>GET /auth/me</td><td>Business JWT</td><td>self</td></tr>
+  <tr><td>POST /branches</td><td>Business JWT</td><td>intended <code>staff:manage</code></td></tr>
+  <tr><td>GET /branches</td><td>Business JWT</td><td>intended <code>staff:read</code></td></tr>
+  <tr><td>GET /branches/:id</td><td>Business JWT</td><td>intended <code>staff:read</code></td></tr>
+  <tr><td>PATCH /branches/:id</td><td>Business JWT</td><td>intended <code>staff:manage</code></td></tr>
+  <tr><td>DELETE /branches/:id</td><td>Business JWT</td><td>intended <code>staff:manage</code></td></tr>
+  <tr><td>POST /users</td><td>Business JWT</td><td>intended <code>patient:create</code></td></tr>
+  <tr><td>GET /users/staff</td><td>Business JWT</td><td>intended <code>staff:read</code></td></tr>
+  <tr><td>POST /users/staff</td><td>Business JWT</td><td>intended <code>staff:manage</code></td></tr>
+  <tr><td>GET /users/:id</td><td>Business JWT</td><td>intended <code>patient:read</code> / <code>staff:read</code></td></tr>
+  <tr><td>PATCH /users/:id</td><td>Business JWT</td><td>ownership rule (owner tenant / self / self-registered)</td></tr>
+  <tr><td>POST /users/:id/profiles</td><td>Business JWT</td><td>intended <code>staff:manage</code></td></tr>
+  <tr><td>DELETE /users/:id/profiles</td><td>Business JWT</td><td>intended <code>staff:manage</code></td></tr>
+  <tr><td>PATCH /users/:id/default-profile</td><td>Business JWT</td><td>intended <code>staff:manage</code></td></tr>
+  <tr><td>GET /users/:id/permissions</td><td>Business JWT</td><td>intended <code>staff:read</code></td></tr>
+  <tr><td>PUT /users/:id/permissions</td><td>Business JWT</td><td>intended <code>staff:manage</code></td></tr>
+  <tr><td>GET /users/:id/receptionist-doctors</td><td>Business JWT</td><td>intended <code>staff:read</code></td></tr>
+  <tr><td>PUT /users/:id/receptionist-doctors</td><td>Business JWT</td><td>intended <code>staff:manage</code></td></tr>
+  <tr><td>POST /users/:id/reset-password</td><td>Business JWT</td><td>intended <code>staff:manage</code></td></tr>
+  <tr><td>POST /siteadmin/auth/login</td><td>Public</td><td>—</td></tr>
+  <tr><td>GET /siteadmin/me</td><td>SiteAdmin JWT</td><td>any role</td></tr>
+  <tr><td>POST /siteadmin/users</td><td>SiteAdmin JWT</td><td><b>required</b> <code>siteadmin:manage</code> · SUPER_OWNER</td></tr>
+  <tr><td>GET /siteadmin/users</td><td>SiteAdmin JWT</td><td><b>required</b> <code>siteadmin:manage</code> · SUPER_OWNER</td></tr>
+  <tr><td>PATCH /siteadmin/users/:id/password</td><td>SiteAdmin JWT</td><td><b>required</b> <code>siteadmin:manage</code> · SUPER_OWNER</td></tr>
+  <tr><td>PATCH /siteadmin/users/:id/deactivate</td><td>SiteAdmin JWT</td><td><b>required</b> <code>siteadmin:manage</code> · SUPER_OWNER</td></tr>
+  <tr><td>POST /siteadmin/tenants</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:create</code> · OPERATIONS_ADMIN+</td></tr>
+  <tr><td>GET /siteadmin/tenants</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:read</code> · OPERATIONS_ADMIN+</td></tr>
+  <tr><td>GET /siteadmin/tenants/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:read</code> · OPERATIONS_ADMIN+</td></tr>
+  <tr><td>PATCH /siteadmin/tenants/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:create</code> · OPERATIONS_ADMIN+</td></tr>
+  <tr><td>GET /siteadmin/tenants/:id/admin</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:read</code> · OPERATIONS_ADMIN+</td></tr>
+  <tr><td>POST /siteadmin/tenants/:id/admin/reset-password</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:create</code> · OPERATIONS_ADMIN+</td></tr>
+</table>
+
+<h2 id="data-model">Data model — models &amp; tiers</h2>
+<p>10 Prisma models. Tenant-scoped models carry <code>tenant_id</code> and are protected by RLS;
+platform-level models sit above the tenant boundary. Every model has <code>id</code> (UUID v4),
+<code>created_at</code>, <code>updated_at</code>, <code>deleted_at</code>.</p>
+<table>
+  <tr><th>Model (table)</th><th>Tier</th><th>Purpose / key fields</th></tr>
+  <tr><td>Tenant (<code>tenants</code>)</td><td>Platform</td><td>Business + "business info": name, slug (unique, immutable), customDomain, email/phone/address, subscriptionStatus, settings(JSONB), mrnCounter/mrnPrefix</td></tr>
+  <tr><td>Person (<code>persons</code>)</td><td>Platform</td><td>All humans (patients + staff): platformMrn (unique), phone/email (unique de-dup), ownerTenantId, isPatient/isStaff</td></tr>
+  <tr><td>PersonCredentials (<code>person_credentials</code>)</td><td>Platform</td><td>Login: phone/email/systemUsername, passwordHash, isTempPassword, failedAttempts/lockedUntil</td></tr>
+  <tr><td>SiteAdminUser (<code>siteadmin_users</code>)</td><td>Platform</td><td>Platform admins: email (unique), passwordHash, role, lockout fields</td></tr>
+  <tr><td>RefreshToken (<code>refresh_tokens</code>)</td><td>Platform</td><td>SHA-256 tokenHash (unique), single-use rotation, expiresAt, isUsed/isRevoked</td></tr>
+  <tr><td>PersonTenantEnrollment (<code>person_tenant_enrollments</code>)</td><td>Platform</td><td>Cross-business patient linkage; per-tenant <code>tenant_mrn</code></td></tr>
+  <tr><td>Branch (<code>branches</code>)</td><td>Tenant-scoped</td><td>Locations: name, branchType, code, address</td></tr>
+  <tr><td>UserBranchProfile (<code>user_branch_profiles</code>)</td><td>Tenant-scoped</td><td>Role assignment: personId, branchId(null=tenant-level), profileKey, isDefault, isActive, revokedAt</td></tr>
+  <tr><td>UserProfilePermissionOverride (<code>user_profile_permission_overrides</code>)</td><td>Tenant-scoped</td><td>Per-assignment allow/deny overrides</td></tr>
+  <tr><td>ReceptionistDoctorMapping (<code>receptionist_doctor_mappings</code>)</td><td>Tenant-scoped</td><td>Receptionist → doctors at a branch</td></tr>
+</table>
+
+<h2 id="tables">Database tables &amp; sample data</h2>
+<p>Each table below lists its columns, type, and one sample row. The sample rows form a
+coherent example: SiteAdmin <i>owner@kalnostics.com</i> created tenant <b>City Diagnostics</b>
+(<code>city-dx</code>) whose business admin <b>Dilip Kumar</b> registered a branch, a lab technician
+<b>Asha P</b>, and a patient <b>Ravi Kumar</b>.</p>
+<div class="note">Every table also has three audit columns (omitted below for brevity):
+<code>created_at</code> &amp; <code>updated_at</code> (timestamptz) and <code>deleted_at</code> (timestamptz, NULL = active — soft delete).</div>
+
+<h3><code>tenants</code> — Tenant <span class="tag">platform</span></h3>
+<table>
+  <tr><th>Column</th><th>Type</th><th>Sample</th></tr>
+  <tr><td>id</td><td>uuid (PK)</td><td>a1f0…-tenant</td></tr>
+  <tr><td>name</td><td>text</td><td>City Diagnostics Pvt Ltd</td></tr>
+  <tr><td>slug</td><td>text · unique</td><td>city-dx</td></tr>
+  <tr><td>custom_domain</td><td>text? · unique</td><td>reports.citydx.com</td></tr>
+  <tr><td>email</td><td>text?</td><td>admin@citydx.com</td></tr>
+  <tr><td>phone</td><td>text?</td><td>+912200000000</td></tr>
+  <tr><td>address</td><td>jsonb?</td><td>{"city":"Mumbai"}</td></tr>
+  <tr><td>subscription_status</td><td>enum</td><td>TRIALING</td></tr>
+  <tr><td>subscription_plan_id</td><td>uuid?</td><td>null</td></tr>
+  <tr><td>trial_ends_at</td><td>timestamptz?</td><td>2026-07-04T00:00:00Z</td></tr>
+  <tr><td>subscription_ends_at</td><td>timestamptz?</td><td>null</td></tr>
+  <tr><td>grace_period_ends_at</td><td>timestamptz?</td><td>null</td></tr>
+  <tr><td>settings</td><td>jsonb?</td><td>{"timezone":"Asia/Kolkata","currency":"INR","date_format":"DD/MM/YYYY","language":"en"}</td></tr>
+  <tr><td>is_active</td><td>bool</td><td>true</td></tr>
+  <tr><td>mrn_counter</td><td>int</td><td>42</td></tr>
+  <tr><td>mrn_prefix</td><td>text?</td><td>CD</td></tr>
+  <tr><td>created_by</td><td>uuid? (siteadmin)</td><td>sa01…-owner</td></tr>
+</table>
+
+<h3><code>persons</code> — Person <span class="tag">platform</span></h3>
+<table>
+  <tr><th>Column</th><th>Type</th><th>Sample (Dilip, admin)</th></tr>
+  <tr><td>id</td><td>uuid (PK)</td><td>p100…-dilip</td></tr>
+  <tr><td>platform_mrn</td><td>text · unique</td><td>KAL-20260604-1A2B3C4D</td></tr>
+  <tr><td>salutation</td><td>text?</td><td>Mr</td></tr>
+  <tr><td>first_name</td><td>text</td><td>Dilip</td></tr>
+  <tr><td>last_name</td><td>text?</td><td>Kumar</td></tr>
+  <tr><td>date_of_birth</td><td>date?</td><td>1985-03-12</td></tr>
+  <tr><td>gender</td><td>enum?</td><td>MALE</td></tr>
+  <tr><td>blood_group</td><td>enum?</td><td>O_POS</td></tr>
+  <tr><td>phone</td><td>text? · unique</td><td>+919876543210</td></tr>
+  <tr><td>email</td><td>text? · unique</td><td>dilip@citydx.com</td></tr>
+  <tr><td>address</td><td>jsonb?</td><td>{"city":"Mumbai"}</td></tr>
+  <tr><td>photo_url</td><td>text?</td><td>null</td></tr>
+  <tr><td>id_type</td><td>text?</td><td>national_id</td></tr>
+  <tr><td>id_number</td><td>text? (encrypted)</td><td>enc:…</td></tr>
+  <tr><td>owner_tenant_id</td><td>uuid?</td><td>a1f0…-tenant</td></tr>
+  <tr><td>is_patient</td><td>bool</td><td>false</td></tr>
+  <tr><td>is_staff</td><td>bool</td><td>true</td></tr>
+  <tr><td>is_active</td><td>bool</td><td>true</td></tr>
+</table>
+
+<h3><code>person_credentials</code> — PersonCredentials <span class="tag">platform</span></h3>
+<table>
+  <tr><th>Column</th><th>Type</th><th>Sample</th></tr>
+  <tr><td>id</td><td>uuid (PK)</td><td>c100…</td></tr>
+  <tr><td>person_id</td><td>uuid · unique</td><td>p100…-dilip</td></tr>
+  <tr><td>phone</td><td>text? · unique</td><td>+919876543210</td></tr>
+  <tr><td>email</td><td>text? · unique</td><td>dilip@citydx.com</td></tr>
+  <tr><td>system_username</td><td>text? · unique</td><td>null</td></tr>
+  <tr><td>is_system_generated_username</td><td>bool</td><td>false</td></tr>
+  <tr><td>password_hash</td><td>text</td><td>$2b$12$… (bcrypt)</td></tr>
+  <tr><td>is_temp_password</td><td>bool</td><td>true</td></tr>
+  <tr><td>failed_attempts</td><td>int</td><td>0</td></tr>
+  <tr><td>locked_until</td><td>timestamptz?</td><td>null</td></tr>
+  <tr><td>last_login_at</td><td>timestamptz?</td><td>2026-06-04T09:00:00Z</td></tr>
+  <tr><td>last_login_ip</td><td>text?</td><td>203.0.113.7</td></tr>
+  <tr><td>mfa_enabled</td><td>bool</td><td>false</td></tr>
+  <tr><td>mfa_secret</td><td>text?</td><td>null</td></tr>
+</table>
+
+<h3><code>siteadmin_users</code> — SiteAdminUser <span class="tag">platform</span></h3>
+<table>
+  <tr><th>Column</th><th>Type</th><th>Sample</th></tr>
+  <tr><td>id</td><td>uuid (PK)</td><td>sa01…-owner</td></tr>
+  <tr><td>first_name</td><td>text</td><td>Platform</td></tr>
+  <tr><td>last_name</td><td>text?</td><td>Owner</td></tr>
+  <tr><td>email</td><td>text · unique</td><td>owner@kalnostics.com</td></tr>
+  <tr><td>password_hash</td><td>text</td><td>$2b$12$…</td></tr>
+  <tr><td>role</td><td>enum</td><td>SUPER_OWNER</td></tr>
+  <tr><td>is_active</td><td>bool</td><td>true</td></tr>
+  <tr><td>failed_attempts</td><td>int</td><td>0</td></tr>
+  <tr><td>locked_until</td><td>timestamptz?</td><td>null</td></tr>
+  <tr><td>last_login_at</td><td>timestamptz?</td><td>2026-06-04T08:30:00Z</td></tr>
+  <tr><td>last_login_ip</td><td>text?</td><td>203.0.113.1</td></tr>
+  <tr><td>created_by</td><td>uuid?</td><td>null (seeded)</td></tr>
+</table>
+
+<h3><code>refresh_tokens</code> — RefreshToken <span class="tag">platform</span></h3>
+<table>
+  <tr><th>Column</th><th>Type</th><th>Sample</th></tr>
+  <tr><td>id</td><td>uuid (PK)</td><td>rt01…</td></tr>
+  <tr><td>person_id</td><td>uuid</td><td>p100…-dilip</td></tr>
+  <tr><td>token_hash</td><td>text · unique</td><td>sha256(raw) = 9f86d0…</td></tr>
+  <tr><td>branch_id</td><td>uuid?</td><td>null</td></tr>
+  <tr><td>profile_key</td><td>text?</td><td>business_admin</td></tr>
+  <tr><td>issued_to_ip</td><td>text?</td><td>203.0.113.7</td></tr>
+  <tr><td>user_agent</td><td>text?</td><td>Mozilla/5.0…</td></tr>
+  <tr><td>expires_at</td><td>timestamptz</td><td>2026-07-04T09:00:00Z</td></tr>
+  <tr><td>is_used</td><td>bool</td><td>false</td></tr>
+  <tr><td>is_revoked</td><td>bool</td><td>false</td></tr>
+</table>
+
+<h3><code>person_tenant_enrollments</code> — PersonTenantEnrollment <span class="tag">platform</span></h3>
+<table>
+  <tr><th>Column</th><th>Type</th><th>Sample (Ravi @ City Dx)</th></tr>
+  <tr><td>id</td><td>uuid (PK)</td><td>en01…</td></tr>
+  <tr><td>person_id</td><td>uuid</td><td>p102…-ravi</td></tr>
+  <tr><td>tenant_id</td><td>uuid</td><td>a1f0…-tenant</td></tr>
+  <tr><td>branch_id</td><td>uuid</td><td>b001…-andheri</td></tr>
+  <tr><td>tenant_mrn</td><td>text?</td><td>CD-00042</td></tr>
+  <tr><td>enrolled_at</td><td>timestamptz</td><td>2026-06-04T10:15:00Z</td></tr>
+  <tr><td>enrolled_by</td><td>uuid?</td><td>p100…-dilip</td></tr>
+  <tr><td colspan="3"><i>unique (person_id, tenant_id)</i></td></tr>
+</table>
+
+<h3><code>branches</code> — Branch <span class="tag biz">tenant-scoped (RLS)</span></h3>
+<table>
+  <tr><th>Column</th><th>Type</th><th>Sample</th></tr>
+  <tr><td>id</td><td>uuid (PK)</td><td>b001…-andheri</td></tr>
+  <tr><td>tenant_id</td><td>uuid</td><td>a1f0…-tenant</td></tr>
+  <tr><td>name</td><td>text</td><td>Andheri Center</td></tr>
+  <tr><td>branch_type</td><td>enum</td><td>DIAGNOSTIC</td></tr>
+  <tr><td>code</td><td>text?</td><td>AND</td></tr>
+  <tr><td>address</td><td>jsonb?</td><td>{"line1":"Plot 5, Andheri W","city":"Mumbai"}</td></tr>
+  <tr><td>phone</td><td>text?</td><td>+912226000000</td></tr>
+  <tr><td>email</td><td>text?</td><td>andheri@citydx.com</td></tr>
+  <tr><td>is_active</td><td>bool</td><td>true</td></tr>
+</table>
+
+<h3><code>user_branch_profiles</code> — UserBranchProfile <span class="tag biz">tenant-scoped (RLS)</span></h3>
+<table>
+  <tr><th>Column</th><th>Type</th><th>Sample A (admin)</th><th>Sample B (lab tech)</th></tr>
+  <tr><td>id</td><td>uuid (PK)</td><td>ubp01…</td><td>ubp02…</td></tr>
+  <tr><td>tenant_id</td><td>uuid</td><td>a1f0…-tenant</td><td>a1f0…-tenant</td></tr>
+  <tr><td>person_id</td><td>uuid</td><td>p100…-dilip</td><td>p101…-asha</td></tr>
+  <tr><td>branch_id</td><td>uuid?</td><td>null (tenant-level)</td><td>b001…-andheri</td></tr>
+  <tr><td>profile_key</td><td>text</td><td>business_admin</td><td>lab_technician</td></tr>
+  <tr><td>is_default</td><td>bool</td><td>true</td><td>true</td></tr>
+  <tr><td>is_active</td><td>bool</td><td>true</td><td>true</td></tr>
+  <tr><td>assigned_at</td><td>timestamptz</td><td>2026-06-04T08:45:00Z</td><td>2026-06-04T11:00:00Z</td></tr>
+  <tr><td>assigned_by</td><td>uuid?</td><td>null (onboarding)</td><td>p100…-dilip</td></tr>
+  <tr><td>revoked_at / revoked_by</td><td>timestamptz? / uuid?</td><td>null / null</td><td>null / null</td></tr>
+</table>
+
+<h3><code>user_profile_permission_overrides</code> — UserProfilePermissionOverride <span class="tag biz">tenant-scoped (RLS)</span></h3>
+<table>
+  <tr><th>Column</th><th>Type</th><th>Sample</th></tr>
+  <tr><td>id</td><td>uuid (PK)</td><td>ovr01…</td></tr>
+  <tr><td>tenant_id</td><td>uuid</td><td>a1f0…-tenant</td></tr>
+  <tr><td>person_id</td><td>uuid</td><td>p101…-asha</td></tr>
+  <tr><td>branch_id</td><td>uuid?</td><td>b001…-andheri</td></tr>
+  <tr><td>profile_key</td><td>text</td><td>lab_technician</td></tr>
+  <tr><td>permission_code</td><td>text</td><td>billing:read</td></tr>
+  <tr><td>override</td><td>text ('allow' | 'deny')</td><td>allow</td></tr>
+  <tr><td>set_by</td><td>uuid?</td><td>p100…-dilip</td></tr>
+</table>
+
+<h3><code>receptionist_doctor_mappings</code> — ReceptionistDoctorMapping <span class="tag biz">tenant-scoped (RLS)</span></h3>
+<table>
+  <tr><th>Column</th><th>Type</th><th>Sample</th></tr>
+  <tr><td>id</td><td>uuid (PK)</td><td>rdm01…</td></tr>
+  <tr><td>tenant_id</td><td>uuid</td><td>a1f0…-tenant</td></tr>
+  <tr><td>branch_id</td><td>uuid</td><td>b001…-andheri</td></tr>
+  <tr><td>receptionist_person_id</td><td>uuid</td><td>p103…-reception</td></tr>
+  <tr><td>doctor_person_id</td><td>uuid</td><td>p104…-doctor</td></tr>
+  <tr><td>assigned_by</td><td>uuid?</td><td>p100…-dilip</td></tr>
+</table>
+
+<h2>API Endpoints</h2>
+<p>36 endpoints across 5 areas. Auth column: <span class="tag pub">public</span> = no token,
+<span class="tag biz">business JWT</span>, <span class="tag sa">SiteAdmin JWT</span>.</p>
+
+<!-- ───────────────────────── BUSINESS AUTH ───────────────────────── -->
+<h2>Business Authentication</h2>
+
+<div class="ep" id="auth-login">
+  <div><span class="m post">POST</span><span class="path">/api/v1/auth/login</span></div>
+  <div class="tags"><span class="tag pub">public</span></div>
+  <p>Authenticate with an identifier (phone, email, or system username) + password. Returns an access + refresh token pair. <code>tenantSlug</code> is required for staff login.</p>
+  <p class="lbl">Request body</p>
+  <pre>{ "identifier": "+919876543210", "password": "MyPassword1", "tenantSlug": "city-dx" }</pre>
+  <p class="lbl">curl</p>
+  <pre>curl -X POST https://api.kalnostics.com/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"identifier":"+919876543210","password":"MyPassword1","tenantSlug":"city-dx"}'</pre>
+  <p class="lbl">200 response</p>
+  <pre>{ "success": true,
+  "data": { "accessToken": "eyJhbGciOi…", "refreshToken": "a1b2c3…" },
+  "meta": { "timestamp": "2026-06-04T10:00:00.000Z" } }</pre>
+</div>
+
+<div class="ep" id="auth-refresh">
+  <div><span class="m post">POST</span><span class="path">/api/v1/auth/refresh</span></div>
+  <div class="tags"><span class="tag pub">public</span></div>
+  <p>Rotate a refresh token. The old token is single-use; a new access + refresh pair is issued with the same context.</p>
+  <p class="lbl">Request body</p>
+  <pre>{ "refreshToken": "a1b2c3…" }</pre>
+  <p class="lbl">curl</p>
+  <pre>curl -X POST https://api.kalnostics.com/api/v1/auth/refresh \
+  -H "Content-Type: application/json" \
+  -d '{"refreshToken":"a1b2c3…"}'</pre>
+  <p class="lbl">200 response</p>
+  <pre>{ "success": true, "data": { "accessToken": "…", "refreshToken": "…" }, "meta": { "timestamp": "…" } }</pre>
+</div>
+
+<div class="ep" id="auth-switch">
+  <div><span class="m post">POST</span><span class="path">/api/v1/auth/switch-profile</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Switch the active branch/profile context. Returns a new access token only (refresh continues). Omit <code>branchId</code> for tenant-level profiles.</p>
+  <p class="lbl">Request body</p>
+  <pre>{ "branchId": "uuid-or-omit", "profileKey": "doctor" }</pre>
+  <p class="lbl">curl</p>
+  <pre>curl -X POST https://api.kalnostics.com/api/v1/auth/switch-profile \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"branchId":"b-uuid","profileKey":"doctor"}'</pre>
+  <p class="lbl">200 response</p>
+  <pre>{ "success": true, "data": { "accessToken": "…" }, "meta": { "timestamp": "…" } }</pre>
+</div>
+
+<div class="ep" id="auth-changepw">
+  <div><span class="m post">POST</span><span class="path">/api/v1/auth/change-password</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Change the caller's password after verifying the current one.</p>
+  <p class="lbl">Request body</p>
+  <pre>{ "currentPassword": "MyPassword1", "newPassword": "MyNewPass2" }</pre>
+  <p class="lbl">200 response</p>
+  <pre>{ "success": true, "data": { "message": "Password changed successfully" }, "meta": { "timestamp": "…" } }</pre>
+</div>
+
+<div class="ep" id="auth-logout">
+  <div><span class="m post">POST</span><span class="path">/api/v1/auth/logout</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Revoke all refresh tokens (logout from all devices). The short-lived access token expires naturally.</p>
+  <p class="lbl">200 response</p>
+  <pre>{ "success": true, "data": { "message": "Logged out successfully" }, "meta": { "timestamp": "…" } }</pre>
+</div>
+
+<div class="ep" id="auth-me">
+  <div><span class="m get">GET</span><span class="path">/api/v1/auth/me</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Return the current session info decoded from the JWT (including the embedded profiles array).</p>
+  <p class="lbl">curl</p>
+  <pre>curl https://api.kalnostics.com/api/v1/auth/me -H "Authorization: Bearer $TOKEN"</pre>
+  <p class="lbl">200 response</p>
+  <pre>{ "success": true, "data": {
+  "person_id": "uuid", "tenant_id": "uuid", "active_branch_id": "uuid",
+  "active_profile_key": "doctor", "is_patient_context": false,
+  "platform_mrn": "KAL-20260604-1A2B3C4D",
+  "profiles": [ { "branch_id":"uuid","branch_name":"Main","branch_type":"DIAGNOSTIC",
+                  "profile_key":"doctor","profile_label":"Doctor","is_default":true } ]
+}, "meta": { "timestamp": "…" } }</pre>
+</div>
+
+<!-- ───────────────────────── BRANCHES ───────────────────────── -->
+<h2>Branches</h2>
+<p>All branch routes require a business JWT; the tenant is taken from the token.</p>
+
+<div class="ep" id="branch-create">
+  <div><span class="m post">POST</span><span class="path">/api/v1/branches</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Create a branch in the caller's tenant.</p>
+  <p class="lbl">Request body</p>
+  <pre>{ "name": "Andheri Center", "branchType": "DIAGNOSTIC",
+  "code": "AND", "phone": "+912200000000", "email": "andheri@citydx.com",
+  "address": { "line1": "…", "city": "Mumbai" } }</pre>
+  <p class="lbl">curl</p>
+  <pre>curl -X POST https://api.kalnostics.com/api/v1/branches \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"Andheri Center","branchType":"DIAGNOSTIC"}'</pre>
+  <p class="lbl">201 response</p>
+  <pre>{ "success": true, "data": {
+  "id":"uuid","tenantId":"uuid","name":"Andheri Center","branchType":"DIAGNOSTIC",
+  "isActive":true,"createdAt":"…","updatedAt":"…","deletedAt":null
+}, "meta": { "timestamp": "…" } }</pre>
+</div>
+
+<div class="ep" id="branch-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/branches?page=1&amp;limit=20</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>List active branches in the tenant (paginated).</p>
+  <pre>curl "https://api.kalnostics.com/api/v1/branches?page=1&amp;limit=20" -H "Authorization: Bearer $TOKEN"</pre>
+  <p class="lbl">200 response</p>
+  <pre>{ "success": true, "data": [ { "id":"uuid","name":"Andheri Center", … } ],
+  "meta": { "total": 3, "page": 1, "limit": 20, "totalPages": 1, "timestamp": "…" } }</pre>
+</div>
+
+<div class="ep" id="branch-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/branches/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Fetch one branch by id. <span class="pill">404 BRANCH_NOT_FOUND</span> if missing.</p>
+  <pre>curl https://api.kalnostics.com/api/v1/branches/b-uuid -H "Authorization: Bearer $TOKEN"</pre>
+</div>
+
+<div class="ep" id="branch-update">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/branches/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Update a branch (all fields optional).</p>
+  <pre>{ "name": "Andheri West Center", "phone": "+912211111111" }</pre>
+</div>
+
+<div class="ep" id="branch-delete">
+  <div><span class="m delete">DELETE</span><span class="path">/api/v1/branches/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Soft-delete a branch (sets <code>deletedAt</code>).</p>
+  <pre>curl -X DELETE https://api.kalnostics.com/api/v1/branches/b-uuid -H "Authorization: Bearer $TOKEN"</pre>
+</div>
+
+<!-- ───────────────────────── USERS ───────────────────────── -->
+<h2>Users</h2>
+<p>All user routes require a business JWT; tenant + actor come from the token.</p>
+
+<div class="ep" id="user-register">
+  <div><span class="m post">POST</span><span class="path">/api/v1/users</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Register a new patient. Phone/email are globally unique de-dup keys.</p>
+  <p class="lbl">Request body (CreatePersonDto)</p>
+  <pre>{ "salutation":"Mr","firstName":"Ravi","lastName":"Kumar",
+  "dateOfBirth":"1990-05-14","gender":"MALE","bloodGroup":"O_POS",
+  "phone":"+919812345678","email":"ravi@example.com",
+  "address":{"city":"Pune"} }</pre>
+  <p class="lbl">201 response</p>
+  <pre>{ "success": true, "data": {
+  "id":"uuid","platformMrn":"KAL-20260604-1A2B3C4D","firstName":"Ravi",
+  "isPatient":true,"isStaff":false,"ownerTenantId":"uuid", … }, "meta": { "timestamp":"…" } }</pre>
+</div>
+
+<div class="ep" id="staff-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/users/staff</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>List all staff in the tenant, grouped by person with their profile assignments.</p>
+  <pre>{ "success": true, "data": [
+  { "id":"uuid","firstName":"Asha","lastName":"P","phone":"+91…","email":null,
+    "platformMrn":"KAL-…","profiles":[
+      {"branchId":"uuid","branchName":"Main","profileKey":"lab_technician","isDefault":true,"assignedAt":"…"} ] }
+], "meta": { "timestamp":"…" } }</pre>
+</div>
+
+<div class="ep" id="staff-register">
+  <div><span class="m post">POST</span><span class="path">/api/v1/users/staff</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Register a staff member: person + credentials (temp password) + initial profile, atomically. Returns the temp password once.</p>
+  <p class="lbl">Request body (RegisterStaffDto)</p>
+  <pre>{ "firstName":"Asha","lastName":"P","phone":"+919800000000",
+  "branchId":"b-uuid","profileKey":"lab_technician" }</pre>
+  <p class="lbl">201 response</p>
+  <pre>{ "success": true, "data": {
+  "person": { "id":"uuid","platformMrn":"KAL-…","isStaff":true, … },
+  "tempPassword": "Abcdef78", "loginIdentifier": "+919800000000"
+}, "meta": { "timestamp":"…" } }</pre>
+</div>
+
+<div class="ep" id="user-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/users/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Fetch a person by id. <span class="pill">404 PERSON_NOT_FOUND</span> if missing.</p>
+</div>
+
+<div class="ep" id="user-update">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/users/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Update a person's details. Only the owning tenant, the person themselves, or any tenant for self-registered persons may edit (<span class="pill">403 NOT_OWNER_TENANT</span> otherwise).</p>
+  <pre>{ "lastName":"Kumar","address":{"city":"Mumbai"} }</pre>
+</div>
+
+<div class="ep" id="user-assign">
+  <div><span class="m post">POST</span><span class="path">/api/v1/users/:id/profiles</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Assign a profile at a branch (or tenant-level if <code>branchId</code> omitted). Validates the profile/branch-type matrix.</p>
+  <pre>{ "branchId":"b-uuid", "profileKey":"doctor", "isDefault": false }</pre>
+</div>
+
+<div class="ep" id="user-revoke">
+  <div><span class="m delete">DELETE</span><span class="path">/api/v1/users/:id/profiles</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Revoke a profile assignment (soft). Body identifies the assignment.</p>
+  <pre>{ "branchId":"b-uuid", "profileKey":"doctor" }</pre>
+</div>
+
+<div class="ep" id="user-default">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/users/:id/default-profile</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Set the default landing profile (clears any prior default).</p>
+  <pre>{ "branchId":"b-uuid", "profileKey":"doctor" }</pre>
+</div>
+
+<div class="ep" id="user-perms-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/users/:id/permissions?profileKey=doctor&amp;branchId=b-uuid</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Resolve effective permissions for a profile assignment (baseline ± overrides).</p>
+  <pre>{ "success": true, "data": [
+  { "code":"report:verify","name":"Verify/sign reports","group":"Reports",
+    "baselineValue":true,"override":"inherit","effectiveValue":true } ],
+  "meta": { "timestamp":"…" } }</pre>
+</div>
+
+<div class="ep" id="user-perms-set">
+  <div><span class="m put">PUT</span><span class="path">/api/v1/users/:id/permissions</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Replace permission overrides for a profile assignment. <code>inherit</code> entries are dropped.</p>
+  <pre>{ "branchId":"b-uuid", "profileKey":"doctor",
+  "overrides":[ {"code":"billing:read","override":"allow"},
+                {"code":"report:verify","override":"deny"} ] }</pre>
+</div>
+
+<div class="ep" id="user-rd-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/users/:id/receptionist-doctors?branchId=b-uuid</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>List the doctors mapped to a receptionist at a branch.</p>
+</div>
+
+<div class="ep" id="user-rd-set">
+  <div><span class="m put">PUT</span><span class="path">/api/v1/users/:id/receptionist-doctors</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Replace the doctor mappings for a receptionist. Each doctor must be an active <code>doctor</code> at the branch. Empty array clears mappings.</p>
+  <pre>{ "branchId":"b-uuid", "doctorPersonIds":["d1-uuid","d2-uuid"] }</pre>
+</div>
+
+<div class="ep" id="user-resetpw">
+  <div><span class="m post">POST</span><span class="path">/api/v1/users/:id/reset-password</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Reset a staff member's password; returns a one-time temp password.</p>
+  <pre>{ "success": true, "data": { "tempPassword":"Abcdef78","loginIdentifier":"+919800000000" }, "meta": { "timestamp":"…" } }</pre>
+</div>
+
+<!-- ───────────────────────── SITEADMIN ───────────────────────── -->
+<h2>SiteAdmin</h2>
+
+<div class="ep" id="sa-login">
+  <div><span class="m post">POST</span><span class="path">/api/v1/siteadmin/auth/login</span></div>
+  <div class="tags"><span class="tag pub">public</span></div>
+  <p>Authenticate a SiteAdmin (email + password). Returns a <code>type:'siteadmin'</code> token (8h).</p>
+  <pre>{ "email":"owner@kalnostics.com", "password":"SuperSecret1" }</pre>
+  <pre>{ "success": true, "data": { "accessToken":"eyJ…" }, "meta": { "timestamp":"…" } }</pre>
+</div>
+
+<div class="ep" id="sa-me">
+  <div><span class="m get">GET</span><span class="path">/api/v1/siteadmin/me</span></div>
+  <div class="tags"><span class="tag sa">SiteAdmin JWT</span></div>
+  <p>Current SiteAdmin session info (any authenticated siteadmin).</p>
+  <pre>{ "success": true, "data": { "siteadmin_id":"uuid","email":"…","role":"SUPER_OWNER" }, "meta": { "timestamp":"…" } }</pre>
+</div>
+
+<div class="ep" id="sa-create">
+  <div><span class="m post">POST</span><span class="path">/api/v1/siteadmin/users</span></div>
+  <div class="tags"><span class="tag sa">SiteAdmin JWT</span><span class="tag">perm: siteadmin:manage</span></div>
+  <p>Create a SiteAdmin sub-account. Cannot create another <code>SUPER_OWNER</code>.</p>
+  <pre>{ "firstName":"Neha","lastName":"S","email":"neha@kalnostics.com",
+  "password":"StrongPass1","role":"OPERATIONS_ADMIN" }</pre>
+</div>
+
+<div class="ep" id="sa-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/siteadmin/users</span></div>
+  <div class="tags"><span class="tag sa">SiteAdmin JWT</span><span class="tag">perm: siteadmin:manage</span></div>
+  <p>List all SiteAdmin accounts.</p>
+</div>
+
+<div class="ep" id="sa-pw">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/siteadmin/users/:id/password</span></div>
+  <div class="tags"><span class="tag sa">SiteAdmin JWT</span><span class="tag">perm: siteadmin:manage</span></div>
+  <p>Change a SiteAdmin's password.</p>
+  <pre>{ "newPassword":"AnotherStrong1" }</pre>
+</div>
+
+<div class="ep" id="sa-deact">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/siteadmin/users/:id/deactivate</span></div>
+  <div class="tags"><span class="tag sa">SiteAdmin JWT</span><span class="tag">perm: siteadmin:manage</span></div>
+  <p>Deactivate a SiteAdmin (the <code>SUPER_OWNER</code> cannot be deactivated).</p>
+</div>
+
+<!-- ───────────────────────── TENANTS ───────────────────────── -->
+<h2>Tenant Management <span style="font-size:13px;color:var(--muted)">(SiteAdmin only)</span></h2>
+
+<div class="ep" id="tenant-create">
+  <div><span class="m post">POST</span><span class="path">/api/v1/siteadmin/tenants</span></div>
+  <div class="tags"><span class="tag sa">SiteAdmin JWT</span><span class="tag">perm: business:create</span></div>
+  <p>Create a tenant (business) and its first <code>business_admin</code> user, atomically. Returns a one-time temp password for the admin.</p>
+  <p class="lbl">Request body (CreateTenantDto)</p>
+  <pre>{ "name":"City Diagnostics Pvt Ltd", "slug":"city-dx",
+  "adminFirstName":"Dilip", "adminLastName":"Kumar",
+  "adminPhone":"+919876543210", "adminEmail":"dilip@citydx.com",
+  "email":"admin@citydx.com", "phone":"+912200000000",
+  "address":{"city":"Mumbai"}, "mrnPrefix":"CD",
+  "settings":{"timezone":"Asia/Kolkata","currency":"INR"} }</pre>
+  <p class="lbl">curl</p>
+  <pre>curl -X POST https://api.kalnostics.com/api/v1/siteadmin/tenants \
+  -H "Authorization: Bearer $SA_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"City Diagnostics","slug":"city-dx","adminFirstName":"Dilip","adminPhone":"+919876543210"}'</pre>
+  <p class="lbl">201 response</p>
+  <pre>{ "success": true, "data": {
+  "tenant": { "id":"uuid","name":"City Diagnostics","slug":"city-dx",
+              "subscriptionStatus":"TRIALING","isActive":true, … },
+  "adminPhone": "+919876543210", "tempPassword": "Abcdef78"
+}, "meta": { "timestamp":"…" } }</pre>
+</div>
+
+<div class="ep" id="tenant-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/siteadmin/tenants?page=1&amp;limit=20</span></div>
+  <div class="tags"><span class="tag sa">SiteAdmin JWT</span><span class="tag">perm: business:read</span></div>
+  <p>List all tenants (paginated).</p>
+</div>
+
+<div class="ep" id="tenant-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/siteadmin/tenants/:id</span></div>
+  <div class="tags"><span class="tag sa">SiteAdmin JWT</span><span class="tag">perm: business:read</span></div>
+  <p>Fetch one tenant by id.</p>
+</div>
+
+<div class="ep" id="tenant-update">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/siteadmin/tenants/:id</span></div>
+  <div class="tags"><span class="tag sa">SiteAdmin JWT</span><span class="tag">perm: business:create</span></div>
+  <p>Update editable fields. <b>Slug is immutable</b>; <code>settings</code> is deep-merged.</p>
+  <pre>{ "name":"City Diagnostics LLP", "settings":{"primary_color":"#0ea5e9"} }</pre>
+</div>
+
+<div class="ep" id="tenant-admin">
+  <div><span class="m get">GET</span><span class="path">/api/v1/siteadmin/tenants/:id/admin</span></div>
+  <div class="tags"><span class="tag sa">SiteAdmin JWT</span><span class="tag">perm: business:read</span></div>
+  <p>Get the tenant's business-admin account + credential metadata.</p>
+  <pre>{ "success": true, "data": {
+  "personId":"uuid","firstName":"Dilip","phone":"+919876543210",
+  "platformMrn":"KAL-…","isActive":true,"isTempPassword":true,"lastLoginAt":null
+}, "meta": { "timestamp":"…" } }</pre>
+</div>
+
+<div class="ep" id="tenant-adminpw">
+  <div><span class="m post">POST</span><span class="path">/api/v1/siteadmin/tenants/:id/admin/reset-password</span></div>
+  <div class="tags"><span class="tag sa">SiteAdmin JWT</span><span class="tag">perm: business:create</span></div>
+  <p>Reset the business admin's password; returns a one-time temp password.</p>
+  <pre>{ "success": true, "data": { "adminPhone":"+919876543210","tempPassword":"Bcdfgh92" }, "meta": { "timestamp":"…" } }</pre>
+</div>
+
+<p style="margin:40px 0 10px;color:var(--muted);font-size:13px">
+Generated for Kalnostics New · reflects the implemented controllers under <code>src/modules</code>.
+Token TTLs, lockout, and password/MRN formats are defined in <code>CLAUDE.md §5</code>.
+</p>
+
+</main>
+</div>
+</body>
+</html>

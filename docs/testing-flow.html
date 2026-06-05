@@ -1,0 +1,1619 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kalnostics New — API Testing & Verification Guide</title>
+  <meta name="description" content="Step-by-step interactive testing guide for Kalnostics New. Explains the complete multi-tenant, dual-authentication flow with dynamic cURL commands, database seeding, and Postgres Row-Level Security verification.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #030712;
+      --panel: rgba(17, 24, 39, 0.7);
+      --panel-border: rgba(255, 255, 255, 0.08);
+      --panel-hover: rgba(31, 41, 55, 0.8);
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      --accent: #38bdf8;
+      --accent-glow: rgba(56, 189, 248, 0.15);
+      
+      --get: #10b981;
+      --post: #3b82f6;
+      --put: #8b5cf6;
+      --patch: #f59e0b;
+      --delete: #ef4444;
+      
+      --code-bg: #0b0f19;
+      --sidebar-width: 320px;
+      --header-height: 80px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: 'Outfit', sans-serif;
+      line-height: 1.6;
+      overflow-x: hidden;
+      background-image: 
+        radial-gradient(circle at 10% 20%, rgba(56, 189, 248, 0.05) 0%, transparent 40%),
+        radial-gradient(circle at 90% 80%, rgba(139, 92, 246, 0.05) 0%, transparent 40%);
+      background-attachment: fixed;
+    }
+
+    /* Scrollbars */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: var(--bg);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--panel-border);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--text-muted);
+    }
+
+    /* Layout */
+    .app-header {
+      height: var(--header-height);
+      border-bottom: 1px solid var(--panel-border);
+      background: rgba(3, 7, 18, 0.8);
+      backdrop-filter: blur(12px);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 40px;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+    }
+
+    .logo-container {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo-badge {
+      background: linear-gradient(135deg, var(--accent), #8b5cf6);
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      color: #fff;
+      box-shadow: 0 0 15px var(--accent-glow);
+    }
+
+    .logo-text h1 {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+      background: linear-gradient(to right, #fff, #9ca3af);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .logo-text p {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-top: -2px;
+    }
+
+    .header-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 14px;
+      transition: color 0.2s;
+      border: 1px solid var(--panel-border);
+      padding: 6px 16px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .header-links a:hover {
+      color: #fff;
+      border-color: var(--accent);
+      background: var(--accent-glow);
+    }
+
+    .main-layout {
+      display: flex;
+      margin-top: var(--header-height);
+      min-height: calc(100vh - var(--header-height));
+    }
+
+    /* Configuration Sidebar */
+    .config-sidebar {
+      width: var(--sidebar-width);
+      border-right: 1px solid var(--panel-border);
+      background: rgba(3, 7, 18, 0.6);
+      backdrop-filter: blur(20px);
+      padding: 30px 24px;
+      position: fixed;
+      top: var(--header-height);
+      bottom: 0;
+      left: 0;
+      overflow-y: auto;
+      z-index: 90;
+    }
+
+    .sidebar-title {
+      font-size: 14px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--accent);
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .form-group {
+      margin-bottom: 18px;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+      font-weight: 500;
+    }
+
+    .form-input {
+      width: 100%;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--panel-border);
+      color: #fff;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      transition: all 0.2s;
+    }
+
+    .form-input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.15);
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    /* Content Area */
+    .content-area {
+      flex: 1;
+      margin-left: var(--sidebar-width);
+      padding: 40px 60px;
+      max-width: 1100px;
+    }
+
+    .hero-section {
+      margin-bottom: 40px;
+    }
+
+    .hero-section h2 {
+      font-size: 32px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      margin-bottom: 12px;
+    }
+
+    .hero-section p {
+      color: var(--text-muted);
+      font-size: 16px;
+      max-width: 800px;
+    }
+
+    /* Tabs Navigation */
+    .tabs-nav {
+      display: flex;
+      gap: 8px;
+      border-bottom: 1px solid var(--panel-border);
+      margin-bottom: 40px;
+      padding-bottom: 1px;
+    }
+
+    .tab-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      padding: 12px 20px;
+      cursor: pointer;
+      border-radius: 8px 8px 0 0;
+      position: relative;
+      transition: all 0.2s;
+    }
+
+    .tab-btn:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .tab-btn.active {
+      color: var(--accent);
+      background: rgba(56, 189, 248, 0.04);
+    }
+
+    .tab-btn.active::after {
+      content: '';
+      position: absolute;
+      bottom: -1px;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--accent);
+      box-shadow: 0 0 10px var(--accent);
+    }
+
+    /* Tab Content Panels */
+    .tab-panel {
+      display: none;
+      animation: fadeIn 0.4s ease-out forwards;
+    }
+
+    .tab-panel.active {
+      display: block;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Flow Card & Steps */
+    .step-card {
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      padding: 30px;
+      margin-bottom: 30px;
+      transition: border-color 0.3s;
+    }
+
+    .step-card:hover {
+      border-color: rgba(56, 189, 248, 0.25);
+    }
+
+    .step-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 20px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      padding-bottom: 16px;
+    }
+
+    .step-badge {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--panel-border);
+      padding: 4px 12px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--accent);
+    }
+
+    .step-number {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+
+    .step-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .method-tag {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 700;
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 4px;
+      color: #fff;
+      display: inline-block;
+      margin-right: 8px;
+    }
+
+    .method-tag.get { background: var(--get); }
+    .method-tag.post { background: var(--post); }
+    .method-tag.put { background: var(--put); }
+    .method-tag.patch { background: var(--patch); }
+    .method-tag.delete { background: var(--delete); }
+
+    .route-path {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 14px;
+      color: #fff;
+      font-weight: 500;
+    }
+
+    .step-description {
+      font-size: 14px;
+      color: var(--text-muted);
+      margin-bottom: 20px;
+    }
+
+    .step-description p {
+      margin-bottom: 8px;
+    }
+
+    .step-description ul {
+      margin-left: 20px;
+      margin-top: 8px;
+      margin-bottom: 8px;
+      list-style-type: square;
+    }
+
+    .step-description li {
+      margin-bottom: 4px;
+    }
+
+    /* Code Display Container */
+    .code-container {
+      position: relative;
+      margin-bottom: 20px;
+    }
+
+    .code-header {
+      background: var(--code-bg);
+      border: 1px solid var(--panel-border);
+      border-bottom: none;
+      border-radius: 8px 8px 0 0;
+      padding: 10px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .code-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+    }
+
+    .copy-btn {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--panel-border);
+      color: var(--text-muted);
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .copy-btn:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+      border-color: var(--accent);
+    }
+
+    .copy-btn.copied {
+      background: rgba(16, 185, 129, 0.15);
+      border-color: var(--get);
+      color: var(--get);
+    }
+
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 0 0 8px 8px;
+      padding: 16px;
+      overflow-x: auto;
+      margin: 0;
+    }
+
+    code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      color: #e2e8f0;
+      white-space: pre;
+    }
+
+    /* Response block */
+    .response-section {
+      background: rgba(255, 255, 255, 0.01);
+      border: 1px solid rgba(255, 255, 255, 0.03);
+      border-radius: 8px;
+      padding: 16px;
+      margin-top: 15px;
+    }
+
+    .response-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .response-title::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+
+    /* Callout Box */
+    .info-callout {
+      background: rgba(56, 189, 248, 0.04);
+      border: 1px solid rgba(56, 189, 248, 0.15);
+      border-left: 4px solid var(--accent);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 20px 0;
+      font-size: 14px;
+    }
+
+    .info-callout.warning {
+      background: rgba(245, 158, 11, 0.04);
+      border-color: rgba(245, 158, 11, 0.15);
+      border-left-color: var(--patch);
+    }
+
+    .info-callout h4 {
+      font-weight: 700;
+      margin-bottom: 6px;
+      color: #fff;
+    }
+
+    .badge-group {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .badge {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--panel-border);
+      color: var(--text-muted);
+    }
+
+    .badge.secured {
+      color: #38bdf8;
+      background: rgba(56, 189, 248, 0.05);
+      border-color: rgba(56, 189, 248, 0.2);
+    }
+
+    /* Setup Checklist styling */
+    .checklist-list {
+      list-style: none;
+      margin-top: 15px;
+    }
+
+    .checklist-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 12px;
+      font-size: 14px;
+    }
+
+    .checklist-check {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--panel-border);
+      width: 18px;
+      height: 18px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 3px;
+      flex-shrink: 0;
+      font-size: 10px;
+      color: var(--get);
+    }
+
+    .checklist-item.done .checklist-check::before {
+      content: '✓';
+    }
+
+    .checklist-body code {
+      font-size: 12px;
+      padding: 1px 5px;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 4px;
+      border: 1px solid var(--panel-border);
+    }
+
+    /* Responsive adjustments */
+    @media (max-width: 1024px) {
+      .config-sidebar {
+        width: 100%;
+        position: relative;
+        top: 0;
+        height: auto;
+        border-right: none;
+        border-bottom: 1px solid var(--panel-border);
+      }
+      .content-area {
+        margin-left: 0;
+        padding: 30px 20px;
+      }
+      .main-layout {
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top App Header -->
+  <header class="app-header">
+    <div class="logo-container">
+      <div class="logo-badge">K</div>
+      <div class="logo-text">
+        <h1>Kalnostics New</h1>
+        <p>API Integration &amp; Testing Console</p>
+      </div>
+    </div>
+    <div class="header-links">
+      <a href="api.html" target="_blank">Full API Reference ↗</a>
+    </div>
+  </header>
+
+  <div class="main-layout">
+    <!-- Configuration Sticky Sidebar -->
+    <aside class="config-sidebar" aria-label="Environment Configuration">
+      <h3 class="sidebar-title">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+        Environment Configuration
+      </h3>
+
+      <div class="form-group">
+        <label class="form-label" for="input-host">Base API URL</label>
+        <input type="text" id="input-host" class="form-input" value="http://localhost:3000">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="input-sa-token">SiteAdmin Token ($SA_TOKEN)</label>
+        <input type="text" id="input-sa-token" class="form-input" placeholder="Paste siteadmin JWT here...">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="input-tenant-slug">Tenant Slug ($TENANT_SLUG)</label>
+        <input type="text" id="input-tenant-slug" class="form-input" value="city-dx">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="input-tenant-id">Tenant ID ($TENANT_ID)</label>
+        <input type="text" id="input-tenant-id" class="form-input" placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="input-temp-password">Temporary Password ($TEMP_PASSWORD)</label>
+        <input type="text" id="input-temp-password" class="form-input" placeholder="One-time password...">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="input-biz-token">Business Admin Token ($BIZ_TOKEN)</label>
+        <input type="text" id="input-biz-token" class="form-input" placeholder="Paste business admin JWT here...">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="input-branch-id">Branch ID ($BRANCH_ID)</label>
+        <input type="text" id="input-branch-id" class="form-input" placeholder="Created branch UUID...">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="input-staff-id">Staff Person ID ($STAFF_ID)</label>
+        <input type="text" id="input-staff-id" class="form-input" placeholder="Created staff person UUID...">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="input-staff-token">Staff Token ($STAFF_TOKEN)</label>
+        <input type="text" id="input-staff-token" class="form-input" placeholder="Paste doctor/receptionist JWT here...">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="input-patient-id">Patient Person ID ($PATIENT_ID)</label>
+        <input type="text" id="input-patient-id" class="form-input" placeholder="Created patient person UUID...">
+      </div>
+    </aside>
+
+    <!-- Main Content Panel -->
+    <main class="content-area">
+      <section class="hero-section">
+        <h2>Complete Integration Testing Flow</h2>
+        <p>This guide explains the end-to-end flow of the Kalnostics New project. Fill in the values in the sidebar as you progress, and the cURL commands below will update dynamically. Copy and run them directly in your shell.</p>
+      </section>
+
+      <!-- Navigation Tabs -->
+      <nav class="tabs-nav" aria-label="Testing Phases">
+        <button class="tab-btn active" onclick="switchTab(event, 'phase-1')">1. Setup &amp; DB</button>
+        <button class="tab-btn" onclick="switchTab(event, 'phase-2')">2. SiteAdmin Operations</button>
+        <button class="tab-btn" onclick="switchTab(event, 'phase-3')">3. Tenant Provisioning</button>
+        <button class="tab-btn" onclick="switchTab(event, 'phase-4')">4. Staff &amp; Patients</button>
+        <button class="tab-btn" onclick="switchTab(event, 'phase-5')">5. RLS Isolation</button>
+      </nav>
+
+      <!-- Phase 1: Database & Platform Setup -->
+      <div id="phase-1" class="tab-panel active">
+        <div class="step-card">
+          <div class="step-header">
+            <div>
+              <div class="step-number">Step 1.1</div>
+              <h3 class="step-title">Initial Local Environment Setup</h3>
+            </div>
+            <span class="step-badge">Database &amp; Env</span>
+          </div>
+          <div class="step-description">
+            <p>Ensure your environment variables are configured and the database has been initialized with the schema and the Row-Level Security (RLS) configurations.</p>
+          </div>
+          
+          <ul class="checklist-list">
+            <li class="checklist-item done">
+              <span class="checklist-check"></span>
+              <div class="checklist-body">
+                Configure your database URL and secrets. Copy <code>.env.example</code> to <code>.env</code> and adjust <code>DATABASE_URL</code> and <code>JWT_SECRET</code>.
+              </div>
+            </li>
+            <li class="checklist-item done">
+              <span class="checklist-check"></span>
+              <div class="checklist-body">
+                Install dependencies: run <code>pnpm install</code> in the root directory.
+              </div>
+            </li>
+            <li class="checklist-item done">
+              <span class="checklist-check"></span>
+              <div class="checklist-body">
+                Run migrations to push schema structure to PostgreSQL: <code>npx prisma db push</code> or <code>npx prisma migrate dev</code>.
+              </div>
+            </li>
+            <li class="checklist-item done">
+              <span class="checklist-check"></span>
+              <div class="checklist-body">
+                <strong>Apply Row-Level Security Policies:</strong> Run the RLS script manually against your PostgreSQL database:
+                <br><code style="margin-top:4px; display:inline-block">psql "$DATABASE_URL" -f prisma/rls.sql</code>
+              </div>
+            </li>
+          </ul>
+        </div>
+
+        <div class="step-card">
+          <div class="step-header">
+            <div>
+              <div class="step-number">Step 1.2</div>
+              <h3 class="step-title">Seed the Initial SUPER_OWNER SiteAdmin</h3>
+            </div>
+            <span class="step-badge">Database Seeding</span>
+          </div>
+          <div class="step-description">
+            <p>To register new tenants (businesses) and set up the system, you must have an initial super admin account. Seed the database with the pre-configured seeder script:</p>
+          </div>
+
+          <div class="code-container">
+            <div class="code-header">
+              <span class="code-label">Terminal Command</span>
+              <button class="copy-btn" onclick="copyCode(this, 'seed-cmd')">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                <span>Copy Command</span>
+              </button>
+            </div>
+            <pre><code id="seed-cmd">npx prisma db seed</code></pre>
+          </div>
+
+          <div class="info-callout">
+            <h4>Seeded Credentials</h4>
+            <p>The seeder creates a default <code>SUPER_OWNER</code> SiteAdmin user with these credentials:</p>
+            <ul>
+              <li><strong>Email:</strong> <code>admin@kalnostics.com</code></li>
+              <li><strong>Password:</strong> <code>SuperSecret1</code></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="step-card">
+          <div class="step-header">
+            <div>
+              <div class="step-number">Step 1.3</div>
+              <h3 class="step-title">Start the NestJS Backend Server</h3>
+            </div>
+            <span class="step-badge">Runtime</span>
+          </div>
+          <div class="step-description">
+            <p>Start the server in watch mode. By default, it runs on port <code>3000</code>. Verify that it starts cleanly and connects to the database.</p>
+          </div>
+
+          <div class="code-container">
+            <div class="code-header">
+              <span class="code-label">Terminal Command</span>
+              <button class="copy-btn" onclick="copyCode(this, 'start-cmd')">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                <span>Copy Command</span>
+              </button>
+            </div>
+            <pre><code id="start-cmd">pnpm run start:dev</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- Phase 2: SiteAdmin Operations -->
+      <div id="phase-2" class="tab-panel">
+        <div class="step-card">
+          <div class="step-header">
+            <div>
+              <div class="step-number">Step 2.1</div>
+              <h3 class="step-title">SiteAdmin Authenticate</h3>
+              <div class="badge-group">
+                <span class="method-tag post">POST</span>
+                <span class="route-path">/api/v1/siteadmin/auth/login</span>
+                <span class="badge">public</span>
+              </div>
+            </div>
+            <span class="step-badge">SiteAdmin Auth</span>
+          </div>
+          <div class="step-description">
+            <p>Log in as the default SiteAdmin to receive an 8-hour SiteAdmin access JWT. This token bypasses the business logic rules and lets you manage the platform.</p>
+          </div>
+
+          <div class="code-container">
+            <div class="code-header">
+              <span class="code-label">cURL Request</span>
+              <button class="copy-btn" onclick="copyCode(this, 'curl-sa-login')">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                <span>Copy cURL</span>
+              </button>
+            </div>
+            <pre><code id="curl-sa-login">curl -X POST {HOST}/api/v1/siteadmin/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "admin@kalnostics.com",
+    "password": "SuperSecret1"
+  }'</code></pre>
+          </div>
+
+          <div class="response-section">
+            <div class="response-title">Expected Response</div>
+            <pre><code>{
+  "success": true,
+  "data": {
+    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  },
+  "meta": {
+    "timestamp": "2026-06-04T11:00:00.000Z"
+  }
+}</code></pre>
+          </div>
+
+          <div class="info-callout">
+            <h4>Next Step</h4>
+            <p>Copy the <code>accessToken</code> from the response, paste it into the **SiteAdmin Token ($SA_TOKEN)** input field in the sidebar, and proceed.</p>
+          </div>
+        </div>
+
+        <div class="step-card">
+          <div class="step-header">
+            <div>
+              <div class="step-number">Step 2.2</div>
+              <h3 class="step-title">Create a New Tenant (Business)</h3>
+              <div class="badge-group">
+                <span class="method-tag post">POST</span>
+                <span class="route-path">/api/v1/siteadmin/tenants</span>
+                <span class="badge secured">siteadmin JWT</span>
+              </div>
+            </div>
+            <span class="step-badge">Tenant Management</span>
+          </div>
+          <div class="step-description">
+            <p>Provision a new medical business (Tenant) and its first <code>business_admin</code> user atomically. The request generates a secure one-time temporary password for the administrator.</p>
+          </div>
+
+          <div class="code-container">
+            <div class="code-header">
+              <span class="code-label">cURL Request</span>
+              <button class="copy-btn" onclick="copyCode(this, 'curl-create-tenant')">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                <span>Copy cURL</span>
+              </button>
+            </div>
+            <pre><code id="curl-create-tenant">curl -X POST {HOST}/api/v1/siteadmin/tenants \
+  -H "Authorization: Bearer {SA_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "City Diagnostics Pvt Ltd",
+    "slug": "{TENANT_SLUG}",
+    "adminFirstName": "Dilip",
+    "adminLastName": "Kumar",
+    "adminPhone": "+919876543210",
+    "adminEmail": "dilip@citydx.com",
+    "email": "admin@citydx.com",
+    "phone": "+912200000000",
+    "address": {
+      "city": "Mumbai",
+      "line1": "123 Link Road"
+    },
+    "mrnPrefix": "CD",
+    "settings": {
+      "timezone": "Asia/Kolkata",
+      "currency": "INR"
+    }
+  }'</code></pre>
+          </div>
+
+          <div class="response-section">
+            <div class="response-title">Expected Response</div>
+            <pre><code>{
+  "success": true,
+  "data": {
+    "tenant": {
+      "id": "e9bdc327-0131-4a4a-9b5d-16a4bece5c38",
+      "name": "City Diagnostics Pvt Ltd",
+      "slug": "city-dx",
+      "subscriptionStatus": "TRIALING",
+      "isActive": true
+    },
+    "adminPhone": "+919876543210",
+    "tempPassword": "Ypxqrd83"
+  },
+  "meta": {
+    "timestamp": "2026-06-04T11:05:00.000Z"
+  }
+}</code></pre>
+          </div>
+
+          <div class="info-callout">
+            <h4>Update Configurations</h4>
+            <p>Extract the values from the response and update the sidebar:</p>
+            <ul>
+              <li>Copy <code>tenant.id</code> to **Tenant ID ($TENANT_ID)**.</li>
+              <li>Copy <code>tempPassword</code> to **Temporary Password ($TEMP_PASSWORD)**.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- Phase 3: Tenant Provisioning / Business Admin Operations -->
+      <div id="phase-3" class="tab-panel">
+        <div class="step-card">
+          <div class="step-header">
+            <div>
+              <div class="step-number">Step 3.1</div>
+              <h3 class="step-title">Log in as Tenant Business Admin</h3>
+              <div class="badge-group">
+                <span class="method-tag post">POST</span>
+                <span class="route-path">/api/v1/auth/login</span>
+                <span class="badge">public</span>
+              </div>
+            </div>
+            <span class="step-badge">Business Auth</span>
+          </div>
+          <div class="step-description">
+            <p>Log in as the newly provisioned Business Admin. Because staff/admin accounts belong to a tenant, you must provide the <code>tenantSlug</code> during login.</p>
+          </div>
+
+          <div class="code-container">
+            <div class="code-header">
+              <span class="code-label">cURL Request</span>
+              <button class="copy-btn" onclick="copyCode(this, 'curl-biz-login')">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                <span>Copy cURL</span>
+              </button>
+            </div>
+            <pre><code id="curl-biz-login">curl -X POST {HOST}/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "identifier": "+919876543210",
+    "password": "{TEMP_PASSWORD}",
+    "tenantSlug": "{TENANT_SLUG}"
+  }'</code></pre>
+          </div>
+
+          <div class="response-section">
+            <div class="response-title">Expected Response</div>
+            <pre><code>{
+  "success": true,
+  "data": {
+    "accessToken": "eyJhbGciOi...",
+    "refreshToken": "a1b2c3d4..."
+  },
+  "meta": {
+    "timestamp": "2026-06-04T11:08:00.000Z"
+  }
+}</code></pre>
+          </div>
+
+          <div class="info-callout">
+            <h4>Update Sidebar</h4>
+            <p>Copy the returned <code>accessToken</code> into the **Business Admin Token ($BIZ_TOKEN)** input field in the sidebar.</p>
+          </div>
+        </div>
+
+        <div class="step-card">
+          <div class="step-header">
+            <div>
+              <div class="step-number">Step 3.2</div>
+              <h3 class="step-title">Change the Admin's Temporary Password</h3>
+              <div class="badge-group">
+                <span class="method-tag post">POST</span>
+                <span class="route-path">/api/v1/auth/change-password</span>
+                <span class="badge secured">business JWT</span>
+              </div>
+            </div>
+            <span class="step-badge">Security</span>
+          </div>
+          <div class="step-description">
+            <p>Temporary passwords should be changed immediately upon first login. Update the password to a secure new value (must contain at least 8 characters, 1 uppercase letter, and 1 digit).</p>
+          </div>
+
+          <div class="code-container">
+            <div class="code-header">
+              <span class="code-label">cURL Request</span>
+              <button class="copy-btn" onclick="copyCode(this, 'curl-biz-changepw')">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                <span>Copy cURL</span>
+              </button>
+            </div>
+            <pre><code id="curl-biz-changepw">curl -X POST {HOST}/api/v1/auth/change-password \
+  -H "Authorization: Bearer {BIZ_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "currentPassword": "{TEMP_PASSWORD}",
+    "newPassword": "NewSecurePassword1"
+  }'</code></pre>
+          </div>
+        </div>
+
+        <div class="step-card">
+          <div class="step-header">
+            <div>
+              <div class="step-number">Step 3.3</div>
+              <h3 class="step-title">Create a Branch for the Tenant</h3>
+              <div class="badge-group">
+                <span class="method-tag post">POST</span>
+                <span class="route-path">/api/v1/branches</span>
+                <span class="badge secured">business JWT</span>
+              </div>
+            </div>
+            <span class="step-badge">Branches</span>
+          </div>
+          <div class="step-description">
+            <p>Establish a physical location under the tenant scope. Multi-tenancy RLS will restrict access to this branch automatically.</p>
+          </div>
+
+          <div class="code-container">
+            <div class="code-header">
+              <span class="code-label">cURL Request</span>
+              <button class="copy-btn" onclick="copyCode(this, 'curl-create-branch')">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                <span>Copy cURL</span>
+              </button>
+            </div>
+            <pre><code id="curl-create-branch">curl -X POST {HOST}/api/v1/branches \
+  -H "Authorization: Bearer {BIZ_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Andheri Diagnostic Center",
+    "branchType": "DIAGNOSTIC",
+    "code": "AND",
+    "phone": "+912233334444",
+    "email": "andheri@citydx.com",
+    "address": {
+      "line1": "Prime Mall, Andheri West",
+      "city": "Mumbai"
+    }
+  }'</code></pre>
+          </div>
+
+          <div class="response-section">
+            <div class="response-title">Expected Response</div>
+            <pre><code>{
+  "success": true,
+  "data": {
+    "id": "77cc49d0-fa52-4752-b883-9b27a3c3066d",
+    "tenantId": "e9bdc327-0131-4a4a-9b5d-16a4bece5c38",
+    "name": "Andheri Diagnostic Center",
+    "branchType": "DIAGNOSTIC",
+    "isActive": true
+  },
+  "meta": {
+    "timestamp": "2026-06-04T11:10:00.000Z"
+  }
+}</code></pre>
+          </div>
+
+          <div class="info-callout">
+            <h4>Update Sidebar</h4>
+            <p>Copy the returned branch <code>id</code> into the **Branch ID ($BRANCH_ID)** field in the sidebar.</p>
+          </div>
+        </div>
+
+        <div class="step-card">
+          <div class="step-header">
+            <div>
+              <div class="step-number">Step 3.4</div>
+              <h3 class="step-title">Register a Staff Member (e.g. Doctor)</h3>
+              <div class="badge-group">
+                <span class="method-tag post">POST</span>
+                <span class="route-path">/api/v1/users/staff</span>
+                <span class="badge secured">business JWT</span>
+              </div>
+            </div>
+            <span class="step-badge">Staff Management</span>
+          </div>
+          <div class="step-description">
+            <p>Hires a staff member in the tenant, maps them to the branch, and assigns them the specified profile role (e.g., <code>doctor</code>). Generates a one-time temporary password for them.</p>
+          </div>
+
+          <div class="code-container">
+            <div class="code-header">
+              <span class="code-label">cURL Request</span>
+              <button class="copy-btn" onclick="copyCode(this, 'curl-create-staff')">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                <span>Copy cURL</span>
+              </button>
+            </div>
+            <pre><code id="curl-create-staff">curl -X POST {HOST}/api/v1/users/staff \
+  -H "Authorization: Bearer {BIZ_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "firstName": "Rajesh",
+    "lastName": "Sharma",
+    "phone": "+919822222222",
+    "email": "dr.rajesh@citydx.com",
+    "branchId": "{BRANCH_ID}",
+    "profileKey": "doctor"
+  }'</code></pre>
+          </div>
+
+          <div class="response-section">
+            <div class="response-title">Expected Response</div>
+            <pre><code>{
+  "success": true,
+  "data": {
+    "person": {
+      "id": "e30e66d2-7fb6-4db8-831d-d249f7e52f53",
+      "platformMrn": "KAL-20260604-A4B3C2D1",
+      "firstName": "Rajesh",
+      "lastName": "Sharma",
+      "isStaff": true,
+      "isPatient": false
+    },
+    "tempPassword": "Hwtzqmp4",
+    "loginIdentifier": "+919822222222"
+  },
+  "meta": {
+    "timestamp": "2026-06-04T11:12:00.000Z"
+  }
+}</code></pre>
+          </div>
+
+          <div class="info-callout">
+            <h4>Update Sidebar</h4>
+            <p>Copy <code>person.id</code> to **Staff Person ID ($STAFF_ID)**, and update the **Temporary Password ($TEMP_PASSWORD)** with the staff's new temp password.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Phase 4: Staff & Patients Operations -->
+      <div id="phase-4" class="tab-panel">
+        <div class="step-card">
+          <div class="step-header">
+            <div>
+              <div class="step-number">Step 4.1</div>
+              <h3 class="step-title">Staff Member Authenticate</h3>
+              <div class="badge-group">
+                <span class="method-tag post">POST</span>
+                <span class="route-path">/api/v1/auth/login</span>
+                <span class="badge">public</span>
+              </div>
+            </div>
+            <span class="step-badge">Staff Auth</span>
+          </div>
+          <div class="step-description">
+            <p>Log in as the newly created Doctor using their temporary password and tenant slug.</p>
+          </div>
+
+          <div class="code-container">
+            <div class="code-header">
+              <span class="code-label">cURL Request</span>
+              <button class="copy-btn" onclick="copyCode(this, 'curl-staff-login')">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                <span>Copy cURL</span>
+              </button>
+            </div>
+            <pre><code id="curl-staff-login">curl -X POST {HOST}/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "identifier": "+919822222222",
+    "password": "{TEMP_PASSWORD}",
+    "tenantSlug": "{TENANT_SLUG}"
+  }'</code></pre>
+          </div>
+
+          <div class="info-callout">
+            <h4>Update Sidebar</h4>
+            <p>Copy the returned <code>accessToken</code> into the **Staff Token ($STAFF_TOKEN)** input field in the sidebar.</p>
+          </div>
+        </div>
+
+        <div class="step-card">
+          <div class="step-header">
+            <div>
+              <div class="step-number">Step 4.2</div>
+              <h3 class="step-title">Switch Active Profile Context</h3>
+              <div class="badge-group">
+                <span class="method-tag post">POST</span>
+                <span class="route-path">/api/v1/auth/switch-profile</span>
+                <span class="badge secured">business JWT</span>
+              </div>
+            </div>
+            <span class="step-badge">Profile Switcher</span>
+          </div>
+          <div class="step-description">
+            <p>If a staff member is assigned to multiple branches or has different roles, they can switch contexts. This generates a new short-lived access token scoped to the active branch and profile key.</p>
+          </div>
+
+          <div class="code-container">
+            <div class="code-header">
+              <span class="code-label">cURL Request</span>
+              <button class="copy-btn" onclick="copyCode(this, 'curl-switch-profile')">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                <span>Copy cURL</span>
+              </button>
+            </div>
+            <pre><code id="curl-switch-profile">curl -X POST {HOST}/api/v1/auth/switch-profile \
+  -H "Authorization: Bearer {STAFF_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "branchId": "{BRANCH_ID}",
+    "profileKey": "doctor"
+  }'</code></pre>
+          </div>
+
+          <div class="response-section">
+            <div class="response-title">Expected Response</div>
+            <pre><code>{
+  "success": true,
+  "data": {
+    "accessToken": "eyJhbGciOi..."
+  },
+  "meta": {
+    "timestamp": "2026-06-04T11:15:00.000Z"
+  }
+}</code></pre>
+          </div>
+        </div>
+
+        <div class="step-card">
+          <div class="step-header">
+            <div>
+              <div class="step-number">Step 4.3</div>
+              <h3 class="step-title">Register a New Patient</h3>
+              <div class="badge-group">
+                <span class="method-tag post">POST</span>
+                <span class="route-path">/api/v1/users</span>
+                <span class="badge secured">business JWT</span>
+              </div>
+            </div>
+            <span class="step-badge">Patient Registration</span>
+          </div>
+          <div class="step-description">
+            <p>Register a patient under the tenant context. A sequential MRN prefix is generated for the patient, and they are saved under the global platform directory, linked to your tenant.</p>
+          </div>
+
+          <div class="code-container">
+            <div class="code-header">
+              <span class="code-label">cURL Request</span>
+              <button class="copy-btn" onclick="copyCode(this, 'curl-create-patient')">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                <span>Copy cURL</span>
+              </button>
+            </div>
+            <pre><code id="curl-create-patient">curl -X POST {HOST}/api/v1/users \
+  -H "Authorization: Bearer {STAFF_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "salutation": "Mr",
+    "firstName": "Amit",
+    "lastName": "Patel",
+    "dateOfBirth": "1992-08-14",
+    "gender": "MALE",
+    "bloodGroup": "O_POS",
+    "phone": "+919988776655",
+    "email": "amit.patel@gmail.com",
+    "address": {
+      "city": "Mumbai",
+      "line1": "45 Sector-3, Bandra"
+    }
+  }'</code></pre>
+          </div>
+
+          <div class="response-section">
+            <div class="response-title">Expected Response</div>
+            <pre><code>{
+  "success": true,
+  "data": {
+    "id": "a4dce63f-ee9c-4933-911d-2856fce244e8",
+    "platformMrn": "CD-20260604-00000001",
+    "firstName": "Amit",
+    "lastName": "Patel",
+    "isPatient": true,
+    "isStaff": false
+  },
+  "meta": {
+    "timestamp": "2026-06-04T11:20:00.000Z"
+  }
+}</code></pre>
+          </div>
+
+          <div class="info-callout">
+            <h4>Update Sidebar</h4>
+            <p>Copy <code>id</code> from the response into the **Patient Person ID ($PATIENT_ID)** field in the sidebar.</p>
+          </div>
+        </div>
+
+        <div class="step-card">
+          <div class="step-header">
+            <div>
+              <div class="step-number">Step 4.4</div>
+              <h3 class="step-title">Configure Custom Profile Permissions Overrides</h3>
+              <div class="badge-group">
+                <span class="method-tag put">PUT</span>
+                <span class="route-path">/api/v1/users/:id/permissions</span>
+                <span class="badge secured">business JWT</span>
+              </div>
+            </div>
+            <span class="step-badge">Permissions Override</span>
+          </div>
+          <div class="step-description">
+            <p>Tenant admins can override specific baseline permissions for a staff member at a branch level (allowing or denying explicitly).</p>
+          </div>
+
+          <div class="code-container">
+            <div class="code-header">
+              <span class="code-label">cURL Request</span>
+              <button class="copy-btn" onclick="copyCode(this, 'curl-set-overrides')">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                <span>Copy cURL</span>
+              </button>
+            </div>
+            <pre><code id="curl-set-overrides">curl -X PUT {HOST}/api/v1/users/{STAFF_ID}/permissions \
+  -H "Authorization: Bearer {BIZ_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "branchId": "{BRANCH_ID}",
+    "profileKey": "doctor",
+    "overrides": [
+      { "code": "billing:read", "override": "allow" },
+      { "code": "report:verify", "override": "deny" }
+    ]
+  }'</code></pre>
+          </div>
+        </div>
+
+        <div class="step-card">
+          <div class="step-header">
+            <div>
+              <div class="step-number">Step 4.5</div>
+              <h3 class="step-title">Check Effective Permissions</h3>
+              <div class="badge-group">
+                <span class="method-tag get">GET</span>
+                <span class="route-path">/api/v1/users/:id/permissions</span>
+                <span class="badge secured">business JWT</span>
+              </div>
+            </div>
+            <span class="step-badge">Permissions Audit</span>
+          </div>
+          <div class="step-description">
+            <p>Query the effective permissions calculated dynamically (Baseline Permissions +/- overrides).</p>
+          </div>
+
+          <div class="code-container">
+            <div class="code-header">
+              <span class="code-label">cURL Request</span>
+              <button class="copy-btn" onclick="copyCode(this, 'curl-get-effective-perms')">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                <span>Copy cURL</span>
+              </button>
+            </div>
+            <pre><code id="curl-get-effective-perms">curl "{HOST}/api/v1/users/{STAFF_ID}/permissions?profileKey=doctor&amp;branchId={BRANCH_ID}" \
+  -H "Authorization: Bearer {STAFF_TOKEN}"</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- Phase 5: RLS Isolation & Verification -->
+      <div id="phase-5" class="tab-panel">
+        <div class="step-card">
+          <div class="step-header">
+            <div>
+              <div class="step-number">Step 5.1</div>
+              <h3 class="step-title">Understanding Row-Level Security (RLS)</h3>
+            </div>
+            <span class="step-badge">Architecture Detail</span>
+          </div>
+          <div class="step-description">
+            <p>Kalnostics New enforces database-level tenant isolation. During connection setup, the API runs <code>SET LOCAL app.current_tenant_id = 'tenant-uuid'</code>. The database tables (like <code>branches</code>, <code>user_branch_profiles</code>) have row-level policies matching that ID.</p>
+            <p>As a result, a user authenticated with Tenant A will never see Tenant B's data, even if they guess the resource UUID.</p>
+          </div>
+        </div>
+
+        <div class="step-card">
+          <div class="step-header">
+            <div>
+              <div class="step-number">Step 5.2</div>
+              <h3 class="step-title">Test RLS Cross-Access Block</h3>
+              <div class="badge-group">
+                <span class="method-tag get">GET</span>
+                <span class="route-path">/api/v1/branches/:id</span>
+                <span class="badge secured">business JWT</span>
+              </div>
+            </div>
+            <span class="step-badge">Security Audit</span>
+          </div>
+          <div class="step-description">
+            <p>To verify the tenant isolation boundary, create a <strong>second tenant</strong> (Tenant B) and use its Business Token to fetch the branch of <strong>Tenant A</strong> (<code>$BRANCH_ID</code>). The endpoint should return a <code>404 Not Found</code> rather than revealing the details or throwing a generic access violation error.</p>
+          </div>
+
+          <div class="code-container">
+            <div class="code-header">
+              <span class="code-label">cURL Request</span>
+              <button class="copy-btn" onclick="copyCode(this, 'curl-test-rls')">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                <span>Copy cURL</span>
+              </button>
+            </div>
+            <pre><code id="curl-test-rls">curl {HOST}/api/v1/branches/{BRANCH_ID} \
+  -H "Authorization: Bearer paste-tenant-b-token-here"</code></pre>
+          </div>
+
+          <div class="response-section">
+            <div class="response-title">Expected Response</div>
+            <pre><code>{
+  "success": false,
+  "error": {
+    "code": "BRANCH_NOT_FOUND",
+    "message": "Branch {BRANCH_ID} not found"
+  }
+}</code></pre>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    // Tab switching logic
+    function switchTab(evt, tabId) {
+      const panels = document.querySelectorAll('.tab-panel');
+      const buttons = document.querySelectorAll('.tab-btn');
+
+      panels.forEach(panel => panel.classList.remove('active'));
+      buttons.forEach(btn => btn.classList.remove('active'));
+
+      document.getElementById(tabId).classList.add('active');
+      evt.currentTarget.classList.add('active');
+    }
+
+    // Dynamic replacement in cURL commands
+    const inputs = {
+      host: document.getElementById('input-host'),
+      saToken: document.getElementById('input-sa-token'),
+      tenantSlug: document.getElementById('input-tenant-slug'),
+      tenantId: document.getElementById('input-tenant-id'),
+      tempPassword: document.getElementById('input-temp-password'),
+      bizToken: document.getElementById('input-biz-token'),
+      branchId: document.getElementById('input-branch-id'),
+      staffId: document.getElementById('input-staff-id'),
+      staffToken: document.getElementById('input-staff-token'),
+      patientId: document.getElementById('input-patient-id')
+    };
+
+    function updateCurls() {
+      const host = inputs.host.value || 'http://localhost:3000';
+      const saToken = inputs.saToken.value || '$SA_TOKEN';
+      const tenantSlug = inputs.tenantSlug.value || 'city-dx';
+      const tenantId = inputs.tenantId.value || '$TENANT_ID';
+      const tempPassword = inputs.tempPassword.value || '$TEMP_PASSWORD';
+      const bizToken = inputs.bizToken.value || '$BIZ_TOKEN';
+      const branchId = inputs.branchId.value || '$BRANCH_ID';
+      const staffId = inputs.staffId.value || '$STAFF_ID';
+      const staffToken = inputs.staffToken.value || '$STAFF_TOKEN';
+      const patientId = inputs.patientId.value || '$PATIENT_ID';
+
+      // Update SA Login URL
+      document.getElementById('curl-sa-login').textContent = `curl -X POST ${host}/api/v1/siteadmin/auth/login \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "email": "admin@kalnostics.com",
+    "password": "SuperSecret1"
+  }'`;
+
+      // Update Create Tenant
+      document.getElementById('curl-create-tenant').textContent = `curl -X POST ${host}/api/v1/siteadmin/tenants \\
+  -H "Authorization: Bearer ${saToken}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "name": "City Diagnostics Pvt Ltd",
+    "slug": "${tenantSlug}",
+    "adminFirstName": "Dilip",
+    "adminLastName": "Kumar",
+    "adminPhone": "+919876543210",
+    "adminEmail": "dilip@citydx.com",
+    "email": "admin@citydx.com",
+    "phone": "+912200000000",
+    "address": {
+      "city": "Mumbai",
+      "line1": "123 Link Road"
+    },
+    "mrnPrefix": "CD",
+    "settings": {
+      "timezone": "Asia/Kolkata",
+      "currency": "INR"
+    }
+  }'`;
+
+      // Update Biz Login
+      document.getElementById('curl-biz-login').textContent = `curl -X POST ${host}/api/v1/auth/login \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "identifier": "+919876543210",
+    "password": "${tempPassword}",
+    "tenantSlug": "${tenantSlug}"
+  }'`;
+
+      // Update Changepw
+      document.getElementById('curl-biz-changepw').textContent = `curl -X POST ${host}/api/v1/auth/change-password \\
+  -H "Authorization: Bearer ${bizToken}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "currentPassword": "${tempPassword}",
+    "newPassword": "NewSecurePassword1"
+  }'`;
+
+      // Update Branch Create
+      document.getElementById('curl-create-branch').textContent = `curl -X POST ${host}/api/v1/branches \\
+  -H "Authorization: Bearer ${bizToken}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "name": "Andheri Diagnostic Center",
+    "branchType": "DIAGNOSTIC",
+    "code": "AND",
+    "phone": "+912233334444",
+    "email": "andheri@citydx.com",
+    "address": {
+      "line1": "Prime Mall, Andheri West",
+      "city": "Mumbai"
+    }
+  }'`;
+
+      // Update Staff Create
+      document.getElementById('curl-create-staff').textContent = `curl -X POST ${host}/api/v1/users/staff \\
+  -H "Authorization: Bearer ${bizToken}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "firstName": "Rajesh",
+    "lastName": "Sharma",
+    "phone": "+919822222222",
+    "email": "dr.rajesh@citydx.com",
+    "branchId": "${branchId}",
+    "profileKey": "doctor"
+  }'`;
+
+      // Update Staff Login
+      document.getElementById('curl-staff-login').textContent = `curl -X POST ${host}/api/v1/auth/login \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "identifier": "+919822222222",
+    "password": "${tempPassword}",
+    "tenantSlug": "${tenantSlug}"
+  }'`;
+
+      // Update Switch Profile
+      document.getElementById('curl-switch-profile').textContent = `curl -X POST ${host}/api/v1/auth/switch-profile \\
+  -H "Authorization: Bearer ${staffToken}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "branchId": "${branchId}",
+    "profileKey": "doctor"
+  }'`;
+
+      // Update Patient Create
+      document.getElementById('curl-create-patient').textContent = `curl -X POST ${host}/api/v1/users \\
+  -H "Authorization: Bearer ${staffToken}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "salutation": "Mr",
+    "firstName": "Amit",
+    "lastName": "Patel",
+    "dateOfBirth": "1992-08-14",
+    "gender": "MALE",
+    "bloodGroup": "O_POS",
+    "phone": "+919988776655",
+    "email": "amit.patel@gmail.com",
+    "address": {
+      "city": "Mumbai",
+      "line1": "45 Sector-3, Bandra"
+    }
+  }'`;
+
+      // Update Set Overrides
+      document.getElementById('curl-set-overrides').textContent = `curl -X PUT ${host}/api/v1/users/${staffId}/permissions \\
+  -H "Authorization: Bearer ${bizToken}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "branchId": "${branchId}",
+    "profileKey": "doctor",
+    "overrides": [
+      { "code": "billing:read", "override": "allow" },
+      { "code": "report:verify", "override": "deny" }
+    ]
+  }'`;
+
+      // Update Get Effective Perms
+      document.getElementById('curl-get-effective-perms').textContent = `curl "${host}/api/v1/users/${staffId}/permissions?profileKey=doctor&branchId=${branchId}" \\
+  -H "Authorization: Bearer ${staffToken}"`;
+
+      // Update RLS Test
+      document.getElementById('curl-test-rls').textContent = `curl ${host}/api/v1/branches/${branchId} \\
+  -H "Authorization: Bearer paste-tenant-b-token-here"`;
+    }
+
+    // Attach listeners
+    Object.values(inputs).forEach(input => {
+      input.addEventListener('input', updateCurls);
+    });
+
+    // Copy to clipboard helper
+    function copyCode(btn, codeId) {
+      const codeText = document.getElementById(codeId).textContent;
+      navigator.clipboard.writeText(codeText).then(() => {
+        const originalText = btn.innerHTML;
+        btn.classList.add('copied');
+        btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> <span>Copied!</span>`;
+        setTimeout(() => {
+          btn.classList.remove('copied');
+          btn.innerHTML = originalText;
+        }, 2000);
+      });
+    }
+
+    // Initialize curls on load
+    updateCurls();
+  </script>
+</body>
+</html>

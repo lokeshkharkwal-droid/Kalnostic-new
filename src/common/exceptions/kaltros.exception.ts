@@ -31,10 +31,7 @@ export class KaltrosException extends HttpException {
     context: Record<string, unknown> = {},
     statusCode: number = HttpStatus.BAD_REQUEST,
   ) {
-    super(
-      { success: false, error: { code: errorCode, message } },
-      statusCode,
-    );
+    super({ success: false, error: { code: errorCode, message } }, statusCode);
     this.errorCode = errorCode;
     this.context = context;
   }
@@ -77,13 +74,22 @@ export class ForbiddenException extends KaltrosException {
 /** 422 — semantic validation failure beyond what the DTO pipe catches. */
 export class ValidationException extends KaltrosException {
   constructor(message: string, fields: Record<string, string> = {}) {
-    super('VALIDATION_ERROR', message, { fields }, HttpStatus.UNPROCESSABLE_ENTITY);
+    super(
+      'VALIDATION_ERROR',
+      message,
+      { fields },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
   }
 }
 
 /** 409 — uniqueness / state conflict. */
 export class ConflictException extends KaltrosException {
-  constructor(errorCode: string, message: string, context: Record<string, unknown> = {}) {
+  constructor(
+    errorCode: string,
+    message: string,
+    context: Record<string, unknown> = {},
+  ) {
     super(errorCode, message, context, HttpStatus.CONFLICT);
   }
 }

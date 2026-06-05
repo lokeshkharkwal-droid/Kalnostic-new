@@ -7,9 +7,10 @@ import { SiteAdminJwtPayload } from '../types/siteadmin-jwt.type';
  */
 export const CurrentSiteAdmin = createParamDecorator(
   (data: keyof SiteAdminJwtPayload | undefined, ctx: ExecutionContext) => {
-    const request = ctx
-      .switchToHttp()
-      .getRequest<{ siteadmin?: SiteAdminJwtPayload; user?: SiteAdminJwtPayload }>();
+    const request = ctx.switchToHttp().getRequest<{
+      siteadmin?: SiteAdminJwtPayload;
+      user?: SiteAdminJwtPayload;
+    }>();
     const admin = request.siteadmin ?? request.user;
     return data ? admin?.[data] : admin;
   },

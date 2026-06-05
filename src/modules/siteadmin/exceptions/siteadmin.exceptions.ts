@@ -4,7 +4,12 @@ import { KaltrosException } from '../../../common/exceptions/kaltros.exception';
 /** 404 — siteadmin user not found. */
 export class SiteAdminNotFoundException extends KaltrosException {
   constructor(id: string) {
-    super('SITEADMIN_NOT_FOUND', 'SiteAdmin user not found', { id }, HttpStatus.NOT_FOUND);
+    super(
+      'SITEADMIN_NOT_FOUND',
+      'SiteAdmin user not found',
+      { id },
+      HttpStatus.NOT_FOUND,
+    );
   }
 }
 
@@ -23,7 +28,12 @@ export class SiteAdminEmailTakenException extends KaltrosException {
 /** 401 — vague invalid-credentials error for siteadmin login. */
 export class SiteAdminInvalidCredentialsException extends KaltrosException {
   constructor() {
-    super('SITEADMIN_INVALID_CREDENTIALS', 'Invalid credentials', {}, HttpStatus.UNAUTHORIZED);
+    super(
+      'SITEADMIN_INVALID_CREDENTIALS',
+      'Invalid credentials',
+      {},
+      HttpStatus.UNAUTHORIZED,
+    );
   }
 }
 

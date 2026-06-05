@@ -28,7 +28,12 @@ export class AccountLockedException extends KaltrosException {
 /** 403 — the person record is inactive. */
 export class AccountInactiveException extends KaltrosException {
   constructor(personId: string) {
-    super('ACCOUNT_INACTIVE', 'This account is inactive', { personId }, HttpStatus.FORBIDDEN);
+    super(
+      'ACCOUNT_INACTIVE',
+      'This account is inactive',
+      { personId },
+      HttpStatus.FORBIDDEN,
+    );
   }
 }
 

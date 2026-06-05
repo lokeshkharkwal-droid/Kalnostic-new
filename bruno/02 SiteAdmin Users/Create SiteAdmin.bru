@@ -1,0 +1,47 @@
+meta {
+  name: Create SiteAdmin
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/users
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "firstName": "Luke",
+    "lastName": "Ops",
+    "email": "Luke@kalnostics.com",
+    "password": "OpsPass123",
+    "role": "OPERATIONS_ADMIN"
+  }
+}
+
+vars:pre-request {
+  siteAdminToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0eXBlIjoic2l0ZWFkbWluIiwic2l0ZWFkbWluX2lkIjoiYTYxMjE4MmUtMzAzOC00ZDJjLWFiMWItYjQ2YzQzZjlkNjVjIiwiZW1haWwiOiJhZG1pbkBrYWxub3N0aWNzLmNvbSIsInJvbGUiOiJTVVBFUl9PV05FUiIsImlhdCI6MTc4MDU4MjgwNiwiZXhwIjoxNzgwNjExNjA2fQ.NQqfAYK5CFfu-ZqpFIa2FKGXpg3tgRi7r4iCmWufsko
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) {
+    bru.setEnvVar("siteAdminUserId", data.id);
+  }
+}
+
+docs {
+  Create a SiteAdmin sub-account. Requires `siteadmin:manage` (super_owner only).
+  
+  `role` is one of: `CONTENT_ADMIN`, `OPERATIONS_ADMIN`, `FULL_ADMIN`,
+  `SUPER_OWNER` (cumulative permission tiers). Captures `siteAdminUserId`.
+}

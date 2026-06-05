@@ -95,25 +95,22 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     return {
       success: false,
-      error: { code: 'INTERNAL_ERROR', message: 'An unexpected error occurred.' },
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'An unexpected error occurred.',
+      },
     };
   }
 
   /** Map a status code to a default error code for non-Kaltros HttpExceptions. */
   private codeForStatus(status: number): string {
-    switch (status) {
-      case HttpStatus.BAD_REQUEST:
-        return 'VALIDATION_ERROR';
-      case HttpStatus.UNAUTHORIZED:
-        return 'UNAUTHORISED';
-      case HttpStatus.FORBIDDEN:
-        return 'FORBIDDEN';
-      case HttpStatus.NOT_FOUND:
-        return 'NOT_FOUND';
-      case HttpStatus.CONFLICT:
-        return 'CONFLICT';
-      default:
-        return 'HTTP_ERROR';
-    }
+    const byStatus: Partial<Record<number, string>> = {
+      [HttpStatus.BAD_REQUEST]: 'VALIDATION_ERROR',
+      [HttpStatus.UNAUTHORIZED]: 'UNAUTHORISED',
+      [HttpStatus.FORBIDDEN]: 'FORBIDDEN',
+      [HttpStatus.NOT_FOUND]: 'NOT_FOUND',
+      [HttpStatus.CONFLICT]: 'CONFLICT',
+    };
+    return byStatus[status] ?? 'HTTP_ERROR';
   }
 }

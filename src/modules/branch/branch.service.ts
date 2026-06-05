@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Branch } from '@prisma/client';
+import { Branch, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { CreateBranchDto } from './dto/create-branch.dto';
@@ -21,7 +21,17 @@ export class BranchService {
    * @returns the created branch
    */
   async create(tenantId: string, dto: CreateBranchDto): Promise<Branch> {
-    return this.prisma.branch.create({ data: { ...dto, tenantId } });
+    return this.prisma.branch.create({
+      data: {
+        tenantId,
+        name: dto.name,
+        branchType: dto.branchType,
+        code: dto.code ?? null,
+        phone: dto.phone ?? null,
+        email: dto.email ?? null,
+        address: (dto.address ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+      },
+    });
   }
 
   /**
@@ -76,7 +86,16 @@ export class BranchService {
     dto: UpdateBranchDto,
   ): Promise<Branch> {
     await this.findById(id, tenantId);
-    return this.prisma.branch.update({ where: { id }, data: dto });
+    const data: Prisma.BranchUpdateInput = {};
+    if (dto.name !== undefined) data.name = dto.name;
+    if (dto.branchType !== undefined) data.branchType = dto.branchType;
+    if (dto.code !== undefined) data.code = dto.code ?? null;
+    if (dto.phone !== undefined) data.phone = dto.phone ?? null;
+    if (dto.email !== undefined) data.email = dto.email ?? null;
+    if (dto.address !== undefined) {
+      data.address = (dto.address ?? Prisma.JsonNull) as Prisma.InputJsonValue;
+    }
+    return this.prisma.branch.update({ where: { id }, data });
   }
 
   /**

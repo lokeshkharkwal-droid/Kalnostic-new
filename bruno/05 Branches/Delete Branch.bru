@@ -1,0 +1,19 @@
+meta {
+  name: Delete Branch
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/branches/{{branchId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Soft-delete a branch (sets `deletedAt`). Scoped to the caller's tenant.
+}

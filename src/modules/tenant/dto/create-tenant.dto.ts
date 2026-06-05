@@ -45,7 +45,8 @@ export class CreateTenantDto {
   @IsNotEmpty()
   @MaxLength(100)
   @Matches(/^[a-z0-9][a-z0-9-]{1,98}[a-z0-9]$/, {
-    message: 'Slug must be lowercase alphanumeric (hyphens allowed, not at start/end)',
+    message:
+      'Slug must be lowercase alphanumeric (hyphens allowed, not at start/end)',
   })
   slug: string;
 

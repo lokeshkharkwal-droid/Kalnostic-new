@@ -1,0 +1,34 @@
+meta {
+  name: Assign Profile
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/users/{{staffPersonId}}/profiles
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "profileKey": "receptionist",
+    "branchId": "{{branchId}}",
+    "isDefault": false
+  }
+}
+
+docs {
+  Assign a profile to a person at a branch (omit `branchId` for tenant-level
+  profiles like `business_admin`). `isDefault` marks the landing profile.
+  `profileKey` from the registry: business_admin, branch_admin, doctor,
+  lab_technician, receptionist, patient.
+}

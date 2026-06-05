@@ -1,0 +1,19 @@
+meta {
+  name: Get Business Admin
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/tenants/{{tenantId}}/admin
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Get the tenant's business-admin account details. Requires `business:read`.
+}

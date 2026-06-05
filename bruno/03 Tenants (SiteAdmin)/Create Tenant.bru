@@ -1,0 +1,68 @@
+meta {
+  name: Create Tenant
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/tenants
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "Acme Diagnostics",
+    "slug": "acme-diagnostics",
+    "adminFirstName": "Alice",
+    "adminLastName": "Admin",
+    "adminPhone": "+919812345678",
+    "adminEmail": "alice.admin@acme.test",
+    "email": "contact@acme.test",
+    "phone": "+919800000000",
+    "mrnPrefix": "AC",
+    "address": {
+      "line1": "12 Lab Street",
+      "city": "Pune",
+      "country": "IN"
+    },
+    "settings": {}
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data) {
+    if (data.id) bru.setEnvVar("tenantId", data.id);
+    if (data.slug) bru.setEnvVar("tenantSlug", data.slug);
+    // The first business-admin + one-time temp password are returned on create.
+    const phone = data.adminPhone || (data.admin && data.admin.phone);
+    const temp = data.tempPassword || (data.admin && data.admin.tempPassword);
+    if (phone) bru.setEnvVar("adminPhone", phone);
+    if (temp) bru.setEnvVar("adminTempPassword", temp);
+  }
+}
+
+docs {
+  Create a tenant (business) **and** its first business-admin user. Requires
+  `business:create` (operations_admin and above).
+
+  Returns the tenant plus a **one-time temp password** for the business-admin.
+  The script captures `tenantId`, `tenantSlug`, `adminPhone`, and
+  `adminTempPassword` — used by **Business Auth → Login**.
+
+  - `slug`: lowercase alphanumeric + hyphens, not at start/end (subdomain).
+  - `adminPhone`: globally-unique login identifier.
+  - `mrnPrefix`: patient MRN prefix (e.g. "AC" -> "AC-00001").
+
+  > If the captured temp password is empty, open the create response and copy
+  > the temp password field into the `adminTempPassword` env var manually.
+}

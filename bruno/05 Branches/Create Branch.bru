@@ -1,0 +1,47 @@
+meta {
+  name: Create Branch
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/branches
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "Main Lab",
+    "branchType": "DIAGNOSTIC",
+    "code": "MAIN",
+    "phone": "+919811111111",
+    "email": "main@acme.test",
+    "address": {
+      "line1": "12 Lab Street",
+      "city": "Pune",
+      "country": "IN"
+    }
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("branchId", data.id);
+}
+
+docs {
+  Create a branch in the caller's tenant (tenant id taken from the JWT).
+  Captures `branchId`.
+
+  `branchType` is one of: `DIAGNOSTIC`, `CLINIC`, `HOSPITAL`, `PHARMACY`,
+  `COLLECTION_CENTER`. `name` 2-255 chars.
+}

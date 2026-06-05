@@ -1,0 +1,31 @@
+meta {
+  name: Set Default Profile
+  type: http
+  seq: 8
+}
+
+patch {
+  url: {{baseUrl}}/users/{{staffPersonId}}/default-profile
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "profileKey": "lab_technician",
+    "branchId": "{{branchId}}"
+  }
+}
+
+docs {
+  Set the default landing profile for a person (used after login). Omit
+  `branchId` for tenant-level profiles.
+}

@@ -1,0 +1,33 @@
+meta {
+  name: Update Person
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/users/{{patientPersonId}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "firstName": "Ravi",
+    "lastName": "Kumar Singh",
+    "bloodGroup": "O_POS"
+  }
+}
+
+docs {
+  Update a person's basic details (all fields optional). Ownership rules apply:
+  only the owning tenant, the person themselves, or any tenant for
+  self-registered persons (`owner_tenant_id = NULL`) may edit.
+}

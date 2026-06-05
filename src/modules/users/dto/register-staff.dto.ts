@@ -1,9 +1,4 @@
-import {
-  IsEmail,
-  IsOptional,
-  IsString,
-  MaxLength,
-} from 'class-validator';
+import { IsEmail, IsOptional, IsString, MaxLength } from 'class-validator';
 
 /** Payload to register a staff member (person + credentials + initial profile). */
 export class RegisterStaffDto {

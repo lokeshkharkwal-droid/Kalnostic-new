@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import type { JwtSignOptions } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { BranchType } from '@prisma/client';
 import { createHash, randomBytes } from 'crypto';
@@ -31,7 +32,7 @@ const LOCK_DURATION_MINUTES = 15;
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
-  private readonly accessTtl: string;
+  private readonly accessTtl: JwtSignOptions['expiresIn'];
   private readonly refreshDays: number;
 
   constructor(
@@ -43,7 +44,10 @@ export class AuthService {
     private readonly branchService: BranchService,
     private readonly config: ConfigService,
   ) {
-    this.accessTtl = this.config.get<string>('JWT_ACCESS_TTL', '15m');
+    this.accessTtl = this.config.get<string>(
+      'JWT_ACCESS_TTL',
+      '15m',
+    ) as JwtSignOptions['expiresIn'];
     this.refreshDays = this.config.get<number>('JWT_REFRESH_TTL_DAYS', 30);
   }
 
@@ -92,7 +96,9 @@ export class AuthService {
         select: { failedAttempts: true },
       });
       if (updated.failedAttempts >= MAX_FAILED_ATTEMPTS) {
-        const lockedUntil = new Date(Date.now() + LOCK_DURATION_MINUTES * 60_000);
+        const lockedUntil = new Date(
+          Date.now() + LOCK_DURATION_MINUTES * 60_000,
+        );
         await this.prisma.personCredentials.update({
           where: { id: credentials.id },
           data: { lockedUntil },
@@ -185,10 +191,20 @@ export class AuthService {
       },
     });
     if (!assignment) {
-      throw new ProfileSwitchDeniedException(branchId ?? 'tenant', dto.profileKey);
+      throw new ProfileSwitchDeniedException(
+        branchId ?? 'tenant',
+        dto.profileKey,
+      );
     }
-    const payload = await this.buildJwtPayload(personId, tenantId, branchId, dto.profileKey);
-    const accessToken = this.jwtService.sign(payload, { expiresIn: this.accessTtl });
+    const payload = await this.buildJwtPayload(
+      personId,
+      tenantId,
+      branchId,
+      dto.profileKey,
+    );
+    const accessToken = this.jwtService.sign(payload, {
+      expiresIn: this.accessTtl,
+    });
     return { accessToken };
   }
 
@@ -197,7 +213,10 @@ export class AuthService {
    * @param personId the person changing their password
    * @param dto current + new password
    */
-  async changePassword(personId: string, dto: ChangePasswordDto): Promise<void> {
+  async changePassword(
+    personId: string,
+    dto: ChangePasswordDto,
+  ): Promise<void> {
     const credentials = await this.prisma.personCredentials.findUnique({
       where: { personId },
     });
@@ -248,7 +267,9 @@ export class AuthService {
     activeProfile: string | null,
   ): Promise<JwtPayload> {
     const [person, allProfiles] = await Promise.all([
-      this.prisma.person.findFirst({ where: { id: personId, deletedAt: null } }),
+      this.prisma.person.findFirst({
+        where: { id: personId, deletedAt: null },
+      }),
       this.usersService.getPersonProfiles(personId),
     ]);
 
@@ -278,7 +299,10 @@ export class AuthService {
               is_default: p.isDefault,
             };
           }
-          const branch = await this.safeFindBranch(p.branchId, resolvedTenantId);
+          const branch = await this.safeFindBranch(
+            p.branchId,
+            resolvedTenantId,
+          );
           return {
             branch_id: p.branchId,
             branch_name: branch?.name ?? null,
@@ -294,14 +318,20 @@ export class AuthService {
     let effectiveProfileKey = activeProfile;
     let effectiveBranchType: BranchType | null = null;
 
-    if (!effectiveBranchId && !effectiveProfileKey && profileEntries.length > 0) {
+    if (
+      !effectiveBranchId &&
+      !effectiveProfileKey &&
+      profileEntries.length > 0
+    ) {
       const def = profileEntries.find((p) => p.is_default) ?? profileEntries[0];
       effectiveBranchId = def.branch_id;
       effectiveProfileKey = def.profile_key;
       effectiveBranchType = def.branch_type;
     } else if (effectiveProfileKey) {
       const active = profileEntries.find(
-        (p) => p.branch_id === effectiveBranchId && p.profile_key === effectiveProfileKey,
+        (p) =>
+          p.branch_id === effectiveBranchId &&
+          p.profile_key === effectiveProfileKey,
       );
       effectiveBranchType = active?.branch_type ?? null;
     }
@@ -336,7 +366,9 @@ export class AuthService {
       activeBranchId,
       activeProfile,
     );
-    const accessToken = this.jwtService.sign(payload, { expiresIn: this.accessTtl });
+    const accessToken = this.jwtService.sign(payload, {
+      expiresIn: this.accessTtl,
+    });
 
     const rawRefreshToken = randomBytes(64).toString('hex');
     const tokenHash = this.hashToken(rawRefreshToken);

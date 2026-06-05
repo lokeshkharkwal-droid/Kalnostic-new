@@ -14,7 +14,7 @@ import { SiteAdminPermissionGuard } from './guards/siteadmin-permission.guard';
 import { RequireSiteAdminPermission } from './decorators/require-siteadmin-permission.decorator';
 import { CurrentSiteAdmin } from './decorators/current-siteadmin.decorator';
 import { SITE_ADMIN_PERM } from './constants/siteadmin-permissions.constant';
-import { SiteAdminJwtPayload } from './types/siteadmin-jwt.type';
+import type { SiteAdminJwtPayload } from './types/siteadmin-jwt.type';
 import { Public } from '../auth/decorators/public.decorator';
 
 /**

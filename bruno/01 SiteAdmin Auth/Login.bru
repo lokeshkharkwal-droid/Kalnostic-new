@@ -1,0 +1,37 @@
+meta {
+  name: Login
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "email": "admin@kalnostics.com",
+    "password": "SuperSecret1"
+  }
+}
+
+script:post-response {
+  if (res.getStatus() === 200 || res.getStatus() === 201) {
+    const data = res.getBody() && res.getBody().data;
+    if (data && data.accessToken) {
+      bru.setEnvVar("siteAdminToken", data.accessToken);
+    }
+  }
+}
+
+docs {
+  Email-only SiteAdmin login. Returns a `jwt-siteadmin` typed token (8h).
+  Default seeded super_owner: `admin@kalnostics.com` / `SuperSecret1`
+  (see `prisma/seed.ts`). Captures `siteAdminToken`.
+}

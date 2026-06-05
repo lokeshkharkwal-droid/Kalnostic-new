@@ -1,0 +1,19 @@
+meta {
+  name: Deactivate SiteAdmin
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/siteadmin/users/{{siteAdminUserId}}/deactivate
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Deactivate a SiteAdmin account. Requires `siteadmin:manage` (super_owner).
+}

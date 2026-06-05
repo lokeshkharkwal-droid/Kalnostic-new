@@ -1,0 +1,21 @@
+meta {
+  name: Me
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/auth/me
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Current session info decoded from the business JWT: `person_id`, `tenant_id`,
+  `active_branch_id`, `active_profile_key`, `is_patient_context`,
+  `platform_mrn`, and the full `profiles[]` array.
+}

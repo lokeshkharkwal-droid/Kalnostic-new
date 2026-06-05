@@ -1,0 +1,37 @@
+docs {
+  # Kalnostics New API
+
+  NestJS + Prisma LMS backend. All routes are served under the global prefix
+  `/api/v1` (configured in `src/main.ts`). Every success response is wrapped by
+  the global `ResponseInterceptor`:
+
+  ```json
+  { "success": true, "data": <payload>, "meta": { "timestamp": "..." } }
+  ```
+
+  Paginated list endpoints lift `total / page / limit / totalPages` into `meta`,
+  so `data` is always just the array of items. Errors use the `KaltrosException`
+  envelope: `{ "success": false, "error": { "code", "message" } }`.
+
+  ## Two separate auth systems
+
+  - **Business auth** (`Authorization: Bearer {{businessAccessToken}}`) — for
+    tenant staff/patients. Access token 15m, refresh 30d.
+  - **SiteAdmin auth** (`Authorization: Bearer {{siteAdminToken}}`) — platform
+    operators. Token 8h, email-only login. Tokens are NOT interchangeable.
+
+  ## Suggested end-to-end run order
+
+  1. **SiteAdmin Auth → Login** (seed creds: `admin@kalnostics.com` /
+     `SuperSecret1`) → captures `siteAdminToken`.
+  2. **Tenants → Create Tenant** → captures `tenantId`, `tenantSlug`,
+     `adminPhone`, `adminTempPassword` (one-time temp password).
+  3. **Business Auth → Login** (uses the captured admin phone + temp password +
+     tenant slug) → captures `businessAccessToken` / `businessRefreshToken`.
+  4. **Branches → Create Branch** → captures `branchId`.
+  5. **Users → Register Patient / Register Staff** → captures person ids.
+  6. Explore the rest — profiles, permissions, receptionist mappings, etc.
+
+  Run the requests in order; the post-response scripts populate the `Local`
+  environment variables automatically. Select the **Local** environment first.
+}

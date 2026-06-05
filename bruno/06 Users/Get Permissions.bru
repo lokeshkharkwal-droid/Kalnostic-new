@@ -1,0 +1,25 @@
+meta {
+  name: Get Permissions
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/users/{{staffPersonId}}/permissions?profileKey=lab_technician&branchId={{branchId}}
+  body: none
+  auth: bearer
+}
+
+params:query {
+  profileKey: lab_technician
+  branchId: {{branchId}}
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Resolve the effective permissions for a profile assignment. `profileKey` is
+  required; `branchId` optional (omit for tenant-level profiles).
+}

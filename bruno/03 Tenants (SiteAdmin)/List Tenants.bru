@@ -1,0 +1,26 @@
+meta {
+  name: List Tenants
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/tenants?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Paginated list of all tenants. Requires `business:read`.
+  `page` (>=1) and `limit` (1-100) are optional query params.
+  Pagination info is returned in `meta`.
+}

@@ -1,4 +1,9 @@
-import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  HttpException,
+  Injectable,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
 import {
@@ -34,9 +39,10 @@ export class SiteAdminPermissionGuard
       throw new UnauthorisedException('SiteAdmin authentication required');
     }
 
-    const request = context
-      .switchToHttp()
-      .getRequest<{ user?: SiteAdminJwtPayload; siteadmin?: SiteAdminJwtPayload }>();
+    const request = context.switchToHttp().getRequest<{
+      user?: SiteAdminJwtPayload;
+      siteadmin?: SiteAdminJwtPayload;
+    }>();
     const admin = request.user;
     if (!admin) {
       throw new UnauthorisedException('SiteAdmin authentication required');
@@ -62,7 +68,7 @@ export class SiteAdminPermissionGuard
   /** Return our typed exception instead of Passport's default 401. */
   handleRequest<TUser = unknown>(err: unknown, user: TUser): TUser {
     if (err || !user) {
-      if (err && typeof err === 'object' && 'errorCode' in err) {
+      if (err instanceof HttpException) {
         throw err;
       }
       throw new UnauthorisedException('Invalid or expired SiteAdmin token');

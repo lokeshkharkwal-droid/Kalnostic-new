@@ -7,7 +7,7 @@ import {
   Post,
   Req,
 } from '@nestjs/common';
-import { Request } from 'express';
+import type { Request } from 'express';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
@@ -15,7 +15,7 @@ import { SwitchProfileDto } from './dto/switch-profile.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { Public } from './decorators/public.decorator';
 import { CurrentUser } from './decorators/current-user.decorator';
-import { JwtPayload } from './types/jwt-payload.type';
+import type { JwtPayload } from './types/jwt-payload.type';
 
 /**
  * Business auth endpoints. `login` and `refresh` are public; the rest require
@@ -50,7 +50,10 @@ export class AuthController {
    */
   @Post('switch-profile')
   @HttpCode(HttpStatus.OK)
-  switchProfile(@CurrentUser() user: JwtPayload, @Body() dto: SwitchProfileDto) {
+  switchProfile(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: SwitchProfileDto,
+  ) {
     return this.authService.switchProfile(user.person_id, user.tenant_id, dto);
   }
 

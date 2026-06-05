@@ -1,0 +1,19 @@
+meta {
+  name: Get Branch
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/branches/{{branchId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Fetch one branch by id (scoped to the caller's tenant).
+}

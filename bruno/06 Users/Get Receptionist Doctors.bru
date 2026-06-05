@@ -1,0 +1,23 @@
+meta {
+  name: Get Receptionist Doctors
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/users/{{staffPersonId}}/receptionist-doctors?branchId={{branchId}}
+  body: none
+  auth: bearer
+}
+
+params:query {
+  branchId: {{branchId}}
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  List the doctors mapped to a receptionist at a branch. `branchId` required.
+}

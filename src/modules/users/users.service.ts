@@ -6,9 +6,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { PasswordService } from '../security/password.service';
 import { UsernameGeneratorService } from '../security/username-generator.service';
 import { BranchService } from '../branch/branch.service';
-import {
-  PERMISSION_CATALOG,
-} from '../permissions/constants/permission-catalog.constant';
+import { PERMISSION_CATALOG } from '../permissions/constants/permission-catalog.constant';
 import { PROFILE_PERMISSIONS } from '../permissions/constants/permissions.constant';
 import {
   isProfileValidForBranch,
@@ -209,7 +207,11 @@ export class UsersService {
     tenantId: string,
     dto: RegisterStaffDto,
     createdBy: string,
-  ): Promise<{ person: Person; tempPassword: string; loginIdentifier: string }> {
+  ): Promise<{
+    person: Person;
+    tempPassword: string;
+    loginIdentifier: string;
+  }> {
     if (!isValidProfileKey(dto.profileKey)) {
       throw new ProfileInvalidForBranchException(dto.profileKey, 'unknown');
     }
@@ -218,7 +220,10 @@ export class UsersService {
     if (dto.branchId) {
       const branch = await this.branchService.findById(dto.branchId, tenantId);
       if (!isProfileValidForBranch(dto.profileKey, branch.branchType)) {
-        throw new ProfileInvalidForBranchException(dto.profileKey, branch.branchType);
+        throw new ProfileInvalidForBranchException(
+          dto.profileKey,
+          branch.branchType,
+        );
       }
     }
 
@@ -308,16 +313,24 @@ export class UsersService {
     if (branchId) {
       const branch = await this.branchService.findById(branchId, tenantId);
       if (!isProfileValidForBranch(profileKey, branch.branchType)) {
-        throw new ProfileInvalidForBranchException(profileKey, branch.branchType);
+        throw new ProfileInvalidForBranchException(
+          profileKey,
+          branch.branchType,
+        );
       }
-    } else if ((PROFILE_BRANCH_MATRIX[profileKey as ProfileKey] ?? []).length > 0) {
+    } else if ((PROFILE_BRANCH_MATRIX[profileKey] ?? []).length > 0) {
       throw new ProfileInvalidForBranchException(
         profileKey,
         'none — this profile requires a branch',
       );
     }
 
-    const existing = await this.findExistingProfile(tenantId, personId, branchId, profileKey);
+    const existing = await this.findExistingProfile(
+      tenantId,
+      personId,
+      branchId,
+      profileKey,
+    );
     if (existing && existing.isActive) {
       throw new ProfileAlreadyAssignedException(
         personId,
@@ -367,7 +380,12 @@ export class UsersService {
     profileKey: string,
     revokedBy: string,
   ): Promise<void> {
-    const existing = await this.findExistingProfile(tenantId, personId, branchId, profileKey);
+    const existing = await this.findExistingProfile(
+      tenantId,
+      personId,
+      branchId,
+      profileKey,
+    );
     if (!existing || !existing.isActive) {
       throw new ProfileNotFoundException(personId, branchId ?? 'tenant');
     }
@@ -404,7 +422,12 @@ export class UsersService {
     profileKey: string,
     branchId: string | null,
   ): Promise<void> {
-    const existing = await this.findExistingProfile(tenantId, personId, branchId, profileKey);
+    const existing = await this.findExistingProfile(
+      tenantId,
+      personId,
+      branchId,
+      profileKey,
+    );
     if (!existing || !existing.isActive) {
       throw new ProfileNotFoundException(personId, branchId ?? 'tenant');
     }
@@ -439,11 +462,15 @@ export class UsersService {
 
     const personIds = [...new Set(profiles.map((p) => p.personId))];
     const branchIds = [
-      ...new Set(profiles.map((p) => p.branchId).filter((b): b is string => !!b)),
+      ...new Set(
+        profiles.map((p) => p.branchId).filter((b): b is string => !!b),
+      ),
     ];
     const [persons, branches] = await Promise.all([
       this.prisma.person.findMany({ where: { id: { in: personIds } } }),
-      this.prisma.branch.findMany({ where: { id: { in: branchIds }, tenantId } }),
+      this.prisma.branch.findMany({
+        where: { id: { in: branchIds }, tenantId },
+      }),
     ]);
     const personMap = new Map(persons.map((p) => [p.id, p]));
     const branchMap = new Map(branches.map((b) => [b.id, b.name]));
@@ -467,7 +494,9 @@ export class UsersService {
       }
       staff.get(person.id)!.profiles.push({
         branchId: profile.branchId,
-        branchName: profile.branchId ? (branchMap.get(profile.branchId) ?? null) : null,
+        branchName: profile.branchId
+          ? (branchMap.get(profile.branchId) ?? null)
+          : null,
         profileKey: profile.profileKey,
         isDefault: profile.isDefault,
         assignedAt: profile.assignedAt,
@@ -490,9 +519,17 @@ export class UsersService {
       PROFILE_PERMISSIONS[profileKey as ProfileKey] ?? [],
     );
     const overrides = await this.prisma.userProfilePermissionOverride.findMany({
-      where: { tenantId, personId, branchId: branchId ?? null, profileKey, deletedAt: null },
+      where: {
+        tenantId,
+        personId,
+        branchId: branchId ?? null,
+        profileKey,
+        deletedAt: null,
+      },
     });
-    const overrideMap = new Map(overrides.map((o) => [o.permissionCode, o.override]));
+    const overrideMap = new Map(
+      overrides.map((o) => [o.permissionCode, o.override]),
+    );
 
     return PERMISSION_CATALOG.map((entry) => {
       const baselineValue = baseline.has(entry.code);
@@ -501,7 +538,11 @@ export class UsersService {
         | 'deny'
         | 'inherit';
       const effectiveValue =
-        override === 'allow' ? true : override === 'deny' ? false : baselineValue;
+        override === 'allow'
+          ? true
+          : override === 'deny'
+            ? false
+            : baselineValue;
       return {
         code: entry.code,
         name: entry.name,
@@ -555,7 +596,9 @@ export class UsersService {
     tenantId: string,
     receptionistPersonId: string,
     branchId: string,
-  ): Promise<Array<{ personId: string; firstName: string; lastName: string | null }>> {
+  ): Promise<
+    Array<{ personId: string; firstName: string; lastName: string | null }>
+  > {
     const mappings = await this.prisma.receptionistDoctorMapping.findMany({
       where: { tenantId, branchId, receptionistPersonId, deletedAt: null },
     });
@@ -584,7 +627,12 @@ export class UsersService {
     assignedBy: string,
   ): Promise<void> {
     for (const doctorId of doctorPersonIds) {
-      const assignment = await this.findExistingProfile(tenantId, doctorId, branchId, 'doctor');
+      const assignment = await this.findExistingProfile(
+        tenantId,
+        doctorId,
+        branchId,
+        'doctor',
+      );
       if (!assignment || !assignment.isActive) {
         throw new ProfileNotFoundException(doctorId, branchId);
       }
@@ -629,7 +677,12 @@ export class UsersService {
 
     await this.prisma.personCredentials.update({
       where: { personId },
-      data: { passwordHash, isTempPassword: true, failedAttempts: 0, lockedUntil: null },
+      data: {
+        passwordHash,
+        isTempPassword: true,
+        failedAttempts: 0,
+        lockedUntil: null,
+      },
     });
     await this.eventEmitter.emitAsync('users.password.reset', {
       personId,
@@ -649,12 +702,21 @@ export class UsersService {
     profileKey: string,
   ): Promise<UserBranchProfile | null> {
     return this.prisma.userBranchProfile.findFirst({
-      where: { tenantId, personId, branchId: branchId ?? null, profileKey, deletedAt: null },
+      where: {
+        tenantId,
+        personId,
+        branchId: branchId ?? null,
+        profileKey,
+        deletedAt: null,
+      },
     });
   }
 
   /** Clear the default flag from all of a person's profiles in a tenant. */
-  private async clearDefaultFlag(tenantId: string, personId: string): Promise<void> {
+  private async clearDefaultFlag(
+    tenantId: string,
+    personId: string,
+  ): Promise<void> {
     await this.prisma.userBranchProfile.updateMany({
       where: { tenantId, personId, isDefault: true },
       data: { isDefault: false },
@@ -662,7 +724,10 @@ export class UsersService {
   }
 
   /** Throw if the phone/email is already registered to another person. */
-  private async assertContactUnique(phone?: string, email?: string): Promise<void> {
+  private async assertContactUnique(
+    phone?: string,
+    email?: string,
+  ): Promise<void> {
     if (phone) {
       const existing = await this.prisma.person.findFirst({
         where: { phone, deletedAt: null },

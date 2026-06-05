@@ -1,0 +1,39 @@
+meta {
+  name: Update Tenant
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/siteadmin/tenants/{{tenantId}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "Acme Diagnostics & Labs",
+    "email": "hello@acme.test",
+    "phone": "+919800000001",
+    "mrnPrefix": "AC",
+    "address": {
+      "line1": "12 Lab Street",
+      "city": "Pune",
+      "country": "IN"
+    }
+  }
+}
+
+docs {
+  Update a tenant's editable fields. Requires `business:create`.
+  Slug is immutable and admin credentials are managed separately, so neither
+  is accepted here. All fields optional.
+}

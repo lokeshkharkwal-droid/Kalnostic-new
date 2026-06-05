@@ -32,8 +32,12 @@ export class PasswordService {
    */
   generateTempPassword(): string {
     const upper = this.pick(this.UPPER);
-    const lower = Array.from({ length: 5 }, () => this.pick(this.LOWER)).join('');
-    const digits = Array.from({ length: 2 }, () => this.pick(this.DIGITS)).join('');
+    const lower = Array.from({ length: 5 }, () => this.pick(this.LOWER)).join(
+      '',
+    );
+    const digits = Array.from({ length: 2 }, () => this.pick(this.DIGITS)).join(
+      '',
+    );
     return upper + lower + digits;
   }
 

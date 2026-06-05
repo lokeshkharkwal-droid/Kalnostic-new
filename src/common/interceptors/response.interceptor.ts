@@ -40,7 +40,10 @@ export class ResponseInterceptor implements NestInterceptor {
   /**
    * Map the handler's return value into the response envelope.
    */
-  intercept(_context: ExecutionContext, next: CallHandler): Observable<unknown> {
+  intercept(
+    _context: ExecutionContext,
+    next: CallHandler,
+  ): Observable<unknown> {
     return next.handle().pipe(map((payload) => this.toEnvelope(payload)));
   }
 
@@ -77,9 +80,12 @@ export class ResponseInterceptor implements NestInterceptor {
    * True when the payload is an offset-paginated result
    * (`data` array + numeric `total` + numeric `page`).
    */
-  private isPaginated(
-    payload: unknown,
-  ): payload is { data: unknown[]; total: number; page: number; limit: number } {
+  private isPaginated(payload: unknown): payload is {
+    data: unknown[];
+    total: number;
+    page: number;
+    limit: number;
+  } {
     if (typeof payload !== 'object' || payload === null) {
       return false;
     }

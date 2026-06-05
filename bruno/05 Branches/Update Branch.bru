@@ -1,0 +1,30 @@
+meta {
+  name: Update Branch
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/branches/{{branchId}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "Main Lab (Central)",
+    "phone": "+919811111112"
+  }
+}
+
+docs {
+  Update a branch (scoped to the caller's tenant). All fields optional.
+}

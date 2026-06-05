@@ -1,0 +1,51 @@
+meta {
+  name: Register Staff
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/users/staff
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "firstName": "Tina",
+    "lastName": "Tech",
+    "phone": "+919833333333",
+    "email": "tina.tech@acme.test",
+    "branchId": "{{branchId}}",
+    "profileKey": "lab_technician"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data) {
+    if (data.id) bru.setEnvVar("staffPersonId", data.id);
+    if (data.personId) bru.setEnvVar("staffPersonId", data.personId);
+    const temp = data.tempPassword || data.temp_password;
+    if (temp) bru.setEnvVar("staffTempPassword", temp);
+  }
+}
+
+docs {
+  Register a staff member (person + credentials + initial profile). Returns a
+  one-time temp password. Captures `staffPersonId` and `staffTempPassword`.
+
+  - `profileKey`: branch-level role (`branch_admin`, `doctor`, `lab_technician`,
+    `receptionist`). Provide `branchId` for branch-level profiles; omit it for
+    tenant-level profiles.
+  - The profile must be valid for the branch's type (PROFILE_BRANCH_MATRIX),
+    e.g. `lab_technician` requires a DIAGNOSTIC or HOSPITAL branch.
+}

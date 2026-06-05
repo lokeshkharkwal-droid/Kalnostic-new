@@ -1,0 +1,42 @@
+meta {
+  name: Switch Profile
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/auth/switch-profile
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "profileKey": "branch_admin",
+    "branchId": "{{branchId}}"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.accessToken) {
+    bru.setEnvVar("businessAccessToken", data.accessToken);
+  }
+}
+
+docs {
+  Switch the active branch/profile context. Returns a NEW access token only
+  (refresh token unchanged). Captures the new `businessAccessToken`.
+
+  `profileKey` is one of: `business_admin`, `branch_admin`, `doctor`,
+  `lab_technician`, `receptionist`, `patient`. Omit `branchId` for tenant-level
+  profiles (e.g. `business_admin`, `patient`).
+}

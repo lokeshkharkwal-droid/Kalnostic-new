@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import type { JwtSignOptions } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { SiteAdminRole, SiteAdminUser } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -22,7 +23,7 @@ const LOCK_DURATION_MINUTES = 15;
 @Injectable()
 export class SiteAdminService {
   private readonly logger = new Logger(SiteAdminService.name);
-  private readonly tokenTtl: string;
+  private readonly tokenTtl: JwtSignOptions['expiresIn'];
 
   constructor(
     private readonly prisma: PrismaService,
@@ -30,7 +31,10 @@ export class SiteAdminService {
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
   ) {
-    this.tokenTtl = this.config.get<string>('SITEADMIN_TOKEN_TTL', '8h');
+    this.tokenTtl = this.config.get<string>(
+      'SITEADMIN_TOKEN_TTL',
+      '8h',
+    ) as JwtSignOptions['expiresIn'];
   }
 
   /**
@@ -39,7 +43,10 @@ export class SiteAdminService {
    * @param dto login credentials
    * @param clientIp client IP (audit)
    */
-  async login(dto: SiteAdminLoginDto, clientIp: string): Promise<{ accessToken: string }> {
+  async login(
+    dto: SiteAdminLoginDto,
+    clientIp: string,
+  ): Promise<{ accessToken: string }> {
     const admin = await this.prisma.siteAdminUser.findFirst({
       where: { email: dto.email, deletedAt: null },
     });
@@ -61,7 +68,9 @@ export class SiteAdminService {
         select: { failedAttempts: true },
       });
       if (updated.failedAttempts >= MAX_FAILED_ATTEMPTS) {
-        const lockedUntil = new Date(Date.now() + LOCK_DURATION_MINUTES * 60_000);
+        const lockedUntil = new Date(
+          Date.now() + LOCK_DURATION_MINUTES * 60_000,
+        );
         await this.prisma.siteAdminUser.update({
           where: { id: admin.id },
           data: { lockedUntil },
@@ -87,8 +96,12 @@ export class SiteAdminService {
       email: admin.email,
       role: admin.role,
     };
-    const accessToken = this.jwtService.sign(payload, { expiresIn: this.tokenTtl });
-    this.logger.log(`SiteAdmin login: ${admin.email} (${admin.role}) from ${clientIp}`);
+    const accessToken = this.jwtService.sign(payload, {
+      expiresIn: this.tokenTtl,
+    });
+    this.logger.log(
+      `SiteAdmin login: ${admin.email} (${admin.role}) from ${clientIp}`,
+    );
     return { accessToken };
   }
 
@@ -98,7 +111,10 @@ export class SiteAdminService {
    * @param dto new admin details
    * @param createdBy super_owner's id
    */
-  async create(dto: CreateSiteAdminDto, createdBy: string): Promise<SiteAdminUser> {
+  async create(
+    dto: CreateSiteAdminDto,
+    createdBy: string,
+  ): Promise<SiteAdminUser> {
     if (dto.role === SiteAdminRole.SUPER_OWNER) {
       throw new SiteAdminCannotModifySuperOwnerException();
     }
@@ -125,7 +141,9 @@ export class SiteAdminService {
         createdBy,
       },
     });
-    this.logger.log(`SiteAdmin created: ${admin.email} (${admin.role}) by ${createdBy}`);
+    this.logger.log(
+      `SiteAdmin created: ${admin.email} (${admin.role}) by ${createdBy}`,
+    );
     return admin;
   }
 
@@ -161,8 +179,13 @@ export class SiteAdminService {
       throw new InvalidPasswordException(policyError);
     }
     const passwordHash = await this.passwordService.hash(newPassword);
-    await this.prisma.siteAdminUser.update({ where: { id }, data: { passwordHash } });
-    this.logger.log(`SiteAdmin password changed: ${admin.email} by ${requestedBy}`);
+    await this.prisma.siteAdminUser.update({
+      where: { id },
+      data: { passwordHash },
+    });
+    this.logger.log(
+      `SiteAdmin password changed: ${admin.email} by ${requestedBy}`,
+    );
   }
 
   /**
@@ -180,7 +203,10 @@ export class SiteAdminService {
     if (admin.role === SiteAdminRole.SUPER_OWNER) {
       throw new SiteAdminCannotModifySuperOwnerException();
     }
-    await this.prisma.siteAdminUser.update({ where: { id }, data: { isActive: false } });
+    await this.prisma.siteAdminUser.update({
+      where: { id },
+      data: { isActive: false },
+    });
     this.logger.log(`SiteAdmin deactivated: ${admin.email} by ${requestedBy}`);
   }
 }

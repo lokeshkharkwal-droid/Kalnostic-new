@@ -87,7 +87,10 @@ export class TenantService {
       }
     }
 
-    const settings: TenantSettings = { ...DEFAULT_SETTINGS, ...(dto.settings ?? {}) };
+    const settings: TenantSettings = {
+      ...DEFAULT_SETTINGS,
+      ...(dto.settings ?? {}),
+    };
     const tempPassword = this.passwordService.generateTempPassword();
     const passwordHash = await this.passwordService.hash(tempPassword);
     const platformMrn = this.generatePlatformMrn();
@@ -225,7 +228,11 @@ export class TenantService {
    * @param dto fields to update
    * @param updatedBy actor (for logs)
    */
-  async update(id: string, dto: UpdateTenantDto, updatedBy: string): Promise<Tenant> {
+  async update(
+    id: string,
+    dto: UpdateTenantDto,
+    updatedBy: string,
+  ): Promise<Tenant> {
     const tenant = await this.findById(id);
 
     const data: Prisma.TenantUpdateInput = {};
@@ -241,7 +248,7 @@ export class TenantService {
         ...((tenant.settings as unknown as TenantSettings) ?? DEFAULT_SETTINGS),
         ...dto.settings,
       };
-      data.settings = merged as unknown as Prisma.InputJsonValue;
+      data.settings = merged;
     }
 
     const updated = await this.prisma.tenant.update({ where: { id }, data });
@@ -319,7 +326,9 @@ export class TenantService {
   ): Promise<{ adminPhone: string; tempPassword: string }> {
     const admin = await this.getBusinessAdmin(tenantId);
     if (!admin) {
-      throw new InternalException('tenant-reset-password-no-admin', { tenantId });
+      throw new InternalException('tenant-reset-password-no-admin', {
+        tenantId,
+      });
     }
 
     const tempPassword = this.passwordService.generateTempPassword();
@@ -327,7 +336,12 @@ export class TenantService {
 
     await this.prisma.personCredentials.update({
       where: { personId: admin.personId },
-      data: { passwordHash, isTempPassword: true, failedAttempts: 0, lockedUntil: null },
+      data: {
+        passwordHash,
+        isTempPassword: true,
+        failedAttempts: 0,
+        lockedUntil: null,
+      },
     });
 
     this.logger.log(

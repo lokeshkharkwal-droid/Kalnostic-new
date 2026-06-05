@@ -28,7 +28,9 @@ export class SiteAdminJwtStrategy extends PassportStrategy(
    */
   validate(payload: SiteAdminJwtPayload): SiteAdminJwtPayload {
     if (payload.type !== 'siteadmin') {
-      throw new UnauthorizedException('Invalid token type for SiteAdmin access');
+      throw new UnauthorizedException(
+        'Invalid token type for SiteAdmin access',
+      );
     }
     if (!payload.siteadmin_id) {
       throw new UnauthorizedException('Malformed SiteAdmin token');

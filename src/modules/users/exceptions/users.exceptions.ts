@@ -4,7 +4,12 @@ import { KaltrosException } from '../../../common/exceptions/kaltros.exception';
 /** 404 — person not found. */
 export class PersonNotFoundException extends KaltrosException {
   constructor(personId: string) {
-    super('PERSON_NOT_FOUND', 'Person not found', { personId }, HttpStatus.NOT_FOUND);
+    super(
+      'PERSON_NOT_FOUND',
+      'Person not found',
+      { personId },
+      HttpStatus.NOT_FOUND,
+    );
   }
 }
 

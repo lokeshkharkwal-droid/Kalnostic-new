@@ -35,8 +35,20 @@ export const PROFILE_PERMISSIONS: Record<ProfileKey, Permission[]> = {
     'staff:manage',
     'billing:read',
   ],
-  doctor: ['patient:read', 'order:read', 'order:create', 'report:read', 'report:verify'],
+  doctor: [
+    'patient:read',
+    'order:read',
+    'order:create',
+    'report:read',
+    'report:verify',
+  ],
   lab_technician: ['order:read', 'order:update', 'report:read'],
-  receptionist: ['patient:read', 'patient:create', 'order:read', 'order:create', 'billing:read'],
+  receptionist: [
+    'patient:read',
+    'patient:create',
+    'order:read',
+    'order:create',
+    'billing:read',
+  ],
   patient: ['report:read'],
 };

@@ -1,0 +1,34 @@
+meta {
+  name: Refresh
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/auth/refresh
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "refreshToken": "{{businessRefreshToken}}"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data) {
+    if (data.accessToken) bru.setEnvVar("businessAccessToken", data.accessToken);
+    if (data.refreshToken) bru.setEnvVar("businessRefreshToken", data.refreshToken);
+  }
+}
+
+docs {
+  Exchange a refresh token for a new access + refresh pair (single-use
+  rotation). Re-captures both tokens.
+}

@@ -1,0 +1,23 @@
+meta {
+  name: List SiteAdmins
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/users
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+vars:pre-request {
+  siteAdminToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0eXBlIjoic2l0ZWFkbWluIiwic2l0ZWFkbWluX2lkIjoiYTYxMjE4MmUtMzAzOC00ZDJjLWFiMWItYjQ2YzQzZjlkNjVjIiwiZW1haWwiOiJhZG1pbkBrYWxub3N0aWNzLmNvbSIsInJvbGUiOiJTVVBFUl9PV05FUiIsImlhdCI6MTc4MDU4MjgwNiwiZXhwIjoxNzgwNjExNjA2fQ.NQqfAYK5CFfu-ZqpFIa2FKGXpg3tgRi7r4iCmWufsko
+}
+
+docs {
+  List all SiteAdmin accounts. Requires `siteadmin:manage` (super_owner).
+}

@@ -1,4 +1,4 @@
-import { ExecutionContext, Injectable } from '@nestjs/common';
+import { ExecutionContext, HttpException, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
 import { UnauthorisedException } from '../../../common/exceptions/kaltros.exception';
@@ -35,7 +35,8 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
    */
   handleRequest<TUser = unknown>(err: unknown, user: TUser): TUser {
     if (err || !user) {
-      if (err && typeof err === 'object' && 'errorCode' in err) {
+      // Re-throw already-typed exceptions (e.g. AccountLockedException) as-is.
+      if (err instanceof HttpException) {
         throw err;
       }
       throw new UnauthorisedException(
