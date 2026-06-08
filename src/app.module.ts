@@ -1,10 +1,12 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { configuration, envValidationSchema } from './config';
 import { PrismaModule } from './prisma';
+import { TenantContextInterceptor } from './common/interceptors';
 import { BranchModule } from './modules/branch/branch.module';
+import { ScheduleModule } from './modules/schedule/schedule.module';
 import { TenantModule } from './modules/tenant/tenant.module';
 import { UsersModule } from './modules/users/users.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -38,6 +40,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 
     // Feature + infrastructure modules.
     BranchModule,
+    ScheduleModule,
     TenantModule,
     UsersModule,
     AuthModule,
@@ -47,6 +50,9 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     // Global business authentication. SiteAdmin routes use @Public() + their
     // own SiteAdminPermissionGuard instead.
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    // Establishes the per-request tenant context (AsyncLocalStorage) from the
+    // JWT so the Prisma RLS extension can scope queries. Runs after the guard.
+    { provide: APP_INTERCEPTOR, useClass: TenantContextInterceptor },
   ],
 })
 export class AppModule {}

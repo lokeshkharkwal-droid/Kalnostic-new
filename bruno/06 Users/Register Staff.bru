@@ -10,12 +10,12 @@ post {
   auth: bearer
 }
 
-auth:bearer {
-  token: {{businessAccessToken}}
-}
-
 headers {
   Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
 }
 
 body:json {
@@ -27,6 +27,11 @@ body:json {
     "branchId": "{{branchId}}",
     "profileKey": "lab_technician"
   }
+}
+
+vars:pre-request {
+  businessAccessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwZXJzb25faWQiOiIyOTQ5N2I2NC0wNGUyLTQwZjktYTY2OS04NDBiZmNlOGU3ZDYiLCJ0ZW5hbnRfaWQiOiJhYjE2OTY1MC01Mzc1LTQwYmUtYTIxMi00ZGE0ZTJiMDE5NGQiLCJhY3RpdmVfYnJhbmNoX2lkIjpudWxsLCJhY3RpdmVfYnJhbmNoX3R5cGUiOm51bGwsImFjdGl2ZV9wcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwiaXNfcGF0aWVudF9jb250ZXh0IjpmYWxzZSwicHJvZmlsZXMiOlt7ImJyYW5jaF9pZCI6bnVsbCwiYnJhbmNoX25hbWUiOm51bGwsImJyYW5jaF90eXBlIjpudWxsLCJwcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwicHJvZmlsZV9sYWJlbCI6IkJ1c2luZXNzIEFkbWluIiwiaXNfZGVmYXVsdCI6dHJ1ZX1dLCJpc19wYXRpZW50IjpmYWxzZSwicGxhdGZvcm1fbXJuIjoiS0FMLTIwMjYwNjA4LTM2OTBCRkQxIiwiaWF0IjoxNzgwOTE5NTg1LCJleHAiOjE3ODA5MjA0ODV9.9-FgakTfsc0MFAvgBb_l4SEav9oCnP7YLFax92E2PVs
+  branchId: 0b866440-7552-4589-a867-161f3db63420
 }
 
 script:post-response {
@@ -42,10 +47,10 @@ script:post-response {
 docs {
   Register a staff member (person + credentials + initial profile). Returns a
   one-time temp password. Captures `staffPersonId` and `staffTempPassword`.
-
+  
   - `profileKey`: branch-level role (`branch_admin`, `doctor`, `lab_technician`,
     `receptionist`). Provide `branchId` for branch-level profiles; omit it for
     tenant-level profiles.
   - The profile must be valid for the branch's type (PROFILE_BRANCH_MATRIX),
-    e.g. `lab_technician` requires a DIAGNOSTIC or HOSPITAL branch.
+    e.g. `lab_technician` requires a DIAGNOSTIC or IPD branch.
 }

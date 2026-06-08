@@ -5,11 +5,13 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { SiteAdminService } from './siteadmin.service';
 import { CreateSiteAdminDto } from './dto/create-siteadmin.dto';
 import { ChangeSiteAdminPasswordDto } from './dto/change-siteadmin-password.dto';
+import { ListSiteAdminUsersQueryDto } from './dto/list-siteadmin-users-query.dto';
 import { SiteAdminPermissionGuard } from './guards/siteadmin-permission.guard';
 import { RequireSiteAdminPermission } from './decorators/require-siteadmin-permission.decorator';
 import { CurrentSiteAdmin } from './decorators/current-siteadmin.decorator';
@@ -55,12 +57,13 @@ export class SiteAdminUsersController {
   }
 
   /**
-   * List all SiteAdmin accounts.
+   * List SiteAdmin accounts (paginated), optionally filtered by name/email
+   * search, status and role.
    */
   @Get('users')
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.SITEADMIN_MANAGE)
-  findAll() {
-    return this.siteAdminService.findAll();
+  findAll(@Query() query: ListSiteAdminUsersQueryDto) {
+    return this.siteAdminService.findAll(query);
   }
 
   /**
@@ -88,5 +91,18 @@ export class SiteAdminUsersController {
   ) {
     await this.siteAdminService.deactivate(id, actorId);
     return { message: 'SiteAdmin deactivated' };
+  }
+
+  /**
+   * Activate a SiteAdmin account.
+   */
+  @Patch('users/:id/activate')
+  @RequireSiteAdminPermission(SITE_ADMIN_PERM.SITEADMIN_MANAGE)
+  async activate(
+    @CurrentSiteAdmin('siteadmin_id') actorId: string,
+    @Param('id') id: string,
+  ) {
+    await this.siteAdminService.activate(id, actorId);
+    return { message: 'SiteAdmin activated' };
   }
 }

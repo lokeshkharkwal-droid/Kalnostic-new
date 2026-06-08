@@ -37,19 +37,19 @@ export const PROFILE_BRANCH_MATRIX: Record<ProfileKey, BranchType[]> = {
   patient: [],
   branch_admin: [
     BranchType.DIAGNOSTIC,
-    BranchType.CLINIC,
-    BranchType.HOSPITAL,
+    BranchType.OPD,
+    BranchType.IPD,
     BranchType.PHARMACY,
-    BranchType.COLLECTION_CENTER,
+    BranchType.FRANCHISE,
   ],
-  doctor: [BranchType.CLINIC, BranchType.HOSPITAL, BranchType.DIAGNOSTIC],
-  lab_technician: [BranchType.DIAGNOSTIC, BranchType.HOSPITAL],
+  doctor: [BranchType.OPD, BranchType.IPD, BranchType.DIAGNOSTIC],
+  lab_technician: [BranchType.DIAGNOSTIC, BranchType.IPD],
   receptionist: [
     BranchType.DIAGNOSTIC,
-    BranchType.CLINIC,
-    BranchType.HOSPITAL,
+    BranchType.OPD,
+    BranchType.IPD,
     BranchType.PHARMACY,
-    BranchType.COLLECTION_CENTER,
+    BranchType.FRANCHISE,
   ],
 };
 

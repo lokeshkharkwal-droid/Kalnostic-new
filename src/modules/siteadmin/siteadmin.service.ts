@@ -2,12 +2,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import type { JwtSignOptions } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { SiteAdminRole, SiteAdminUser } from '@prisma/client';
+import { Prisma, SiteAdminRole, SiteAdminUser } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PasswordService } from '../security/password.service';
 import { SiteAdminJwtPayload } from './types/siteadmin-jwt.type';
 import { SiteAdminLoginDto } from './dto/siteadmin-login.dto';
 import { CreateSiteAdminDto } from './dto/create-siteadmin.dto';
+import { ListSiteAdminUsersQueryDto } from './dto/list-siteadmin-users-query.dto';
 import {
   SiteAdminAccountLockedException,
   SiteAdminCannotModifySuperOwnerException,
@@ -148,13 +149,44 @@ export class SiteAdminService {
   }
 
   /**
-   * List all SiteAdmin accounts (super_owner only).
+   * List SiteAdmin accounts (super_owner only), offset-paginated with optional
+   * filters.
+   *
+   * @param query pagination (`page`/`limit`) plus optional `search`
+   *   (case-insensitive substring on name/email), `status` (`active`/`inactive`
+   *   → `isActive`) and `role`
+   * @returns `{ data, total, page, limit }` for the `meta` envelope
    */
-  async findAll(): Promise<SiteAdminUser[]> {
-    return this.prisma.siteAdminUser.findMany({
-      where: { deletedAt: null },
-      orderBy: { createdAt: 'asc' },
-    });
+  async findAll(query: ListSiteAdminUsersQueryDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+
+    const where: Prisma.SiteAdminUserWhereInput = { deletedAt: null };
+    const search = query.search?.trim();
+    if (search) {
+      where.OR = [
+        { firstName: { contains: search, mode: 'insensitive' } },
+        { lastName: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+    if (query.status) {
+      where.isActive = query.status === 'active';
+    }
+    if (query.role) {
+      where.role = query.role;
+    }
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.siteAdminUser.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.siteAdminUser.count({ where }),
+    ]);
+    return { data, total, page, limit };
   }
 
   /**
@@ -208,5 +240,30 @@ export class SiteAdminService {
       data: { isActive: false },
     });
     this.logger.log(`SiteAdmin deactivated: ${admin.email} by ${requestedBy}`);
+
   }
-}
+
+  /**
+   * Activate a SiteAdmin account (super_owner cannot be deactivated).
+   * @param id target siteadmin id
+   * @param requestedBy actor id
+   */
+  async activate(id: string, requestedBy: string): Promise<void> {
+    const admin = await this.prisma.siteAdminUser.findFirst({
+      where: { id, deletedAt: null },
+    });
+    if (!admin) {
+      throw new SiteAdminNotFoundException(id);
+    }
+    if (admin.role === SiteAdminRole.SUPER_OWNER) {
+      throw new SiteAdminCannotModifySuperOwnerException();
+    }
+    await this.prisma.siteAdminUser.update({
+      where: { id },
+      data: { isActive: true },
+    });
+    this.logger.log(`SiteAdmin activated: ${admin.email} by ${requestedBy}`);
+  }
+
+  
+  }

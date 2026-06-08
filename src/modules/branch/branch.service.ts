@@ -1,10 +1,14 @@
 import { Injectable } from '@nestjs/common';
-import { Branch, Prisma } from '@prisma/client';
+import { Branch, BranchStatus, Prisma, TenantMainBranch } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { CreateBranchDto } from './dto/create-branch.dto';
 import { UpdateBranchDto } from './dto/update-branch.dto';
-import { BranchNotFoundException } from './exceptions/branch.exceptions';
+import {
+  BranchNameConflictException,
+  BranchNotFoundException,
+  MainBranchNotSetException,
+} from './exceptions/branch.exceptions';
 
 /**
  * Branch management. Tenant-scoped: every query carries `tenantId` (defence in
@@ -15,23 +19,60 @@ export class BranchService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * Create a branch within a tenant.
+   * Create a branch within a tenant. The branch `code` is system-generated:
+   * a per-tenant sequential value (`BR-00001`, `BR-00002`, …) derived by
+   * atomically incrementing `Tenant.branchCounter` in the same transaction, so
+   * concurrent creates never collide. `code` is immutable thereafter.
    * @param tenantId owning tenant
-   * @param dto validated branch payload
+   * @param dto validated branch payload (no `code` — it is generated here)
    * @returns the created branch
+   * @throws BranchNameConflictException if the name is already used by an
+   *   active branch in this tenant
    */
   async create(tenantId: string, dto: CreateBranchDto): Promise<Branch> {
-    return this.prisma.branch.create({
-      data: {
-        tenantId,
-        name: dto.name,
-        branchType: dto.branchType,
-        code: dto.code ?? null,
-        phone: dto.phone ?? null,
-        email: dto.email ?? null,
-        address: (dto.address ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-      },
-    });
+    try {
+      return await this.prisma.withTenant(tenantId, async (tx) => {
+        const tenant = await tx.tenant.update({
+          where: { id: tenantId },
+          data: { branchCounter: { increment: 1 } },
+          select: { branchCounter: true },
+        });
+        const code = `BR-${String(tenant.branchCounter).padStart(5, '0')}`;
+        return tx.branch.create({
+          data: {
+            tenantId,
+            name: dto.name,
+            branchType: dto.branchType,
+            code,
+            status: dto.status ?? BranchStatus.ACTIVE,
+            establishedDate: dto.establishedDate
+              ? new Date(dto.establishedDate)
+              : null,
+            addressLine: dto.addressLine ?? null,
+            city: dto.city ?? null,
+            state: dto.state ?? null,
+            pincode: dto.pincode ?? null,
+            phone: dto.phone ?? null,
+            email: dto.email ?? null,
+            managerName: dto.managerName ?? null,
+            managerPhone: dto.managerPhone ?? null,
+            labDirector: dto.labDirector ?? null,
+            openingTime: dto.openingTime ?? null,
+            closingTime: dto.closingTime ?? null,
+            dailyCapacity: dto.dailyCapacity ?? null,
+            operationalDays: dto.operationalDays ?? [],
+            gstNo: dto.gstNo ?? null,
+            licenseNo: dto.licenseNo ?? null,
+            remarks: dto.remarks ?? null,
+          },
+        });
+      });
+    } catch (e) {
+      if (this.isUniqueViolation(e)) {
+        throw new BranchNameConflictException(dto.name);
+      }
+      throw e;
+    }
   }
 
   /**
@@ -62,23 +103,26 @@ export class BranchService {
     limit = 20,
   ): Promise<PaginatedResult<Branch>> {
     const where = { tenantId, deletedAt: null };
-    const [data, total] = await this.prisma.$transaction([
-      this.prisma.branch.findMany({
-        where,
-        skip: (page - 1) * limit,
-        take: limit,
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.branch.count({ where }),
-    ]);
+    // Sequential (not array-`$transaction`) so each call flows through the RLS
+    // extension and carries the tenant GUC when RLS is enabled.
+    const data = await this.prisma.branch.findMany({
+      where,
+      skip: (page - 1) * limit,
+      take: limit,
+      orderBy: { createdAt: 'desc' },
+    });
+    const total = await this.prisma.branch.count({ where });
     return { data, total, page, limit };
   }
 
   /**
-   * Update an existing branch.
+   * Update an existing branch. `code` is immutable and cannot be changed.
    * @param id branch id
    * @param tenantId tenant scope
    * @param dto partial update
+   * @throws BranchNotFoundException if missing/soft-deleted
+   * @throws BranchNameConflictException if the new name collides with another
+   *   active branch in this tenant
    */
   async update(
     id: string,
@@ -89,13 +133,48 @@ export class BranchService {
     const data: Prisma.BranchUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.branchType !== undefined) data.branchType = dto.branchType;
-    if (dto.code !== undefined) data.code = dto.code ?? null;
+    // `code` is immutable and system-generated — never updated here.
+    if (dto.status !== undefined) data.status = dto.status;
+    if (dto.establishedDate !== undefined) {
+      data.establishedDate = dto.establishedDate
+        ? new Date(dto.establishedDate)
+        : null;
+    }
+    if (dto.addressLine !== undefined)
+      data.addressLine = dto.addressLine ?? null;
+    if (dto.city !== undefined) data.city = dto.city ?? null;
+    if (dto.state !== undefined) data.state = dto.state ?? null;
+    if (dto.pincode !== undefined) data.pincode = dto.pincode ?? null;
     if (dto.phone !== undefined) data.phone = dto.phone ?? null;
     if (dto.email !== undefined) data.email = dto.email ?? null;
-    if (dto.address !== undefined) {
-      data.address = (dto.address ?? Prisma.JsonNull) as Prisma.InputJsonValue;
+    if (dto.managerName !== undefined)
+      data.managerName = dto.managerName ?? null;
+    if (dto.managerPhone !== undefined) {
+      data.managerPhone = dto.managerPhone ?? null;
     }
-    return this.prisma.branch.update({ where: { id }, data });
+    if (dto.labDirector !== undefined)
+      data.labDirector = dto.labDirector ?? null;
+    if (dto.openingTime !== undefined)
+      data.openingTime = dto.openingTime ?? null;
+    if (dto.closingTime !== undefined)
+      data.closingTime = dto.closingTime ?? null;
+    if (dto.dailyCapacity !== undefined) {
+      data.dailyCapacity = dto.dailyCapacity ?? null;
+    }
+    if (dto.operationalDays !== undefined) {
+      data.operationalDays = dto.operationalDays ?? [];
+    }
+    if (dto.gstNo !== undefined) data.gstNo = dto.gstNo ?? null;
+    if (dto.licenseNo !== undefined) data.licenseNo = dto.licenseNo ?? null;
+    if (dto.remarks !== undefined) data.remarks = dto.remarks ?? null;
+    try {
+      return await this.prisma.branch.update({ where: { id }, data });
+    } catch (e) {
+      if (this.isUniqueViolation(e)) {
+        throw new BranchNameConflictException(dto.name ?? '');
+      }
+      throw e;
+    }
   }
 
   /**
@@ -109,5 +188,59 @@ export class BranchService {
       where: { id },
       data: { deletedAt: new Date() },
     });
+  }
+
+  /**
+   * Set (or change) the tenant's single main branch. Idempotent: there is at
+   * most one main-branch row per tenant (`tenant_id` is unique), so this
+   * upserts. The branch is validated to belong to the caller's tenant first
+   * (CLAUDE.md §4.7 — client-supplied branch ids are never trusted).
+   * @param tenantId tenant scope
+   * @param branchId the branch to mark as main
+   * @param setBy person id of the actor (optional audit trail)
+   * @returns the main-branch pointer row
+   * @throws BranchNotFoundException if the branch is missing/soft-deleted/other tenant
+   */
+  async setMainBranch(
+    tenantId: string,
+    branchId: string,
+    setBy?: string,
+  ): Promise<TenantMainBranch> {
+    await this.findById(branchId, tenantId);
+    return this.prisma.tenantMainBranch.upsert({
+      where: { tenantId },
+      create: { tenantId, branchId, setBy: setBy ?? null },
+      update: { branchId, setBy: setBy ?? null },
+    });
+  }
+
+  /**
+   * Fetch the tenant's current main branch.
+   * @param tenantId tenant scope
+   * @returns the main branch
+   * @throws MainBranchNotSetException if no main branch has been set
+   * @throws BranchNotFoundException if the main branch was since soft-deleted
+   */
+  async getMainBranch(tenantId: string): Promise<Branch> {
+    const pointer = await this.prisma.tenantMainBranch.findUnique({
+      where: { tenantId },
+    });
+    if (!pointer) {
+      throw new MainBranchNotSetException(tenantId);
+    }
+    return this.findById(pointer.branchId, tenantId);
+  }
+
+  /**
+   * Narrow an unknown caught error to a Prisma unique-constraint violation
+   * (P2002). Used to map the per-tenant branch-name index to a typed 409.
+   * @param e the caught error
+   */
+  private isUniqueViolation(
+    e: unknown,
+  ): e is Prisma.PrismaClientKnownRequestError {
+    return (
+      e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002'
+    );
   }
 }

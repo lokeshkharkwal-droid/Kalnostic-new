@@ -70,7 +70,7 @@ just open the response, copy the value, and paste it into the matching
 
 - `Gender`: MALE, FEMALE, OTHER, PREFER_NOT_TO_SAY
 - `BloodGroup`: A_POS, A_NEG, B_POS, B_NEG, O_POS, O_NEG, AB_POS, AB_NEG, UNKNOWN
-- `BranchType`: DIAGNOSTIC, CLINIC, HOSPITAL, PHARMACY, COLLECTION_CENTER
+- `BranchType`: DIAGNOSTIC, RADIOLOGY, OPD, IPD, PHARMACY, INVENTORY, BLOOD_BANK, FRANCHISE, COMBINED
 - `SiteAdminRole`: CONTENT_ADMIN, OPERATIONS_ADMIN, FULL_ADMIN, SUPER_OWNER
 - `ProfileKey`: business_admin, branch_admin, doctor, lab_technician,
   receptionist, patient

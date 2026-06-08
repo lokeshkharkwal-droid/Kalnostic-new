@@ -10,12 +10,12 @@ post {
   auth: bearer
 }
 
-auth:bearer {
-  token: {{siteAdminToken}}
-}
-
 headers {
   Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
 }
 
 body:json {
@@ -38,6 +38,10 @@ body:json {
   }
 }
 
+vars:pre-request {
+  siteAdminToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0eXBlIjoic2l0ZWFkbWluIiwic2l0ZWFkbWluX2lkIjoiMjM1ZmU0NjMtZTdiYS00Y2U4LTk4YmMtMzMwMzRiYWFmMmIyIiwiZW1haWwiOiJhZG1pbkBrYWxub3N0aWNzLmNvbSIsInJvbGUiOiJTVVBFUl9PV05FUiIsImlhdCI6MTc4MDkxNzU3MywiZXhwIjoxNzgwOTQ2MzczfQ.MfMWYmrhqLI2hlgMwQkz-y_wcG2i4aiLinvTrDuXdCY
+}
+
 script:post-response {
   const data = res.getBody() && res.getBody().data;
   if (data) {
@@ -54,15 +58,15 @@ script:post-response {
 docs {
   Create a tenant (business) **and** its first business-admin user. Requires
   `business:create` (operations_admin and above).
-
+  
   Returns the tenant plus a **one-time temp password** for the business-admin.
   The script captures `tenantId`, `tenantSlug`, `adminPhone`, and
   `adminTempPassword` — used by **Business Auth → Login**.
-
+  
   - `slug`: lowercase alphanumeric + hyphens, not at start/end (subdomain).
   - `adminPhone`: globally-unique login identifier.
   - `mrnPrefix`: patient MRN prefix (e.g. "AC" -> "AC-00001").
-
+  
   > If the captured temp password is empty, open the create response and copy
   > the temp password field into the `adminTempPassword` env var manually.
 }

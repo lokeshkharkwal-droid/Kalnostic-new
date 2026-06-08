@@ -10,6 +10,7 @@ import {
 } from '../users/exceptions/users.exceptions';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
+import { ListTenantsQueryDto } from './dto/list-tenants-query.dto';
 import { TenantSettings } from './entities/tenant.entity';
 import {
   TenantNotFoundException,
@@ -203,12 +204,30 @@ export class TenantService {
   }
 
   /**
-   * List all tenants (SiteAdmin only), offset-paginated.
-   * @param page 1-based page (default 1)
-   * @param limit page size (default 20)
+   * List tenants (SiteAdmin only), offset-paginated with optional filters.
+   *
+   * @param query pagination (`page`/`limit`) plus optional `search`
+   *   (case-insensitive substring on name/slug/email) and `status`
+   *   (exact `subscriptionStatus`)
+   * @returns `{ data, total, page, limit }` for the `meta` envelope
    */
-  async findAll(page = 1, limit = 20) {
-    const where = { deletedAt: null };
+  async findAll(query: ListTenantsQueryDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+
+    const where: Prisma.TenantWhereInput = { deletedAt: null };
+    const search = query.search?.trim();
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { slug: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+    if (query.status) {
+      where.subscriptionStatus = query.status;
+    }
+
     const [data, total] = await this.prisma.$transaction([
       this.prisma.tenant.findMany({
         where,

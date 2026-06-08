@@ -6,12 +6,15 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
 } from '@nestjs/common';
 import { BranchService } from './branch.service';
 import { CreateBranchDto } from './dto/create-branch.dto';
 import { UpdateBranchDto } from './dto/update-branch.dto';
+import { SetMainBranchDto } from './dto/set-main-branch.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 
 /**
@@ -43,6 +46,33 @@ export class BranchController {
       query.page ?? 1,
       query.limit ?? 20,
     );
+  }
+
+  // ── Main-branch routes ──────────────────────────────────────────────────────
+  // ROUTE-ORDERING INVARIANT: these literal `main-branch` paths MUST stay above
+  // the `:id` param routes below. Express matches per-verb in declaration order,
+  // so moving `@Get(':id')` above `@Get('main-branch')` (or adding e.g.
+  // `@Patch('main-branch')` below `@Patch(':id')`) would make Nest treat
+  // "main-branch" as a branch id and 404. Keep new literal routes here.
+
+  /**
+   * Get the tenant's current main branch.
+   */
+  @Get('main-branch')
+  getMainBranch(@CurrentTenant() tenantId: string) {
+    return this.branchService.getMainBranch(tenantId);
+  }
+
+  /**
+   * Set (or change) the tenant's main branch.
+   */
+  @Put('main-branch')
+  setMainBranch(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+    @Body() dto: SetMainBranchDto,
+  ) {
+    return this.branchService.setMainBranch(tenantId, dto.branchId, personId);
   }
 
   /**

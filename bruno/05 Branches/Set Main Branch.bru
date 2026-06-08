@@ -1,0 +1,38 @@
+meta {
+  name: Set Main Branch
+  type: http
+  seq: 7
+}
+
+put {
+  url: {{baseUrl}}/branches/main-branch
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "branchId": "{{branchId}}"
+  }
+}
+
+vars:pre-request {
+  branchId: 33f7c1db-3fd4-4e0b-b5ee-30c731535a05
+  businessAccessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwZXJzb25faWQiOiIyOTQ5N2I2NC0wNGUyLTQwZjktYTY2OS04NDBiZmNlOGU3ZDYiLCJ0ZW5hbnRfaWQiOiJhYjE2OTY1MC01Mzc1LTQwYmUtYTIxMi00ZGE0ZTJiMDE5NGQiLCJhY3RpdmVfYnJhbmNoX2lkIjpudWxsLCJhY3RpdmVfYnJhbmNoX3R5cGUiOm51bGwsImFjdGl2ZV9wcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwiaXNfcGF0aWVudF9jb250ZXh0IjpmYWxzZSwicHJvZmlsZXMiOlt7ImJyYW5jaF9pZCI6bnVsbCwiYnJhbmNoX25hbWUiOm51bGwsImJyYW5jaF90eXBlIjpudWxsLCJwcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwicHJvZmlsZV9sYWJlbCI6IkJ1c2luZXNzIEFkbWluIiwiaXNfZGVmYXVsdCI6dHJ1ZX1dLCJpc19wYXRpZW50IjpmYWxzZSwicGxhdGZvcm1fbXJuIjoiS0FMLTIwMjYwNjA4LTM2OTBCRkQxIiwiaWF0IjoxNzgwOTE3ODQ0LCJleHAiOjE3ODA5MTg3NDR9.SvHviOXq5XC3_5hZ30iX0nsg3McXaCySgbwwmZP3ujY
+}
+
+docs {
+  Set (or change) the tenant's single main branch. Idempotent upsert — only one
+  main branch exists per tenant at a time. The `branchId` must belong to the
+  caller's tenant (validated server-side; 404 otherwise).
+  
+  Defaults to the `branchId` captured by **Create Branch**.
+}

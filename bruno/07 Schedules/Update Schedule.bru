@@ -1,0 +1,40 @@
+meta {
+  name: Update Schedule
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/branches/{{branchId}}/schedules/{{scheduleId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "ACTIVE"
+  }
+}
+
+vars:pre-request {
+  branchId: 0b866440-7552-4589-a867-161f3db63420
+  scheduleId: 8d7aaba4-d403-476f-a77f-1c3542f6caa2
+  businessAccessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwZXJzb25faWQiOiIyOTQ5N2I2NC0wNGUyLTQwZjktYTY2OS04NDBiZmNlOGU3ZDYiLCJ0ZW5hbnRfaWQiOiJhYjE2OTY1MC01Mzc1LTQwYmUtYTIxMi00ZGE0ZTJiMDE5NGQiLCJhY3RpdmVfYnJhbmNoX2lkIjpudWxsLCJhY3RpdmVfYnJhbmNoX3R5cGUiOm51bGwsImFjdGl2ZV9wcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwiaXNfcGF0aWVudF9jb250ZXh0IjpmYWxzZSwicHJvZmlsZXMiOlt7ImJyYW5jaF9pZCI6bnVsbCwiYnJhbmNoX25hbWUiOm51bGwsImJyYW5jaF90eXBlIjpudWxsLCJwcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwicHJvZmlsZV9sYWJlbCI6IkJ1c2luZXNzIEFkbWluIiwiaXNfZGVmYXVsdCI6dHJ1ZX1dLCJpc19wYXRpZW50IjpmYWxzZSwicGxhdGZvcm1fbXJuIjoiS0FMLTIwMjYwNjA4LTM2OTBCRkQxIiwiaWF0IjoxNzgwOTI5MjU4LCJleHAiOjE3ODA5MzAxNTh9.3Ewemhs9iKWhkM-0Xn-s3je4jwUtpGkUDNyBZ6aHGZc
+}
+
+docs {
+  Update a schedule (scoped to its branch + tenant). All fields optional.
+  
+  If the resulting schedule is ACTIVE, its date range is re-checked for overlap
+  against other ACTIVE schedules (excluding itself). If `shifts` is provided it
+  is re-validated (break-in-shift + no overlap on a shared active day,
+  midnight-aware). Each shift carries its own `activeDays`.
+}

@@ -19,6 +19,10 @@ auth:bearer {
   token: {{siteAdminToken}}
 }
 
+vars:pre-request {
+  siteAdminToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0eXBlIjoic2l0ZWFkbWluIiwic2l0ZWFkbWluX2lkIjoiMjM1ZmU0NjMtZTdiYS00Y2U4LTk4YmMtMzMwMzRiYWFmMmIyIiwiZW1haWwiOiJhZG1pbkBrYWxub3N0aWNzLmNvbSIsInJvbGUiOiJTVVBFUl9PV05FUiIsImlhdCI6MTc4MDkxNzU3MywiZXhwIjoxNzgwOTQ2MzczfQ.MfMWYmrhqLI2hlgMwQkz-y_wcG2i4aiLinvTrDuXdCY
+}
+
 docs {
   Paginated list of all tenants. Requires `business:read`.
   `page` (>=1) and `limit` (1-100) are optional query params.

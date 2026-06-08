@@ -10,27 +10,29 @@ post {
   auth: bearer
 }
 
-auth:bearer {
-  token: {{businessAccessToken}}
-}
-
 headers {
   Content-Type: application/json
 }
 
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
 body:json {
   {
-    "name": "Main Lab",
+    "name": "My Test Main Lab 2",
     "branchType": "DIAGNOSTIC",
-    "code": "MAIN",
     "phone": "+919811111111",
     "email": "main@acme.test",
-    "address": {
-      "line1": "12 Lab Street",
-      "city": "Pune",
-      "country": "IN"
-    }
+    "addressLine": "12 Lab Street",
+    "city": "Pune",
+    "state": "Maharashtra",
+    "pincode": "411001"
   }
+}
+
+vars:pre-request {
+  businessAccessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwZXJzb25faWQiOiIyOTQ5N2I2NC0wNGUyLTQwZjktYTY2OS04NDBiZmNlOGU3ZDYiLCJ0ZW5hbnRfaWQiOiJhYjE2OTY1MC01Mzc1LTQwYmUtYTIxMi00ZGE0ZTJiMDE5NGQiLCJhY3RpdmVfYnJhbmNoX2lkIjpudWxsLCJhY3RpdmVfYnJhbmNoX3R5cGUiOm51bGwsImFjdGl2ZV9wcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwiaXNfcGF0aWVudF9jb250ZXh0IjpmYWxzZSwicHJvZmlsZXMiOlt7ImJyYW5jaF9pZCI6bnVsbCwiYnJhbmNoX25hbWUiOm51bGwsImJyYW5jaF90eXBlIjpudWxsLCJwcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwicHJvZmlsZV9sYWJlbCI6IkJ1c2luZXNzIEFkbWluIiwiaXNfZGVmYXVsdCI6dHJ1ZX1dLCJpc19wYXRpZW50IjpmYWxzZSwicGxhdGZvcm1fbXJuIjoiS0FMLTIwMjYwNjA4LTM2OTBCRkQxIiwiaWF0IjoxNzgwOTE3ODQ0LCJleHAiOjE3ODA5MTg3NDR9.SvHviOXq5XC3_5hZ30iX0nsg3McXaCySgbwwmZP3ujY
 }
 
 script:post-response {
@@ -41,7 +43,11 @@ script:post-response {
 docs {
   Create a branch in the caller's tenant (tenant id taken from the JWT).
   Captures `branchId`.
-
-  `branchType` is one of: `DIAGNOSTIC`, `CLINIC`, `HOSPITAL`, `PHARMACY`,
-  `COLLECTION_CENTER`. `name` 2-255 chars.
+  
+  `branchType` is one of: `DIAGNOSTIC`, `RADIOLOGY`, `OPD`, `IPD`, `PHARMACY`,
+  `INVENTORY`, `BLOOD_BANK`, `FRANCHISE`, `COMBINED`. `name` 2-255 chars.
+  
+  NOTE: `code` is system-generated (per-tenant sequential, e.g. `BR-00001`) and
+  immutable — do NOT send it in the body (it is rejected as an unknown field).
+  `name` must be unique among active branches in the tenant (409 otherwise).
 }

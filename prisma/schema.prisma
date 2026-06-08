@@ -10,7 +10,8 @@
 //   - PLATFORM models (no tenant_id): Tenant, Person, PersonCredentials,
 //     SiteAdminUser, RefreshToken, PersonTenantEnrollment
 //   - TENANT-SCOPED models (tenant_id + RLS): Branch, UserBranchProfile,
-//     UserProfilePermissionOverride, ReceptionistDoctorMapping
+//     UserProfilePermissionOverride, ReceptionistDoctorMapping,
+//     TenantMainBranch, Schedule
 //
 // RLS policies for tenant-scoped tables live in prisma/rls.sql (CLAUDE.md §4.3).
 
@@ -61,10 +62,43 @@ enum SiteAdminRole {
 
 enum BranchType {
   DIAGNOSTIC
-  CLINIC
-  HOSPITAL
+  RADIOLOGY
+  OPD
+  IPD
   PHARMACY
-  COLLECTION_CENTER
+  INVENTORY
+  BLOOD_BANK
+  FRANCHISE
+  COMBINED
+}
+
+enum BranchStatus {
+  ACTIVE
+  INACTIVE
+  UNDER_MAINTENANCE
+}
+
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+enum ScheduleStatus {
+  ACTIVE
+  INACTIVE
+  DRAFT
+}
+
+enum ShiftName {
+  MORNING
+  AFTERNOON
+  EVENING
+  NIGHT
 }
 
 // ── Platform-level models (NO tenant_id) ────────────────────────────────────────
@@ -92,10 +126,11 @@ model Tenant {
   // ── Locale & branding (timezone/currency/date_format/language/logo/colors) ──
   settings Json?
 
-  isActive   Boolean @default(true) @map("is_active")
-  mrnCounter Int     @default(0) @map("mrn_counter") // per-tenant sequential patient MRN
-  mrnPrefix  String? @map("mrn_prefix")
-  createdBy  String? @map("created_by") // SiteAdmin user id
+  isActive      Boolean @default(true) @map("is_active")
+  mrnCounter    Int     @default(0) @map("mrn_counter") // per-tenant sequential patient MRN
+  mrnPrefix     String? @map("mrn_prefix")
+  branchCounter Int     @default(0) @map("branch_counter") // per-tenant sequential branch code
+  createdBy     String? @map("created_by") // SiteAdmin user id
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -245,11 +280,37 @@ model Branch {
   tenantId   String     @map("tenant_id")
   name       String
   branchType BranchType @map("branch_type")
-  code       String?
-  address    Json?
-  phone      String?
-  email      String?
-  isActive   Boolean    @default(true) @map("is_active")
+  // System-generated, immutable. Per-tenant sequential code (e.g. "BR-00001")
+  // derived from Tenant.branchCounter. Unique per tenant among active rows
+  // (partial unique index in prisma/rls.sql); never client-supplied.
+  code       String
+
+  status          BranchStatus @default(ACTIVE)
+  establishedDate DateTime?    @map("established_date")
+
+  // Location
+  addressLine String? @map("address_line")
+  city        String?
+  state       String?
+  pincode     String?
+
+  // Contact
+  phone        String?
+  email        String?
+  managerName  String? @map("manager_name")
+  managerPhone String? @map("manager_phone")
+  labDirector  String? @map("lab_director")
+
+  // Operations
+  openingTime     String?     @map("opening_time") // "HH:mm" (24h, branch-local)
+  closingTime     String?     @map("closing_time") // "HH:mm" (24h, branch-local)
+  dailyCapacity   Int?        @map("daily_capacity") // max orders processable per day
+  operationalDays DayOfWeek[] @map("operational_days")
+
+  // Compliance / misc
+  gstNo     String? @map("gst_no")
+  licenseNo String? @map("license_no")
+  remarks   String?
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -320,4 +381,59 @@ model ReceptionistDoctorMapping {
 
   @@index([tenantId, branchId, receptionistPersonId])
   @@map("receptionist_doctor_mappings")
+}
+
+/// The single main branch per tenant (one row per tenant; changed via upsert).
+/// Tenant-scoped: `tenant_id` is UNIQUE, so a tenant can have at most one main
+/// branch at a time. RLS policy in prisma/rls.sql.
+model TenantMainBranch {
+  id       String @id @default(uuid())
+  tenantId String @unique @map("tenant_id")
+  branchId String @map("branch_id")
+
+  setBy String? @map("set_by")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([branchId])
+  @@map("tenant_main_branch")
+}
+
+/// A working schedule (shift plan) for a branch. Tenant-scoped + branch-level.
+///
+/// `shifts` is stored as JSON (validated by the schedule DTOs):
+///   - shifts: Array<{ shiftName: ShiftName, startTime, endTime,
+///                      breakStartTime, breakEndTime, activeDays: DayOfWeek[] }>
+///             (times "HH:mm", 24h, branch-local; activeDays = the days the
+///              shift runs on)
+///
+/// At most one ACTIVE schedule per branch may cover any given date — enforced in
+/// the service (see ScheduleService.create/update). NIGHT shifts may cross
+/// midnight (endTime <= startTime); overlap checks are midnight-aware and only
+/// flag shifts that overlap on a shared active day.
+model Schedule {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  planName String         @map("plan_name")
+  status   ScheduleStatus @default(DRAFT)
+
+  effectiveFrom DateTime  @map("effective_from") @db.Date
+  effectiveTo   DateTime? @map("effective_to") @db.Date // null = open-ended (+∞)
+
+  shifts Json
+
+  createdBy String? @map("created_by")
+  updatedBy String? @map("updated_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([deletedAt])
+  @@map("schedules")
 }

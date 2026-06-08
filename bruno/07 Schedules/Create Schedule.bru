@@ -1,0 +1,82 @@
+meta {
+  name: Create Schedule
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/branches/{{branchId}}/schedules
+  body: json
+  auth: bearer
+}
+
+headers {
+  authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwZXJzb25faWQiOiIyOTQ5N2I2NC0wNGUyLTQwZjktYTY2OS04NDBiZmNlOGU3ZDYiLCJ0ZW5hbnRfaWQiOiJhYjE2OTY1MC01Mzc1LTQwYmUtYTIxMi00ZGE0ZTJiMDE5NGQiLCJhY3RpdmVfYnJhbmNoX2lkIjpudWxsLCJhY3RpdmVfYnJhbmNoX3R5cGUiOm51bGwsImFjdGl2ZV9wcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwiaXNfcGF0aWVudF9jb250ZXh0IjpmYWxzZSwicHJvZmlsZXMiOlt7ImJyYW5jaF9pZCI6bnVsbCwiYnJhbmNoX25hbWUiOm51bGwsImJyYW5jaF90eXBlIjpudWxsLCJwcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwicHJvZmlsZV9sYWJlbCI6IkJ1c2luZXNzIEFkbWluIiwiaXNfZGVmYXVsdCI6dHJ1ZX1dLCJpc19wYXRpZW50IjpmYWxzZSwicGxhdGZvcm1fbXJuIjoiS0FMLTIwMjYwNjA4LTM2OTBCRkQxIiwiaWF0IjoxNzgwOTE5NTg1LCJleHAiOjE3ODA5MjA0ODV9.9-FgakTfsc0MFAvgBb_l4SEav9oCnP7YLFax92E2PVs
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "planName": "Split-Day Coverage",
+    "status": "ACTIVE",
+    "effectiveFrom": "2026-07-01",
+    "effectiveTo": "2026-12-31",
+    "shifts": [
+      {
+        "shiftName": "MORNING",
+        "startTime": "08:00",
+        "endTime": "14:00",
+        "breakStartTime": "10:30",
+        "breakEndTime": "11:00",
+        "activeDays": [
+          "MONDAY",
+          "WEDNESDAY",
+          "FRIDAY"
+        ]
+      },
+      {
+        "shiftName": "AFTERNOON",
+        "startTime": "08:00",
+        "endTime": "14:00",
+        "breakStartTime": "10:30",
+        "breakEndTime": "11:00",
+        "activeDays": [
+          "TUESDAY",
+          "THURSDAY"
+        ]
+      }
+    ]
+  }
+}
+
+vars:pre-request {
+  branchId: 33f7c1db-3fd4-4e0b-b5ee-30c731535a05
+  businessAccessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwZXJzb25faWQiOiIyOTQ5N2I2NC0wNGUyLTQwZjktYTY2OS04NDBiZmNlOGU3ZDYiLCJ0ZW5hbnRfaWQiOiJhYjE2OTY1MC01Mzc1LTQwYmUtYTIxMi00ZGE0ZTJiMDE5NGQiLCJhY3RpdmVfYnJhbmNoX2lkIjpudWxsLCJhY3RpdmVfYnJhbmNoX3R5cGUiOm51bGwsImFjdGl2ZV9wcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwiaXNfcGF0aWVudF9jb250ZXh0IjpmYWxzZSwicHJvZmlsZXMiOlt7ImJyYW5jaF9pZCI6bnVsbCwiYnJhbmNoX25hbWUiOm51bGwsImJyYW5jaF90eXBlIjpudWxsLCJwcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwicHJvZmlsZV9sYWJlbCI6IkJ1c2luZXNzIEFkbWluIiwiaXNfZGVmYXVsdCI6dHJ1ZX1dLCJpc19wYXRpZW50IjpmYWxzZSwicGxhdGZvcm1fbXJuIjoiS0FMLTIwMjYwNjA4LTM2OTBCRkQxIiwiaWF0IjoxNzgwOTI4MzIwLCJleHAiOjE3ODA5MjkyMjB9.OYjmyhsATXP93NboBgVERO34GCt9rrbkudWR3R3GPmY
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("scheduleId", data.id);
+}
+
+docs {
+  Create a schedule for the branch in the URL (`branchId` is validated against
+  the caller's tenant). Captures `scheduleId`.
+  
+  - `status`: `ACTIVE` | `INACTIVE` | `DRAFT` (defaults to `DRAFT`). Only ACTIVE
+    schedules are checked for date-range overlap.
+  - `effectiveFrom` required; `effectiveTo` optional (omit for open-ended).
+  - `shifts`: at least one. `shiftName` is `MORNING`/`AFTERNOON`/`EVENING`/`NIGHT`;
+    all four times are `HH:mm` (24h) and required. Each shift carries its own
+    `activeDays`: array of `MONDAY`..`SUNDAY` (at least one, no duplicates). The
+    break must fall inside the shift; two shifts must not overlap in time on a
+    shared active day. A NIGHT shift may cross midnight (`endTime` <=
+    `startTime`, e.g. 22:00–06:00).
+  
+  Errors: `SCHEDULE_DATE_OVERLAP` (409) if another ACTIVE schedule covers these
+  dates; `INVALID_SHIFT` / `INVALID_SCHEDULE_DATES` (400) on bad shift/date data.
+}

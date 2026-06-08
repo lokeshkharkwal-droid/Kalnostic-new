@@ -15,8 +15,34 @@ async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule);
   const config = app.get(ConfigService);
 
+  // ── CORS ──
+  // Allow browser-based frontends to call this API.
+  // CORS_ORIGIN can be a comma-separated list of allowed origins.
+  // e.g. CORS_ORIGIN=http://localhost:5173,http://localhost:3001
+  // Falls back to permissive '*' in development when not set.
+  const rawOrigins = config.get<string>('CORS_ORIGIN', '*');
+  const allowedOrigins =
+    rawOrigins === '*'
+      ? '*'
+      : rawOrigins.split(',').map((o) => o.trim());
+
+  app.enableCors({
+    origin: allowedOrigins,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'Accept',
+      'x-tenant-id',
+      'x-branch-id',
+    ],
+    credentials: true,
+  });
+
   // ── Security & performance middleware ──
-  app.use(helmet()); // sensible security headers
+  // helmet() is applied AFTER enableCors so it doesn't interfere with
+  // the preflight OPTIONS response.
+  app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
   app.use(compression()); // gzip responses
 
   // All routes are served under /api/v1 (e.g. POST /api/v1/auth/login).

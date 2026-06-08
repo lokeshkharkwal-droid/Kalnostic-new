@@ -18,4 +18,8 @@ export const envValidationSchema = Joi.object({
   JWT_REFRESH_TTL_DAYS: Joi.number().default(30),
   SITEADMIN_TOKEN_TTL: Joi.string().default('8h'),
   BCRYPT_ROUNDS: Joi.number().default(12),
+  // When true, PrismaService sets app.current_tenant_id per request so Postgres
+  // RLS (prisma/rls.sql) enforces tenant isolation. Requires a non-owner DB role
+  // and rls.sql applied. Default false — isolation then relies on where-clauses.
+  RLS_ENABLED: Joi.boolean().default(false),
 });

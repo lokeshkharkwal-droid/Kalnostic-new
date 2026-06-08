@@ -1,0 +1,20 @@
+meta {
+  name: Get Schedule
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/branches/{{branchId}}/schedules/{{scheduleId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Fetch one schedule by id (scoped to its branch + the caller's tenant). Uses
+  the `scheduleId` captured by **Create Schedule**.
+}

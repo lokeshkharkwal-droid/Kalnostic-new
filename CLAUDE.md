@@ -344,11 +344,18 @@ Rules of thumb:
 - **For any new feature, the §4.6 tier decision + §4.7 scoping rules are not
   optional** — they are the first thing to settle, before the schema.
 
-> **Current state:** the tenant, branch, users, auth, and siteadmin modules are
-> implemented; the `meta` envelope (§7) and `KaltrosException` (§6) are wired
-> globally. Business routes are authenticated (business JWT) but do **not** yet
-> enforce per-permission RBAC at the route level — the permission baselines +
-> overrides are resolved as data for the frontend and a future business
-> permission guard. SiteAdmin routes **do** enforce role/permission via
-> `SiteAdminPermissionGuard`. See `docs/api.html` for the full endpoint +
-> authorization reference.
+> **Current state:** the tenant, branch, schedule, users, auth, and siteadmin
+> modules are implemented; the `meta` envelope (§7) and `KaltrosException` (§6)
+> are wired globally. Branches carry a system-generated, immutable, per-tenant
+> sequential `code` (`BR-00001`…, from `Tenant.branchCounter`); a tenant's
+> single main branch lives in `TenantMainBranch` (one row per tenant, set via
+> `PUT /branches/main-branch`). The `schedule` module (branch-level) stores
+> shift plans on the `Schedule` model with `shifts` as JSON (each shift carrying
+> its own `activeDays`); the
+> service enforces midnight-aware shift validation and at most one ACTIVE
+> schedule per overlapping date range per branch. Business routes are
+> authenticated (business JWT) but do **not** yet enforce per-permission RBAC at
+> the route level — the permission baselines + overrides are resolved as data
+> for the frontend and a future business permission guard. SiteAdmin routes
+> **do** enforce role/permission via `SiteAdminPermissionGuard`. See
+> `docs/api.html` for the full endpoint + authorization reference.

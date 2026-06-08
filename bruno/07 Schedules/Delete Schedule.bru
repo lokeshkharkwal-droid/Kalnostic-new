@@ -1,0 +1,20 @@
+meta {
+  name: Delete Schedule
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/branches/{{branchId}}/schedules/{{scheduleId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Soft-delete a schedule (sets `deletedAt`; the row is preserved). Scoped to its
+  branch + the caller's tenant.
+}

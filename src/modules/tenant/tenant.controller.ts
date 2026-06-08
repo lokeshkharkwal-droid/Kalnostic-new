@@ -11,7 +11,7 @@ import {
 import { TenantService } from './tenant.service';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
-import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import { ListTenantsQueryDto } from './dto/list-tenants-query.dto';
 import { SiteAdminPermissionGuard } from '../siteadmin/guards/siteadmin-permission.guard';
 import { RequireSiteAdminPermission } from '../siteadmin/decorators/require-siteadmin-permission.decorator';
 import { CurrentSiteAdmin } from '../siteadmin/decorators/current-siteadmin.decorator';
@@ -44,12 +44,13 @@ export class TenantController {
   }
 
   /**
-   * List all tenants (paginated).
+   * List tenants (paginated), optionally filtered by name/slug/email search
+   * and subscription status.
    */
   @Get()
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.BUSINESS_READ)
-  findAll(@Query() query: PaginationQueryDto) {
-    return this.tenantService.findAll(query.page ?? 1, query.limit ?? 20);
+  findAll(@Query() query: ListTenantsQueryDto) {
+    return this.tenantService.findAll(query);
   }
 
   /**
