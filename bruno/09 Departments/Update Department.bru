@@ -1,0 +1,52 @@
+meta {
+  name: Update Department
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/departments/{{departmentId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "description": "Updated department description",
+    "isActive": false,
+    "moduleMapping": ["DIAGNOSTIC"],
+    "personMappings": [
+      {
+        "personId": "{{patientPersonId}}",
+        "position": "MANAGER",
+        "priority": 1
+      }
+    ]
+  }
+}
+
+vars:pre-request {
+  departmentId: eb8eebc0-fe57-42a2-ac94-f11f61eb346c
+  patientPersonId: 6ca062db-14ad-44f6-8419-cae5a7441eea
+}
+
+docs {
+  Update a department (scoped to the caller's tenant). All fields optional.
+  
+  - `code` is immutable and cannot be changed.
+  - When `personMappings` is supplied it REPLACES the whole set: existing active
+    mappings are soft-deleted and the new set is created. Omit `personMappings`
+    to leave the current mappings untouched.
+  - The same validation rules as create apply to a replacement set:
+    `INVALID_DEPARTMENT_PRIORITY`, `DUPLICATE_DEFAULT_POSITION`,
+    `PERSON_NOT_FOUND`. Renaming to a name used by another active department →
+    409 `DEPARTMENT_NAME_CONFLICT`.
+}

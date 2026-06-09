@@ -30,7 +30,9 @@ docs {
      tenant slug) → captures `businessAccessToken` / `businessRefreshToken`.
   4. **Branches → Create Branch** → captures `branchId`.
   5. **Users → Register Patient / Register Staff** → captures person ids.
-  6. Explore the rest — profiles, permissions, receptionist mappings, etc.
+  6. **Departments → Create Department** → captures `departmentId` (uses
+     captured person ids in its `personMappings`).
+  7. Explore the rest — profiles, permissions, receptionist mappings, etc.
 
   Run the requests in order; the post-response scripts populate the `Local`
   environment variables automatically. Select the **Local** environment first.

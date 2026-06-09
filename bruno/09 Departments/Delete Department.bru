@@ -1,0 +1,25 @@
+meta {
+  name: Delete Department
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/departments/{{departmentId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  departmentId: eb8eebc0-fe57-42a2-ac94-f11f61eb346c
+}
+
+docs {
+  Soft-delete a department (sets `deletedAt`) and cascade soft-deletes its active
+  person mappings, in one transaction. Scoped to the caller's tenant. The
+  department `name` and `code` are freed for reuse among active rows afterward.
+}

@@ -22,9 +22,7 @@ async function bootstrap(): Promise<void> {
   // Falls back to permissive '*' in development when not set.
   const rawOrigins = config.get<string>('CORS_ORIGIN', '*');
   const allowedOrigins =
-    rawOrigins === '*'
-      ? '*'
-      : rawOrigins.split(',').map((o) => o.trim());
+    rawOrigins === '*' ? '*' : rawOrigins.split(',').map((o) => o.trim());
 
   app.enableCors({
     origin: allowedOrigins,

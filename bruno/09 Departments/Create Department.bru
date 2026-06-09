@@ -1,0 +1,86 @@
+meta {
+  name: Create Department
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/departments
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Pathology",
+    "description": "Clinical pathology department",
+    "isActive": true,
+    "moduleMapping": ["DIAGNOSTIC", "RADIOLOGY"],
+    "personMappings": [
+      {
+        "personId": "{{patientPersonId}}",
+        "position": "HOD",
+        "isSignatory": true,
+        "priority": 1,
+        "isDefault": true
+      }
+    ]
+  }
+}
+
+vars:pre-request {
+  patientPersonId: 6ca062db-14ad-44f6-8419-cae5a7441eea
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("departmentId", data.id);
+}
+
+docs {
+  Create a department in the caller's tenant (tenant id taken from the JWT).
+  Tenant-level — departments belong to the business as a whole, NOT a branch.
+  Captures `departmentId`.
+  
+  ## Fields
+  
+  - `name` — 2-255 chars, unique among active departments in the tenant (409
+    `DEPARTMENT_NAME_CONFLICT` otherwise).
+  - `description` — optional, ≤ 2000 chars.
+  - `isActive` — optional, defaults `true`.
+  - `moduleMapping` — REQUIRED array using the same enum as `branchType`:
+    `DIAGNOSTIC`, `RADIOLOGY`, `OPD`, `IPD`, `PHARMACY`, `INVENTORY`,
+    `BLOOD_BANK`, `FRANCHISE`, `COMBINED`. Must be unique (no duplicates).
+  - `personMappings` — optional array; each entry:
+    - `personId` (UUID of an existing person),
+    - `position` — one of `HOD`, `SPECIALIST`, `CONSULTANT`, `MANAGER`,
+      `TECHNICIAN`,
+    - `isSignatory` (bool, default false),
+    - `priority` (int ≥ 1),
+    - `isDefault` (bool, default false).
+  
+  NOTE: `code` is system-generated (`{INITIALS}-Dep-{n}`, e.g. `AD-Dep-0` for a
+  tenant named "Acme Diagnostics"; `n` is a 0-based per-tenant counter) and
+  immutable — do NOT send it (it is rejected as an unknown field).
+  
+  ## Validation rules (enforced server-side)
+  
+  - `priority` must be between 1 and the tenant's TOTAL active person-mapping
+    count (existing rows + the rows in this request). Out of range →
+    400 `INVALID_DEPARTMENT_PRIORITY`.
+  - At most one `isDefault: true` per `position` in the payload →
+    409 `DUPLICATE_DEFAULT_POSITION` otherwise.
+  - Every `personId` must exist (active) → 404 `PERSON_NOT_FOUND` otherwise.
+  
+  The example uses `{{patientPersonId}}` (captured by Users → Register Patient).
+  Add more entries to `personMappings` as needed — remember `priority` ≤ the
+  tenant's total mapping count.
+}

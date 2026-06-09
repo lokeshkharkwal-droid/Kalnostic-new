@@ -11,7 +11,7 @@
 //     SiteAdminUser, RefreshToken, PersonTenantEnrollment
 //   - TENANT-SCOPED models (tenant_id + RLS): Branch, UserBranchProfile,
 //     UserProfilePermissionOverride, ReceptionistDoctorMapping,
-//     TenantMainBranch, Schedule
+//     TenantMainBranch, Schedule, Department, DepartmentPersonMapping
 //
 // RLS policies for tenant-scoped tables live in prisma/rls.sql (CLAUDE.md §4.3).
 
@@ -94,11 +94,42 @@ enum ScheduleStatus {
   DRAFT
 }
 
+/// The position a person holds within a department.
+enum DepartmentPosition {
+  HOD
+  SPECIALIST
+  CONSULTANT
+  MANAGER
+  TECHNICIAN
+}
+
 enum ShiftName {
   MORNING
   AFTERNOON
   EVENING
   NIGHT
+}
+
+/// Which functional area an audit event belongs to (the "Module" column).
+enum AuditModule {
+  USER
+  BRANCH
+  SCHEDULE
+  TENANT
+  DEPARTMENT
+  AUTH
+  SITEADMIN // reserved; not written to in this phase (business audit only)
+}
+
+/// The kind of operation an audit event records.
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  EXPORT
+  OTHER
 }
 
 // ── Platform-level models (NO tenant_id) ────────────────────────────────────────
@@ -130,6 +161,7 @@ model Tenant {
   mrnCounter    Int     @default(0) @map("mrn_counter") // per-tenant sequential patient MRN
   mrnPrefix     String? @map("mrn_prefix")
   branchCounter Int     @default(0) @map("branch_counter") // per-tenant sequential branch code
+  departmentCounter Int @default(0) @map("department_counter") // per-tenant sequential department code
   createdBy     String? @map("created_by") // SiteAdmin user id
 
   createdAt DateTime  @default(now()) @map("created_at")
@@ -436,4 +468,97 @@ model Schedule {
   @@index([branchId])
   @@index([deletedAt])
   @@map("schedules")
+}
+
+/// A department within a tenant (business-wide; NOT branch-scoped — CLAUDE.md
+/// §4.6 tenant-level tier). The `code` is system-generated and immutable:
+/// `{INITIALS}-Dep-{n}`, where INITIALS are derived from the tenant name and `n`
+/// is a per-tenant sequential counter (Tenant.departmentCounter), e.g.
+/// `ABC-Dep-0`, `ABC-Dep-1`. Unique per tenant among active rows (partial unique
+/// index in prisma/rls.sql). RLS policy in prisma/rls.sql.
+model Department {
+  id          String  @id @default(uuid())
+  tenantId    String  @map("tenant_id")
+  name        String
+  description String?
+  code        String
+  isActive    Boolean @default(true) @map("is_active")
+
+  /// "Module mapping" — reuses the same enum as Branch.branchType, so the valid
+  /// values stay identical to branch creation. A department may cover several.
+  moduleMapping BranchType[] @map("module_mapping")
+
+  personMappings DepartmentPersonMapping[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([deletedAt])
+  @@map("departments")
+}
+
+/// Links a Person (platform-level) to a Department with a position plus signing
+/// authority and ordering metadata. Tenant-scoped (mirrors UserBranchProfile —
+/// `person_id` is a logical FK to the platform `persons` table). `priority` is
+/// validated in DepartmentService against the tenant's total mapping count.
+model DepartmentPersonMapping {
+  id           String             @id @default(uuid())
+  tenantId     String             @map("tenant_id")
+  departmentId String             @map("department_id")
+  personId     String             @map("person_id")
+  position     DepartmentPosition
+  isSignatory  Boolean            @default(false) @map("is_signatory")
+  priority     Int
+  isDefault    Boolean            @default(false) @map("is_default")
+
+  department Department @relation(fields: [departmentId], references: [id])
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([departmentId])
+  @@index([personId])
+  @@index([deletedAt])
+  @@map("department_person_mappings")
+}
+
+/// An audit-trail entry: who did what, in which module, from where, and when.
+/// Tenant-scoped + branch-level (CLAUDE.md §4.6 default tier). Rows are written
+/// by the global AuditInterceptor (from `@Audit(...)` route metadata) or by
+/// AuditService.record directly; they are effectively append-only.
+///
+/// Actor fields are snapshotted from the business JWT at write time so the log
+/// stays readable even if the person's profile later changes.
+model AuditLog {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id") // null = tenant-level action
+
+  module      AuditModule
+  action      AuditAction @default(OTHER)
+  description String // human-readable "what the user performed"
+
+  actorPersonId  String  @map("actor_person_id") // the User
+  actorRoleKey   String? @map("actor_role_key") // Role = active_profile_key
+  actorRoleLabel String? @map("actor_role_label") // human-readable role label
+  ipAddress      String? @map("ip_address") // caller IP
+
+  resourceId String? @map("resource_id") // optional id of the affected resource
+  metadata   Json? // optional extra structured detail
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([module])
+  @@index([actorPersonId])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@map("audit_logs")
 }

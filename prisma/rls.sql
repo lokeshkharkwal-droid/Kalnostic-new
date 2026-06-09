@@ -80,6 +80,39 @@ CREATE POLICY rdm_tenant_isolation ON receptionist_doctor_mappings
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── departments ─────────────────────────────────────────────────────────────────
+ALTER TABLE departments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE departments FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS departments_tenant_isolation ON departments;
+CREATE POLICY departments_tenant_isolation ON departments
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- Per-tenant uniqueness for department name + code, among ACTIVE rows only
+-- (partial index on deleted_at IS NULL), so a name/code freed by a soft-delete
+-- can be reused. `code` is system-generated & immutable; `name` is user-set.
+-- Prisma can't express partial unique indexes, so they live here.
+CREATE UNIQUE INDEX IF NOT EXISTS departments_tenant_code_active_unique
+  ON departments (tenant_id, code) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS departments_tenant_name_active_unique
+  ON departments (tenant_id, name) WHERE deleted_at IS NULL;
+
+-- ── department_person_mappings ────────────────────────────────────────────────────
+ALTER TABLE department_person_mappings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE department_person_mappings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS dpm_tenant_isolation ON department_person_mappings;
+CREATE POLICY dpm_tenant_isolation ON department_person_mappings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── audit_logs ────────────────────────────────────────────────────────────────
+ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_logs FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS audit_logs_tenant_isolation ON audit_logs;
+CREATE POLICY audit_logs_tenant_isolation ON audit_logs
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- Platform-level tables (tenants, persons, person_credentials, siteadmin_users,
 -- refresh_tokens, person_tenant_enrollments) are intentionally NOT covered —
 -- they sit above the tenant boundary.

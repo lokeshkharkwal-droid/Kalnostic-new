@@ -13,9 +13,11 @@ import { BranchService } from './branch.service';
 import { CreateBranchDto } from './dto/create-branch.dto';
 import { UpdateBranchDto } from './dto/update-branch.dto';
 import { SetMainBranchDto } from './dto/set-main-branch.dto';
+import { AuditAction, AuditModule } from '@prisma/client';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
  * Branch endpoints (business-authenticated; tenant comes from the JWT).
@@ -29,6 +31,11 @@ export class BranchController {
    * Create a branch in the caller's tenant.
    */
   @Post()
+  @Audit({
+    module: AuditModule.BRANCH,
+    action: AuditAction.CREATE,
+    description: 'Created a branch',
+  })
   create(@CurrentTenant() tenantId: string, @Body() dto: CreateBranchDto) {
     return this.branchService.create(tenantId, dto);
   }
@@ -67,6 +74,11 @@ export class BranchController {
    * Set (or change) the tenant's main branch.
    */
   @Put('main-branch')
+  @Audit({
+    module: AuditModule.BRANCH,
+    action: AuditAction.UPDATE,
+    description: 'Set the main branch',
+  })
   setMainBranch(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
@@ -87,6 +99,11 @@ export class BranchController {
    * Update a branch.
    */
   @Patch(':id')
+  @Audit({
+    module: AuditModule.BRANCH,
+    action: AuditAction.UPDATE,
+    description: 'Updated a branch',
+  })
   update(
     @CurrentTenant() tenantId: string,
     @Param('id') id: string,
@@ -99,6 +116,11 @@ export class BranchController {
    * Soft-delete a branch.
    */
   @Delete(':id')
+  @Audit({
+    module: AuditModule.BRANCH,
+    action: AuditAction.DELETE,
+    description: 'Deleted a branch',
+  })
   remove(@CurrentTenant() tenantId: string, @Param('id') id: string) {
     return this.branchService.remove(id, tenantId);
   }

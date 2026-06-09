@@ -1,0 +1,25 @@
+meta {
+  name: Get Audit
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/audits/{{auditId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  auditId: 601dd964-5189-44c3-8f9c-c9df434eb2fa
+}
+
+docs {
+  Fetch one audit-trail entry by id (scoped to the caller's tenant). Returns
+  404 `AUDIT_NOT_FOUND` if it does not exist in this tenant. Set `auditId` from
+  an id returned by **List Audits**.
+}

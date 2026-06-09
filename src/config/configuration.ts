@@ -15,6 +15,10 @@ export const configuration = () => ({
     secret: process.env.JWT_SECRET,
     expiresIn: process.env.JWT_EXPIRES_IN ?? '1h',
   },
+  audit: {
+    // Days an audit row is kept before the daily purge hard-deletes it.
+    retentionDays: parseInt(process.env.AUDIT_RETENTION_DAYS ?? '90', 10),
+  },
 });
 
 export type AppConfiguration = ReturnType<typeof configuration>;

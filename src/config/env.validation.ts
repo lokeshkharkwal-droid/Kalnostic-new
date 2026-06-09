@@ -22,4 +22,8 @@ export const envValidationSchema = Joi.object({
   // RLS (prisma/rls.sql) enforces tenant isolation. Requires a non-owner DB role
   // and rls.sql applied. Default false — isolation then relies on where-clauses.
   RLS_ENABLED: Joi.boolean().default(false),
+  // Retention window for audit logs: rows older than this many days are
+  // hard-deleted by the daily purge in AuditService (CLAUDE.md retention
+  // policy). Default 90 (~3 months).
+  AUDIT_RETENTION_DAYS: Joi.number().integer().min(1).default(90),
 });

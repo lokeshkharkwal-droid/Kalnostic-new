@@ -1,0 +1,50 @@
+meta {
+  name: List Audits
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/audits?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~module: BRANCH
+  ~action: CREATE
+  ~search: branch
+  ~actorPersonId: 00000000-0000-0000-0000-000000000000
+  ~branchId: 00000000-0000-0000-0000-000000000000
+  ~from: 2026-06-01
+  ~to: 2026-06-30
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Paginated list of audit-trail entries for the caller's tenant, newest first.
+  Pagination info (`total / page / limit / totalPages`) is lifted into `meta`.
+
+  All query params are optional (the `~`-prefixed ones above are disabled
+  examples — enable the ones you need):
+
+  - `page` (>=1, default 1) / `limit` (1-100, default 20) — pagination.
+  - `module` — filter by functional area. One of:
+    `USER`, `BRANCH`, `SCHEDULE`, `TENANT`, `AUTH`, `SITEADMIN`.
+  - `action` — filter by operation. One of:
+    `CREATE`, `UPDATE`, `DELETE`, `LOGIN`, `LOGOUT`, `EXPORT`, `OTHER`.
+  - `actorPersonId` — exact person id of the actor.
+  - `branchId` — exact branch id (branch-level events).
+  - `from` / `to` — inclusive `createdAt` bounds (ISO-8601 date or datetime).
+  - `search` — case-insensitive substring matched against the actor
+    (person id / role label) and the description.
+
+  Each item carries: `createdAt` (timestamp), `actorPersonId` (User),
+  `actorRoleKey` + `actorRoleLabel` (Role), `module`, `action`, `description`,
+  `ipAddress`, `branchId`, plus optional `resourceId` / `metadata`.
+}

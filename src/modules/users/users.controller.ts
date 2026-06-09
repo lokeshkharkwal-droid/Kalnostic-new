@@ -20,8 +20,10 @@ import {
 } from './dto/assign-profile.dto';
 import { SetPermissionsDto } from './dto/set-permissions.dto';
 import { SetReceptionistDoctorsDto } from './dto/set-receptionist-doctors.dto';
+import { AuditAction, AuditModule } from '@prisma/client';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
  * User/person management (business-authenticated; tenant + actor come from the
@@ -35,6 +37,11 @@ export class UsersController {
    * Register a new patient in the caller's tenant.
    */
   @Post()
+  @Audit({
+    module: AuditModule.USER,
+    action: AuditAction.CREATE,
+    description: 'Registered a patient',
+  })
   registerPatient(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') actorId: string,
@@ -55,6 +62,11 @@ export class UsersController {
    * Register a new staff member (returns a one-time temp password).
    */
   @Post('staff')
+  @Audit({
+    module: AuditModule.USER,
+    action: AuditAction.CREATE,
+    description: 'Registered a staff member',
+  })
   registerStaff(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') actorId: string,
@@ -75,6 +87,11 @@ export class UsersController {
    * Update a person's basic details (ownership rules apply).
    */
   @Patch(':id')
+  @Audit({
+    module: AuditModule.USER,
+    action: AuditAction.UPDATE,
+    description: "Updated a person's details",
+  })
   update(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') actorId: string,
@@ -88,6 +105,11 @@ export class UsersController {
    * Assign a profile to a person at a branch (or tenant-level).
    */
   @Post(':id/profiles')
+  @Audit({
+    module: AuditModule.USER,
+    action: AuditAction.CREATE,
+    description: 'Assigned a profile to a person',
+  })
   assignProfile(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') actorId: string,
@@ -108,6 +130,11 @@ export class UsersController {
    * Revoke a profile assignment (soft).
    */
   @Delete(':id/profiles')
+  @Audit({
+    module: AuditModule.USER,
+    action: AuditAction.DELETE,
+    description: 'Revoked a profile assignment',
+  })
   revokeProfile(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') actorId: string,
@@ -127,6 +154,11 @@ export class UsersController {
    * Set the default landing profile for a person.
    */
   @Patch(':id/default-profile')
+  @Audit({
+    module: AuditModule.USER,
+    action: AuditAction.UPDATE,
+    description: 'Set a default profile',
+  })
   setDefaultProfile(
     @CurrentTenant() tenantId: string,
     @Param('id') id: string,
@@ -162,6 +194,11 @@ export class UsersController {
    * Replace the permission overrides for a profile assignment.
    */
   @Put(':id/permissions')
+  @Audit({
+    module: AuditModule.USER,
+    action: AuditAction.UPDATE,
+    description: 'Updated profile permission overrides',
+  })
   setPermissions(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') actorId: string,
@@ -194,6 +231,11 @@ export class UsersController {
    * Replace the doctors mapped to a receptionist at a branch.
    */
   @Put(':id/receptionist-doctors')
+  @Audit({
+    module: AuditModule.USER,
+    action: AuditAction.UPDATE,
+    description: 'Updated receptionist-doctor mappings',
+  })
   setReceptionistDoctors(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') actorId: string,
@@ -213,6 +255,11 @@ export class UsersController {
    * Reset a staff member's password (returns a one-time temp password).
    */
   @Post(':id/reset-password')
+  @Audit({
+    module: AuditModule.USER,
+    action: AuditAction.UPDATE,
+    description: "Reset a staff member's password",
+  })
   resetPassword(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') actorId: string,

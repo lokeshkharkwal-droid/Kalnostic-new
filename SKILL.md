@@ -18,7 +18,8 @@
 6. [Response envelope & pagination (meta-based)](#6-response-envelope--pagination)
 7. [Environment config](#7-environment-config)
 8. [Auth & guards](#8-auth--guards)
-9. [How to add a new feature (checklist)](#9-how-to-add-a-new-feature-checklist)
+9. [Audit logging (track tenant actions)](#9-audit-logging-track-tenant-actions)
+10. [How to add a new feature (checklist)](#10-how-to-add-a-new-feature-checklist)
 
 ---
 
@@ -376,7 +377,57 @@ password & `system_username` formats exclude `I O 0 1`.
 
 ---
 
-## 9. How to add a new feature (checklist)
+## 9. Audit logging (track tenant actions)
+
+Every tenant-scoped **write** is recorded in the `audit_logs` table (who did
+what, in which module, from which IP, and when) by a global `AuditInterceptor`.
+You opt a route in **declaratively** with the `@Audit(...)` decorator — there is
+**no manual logging code in services**.
+
+```ts
+// src/modules/branch/branch.controller.ts
+import { AuditAction, AuditModule } from '@prisma/client';
+import { Audit } from '../../common/decorators/audit.decorator';
+
+@Post()
+@Audit({
+  module: AuditModule.BRANCH,
+  action: AuditAction.CREATE,
+  description: 'Created a branch',
+})
+create(@CurrentTenant() tenantId: string, @Body() dto: CreateBranchDto) {
+  return this.branchService.create(tenantId, dto);
+}
+```
+
+What gets saved (snapshotted from the JWT + request, so the log stays readable
+later): actor `person_id`, role (`active_profile_key` + its label), `tenant_id`,
+active `branch_id`, the client IP, and your `module` / `action` / `description`.
+The write is **fire-and-forget** — a failed audit write logs an error but never
+blocks or fails the user's request.
+
+**Rules:**
+
+- Annotate **every mutating route** (`POST` / `PUT` / `PATCH` / `DELETE`) of a
+  tenant feature. Reads (`GET`) are not logged.
+- The route must run under the business `JwtAuthGuard` (the default). Routes that
+  are unannotated, `@Public()`, or SiteAdmin-only are **not** business-audited —
+  with no `req.user.tenant_id` there is no tenant to scope the row to, so the
+  interceptor skips them.
+- **New feature area?** Add a value to the `AuditModule` enum in
+  `prisma/schema.prisma` (+ a migration) before referencing it. Pick the closest
+  existing `AuditAction`, or use `OTHER`.
+- **Flows without `req.user`** (e.g. login/logout on `@Public()` auth routes):
+  inject the exported `AuditService` and call `auditService.record({ … })`
+  directly — pass `tenantId` and actor fields explicitly.
+
+> The read API lives in `src/modules/audit` (`GET /audits`, `GET /audits/:id`):
+> paginated and filterable by module / action / actor / branch / date range,
+> plus a free-text `search` over the user and description.
+
+---
+
+## 10. How to add a new feature (checklist)
 
 - [ ] **0. Decide the tier (FIRST — CLAUDE.md §4.6).** Platform-level (no
       `tenantId`, rare — justify it) → tenant-scoped (default) → also
@@ -400,6 +451,9 @@ password & `system_username` formats exclude `I O 0 1`.
 - [ ] **Controller** — thin; `@CurrentTenant()` for tenant, `@CurrentProfile()`
       for active branch; return raw data (interceptor wraps it); list endpoints
       return `{ data, total, page, limit }` (§6); add guards/`@Public()`.
+- [ ] **Audit** — add `@Audit({ module, action, description })` to **every write
+      endpoint** so tenant actions are recorded (§9). New module area → add an
+      `AuditModule` enum value (+ migration) first.
 - [ ] **Module wiring** — `imports: [PrismaModule, …]`; `exports` the service if
       others need it; never import another service's file directly (rule #3).
 - [ ] **Register** — add the module to `AppModule.imports`.

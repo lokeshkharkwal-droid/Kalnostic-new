@@ -22,12 +22,15 @@ body:json {
 }
 
 script:post-response {
-  if (res.getStatus() === 200 || res.getStatus() === 201) {
-    const data = res.getBody() && res.getBody().data;
-    if (data && data.accessToken) {
-      bru.setEnvVar("siteAdminToken", data.accessToken);
-    }
+  // Parse the response body
+  const responseData = res.getBody();
+  
+  // Verify the response was successful before updating the token
+  if (responseData && responseData.success && responseData.data) {
+    // Extract and save the token to your environment variable
+    bru.setEnvVar("siteAdminToken", responseData.data.accessToken);
   }
+  
 }
 
 docs {

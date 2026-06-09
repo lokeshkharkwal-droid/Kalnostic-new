@@ -23,19 +23,19 @@ body:json {
 }
 
 vars:pre-request {
-  adminPhone: +919812345678
-  adminTempPassword: Yvyzkq54
+  adminPhone: +919812345670
+  adminTempPassword: Furgfv64
   tenantSlug: acme-diagnostics
 }
 
 script:post-response {
-  if (res.getStatus() === 200 || res.getStatus() === 201) {
-    const data = res.getBody() && res.getBody().data;
-    if (data) {
-      if (data.accessToken) bru.setEnvVar("businessAccessToken", data.accessToken);
-      if (data.refreshToken) bru.setEnvVar("businessRefreshToken", data.refreshToken);
-    }
+  const responseData = res.getBody();
+  
+  if (responseData && responseData.success && responseData.data) {
+    // Use setVar instead of setEnvVar
+    bru.setVar("businessAccessToken", responseData.data.accessToken);
   }
+  
 }
 
 docs {

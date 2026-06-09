@@ -1,11 +1,20 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+// Aliased: the project already has a domain `ScheduleModule`
+// (src/modules/schedule) for shift scheduling — this is the @nestjs/schedule
+// background-job scheduler that powers @Cron jobs (e.g. audit-log retention).
+import { ScheduleModule as NestScheduleModule } from '@nestjs/schedule';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { configuration, envValidationSchema } from './config';
 import { PrismaModule } from './prisma';
-import { TenantContextInterceptor } from './common/interceptors';
+import {
+  AuditInterceptor,
+  TenantContextInterceptor,
+} from './common/interceptors';
+import { AuditModule } from './modules/audit/audit.module';
 import { BranchModule } from './modules/branch/branch.module';
+import { DepartmentModule } from './modules/department/department.module';
 import { ScheduleModule } from './modules/schedule/schedule.module';
 import { TenantModule } from './modules/tenant/tenant.module';
 import { UsersModule } from './modules/users/users.module';
@@ -35,11 +44,17 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     // In-process domain events (users.* emitted by UsersService).
     EventEmitterModule.forRoot(),
 
+    // Background-job scheduler (@Cron). Powers the daily audit-log retention
+    // purge in AuditService. Aliased import — see top of file.
+    NestScheduleModule.forRoot(),
+
     // Database access.
     PrismaModule,
 
     // Feature + infrastructure modules.
+    AuditModule,
     BranchModule,
+    DepartmentModule,
     ScheduleModule,
     TenantModule,
     UsersModule,
@@ -53,6 +68,10 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     // Establishes the per-request tenant context (AsyncLocalStorage) from the
     // JWT so the Prisma RLS extension can scope queries. Runs after the guard.
     { provide: APP_INTERCEPTOR, useClass: TenantContextInterceptor },
+    // Records an audit row for routes annotated with `@Audit(...)`, after the
+    // handler succeeds. Declared after TenantContextInterceptor so tenant
+    // context is established first.
+    { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },
   ],
 })
 export class AppModule {}

@@ -11,9 +11,11 @@ import {
 import { ScheduleService } from './schedule.service';
 import { CreateScheduleDto } from './dto/create-schedule.dto';
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
+import { AuditAction, AuditModule } from '@prisma/client';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
  * Schedule endpoints, nested under a branch (`/branches/:branchId/schedules`).
@@ -29,6 +31,11 @@ export class ScheduleController {
    * Create a schedule for the branch.
    */
   @Post()
+  @Audit({
+    module: AuditModule.SCHEDULE,
+    action: AuditAction.CREATE,
+    description: 'Created a schedule',
+  })
   create(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
@@ -71,6 +78,11 @@ export class ScheduleController {
    * Update a schedule.
    */
   @Patch(':id')
+  @Audit({
+    module: AuditModule.SCHEDULE,
+    action: AuditAction.UPDATE,
+    description: 'Updated a schedule',
+  })
   update(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
@@ -85,6 +97,11 @@ export class ScheduleController {
    * Soft-delete a schedule.
    */
   @Delete(':id')
+  @Audit({
+    module: AuditModule.SCHEDULE,
+    action: AuditAction.DELETE,
+    description: 'Deleted a schedule',
+  })
   remove(
     @CurrentTenant() tenantId: string,
     @Param('branchId') branchId: string,

@@ -1,3 +1,2 @@
-// Shared pure helper functions go here (e.g. slugify, date helpers).
-// Placeholder so the folder is tracked; remove once real utils are added.
-export {};
+// Shared pure helper functions.
+export * from './client-ip.util';

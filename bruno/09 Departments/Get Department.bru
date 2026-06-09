@@ -1,0 +1,25 @@
+meta {
+  name: Get Department
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/departments/{{departmentId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  departmentId: eb8eebc0-fe57-42a2-ac94-f11f61eb346c
+}
+
+docs {
+  Fetch one department by id (scoped to the caller's tenant), with its active
+  person mappings ordered by `priority`. 404 `DEPARTMENT_NOT_FOUND` if missing,
+  soft-deleted, or owned by another tenant.
+}

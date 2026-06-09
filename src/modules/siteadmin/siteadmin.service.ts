@@ -240,7 +240,6 @@ export class SiteAdminService {
       data: { isActive: false },
     });
     this.logger.log(`SiteAdmin deactivated: ${admin.email} by ${requestedBy}`);
-
   }
 
   /**
@@ -264,6 +263,4 @@ export class SiteAdminService {
     });
     this.logger.log(`SiteAdmin activated: ${admin.email} by ${requestedBy}`);
   }
-
-  
-  }
+}
