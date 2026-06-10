@@ -20,6 +20,7 @@ auth:bearer {
 
 body:json {
   {
+    "shortName": "PATH2",
     "description": "Updated department description",
     "isActive": false,
     "moduleMapping": ["DIAGNOSTIC"],
@@ -38,10 +39,24 @@ vars:pre-request {
   patientPersonId: 6ca062db-14ad-44f6-8419-cae5a7441eea
 }
 
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("shortName was updated", function () {
+    expect(res.getBody().data.shortName).to.equal("PATH2");
+  });
+}
+
 docs {
   Update a department (scoped to the caller's tenant). All fields optional.
-  
+
   - `code` is immutable and cannot be changed.
+  - `shortName` is editable. Same format as create (`^[A-Z0-9]{2,6}$` → 400) and
+    re-validated for uniqueness: changing it to one already used by another
+    active department in the tenant → 409 `DEPARTMENT_SHORT_NAME_CONFLICT`.
+    (The "this prefix is used in dropdowns" confirmation is handled on the
+    frontend; the backend just applies the change.)
   - When `personMappings` is supplied it REPLACES the whole set: existing active
     mappings are soft-deleted and the new set is created. Omit `personMappings`
     to leave the current mappings untouched.

@@ -14,6 +14,10 @@ auth:bearer {
   token: {{businessAccessToken}}
 }
 
+vars:pre-request {
+  branchId: 095ce801-16db-438a-9f26-4fa65d15c88c
+}
+
 docs {
   Soft-delete a branch (sets `deletedAt`). Scoped to the caller's tenant.
 }

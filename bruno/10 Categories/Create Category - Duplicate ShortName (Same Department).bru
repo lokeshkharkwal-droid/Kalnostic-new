@@ -1,0 +1,47 @@
+meta {
+  name: Create Category - Duplicate ShortName (Same Department)
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/categories
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Hematology Panel (Duplicate ShortName)",
+    "shortName": "HEM",
+    "categoryType": "UNDER_DEPARTMENT",
+    "departmentId": "{{departmentId}}",
+    "moduleMapping": ["DIAGNOSTIC"]
+  }
+}
+
+tests {
+  test("409 Conflict", function () {
+    expect(res.getStatus()).to.equal(409);
+  });
+  test("error code is CATEGORY_SHORT_NAME_CONFLICT", function () {
+    expect(res.getBody().error.code).to.equal("CATEGORY_SHORT_NAME_CONFLICT");
+  });
+}
+
+docs {
+  Negative case: a category `shortName` is unique WITHIN its parent department.
+  Run "Create Category (Under Department)" first (it creates `HEM` under
+  `{{departmentId}}`). This request reuses `HEM` under the SAME department with a
+  different `name` → 409 `CATEGORY_SHORT_NAME_CONFLICT`.
+
+  Contrast with "Same ShortName Different Department", which is allowed.
+}

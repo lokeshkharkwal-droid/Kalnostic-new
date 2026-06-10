@@ -1,0 +1,37 @@
+meta {
+  name: Create Department - Missing ShortName
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/departments
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "No ShortName Department",
+    "moduleMapping": ["DIAGNOSTIC"]
+  }
+}
+
+tests {
+  test("400 Bad Request (shortName is mandatory)", function () {
+    expect(res.getStatus()).to.equal(400);
+  });
+}
+
+docs {
+  Negative case: `shortName` is REQUIRED on create. Omitting it fails the
+  `@IsString()` + `@Matches()` validation → 400 with a `shortName` field error.
+}

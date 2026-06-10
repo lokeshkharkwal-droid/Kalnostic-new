@@ -1,0 +1,47 @@
+meta {
+  name: Create Sub-Category - Duplicate ShortName (Same Category)
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/sub-categories
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Complete Blood Count (Duplicate ShortName)",
+    "shortName": "CBC",
+    "subCategoryType": "UNDER_CATEGORY",
+    "categoryId": "{{categoryId}}",
+    "moduleMapping": ["DIAGNOSTIC"]
+  }
+}
+
+tests {
+  test("409 Conflict", function () {
+    expect(res.getStatus()).to.equal(409);
+  });
+  test("error code is SUB_CATEGORY_SHORT_NAME_CONFLICT", function () {
+    expect(res.getBody().error.code).to.equal("SUB_CATEGORY_SHORT_NAME_CONFLICT");
+  });
+}
+
+docs {
+  Negative case: a sub-category `shortName` is unique WITHIN its parent category.
+  Run "Create Sub-Category (Under Category)" first (it creates `CBC` under
+  `{{categoryId}}`). This request reuses `CBC` under the SAME category with a
+  different `name` → 409 `SUB_CATEGORY_SHORT_NAME_CONFLICT`.
+
+  Contrast with "Same ShortName Different Category", which is allowed.
+}

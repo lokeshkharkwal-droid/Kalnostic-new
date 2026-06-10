@@ -1,0 +1,84 @@
+meta {
+  name: Update Sub-Category
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{baseUrl}}/sub-categories/{{subCategoryId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "shortName": "CBC2",
+    "description": "Updated sub-category description",
+    "isActive": false,
+    "subCategoryType": "UNDER_CATEGORY",
+    "categoryId": "{{categoryId}}",
+    "moduleMapping": ["DIAGNOSTIC"],
+    "personMappings": [
+      {
+        "personId": "{{patientPersonId}}",
+        "position": "MANAGER",
+        "priority": 1
+      }
+    ]
+  }
+}
+
+vars:pre-request {
+  subCategoryId: ab92f2e2-8e03-41ae-85f5-ca300f3f4db7
+  categoryId: eb8eebc0-fe57-42a2-ac94-f11f61eb346c
+  departmentId: 57d87b1a-80be-4fb0-afbb-aeb60c802a96
+  patientPersonId: 6ca062db-14ad-44f6-8419-cae5a7441eea
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("shortName was updated", function () {
+    expect(res.getBody().data.shortName).to.equal("CBC2");
+  });
+}
+
+docs {
+  Update a sub-category (scoped to the caller's tenant). All fields optional.
+
+  - `code` is immutable and cannot be changed.
+  - `shortName` is editable (`^[A-Z0-9]{2,6}$` → 400). Re-validated against the
+    sub-category's scope (parent category for UNDER_CATEGORY, parent department
+    for UNDER_DEPARTMENT, the tenant's independent set for INDEPENDENT) →
+    409 `SUB_CATEGORY_SHORT_NAME_CONFLICT`. Changing the type/parent moves it to
+    a new scope, against which the shortName is then checked.
+  - `subCategoryType`, `departmentId`, and `categoryId` may all change —
+    switching between INDEPENDENT, UNDER_DEPARTMENT, and UNDER_CATEGORY is
+    allowed and the resulting parent link is re-validated:
+    - to `UNDER_DEPARTMENT`: a valid active `departmentId` of this tenant is
+      required (`SUB_CATEGORY_DEPARTMENT_REQUIRED` / `DEPARTMENT_NOT_FOUND`);
+      omit `categoryId`;
+    - to `UNDER_CATEGORY`: a valid active `categoryId` of this tenant is
+      required (`SUB_CATEGORY_CATEGORY_REQUIRED` / `CATEGORY_NOT_FOUND`); omit
+      `departmentId`;
+    - to `INDEPENDENT`: send `subCategoryType: "INDEPENDENT"` and OMIT both
+      `departmentId` and `categoryId` (the previous parent is cleared
+      automatically; sending either → `INDEPENDENT_SUB_CATEGORY_PARENT`).
+    Omit ALL three fields to leave the current type/link untouched.
+  - When `personMappings` is supplied it REPLACES the whole set: existing active
+    mappings are soft-deleted and the new set is created. Omit `personMappings`
+    to leave the current mappings untouched.
+  - The same validation rules as create apply to a replacement set:
+    `INVALID_SUB_CATEGORY_PRIORITY`, `DUPLICATE_DEFAULT_POSITION`,
+    `PERSON_NOT_FOUND`. Renaming to a name used by another active sub-category →
+    409 `SUB_CATEGORY_NAME_CONFLICT`.
+}

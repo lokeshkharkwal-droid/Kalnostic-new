@@ -31,3 +31,15 @@ export class MainBranchNotSetException extends KaltrosException {
     );
   }
 }
+
+/** 409 — the main branch cannot be soft-deleted while it is the main branch. */
+export class CannotDeleteMainBranchException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'CANNOT_DELETE_MAIN_BRANCH',
+      'The main branch cannot be deleted. Set another branch as main (or deactivate it) first.',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}

@@ -28,7 +28,8 @@ export class BranchController {
   constructor(private readonly branchService: BranchService) {}
 
   /**
-   * Create a branch in the caller's tenant.
+   * Create a branch in the caller's tenant. When the tenant has no active
+   * branch yet, the new branch is auto-set as the main branch.
    */
   @Post()
   @Audit({
@@ -36,8 +37,12 @@ export class BranchController {
     action: AuditAction.CREATE,
     description: 'Created a branch',
   })
-  create(@CurrentTenant() tenantId: string, @Body() dto: CreateBranchDto) {
-    return this.branchService.create(tenantId, dto);
+  create(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+    @Body() dto: CreateBranchDto,
+  ) {
+    return this.branchService.create(tenantId, dto, personId);
   }
 
   /**

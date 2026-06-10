@@ -70,6 +70,9 @@ enum BranchType {
   BLOOD_BANK
   FRANCHISE
   COMBINED
+  ASSISTANT
+  ACCESSION
+  TECHNICIAN
 }
 
 enum BranchStatus {
@@ -103,6 +106,37 @@ enum DepartmentPosition {
   TECHNICIAN
 }
 
+/// Whether a category stands alone or hangs off a department.
+enum CategoryType {
+  INDEPENDENT
+  UNDER_DEPARTMENT
+}
+
+/// The position a person holds within a category (mirrors DepartmentPosition).
+enum CategoryPosition {
+  HOD
+  SPECIALIST
+  CONSULTANT
+  MANAGER
+  TECHNICIAN
+}
+
+/// Whether a sub-category stands alone, hangs off a department, or off a category.
+enum SubCategoryType {
+  INDEPENDENT
+  UNDER_DEPARTMENT
+  UNDER_CATEGORY
+}
+
+/// The position a person holds within a sub-category (mirrors CategoryPosition).
+enum SubCategoryPosition {
+  HOD
+  SPECIALIST
+  CONSULTANT
+  MANAGER
+  TECHNICIAN
+}
+
 enum ShiftName {
   MORNING
   AFTERNOON
@@ -117,6 +151,8 @@ enum AuditModule {
   SCHEDULE
   TENANT
   DEPARTMENT
+  CATEGORY
+  SUB_CATEGORY
   AUTH
   SITEADMIN // reserved; not written to in this phase (business audit only)
 }
@@ -162,6 +198,8 @@ model Tenant {
   mrnPrefix     String? @map("mrn_prefix")
   branchCounter Int     @default(0) @map("branch_counter") // per-tenant sequential branch code
   departmentCounter Int @default(0) @map("department_counter") // per-tenant sequential department code
+  categoryCounter Int   @default(0) @map("category_counter") // per-tenant sequential category code
+  subCategoryCounter Int @default(0) @map("sub_category_counter") // per-tenant sequential sub-category code
   createdBy     String? @map("created_by") // SiteAdmin user id
 
   createdAt DateTime  @default(now()) @map("created_at")
@@ -482,6 +520,12 @@ model Department {
   name        String
   description String?
   code        String
+
+  /// User-set short prefix for space-constrained dropdowns (2-6 chars, uppercase
+  /// A-Z/0-9). Mandatory and editable. Unique per tenant among active rows
+  /// (partial unique index in prisma/rls.sql).
+  shortName String @map("short_name")
+
   isActive    Boolean @default(true) @map("is_active")
 
   /// "Module mapping" — reuses the same enum as Branch.branchType, so the valid
@@ -490,11 +534,18 @@ model Department {
 
   personMappings DepartmentPersonMapping[]
 
+  /// Categories that hang off this department (CategoryType.UNDER_DEPARTMENT).
+  categories Category[]
+
+  /// Sub-categories that hang off this department (SubCategoryType.UNDER_DEPARTMENT).
+  subCategories SubCategory[]
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
   @@index([tenantId])
+  @@index([shortName])
   @@index([deletedAt])
   @@map("departments")
 }
@@ -524,6 +575,166 @@ model DepartmentPersonMapping {
   @@index([personId])
   @@index([deletedAt])
   @@map("department_person_mappings")
+}
+
+/// A category, the same shape as a Department plus a type dimension: INDEPENDENT
+/// categories stand alone (department_id NULL); UNDER_DEPARTMENT categories link
+/// to an active department of the same tenant (department_id set). The
+/// type↔link invariant is enforced in CategoryService + a CHECK in
+/// prisma/rls.sql (Prisma can't express conditional constraints).
+///
+/// Tenant-scoped, tenant-level (CLAUDE.md §4.6). `code` is system-generated &
+/// immutable: `{INITIALS}-Cat-{n}`, INITIALS from the tenant name, `n` a 0-based
+/// per-tenant sequence from Tenant.categoryCounter. Unique per tenant among
+/// active rows (partial unique index in prisma/rls.sql). RLS policy in rls.sql.
+model Category {
+  id           String       @id @default(uuid())
+  tenantId     String       @map("tenant_id")
+  name         String
+  description  String?
+  code         String
+
+  /// User-set short prefix for space-constrained dropdowns (2-6 chars, uppercase
+  /// A-Z/0-9). Mandatory and editable. Unique within the parent department among
+  /// active rows; INDEPENDENT categories are unique per tenant (partial unique
+  /// indexes in prisma/rls.sql).
+  shortName String @map("short_name")
+
+  isActive     Boolean      @default(true) @map("is_active")
+  categoryType CategoryType  @map("category_type")
+
+  /// INDEPENDENT → null; UNDER_DEPARTMENT → an active department of this tenant.
+  departmentId String?      @map("department_id")
+  department   Department?  @relation(fields: [departmentId], references: [id])
+
+  /// "Module mapping" — reuses the same enum as Branch.branchType, exactly like
+  /// Department. A category may cover several.
+  moduleMapping BranchType[] @map("module_mapping")
+
+  personMappings CategoryPersonMapping[]
+
+  /// Sub-categories that hang off this category (SubCategoryType.UNDER_CATEGORY).
+  subCategories SubCategory[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([departmentId])
+  @@index([shortName])
+  @@index([deletedAt])
+  @@map("categories")
+}
+
+/// Links a Person (platform-level) to a Category with a position plus signing
+/// authority and ordering metadata. Tenant-scoped (mirrors
+/// DepartmentPersonMapping — `person_id` is a logical FK to the platform
+/// `persons` table). `priority` is validated in CategoryService against the
+/// tenant's total mapping count.
+model CategoryPersonMapping {
+  id          String           @id @default(uuid())
+  tenantId    String           @map("tenant_id")
+  categoryId  String           @map("category_id")
+  personId    String           @map("person_id")
+  position    CategoryPosition
+  isSignatory Boolean          @default(false) @map("is_signatory")
+  priority    Int
+  isDefault   Boolean          @default(false) @map("is_default")
+
+  category Category @relation(fields: [categoryId], references: [id])
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([categoryId])
+  @@index([personId])
+  @@index([deletedAt])
+  @@map("category_person_mappings")
+}
+
+/// A sub-category, the same shape as a Category plus a third type option. Its
+/// type dimension picks the parent: INDEPENDENT stands alone (both FKs NULL);
+/// UNDER_DEPARTMENT links to an active department of the same tenant
+/// (department_id set); UNDER_CATEGORY links to an active category of the same
+/// tenant (category_id set). The type↔link invariant is enforced in
+/// SubCategoryService + a CHECK in prisma/rls.sql (Prisma can't express
+/// conditional constraints).
+///
+/// Tenant-scoped, tenant-level (CLAUDE.md §4.6). `code` is system-generated &
+/// immutable: `{INITIALS}-SubCat-{n}`, INITIALS from the tenant name, `n` a
+/// 0-based per-tenant sequence from Tenant.subCategoryCounter. Unique per tenant
+/// among active rows (partial unique index in prisma/rls.sql). RLS in rls.sql.
+model SubCategory {
+  id              String          @id @default(uuid())
+  tenantId        String          @map("tenant_id")
+  name            String
+  description     String?
+  code            String
+
+  /// User-set short prefix for space-constrained dropdowns (2-6 chars, uppercase
+  /// A-Z/0-9). Mandatory and editable. Unique within the parent category
+  /// (UNDER_CATEGORY) or parent department (UNDER_DEPARTMENT) among active rows;
+  /// INDEPENDENT sub-categories are unique per tenant (partial unique indexes in
+  /// prisma/rls.sql).
+  shortName String @map("short_name")
+
+  isActive        Boolean         @default(true) @map("is_active")
+  subCategoryType SubCategoryType @map("sub_category_type")
+
+  /// UNDER_DEPARTMENT → an active department of this tenant; else null.
+  departmentId String?     @map("department_id")
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  /// UNDER_CATEGORY → an active category of this tenant; else null.
+  categoryId String?   @map("category_id")
+  category   Category? @relation(fields: [categoryId], references: [id])
+
+  /// "Module mapping" — reuses the same enum as Branch.branchType, exactly like
+  /// Category. A sub-category may cover several.
+  moduleMapping BranchType[] @map("module_mapping")
+
+  personMappings SubCategoryPersonMapping[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([departmentId])
+  @@index([categoryId])
+  @@index([shortName])
+  @@index([deletedAt])
+  @@map("sub_categories")
+}
+
+/// Links a Person (platform-level) to a SubCategory with a position plus signing
+/// authority and ordering metadata. Tenant-scoped (mirrors CategoryPersonMapping
+/// — `person_id` is a logical FK to the platform `persons` table). `priority` is
+/// validated in SubCategoryService against the tenant's total mapping count.
+model SubCategoryPersonMapping {
+  id            String              @id @default(uuid())
+  tenantId      String              @map("tenant_id")
+  subCategoryId String              @map("sub_category_id")
+  personId      String              @map("person_id")
+  position      SubCategoryPosition
+  isSignatory   Boolean             @default(false) @map("is_signatory")
+  priority      Int
+  isDefault     Boolean             @default(false) @map("is_default")
+
+  subCategory SubCategory @relation(fields: [subCategoryId], references: [id])
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([subCategoryId])
+  @@index([personId])
+  @@index([deletedAt])
+  @@map("sub_category_person_mappings")
 }
 
 /// An audit-trail entry: who did what, in which module, from where, and when.

@@ -97,11 +97,112 @@ CREATE UNIQUE INDEX IF NOT EXISTS departments_tenant_code_active_unique
 CREATE UNIQUE INDEX IF NOT EXISTS departments_tenant_name_active_unique
   ON departments (tenant_id, name) WHERE deleted_at IS NULL;
 
+-- User-set `short_name` (dropdown prefix): unique per tenant among ACTIVE rows.
+CREATE UNIQUE INDEX IF NOT EXISTS departments_tenant_short_name_active_unique
+  ON departments (tenant_id, short_name) WHERE deleted_at IS NULL;
+
 -- ── department_person_mappings ────────────────────────────────────────────────────
 ALTER TABLE department_person_mappings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE department_person_mappings FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS dpm_tenant_isolation ON department_person_mappings;
 CREATE POLICY dpm_tenant_isolation ON department_person_mappings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── categories ──────────────────────────────────────────────────────────────────
+ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE categories FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS categories_tenant_isolation ON categories;
+CREATE POLICY categories_tenant_isolation ON categories
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- Per-tenant uniqueness for category name + code, among ACTIVE rows only
+-- (partial index on deleted_at IS NULL), mirroring departments. `code` is
+-- system-generated & immutable; `name` is user-set. Prisma can't express
+-- partial unique indexes, so they live here.
+CREATE UNIQUE INDEX IF NOT EXISTS categories_tenant_code_active_unique
+  ON categories (tenant_id, code) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS categories_tenant_name_active_unique
+  ON categories (tenant_id, name) WHERE deleted_at IS NULL;
+
+-- User-set `short_name` (dropdown prefix), among ACTIVE rows. Scoped to the
+-- parent department for UNDER_DEPARTMENT categories (department_id NOT NULL), so
+-- two different departments may reuse the same short name; INDEPENDENT
+-- categories (department_id NULL) are unique per tenant. Postgres treats NULLs
+-- as distinct, so the two cases need separate partial indexes.
+CREATE UNIQUE INDEX IF NOT EXISTS categories_dept_short_name_active_unique
+  ON categories (tenant_id, department_id, short_name)
+  WHERE deleted_at IS NULL AND department_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS categories_independent_short_name_active_unique
+  ON categories (tenant_id, short_name)
+  WHERE deleted_at IS NULL AND department_id IS NULL;
+
+-- Invariant: UNDER_DEPARTMENT ⇒ department_id set; INDEPENDENT ⇒ NULL. Prisma
+-- can't express a conditional constraint, so it lives here (defence in depth on
+-- top of the DTO + CategoryService checks).
+ALTER TABLE categories DROP CONSTRAINT IF EXISTS categories_type_dept_chk;
+ALTER TABLE categories ADD CONSTRAINT categories_type_dept_chk CHECK (
+  (category_type = 'UNDER_DEPARTMENT' AND department_id IS NOT NULL) OR
+  (category_type = 'INDEPENDENT' AND department_id IS NULL)
+);
+
+-- ── category_person_mappings ──────────────────────────────────────────────────────
+ALTER TABLE category_person_mappings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE category_person_mappings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS cpm_tenant_isolation ON category_person_mappings;
+CREATE POLICY cpm_tenant_isolation ON category_person_mappings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── sub_categories ──────────────────────────────────────────────────────────────
+ALTER TABLE sub_categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sub_categories FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS sub_categories_tenant_isolation ON sub_categories;
+CREATE POLICY sub_categories_tenant_isolation ON sub_categories
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- Per-tenant uniqueness for sub-category name + code, among ACTIVE rows only
+-- (partial index on deleted_at IS NULL), mirroring categories. `code` is
+-- system-generated & immutable; `name` is user-set. Prisma can't express
+-- partial unique indexes, so they live here.
+CREATE UNIQUE INDEX IF NOT EXISTS sub_categories_tenant_code_active_unique
+  ON sub_categories (tenant_id, code) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS sub_categories_tenant_name_active_unique
+  ON sub_categories (tenant_id, name) WHERE deleted_at IS NULL;
+
+-- User-set `short_name` (dropdown prefix), among ACTIVE rows. Scoped to the
+-- parent category for UNDER_CATEGORY rows (category_id NOT NULL), to the parent
+-- department for UNDER_DEPARTMENT rows (department_id NOT NULL), and per tenant
+-- for INDEPENDENT rows (both NULL). Postgres treats NULLs as distinct, so each
+-- type needs its own partial index.
+CREATE UNIQUE INDEX IF NOT EXISTS sub_categories_cat_short_name_active_unique
+  ON sub_categories (tenant_id, category_id, short_name)
+  WHERE deleted_at IS NULL AND category_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS sub_categories_dept_short_name_active_unique
+  ON sub_categories (tenant_id, department_id, short_name)
+  WHERE deleted_at IS NULL AND department_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS sub_categories_independent_short_name_active_unique
+  ON sub_categories (tenant_id, short_name)
+  WHERE deleted_at IS NULL AND department_id IS NULL AND category_id IS NULL;
+
+-- Invariant: UNDER_DEPARTMENT ⇒ department_id set (category_id NULL);
+-- UNDER_CATEGORY ⇒ category_id set (department_id NULL); INDEPENDENT ⇒ both
+-- NULL. Prisma can't express a conditional constraint, so it lives here
+-- (defence in depth on top of the DTO + SubCategoryService checks).
+ALTER TABLE sub_categories DROP CONSTRAINT IF EXISTS sub_categories_type_parent_chk;
+ALTER TABLE sub_categories ADD CONSTRAINT sub_categories_type_parent_chk CHECK (
+  (sub_category_type = 'UNDER_DEPARTMENT' AND department_id IS NOT NULL AND category_id IS NULL) OR
+  (sub_category_type = 'UNDER_CATEGORY'   AND category_id   IS NOT NULL AND department_id IS NULL) OR
+  (sub_category_type = 'INDEPENDENT'      AND department_id IS NULL     AND category_id IS NULL)
+);
+
+-- ── sub_category_person_mappings ──────────────────────────────────────────────────
+ALTER TABLE sub_category_person_mappings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sub_category_person_mappings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS scpm_tenant_isolation ON sub_category_person_mappings;
+CREATE POLICY scpm_tenant_isolation ON sub_category_person_mappings
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 

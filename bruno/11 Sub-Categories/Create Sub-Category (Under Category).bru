@@ -1,0 +1,75 @@
+meta {
+  name: Create Sub-Category (Under Category)
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/sub-categories
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Complete Blood Count",
+    "shortName": "CBC",
+    "description": "Sub-category that hangs off an existing category",
+    "isActive": true,
+    "subCategoryType": "UNDER_CATEGORY",
+    "categoryId": "{{categoryId}}",
+    "moduleMapping": ["DIAGNOSTIC"],
+    "personMappings": []
+  }
+}
+
+vars:pre-request {
+  categoryId: 5e5de920-287d-464a-a6ec-cf79aa212481
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("subCategoryId", data.id);
+  if (data && data.shortName) bru.setEnvVar("subCategoryUnderCatShortName", data.shortName);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("echoes the submitted shortName", function () {
+    expect(res.getBody().data.shortName).to.equal("CBC");
+  });
+}
+
+docs {
+  Create an UNDER_CATEGORY sub-category — linked to an existing active category
+  of the caller's tenant. This is the sub-category-only type (Category has no
+  equivalent). Captures `subCategoryId` and `subCategoryUnderCatShortName`.
+
+  - `subCategoryType` must be `UNDER_CATEGORY`.
+  - `shortName` — REQUIRED (`^[A-Z0-9]{2,6}$`). Scoped to the PARENT CATEGORY:
+    unique among active sub-categories under the same `categoryId` →
+    409 `SUB_CATEGORY_SHORT_NAME_CONFLICT`. Two different categories may reuse
+    the same sub-category shortName.
+  - `categoryId` is REQUIRED here and must reference an active category of THIS
+    tenant. Uses `{{categoryId}}` (captured by Categories → Create Category).
+    Missing it → 400 `SUB_CATEGORY_CATEGORY_REQUIRED`; a category id that is
+    missing, soft-deleted, or owned by another tenant → 404 `CATEGORY_NOT_FOUND`.
+    The parent category may itself be INDEPENDENT or UNDER_DEPARTMENT — any
+    active category of the tenant is accepted.
+  - `departmentId` must be OMITTED for this type.
+  
+  All other fields (`name`, `description`, `isActive`, `moduleMapping`,
+  `personMappings`) and their validation rules are identical to the Independent
+  create request. `code` is system-generated (`{INITIALS}-SubCat-{n}`) and
+  immutable.
+}

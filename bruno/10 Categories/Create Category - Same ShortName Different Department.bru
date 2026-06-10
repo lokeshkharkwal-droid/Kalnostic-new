@@ -1,0 +1,49 @@
+meta {
+  name: Create Category - Same ShortName Different Department
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/categories
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Hematology Panel (Other Dept)",
+    "shortName": "HEM",
+    "categoryType": "UNDER_DEPARTMENT",
+    "departmentId": "{{secondDepartmentId}}",
+    "moduleMapping": ["DIAGNOSTIC"]
+  }
+}
+
+vars:pre-request {
+  secondDepartmentId: 00000000-0000-0000-0000-000000000000
+}
+
+tests {
+  test("201 Created (different department, same shortName is allowed)", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  Positive scope case: the SAME category `shortName` (`HEM`) is allowed under a
+  DIFFERENT department, because category shortName uniqueness is scoped per
+  parent department.
+
+  Prerequisite: create a second department and set `secondDepartmentId` to its
+  id (the placeholder `0000…` will 404 as `DEPARTMENT_NOT_FOUND`). Then this
+  request, reusing `HEM` under that second department, succeeds with 201.
+}

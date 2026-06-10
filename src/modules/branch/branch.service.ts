@@ -7,6 +7,7 @@ import { UpdateBranchDto } from './dto/update-branch.dto';
 import {
   BranchNameConflictException,
   BranchNotFoundException,
+  CannotDeleteMainBranchException,
   MainBranchNotSetException,
 } from './exceptions/branch.exceptions';
 
@@ -23,13 +24,24 @@ export class BranchService {
    * a per-tenant sequential value (`BR-00001`, `BR-00002`, …) derived by
    * atomically incrementing `Tenant.branchCounter` in the same transaction, so
    * concurrent creates never collide. `code` is immutable thereafter.
+   *
+   * Main-branch auto-assignment: if the new branch is active
+   * (`status = ACTIVE`) and the tenant has no other active branch
+   * (`deletedAt = null` AND `status = ACTIVE`), the new branch is set as the
+   * tenant's main branch in the same transaction.
    * @param tenantId owning tenant
    * @param dto validated branch payload (no `code` — it is generated here)
+   * @param setBy person id of the actor, recorded on the main-branch pointer
+   *   when auto-assignment fires (optional audit trail)
    * @returns the created branch
    * @throws BranchNameConflictException if the name is already used by an
    *   active branch in this tenant
    */
-  async create(tenantId: string, dto: CreateBranchDto): Promise<Branch> {
+  async create(
+    tenantId: string,
+    dto: CreateBranchDto,
+    setBy?: string,
+  ): Promise<Branch> {
     try {
       return await this.prisma.withTenant(tenantId, async (tx) => {
         const tenant = await tx.tenant.update({
@@ -38,7 +50,7 @@ export class BranchService {
           select: { branchCounter: true },
         });
         const code = `BR-${String(tenant.branchCounter).padStart(5, '0')}`;
-        return tx.branch.create({
+        const branch = await tx.branch.create({
           data: {
             tenantId,
             name: dto.name,
@@ -66,6 +78,25 @@ export class BranchService {
             remarks: dto.remarks ?? null,
           },
         });
+
+        // Auto-set as main branch when this is the tenant's only active branch.
+        // An active branch = not soft-deleted AND status ACTIVE; a count of 1
+        // therefore means the branch we just created is the sole active one.
+        if (branch.status === BranchStatus.ACTIVE) {
+          const activeCount = await tx.branch.count({
+            where: { tenantId, deletedAt: null, status: BranchStatus.ACTIVE },
+          });
+          if (activeCount === 1) {
+            // Upsert (not create) so any stale pointer self-heals.
+            await tx.tenantMainBranch.upsert({
+              where: { tenantId },
+              create: { tenantId, branchId: branch.id, setBy: setBy ?? null },
+              update: { branchId: branch.id, setBy: setBy ?? null },
+            });
+          }
+        }
+
+        return branch;
       });
     } catch (e) {
       if (this.isUniqueViolation(e)) {
@@ -117,6 +148,9 @@ export class BranchService {
 
   /**
    * Update an existing branch. `code` is immutable and cannot be changed.
+   * If the branch is set to `INACTIVE` and it is the tenant's main branch, its
+   * main-branch pointer is cleared in the same transaction (a non-active branch
+   * may not remain the main branch).
    * @param id branch id
    * @param tenantId tenant scope
    * @param dto partial update
@@ -168,7 +202,17 @@ export class BranchService {
     if (dto.licenseNo !== undefined) data.licenseNo = dto.licenseNo ?? null;
     if (dto.remarks !== undefined) data.remarks = dto.remarks ?? null;
     try {
-      return await this.prisma.branch.update({ where: { id }, data });
+      return await this.prisma.withTenant(tenantId, async (tx) => {
+        const updated = await tx.branch.update({ where: { id }, data });
+        // Deactivating the main branch releases its pointer; deleteMany is a
+        // safe no-op when this branch is not the main branch.
+        if (dto.status === BranchStatus.INACTIVE) {
+          await tx.tenantMainBranch.deleteMany({
+            where: { tenantId, branchId: id },
+          });
+        }
+        return updated;
+      });
     } catch (e) {
       if (this.isUniqueViolation(e)) {
         throw new BranchNameConflictException(dto.name ?? '');
@@ -178,12 +222,22 @@ export class BranchService {
   }
 
   /**
-   * Soft-delete a branch (sets deletedAt; row is preserved).
+   * Soft-delete a branch (sets deletedAt; row is preserved). The tenant's main
+   * branch cannot be deleted — set another branch as main, or deactivate it
+   * (which releases the main-branch pointer), first.
    * @param id branch id
    * @param tenantId tenant scope
+   * @throws BranchNotFoundException if missing/soft-deleted
+   * @throws CannotDeleteMainBranchException if the branch is the current main branch
    */
   async remove(id: string, tenantId: string): Promise<Branch> {
     await this.findById(id, tenantId);
+    const pointer = await this.prisma.tenantMainBranch.findUnique({
+      where: { tenantId },
+    });
+    if (pointer?.branchId === id) {
+      throw new CannotDeleteMainBranchException(id);
+    }
     return this.prisma.branch.update({
       where: { id },
       data: { deletedAt: new Date() },

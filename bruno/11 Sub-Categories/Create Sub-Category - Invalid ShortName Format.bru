@@ -1,0 +1,41 @@
+meta {
+  name: Create Sub-Category - Invalid ShortName Format
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/sub-categories
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Bad ShortName Sub-Category",
+    "shortName": "TOOLONG",
+    "subCategoryType": "INDEPENDENT",
+    "moduleMapping": ["DIAGNOSTIC"]
+  }
+}
+
+tests {
+  test("400 Bad Request", function () {
+    expect(res.getStatus()).to.equal(400);
+  });
+}
+
+docs {
+  Negative case: `shortName` must match `^[A-Z0-9]{2,6}$`. `"TOOLONG"` is 7 chars
+  (> 6), so the validation pipe rejects it with 400. Same rule for lowercase,
+  too short (`"S"`), special characters, spaces, or a missing value (`shortName`
+  is mandatory on create).
+}

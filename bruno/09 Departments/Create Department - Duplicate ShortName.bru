@@ -1,0 +1,47 @@
+meta {
+  name: Create Department - Duplicate ShortName
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/departments
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Pathology (Duplicate ShortName)",
+    "shortName": "{{departmentShortName}}",
+    "moduleMapping": ["DIAGNOSTIC"]
+  }
+}
+
+tests {
+  test("409 Conflict", function () {
+    expect(res.getStatus()).to.equal(409);
+  });
+  test("error code is DEPARTMENT_SHORT_NAME_CONFLICT", function () {
+    expect(res.getBody().error.code).to.equal("DEPARTMENT_SHORT_NAME_CONFLICT");
+  });
+}
+
+docs {
+  Negative case: department `shortName` is unique per tenant. Run "Create
+  Department" first (it captures `departmentShortName`, e.g. `PATH`). This
+  request reuses that exact shortName under a DIFFERENT `name`, so the only
+  collision is the shortName → 409 `DEPARTMENT_SHORT_NAME_CONFLICT`.
+
+  > A distinct `name` is used deliberately: if both `name` and `shortName`
+  > collided, the name index could trip first and return
+  > `DEPARTMENT_NAME_CONFLICT` instead.
+}

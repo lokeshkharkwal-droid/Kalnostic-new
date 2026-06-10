@@ -1,0 +1,44 @@
+meta {
+  name: Create Category - Duplicate ShortName (Independent)
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/categories
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Blood Tests (Duplicate ShortName)",
+    "shortName": "{{categoryShortName}}",
+    "categoryType": "INDEPENDENT",
+    "moduleMapping": ["DIAGNOSTIC"]
+  }
+}
+
+tests {
+  test("409 Conflict", function () {
+    expect(res.getStatus()).to.equal(409);
+  });
+  test("error code is CATEGORY_SHORT_NAME_CONFLICT", function () {
+    expect(res.getBody().error.code).to.equal("CATEGORY_SHORT_NAME_CONFLICT");
+  });
+}
+
+docs {
+  Negative case: INDEPENDENT categories share one per-tenant scope. Run "Create
+  Category (Independent)" first (it captures `categoryShortName`, e.g. `BLD`).
+  This request reuses that shortName as another INDEPENDENT category with a
+  different `name` → 409 `CATEGORY_SHORT_NAME_CONFLICT`.
+}

@@ -7,6 +7,7 @@ import {
   IsEnum,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
   MinLength,
   ValidateNested,
@@ -18,6 +19,14 @@ export class CreateDepartmentDto {
   @MinLength(2)
   @MaxLength(255)
   name: string;
+
+  // User-set dropdown prefix, unique per tenant (validated in DepartmentService).
+  // The regex bounds the length (2-6), so no separate Min/MaxLength is needed.
+  @IsString()
+  @Matches(/^[A-Z0-9]{2,6}$/, {
+    message: 'shortName must be 2-6 uppercase letters or digits (A-Z, 0-9)',
+  })
+  shortName: string;
 
   @IsString()
   @IsOptional()

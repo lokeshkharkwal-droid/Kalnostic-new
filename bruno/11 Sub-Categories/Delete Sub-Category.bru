@@ -1,0 +1,25 @@
+meta {
+  name: Delete Sub-Category
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/sub-categories/{{subCategoryId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  subCategoryId: eb8eebc0-fe57-42a2-ac94-f11f61eb346c
+}
+
+docs {
+  Soft-delete a sub-category (sets `deletedAt`) and cascade soft-deletes its
+  active person mappings, in one transaction. Scoped to the caller's tenant. The
+  sub-category `name` and `code` are freed for reuse among active rows afterward.
+}

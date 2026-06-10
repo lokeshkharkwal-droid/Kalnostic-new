@@ -21,6 +21,7 @@ auth:bearer {
 body:json {
   {
     "name": "Pathology",
+    "shortName": "PATH",
     "description": "Clinical pathology department",
     "isActive": true,
     "moduleMapping": ["DIAGNOSTIC", "RADIOLOGY"],
@@ -43,22 +44,37 @@ vars:pre-request {
 script:post-response {
   const data = res.getBody() && res.getBody().data;
   if (data && data.id) bru.setEnvVar("departmentId", data.id);
+  if (data && data.shortName) bru.setEnvVar("departmentShortName", data.shortName);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("echoes the submitted shortName", function () {
+    expect(res.getBody().data.shortName).to.equal("PATH");
+  });
 }
 
 docs {
   Create a department in the caller's tenant (tenant id taken from the JWT).
   Tenant-level — departments belong to the business as a whole, NOT a branch.
-  Captures `departmentId`.
-  
+  Captures `departmentId` and `departmentShortName`.
+
   ## Fields
-  
+
   - `name` — 2-255 chars, unique among active departments in the tenant (409
     `DEPARTMENT_NAME_CONFLICT` otherwise).
+  - `shortName` — REQUIRED dropdown prefix, exactly 2-6 chars, uppercase
+    `A-Z`/`0-9` only (regex `^[A-Z0-9]{2,6}$`); anything else → 400. Unique among
+    active departments in the tenant (system-wide within the business) →
+    409 `DEPARTMENT_SHORT_NAME_CONFLICT` otherwise. Editable (see Update).
   - `description` — optional, ≤ 2000 chars.
   - `isActive` — optional, defaults `true`.
   - `moduleMapping` — REQUIRED array using the same enum as `branchType`:
     `DIAGNOSTIC`, `RADIOLOGY`, `OPD`, `IPD`, `PHARMACY`, `INVENTORY`,
-    `BLOOD_BANK`, `FRANCHISE`, `COMBINED`. Must be unique (no duplicates).
+    `BLOOD_BANK`, `FRANCHISE`, `COMBINED`, `ASSISTANT`, `ACCESSION`,
+    `TECHNICIAN`. Must be unique (no duplicates).
   - `personMappings` — optional array; each entry:
     - `personId` (UUID of an existing person),
     - `position` — one of `HOD`, `SPECIALIST`, `CONSULTANT`, `MANAGER`,

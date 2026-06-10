@@ -22,16 +22,15 @@ auth:bearer {
 body:json {
   {
     "planName": "Split-Day Coverage",
-    "status": "ACTIVE",
     "effectiveFrom": "2026-07-01",
     "effectiveTo": "2026-12-31",
     "shifts": [
       {
         "shiftName": "MORNING",
-        "startTime": "08:00",
-        "endTime": "14:00",
-        "breakStartTime": "10:30",
-        "breakEndTime": "11:00",
+        "startTime": "23:00",
+        "endTime": "02:00",
+        "breakStartTime": "23:30",
+        "breakEndTime": "00:20",
         "activeDays": [
           "MONDAY",
           "WEDNESDAY",
@@ -40,11 +39,12 @@ body:json {
       },
       {
         "shiftName": "AFTERNOON",
-        "startTime": "08:00",
-        "endTime": "14:00",
+        "startTime": "01:59",
+        "endTime": "00:59",
         "breakStartTime": "12:30",
-        "breakEndTime": "00:59",
+        "breakEndTime": "13:59",
         "activeDays": [
+          "MONDAY",
           "TUESDAY",
           "THURSDAY"
         ]
@@ -54,7 +54,7 @@ body:json {
 }
 
 vars:pre-request {
-  branchId: 33f7c1db-3fd4-4e0b-b5ee-30c731535a05
+  branchId: 35deb1e4-2c85-4b76-9389-56dc8bc714f1
   businessAccessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwZXJzb25faWQiOiIyOTQ5N2I2NC0wNGUyLTQwZjktYTY2OS04NDBiZmNlOGU3ZDYiLCJ0ZW5hbnRfaWQiOiJhYjE2OTY1MC01Mzc1LTQwYmUtYTIxMi00ZGE0ZTJiMDE5NGQiLCJhY3RpdmVfYnJhbmNoX2lkIjpudWxsLCJhY3RpdmVfYnJhbmNoX3R5cGUiOm51bGwsImFjdGl2ZV9wcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwiaXNfcGF0aWVudF9jb250ZXh0IjpmYWxzZSwicHJvZmlsZXMiOlt7ImJyYW5jaF9pZCI6bnVsbCwiYnJhbmNoX25hbWUiOm51bGwsImJyYW5jaF90eXBlIjpudWxsLCJwcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwicHJvZmlsZV9sYWJlbCI6IkJ1c2luZXNzIEFkbWluIiwiaXNfZGVmYXVsdCI6dHJ1ZX1dLCJpc19wYXRpZW50IjpmYWxzZSwicGxhdGZvcm1fbXJuIjoiS0FMLTIwMjYwNjA4LTM2OTBCRkQxIiwiaWF0IjoxNzgwOTM5ODE2LCJleHAiOjE3ODA5NDA3MTZ9.J55wiEzB-FCqQGSFyaVmqeOfFIFJRrlK5d47mBUpMZ4
 }
 

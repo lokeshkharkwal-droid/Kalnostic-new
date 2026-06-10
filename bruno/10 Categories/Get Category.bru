@@ -1,0 +1,25 @@
+meta {
+  name: Get Category
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/categories/{{categoryId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  categoryId: eb8eebc0-fe57-42a2-ac94-f11f61eb346c
+}
+
+docs {
+  Fetch one category by id (scoped to the caller's tenant), with its active
+  person mappings ordered by `priority`. 404 `CATEGORY_NOT_FOUND` if missing,
+  soft-deleted, or owned by another tenant.
+}

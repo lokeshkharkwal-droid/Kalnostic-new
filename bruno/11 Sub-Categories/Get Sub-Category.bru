@@ -1,0 +1,25 @@
+meta {
+  name: Get Sub-Category
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/sub-categories/{{subCategoryId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  subCategoryId: eb8eebc0-fe57-42a2-ac94-f11f61eb346c
+}
+
+docs {
+  Fetch one sub-category by id (scoped to the caller's tenant), with its active
+  person mappings ordered by `priority`. 404 `SUB_CATEGORY_NOT_FOUND` if missing,
+  soft-deleted, or owned by another tenant.
+}

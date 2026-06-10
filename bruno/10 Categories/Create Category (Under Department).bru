@@ -1,0 +1,74 @@
+meta {
+  name: Create Category (Under Department)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/categories
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Hematology Panel",
+    "shortName": "HEM",
+    "description": "Category that hangs off an existing department",
+    "isActive": true,
+    "categoryType": "UNDER_DEPARTMENT",
+    "departmentId": "{{departmentId}}",
+    "moduleMapping": ["DIAGNOSTIC"],
+    "personMappings": []
+  }
+}
+
+vars:pre-request {
+  departmentId: 57d87b1a-80be-4fb0-afbb-aeb60c802a96
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("categoryId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("echoes the submitted shortName", function () {
+    expect(res.getBody().data.shortName).to.equal("HEM");
+  });
+}
+
+docs {
+  Create an UNDER_DEPARTMENT category — linked to an existing active department
+  of the caller's tenant. Captures `categoryId`.
+
+  - `categoryType` must be `UNDER_DEPARTMENT`.
+  - `shortName` — REQUIRED (`^[A-Z0-9]{2,6}$`). Scoped to the PARENT DEPARTMENT:
+    unique among active categories under the same `departmentId` →
+    409 `CATEGORY_SHORT_NAME_CONFLICT`. Two different departments may reuse the
+    same category shortName (see "Same ShortName Different Department").
+  - `departmentId` is REQUIRED here and must reference an active department of
+    THIS tenant. Uses `{{departmentId}}` (captured by Departments → Create
+    Department). Missing it → 400 `CATEGORY_DEPARTMENT_REQUIRED`; a department
+    id that is missing, soft-deleted, or owned by another tenant →
+    404 `DEPARTMENT_NOT_FOUND`.
+  
+  All other fields (`name`, `description`, `isActive`, `moduleMapping`,
+  `personMappings`) and their validation rules are identical to the Independent
+  create request. `code` is system-generated (`{INITIALS}-Cat-{n}`) and
+  immutable.
+  
+  > The category's `moduleMapping` is independent of the parent department's —
+  > it can list any `branchType` values.
+}

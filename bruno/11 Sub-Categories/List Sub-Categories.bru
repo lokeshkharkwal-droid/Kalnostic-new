@@ -1,0 +1,28 @@
+meta {
+  name: List Sub-Categories
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/sub-categories?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Paginated list of sub-categories in the caller's tenant, each with its active
+  person mappings (ordered by `priority`). `page`/`limit` optional. Pagination
+  info (`total`, `page`, `limit`, `totalPages`) is lifted into `meta`. Each row
+  carries `subCategoryType`, `departmentId` (set only for UNDER_DEPARTMENT), and
+  `categoryId` (set only for UNDER_CATEGORY); both are null for INDEPENDENT.
+}

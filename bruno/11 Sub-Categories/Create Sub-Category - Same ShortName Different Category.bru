@@ -1,0 +1,49 @@
+meta {
+  name: Create Sub-Category - Same ShortName Different Category
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/sub-categories
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Complete Blood Count (Other Category)",
+    "shortName": "CBC",
+    "subCategoryType": "UNDER_CATEGORY",
+    "categoryId": "{{secondCategoryId}}",
+    "moduleMapping": ["DIAGNOSTIC"]
+  }
+}
+
+vars:pre-request {
+  secondCategoryId: 00000000-0000-0000-0000-000000000000
+}
+
+tests {
+  test("201 Created (different category, same shortName is allowed)", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  Positive scope case: the SAME sub-category `shortName` (`CBC`) is allowed under
+  a DIFFERENT category, because sub-category shortName uniqueness is scoped per
+  parent category.
+
+  Prerequisite: create a second category and set `secondCategoryId` to its id
+  (the placeholder `0000…` will 404 as `CATEGORY_NOT_FOUND`). Then this request,
+  reusing `CBC` under that second category, succeeds with 201.
+}

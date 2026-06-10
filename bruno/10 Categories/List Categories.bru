@@ -1,0 +1,27 @@
+meta {
+  name: List Categories
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/categories?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Paginated list of categories in the caller's tenant, each with its active
+  person mappings (ordered by `priority`). `page`/`limit` optional. Pagination
+  info (`total`, `page`, `limit`, `totalPages`) is lifted into `meta`. Each row
+  carries `categoryType` and `departmentId` (null for Independent categories).
+}

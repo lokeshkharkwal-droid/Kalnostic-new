@@ -25,6 +25,18 @@ export class DepartmentNameConflictException extends KaltrosException {
   }
 }
 
+/** 409 — another active department in this tenant already uses this short name. */
+export class DepartmentShortNameConflictException extends KaltrosException {
+  constructor(shortName: string) {
+    super(
+      'DEPARTMENT_SHORT_NAME_CONFLICT',
+      'A department with this short name already exists',
+      { shortName },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
 /**
  * 400 — a person mapping's priority is out of range. Priority must be between 1
  * and the tenant's total active person-mapping count (inclusive).

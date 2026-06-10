@@ -1,0 +1,106 @@
+meta {
+  name: Create Category (Independent)
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/categories
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Blood Tests",
+    "shortName": "BLD",
+    "description": "Standalone category, not tied to any department",
+    "isActive": true,
+    "categoryType": "INDEPENDENT",
+    "moduleMapping": ["DIAGNOSTIC", "RADIOLOGY"],
+    "personMappings": [
+      {
+        "personId": "{{patientPersonId}}",
+        "position": "HOD",
+        "isSignatory": true,
+        "priority": 1,
+        "isDefault": true
+      }
+    ]
+  }
+}
+
+vars:pre-request {
+  patientPersonId: 6ca062db-14ad-44f6-8419-cae5a7441eea
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("categoryId", data.id);
+  if (data && data.shortName) bru.setEnvVar("categoryShortName", data.shortName);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("echoes the submitted shortName", function () {
+    expect(res.getBody().data.shortName).to.equal("BLD");
+  });
+}
+
+docs {
+  Create an INDEPENDENT category in the caller's tenant (tenant id taken from the
+  JWT). Tenant-level — categories belong to the business as a whole, NOT a
+  branch. Captures `categoryId` and `categoryShortName`.
+
+  ## Fields
+
+  - `name` — 2-255 chars, unique among active categories in the tenant (409
+    `CATEGORY_NAME_CONFLICT` otherwise).
+  - `shortName` — REQUIRED dropdown prefix, exactly 2-6 chars, uppercase
+    `A-Z`/`0-9` only (regex `^[A-Z0-9]{2,6}$`); anything else → 400. For an
+    INDEPENDENT category it must be unique among the tenant's other INDEPENDENT
+    categories → 409 `CATEGORY_SHORT_NAME_CONFLICT`. (UNDER_DEPARTMENT scoping is
+    per-department — see that request.) Editable (see Update).
+  - `description` — optional, ≤ 2000 chars.
+  - `isActive` — optional, defaults `true`.
+  - `categoryType` — REQUIRED, one of `INDEPENDENT` or `UNDER_DEPARTMENT`.
+  - `departmentId` — for `INDEPENDENT` it must be OMITTED (sending one →
+    400 `INDEPENDENT_CATEGORY_DEPARTMENT`). See the "Under Department" request
+    for the linked variant.
+  - `moduleMapping` — REQUIRED array using the same enum as `branchType`:
+    `DIAGNOSTIC`, `RADIOLOGY`, `OPD`, `IPD`, `PHARMACY`, `INVENTORY`,
+    `BLOOD_BANK`, `FRANCHISE`, `COMBINED`, `ASSISTANT`, `ACCESSION`,
+    `TECHNICIAN`. Must be unique (no duplicates).
+  - `personMappings` — optional array; each entry:
+    - `personId` (UUID of an existing person),
+    - `position` — one of `HOD`, `SPECIALIST`, `CONSULTANT`, `MANAGER`,
+      `TECHNICIAN`,
+    - `isSignatory` (bool, default false),
+    - `priority` (int ≥ 1),
+    - `isDefault` (bool, default false).
+
+  NOTE: `code` is system-generated (`{INITIALS}-Cat-{n}`, e.g. `AD-Cat-0` for a
+  tenant named "Acme Diagnostics"; `n` is a 0-based per-tenant counter) and
+  immutable — do NOT send it (it is rejected as an unknown field).
+
+  ## Validation rules (enforced server-side)
+
+  - `priority` must be between 1 and the tenant's TOTAL active person-mapping
+    count (existing rows + the rows in this request). Out of range →
+    400 `INVALID_CATEGORY_PRIORITY`.
+  - At most one `isDefault: true` per `position` in the payload →
+    409 `DUPLICATE_DEFAULT_POSITION` otherwise.
+  - Every `personId` must exist (active) → 404 `PERSON_NOT_FOUND` otherwise.
+
+  The example uses `{{patientPersonId}}` (captured by Users → Register Patient).
+}

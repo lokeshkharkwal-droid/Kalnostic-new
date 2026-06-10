@@ -1,0 +1,25 @@
+meta {
+  name: Delete Category
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{baseUrl}}/categories/{{categoryId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  categoryId: eb8eebc0-fe57-42a2-ac94-f11f61eb346c
+}
+
+docs {
+  Soft-delete a category (sets `deletedAt`) and cascade soft-deletes its active
+  person mappings, in one transaction. Scoped to the caller's tenant. The
+  category `name` and `code` are freed for reuse among active rows afterward.
+}

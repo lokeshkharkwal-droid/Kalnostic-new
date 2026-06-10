@@ -195,7 +195,7 @@ prisma/
   "person_id": "uuid",
   "tenant_id": "uuid",
   "active_branch_id": "uuid | null",
-  "active_branch_type": "DIAGNOSTIC | CLINIC | HOSPITAL | PHARMACY | COLLECTION_CENTER | null",
+  "active_branch_type": "DIAGNOSTIC | RADIOLOGY | OPD | IPD | PHARMACY | INVENTORY | BLOOD_BANK | FRANCHISE | COMBINED | ASSISTANT | ACCESSION | TECHNICIAN | null",
   "active_profile_key": "business_admin | doctor | ... | null",
   "is_patient_context": false,
   "profiles": [
@@ -249,7 +249,7 @@ Pagination metadata is returned in <code>meta</code>.</p>
 <h2 id="enums">Enums &amp; constants</h2>
 <table>
   <tr><th>Enum</th><th>Values</th></tr>
-  <tr><td>BranchType</td><td>DIAGNOSTIC, CLINIC, HOSPITAL, PHARMACY, COLLECTION_CENTER</td></tr>
+  <tr><td>BranchType</td><td>DIAGNOSTIC, RADIOLOGY, OPD, IPD, PHARMACY, INVENTORY, BLOOD_BANK, FRANCHISE, COMBINED, ASSISTANT, ACCESSION, TECHNICIAN</td></tr>
   <tr><td>SubscriptionStatus</td><td>TRIALING, ACTIVE, GRACE_PERIOD, SUSPENDED, CANCELLED</td></tr>
   <tr><td>SiteAdminRole</td><td>CONTENT_ADMIN, OPERATIONS_ADMIN, FULL_ADMIN, SUPER_OWNER (cumulative)</td></tr>
   <tr><td>Gender</td><td>MALE, FEMALE, OTHER, PREFER_NOT_TO_SAY</td></tr>
@@ -264,10 +264,10 @@ profiles have <code>branch_id = NULL</code>.</p>
 <table>
   <tr><th>Profile key</th><th>Label</th><th>Level</th><th>Valid branch types</th></tr>
   <tr><td><code>business_admin</code></td><td>Business Admin</td><td>Tenant-level</td><td>— (no branch)</td></tr>
-  <tr><td><code>branch_admin</code></td><td>Branch Admin</td><td>Branch</td><td>DIAGNOSTIC, CLINIC, HOSPITAL, PHARMACY, COLLECTION_CENTER</td></tr>
-  <tr><td><code>doctor</code></td><td>Doctor</td><td>Branch</td><td>CLINIC, HOSPITAL, DIAGNOSTIC</td></tr>
-  <tr><td><code>lab_technician</code></td><td>Lab Technician</td><td>Branch</td><td>DIAGNOSTIC, HOSPITAL</td></tr>
-  <tr><td><code>receptionist</code></td><td>Receptionist</td><td>Branch</td><td>DIAGNOSTIC, CLINIC, HOSPITAL, PHARMACY, COLLECTION_CENTER</td></tr>
+  <tr><td><code>branch_admin</code></td><td>Branch Admin</td><td>Branch</td><td>DIAGNOSTIC, OPD, IPD, PHARMACY, FRANCHISE</td></tr>
+  <tr><td><code>doctor</code></td><td>Doctor</td><td>Branch</td><td>OPD, IPD, DIAGNOSTIC</td></tr>
+  <tr><td><code>lab_technician</code></td><td>Lab Technician</td><td>Branch</td><td>DIAGNOSTIC, IPD</td></tr>
+  <tr><td><code>receptionist</code></td><td>Receptionist</td><td>Branch</td><td>DIAGNOSTIC, OPD, IPD, PHARMACY, FRANCHISE</td></tr>
   <tr><td><code>patient</code></td><td>Patient</td><td>Tenant-level</td><td>— (no branch)</td></tr>
 </table>
 

@@ -9,6 +9,7 @@ import { DepartmentWithMappings } from './entities/department.entity';
 import {
   DepartmentNameConflictException,
   DepartmentNotFoundException,
+  DepartmentShortNameConflictException,
   DuplicateDefaultPositionException,
   InvalidDepartmentPriorityException,
   PersonNotFoundException,
@@ -43,6 +44,8 @@ export class DepartmentService {
    * @returns the created department with its active person mappings
    * @throws DepartmentNameConflictException if the name is already used by an
    *   active department in this tenant
+   * @throws DepartmentShortNameConflictException if the shortName is already
+   *   used by an active department in this tenant
    * @throws InvalidDepartmentPriorityException / DuplicateDefaultPositionException
    *   / PersonNotFoundException if the person mappings are invalid
    */
@@ -69,6 +72,7 @@ export class DepartmentService {
           data: {
             tenantId,
             name: dto.name,
+            shortName: dto.shortName,
             description: dto.description ?? null,
             code,
             isActive: dto.isActive ?? true,
@@ -81,9 +85,7 @@ export class DepartmentService {
         });
       });
     } catch (e) {
-      if (this.isUniqueViolation(e)) {
-        throw new DepartmentNameConflictException(dto.name);
-      }
+      this.rethrowUniqueViolation(e, dto.name, dto.shortName);
       throw e;
     }
   }
@@ -145,6 +147,7 @@ export class DepartmentService {
    * @param dto partial update
    * @throws DepartmentNotFoundException if missing/soft-deleted
    * @throws DepartmentNameConflictException on a name collision
+   * @throws DepartmentShortNameConflictException on a shortName collision
    * @throws InvalidDepartmentPriorityException / DuplicateDefaultPositionException
    *   / PersonNotFoundException if the replacement mappings are invalid
    */
@@ -158,6 +161,7 @@ export class DepartmentService {
       return await this.prisma.withTenant(tenantId, async (tx) => {
         const data: Prisma.DepartmentUpdateInput = {};
         if (dto.name !== undefined) data.name = dto.name;
+        if (dto.shortName !== undefined) data.shortName = dto.shortName;
         if (dto.description !== undefined) {
           data.description = dto.description ?? null;
         }
@@ -193,9 +197,7 @@ export class DepartmentService {
         });
       });
     } catch (e) {
-      if (this.isUniqueViolation(e)) {
-        throw new DepartmentNameConflictException(dto.name ?? '');
-      }
+      this.rethrowUniqueViolation(e, dto.name ?? '', dto.shortName ?? '');
       throw e;
     }
   }
@@ -330,15 +332,33 @@ export class DepartmentService {
   }
 
   /**
-   * Narrow an unknown caught error to a Prisma unique-constraint violation
-   * (P2002). Used to map the per-tenant department-name index to a typed 409.
+   * If the caught error is a Prisma unique-constraint violation (P2002), throw
+   * the matching typed 409. Two user-set unique indexes exist per tenant
+   * (`name` and `short_name`); the violated index name arrives in
+   * `error.meta.target`, so we check `short_name` first (it contains `name` as a
+   * substring). Returns normally for any other error so the caller can rethrow.
    * @param e the caught error
+   * @param name the attempted name (for the conflict's context)
+   * @param shortName the attempted shortName (for the conflict's context)
+   * @throws DepartmentShortNameConflictException / DepartmentNameConflictException
    */
-  private isUniqueViolation(
+  private rethrowUniqueViolation(
     e: unknown,
-  ): e is Prisma.PrismaClientKnownRequestError {
-    return (
-      e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002'
+    name: string,
+    shortName: string,
+  ): void {
+    if (
+      !(e instanceof Prisma.PrismaClientKnownRequestError) ||
+      e.code !== 'P2002'
+    ) {
+      return;
+    }
+    const target = String(
+      (e.meta as { target?: unknown } | undefined)?.target ?? '',
     );
+    if (target.includes('short_name')) {
+      throw new DepartmentShortNameConflictException(shortName);
+    }
+    throw new DepartmentNameConflictException(name);
   }
 }
