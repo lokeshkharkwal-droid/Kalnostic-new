@@ -1,0 +1,135 @@
+meta {
+  name: Create Lab Test
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/lab-tests
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "testName": "Complete Blood Count",
+    "testCode": "CBC",
+    "processMethod": "SINGLE_STEP",
+    "samplePriorityType": "ROUTINE",
+    "priceMsrp": 700,
+    "priceMaximum": 650,
+    "priceMinimum": 400,
+    "discountCapPct": 20,
+    "tatMinValue": 2,
+    "tatMinUnit": "HOURS",
+    "tatMaxValue": 24,
+    "tatMaxUnit": "HOURS",
+    "scheduleDays": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+    "scheduleFrom": "08:00",
+    "scheduleTo": "18:00",
+    "clinicalTags": ["haematology", "routine"],
+    "samples": [
+      {
+        "containerType": "EDTA_TUBE_PURPLE_TOP",
+        "sampleSize": "3 mL",
+        "numberOfSamples": 1,
+        "isFastingRequired": false,
+        "isDefault": true
+      }
+    ],
+    "resultParams": [
+      {
+        "parameterName": "Haemoglobin",
+        "parameterCode": "HGB",
+        "reportingUnit": "g/dL",
+        "resultType": "QUANTITATIVE",
+        "parameterType": "MEASURED",
+        "decimalPlaces": 1,
+        "sortOrder": 1,
+        "referenceRanges": [
+          {
+            "gender": "MALE",
+            "ageFrom": 18,
+            "ageFromUnit": "YEARS",
+            "ageTo": 99,
+            "ageToUnit": "YEARS",
+            "lowerLimit": 13.0,
+            "upperLimit": 17.0,
+            "criticalMin": 7.0,
+            "criticalMax": 20.0,
+            "abnormalFlagLogic": "BOLD_AND_RED"
+          }
+        ]
+      },
+      {
+        "parameterName": "Blood Group",
+        "parameterCode": "ABO",
+        "resultType": "QUALITATIVE",
+        "referenceValues": [
+          { "normalValueText": "Not Detected", "gender": "ALL" }
+        ]
+      }
+    ]
+  }
+}
+
+vars:pre-request {
+  masterDataId: 3bebbd8d-eef4-4bfa-88f3-3aff4a4a4516
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("labTestId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  Create a lab test inside a master data (tenant/branch from the JWT + the path's
+  master data). Captures `labTestId`. Children (`samples`, `resultParams`, each
+  param's `referenceRanges`/`referenceValues`) are created in the same
+  transaction; the response includes them all, plus a seeded `versionHistory` v1.
+  
+  ## Key fields
+  
+  - `testName` (2-255) and `testCode` (1-50) — unique **per master data** among
+    active rows → 409 `LAB_TEST_NAME_CONFLICT` / `LAB_TEST_CODE_CONFLICT`.
+  - Enums are UPPERCASE: `processMethod` (SINGLE_STEP|MULTI_STEP),
+    `samplePriorityType` (ROUTINE|URGENT|STAT), `tat*Unit` (MINUTES|HOURS|DAYS),
+    `scheduleDays` (MONDAY…SUNDAY), `containerType`, `resultType`
+    (QUANTITATIVE|QUALITATIVE|CALCULATED), `parameterType` (MEASURED|CALCULATED),
+    `gender` (ALL|MALE|FEMALE), `age*Unit` (DAYS|MONTHS|YEARS), `abnormalFlagLogic`.
+  - Prices are integers; `parameterCode` is unique per test → 409
+    `LAB_TEST_PARAM_CODE_CONFLICT`.
+  
+  ## Cross-field rules (422 VALIDATION_ERROR)
+  
+  - `priceMaximum ≤ priceMsrp`, `priceMinimum ≤ priceMaximum`.
+  - `isMandatoryTest: true` requires `mandatoryDeptId`.
+  - `isRepeatIntervalRestriction: true` requires `repeatIntervalValue` +
+    `repeatIntervalUnit`.
+  - A `CALCULATED` parameter requires `calculationFormula`.
+  - Per range: `lowerLimit ≤ upperLimit`, `criticalMin ≤ lowerLimit`,
+    `criticalMax ≥ upperLimit`, `ageFrom ≤ ageTo`.
+  
+  The 8 settings/template ids (reportTemplateId, pdfSettingsId, imageSettingsId,
+  approvalWorkflowId, groupLayoutId, groupSettingsId, iconSettingsId,
+  sampleNameId) are optional logical references — omit them until those modules
+  exist. Uses `masterDataId` from Master Data → List/Create.
+  
+  `isActive` (optional, default `true`) toggles Active/Inactive — used by the
+  `status` filter on "List Lab Tests (Listing & Views)". Soft delete (`deletedAt`)
+  is separate: deleted tests never appear regardless of `isActive`.
+}

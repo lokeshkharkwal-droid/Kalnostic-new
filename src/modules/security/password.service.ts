@@ -78,6 +78,6 @@ export class PasswordService {
 
   /** Pick one random character from a set using a CSPRNG. */
   private pick(set: string): string {
-    return set[randomInt(set.length)];
+    return set.charAt(randomInt(set.length));
   }
 }

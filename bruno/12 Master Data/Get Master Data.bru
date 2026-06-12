@@ -1,0 +1,26 @@
+meta {
+  name: Get Master Data
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/master-data/{{masterDataId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  masterDataId: a218e484-28fa-49e8-90cf-9399b5605292
+}
+
+docs {
+  Fetch one master data by id (scoped to the caller's tenant). 404
+  `MASTER_DATA_NOT_FOUND` if missing, soft-deleted, or owned by another tenant.
+  
+  Uses `masterDataId` captured by **List Master Data**.
+}

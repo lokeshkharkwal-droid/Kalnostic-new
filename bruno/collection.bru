@@ -32,7 +32,12 @@ docs {
   5. **Users → Register Patient / Register Staff** → captures person ids.
   6. **Departments → Create Department** → captures `departmentId` (uses
      captured person ids in its `personMappings`).
-  7. Explore the rest — profiles, permissions, receptionist mappings, etc.
+  7. **Master Data → List Master Data** → captures `masterDataId` (the branch's
+     auto-created master data; manually create more for non-main branches).
+  8. **Lab Tests → Create Lab Test** → captures `labTestId` (rich test with
+     nested samples, params, and reference ranges/values); also list/update/
+     version/clone.
+  9. Explore the rest — profiles, permissions, receptionist mappings, etc.
 
   Run the requests in order; the post-response scripts populate the `Local`
   environment variables automatically. Select the **Local** environment first.

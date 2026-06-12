@@ -278,8 +278,9 @@ export class AuthService {
     const matchesOwner = allProfiles.filter((p) => p.tenantId === tenantId);
     if (matchesOwner.length === 0 && allProfiles.length > 0) {
       const uniqueTenants = [...new Set(allProfiles.map((p) => p.tenantId))];
-      if (uniqueTenants.length === 1) {
-        resolvedTenantId = uniqueTenants[0];
+      const [singleTenant] = uniqueTenants;
+      if (uniqueTenants.length === 1 && singleTenant) {
+        resolvedTenantId = singleTenant;
       }
     }
 
@@ -324,9 +325,11 @@ export class AuthService {
       profileEntries.length > 0
     ) {
       const def = profileEntries.find((p) => p.is_default) ?? profileEntries[0];
-      effectiveBranchId = def.branch_id;
-      effectiveProfileKey = def.profile_key;
-      effectiveBranchType = def.branch_type;
+      if (def) {
+        effectiveBranchId = def.branch_id;
+        effectiveProfileKey = def.profile_key;
+        effectiveBranchType = def.branch_type;
+      }
     } else if (effectiveProfileKey) {
       const active = profileEntries.find(
         (p) =>

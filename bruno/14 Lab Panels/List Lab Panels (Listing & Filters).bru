@@ -1,0 +1,56 @@
+meta {
+  name: List Lab Panels (Listing & Filters)
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/lab-panels/listing?page=1&limit=20&search=FBC
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  search: FBC
+  ~categoryId: 00000000-0000-0000-0000-000000000000
+  ~departmentId: 00000000-0000-0000-0000-000000000000
+  ~status: ACTIVE
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  masterDataId: 3bebbd8d-eef4-4bfa-88f3-3aff4a4a4516
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Listing screen for a master data's lab panels. Paginated (offset; `page` /
+  `limit`, pagination lands in `meta`).
+  
+  ## Search
+  
+  - `search` — case-insensitive match against `panelName` **OR** `panelCode`.
+  
+  ## Filters (all optional — toggle the `~` to enable a query param)
+  
+  - `categoryId` — parent category (UUID).
+  - `departmentId` — parent department (UUID).
+  - `status` — `ACTIVE` | `INACTIVE` (mapped to the `isActive` flag).
+  
+  ## Row shape
+  
+  Each row is the **full panel record** (all columns) enriched with embedded
+  `category` and `department` objects — each `{ id, name }`, or `null` when the
+  panel has no category/department — plus `testsCount` (number of included tests).
+  The full included-`tests` array is not included here; fetch it via "Get Lab Panel".
+}

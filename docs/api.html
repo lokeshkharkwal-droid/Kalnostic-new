@@ -115,6 +115,25 @@
   <a href="#tenant-update">PATCH /siteadmin/tenants/:id</a>
   <a href="#tenant-admin">GET /siteadmin/tenants/:id/admin</a>
   <a href="#tenant-adminpw">POST .../admin/reset-password</a>
+  <h3>Lab Tests <span style="text-transform:none;letter-spacing:0">(under master data)</span></h3>
+  <a href="#lt-create">POST .../lab-tests</a>
+  <a href="#lt-list">GET .../lab-tests</a>
+  <a href="#lt-listing">GET .../lab-tests/listing</a>
+  <a href="#lt-bulk">PATCH .../lab-tests/bulk</a>
+  <a href="#lt-import">POST .../lab-tests/import</a>
+  <a href="#lt-get">GET .../lab-tests/:id</a>
+  <a href="#lt-update">PATCH .../lab-tests/:id</a>
+  <a href="#lt-version">POST .../lab-tests/:id/versions</a>
+  <a href="#lt-clone">POST .../lab-tests/clone</a>
+  <a href="#lt-delete">DELETE .../lab-tests/:id</a>
+  <h3>Lab Panels <span style="text-transform:none;letter-spacing:0">(under master data)</span></h3>
+  <a href="#lp-create">POST .../lab-panels</a>
+  <a href="#lp-list">GET .../lab-panels</a>
+  <a href="#lp-listing">GET .../lab-panels/listing</a>
+  <a href="#lp-bulk">PATCH .../lab-panels/bulk</a>
+  <a href="#lp-get">GET .../lab-panels/:id</a>
+  <a href="#lp-update">PATCH .../lab-panels/:id</a>
+  <a href="#lp-delete">DELETE .../lab-panels/:id</a>
 </nav>
 <main>
 
@@ -389,6 +408,23 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>PATCH /siteadmin/tenants/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:create</code> · OPERATIONS_ADMIN+</td></tr>
   <tr><td>GET /siteadmin/tenants/:id/admin</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:read</code> · OPERATIONS_ADMIN+</td></tr>
   <tr><td>POST /siteadmin/tenants/:id/admin/reset-password</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:create</code> · OPERATIONS_ADMIN+</td></tr>
+  <tr><td>POST /master-data/:masterDataId/lab-tests</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
+  <tr><td>GET /master-data/:masterDataId/lab-tests</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
+  <tr><td>GET /master-data/:masterDataId/lab-tests/listing</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
+  <tr><td>PATCH /master-data/:masterDataId/lab-tests/bulk</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
+  <tr><td>POST /master-data/:masterDataId/lab-tests/import</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
+  <tr><td>GET /master-data/:masterDataId/lab-tests/:labTestId</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
+  <tr><td>PATCH /master-data/:masterDataId/lab-tests/:labTestId</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
+  <tr><td>POST /master-data/:masterDataId/lab-tests/:labTestId/versions</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
+  <tr><td>POST /master-data/:masterDataId/lab-tests/clone</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
+  <tr><td>DELETE /master-data/:masterDataId/lab-tests/:labTestId</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
+  <tr><td>POST /master-data/:masterDataId/lab-panels</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
+  <tr><td>GET /master-data/:masterDataId/lab-panels</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
+  <tr><td>GET /master-data/:masterDataId/lab-panels/listing</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
+  <tr><td>PATCH /master-data/:masterDataId/lab-panels/bulk</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
+  <tr><td>GET /master-data/:masterDataId/lab-panels/:panelId</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
+  <tr><td>PATCH /master-data/:masterDataId/lab-panels/:panelId</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
+  <tr><td>DELETE /master-data/:masterDataId/lab-panels/:panelId</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
 </table>
 
 <h2 id="data-model">Data model — models &amp; tiers</h2>
@@ -940,6 +976,273 @@ coherent example: SiteAdmin <i>owner@kalnostics.com</i> created tenant <b>City D
   <div class="tags"><span class="tag sa">SiteAdmin JWT</span><span class="tag">perm: business:create</span></div>
   <p>Reset the business admin's password; returns a one-time temp password.</p>
   <pre>{ "success": true, "data": { "adminPhone":"+919876543210","tempPassword":"Bcdfgh92" }, "meta": { "timestamp":"…" } }</pre>
+</div>
+
+<!-- ───────────────────────── LAB TESTS ───────────────────────── -->
+<h2 id="lab-tests">Lab Tests <span style="font-size:13px;color:var(--muted)">(nested under a master data)</span></h2>
+<div class="note">Lab tests live inside a <b>master data</b> container and are addressed as
+<code>/master-data/:masterDataId/lab-tests</code>. They are tenant-scoped + branch-level (tenant/branch
+come from the JWT + the parent master data — never the body). A test owns nested children: samples,
+result parameters, and per-parameter reference ranges/values. <code>testName</code>/<code>testCode</code>
+are unique <b>per master data</b> among active rows; <code>parameterCode</code> is unique per test.
+<code>isActive</code> (Active/Inactive) is separate from soft delete (<code>deletedAt</code>) — deleted
+tests never appear regardless of status.</div>
+
+<div class="ep" id="lt-create">
+  <div><span class="m post">POST</span><span class="path">/api/v1/master-data/:masterDataId/lab-tests</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Create a lab test with its children, in one transaction; seeds <code>versionHistory</code> v1.
+  Conflicts: <span class="pill">409 LAB_TEST_NAME_CONFLICT</span> / <span class="pill">409 LAB_TEST_CODE_CONFLICT</span> /
+  <span class="pill">409 LAB_TEST_PARAM_CODE_CONFLICT</span>. DTO/shape errors → <span class="pill">400 VALIDATION_ERROR</span>;
+  cross-field rules (price ordering, mandatory-dept, repeat-interval, calc-formula, range bounds) →
+  <span class="pill">422 VALIDATION_ERROR</span>. <code>isActive</code> optional (default <code>true</code>).</p>
+  <pre>{ "testName":"Complete Blood Count", "testCode":"CBC",
+  "priceMsrp":700, "priceMaximum":650, "priceMinimum":400,
+  "tatMaxValue":24, "tatMaxUnit":"HOURS",
+  "samples":[ {"containerType":"EDTA_TUBE_PURPLE_TOP","isDefault":true} ],
+  "resultParams":[ {"parameterName":"Haemoglobin","parameterCode":"HGB",
+    "resultType":"QUANTITATIVE",
+    "referenceRanges":[ {"gender":"MALE","lowerLimit":13.0,"upperLimit":17.0} ]} ] }</pre>
+</div>
+
+<div class="ep" id="lt-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/master-data/:masterDataId/lab-tests?page=1&amp;limit=20</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Paginated list of the master data's lab tests — <b>core rows only</b> (no children).
+  <span class="pill">404 MASTER_DATA_NOT_FOUND</span> if the master data is missing/other tenant.</p>
+</div>
+
+<div class="ep" id="lt-listing">
+  <div><span class="m get">GET</span><span class="path">/api/v1/master-data/:masterDataId/lab-tests/listing?view=DEFAULT&amp;page=1&amp;limit=20</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Configurable listing screen. The <code>view</code> param selects which columns (and, for the
+  child-centric views, nested arrays) are projected. Paginated <b>by lab test</b> — <code>meta.total</code>
+  counts tests even for the nested views. Additive: the core <code>List</code> endpoint above is unchanged.</p>
+  <p class="lbl">Query params (all optional)</p>
+  <table>
+    <tr><th>Param</th><th>Notes</th></tr>
+    <tr><td><code>view</code></td><td><code>DEFAULT</code> (default) · <code>BASIC_DETAILS</code> · <code>PRICING</code> · <code>TAT</code> · <code>FLAGS</code> · <code>SAMPLE</code> · <code>RESULTS</code> · <code>REFERENCE_RANGE</code> · <code>REFERENCE_VALUE</code> · <code>NOTES</code> · <code>VERSION_CONTROL</code> · <code>OVERVIEW</code></td></tr>
+    <tr><td><code>search</code></td><td>matches <code>testName</code> OR <code>testCode</code> only (case-insensitive)</td></tr>
+    <tr><td><code>departmentId</code> / <code>categoryId</code> / <code>subCategoryId</code></td><td>filter by id; the matching <b>names</b> are resolved server-side in views that show them</td></tr>
+    <tr><td><code>status</code></td><td><code>ACTIVE</code> | <code>INACTIVE</code> → maps to <code>isActive</code> (soft-deleted always excluded)</td></tr>
+    <tr><td><code>page</code> / <code>limit</code></td><td>standard pagination (<code>limit</code> ≤ 100)</td></tr>
+  </table>
+  <p>Invalid <code>view</code>/<code>status</code> (or empty enum value) → <span class="pill">400 VALIDATION_ERROR</span>;
+  missing/other-tenant master data → <span class="pill">404 MASTER_DATA_NOT_FOUND</span>.</p>
+  <p class="lbl">200 response (DEFAULT view)</p>
+  <pre>{ "success": true, "data": [
+  { "id":"…","testName":"Complete Blood Count","testCode":"CBC",
+    "departmentName":"Haematology","priceMsrp":700,
+    "tatMaxValue":24,"tatMaxUnit":"HOURS",
+    "defaultSample":{ "id":"…","containerType":"EDTA_TUBE_PURPLE_TOP", … },
+    "parametersCount":2,"isActive":true } ],
+  "meta": { "total":1,"page":1,"limit":20,"totalPages":1,"timestamp":"…" } }</pre>
+  <div class="note"><b>Fields mapped/omitted</b> (no backing column yet): FLAGS "Reference test" → <code>isPreferenceTest</code>
+  (Bill only / Disable discount / Outsource / Sample flow omitted); TAT "Reporting time" omitted;
+  BASIC_DETAILS "Approval" → <code>approvalWorkflowId</code>; SAMPLE "Sample/Sample type" → <code>sampleNameId</code> + <code>containerType</code>;
+  OVERVIEW "Max value" → <code>priceMaximum</code>.</div>
+</div>
+
+<div class="ep" id="lt-bulk">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/master-data/:masterDataId/lab-tests/bulk</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Bulk-edit: <code>data</code> is an array (1–500) of per-test edits, each carrying its own
+  <code>labTestId</code> plus the <b>scalar</b> fields to change <b>for that test</b>, scoped to the
+  caller's tenant + the path's master data. Only the tests in the payload are touched.
+  <code>testName</code>/<code>testCode</code> and the children (<code>samples</code>/<code>resultParams</code>)
+  are <b>not</b> bulk-editable. <b>All-or-nothing</b>: an unresolved <code>labTestId</code> →
+  <span class="pill">404 LAB_TEST_NOT_FOUND</span>; duplicate ids, an item with no changes, or a per-test
+  cross-field invariant break (price ordering, mandatory-dept, repeat-interval — re-checked against each
+  test's existing values) → <span class="pill">422 VALIDATION_ERROR</span> — and nothing is changed (one
+  transaction). Returns <code>{ updated }</code>.</p>
+  <pre>{ "data":[
+  { "labTestId":"lt-uuid-1", "isActive":false, "priceMsrp":700 },
+  { "labTestId":"lt-uuid-2", "samplePriorityType":"STAT" } ] }</pre>
+</div>
+
+<div class="ep" id="lt-import">
+  <div><span class="m post">POST</span><span class="path">/api/v1/master-data/:masterDataId/lab-tests/import</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Bulk-import (<b>create-only</b>) lab tests from the frontend's parsed Excel rows. <code>rows</code> is
+  an array (1–1000) of <b>core/scalar</b> test fields (no nested samples/parameters); each row may carry an
+  optional <code>rowNumber</code> (echoed in errors; falls back to the 1-based index). <code>testName</code>
+  and <code>testCode</code> are required per row.</p>
+  <p><b>Validate-all-then-save (all-or-nothing).</b> Every row is checked — structural (types/required/enum),
+  cross-field invariants, and duplicate <code>testName</code>/<code>testCode</code> (against the batch itself
+  <i>and</i> existing active tests in the master data). If <b>any</b> row fails, <b>nothing</b> is saved and
+  the response is <span class="pill">422 LAB_TEST_IMPORT_VALIDATION_FAILED</span> whose <code>message</code>
+  is a <b>row-numbered list</b>. On success every row is created in one transaction (seeded
+  <code>versionHistory</code> v1) → <code>{ created }</code>.</p>
+  <pre>{ "rows":[
+  { "rowNumber":2, "testName":"Complete Blood Count", "testCode":"CBC", "priceMsrp":700 },
+  { "rowNumber":3, "testName":"Lipid Profile", "testCode":"LIPID", "priceMsrp":900 } ] }</pre>
+  <p class="lbl">422 response (nothing saved)</p>
+  <pre>{ "success": false, "error": { "code": "LAB_TEST_IMPORT_VALIDATION_FAILED",
+  "message": [ "Row 3: testCode must be longer than or equal to 1 characters",
+    "Row 5: testCode 'CBC' already exists in this master data" ] } }</pre>
+</div>
+
+<div class="ep" id="lt-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/master-data/:masterDataId/lab-tests/:labTestId</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Fetch one lab test composed with all children (<code>samples</code>, <code>resultParams</code> each with
+  <code>referenceRanges</code>/<code>referenceValues</code>) + <code>versionHistory</code>.
+  <span class="pill">404 LAB_TEST_NOT_FOUND</span> if missing/soft-deleted/other master data.</p>
+</div>
+
+<div class="ep" id="lt-update">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/master-data/:masterDataId/lab-tests/:labTestId</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Patch core fields (send only what changes). When <code>samples</code> or <code>resultParams</code> is
+  provided, that whole child set is <b>replaced</b> (old active rows soft-deleted, new set created) in one
+  transaction. Same conflicts/cross-field rules as create. Toggle Active/Inactive via <code>isActive</code>.</p>
+  <pre>{ "priceMaximum":600, "isActive":false }</pre>
+</div>
+
+<div class="ep" id="lt-version">
+  <div><span class="m post">POST</span><span class="path">/api/v1/master-data/:masterDataId/lab-tests/:labTestId/versions</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Append a version entry to <code>versionHistory</code>. <code>version</code> auto-increments; the previous
+  open entry's <code>effectiveTo</code> is set to <code>effectiveFrom − 1 day</code>; <code>modifiedBy</code>
+  comes from the JWT actor.</p>
+  <pre>{ "effectiveFrom":"2026-07-01", "approvedBy":"person-uuid" }</pre>
+</div>
+
+<div class="ep" id="lt-clone">
+  <div><span class="m post">POST</span><span class="path">/api/v1/master-data/:masterDataId/lab-tests/clone</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Deep-clone all active lab tests from this (source) master data into a target — each test plus its
+  samples, params, and reference ranges/values copied with fresh ids, the target's <code>branchId</code>,
+  and a fresh <code>versionHistory</code> v1. A source test is <b>skipped</b> if its <code>testName</code>/<code>testCode</code>
+  already exists (active) in the target. Both master data must be in the caller's tenant. Returns <code>{ copied, skipped }</code>.</p>
+  <pre>{ "targetMasterDataId":"md-uuid" }</pre>
+</div>
+
+<div class="ep" id="lt-delete">
+  <div><span class="m delete">DELETE</span><span class="path">/api/v1/master-data/:masterDataId/lab-tests/:labTestId</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Soft-delete a lab test (sets <code>deletedAt</code>) and cascade soft-delete all of its children in one
+  transaction. Frees <code>testName</code>/<code>testCode</code> for reuse among active rows.
+  <span class="pill">404 LAB_TEST_NOT_FOUND</span> if missing/already-deleted/other master data.</p>
+</div>
+
+<!-- ───────────────────────── LAB PANELS ───────────────────────── -->
+<h2 id="lab-panels">Lab Panels <span style="font-size:13px;color:var(--muted)">(nested under a master data)</span></h2>
+<div class="note">Lab panels live inside a <b>master data</b> container and are addressed as
+<code>/master-data/:masterDataId/lab-panels</code>. They are tenant-scoped + branch-level (tenant/branch
+come from the JWT + the parent master data — never the body). A panel groups several lab tests via the
+nested <code>tests[]</code> array (each <code>labTestId</code> must reference an active lab test in the
+<b>same master data</b>). <code>panelName</code>/<code>panelCode</code> are unique <b>per master data</b>
+among active rows. <code>isActive</code> (Active/Inactive) is separate from soft delete
+(<code>deletedAt</code>) — deleted panels never appear regardless of status.</div>
+
+<div class="ep" id="lp-create">
+  <div><span class="m post">POST</span><span class="path">/api/v1/master-data/:masterDataId/lab-panels</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Create a lab panel with its included tests, in one transaction.
+  Conflicts: <span class="pill">409 LAB_PANEL_NAME_CONFLICT</span> / <span class="pill">409 LAB_PANEL_CODE_CONFLICT</span>.
+  DTO/shape errors → <span class="pill">400 VALIDATION_ERROR</span>; cross-field rules (price ordering,
+  <code>maxTestsRemovable</code> requires <code>isAllowPartialBilling</code> and cannot exceed the test count) →
+  <span class="pill">422 VALIDATION_ERROR</span>; a bad/foreign/duplicate test reference →
+  <span class="pill">422 LAB_PANEL_TEST_NOT_FOUND</span>. <code>isActive</code> optional (default <code>true</code>).</p>
+  <pre>{ "panelName":"Full Body Checkup", "panelCode":"FBC",
+  "applicableGender":"ALL", "applicableAgeGroup":"ADULT",
+  "reportType":"COMBINED", "turnaroundPriority":"ROUTINE",
+  "priceMsrp":2500, "priceMaximum":2300, "priceMinimum":1800,
+  "tatMaxValue":48, "tatMaxUnit":"HOURS",
+  "isFastingRequired":true, "isHomeCollection":true,
+  "isAllowPartialBilling":true, "maxTestsRemovable":1,
+  "tests":[ {"labTestId":"lt-uuid","sortOrder":1,"isRemovable":true} ] }</pre>
+  <p class="lbl">Enums</p>
+  <p><code>applicableGender</code> ALL|MALE|FEMALE · <code>applicableAgeGroup</code> ALL|ADULT|PEDIATRIC|SENIOR ·
+  <code>reportType</code> COMBINED|SEPARATE · <code>turnaroundPriority</code> ROUTINE|URGENT|STAT ·
+  <code>tat*Unit</code> MINUTES|HOURS|DAYS (defaults <code>HOURS</code>). Prices are integers (minor units).</p>
+</div>
+
+<div class="ep" id="lp-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/master-data/:masterDataId/lab-panels?page=1&amp;limit=20</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Paginated list of the master data's lab panels — full panel records (no <code>tests</code> array),
+  each enriched with embedded <code>category</code> / <code>department</code> <code>{ id, name }</code>
+  objects (<code>null</code> when unset).
+  <span class="pill">404 MASTER_DATA_NOT_FOUND</span> if the master data is missing/other tenant.</p>
+</div>
+
+<div class="ep" id="lp-listing">
+  <div><span class="m get">GET</span><span class="path">/api/v1/master-data/:masterDataId/lab-panels/listing?page=1&amp;limit=20</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Listing screen for the panels. Paginated <b>by panel</b>. Each row is the <b>full panel record</b>
+  enriched with embedded <code>category</code> / <code>department</code> <code>{ id, name }</code> objects
+  (<code>null</code> when unset) plus <code>testsCount</code> (the included-tests array stays on the
+  get-one endpoint).</p>
+  <p class="lbl">Query params (all optional)</p>
+  <table>
+    <tr><th>Param</th><th>Notes</th></tr>
+    <tr><td><code>search</code></td><td>matches <code>panelName</code> OR <code>panelCode</code> (case-insensitive)</td></tr>
+    <tr><td><code>categoryId</code></td><td>filter by parent category id</td></tr>
+    <tr><td><code>departmentId</code></td><td>filter by parent department id</td></tr>
+    <tr><td><code>status</code></td><td><code>ACTIVE</code> | <code>INACTIVE</code> → maps to <code>isActive</code> (soft-deleted always excluded)</td></tr>
+    <tr><td><code>page</code> / <code>limit</code></td><td>standard pagination (<code>limit</code> ≤ 100)</td></tr>
+  </table>
+  <p>Invalid <code>status</code> → <span class="pill">400 VALIDATION_ERROR</span>;
+  missing/other-tenant master data → <span class="pill">404 MASTER_DATA_NOT_FOUND</span>.</p>
+  <p class="lbl">200 response (each row is the full panel — fields abbreviated below)</p>
+  <pre>{ "success": true, "data": [
+  { "id":"…","panelName":"Full Body Checkup","panelCode":"FBC",
+    "categoryId":"cat-uuid","departmentId":"dep-uuid",
+    "category":{ "id":"cat-uuid","name":"Wellness" },
+    "department":{ "id":"dep-uuid","name":"Pathology" },
+    "applicableGender":"ALL","applicableAgeGroup":"ADULT",
+    "reportType":"COMBINED","turnaroundPriority":"ROUTINE","isActive":true,
+    "priceMsrp":2500,"priceMaximum":2300,"priceMinimum":1800,
+    "tatMaxValue":48,"tatMaxUnit":"HOURS","isAllowPartialBilling":true,
+    "maxTestsRemovable":1, "…":"…all other panel columns…",
+    "testsCount":12 } ],
+  "meta": { "total":1,"page":1,"limit":20,"totalPages":1,"timestamp":"…" } }</pre>
+</div>
+
+<div class="ep" id="lp-bulk">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/master-data/:masterDataId/lab-panels/bulk</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Bulk-edit: <code>data</code> is an array (1–500) of per-panel edits, each carrying its own
+  <code>labPanelId</code> plus the <b>scalar</b> fields to change <b>for that panel</b>, scoped to the
+  caller's tenant + the path's master data. Only the panels in the payload are touched.
+  <code>panelName</code>/<code>panelCode</code> and the <code>tests</code> composition are <b>not</b>
+  bulk-editable. <b>All-or-nothing</b>: an unresolved <code>labPanelId</code> →
+  <span class="pill">404 LAB_PANEL_NOT_FOUND</span>; duplicate ids, an item with no changes, or a per-panel
+  cross-field invariant break (re-checked against each panel's existing values + test count) →
+  <span class="pill">422 VALIDATION_ERROR</span> — and nothing is changed (one transaction). Returns
+  <code>{ updated }</code>.</p>
+  <pre>{ "data":[
+  { "labPanelId":"panel-uuid-1", "isActive":false, "priceMsrp":2500 },
+  { "labPanelId":"panel-uuid-2", "turnaroundPriority":"STAT" } ] }</pre>
+</div>
+
+<div class="ep" id="lp-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/master-data/:masterDataId/lab-panels/:panelId</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Fetch one lab panel (full record) composed with its included <code>tests</code> (ordered by
+  <code>sortOrder</code>) and its embedded <code>category</code> / <code>department</code>
+  <code>{ id, name }</code> objects (<code>null</code> when unset).
+  <span class="pill">404 LAB_PANEL_NOT_FOUND</span> if missing/soft-deleted/other master data.</p>
+</div>
+
+<div class="ep" id="lp-update">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/master-data/:masterDataId/lab-panels/:panelId</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Patch core fields (send only what changes). When <code>tests</code> is provided, the whole included-test
+  set is <b>replaced</b> (old active rows soft-deleted, new set created) in one transaction — omit it to leave
+  composition untouched. Same conflicts/cross-field rules as create (evaluated against merged values).
+  Toggle Active/Inactive via <code>isActive</code>.</p>
+  <pre>{ "priceMaximum":2600, "turnaroundPriority":"URGENT", "isHomeCollection":false }</pre>
+</div>
+
+<div class="ep" id="lp-delete">
+  <div><span class="m delete">DELETE</span><span class="path">/api/v1/master-data/:masterDataId/lab-panels/:panelId</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Soft-delete a lab panel (sets <code>deletedAt</code>) and cascade soft-delete its included tests in one
+  transaction. Frees <code>panelName</code>/<code>panelCode</code> for reuse among active rows.
+  <span class="pill">404 LAB_PANEL_NOT_FOUND</span> if missing/already-deleted/other master data.</p>
 </div>
 
 <p style="margin:40px 0 10px;color:var(--muted);font-size:13px">

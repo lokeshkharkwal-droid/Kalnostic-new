@@ -1,0 +1,1499 @@
+import { Injectable } from '@nestjs/common';
+import {
+  LabTest,
+  LabTestReferenceRange,
+  LabTestReferenceValue,
+  LabTestResultParam,
+  LabTestSample,
+  ParameterType,
+  Prisma,
+} from '@prisma/client';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
+import { PrismaService } from '../../prisma/prisma.service';
+import { PaginatedResult } from '../../common/dto/response.dto';
+import { ValidationException } from '../../common/exceptions/kaltros.exception';
+import { MasterDataService } from '../master-data/master-data.service';
+import { CreateLabTestDto } from './dto/create-lab-test.dto';
+import { UpdateLabTestDto } from './dto/update-lab-test.dto';
+import { ListLabTestsDto } from './dto/list-lab-tests.dto';
+import { LabTestResultParamDto } from './dto/lab-test-result-param.dto';
+import { LabTestReferenceRangeDto } from './dto/lab-test-reference-range.dto';
+import { AddLabTestVersionDto } from './dto/add-lab-test-version.dto';
+import {
+  BulkEditLabTestItemDto,
+  BulkEditLabTestsDto,
+} from './dto/bulk-edit-lab-tests.dto';
+import {
+  ImportLabTestRowDto,
+  ImportLabTestsDto,
+} from './dto/import-lab-tests.dto';
+import {
+  LabTestListRow,
+  LabTestListView,
+  LabTestRefRangeRow,
+  LabTestRefValueRow,
+  LabTestResultsParamRow,
+  LabTestSampleRow,
+  LabTestVersionEntry,
+  LabTestWithChildren,
+} from './entities/lab-test.entity';
+import {
+  LabTestCodeConflictException,
+  LabTestImportValidationException,
+  LabTestNameConflictException,
+  LabTestNotFoundException,
+  LabTestParamCodeConflictException,
+} from './exceptions/lab-test.exceptions';
+
+/** Result of a bulk edit: how many lab tests were updated. */
+export interface BulkEditResult {
+  updated: number;
+}
+
+/** Result of a bulk import: how many lab tests were created. */
+export interface ImportResult {
+  created: number;
+}
+
+/** Result of a clone operation: how many tests were copied vs skipped. */
+export interface CloneResult {
+  copied: number;
+  skipped: number;
+}
+
+/** Row keys that are re-derived (never copied) when cloning. */
+const META_KEYS = [
+  'id',
+  'tenantId',
+  'branchId',
+  'masterDataId',
+  'labTestId',
+  'paramId',
+  'createdAt',
+  'updatedAt',
+  'deletedAt',
+  'versionHistory',
+];
+
+/**
+ * Lab-test configuration management. Tenant-scoped + branch-level; every test
+ * lives inside a master data (`masterDataId`) whose tenant/branch it inherits.
+ * Child rows (samples, result params, reference ranges/values) are managed
+ * nested in the test payload. Prisma-direct; multi-step writes run in
+ * `withTenant` transactions. Cross-field invariants are validated here (defence
+ * in front of the CHECK constraints in prisma/rls.sql).
+ */
+@Injectable()
+export class LabTestService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly masterDataService: MasterDataService,
+  ) {}
+
+  /**
+   * Create a lab test inside a master data, with its samples and result
+   * parameters (each carrying its reference ranges/values). The master data is
+   * validated to belong to the caller's tenant (and supplies `branchId`).
+   * Seeds `versionHistory` with v1. All inserts run in one transaction.
+   * @param masterDataId parent master data id
+   * @param tenantId tenant scope
+   * @param actorId person id recorded as `modifiedBy` on the seeded v1
+   * @param dto validated payload
+   * @returns the created lab test with all children
+   * @throws MasterDataNotFoundException if the master data is missing/other tenant
+   * @throws ValidationException on a cross-field invariant violation
+   * @throws LabTestNameConflictException / LabTestCodeConflictException / LabTestParamCodeConflictException
+   */
+  async create(
+    masterDataId: string,
+    tenantId: string,
+    actorId: string,
+    dto: CreateLabTestDto,
+  ): Promise<LabTestWithChildren> {
+    const masterData = await this.masterDataService.findById(
+      masterDataId,
+      tenantId,
+    );
+    this.assertCoreInvariants({
+      priceMsrp: dto.priceMsrp ?? 0,
+      priceMaximum: dto.priceMaximum ?? 0,
+      priceMinimum: dto.priceMinimum ?? 0,
+      isMandatoryTest: dto.isMandatoryTest ?? false,
+      mandatoryDeptId: dto.mandatoryDeptId ?? null,
+      isRepeatIntervalRestriction: dto.isRepeatIntervalRestriction ?? false,
+      repeatIntervalValue: dto.repeatIntervalValue ?? null,
+      repeatIntervalUnit: dto.repeatIntervalUnit ?? null,
+    });
+    (dto.resultParams ?? []).forEach((p) => this.assertParam(p));
+
+    const { samples, resultParams, ...scalars } = dto;
+    let createdId: string;
+    try {
+      createdId = await this.prisma.withTenant(tenantId, async (tx) => {
+        const labTest = await tx.labTest.create({
+          data: {
+            ...scalars,
+            tenantId,
+            branchId: masterData.branchId,
+            masterDataId,
+            versionHistory: [
+              this.seedVersion(actorId),
+            ] as unknown as Prisma.InputJsonValue,
+          },
+        });
+        await this.createSamples(
+          tx,
+          tenantId,
+          masterData.branchId,
+          labTest.id,
+          samples,
+        );
+        await this.createParams(
+          tx,
+          tenantId,
+          masterData.branchId,
+          labTest.id,
+          resultParams,
+        );
+        return labTest.id;
+      });
+    } catch (e) {
+      this.rethrowConflict(e, dto.testName, dto.testCode);
+      throw e;
+    }
+    return this.findById(masterDataId, createdId, tenantId);
+  }
+
+  /**
+   * Fetch one lab test composed with its samples and result parameters (each
+   * with its reference ranges/values).
+   * @param masterDataId parent master data id
+   * @param labTestId lab test id
+   * @param tenantId tenant scope
+   * @throws LabTestNotFoundException if missing/soft-deleted/other master data
+   */
+  async findById(
+    masterDataId: string,
+    labTestId: string,
+    tenantId: string,
+  ): Promise<LabTestWithChildren> {
+    const labTest = await this.findCoreById(labTestId, masterDataId, tenantId);
+    const [samples, params] = await Promise.all([
+      this.prisma.labTestSample.findMany({
+        where: { labTestId, tenantId, deletedAt: null },
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.labTestResultParam.findMany({
+        where: { labTestId, tenantId, deletedAt: null },
+        orderBy: { sortOrder: 'asc' },
+      }),
+    ]);
+    const [ranges, values] = await Promise.all([
+      this.prisma.labTestReferenceRange.findMany({
+        where: { labTestId, tenantId, deletedAt: null },
+      }),
+      this.prisma.labTestReferenceValue.findMany({
+        where: { labTestId, tenantId, deletedAt: null },
+      }),
+    ]);
+    return {
+      ...labTest,
+      samples,
+      resultParams: params.map((p) => ({
+        ...p,
+        referenceRanges: ranges.filter((r) => r.paramId === p.id),
+        referenceValues: values.filter((v) => v.paramId === p.id),
+      })),
+    };
+  }
+
+  /**
+   * List active lab tests in a master data (offset pagination; core rows only).
+   * @param masterDataId parent master data id
+   * @param tenantId tenant scope
+   * @param page 1-based page (default 1)
+   * @param limit page size (default 20)
+   * @throws MasterDataNotFoundException if the master data is missing/other tenant
+   */
+  async findAll(
+    masterDataId: string,
+    tenantId: string,
+    page = 1,
+    limit = 20,
+  ): Promise<PaginatedResult<LabTest>> {
+    await this.masterDataService.findById(masterDataId, tenantId);
+    const where = { masterDataId, tenantId, deletedAt: null };
+    const data = await this.prisma.labTest.findMany({
+      where,
+      skip: (page - 1) * limit,
+      take: limit,
+      orderBy: { createdAt: 'desc' },
+    });
+    const total = await this.prisma.labTest.count({ where });
+    return { data, total, page, limit };
+  }
+
+  /**
+   * List lab tests in a master data for the configurable listing screen.
+   * Supports search (by `testName`/`testCode`), classification + status filters,
+   * and a `view` that projects a different column subset (and, for the
+   * child-centric views, nested arrays). Pagination always counts lab tests.
+   * @param masterDataId parent master data id
+   * @param tenantId tenant scope
+   * @param query view + filters + pagination
+   * @returns a paginated list of view-specific projection rows
+   * @throws MasterDataNotFoundException if the master data is missing/other tenant
+   */
+  async listForView(
+    masterDataId: string,
+    tenantId: string,
+    query: ListLabTestsDto,
+  ): Promise<PaginatedResult<LabTestListRow>> {
+    await this.masterDataService.findById(masterDataId, tenantId);
+    const view = query.view ?? LabTestListView.DEFAULT;
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+
+    const where: Prisma.LabTestWhereInput = {
+      masterDataId,
+      tenantId,
+      deletedAt: null,
+    };
+    const search = query.search?.trim();
+    if (search) {
+      where.OR = [
+        { testName: { contains: search, mode: 'insensitive' } },
+        { testCode: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+    if (query.departmentId) where.departmentId = query.departmentId;
+    if (query.categoryId) where.categoryId = query.categoryId;
+    if (query.subCategoryId) where.subCategoryId = query.subCategoryId;
+    if (query.status) where.isActive = query.status === 'ACTIVE';
+
+    const [tests, total] = await Promise.all([
+      this.prisma.labTest.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.labTest.count({ where }),
+    ]);
+
+    const data = await this.projectListRows(view, tenantId, tests);
+    return { data, total, page, limit };
+  }
+
+  // ── Listing projection ────────────────────────────────────────────────────────
+
+  /**
+   * Project a page of lab tests into the requested view's row shape. Fetches only
+   * the children/counts/names the view needs, batched over the page's ids (no
+   * N+1), then maps each test.
+   */
+  private async projectListRows(
+    view: LabTestListView,
+    tenantId: string,
+    tests: LabTest[],
+  ): Promise<LabTestListRow[]> {
+    if (tests.length === 0) {
+      return [];
+    }
+    const ids = tests.map((t) => t.id);
+
+    switch (view) {
+      case LabTestListView.DEFAULT: {
+        const [deptNames, defaultSamples, paramCounts] = await Promise.all([
+          this.resolveNames(
+            'department',
+            tenantId,
+            tests.map((t) => t.departmentId),
+          ),
+          this.fetchDefaultSamples(tenantId, ids),
+          this.countByTest('labTestResultParam', tenantId, ids),
+        ]);
+        return tests.map((t) => ({
+          id: t.id,
+          testName: t.testName,
+          testCode: t.testCode,
+          departmentName: this.nameOf(deptNames, t.departmentId),
+          priceMsrp: t.priceMsrp,
+          tatMaxValue: t.tatMaxValue,
+          tatMaxUnit: t.tatMaxUnit,
+          defaultSample: defaultSamples.get(t.id) ?? null,
+          parametersCount: paramCounts.get(t.id) ?? 0,
+          isActive: t.isActive,
+        }));
+      }
+
+      case LabTestListView.BASIC_DETAILS: {
+        const [deptNames, catNames, subCatNames] = await Promise.all([
+          this.resolveNames(
+            'department',
+            tenantId,
+            tests.map((t) => t.departmentId),
+          ),
+          this.resolveNames(
+            'category',
+            tenantId,
+            tests.map((t) => t.categoryId),
+          ),
+          this.resolveNames(
+            'subCategory',
+            tenantId,
+            tests.map((t) => t.subCategoryId),
+          ),
+        ]);
+        return tests.map((t) => ({
+          id: t.id,
+          testName: t.testName,
+          testCode: t.testCode,
+          aka: t.aka,
+          departmentName: this.nameOf(deptNames, t.departmentId),
+          categoryName: this.nameOf(catNames, t.categoryId),
+          subCategoryName: this.nameOf(subCatNames, t.subCategoryId),
+          processMethod: t.processMethod,
+          approvalWorkflowId: t.approvalWorkflowId,
+          isMandatoryTest: t.isMandatoryTest,
+          samplePriorityType: t.samplePriorityType,
+          icdCode: t.icdCode,
+          loincCode: t.loincCode,
+        }));
+      }
+
+      case LabTestListView.PRICING:
+        return tests.map((t) => ({
+          id: t.id,
+          testName: t.testName,
+          testCode: t.testCode,
+          priceMsrp: t.priceMsrp,
+          priceMinimum: t.priceMinimum,
+          priceMaximum: t.priceMaximum,
+          priceOriginal: t.priceOriginal,
+          franchisePrice: t.franchisePrice,
+          emergencyPrice: t.emergencyPrice,
+          discountCapPct: t.discountCapPct,
+          isAllowPriceOverride: t.isAllowPriceOverride,
+          isAllowDiscounts: t.isAllowDiscounts,
+        }));
+
+      case LabTestListView.TAT:
+        return tests.map((t) => ({
+          id: t.id,
+          testName: t.testName,
+          tatMinValue: t.tatMinValue,
+          tatMinUnit: t.tatMinUnit,
+          tatMaxValue: t.tatMaxValue,
+          tatMaxUnit: t.tatMaxUnit,
+          scheduleFrom: t.scheduleFrom,
+          scheduleTo: t.scheduleTo,
+          procTimeMinValue: t.procTimeMinValue,
+          procTimeMinUnit: t.procTimeMinUnit,
+          procTimeMaxValue: t.procTimeMaxValue,
+          procTimeMaxUnit: t.procTimeMaxUnit,
+          approvalTimeFrom: t.approvalTimeFrom,
+          approvalTimeTo: t.approvalTimeTo,
+        }));
+
+      case LabTestListView.FLAGS:
+        return tests.map((t) => ({
+          id: t.id,
+          testName: t.testName,
+          isHideInOrderScreen: t.isHideInOrderScreen,
+          isEnableCms: t.isEnableCms,
+          isPreferenceTest: t.isPreferenceTest,
+          isActive: t.isActive,
+        }));
+
+      case LabTestListView.SAMPLE: {
+        const [deptNames, samplesByTest] = await Promise.all([
+          this.resolveNames(
+            'department',
+            tenantId,
+            tests.map((t) => t.departmentId),
+          ),
+          this.fetchSamples(tenantId, ids),
+        ]);
+        return tests.map((t) => ({
+          id: t.id,
+          testName: t.testName,
+          testCode: t.testCode,
+          departmentName: this.nameOf(deptNames, t.departmentId),
+          isActive: t.isActive,
+          samples: (samplesByTest.get(t.id) ?? []).map(
+            (s): LabTestSampleRow => ({
+              id: s.id,
+              sampleNameId: s.sampleNameId,
+              sampleType: s.sampleType,
+              containerType: s.containerType,
+              sampleSize: s.sampleSize,
+              isFastingRequired: s.isFastingRequired,
+              transportTemperature: s.transportTemperature,
+            }),
+          ),
+        }));
+      }
+
+      case LabTestListView.RESULTS: {
+        const [deptNames, paramsByTest] = await Promise.all([
+          this.resolveNames(
+            'department',
+            tenantId,
+            tests.map((t) => t.departmentId),
+          ),
+          this.fetchParams(tenantId, ids),
+        ]);
+        return tests.map((t) => ({
+          id: t.id,
+          testName: t.testName,
+          testCode: t.testCode,
+          departmentName: this.nameOf(deptNames, t.departmentId),
+          isActive: t.isActive,
+          resultParams: (paramsByTest.get(t.id) ?? []).map(
+            (p): LabTestResultsParamRow => ({
+              id: p.id,
+              parameterName: p.parameterName,
+              method: p.method,
+              resultType: p.resultType,
+              units: p.reportingUnit,
+              isNabl: p.isNabl,
+              isCap: p.isCap,
+            }),
+          ),
+        }));
+      }
+
+      case LabTestListView.REFERENCE_RANGE: {
+        const [paramsByTest, rangesByTest] = await Promise.all([
+          this.fetchParams(tenantId, ids),
+          this.fetchRanges(tenantId, ids),
+        ]);
+        return tests.map((t) => {
+          const paramMap = this.indexById(paramsByTest.get(t.id) ?? []);
+          return {
+            id: t.id,
+            testName: t.testName,
+            testCode: t.testCode,
+            referenceRanges: (rangesByTest.get(t.id) ?? []).map(
+              (r): LabTestRefRangeRow => {
+                const param = paramMap.get(r.paramId);
+                return {
+                  id: r.id,
+                  parameterName: param?.parameterName ?? '',
+                  method: r.method ?? param?.method ?? null,
+                  gender: r.gender,
+                  ageFrom: r.ageFrom,
+                  ageTo: r.ageTo,
+                  lowerLimit: r.lowerLimit,
+                  upperLimit: r.upperLimit,
+                  displayOfReferenceRange: r.displayOfReferenceRange,
+                  flag: r.abnormalFlagLogic,
+                };
+              },
+            ),
+          };
+        });
+      }
+
+      case LabTestListView.REFERENCE_VALUE: {
+        const [paramsByTest, valuesByTest] = await Promise.all([
+          this.fetchParams(tenantId, ids),
+          this.fetchValues(tenantId, ids),
+        ]);
+        return tests.map((t) => {
+          const paramMap = this.indexById(paramsByTest.get(t.id) ?? []);
+          return {
+            id: t.id,
+            testName: t.testName,
+            testCode: t.testCode,
+            referenceValues: (valuesByTest.get(t.id) ?? []).map(
+              (v): LabTestRefValueRow => {
+                const param = paramMap.get(v.paramId);
+                return {
+                  id: v.id,
+                  parameterName: param?.parameterName ?? '',
+                  method: v.method ?? param?.method ?? null,
+                  gender: v.gender,
+                  ageFrom: v.ageFrom,
+                  ageTo: v.ageTo,
+                  displayValue: v.normalValueText,
+                  flag: v.abnormalFlagLogic,
+                };
+              },
+            ),
+          };
+        });
+      }
+
+      case LabTestListView.NOTES:
+        return tests.map((t) => ({
+          id: t.id,
+          testName: t.testName,
+          usefulFor: t.usefulFor,
+          interpretationOfResults: t.interpretationOfResults,
+          limitations: t.limitations,
+          remarks: t.remarks,
+          references: t.references,
+        }));
+
+      case LabTestListView.VERSION_CONTROL:
+        return tests.map((t) => {
+          const history = this.readVersionHistory(t.versionHistory);
+          const current = this.currentVersion(history);
+          return {
+            id: t.id,
+            testName: t.testName,
+            currentVersion: current?.version ?? null,
+            effectiveFrom: current?.effectiveFrom ?? null,
+            modifiedBy: current?.modifiedBy ?? null,
+            versionHistory: history,
+          };
+        });
+
+      case LabTestListView.OVERVIEW: {
+        const [deptNames, sampleCounts, paramCounts] = await Promise.all([
+          this.resolveNames(
+            'department',
+            tenantId,
+            tests.map((t) => t.departmentId),
+          ),
+          this.countByTest('labTestSample', tenantId, ids),
+          this.countByTest('labTestResultParam', tenantId, ids),
+        ]);
+        return tests.map((t) => ({
+          id: t.id,
+          testName: t.testName,
+          testCode: t.testCode,
+          departmentName: this.nameOf(deptNames, t.departmentId),
+          maxValue: t.priceMaximum,
+          tatMaxValue: t.tatMaxValue,
+          tatMaxUnit: t.tatMaxUnit,
+          samplesCount: sampleCounts.get(t.id) ?? 0,
+          parametersCount: paramCounts.get(t.id) ?? 0,
+          isActive: t.isActive,
+        }));
+      }
+    }
+  }
+
+  /**
+   * Resolve a set of classification ids to a `id → name` map (tenant-scoped).
+   * Used to denormalise department/category/sub-category names into list rows.
+   */
+  private async resolveNames(
+    model: 'department' | 'category' | 'subCategory',
+    tenantId: string,
+    idsRaw: (string | null)[],
+  ): Promise<Map<string, string>> {
+    const ids = [...new Set(idsRaw.filter((x): x is string => Boolean(x)))];
+    const map = new Map<string, string>();
+    if (ids.length === 0) {
+      return map;
+    }
+    const where = { id: { in: ids }, tenantId };
+    const select = { id: true, name: true };
+    const rows =
+      model === 'department'
+        ? await this.prisma.department.findMany({ where, select })
+        : model === 'category'
+          ? await this.prisma.category.findMany({ where, select })
+          : await this.prisma.subCategory.findMany({ where, select });
+    for (const r of rows) {
+      map.set(r.id, r.name);
+    }
+    return map;
+  }
+
+  /** Look up a resolved name by (possibly null) id. */
+  private nameOf(map: Map<string, string>, id: string | null): string | null {
+    return id ? (map.get(id) ?? null) : null;
+  }
+
+  /** The default sample per test (`isDefault`), keyed by `labTestId`. */
+  private async fetchDefaultSamples(
+    tenantId: string,
+    ids: string[],
+  ): Promise<Map<string, LabTestSample>> {
+    const rows = await this.prisma.labTestSample.findMany({
+      where: {
+        labTestId: { in: ids },
+        tenantId,
+        deletedAt: null,
+        isDefault: true,
+      },
+    });
+    const map = new Map<string, LabTestSample>();
+    for (const r of rows) {
+      if (!map.has(r.labTestId)) {
+        map.set(r.labTestId, r);
+      }
+    }
+    return map;
+  }
+
+  /** All active samples grouped by `labTestId`. */
+  private async fetchSamples(
+    tenantId: string,
+    ids: string[],
+  ): Promise<Map<string, LabTestSample[]>> {
+    const rows = await this.prisma.labTestSample.findMany({
+      where: { labTestId: { in: ids }, tenantId, deletedAt: null },
+      orderBy: { createdAt: 'asc' },
+    });
+    return this.groupByKey(rows, (r) => r.labTestId);
+  }
+
+  /** All active result parameters grouped by `labTestId`. */
+  private async fetchParams(
+    tenantId: string,
+    ids: string[],
+  ): Promise<Map<string, LabTestResultParam[]>> {
+    const rows = await this.prisma.labTestResultParam.findMany({
+      where: { labTestId: { in: ids }, tenantId, deletedAt: null },
+      orderBy: { sortOrder: 'asc' },
+    });
+    return this.groupByKey(rows, (r) => r.labTestId);
+  }
+
+  /** All active reference ranges grouped by `labTestId`. */
+  private async fetchRanges(
+    tenantId: string,
+    ids: string[],
+  ): Promise<Map<string, LabTestReferenceRange[]>> {
+    const rows = await this.prisma.labTestReferenceRange.findMany({
+      where: { labTestId: { in: ids }, tenantId, deletedAt: null },
+    });
+    return this.groupByKey(rows, (r) => r.labTestId);
+  }
+
+  /** All active reference values grouped by `labTestId`. */
+  private async fetchValues(
+    tenantId: string,
+    ids: string[],
+  ): Promise<Map<string, LabTestReferenceValue[]>> {
+    const rows = await this.prisma.labTestReferenceValue.findMany({
+      where: { labTestId: { in: ids }, tenantId, deletedAt: null },
+    });
+    return this.groupByKey(rows, (r) => r.labTestId);
+  }
+
+  /** Count active child rows of one model per test, keyed by `labTestId`. */
+  private async countByTest(
+    model: 'labTestSample' | 'labTestResultParam',
+    tenantId: string,
+    ids: string[],
+  ): Promise<Map<string, number>> {
+    const where = { labTestId: { in: ids }, tenantId, deletedAt: null };
+    const grouped =
+      model === 'labTestSample'
+        ? await this.prisma.labTestSample.groupBy({
+            by: ['labTestId'],
+            where,
+            _count: { _all: true },
+          })
+        : await this.prisma.labTestResultParam.groupBy({
+            by: ['labTestId'],
+            where,
+            _count: { _all: true },
+          });
+    const map = new Map<string, number>();
+    for (const g of grouped) {
+      map.set(g.labTestId, g._count._all);
+    }
+    return map;
+  }
+
+  /** Group an array of rows into a `key → rows[]` map (insertion order preserved). */
+  private groupByKey<T>(rows: T[], key: (r: T) => string): Map<string, T[]> {
+    const map = new Map<string, T[]>();
+    for (const r of rows) {
+      const k = key(r);
+      const arr = map.get(k);
+      if (arr) {
+        arr.push(r);
+      } else {
+        map.set(k, [r]);
+      }
+    }
+    return map;
+  }
+
+  /** Index a list of result parameters by their id (for range/value denormalisation). */
+  private indexById(
+    params: LabTestResultParam[],
+  ): Map<string, LabTestResultParam> {
+    const map = new Map<string, LabTestResultParam>();
+    for (const p of params) {
+      map.set(p.id, p);
+    }
+    return map;
+  }
+
+  /** The "current" version entry: the open one (`effectiveTo === null`) else the highest. */
+  private currentVersion(
+    history: LabTestVersionEntry[],
+  ): LabTestVersionEntry | null {
+    const open = history.find((e) => e.effectiveTo === null);
+    if (open) {
+      return open;
+    }
+    return history.reduce<LabTestVersionEntry | null>(
+      (acc, e) => (!acc || e.version > acc.version ? e : acc),
+      null,
+    );
+  }
+
+  /**
+   * Update a lab test. Core fields are patched; when `samples` or `resultParams`
+   * is provided, that whole child set is replaced (old active rows soft-deleted,
+   * the new set created) in one transaction.
+   * @param masterDataId parent master data id
+   * @param labTestId lab test id
+   * @param tenantId tenant scope
+   * @param dto partial update
+   * @throws LabTestNotFoundException / ValidationException / conflict exceptions
+   */
+  async update(
+    masterDataId: string,
+    labTestId: string,
+    tenantId: string,
+    dto: UpdateLabTestDto,
+  ): Promise<LabTestWithChildren> {
+    const existing = await this.findCoreById(labTestId, masterDataId, tenantId);
+    this.assertCoreInvariants({
+      priceMsrp: dto.priceMsrp ?? existing.priceMsrp,
+      priceMaximum: dto.priceMaximum ?? existing.priceMaximum,
+      priceMinimum: dto.priceMinimum ?? existing.priceMinimum,
+      isMandatoryTest: dto.isMandatoryTest ?? existing.isMandatoryTest,
+      mandatoryDeptId: dto.mandatoryDeptId ?? existing.mandatoryDeptId ?? null,
+      isRepeatIntervalRestriction:
+        dto.isRepeatIntervalRestriction ?? existing.isRepeatIntervalRestriction,
+      repeatIntervalValue:
+        dto.repeatIntervalValue ?? existing.repeatIntervalValue ?? null,
+      repeatIntervalUnit:
+        dto.repeatIntervalUnit ?? existing.repeatIntervalUnit ?? null,
+    });
+    (dto.resultParams ?? []).forEach((p) => this.assertParam(p));
+
+    const { samples, resultParams, ...scalars } = dto;
+    const now = new Date();
+    try {
+      await this.prisma.withTenant(tenantId, async (tx) => {
+        await tx.labTest.update({
+          where: { id: labTestId },
+          data: scalars,
+        });
+        if (samples !== undefined) {
+          await tx.labTestSample.updateMany({
+            where: { labTestId, tenantId, deletedAt: null },
+            data: { deletedAt: now },
+          });
+          await this.createSamples(
+            tx,
+            tenantId,
+            existing.branchId,
+            labTestId,
+            samples,
+          );
+        }
+        if (resultParams !== undefined) {
+          await tx.labTestReferenceRange.updateMany({
+            where: { labTestId, tenantId, deletedAt: null },
+            data: { deletedAt: now },
+          });
+          await tx.labTestReferenceValue.updateMany({
+            where: { labTestId, tenantId, deletedAt: null },
+            data: { deletedAt: now },
+          });
+          await tx.labTestResultParam.updateMany({
+            where: { labTestId, tenantId, deletedAt: null },
+            data: { deletedAt: now },
+          });
+          await this.createParams(
+            tx,
+            tenantId,
+            existing.branchId,
+            labTestId,
+            resultParams,
+          );
+        }
+      });
+    } catch (e) {
+      this.rethrowConflict(e, dto.testName ?? '', dto.testCode ?? '');
+      throw e;
+    }
+    return this.findById(masterDataId, labTestId, tenantId);
+  }
+
+  /**
+   * Soft-delete a lab test and cascade soft-delete all of its children
+   * (samples, params, reference ranges/values) in one transaction.
+   * @param masterDataId parent master data id
+   * @param labTestId lab test id
+   * @param tenantId tenant scope
+   * @throws LabTestNotFoundException if missing/soft-deleted/other master data
+   */
+  async remove(
+    masterDataId: string,
+    labTestId: string,
+    tenantId: string,
+  ): Promise<LabTest> {
+    await this.findCoreById(labTestId, masterDataId, tenantId);
+    const now = new Date();
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const where = { labTestId, tenantId, deletedAt: null };
+      await tx.labTestReferenceRange.updateMany({
+        where,
+        data: { deletedAt: now },
+      });
+      await tx.labTestReferenceValue.updateMany({
+        where,
+        data: { deletedAt: now },
+      });
+      await tx.labTestResultParam.updateMany({
+        where,
+        data: { deletedAt: now },
+      });
+      await tx.labTestSample.updateMany({ where, data: { deletedAt: now } });
+      return tx.labTest.update({
+        where: { id: labTestId },
+        data: { deletedAt: now },
+      });
+    });
+  }
+
+  /**
+   * Append a version entry to a lab test's `versionHistory`. `version` auto-
+   * increments; the previous open entry's `effectiveTo` is set to the new
+   * `effectiveFrom − 1 day`; the new entry's `effectiveTo` is null.
+   * @param masterDataId parent master data id
+   * @param labTestId lab test id
+   * @param tenantId tenant scope
+   * @param actorId person id recorded as `modifiedBy`
+   * @param dto effective-from (+ optional approver)
+   * @throws LabTestNotFoundException if missing/soft-deleted/other master data
+   */
+  async addVersion(
+    masterDataId: string,
+    labTestId: string,
+    tenantId: string,
+    actorId: string,
+    dto: AddLabTestVersionDto,
+  ): Promise<LabTest> {
+    const labTest = await this.findCoreById(labTestId, masterDataId, tenantId);
+    const history = this.readVersionHistory(labTest.versionHistory);
+    const effectiveFrom = dto.effectiveFrom.slice(0, 10);
+    const open = history.find((e) => e.effectiveTo === null);
+    if (open) {
+      open.effectiveTo = this.previousDay(effectiveFrom);
+    }
+    const nextVersion =
+      history.reduce((max, e) => Math.max(max, e.version), 0) + 1;
+    history.push({
+      version: nextVersion,
+      effectiveFrom,
+      effectiveTo: null,
+      modifiedBy: actorId,
+      approvedBy: dto.approvedBy ?? null,
+    });
+    return this.prisma.labTest.update({
+      where: { id: labTestId },
+      data: { versionHistory: history as unknown as Prisma.InputJsonValue },
+    });
+  }
+
+  /**
+   * Deep-clone all active lab tests from a source master data into a target
+   * (both in the caller's tenant). Each test plus its samples, params, and
+   * reference ranges/values is copied with fresh ids, the target's `branchId`,
+   * and a fresh `versionHistory` v1. A source test is skipped if its `testName`
+   * or `testCode` already exists (active) in the target.
+   * @param sourceMasterDataId master data to copy from
+   * @param targetMasterDataId master data to copy into
+   * @param tenantId tenant scope
+   * @returns counts of copied vs skipped tests
+   * @throws MasterDataNotFoundException if either master data is missing/other tenant
+   */
+  async cloneAll(
+    sourceMasterDataId: string,
+    targetMasterDataId: string,
+    tenantId: string,
+  ): Promise<CloneResult> {
+    await this.masterDataService.findById(sourceMasterDataId, tenantId);
+    const target = await this.masterDataService.findById(
+      targetMasterDataId,
+      tenantId,
+    );
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const sourceTests = await tx.labTest.findMany({
+        where: { masterDataId: sourceMasterDataId, tenantId, deletedAt: null },
+      });
+      const existing = await tx.labTest.findMany({
+        where: { masterDataId: targetMasterDataId, tenantId, deletedAt: null },
+        select: { testName: true, testCode: true },
+      });
+      const names = new Set(existing.map((t) => t.testName));
+      const codes = new Set(existing.map((t) => t.testCode));
+
+      let copied = 0;
+      let skipped = 0;
+      for (const src of sourceTests) {
+        if (names.has(src.testName) || codes.has(src.testCode)) {
+          skipped += 1;
+          continue;
+        }
+        const newTest = await tx.labTest.create({
+          data: {
+            ...this.stripMeta(src),
+            tenantId,
+            branchId: target.branchId,
+            masterDataId: targetMasterDataId,
+            versionHistory: [
+              this.seedVersion(null),
+            ] as unknown as Prisma.InputJsonValue,
+          } as Prisma.LabTestUncheckedCreateInput,
+        });
+
+        const samples = await tx.labTestSample.findMany({
+          where: { labTestId: src.id, tenantId, deletedAt: null },
+        });
+        if (samples.length) {
+          await tx.labTestSample.createMany({
+            data: samples.map((s) => ({
+              ...this.stripMeta(s),
+              tenantId,
+              branchId: target.branchId,
+              labTestId: newTest.id,
+            })),
+          });
+        }
+
+        const params = await tx.labTestResultParam.findMany({
+          where: { labTestId: src.id, tenantId, deletedAt: null },
+        });
+        for (const param of params) {
+          const newParam = await tx.labTestResultParam.create({
+            data: {
+              ...this.stripMeta(param),
+              tenantId,
+              branchId: target.branchId,
+              labTestId: newTest.id,
+            } as Prisma.LabTestResultParamUncheckedCreateInput,
+          });
+          const ranges = await tx.labTestReferenceRange.findMany({
+            where: { paramId: param.id, tenantId, deletedAt: null },
+          });
+          if (ranges.length) {
+            await tx.labTestReferenceRange.createMany({
+              data: ranges.map((r) => ({
+                ...this.stripMeta(r),
+                tenantId,
+                branchId: target.branchId,
+                labTestId: newTest.id,
+                paramId: newParam.id,
+              })),
+            });
+          }
+          const values = await tx.labTestReferenceValue.findMany({
+            where: { paramId: param.id, tenantId, deletedAt: null },
+          });
+          if (values.length) {
+            await tx.labTestReferenceValue.createMany({
+              data: values.map((v) => ({
+                ...this.stripMeta(v),
+                tenantId,
+                branchId: target.branchId,
+                labTestId: newTest.id,
+                paramId: newParam.id,
+              })) as Prisma.LabTestReferenceValueCreateManyInput[],
+            });
+          }
+        }
+        copied += 1;
+      }
+      return { copied, skipped };
+    });
+  }
+
+  /**
+   * Bulk-edit lab tests: apply each item's scalar changes to its own `labTestId`
+   * (all scoped to the caller's tenant + the path's master data). All-or-nothing —
+   * every item is validated up front (against the test's existing values) and the
+   * updates run in one transaction, so if any item is invalid or its `labTestId`
+   * can't be resolved nothing changes. Children and `testName`/`testCode` are not
+   * bulk-editable.
+   * @param masterDataId parent master data id
+   * @param tenantId tenant scope
+   * @param dto the array of per-test edits
+   * @returns the number of lab tests updated
+   * @throws MasterDataNotFoundException if the master data is missing/other tenant
+   * @throws ValidationException on duplicate ids, an empty item, or a broken invariant
+   * @throws LabTestNotFoundException if a `labTestId` doesn't resolve to an active test
+   */
+  async bulkEdit(
+    masterDataId: string,
+    tenantId: string,
+    dto: BulkEditLabTestsDto,
+  ): Promise<BulkEditResult> {
+    await this.masterDataService.findById(masterDataId, tenantId);
+
+    const items = dto.data;
+    const ids = items.map((i) => i.labTestId);
+    if (new Set(ids).size !== ids.length) {
+      throw new ValidationException('Duplicate labTestId in payload');
+    }
+
+    const edits = items.map((item) => {
+      const { labTestId, ...changes } = item;
+      const data = this.pickDefined(changes);
+      if (Object.keys(data).length === 0) {
+        throw new ValidationException(
+          `No changes provided for lab test ${labTestId}`,
+        );
+      }
+      return { labTestId, changes, data };
+    });
+
+    const tests = await this.prisma.labTest.findMany({
+      where: { id: { in: ids }, masterDataId, tenantId, deletedAt: null },
+    });
+    const testById = new Map(tests.map((t) => [t.id, t]));
+    const missing = ids.find((id) => !testById.has(id));
+    if (missing) {
+      throw new LabTestNotFoundException(missing);
+    }
+
+    for (const { labTestId, changes } of edits) {
+      const test = testById.get(labTestId)!;
+      this.assertCoreInvariants({
+        priceMsrp: changes.priceMsrp ?? test.priceMsrp,
+        priceMaximum: changes.priceMaximum ?? test.priceMaximum,
+        priceMinimum: changes.priceMinimum ?? test.priceMinimum,
+        isMandatoryTest: changes.isMandatoryTest ?? test.isMandatoryTest,
+        mandatoryDeptId:
+          changes.mandatoryDeptId ?? test.mandatoryDeptId ?? null,
+        isRepeatIntervalRestriction:
+          changes.isRepeatIntervalRestriction ??
+          test.isRepeatIntervalRestriction,
+        repeatIntervalValue:
+          changes.repeatIntervalValue ?? test.repeatIntervalValue ?? null,
+        repeatIntervalUnit:
+          changes.repeatIntervalUnit ?? test.repeatIntervalUnit ?? null,
+      });
+    }
+
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      for (const { labTestId, data } of edits) {
+        await tx.labTest.update({ where: { id: labTestId }, data });
+      }
+    });
+    return { updated: edits.length };
+  }
+
+  /**
+   * Bulk-import lab tests (create-only) from the frontend's parsed Excel rows.
+   * Every row is validated first — structural (class-validator), cross-field
+   * (price/mandatory/repeat invariants), and duplicate `testName`/`testCode`
+   * (against the batch itself and against existing active tests in the master
+   * data). If ANY row fails, nothing is saved and a single
+   * `LabTestImportValidationException` carries the row-numbered messages. On
+   * success every row is created in one transaction (seeded `versionHistory` v1).
+   * @param masterDataId parent master data id
+   * @param tenantId tenant scope
+   * @param actorId person id recorded as `modifiedBy` on each seeded v1
+   * @param dto the rows to import
+   * @returns the number of lab tests created
+   * @throws MasterDataNotFoundException if the master data is missing/other tenant
+   * @throws LabTestImportValidationException if any row fails validation
+   */
+  async importAll(
+    masterDataId: string,
+    tenantId: string,
+    actorId: string,
+    dto: ImportLabTestsDto,
+  ): Promise<ImportResult> {
+    const masterData = await this.masterDataService.findById(
+      masterDataId,
+      tenantId,
+    );
+
+    // Errors keyed by row label so messages stay ordered and de-duplicated.
+    const errors: { row: number; message: string }[] = [];
+    const rows: { row: number; dto: ImportLabTestRowDto }[] = [];
+
+    for (let i = 0; i < dto.rows.length; i++) {
+      const raw = dto.rows[i];
+      const row = plainToInstance(ImportLabTestRowDto, raw);
+      const label = row.rowNumber ?? i + 1;
+
+      const failures = await validate(row, {
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      });
+      if (failures.length) {
+        for (const f of failures) {
+          for (const msg of Object.values(f.constraints ?? {})) {
+            errors.push({ row: label, message: msg });
+          }
+        }
+        continue; // skip semantic checks for a structurally invalid row
+      }
+
+      try {
+        this.assertCoreInvariants({
+          priceMsrp: row.priceMsrp ?? 0,
+          priceMaximum: row.priceMaximum ?? 0,
+          priceMinimum: row.priceMinimum ?? 0,
+          isMandatoryTest: row.isMandatoryTest ?? false,
+          mandatoryDeptId: row.mandatoryDeptId ?? null,
+          isRepeatIntervalRestriction: row.isRepeatIntervalRestriction ?? false,
+          repeatIntervalValue: row.repeatIntervalValue ?? null,
+          repeatIntervalUnit: row.repeatIntervalUnit ?? null,
+        });
+      } catch (e) {
+        if (e instanceof ValidationException) {
+          errors.push({ row: label, message: e.message });
+          continue;
+        }
+        throw e;
+      }
+      rows.push({ row: label, dto: row });
+    }
+
+    // Duplicate detection (within the batch + against existing active tests).
+    this.collectDuplicateErrors(
+      rows,
+      await this.existingKeys(masterDataId, tenantId, rows),
+      errors,
+    );
+
+    if (errors.length) {
+      const messages = errors
+        .sort((a, b) => a.row - b.row)
+        .map((e) => `Row ${e.row}: ${e.message}`);
+      throw new LabTestImportValidationException(messages);
+    }
+
+    await this.prisma.withTenant(tenantId, (tx) =>
+      tx.labTest.createMany({
+        data: rows.map(({ dto: r }) => {
+          const scalars = { ...r };
+          delete scalars.rowNumber; // not a column; only used for error labels
+          return {
+            ...scalars,
+            tenantId,
+            branchId: masterData.branchId,
+            masterDataId,
+            versionHistory: [
+              this.seedVersion(actorId),
+            ] as unknown as Prisma.InputJsonValue,
+          };
+        }),
+      }),
+    );
+    return { created: rows.length };
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────────
+
+  /** Strip undefined keys from one bulk-edit item's changes, yielding a Prisma update. */
+  private pickDefined(
+    changes: Omit<BulkEditLabTestItemDto, 'labTestId'>,
+  ): Prisma.LabTestUpdateInput {
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(changes)) {
+      if (value !== undefined) {
+        out[key] = value;
+      }
+    }
+    return out;
+  }
+
+  /**
+   * The `testName`/`testCode` values already taken by active tests in this master
+   * data among the import batch's values. One batched query (exact match, mirroring
+   * the case-sensitive partial unique indexes in prisma/rls.sql).
+   */
+  private async existingKeys(
+    masterDataId: string,
+    tenantId: string,
+    rows: { dto: ImportLabTestRowDto }[],
+  ): Promise<{ names: Set<string>; codes: Set<string> }> {
+    const names = [...new Set(rows.map((r) => r.dto.testName))];
+    const codes = [...new Set(rows.map((r) => r.dto.testCode))];
+    const found = await this.prisma.labTest.findMany({
+      where: {
+        masterDataId,
+        tenantId,
+        deletedAt: null,
+        OR: [{ testName: { in: names } }, { testCode: { in: codes } }],
+      },
+      select: { testName: true, testCode: true },
+    });
+    return {
+      names: new Set(found.map((t) => t.testName)),
+      codes: new Set(found.map((t) => t.testCode)),
+    };
+  }
+
+  /**
+   * Append duplicate-`testName`/`testCode` errors for the import: a value already
+   * used by an existing active test, or repeated earlier in the same batch, is
+   * flagged on the row that (re)introduces it.
+   */
+  private collectDuplicateErrors(
+    rows: { row: number; dto: ImportLabTestRowDto }[],
+    existing: { names: Set<string>; codes: Set<string> },
+    errors: { row: number; message: string }[],
+  ): void {
+    const seenNames = new Set<string>();
+    const seenCodes = new Set<string>();
+    for (const { row, dto } of rows) {
+      if (existing.codes.has(dto.testCode)) {
+        errors.push({
+          row,
+          message: `testCode '${dto.testCode}' already exists in this master data`,
+        });
+      } else if (seenCodes.has(dto.testCode)) {
+        errors.push({
+          row,
+          message: `testCode '${dto.testCode}' is duplicated in the import`,
+        });
+      } else {
+        seenCodes.add(dto.testCode);
+      }
+
+      if (existing.names.has(dto.testName)) {
+        errors.push({
+          row,
+          message: `testName '${dto.testName}' already exists in this master data`,
+        });
+      } else if (seenNames.has(dto.testName)) {
+        errors.push({
+          row,
+          message: `testName '${dto.testName}' is duplicated in the import`,
+        });
+      } else {
+        seenNames.add(dto.testName);
+      }
+    }
+  }
+
+  /**
+   * Fetch one active lab test (core row only) scoped to its tenant + master data.
+   * @throws LabTestNotFoundException if missing/soft-deleted/other master data
+   */
+  private async findCoreById(
+    labTestId: string,
+    masterDataId: string,
+    tenantId: string,
+  ): Promise<LabTest> {
+    const labTest = await this.prisma.labTest.findFirst({
+      where: { id: labTestId, masterDataId, tenantId, deletedAt: null },
+    });
+    if (!labTest) {
+      throw new LabTestNotFoundException(labTestId);
+    }
+    return labTest;
+  }
+
+  /** Insert a test's sample rows (no-op for an empty/absent list). */
+  private async createSamples(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    branchId: string,
+    labTestId: string,
+    samples: CreateLabTestDto['samples'],
+  ): Promise<void> {
+    if (!samples?.length) {
+      return;
+    }
+    await tx.labTestSample.createMany({
+      data: samples.map((s) => ({ ...s, tenantId, branchId, labTestId })),
+    });
+  }
+
+  /**
+   * Insert a test's result parameters and, per parameter, its reference
+   * ranges/values (mapped to the freshly-created `paramId`).
+   */
+  private async createParams(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    branchId: string,
+    labTestId: string,
+    params: LabTestResultParamDto[] | undefined,
+  ): Promise<void> {
+    for (const p of params ?? []) {
+      const { referenceRanges, referenceValues, ...paramScalars } = p;
+      const param = await tx.labTestResultParam.create({
+        data: { ...paramScalars, tenantId, branchId, labTestId },
+      });
+      if (referenceRanges?.length) {
+        await tx.labTestReferenceRange.createMany({
+          data: referenceRanges.map((r) => ({
+            ...r,
+            tenantId,
+            branchId,
+            labTestId,
+            paramId: param.id,
+          })),
+        });
+      }
+      if (referenceValues?.length) {
+        await tx.labTestReferenceValue.createMany({
+          data: referenceValues.map((v) => ({
+            ...v,
+            tenantId,
+            branchId,
+            labTestId,
+            paramId: param.id,
+          })),
+        });
+      }
+    }
+  }
+
+  /** A shallow copy of a row with the re-derived meta keys removed (for cloning). */
+  private stripMeta(row: Record<string, unknown>): Record<string, unknown> {
+    const copy: Record<string, unknown> = { ...row };
+    for (const key of META_KEYS) {
+      delete copy[key];
+    }
+    return copy;
+  }
+
+  /** Build the seed v1 version entry for a freshly-created test. */
+  private seedVersion(actorId: string | null): LabTestVersionEntry {
+    return {
+      version: 1,
+      effectiveFrom: new Date().toISOString().slice(0, 10),
+      effectiveTo: null,
+      modifiedBy: actorId,
+      approvedBy: null,
+    };
+  }
+
+  /** Read a lab test's `versionHistory` Json into a typed, mutable array. */
+  private readVersionHistory(value: Prisma.JsonValue): LabTestVersionEntry[] {
+    return Array.isArray(value)
+      ? (value as unknown as LabTestVersionEntry[])
+      : [];
+  }
+
+  /** The day before a `YYYY-MM-DD` date, as `YYYY-MM-DD` (UTC). */
+  private previousDay(dateStr: string): string {
+    const d = new Date(`${dateStr}T00:00:00.000Z`);
+    d.setUTCDate(d.getUTCDate() - 1);
+    return d.toISOString().slice(0, 10);
+  }
+
+  /** Validate cross-field invariants that class-validator can't express per-field. */
+  private assertCoreInvariants(c: {
+    priceMsrp: number;
+    priceMaximum: number;
+    priceMinimum: number;
+    isMandatoryTest: boolean;
+    mandatoryDeptId: string | null;
+    isRepeatIntervalRestriction: boolean;
+    repeatIntervalValue: number | null;
+    repeatIntervalUnit: string | null;
+  }): void {
+    if (c.priceMaximum > c.priceMsrp) {
+      throw new ValidationException('priceMaximum must be ≤ priceMsrp', {
+        priceMaximum: String(c.priceMaximum),
+        priceMsrp: String(c.priceMsrp),
+      });
+    }
+    if (c.priceMinimum > c.priceMaximum) {
+      throw new ValidationException('priceMinimum must be ≤ priceMaximum', {
+        priceMinimum: String(c.priceMinimum),
+        priceMaximum: String(c.priceMaximum),
+      });
+    }
+    if (c.isMandatoryTest && !c.mandatoryDeptId) {
+      throw new ValidationException(
+        'mandatoryDeptId is required when isMandatoryTest is true',
+      );
+    }
+    if (
+      c.isRepeatIntervalRestriction &&
+      (c.repeatIntervalValue == null || c.repeatIntervalUnit == null)
+    ) {
+      throw new ValidationException(
+        'repeatIntervalValue and repeatIntervalUnit are required when isRepeatIntervalRestriction is true',
+      );
+    }
+  }
+
+  /** Validate a result parameter + its embedded reference ranges. */
+  private assertParam(p: LabTestResultParamDto): void {
+    if (p.parameterType === ParameterType.CALCULATED && !p.calculationFormula) {
+      throw new ValidationException(
+        'calculationFormula is required when parameterType is CALCULATED',
+        { parameterCode: p.parameterCode },
+      );
+    }
+    (p.referenceRanges ?? []).forEach((r) => this.assertRange(r));
+  }
+
+  /** Validate a numeric reference range's bounds. */
+  private assertRange(r: LabTestReferenceRangeDto): void {
+    if (
+      r.lowerLimit != null &&
+      r.upperLimit != null &&
+      r.lowerLimit > r.upperLimit
+    ) {
+      throw new ValidationException('lowerLimit must be ≤ upperLimit');
+    }
+    if (
+      r.criticalMin != null &&
+      r.lowerLimit != null &&
+      r.criticalMin > r.lowerLimit
+    ) {
+      throw new ValidationException('criticalMin must be ≤ lowerLimit');
+    }
+    if (
+      r.criticalMax != null &&
+      r.upperLimit != null &&
+      r.criticalMax < r.upperLimit
+    ) {
+      throw new ValidationException('criticalMax must be ≥ upperLimit');
+    }
+    if ((r.ageFrom ?? 0) > (r.ageTo ?? 999)) {
+      throw new ValidationException('ageFrom must be ≤ ageTo');
+    }
+  }
+
+  /**
+   * Map a Prisma unique-constraint violation (P2002) to the matching typed 409.
+   * The violated index name arrives in `error.meta.target`.
+   */
+  private rethrowConflict(
+    e: unknown,
+    testName: string,
+    testCode: string,
+  ): void {
+    if (
+      !(e instanceof Prisma.PrismaClientKnownRequestError) ||
+      e.code !== 'P2002'
+    ) {
+      return;
+    }
+    const rawTarget = (e.meta as { target?: unknown } | undefined)?.target;
+    const target = Array.isArray(rawTarget)
+      ? rawTarget.join(',')
+      : typeof rawTarget === 'string'
+        ? rawTarget
+        : '';
+    if (target.includes('parameter_code')) {
+      throw new LabTestParamCodeConflictException('');
+    }
+    if (target.includes('test_code')) {
+      throw new LabTestCodeConflictException(testCode);
+    }
+    throw new LabTestNameConflictException(testName);
+  }
+}

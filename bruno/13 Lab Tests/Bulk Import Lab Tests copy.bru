@@ -1,0 +1,193 @@
+meta {
+  name: Bulk Import Lab Tests copy
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/lab-tests/import
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "rows": [
+      {
+    "rowNumber": 1,
+    "testName": "1 Complete Blood Count",
+    "testCode": "1CBC",
+    "processMethod": "SINGLE_STEP",
+    "samplePriorityType": "ROUTINE",
+    "priceMsrp": 700,
+    "priceMaximum": 650,
+    "priceMinimum": 400,
+    "discountCapPct": 20,
+    "tatMinValue": 2,
+    "tatMinUnit": "HOURS",
+    "tatMaxValue": 24,
+    "tatMaxUnit": "HOURS",
+    "scheduleDays": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+    "scheduleFrom": "08:00",
+    "scheduleTo": "18:00",
+    "clinicalTags": ["haematology", "routine"],
+    "samples": [
+      {
+        "containerType": "EDTA_TUBE_PURPLE_TOP",
+        "sampleSize": "3 mL",
+        "numberOfSamples": 1,
+        "isFastingRequired": false,
+        "isDefault": true
+      }
+    ],
+    "resultParams": [
+      {
+        "parameterName": "Haemoglobin",
+        "parameterCode": "HGB",
+        "reportingUnit": "g/dL",
+        "resultType": "QUANTITATIVE",
+        "parameterType": "MEASURED",
+        "decimalPlaces": 1,
+        "sortOrder": 1,
+        "referenceRanges": [
+          {
+            "gender": "MALE",
+            "ageFrom": 18,
+            "ageFromUnit": "YEARS",
+            "ageTo": 99,
+            "ageToUnit": "YEARS",
+            "lowerLimit": 13.0,
+            "upperLimit": 17.0,
+            "criticalMin": 7.0,
+            "criticalMax": 20.0,
+            "abnormalFlagLogic": "BOLD_AND_RED"
+          }
+        ]
+      },
+      {
+        "parameterName": "Blood Group",
+        "parameterCode": "ABO",
+        "resultType": "QUALITATIVE",
+        "referenceValues": [
+          { "normalValueText": "Not Detected", "gender": "ALL" }
+        ]
+      }
+    ]
+  }
+        
+        
+        
+        
+        
+     ,
+      {
+        "rowNumber": 2,
+  
+      
+    "testName": "2 Complete Blood Count",
+    "testCode": "CBC",
+    "processMethod": "SINGLE_STEP",
+    "samplePriorityType": "ROUTINE",
+    "priceMsrp": 700,
+    "priceMaximum": 650,
+    "priceMinimum": 400,
+    "discountCapPct": 20,
+    "tatMinValue": 2,
+    "tatMinUnit": "HOURS",
+    "tatMaxValue": 24,
+    "tatMaxUnit": "HOURS",
+    "scheduleDays": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+    "scheduleFrom": "08:00",
+    "scheduleTo": "18:00",
+    "clinicalTags": ["haematology", "routine"],
+    "samples": [
+      {
+        "containerType": "EDTA_TUBE_PURPLE_TOP",
+        "sampleSize": "3 mL",
+        "numberOfSamples": 1,
+        "isFastingRequired": false,
+        "isDefault": true
+      }
+    ],
+    "resultParams": [
+      {
+        "parameterName": "Haemoglobin",
+        "parameterCode": "HGB",
+        "reportingUnit": "g/dL",
+        "resultType": "QUANTITATIVE",
+        "parameterType": "MEASURED",
+        "decimalPlaces": 1,
+        "sortOrder": 1,
+        "referenceRanges": [
+          {
+            "gender": "MALE",
+            "ageFrom": 18,
+            "ageFromUnit": "YEARS",
+            "ageTo": 99,
+            "ageToUnit": "YEARS",
+            "lowerLimit": 13.0,
+            "upperLimit": 17.0,
+            "criticalMin": 7.0,
+            "criticalMax": 20.0,
+            "abnormalFlagLogic": "BOLD_AND_RED"
+          }
+        ]
+      },
+      {
+        "parameterName": "Blood Group",
+        "parameterCode": "ABO",
+        "resultType": "QUALITATIVE",
+        "referenceValues": [
+          { "normalValueText": "Not Detected", "gender": "ALL" }
+        ]
+      }
+    ]
+  }
+      
+    ]
+  }
+}
+
+vars:pre-request {
+  masterDataId: 3bebbd8d-eef4-4bfa-88f3-3aff4a4a4516
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("reports created count", function () {
+    const data = res.getBody() && res.getBody().data;
+    expect(data).to.have.property("created");
+  });
+}
+
+docs {
+  Bulk-import lab tests (**create-only**) from the frontend's parsed Excel rows.
+  `rows` is an array (1–1000) of **core/scalar** test fields — no nested
+  samples/parameters. Each row may carry an optional `rowNumber` (echoed in error
+  messages; falls back to the 1-based index). `testName` and `testCode` are
+  required per row.
+  
+  ## Behaviour
+  
+  - **Validate-all-then-save (all-or-nothing).** Every row is validated first —
+    structural (types/required/enum), cross-field invariants (price ordering,
+    mandatory-dept, repeat-interval), and **duplicate** `testName`/`testCode`
+    (both within the batch and against existing active tests in the master data).
+  - If **any** row fails → 422 `LAB_TEST_IMPORT_VALIDATION_FAILED` whose `message`
+    is a row-numbered list, and **nothing** is saved. See "Bulk Import Lab Tests -
+    Validation Errors".
+  - On success every row is created in one transaction (seeded `versionHistory`
+    v1) → `{ created: <count> }`.
+  - This API does **not** update existing tests — a row matching an existing
+    `testName`/`testCode` is reported as a duplicate error.
+}

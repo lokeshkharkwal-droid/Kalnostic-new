@@ -214,6 +214,169 @@ CREATE POLICY audit_logs_tenant_isolation ON audit_logs
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── master_data ─────────────────────────────────────────────────────────────────
+ALTER TABLE master_data ENABLE ROW LEVEL SECURITY;
+ALTER TABLE master_data FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS md_tenant_isolation ON master_data;
+CREATE POLICY md_tenant_isolation ON master_data
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- Master-data `name` is unique per branch among ACTIVE rows only (a name freed by
+-- a soft-delete can be reused). Prisma can't express partial unique indexes.
+CREATE UNIQUE INDEX IF NOT EXISTS master_data_branch_name_active_unique
+  ON master_data (tenant_id, branch_id, name) WHERE deleted_at IS NULL;
+
+-- ── lab_test ────────────────────────────────────────────────────────────────────
+ALTER TABLE lab_test ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lab_test FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lab_test_tenant_isolation ON lab_test;
+CREATE POLICY lab_test_tenant_isolation ON lab_test
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- `test_name` / `test_code` unique per master data among ACTIVE rows only (a value
+-- freed by a soft-delete can be reused). Per master data (not tenant) so cloning a
+-- test into another branch's master data is allowed. Prisma can't express these.
+CREATE UNIQUE INDEX IF NOT EXISTS lab_test_md_name_active_unique
+  ON lab_test (tenant_id, master_data_id, test_name) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS lab_test_md_code_active_unique
+  ON lab_test (tenant_id, master_data_id, test_code) WHERE deleted_at IS NULL;
+
+-- CHECK constraints (Prisma can't express them); defence in depth on top of the
+-- DTO + LabTestService validation.
+ALTER TABLE lab_test DROP CONSTRAINT IF EXISTS chk_lab_test_price_max_lte_msrp;
+ALTER TABLE lab_test ADD CONSTRAINT chk_lab_test_price_max_lte_msrp
+  CHECK (price_maximum <= price_msrp);
+ALTER TABLE lab_test DROP CONSTRAINT IF EXISTS chk_lab_test_price_min_lte_max;
+ALTER TABLE lab_test ADD CONSTRAINT chk_lab_test_price_min_lte_max
+  CHECK (price_minimum <= price_maximum);
+ALTER TABLE lab_test DROP CONSTRAINT IF EXISTS chk_lab_test_discount_cap_range;
+ALTER TABLE lab_test ADD CONSTRAINT chk_lab_test_discount_cap_range
+  CHECK (discount_cap_pct BETWEEN 0 AND 100);
+ALTER TABLE lab_test DROP CONSTRAINT IF EXISTS chk_lab_test_mandatory_fields;
+ALTER TABLE lab_test ADD CONSTRAINT chk_lab_test_mandatory_fields
+  CHECK (is_mandatory_test = FALSE OR mandatory_dept_id IS NOT NULL);
+ALTER TABLE lab_test DROP CONSTRAINT IF EXISTS chk_lab_test_repeat_fields;
+ALTER TABLE lab_test ADD CONSTRAINT chk_lab_test_repeat_fields
+  CHECK (
+    is_repeat_interval_restriction = FALSE OR
+    (repeat_interval_value IS NOT NULL AND repeat_interval_unit IS NOT NULL)
+  );
+
+-- ── lab_test_samples ────────────────────────────────────────────────────────────
+ALTER TABLE lab_test_samples ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lab_test_samples FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lab_test_samples_tenant_isolation ON lab_test_samples;
+CREATE POLICY lab_test_samples_tenant_isolation ON lab_test_samples
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- At most one default sample per test among ACTIVE rows.
+CREATE UNIQUE INDEX IF NOT EXISTS lab_test_sample_default_active_unique
+  ON lab_test_samples (tenant_id, lab_test_id)
+  WHERE is_default = TRUE AND deleted_at IS NULL;
+
+ALTER TABLE lab_test_samples DROP CONSTRAINT IF EXISTS chk_lab_test_sample_number;
+ALTER TABLE lab_test_samples ADD CONSTRAINT chk_lab_test_sample_number
+  CHECK (number_of_samples >= 1);
+
+-- ── lab_test_result_params ──────────────────────────────────────────────────────
+ALTER TABLE lab_test_result_params ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lab_test_result_params FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lab_test_result_params_tenant_isolation ON lab_test_result_params;
+CREATE POLICY lab_test_result_params_tenant_isolation ON lab_test_result_params
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- `parameter_code` unique per test among ACTIVE rows.
+CREATE UNIQUE INDEX IF NOT EXISTS lab_test_param_code_active_unique
+  ON lab_test_result_params (tenant_id, lab_test_id, parameter_code) WHERE deleted_at IS NULL;
+
+ALTER TABLE lab_test_result_params DROP CONSTRAINT IF EXISTS chk_lab_test_param_calc_formula;
+ALTER TABLE lab_test_result_params ADD CONSTRAINT chk_lab_test_param_calc_formula
+  CHECK (parameter_type != 'CALCULATED' OR calculation_formula IS NOT NULL);
+ALTER TABLE lab_test_result_params DROP CONSTRAINT IF EXISTS chk_lab_test_param_decimals;
+ALTER TABLE lab_test_result_params ADD CONSTRAINT chk_lab_test_param_decimals
+  CHECK (decimal_places BETWEEN 0 AND 6);
+
+-- ── lab_test_reference_ranges ─────────────────────────────────────────────────────
+ALTER TABLE lab_test_reference_ranges ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lab_test_reference_ranges FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lab_test_reference_ranges_tenant_isolation ON lab_test_reference_ranges;
+CREATE POLICY lab_test_reference_ranges_tenant_isolation ON lab_test_reference_ranges
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+ALTER TABLE lab_test_reference_ranges DROP CONSTRAINT IF EXISTS chk_ref_range_lower_lte_upper;
+ALTER TABLE lab_test_reference_ranges ADD CONSTRAINT chk_ref_range_lower_lte_upper
+  CHECK (lower_limit IS NULL OR upper_limit IS NULL OR lower_limit <= upper_limit);
+ALTER TABLE lab_test_reference_ranges DROP CONSTRAINT IF EXISTS chk_ref_range_critical_min;
+ALTER TABLE lab_test_reference_ranges ADD CONSTRAINT chk_ref_range_critical_min
+  CHECK (critical_min IS NULL OR lower_limit IS NULL OR critical_min <= lower_limit);
+ALTER TABLE lab_test_reference_ranges DROP CONSTRAINT IF EXISTS chk_ref_range_critical_max;
+ALTER TABLE lab_test_reference_ranges ADD CONSTRAINT chk_ref_range_critical_max
+  CHECK (critical_max IS NULL OR upper_limit IS NULL OR critical_max >= upper_limit);
+ALTER TABLE lab_test_reference_ranges DROP CONSTRAINT IF EXISTS chk_ref_range_age;
+ALTER TABLE lab_test_reference_ranges ADD CONSTRAINT chk_ref_range_age
+  CHECK (age_from <= age_to);
+
+-- ── lab_test_reference_values ─────────────────────────────────────────────────────
+ALTER TABLE lab_test_reference_values ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lab_test_reference_values FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lab_test_reference_values_tenant_isolation ON lab_test_reference_values;
+CREATE POLICY lab_test_reference_values_tenant_isolation ON lab_test_reference_values
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+ALTER TABLE lab_test_reference_values DROP CONSTRAINT IF EXISTS chk_ref_value_age;
+ALTER TABLE lab_test_reference_values ADD CONSTRAINT chk_ref_value_age
+  CHECK (age_from <= age_to);
+
+-- ── lab_panels ──────────────────────────────────────────────────────────────────
+ALTER TABLE lab_panels ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lab_panels FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lab_panels_tenant_isolation ON lab_panels;
+CREATE POLICY lab_panels_tenant_isolation ON lab_panels
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- `panel_name` / `panel_code` unique per master data among ACTIVE rows only (a
+-- value freed by a soft-delete can be reused). Per master data (not tenant), like
+-- lab_test. Prisma can't express these.
+CREATE UNIQUE INDEX IF NOT EXISTS lab_panel_md_name_active_unique
+  ON lab_panels (tenant_id, master_data_id, panel_name) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS lab_panel_md_code_active_unique
+  ON lab_panels (tenant_id, master_data_id, panel_code) WHERE deleted_at IS NULL;
+
+-- CHECK constraints (Prisma can't express them); defence in depth on top of the
+-- DTO + LabPanelService validation.
+ALTER TABLE lab_panels DROP CONSTRAINT IF EXISTS chk_lab_panel_price_max_lte_msrp;
+ALTER TABLE lab_panels ADD CONSTRAINT chk_lab_panel_price_max_lte_msrp
+  CHECK (price_maximum <= price_msrp);
+ALTER TABLE lab_panels DROP CONSTRAINT IF EXISTS chk_lab_panel_price_min_lte_max;
+ALTER TABLE lab_panels ADD CONSTRAINT chk_lab_panel_price_min_lte_max
+  CHECK (price_minimum <= price_maximum);
+ALTER TABLE lab_panels DROP CONSTRAINT IF EXISTS chk_lab_panel_max_removable_nonneg;
+ALTER TABLE lab_panels ADD CONSTRAINT chk_lab_panel_max_removable_nonneg
+  CHECK (max_tests_removable >= 0);
+-- max_tests_removable > 0 only makes sense when partial billing is allowed.
+ALTER TABLE lab_panels DROP CONSTRAINT IF EXISTS chk_lab_panel_removable_partial;
+ALTER TABLE lab_panels ADD CONSTRAINT chk_lab_panel_removable_partial
+  CHECK (is_allow_partial_billing = TRUE OR max_tests_removable = 0);
+
+-- ── lab_panel_tests ─────────────────────────────────────────────────────────────
+ALTER TABLE lab_panel_tests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lab_panel_tests FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lab_panel_tests_tenant_isolation ON lab_panel_tests;
+CREATE POLICY lab_panel_tests_tenant_isolation ON lab_panel_tests
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- A lab test appears at most once per panel among ACTIVE rows.
+CREATE UNIQUE INDEX IF NOT EXISTS lab_panel_test_unique
+  ON lab_panel_tests (tenant_id, lab_panel_id, lab_test_id) WHERE deleted_at IS NULL;
+
 -- Platform-level tables (tenants, persons, person_credentials, siteadmin_users,
 -- refresh_tokens, person_tenant_enrollments) are intentionally NOT covered —
 -- they sit above the tenant boundary.

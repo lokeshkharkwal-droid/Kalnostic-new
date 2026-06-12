@@ -27,7 +27,7 @@ export class ListSiteAdminUsersQueryDto extends PaginationQueryDto {
 
   /** SiteAdmin role filter (optional). */
   @IsOptional()
-  @Transform(({ value }) =>
+  @Transform(({ value }: { value: unknown }) =>
     typeof value === 'string' ? value.toUpperCase() : value,
   )
   @IsEnum(SiteAdminRole)

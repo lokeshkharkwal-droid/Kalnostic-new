@@ -483,7 +483,7 @@ export class SubCategoryService {
       return;
     }
     const target = String(
-      (e.meta as { target?: unknown } | undefined)?.target ?? '',
+      (e.meta as { target?: string | string[] } | undefined)?.target ?? '',
     );
     if (target.includes('short_name')) {
       throw new SubCategoryShortNameConflictException(shortName);

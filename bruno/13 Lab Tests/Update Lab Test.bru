@@ -1,0 +1,40 @@
+meta {
+  name: Update Lab Test
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/lab-tests/{{labTestId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "testDisplayName": "CBC (Complete Blood Count)",
+    "priceMaximum": 600,
+    "remarks": "Q3 price revision"
+  }
+}
+
+docs {
+  Patch a lab test's core fields (send only what changes). `versionHistory` is
+  never edited here (use Add Version).
+  
+  Child sets are REPLACED when provided: include a full `samples` array and/or
+  `resultParams` array (each param with its `referenceRanges`/`referenceValues`)
+  to swap the whole set — the old active rows are soft-deleted and the new set
+  created in one transaction. Omit a child array to leave it untouched.
+  
+  Same cross-field rules and conflicts as Create (422 `VALIDATION_ERROR`, 409 on
+  name/code/parameterCode). 404 `LAB_TEST_NOT_FOUND` if missing/other tenant.
+}

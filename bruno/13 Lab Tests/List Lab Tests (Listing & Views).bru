@@ -1,0 +1,98 @@
+meta {
+  name: List Lab Tests (Listing & Views)
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/lab-tests/listing?view=RESULTS&page=1&limit=20&search=Complete
+  body: none
+  auth: bearer
+}
+
+params:query {
+  view: RESULTS
+  page: 1
+  limit: 20
+  search: Complete
+  ~departmentId: 
+  ~categoryId: 
+  ~subCategoryId: 
+  ~status: ACTIVE
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  masterDataId: 3bebbd8d-eef4-4bfa-88f3-3aff4a4a4516
+}
+
+docs {
+  Configurable listing screen for a master data's lab tests. One endpoint; the
+  `view` query param selects which columns (and, for the child-centric views,
+  nested arrays) are projected. Paginated **by lab test** (`meta.total` always
+  counts tests, even for the nested views). 404 `MASTER_DATA_NOT_FOUND` if the
+  parent master data is missing/other tenant.
+  
+  ## Search & filters (all optional)
+  
+  - `search` — matches `testName` OR `testCode` only (case-insensitive,
+    `contains`). Other fields are not searched, by design.
+  - `departmentId` / `categoryId` / `subCategoryId` — filter by id. The matching
+    **names** are resolved server-side and returned in the views that show them.
+  - `status` — `ACTIVE` | `INACTIVE` (maps to the `isActive` flag). Soft-deleted
+    tests are always excluded regardless of `status`.
+  - `page` / `limit` — standard pagination (limit capped at 100).
+  
+  > The disabled (`~`) query params above are examples — enable the ones you
+  > want. Don't send an empty `status`/`view` (an empty enum value → 400
+  > `VALIDATION_ERROR`); omit them instead.
+  
+  ## Views (`view`)
+  
+  Each value projects a different row shape:
+  
+  - `DEFAULT` (default) — testName, testCode, departmentName, priceMsrp,
+    tatMaxValue/Unit, **defaultSample** (the `isDefault` sample), **parametersCount**, isActive.
+  - `BASIC_DETAILS` — testName, testCode, aka, departmentName, categoryName,
+    subCategoryName, processMethod, approvalWorkflowId, isMandatoryTest,
+    samplePriorityType, icdCode, loincCode.
+  - `PRICING` — the full price ladder (msrp/min/max/original/franchise/emergency,
+    discountCapPct, isAllowPriceOverride).
+  - `TAT` — tatMin/Max (value+unit), schedule from/to, processing time min/max
+    (value+unit), approval time from/to.
+  - `FLAGS` — isHideInOrderScreen, isEnableCms, isPreferenceTest, isActive.
+  - `SAMPLE` — testName, testCode, departmentName, isActive + nested `samples[]`
+    (sampleNameId, containerType, sampleSize, isFastingRequired, transportTemperature).
+  - `RESULTS` — testName, testCode, departmentName, isActive + nested
+    `resultParams[]` (parameterName, method, resultType, units, isNabl, isCap).
+  - `REFERENCE_RANGE` — testName, testCode + nested `referenceRanges[]`
+    (parameterName, method, gender, ageFrom, ageTo, lowerLimit, upperLimit,
+    displayOfReferenceRange, flag).
+  - `REFERENCE_VALUE` — testName, testCode + nested `referenceValues[]`
+    (parameterName, method, gender, ageFrom, ageTo, displayValue, flag).
+  - `NOTES` — usefulFor, interpretationOfResults, limitations, remarks, references.
+  - `VERSION_CONTROL` — testName + currentVersion/effectiveFrom/modifiedBy
+    (the open entry, else the highest) + the full `versionHistory`.
+  - `OVERVIEW` — testName, testCode, departmentName, maxValue (= priceMaximum),
+    tatMaxValue/Unit, samplesCount, parametersCount, isActive.
+  
+  ## Fields mapped/omitted (no backing column yet)
+  
+  Some requested columns have no field on the model today, so they are mapped to
+  the nearest field or omitted (to be wired when those modules land):
+  
+  - `FLAGS` "Reference test" → `isPreferenceTest`; "Bill only / Disable discount
+    / Outsource / Sample flow" → omitted.
+  - `TAT` "Reporting time" and extra from/to → omitted (only schedule/processing/
+    approval windows exist).
+  - `BASIC_DETAILS` "Approval" → `approvalWorkflowId` (logical ref).
+  - `SAMPLE` "Sample / Sample type" → `sampleNameId` + `containerType` (no sample
+    catalogue yet, so no resolved sample name).
+  - `OVERVIEW` "Max value" → `priceMaximum`.
+  
+  This endpoint is read-only and additive — the original `List Lab Tests`
+  (core rows only) is unchanged.
+}

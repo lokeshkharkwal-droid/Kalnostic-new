@@ -1,0 +1,35 @@
+meta {
+  name: List Master Data
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/master-data?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.length && data[0].id) bru.setEnvVar("masterDataId", data[0].id);
+}
+
+docs {
+  Paginated list of the tenant's master data. `page`/`limit` optional. Captures
+  `masterDataId` from the first item — the easiest way to grab the master data
+  that was **auto-created** when a branch was created.
+
+  Every branch gets a default master data automatically on branch creation (named
+  after the branch), so this list is populated as soon as you have branches. Also
+  feeds the "copy data from" dropdown on **Create Master Data**.
+}

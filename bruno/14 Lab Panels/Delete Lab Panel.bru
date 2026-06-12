@@ -1,0 +1,28 @@
+meta {
+  name: Delete Lab Panel
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/lab-panels/{{labPanelId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Soft-delete a lab panel (sets `deletedAt`) and cascade soft-delete its included
+  tests in one transaction. The panel and its tests no longer appear in any list
+  or get. A missing/already-deleted/foreign panel → 404 `LAB_PANEL_NOT_FOUND`.
+  The freed `panelName` / `panelCode` may be reused by a new active panel.
+}

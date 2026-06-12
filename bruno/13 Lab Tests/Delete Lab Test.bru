@@ -1,0 +1,24 @@
+meta {
+  name: Delete Lab Test
+  type: http
+  seq: 8
+}
+
+delete {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/lab-tests/{{labTestId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Soft-delete a lab test (sets `deletedAt`) and cascade soft-delete all of its
+  children — samples, result parameters, and reference ranges/values — in one
+  transaction. Scoped to the caller's tenant + master data. The `testName` /
+  `testCode` are freed for reuse among active rows afterward. 404
+  `LAB_TEST_NOT_FOUND` if missing, already soft-deleted, or not in this master
+  data.
+}

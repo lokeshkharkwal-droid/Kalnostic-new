@@ -153,6 +153,9 @@ enum AuditModule {
   DEPARTMENT
   CATEGORY
   SUB_CATEGORY
+  MASTER_DATA
+  LAB_TEST
+  LAB_PANEL
   AUTH
   SITEADMIN // reserved; not written to in this phase (business audit only)
 }
@@ -166,6 +169,114 @@ enum AuditAction {
   LOGOUT
   EXPORT
   OTHER
+}
+
+// ── Lab-test enums (UPPERCASE per project convention; values map to the raw
+//    snake_case spec, e.g. SINGLE_STEP ↔ 'single_step') ──────────────────────────
+
+/// Whether a test is processed in one step or several.
+enum ProcessMethod {
+  SINGLE_STEP
+  MULTI_STEP
+}
+
+/// How urgently a sample/test is processed.
+enum SamplePriority {
+  ROUTINE
+  URGENT
+  STAT
+}
+
+/// Unit for turnaround / processing time windows.
+enum TatUnit {
+  MINUTES
+  HOURS
+  DAYS
+}
+
+/// Unit for the repeat-interval restriction between orders of a test.
+enum RepeatIntervalUnit {
+  HOURS
+  DAYS
+  MONTHS
+  YEARS
+}
+
+/// Age-group applicability for a lab panel (CMS filtering + age-appropriate
+/// package suggestions). Distinct from the per-range `AgeUnit` bounds on a test.
+enum AgeGroup {
+  ALL
+  ADULT
+  PEDIATRIC
+  SENIOR
+}
+
+/// How a lab panel's results are reported. COMBINED merges every test result
+/// into one report; SEPARATE generates an individual report per test.
+enum ReportType {
+  COMBINED
+  SEPARATE
+}
+
+/// How a result parameter's value is produced/expressed.
+enum ResultType {
+  QUANTITATIVE
+  QUALITATIVE
+  CALCULATED
+}
+
+/// Whether a parameter is measured directly or computed from a formula.
+enum ParameterType {
+  MEASURED
+  CALCULATED
+}
+
+/// Whether a parameter's result is entered by hand or pulled automatically.
+enum ResultEntryMode {
+  MANUAL
+  AUTO
+}
+
+/// Rounding applied to a numeric result.
+enum ResultRounding {
+  NO_ROUNDING
+  ONE_DECIMAL
+  TWO_DECIMAL
+  THREE_DECIMAL
+  WHOLE_NUMBER
+}
+
+/// Gender applicability for a reference range/value. Distinct from the
+/// person-level `Gender` (which lacks `ALL` and carries OTHER/PREFER_NOT_TO_SAY).
+enum ReferenceGender {
+  ALL
+  MALE
+  FEMALE
+}
+
+/// Unit for age bounds on a reference range/value.
+enum AgeUnit {
+  DAYS
+  MONTHS
+  YEARS
+}
+
+/// How an out-of-range result is visually flagged on the report.
+enum AbnormalFlag {
+  BOLD_AND_RED
+  BOLD_ONLY
+  ITALIC
+  UNDERLINE
+  COLOUR_HIGHLIGHT
+}
+
+/// Sample container type (tube/colour or receptacle).
+enum ContainerType {
+  EDTA_TUBE_PURPLE_TOP
+  PLAIN_TUBE_RED_TOP
+  FLUORIDE_TUBE_GREY_TOP
+  URINE_CONTAINER
+  STERILE_CONTAINER
 }
 
 // ── Platform-level models (NO tenant_id) ────────────────────────────────────────
@@ -772,4 +883,396 @@ model AuditLog {
   @@index([createdAt])
   @@index([deletedAt])
   @@map("audit_logs")
+}
+
+/// A master-data container for a branch. Tenant-scoped + branch-level. A non-main
+/// branch may have several; the main branch is capped at one (its auto-created
+/// default). The first master data is auto-created on branch creation (named after
+/// the branch). Updatable; rows belonging to the tenant's main branch cannot be
+/// deleted. Name is unique per branch among active rows (partial unique index in
+/// prisma/rls.sql). RLS policy in prisma/rls.sql.
+model MasterData {
+  id          String  @id @default(uuid())
+  tenantId    String  @map("tenant_id")
+  branchId    String  @map("branch_id")
+  name        String
+  description String?
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([deletedAt])
+  @@map("master_data")
+}
+
+/// A lab-test configuration inside a master data (tenant-scoped + branch-level;
+/// `branchId` denormalised from the parent master data). Covers basic details,
+/// pricing, TAT/schedule, flags, and notes. Child rows (samples, result params,
+/// reference ranges/values) hang off this via `labTestId`. `testName`/`testCode`
+/// are unique per master data among active rows (partial unique indexes in
+/// prisma/rls.sql). CHECK constraints (price ordering, conditional-required
+/// fields) also live in prisma/rls.sql. Cross-entity ids (department, category,
+/// report template, pdf/image settings, approval workflow, mandatory dept/cat) are
+/// nullable logical references (no Prisma relation) until those modules exist.
+model LabTest {
+  id           String @id @default(uuid())
+  tenantId     String @map("tenant_id")
+  branchId     String @map("branch_id")
+  masterDataId String @map("master_data_id")
+
+  // Identity
+  testName        String  @map("test_name")
+  testDisplayName String? @map("test_display_name")
+  testCode        String  @map("test_code")
+  aka             String?
+
+  // Classification (logical refs)
+  departmentId  String? @map("department_id")
+  categoryId    String? @map("category_id")
+  subCategoryId String? @map("sub_category_id")
+
+  // Basic config
+  processMethod      ProcessMethod  @default(SINGLE_STEP) @map("process_method")
+  icdCode            String?        @map("icd_code")
+  loincCode          String?        @map("loinc_code")
+  clinicalTags       String[]       @map("clinical_tags")
+  reportTemplateId   String?        @map("report_template_id")
+  samplePriorityType SamplePriority @default(ROUTINE) @map("sample_priority_type")
+  pdfSettingsId      String?        @map("pdf_settings_id")
+  imageSettingsId    String?        @map("image_settings_id")
+  isEnableCms        Boolean        @default(true) @map("is_enable_cms")
+  approvalWorkflowId String?        @map("approval_workflow_id")
+
+  // Pricing (integer minor units)
+  priceMsrp            Int     @default(0) @map("price_msrp")
+  priceMaximum         Int     @default(0) @map("price_maximum")
+  priceMinimum         Int     @default(0) @map("price_minimum")
+  priceOriginal        Int     @default(0) @map("price_original")
+  franchisePrice       Int     @default(0) @map("franchise_price")
+  emergencyPrice       Int     @default(0) @map("emergency_price")
+  discountCapPct       Int     @default(0) @map("discount_cap_pct")
+  isAllowPriceOverride Boolean @default(false) @map("is_allow_price_override")
+  isAllowDiscounts     Boolean @default(true) @map("is_allow_discounts")
+
+  // TAT
+  tatMinValue Int?     @map("tat_min_value")
+  tatMinUnit  TatUnit? @map("tat_min_unit")
+  tatMaxValue Int?     @map("tat_max_value")
+  tatMaxUnit  TatUnit? @map("tat_max_unit")
+
+  // Schedule (times stored as "HH:mm" strings, like Branch.openingTime)
+  scheduleDays DayOfWeek[] @map("schedule_days")
+  scheduleFrom String?     @map("schedule_from")
+  scheduleTo   String?     @map("schedule_to")
+
+  // Processing time
+  procTimeMinValue Int?     @map("proc_time_min_value")
+  procTimeMinUnit  TatUnit? @map("proc_time_min_unit")
+  procTimeMaxValue Int?     @map("proc_time_max_value")
+  procTimeMaxUnit  TatUnit? @map("proc_time_max_unit")
+
+  // Approval window
+  approvalTimeFrom String? @map("approval_time_from")
+  approvalTimeTo   String? @map("approval_time_to")
+
+  // Flags
+  isHideInOrderScreen         Boolean             @default(false) @map("is_hide_in_order_screen")
+  isPreferenceTest            Boolean             @default(false) @map("is_preference_test")
+  isMandatoryTest             Boolean             @default(false) @map("is_mandatory_test")
+  mandatoryDeptId             String?             @map("mandatory_dept_id")
+  mandatoryCatId              String?             @map("mandatory_cat_id")
+  mandatorySubcatId           String?             @map("mandatory_subcat_id")
+  isRepeatIntervalRestriction Boolean             @default(false) @map("is_repeat_interval_restriction")
+  repeatIntervalValue         Int?                @map("repeat_interval_value")
+  repeatIntervalUnit          RepeatIntervalUnit? @map("repeat_interval_unit")
+
+  // Active/inactive status (distinct from soft delete; NULL deletedAt = not deleted)
+  isActive Boolean @default(true) @map("is_active")
+
+  // Notes
+  usefulFor               String? @map("useful_for")
+  interpretationOfResults String? @map("interpretation_of_results")
+  limitations             String?
+  remarks                 String?
+  references              String?
+
+  // Version control: JSON array of
+  // { version, effectiveFrom, effectiveTo, modifiedBy, approvedBy } (no snapshot).
+  versionHistory Json @default("[]") @map("version_history")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([masterDataId])
+  @@index([departmentId])
+  @@index([categoryId])
+  @@index([isActive])
+  @@index([deletedAt])
+  @@map("lab_test")
+}
+
+/// A sample requirement for a lab test. Many per test; at most one `isDefault`
+/// per test (partial unique index in prisma/rls.sql). `sampleNameId` is a nullable
+/// logical ref to the (not-yet-built) sample-types catalogue.
+model LabTestSample {
+  id        String @id @default(uuid())
+  tenantId  String @map("tenant_id")
+  branchId  String @map("branch_id")
+  labTestId String @map("lab_test_id")
+
+  sampleNameId               String?        @map("sample_name_id")
+  sampleType                 String?        @map("sample_type")
+  containerType              ContainerType? @map("container_type")
+  sampleSize                 String?        @map("sample_size")
+  collectionMethod           String?        @map("collection_method")
+  numberOfSamples            Int            @default(1) @map("number_of_samples")
+  stability                  String?
+  transportTemperature       String?        @map("transport_temperature")
+  preservative               String?
+  sampleHandlingInstructions String?        @map("sample_handling_instructions")
+  isFastingRequired          Boolean        @default(false) @map("is_fasting_required")
+  isLightProtection          Boolean        @default(false) @map("is_light_protection")
+  isDefault                  Boolean        @default(false) @map("is_default")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([labTestId])
+  @@index([deletedAt])
+  @@map("lab_test_samples")
+}
+
+/// A result parameter for a lab test. `parameterCode` is unique per test among
+/// active rows (partial unique index in prisma/rls.sql). `reflexTestIds` is a list
+/// of LabTest ids (logical refs). Settings/layout/icon ids are nullable logical refs.
+model LabTestResultParam {
+  id        String @id @default(uuid())
+  tenantId  String @map("tenant_id")
+  branchId  String @map("branch_id")
+  labTestId String @map("lab_test_id")
+
+  // Group display
+  groupName       String? @map("group_name")
+  groupLayoutId   String? @map("group_layout_id")
+  groupSettingsId String? @map("group_settings_id")
+
+  // Parameter identity
+  parameterName String  @map("parameter_name")
+  parameterCode String  @map("parameter_code")
+  method        String?
+  attachFileUrl String? @map("attach_file_url")
+  iconSettingsId String? @map("icon_settings_id")
+  reportingUnit String? @map("reporting_unit")
+
+  // Result behaviour
+  resultType         ResultType      @map("result_type")
+  parameterType      ParameterType   @default(MEASURED) @map("parameter_type")
+  resultEntryMode    ResultEntryMode @default(MANUAL) @map("result_entry_mode")
+  calculationFormula String?         @map("calculation_formula")
+  resultRoundingType ResultRounding  @default(TWO_DECIMAL) @map("result_rounding_type")
+  allowableUnits     String?         @map("allowable_units")
+  decimalPlaces      Int             @default(2) @map("decimal_places")
+
+  // Reflex tests (LabTest ids)
+  reflexTestIds String[] @map("reflex_test_ids")
+
+  // Meta
+  notes     String?
+  isNabl    Boolean @default(false) @map("is_nabl")
+  isCap     Boolean @default(false) @map("is_cap")
+  sortOrder Int     @default(0) @map("sort_order")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([labTestId])
+  @@index([labTestId, sortOrder])
+  @@index([deletedAt])
+  @@map("lab_test_result_params")
+}
+
+/// A numeric reference range for a result parameter (`paramId` is a logical ref to
+/// LabTestResultParam). CHECK constraints (lower≤upper, critical bounds,
+/// age_from≤age_to) live in prisma/rls.sql.
+model LabTestReferenceRange {
+  id        String @id @default(uuid())
+  tenantId  String @map("tenant_id")
+  branchId  String @map("branch_id")
+  labTestId String @map("lab_test_id")
+  paramId   String @map("param_id")
+
+  method String?
+  gender ReferenceGender @default(ALL)
+
+  ageFrom     Int     @default(0) @map("age_from")
+  ageFromUnit AgeUnit @default(YEARS) @map("age_from_unit")
+  ageTo       Int     @default(999) @map("age_to")
+  ageToUnit   AgeUnit @default(YEARS) @map("age_to_unit")
+
+  lowerLimit              Decimal?     @map("lower_limit") @db.Decimal(10, 4)
+  upperLimit              Decimal?     @map("upper_limit") @db.Decimal(10, 4)
+  criticalMin             Decimal?     @map("critical_min") @db.Decimal(10, 4)
+  criticalMax             Decimal?     @map("critical_max") @db.Decimal(10, 4)
+  displayOfReferenceRange String?      @map("display_of_reference_range")
+  abnormalFlagLogic       AbnormalFlag @default(BOLD_AND_RED) @map("abnormal_flag_logic")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([labTestId])
+  @@index([paramId])
+  @@index([deletedAt])
+  @@map("lab_test_reference_ranges")
+}
+
+/// A qualitative reference value for a result parameter (e.g. "Negative").
+/// `paramId` is a logical ref to LabTestResultParam.
+model LabTestReferenceValue {
+  id        String @id @default(uuid())
+  tenantId  String @map("tenant_id")
+  branchId  String @map("branch_id")
+  labTestId String @map("lab_test_id")
+  paramId   String @map("param_id")
+
+  method String?
+  gender ReferenceGender @default(ALL)
+
+  ageFrom     Int     @default(0) @map("age_from")
+  ageFromUnit AgeUnit @default(YEARS) @map("age_from_unit")
+  ageTo       Int     @default(999) @map("age_to")
+  ageToUnit   AgeUnit @default(YEARS) @map("age_to_unit")
+
+  normalValueText         String       @map("normal_value_text")
+  displayOfReferenceRange String?      @map("display_of_reference_range")
+  abnormalFlagLogic       AbnormalFlag @default(BOLD_AND_RED) @map("abnormal_flag_logic")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([labTestId])
+  @@index([paramId])
+  @@index([deletedAt])
+  @@map("lab_test_reference_values")
+}
+
+/// A lab-panel configuration inside a master data (tenant-scoped + branch-level;
+/// `branchId` denormalised from the parent master data, exactly like LabTest). A
+/// panel groups several lab tests (via `LabPanelTest`) and carries its own
+/// classification, applicability, report/turnaround settings, pricing, TAT, flags
+/// and instructions. `panelName`/`panelCode` are unique per master data among
+/// active rows (partial unique indexes in prisma/rls.sql). CHECK constraints
+/// (price ordering, max-tests-removable rules) also live in prisma/rls.sql.
+/// Cross-entity ids (department, category) are nullable logical references (no
+/// Prisma relation), mirroring LabTest.
+model LabPanel {
+  id           String @id @default(uuid())
+  tenantId     String @map("tenant_id")
+  branchId     String @map("branch_id")
+  masterDataId String @map("master_data_id")
+
+  // Identity
+  bannerImage String? @map("banner_image")
+  panelName   String  @map("panel_name")
+  panelCode   String  @map("panel_code")
+
+  // Classification (logical refs)
+  categoryId   String? @map("category_id")
+  departmentId String? @map("department_id")
+
+  // Applicability + reporting
+  applicableGender    ReferenceGender @default(ALL) @map("applicable_gender")
+  applicableAgeGroup  AgeGroup        @default(ALL) @map("applicable_age_group")
+  reportType          ReportType      @default(COMBINED) @map("report_type")
+  turnaroundPriority  SamplePriority  @default(ROUTINE) @map("turnaround_priority")
+
+  // Active/inactive status (distinct from soft delete; NULL deletedAt = not deleted)
+  isActive Boolean @default(true) @map("is_active")
+
+  // Pricing (integer minor units)
+  priceMsrp      Int @default(0) @map("price_msrp")
+  priceMinimum   Int @default(0) @map("price_minimum")
+  priceMaximum   Int @default(0) @map("price_maximum")
+  priceOriginal  Int @default(0) @map("price_original")
+  franchisePrice Int @default(0) @map("franchise_price")
+
+  // TAT (defaults to HOURS per the panel spec)
+  tatMinValue Int?     @map("tat_min_value")
+  tatMinUnit  TatUnit? @default(HOURS) @map("tat_min_unit")
+  tatMaxValue Int?     @map("tat_max_value")
+  tatMaxUnit  TatUnit? @default(HOURS) @map("tat_max_unit")
+
+  // Instructions
+  panelInstructions String? @map("panel_instructions")
+
+  // Flags
+  isDisableDiscount     Boolean @default(false) @map("is_disable_discount")
+  isEnableCms           Boolean @default(true) @map("is_enable_cms")
+  isPreference          Boolean @default(false) @map("is_preference")
+  isFastingRequired     Boolean @default(false) @map("is_fasting_required")
+  isShowOnlineBooking   Boolean @default(true) @map("is_show_online_booking")
+  isHomeCollection      Boolean @default(false) @map("is_home_collection")
+  isAllowPartialBilling Boolean @default(false) @map("is_allow_partial_billing")
+
+  // Max tests removable in a single order (0 = no limit). Only meaningful when
+  // isAllowPartialBilling = true (enforced in service + CHECK in prisma/rls.sql).
+  maxTestsRemovable Int @default(0) @map("max_tests_removable")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([masterDataId])
+  @@index([departmentId])
+  @@index([categoryId])
+  @@index([isActive])
+  @@index([deletedAt])
+  @@map("lab_panels")
+}
+
+/// A test included in a lab panel. Many per panel; `labTestId` is a logical ref to
+/// an active LabTest in the same tenant (validated in LabPanelService). `isRemovable`
+/// marks whether this specific test may be unchecked in an order (subject to the
+/// panel's `maxTestsRemovable` + `isAllowPartialBilling`). Per-test price is read
+/// from the referenced LabTest at billing time (not snapshotted here).
+model LabPanelTest {
+  id         String @id @default(uuid())
+  tenantId   String @map("tenant_id")
+  branchId   String @map("branch_id")
+  labPanelId String @map("lab_panel_id")
+  labTestId  String @map("lab_test_id")
+
+  sortOrder   Int     @default(0) @map("sort_order")
+  isRemovable Boolean @default(true) @map("is_removable")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([labPanelId])
+  @@index([labPanelId, sortOrder])
+  @@index([labTestId])
+  @@index([deletedAt])
+  @@map("lab_panel_tests")
 }

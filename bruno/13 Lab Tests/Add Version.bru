@@ -1,0 +1,41 @@
+meta {
+  name: Add Version
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/lab-tests/{{labTestId}}/versions
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "effectiveFrom": "2026-07-01",
+    "approvedBy": "{{patientPersonId}}"
+  }
+}
+
+docs {
+  Append a version entry to the lab test's `versionHistory` JSON array. The entry
+  shape is `{ version, effectiveFrom, effectiveTo, modifiedBy, approvedBy }` — no
+  row snapshot.
+  
+  - `version` auto-increments (starts at 1, seeded on create).
+  - `effectiveFrom` (YYYY-MM-DD) is required; `approvedBy` (person UUID) optional.
+  - `modifiedBy` is taken from the JWT actor.
+  - On append, the previous open entry's `effectiveTo` is set to
+    `effectiveFrom − 1 day`; the new entry's `effectiveTo` is null.
+  
+  404 `LAB_TEST_NOT_FOUND` if missing/other tenant. The example reuses
+  `{{patientPersonId}}` as a stand-in approver.
+}

@@ -1,0 +1,67 @@
+meta {
+  name: Bulk Edit Lab Tests
+  type: http
+  seq: 9
+}
+
+patch {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/lab-tests/bulk
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "data": [
+      {
+        "labTestId": "{{labTestId}}",
+        "isActive": false,
+        "samplePriorityType": "STAT",
+        "priceMsrp": 750
+      }
+    ]
+  }
+}
+
+vars:pre-request {
+  masterDataId: 3bebbd8d-eef4-4bfa-88f3-3aff4a4a4516
+  labTestId: 7378922b-7c34-4785-b276-191f5eac2854
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("reports updated count", function () {
+    const data = res.getBody() && res.getBody().data;
+    expect(data).to.have.property("updated");
+  });
+}
+
+docs {
+  Bulk-edit lab tests: `data` is an array of per-test edits, each carrying its own
+  `labTestId` plus the scalar fields to change **for that test** (scoped to the
+  caller's tenant + the path's master data). Only the tests in the payload are
+  touched. Returns `{ updated: <count> }`.
+  
+  ## Rules
+  
+  - `data` — 1 to 500 items. Each item's `labTestId` must resolve to an active
+    lab test in this master data; an unresolved id → 404 `LAB_TEST_NOT_FOUND`.
+  - Each item may set any subset of the test's **scalar** fields (classification,
+    pricing, TAT, schedule, flags, notes, status). `testName`/`testCode` and the
+    children (`samples`/`resultParams`) are **not** bulk-editable — use the
+    single-test update for those.
+  - **All-or-nothing**: duplicate `labTestId`s, an item with no changes, or a
+    broken cross-field invariant (price ordering, mandatory-dept, repeat-interval —
+    re-checked per test against its existing values) → 422 `VALIDATION_ERROR` and
+    **nothing** is changed. Updates run in one transaction.
+}

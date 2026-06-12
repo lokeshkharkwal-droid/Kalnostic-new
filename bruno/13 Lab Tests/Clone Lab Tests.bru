@@ -1,0 +1,45 @@
+meta {
+  name: Clone Lab Tests
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/lab-tests/clone
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "targetMasterDataId": "{{targetMasterDataId}}"
+  }
+}
+
+vars:pre-request {
+  targetMasterDataId: 00000000-0000-0000-0000-000000000000
+}
+
+docs {
+  Deep-clone all active lab tests from this master data (the `:masterDataId` in
+  the URL, the *source*) into a target master data. Each test plus its samples,
+  result parameters, and reference ranges/values is copied with fresh ids, the
+  target's `branchId`, and a fresh `versionHistory` v1. Returns
+  `{ "copied": <n>, "skipped": <n> }`.
+  
+  A source test is **skipped** if its `testName` or `testCode` already exists
+  (active) in the target. Both master data must belong to the caller's tenant
+  (404 `MASTER_DATA_NOT_FOUND` otherwise).
+  
+  Set `targetMasterDataId` to a second (usually different-branch) master data's
+  id — create one via Master Data → Create, or grab another from List. The
+  placeholder default will 404 until you set a real id.
+}

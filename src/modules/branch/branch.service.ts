@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Branch, BranchStatus, Prisma, TenantMainBranch } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
@@ -17,7 +18,10 @@ import {
  */
 @Injectable()
 export class BranchService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly eventEmitter: EventEmitter2,
+  ) {}
 
   /**
    * Create a branch within a tenant. The branch `code` is system-generated:
@@ -43,7 +47,7 @@ export class BranchService {
     setBy?: string,
   ): Promise<Branch> {
     try {
-      return await this.prisma.withTenant(tenantId, async (tx) => {
+      const created = await this.prisma.withTenant(tenantId, async (tx) => {
         const tenant = await tx.tenant.update({
           where: { id: tenantId },
           data: { branchCounter: { increment: 1 } },
@@ -98,6 +102,16 @@ export class BranchService {
 
         return branch;
       });
+      // Auto-provision the branch's default master data (and any other
+      // branch-created side effects) via an in-process event. Listeners run in
+      // their own transactions; a listener failure must not fail (or roll back)
+      // the already-committed branch creation.
+      await this.eventEmitter.emitAsync('branch.created', {
+        tenantId,
+        branchId: created.id,
+        branchName: created.name,
+      });
+      return created;
     } catch (e) {
       if (this.isUniqueViolation(e)) {
         throw new BranchNameConflictException(dto.name);

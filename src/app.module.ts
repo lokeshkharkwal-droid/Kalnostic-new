@@ -17,6 +17,9 @@ import { BranchModule } from './modules/branch/branch.module';
 import { CategoryModule } from './modules/category/category.module';
 import { DepartmentModule } from './modules/department/department.module';
 import { SubCategoryModule } from './modules/sub-category/sub-category.module';
+import { MasterDataModule } from './modules/master-data/master-data.module';
+import { LabTestModule } from './modules/lab-test/lab-test.module';
+import { LabPanelModule } from './modules/lab-panel/lab-panel.module';
 import { ScheduleModule } from './modules/schedule/schedule.module';
 import { TenantModule } from './modules/tenant/tenant.module';
 import { UsersModule } from './modules/users/users.module';
@@ -59,6 +62,9 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     CategoryModule,
     SubCategoryModule,
     DepartmentModule,
+    MasterDataModule,
+    LabTestModule,
+    LabPanelModule,
     ScheduleModule,
     TenantModule,
     UsersModule,

@@ -1,0 +1,35 @@
+meta {
+  name: Update Master Data
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/master-data/{{masterDataId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Radiology Catalogue (v2)",
+    "description": "Updated description"
+  }
+}
+
+docs {
+  Update a master data's `name` and/or `description` (both optional; send only
+  what changes). `branchId` is immutable and never accepted here.
+
+  The main branch's master data CAN be updated (only deletion is blocked). A name
+  collision with another active master data on the same branch → 409
+  `MASTER_DATA_NAME_CONFLICT`. 404 `MASTER_DATA_NOT_FOUND` if missing/other tenant.
+}

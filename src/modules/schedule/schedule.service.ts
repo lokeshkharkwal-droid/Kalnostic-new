@@ -261,16 +261,15 @@ export class ScheduleService {
     // No two shifts may overlap in clock time on a day they both run (compare
     // expanded intervals; shifts on disjoint days never conflict).
     for (let i = 0; i < shifts.length; i++) {
+      const a = shifts[i];
       for (let j = i + 1; j < shifts.length; j++) {
-        if (
-          this.shiftsShareDay(shifts[i], shifts[j]) &&
-          this.shiftsOverlap(shifts[i], shifts[j])
-        ) {
+        const b = shifts[j];
+        if (a && b && this.shiftsShareDay(a, b) && this.shiftsOverlap(a, b)) {
           throw new InvalidShiftException(
             'Two shifts overlap in time on a shared active day',
             {
-              a: shifts[i].shiftName,
-              b: shifts[j].shiftName,
+              a: a.shiftName,
+              b: b.shiftName,
             },
           );
         }
@@ -380,7 +379,7 @@ export class ScheduleService {
 
   /** Convert an `HH:mm` string to minutes since midnight (0..1439). */
   private toMinutes(hhmm: string): number {
-    const [h, m] = hhmm.split(':').map(Number);
+    const [h = 0, m = 0] = hhmm.split(':').map(Number);
     return h * 60 + m;
   }
 

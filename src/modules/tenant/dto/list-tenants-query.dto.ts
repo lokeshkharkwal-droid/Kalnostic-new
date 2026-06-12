@@ -21,7 +21,7 @@ export class ListTenantsQueryDto extends PaginationQueryDto {
 
   /** Subscription status filter (optional). */
   @IsOptional()
-  @Transform(({ value }) =>
+  @Transform(({ value }: { value: unknown }) =>
     typeof value === 'string' ? value.toUpperCase() : value,
   )
   @IsEnum(SubscriptionStatus)

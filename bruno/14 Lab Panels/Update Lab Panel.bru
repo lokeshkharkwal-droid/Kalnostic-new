@@ -1,0 +1,55 @@
+meta {
+  name: Update Lab Panel
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/lab-panels/{{labPanelId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "panelName": "Full Body Checkup (Advanced)",
+    "turnaroundPriority": "URGENT",
+    "priceMsrp": 2800,
+    "priceMaximum": 2600,
+    "priceMinimum": 2000,
+    "isHomeCollection": false
+  }
+}
+
+vars:pre-request {
+  masterDataId: 3bebbd8d-eef4-4bfa-88f3-3aff4a4a4516
+  labPanelId: 7304fcdc-3c2a-4ee9-9837-7bbde89ca922
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Partial update of a lab panel. Only the keys present are changed. When `tests`
+  is provided, the **whole** included-test set is replaced (old active rows
+  soft-deleted, the new set created) in one transaction — omit `tests` to leave
+  the panel's composition untouched.
+  
+  The same cross-field rules as Create apply, evaluated against the merged
+  (existing + patch) values: `priceMaximum ≤ priceMsrp`,
+  `priceMinimum ≤ priceMaximum`, `maxTestsRemovable > 0` requires
+  `isAllowPartialBilling`, and `maxTestsRemovable ≤` the effective test count.
+  Name/code collisions → 409; invalid test references → 422
+  `LAB_PANEL_TEST_NOT_FOUND`.
+}

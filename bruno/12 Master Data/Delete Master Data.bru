@@ -1,0 +1,25 @@
+meta {
+  name: Delete Master Data
+  type: http
+  seq: 10
+}
+
+delete {
+  url: {{baseUrl}}/master-data/{{masterDataId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Soft-delete a master data (sets `deletedAt`) and cascade soft-deletes its active
+  lab tests, in one transaction. Scoped to the caller's tenant.
+
+  Master data belonging to the tenant's **main branch cannot be deleted** → 409
+  `CANNOT_DELETE_MAIN_BRANCH_MASTER_DATA` (set another branch as main, or target a
+  non-main branch's master data). 404 `MASTER_DATA_NOT_FOUND` if missing/other
+  tenant. The master data `name` is freed for reuse among active rows afterward.
+}
