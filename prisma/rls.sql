@@ -377,6 +377,105 @@ CREATE POLICY lab_panel_tests_tenant_isolation ON lab_panel_tests
 CREATE UNIQUE INDEX IF NOT EXISTS lab_panel_test_unique
   ON lab_panel_tests (tenant_id, lab_panel_id, lab_test_id) WHERE deleted_at IS NULL;
 
+-- ── outsource_centers ─────────────────────────────────────────────────────────
+ALTER TABLE outsource_centers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE outsource_centers FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS outsource_centers_tenant_isolation ON outsource_centers;
+CREATE POLICY outsource_centers_tenant_isolation ON outsource_centers
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- Per-tenant uniqueness for outsource-center name + code, among ACTIVE rows only
+-- (partial index on deleted_at IS NULL), so a name/code freed by a soft-delete can
+-- be reused. `code` is system-generated & immutable; `name` is user-set. Prisma
+-- can't express partial unique indexes, so they live here.
+CREATE UNIQUE INDEX IF NOT EXISTS outsource_centers_tenant_code_active_unique
+  ON outsource_centers (tenant_id, code) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS outsource_centers_tenant_name_active_unique
+  ON outsource_centers (tenant_id, outsource_center_name) WHERE deleted_at IS NULL;
+
+-- ── outsource_center_contacts ─────────────────────────────────────────────────
+ALTER TABLE outsource_center_contacts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE outsource_center_contacts FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS occ_tenant_isolation ON outsource_center_contacts;
+CREATE POLICY occ_tenant_isolation ON outsource_center_contacts
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- At most one active contact per role per center.
+CREATE UNIQUE INDEX IF NOT EXISTS occ_center_role_active_unique
+  ON outsource_center_contacts (tenant_id, outsource_center_id, role)
+  WHERE deleted_at IS NULL;
+
+-- ── outsource_center_branch_assignments ───────────────────────────────────────
+ALTER TABLE outsource_center_branch_assignments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE outsource_center_branch_assignments FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS ocba_tenant_isolation ON outsource_center_branch_assignments;
+CREATE POLICY ocba_tenant_isolation ON outsource_center_branch_assignments
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- One active assignment per (center, branch) among ACTIVE rows only.
+CREATE UNIQUE INDEX IF NOT EXISTS ocba_center_branch_active_unique
+  ON outsource_center_branch_assignments (tenant_id, outsource_center_id, branch_id)
+  WHERE deleted_at IS NULL;
+
+-- ── outsource_center_branch_tests ─────────────────────────────────────────────
+ALTER TABLE outsource_center_branch_tests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE outsource_center_branch_tests FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS ocbt_tenant_isolation ON outsource_center_branch_tests;
+CREATE POLICY ocbt_tenant_isolation ON outsource_center_branch_tests
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- A lab test appears at most once per assignment among ACTIVE rows.
+CREATE UNIQUE INDEX IF NOT EXISTS ocbt_assignment_test_active_unique
+  ON outsource_center_branch_tests (tenant_id, assignment_id, lab_test_id)
+  WHERE deleted_at IS NULL;
+
+-- ── outsource_center_branch_panels ────────────────────────────────────────────
+ALTER TABLE outsource_center_branch_panels ENABLE ROW LEVEL SECURITY;
+ALTER TABLE outsource_center_branch_panels FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS ocbp_tenant_isolation ON outsource_center_branch_panels;
+CREATE POLICY ocbp_tenant_isolation ON outsource_center_branch_panels
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- A lab panel appears at most once per assignment among ACTIVE rows.
+CREATE UNIQUE INDEX IF NOT EXISTS ocbp_assignment_panel_active_unique
+  ON outsource_center_branch_panels (tenant_id, assignment_id, lab_panel_id)
+  WHERE deleted_at IS NULL;
+
+-- ── doctors ─────────────────────────────────────────────────────────────────────
+ALTER TABLE doctors ENABLE ROW LEVEL SECURITY;
+ALTER TABLE doctors FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS doctors_tenant_isolation ON doctors;
+CREATE POLICY doctors_tenant_isolation ON doctors
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- `registration_no` is a per-tenant de-duplication key among ACTIVE rows only (a
+-- value freed by a soft-delete can be reused). Prisma can't express partial
+-- unique indexes, so it lives here.
+CREATE UNIQUE INDEX IF NOT EXISTS doctors_tenant_registration_active_unique
+  ON doctors (tenant_id, registration_no) WHERE deleted_at IS NULL;
+
+-- ── doctor_qualifications ─────────────────────────────────────────────────────────
+ALTER TABLE doctor_qualifications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE doctor_qualifications FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS doctor_qualifications_tenant_isolation ON doctor_qualifications;
+CREATE POLICY doctor_qualifications_tenant_isolation ON doctor_qualifications
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── doctor_experience ─────────────────────────────────────────────────────────────
+ALTER TABLE doctor_experience ENABLE ROW LEVEL SECURITY;
+ALTER TABLE doctor_experience FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS doctor_experience_tenant_isolation ON doctor_experience;
+CREATE POLICY doctor_experience_tenant_isolation ON doctor_experience
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- Platform-level tables (tenants, persons, person_credentials, siteadmin_users,
 -- refresh_tokens, person_tenant_enrollments) are intentionally NOT covered —
 -- they sit above the tenant boundary.

@@ -1,0 +1,130 @@
+meta {
+  name: Create Doctor (Reporting)
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/doctors
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "doctorType": "REPORTING",
+    "salutation": "DR",
+    "firstName": "Anita",
+    "lastName": "Sharma",
+    "dateOfBirth": "1980-05-14",
+    "gender": "FEMALE",
+    "phone": "+919800000001",
+    "alternatePhone": "+919800000002",
+    "email": "anita.sharma@example.com",
+    "address": "12 MG Road, Bengaluru",
+    "registrationNo": "KMC-2024-00123",
+    "registrationCouncil": "Karnataka Medical Council",
+    "registrationExpiry": "2030-12-31",
+    "subCategory": "Histopathology",
+    "isNablAuthorized": true,
+    "isCapCertified": false,
+    "isIsoCertified": true,
+    "isReportSignatory": true,
+    "signatoryName": "Dr. Anita Sharma",
+    "signatoryDesignation": "Consultant Pathologist",
+    "signatureImagePath": "uploads/signatures/anita-sharma.png",
+    "signatoryDepartmentIds": ["1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed"],
+    "signatoryCategoryIds": [],
+    "signatorySubCategoryIds": [],
+    "consultationFee": 800.00,
+    "emergencyFee": 1500,
+    "followUpFee": 400.50,
+    "isAllowDiscount": true,
+    "accountHolderName": "Anita Sharma",
+    "bankName": "HDFC Bank",
+    "accountNumber": "50100123456789",
+    "ifscCode": "HDFC0001234",
+    "paymentMode": "BANK_TRANSFER",
+    "status": "ACTIVE",
+    "joiningDate": "2024-01-15",
+    "remarks": "Lead reporting pathologist",
+    "qualifications": [
+      { "degree": "MBBS", "institution": "AIIMS Delhi", "yearOfPassing": 2003 },
+      { "degree": "MD Pathology", "institution": "PGIMER Chandigarh", "yearOfPassing": 2008 }
+    ],
+    "experiences": [
+      { "organisation": "Apollo Hospitals", "rolePosition": "Senior Pathologist", "fromDate": "2010-06-01", "toDate": "2019-03-31" },
+      { "organisation": "Acme Diagnostics", "rolePosition": "Lab Director", "fromDate": "2019-04-01" }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("doctorId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("is a REPORTING doctor", function () {
+    expect(res.getBody().data.doctorType).to.equal("REPORTING");
+  });
+  test("nested qualifications + experiences were created", function () {
+    expect(res.getBody().data.qualifications).to.have.lengthOf(2);
+    expect(res.getBody().data.experiences).to.have.lengthOf(2);
+  });
+}
+
+docs {
+  Register a REPORTING doctor in the caller's tenant (tenant id taken from the
+  JWT, never the body). Tenant-level — the doctor registry belongs to the
+  business as a whole, NOT a branch. Captures `doctorId`.
+
+  ## Fields
+
+  - `doctorType` — REQUIRED, `REPORTING` or `CONSULTANT`.
+  - `salutation` — optional, one of `DR`, `MR`, `MRS`, `MS`, `PROF` (display
+    labels like "Dr." are resolved on the frontend).
+  - `firstName`, `lastName` — REQUIRED (1-255 chars).
+  - `phone` — REQUIRED. `alternatePhone`, `email`, `address` — optional.
+  - `dateOfBirth`, `registrationExpiry`, `joiningDate` — optional ISO-8601 date
+    strings (`YYYY-MM-DD`). `gender` — optional (`MALE`/`FEMALE`/`OTHER`/
+    `PREFER_NOT_TO_SAY`).
+  - `registrationNo` — REQUIRED, unique among ACTIVE doctors in the tenant
+    (409 `DUPLICATE_REGISTRATION_NO` otherwise). `registrationCouncil` — optional.
+  - Classification:
+    - `categoryId` — optional UUID; must be an active **category** of this
+      tenant (404 `CATEGORY_NOT_FOUND` otherwise). Surfaces as
+      "specialization" in the listing.
+    - `departmentId` — optional UUID; must be an active **department** of this
+      tenant (404 `DEPARTMENT_NOT_FOUND` otherwise).
+    - `subCategory` — optional free-text "super specialization" label (NOT an
+      FK).
+  - Accreditation / signatory: `isNablAuthorized`, `isCapCertified`,
+    `isIsoCertified`, `isReportSignatory` (booleans, default false);
+    `signatoryName`, `signatoryDesignation`, `signatureImagePath` (strings);
+    `signatoryDepartmentIds` / `signatoryCategoryIds` / `signatorySubCategoryIds`
+    — optional arrays of UUIDs stored as JSON (format-validated only).
+  - Fees: `consultationFee`, `emergencyFee`, `followUpFee` — optional decimals
+    (≥ 0, up to 2 dp), default 0. `isAllowDiscount` — bool, default false.
+  - Banking: `accountHolderName`, `bankName`, `accountNumber`, `ifscCode`
+    (strings); `paymentMode` — `BANK_TRANSFER` (default) / `CASH` / `CHEQUE`.
+  - `status` — `ACTIVE` (default) / `INACTIVE`. `remarks` — optional.
+  - `qualifications` — optional array; each entry: `degree`, `institution`
+    (strings), `yearOfPassing` (int 1900-2100). REPLACES the set on update.
+  - `experiences` — optional array; each entry: `organisation`, `rolePosition`
+    (strings), `fromDate`, `toDate` (ISO dates; omit `toDate` = current role).
+    REPLACES the set on update.
+
+  The doctor + its qualifications/experiences are created in one transaction.
+}

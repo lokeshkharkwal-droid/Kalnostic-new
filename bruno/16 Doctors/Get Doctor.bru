@@ -1,0 +1,27 @@
+meta {
+  name: Get Doctor
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/doctors/{{doctorId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  doctorId: 821f3161-77c5-4684-9f80-db1122e5ae94
+}
+
+docs {
+  Fetch one doctor by id (scoped to the caller's tenant). Returns the FULL
+  record — every column plus the linked `department` and `category` (each
+  `{ id, name }` or `null`) and the doctor's active `qualifications` and
+  `experiences` arrays (ordered by creation time). 404 `DOCTOR_NOT_FOUND` if
+  missing, soft-deleted, or owned by another tenant.
+}

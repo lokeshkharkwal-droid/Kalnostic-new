@@ -1,0 +1,25 @@
+meta {
+  name: Get Outsource Center
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/outsource-centers/fc8c1e56-1541-42ea-bdf6-14d744c55195
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Fetch one outsource center by id (scoped to the caller's tenant), with its
+  active contacts and branch assignments — each assignment embedding its selected
+  lab tests and lab panels. 404 `OUTSOURCE_CENTER_NOT_FOUND` if missing or
+  soft-deleted.
+
+  The id `fc8c1e56…` is a real seeded center ("Sample Reference Lab (Bruno)",
+  OC-00001) in the dev DB.
+}

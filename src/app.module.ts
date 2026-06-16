@@ -20,6 +20,8 @@ import { SubCategoryModule } from './modules/sub-category/sub-category.module';
 import { MasterDataModule } from './modules/master-data/master-data.module';
 import { LabTestModule } from './modules/lab-test/lab-test.module';
 import { LabPanelModule } from './modules/lab-panel/lab-panel.module';
+import { OutsourceCenterModule } from './modules/outsource-center/outsource-center.module';
+import { DoctorsModule } from './modules/doctors/doctors.module';
 import { ScheduleModule } from './modules/schedule/schedule.module';
 import { TenantModule } from './modules/tenant/tenant.module';
 import { UsersModule } from './modules/users/users.module';
@@ -65,6 +67,8 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     MasterDataModule,
     LabTestModule,
     LabPanelModule,
+    OutsourceCenterModule,
+    DoctorsModule,
     ScheduleModule,
     TenantModule,
     UsersModule,

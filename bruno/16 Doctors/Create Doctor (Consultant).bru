@@ -1,0 +1,76 @@
+meta {
+  name: Create Doctor (Consultant)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/doctors
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "doctorType": "CONSULTANT",
+    "salutation": "DR",
+    "firstName": "Rahul",
+    "lastName": "Verma",
+    "gender": "MALE",
+    "phone": "+919800000010",
+    "email": "rahul.verma@example.com",
+    "registrationNo": "MMC-2022-04567",
+    "registrationCouncil": "Maharashtra Medical Council",
+    "subCategory": "Interventional Cardiology",
+    "consultationFee": 1200,
+    "emergencyFee": 2500,
+    "followUpFee": 600,
+    "isAllowDiscount": false,
+    "accountHolderName": "Rahul Verma",
+    "bankName": "ICICI Bank",
+    "accountNumber": "001401599999",
+    "ifscCode": "ICIC0000014",
+    "paymentMode": "CASH",
+    "status": "ACTIVE",
+    "joiningDate": "2023-09-01",
+    "qualifications": [
+      { "degree": "MBBS", "institution": "Grant Medical College", "yearOfPassing": 2009 },
+      { "degree": "DM Cardiology", "institution": "KEM Hospital", "yearOfPassing": 2016 }
+    ],
+    "experiences": [
+      { "organisation": "Fortis Hospital", "rolePosition": "Consultant Cardiologist", "fromDate": "2017-07-01" }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("doctorId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("is a CONSULTANT doctor", function () {
+    expect(res.getBody().data.doctorType).to.equal("CONSULTANT");
+  });
+}
+
+docs {
+  Register a CONSULTANT doctor in the caller's tenant. Same endpoint and fields
+  as "Create Doctor (Reporting)" — only `doctorType` differs. Consultants
+  typically omit the signatory/accreditation block. Captures `doctorId`.
+
+  This example demonstrates the free-text "super specialization" (`subCategory`)
+  and `CASH` payment mode. `registrationNo` must be unique among active doctors
+  in the tenant (409 `DUPLICATE_REGISTRATION_NO`).
+}

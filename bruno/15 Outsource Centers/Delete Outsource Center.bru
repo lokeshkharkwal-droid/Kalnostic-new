@@ -1,0 +1,24 @@
+meta {
+  name: Delete Outsource Center
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/outsource-centers/fc8c1e56-1541-42ea-bdf6-14d744c55195
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Soft-delete an outsource center (sets `deletedAt`). Cascades a soft-delete to
+  its active contacts, branch assignments, and the assignments' selected
+  tests/panels in the same transaction. Scoped to the caller's tenant.
+
+  Targets the seeded center `fc8c1e56…` ("Sample Reference Lab (Bruno)"). Run
+  this last — once deleted, *Get*/*Update* against the same id return 404.
+}

@@ -1,0 +1,26 @@
+meta {
+  name: List Outsource Centers
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/outsource-centers?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Paginated list of outsource centers in the caller's tenant (newest first).
+  `page`/`limit` optional. Contacts and assignments are NOT embedded here — use
+  *Get Outsource Center* for the full record.
+}
