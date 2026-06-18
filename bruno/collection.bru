@@ -39,6 +39,14 @@ docs {
      version/clone.
   9. Explore the rest — profiles, permissions, receptionist mappings, etc.
 
+  ## User Management v2.0 flow (`users/manage`)
+
+  10. **Branches → Set Branch Modules** — enable the work-area modules for the
+      branch (gates default-module choices and the per-user permission modal).
+  11. **Users → User Management v2 → Create User** → captures `manageUserId`,
+      `manageUserCode`. Then Assign Branches, Get/Update Branch Permissions,
+      Deactivate/Activate, and the List/Get read screens.
+
   Run the requests in order; the post-response scripts populate the `Local`
   environment variables automatically. Select the **Local** environment first.
 }

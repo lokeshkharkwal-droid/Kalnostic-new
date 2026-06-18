@@ -1,0 +1,45 @@
+meta {
+  name: List Users
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/users/manage?page=1&limit=20&search=&role=&branchId=&moduleKey=&sortBy=employeeName&sortOrder=asc
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  search:
+  role:
+  branchId:
+  moduleKey:
+  sortBy: employeeName
+  sortOrder: asc
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Paginated staff list. Each row: `userCode`, `employeeName`, `username`,
+  `email`, `mobile`, `role`, `assignedBranches` (names only — back-compat),
+  `branches`, `defaultBranch`, `defaultModule`, `status`. Since roles are
+  per-branch, `role` shows the membership's primary role, falling back to the
+  default branch's role.
+
+  `branches[]` gives the full per-assignment detail:
+  `{ branchId, branchName, roleKey, roleLabel, branchStatus, isDefault, moduleId,
+  moduleLabel }` — one entry per active assignment (roles/modules can differ per
+  branch).
+
+  Filters (all optional): `search` (matches employeeName/username/email/userCode),
+  `role` (matches any of the user's branch roles), `branchId` (assigned to that
+  branch), `moduleKey` (module on any branch). Sort `sortBy` ∈ {userCode,
+  employeeName, email, mobile, role, assignedBranches, defaultBranch,
+  defaultModule, status}, `sortOrder` asc|desc. Leave a param blank to skip it.
+}

@@ -1,0 +1,20 @@
+meta {
+  name: List Roles
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/users/manage/roles
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  The predefined role catalogue (21 staff roles) as `{ key, label }` for the
+  role dropdown.
+}

@@ -1,0 +1,49 @@
+meta {
+  name: Register User (no role)
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{baseUrl}}/users/manage
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "employeeName": "Ravi Kumar",
+    "username": "ravi.kumar",
+    "dateOfBirth": "1992-09-03",
+    "gender": "MALE",
+    "email": "ravi.kumar@acme.test",
+    "mobileNumber": "9812345699",
+    "password": "Str0ng@Pass1",
+    "userType": "INTERNAL"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data) {
+    if (data.person && data.person.id) bru.setEnvVar("manageUserId", data.person.id);
+    if (data.userCode) bru.setEnvVar("manageUserCode", data.userCode);
+  }
+}
+
+docs {
+  Register a staff user with **no role and no branches** — just basic details +
+  tenant membership. `roleKey` and `branches` are omitted; the membership's role is
+  null until branches are assigned.
+
+  Follow up with "Assign Branches" to give the user a role + module per branch.
+  Captures `manageUserId` and `manageUserCode`.
+}

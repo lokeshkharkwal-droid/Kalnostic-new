@@ -13,6 +13,7 @@ import { BranchService } from './branch.service';
 import { CreateBranchDto } from './dto/create-branch.dto';
 import { UpdateBranchDto } from './dto/update-branch.dto';
 import { SetMainBranchDto } from './dto/set-main-branch.dto';
+import { SetBranchModulesDto } from './dto/set-branch-modules.dto';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -128,5 +129,30 @@ export class BranchController {
   })
   remove(@CurrentTenant() tenantId: string, @Param('id') id: string) {
     return this.branchService.remove(id, tenantId);
+  }
+
+  /**
+   * List the system modules and whether each is enabled at this branch.
+   */
+  @Get(':id/modules')
+  getModules(@CurrentTenant() tenantId: string, @Param('id') id: string) {
+    return this.branchService.getBranchModules(tenantId, id);
+  }
+
+  /**
+   * Set which system modules are enabled at this branch.
+   */
+  @Put(':id/modules')
+  @Audit({
+    module: AuditModule.BRANCH,
+    action: AuditAction.UPDATE,
+    description: 'Updated branch module enablement',
+  })
+  setModules(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+    @Body() dto: SetBranchModulesDto,
+  ) {
+    return this.branchService.setBranchModules(tenantId, id, dto.modules);
   }
 }

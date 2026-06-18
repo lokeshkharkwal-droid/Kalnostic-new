@@ -1,0 +1,59 @@
+meta {
+  name: Assign Branches
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/users/manage/{{manageUserId}}/branches
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "branches": [
+      {
+        "branchId": "{{branchId}}",
+        "roleKey": "lab_technician",
+        "moduleId": "lab_operations",
+        "isDefault": true,
+        "branchStatus": "ACTIVE"
+      },
+      {
+        "branchId": "{{branchId2}}",
+        "roleKey": "branch_admin",
+        "branchStatus": "ACTIVE"
+      }
+    ]
+  }
+}
+
+vars:pre-request {
+  manageUserId: 1631b376-ce6f-438e-89b3-390dd45029b9
+  branchId: b0b8fb9d-7c16-4cd1-b527-5c6cb12508a1
+  branchId2: b0b8fb9d-7c16-4cd1-b527-5c6cb12508a1
+}
+
+docs {
+  Assign (or update) the user's branch assignments in bulk — an array of
+  `{ branchId, roleKey, moduleId? }`. The role is chosen **per branch** (one role
+  per branch); a user can hold different roles at different branches. An existing
+  assignment for a branch is re-roled in place.
+
+  - Each `roleKey` must be valid for that branch's type (PROFILE_BRANCH_MATRIX).
+  - Exactly one branch may be `isDefault: true` (else 422 MULTIPLE_DEFAULT_BRANCH).
+  - `moduleId` must be a module **enabled for that branch** (Branches → Set Branch
+    Modules first) else 422 MODULE_NOT_ENABLED_FOR_BRANCH; if the role template
+    links specific modules it must be one of them else 422
+    MODULE_NOT_IN_ROLE_TEMPLATE. Omit it to leave the work-area unset.
+  - `branchStatus` ACTIVE|INACTIVE controls access to that branch only.
+}

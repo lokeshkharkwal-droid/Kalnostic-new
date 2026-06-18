@@ -1,0 +1,43 @@
+meta {
+  name: Update Branch Permissions
+  type: http
+  seq: 11
+}
+
+put {
+  url: {{baseUrl}}/users/manage/{{manageUserId}}/branch-permissions
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "branchId": "{{branchId}}",
+    "items": [
+      { "moduleKey": "lab_operations", "permissionKey": "lab_operations:view", "allowed": true },
+      { "moduleKey": "lab_operations", "permissionKey": "lab_operations:enter_results", "allowed": true },
+      { "moduleKey": "lab_operations", "permissionKey": "lab_operations:verify", "allowed": false }
+    ]
+  }
+}
+
+vars:pre-request {
+  manageUserId: 1631b376-ce6f-438e-89b3-390dd45029b9
+  branchId: 37e8cb33-9c10-4778-bc4c-20490e1c0f75
+}
+
+docs {
+  Replace the (user + branch) permission grants. The client sends the full set
+  for the branch (supports Select-All / Deselect-All per module). Only modules
+  **enabled for the branch** are accepted, and each `permissionKey` must belong
+  to its `moduleKey` (else 422 INVALID_MODULE_KEY / MODULE_NOT_ENABLED_FOR_BRANCH).
+  Absent permissions fall back to the role baseline.
+}

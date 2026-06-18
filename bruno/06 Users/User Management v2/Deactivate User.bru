@@ -1,0 +1,22 @@
+meta {
+  name: Deactivate User
+  type: http
+  seq: 8
+}
+
+patch {
+  url: {{baseUrl}}/users/manage/{{manageUserId}}/deactivate
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Global deactivate — sets the tenant-global membership status to INACTIVE,
+  blocking login to this tenant. Branch statuses and all records are preserved
+  (no hard delete). Cross-tenant safe: the same person stays usable at other
+  tenants.
+}

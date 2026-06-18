@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>User Management v2.0 — Backend Showcase</title>
+    <style>
+      :root {
+        --bg: #f5f7fb;
+        --card: #ffffff;
+        --ink: #1f2937;
+        --muted: #6b7280;
+        --line: #e5e7eb;
+        --accent: #2563eb;
+        --accent2: #7c3aed;
+        --ok: #2f9e44;
+        --warn: #f08c00;
+        --stop: #e03131;
+        --code: #0f172a;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+        line-height: 1.55;
+      }
+      header {
+        background: linear-gradient(135deg, #2563eb, #1e40af 55%, #7c3aed);
+        color: #fff;
+        padding: 34px 24px;
+        text-align: center;
+      }
+      header h1 { margin: 0 0 8px; font-size: 28px; }
+      header p { margin: 0 auto; opacity: 0.92; font-size: 15px; max-width: 720px; }
+      .tag {
+        display: inline-block; margin-top: 12px; padding: 4px 12px;
+        background: rgba(255,255,255,0.18); border: 1px solid rgba(255,255,255,0.35);
+        border-radius: 999px; font-size: 12.5px; letter-spacing: .3px;
+      }
+      main { max-width: 1080px; margin: 0 auto; padding: 22px 16px 70px; }
+      nav.toc {
+        background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+        padding: 14px 18px; margin: 22px 0; box-shadow: 0 1px 3px rgba(0,0,0,.05);
+        display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 14px;
+      }
+      nav.toc a { color: var(--accent); text-decoration: none; white-space: nowrap; }
+      nav.toc a:hover { text-decoration: underline; }
+      .card {
+        background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+        padding: 22px 24px; margin: 22px 0; box-shadow: 0 1px 3px rgba(0,0,0,.05);
+        scroll-margin-top: 16px;
+      }
+      .card h2 {
+        margin: 0 0 4px; font-size: 20px; display: flex; align-items: center; gap: 10px;
+      }
+      .badge {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 30px; height: 30px; border-radius: 50%; background: var(--accent);
+        color: #fff; font-size: 15px; font-weight: 700; flex: none;
+      }
+      .card .sub { margin: 0 0 16px; color: var(--muted); font-size: 14px; }
+      .mermaid { display: flex; justify-content: center; overflow-x: auto; padding: 8px 0; }
+      table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin: 6px 0; }
+      th, td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--line); vertical-align: top; }
+      th { background: #f8fafc; font-weight: 650; color: #334155; }
+      tr:last-child td { border-bottom: none; }
+      code, .mono {
+        font-family: "SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12.5px;
+      }
+      td code, p code, li code { background: #eef2ff; color: #3730a3; padding: 1px 6px; border-radius: 5px; }
+      pre.code {
+        background: var(--code); color: #e2e8f0; border-radius: 10px; padding: 14px 16px;
+        overflow-x: auto; font-size: 12.5px; line-height: 1.5; margin: 12px 0;
+      }
+      pre.code .k { color: #93c5fd; } pre.code .s { color: #86efac; } pre.code .c { color: #64748b; }
+      .pill {
+        display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px;
+        font-weight: 600; border: 1px solid;
+      }
+      .pill.get { color: #0b7285; background: #e3fafc; border-color: #66d9e8; }
+      .pill.post { color: #2b8a3e; background: #ebfbee; border-color: #8ce99a; }
+      .pill.patch { color: #e8590c; background: #fff4e6; border-color: #ffc078; }
+      .pill.put { color: #5f3dc4; background: #f3f0ff; border-color: #b197fc; }
+      .pill.del { color: #c92a2a; background: #fff5f5; border-color: #ffa8a8; }
+      .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+      @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+      .note {
+        border-left: 4px solid var(--accent); background: #eff6ff; border-radius: 0 8px 8px 0;
+        padding: 10px 14px; font-size: 13.5px; margin: 12px 0; color: #1e3a5f;
+      }
+      .note.warn { border-color: var(--warn); background: #fff8ed; color: #663c00; }
+      .legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 14px; font-size: 13px; color: var(--muted); }
+      .legend span { display: inline-flex; align-items: center; gap: 7px; }
+      .dot { width: 14px; height: 14px; border-radius: 4px; display: inline-block; }
+      .dot.start { background: #d3f9d8; border: 1px solid #2f9e44; }
+      .dot.step { background: #e7f5ff; border: 1px solid #1c7ed6; }
+      .dot.choice { background: #fff3bf; border: 1px solid #f08c00; }
+      .dot.stop { background: #ffe3e3; border: 1px solid #e03131; }
+      h3 { font-size: 15.5px; margin: 18px 0 6px; }
+      footer { text-align: center; color: var(--muted); font-size: 13px; padding: 0 16px 40px; }
+      .fallback {
+        display: none; background: #fff3bf; border: 1px solid #f59f00; border-radius: 8px;
+        padding: 12px 14px; font-size: 14px; color: #663c00; margin-top: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>User Management v2.0 — Backend Showcase</h1>
+      <p>
+        How the Kalnostics New backend models staff users: one identity, one
+        employment record per business, and <strong>a different role at every
+        branch</strong>. Registration, branch assignment, and permission
+        resolution — end to end.
+      </p>
+      <div class="tag">NestJS · Prisma · PostgreSQL (RLS) · <code>/api/v1/users/manage</code></div>
+    </header>
+
+    <main>
+      <nav class="toc">
+        <strong>Jump to:</strong>
+        <a href="#model">Data model</a>
+        <a href="#perbranch">Roles per branch</a>
+        <a href="#register">Register → assign</a>
+        <a href="#perms">Permission resolution</a>
+        <a href="#status">Status layers</a>
+        <a href="#endpoints">Endpoints</a>
+        <a href="#catalogue">Roles &amp; modules</a>
+        <a href="#example">Worked example</a>
+      </nav>
+
+      <!-- 1 — DATA MODEL -->
+      <section class="card" id="model">
+        <h2><span class="badge">1</span> The data model</h2>
+        <p class="sub">
+          Three tiers: a global <code>Person</code>, one
+          <code>TenantStaffMembership</code> per business, and one
+          <code>UserBranchProfile</code> per branch assignment (the
+          user↔branch↔role↔module junction). Permissions and module enablement
+          hang off the branch.
+        </p>
+        <pre class="mermaid">
+flowchart TD
+  P["Person (platform)<br/><small>one human, global identity<br/>name · contacts · Aadhaar(enc) · platformMrn</small>"]:::plat
+  M["TenantStaffMembership<br/><small>one per (tenant, person)<br/>userCode USR-00001 · userType<br/>roleKey? (optional primary) · status</small>"]:::tenant
+  A["UserBranchProfile — Branch A<br/><small>profileKey = doctor<br/>moduleId = lab_operations<br/>branchStatus · isDefault</small>"]:::branch
+  B["UserBranchProfile — Branch B<br/><small>profileKey = branch_admin<br/>branchStatus · isDefault</small>"]:::branch
+  BM["BranchModule<br/><small>which of 12 modules a branch runs</small>"]:::side
+  UP["UserBranchPermission<br/><small>per (user+branch) allow/deny overrides</small>"]:::side
+  P --> M
+  M --> A
+  M --> B
+  A -. "module must be enabled" .- BM
+  A -. "overrides baseline" .- UP
+  classDef plat fill:#f3f0ff,stroke:#7c3aed,color:#3b1f7a;
+  classDef tenant fill:#e7f5ff,stroke:#1c7ed6,color:#0b3d66;
+  classDef branch fill:#d3f9d8,stroke:#2f9e44,color:#14532d;
+  classDef side fill:#fff3bf,stroke:#f08c00,color:#663c00;
+        </pre>
+        <div class="note">
+          <strong>One role per branch</strong> is enforced by a partial unique
+          index <code>ubp_person_branch_active_unique</code> on
+          <code>(tenant_id, person_id, branch_id)</code> where the row is active.
+          The role can still differ from branch to branch.
+        </div>
+      </section>
+
+      <!-- 2 — ROLES PER BRANCH -->
+      <section class="card" id="perbranch">
+        <h2><span class="badge">2</span> One user, different roles per branch</h2>
+        <p class="sub">
+          The role lives on each branch assignment (<code>profileKey</code>), not
+          on the membership. The membership's <code>roleKey</code> is only an
+          optional primary/default and is never forced onto the branches.
+        </p>
+        <pre class="mermaid">
+flowchart LR
+  U["Asha Rao<br/><small>USR-00042 · status ACTIVE</small>"]:::tenant
+  U --> A["Main Lab (DIAGNOSTIC)<br/><b>doctor</b> · lab_operations<br/><small>default · ACTIVE</small>"]:::ok
+  U --> B["City Branch (OPD)<br/><b>branch_admin</b><br/><small>ACTIVE</small>"]:::ok
+  U --> C["Satellite (IPD)<br/><b>receptionist</b><br/><small>INACTIVE — no access here</small>"]:::off
+  classDef tenant fill:#e7f5ff,stroke:#1c7ed6,color:#0b3d66;
+  classDef ok fill:#d3f9d8,stroke:#2f9e44,color:#14532d;
+  classDef off fill:#ffe3e3,stroke:#e03131,color:#7a1212;
+        </pre>
+        <p style="font-size:13.5px;color:var(--muted);margin:6px 0 0">
+          Same person — three branches, three roles, independent on/off switches.
+          Each role is validated against the branch's <code>branchType</code> via
+          the <code>PROFILE_BRANCH_MATRIX</code>.
+        </p>
+      </section>
+
+      <!-- 3 — REGISTER -> ASSIGN -->
+      <section class="card" id="register">
+        <h2><span class="badge">3</span> Register first, assign roles later</h2>
+        <p class="sub">
+          A user can be created with just basic details (no role). Roles + modules
+          are assigned per branch afterwards, as an array of objects.
+        </p>
+        <pre class="mermaid">
+flowchart TD
+  S([Admin creates a user]):::start --> V{Valid?<br/>age 18+ · unique phone/email/username<br/>strong password}:::choice
+  V -- No --> E[Return a typed error<br/>e.g. USER_UNDERAGE, USERNAME_TAKEN]:::stop
+  V -- Yes --> C[Create Person + credentials + membership<br/>roleKey may be NULL · userCode USR-0000n]:::step
+  C --> Q{Branches supplied?}:::choice
+  Q -- No --> M([Tenant member with no role yet]):::start
+  Q -- Yes --> A["Assign Branches:<br/>[{ branchId, roleKey, moduleId }]"]:::step
+  A --> AV{Each item valid?<br/>role valid for branch type ·<br/>module enabled &amp; linked to role ·<br/>one default}:::choice
+  AV -- No --> E2[Typed error<br/>PROFILE_INVALID_FOR_BRANCH ·<br/>MODULE_NOT_ENABLED_FOR_BRANCH ·<br/>MODULE_NOT_IN_ROLE_TEMPLATE]:::stop
+  AV -- Yes --> W[Upsert one UserBranchProfile per branch<br/>re-roled in place · one role per branch]:::step
+  W --> D([User can log in &amp; switch branches]):::start
+  classDef start fill:#d3f9d8,stroke:#2f9e44,color:#14532d;
+  classDef step fill:#e7f5ff,stroke:#1c7ed6,color:#0b3d66;
+  classDef choice fill:#fff3bf,stroke:#f08c00,color:#663c00;
+  classDef stop fill:#ffe3e3,stroke:#e03131,color:#7a1212;
+        </pre>
+        <div class="grid2">
+          <div>
+            <h3>Register with no role</h3>
+            <pre class="code"><span class="c">POST /api/v1/users/manage</span>
+{
+  <span class="k">"employeeName"</span>: <span class="s">"Ravi Kumar"</span>,
+  <span class="k">"username"</span>: <span class="s">"ravi.kumar"</span>,
+  <span class="k">"dateOfBirth"</span>: <span class="s">"1992-09-03"</span>,
+  <span class="k">"gender"</span>: <span class="s">"MALE"</span>,
+  <span class="k">"email"</span>: <span class="s">"ravi@acme.test"</span>,
+  <span class="k">"mobileNumber"</span>: <span class="s">"9812345699"</span>,
+  <span class="k">"password"</span>: <span class="s">"Str0ng@Pass1"</span>,
+  <span class="k">"userType"</span>: <span class="s">"INTERNAL"</span>
+}</pre>
+          </div>
+          <div>
+            <h3>Assign branches (array of objects)</h3>
+            <pre class="code"><span class="c">POST /users/manage/:id/branches</span>
+{
+  <span class="k">"branches"</span>: [
+    { <span class="k">"branchId"</span>: <span class="s">"A"</span>, <span class="k">"roleKey"</span>: <span class="s">"doctor"</span>,
+      <span class="k">"moduleId"</span>: <span class="s">"lab_operations"</span>,
+      <span class="k">"isDefault"</span>: true },
+    { <span class="k">"branchId"</span>: <span class="s">"B"</span>,
+      <span class="k">"roleKey"</span>: <span class="s">"branch_admin"</span> }
+  ]
+}</pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4 — PERMISSION RESOLUTION -->
+      <section class="card" id="perms">
+        <h2><span class="badge">4</span> How permissions resolve (per branch)</h2>
+        <p class="sub">
+          The baseline comes from the role <em>at that branch</em>; stored
+          overrides win; only modules the branch runs are shown.
+        </p>
+        <pre class="mermaid">
+flowchart TD
+  S([GET .../branch-permissions?branchId]):::start --> A[Find the user's UserBranchProfile<br/>for this branch -> its role]:::step
+  A --> Z{Active assignment?}:::choice
+  Z -- No --> R0[Return empty list]:::stop
+  Z -- Yes --> B[Read modules enabled for the branch<br/>BranchModule.isEnabled]:::step
+  B --> C["baseline = ROLE_TEMPLATES[role].permissions"]:::step
+  C --> D[Load UserBranchPermission overrides<br/>allow / deny]:::step
+  D --> E["For each catalogue permission in an enabled module:<br/><b>allowed = override ?? baseline</b>"]:::step
+  E --> R([Return module-grouped permissions]):::start
+  classDef start fill:#d3f9d8,stroke:#2f9e44,color:#14532d;
+  classDef step fill:#e7f5ff,stroke:#1c7ed6,color:#0b3d66;
+  classDef choice fill:#fff3bf,stroke:#f08c00,color:#663c00;
+  classDef stop fill:#ffe3e3,stroke:#e03131,color:#7a1212;
+        </pre>
+        <div class="note">
+          A <strong>role template</strong> carries two independent lists —
+          <code>permissions</code> and linked <code>modules</code>. The module
+          link is optional; when a template links specific modules, an
+          assignment's <code>moduleId</code> must be one of them.
+        </div>
+      </section>
+
+      <!-- 5 — STATUS LAYERS -->
+      <section class="card" id="status">
+        <h2><span class="badge">5</span> Two independent on/off switches</h2>
+        <table>
+          <tr><th>Layer</th><th>Field</th><th>Effect</th></tr>
+          <tr>
+            <td><strong>Global</strong></td>
+            <td><code>TenantStaffMembership.status</code></td>
+            <td>INACTIVE blocks login to the <strong>whole tenant</strong>; login is rejected outright.</td>
+          </tr>
+          <tr>
+            <td><strong>Per-branch</strong></td>
+            <td><code>UserBranchProfile.branchStatus</code></td>
+            <td>INACTIVE blocks <strong>only that branch</strong>; the JWT/profile switcher excludes it. Global wins if it is INACTIVE.</td>
+          </tr>
+        </table>
+      </section>
+
+      <!-- 6 — ENDPOINTS -->
+      <section class="card" id="endpoints">
+        <h2><span class="badge">6</span> Endpoints — <code>/api/v1/users/manage</code></h2>
+        <p class="sub">
+          Business-authenticated. Tenant + actor come from the JWT, never the
+          body. Responses use the global <code>{ success, data, meta }</code>
+          envelope. (The pre-v2.0 <code>/users</code> controller was removed.)
+        </p>
+        <table>
+          <tr><th>Method</th><th>Path</th><th>Purpose</th></tr>
+          <tr><td><span class="pill post">POST</span></td><td><code>/users/manage</code></td><td>Create a staff user (role optional)</td></tr>
+          <tr><td><span class="pill get">GET</span></td><td><code>/users/manage</code></td><td>List users — paginated, filterable, sortable; each row includes a <code>branches[]</code> array with per-branch role, module &amp; status</td></tr>
+          <tr><td><span class="pill get">GET</span></td><td><code>/users/manage/:id</code></td><td>Full detail (Aadhaar masked; per-branch roles)</td></tr>
+          <tr><td><span class="pill patch">PATCH</span></td><td><code>/users/manage/:id</code></td><td>Edit identity / password / primary role / status</td></tr>
+          <tr><td><span class="pill post">POST</span></td><td><code>/users/manage/:id/photo</code></td><td>Upload photo (JPG/PNG ≤ 2&nbsp;MB)</td></tr>
+          <tr><td><span class="pill post">POST</span></td><td><code>/users/manage/:id/branches</code></td><td>Assign branches — <code>[{ branchId, roleKey, moduleId }]</code></td></tr>
+          <tr><td><span class="pill patch">PATCH</span></td><td><code>/users/manage/:id/branches/:branchId</code></td><td>Patch one branch (role / module / status / default)</td></tr>
+          <tr><td><span class="pill patch">PATCH</span></td><td><code>/users/manage/:id/activate</code> · <code>/deactivate</code></td><td>Global status</td></tr>
+          <tr><td><span class="pill get">GET</span></td><td><code>/users/manage/:id/branch-permissions</code></td><td>Resolve (user+branch) permissions</td></tr>
+          <tr><td><span class="pill put">PUT</span></td><td><code>/users/manage/:id/branch-permissions</code></td><td>Replace (user+branch) overrides</td></tr>
+          <tr><td><span class="pill get">GET</span></td><td><code>/users/manage/roles</code> · <code>/modules</code> · <code>/permissions</code></td><td>Catalogues &amp; permissions screen</td></tr>
+        </table>
+      </section>
+
+      <!-- 7 — CATALOGUE -->
+      <section class="card" id="catalogue">
+        <h2><span class="badge">7</span> Roles &amp; modules</h2>
+        <div class="grid2">
+          <div>
+            <h3>12 system modules</h3>
+            <p style="font-size:13.5px;color:var(--muted);margin:0 0 8px">
+              A branch enables the modules it runs (<code>BranchModule</code>).
+            </p>
+            <p style="font-size:13px;line-height:2">
+              <code>registration</code> <code>accession</code>
+              <code>lab_operations</code> <code>inventory</code> <code>sales</code>
+              <code>admin</code> <code>radiology</code> <code>pharmacy</code>
+              <code>opd</code> <code>ipd</code> <code>finance</code>
+              <code>phlebotomist</code>
+            </p>
+          </div>
+          <div>
+            <h3>Role templates (sample)</h3>
+            <table>
+              <tr><th>Role</th><th>Valid branch types</th></tr>
+              <tr><td><code>doctor</code></td><td>OPD, IPD, DIAGNOSTIC</td></tr>
+              <tr><td><code>branch_admin</code></td><td>most branch types</td></tr>
+              <tr><td><code>lab_technician</code></td><td>DIAGNOSTIC, IPD</td></tr>
+              <tr><td><code>chemist</code></td><td>PHARMACY, COMBINED</td></tr>
+              <tr><td><code>receptionist</code></td><td>DIAGNOSTIC, OPD, IPD, PHARMACY, FRANCHISE</td></tr>
+              <tr><td><code>business_admin</code></td><td><em>tenant-level (no branch)</em></td></tr>
+            </table>
+          </div>
+        </div>
+        <p style="font-size:13px;color:var(--muted);margin:12px 0 0">
+          Full lists: <code>profile-registry.constant.ts</code> (roles +
+          <code>PROFILE_BRANCH_MATRIX</code>),
+          <code>system-modules.constant.ts</code> (modules),
+          <code>module-permissions.constant.ts</code>
+          (<code>ROLE_TEMPLATES</code> + permission catalogue).
+        </p>
+      </section>
+
+      <!-- 8 — WORKED EXAMPLE -->
+      <section class="card" id="example">
+        <h2><span class="badge">8</span> Worked example</h2>
+        <p class="sub">
+          Asha is created with no role, then assigned two branches with different
+          roles. Her effective permissions differ by branch because the baseline
+          is the role <em>at that branch</em>.
+        </p>
+        <table>
+          <tr><th>Step</th><th>Call</th><th>Result</th></tr>
+          <tr>
+            <td>1</td>
+            <td><span class="pill post">POST</span> <code>/users/manage</code> (no role)</td>
+            <td>Person + membership created · <code>roleKey = null</code> · <code>USR-00042</code></td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td><span class="pill post">POST</span> <code>/users/manage/:id/branches</code></td>
+            <td><code>doctor</code> @ Main Lab (default), <code>branch_admin</code> @ City Branch</td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td><span class="pill get">GET</span> <code>…/branch-permissions?branchId=MainLab</code></td>
+            <td>baseline = <strong>doctor</strong> template (registration, lab&nbsp;ops, opd, radiology ∩ enabled)</td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td><span class="pill get">GET</span> <code>…/branch-permissions?branchId=City</code></td>
+            <td>baseline = <strong>branch_admin</strong> template — <em>different permissions, same user</em></td>
+          </tr>
+          <tr>
+            <td>5</td>
+            <td><span class="pill patch">PATCH</span> <code>…/branches/CityBranch</code> <code>{ roleKey: "receptionist" }</code></td>
+            <td>Only City Branch is re-roled; Main Lab unchanged</td>
+          </tr>
+          <tr>
+            <td>6</td>
+            <td><span class="pill patch">PATCH</span> <code>…/branches/CityBranch</code> <code>{ branchStatus: "INACTIVE" }</code></td>
+            <td>Asha loses access to City Branch only; still a doctor at Main Lab</td>
+          </tr>
+        </table>
+        <div class="legend">
+          <span><i class="dot start"></i> Start / Done</span>
+          <span><i class="dot step"></i> Step</span>
+          <span><i class="dot choice"></i> Decision</span>
+          <span><i class="dot stop"></i> Error / blocked</span>
+        </div>
+      </section>
+
+      <div class="fallback" id="fallback">
+        The diagrams need a one-time internet connection to draw. If you are
+        offline, reconnect and refresh this page.
+      </div>
+    </main>
+
+    <footer>
+      Kalnostics New · User Management v2.0 — backend showcase ·
+      see <code>docs/USER-MANAGEMENT-V2.md</code> and the
+      <code>bruno/06 Users/User Management v2/</code> collection
+    </footer>
+
+    <script type="module">
+      try {
+        const mermaid = (
+          await import(
+            "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs"
+          )
+        ).default;
+        mermaid.initialize({
+          startOnLoad: true,
+          theme: "base",
+          themeVariables: { fontSize: "13px" },
+          flowchart: { htmlLabels: true, useMaxWidth: true, nodeSpacing: 38, rankSpacing: 42 },
+        });
+      } catch (e) {
+        document.getElementById("fallback").style.display = "block";
+      }
+    </script>
+  </body>
+</html>

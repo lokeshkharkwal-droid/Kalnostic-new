@@ -8,7 +8,7 @@ export type Permission = string;
  * overrides. The effective set = baseline ± overrides (allow/deny), resolved in
  * `UsersService.getProfilePermissions`.
  */
-export const PROFILE_PERMISSIONS: Record<ProfileKey, Permission[]> = {
+export const PROFILE_PERMISSIONS: Partial<Record<ProfileKey, Permission[]>> = {
   business_admin: [
     'patient:read',
     'patient:create',

@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>User Management — Simple Flow</title>
+    <style>
+      :root {
+        --bg: #f5f7fb;
+        --card: #ffffff;
+        --ink: #1f2937;
+        --muted: #6b7280;
+        --line: #e5e7eb;
+        --accent: #2563eb;
+        --stop: #e03131;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+        line-height: 1.5;
+      }
+      header {
+        background: linear-gradient(135deg, #2563eb, #1e40af);
+        color: #fff;
+        padding: 28px 24px;
+        text-align: center;
+      }
+      header h1 { margin: 0 0 6px; font-size: 26px; }
+      header p { margin: 0; opacity: 0.9; font-size: 15px; }
+      main {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 24px 16px 60px;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 22px;
+        margin: 22px 0;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+      }
+      .card h2 {
+        margin: 0 0 4px;
+        font-size: 20px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        background: var(--accent);
+        color: #fff;
+        font-size: 15px;
+        font-weight: 700;
+      }
+      .card .sub { margin: 0 0 14px; color: var(--muted); font-size: 14px; }
+      .mermaid {
+        display: flex;
+        justify-content: center;
+        overflow-x: auto;
+        padding: 8px 0;
+      }
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        margin-top: 14px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .legend span { display: inline-flex; align-items: center; gap: 7px; }
+      .dot {
+        width: 14px; height: 14px; border-radius: 4px; display: inline-block;
+      }
+      .dot.start { background: #d3f9d8; border: 1px solid #2f9e44; }
+      .dot.step { background: #e7f5ff; border: 1px solid #1c7ed6; }
+      .dot.choice { background: #fff3bf; border: 1px solid #f08c00; }
+      .dot.stop { background: #ffe3e3; border: 1px solid #e03131; }
+      footer {
+        text-align: center;
+        color: var(--muted);
+        font-size: 13px;
+        padding: 0 16px 40px;
+      }
+      .fallback {
+        display: none;
+        background: #fff3bf;
+        border: 1px solid #f59f00;
+        border-radius: 8px;
+        padding: 12px 14px;
+        font-size: 14px;
+        color: #663c00;
+        margin-top: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>User Management — Simple Flow</h1>
+      <p>How an admin sets up a new user, and what happens when that user logs in.</p>
+    </header>
+
+    <main>
+      <section class="card">
+        <h2><span class="badge">1</span> Admin registers a new user</h2>
+        <p class="sub">
+          Everything the admin does to set someone up — from filling in their
+          details to the moment the account is ready to use.
+        </p>
+        <pre class="mermaid">
+flowchart TD
+  A([Admin starts: add a new user]):::start --> B[Enter personal details:<br/>name, date of birth, gender,<br/>blood group, nationality,<br/>parents' names, ID numbers, address]:::step
+  B --> C[Add a profile photo<br/>a small image file · optional]:::step
+  C --> D[Enter contact details:<br/>mobile number, email,<br/>emergency contact]:::step
+  D --> E[Set login details:<br/>a username and a password]:::step
+  E --> F[Choose the user's role<br/>and type: internal or external]:::step
+  F --> G[Choose the branches the user works at:<br/>mark one as the main branch,<br/>turn each branch on or off,<br/>pick a default work area for each]:::step
+  G --> H[Adjust what the user is allowed to do<br/>in each branch and work area<br/>optional · starts from role defaults]:::step
+  H --> I[Admin saves the new user]:::step
+  I --> J{Are all the details valid?}:::choice
+  J -- No --> K[Show clear messages and let the admin fix them:<br/>· must be at least 18 years old<br/>· ID numbers in the right format<br/>· valid mobile number<br/>· username and email not already used<br/>· only one main branch<br/>· default work area must exist at that branch]:::step
+  K --> B
+  J -- Yes --> L[Create the account:<br/>· give a unique user number<br/>· keep the password safely scrambled<br/>· keep the ID number protected<br/>· save branches, work areas and allowances]:::step
+  L --> M[Record who created the user and when]:::step
+  M --> N([Done — the new user can now log in<br/>with their username and password]):::start
+  classDef start fill:#d3f9d8,stroke:#2f9e44,color:#14532d;
+  classDef step fill:#e7f5ff,stroke:#1c7ed6,color:#0b3d66;
+  classDef choice fill:#fff3bf,stroke:#f08c00,color:#663c00;
+        </pre>
+      </section>
+
+      <section class="card">
+        <h2><span class="badge">2</span> What happens when the user logs in</h2>
+        <p class="sub">
+          The full journey for the newly created user — including every thing
+          that can go wrong and the happy path to their dashboard.
+        </p>
+        <pre class="mermaid">
+flowchart TD
+  A([User opens the login screen]):::start --> B[Enter login ID and password<br/>login ID can be their mobile,<br/>email, or username]:::step
+  B --> C{Does an account with<br/>this login ID exist?}:::choice
+  C -- No --> S1[Show: login details are not correct]:::stop
+  C -- Yes --> D{Is the account locked for now?<br/>too many wrong tries earlier}:::choice
+  D -- Yes --> S2[Show: account is locked,<br/>please try again later]:::stop
+  D -- No --> E{Is the password correct?}:::choice
+  E -- No --> F[Count this wrong attempt]:::step
+  F --> G{Too many wrong attempts now?}:::choice
+  G -- Yes --> H[Lock the account for a short while]:::step
+  H --> S2
+  G -- No --> S1
+  E -- Yes --> I{Is the account switched on<br/>for this business?}:::choice
+  I -- No --> S3[Show: account is turned off,<br/>please contact the admin]:::stop
+  I -- Yes --> J[Reset the wrong-attempt count]:::step
+  J --> K[Gather the branches and roles<br/>the user can use<br/>· branches that are switched off are hidden]:::step
+  K --> L{Does the user have at least<br/>one switched-on branch or role?}:::choice
+  L -- No --> S4[Show: no active access yet,<br/>please contact the admin]:::stop
+  L -- Yes --> M{Is a main branch set<br/>for the user?}:::choice
+  M -- Yes --> N[Take the user straight into<br/>their main branch and role]:::step
+  M -- No --> O[Show the list of available<br/>branches and roles to pick from]:::step
+  O --> P[User picks a branch and role]:::step
+  N --> Q([Logged in — user lands on the<br/>dashboard for that branch]):::start
+  P --> Q
+  Q --> R[Any time later, the user can switch<br/>to another of their branches<br/>· only the switched-on ones show up]:::step
+  classDef start fill:#d3f9d8,stroke:#2f9e44,color:#14532d;
+  classDef step fill:#e7f5ff,stroke:#1c7ed6,color:#0b3d66;
+  classDef choice fill:#fff3bf,stroke:#f08c00,color:#663c00;
+  classDef stop fill:#ffe3e3,stroke:#e03131,color:#7a1212;
+        </pre>
+
+        <div class="legend">
+          <span><i class="dot start"></i> Start / Done</span>
+          <span><i class="dot step"></i> Step</span>
+          <span><i class="dot choice"></i> Decision</span>
+          <span><i class="dot stop"></i> Login stops here</span>
+        </div>
+      </section>
+
+      <div class="fallback" id="fallback">
+        The diagrams need a one-time internet connection to draw. If you are
+        offline, reconnect and refresh this page.
+      </div>
+    </main>
+
+    <footer>Kalnostics New · User Management — simple flow overview</footer>
+
+    <script type="module">
+      try {
+        const mermaid = (
+          await import(
+            "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs"
+          )
+        ).default;
+        mermaid.initialize({
+          startOnLoad: true,
+          theme: "base",
+          themeVariables: { fontSize: "14px" },
+          flowchart: { htmlLabels: true, useMaxWidth: true, nodeSpacing: 40, rankSpacing: 45 },
+        });
+      } catch (e) {
+        document.getElementById("fallback").style.display = "block";
+      }
+    </script>
+  </body>
+</html>

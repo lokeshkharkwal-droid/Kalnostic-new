@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import type { JwtSignOptions } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { BranchType } from '@prisma/client';
+import { BranchType, StaffStatus } from '@prisma/client';
 import { createHash, randomBytes } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PasswordService } from '../security/password.service';
@@ -126,6 +126,19 @@ export class AuthService {
       tenantId = person.ownerTenantId ?? '';
     }
 
+    // Tenant-global staff status (User Management v2.0): a staff member whose
+    // membership is INACTIVE cannot log in to that tenant, even though the
+    // platform-level Person is still active (so they remain usable elsewhere).
+    if (tenantId) {
+      const membership = await this.prisma.tenantStaffMembership.findFirst({
+        where: { tenantId, personId: person.id, deletedAt: null },
+        select: { status: true },
+      });
+      if (membership && membership.status === StaffStatus.INACTIVE) {
+        throw new AccountInactiveException(person.id);
+      }
+    }
+
     this.logger.log(`Login successful: person ${person.id} from ${clientIp}`);
     return this.issueTokens(person.id, tenantId, null, null, clientIp);
   }
@@ -187,6 +200,8 @@ export class AuthService {
         branchId,
         profileKey: dto.profileKey,
         isActive: true,
+        // Can't switch into a deactivated branch (per-branch status).
+        branchStatus: StaffStatus.ACTIVE,
         deletedAt: null,
       },
     });
@@ -286,7 +301,12 @@ export class AuthService {
 
     const profileEntries: JwtProfileEntry[] = await Promise.all(
       allProfiles
-        .filter((p) => p.tenantId === resolvedTenantId)
+        .filter(
+          (p) =>
+            p.tenantId === resolvedTenantId &&
+            // Hide profiles whose branch has been deactivated (per-branch status).
+            p.branchStatus !== StaffStatus.INACTIVE,
+        )
         .map(async (p) => {
           const label =
             PROFILE_LABELS[p.profileKey as ProfileKey] ?? p.profileKey;

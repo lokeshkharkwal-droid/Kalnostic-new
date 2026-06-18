@@ -5,6 +5,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { CreateBranchDto } from './dto/create-branch.dto';
 import { UpdateBranchDto } from './dto/update-branch.dto';
+import { BranchModuleItemDto } from './dto/set-branch-modules.dto';
+import { SYSTEM_MODULES } from '../permissions/constants/system-modules.constant';
 import {
   BranchNameConflictException,
   BranchNotFoundException,
@@ -297,6 +299,66 @@ export class BranchService {
       throw new MainBranchNotSetException(tenantId);
     }
     return this.findById(pointer.branchId, tenantId);
+  }
+
+  // ── Branch → Module enablement (User Management v2.0) ────────────────────────
+
+  /**
+   * List every system module with whether it is enabled at the branch. Modules
+   * with no `branch_modules` row are reported as disabled.
+   * @param tenantId tenant scope
+   * @param branchId branch (validated to belong to the tenant)
+   */
+  async getBranchModules(
+    tenantId: string,
+    branchId: string,
+  ): Promise<Array<{ moduleKey: string; label: string; isEnabled: boolean }>> {
+    await this.findById(branchId, tenantId);
+    const rows = await this.prisma.branchModule.findMany({
+      where: { tenantId, branchId, deletedAt: null },
+    });
+    const enabled = new Map(rows.map((r) => [r.moduleKey, r.isEnabled]));
+    return SYSTEM_MODULES.map((m) => ({
+      moduleKey: m.key,
+      label: m.label,
+      isEnabled: enabled.get(m.key) ?? false,
+    }));
+  }
+
+  /**
+   * Set which system modules are enabled at a branch (upsert per module). The
+   * client sends the desired set; modules default to enabled when `isEnabled`
+   * is omitted.
+   * @param tenantId tenant scope
+   * @param branchId branch (validated to belong to the tenant)
+   * @param items the modules to set
+   * @returns the full module enablement list after the change
+   */
+  async setBranchModules(
+    tenantId: string,
+    branchId: string,
+    items: BranchModuleItemDto[],
+  ): Promise<Array<{ moduleKey: string; label: string; isEnabled: boolean }>> {
+    await this.findById(branchId, tenantId);
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      for (const item of items) {
+        const isEnabled = item.isEnabled ?? true;
+        await tx.branchModule.upsert({
+          where: {
+            branchId_moduleKey: { branchId, moduleKey: item.moduleKey },
+          },
+          create: {
+            tenantId,
+            branchId,
+            moduleKey: item.moduleKey,
+            isEnabled,
+            deletedAt: null,
+          },
+          update: { isEnabled, deletedAt: null },
+        });
+      }
+    });
+    return this.getBranchModules(tenantId, branchId);
   }
 
   /**

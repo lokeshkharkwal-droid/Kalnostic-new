@@ -1,0 +1,41 @@
+meta {
+  name: Update Branch Assignment
+  type: http
+  seq: 7
+}
+
+patch {
+  url: {{baseUrl}}/users/manage/{{manageUserId}}/branches/{{branchId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "roleKey": "receptionist",
+    "branchStatus": "INACTIVE",
+    "isDefault": false,
+    "moduleId": "registration"
+  }
+}
+
+docs {
+  Patch a single (user + branch) assignment. All fields optional:
+  - `roleKey` — change the role at THIS branch only (one role per branch). Must be
+    valid for the branch's type (PROFILE_BRANCH_MATRIX). Changing it does not
+    affect the user's other branches.
+  - `branchStatus` ACTIVE|INACTIVE — INACTIVE blocks access to THIS branch only
+    (the user stays usable at other branches; tenant-global Deactivate overrides
+    all branches).
+  - `isDefault` — setting true clears any other default branch.
+  - `moduleId` — must be enabled for the branch (and linked to the role template,
+    when it links any).
+}

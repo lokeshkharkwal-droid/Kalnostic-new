@@ -1,0 +1,27 @@
+meta {
+  name: Upload Profile Photo
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/users/manage/{{manageUserId}}/photo
+  body: multipartForm
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:multipart-form {
+  photo: @file(C:\path\to\photo.jpg)
+}
+
+docs {
+  Upload / replace the user's profile photo. Form field name is **`photo`**.
+  Only JPG / JPEG / PNG are accepted, max **2 MB**; otherwise 422
+  INVALID_PROFILE_PHOTO. The stored path is saved on the person's `photoUrl`.
+
+  Edit the `@file(...)` path to a real image on your machine before sending.
+}

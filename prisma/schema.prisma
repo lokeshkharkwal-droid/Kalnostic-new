@@ -11,7 +11,8 @@
 //     SiteAdminUser, RefreshToken, PersonTenantEnrollment
 //   - TENANT-SCOPED models (tenant_id + RLS): Branch, UserBranchProfile,
 //     UserProfilePermissionOverride, ReceptionistDoctorMapping,
-//     TenantMainBranch, Schedule, Department, DepartmentPersonMapping
+//     TenantMainBranch, Schedule, Department, DepartmentPersonMapping,
+//     TenantStaffMembership, BranchModule, UserBranchPermission
 //
 // RLS policies for tenant-scoped tables live in prisma/rls.sql (CLAUDE.md §4.3).
 
@@ -58,6 +59,19 @@ enum SiteAdminRole {
   OPERATIONS_ADMIN
   FULL_ADMIN
   SUPER_OWNER
+}
+
+/// Whether a staff member is internal (employee) or external (e.g. partner).
+enum UserType {
+  INTERNAL
+  EXTERNAL
+}
+
+/// ACTIVE/INACTIVE flag used for both tenant-global staff status
+/// (TenantStaffMembership) and per-branch status (UserBranchProfile.branchStatus).
+enum StaffStatus {
+  ACTIVE
+  INACTIVE
 }
 
 enum BranchType {
@@ -436,6 +450,7 @@ model Tenant {
   mrnCounter             Int     @default(0) @map("mrn_counter") // per-tenant sequential patient MRN
   mrnPrefix              String? @map("mrn_prefix")
   branchCounter          Int     @default(0) @map("branch_counter") // per-tenant sequential branch code
+  staffCounter           Int     @default(0) @map("staff_counter") // per-tenant sequential staff user code (USR-00001)
   departmentCounter      Int     @default(0) @map("department_counter") // per-tenant sequential department code
   categoryCounter        Int     @default(0) @map("category_counter") // per-tenant sequential category code
   subCategoryCounter     Int     @default(0) @map("sub_category_counter") // per-tenant sequential sub-category code
@@ -473,6 +488,15 @@ model Person {
   photoUrl String? @map("photo_url")
   idType   String? @map("id_type")
   idNumber String? @map("id_number") // encrypted at rest (deferred)
+
+  // ── Extended identity (User Management v2.0) ──
+  nationality            String? @default("Indian")
+  fatherName             String? @map("father_name")
+  motherName             String? @map("mother_name")
+  aadhaarNumber          String? @map("aadhaar_number") // 12 digits, ENCRYPTED at rest (AES-256-GCM)
+  panNumber              String? @map("pan_number") // ^[A-Z]{5}[0-9]{4}[A-Z]$, stored uppercase
+  emergencyContactName   String? @map("emergency_contact_name")
+  emergencyContactNumber String? @map("emergency_contact_number")
 
   /// First business to register this person owns their basic details. NULL = self-registered.
   ownerTenantId String? @map("owner_tenant_id")
@@ -640,6 +664,14 @@ model UserBranchProfile {
   branchId   String? @map("branch_id") // null = tenant-level profile (e.g. business_admin)
   profileKey String  @map("profile_key")
 
+  // ── User Management v2.0 ──
+  // Per-branch activation: INACTIVE blocks access to THIS branch only (the
+  // tenant-global TenantStaffMembership.status overrides all branches).
+  branchStatus    StaffStatus @default(ACTIVE) @map("branch_status")
+  // The module (key from SYSTEM_MODULES) this assignment lands on by default;
+  // must be enabled for the branch (branch_modules). Null = none chosen.
+  defaultModuleId String?     @map("default_module_id")
+
   isDefault  Boolean   @default(false) @map("is_default")
   isActive   Boolean   @default(true) @map("is_active")
   assignedAt DateTime  @default(now()) @map("assigned_at")
@@ -675,6 +707,80 @@ model UserProfilePermissionOverride {
 
   @@index([tenantId, personId, profileKey])
   @@map("user_profile_permission_overrides")
+}
+
+/// A person's employment with a tenant (one row per tenant+person). Holds the
+/// per-employer facts that must NOT live on the cross-tenant Person: the
+/// sequential user code (USR-00001), internal/external classification, the role,
+/// and the tenant-global active/inactive status. Cross-tenant safe: deactivating
+/// here never affects the same person at another tenant.
+model TenantStaffMembership {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  personId String @map("person_id")
+
+  // System-generated, immutable, per-tenant sequential code ("USR-00001")
+  // derived from Tenant.staffCounter. Unique per tenant among active rows
+  // (partial unique index in prisma/rls.sql); never client-supplied.
+  userCode String      @map("user_code")
+  userType UserType    @default(INTERNAL) @map("user_type")
+  // Optional primary/default role. The authoritative role now lives per-branch on
+  // UserBranchProfile.profileKey; a user can be a tenant member with no role yet.
+  roleKey  String?     @map("role_key")
+  status   StaffStatus @default(ACTIVE) // tenant-global account status
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([tenantId, personId])
+  @@index([tenantId])
+  @@index([personId])
+  @@map("tenant_staff_memberships")
+}
+
+/// Which system modules (keys from SYSTEM_MODULES) are enabled at a branch.
+/// Drives the module dropdowns and gates the per-user permission modal.
+model BranchModule {
+  id        String  @id @default(uuid())
+  tenantId  String  @map("tenant_id")
+  branchId  String  @map("branch_id")
+  moduleKey String  @map("module_key")
+  isEnabled Boolean @default(true) @map("is_enabled")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([branchId, moduleKey])
+  @@index([tenantId])
+  @@index([branchId])
+  @@map("branch_modules")
+}
+
+/// Module-grouped, per-(user + branch) permission grants (User Management v2.0).
+/// `allowed` is the effective grant for a permission key; absence of a row means
+/// "inherit the role baseline". Distinct from UserProfilePermissionOverride,
+/// which is keyed on profileKey and retained for backward compatibility.
+model UserBranchPermission {
+  id            String  @id @default(uuid())
+  tenantId      String  @map("tenant_id")
+  personId      String  @map("person_id")
+  branchId      String  @map("branch_id")
+  moduleKey     String  @map("module_key")
+  permissionKey String  @map("permission_key")
+  allowed       Boolean
+
+  setBy String? @map("set_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([tenantId, personId, branchId, permissionKey])
+  @@index([tenantId, personId])
+  @@index([branchId])
+  @@map("user_branch_permissions")
 }
 
 /// Maps a receptionist to the doctors they handle at a branch.
@@ -1353,11 +1459,11 @@ model LabPanel {
   isActive Boolean @default(true) @map("is_active")
 
   // Pricing (integer minor units)
-  priceMsrp      Int @default(0) @map("price_msrp")
-  priceMinimum   Int @default(0) @map("price_minimum")
-  priceMaximum   Int @default(0) @map("price_maximum")
-  priceOriginal  Int @default(0) @map("price_original")
-  franchisePrice Int @default(0) @map("franchise_price")
+  priceMsrp       Int @default(0) @map("price_msrp")
+  priceMinimum    Int @default(0) @map("price_minimum")
+  priceMaximum    Int @default(0) @map("price_maximum")
+  priceOriginal   Int @default(0) @map("price_original")
+  franchisePrice  Int @default(0) @map("franchise_price")
   commissionPrice Int @default(0) @map("commission_price")
 
   // TAT (defaults to HOURS per the panel spec)

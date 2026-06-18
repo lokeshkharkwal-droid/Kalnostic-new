@@ -1,0 +1,29 @@
+meta {
+  name: Get User
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/users/manage/{{manageUserId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  manageUserId: 1631b376-ce6f-438e-89b3-390dd45029b9
+}
+
+docs {
+  Full detail for one staff user: person identity (Aadhaar returned **masked**
+  as `XXXX-XXXX-1234`), the tenant membership (userCode/type/optional primary
+  role/status), the username, and all active branch assignments.
+
+  Each `branches[]` entry carries its **own role** and module:
+  `{ id, branchId, branchName, roleKey, roleLabel, branchStatus, isDefault,
+  moduleId, moduleLabel }`. Roles may differ across branches (one role per branch).
+}

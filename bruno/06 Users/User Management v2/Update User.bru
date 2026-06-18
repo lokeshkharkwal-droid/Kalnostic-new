@@ -1,0 +1,45 @@
+meta {
+  name: Update User
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/users/manage/{{manageUserId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "employeeName": "Anita S Sharma",
+    "bloodGroup": "B_POS",
+    "address": "45 Brigade Road, Bengaluru",
+    "mobileNumber": "9812345699",
+    "emergencyContactNumber": "9812300011",
+    "password": "N3w@Strong1",
+    "roleKey": "branch_admin",
+    "userType": "INTERNAL",
+    "status": "ACTIVE"
+  }
+}
+
+docs {
+  Edit a staff user. Identity, password (always editable by admin), the OPTIONAL
+  primary `roleKey`, and global `status`. `username`, `email`, and `userCode` are
+  **immutable** — they are not accepted (the global validation pipe rejects unknown
+  properties), so do not send them.
+
+  Role model (v2.0): `roleKey` here is only the membership's primary/default role —
+  it is **NOT** propagated to branch assignments. Per-branch roles are managed via
+  Assign Branches / Update Branch Assignment. To change a user's role at a specific
+  branch, use those endpoints.
+}

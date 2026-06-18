@@ -1,0 +1,83 @@
+meta {
+  name: Create User
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/users/manage
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "employeeName": "Anita Sharma",
+    "username": "anita.sharma",
+    "dateOfBirth": "1995-04-12",
+    "gender": "FEMALE",
+    "bloodGroup": "O_POS",
+    "nationality": "Indian",
+    "fatherName": "Ramesh Sharma",
+    "motherName": "Sunita Sharma",
+    "aadhaarNumber": "123456789012",
+    "panNumber": "ABCDE1234F",
+    "address": "12 MG Road, Bengaluru",
+    "email": "anita.sharma@acme.test",
+    "mobileNumber": "9812345678",
+    "emergencyContactName": "Ramesh Sharma",
+    "emergencyContactNumber": "9812300000",
+    "password": "Str0ng@Pass1",
+    "userType": "INTERNAL",
+    "status": "ACTIVE",
+    "branches": [
+      { "branchId": "{{branchId}}", "roleKey": "lab_technician", "moduleId": "lab_operations", "isDefault": true, "branchStatus": "ACTIVE" }
+    ]
+  }
+}
+
+vars:pre-request {
+  branchId: b0b8fb9d-7c16-4cd1-b527-5c6cb12508a1
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data) {
+    if (data.person && data.person.id) bru.setEnvVar("manageUserId", data.person.id);
+    if (data.userCode) bru.setEnvVar("manageUserCode", data.userCode);
+    if (data.loginIdentifier) bru.setEnvVar("manageLoginIdentifier", data.loginIdentifier);
+  }
+}
+
+docs {
+  Create a staff user. Identity → Person (Aadhaar encrypted), credentials →
+  PersonCredentials (chosen `username` + `password`), employment →
+  TenantStaffMembership (sequential `userCode`), branch assignment(s) →
+  UserBranchProfile. Captures `manageUserId` and `manageUserCode`.
+  
+  Validation (all declarative): `employeeName`/parents = letters+spaces;
+  `username` lowercase `[a-z0-9._]` (immutable); `dateOfBirth` ≥ 18 years;
+  `aadhaarNumber` 12 digits; `panNumber` `AAAAA9999A`; `mobileNumber` Indian
+  10-digit; `password` ≥8 with upper/lower/digit/special; `userType`
+  INTERNAL|EXTERNAL.
+  
+  Role model (v2.0):
+  - The role is assigned **per branch** via `branches[].roleKey` (one role per
+    branch). The top-level `roleKey` is an OPTIONAL primary/default role — omit it
+    to create a user with no role and assign roles later (see "Register User
+    (no role)" + "Assign Branches").
+  - `branches[].moduleId` is the module linked to that assignment. It must be
+    enabled for the branch (Branches → Set Branch Modules) else 422
+    MODULE_NOT_ENABLED_FOR_BRANCH; if the role template links specific modules, it
+    must be one of them else 422 MODULE_NOT_IN_ROLE_TEMPLATE.
+  - Each branch `roleKey` must be valid for that branch's type
+    (PROFILE_BRANCH_MATRIX). Exactly one branch entry may be `isDefault: true`.
+}

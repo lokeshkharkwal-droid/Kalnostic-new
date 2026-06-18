@@ -1,57 +1,121 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { Person, Prisma, UserBranchProfile } from '@prisma/client';
+import {
+  Person,
+  Prisma,
+  StaffStatus,
+  TenantStaffMembership,
+  UserBranchProfile,
+} from '@prisma/client';
 import { randomBytes } from 'crypto';
+import { mkdir, writeFile } from 'fs/promises';
+import { extname, join } from 'path';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PasswordService } from '../security/password.service';
 import { UsernameGeneratorService } from '../security/username-generator.service';
+import { EncryptionService } from '../security/encryption.service';
 import { BranchService } from '../branch/branch.service';
-import { PERMISSION_CATALOG } from '../permissions/constants/permission-catalog.constant';
-import { PROFILE_PERMISSIONS } from '../permissions/constants/permissions.constant';
+import { PaginatedResult } from '../../common/dto/response.dto';
 import {
   isProfileValidForBranch,
   isValidProfileKey,
   PROFILE_BRANCH_MATRIX,
+  PROFILE_LABELS,
   ProfileKey,
 } from '../permissions/constants/profile-registry.constant';
-import { CreatePersonDto } from './dto/create-person.dto';
-import { UpdatePersonDto } from './dto/update-person.dto';
-import { RegisterStaffDto } from './dto/register-staff.dto';
 import {
+  MODULE_PERMISSION_CATALOG,
+  roleBaselinePermissions,
+  roleTemplateModules,
+} from '../permissions/constants/module-permissions.constant';
+import {
+  isValidModuleKey,
+  moduleLabel,
+} from '../permissions/constants/system-modules.constant';
+import { BranchAssignmentItemDto, CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
+import { UpdateBranchAssignmentDto } from './dto/update-branch-assignment.dto';
+import { UpdateBranchPermissionsDto } from './dto/update-branch-permissions.dto';
+import { ListUsersQueryDto, UserSortField } from './dto/list-users-query.dto';
+import {
+  InvalidModuleKeyException,
+  ModuleNotEnabledForBranchException,
+  ModuleNotInRoleTemplateException,
+  MultipleDefaultBranchException,
   NotOwnerTenantException,
   PersonEmailTakenException,
   PersonNotFoundException,
   PersonPhoneTakenException,
-  ProfileAlreadyAssignedException,
   ProfileInvalidForBranchException,
   ProfileNotFoundException,
+  StaffMembershipNotFoundException,
+  UnderageUserException,
+  UsernameTakenException,
 } from './exceptions/users.exceptions';
 
-/** A staff member with their profile assignments (for the staff roster screen). */
-export interface StaffMemberDto {
-  id: string;
-  firstName: string;
-  lastName: string | null;
-  phone: string | null;
-  email: string | null;
-  platformMrn: string;
-  profiles: Array<{
-    branchId: string | null;
-    branchName: string | null;
-    profileKey: string;
-    isDefault: boolean;
-    assignedAt: Date;
-  }>;
+/** Minimum age (in whole years) for a staff user (v2.0). */
+const MIN_USER_AGE = 18;
+
+/** A validated, normalised branch assignment (internal to UsersService). */
+interface PreparedAssignment {
+  branchId: string;
+  profileKey: string;
+  isDefault: boolean;
+  defaultModuleId: string | null;
+  branchStatus: StaffStatus;
 }
 
-/** A permission row with its resolved effective value. */
-export interface ResolvedPermission {
-  code: string;
-  name: string;
-  group: string;
-  baselineValue: boolean;
-  override: 'allow' | 'deny' | 'inherit';
-  effectiveValue: boolean;
+/** One assigned branch (with its role + module) on a user-list row. */
+export interface UserListBranch {
+  branchId: string | null;
+  branchName: string | null;
+  roleKey: string;
+  roleLabel: string;
+  branchStatus: StaffStatus;
+  isDefault: boolean;
+  moduleId: string | null;
+  moduleLabel: string | null;
+}
+
+/** A row in the v2.0 User List (one per staff member). */
+export interface UserListRow {
+  id: string;
+  userCode: string;
+  employeeName: string;
+  username: string | null;
+  email: string | null;
+  mobile: string | null;
+  role: string;
+  roleLabel: string;
+  /** Branch names only (kept for back-compat); see `branches` for full detail. */
+  assignedBranches: string[];
+  /** Every active assignment with its role, module, status and default flag. */
+  branches: UserListBranch[];
+  defaultBranch: string | null;
+  defaultModule: string | null;
+  status: StaffStatus;
+}
+
+/** A row in the Permissions screen (one per user + branch; status always Active). */
+export interface ProfilePermissionRow {
+  id: string; // userBranchProfile id
+  userCode: string;
+  username: string | null;
+  role: string;
+  roleLabel: string;
+  branch: string;
+  status: StaffStatus;
+}
+
+/** A module-grouped permission with its resolved grant for a (user + branch). */
+export interface ResolvedBranchPermission {
+  moduleKey: string;
+  moduleLabel: string;
+  permissionKey: string;
+  label: string;
+  baseline: boolean;
+  allowed: boolean; // effective value (override ?? baseline)
 }
 
 @Injectable()
@@ -62,53 +126,11 @@ export class UsersService {
     private readonly prisma: PrismaService,
     private readonly passwordService: PasswordService,
     private readonly usernameService: UsernameGeneratorService,
+    private readonly encryptionService: EncryptionService,
     private readonly branchService: BranchService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly config: ConfigService,
   ) {}
-
-  /**
-   * Register a person (patient or staff). Generates a global platform MRN and
-   * sets the registering business as owner.
-   * @param tenantId registering business (becomes owner)
-   * @param dto demographics
-   * @param createdBy actor person id
-   * @param isPatient whether this is a patient registration
-   */
-  async registerPerson(
-    tenantId: string,
-    dto: CreatePersonDto,
-    createdBy: string,
-    isPatient = true,
-  ): Promise<Person> {
-    await this.assertContactUnique(dto.phone, dto.email);
-
-    const person = await this.prisma.person.create({
-      data: {
-        platformMrn: this.generatePlatformMrn(),
-        salutation: dto.salutation ?? null,
-        firstName: dto.firstName,
-        lastName: dto.lastName ?? null,
-        dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : null,
-        gender: dto.gender ?? null,
-        bloodGroup: dto.bloodGroup ?? null,
-        phone: dto.phone ?? null,
-        email: dto.email ?? null,
-        address: (dto.address ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-        ownerTenantId: tenantId,
-        isPatient,
-        isStaff: false,
-        isActive: true,
-      },
-    });
-
-    await this.eventEmitter.emitAsync('users.person.registered', {
-      personId: person.id,
-      tenantId,
-      isPatient,
-      createdBy,
-    });
-    return person;
-  }
 
   /**
    * Fetch a person by id (platform-level lookup, no tenant scope).
@@ -158,67 +180,241 @@ export class UsersService {
   }
 
   /**
-   * Update a person's basic details. Only the owning tenant, the person
-   * themselves, or any tenant for self-registered persons may edit.
-   * @param personId person to update
-   * @param tenantId tenant making the request
-   * @param dto fields to update
-   * @param updatedBy actor person id
+   * All active profile assignments for a person (used to build the JWT).
    */
-  async updatePersonDetails(
+  async getPersonProfiles(personId: string): Promise<UserBranchProfile[]> {
+    return this.prisma.userBranchProfile.findMany({
+      where: { personId, isActive: true, deletedAt: null },
+    });
+  }
+
+  // ── User Management v2.0 ────────────────────────────────────────────────────
+
+  /**
+   * Create a staff user (v2.0). Identity → Person, credentials →
+   * PersonCredentials (username + chosen password), employment →
+   * TenantStaffMembership (sequential `userCode`, type, optional primary role,
+   * global status). The authoritative role is assigned **per branch** on
+   * UserBranchProfile; a user may be created with no role and assigned to
+   * branches later. Aadhaar is encrypted at rest.
+   * @returns the person, membership, generated user code, and login identifier
+   */
+  async createUser(
+    tenantId: string,
+    dto: CreateUserDto,
+    createdBy: string,
+  ): Promise<{
+    person: Person;
+    membership: TenantStaffMembership;
+    userCode: string;
+    loginIdentifier: string;
+  }> {
+    this.assertAdult(dto.dateOfBirth);
+    if (dto.roleKey && !isValidProfileKey(dto.roleKey)) {
+      throw new ProfileInvalidForBranchException(dto.roleKey, 'unknown');
+    }
+    await this.assertContactUnique(dto.mobileNumber, dto.email);
+    await this.assertUsernameUnique(dto.username);
+
+    const prepared = await this.prepareBranchAssignments(
+      tenantId,
+      dto.roleKey ?? null,
+      dto.branches ?? [],
+    );
+
+    const passwordHash = await this.passwordService.hash(dto.password);
+    const aadhaarEnc = dto.aadhaarNumber
+      ? this.encryptionService.encrypt(dto.aadhaarNumber)
+      : null;
+    const platformMrn = this.generatePlatformMrn();
+    const status = dto.status ?? StaffStatus.ACTIVE;
+    const isTenantLevelRole =
+      !!dto.roleKey &&
+      (PROFILE_BRANCH_MATRIX[dto.roleKey as ProfileKey] ?? []).length === 0;
+
+    const result = await this.prisma.withTenant(tenantId, async (tx) => {
+      const tenant = await tx.tenant.update({
+        where: { id: tenantId },
+        data: { staffCounter: { increment: 1 } },
+        select: { staffCounter: true },
+      });
+      const userCode = `USR-${String(tenant.staffCounter).padStart(5, '0')}`;
+
+      const person = await tx.person.create({
+        data: {
+          platformMrn,
+          firstName: dto.employeeName,
+          lastName: null,
+          dateOfBirth: new Date(dto.dateOfBirth),
+          gender: dto.gender,
+          bloodGroup: dto.bloodGroup ?? null,
+          phone: dto.mobileNumber,
+          email: dto.email,
+          address: (dto.address ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+          nationality: dto.nationality ?? 'Indian',
+          fatherName: dto.fatherName ?? null,
+          motherName: dto.motherName ?? null,
+          aadhaarNumber: aadhaarEnc,
+          panNumber: dto.panNumber ?? null,
+          emergencyContactName: dto.emergencyContactName ?? null,
+          emergencyContactNumber: dto.emergencyContactNumber ?? null,
+          ownerTenantId: tenantId,
+          isPatient: false,
+          isStaff: true,
+          isActive: true,
+        },
+      });
+
+      await tx.personCredentials.create({
+        data: {
+          personId: person.id,
+          phone: dto.mobileNumber,
+          email: dto.email,
+          systemUsername: dto.username,
+          isSystemGeneratedUsername: false,
+          passwordHash,
+          isTempPassword: false,
+        },
+      });
+
+      const membership = await tx.tenantStaffMembership.create({
+        data: {
+          tenantId,
+          personId: person.id,
+          userCode,
+          userType: dto.userType,
+          roleKey: dto.roleKey ?? null,
+          status,
+        },
+      });
+
+      if (prepared.length > 0) {
+        for (const a of prepared) {
+          await tx.userBranchProfile.create({
+            data: {
+              tenantId,
+              personId: person.id,
+              branchId: a.branchId,
+              profileKey: a.profileKey,
+              branchStatus: a.branchStatus,
+              defaultModuleId: a.defaultModuleId,
+              isDefault: a.isDefault,
+              isActive: true,
+              assignedAt: new Date(),
+              assignedBy: createdBy,
+            },
+          });
+        }
+      } else if (isTenantLevelRole && dto.roleKey) {
+        // Tenant-level role with no branch list: create the tenant-level profile
+        // so the auth/JWT path has a profile to land on.
+        await tx.userBranchProfile.create({
+          data: {
+            tenantId,
+            personId: person.id,
+            branchId: null,
+            profileKey: dto.roleKey,
+            isDefault: true,
+            isActive: true,
+            assignedAt: new Date(),
+            assignedBy: createdBy,
+          },
+        });
+      }
+
+      return { person, membership, userCode };
+    });
+
+    await this.eventEmitter.emitAsync('users.user.created', {
+      personId: result.person.id,
+      tenantId,
+      userCode: result.userCode,
+      createdBy,
+    });
+    return { ...result, loginIdentifier: dto.mobileNumber };
+  }
+
+  /**
+   * Edit a staff user (v2.0). Updates identity, password, optional primary role
+   * and global status. `username`/`email`/`userCode` are immutable (absent from
+   * the DTO). The primary `roleKey` is informational — it is **not** propagated to
+   * branch assignments (per-branch roles are managed via Assign/Update Branch).
+   */
+  async updateUser(
     personId: string,
     tenantId: string,
-    dto: UpdatePersonDto,
+    dto: UpdateUserDto,
     updatedBy: string,
-  ): Promise<Person> {
+  ): Promise<{ person: Person; membership: TenantStaffMembership }> {
     const person = await this.findById(personId);
+    this.assertCanEdit(person, tenantId, updatedBy);
+    const membership = await this.getMembership(tenantId, personId);
 
-    const isOwner = person.ownerTenantId === tenantId;
-    const isSelfUpdate = updatedBy === personId;
-    const isSelfRegistered = person.ownerTenantId === null;
-    if (!isOwner && !isSelfUpdate && !isSelfRegistered) {
-      throw new NotOwnerTenantException(tenantId, personId);
+    if (dto.dateOfBirth !== undefined) {
+      this.assertAdult(dto.dateOfBirth);
     }
-
-    if (dto.phone && dto.phone !== person.phone) {
-      const existing = await this.prisma.person.findFirst({
-        where: { phone: dto.phone, deletedAt: null },
-        select: { id: true },
-      });
-      if (existing && existing.id !== personId) {
-        throw new PersonPhoneTakenException(dto.phone);
-      }
+    if (dto.mobileNumber && dto.mobileNumber !== person.phone) {
+      await this.assertPhoneUnique(dto.mobileNumber, personId);
     }
-    if (dto.email && dto.email !== person.email) {
-      const existing = await this.prisma.person.findFirst({
-        where: { email: dto.email, deletedAt: null },
-        select: { id: true },
-      });
-      if (existing && existing.id !== personId) {
-        throw new PersonEmailTakenException(dto.email);
-      }
+    if (dto.roleKey && !isValidProfileKey(dto.roleKey)) {
+      throw new ProfileInvalidForBranchException(dto.roleKey, 'unknown');
     }
 
     const data: Prisma.PersonUpdateInput = {};
-    if (dto.salutation !== undefined) data.salutation = dto.salutation ?? null;
-    if (dto.firstName !== undefined) data.firstName = dto.firstName;
-    if (dto.lastName !== undefined) data.lastName = dto.lastName ?? null;
+    if (dto.employeeName !== undefined) data.firstName = dto.employeeName;
     if (dto.dateOfBirth !== undefined) {
-      data.dateOfBirth = dto.dateOfBirth ? new Date(dto.dateOfBirth) : null;
+      data.dateOfBirth = new Date(dto.dateOfBirth);
     }
-    if (dto.gender !== undefined) data.gender = dto.gender ?? null;
+    if (dto.gender !== undefined) data.gender = dto.gender;
     if (dto.bloodGroup !== undefined) data.bloodGroup = dto.bloodGroup ?? null;
-    if (dto.phone !== undefined) data.phone = dto.phone ?? null;
-    if (dto.email !== undefined) data.email = dto.email ?? null;
+    if (dto.nationality !== undefined) data.nationality = dto.nationality;
+    if (dto.fatherName !== undefined) data.fatherName = dto.fatherName ?? null;
+    if (dto.motherName !== undefined) data.motherName = dto.motherName ?? null;
+    if (dto.aadhaarNumber !== undefined) {
+      data.aadhaarNumber = dto.aadhaarNumber
+        ? this.encryptionService.encrypt(dto.aadhaarNumber)
+        : null;
+    }
+    if (dto.panNumber !== undefined) data.panNumber = dto.panNumber ?? null;
     if (dto.address !== undefined) {
-      data.address = (dto.address ?? Prisma.JsonNull) as Prisma.InputJsonValue;
+      data.address = dto.address ?? Prisma.JsonNull;
+    }
+    if (dto.mobileNumber !== undefined) data.phone = dto.mobileNumber;
+    if (dto.emergencyContactName !== undefined) {
+      data.emergencyContactName = dto.emergencyContactName ?? null;
+    }
+    if (dto.emergencyContactNumber !== undefined) {
+      data.emergencyContactNumber = dto.emergencyContactNumber ?? null;
     }
 
-    const updated = await this.prisma.person.update({
-      where: { id: personId },
-      data,
+    const passwordHash = dto.password
+      ? await this.passwordService.hash(dto.password)
+      : null;
+
+    const updated = await this.prisma.withTenant(tenantId, async (tx) => {
+      const updatedPerson = await tx.person.update({
+        where: { id: personId },
+        data,
+      });
+      if (passwordHash) {
+        await tx.personCredentials.update({
+          where: { personId },
+          data: { passwordHash, isTempPassword: false },
+        });
+      }
+      const membershipData: Prisma.TenantStaffMembershipUpdateInput = {};
+      if (dto.userType !== undefined) membershipData.userType = dto.userType;
+      if (dto.status !== undefined) membershipData.status = dto.status;
+      // Primary role is informational only — never propagated to branch profiles.
+      if (dto.roleKey !== undefined) membershipData.roleKey = dto.roleKey;
+      const updatedMembership = await tx.tenantStaffMembership.update({
+        where: { id: membership.id },
+        data: membershipData,
+      });
+      return { person: updatedPerson, membership: updatedMembership };
     });
-    await this.eventEmitter.emitAsync('users.person.updated', {
+
+    await this.eventEmitter.emitAsync('users.user.updated', {
       personId,
       tenantId,
       updatedBy,
@@ -228,532 +424,826 @@ export class UsersService {
   }
 
   /**
-   * Register a staff member: person + credentials (temp password) + initial
-   * profile, atomically. Login identifier precedence: phone → email →
-   * auto-generated system_username.
-   * @param tenantId tenant scope
-   * @param dto staff details + target profile/branch
-   * @param createdBy admin performing the registration
-   * @returns the person, a one-time temp password, and the login identifier
+   * Store an uploaded profile photo (JPG/JPEG/PNG, ≤ configured max). Writes the
+   * file under UPLOAD_DIR and records the path on `Person.photoUrl`.
+   * @returns the stored photo path
    */
-  async registerStaff(
-    tenantId: string,
-    dto: RegisterStaffDto,
-    createdBy: string,
-  ): Promise<{
-    person: Person;
-    tempPassword: string;
-    loginIdentifier: string;
-  }> {
-    if (!isValidProfileKey(dto.profileKey)) {
-      throw new ProfileInvalidForBranchException(dto.profileKey, 'unknown');
-    }
-    await this.assertContactUnique(dto.phone, dto.email);
-
-    if (dto.branchId) {
-      const branch = await this.branchService.findById(dto.branchId, tenantId);
-      if (!isProfileValidForBranch(dto.profileKey, branch.branchType)) {
-        throw new ProfileInvalidForBranchException(
-          dto.profileKey,
-          branch.branchType,
-        );
-      }
-    }
-
-    const tempPassword = this.passwordService.generateTempPassword();
-    const passwordHash = await this.passwordService.hash(tempPassword);
-
-    let systemUsername: string | null = null;
-    let loginIdentifier: string;
-    if (dto.phone) {
-      loginIdentifier = dto.phone;
-    } else if (dto.email) {
-      loginIdentifier = dto.email;
-    } else {
-      systemUsername = await this.usernameService.generate();
-      loginIdentifier = systemUsername;
-    }
-
-    const platformMrn = this.generatePlatformMrn();
-
-    const person = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.person.create({
-        data: {
-          platformMrn,
-          firstName: dto.firstName,
-          lastName: dto.lastName ?? null,
-          phone: dto.phone ?? null,
-          email: dto.email ?? null,
-          ownerTenantId: tenantId,
-          isPatient: false,
-          isStaff: true,
-          isActive: true,
-        },
-      });
-      await tx.personCredentials.create({
-        data: {
-          personId: created.id,
-          phone: dto.phone ?? null,
-          email: dto.email ?? null,
-          systemUsername,
-          isSystemGeneratedUsername: !!systemUsername,
-          passwordHash,
-          isTempPassword: true,
-        },
-      });
-      await tx.userBranchProfile.create({
-        data: {
-          tenantId,
-          personId: created.id,
-          branchId: dto.branchId ?? null,
-          profileKey: dto.profileKey,
-          isDefault: true,
-          isActive: true,
-          assignedAt: new Date(),
-          assignedBy: createdBy,
-        },
-      });
-      return created;
-    });
-
-    await this.eventEmitter.emitAsync('users.staff.registered', {
-      personId: person.id,
-      tenantId,
-      profileKey: dto.profileKey,
-      branchId: dto.branchId ?? null,
-      createdBy,
-    });
-    return { person, tempPassword, loginIdentifier };
-  }
-
-  /**
-   * Assign a profile to a person at a branch (or tenant-level). Validates the
-   * profile key and branch-type compatibility; enforces a single default.
-   * @returns the created assignment
-   */
-  async assignProfile(
-    tenantId: string,
+  async uploadProfilePhoto(
     personId: string,
-    branchId: string | null,
-    profileKey: string,
-    assignedBy: string,
-    isDefault = false,
-  ): Promise<UserBranchProfile> {
-    if (!isValidProfileKey(profileKey)) {
-      throw new ProfileInvalidForBranchException(profileKey, 'unknown');
-    }
+    tenantId: string,
+    file: Express.Multer.File,
+    actorId: string,
+  ): Promise<{ photoUrl: string }> {
+    const person = await this.findById(personId);
+    this.assertCanEdit(person, tenantId, actorId);
 
-    if (branchId) {
-      const branch = await this.branchService.findById(branchId, tenantId);
-      if (!isProfileValidForBranch(profileKey, branch.branchType)) {
-        throw new ProfileInvalidForBranchException(
-          profileKey,
-          branch.branchType,
-        );
-      }
-    } else if ((PROFILE_BRANCH_MATRIX[profileKey] ?? []).length > 0) {
-      throw new ProfileInvalidForBranchException(
-        profileKey,
-        'none — this profile requires a branch',
-      );
-    }
+    const dir = this.config.get<string>('UPLOAD_DIR', './uploads');
+    await mkdir(dir, { recursive: true });
+    const ext = extname(file.originalname) || '.jpg';
+    const fileName = `${personId}-${randomBytes(6).toString('hex')}${ext}`;
+    const fullPath = join(dir, fileName);
+    await writeFile(fullPath, file.buffer);
 
-    const existing = await this.findExistingProfile(
-      tenantId,
-      personId,
-      branchId,
-      profileKey,
+    const photoUrl = `${dir.replace(/\\/g, '/')}/${fileName}`.replace(
+      /^\.\//,
+      '/',
     );
-    if (existing && existing.isActive) {
-      throw new ProfileAlreadyAssignedException(
-        personId,
-        branchId ?? 'tenant',
-        profileKey,
-      );
-    }
-
-    if (isDefault) {
-      await this.clearDefaultFlag(tenantId, personId);
-    }
-
-    const assignment = await this.prisma.userBranchProfile.create({
-      data: {
-        tenantId,
-        personId,
-        branchId: branchId ?? null,
-        profileKey,
-        isDefault,
-        isActive: true,
-        assignedAt: new Date(),
-        assignedBy,
-      },
-    });
     await this.prisma.person.update({
       where: { id: personId },
-      data: { isStaff: true },
+      data: { photoUrl },
     });
-    await this.eventEmitter.emitAsync('users.profile.assigned', {
-      tenantId,
-      personId,
-      branchId,
-      profileKey,
-      assignedBy,
-    });
-    return assignment;
+    return { photoUrl };
   }
 
   /**
-   * Revoke a profile assignment (soft — sets revoked_at / is_active=false). If
-   * the person has no remaining active profiles, clears their is_staff flag.
+   * List staff users for a tenant (v2.0): paginated, filterable (search, branch,
+   * role, module) and sortable on the spec's columns.
    */
-  async revokeProfile(
+  async listUsers(
     tenantId: string,
-    personId: string,
-    branchId: string | null,
-    profileKey: string,
-    revokedBy: string,
-  ): Promise<void> {
-    const existing = await this.findExistingProfile(
-      tenantId,
-      personId,
-      branchId,
-      profileKey,
-    );
-    if (!existing || !existing.isActive) {
-      throw new ProfileNotFoundException(personId, branchId ?? 'tenant');
+    query: ListUsersQueryDto,
+  ): Promise<PaginatedResult<UserListRow>> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+
+    const memberships = await this.prisma.tenantStaffMembership.findMany({
+      where: { tenantId, deletedAt: null },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (memberships.length === 0) {
+      return { data: [], total: 0, page, limit };
     }
 
-    await this.prisma.userBranchProfile.update({
-      where: { id: existing.id },
-      data: { isActive: false, revokedAt: new Date(), revokedBy },
-    });
-
-    const remaining = await this.prisma.userBranchProfile.count({
-      where: { personId, isActive: true, deletedAt: null },
-    });
-    if (remaining === 0) {
-      await this.prisma.person.update({
-        where: { id: personId },
-        data: { isStaff: false },
-      });
-    }
-    await this.eventEmitter.emitAsync('users.profile.revoked', {
-      tenantId,
-      personId,
-      branchId,
-      profileKey,
-      revokedBy,
-    });
-  }
-
-  /**
-   * Set the default landing profile for a person (clears any prior default).
-   */
-  async setDefaultProfile(
-    tenantId: string,
-    personId: string,
-    profileKey: string,
-    branchId: string | null,
-  ): Promise<void> {
-    const existing = await this.findExistingProfile(
-      tenantId,
-      personId,
-      branchId,
-      profileKey,
-    );
-    if (!existing || !existing.isActive) {
-      throw new ProfileNotFoundException(personId, branchId ?? 'tenant');
-    }
-    await this.clearDefaultFlag(tenantId, personId);
-    await this.prisma.userBranchProfile.update({
-      where: { id: existing.id },
-      data: { isDefault: true },
-    });
-  }
-
-  /**
-   * All active profile assignments for a person (used to build the JWT).
-   */
-  async getPersonProfiles(personId: string): Promise<UserBranchProfile[]> {
-    return this.prisma.userBranchProfile.findMany({
-      where: { personId, isActive: true, deletedAt: null },
-    });
-  }
-
-  /**
-   * List staff for a tenant, grouped by person with their profile assignments.
-   * @param tenantId tenant scope
-   */
-  async listTenantStaff(tenantId: string): Promise<StaffMemberDto[]> {
-    const profiles = await this.prisma.userBranchProfile.findMany({
-      where: { tenantId, isActive: true, deletedAt: null },
-      orderBy: { assignedAt: 'asc' },
-    });
-    if (profiles.length === 0) {
-      return [];
-    }
-
-    const personIds = [...new Set(profiles.map((p) => p.personId))];
+    const personIds = memberships.map((m) => m.personId);
+    const [persons, credentials, profiles] = await Promise.all([
+      this.prisma.person.findMany({ where: { id: { in: personIds } } }),
+      this.prisma.personCredentials.findMany({
+        where: { personId: { in: personIds } },
+      }),
+      this.prisma.userBranchProfile.findMany({
+        where: {
+          tenantId,
+          personId: { in: personIds },
+          isActive: true,
+          deletedAt: null,
+        },
+      }),
+    ]);
     const branchIds = [
       ...new Set(
         profiles.map((p) => p.branchId).filter((b): b is string => !!b),
       ),
     ];
-    const [persons, branches] = await Promise.all([
-      this.prisma.person.findMany({ where: { id: { in: personIds } } }),
-      this.prisma.branch.findMany({
-        where: { id: { in: branchIds }, tenantId },
-      }),
-    ]);
-    const personMap = new Map(persons.map((p) => [p.id, p]));
-    const branchMap = new Map(branches.map((b) => [b.id, b.name]));
+    const branches = await this.prisma.branch.findMany({
+      where: { id: { in: branchIds }, tenantId },
+    });
 
-    const staff = new Map<string, StaffMemberDto>();
-    for (const profile of profiles) {
-      const person = personMap.get(profile.personId);
-      if (!person) {
-        continue;
-      }
-      if (!staff.has(person.id)) {
-        staff.set(person.id, {
-          id: person.id,
-          firstName: person.firstName,
-          lastName: person.lastName,
-          phone: person.phone,
-          email: person.email,
-          platformMrn: person.platformMrn,
-          profiles: [],
-        });
-      }
-      staff.get(person.id)!.profiles.push({
-        branchId: profile.branchId,
-        branchName: profile.branchId
-          ? (branchMap.get(profile.branchId) ?? null)
-          : null,
-        profileKey: profile.profileKey,
-        isDefault: profile.isDefault,
-        assignedAt: profile.assignedAt,
-      });
+    const personMap = new Map(persons.map((p) => [p.id, p]));
+    const credMap = new Map(credentials.map((c) => [c.personId, c]));
+    const branchNameMap = new Map(branches.map((b) => [b.id, b.name]));
+    const profilesByPerson = new Map<string, UserBranchProfile[]>();
+    for (const p of profiles) {
+      const list = profilesByPerson.get(p.personId) ?? [];
+      list.push(p);
+      profilesByPerson.set(p.personId, list);
     }
-    return [...staff.values()];
+
+    let rows: UserListRow[] = memberships.map((m) => {
+      const person = personMap.get(m.personId);
+      const cred = credMap.get(m.personId);
+      const mProfiles = profilesByPerson.get(m.personId) ?? [];
+      const branchProfiles = mProfiles.filter((p) => p.branchId);
+      const defaultProfile =
+        mProfiles.find((p) => p.isDefault) ?? mProfiles[0] ?? null;
+      const defaultBranchName =
+        defaultProfile?.branchId != null
+          ? (branchNameMap.get(defaultProfile.branchId) ?? null)
+          : null;
+      // Role now lives per-branch; show the default profile's role (or the
+      // membership's optional primary role) as the row's primary role.
+      const primaryRole = m.roleKey ?? defaultProfile?.profileKey ?? null;
+      return {
+        id: m.personId,
+        userCode: m.userCode,
+        employeeName: person?.firstName ?? '',
+        username: cred?.systemUsername ?? null,
+        email: person?.email ?? null,
+        mobile: person?.phone ?? null,
+        role: primaryRole ?? '',
+        roleLabel: primaryRole
+          ? (PROFILE_LABELS[primaryRole as ProfileKey] ?? primaryRole)
+          : '',
+        assignedBranches: branchProfiles
+          .map((p) => (p.branchId ? branchNameMap.get(p.branchId) : null))
+          .filter((n): n is string => !!n),
+        branches: mProfiles.map((p) => ({
+          branchId: p.branchId,
+          branchName: p.branchId
+            ? (branchNameMap.get(p.branchId) ?? null)
+            : null,
+          roleKey: p.profileKey,
+          roleLabel: PROFILE_LABELS[p.profileKey as ProfileKey] ?? p.profileKey,
+          branchStatus: p.branchStatus,
+          isDefault: p.isDefault,
+          moduleId: p.defaultModuleId,
+          moduleLabel: p.defaultModuleId
+            ? moduleLabel(p.defaultModuleId)
+            : null,
+        })),
+        defaultBranch: defaultBranchName,
+        defaultModule: defaultProfile?.defaultModuleId
+          ? moduleLabel(defaultProfile.defaultModuleId)
+          : null,
+        status: m.status,
+      };
+    });
+
+    rows = this.applyUserListFilters(rows, query, profilesByPerson);
+    rows = this.sortUserRows(rows, query.sortBy, query.sortOrder);
+
+    const total = rows.length;
+    const data = rows.slice((page - 1) * limit, (page - 1) * limit + limit);
+    return { data, total, page, limit };
   }
 
   /**
-   * Resolve every catalogue permission for a profile assignment, applying
-   * per-assignment overrides on top of the profile baseline.
+   * Full detail for one staff user: person identity (Aadhaar masked), the tenant
+   * membership, and all active branch assignments with role/branch/module labels.
    */
-  async getProfilePermissions(
+  async getUser(
     tenantId: string,
     personId: string,
-    branchId: string | null,
-    profileKey: string,
-  ): Promise<ResolvedPermission[]> {
-    const baseline = new Set<string>(
-      PROFILE_PERMISSIONS[profileKey as ProfileKey] ?? [],
-    );
-    const overrides = await this.prisma.userProfilePermissionOverride.findMany({
-      where: {
-        tenantId,
-        personId,
-        branchId: branchId ?? null,
-        profileKey,
-        deletedAt: null,
-      },
+  ): Promise<{
+    person: Omit<Person, 'aadhaarNumber'> & { aadhaarMasked: string | null };
+    membership: TenantStaffMembership;
+    username: string | null;
+    branches: Array<{
+      id: string;
+      branchId: string | null;
+      branchName: string | null;
+      roleKey: string;
+      roleLabel: string;
+      branchStatus: StaffStatus;
+      isDefault: boolean;
+      moduleId: string | null;
+      moduleLabel: string | null;
+    }>;
+  }> {
+    const person = await this.findById(personId);
+    const membership = await this.getMembership(tenantId, personId);
+    const cred = await this.prisma.personCredentials.findUnique({
+      where: { personId },
     });
-    const overrideMap = new Map(
-      overrides.map((o) => [o.permissionCode, o.override]),
+    const profiles = await this.prisma.userBranchProfile.findMany({
+      where: { tenantId, personId, isActive: true, deletedAt: null },
+    });
+    const branchIds = profiles
+      .map((p) => p.branchId)
+      .filter((b): b is string => !!b);
+    const branches = await this.prisma.branch.findMany({
+      where: { id: { in: branchIds }, tenantId },
+    });
+    const branchNameMap = new Map(branches.map((b) => [b.id, b.name]));
+
+    const { aadhaarNumber, ...rest } = person;
+    return {
+      person: {
+        ...rest,
+        aadhaarMasked: this.maskAadhaar(aadhaarNumber),
+      },
+      membership,
+      username: cred?.systemUsername ?? null,
+      branches: profiles.map((p) => ({
+        id: p.id,
+        branchId: p.branchId,
+        branchName: p.branchId ? (branchNameMap.get(p.branchId) ?? null) : null,
+        roleKey: p.profileKey,
+        roleLabel: PROFILE_LABELS[p.profileKey as ProfileKey] ?? p.profileKey,
+        branchStatus: p.branchStatus,
+        isDefault: p.isDefault,
+        moduleId: p.defaultModuleId,
+        moduleLabel: p.defaultModuleId ? moduleLabel(p.defaultModuleId) : null,
+      })),
+    };
+  }
+
+  /**
+   * Assign (or update) the user's branch assignments in bulk. Each item carries
+   * its own role (`roleKey`) and optional `moduleId`: `{ branchId, roleKey,
+   * moduleId? }`. One role per branch — an existing assignment for a branch is
+   * re-roled in place. Enforces a single default branch.
+   */
+  async assignBranches(
+    tenantId: string,
+    personId: string,
+    branches: BranchAssignmentItemDto[],
+    actorId: string,
+  ): Promise<void> {
+    const membership = await this.getMembership(tenantId, personId);
+    const prepared = await this.prepareBranchAssignments(
+      tenantId,
+      membership.roleKey ?? null,
+      branches,
     );
 
-    return PERMISSION_CATALOG.map((entry) => {
-      const baselineValue = baseline.has(entry.code);
-      const override = (overrideMap.get(entry.code) ?? 'inherit') as
-        | 'allow'
-        | 'deny'
-        | 'inherit';
-      const effectiveValue =
-        override === 'allow'
-          ? true
-          : override === 'deny'
-            ? false
-            : baselineValue;
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      if (prepared.some((a) => a.isDefault)) {
+        await tx.userBranchProfile.updateMany({
+          where: { tenantId, personId, isDefault: true },
+          data: { isDefault: false },
+        });
+      }
+      for (const a of prepared) {
+        // One role per branch: match on (tenant, person, branch), not role.
+        const existing = await tx.userBranchProfile.findFirst({
+          where: { tenantId, personId, branchId: a.branchId, deletedAt: null },
+        });
+        if (existing) {
+          await tx.userBranchProfile.update({
+            where: { id: existing.id },
+            data: {
+              profileKey: a.profileKey,
+              isActive: true,
+              branchStatus: a.branchStatus,
+              defaultModuleId: a.defaultModuleId,
+              isDefault: a.isDefault,
+              revokedAt: null,
+              revokedBy: null,
+            },
+          });
+        } else {
+          await tx.userBranchProfile.create({
+            data: {
+              tenantId,
+              personId,
+              branchId: a.branchId,
+              profileKey: a.profileKey,
+              branchStatus: a.branchStatus,
+              defaultModuleId: a.defaultModuleId,
+              isDefault: a.isDefault,
+              isActive: true,
+              assignedAt: new Date(),
+              assignedBy: actorId,
+            },
+          });
+        }
+      }
+      await tx.person.update({
+        where: { id: personId },
+        data: { isStaff: true },
+      });
+    });
+  }
+
+  /**
+   * Patch a single (user + branch) assignment: per-branch role, status, default
+   * flag, and module. Validates the role for the branch type and the module is
+   * enabled for the branch (and linked to the role template, when it links any).
+   */
+  async updateBranchAssignment(
+    tenantId: string,
+    personId: string,
+    branchId: string,
+    dto: UpdateBranchAssignmentDto,
+    actorId: string,
+  ): Promise<UserBranchProfile> {
+    await this.getMembership(tenantId, personId);
+    const existing = await this.prisma.userBranchProfile.findFirst({
+      where: { tenantId, personId, branchId, isActive: true, deletedAt: null },
+    });
+    if (!existing) {
+      throw new ProfileNotFoundException(personId, branchId);
+    }
+
+    const branch = await this.branchService.findById(branchId, tenantId);
+    const targetRole = dto.roleKey ?? existing.profileKey;
+    if (dto.roleKey) {
+      if (!isValidProfileKey(dto.roleKey)) {
+        throw new ProfileInvalidForBranchException(dto.roleKey, 'unknown');
+      }
+      if (!isProfileValidForBranch(dto.roleKey, branch.branchType)) {
+        throw new ProfileInvalidForBranchException(
+          dto.roleKey,
+          branch.branchType,
+        );
+      }
+    }
+    if (dto.moduleId !== undefined && dto.moduleId !== null) {
+      await this.assertModuleEnabledForBranch(tenantId, branchId, dto.moduleId);
+      this.assertModuleInRoleTemplate(targetRole, dto.moduleId);
+    }
+
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      if (dto.isDefault === true) {
+        await tx.userBranchProfile.updateMany({
+          where: { tenantId, personId, isDefault: true },
+          data: { isDefault: false },
+        });
+      }
+      const data: Prisma.UserBranchProfileUpdateInput = {};
+      if (dto.roleKey !== undefined) data.profileKey = dto.roleKey;
+      if (dto.branchStatus !== undefined) data.branchStatus = dto.branchStatus;
+      if (dto.isDefault !== undefined) data.isDefault = dto.isDefault;
+      if (dto.moduleId !== undefined) {
+        data.defaultModuleId = dto.moduleId ?? null;
+      }
+      const updated = await tx.userBranchProfile.update({
+        where: { id: existing.id },
+        data,
+      });
+      await this.eventEmitter.emitAsync('users.branch.assignment.updated', {
+        tenantId,
+        personId,
+        branchId,
+        actorId,
+      });
+      return updated;
+    });
+  }
+
+  /**
+   * Global deactivate: set the tenant-global membership status to INACTIVE,
+   * blocking login tenant-wide. Branch statuses and all records are preserved.
+   */
+  async deactivateUser(
+    tenantId: string,
+    personId: string,
+    actorId: string,
+  ): Promise<TenantStaffMembership> {
+    return this.setMembershipStatus(
+      tenantId,
+      personId,
+      StaffStatus.INACTIVE,
+      actorId,
+    );
+  }
+
+  /** Global activate: restore the membership status to ACTIVE. */
+  async activateUser(
+    tenantId: string,
+    personId: string,
+    actorId: string,
+  ): Promise<TenantStaffMembership> {
+    return this.setMembershipStatus(
+      tenantId,
+      personId,
+      StaffStatus.ACTIVE,
+      actorId,
+    );
+  }
+
+  /**
+   * Resolve the module-grouped permissions for a (user + branch). The baseline is
+   * the role assigned at **that branch** (UserBranchProfile.profileKey). Only
+   * modules enabled for the branch are returned; effective `allowed` =
+   * override ?? the role baseline.
+   */
+  async getBranchPermissions(
+    tenantId: string,
+    personId: string,
+    branchId: string,
+  ): Promise<ResolvedBranchPermission[]> {
+    await this.getMembership(tenantId, personId);
+    await this.branchService.findById(branchId, tenantId);
+    const profile = await this.prisma.userBranchProfile.findFirst({
+      where: { tenantId, personId, branchId, isActive: true, deletedAt: null },
+    });
+    if (!profile) {
+      return [];
+    }
+    const enabledModules = await this.getActiveBranchModuleKeys(
+      tenantId,
+      branchId,
+    );
+    if (enabledModules.size === 0) {
+      return [];
+    }
+    const baseline = roleBaselinePermissions(profile.profileKey);
+    const overrides = await this.prisma.userBranchPermission.findMany({
+      where: { tenantId, personId, branchId, deletedAt: null },
+    });
+    const overrideMap = new Map(
+      overrides.map((o) => [o.permissionKey, o.allowed]),
+    );
+
+    return MODULE_PERMISSION_CATALOG.filter((e) =>
+      enabledModules.has(e.moduleKey),
+    ).map((e) => {
+      const base = baseline.has(e.permissionKey);
+      const override = overrideMap.get(e.permissionKey);
       return {
-        code: entry.code,
-        name: entry.name,
-        group: entry.group,
-        baselineValue,
-        override,
-        effectiveValue,
+        moduleKey: e.moduleKey,
+        moduleLabel: moduleLabel(e.moduleKey),
+        permissionKey: e.permissionKey,
+        label: e.label,
+        baseline: base,
+        allowed: override ?? base,
       };
     });
   }
 
   /**
-   * Replace all permission overrides for a profile assignment. Entries with
-   * `inherit` are dropped (no row = inherit).
+   * Replace the (user + branch) permission grants. Accepts only modules enabled
+   * for the branch; supports Select-All/Deselect-All (client sends the full set).
    */
-  async setProfilePermissions(
+  async updateBranchPermissions(
     tenantId: string,
     personId: string,
-    branchId: string | null,
-    profileKey: string,
-    overrides: Array<{ code: string; override: 'allow' | 'deny' | 'inherit' }>,
+    dto: UpdateBranchPermissionsDto,
     setBy: string,
   ): Promise<void> {
-    const toStore = overrides
-      .filter((o) => o.override === 'allow' || o.override === 'deny')
-      .map((o) => ({
-        tenantId,
-        personId,
-        branchId: branchId ?? null,
-        profileKey,
-        permissionCode: o.code,
-        override: o.override,
-        setBy,
-      }));
+    await this.getMembership(tenantId, personId);
+    await this.branchService.findById(dto.branchId, tenantId);
+    const enabledModules = await this.getActiveBranchModuleKeys(
+      tenantId,
+      dto.branchId,
+    );
+    const validKeys = new Map(
+      MODULE_PERMISSION_CATALOG.map((e) => [e.permissionKey, e.moduleKey]),
+    );
 
-    await this.prisma.$transaction([
-      this.prisma.userProfilePermissionOverride.deleteMany({
-        where: { tenantId, personId, branchId: branchId ?? null, profileKey },
-      }),
-      this.prisma.userProfilePermissionOverride.createMany({ data: toStore }),
-    ]);
+    for (const item of dto.items) {
+      if (!isValidModuleKey(item.moduleKey)) {
+        throw new InvalidModuleKeyException(item.moduleKey);
+      }
+      if (!enabledModules.has(item.moduleKey)) {
+        throw new ModuleNotEnabledForBranchException(
+          item.moduleKey,
+          dto.branchId,
+        );
+      }
+      if (validKeys.get(item.permissionKey) !== item.moduleKey) {
+        throw new InvalidModuleKeyException(item.moduleKey);
+      }
+    }
+
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      await tx.userBranchPermission.deleteMany({
+        where: { tenantId, personId, branchId: dto.branchId },
+      });
+      if (dto.items.length > 0) {
+        await tx.userBranchPermission.createMany({
+          data: dto.items.map((item) => ({
+            tenantId,
+            personId,
+            branchId: dto.branchId,
+            moduleKey: item.moduleKey,
+            permissionKey: item.permissionKey,
+            allowed: item.allowed,
+            setBy,
+          })),
+        });
+      }
+    });
     this.logger.log(
-      `Permission overrides updated for person ${personId} profile ${profileKey} by ${setBy}`,
+      `Branch permissions updated for person ${personId} branch ${dto.branchId} by ${setBy}`,
     );
   }
 
   /**
-   * Doctors mapped to a receptionist at a branch (with display names).
+   * Permissions screen listing: one row per (globally-Active user + branch).
+   * Status is always Active in this view (inactive users are excluded).
    */
-  async getReceptionistDoctors(
+  async listProfilePermissions(
     tenantId: string,
-    receptionistPersonId: string,
-    branchId: string,
-  ): Promise<
-    Array<{ personId: string; firstName: string; lastName: string | null }>
-  > {
-    const mappings = await this.prisma.receptionistDoctorMapping.findMany({
-      where: { tenantId, branchId, receptionistPersonId, deletedAt: null },
+  ): Promise<ProfilePermissionRow[]> {
+    const memberships = await this.prisma.tenantStaffMembership.findMany({
+      where: { tenantId, deletedAt: null, status: StaffStatus.ACTIVE },
     });
-    if (mappings.length === 0) {
+    if (memberships.length === 0) {
       return [];
     }
-    const doctors = await this.prisma.person.findMany({
-      where: { id: { in: mappings.map((m) => m.doctorPersonId) } },
-    });
-    return doctors.map((d) => ({
-      personId: d.id,
-      firstName: d.firstName,
-      lastName: d.lastName,
-    }));
-  }
-
-  /**
-   * Replace the doctor mappings for a receptionist at a branch. Each doctor
-   * must be an active `doctor` at that branch. Empty array clears mappings.
-   */
-  async setReceptionistDoctors(
-    tenantId: string,
-    receptionistPersonId: string,
-    branchId: string,
-    doctorPersonIds: string[],
-    assignedBy: string,
-  ): Promise<void> {
-    for (const doctorId of doctorPersonIds) {
-      const assignment = await this.findExistingProfile(
-        tenantId,
-        doctorId,
-        branchId,
-        'doctor',
-      );
-      if (!assignment || !assignment.isActive) {
-        throw new ProfileNotFoundException(doctorId, branchId);
-      }
-    }
-
-    await this.prisma.$transaction([
-      this.prisma.receptionistDoctorMapping.deleteMany({
-        where: { tenantId, branchId, receptionistPersonId },
+    const personIds = memberships.map((m) => m.personId);
+    const membershipMap = new Map(memberships.map((m) => [m.personId, m]));
+    const [credentials, profiles] = await Promise.all([
+      this.prisma.personCredentials.findMany({
+        where: { personId: { in: personIds } },
       }),
-      this.prisma.receptionistDoctorMapping.createMany({
-        data: doctorPersonIds.map((doctorPersonId) => ({
+      this.prisma.userBranchProfile.findMany({
+        where: {
           tenantId,
-          branchId,
-          receptionistPersonId,
-          doctorPersonId,
-          assignedBy,
-        })),
+          personId: { in: personIds },
+          isActive: true,
+          deletedAt: null,
+          branchId: { not: null },
+        },
       }),
     ]);
+    const credMap = new Map(credentials.map((c) => [c.personId, c]));
+    const branchIds = [
+      ...new Set(
+        profiles.map((p) => p.branchId).filter((b): b is string => !!b),
+      ),
+    ];
+    const branches = await this.prisma.branch.findMany({
+      where: { id: { in: branchIds }, tenantId },
+    });
+    const branchNameMap = new Map(branches.map((b) => [b.id, b.name]));
+
+    return profiles.map((p) => {
+      const m = membershipMap.get(p.personId);
+      const cred = credMap.get(p.personId);
+      return {
+        id: p.id,
+        userCode: m?.userCode ?? '',
+        username: cred?.systemUsername ?? null,
+        role: p.profileKey,
+        roleLabel: PROFILE_LABELS[p.profileKey as ProfileKey] ?? p.profileKey,
+        branch: p.branchId ? (branchNameMap.get(p.branchId) ?? '') : '',
+        status: StaffStatus.ACTIVE,
+      };
+    });
+  }
+
+  // ── v2.0 private helpers ─────────────────────────────────────────────────────
+
+  /** Throw UnderageUserException if the DOB is younger than the minimum age. */
+  private assertAdult(dob: string): void {
+    const d = new Date(dob);
+    const now = new Date();
+    const threshold = new Date(
+      now.getFullYear() - MIN_USER_AGE,
+      now.getMonth(),
+      now.getDate(),
+    );
+    if (Number.isNaN(d.getTime()) || d.getTime() > threshold.getTime()) {
+      throw new UnderageUserException(MIN_USER_AGE);
+    }
+  }
+
+  /** Ownership guard: owner tenant, self, or self-registered. */
+  private assertCanEdit(
+    person: Person,
+    tenantId: string,
+    actorId: string,
+  ): void {
+    const isOwner = person.ownerTenantId === tenantId;
+    const isSelf = actorId === person.id;
+    const isSelfRegistered = person.ownerTenantId === null;
+    if (!isOwner && !isSelf && !isSelfRegistered) {
+      throw new NotOwnerTenantException(tenantId, person.id);
+    }
+  }
+
+  /** Fetch the tenant membership for a person or throw. */
+  private async getMembership(
+    tenantId: string,
+    personId: string,
+  ): Promise<TenantStaffMembership> {
+    const m = await this.prisma.tenantStaffMembership.findFirst({
+      where: { tenantId, personId, deletedAt: null },
+    });
+    if (!m) {
+      throw new StaffMembershipNotFoundException(personId, tenantId);
+    }
+    return m;
+  }
+
+  /** Set the tenant-global membership status and emit an event. */
+  private async setMembershipStatus(
+    tenantId: string,
+    personId: string,
+    status: StaffStatus,
+    actorId: string,
+  ): Promise<TenantStaffMembership> {
+    const membership = await this.getMembership(tenantId, personId);
+    const updated = await this.prisma.tenantStaffMembership.update({
+      where: { id: membership.id },
+      data: { status },
+    });
+    await this.eventEmitter.emitAsync('users.user.status.changed', {
+      tenantId,
+      personId,
+      status,
+      actorId,
+    });
+    return updated;
+  }
+
+  /** Throw UsernameTakenException if the username is already in use. */
+  private async assertUsernameUnique(username: string): Promise<void> {
+    const existing = await this.prisma.personCredentials.findFirst({
+      where: { systemUsername: username, deletedAt: null },
+      select: { id: true },
+    });
+    if (existing) {
+      throw new UsernameTakenException(username);
+    }
+  }
+
+  /** Throw PersonPhoneTakenException if the phone belongs to a different person. */
+  private async assertPhoneUnique(
+    phone: string,
+    excludePersonId: string,
+  ): Promise<void> {
+    const existing = await this.prisma.person.findFirst({
+      where: { phone, deletedAt: null },
+      select: { id: true },
+    });
+    if (existing && existing.id !== excludePersonId) {
+      throw new PersonPhoneTakenException(phone);
+    }
+  }
+
+  /** The module keys enabled (and not soft-deleted) for a branch. */
+  private async getActiveBranchModuleKeys(
+    tenantId: string,
+    branchId: string,
+  ): Promise<Set<string>> {
+    const rows = await this.prisma.branchModule.findMany({
+      where: { tenantId, branchId, isEnabled: true, deletedAt: null },
+      select: { moduleKey: true },
+    });
+    return new Set(rows.map((r) => r.moduleKey));
+  }
+
+  /** Validate a module key exists and is enabled for the branch. */
+  private async assertModuleEnabledForBranch(
+    tenantId: string,
+    branchId: string,
+    moduleKey: string,
+  ): Promise<void> {
+    if (!isValidModuleKey(moduleKey)) {
+      throw new InvalidModuleKeyException(moduleKey);
+    }
+    const enabled = await this.getActiveBranchModuleKeys(tenantId, branchId);
+    if (!enabled.has(moduleKey)) {
+      throw new ModuleNotEnabledForBranchException(moduleKey, branchId);
+    }
   }
 
   /**
-   * Reset a staff member's password; returns a one-time temp password.
+   * If a role template links specific modules, the chosen module must be one of
+   * them. Templates with no linked modules accept any (branch-enabled) module.
    */
-  async resetStaffPassword(
-    personId: string,
+  private assertModuleInRoleTemplate(roleKey: string, moduleKey: string): void {
+    const linked = roleTemplateModules(roleKey);
+    if (linked.length > 0 && !linked.includes(moduleKey)) {
+      throw new ModuleNotInRoleTemplateException(moduleKey, roleKey);
+    }
+  }
+
+  /**
+   * Validate + normalise a list of branch assignments. Each item carries its own
+   * role (falling back to the membership's optional primary role); the role must be
+   * branch-level and valid for the branch type, the branch must belong to the
+   * tenant, any module must be enabled (and linked to the role template), and at
+   * most one branch may be default (the first is defaulted when none is flagged).
+   */
+  private async prepareBranchAssignments(
     tenantId: string,
-    actorId: string,
-  ): Promise<{ tempPassword: string; loginIdentifier: string }> {
-    const person = await this.findById(personId);
-    const credentials = await this.prisma.personCredentials.findUnique({
-      where: { personId },
-    });
-    if (!credentials) {
-      throw new PersonNotFoundException(personId);
+    fallbackRoleKey: string | null,
+    items: BranchAssignmentItemDto[],
+  ): Promise<PreparedAssignment[]> {
+    if (items.length === 0) {
+      return [];
     }
 
-    const tempPassword = this.passwordService.generateTempPassword();
-    const passwordHash = await this.passwordService.hash(tempPassword);
-    const loginIdentifier =
-      person.phone ?? person.email ?? credentials.systemUsername ?? personId;
+    const byBranch = new Map<string, BranchAssignmentItemDto>();
+    for (const it of items) {
+      byBranch.set(it.branchId, it);
+    }
+    const unique = [...byBranch.values()];
+    const defaultsCount = unique.filter((i) => i.isDefault).length;
+    if (defaultsCount > 1) {
+      throw new MultipleDefaultBranchException();
+    }
 
-    await this.prisma.personCredentials.update({
-      where: { personId },
-      data: {
-        passwordHash,
-        isTempPassword: true,
-        failedAttempts: 0,
-        lockedUntil: null,
-      },
-    });
-    await this.eventEmitter.emitAsync('users.password.reset', {
-      personId,
-      tenantId,
-      resetBy: actorId,
-    });
-    return { tempPassword, loginIdentifier };
+    const prepared: PreparedAssignment[] = [];
+    for (const [idx, it] of unique.entries()) {
+      const roleKey = it.roleKey ?? fallbackRoleKey;
+      if (!roleKey || !isValidProfileKey(roleKey)) {
+        throw new ProfileInvalidForBranchException(
+          roleKey ?? 'none',
+          'unknown',
+        );
+      }
+      const isTenantLevel = (PROFILE_BRANCH_MATRIX[roleKey] ?? []).length === 0;
+      if (isTenantLevel) {
+        throw new ProfileInvalidForBranchException(
+          roleKey,
+          'none — this is a tenant-level role and cannot be assigned to a branch',
+        );
+      }
+      const branch = await this.branchService.findById(it.branchId, tenantId);
+      if (!isProfileValidForBranch(roleKey, branch.branchType)) {
+        throw new ProfileInvalidForBranchException(roleKey, branch.branchType);
+      }
+      let moduleId: string | null = null;
+      if (it.moduleId) {
+        await this.assertModuleEnabledForBranch(
+          tenantId,
+          it.branchId,
+          it.moduleId,
+        );
+        this.assertModuleInRoleTemplate(roleKey, it.moduleId);
+        moduleId = it.moduleId;
+      }
+      prepared.push({
+        branchId: it.branchId,
+        profileKey: roleKey,
+        isDefault: defaultsCount === 0 ? idx === 0 : !!it.isDefault,
+        defaultModuleId: moduleId,
+        branchStatus: it.branchStatus ?? StaffStatus.ACTIVE,
+      });
+    }
+    return prepared;
   }
 
-  // ── Private helpers ────────────────────────────────────────────────────────
-
-  /** Find an active-or-inactive assignment for (person, branch, profile). */
-  private findExistingProfile(
-    tenantId: string,
-    personId: string,
-    branchId: string | null,
-    profileKey: string,
-  ): Promise<UserBranchProfile | null> {
-    return this.prisma.userBranchProfile.findFirst({
-      where: {
-        tenantId,
-        personId,
-        branchId: branchId ?? null,
-        profileKey,
-        deletedAt: null,
-      },
-    });
+  /** Apply search/branch/role/module filters to the assembled user rows. */
+  private applyUserListFilters(
+    rows: UserListRow[],
+    query: ListUsersQueryDto,
+    profilesByPerson: Map<string, UserBranchProfile[]>,
+  ): UserListRow[] {
+    let out = rows;
+    if (query.search) {
+      const q = query.search.toLowerCase();
+      out = out.filter(
+        (r) =>
+          r.employeeName.toLowerCase().includes(q) ||
+          (r.username ?? '').toLowerCase().includes(q) ||
+          (r.email ?? '').toLowerCase().includes(q) ||
+          r.userCode.toLowerCase().includes(q),
+      );
+    }
+    if (query.branchId) {
+      const branchId = query.branchId;
+      out = out.filter((r) =>
+        (profilesByPerson.get(r.id) ?? []).some((p) => p.branchId === branchId),
+      );
+    }
+    if (query.role) {
+      const role = query.role;
+      // Role is per-branch: match any of the user's branch roles (or the primary).
+      out = out.filter(
+        (r) =>
+          r.role === role ||
+          (profilesByPerson.get(r.id) ?? []).some((p) => p.profileKey === role),
+      );
+    }
+    if (query.moduleKey) {
+      const mk = query.moduleKey;
+      out = out.filter((r) =>
+        (profilesByPerson.get(r.id) ?? []).some(
+          (p) => p.defaultModuleId === mk,
+        ),
+      );
+    }
+    return out;
   }
 
-  /** Clear the default flag from all of a person's profiles in a tenant. */
-  private async clearDefaultFlag(
-    tenantId: string,
-    personId: string,
-  ): Promise<void> {
-    await this.prisma.userBranchProfile.updateMany({
-      where: { tenantId, personId, isDefault: true },
-      data: { isDefault: false },
-    });
+  /** Sort user rows by the requested column/direction (in memory). */
+  private sortUserRows(
+    rows: UserListRow[],
+    sortBy?: UserSortField,
+    sortOrder?: 'asc' | 'desc',
+  ): UserListRow[] {
+    if (!sortBy) {
+      return rows;
+    }
+    const dir = sortOrder === 'desc' ? -1 : 1;
+    const val = (r: UserListRow): string => {
+      switch (sortBy) {
+        case 'userCode':
+          return r.userCode;
+        case 'employeeName':
+          return r.employeeName;
+        case 'email':
+          return r.email ?? '';
+        case 'mobile':
+          return r.mobile ?? '';
+        case 'role':
+          return r.roleLabel;
+        case 'assignedBranches':
+          return r.assignedBranches.join(', ');
+        case 'defaultBranch':
+          return r.defaultBranch ?? '';
+        case 'defaultModule':
+          return r.defaultModule ?? '';
+        case 'status':
+          return r.status;
+        default:
+          return '';
+      }
+    };
+    return [...rows].sort((a, b) => val(a).localeCompare(val(b)) * dir);
+  }
+
+  /** Decrypt and mask an Aadhaar value for display (XXXX-XXXX-1234). */
+  private maskAadhaar(enc: string | null): string | null {
+    if (!enc) {
+      return null;
+    }
+    try {
+      const digits = this.encryptionService.decrypt(enc);
+      if (digits.length < 4) {
+        return 'XXXX-XXXX-XXXX';
+      }
+      return `XXXX-XXXX-${digits.slice(-4)}`;
+    } catch {
+      return null;
+    }
   }
 
   /** Throw if the phone/email is already registered to another person. */

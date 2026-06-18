@@ -64,6 +64,14 @@ CREATE POLICY ubp_tenant_isolation ON user_branch_profiles
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- One active role per (tenant, person, branch): a user holds at most one role at a
+-- given branch (different roles allowed across branches). NULL branch_id rows
+-- (tenant-level profiles) are treated as distinct by Postgres, so they are not
+-- constrained here. Prisma can't express partial unique indexes.
+CREATE UNIQUE INDEX IF NOT EXISTS ubp_person_branch_active_unique
+  ON user_branch_profiles (tenant_id, person_id, branch_id)
+  WHERE deleted_at IS NULL AND is_active = true;
+
 -- ── user_profile_permission_overrides ───────────────────────────────────────────
 ALTER TABLE user_profile_permission_overrides ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_profile_permission_overrides FORCE ROW LEVEL SECURITY;
@@ -660,6 +668,40 @@ CREATE UNIQUE INDEX IF NOT EXISTS referral_panel_settings_name_active_unique
   ON referral_panel_settings (tenant_id, setting_name)
   WHERE deleted_at IS NULL;
 
+-- ── tenant_staff_memberships ──────────────────────────────────────────────────
+ALTER TABLE tenant_staff_memberships ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenant_staff_memberships FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tsm_tenant_isolation ON tenant_staff_memberships;
+CREATE POLICY tsm_tenant_isolation ON tenant_staff_memberships
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- Per-tenant uniqueness for the staff user code among ACTIVE rows only. `user_code`
+-- is system-generated & immutable. Prisma can't express partial unique indexes.
+CREATE UNIQUE INDEX IF NOT EXISTS tsm_tenant_user_code_active_unique
+  ON tenant_staff_memberships (tenant_id, user_code) WHERE deleted_at IS NULL;
+
+-- ── branch_modules ──────────────────────────────────────────────────────────────
+ALTER TABLE branch_modules ENABLE ROW LEVEL SECURITY;
+ALTER TABLE branch_modules FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS branch_modules_tenant_isolation ON branch_modules;
+CREATE POLICY branch_modules_tenant_isolation ON branch_modules
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── user_branch_permissions ───────────────────────────────────────────────────
+ALTER TABLE user_branch_permissions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_branch_permissions FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS ubperm_tenant_isolation ON user_branch_permissions;
+CREATE POLICY ubperm_tenant_isolation ON user_branch_permissions
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- Platform-level tables (tenants, persons, person_credentials, siteadmin_users,
 -- refresh_tokens, person_tenant_enrollments) are intentionally NOT covered —
 -- they sit above the tenant boundary.
+--
+-- NOTE on Person.aadhaar_number / pan_number: no unique index. Aadhaar is stored
+-- encrypted (AES-256-GCM with a random IV → identical inputs yield different
+-- ciphertext), so a uniqueness index would be meaningless; the v2.0 spec requires
+-- format validation, not de-duplication, for these fields.

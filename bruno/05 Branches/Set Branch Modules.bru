@@ -1,0 +1,43 @@
+meta {
+  name: Set Branch Modules
+  type: http
+  seq: 10
+}
+
+put {
+  url: {{baseUrl}}/branches/{{branchId}}/modules
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "modules": [
+      { "moduleKey": "registration", "isEnabled": true },
+      { "moduleKey": "accession", "isEnabled": true },
+      { "moduleKey": "lab_operations", "isEnabled": true },
+      { "moduleKey": "sales", "isEnabled": true },
+      { "moduleKey": "finance", "isEnabled": false }
+    ]
+  }
+}
+
+vars:pre-request {
+  branchId: 37e8cb33-9c10-4778-bc4c-20490e1c0f75
+}
+
+docs {
+  Enable / disable system modules at this branch (upsert per module; the client
+  sends the desired set). This gates which work-area modules can be picked as a
+  user's default module and which appear in the per-user permission modal for
+  the branch. `isEnabled` defaults to true when omitted. `moduleKey` must be one
+  of the 12 master modules (see Users → User Management v2 → List Modules).
+}

@@ -19,6 +19,18 @@ export const configuration = () => ({
     // Days an audit row is kept before the daily purge hard-deletes it.
     retentionDays: parseInt(process.env.AUDIT_RETENTION_DAYS ?? '90', 10),
   },
+  encryption: {
+    // AES-256-GCM key (64 hex chars) for at-rest field encryption (e.g. Aadhaar).
+    key: process.env.ENCRYPTION_KEY,
+  },
+  upload: {
+    // Where profile photos are written, and the max allowed size in bytes.
+    dir: process.env.UPLOAD_DIR ?? './uploads',
+    maxBytes: parseInt(
+      process.env.MAX_UPLOAD_BYTES ?? `${2 * 1024 * 1024}`,
+      10,
+    ),
+  },
 });
 
 export type AppConfiguration = ReturnType<typeof configuration>;

@@ -1,0 +1,34 @@
+meta {
+  name: Get Branch Permissions
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/users/manage/{{manageUserId}}/branch-permissions?branchId={{branchId}}
+  body: none
+  auth: bearer
+}
+
+params:query {
+  branchId: {{branchId}}
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchId: 37e8cb33-9c10-4778-bc4c-20490e1c0f75
+  manageUserId: 1631b376-ce6f-438e-89b3-390dd45029b9
+}
+
+docs {
+  Resolve the module-grouped permissions for a (user + branch). The baseline is
+  the role assigned at **that branch** (UserBranchProfile.profileKey) — so the same
+  user can resolve different permissions at different branches. Only modules
+  **enabled for the branch** are returned. Each row: `moduleKey`, `moduleLabel`,
+  `permissionKey`, `label`, `baseline` (from the branch's role), and `allowed`
+  (effective = stored grant ?? baseline). Returns an empty list if the user has no
+  active assignment at the branch or no modules are enabled.
+}

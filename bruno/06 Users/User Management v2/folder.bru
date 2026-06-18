@@ -1,0 +1,32 @@
+meta {
+  name: User Management v2
+  seq: 20
+}
+
+docs {
+  # User Management v2.0
+
+  Staff user lifecycle (CLAUDE.md §-users, MIGRATION-PLAN.md §9). Mounted under
+  `users/manage` so it never collides with the legacy person/patient routes.
+
+  **Identity** lives on the platform `Person` (Aadhaar encrypted at rest);
+  **employment** (sequential `USR-00001` code, Internal/External type, role,
+  tenant-global status) lives on `TenantStaffMembership`; **branch assignments**
+  (per-branch status + default work-area module) on `UserBranchProfile`; and
+  **permissions** are module-grouped per (user + branch) in
+  `user_branch_permissions`.
+
+  ## Suggested order
+
+  1. **Branches → Set Branch Modules** — enable the work-area modules at the
+     branch first (the default module + permission modal only show enabled ones).
+  2. **Create User** — captures `manageUserId` + `manageUserCode`.
+  3. **Assign Branches** / **Update Branch Assignment** — multi-branch, default
+     branch, per-branch status, default module.
+  4. **Get / Update Branch Permissions** — module-grouped grants.
+  5. **Deactivate / Activate User** — tenant-global on/off (login backstop).
+  6. **List Users / Get User / List Profile Permissions** — read screens.
+
+  Run **Business Auth → Login** first (as a `business_admin`) so
+  `businessAccessToken` is populated.
+}

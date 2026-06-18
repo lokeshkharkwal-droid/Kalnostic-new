@@ -1,0 +1,20 @@
+meta {
+  name: List Modules
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{baseUrl}}/users/manage/modules
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  The 12 master system modules as `{ key, label, order }` for module dropdowns
+  and filters.
+}

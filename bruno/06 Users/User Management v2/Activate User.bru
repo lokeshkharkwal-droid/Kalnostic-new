@@ -1,0 +1,20 @@
+meta {
+  name: Activate User
+  type: http
+  seq: 9
+}
+
+patch {
+  url: {{baseUrl}}/users/manage/{{manageUserId}}/activate
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Global activate — restores the tenant-global membership status to ACTIVE.
+  Previously-active branch assignments become reachable again.
+}

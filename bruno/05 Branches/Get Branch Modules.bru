@@ -1,0 +1,20 @@
+meta {
+  name: Get Branch Modules
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/branches/{{branchId}}/modules
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  List all 12 system modules with whether each is enabled at this branch
+  (`{ moduleKey, label, isEnabled }`). Modules with no row are reported disabled.
+}
