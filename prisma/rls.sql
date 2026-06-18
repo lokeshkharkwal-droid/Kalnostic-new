@@ -446,6 +446,52 @@ CREATE UNIQUE INDEX IF NOT EXISTS ocbp_assignment_panel_active_unique
   ON outsource_center_branch_panels (tenant_id, assignment_id, lab_panel_id)
   WHERE deleted_at IS NULL;
 
+-- ── referral_panels ───────────────────────────────────────────────────────────
+ALTER TABLE referral_panels ENABLE ROW LEVEL SECURITY;
+ALTER TABLE referral_panels FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS referral_panels_tenant_isolation ON referral_panels;
+CREATE POLICY referral_panels_tenant_isolation ON referral_panels
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- Per-tenant uniqueness for referral-panel name + code, among ACTIVE rows only.
+-- `code` is system-generated & immutable; `name` is user-set. The user-supplied
+-- `panel_code` is optional and unique per tenant only when present. Prisma can't
+-- express partial unique indexes, so they live here.
+CREATE UNIQUE INDEX IF NOT EXISTS referral_panels_tenant_code_active_unique
+  ON referral_panels (tenant_id, code) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS referral_panels_tenant_name_active_unique
+  ON referral_panels (tenant_id, referral_panel_name) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS referral_panels_tenant_panel_code_active_unique
+  ON referral_panels (tenant_id, panel_code)
+  WHERE deleted_at IS NULL AND panel_code IS NOT NULL;
+
+-- ── referral_panel_lab_tests ──────────────────────────────────────────────────
+ALTER TABLE referral_panel_lab_tests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE referral_panel_lab_tests FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS rplt_tenant_isolation ON referral_panel_lab_tests;
+CREATE POLICY rplt_tenant_isolation ON referral_panel_lab_tests
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- A lab test appears at most once per referral panel among ACTIVE rows.
+CREATE UNIQUE INDEX IF NOT EXISTS rplt_panel_test_active_unique
+  ON referral_panel_lab_tests (tenant_id, referral_panel_id, lab_test_id)
+  WHERE deleted_at IS NULL;
+
+-- ── referral_panel_lab_panels ─────────────────────────────────────────────────
+ALTER TABLE referral_panel_lab_panels ENABLE ROW LEVEL SECURITY;
+ALTER TABLE referral_panel_lab_panels FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS rplp_tenant_isolation ON referral_panel_lab_panels;
+CREATE POLICY rplp_tenant_isolation ON referral_panel_lab_panels
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- A lab panel appears at most once per referral panel among ACTIVE rows.
+CREATE UNIQUE INDEX IF NOT EXISTS rplp_panel_labpanel_active_unique
+  ON referral_panel_lab_panels (tenant_id, referral_panel_id, lab_panel_id)
+  WHERE deleted_at IS NULL;
+
 -- ── doctors ─────────────────────────────────────────────────────────────────────
 ALTER TABLE doctors ENABLE ROW LEVEL SECURITY;
 ALTER TABLE doctors FORCE ROW LEVEL SECURITY;
@@ -475,6 +521,144 @@ DROP POLICY IF EXISTS doctor_experience_tenant_isolation ON doctor_experience;
 CREATE POLICY doctor_experience_tenant_isolation ON doctor_experience
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── referral_doctors ──────────────────────────────────────────────────────────
+ALTER TABLE referral_doctors ENABLE ROW LEVEL SECURITY;
+ALTER TABLE referral_doctors FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS referral_doctors_tenant_isolation ON referral_doctors;
+CREATE POLICY referral_doctors_tenant_isolation ON referral_doctors
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── referral_doctor_qualifications ────────────────────────────────────────────
+ALTER TABLE referral_doctor_qualifications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE referral_doctor_qualifications FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS referral_doctor_qualifications_tenant_isolation ON referral_doctor_qualifications;
+CREATE POLICY referral_doctor_qualifications_tenant_isolation ON referral_doctor_qualifications
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── referral_doctor_experience ────────────────────────────────────────────────
+ALTER TABLE referral_doctor_experience ENABLE ROW LEVEL SECURITY;
+ALTER TABLE referral_doctor_experience FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS referral_doctor_experience_tenant_isolation ON referral_doctor_experience;
+CREATE POLICY referral_doctor_experience_tenant_isolation ON referral_doctor_experience
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── referral_doctor_lab_tests ─────────────────────────────────────────────────
+ALTER TABLE referral_doctor_lab_tests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE referral_doctor_lab_tests FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS rdlt_tenant_isolation ON referral_doctor_lab_tests;
+CREATE POLICY rdlt_tenant_isolation ON referral_doctor_lab_tests
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- A lab test appears at most once per referral doctor among ACTIVE rows.
+CREATE UNIQUE INDEX IF NOT EXISTS rdlt_doctor_test_active_unique
+  ON referral_doctor_lab_tests (tenant_id, referral_doctor_id, lab_test_id)
+  WHERE deleted_at IS NULL;
+
+-- ── referral_doctor_lab_panels ────────────────────────────────────────────────
+ALTER TABLE referral_doctor_lab_panels ENABLE ROW LEVEL SECURITY;
+ALTER TABLE referral_doctor_lab_panels FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS rdlp_tenant_isolation ON referral_doctor_lab_panels;
+CREATE POLICY rdlp_tenant_isolation ON referral_doctor_lab_panels
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- A lab panel appears at most once per referral doctor among ACTIVE rows.
+CREATE UNIQUE INDEX IF NOT EXISTS rdlp_doctor_labpanel_active_unique
+  ON referral_doctor_lab_panels (tenant_id, referral_doctor_id, lab_panel_id)
+  WHERE deleted_at IS NULL;
+
+-- ── external_referrals ────────────────────────────────────────────────────────
+ALTER TABLE external_referrals ENABLE ROW LEVEL SECURITY;
+ALTER TABLE external_referrals FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS external_referrals_tenant_isolation ON external_referrals;
+CREATE POLICY external_referrals_tenant_isolation ON external_referrals
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── external_referral_lab_tests ───────────────────────────────────────────────
+ALTER TABLE external_referral_lab_tests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE external_referral_lab_tests FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS erlt_tenant_isolation ON external_referral_lab_tests;
+CREATE POLICY erlt_tenant_isolation ON external_referral_lab_tests
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- A lab test appears at most once per external referral among ACTIVE rows.
+CREATE UNIQUE INDEX IF NOT EXISTS erlt_referral_test_active_unique
+  ON external_referral_lab_tests (tenant_id, external_referral_id, lab_test_id)
+  WHERE deleted_at IS NULL;
+
+-- ── external_referral_lab_panels ──────────────────────────────────────────────
+ALTER TABLE external_referral_lab_panels ENABLE ROW LEVEL SECURITY;
+ALTER TABLE external_referral_lab_panels FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS erlp_tenant_isolation ON external_referral_lab_panels;
+CREATE POLICY erlp_tenant_isolation ON external_referral_lab_panels
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- A lab panel appears at most once per external referral among ACTIVE rows.
+CREATE UNIQUE INDEX IF NOT EXISTS erlp_referral_labpanel_active_unique
+  ON external_referral_lab_panels (tenant_id, external_referral_id, lab_panel_id)
+  WHERE deleted_at IS NULL;
+
+-- ── internal_referrals ────────────────────────────────────────────────────────
+ALTER TABLE internal_referrals ENABLE ROW LEVEL SECURITY;
+ALTER TABLE internal_referrals FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS internal_referrals_tenant_isolation ON internal_referrals;
+CREATE POLICY internal_referrals_tenant_isolation ON internal_referrals
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── internal_referral_lab_tests ───────────────────────────────────────────────
+ALTER TABLE internal_referral_lab_tests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE internal_referral_lab_tests FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS irlt_tenant_isolation ON internal_referral_lab_tests;
+CREATE POLICY irlt_tenant_isolation ON internal_referral_lab_tests
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- A lab test appears at most once per internal referral among ACTIVE rows.
+CREATE UNIQUE INDEX IF NOT EXISTS irlt_referral_test_active_unique
+  ON internal_referral_lab_tests (tenant_id, internal_referral_id, lab_test_id)
+  WHERE deleted_at IS NULL;
+
+-- ── internal_referral_lab_panels ──────────────────────────────────────────────
+ALTER TABLE internal_referral_lab_panels ENABLE ROW LEVEL SECURITY;
+ALTER TABLE internal_referral_lab_panels FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS irlp_tenant_isolation ON internal_referral_lab_panels;
+CREATE POLICY irlp_tenant_isolation ON internal_referral_lab_panels
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- A lab panel appears at most once per internal referral among ACTIVE rows.
+CREATE UNIQUE INDEX IF NOT EXISTS irlp_referral_labpanel_active_unique
+  ON internal_referral_lab_panels (tenant_id, internal_referral_id, lab_panel_id)
+  WHERE deleted_at IS NULL;
+
+-- ── referral_panel_settings ───────────────────────────────────────────────────
+ALTER TABLE referral_panel_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE referral_panel_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS referral_panel_settings_tenant_isolation ON referral_panel_settings;
+CREATE POLICY referral_panel_settings_tenant_isolation ON referral_panel_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- At most one default settings template per (tenant, client_type) among ACTIVE
+-- (non-deleted) rows. The service also clears the prior default in a transaction.
+CREATE UNIQUE INDEX IF NOT EXISTS referral_panel_settings_default_active_unique
+  ON referral_panel_settings (tenant_id, client_type)
+  WHERE is_default = TRUE AND deleted_at IS NULL;
+
+-- `setting_name` unique per tenant among ACTIVE rows (a value freed by a
+-- soft-delete can be reused). Prisma can't express a partial unique index.
+CREATE UNIQUE INDEX IF NOT EXISTS referral_panel_settings_name_active_unique
+  ON referral_panel_settings (tenant_id, setting_name)
+  WHERE deleted_at IS NULL;
 
 -- Platform-level tables (tenants, persons, person_credentials, siteadmin_users,
 -- refresh_tokens, person_tenant_enrollments) are intentionally NOT covered —

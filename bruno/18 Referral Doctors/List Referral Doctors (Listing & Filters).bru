@@ -1,0 +1,60 @@
+meta {
+  name: List Referral Doctors (Listing & Filters)
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/referral-doctors?page=1&limit=20&search=Rahul Verma
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  search: Rahul Verma
+  ~departmentId: 00000000-0000-0000-0000-000000000000
+  ~categoryId: 00000000-0000-0000-0000-000000000000
+  ~status: ACTIVE
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Listing screen for the tenant's referral doctors. Paginated (offset; `page` /
+  `limit`, pagination lands in `meta` as `total` / `page` / `limit` /
+  `totalPages`). Newest first.
+
+  ## Search by doctor name
+
+  - `search` — searches by **doctor name**. The value is split on whitespace and
+    EACH token must match some name part — `firstName`, `middleName`, **OR**
+    `lastName` (case-insensitive `contains`), with `mobileNumber` as a fallback.
+    So `Rahul Verma` matches a doctor whose first name is "Rahul" and last name is
+    "Verma", while a single token (`Rahul`) matches any part. Whitespace-only
+    values are ignored; omit it to list all.
+
+  ## Filters (all optional — toggle the `~` to enable a query param)
+
+  - `departmentId` — linked department (UUID).
+  - `categoryId` — linked Specialty/category (UUID).
+  - `status` — `ACTIVE` | `INACTIVE`.
+
+  ## Row shape (trimmed listing projection)
+
+  Each row contains ONLY: `id`, `fullName` (composed first/middle/last),
+  `mobileNumber`, `email`, `department` (`{ id, name }` or `null`), `specialty`
+  (the linked category `{ id, name }`, or `null`), `superSpecialty` (the linked
+  sub-category `{ id, name }`, or `null`), `isCommissionApplicable`, and `status`.
+  Fetch the full record (all fields, qualifications, experiences, assigned lab
+  tests/panels, derived `age`/`duration`) via "Get Referral Doctor".
+}

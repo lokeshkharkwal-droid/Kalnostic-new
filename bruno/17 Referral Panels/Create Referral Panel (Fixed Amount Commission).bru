@@ -1,0 +1,48 @@
+meta {
+  name: Create Referral Panel (Fixed Amount Commission)
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/referral-panels
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Metro Health Referrals",
+    "clientType": "CASH",
+    "branchId": "{{branchId}}",
+    "isCommissionApplicable": true,
+    "commissionType": "FIXED_AMOUNT",
+    "fixedCommissionCycle": "MONTHLY",
+    "fixedAmount": 15000,
+    "isTdsApplicable": false,
+    "paymentCycle": "MONTHLY",
+    "paymentMode": "CASH",
+    "monthlyTargetAmount": 100000
+  }
+}
+
+docs {
+  Create a referral panel with **fixed-amount** commission.
+
+  - `commissionType: "FIXED_AMOUNT"` requires `fixedCommissionCycle`
+    (`ORDER_WISE` | `MONTHLY` | `QUARTERLY` | `HALF_YEARLY` | `ANNUALLY`).
+  - `fixedAmount` is required for every cycle **except** `ORDER_WISE` (which pays
+    per order, so no fixed amount). Sending `FIXED_AMOUNT` without a cycle, or a
+    non-`ORDER_WISE` cycle without `fixedAmount`, returns 422
+    `REFERRAL_PANEL_INVALID_COMMISSION_CONFIG`.
+
+  Percentage and slab fields are ignored/nulled for this commission type.
+}

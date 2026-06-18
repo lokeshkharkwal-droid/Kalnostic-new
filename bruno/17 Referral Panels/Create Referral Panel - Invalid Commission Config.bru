@@ -1,0 +1,56 @@
+meta {
+  name: Create Referral Panel - Invalid Commission Config
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/referral-panels
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Broken Commission Clinic",
+    "clientType": "PREPAID",
+    "isCommissionApplicable": true,
+    "commissionType": "SLAB_BASED",
+    "commissionSlabs": []
+  }
+}
+
+tests {
+  test("422 Unprocessable Entity", function () {
+    expect(res.getStatus()).to.equal(422);
+  });
+  test("commission-config error code", function () {
+    expect(res.getBody().error.code).to.equal("REFERRAL_PANEL_INVALID_COMMISSION_CONFIG");
+  });
+}
+
+docs {
+  Negative test: `commissionType: "SLAB_BASED"` with an empty `commissionSlabs`
+  array. The service rejects it with 422
+  `REFERRAL_PANEL_INVALID_COMMISSION_CONFIG`.
+
+  Other configurations that trigger the same error:
+  - `isCommissionApplicable: true` with no `commissionType`.
+  - `commissionType: "FIXED_AMOUNT"` with no `fixedCommissionCycle`.
+  - `commissionType: "FIXED_AMOUNT"`, a non-`ORDER_WISE` cycle, and no
+    `fixedAmount`.
+  - `isIncentiveBonusApplicable: true` with an empty/absent `bonusSlabs` array.
+  - any slab whose `monthlyBusinessFrom` exceeds its `monthlyBusinessTo`.
+
+  (Note: the create DTO's `@ValidateIf` rules also catch some of these at the
+  validation layer with a 400 before reaching the service — the service check is
+  the authoritative backstop and the only path on updates.)
+}

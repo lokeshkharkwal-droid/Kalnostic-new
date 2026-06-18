@@ -1,0 +1,47 @@
+meta {
+  name: Update Referral Panel Settings
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{baseUrl}}/referral-panel-settings/{{referralPanelSettingsId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "settingName": "Standard Postpaid Terms (Revised)",
+    "creditLimitAmount": 250000,
+    "creditAllowedDays": 45,
+    "isAutoInvoice": false,
+    "isAllowManualInvoice": true,
+    "status": "ACTIVE"
+  }
+}
+
+docs {
+  Update a settings template (scoped to the caller's tenant). All fields are
+  optional.
+
+  **`isDefault` / `clientType`** — if the result would be a default for its client
+  type, the previous default for that client type is cleared in the same
+  transaction. Changing `clientType` re-applies the rule for the new type.
+
+  **Bonus rule** — re-validated when `bonusType` is sent, against the merged
+  (existing + patch) amounts (422 `REFERRAL_PANEL_SETTINGS_INVALID_BONUS`).
+
+  Name collisions return 409 `REFERRAL_PANEL_SETTINGS_NAME_CONFLICT`.
+
+  Uses `referralPanelSettingsId` captured by *Create Referral Panel Settings
+  (Postpaid - Credit)*.
+}

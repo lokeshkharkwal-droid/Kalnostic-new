@@ -1,0 +1,42 @@
+meta {
+  name: Get Referral Doctor
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/referral-doctors/{{referralDoctorId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  referralDoctorId: 00000000-0000-0000-0000-000000000000
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Fetch one referral doctor by id (scoped to the caller's tenant). Returns the
+  FULL record — every column plus the linked `department`, `category` (Specialty),
+  and `subCategory` (Super Specialty) (each `{ id, name }` or `null`), the active
+  `qualifications` and `experiences` arrays (ordered by creation time), and the
+  assigned `labTests` / `labPanels` (each enriched with the referenced test/panel
+  name + code).
+
+  Derived, read-only fields are computed server-side:
+  - `fullName` — composed first/middle/last name.
+  - `age` — whole years from `dateOfBirth` (null when no DOB).
+  - each experience's `duration` — e.g. "8 yr 2 mo" (`toDate` null = up to now).
+
+  404 `REFERRAL_DOCTOR_NOT_FOUND` if missing, soft-deleted, or owned by another
+  tenant.
+}

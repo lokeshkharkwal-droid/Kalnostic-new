@@ -103,6 +103,11 @@ export class CreateLabPanelDto {
   @IsOptional()
   franchisePrice?: number;
 
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  commissionPrice?: number;
+
   // ── TAT (hours by default) ────────────────────────────────────────────────────
   @IsInt()
   @Min(0)

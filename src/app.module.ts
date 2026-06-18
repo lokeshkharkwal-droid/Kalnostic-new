@@ -21,7 +21,12 @@ import { MasterDataModule } from './modules/master-data/master-data.module';
 import { LabTestModule } from './modules/lab-test/lab-test.module';
 import { LabPanelModule } from './modules/lab-panel/lab-panel.module';
 import { OutsourceCenterModule } from './modules/outsource-center/outsource-center.module';
+import { ReferralPanelModule } from './modules/referral-panel/referral-panel.module';
+import { ReferralPanelSettingsModule } from './modules/referral-panel-settings/referral-panel-settings.module';
 import { DoctorsModule } from './modules/doctors/doctors.module';
+import { ReferralDoctorModule } from './modules/referral-doctor/referral-doctor.module';
+import { ExternalReferralModule } from './modules/external-referral/external-referral.module';
+import { InternalReferralModule } from './modules/internal-referral/internal-referral.module';
 import { ScheduleModule } from './modules/schedule/schedule.module';
 import { TenantModule } from './modules/tenant/tenant.module';
 import { UsersModule } from './modules/users/users.module';
@@ -68,7 +73,12 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     LabTestModule,
     LabPanelModule,
     OutsourceCenterModule,
+    ReferralPanelModule,
+    ReferralPanelSettingsModule,
     DoctorsModule,
+    ReferralDoctorModule,
+    ExternalReferralModule,
+    InternalReferralModule,
     ScheduleModule,
     TenantModule,
     UsersModule,

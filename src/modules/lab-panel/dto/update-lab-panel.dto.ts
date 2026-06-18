@@ -102,6 +102,11 @@ export class UpdateLabPanelDto {
   @IsInt()
   @Min(0)
   @IsOptional()
+  commissionPrice?: number;
+
+  @IsInt()
+  @Min(0)
+  @IsOptional()
   tatMinValue?: number;
 
   @IsEnum(TatUnit)

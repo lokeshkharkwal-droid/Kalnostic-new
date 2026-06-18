@@ -1,0 +1,46 @@
+meta {
+  name: Create Referral Panel Settings - Invalid Bonus Config
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/referral-panel-settings
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "settingName": "Bad Prepaid Bonus",
+    "clientType": "PREPAID",
+    "bonusType": "PERCENTAGE"
+  }
+}
+
+tests {
+  test("422 Unprocessable Entity", function () {
+    expect(res.getStatus()).to.equal(422);
+  });
+
+  test("error code is REFERRAL_PANEL_SETTINGS_INVALID_BONUS", function () {
+    expect(res.getBody().error.code).to.equal(
+      "REFERRAL_PANEL_SETTINGS_INVALID_BONUS",
+    );
+  });
+}
+
+docs {
+  Negative test: a `bonusType` of `PERCENTAGE` requires `bonusPercentage` (and
+  `FIXED_AMOUNT` requires `bonusFixedAmount`). Omitting the matching amount fails
+  the cross-field check in `ReferralPanelSettingsService` with 422
+  `REFERRAL_PANEL_SETTINGS_INVALID_BONUS`. No row is created.
+}

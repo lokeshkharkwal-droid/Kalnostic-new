@@ -1,0 +1,47 @@
+meta {
+  name: List Referral Panels (Search)
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/referral-panels?page=1&limit=20&search=City
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  search: City
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Paginated list of referral panels in the caller's tenant (newest first).
+
+  ## Search
+
+  - `search` — case-insensitive match against the panel `name` **OR** the
+    user-supplied `panelCode`. Whitespace-only values are ignored. Omit it to list
+    all panels.
+
+  ## Pagination
+
+  - `page` (default 1) / `limit` (default 20, max 100). Pagination info lands in
+    `meta` (`total` / `page` / `limit` / `totalPages`).
+
+  ## Row shape
+
+  Each row is the referral-panel record (scalar columns only). Assigned lab
+  tests/panels are **not** embedded here — fetch them via *Get Referral Panel*.
+}

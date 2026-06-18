@@ -1,0 +1,52 @@
+meta {
+  name: List External Referrals (Listing & Filters)
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/external-referrals?page=1&limit=20&search=Acme
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  search: Acme
+  ~status: ACTIVE
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Listing screen for the tenant's external referrals. Paginated (offset; `page` /
+  `limit`, pagination lands in `meta` as `total` / `page` / `limit` /
+  `totalPages`). Newest first.
+
+  ## Search by name
+
+  - `search` — searches by **referral name**. The value is split on whitespace and
+    EACH token must match the `name` (case-insensitive `contains`), with
+    `organisationName`, `mobileNumber`, and `referralCode` as fallbacks. So a single
+    token (`Acme`) matches any of those parts. Whitespace-only values are ignored;
+    omit it to list all.
+
+  ## Filters (optional — toggle the `~` to enable a query param)
+
+  - `status` — `ACTIVE` | `INACTIVE`.
+
+  ## Row shape (trimmed listing projection)
+
+  Each row contains ONLY: `id`, `name`, `organisationName`, `referralCode`,
+  `mobileNumber`, `email`, `isCommissionApplicable`, and `status`. Fetch the full
+  record (all fields + assigned lab tests/panels) via "Get External Referral".
+}

@@ -1,0 +1,26 @@
+meta {
+  name: Delete Referral Panel
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/referral-panels/{{referralPanelId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Soft-delete a referral panel (sets `deletedAt`). Cascades a soft-delete to its
+  active assigned lab tests and lab panels in the same transaction. Scoped to the
+  caller's tenant.
+
+  Uses `referralPanelId` captured by *Create Referral Panel (Percentage
+  Commission)*. Run this last — once deleted, *Get* / *Update* against the same id
+  return 404 `REFERRAL_PANEL_NOT_FOUND`, and the panel's name / panel code are
+  freed for reuse.
+}

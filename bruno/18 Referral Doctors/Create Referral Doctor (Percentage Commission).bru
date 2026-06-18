@@ -1,0 +1,167 @@
+meta {
+  name: Create Referral Doctor (Percentage Commission)
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/referral-doctors
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "firstName": "Rahul",
+    "middleName": "Kumar",
+    "lastName": "Verma",
+    "gender": "MALE",
+    "dateOfBirth": "1982-09-21",
+    "mobileNumber": "+919900000001",
+    "email": "rahul.verma@example.com",
+    "aadhaarNumber": "123412341234",
+    "panNumber": "ABCDE1234F",
+    "branchId": "{{branchId}}",
+    "medicalLicenseNumber": "DMC-2024-04567",
+    "registrationCouncil": "Delhi Medical Council",
+    "registrationValidTill": "2030-06-30",
+    "qualifications": [
+      { "qualificationType": "Graduate", "degreeName": "MBBS", "institutionName": "AIIMS Delhi", "yearOfCompletion": 2005, "percentageGrade": "72%" },
+      { "qualificationType": "Post Graduate", "degreeName": "MD Medicine", "institutionName": "PGIMER Chandigarh", "yearOfCompletion": 2009, "percentageGrade": "A" }
+    ],
+    "experiences": [
+      { "position": "Consultant Physician", "organisation": "Apollo Hospitals", "fromDate": "2010-06-01", "toDate": "2018-03-31" },
+      { "position": "Senior Consultant", "organisation": "Fortis Healthcare", "fromDate": "2018-04-01" }
+    ],
+    "isCommissionApplicable": true,
+    "commissionType": "PERCENTAGE",
+    "commissionPctLabTest": 10,
+    "commissionPctLabPanel": 7.5,
+    "isTdsApplicable": true,
+    "paymentCycle": "MONTHLY",
+    "paymentMode": "BANK_TRANSFER",
+    "monthlyTargetAmount": 50000,
+    "isIncentiveBonusApplicable": false,
+    "fileName": "referral-agreement.pdf",
+    "fileUrl": "https://files.example.com/referral-doctors/rahul-verma.pdf",
+    "remarks": "Top referring physician for the south zone.",
+    "status": "ACTIVE"
+  }
+}
+
+vars:pre-request {
+  branchId: 9fcbf225-7f94-4b57-b3b4-2127b7f5be78
+}
+
+script:post-response {
+  const responseData = res.getBody();
+  
+  if (responseData && responseData.success && responseData.data) {
+    bru.setVar("referralDoctorId", responseData.data.id);
+  }
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("derived fullName/age are returned", function () {
+    expect(res.getBody().data.fullName).to.equal("Rahul Kumar Verma");
+    expect(res.getBody().data.age).to.be.a("number");
+  });
+  test("nested qualifications + experiences were created", function () {
+    expect(res.getBody().data.qualifications).to.have.lengthOf(2);
+    expect(res.getBody().data.experiences).to.have.lengthOf(2);
+  });
+  test("experience duration is derived", function () {
+    expect(res.getBody().data.experiences[0].duration).to.be.a("string");
+  });
+}
+
+docs {
+  Register an external referring doctor in the caller's tenant (tenant id taken
+  from the JWT, never the body). Tenant-scoped; each doctor may OPTIONALLY be
+  associated with a branch via the nullable `branchId` (see below) — reads remain
+  tenant-wide. Captures `referralDoctorId` for the Get/Update/Delete requests.
+  
+  ## Personal details
+  
+  - `firstName` — REQUIRED (1-255). `middleName`, `lastName` — optional.
+  - `gender` — optional (`MALE` default | `FEMALE` | `OTHER` |
+    `PREFER_NOT_TO_SAY`).
+  - `dateOfBirth` — optional ISO-8601 date (`YYYY-MM-DD`).
+  - `mobileNumber` — REQUIRED. `email`, `aadhaarNumber`, `panNumber` — optional.
+  - `fullName` and `age` are **derived & read-only** — computed from the name
+    parts / DOB and returned in the response (never sent in the body).
+  - `branchId` — OPTIONAL UUID of a branch in the caller's tenant this doctor
+    belongs to. Validated server-side when sent (404 `BRANCH_NOT_FOUND`
+    otherwise); omit or send `null` for a tenant-level (no-branch) doctor. The
+    example uses `{{branchId}}` captured by **05 Branches → Create Branch**.
+  
+  ## Professional details (optional, validated against the tenant)
+  
+  - `departmentId` — active **department** of this tenant (404
+    `DEPARTMENT_NOT_FOUND` otherwise).
+  - `categoryId` — Specialty; active **category** (404 `CATEGORY_NOT_FOUND`).
+  - `subCategoryId` — Super Specialty; active **sub-category** (404
+    `SUB_CATEGORY_NOT_FOUND`).
+  - `medicalLicenseNumber`, `registrationCouncil` (strings),
+    `registrationValidTill` (ISO date).
+  - `referralPanelSettingsId` — optional ref to a *Referral Panel Settings*
+    template in the tenant (folder 21). Validated to belong to the caller's
+    tenant when sent (404 `REFERRAL_PANEL_SETTINGS_NOT_FOUND` otherwise), e.g.
+    `"referralPanelSettingsId": "{{referralPanelSettingsId}}"`.
+  
+  Add them to the body using ids captured by the Departments / Categories /
+  Sub-Categories create requests, e.g. `"departmentId": "{{departmentId}}"`.
+  
+  ## Qualifications & experience (repeatable; REPLACE the set on update)
+  
+  - `qualifications[]` — `qualificationType`, `degreeName`, `institutionName`
+    (strings), `yearOfCompletion` (int 1900-2100), `percentageGrade` (string).
+  - `experiences[]` — `position`, `organisation` (strings), `fromDate`, `toDate`
+    (ISO dates; omit `toDate` = current role). Each row's `duration` is
+    **derived & read-only** in the response.
+  
+  ## Lab lists (optional, multi-select)
+  
+  - `labTestIds` / `labPanelIds` — arrays of active lab-test / lab-panel ids in
+    the tenant (the "lab test list" / "lab panel list" assigned to the doctor).
+    Every id must reference an active row else 422
+    `REFERRAL_DOCTOR_INVALID_LAB_TEST` / `REFERRAL_DOCTOR_INVALID_LAB_PANEL`.
+  
+  ## Commission & TDS
+  
+  `isCommissionApplicable` (default false). When true, `commissionType` is required:
+  - `PERCENTAGE` → set `commissionPctLabTest` / `commissionPctLabPanel` (0-100).
+  - `SLAB_BASED` → send a non-empty `commissionSlabs` array.
+  - `FIXED_AMOUNT` → set `fixedCommissionCycle` (the "Fixed Type"); `fixedAmount`
+    required unless the cycle is `ORDER_WISE`.
+  Inapplicable commission fields are nulled/emptied on save. `isTdsApplicable`
+  default false.
+  
+  ## Payment & incentive
+  
+  - `paymentCycle` (`NA` default | `MONTHLY` | `QUARTERLY` | `HALF_YEARLY` |
+    `ANNUALLY`), `paymentMode` (`BANK_TRANSFER` default | `CASH` | `CHEQUE`),
+    `monthlyTargetAmount` (int, default 0).
+  - `isIncentiveBonusApplicable` (default false; when true send a non-empty
+    `bonusSlabs` array).
+  
+  ## Attachment, remarks & status
+  
+  - `fileName`, `fileUrl` (a URL to an already-uploaded file; no upload is
+    performed here), `remarks`.
+  - `status` — `ACTIVE` (default) | `INACTIVE`.
+  
+  The doctor + its qualifications/experiences + assigned lab tests/panels are
+  created in one transaction.
+}

@@ -1,0 +1,23 @@
+meta {
+  name: Get Referral Panel Settings
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/referral-panel-settings/{{referralPanelSettingsId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Fetch one settings template by id (scoped to the caller's tenant). 404
+  `REFERRAL_PANEL_SETTINGS_NOT_FOUND` if missing or soft-deleted.
+
+  Uses `referralPanelSettingsId` captured by *Create Referral Panel Settings
+  (Postpaid - Credit)*. Run a Create request first, or set the var manually.
+}

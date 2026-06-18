@@ -1,0 +1,32 @@
+meta {
+  name: Delete Referral Doctor
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/referral-doctors/{{referralDoctorId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  referralDoctorId: 00000000-0000-0000-0000-000000000000
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Soft-delete a referral doctor (sets `deletedAt`) and cascade soft-deletes its
+  active qualifications, experiences, and assigned lab tests/panels, in one
+  transaction. Scoped to the caller's tenant. 404 `REFERRAL_DOCTOR_NOT_FOUND` if
+  missing, already soft-deleted, or owned by another tenant.
+}

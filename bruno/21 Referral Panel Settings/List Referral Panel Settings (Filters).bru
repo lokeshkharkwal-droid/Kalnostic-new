@@ -1,0 +1,48 @@
+meta {
+  name: List Referral Panel Settings (Filters)
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/referral-panel-settings?page=1&limit=20&clientType=POSTPAID&status=ACTIVE&search=Standard
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  clientType: POSTPAID
+  status: ACTIVE
+  search: Standard
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Paginated list of referral panel settings templates in the caller's tenant
+  (newest first). Scoped by tenant only.
+
+  ## Filters
+
+  - `clientType` — `CASH` | `PREPAID` | `POSTPAID`.
+  - `status` — `ACTIVE` | `INACTIVE`.
+  - `search` — case-insensitive match against `settingName`. Whitespace-only
+    values are ignored.
+
+  All three are optional and combine (AND). Omit them to list everything.
+
+  ## Pagination
+
+  - `page` (default 1) / `limit` (default 20, max 100). Pagination info lands in
+    `meta` (`total` / `page` / `limit` / `totalPages`).
+}

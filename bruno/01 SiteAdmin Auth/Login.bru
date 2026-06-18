@@ -28,7 +28,7 @@ script:post-response {
   // Verify the response was successful before updating the token
   if (responseData && responseData.success && responseData.data) {
     // Extract and save the token to your environment variable
-    bru.setEnvVar("siteAdminToken", responseData.data.accessToken);
+    bru.setVar("siteAdminToken", responseData.data.accessToken);
   }
   
 }

@@ -148,6 +148,11 @@ export class CreateLabTestDto {
 
   @IsInt()
   @Min(0)
+  @IsOptional()
+  commissionPrice?: number;
+
+  @IsInt()
+  @Min(0)
   @Max(100)
   @IsOptional()
   discountCapPct?: number;

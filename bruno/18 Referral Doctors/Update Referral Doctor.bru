@@ -1,0 +1,76 @@
+meta {
+  name: Update Referral Doctor
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{baseUrl}}/referral-doctors/{{referralDoctorId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "INACTIVE",
+    "monthlyTargetAmount": 75000,
+    "branchId": "{{branchId}}",
+    "isCommissionApplicable": true,
+    "commissionType": "FIXED_AMOUNT",
+    "fixedCommissionCycle": "MONTHLY",
+    "fixedAmount": 5000,
+    "remarks": "Switched to a fixed monthly retainer for FY26.",
+    "qualifications": [
+      { "qualificationType": "Post Graduate", "degreeName": "MD Medicine", "institutionName": "PGIMER Chandigarh", "yearOfCompletion": 2009, "percentageGrade": "A" },
+      { "qualificationType": "Fellowship", "degreeName": "Fellowship in Diabetology", "institutionName": "RSSDI", "yearOfCompletion": 2013, "percentageGrade": "A+" }
+    ]
+  }
+}
+
+vars:pre-request {
+  referralDoctorId: 00000000-0000-0000-0000-000000000000
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("status was updated", function () {
+    expect(res.getBody().data.status).to.equal("INACTIVE");
+  });
+  test("commission switched to fixed amount", function () {
+    expect(res.getBody().data.commissionType).to.equal("FIXED_AMOUNT");
+  });
+  test("qualifications were replaced", function () {
+    expect(res.getBody().data.qualifications).to.have.lengthOf(2);
+  });
+}
+
+docs {
+  Update a referral doctor (scoped to the caller's tenant). All fields optional;
+  only supplied fields change. Same field rules as create.
+
+  - Commission/incentive config is re-validated and normalised against the MERGED
+    (existing + patch) state when any related field is present — e.g. switching to
+    `FIXED_AMOUNT` requires `fixedCommissionCycle` (and `fixedAmount` unless the
+    cycle is `ORDER_WISE`); inapplicable fields are nulled. Bad configs → 422
+    `REFERRAL_DOCTOR_INVALID_COMMISSION_CONFIG`.
+  - `departmentId` / `categoryId` / `subCategoryId` — if supplied, re-validated
+    against the tenant's active rows (404 `DEPARTMENT_NOT_FOUND` /
+    `CATEGORY_NOT_FOUND` / `SUB_CATEGORY_NOT_FOUND`). Send `null` to clear a link;
+    omit to leave it untouched.
+  - `branchId` — if supplied, re-validated against the tenant (404
+    `BRANCH_NOT_FOUND`). Send `null` to clear it; omit to leave it untouched.
+  - `qualifications` / `experiences` / `labTestIds` / `labPanelIds` — when
+    supplied, REPLACE the whole set: existing active rows are soft-deleted and the
+    new set created (one transaction). Omit to leave them untouched.
+  - 404 `REFERRAL_DOCTOR_NOT_FOUND` if the doctor is missing/soft-deleted.
+}

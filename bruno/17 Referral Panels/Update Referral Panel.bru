@@ -1,0 +1,57 @@
+meta {
+  name: Update Referral Panel
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{baseUrl}}/referral-panels/{{referralPanelId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "shortName": "CityCare Updated",
+    "bankName": "ICICI Bank",
+    "branchId": "{{branchId}}",
+    "isActive": true,
+    "isCommissionApplicable": true,
+    "commissionType": "PERCENTAGE",
+    "commissionPctLabTest": 12,
+    "commissionPctLabPanel": 9,
+    "labTestIds": ["3772e02a-391a-4276-9d78-f06a0e078e44"],
+    "labPanelIds": []
+  }
+}
+
+docs {
+  Update a referral panel (scoped to the caller's tenant). All fields are
+  optional; `code` is immutable and never accepted.
+
+  **Commission/incentive** are re-validated and normalised against the **merged**
+  (existing + patch) state whenever any related field is sent. For example,
+  switching `commissionType` to `PERCENTAGE` here causes any previously-stored
+  slab / fixed-amount values to be nulled out. The same conditional rules as
+  create apply (422 `REFERRAL_PANEL_INVALID_COMMISSION_CONFIG` on a violation).
+
+  **Lab lists** — `labTestIds` / `labPanelIds` are **replace-all when present**
+  (the active assigned set is soft-deleted and recreated) and left untouched when
+  omitted. Sending an empty array clears that list; the example clears panels and
+  keeps one test. Invalid ids return 422
+  `REFERRAL_PANEL_INVALID_LAB_TEST` / `REFERRAL_PANEL_INVALID_LAB_PANEL`.
+
+  **Branch** — `branchId`, if supplied, is re-validated against the tenant (404
+  `BRANCH_NOT_FOUND`). Send `null` to clear it; omit to leave it untouched.
+
+  Uses `referralPanelId` captured by *Create Referral Panel (Percentage
+  Commission)*.
+}

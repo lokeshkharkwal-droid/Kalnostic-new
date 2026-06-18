@@ -1,0 +1,67 @@
+meta {
+  name: Update External Referral
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{baseUrl}}/external-referrals/{{externalReferralId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "INACTIVE",
+    "monthlyTargetAmount": 75000,
+    "branchId": "{{branchId}}",
+    "isCommissionApplicable": true,
+    "commissionType": "FIXED_AMOUNT",
+    "fixedCommissionCycle": "MONTHLY",
+    "fixedAmount": 5000,
+    "remarks": "Switched to a fixed monthly retainer for FY26."
+  }
+}
+
+vars:pre-request {
+  externalReferralId: 00000000-0000-0000-0000-000000000000
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("status was updated", function () {
+    expect(res.getBody().data.status).to.equal("INACTIVE");
+  });
+  test("commission switched to fixed amount", function () {
+    expect(res.getBody().data.commissionType).to.equal("FIXED_AMOUNT");
+  });
+}
+
+docs {
+  Update an external referral (scoped to the caller's tenant). All fields optional;
+  only supplied fields change. Same field rules as create.
+
+  - Commission/incentive config is re-validated and normalised against the MERGED
+    (existing + patch) state when any related field is present — e.g. switching to
+    `FIXED_AMOUNT` requires `fixedCommissionCycle` (and `fixedAmount` unless the
+    cycle is `ORDER_WISE`); inapplicable fields are nulled. Bad configs → 422
+    `EXTERNAL_REFERRAL_INVALID_COMMISSION_CONFIG`.
+  - `labTestIds` / `labPanelIds` — when supplied, REPLACE the whole set: existing
+    active rows are soft-deleted and the new set created (one transaction). Every id
+    must reference an active lab test/panel in the tenant else 422
+    `EXTERNAL_REFERRAL_INVALID_LAB_TEST` / `EXTERNAL_REFERRAL_INVALID_LAB_PANEL`.
+    Omit to leave them untouched.
+  - `branchId` — if supplied, re-validated against the tenant (404
+    `BRANCH_NOT_FOUND`). Send `null` to clear it; omit to leave it untouched.
+  - 404 `EXTERNAL_REFERRAL_NOT_FOUND` if the referral is missing/soft-deleted.
+}

@@ -1,0 +1,54 @@
+meta {
+  name: List Internal Referrals (Listing & Filters)
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/internal-referrals?page=1&limit=20&search=Rahul Verma
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  search: Rahul Verma
+  ~status: ACTIVE
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Listing screen for the tenant's internal referrals. Paginated (offset; `page` /
+  `limit`, pagination lands in `meta` as `total` / `page` / `limit` /
+  `totalPages`). Newest first.
+
+  ## Search by employee name
+
+  - `search` — searches by **employee name**. The value is split on whitespace and
+    EACH token must match some name part — `firstName`, `lastName`, **OR**
+    `fullName` (case-insensitive `contains`), with `mobileNumber` as a fallback. So
+    `Rahul Verma` matches an employee whose first name is "Rahul" and last name is
+    "Verma", while a single token (`Rahul`) matches any part. Whitespace-only values
+    are ignored; omit it to list all.
+
+  ## Filters (toggle the `~` to enable a query param)
+
+  - `status` — `ACTIVE` | `INACTIVE`.
+
+  ## Row shape (trimmed listing projection)
+
+  Each row contains ONLY: `id`, `employeeId`, `firstName`, `lastName`, `fullName`,
+  `mobileNumber`, `email`, `isCommissionApplicable`, `isIncludedInPayroll`, and
+  `status`. Fetch the full record (all fields + assigned lab tests/panels) via
+  "Get Internal Referral".
+}

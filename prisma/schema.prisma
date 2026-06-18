@@ -158,6 +158,11 @@ enum AuditModule {
   LAB_PANEL
   OUTSOURCE_CENTER
   DOCTOR
+  REFERRAL_PANEL
+  REFERRAL_PANEL_SETTINGS
+  REFERRAL_DOCTOR
+  EXTERNAL_REFERRAL
+  INTERNAL_REFERRAL
   AUTH
   SITEADMIN // reserved; not written to in this phase (business audit only)
 }
@@ -322,6 +327,86 @@ enum DoctorStatus {
   INACTIVE
 }
 
+enum ReferralDoctorStatus {
+  ACTIVE
+  INACTIVE
+}
+
+/// Active/inactive lifecycle for an external referral record (distinct from soft
+/// delete; NULL deletedAt = not deleted).
+enum ExternalReferralStatus {
+  ACTIVE
+  INACTIVE
+}
+
+/// Active/inactive lifecycle for an internal referral (employee) record (distinct
+/// from soft delete; NULL deletedAt = not deleted).
+enum InternalReferralStatus {
+  ACTIVE
+  INACTIVE
+}
+
+/// How an internal referral's commission is paid out — unique to internal
+/// referrals (employees): either folded into salary or paid as a separate payout.
+enum CommissionMode {
+  INCLUDED_IN_SALARY
+  SEPARATE_PAYOUT
+}
+
+/// Billing relationship of a referring panel with the tenant.
+enum ReferralClientType {
+  CASH
+  PREPAID
+  POSTPAID
+}
+
+/// How a referring panel's commission is computed (only when commission applies).
+enum CommissionType {
+  PERCENTAGE
+  SLAB_BASED
+  FIXED_AMOUNT
+}
+
+/// Payout cadence for a FIXED_AMOUNT commission. `ORDER_WISE` pays per order (no
+/// fixed amount); the rest pay the configured fixed amount on that cadence.
+enum FixedCommissionCycle {
+  ORDER_WISE
+  MONTHLY
+  QUARTERLY
+  HALF_YEARLY
+  ANNUALLY
+}
+
+/// Settlement cadence for a referring panel (`NA` = not applicable / on demand).
+enum PaymentCycle {
+  NA
+  MONTHLY
+  QUARTERLY
+  HALF_YEARLY
+  ANNUALLY
+}
+
+/// How a referring panel is paid out. Mirrors DoctorPaymentMode but kept separate
+/// so the referral module can evolve independently (CLAUDE.md rule #3 spirit).
+enum ReferralPaymentMode {
+  BANK_TRANSFER
+  CASH
+  CHEQUE
+}
+
+/// Active/inactive lifecycle for a referral panel settings template (distinct from
+/// soft delete; NULL deletedAt = not deleted).
+enum ReferralPanelSettingsStatus {
+  ACTIVE
+  INACTIVE
+}
+
+/// How a prepaid wallet bonus is computed for a referral panel settings template.
+enum ReferralBonusType {
+  PERCENTAGE
+  FIXED_AMOUNT
+}
+
 // ── Platform-level models (NO tenant_id) ────────────────────────────────────────
 
 /// One row per registered business. "Business info" = the fields here.
@@ -355,6 +440,7 @@ model Tenant {
   categoryCounter        Int     @default(0) @map("category_counter") // per-tenant sequential category code
   subCategoryCounter     Int     @default(0) @map("sub_category_counter") // per-tenant sequential sub-category code
   outsourceCenterCounter Int     @default(0) @map("outsource_center_counter") // per-tenant sequential outsource-center code
+  referralPanelCounter   Int     @default(0) @map("referral_panel_counter") // per-tenant sequential referral-panel code
   createdBy              String? @map("created_by") // SiteAdmin user id
 
   createdAt DateTime  @default(now()) @map("created_at")
@@ -698,6 +784,9 @@ model Department {
   /// Doctors whose specialization links to this department (logical via relation).
   doctors Doctor[]
 
+  /// Referral doctors whose department links here.
+  referralDoctors ReferralDoctor[]
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -776,6 +865,9 @@ model Category {
 
   /// Doctors whose specialization links to this category (logical via relation).
   doctors Doctor[]
+
+  /// Referral doctors whose specialty links to this category.
+  referralDoctors ReferralDoctor[]
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -858,6 +950,9 @@ model SubCategory {
   moduleMapping BranchType[] @map("module_mapping")
 
   personMappings SubCategoryPersonMapping[]
+
+  /// Referral doctors whose super specialty links to this sub-category.
+  referralDoctors ReferralDoctor[]
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -1003,6 +1098,7 @@ model LabTest {
   priceOriginal        Int     @default(0) @map("price_original")
   franchisePrice       Int     @default(0) @map("franchise_price")
   emergencyPrice       Int     @default(0) @map("emergency_price")
+  commissionPrice      Int     @default(0) @map("commission_price")
   discountCapPct       Int     @default(0) @map("discount_cap_pct")
   isAllowPriceOverride Boolean @default(false) @map("is_allow_price_override")
   isAllowDiscounts     Boolean @default(true) @map("is_allow_discounts")
@@ -1262,6 +1358,7 @@ model LabPanel {
   priceMaximum   Int @default(0) @map("price_maximum")
   priceOriginal  Int @default(0) @map("price_original")
   franchisePrice Int @default(0) @map("franchise_price")
+  commissionPrice Int @default(0) @map("commission_price")
 
   // TAT (defaults to HOURS per the panel spec)
   tatMinValue Int?     @map("tat_min_value")
@@ -1480,6 +1577,232 @@ model OutsourceCenterBranchPanel {
   @@map("outsource_center_branch_panels")
 }
 
+/// An external referring panel (clinic/hospital/lab) that sends business to the
+/// tenant. Tenant-scoped, tenant-level (CLAUDE.md §4.6) — it belongs to the business
+/// as a whole. `code` is system-generated & immutable (RP-00001…, from
+/// Tenant.referralPanelCounter). `referral_panel_name` + `code` are unique per tenant
+/// among active rows, and the user-supplied `panel_code` is unique per tenant among
+/// active non-null rows (partial unique indexes in prisma/rls.sql). Contact persons
+/// are flat columns (one name/mobile/email per fixed role) rather than a child table.
+/// Commission/bonus slabs are JSON arrays validated by DTOs (see
+/// ReferralPanelService). `referralPanelSettingsId` is a nullable logical ref to a
+/// not-yet-modelled settings template. Assigned lab tests/panels (the "lab test/panel
+/// list") are child rows (ReferralPanelLabTest / ReferralPanelLabPanel). RLS policy in
+/// prisma/rls.sql.
+/// Reusable billing/communication settings template for the referral module,
+/// keyed by `clientType` (CASH / PREPAID / POSTPAID). Referenced (optionally) by
+/// ReferralPanel, ReferralDoctor, ExternalReferral and InternalReferral via their
+/// nullable `referralPanelSettingsId`. Tenant-scoped, tenant-level (CLAUDE.md §4.6
+/// — matches ReferralPanel); `branchId` is carried for future use but the service
+/// scopes reads by tenant only. At most one default per (tenant, clientType) among
+/// ACTIVE rows, and `settingName` unique per tenant among ACTIVE rows (partial
+/// unique indexes in prisma/rls.sql). RLS policy in prisma/rls.sql.
+model ReferralPanelSettings {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  settingName String                      @map("setting_name")
+  clientType  ReferralClientType          @map("client_type")
+  isDefault   Boolean                     @default(false) @map("is_default")
+  status      ReferralPanelSettingsStatus @default(ACTIVE)
+
+  // ── Communication ──
+  isSendBillsToPatient   Boolean @default(false) @map("is_send_bills_to_patient")
+  isSendBillsToB2b       Boolean @default(false) @map("is_send_bills_to_b2b")
+  isSendBillsToDoctor    Boolean @default(false) @map("is_send_bills_to_doctor")
+  isSendReportsToPatient Boolean @default(false) @map("is_send_reports_to_patient")
+  isSendReportsToB2b     Boolean @default(false) @map("is_send_reports_to_b2b")
+  isSendReportsToDoctor  Boolean @default(false) @map("is_send_reports_to_doctor")
+
+  // ── Credit / invoicing (POSTPAID) ──
+  creditLimitAmount           Decimal? @map("credit_limit_amount") @db.Decimal(12, 2)
+  isRestrictOrderCreditLimit  Boolean  @default(false) @map("is_restrict_order_credit_limit")
+  isRestrictReportCreditLimit Boolean  @default(false) @map("is_restrict_report_credit_limit")
+  creditAllowedDays           Int?     @map("credit_allowed_days")
+  isRestrictOrderCreditDays   Boolean  @default(false) @map("is_restrict_order_credit_days")
+  isRestrictReportCreditDays  Boolean  @default(false) @map("is_restrict_report_credit_days")
+  daysAfterInvoice            Int?     @map("days_after_invoice")
+  isRestrictOrderPostInvoice  Boolean  @default(false) @map("is_restrict_order_post_invoice")
+  isRestrictReportPostInvoice Boolean  @default(false) @map("is_restrict_report_post_invoice")
+  isAutoInvoice               Boolean  @default(false) @map("is_auto_invoice")
+  raiseInvoiceCreditLimit     Decimal? @map("raise_invoice_credit_limit") @db.Decimal(12, 2)
+  invoiceFrequencyDays        Int?     @map("invoice_frequency_days")
+  isOverlapMonthEndClose      Boolean  @default(false) @map("is_overlap_month_end_close")
+  isAllowManualInvoice        Boolean  @default(false) @map("is_allow_manual_invoice")
+  invoiceEmailTriggerHours    Int?     @map("invoice_email_trigger_hours")
+
+  // ── Wallet / bonus (PREPAID) ──
+  minWalletAdvance            Decimal?           @map("min_wallet_advance") @db.Decimal(12, 2)
+  minAdvanceForBonus          Decimal?           @map("min_advance_for_bonus") @db.Decimal(12, 2)
+  minWalletBalance            Decimal?           @map("min_wallet_balance") @db.Decimal(12, 2)
+  isRestrictOrderAtMinBalance Boolean            @default(false) @map("is_restrict_order_at_min_balance")
+  isReminderAt75Percent       Boolean            @default(false) @map("is_reminder_at_75_percent")
+  isReminderAtMinBalance      Boolean            @default(false) @map("is_reminder_at_min_balance")
+  bonusType                   ReferralBonusType? @map("bonus_type")
+  bonusPercentage             Decimal?           @map("bonus_percentage") @db.Decimal(5, 2)
+  bonusFixedAmount            Decimal?           @map("bonus_fixed_amount") @db.Decimal(12, 2)
+  bonusExtraAmount            Decimal?           @map("bonus_extra_amount") @db.Decimal(12, 2)
+  isAllowNegativeBalance      Boolean            @default(false) @map("is_allow_negative_balance")
+  maxNegativeBalance          Decimal?           @map("max_negative_balance") @db.Decimal(12, 2)
+  isRestrictOrderNegative     Boolean            @default(false) @map("is_restrict_order_negative")
+  isRestrictReportNegative    Boolean            @default(false) @map("is_restrict_report_negative")
+
+  // ── Payment ──
+  isAllowOtherPaymentModes Boolean @default(false) @map("is_allow_other_payment_modes")
+
+  // ── Back-relations (the four referral entities that reference this template) ──
+  referralPanels    ReferralPanel[]
+  referralDoctors   ReferralDoctor[]
+  externalReferrals ExternalReferral[]
+  internalReferrals InternalReferral[]
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([clientType])
+  @@index([deletedAt])
+  @@map("referral_panel_settings")
+}
+
+model ReferralPanel {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+  code     String
+
+  // ── Basic details ──
+  name                    String                 @map("referral_panel_name")
+  shortName               String?                @map("short_name")
+  panelCode               String?                @map("panel_code")
+  clientType              ReferralClientType     @map("client_type")
+  referralPanelSettingsId String?                @map("referral_panel_settings_id")
+  referralPanelSettings   ReferralPanelSettings? @relation(fields: [referralPanelSettingsId], references: [id])
+  isActive                Boolean                @default(true) @map("is_active")
+
+  // ── Address details ──
+  addressLine1 String? @map("address_line1")
+  addressLine2 String? @map("address_line2")
+  city         String?
+  state        String?
+  pincode      String?
+  gstNumber    String? @map("gst_number")
+  panNumber    String? @map("pan_number")
+
+  // ── Bank details ──
+  accountHolderName String? @map("account_holder_name")
+  bankName          String? @map("bank_name")
+  accountNumber     String? @map("account_number")
+  ifscCode          String? @map("ifsc_code")
+
+  // ── Contact persons (flat, one trio per fixed role) ──
+  directorName             String? @map("director_name")
+  directorMobile           String? @map("director_mobile")
+  directorEmail            String? @map("director_email")
+  accessionPersonName      String? @map("accession_person_name")
+  accessionPersonMobile    String? @map("accession_person_mobile")
+  accessionPersonEmail     String? @map("accession_person_email")
+  registrationPersonName   String? @map("registration_person_name")
+  registrationPersonMobile String? @map("registration_person_mobile")
+  registrationPersonEmail  String? @map("registration_person_email")
+  logisticsPersonName      String? @map("logistics_person_name")
+  logisticsPersonMobile    String? @map("logistics_person_mobile")
+  logisticsPersonEmail     String? @map("logistics_person_email")
+  accountsPersonName       String? @map("accounts_person_name")
+  accountsPersonMobile     String? @map("accounts_person_mobile")
+  accountsPersonEmail      String? @map("accounts_person_email")
+
+  // ── Commission & TDS ──
+  isCommissionApplicable Boolean               @default(false) @map("is_commission_applicable")
+  commissionType         CommissionType?       @map("commission_type")
+  commissionPctLabTest   Decimal?              @map("commission_pct_lab_test") @db.Decimal(5, 2)
+  commissionPctLabPanel  Decimal?              @map("commission_pct_lab_panel") @db.Decimal(5, 2)
+  commissionSlabs        Json                  @default("[]") @map("commission_slabs")
+  fixedCommissionCycle   FixedCommissionCycle? @map("fixed_commission_cycle")
+  fixedAmount            Decimal?              @map("fixed_amount") @db.Decimal(10, 2)
+  isTdsApplicable        Boolean               @default(false) @map("is_tds_applicable")
+  tds                    Int?                  @map("tds")
+
+  // ── Payment & incentive ──
+  paymentCycle               PaymentCycle        @default(NA) @map("payment_cycle")
+  paymentMode                ReferralPaymentMode @default(BANK_TRANSFER) @map("payment_mode")
+  monthlyTargetAmount        Int                 @default(0) @map("monthly_target_amount")
+  isIncentiveBonusApplicable Boolean             @default(false) @map("is_incentive_bonus_applicable")
+  bonusSlabs                 Json                @default("[]") @map("bonus_slabs")
+
+  // ── Attachment & remarks ──
+  fileName String? @map("file_name")
+  fileUrl  String? @map("file_url")
+  remarks  String?
+
+  labTests  ReferralPanelLabTest[]
+  labPanels ReferralPanelLabPanel[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([referralPanelSettingsId])
+  @@index([deletedAt])
+  @@map("referral_panels")
+}
+
+/// A lab test assigned to a referral panel (the "lab test list" — one row per
+/// assigned test). `labTestId` is a logical ref to a LabTest in the tenant (no Prisma
+/// relation, mirroring OutsourceCenterBranchTest.labTestId); validated in
+/// ReferralPanelService to be an active test in the tenant. One active row per
+/// (panel, test) (partial unique index in prisma/rls.sql). RLS policy in
+/// prisma/rls.sql.
+model ReferralPanelLabTest {
+  id              String @id @default(uuid())
+  tenantId        String @map("tenant_id")
+  referralPanelId String @map("referral_panel_id")
+  labTestId       String @map("lab_test_id")
+
+  referralPanel ReferralPanel @relation(fields: [referralPanelId], references: [id])
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([referralPanelId])
+  @@index([labTestId])
+  @@index([deletedAt])
+  @@map("referral_panel_lab_tests")
+}
+
+/// A lab panel assigned to a referral panel (the "lab panel list" — one row per
+/// assigned panel). `labPanelId` is a logical ref to a LabPanel in the tenant (no
+/// Prisma relation); validated in ReferralPanelService to be an active panel in the
+/// tenant. One active row per (panel, lab-panel) (partial unique index in
+/// prisma/rls.sql). RLS policy in prisma/rls.sql.
+model ReferralPanelLabPanel {
+  id              String @id @default(uuid())
+  tenantId        String @map("tenant_id")
+  referralPanelId String @map("referral_panel_id")
+  labPanelId      String @map("lab_panel_id")
+
+  referralPanel ReferralPanel @relation(fields: [referralPanelId], references: [id])
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([referralPanelId])
+  @@index([labPanelId])
+  @@index([deletedAt])
+  @@map("referral_panel_lab_panels")
+}
+
 /// A doctor in a tenant's registry — either a REPORTING doctor (signs/reports on
 /// tests) or a CONSULTANT (sees patients). Tenant-scoped, tenant-level (CLAUDE.md
 /// §4.6): the registry belongs to the business as a whole, not a single branch.
@@ -1611,4 +1934,449 @@ model DoctorExperience {
   @@index([doctorId])
   @@index([deletedAt])
   @@map("doctor_experience")
+}
+
+/// An external referring doctor in a tenant's registry who sends business to the
+/// lab and earns commission/incentives. Tenant-scoped, tenant-level (CLAUDE.md
+/// §4.6): the registry belongs to the business as a whole, not a single branch.
+/// Identity mirrors `Doctor`; the commission/TDS/payment/incentive block mirrors
+/// `ReferralPanel` (conditional fields validated + normalised in
+/// ReferralDoctorService; slabs stored as JSON). Classification links
+/// (`department`, `category` = Specialty, `subCategory` = Super Specialty) are real
+/// relations to active rows of the same tenant (validated in ReferralDoctorService).
+/// Assigned lab tests/panels are child rows (`ReferralDoctorLabTest` /
+/// `ReferralDoctorLabPanel`, replace-all on update). `fullName`/`age`/per-experience
+/// `duration` are derived in the service, not stored. RLS policy in prisma/rls.sql.
+model ReferralDoctor {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  // Personal details
+  firstName     String    @map("first_name")
+  middleName    String?   @map("middle_name")
+  lastName      String?   @map("last_name")
+  gender        Gender    @default(MALE)
+  dateOfBirth   DateTime? @map("date_of_birth") @db.Date
+  mobileNumber  String    @map("mobile_number")
+  email         String?
+  aadhaarNumber String?   @map("aadhaar_number")
+  panNumber     String?   @map("pan_number")
+
+  // Professional details — classification links to active rows of the same tenant
+  // (validated in ReferralDoctorService). category = Specialty, subCategory = Super
+  // Specialty.
+  departmentId  String?      @map("department_id")
+  department    Department?  @relation(fields: [departmentId], references: [id])
+  categoryId    String?      @map("category_id")
+  category      Category?    @relation(fields: [categoryId], references: [id])
+  subCategoryId String?      @map("sub_category_id")
+  subCategory   SubCategory? @relation(fields: [subCategoryId], references: [id])
+
+  medicalLicenseNumber  String?   @map("medical_license_number")
+  registrationCouncil   String?   @map("registration_council")
+  registrationValidTill DateTime? @map("registration_valid_till") @db.Date
+
+  // Logical ref to a ReferralPanelSettings template in the tenant (validated in
+  // ReferralDoctorService to belong to the caller's tenant).
+  referralPanelSettingsId String?                @map("referral_panel_settings_id")
+  referralPanelSettings   ReferralPanelSettings? @relation(fields: [referralPanelSettingsId], references: [id])
+
+  // Commission & TDS (conditional fields normalised in the service; slabs as JSON
+  // of { monthlyBusinessFrom, monthlyBusinessTo, commissionPct }).
+  isCommissionApplicable Boolean               @default(false) @map("is_commission_applicable")
+  commissionType         CommissionType?       @map("commission_type")
+  commissionPctLabTest   Decimal?              @map("commission_pct_lab_test") @db.Decimal(5, 2)
+  commissionPctLabPanel  Decimal?              @map("commission_pct_lab_panel") @db.Decimal(5, 2)
+  commissionSlabs        Json                  @default("[]") @map("commission_slabs")
+  fixedCommissionCycle   FixedCommissionCycle? @map("fixed_commission_cycle")
+  fixedAmount            Decimal?              @map("fixed_amount") @db.Decimal(10, 2)
+  isTdsApplicable        Boolean               @default(false) @map("is_tds_applicable")
+  tds                    Int?                  @map("tds")
+
+  // Payment & incentive (bonus slabs as JSON of
+  // { monthlyBusinessFrom, monthlyBusinessTo, bonusPct }).
+  paymentCycle               PaymentCycle        @default(NA) @map("payment_cycle")
+  paymentMode                ReferralPaymentMode @default(BANK_TRANSFER) @map("payment_mode")
+  monthlyTargetAmount        Int                 @default(0) @map("monthly_target_amount")
+  isIncentiveBonusApplicable Boolean             @default(false) @map("is_incentive_bonus_applicable")
+  bonusSlabs                 Json                @default("[]") @map("bonus_slabs")
+
+  // Attachment & remarks (file stored as name + URL; upload handled elsewhere)
+  fileName String? @map("file_name")
+  fileUrl  String? @map("file_url")
+  remarks  String?
+
+  // Status
+  status ReferralDoctorStatus @default(ACTIVE)
+
+  // Children (managed via the parent in ReferralDoctorService)
+  qualifications ReferralDoctorQualification[]
+  experiences    ReferralDoctorExperience[]
+  labTests       ReferralDoctorLabTest[]
+  labPanels      ReferralDoctorLabPanel[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([departmentId])
+  @@index([categoryId])
+  @@index([subCategoryId])
+  @@index([referralPanelSettingsId])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("referral_doctors")
+}
+
+/// A qualification (degree) held by a referral doctor. Tenant-scoped; lifecycle is
+/// managed via the parent (replace-on-update; soft-deleted with the parent). The
+/// `onDelete: Cascade` relation is a DB safety net only — the app soft-deletes.
+model ReferralDoctorQualification {
+  id               String @id @default(uuid())
+  tenantId         String @map("tenant_id")
+  referralDoctorId String @map("referral_doctor_id")
+
+  qualificationType String? @map("qualification_type")
+  degreeName        String? @map("degree_name")
+  institutionName   String? @map("institution_name")
+  yearOfCompletion  Int?    @map("year_of_completion")
+  percentageGrade   String? @map("percentage_grade")
+
+  referralDoctor ReferralDoctor @relation(fields: [referralDoctorId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([referralDoctorId])
+  @@index([deletedAt])
+  @@map("referral_doctor_qualifications")
+}
+
+/// A past/current work engagement of a referral doctor. `toDate` NULL means the
+/// role is current (Duration is derived in the service, not stored). Tenant-scoped;
+/// managed via the parent like ReferralDoctorQualification.
+model ReferralDoctorExperience {
+  id               String @id @default(uuid())
+  tenantId         String @map("tenant_id")
+  referralDoctorId String @map("referral_doctor_id")
+
+  position     String?
+  organisation String?
+  fromDate     DateTime? @map("from_date") @db.Date
+  toDate       DateTime? @map("to_date") @db.Date
+
+  referralDoctor ReferralDoctor @relation(fields: [referralDoctorId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([referralDoctorId])
+  @@index([deletedAt])
+  @@map("referral_doctor_experience")
+}
+
+/// A lab test assigned to a referral doctor (the "lab test list" — one row per
+/// assigned test). `labTestId` is a logical ref to a LabTest in the tenant (no
+/// Prisma relation, mirroring ReferralPanelLabTest); validated in
+/// ReferralDoctorService to be an active test in the tenant. One active row per
+/// (referral doctor, test) (partial unique index in prisma/rls.sql).
+model ReferralDoctorLabTest {
+  id               String @id @default(uuid())
+  tenantId         String @map("tenant_id")
+  referralDoctorId String @map("referral_doctor_id")
+  labTestId        String @map("lab_test_id")
+
+  referralDoctor ReferralDoctor @relation(fields: [referralDoctorId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([referralDoctorId])
+  @@index([labTestId])
+  @@index([deletedAt])
+  @@map("referral_doctor_lab_tests")
+}
+
+/// A lab panel assigned to a referral doctor (the "lab panel list" — one row per
+/// assigned panel). `labPanelId` is a logical ref to a LabPanel in the tenant (no
+/// Prisma relation); validated in ReferralDoctorService to be an active panel in
+/// the tenant. One active row per (referral doctor, lab-panel) (partial unique
+/// index in prisma/rls.sql).
+model ReferralDoctorLabPanel {
+  id               String @id @default(uuid())
+  tenantId         String @map("tenant_id")
+  referralDoctorId String @map("referral_doctor_id")
+  labPanelId       String @map("lab_panel_id")
+
+  referralDoctor ReferralDoctor @relation(fields: [referralDoctorId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([referralDoctorId])
+  @@index([labPanelId])
+  @@index([deletedAt])
+  @@map("referral_doctor_lab_panels")
+}
+
+/// A business's registry of external referral partners (people/organisations that
+/// refer work to the lab). Tenant-scoped, tenant-level (CLAUDE.md §4.6) — the
+/// registry belongs to the business as a whole, not a branch. Commission/incentive
+/// config is conditional and normalised in ExternalReferralService (slabs stored as
+/// JSON). Assigned lab tests/panels are managed via the parent (replace-on-update).
+/// The attachment is stored as name + URL; the upload itself is handled elsewhere.
+model ExternalReferral {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  // Basic details
+  name             String
+  organisationName String?                @map("organisation_name")
+  referralCode     String?                @map("referral_code")
+  status           ExternalReferralStatus @default(ACTIVE)
+  mobileNumber     String?                @map("mobile_number")
+  email            String?
+
+  // Address & identity
+  address       String?
+  city          String?
+  state         String?
+  pinCode       String? @map("pin_code")
+  panNumber     String? @map("pan_number")
+  aadhaarNumber String? @map("aadhaar_number")
+  gstNumber     String? @map("gst_number")
+
+  // Bank details
+  accountHolderName String? @map("account_holder_name")
+  bankName          String? @map("bank_name")
+  accountNumber     String? @map("account_number")
+  ifscCode          String? @map("ifsc_code")
+
+  // Logical ref to a ReferralPanelSettings template in the tenant (validated in
+  // ExternalReferralService to belong to the caller's tenant).
+  referralPanelSettingsId String?                @map("referral_panel_settings_id")
+  referralPanelSettings   ReferralPanelSettings? @relation(fields: [referralPanelSettingsId], references: [id])
+
+  // Commission & TDS (conditional fields normalised in the service; slabs as JSON
+  // of { monthlyBusinessFrom, monthlyBusinessTo, commissionPct }).
+  isCommissionApplicable Boolean               @default(false) @map("is_commission_applicable")
+  commissionType         CommissionType?       @map("commission_type")
+  commissionPctLabTest   Decimal?              @map("commission_pct_lab_test") @db.Decimal(5, 2)
+  commissionPctLabPanel  Decimal?              @map("commission_pct_lab_panel") @db.Decimal(5, 2)
+  commissionSlabs        Json                  @default("[]") @map("commission_slabs")
+  fixedCommissionCycle   FixedCommissionCycle? @map("fixed_commission_cycle")
+  fixedAmount            Decimal?              @map("fixed_amount") @db.Decimal(10, 2)
+  isTdsApplicable        Boolean               @default(false) @map("is_tds_applicable")
+  tds                    Int?                  @map("tds")
+
+  // Payment & incentive (bonus slabs as JSON of
+  // { monthlyBusinessFrom, monthlyBusinessTo, bonusPct }).
+  paymentCycle               PaymentCycle        @default(NA) @map("payment_cycle")
+  paymentMode                ReferralPaymentMode @default(BANK_TRANSFER) @map("payment_mode")
+  monthlyTargetAmount        Int                 @default(0) @map("monthly_target_amount")
+  isIncentiveBonusApplicable Boolean             @default(false) @map("is_incentive_bonus_applicable")
+  bonusSlabs                 Json                @default("[]") @map("bonus_slabs")
+
+  // Attachment & remarks (file stored as name + URL; upload handled elsewhere)
+  fileName String? @map("file_name")
+  fileUrl  String? @map("file_url")
+  remarks  String?
+
+  // Children (managed via the parent in ExternalReferralService)
+  labTests  ExternalReferralLabTest[]
+  labPanels ExternalReferralLabPanel[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([referralPanelSettingsId])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("external_referrals")
+}
+
+/// A lab test assigned to an external referral (the "lab test list" — one row per
+/// assigned test). `labTestId` is a logical ref to a LabTest in the tenant (no Prisma
+/// relation, mirroring ReferralDoctorLabTest); validated in ExternalReferralService
+/// to be an active test in the tenant. One active row per (external referral, test)
+/// (partial unique index in prisma/rls.sql).
+model ExternalReferralLabTest {
+  id                 String @id @default(uuid())
+  tenantId           String @map("tenant_id")
+  externalReferralId String @map("external_referral_id")
+  labTestId          String @map("lab_test_id")
+
+  externalReferral ExternalReferral @relation(fields: [externalReferralId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([externalReferralId])
+  @@index([labTestId])
+  @@index([deletedAt])
+  @@map("external_referral_lab_tests")
+}
+
+/// A lab panel assigned to an external referral (the "lab panel list" — one row per
+/// assigned panel). `labPanelId` is a logical ref to a LabPanel in the tenant (no
+/// Prisma relation); validated in ExternalReferralService to be an active panel in
+/// the tenant. One active row per (external referral, lab-panel) (partial unique index
+/// in prisma/rls.sql).
+model ExternalReferralLabPanel {
+  id                 String @id @default(uuid())
+  tenantId           String @map("tenant_id")
+  externalReferralId String @map("external_referral_id")
+  labPanelId         String @map("lab_panel_id")
+
+  externalReferral ExternalReferral @relation(fields: [externalReferralId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([externalReferralId])
+  @@index([labPanelId])
+  @@index([deletedAt])
+  @@map("external_referral_lab_panels")
+}
+
+/// An internal referral: an employee of the business who refers lab work and may
+/// earn commission/incentive, optionally settled through payroll. Tenant-scoped,
+/// tenant-level (CLAUDE.md §4.6): the registry belongs to the business as a whole,
+/// not a branch. `employeeId` is an OPTIONAL logical ref to a Person (no Prisma
+/// relation, mirroring the lab-list refs); when present it is validated in
+/// InternalReferralService to be an active staff member of the caller's tenant.
+/// First/last/full name, mobile, and email are stored independently (the frontend
+/// may pre-fill them from the linked employee). `fullName` is a plain stored string.
+model InternalReferral {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  // Employee details (employeeId = optional logical ref to persons.id)
+  employeeId   String?   @map("employee_id")
+  firstName    String    @map("first_name")
+  lastName     String?   @map("last_name")
+  fullName     String?   @map("full_name")
+  designation  String?
+  joiningDate  DateTime? @map("joining_date") @db.Date
+  mobileNumber String?   @map("mobile_number")
+  email        String?
+
+  // Logical ref to a ReferralPanelSettings template in the tenant (validated in
+  // InternalReferralService to belong to the caller's tenant).
+  referralPanelSettingsId String?                @map("referral_panel_settings_id")
+  referralPanelSettings   ReferralPanelSettings? @relation(fields: [referralPanelSettingsId], references: [id])
+
+  // Commission & TDS (conditional fields normalised in the service; slabs as JSON
+  // of { monthlyBusinessFrom, monthlyBusinessTo, commissionPct }).
+  isCommissionApplicable Boolean               @default(false) @map("is_commission_applicable")
+  commissionType         CommissionType?       @map("commission_type")
+  commissionPctLabTest   Decimal?              @map("commission_pct_lab_test") @db.Decimal(5, 2)
+  commissionPctLabPanel  Decimal?              @map("commission_pct_lab_panel") @db.Decimal(5, 2)
+  commissionSlabs        Json                  @default("[]") @map("commission_slabs")
+  fixedCommissionCycle   FixedCommissionCycle? @map("fixed_commission_cycle")
+  fixedAmount            Decimal?              @map("fixed_amount") @db.Decimal(10, 2)
+  isTdsApplicable        Boolean               @default(false) @map("is_tds_applicable")
+  tds                    Int?                  @map("tds")
+
+  // Payroll & payment (unique to internal referrals; bonus slabs as JSON of
+  // { monthlyBusinessFrom, monthlyBusinessTo, bonusPct }).
+  isIncludedInPayroll        Boolean             @default(false) @map("is_included_in_payroll")
+  paymentCycle               PaymentCycle        @default(MONTHLY) @map("payment_cycle")
+  paymentMode                ReferralPaymentMode @default(BANK_TRANSFER) @map("payment_mode")
+  commissionMode             CommissionMode      @default(INCLUDED_IN_SALARY) @map("commission_mode")
+  monthlyTargetAmount        Int                 @default(0) @map("monthly_target_amount")
+  isIncentiveBonusApplicable Boolean             @default(false) @map("is_incentive_bonus_applicable")
+  bonusSlabs                 Json                @default("[]") @map("bonus_slabs")
+
+  // Attachment & remarks (file stored as name + URL; upload handled elsewhere)
+  fileName String? @map("file_name")
+  fileUrl  String? @map("file_url")
+  remarks  String?
+
+  // Status
+  status InternalReferralStatus @default(ACTIVE)
+
+  // Children (managed via the parent in InternalReferralService)
+  labTests  InternalReferralLabTest[]
+  labPanels InternalReferralLabPanel[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([employeeId])
+  @@index([referralPanelSettingsId])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("internal_referrals")
+}
+
+/// A lab test assigned to an internal referral (the "lab test list" — one row per
+/// assigned test). `labTestId` is a logical ref to a LabTest in the tenant (no Prisma
+/// relation, mirroring ExternalReferralLabTest); validated in InternalReferralService
+/// to be an active test in the tenant. One active row per (internal referral, test)
+/// (partial unique index in prisma/rls.sql).
+model InternalReferralLabTest {
+  id                 String @id @default(uuid())
+  tenantId           String @map("tenant_id")
+  internalReferralId String @map("internal_referral_id")
+  labTestId          String @map("lab_test_id")
+
+  internalReferral InternalReferral @relation(fields: [internalReferralId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([internalReferralId])
+  @@index([labTestId])
+  @@index([deletedAt])
+  @@map("internal_referral_lab_tests")
+}
+
+/// A lab panel assigned to an internal referral (the "lab panel list" — one row per
+/// assigned panel). `labPanelId` is a logical ref to a LabPanel in the tenant (no
+/// Prisma relation); validated in InternalReferralService to be an active panel in
+/// the tenant. One active row per (internal referral, lab-panel) (partial unique index
+/// in prisma/rls.sql).
+model InternalReferralLabPanel {
+  id                 String @id @default(uuid())
+  tenantId           String @map("tenant_id")
+  internalReferralId String @map("internal_referral_id")
+  labPanelId         String @map("lab_panel_id")
+
+  internalReferral InternalReferral @relation(fields: [internalReferralId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([internalReferralId])
+  @@index([labPanelId])
+  @@index([deletedAt])
+  @@map("internal_referral_lab_panels")
 }

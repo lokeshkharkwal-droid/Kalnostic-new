@@ -1,0 +1,42 @@
+meta {
+  name: Create Referral Panel Settings (Cash)
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/referral-panel-settings
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "settingName": "Walk-in Cash",
+    "clientType": "CASH",
+    "isDefault": true,
+    "status": "ACTIVE",
+    "isSendBillsToPatient": true,
+    "isSendReportsToPatient": true,
+    "isAllowOtherPaymentModes": true
+  }
+}
+
+docs {
+  Create a CASH settings template. Cash clients pay up front, so the credit /
+  invoicing and wallet / bonus sections are typically left at their defaults
+  (omitted) — only the communication toggles and the payment-mode toggle are set
+  here.
+
+  `isDefault: true` makes this the default CASH template (one default per client
+  type per tenant). Demonstrates that all section fields are optional and a
+  template can carry just the fields relevant to its `clientType`.
+}

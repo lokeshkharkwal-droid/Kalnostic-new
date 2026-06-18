@@ -1,0 +1,32 @@
+meta {
+  name: Delete Internal Referral
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/internal-referrals/{{internalReferralId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  internalReferralId: 00000000-0000-0000-0000-000000000000
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Soft-delete an internal referral (sets `deletedAt`) and cascade soft-deletes its
+  active assigned lab tests/panels, in one transaction. Scoped to the caller's
+  tenant. 404 `INTERNAL_REFERRAL_NOT_FOUND` if missing, already soft-deleted, or
+  owned by another tenant.
+}

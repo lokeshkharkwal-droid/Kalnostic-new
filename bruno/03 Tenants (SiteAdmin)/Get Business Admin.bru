@@ -14,6 +14,10 @@ auth:bearer {
   token: {{siteAdminToken}}
 }
 
+vars:pre-request {
+  tenantId: d1139e2e-6e2e-45cd-9ca1-2acac0eff8ef
+}
+
 docs {
   Get the tenant's business-admin account details. Requires `business:read`.
 }

@@ -1,0 +1,35 @@
+meta {
+  name: Get Internal Referral
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/internal-referrals/{{internalReferralId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  internalReferralId: 00000000-0000-0000-0000-000000000000
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Fetch one internal referral by id (scoped to the caller's tenant). Returns the
+  FULL record — every column (employee details, commission & TDS, payroll &
+  payment, attachment, remarks, status) plus the assigned `labTests` / `labPanels`
+  (each enriched with the referenced test/panel name + code).
+
+  404 `INTERNAL_REFERRAL_NOT_FOUND` if missing, soft-deleted, or owned by another
+  tenant.
+}

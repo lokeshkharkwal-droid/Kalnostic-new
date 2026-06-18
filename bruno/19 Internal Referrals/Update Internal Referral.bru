@@ -1,0 +1,70 @@
+meta {
+  name: Update Internal Referral
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{baseUrl}}/internal-referrals/{{internalReferralId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "INACTIVE",
+    "monthlyTargetAmount": 75000,
+    "branchId": "{{branchId}}",
+    "isIncludedInPayroll": false,
+    "commissionMode": "SEPARATE_PAYOUT",
+    "isCommissionApplicable": true,
+    "commissionType": "FIXED_AMOUNT",
+    "fixedCommissionCycle": "MONTHLY",
+    "fixedAmount": 5000,
+    "remarks": "Switched to a fixed monthly retainer for FY26."
+  }
+}
+
+vars:pre-request {
+  internalReferralId: 00000000-0000-0000-0000-000000000000
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("status was updated", function () {
+    expect(res.getBody().data.status).to.equal("INACTIVE");
+  });
+  test("commission switched to fixed amount", function () {
+    expect(res.getBody().data.commissionType).to.equal("FIXED_AMOUNT");
+  });
+}
+
+docs {
+  Update an internal referral (scoped to the caller's tenant). All fields optional;
+  only supplied fields change. Same field rules as create.
+
+  - Commission/incentive config is re-validated and normalised against the MERGED
+    (existing + patch) state when any related field is present — e.g. switching to
+    `FIXED_AMOUNT` requires `fixedCommissionCycle` (and `fixedAmount` unless the
+    cycle is `ORDER_WISE`); inapplicable fields are nulled. Bad configs → 422
+    `INTERNAL_REFERRAL_INVALID_COMMISSION_CONFIG`.
+  - `employeeId` — if supplied, re-validated as active staff of the tenant (422
+    `INTERNAL_REFERRAL_INVALID_EMPLOYEE`). Send `null` to clear the link; omit to
+    leave it untouched.
+  - `branchId` — if supplied, re-validated against the tenant (404
+    `BRANCH_NOT_FOUND`). Send `null` to clear it; omit to leave it untouched.
+  - `labTestIds` / `labPanelIds` — when supplied, REPLACE the whole set: existing
+    active rows are soft-deleted and the new set created (one transaction). Omit to
+    leave them untouched.
+  - 404 `INTERNAL_REFERRAL_NOT_FOUND` if the referral is missing/soft-deleted.
+}

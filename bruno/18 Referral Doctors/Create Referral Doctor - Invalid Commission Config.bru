@@ -1,0 +1,51 @@
+meta {
+  name: Create Referral Doctor - Invalid Commission Config
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/referral-doctors
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "firstName": "Invalid",
+    "lastName": "Config",
+    "mobileNumber": "+919900000003",
+    "isCommissionApplicable": true,
+    "commissionType": "FIXED_AMOUNT"
+  }
+}
+
+tests {
+  test("422 Unprocessable Entity", function () {
+    expect(res.getStatus()).to.equal(422);
+  });
+  test("typed error code", function () {
+    expect(res.getBody().error.code).to.equal("REFERRAL_DOCTOR_INVALID_COMMISSION_CONFIG");
+  });
+}
+
+docs {
+  Demonstrates the cross-field commission validation. Here `commissionType` is
+  `FIXED_AMOUNT` but `fixedCommissionCycle` (the "Fixed Type") is missing, so the
+  service rejects it with 422 `REFERRAL_DOCTOR_INVALID_COMMISSION_CONFIG`.
+
+  Other configs that trip the same error:
+  - `isCommissionApplicable: true` with no `commissionType`.
+  - `SLAB_BASED` with an empty/absent `commissionSlabs`.
+  - `FIXED_AMOUNT` on a non-`ORDER_WISE` cycle with no `fixedAmount`.
+  - `isIncentiveBonusApplicable: true` with an empty/absent `bonusSlabs`.
+  - any slab with `monthlyBusinessFrom > monthlyBusinessTo`.
+}

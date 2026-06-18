@@ -1,0 +1,71 @@
+meta {
+  name: Create Referral Panel Settings (Prepaid - Wallet)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/referral-panel-settings
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "settingName": "Standard Prepaid Wallet",
+    "clientType": "PREPAID",
+    "isDefault": true,
+    "status": "ACTIVE",
+    "isSendBillsToB2b": true,
+    "isSendReportsToB2b": true,
+    "minWalletAdvance": 10000,
+    "minAdvanceForBonus": 25000,
+    "minWalletBalance": 1000,
+    "isRestrictOrderAtMinBalance": true,
+    "isReminderAt75Percent": true,
+    "isReminderAtMinBalance": true,
+    "bonusType": "PERCENTAGE",
+    "bonusPercentage": 5,
+    "bonusExtraAmount": 500,
+    "isAllowNegativeBalance": false,
+    "maxNegativeBalance": 0,
+    "isRestrictOrderNegative": true,
+    "isRestrictReportNegative": true,
+    "isAllowOtherPaymentModes": false
+  }
+}
+
+script:post-response {
+  const responseData = res.getBody();
+
+  if (responseData && responseData.success && responseData.data) {
+    bru.setVar("referralPanelSettingsPrepaidId", responseData.data.id);
+  }
+}
+
+docs {
+  Create a PREPAID settings template (wallet + bonus configuration).
+
+  **Wallet / bonus (PREPAID)** — `minWalletAdvance`, `minAdvanceForBonus`,
+  `minWalletBalance`, `isRestrictOrderAtMinBalance`, `isReminderAt75Percent`,
+  `isReminderAtMinBalance`, `bonusType` (`PERCENTAGE` | `FIXED_AMOUNT`),
+  `bonusPercentage`, `bonusFixedAmount`, `bonusExtraAmount`,
+  `isAllowNegativeBalance`, `maxNegativeBalance`, `isRestrictOrderNegative`,
+  `isRestrictReportNegative`. All optional; money fields are decimals.
+
+  **Bonus rule** — when `bonusType` is set it requires its matching amount:
+  `PERCENTAGE` → `bonusPercentage`, `FIXED_AMOUNT` → `bonusFixedAmount`. A
+  mismatch returns 422 `REFERRAL_PANEL_SETTINGS_INVALID_BONUS` (see *Create …
+  Invalid Bonus Config*).
+
+  `isDefault: true` makes this the default PREPAID template, clearing any previous
+  PREPAID default. Captures `referralPanelSettingsPrepaidId`.
+}

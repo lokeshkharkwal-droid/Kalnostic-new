@@ -1,0 +1,57 @@
+meta {
+  name: Create Referral Panel (Slab-Based Commission)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/referral-panels
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Sunrise Diagnostics Network",
+    "shortName": "Sunrise",
+    "clientType": "POSTPAID",
+    "branchId": "{{branchId}}",
+    "isCommissionApplicable": true,
+    "commissionType": "SLAB_BASED",
+    "commissionSlabs": [
+      { "monthlyBusinessFrom": 0, "monthlyBusinessTo": 50000, "commissionPct": 8 },
+      { "monthlyBusinessFrom": 50000.01, "monthlyBusinessTo": 200000, "commissionPct": 12 },
+      { "monthlyBusinessFrom": 200000.01, "monthlyBusinessTo": 1000000, "commissionPct": 15 }
+    ],
+    "isTdsApplicable": true,
+    "paymentCycle": "QUARTERLY",
+    "paymentMode": "CHEQUE",
+    "isIncentiveBonusApplicable": true,
+    "bonusSlabs": [
+      { "monthlyBusinessFrom": 100000, "monthlyBusinessTo": 500000, "bonusPct": 2 },
+      { "monthlyBusinessFrom": 500000.01, "monthlyBusinessTo": 1000000, "bonusPct": 5 }
+    ]
+  }
+}
+
+docs {
+  Create a referral panel with **slab-based** commission and an incentive bonus.
+
+  - `commissionType: "SLAB_BASED"` requires a non-empty `commissionSlabs` array;
+    each row is `{ monthlyBusinessFrom, monthlyBusinessTo, commissionPct }` and the
+    service rejects an inverted band (`from > to`) with 422
+    `REFERRAL_PANEL_INVALID_COMMISSION_CONFIG`. The percentage fields
+    (`commissionPctLabTest` / `commissionPctLabPanel`) are ignored for this type.
+  - `isIncentiveBonusApplicable: true` requires a non-empty `bonusSlabs` array,
+    each row `{ monthlyBusinessFrom, monthlyBusinessTo, bonusPct }`.
+
+  Slabs are stored as JSON on the panel row (not child tables).
+}

@@ -125,6 +125,39 @@ export class UsersService {
   }
 
   /**
+   * Whether a person is an active staff member of a tenant — i.e. holds at least one
+   * active branch/tenant-level profile (`user_branch_profiles`) in that tenant and is
+   * an active, non-deleted person. Used by other modules to validate an employee link.
+   * @param personId the person to check
+   * @param tenantId the tenant the person must belong to as staff
+   * @returns true when the person is active staff of the tenant
+   */
+  async isActiveStaffOfTenant(
+    personId: string,
+    tenantId: string,
+  ): Promise<boolean> {
+    // No Prisma relation exists between UserBranchProfile and Person, so check both
+    // independently: the person must be active staff, and hold an active profile in
+    // the tenant.
+    const [person, profile] = await Promise.all([
+      this.prisma.person.findFirst({
+        where: {
+          id: personId,
+          isStaff: true,
+          isActive: true,
+          deletedAt: null,
+        },
+        select: { id: true },
+      }),
+      this.prisma.userBranchProfile.findFirst({
+        where: { personId, tenantId, isActive: true, deletedAt: null },
+        select: { id: true },
+      }),
+    ]);
+    return person !== null && profile !== null;
+  }
+
+  /**
    * Update a person's basic details. Only the owning tenant, the person
    * themselves, or any tenant for self-registered persons may edit.
    * @param personId person to update

@@ -1,0 +1,95 @@
+meta {
+  name: Create Referral Panel Settings (Postpaid - Credit)
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/referral-panel-settings
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "settingName": "Standard Postpaid Terms",
+    "clientType": "POSTPAID",
+    "isDefault": true,
+    "status": "ACTIVE",
+    "isSendBillsToPatient": false,
+    "isSendBillsToB2b": true,
+    "isSendBillsToDoctor": false,
+    "isSendReportsToPatient": true,
+    "isSendReportsToB2b": true,
+    "isSendReportsToDoctor": false,
+    "creditLimitAmount": 200000,
+    "isRestrictOrderCreditLimit": true,
+    "isRestrictReportCreditLimit": false,
+    "creditAllowedDays": 30,
+    "isRestrictOrderCreditDays": true,
+    "isRestrictReportCreditDays": false,
+    "daysAfterInvoice": 7,
+    "isRestrictOrderPostInvoice": false,
+    "isRestrictReportPostInvoice": false,
+    "isAutoInvoice": true,
+    "raiseInvoiceCreditLimit": 150000,
+    "invoiceFrequencyDays": 30,
+    "isOverlapMonthEndClose": true,
+    "isAllowManualInvoice": true,
+    "invoiceEmailTriggerHours": 24,
+    "isAllowOtherPaymentModes": true
+  }
+}
+
+script:post-response {
+  const responseData = res.getBody();
+
+  if (responseData && responseData.success && responseData.data) {
+    bru.setVar("referralPanelSettingsId", responseData.data.id);
+  }
+}
+
+docs {
+  Create a referral panel settings template — a reusable billing/communication
+  profile keyed by `clientType` (`CASH` | `PREPAID` | `POSTPAID`). Referenced
+  (optionally) by referral panels, referral doctors, external referrals and
+  internal referrals via their `referralPanelSettingsId`. Captures
+  `referralPanelSettingsId` for the Get/Update/Delete requests and for linking
+  referral entities.
+
+  Tenant-scoped, tenant-level: `tenantId` comes from the JWT and is never sent;
+  `branchId` is carried on the model but reads are scoped by tenant only.
+
+  **Identity** — `settingName` (required, 2-255, unique per tenant among active
+  rows — 409 `REFERRAL_PANEL_SETTINGS_NAME_CONFLICT`), `clientType` (required).
+  `status` defaults to `ACTIVE`.
+
+  **`isDefault`** — at most one default per `clientType` per tenant. Setting this
+  `true` automatically clears the previous default for the same client type (and
+  is backed by a partial unique index — 409
+  `REFERRAL_PANEL_SETTINGS_DEFAULT_CONFLICT` on a race).
+
+  **Communication** — `isSendBills*` / `isSendReports*` toggles (to patient / B2B
+  / doctor). Apply to all client types.
+
+  **Credit / invoicing (POSTPAID)** — `creditLimitAmount`,
+  `isRestrictOrder/ReportCreditLimit`, `creditAllowedDays`,
+  `isRestrictOrder/ReportCreditDays`, `daysAfterInvoice`,
+  `isRestrictOrder/ReportPostInvoice`, `isAutoInvoice`,
+  `raiseInvoiceCreditLimit`, `invoiceFrequencyDays`, `isOverlapMonthEndClose`,
+  `isAllowManualInvoice`, `invoiceEmailTriggerHours`. All optional; money fields
+  are decimals, day/hour fields are integers.
+
+  **Payment** — `isAllowOtherPaymentModes`.
+
+  All fields not relevant to the chosen `clientType` may simply be omitted (the
+  backend stores all sections; the frontend shows the relevant group).
+}

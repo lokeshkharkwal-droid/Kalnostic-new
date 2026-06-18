@@ -1,0 +1,70 @@
+meta {
+  name: Create External Referral (Slab-Based Commission)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/external-referrals
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "MediPath Labs Referral",
+    "organisationName": "MediPath Labs LLP",
+    "referralCode": "MEDIPATH-002",
+    "mobileNumber": "+919900100002",
+    "email": "accounts@medipath.example.com",
+    "branchId": "{{branchId}}",
+    "isCommissionApplicable": true,
+    "commissionType": "SLAB_BASED",
+    "commissionSlabs": [
+      { "monthlyBusinessFrom": 0, "monthlyBusinessTo": 50000, "commissionPct": 5 },
+      { "monthlyBusinessFrom": 50000.01, "monthlyBusinessTo": 200000, "commissionPct": 8 }
+    ],
+    "isTdsApplicable": false,
+    "paymentCycle": "QUARTERLY",
+    "paymentMode": "CHEQUE",
+    "monthlyTargetAmount": 100000,
+    "isIncentiveBonusApplicable": true,
+    "bonusSlabs": [
+      { "monthlyBusinessFrom": 100000, "monthlyBusinessTo": 300000, "bonusPct": 2.5 }
+    ],
+    "status": "ACTIVE"
+  }
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("slabs were stored", function () {
+    expect(res.getBody().data.commissionSlabs).to.have.lengthOf(2);
+    expect(res.getBody().data.bonusSlabs).to.have.lengthOf(1);
+  });
+}
+
+docs {
+  Create an external referral with SLAB_BASED commission and an incentive bonus.
+
+  - `commissionType: "SLAB_BASED"` requires a non-empty `commissionSlabs` array;
+    each slab is `{ monthlyBusinessFrom, monthlyBusinessTo, commissionPct }` with
+    `from <= to` and `commissionPct` in 0-100 (422
+    `EXTERNAL_REFERRAL_INVALID_COMMISSION_CONFIG` otherwise). The
+    `commissionPctLabTest` / `commissionPctLabPanel` percentage fields are ignored
+    (nulled) for slab-based commission.
+  - `isIncentiveBonusApplicable: true` requires a non-empty `bonusSlabs` array; each
+    slab is `{ monthlyBusinessFrom, monthlyBusinessTo, bonusPct }` (same rules).
+
+  Slabs are stored as JSON on the external-referral row.
+}

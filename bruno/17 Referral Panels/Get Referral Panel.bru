@@ -1,0 +1,26 @@
+meta {
+  name: Get Referral Panel
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/referral-panels/{{referralPanelId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Fetch one referral panel by id (scoped to the caller's tenant), with its
+  assigned lab tests and lab panels embedded. Each assigned item is enriched with
+  the resolved `testName`/`testCode` (or `panelName`/`panelCode`) — `null` if the
+  referenced lab test/panel has since been deleted. 404
+  `REFERRAL_PANEL_NOT_FOUND` if missing or soft-deleted.
+
+  Uses `referralPanelId` captured by *Create Referral Panel (Percentage
+  Commission)*. Run a Create request first, or set the var manually.
+}
