@@ -39,8 +39,9 @@ Seeded SiteAdmin login: `admin@kalnostics.com` / `SuperSecret1`.
 | 4 | **05 Branches → Create Branch** | `branchId` |
 | 5 | **06 Users → Register Patient / Register Staff** | `patientPersonId`, `staffPersonId`, `staffTempPassword` |
 | 6 | **05 Branches → Set Branch Modules** | — (enables work-area modules for the branch) |
-| 7 | **06 Users → User Management v2 → Create User** | `manageUserId`, `manageUserCode` |
-| 8 | everything else | — |
+| 7 | **05 Branches → Create Collection Center** | `collectionCenterId` (maps `branchId` as a sample receiver; optional) |
+| 8 | **06 Users → User Management v2 → Create User** | `manageUserId`, `manageUserCode` |
+| 9 | everything else (incl. Get/Set Collection Mappings) | — |
 
 If a capture script can't find a field (the exact response shape may differ),
 just open the response, copy the value, and paste it into the matching
@@ -63,21 +64,23 @@ just open the response, copy the value, and paste it into the matching
   deactivate
 - **Tenants** (`/siteadmin/tenants`): create, list, get, update, get-admin,
   reset-admin-password
-- **Branches** (`/branches`): create, list, get, update, delete,
-  get/set modules (work-area enablement)
+- **Branches** (`/branches`): create (incl. Collection Center with inline
+  `receivingBranchIds`), list, get, update, delete, get/set modules (work-area
+  enablement), get/set collection-center sample-receiving mappings
 - **Users** (`/users`): register-patient, list-staff, register-staff, get,
   update, assign/revoke/default profile, get/set permissions, get/set
   receptionist-doctors, reset-password
 - **User Management v2** (`/users/manage`): create / list / get / update user,
   upload profile photo, assign branches, update branch assignment, global
-  deactivate / activate, get / update branch permissions, list profile
-  permissions, list roles, list modules
+  deactivate / activate, get / update branch permissions, **get my permissions
+  (`me/permissions`)**, **get permission catalog (`permission-catalog`)**, list
+  profile permissions, list roles, list modules
 
 ## Enum reference
 
 - `Gender`: MALE, FEMALE, OTHER, PREFER_NOT_TO_SAY
 - `BloodGroup`: A_POS, A_NEG, B_POS, B_NEG, O_POS, O_NEG, AB_POS, AB_NEG, UNKNOWN
-- `BranchType`: DIAGNOSTIC, RADIOLOGY, OPD, IPD, PHARMACY, INVENTORY, BLOOD_BANK, FRANCHISE, COMBINED, ASSISTANT, ACCESSION, TECHNICIAN
+- `BranchType`: DIAGNOSTIC, RADIOLOGY, OPD, IPD, PHARMACY, INVENTORY, BLOOD_BANK, FRANCHISE, COMBINED, ASSISTANT, ACCESSION, TECHNICIAN, COLLECTION_CENTER
 - `SiteAdminRole`: CONTENT_ADMIN, OPERATIONS_ADMIN, FULL_ADMIN, SUPER_OWNER
 - `UserType` (User Mgmt v2): INTERNAL, EXTERNAL
 - `StaffStatus` (User Mgmt v2): ACTIVE, INACTIVE
@@ -90,3 +93,10 @@ just open the response, copy the value, and paste it into the matching
   nursing_staff, nursing_incharge
 - System modules (`moduleKey`): registration, accession, lab_operations,
   inventory, sales, admin, radiology, pharmacy, opd, ipd, finance, phlebotomist
+- Permission keys (`permissionKey`): `module:action`. Every module exposes the
+  four standard actions — `view`, `write`, `edit`, `delete` (e.g. `admin:view`,
+  `inventory:write`) — plus domain-specific extras: `lab_operations:enter_results`,
+  `lab_operations:verify`, `admin:manage_users`, `admin:manage_branches`,
+  `admin:manage_permissions`, `radiology:report`, `radiology:verify`,
+  `pharmacy:dispense`, `pharmacy:manage_stock`, `ipd:admit`, `ipd:discharge`,
+  `finance:manage`, `finance:reports`, `phlebotomist:collect_sample`

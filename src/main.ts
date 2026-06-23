@@ -40,7 +40,9 @@ async function bootstrap(): Promise<void> {
   // ── Security & performance middleware ──
   // helmet() is applied AFTER enableCors so it doesn't interfere with
   // the preflight OPTIONS response.
+
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+
   app.use(compression()); // gzip responses
 
   // All routes are served under /api/v1 (e.g. POST /api/v1/auth/login).

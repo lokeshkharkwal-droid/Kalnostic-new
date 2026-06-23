@@ -87,6 +87,7 @@ enum BranchType {
   ASSISTANT
   ACCESSION
   TECHNICIAN
+  COLLECTION_CENTER
 }
 
 enum BranchStatus {
@@ -177,6 +178,7 @@ enum AuditModule {
   REFERRAL_DOCTOR
   EXTERNAL_REFERRAL
   INTERNAL_REFERRAL
+  MACHINE
   AUTH
   SITEADMIN // reserved; not written to in this phase (business audit only)
 }
@@ -756,6 +758,28 @@ model BranchModule {
   @@index([tenantId])
   @@index([branchId])
   @@map("branch_modules")
+}
+
+/// Maps a Collection Center branch to a branch that receives its samples for
+/// processing. Tenant-scoped (CLAUDE.md §4.6). Both ids are logical FKs to
+/// `branches` (validated in BranchService, mirroring BranchModule). One active
+/// mapping per (collection_center, receiving_branch) — partial unique index in
+/// prisma/rls.sql. RLS policy in prisma/rls.sql.
+model CollectionCenterMapping {
+  id                 String @id @default(uuid())
+  tenantId           String @map("tenant_id")
+  collectionCenterId String @map("collection_center_id")
+  receivingBranchId  String @map("receiving_branch_id")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([collectionCenterId])
+  @@index([receivingBranchId])
+  @@index([deletedAt])
+  @@map("collection_center_mappings")
 }
 
 /// Module-grouped, per-(user + branch) permission grants (User Management v2.0).
@@ -2485,4 +2509,160 @@ model InternalReferralLabPanel {
   @@index([labPanelId])
   @@index([deletedAt])
   @@map("internal_referral_lab_panels")
+}
+
+// ── Machine Management enums ─────────────────────────────────────────────────────
+
+/// A machine's connectivity/operational state. Default OFFLINE.
+enum MachineStatus {
+  ONLINE
+  OFFLINE
+  MAINTENANCE
+  ERROR
+}
+
+/// Severity/category of an adapter communication log line.
+enum AdapterLogType {
+  ERROR
+  INFO
+  WARNING
+}
+
+/// A lab machine/analyzer. Tenant-scoped, tenant-level (CLAUDE.md §4.6): a machine
+/// is owned by the business and assigned to one-or-more branches via the
+/// `MachineBranch` junction (it carries no `branchId` of its own). `departmentId`
+/// is a logical ref to a Department in the tenant (no Prisma relation), validated
+/// in MachineService.
+model Machine {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+
+  machineName  String        @map("machine_name")
+  code         String?
+  manufacturer String?
+  model        String?
+  serialNo     String?       @map("serial_no")
+  departmentId String?       @map("department_id")
+  status       MachineStatus @default(OFFLINE)
+
+  lastCalibrationDate DateTime? @map("last_calibration_date")
+  lastMaintenanceDate DateTime? @map("last_maintenance_date")
+  nextCalibrationDate DateTime? @map("next_calibration_date")
+  nextMaintenanceDue  DateTime? @map("next_maintenance_due")
+
+  analyserImage String? @map("analyser_image")
+  machineNotes  String? @map("machine_notes")
+
+  interfaceType     String?  @map("interface_type")
+  tokenNumber       String?  @map("token_number")
+  connectionType    String?  @map("connection_type")
+  hostPcIpAddress   String?  @map("host_pc_ip_address")
+  analyserIpAddress String?  @map("analyser_ip_address")
+  port              Int?
+  isAdapterServer   Boolean? @map("is_adapter_server")
+  adapterSupports   String[] @map("adapter_supports")
+  referenceImages   String[] @map("reference_images")
+  interfaceNote     String?  @map("interface_note")
+
+  isBidirectionalInterface Boolean @default(false) @map("is_bidirectional_interface")
+  isAutoValidateResults    Boolean @default(false) @map("is_auto_validate_results")
+  isAutoFlagCritical       Boolean @default(false) @map("is_auto_flag_critical")
+
+  interfaceConfigurationNotes String? @map("interface_configuration_notes")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([departmentId])
+  @@index([deletedAt])
+  @@map("machines")
+}
+
+/// A reagent kit used by a machine (one machine → many kits). `machineId` is a
+/// logical ref to a Machine in the tenant; cascade soft-delete is done in
+/// MachineService (no DB-level ON DELETE CASCADE — CLAUDE.md §4.1).
+model MachineReagentKit {
+  id             String  @id @default(uuid())
+  tenantId       String  @map("tenant_id")
+  machineId      String  @map("machine_id")
+  reagentKitName String  @map("reagent_kit_name")
+  manufacturer   String
+  details        String?
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([machineId])
+  @@index([deletedAt])
+  @@map("machine_reagent_kits")
+}
+
+/// A LIS↔analyzer test mapping for a machine (one machine → many mappings).
+/// `isActive` enables/disables the mapping. `machineId` is a logical ref.
+model MachineTestMapping {
+  id            String  @id @default(uuid())
+  tenantId      String  @map("tenant_id")
+  machineId     String  @map("machine_id")
+  lisCode       String  @map("lis_code")
+  lisTestName   String  @map("lis_test_name")
+  analyzerCode  String  @map("analyzer_code")
+  analyzerName  String  @map("analyzer_name")
+  unit          String?
+  decimalPlaces Int     @default(0) @map("decimal_places")
+  isActive      Boolean @default(true) @map("is_active")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([machineId])
+  @@index([deletedAt])
+  @@map("machine_test_mappings")
+}
+
+/// An adapter communication log line for a machine (append-only; one machine →
+/// many logs). `isViewed` tracks whether an operator has seen the line. `sourceIp`
+/// is stored as text (Prisma has no native INET). `machineId` is a logical ref.
+model MachineAdapterLog {
+  id        String          @id @default(uuid())
+  tenantId  String          @map("tenant_id")
+  machineId String          @map("machine_id")
+  logType   AdapterLogType? @map("log_type")
+  status    String?
+  sourceIp  String?         @map("source_ip")
+  isViewed  Boolean         @default(false) @map("is_viewed")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([machineId])
+  @@index([deletedAt])
+  @@map("machine_adapter_logs")
+}
+
+/// Junction mapping a machine to the branches it serves (many-to-many).
+/// `branchId` arrives from the request body and is validated against the caller's
+/// tenant via BranchService.findById (the §4.7 exception to "branchId from JWT").
+/// One active row per (machine, branch) — partial unique index in prisma/rls.sql.
+model MachineBranch {
+  id        String @id @default(uuid())
+  tenantId  String @map("tenant_id")
+  machineId String @map("machine_id")
+  branchId  String @map("branch_id")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([machineId])
+  @@index([branchId])
+  @@map("machine_branches")
 }

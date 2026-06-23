@@ -697,6 +697,65 @@ CREATE POLICY ubperm_tenant_isolation ON user_branch_permissions
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── machines ────────────────────────────────────────────────────────────────────
+ALTER TABLE machines ENABLE ROW LEVEL SECURITY;
+ALTER TABLE machines FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS machines_tenant_isolation ON machines;
+CREATE POLICY machines_tenant_isolation ON machines
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── machine_reagent_kits ──────────────────────────────────────────────────────
+ALTER TABLE machine_reagent_kits ENABLE ROW LEVEL SECURITY;
+ALTER TABLE machine_reagent_kits FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS machine_reagent_kits_tenant_isolation ON machine_reagent_kits;
+CREATE POLICY machine_reagent_kits_tenant_isolation ON machine_reagent_kits
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── machine_test_mappings ─────────────────────────────────────────────────────
+ALTER TABLE machine_test_mappings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE machine_test_mappings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS machine_test_mappings_tenant_isolation ON machine_test_mappings;
+CREATE POLICY machine_test_mappings_tenant_isolation ON machine_test_mappings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── machine_adapter_logs ──────────────────────────────────────────────────────
+ALTER TABLE machine_adapter_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE machine_adapter_logs FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS machine_adapter_logs_tenant_isolation ON machine_adapter_logs;
+CREATE POLICY machine_adapter_logs_tenant_isolation ON machine_adapter_logs
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── machine_branches ──────────────────────────────────────────────────────────
+ALTER TABLE machine_branches ENABLE ROW LEVEL SECURITY;
+ALTER TABLE machine_branches FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS machine_branches_tenant_isolation ON machine_branches;
+CREATE POLICY machine_branches_tenant_isolation ON machine_branches
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- One ACTIVE mapping per (tenant, machine, branch); a soft-deleted mapping can be
+-- re-created. Prisma can't express partial unique indexes, so it lives here.
+CREATE UNIQUE INDEX IF NOT EXISTS machine_branches_tenant_machine_branch_active_unique
+  ON machine_branches (tenant_id, machine_id, branch_id) WHERE deleted_at IS NULL;
+
+-- ── collection_center_mappings ───────────────────────────────────────────────
+ALTER TABLE collection_center_mappings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE collection_center_mappings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS ccm_tenant_isolation ON collection_center_mappings;
+CREATE POLICY ccm_tenant_isolation ON collection_center_mappings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- One ACTIVE mapping per (collection center, receiving branch); a soft-deleted
+-- mapping can be re-created. Prisma can't express partial unique indexes.
+CREATE UNIQUE INDEX IF NOT EXISTS ccm_center_receiver_active_unique
+  ON collection_center_mappings (collection_center_id, receiving_branch_id)
+  WHERE deleted_at IS NULL;
+
 -- Platform-level tables (tenants, persons, person_credentials, siteadmin_users,
 -- refresh_tokens, person_tenant_enrollments) are intentionally NOT covered —
 -- they sit above the tenant boundary.

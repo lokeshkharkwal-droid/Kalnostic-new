@@ -14,6 +14,10 @@ auth:bearer {
   token: {{businessAccessToken}}
 }
 
+vars:pre-request {
+  branchId: fc9e3c69-e871-423e-ad60-fa819ca7199e
+}
+
 docs {
   List all 12 system modules with whether each is enabled at this branch
   (`{ moduleKey, label, isEnabled }`). Modules with no row are reported disabled.

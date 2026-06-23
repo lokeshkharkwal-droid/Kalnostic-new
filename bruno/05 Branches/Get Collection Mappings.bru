@@ -1,0 +1,26 @@
+meta {
+  name: Get Collection Mappings
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/branches/{{collectionCenterId}}/collection-mappings
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  collectionCenterId: fc9e3c69-e871-423e-ad60-fa819ca7199e
+}
+
+docs {
+  List the sample-receiving branches mapped to this Collection Center
+  (`{ receivingBranchId, name, code, branchType, status }` per row). The branch
+  must be of type `COLLECTION_CENTER`, otherwise the call returns 409
+  `NOT_A_COLLECTION_CENTER`. Soft-deleted receiver branches are omitted.
+}

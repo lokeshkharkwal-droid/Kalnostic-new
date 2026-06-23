@@ -1,0 +1,31 @@
+meta {
+  name: List Adapter Logs
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/machines/{{machineId}}/adapter-logs?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  List a machine's adapter communication logs (newest first, paginated). Logs are
+  append-only. 404 `MACHINE_NOT_FOUND` if the machine is missing/soft-deleted.
+}

@@ -1,0 +1,32 @@
+meta {
+  name: Get My Permissions
+  type: http
+  seq: 17
+}
+
+get {
+  url: {{baseUrl}}/users/manage/me/permissions
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  The **current user's** effective permissions, resolved from the JWT (active
+  branch + active profile) — no path params. Returns `{ modules, allowed }`:
+
+  - `modules`: array of `{ moduleKey, moduleLabel, permissions[] }`, where each
+    permission is `{ permissionKey, action, label, baseline, allowed }`. Effective
+    `allowed` = stored override ?? role baseline.
+  - `allowed`: flat array of every granted `permissionKey` (e.g.
+    `["admin:view", "admin:edit", "admin:manage_users"]`) — the frontend keys off
+    this for show/hide.
+
+  **Branch context** (active branch set): gated to the branch's enabled modules
+  with per-(user+branch) overrides applied. **Tenant-level** profiles
+  (`business_admin`/`administrator`, no active branch): all of the role's modules
+  with the role baseline as the grant.
+}

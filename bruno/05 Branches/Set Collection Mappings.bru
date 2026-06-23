@@ -1,0 +1,48 @@
+meta {
+  name: Set Collection Mappings
+  type: http
+  seq: 12
+}
+
+put {
+  url: {{baseUrl}}/branches/{{collectionCenterId}}/collection-mappings
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "receivingBranchIds": [
+      "{{receivingBranchIdA}}",
+      "37e8cb33-9c10-4778-bc4c-20490e1c0f75"
+    ]
+  }
+}
+
+vars:pre-request {
+  collectionCenterId: fc9e3c69-e871-423e-ad60-fa819ca7199e
+  receivingBranchIdA: b0b8fb9d-7c16-4cd1-b527-5c6cb12508a1
+  receivingBranchIdB: 00000000-0000-4000-8000-000000000002
+}
+
+docs {
+  Replace the full set of sample-receiving branches mapped to this Collection
+  Center (PUT replaces the whole set). Mappings no longer in the array are
+  soft-deleted; ids in the array are upserted (a previously removed mapping is
+  reactivated, not duplicated). Send `"receivingBranchIds": []` to clear all
+  mappings.
+  
+  The target branch must be of type `COLLECTION_CENTER` (else 409
+  `NOT_A_COLLECTION_CENTER`). Each receiver must be an active branch in the
+  tenant; it cannot be the Collection Center itself or another Collection Center
+  (else 409 `INVALID_RECEIVING_BRANCH`). A receiver from another tenant / missing
+  returns 404 `BRANCH_NOT_FOUND`.
+}

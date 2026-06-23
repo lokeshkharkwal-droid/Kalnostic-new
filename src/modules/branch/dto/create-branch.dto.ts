@@ -1,12 +1,14 @@
 import { BranchStatus, BranchType, DayOfWeek } from '@prisma/client';
 import {
   ArrayUnique,
+  IsArray,
   IsDateString,
   IsEmail,
   IsEnum,
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   MaxLength,
   Min,
@@ -27,6 +29,15 @@ export class CreateBranchDto {
 
   // NOTE: `code` is NOT accepted from the client — it is system-generated
   // (per-tenant sequential, e.g. "BR-00001") and immutable. See BranchService.
+
+  // Sample-receiving branches to map to this branch. Only valid when
+  // `branchType` is `COLLECTION_CENTER`; the service creates the branch and its
+  // mappings atomically and validates each receiver (rejects non-CC types).
+  @IsArray()
+  @ArrayUnique()
+  @IsUUID('4', { each: true })
+  @IsOptional()
+  receivingBranchIds?: string[];
 
   @IsEnum(BranchStatus)
   @IsOptional()

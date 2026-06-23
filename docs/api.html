@@ -87,6 +87,8 @@
   <a href="#branch-get">GET /branches/:id</a>
   <a href="#branch-update">PATCH /branches/:id</a>
   <a href="#branch-delete">DELETE /branches/:id</a>
+  <a href="#branch-collection-mappings-get">GET /branches/:id/collection-mappings</a>
+  <a href="#branch-collection-mappings-set">PUT /branches/:id/collection-mappings</a>
   <h3>Users</h3>
   <a href="#user-register">POST /users</a>
   <a href="#staff-list">GET /users/staff</a>
@@ -383,6 +385,8 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>GET /branches/:id</td><td>Business JWT</td><td>intended <code>staff:read</code></td></tr>
   <tr><td>PATCH /branches/:id</td><td>Business JWT</td><td>intended <code>staff:manage</code></td></tr>
   <tr><td>DELETE /branches/:id</td><td>Business JWT</td><td>intended <code>staff:manage</code></td></tr>
+  <tr><td>GET /branches/:id/collection-mappings</td><td>Business JWT</td><td>intended <code>staff:read</code></td></tr>
+  <tr><td>PUT /branches/:id/collection-mappings</td><td>Business JWT</td><td>intended <code>staff:manage</code></td></tr>
   <tr><td>POST /users</td><td>Business JWT</td><td>intended <code>patient:create</code></td></tr>
   <tr><td>GET /users/staff</td><td>Business JWT</td><td>intended <code>staff:read</code></td></tr>
   <tr><td>POST /users/staff</td><td>Business JWT</td><td>intended <code>staff:manage</code></td></tr>
@@ -707,11 +711,16 @@ coherent example: SiteAdmin <i>owner@kalnostics.com</i> created tenant <b>City D
 <div class="ep" id="branch-create">
   <div><span class="m post">POST</span><span class="path">/api/v1/branches</span></div>
   <div class="tags"><span class="tag biz">business JWT</span></div>
-  <p>Create a branch in the caller's tenant.</p>
+  <p>Create a branch in the caller's tenant. When <code>branchType</code> is
+  <code>COLLECTION_CENTER</code>, an optional <code>receivingBranchIds</code> array
+  maps the center's sample-receiving branches in the same (atomic) request; the
+  receivers are validated like <a href="#branch-collection-mappings-set">PUT
+  collection-mappings</a>. Supplying <code>receivingBranchIds</code> for any other
+  branch type returns <span class="pill">422 VALIDATION_ERROR</span>.</p>
   <p class="lbl">Request body</p>
-  <pre>{ "name": "Andheri Center", "branchType": "DIAGNOSTIC",
-  "code": "AND", "phone": "+912200000000", "email": "andheri@citydx.com",
-  "address": { "line1": "…", "city": "Mumbai" } }</pre>
+  <pre>{ "name": "Kothrud Collection Center", "branchType": "COLLECTION_CENTER",
+  "phone": "+912200000000", "city": "Pune",
+  "receivingBranchIds": ["b-uuid-1", "b-uuid-2"] }</pre>
   <p class="lbl">curl</p>
   <pre>curl -X POST https://api.kalnostics.com/api/v1/branches \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
@@ -752,6 +761,30 @@ coherent example: SiteAdmin <i>owner@kalnostics.com</i> created tenant <b>City D
   <div class="tags"><span class="tag biz">business JWT</span></div>
   <p>Soft-delete a branch (sets <code>deletedAt</code>).</p>
   <pre>curl -X DELETE https://api.kalnostics.com/api/v1/branches/b-uuid -H "Authorization: Bearer $TOKEN"</pre>
+</div>
+
+<div class="ep" id="branch-collection-mappings-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/branches/:id/collection-mappings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>List the sample-receiving branches mapped to this Collection Center
+  (<code>{ receivingBranchId, name, code, branchType, status }</code> per row).
+  <span class="pill">409 NOT_A_COLLECTION_CENTER</span> if the branch is not of type
+  <code>COLLECTION_CENTER</code>.</p>
+  <pre>curl https://api.kalnostics.com/api/v1/branches/cc-uuid/collection-mappings -H "Authorization: Bearer $TOKEN"</pre>
+</div>
+
+<div class="ep" id="branch-collection-mappings-set">
+  <div><span class="m put">PUT</span><span class="path">/api/v1/branches/:id/collection-mappings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Replace the full set of sample-receiving branches mapped to this Collection
+  Center. Mappings no longer in the array are soft-deleted; ids in the array are
+  upserted (a removed mapping is reactivated, not duplicated). An empty array
+  clears all mappings. The branch must be of type <code>COLLECTION_CENTER</code>
+  (<span class="pill">409 NOT_A_COLLECTION_CENTER</span>); each receiver must be an
+  active branch in the tenant and may not be the center itself or another
+  Collection Center (<span class="pill">409 INVALID_RECEIVING_BRANCH</span>);
+  unknown / other-tenant receivers give <span class="pill">404 BRANCH_NOT_FOUND</span>.</p>
+  <pre>{ "receivingBranchIds": ["b-uuid-1", "b-uuid-2"] }</pre>
 </div>
 
 <!-- ───────────────────────── USERS ───────────────────────── -->

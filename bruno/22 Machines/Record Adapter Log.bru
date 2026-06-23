@@ -1,0 +1,44 @@
+meta {
+  name: Record Adapter Log
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/machines/{{machineId}}/adapter-logs
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "logType": "INFO",
+    "status": "Connection established",
+    "sourceIp": "192.168.1.20"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("adapterLogId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  Append an adapter communication log line for a machine. Captures `adapterLogId`.
+  `logType` enum: ERROR | INFO | WARNING (optional). `sourceIp` is stored as text.
+  New logs default to `isViewed: false`.
+}

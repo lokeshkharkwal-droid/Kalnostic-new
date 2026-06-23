@@ -1,7 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { Branch, BranchStatus, Prisma, TenantMainBranch } from '@prisma/client';
+import {
+  Branch,
+  BranchStatus,
+  BranchType,
+  Prisma,
+  TenantMainBranch,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ValidationException } from '../../common/exceptions/kaltros.exception';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { CreateBranchDto } from './dto/create-branch.dto';
 import { UpdateBranchDto } from './dto/update-branch.dto';
@@ -11,8 +18,19 @@ import {
   BranchNameConflictException,
   BranchNotFoundException,
   CannotDeleteMainBranchException,
+  InvalidReceivingBranchException,
   MainBranchNotSetException,
+  NotACollectionCenterException,
 } from './exceptions/branch.exceptions';
+
+/** A sample-receiving branch mapped to a Collection Center. */
+export interface CollectionMappingView {
+  receivingBranchId: string;
+  name: string;
+  code: string;
+  branchType: BranchType;
+  status: BranchStatus;
+}
 
 /**
  * Branch management. Tenant-scoped: every query carries `tenantId` (defence in
@@ -35,6 +53,10 @@ export class BranchService {
    * (`status = ACTIVE`) and the tenant has no other active branch
    * (`deletedAt = null` AND `status = ACTIVE`), the new branch is set as the
    * tenant's main branch in the same transaction.
+   * When `branchType` is `COLLECTION_CENTER`, the optional
+   * `dto.receivingBranchIds` are mapped to the new branch in the same
+   * transaction (branch + mappings are atomic). Each receiver is validated
+   * first; supplying receivers for a non-Collection-Center branch is rejected.
    * @param tenantId owning tenant
    * @param dto validated branch payload (no `code` — it is generated here)
    * @param setBy person id of the actor, recorded on the main-branch pointer
@@ -42,12 +64,29 @@ export class BranchService {
    * @returns the created branch
    * @throws BranchNameConflictException if the name is already used by an
    *   active branch in this tenant
+   * @throws ValidationException if `receivingBranchIds` is set for a branch
+   *   whose type is not `COLLECTION_CENTER`
+   * @throws BranchNotFoundException / InvalidReceivingBranchException if a
+   *   receiver is invalid (see {@link validateReceivingBranches})
    */
   async create(
     tenantId: string,
     dto: CreateBranchDto,
     setBy?: string,
   ): Promise<Branch> {
+    const receivingBranchIds = dto.receivingBranchIds ?? [];
+    if (receivingBranchIds.length > 0) {
+      if (dto.branchType !== BranchType.COLLECTION_CENTER) {
+        throw new ValidationException(
+          'receivingBranchIds can only be set when branchType is COLLECTION_CENTER',
+          { receivingBranchIds: 'only allowed for COLLECTION_CENTER branches' },
+        );
+      }
+      // Validate every receiver up front (existence, tenant, active, not a CC).
+      // No self-check: the new branch id is not yet known, so it cannot appear.
+      await this.validateReceivingBranches(tenantId, receivingBranchIds);
+    }
+
     try {
       const created = await this.prisma.withTenant(tenantId, async (tx) => {
         const tenant = await tx.tenant.update({
@@ -84,6 +123,19 @@ export class BranchService {
             remarks: dto.remarks ?? null,
           },
         });
+
+        // Map the sample-receiving branches to this new Collection Center. All
+        // ids were validated above and are unique (DTO `@ArrayUnique`), so a
+        // plain createMany is safe (no existing rows to reactivate).
+        if (receivingBranchIds.length > 0) {
+          await tx.collectionCenterMapping.createMany({
+            data: receivingBranchIds.map((receivingBranchId) => ({
+              tenantId,
+              collectionCenterId: branch.id,
+              receivingBranchId,
+            })),
+          });
+        }
 
         // Auto-set as main branch when this is the tenant's only active branch.
         // An active branch = not soft-deleted AND status ACTIVE; a count of 1
@@ -359,6 +411,158 @@ export class BranchService {
       }
     });
     return this.getBranchModules(tenantId, branchId);
+  }
+
+  // ── Collection Center → sample-receiving branch mappings ─────────────────────
+
+  /**
+   * Validate that every id may receive samples from a Collection Center: each
+   * must be an existing, active branch in the tenant, must not be the Collection
+   * Center itself, and must not itself be a Collection Center.
+   * @param tenantId tenant scope
+   * @param receivingBranchIds candidate receiver ids
+   * @param collectionCenterId the owning Collection Center when it already
+   *   exists; omit during branch creation (the new id is not yet known, so a
+   *   self-reference is impossible)
+   * @throws BranchNotFoundException if a receiver is missing / other tenant
+   * @throws InvalidReceivingBranchException if a receiver is the center itself or
+   *   is another Collection Center
+   */
+  private async validateReceivingBranches(
+    tenantId: string,
+    receivingBranchIds: string[],
+    collectionCenterId?: string,
+  ): Promise<void> {
+    for (const receivingBranchId of receivingBranchIds) {
+      if (collectionCenterId && receivingBranchId === collectionCenterId) {
+        throw new InvalidReceivingBranchException(
+          receivingBranchId,
+          'A collection center cannot map to itself',
+        );
+      }
+      const receiver = await this.findById(receivingBranchId, tenantId);
+      if (receiver.branchType === BranchType.COLLECTION_CENTER) {
+        throw new InvalidReceivingBranchException(
+          receivingBranchId,
+          'Another collection center cannot be a sample receiver',
+        );
+      }
+    }
+  }
+
+  /**
+   * List the branches that receive samples from a Collection Center. Soft-deleted
+   * receiver branches are omitted from the result.
+   * @param tenantId tenant scope
+   * @param branchId the Collection Center branch (validated to belong to the
+   *   tenant and to be of type `COLLECTION_CENTER`)
+   * @returns one entry per active mapped receiving branch
+   * @throws BranchNotFoundException if the branch is missing / other tenant
+   * @throws NotACollectionCenterException if the branch is not a Collection Center
+   */
+  async getCollectionMappings(
+    tenantId: string,
+    branchId: string,
+  ): Promise<CollectionMappingView[]> {
+    const center = await this.findById(branchId, tenantId);
+    if (center.branchType !== BranchType.COLLECTION_CENTER) {
+      throw new NotACollectionCenterException(branchId);
+    }
+    const mappings = await this.prisma.collectionCenterMapping.findMany({
+      where: { tenantId, collectionCenterId: branchId, deletedAt: null },
+    });
+    if (mappings.length === 0) {
+      return [];
+    }
+    const receivingIds = mappings.map((m) => m.receivingBranchId);
+    const branches = await this.prisma.branch.findMany({
+      where: { tenantId, id: { in: receivingIds }, deletedAt: null },
+    });
+    const byId = new Map(branches.map((b) => [b.id, b]));
+    return mappings
+      .map((m) => byId.get(m.receivingBranchId))
+      .filter((b): b is Branch => b !== undefined)
+      .map((b) => ({
+        receivingBranchId: b.id,
+        name: b.name,
+        code: b.code,
+        branchType: b.branchType,
+        status: b.status,
+      }));
+  }
+
+  /**
+   * Replace the full set of sample-receiving branches mapped to a Collection
+   * Center. Mappings no longer in the set are soft-deleted; ids in the set are
+   * upserted (a previously soft-deleted mapping is reactivated rather than
+   * duplicated, respecting the partial unique index in prisma/rls.sql). An empty
+   * `receivingBranchIds` clears all mappings.
+   *
+   * Each receiver is validated against the caller's tenant (CLAUDE.md §4.7): it
+   * must exist and be active, must not be the Collection Center itself, and must
+   * not itself be a Collection Center.
+   * @param tenantId tenant scope
+   * @param collectionCenterId the Collection Center branch
+   * @param receivingBranchIds the desired set of receiving branch ids
+   * @param actorId person id of the actor (reserved for future audit trail)
+   * @returns the mappings after the change
+   * @throws BranchNotFoundException if the center or any receiver is missing /
+   *   other tenant
+   * @throws NotACollectionCenterException if the branch is not a Collection Center
+   * @throws InvalidReceivingBranchException if a receiver is the center itself or
+   *   is another Collection Center
+   */
+  async setCollectionMappings(
+    tenantId: string,
+    collectionCenterId: string,
+    receivingBranchIds: string[],
+    actorId?: string,
+  ): Promise<CollectionMappingView[]> {
+    void actorId;
+    const center = await this.findById(collectionCenterId, tenantId);
+    if (center.branchType !== BranchType.COLLECTION_CENTER) {
+      throw new NotACollectionCenterException(collectionCenterId);
+    }
+
+    // Validate every receiver before touching the database.
+    await this.validateReceivingBranches(
+      tenantId,
+      receivingBranchIds,
+      collectionCenterId,
+    );
+
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      // Soft-delete active mappings that are no longer in the desired set.
+      // (`notIn: []` matches every row, so an empty set clears all mappings.)
+      await tx.collectionCenterMapping.updateMany({
+        where: {
+          tenantId,
+          collectionCenterId,
+          deletedAt: null,
+          receivingBranchId: { notIn: receivingBranchIds },
+        },
+        data: { deletedAt: new Date() },
+      });
+
+      // Upsert each desired mapping (reactivate a soft-deleted row, else create).
+      for (const receivingBranchId of receivingBranchIds) {
+        const existing = await tx.collectionCenterMapping.findFirst({
+          where: { tenantId, collectionCenterId, receivingBranchId },
+        });
+        if (existing) {
+          await tx.collectionCenterMapping.update({
+            where: { id: existing.id },
+            data: { deletedAt: null },
+          });
+        } else {
+          await tx.collectionCenterMapping.create({
+            data: { tenantId, collectionCenterId, receivingBranchId },
+          });
+        }
+      }
+    });
+
+    return this.getCollectionMappings(tenantId, collectionCenterId);
   }
 
   /**

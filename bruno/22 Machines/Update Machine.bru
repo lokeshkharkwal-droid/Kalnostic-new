@@ -1,0 +1,51 @@
+meta {
+  name: Update Machine
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/machines/{{machineId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "ONLINE",
+    "machineNotes": "Re-calibrated and brought online.",
+    "testMappings": [
+      {
+        "lisCode": "WBC",
+        "lisTestName": "White Blood Cell Count",
+        "analyzerCode": "02",
+        "analyzerName": "WBC",
+        "unit": "10^3/uL",
+        "decimalPlaces": 2,
+        "isActive": true
+      }
+    ]
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Partial update. Any omitted field is left unchanged. When `reagentKits`,
+  `testMappings`, or `branchIds` is provided, the whole corresponding set is
+  REPLACED (old active rows soft-deleted, the new set created) in one transaction —
+  send the full desired list, not a delta. `departmentId`/`branchIds` are validated
+  against the tenant; a colliding `code` → 409 `MACHINE_CODE_CONFLICT`.
+}

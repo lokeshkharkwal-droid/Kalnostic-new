@@ -43,3 +43,30 @@ export class CannotDeleteMainBranchException extends KaltrosException {
     );
   }
 }
+
+/** 409 — the target branch is not a Collection Center, so it cannot map receivers. */
+export class NotACollectionCenterException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'NOT_A_COLLECTION_CENTER',
+      'This branch is not a Collection Center',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
+ * 409 — a branch cannot be mapped as a sample receiver because it is the
+ * Collection Center itself or is itself another Collection Center.
+ */
+export class InvalidReceivingBranchException extends KaltrosException {
+  constructor(receivingBranchId: string, reason: string) {
+    super(
+      'INVALID_RECEIVING_BRANCH',
+      'This branch cannot receive samples from the collection center',
+      { receivingBranchId, reason },
+      HttpStatus.CONFLICT,
+    );
+  }
+}

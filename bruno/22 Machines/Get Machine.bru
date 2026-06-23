@@ -1,0 +1,31 @@
+meta {
+  name: Get Machine
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/machines/{{machineId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  machineId: edbe535e-539d-4625-9ff8-cca2adb33e46
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Fetch one machine composed with its `reagentKits`, `testMappings`, and active
+  `branches` (branch assignments). 404 `MACHINE_NOT_FOUND` if missing/soft-deleted
+  or in another tenant. Uses `machineId` captured by Create Machine.
+}

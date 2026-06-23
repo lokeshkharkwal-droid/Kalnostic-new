@@ -1,4 +1,5 @@
 import { ProfileKey } from './profile-registry.constant';
+import { SYSTEM_MODULES } from './system-modules.constant';
 
 /**
  * Module-grouped, fine-grained permission catalogue (User Management v2.0).
@@ -14,191 +15,103 @@ export interface ModulePermissionEntry {
   label: string;
 }
 
-export const MODULE_PERMISSION_CATALOG: ModulePermissionEntry[] = [
-  // Registration
-  {
-    moduleKey: 'registration',
-    permissionKey: 'registration:view',
-    label: 'View registrations',
-  },
-  {
-    moduleKey: 'registration',
-    permissionKey: 'registration:create',
-    label: 'Create registration',
-  },
-  {
-    moduleKey: 'registration',
-    permissionKey: 'registration:edit',
-    label: 'Edit registration',
-  },
-  {
-    moduleKey: 'registration',
-    permissionKey: 'registration:delete',
-    label: 'Delete registration',
-  },
-
-  // Accession
-  {
-    moduleKey: 'accession',
-    permissionKey: 'accession:view',
-    label: 'View accessions',
-  },
-  {
-    moduleKey: 'accession',
-    permissionKey: 'accession:create',
-    label: 'Create accession',
-  },
-  {
-    moduleKey: 'accession',
-    permissionKey: 'accession:edit',
-    label: 'Edit accession',
-  },
-
-  // Lab Operations
-  {
-    moduleKey: 'lab_operations',
-    permissionKey: 'lab_operations:view',
-    label: 'View lab operations',
-  },
-  {
-    moduleKey: 'lab_operations',
-    permissionKey: 'lab_operations:enter_results',
-    label: 'Enter results',
-  },
-  {
-    moduleKey: 'lab_operations',
-    permissionKey: 'lab_operations:verify',
-    label: 'Verify/sign results',
-  },
-  {
-    moduleKey: 'lab_operations',
-    permissionKey: 'lab_operations:edit',
-    label: 'Edit lab operations',
-  },
-
-  // Inventory
-  {
-    moduleKey: 'inventory',
-    permissionKey: 'inventory:view',
-    label: 'View inventory',
-  },
-  {
-    moduleKey: 'inventory',
-    permissionKey: 'inventory:create',
-    label: 'Add inventory item',
-  },
-  {
-    moduleKey: 'inventory',
-    permissionKey: 'inventory:edit',
-    label: 'Edit inventory item',
-  },
-  {
-    moduleKey: 'inventory',
-    permissionKey: 'inventory:delete',
-    label: 'Delete inventory item',
-  },
-
-  // Sales
-  { moduleKey: 'sales', permissionKey: 'sales:view', label: 'View sales' },
-  { moduleKey: 'sales', permissionKey: 'sales:create', label: 'Create sale' },
-  { moduleKey: 'sales', permissionKey: 'sales:edit', label: 'Edit sale' },
-
-  // Admin
-  { moduleKey: 'admin', permissionKey: 'admin:view', label: 'View admin area' },
-  {
-    moduleKey: 'admin',
-    permissionKey: 'admin:manage_users',
-    label: 'Manage users',
-  },
-  {
-    moduleKey: 'admin',
-    permissionKey: 'admin:manage_branches',
-    label: 'Manage branches',
-  },
-  {
-    moduleKey: 'admin',
-    permissionKey: 'admin:manage_permissions',
-    label: 'Manage permissions',
-  },
-
-  // Radiology
-  {
-    moduleKey: 'radiology',
-    permissionKey: 'radiology:view',
-    label: 'View radiology',
-  },
-  {
-    moduleKey: 'radiology',
-    permissionKey: 'radiology:report',
-    label: 'Report radiology study',
-  },
-  {
-    moduleKey: 'radiology',
-    permissionKey: 'radiology:verify',
-    label: 'Verify radiology report',
-  },
-
-  // Pharmacy
-  {
-    moduleKey: 'pharmacy',
-    permissionKey: 'pharmacy:view',
-    label: 'View pharmacy',
-  },
-  {
-    moduleKey: 'pharmacy',
-    permissionKey: 'pharmacy:dispense',
-    label: 'Dispense medication',
-  },
-  {
-    moduleKey: 'pharmacy',
-    permissionKey: 'pharmacy:manage_stock',
-    label: 'Manage pharmacy stock',
-  },
-
-  // OPD
-  { moduleKey: 'opd', permissionKey: 'opd:view', label: 'View OPD' },
-  { moduleKey: 'opd', permissionKey: 'opd:create', label: 'Create OPD visit' },
-  { moduleKey: 'opd', permissionKey: 'opd:edit', label: 'Edit OPD visit' },
-
-  // IPD
-  { moduleKey: 'ipd', permissionKey: 'ipd:view', label: 'View IPD' },
-  { moduleKey: 'ipd', permissionKey: 'ipd:admit', label: 'Admit patient' },
-  {
-    moduleKey: 'ipd',
-    permissionKey: 'ipd:discharge',
-    label: 'Discharge patient',
-  },
-  { moduleKey: 'ipd', permissionKey: 'ipd:edit', label: 'Edit IPD record' },
-
-  // Finance
-  {
-    moduleKey: 'finance',
-    permissionKey: 'finance:view',
-    label: 'View finance',
-  },
-  {
-    moduleKey: 'finance',
-    permissionKey: 'finance:manage',
-    label: 'Manage finance',
-  },
-  {
-    moduleKey: 'finance',
-    permissionKey: 'finance:reports',
-    label: 'View finance reports',
-  },
-
-  // Phlebotomist
-  {
-    moduleKey: 'phlebotomist',
-    permissionKey: 'phlebotomist:view',
-    label: 'View phlebotomy queue',
-  },
-  {
-    moduleKey: 'phlebotomist',
-    permissionKey: 'phlebotomist:collect_sample',
-    label: 'Collect sample',
-  },
+/**
+ * The four canonical actions every module exposes. `write` is the create
+ * capability (named `write` for a uniform view/write/edit/delete contract that
+ * the frontend keys off for show/hide).
+ */
+const STANDARD_ACTIONS: { action: string; verb: string }[] = [
+  { action: 'view', verb: 'View' },
+  { action: 'write', verb: 'Create in' },
+  { action: 'edit', verb: 'Edit' },
+  { action: 'delete', verb: 'Delete from' },
 ];
+
+/**
+ * Domain-specific permissions beyond the four standard actions, per module.
+ * These carry meaning the CRUD verbs can't (verify, dispense, admit, …) and are
+ * appended after the standard set in catalogue order.
+ */
+const EXTRA_PERMISSIONS: Record<string, { action: string; label: string }[]> = {
+  lab_operations: [
+    { action: 'enter_results', label: 'Enter results' },
+    { action: 'verify', label: 'Verify/sign results' },
+  ],
+  admin: [
+    { action: 'manage_users', label: 'Manage users' },
+    { action: 'manage_branches', label: 'Manage branches' },
+    { action: 'manage_permissions', label: 'Manage permissions' },
+  ],
+  radiology: [
+    { action: 'report', label: 'Report radiology study' },
+    { action: 'verify', label: 'Verify radiology report' },
+  ],
+  pharmacy: [
+    { action: 'dispense', label: 'Dispense medication' },
+    { action: 'manage_stock', label: 'Manage pharmacy stock' },
+  ],
+  ipd: [
+    { action: 'admit', label: 'Admit patient' },
+    { action: 'discharge', label: 'Discharge patient' },
+  ],
+  finance: [
+    { action: 'manage', label: 'Manage finance' },
+    { action: 'reports', label: 'View finance reports' },
+  ],
+  phlebotomist: [{ action: 'collect_sample', label: 'Collect sample' }],
+};
+
+/**
+ * Module-grouped permission catalogue: for each of the 12 system modules, the
+ * four standard actions (`view`/`write`/`edit`/`delete`) followed by any
+ * domain-specific extras. Permission keys are `module:action`.
+ */
+export const MODULE_PERMISSION_CATALOG: ModulePermissionEntry[] =
+  SYSTEM_MODULES.flatMap((m) => [
+    ...STANDARD_ACTIONS.map((a) => ({
+      moduleKey: m.key,
+      permissionKey: `${m.key}:${a.action}`,
+      label: `${a.verb} ${m.label}`,
+    })),
+    ...(EXTRA_PERMISSIONS[m.key] ?? []).map((extra) => ({
+      moduleKey: m.key,
+      permissionKey: `${m.key}:${extra.action}`,
+      label: extra.label,
+    })),
+  ]);
+
+/** One action within a module group of the system permission catalogue. */
+export interface PermissionCatalogAction {
+  permissionKey: string;
+  action: string; // the part after the colon, e.g. 'view'
+  label: string;
+}
+
+/** A module with all its permission actions (system catalogue, no user context). */
+export interface PermissionCatalogModule {
+  moduleKey: string;
+  moduleLabel: string;
+  permissions: PermissionCatalogAction[];
+}
+
+/**
+ * The full system permission catalogue, grouped by module (catalogue order).
+ * Pure static data derived from `MODULE_PERMISSION_CATALOG` — used by admin
+ * permission editors to render the complete grid before toggling a user's
+ * overrides.
+ */
+export const PERMISSION_CATALOG_BY_MODULE: PermissionCatalogModule[] =
+  SYSTEM_MODULES.map((m) => ({
+    moduleKey: m.key,
+    moduleLabel: m.label,
+    permissions: MODULE_PERMISSION_CATALOG.filter(
+      (e) => e.moduleKey === m.key,
+    ).map((e) => ({
+      permissionKey: e.permissionKey,
+      action: e.permissionKey.slice(e.permissionKey.indexOf(':') + 1),
+      label: e.label,
+    })),
+  }));
 
 /** Permission keys belonging to a module, in catalogue order. */
 export function modulePermissionKeys(moduleKey: string): string[] {

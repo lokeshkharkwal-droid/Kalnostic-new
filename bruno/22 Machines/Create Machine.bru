@@ -1,0 +1,101 @@
+meta {
+  name: Create Machine
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/machines
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "machineName": "Sysmex XN-1000",
+    "code": "AN-001",
+    "manufacturer": "Sysmex",
+    "model": "XN-1000",
+    "serialNo": "SN-XN1000-001",
+    "status": "OFFLINE",
+    "lastCalibrationDate": "2026-06-01",
+    "nextCalibrationDate": "2026-12-01",
+    "interfaceType": "ASTM",
+    "connectionType": "TCP/IP",
+    "hostPcIpAddress": "192.168.1.10",
+    "analyserIpAddress": "192.168.1.20",
+    "port": 5600,
+    "isAdapterServer": true,
+    "adapterSupports": ["Histogram", "Scattergram"],
+    "isBidirectionalInterface": true,
+    "isAutoValidateResults": false,
+    "isAutoFlagCritical": true,
+    "reagentKits": [
+      {
+        "reagentKitName": "CELLPACK DCL",
+        "manufacturer": "Sysmex",
+        "details": "Diluent for the analyzer"
+      }
+    ],
+    "testMappings": [
+      {
+        "lisCode": "HGB",
+        "lisTestName": "Haemoglobin",
+        "analyzerCode": "01",
+        "analyzerName": "HGB",
+        "unit": "g/dL",
+        "decimalPlaces": 1,
+        "isActive": true
+      }
+    ],
+    "branchIds": ["{{branchId}}"]
+  }
+}
+
+vars:pre-request {
+  branchId: fc9e3c69-e871-423e-ad60-fa819ca7199e
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("machineId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  Create a machine (tenant from the JWT). Captures `machineId`. Reagent kits, test
+  mappings, and branch assignments are created in the same transaction; the
+  response embeds `reagentKits`, `testMappings`, and `branches` (adapter logs have
+  their own endpoints).
+  
+  ## Key fields
+  
+  - `machineName` (2-255) required. `code` optional, unique per tenant among active
+    rows → 409 `MACHINE_CODE_CONFLICT`.
+  - `status` enum: ONLINE | OFFLINE | MAINTENANCE | ERROR (default OFFLINE).
+  - Booleans are `is`-prefixed: `isAdapterServer`, `isBidirectionalInterface`,
+    `isAutoValidateResults`, `isAutoFlagCritical`.
+  - `adapterSupports` / `referenceImages` are string arrays; `port` is 0-65535.
+  - Date fields (`lastCalibrationDate`, `lastMaintenanceDate`,
+    `nextCalibrationDate`, `nextMaintenanceDue`) accept ISO date strings.
+  - `departmentId` (optional) must be an active Department in the tenant → 404
+    `DEPARTMENT_NOT_FOUND`.
+  - `branchIds` must each be an active Branch in the tenant → 404 `BRANCH_NOT_FOUND`;
+    duplicates → 422 `VALIDATION_ERROR`.
+  
+  A machine is tenant-level and assigned to one-or-more branches via the
+  `machine_branches` junction (many-to-many).
+}

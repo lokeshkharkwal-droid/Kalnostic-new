@@ -14,6 +14,7 @@ import { CreateBranchDto } from './dto/create-branch.dto';
 import { UpdateBranchDto } from './dto/update-branch.dto';
 import { SetMainBranchDto } from './dto/set-main-branch.dto';
 import { SetBranchModulesDto } from './dto/set-branch-modules.dto';
+import { SetCollectionMappingsDto } from './dto/set-collection-mappings.dto';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -154,5 +155,40 @@ export class BranchController {
     @Body() dto: SetBranchModulesDto,
   ) {
     return this.branchService.setBranchModules(tenantId, id, dto.modules);
+  }
+
+  /**
+   * List the sample-receiving branches mapped to this Collection Center.
+   */
+  @Get(':id/collection-mappings')
+  getCollectionMappings(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+  ) {
+    return this.branchService.getCollectionMappings(tenantId, id);
+  }
+
+  /**
+   * Replace the set of sample-receiving branches mapped to this Collection
+   * Center (PUT replaces the whole set; an empty array clears all mappings).
+   */
+  @Put(':id/collection-mappings')
+  @Audit({
+    module: AuditModule.BRANCH,
+    action: AuditAction.UPDATE,
+    description: 'Updated collection center mappings',
+  })
+  setCollectionMappings(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+    @Param('id') id: string,
+    @Body() dto: SetCollectionMappingsDto,
+  ) {
+    return this.branchService.setCollectionMappings(
+      tenantId,
+      id,
+      dto.receivingBranchIds,
+      personId,
+    );
   }
 }

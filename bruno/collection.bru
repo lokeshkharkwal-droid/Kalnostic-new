@@ -37,13 +37,17 @@ docs {
   8. **Lab Tests → Create Lab Test** → captures `labTestId` (rich test with
      nested samples, params, and reference ranges/values); also list/update/
      version/clone.
-  9. Explore the rest — profiles, permissions, receptionist mappings, etc.
+  9. **Branches → Create Collection Center** → captures `collectionCenterId`
+     (a `COLLECTION_CENTER` branch that maps the captured `branchId` as a
+     sample-receiving branch inline). Manage the mappings afterwards via
+     **Get / Set Collection Mappings**.
+  10. Explore the rest — profiles, permissions, receptionist mappings, etc.
 
   ## User Management v2.0 flow (`users/manage`)
 
-  10. **Branches → Set Branch Modules** — enable the work-area modules for the
+  11. **Branches → Set Branch Modules** — enable the work-area modules for the
       branch (gates default-module choices and the per-user permission modal).
-  11. **Users → User Management v2 → Create User** → captures `manageUserId`,
+  12. **Users → User Management v2 → Create User** → captures `manageUserId`,
       `manageUserCode`. Then Assign Branches, Get/Update Branch Permissions,
       Deactivate/Activate, and the List/Get read screens.
 

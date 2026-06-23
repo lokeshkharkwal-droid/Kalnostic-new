@@ -1,0 +1,51 @@
+meta {
+  name: Create Collection Center
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/branches
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Kothrud Collection Center",
+    "branchType": "COLLECTION_CENTER",
+    "phone": "+919822222222",
+    "city": "Pune",
+    "state": "Maharashtra",
+    "pincode": "411038",
+    "receivingBranchIds": [
+      "{{branchId}}"
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("collectionCenterId", data.id);
+}
+
+docs {
+  Create a `COLLECTION_CENTER` branch and map its sample-receiving branches in one
+  request. The branch and its `collection_center_mappings` rows are created
+  atomically. Captures `collectionCenterId`.
+
+  `receivingBranchIds` is optional (omit / `[]` to create the center with no
+  mappings, then manage them later via "Set Collection Mappings"). Each id must
+  be an existing active branch in the tenant and cannot itself be a Collection
+  Center (409 `INVALID_RECEIVING_BRANCH`); an unknown / other-tenant id returns
+  404 `BRANCH_NOT_FOUND`. Supplying `receivingBranchIds` with any non-CC
+  `branchType` returns 422 `VALIDATION_ERROR`.
+}

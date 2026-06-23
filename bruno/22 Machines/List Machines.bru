@@ -1,0 +1,38 @@
+meta {
+  name: List Machines
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/machines?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: Sysmex
+  ~status: OFFLINE
+  ~departmentId:
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  List the tenant's active machines (paginated; newest first). Each row is composed
+  with its `reagentKits`, `testMappings`, and active `branches` (same shape as Get
+  Machine) — children are batch-loaded per page (no N+1). Optional filters: `search`
+  (matches machineName / code / serialNo, case-insensitive), `status`
+  (ONLINE | OFFLINE | MAINTENANCE | ERROR), and `departmentId`. Pagination info is
+  returned in the `meta` envelope.
+}

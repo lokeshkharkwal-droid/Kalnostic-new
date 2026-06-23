@@ -118,6 +118,31 @@ export interface ResolvedBranchPermission {
   allowed: boolean; // effective value (override ?? baseline)
 }
 
+/** One resolved permission action within a module group. */
+export interface ResolvedPermissionAction {
+  permissionKey: string;
+  action: string; // the part after the colon, e.g. 'view'
+  label: string;
+  baseline: boolean;
+  allowed: boolean; // effective value (override ?? baseline)
+}
+
+/** A module with its resolved permission actions (grouped output). */
+export interface PermissionModuleGroup {
+  moduleKey: string;
+  moduleLabel: string;
+  permissions: ResolvedPermissionAction[];
+}
+
+/**
+ * The current user's effective permissions: grouped by module plus a flat list
+ * of granted permission keys (the frontend keys off `allowed` for show/hide).
+ */
+export interface MyPermissions {
+  modules: PermissionModuleGroup[];
+  allowed: string[];
+}
+
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
@@ -840,6 +865,101 @@ export class UsersService {
         allowed: override ?? base,
       };
     });
+  }
+
+  /**
+   * Resolve the **current user's** effective permissions, grouped by module, plus
+   * a flat list of granted keys the frontend uses to show/hide features. Effective
+   * `allowed` = override ?? role baseline.
+   *
+   * - **Branch context** (`activeBranchId` set): gated to the branch's enabled
+   *   modules, with per-(user+branch) overrides applied.
+   * - **Tenant-level** (no active branch, e.g. `business_admin`/`administrator`):
+   *   gated to the role's modules with no overrides — the role baseline is the grant.
+   *
+   * @param tenantId         the caller's tenant (from the JWT)
+   * @param personId         the caller's person id (from the JWT)
+   * @param activeBranchId   the active branch id (null for tenant-level profiles)
+   * @param activeProfileKey the active profile/role key (drives the baseline)
+   * @returns the grouped modules and a flat `allowed` key list
+   */
+  async getMyPermissions(
+    tenantId: string,
+    personId: string,
+    activeBranchId: string | null,
+    activeProfileKey: string | null,
+  ): Promise<MyPermissions> {
+    const baseline = roleBaselinePermissions(activeProfileKey ?? '');
+    let moduleFilter: Set<string>;
+    let overrideMap = new Map<string, boolean>();
+
+    if (activeBranchId) {
+      moduleFilter = await this.getActiveBranchModuleKeys(
+        tenantId,
+        activeBranchId,
+      );
+      const overrides = await this.prisma.userBranchPermission.findMany({
+        where: {
+          tenantId,
+          personId,
+          branchId: activeBranchId,
+          deletedAt: null,
+        },
+      });
+      overrideMap = new Map(overrides.map((o) => [o.permissionKey, o.allowed]));
+    } else {
+      // Tenant-level role: gate by the role's modules (business_admin = all 12).
+      moduleFilter = new Set(roleTemplateModules(activeProfileKey ?? ''));
+    }
+
+    return this.groupResolvedPermissions(baseline, overrideMap, moduleFilter);
+  }
+
+  /**
+   * Shape the permission catalogue (filtered to `moduleFilter`) into module groups
+   * with resolved grants, plus a flat list of allowed keys. Effective `allowed` =
+   * override ?? baseline. Catalogue order is preserved.
+   */
+  private groupResolvedPermissions(
+    baseline: Set<string>,
+    overrideMap: Map<string, boolean>,
+    moduleFilter: Set<string>,
+  ): MyPermissions {
+    const groups = new Map<string, PermissionModuleGroup>();
+    const allowed: string[] = [];
+
+    for (const entry of MODULE_PERMISSION_CATALOG) {
+      if (!moduleFilter.has(entry.moduleKey)) {
+        continue;
+      }
+      const base = baseline.has(entry.permissionKey);
+      const isAllowed = overrideMap.get(entry.permissionKey) ?? base;
+      const action = entry.permissionKey.slice(
+        entry.permissionKey.indexOf(':') + 1,
+      );
+
+      let group = groups.get(entry.moduleKey);
+      if (!group) {
+        group = {
+          moduleKey: entry.moduleKey,
+          moduleLabel: moduleLabel(entry.moduleKey),
+          permissions: [],
+        };
+        groups.set(entry.moduleKey, group);
+      }
+      group.permissions.push({
+        permissionKey: entry.permissionKey,
+        action,
+        label: entry.label,
+        baseline: base,
+        allowed: isAllowed,
+      });
+      if (isAllowed) {
+        allowed.push(entry.permissionKey);
+      }
+    }
+
+    return { modules: [...groups.values()], allowed };
   }
 
   /**

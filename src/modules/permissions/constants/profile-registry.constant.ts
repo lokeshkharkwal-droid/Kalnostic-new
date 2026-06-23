@@ -99,6 +99,7 @@ export const PROFILE_BRANCH_MATRIX: Record<ProfileKey, BranchType[]> = {
     BranchType.BLOOD_BANK,
     BranchType.FRANCHISE,
     BranchType.COMBINED,
+    BranchType.COLLECTION_CENTER,
   ],
   doctor: [BranchType.OPD, BranchType.IPD, BranchType.DIAGNOSTIC],
   lab_technician: [BranchType.DIAGNOSTIC, BranchType.IPD],
@@ -108,6 +109,7 @@ export const PROFILE_BRANCH_MATRIX: Record<ProfileKey, BranchType[]> = {
     BranchType.IPD,
     BranchType.PHARMACY,
     BranchType.FRANCHISE,
+    BranchType.COLLECTION_CENTER,
   ],
   // Branch-level (v2.0)
   junior_lab_technician: [
@@ -143,6 +145,7 @@ export const PROFILE_BRANCH_MATRIX: Record<ProfileKey, BranchType[]> = {
     BranchType.IPD,
     BranchType.BLOOD_BANK,
     BranchType.COMBINED,
+    BranchType.COLLECTION_CENTER,
   ],
   marketing_executive: [
     BranchType.DIAGNOSTIC,

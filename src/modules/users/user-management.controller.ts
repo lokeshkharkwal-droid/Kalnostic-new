@@ -24,9 +24,12 @@ import {
   STAFF_ROLE_KEYS,
 } from '../permissions/constants/profile-registry.constant';
 import { SYSTEM_MODULES } from '../permissions/constants/system-modules.constant';
+import { PERMISSION_CATALOG_BY_MODULE } from '../permissions/constants/module-permissions.constant';
 import { ALLOWED_PHOTO_MIME_TYPES } from '../../common/constants/validation-patterns.constant';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
+import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /** 2 MB — the v2.0 profile-photo size cap. */
@@ -81,6 +84,35 @@ export class UserManagementController {
   @Get('modules')
   modules() {
     return SYSTEM_MODULES;
+  }
+
+  /**
+   * The full system permission catalogue (all modules + actions), grouped by
+   * module. Static system data the admin permission editor renders before
+   * overlaying a user's current grants.
+   */
+  @Get('permission-catalog')
+  permissionCatalog() {
+    return PERMISSION_CATALOG_BY_MODULE;
+  }
+
+  /**
+   * The current user's effective permissions for their active branch, grouped by
+   * module (+ a flat `allowed` key list). Context comes from the JWT — used by the
+   * frontend to show/hide features.
+   */
+  @Get('me/permissions')
+  myPermissions(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+    @CurrentProfile() profile: ActiveProfile,
+  ) {
+    return this.usersService.getMyPermissions(
+      tenantId,
+      personId,
+      profile.branchId,
+      profile.profileKey,
+    );
   }
 
   /** Full detail for one staff user (Aadhaar masked). */

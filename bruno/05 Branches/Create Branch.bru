@@ -19,20 +19,26 @@ auth:bearer {
 }
 
 body:json {
+  
+  
   {
-    "name": "My Test Main Lab 2",
-    "branchType": "DIAGNOSTIC",
-    "phone": "+919811111111",
-    "email": "main@acme.test",
+    "name": "Kothrud Collection Center",
+    "branchType": "COLLECTION_CENTER",
+    "phone": "+919822222222",
+      "email": "main@acme.test",
     "addressLine": "12 Lab Street",
     "city": "Pune",
     "state": "Maharashtra",
-    "pincode": "411001"
+    "pincode": "411038",
+    "receivingBranchIds": [
+      "{{branchId}}"
+    ]
   }
 }
 
 vars:pre-request {
   businessAccessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwZXJzb25faWQiOiIyOTQ5N2I2NC0wNGUyLTQwZjktYTY2OS04NDBiZmNlOGU3ZDYiLCJ0ZW5hbnRfaWQiOiJhYjE2OTY1MC01Mzc1LTQwYmUtYTIxMi00ZGE0ZTJiMDE5NGQiLCJhY3RpdmVfYnJhbmNoX2lkIjpudWxsLCJhY3RpdmVfYnJhbmNoX3R5cGUiOm51bGwsImFjdGl2ZV9wcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwiaXNfcGF0aWVudF9jb250ZXh0IjpmYWxzZSwicHJvZmlsZXMiOlt7ImJyYW5jaF9pZCI6bnVsbCwiYnJhbmNoX25hbWUiOm51bGwsImJyYW5jaF90eXBlIjpudWxsLCJwcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwicHJvZmlsZV9sYWJlbCI6IkJ1c2luZXNzIEFkbWluIiwiaXNfZGVmYXVsdCI6dHJ1ZX1dLCJpc19wYXRpZW50IjpmYWxzZSwicGxhdGZvcm1fbXJuIjoiS0FMLTIwMjYwNjA4LTM2OTBCRkQxIiwiaWF0IjoxNzgwOTE3ODQ0LCJleHAiOjE3ODA5MTg3NDR9.SvHviOXq5XC3_5hZ30iX0nsg3McXaCySgbwwmZP3ujY
+  branchId: b0b8fb9d-7c16-4cd1-b527-5c6cb12508a1
 }
 
 script:post-response {

@@ -1,0 +1,27 @@
+meta {
+  name: Mark Adapter Log Viewed
+  type: http
+  seq: 7
+}
+
+patch {
+  url: {{baseUrl}}/machines/{{machineId}}/adapter-logs/{{adapterLogId}}/viewed
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Mark an adapter log line as viewed (`isViewed: true`). 404
+  `MACHINE_ADAPTER_LOG_NOT_FOUND` if the log is missing or belongs to another
+  machine. Uses `machineId` + `adapterLogId` captured earlier.
+}

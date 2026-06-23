@@ -1,0 +1,29 @@
+meta {
+  name: Get Permission Catalog
+  type: http
+  seq: 18
+}
+
+get {
+  url: {{baseUrl}}/users/manage/permission-catalog
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  The **full system permission catalogue** — every module and every action the
+  system offers, independent of any user. Returns an array grouped by module:
+  `{ moduleKey, moduleLabel, permissions: [{ permissionKey, action, label }] }`.
+
+  Every module exposes the four standard actions (`view`/`write`/`edit`/`delete`)
+  plus domain-specific extras (e.g. `admin:manage_users`, `lab_operations:verify`).
+
+  Admin permission editors render this master grid, then overlay a user's current
+  state from `GET /users/manage/:id/branch-permissions?branchId=` (baseline +
+  effective allowed) and submit changes via
+  `PUT /users/manage/:id/branch-permissions`.
+}
