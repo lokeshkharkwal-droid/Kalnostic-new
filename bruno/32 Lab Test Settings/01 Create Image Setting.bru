@@ -1,0 +1,86 @@
+meta {
+  name: Create Image Setting
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/business-admin/lab-test-settings/image-settings
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Microscopy – Two Per Row",
+    "displayPosition": "At the End of the Test Report",
+    "layout": "Two Images Per Row",
+    "alignment": "Center",
+    "imageSize": "Fixed Size 2",
+    "aspectRatio1": "1 : 1",
+    "aspectRatio2": "1 : 2",
+    "pageBreakControl": "Keep Image and Parameter Together on One Page",
+    "headerRetention": "Always Show Report Header Above Image",
+    "replacementMode": "Not Applicable",
+    "status": "Active"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("imageSettingId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("has id", function () {
+    expect(res.getBody().data.id).to.be.a("string");
+  });
+  test("name matches", function () {
+    expect(res.getBody().data.name).to.equal("Microscopy – Two Per Row");
+  });
+}
+
+docs {
+  Create a lab image setting for the caller's tenant (tenant id taken from JWT).
+
+  ## Required fields
+  - `name` — unique display name for this setting (max 255 chars)
+  - `displayPosition` — one of:
+      "Before the Next Parameter" | "At the End of the Test Report" | "At the End of the Entire Order"
+  - `layout` — one of:
+      "Single Image Per Row" | "Two Images Per Row" | "Three Images Per Row" |
+      "Four Images Per Row" | "Grid 4 : 3 : 2 : 1" | "Grid 3 : 2 : 1"
+  - `alignment` — "Left" | "Center" | "Right"
+  - `imageSize` — "Full Width" | "Fixed Size 2" | "Fixed Size 3" | "Fixed Size 4"
+  - `pageBreakControl` — one of:
+      "Allow Image to Break Across the Page" |
+      "Keep Image and Parameter Together on One Page" |
+      "Force Image on a New Page"
+  - `headerRetention` — one of:
+      "Always Show Report Header Above Image" |
+      "Hide Header if Replacing Full Report" |
+      "No Header with Empty Header Space"
+  - `replacementMode` — "Replace Entire Report with Image" | "Not Applicable"
+
+  ## Optional fields
+  - `aspectRatio1` / `aspectRatio2` / `aspectRatio3` / `aspectRatio4` —
+      "1 : 1" | "1 : 2" | "2 : 1"
+      Only meaningful when imageSize is Fixed Size 2/3/4:
+        Fixed Size 2 → aspectRatio1, aspectRatio2
+        Fixed Size 3 → aspectRatio1, aspectRatio2, aspectRatio3
+        Fixed Size 4 → all four
+  - `status` — "Active" | "Inactive" (defaults to "Active")
+
+  Captures `imageSettingId` for use in subsequent requests.
+}

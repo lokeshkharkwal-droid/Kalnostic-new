@@ -196,6 +196,7 @@ enum AuditModule {
   TEMPLATE
   AUTH
   SITEADMIN // reserved; not written to in this phase (business audit only)
+  LAB_TEST_SETTINGS
 }
 
 /// Type of controlled document managed by the document module.
@@ -3246,4 +3247,85 @@ model PaymentRule {
   @@index([code])
   @@index([deletedAt])
   @@map("payment_rules")
+}
+
+// ── Lab Test Settings ─────────────────────────────────────────────────────────
+
+model LabImageSetting {
+  id               String    @id @default(uuid())
+  tenantId         String    @map("tenant_id")
+  name             String
+  displayPosition  String    @map("display_position")
+  layout           String
+  alignment        String
+  imageSize        String    @map("image_size")
+  aspectRatio1     String?   @map("aspect_ratio_1")
+  aspectRatio2     String?   @map("aspect_ratio_2")
+  aspectRatio3     String?   @map("aspect_ratio_3")
+  aspectRatio4     String?   @map("aspect_ratio_4")
+  pageBreakControl String    @map("page_break_control")
+  headerRetention  String    @map("header_retention")
+  replacementMode  String    @map("replacement_mode")
+  status           String    @default("Active")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  deletedAt        DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([deletedAt])
+  @@map("lab_image_settings")
+}
+
+model LabPdfSetting {
+  id               String    @id @default(uuid())
+  tenantId         String    @map("tenant_id")
+  name             String
+  pdfMode          String    @map("pdf_mode")
+  placement        String
+  scaleMode        String    @map("scale_mode")
+  customScalePct   Int?      @map("custom_scale_pct")
+  pageBreakControl String    @map("page_break_control")
+  status           String    @default("Active")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  deletedAt        DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([deletedAt])
+  @@map("lab_pdf_settings")
+}
+
+model LabGroupLayoutSetting {
+  id              String    @id @default(uuid())
+  tenantId        String    @map("tenant_id")
+  name            String
+  nameAlignment   String    @map("name_alignment")
+  columnLayout    String    @map("column_layout")
+  resultAlignment String    @map("result_alignment")
+  displayStyle    String    @map("display_style")
+  status          String    @default("Active")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  deletedAt       DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([deletedAt])
+  @@map("lab_group_layout_settings")
+}
+
+/// Each icon entry: { iconUrl, position, alignment, size, visibility }.
+model LabIconSetting {
+  id         String    @id @default(uuid())
+  tenantId   String    @map("tenant_id")
+  name       String
+  iconCount  Int       @map("icon_count")
+  icons      Json
+  status     String    @default("Active")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  deletedAt  DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([deletedAt])
+  @@map("lab_icon_settings")
 }
