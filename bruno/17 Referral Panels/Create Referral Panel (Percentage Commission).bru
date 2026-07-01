@@ -25,6 +25,7 @@ body:json {
     "panelCode": "CCC-001",
     "clientType": "PREPAID",
     "branchId": "{{branchId}}",
+    "referralPanelSettingsId": "{{referralPanelSettingsId}}",
     "isActive": true,
     "addressLine1": "12 MG Road",
     "addressLine2": "Near Central Mall",
@@ -40,6 +41,15 @@ body:json {
     "directorName": "Dr. R. Mehta",
     "directorMobile": "+919811112222",
     "directorEmail": "director@citycare.test",
+    "accessionPersonName": "K. Rao",
+    "accessionPersonMobile": "+919811114444",
+    "accessionPersonEmail": "accession@citycare.test",
+    "registrationPersonName": "M. Nair",
+    "registrationPersonMobile": "+919811115555",
+    "registrationPersonEmail": "registration@citycare.test",
+    "logisticsPersonName": "P. Singh",
+    "logisticsPersonMobile": "+919811116666",
+    "logisticsPersonEmail": "logistics@citycare.test",
     "accountsPersonName": "S. Iyer",
     "accountsPersonMobile": "+919811113333",
     "accountsPersonEmail": "accounts@citycare.test",
@@ -48,6 +58,7 @@ body:json {
     "commissionPctLabTest": 10,
     "commissionPctLabPanel": 7.5,
     "isTdsApplicable": true,
+    "tds": 10,
     "paymentCycle": "MONTHLY",
     "paymentMode": "BANK_TRANSFER",
     "monthlyTargetAmount": 50000,
@@ -101,7 +112,8 @@ docs {
   - `FIXED_AMOUNT` → set `fixedCommissionCycle`; `fixedAmount` required unless the
     cycle is `ORDER_WISE`.
   Inapplicable commission fields are nulled/emptied on save. `isTdsApplicable`
-  default false.
+  default false; `tds` is an integer percentage 0-100 (only meaningful when TDS
+  applies — normalised in the service otherwise).
 
   **Payment & incentive** — `paymentCycle` (`NA` default | `MONTHLY` |
   `QUARTERLY` | `HALF_YEARLY` | `ANNUALLY`), `paymentMode` (`BANK_TRANSFER`

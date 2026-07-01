@@ -16,8 +16,9 @@ auth:bearer {
 
 docs {
   Fetch one outsource center by id (scoped to the caller's tenant), with its
-  active contacts and branch assignments — each assignment embedding its selected
-  lab tests and lab panels. 404 `OUTSOURCE_CENTER_NOT_FOUND` if missing or
+  active contacts and the resolved `labTestName` / `labPanelName` for the single
+  assigned `labTestId` / `labPanelId` (each `null` if unset or the referenced
+  test/panel was deleted). 404 `OUTSOURCE_CENTER_NOT_FOUND` if missing or
   soft-deleted.
 
   The id `fc8c1e56…` is a real seeded center ("Sample Reference Lab (Bruno)",

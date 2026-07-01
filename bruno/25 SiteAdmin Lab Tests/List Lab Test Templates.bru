@@ -1,0 +1,42 @@
+meta {
+  name: List Lab Test Templates
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/lab-tests?view=DEFAULT&page=1&limit=20&search=
+  body: none
+  auth: bearer
+}
+
+params:query {
+  view: DEFAULT
+  page: 1
+  limit: 20
+  search:
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  List SITE_ADMIN lab-test templates (paginated, view-projected). Auth: SiteAdmin
+  token, requires `master-data:read`. Same `view` projection as the tenant
+  `GET /master-data/:id/lab-tests/listing`.
+
+  Query params:
+  - `view` — which projection to return (default `DEFAULT`). One of: `DEFAULT`,
+    `BASIC_DETAILS`, `PRICING`, `TAT`, `FLAGS`, `SAMPLE`, `RESULTS`,
+    `REFERENCE_RANGE`, `REFERENCE_VALUE`, `NOTES`, `VERSION_CONTROL`, `OVERVIEW`.
+    Child-centric views (`SAMPLE`/`RESULTS`/`REFERENCE_*`) include nested arrays.
+  - `page` / `limit` — offset pagination (defaults 1 / 20).
+  - `search` — case-insensitive match on `testName` / `testCode` (optional).
+  - `status` — `ACTIVE` | `INACTIVE` (maps to `isActive`, optional).
+
+  Returns only `source = SITE_ADMIN` rows; pagination lands in `meta`. Templates
+  have no tenant classification, so the denormalised department/category/
+  sub-category name columns come back `null`. Classification/`sampleType` filters
+  don't apply to templates and are ignored.
+}

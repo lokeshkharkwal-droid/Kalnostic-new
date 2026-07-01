@@ -1,0 +1,21 @@
+meta {
+  name: Delete Department Template
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/siteadmin/departments/{{siteAdminDepartmentTemplateId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Soft-delete a SITE_ADMIN department template (sets `deletedAt`). Auth: SiteAdmin
+  token, requires `master-data:write`. The freed `name`/`shortName`/`code` can be
+  reused by a new template. 404 `DEPARTMENT_NOT_FOUND` if not a live template.
+}

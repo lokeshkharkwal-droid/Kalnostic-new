@@ -5,9 +5,17 @@ meta {
 }
 
 get {
-  url: {{baseUrl}}/siteadmin/users
+  url: {{baseUrl}}/siteadmin/users?page=1&limit=20
   body: none
   auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: luke
+  ~status: active
+  ~role: OPERATIONS_ADMIN
 }
 
 auth:bearer {
@@ -19,5 +27,13 @@ vars:pre-request {
 }
 
 docs {
-  List all SiteAdmin accounts. Requires `siteadmin:manage` (super_owner).
+  Paginated list of SiteAdmin accounts. Requires `siteadmin:manage`
+  (super_owner). All query params optional; pagination info is in `meta`.
+
+  - `page` (>=1) / `limit` (1-100) — offset pagination (defaults 1 / 20).
+  - `search` — case-insensitive substring matched against firstName /
+    lastName / email.
+  - `status` — `active` | `inactive` (maps to the `isActive` boolean).
+  - `role` — exact `SiteAdminRole` (accepted case-insensitively):
+    `CONTENT_ADMIN` | `OPERATIONS_ADMIN` | `FULL_ADMIN` | `SUPER_OWNER`.
 }

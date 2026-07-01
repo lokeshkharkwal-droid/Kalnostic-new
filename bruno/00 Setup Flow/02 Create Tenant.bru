@@ -1,0 +1,76 @@
+meta {
+  name: 02 Create Tenant
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/tenants
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "name": "{{flowTenantName}}",
+    "slug": "{{flowSlug}}",
+    "adminFirstName": "Flow",
+    "adminLastName": "Admin",
+    "adminPhone": "{{flowAdminPhone}}",
+    "adminEmail": "{{flowAdminEmail}}",
+    "email": "contact.{{flowSlug}}@flow.test",
+    "phone": "+919800000000",
+    "mrnPrefix": "FL",
+    "address": { "line1": "1 Flow Street", "city": "Pune", "country": "IN" },
+    "settings": {
+      "timezone": "Asia/Kolkata",
+      "currency": "INR",
+      "date_format": "DD/MM/YYYY",
+      "language": "en",
+      "logo_url": "https://cdn.flow.test/logo.png",
+      "primary_color": "#0B5FFF",
+      "secondary_color": "#1A1A2E",
+      "app_name": "Flow Labs"
+    }
+  }
+}
+
+script:pre-request {
+  // Randomize globally-unique fields so the flow is re-runnable.
+  const rand = String(Math.floor(Math.random() * 900000) + 100000);
+  const extra = String(Math.floor(Math.random() * 900) + 100);
+  bru.setVar("flowSlug", "flow-" + rand);
+  bru.setVar("flowTenantName", "Flow Lab " + rand);
+  bru.setVar("flowAdminPhone", "+919" + rand + extra); // +91 then 10 digits
+  bru.setVar("flowAdminEmail", "admin." + rand + "@flow.test");
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data) {
+    if (data.id) bru.setEnvVar("tenantId", data.id);
+    if (data.slug) bru.setEnvVar("tenantSlug", data.slug);
+    const phone = data.adminPhone || (data.admin && data.admin.phone);
+    const temp = data.tempPassword || (data.admin && data.admin.tempPassword);
+    if (phone) bru.setEnvVar("adminPhone", phone);
+    if (temp) bru.setEnvVar("adminTempPassword", temp);
+  }
+}
+
+docs {
+  Step 2. Create the tenant + its first business_admin (requires
+  `business:create`). Returns the tenant plus a one-time temp password.
+  Captures `tenantId`, `tenantSlug`, `adminPhone`, `adminTempPassword` — consumed
+  by Business Login.
+
+  If your environment does not echo the temp password into `adminTempPassword`,
+  open the response and copy it into the env var manually before running step 3.
+}

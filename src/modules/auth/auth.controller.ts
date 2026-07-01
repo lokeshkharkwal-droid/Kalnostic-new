@@ -46,15 +46,23 @@ export class AuthController {
   }
 
   /**
-   * Switch the active branch/profile context (new access token only).
+   * Switch the active branch/profile context. Returns a fresh access + refresh
+   * pair capturing the new context (the refresh token is rotated so a later
+   * refresh keeps the switched branch rather than reverting).
    */
   @Post('switch-profile')
   @HttpCode(HttpStatus.OK)
   switchProfile(
     @CurrentUser() user: JwtPayload,
     @Body() dto: SwitchProfileDto,
+    @Req() req: Request,
   ) {
-    return this.authService.switchProfile(user.person_id, user.tenant_id, dto);
+    return this.authService.switchProfile(
+      user.person_id,
+      user.tenant_id,
+      dto,
+      this.clientIp(req),
+    );
   }
 
   /**

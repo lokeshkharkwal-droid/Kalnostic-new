@@ -1,0 +1,21 @@
+meta {
+  name: Delete Category Template
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/siteadmin/categories/{{siteAdminCategoryTemplateId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Soft-delete a SITE_ADMIN category template (sets `deletedAt`). Auth: SiteAdmin
+  token, requires `master-data:write`. 404 `CATEGORY_NOT_FOUND` if not a live
+  template.
+}

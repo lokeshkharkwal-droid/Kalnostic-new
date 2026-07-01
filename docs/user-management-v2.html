@@ -149,7 +149,7 @@ flowchart TD
   M["TenantStaffMembership<br/><small>one per (tenant, person)<br/>userCode USR-00001 · userType<br/>roleKey? (optional primary) · status</small>"]:::tenant
   A["UserBranchProfile — Branch A<br/><small>profileKey = doctor<br/>moduleId = lab_operations<br/>branchStatus · isDefault</small>"]:::branch
   B["UserBranchProfile — Branch B<br/><small>profileKey = branch_admin<br/>branchStatus · isDefault</small>"]:::branch
-  BM["BranchModule<br/><small>which of 12 modules a branch runs</small>"]:::side
+  BM["BranchModule<br/><small>which of 14 modules a branch runs</small>"]:::side
   UP["UserBranchPermission<br/><small>per (user+branch) allow/deny overrides</small>"]:::side
   P --> M
   M --> A
@@ -326,7 +326,7 @@ flowchart TD
         <h2><span class="badge">7</span> Roles &amp; modules</h2>
         <div class="grid2">
           <div>
-            <h3>12 system modules</h3>
+            <h3>14 system modules</h3>
             <p style="font-size:13.5px;color:var(--muted);margin:0 0 8px">
               A branch enables the modules it runs (<code>BranchModule</code>).
             </p>
@@ -335,7 +335,7 @@ flowchart TD
               <code>lab_operations</code> <code>inventory</code> <code>sales</code>
               <code>admin</code> <code>radiology</code> <code>pharmacy</code>
               <code>opd</code> <code>ipd</code> <code>finance</code>
-              <code>phlebotomist</code>
+              <code>phlebotomist</code> <code>assistant</code> <code>operation</code>
             </p>
           </div>
           <div>

@@ -1,0 +1,66 @@
+meta {
+  name: Create Sub-Category Template
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/sub-categories
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "name": "Global Complete Blood Count Template",
+    "shortName": "CBC",
+    "description": "Global SITE_ADMIN sub-category template under a template category",
+    "isActive": true,
+    "subCategoryType": "UNDER_CATEGORY",
+    "categoryId": "{{siteAdminCategoryTemplateId}}",
+    "moduleMapping": ["DIAGNOSTIC"]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("siteAdminSubCategoryTemplateId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("is a SITE_ADMIN template with SA code", function () {
+    const d = res.getBody().data;
+    expect(d.source).to.equal("SITE_ADMIN");
+    expect(d.tenantId).to.equal(null);
+    expect(d.code).to.match(/^SA-SubCat-\d+$/);
+  });
+}
+
+docs {
+  Create a **global SITE_ADMIN sub-category template**. Auth: SiteAdmin token,
+  requires `master-data:write`. Captures `siteAdminSubCategoryTemplateId`.
+
+  `code` is system-generated `SA-SubCat-{n}` (global sequence). Full hierarchy:
+  - `subCategoryType = INDEPENDENT` → omit both parent ids.
+  - `UNDER_DEPARTMENT` → `departmentId` REQUIRED, must be an active SITE_ADMIN
+    department template.
+  - `UNDER_CATEGORY` → `categoryId` REQUIRED, must be an active SITE_ADMIN
+    category template (run `28 SiteAdmin Categories → Create Category Template`
+    first).
+
+  Wrong/missing parent → 404 `DEPARTMENT_NOT_FOUND` / `CATEGORY_NOT_FOUND`, or
+  400 `SUB_CATEGORY_DEPARTMENT_REQUIRED` / `SUB_CATEGORY_CATEGORY_REQUIRED` /
+  `INDEPENDENT_SUB_CATEGORY_PARENT`. Businesses adopt this via `11 Sub-Categories
+  → Clone Site Admin Template` (cascade-clones the parent template chain).
+}

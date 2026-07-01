@@ -1,0 +1,74 @@
+meta {
+  name: 06 Create Staff User
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/users/manage
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "employeeName": "Flow Staff",
+    "username": "{{flowUsername}}",
+    "dateOfBirth": "1995-04-12",
+    "gender": "MALE",
+    "bloodGroup": "O_POS",
+    "nationality": "Indian",
+    "address": "1 Flow Street, Pune",
+    "email": "{{flowUserEmail}}",
+    "mobileNumber": "{{flowUserMobile}}",
+    "password": "Str0ng@Pass1",
+    "userType": "INTERNAL",
+    "status": "ACTIVE",
+    "branches": [
+      { "branchId": "{{branchId}}", "roleKey": "branch_admin", "moduleId": "branch_admin", "isDefault": true, "branchStatus": "ACTIVE" }
+    ]
+  }
+}
+
+vars:pre-request {
+  flowUsername: flow user
+  flowUserEmail: flowuser@gmail.com
+  flowUserMobile: 9876541101
+  branchId: c6bc4215-7667-4ce3-a82d-455a11f6e31a
+}
+
+script:pre-request {
+  const rand = String(Math.floor(Math.random() * 900000) + 100000);
+  const extra = String(Math.floor(Math.random() * 900) + 100);
+  bru.setVar("flowUsername", "user." + rand);
+  bru.setVar("flowUserEmail", "user." + rand + "@flow.test");
+  bru.setVar("flowUserMobile", "9" + rand + extra); // Indian 10-digit
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data) {
+    if (data.person && data.person.id) bru.setEnvVar("manageUserId", data.person.id);
+    if (data.userCode) bru.setEnvVar("manageUserCode", data.userCode);
+    if (data.loginIdentifier) bru.setEnvVar("manageLoginIdentifier", data.loginIdentifier);
+  }
+}
+
+docs {
+  Step 6. Create a staff user with a branch_admin assignment at the branch from
+  step 4. Identity -> Person, credentials -> PersonCredentials, employment ->
+  TenantStaffMembership (sequential `userCode`), assignment -> UserBranchProfile.
+  Captures `manageUserId`, `manageUserCode`, `manageLoginIdentifier`.
+  
+  `aadhaarNumber` is intentionally omitted so this works without `ENCRYPTION_KEY`.
+  `moduleId` must be enabled for the branch (step 5) and valid for the role.
+  Exactly one branch entry may be `isDefault: true`.
+}

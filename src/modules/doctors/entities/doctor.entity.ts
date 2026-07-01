@@ -4,15 +4,22 @@ import { DoctorStatus, Prisma, Salutation } from '@prisma/client';
 export type DoctorEntity = Prisma.DoctorGetPayload<object>;
 
 /**
- * Relations eager-loaded by the GET-single endpoint: all active qualifications
- * and experiences, plus the linked department/category (id + name only). Ordered
+ * Relations eager-loaded by the GET-single endpoint: all active qualifications,
+ * experiences, and branch assignments (each with its branch id + name), plus the
+ * linked department/category/sub-category (id + name only). Ordered
  * deterministically by creation time.
  */
 export const DOCTOR_DETAIL_INCLUDE = {
   qualifications: { where: { deletedAt: null }, orderBy: { createdAt: 'asc' } },
   experiences: { where: { deletedAt: null }, orderBy: { createdAt: 'asc' } },
+  branchAssignments: {
+    where: { deletedAt: null },
+    orderBy: { createdAt: 'asc' },
+    include: { branch: { select: { id: true, name: true } } },
+  },
   department: { select: { id: true, name: true } },
   category: { select: { id: true, name: true } },
+  subCategory: { select: { id: true, name: true } },
 } satisfies Prisma.DoctorInclude;
 
 /** A doctor with its active qualifications, experiences, and classification names. */
@@ -21,10 +28,23 @@ export type DoctorDetail = Prisma.DoctorGetPayload<{
 }>;
 
 /**
+ * A {@link DoctorDetail} augmented with the signatory department/category/
+ * sub-category selections resolved from their stored id arrays into `{ id, name }`
+ * references. The raw `signatory*Ids` JSON columns only hold ids; the detail
+ * endpoint resolves the names so the frontend's multi-select chips render without
+ * an extra round-trip.
+ */
+export type DoctorDetailResolved = DoctorDetail & {
+  signatoryDepartments: ClassificationRef[];
+  signatoryCategories: ClassificationRef[];
+  signatorySubCategories: ClassificationRef[];
+};
+
+/**
  * Trimmed projection backing the list endpoint. Only the columns the listing
  * needs are selected; the service reshapes these into `DoctorListItem` so the
  * payload matches the listing spec (specialization ← category, super
- * specialization ← subCategory, contact ← phone).
+ * specialization ← sub-category, contact ← phone).
  */
 export const DOCTOR_LIST_SELECT = {
   id: true,
@@ -32,14 +52,13 @@ export const DOCTOR_LIST_SELECT = {
   firstName: true,
   lastName: true,
   registrationNo: true,
-  subCategory: true,
   phone: true,
   email: true,
-  consultationFee: true,
-  followUpFee: true,
   status: true,
+  isReportSignatory: true,
   department: { select: { id: true, name: true } },
   category: { select: { id: true, name: true } },
+  subCategory: { select: { id: true, name: true } },
 } satisfies Prisma.DoctorSelect;
 
 /** The raw row shape returned by `DOCTOR_LIST_SELECT` before reshaping. */
@@ -68,7 +87,6 @@ export interface DoctorListItem {
   superSpecialization: string | null;
   contact: string;
   email: string | null;
-  consultationFee: Prisma.Decimal;
-  followUpFee: Prisma.Decimal;
   status: DoctorStatus;
+  isReportSignatory: boolean;
 }

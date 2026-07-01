@@ -15,8 +15,8 @@ auth:bearer {
 }
 
 vars:pre-request {
-  labTestId: 3772e02a-391a-4276-9d78-f06a0e078e44
-  masterDataId: 3bebbd8d-eef4-4bfa-88f3-3aff4a4a4516
+  labTestId: f5953a54-9eb3-4c01-b7e2-c50ee5fc9364
+  masterDataId: cda51b46-948d-45bf-8368-00add42c2bfb
 }
 
 docs {
@@ -25,4 +25,8 @@ docs {
   `versionHistory`. 404 `LAB_TEST_NOT_FOUND` if missing, soft-deleted, or not in
   this master data / tenant. Uses `masterDataId` + `labTestId` from the earlier
   requests.
+
+  Each result param also returns `criticalMin`/`criticalMax` (result-level) and
+  `reflexTests: [{ id, name }]` — the JSON snapshot stored on create/update,
+  returned verbatim.
 }

@@ -1,0 +1,45 @@
+meta {
+  name: 03 Business Login
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "identifier": "{{adminPhone}}",
+    "password": "{{adminTempPassword}}",
+    "tenantSlug": "{{tenantSlug}}"
+  }
+}
+
+vars:pre-request {
+  adminTempPassword: Str0ng@Pass1
+  adminPhone: user.528812@flow.test
+}
+
+script:post-response {
+  const responseData = res.getBody();
+  
+  if (responseData && responseData.success && responseData.data) {
+    // Use setVar instead of setEnvVar
+    bru.setVar("businessAccessToken", responseData.data.accessToken);
+  }
+  
+}
+
+docs {
+  Step 3. Log in as the business_admin captured in step 2. `identifier` resolves
+  phone -> email -> system_username; `tenantSlug` sets the tenant context.
+  Captures `businessAccessToken` (15m) and `businessRefreshToken` (30d) — used by
+  every step below.
+}

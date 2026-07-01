@@ -1,6 +1,7 @@
 /**
- * The 12 master system modules (User Management v2.0). Every module dropdown,
- * filter, Branch→Module enablement (`branch_modules`), default-module choice
+ * The 9 master system modules (User Management v2.0): 7 operational modules plus
+ * 2 admin-console modules. Every module dropdown, filter, Branch→Module
+ * enablement (`branch_modules`), default-module choice
  * (`UserBranchProfile.defaultModuleId`), and per-(user+branch) permission grant
  * keys off this list. `order` mirrors the spec's numbering.
  */
@@ -11,18 +12,21 @@ export interface SystemModule {
 }
 
 export const SYSTEM_MODULES: SystemModule[] = [
-  { key: 'registration', label: 'Registration', order: 1 },
-  { key: 'accession', label: 'Accession', order: 2 },
-  { key: 'lab_operations', label: 'Lab Operations', order: 3 },
-  { key: 'inventory', label: 'Inventory', order: 4 },
-  { key: 'sales', label: 'Sales', order: 5 },
-  { key: 'admin', label: 'Admin', order: 6 },
-  { key: 'radiology', label: 'Radiology', order: 7 },
-  { key: 'pharmacy', label: 'Pharmacy', order: 8 },
-  { key: 'opd', label: 'OPD', order: 9 },
-  { key: 'ipd', label: 'IPD', order: 10 },
-  { key: 'finance', label: 'Finance', order: 11 },
-  { key: 'phlebotomist', label: 'Phlebotomist', order: 12 },
+  // ── 7 operational modules (branch-toggleable) ──
+  { key: 'accession', label: 'Accession', order: 1 },
+  { key: 'inventory', label: 'Inventory', order: 2 },
+  { key: 'sales', label: 'Sales', order: 3 },
+  { key: 'finance', label: 'Finance', order: 4 },
+  { key: 'phlebotomist', label: 'Phlebotomist', order: 5 },
+  { key: 'assistant', label: 'Assistant', order: 6 },
+  { key: 'operation', label: 'Operation', order: 7 },
+  // ── Admin console modules (User Management v2.0) ──
+  // Unlike the operational modules above, these are not branch-toggleable
+  // feature areas — they are the admin "consoles" the Business Admin / Branch
+  // Admin roles are linked to. Their permission set is the full API resource
+  // catalogue (see module-permissions.constant.ts), not the standard CRUD verbs.
+  { key: 'business_admin', label: 'Business Admin', order: 8 },
+  { key: 'branch_admin', label: 'Branch Admin', order: 9 },
 ];
 
 /** All valid module keys, in spec order. */

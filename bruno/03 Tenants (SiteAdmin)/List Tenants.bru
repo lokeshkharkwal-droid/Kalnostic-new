@@ -13,6 +13,8 @@ get {
 params:query {
   page: 1
   limit: 20
+  ~search: acme
+  ~status: ACTIVE
 }
 
 auth:bearer {
@@ -24,7 +26,11 @@ vars:pre-request {
 }
 
 docs {
-  Paginated list of all tenants. Requires `business:read`.
-  `page` (>=1) and `limit` (1-100) are optional query params.
-  Pagination info is returned in `meta`.
+  Paginated list of all tenants. Requires `business:read`. All query params
+  optional; pagination info is returned in `meta`.
+
+  - `page` (>=1) / `limit` (1-100) — offset pagination (defaults 1 / 20).
+  - `search` — case-insensitive substring matched against name / slug / email.
+  - `status` — exact `SubscriptionStatus` (accepted case-insensitively):
+    `TRIALING` | `ACTIVE` | `GRACE_PERIOD` | `SUSPENDED` | `CANCELLED`.
 }

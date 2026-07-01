@@ -15,9 +15,10 @@ params:query {
   page: 1
   limit: 20
   search: Complete
-  ~departmentId: 
-  ~categoryId: 
-  ~subCategoryId: 
+  ~departmentId:
+  ~categoryId:
+  ~subCategoryId:
+  ~sampleType: Serum
   ~status: ACTIVE
 }
 
@@ -26,7 +27,7 @@ auth:bearer {
 }
 
 vars:pre-request {
-  masterDataId: 3bebbd8d-eef4-4bfa-88f3-3aff4a4a4516
+  masterDataId: cda51b46-948d-45bf-8368-00add42c2bfb
 }
 
 docs {
@@ -42,6 +43,9 @@ docs {
     `contains`). Other fields are not searched, by design.
   - `departmentId` / `categoryId` / `subCategoryId` — filter by id. The matching
     **names** are resolved server-side and returned in the views that show them.
+  - `sampleType` — restrict to tests that own at least one (non-deleted) sample
+    with this `sampleType` (case-sensitive `contains`-free exact match on the
+    child sample's free-text type).
   - `status` — `ACTIVE` | `INACTIVE` (maps to the `isActive` flag). Soft-deleted
     tests are always excluded regardless of `status`.
   - `page` / `limit` — standard pagination (limit capped at 100).

@@ -1,0 +1,41 @@
+meta {
+  name: Create Document - Invalid Type
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/documents
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "documentNumber": "SOP-999",
+    "documentType": "MANUAL",
+    "title": "Document with an invalid type",
+    "version": "1.0"
+  }
+}
+
+tests {
+  test("400 Bad Request", function () {
+    expect(res.getStatus()).to.equal(400);
+  });
+}
+
+docs {
+  Negative case: `documentType` must be one of the allowed enum values (`SOP`,
+  `POLICY`, `FORM`, `CERTIFICATE`, `ACCREDITATION`, `QC_DOCUMENT`,
+  `WORK_INSTRUCTION`, `OTHER`). `"MANUAL"` is not valid, so the validation pipe
+  rejects it with 400 before the service runs.
+}

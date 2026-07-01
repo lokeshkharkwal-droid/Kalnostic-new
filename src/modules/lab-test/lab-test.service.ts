@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  DataSource,
   LabTest,
   LabTestReferenceRange,
   LabTestReferenceValue,
@@ -37,6 +38,7 @@ import {
   LabTestSampleRow,
   LabTestVersionEntry,
   LabTestWithChildren,
+  ReflexTestRef,
 } from './entities/lab-test.entity';
 import {
   LabTestCodeConflictException,
@@ -70,11 +72,29 @@ const META_KEYS = [
   'masterDataId',
   'labTestId',
   'paramId',
+  'source',
   'createdAt',
   'updatedAt',
   'deletedAt',
   'versionHistory',
 ];
+
+/**
+ * Classification / mandatory-test refs that are real FKs to tenant-scoped
+ * catalogue tables (departments / categories / sub_categories). A SITE_ADMIN
+ * global template belongs to no tenant, so it cannot reference them — these are
+ * forced NULL (and `isMandatoryTest` forced false) when creating/updating a
+ * template, so they are intentionally absent from the template write payload.
+ */
+const TEMPLATE_NULLED_REFS = {
+  departmentId: null,
+  categoryId: null,
+  subCategoryId: null,
+  mandatoryDeptId: null,
+  mandatoryCatId: null,
+  mandatorySubcatId: null,
+  isMandatoryTest: false,
+} as const;
 
 /**
  * Lab-test configuration management. Tenant-scoped + branch-level; every test
@@ -124,6 +144,14 @@ export class LabTestService {
       isRepeatIntervalRestriction: dto.isRepeatIntervalRestriction ?? false,
       repeatIntervalValue: dto.repeatIntervalValue ?? null,
       repeatIntervalUnit: dto.repeatIntervalUnit ?? null,
+    });
+    await this.assertCatalogueRefs(tenantId, {
+      departmentId: dto.departmentId,
+      categoryId: dto.categoryId,
+      subCategoryId: dto.subCategoryId,
+      mandatoryDeptId: dto.mandatoryDeptId,
+      mandatoryCatId: dto.mandatoryCatId,
+      mandatorySubcatId: dto.mandatorySubcatId,
     });
     (dto.resultParams ?? []).forEach((p) => this.assertParam(p));
 
@@ -179,6 +207,20 @@ export class LabTestService {
     tenantId: string,
   ): Promise<LabTestWithChildren> {
     const labTest = await this.findCoreById(labTestId, masterDataId, tenantId);
+    return this.composeWithChildren(labTest);
+  }
+
+  /**
+   * Compose a (already-fetched) lab test with its samples and result parameters
+   * (each with its reference ranges/values). Children are scoped to the test's
+   * own `tenantId` — which is the caller's tenant for TENANT tests and NULL for
+   * SITE_ADMIN templates — so this serves both the tenant and template read paths.
+   * @param labTest the core lab-test row
+   */
+  private async composeWithChildren(
+    labTest: LabTest,
+  ): Promise<LabTestWithChildren> {
+    const { id: labTestId, tenantId } = labTest;
     const [samples, params] = await Promise.all([
       this.prisma.labTestSample.findMany({
         where: { labTestId, tenantId, deletedAt: null },
@@ -204,7 +246,76 @@ export class LabTestService {
         ...p,
         referenceRanges: ranges.filter((r) => r.paramId === p.id),
         referenceValues: values.filter((v) => v.paramId === p.id),
+        // `reflexTests` is stored as a JSON snapshot of { id, name } — returned
+        // verbatim (Prisma types JSON columns as `JsonValue`).
+        reflexTests: (p.reflexTests ?? []) as unknown as ReflexTestRef[],
       })),
+    };
+  }
+
+  /**
+   * Lightweight `{ id, name }` options for the searchable selector
+   * (`GET /lab-tests/options`). Tenant-scoped to active, non-deleted lab tests;
+   * optionally filtered by `branchId` and a case-insensitive `testName` search.
+   * Returns the full array when `page` is omitted, or a paginated envelope when
+   * `page` is supplied (mirrors `BranchService.findOptionsForTenant`).
+   * @param tenantId tenant scope
+   * @param filters optional `branchId`, `search`, and opt-in `page`/`limit`
+   */
+  async findOptions(
+    tenantId: string,
+    filters: {
+      branchId?: string;
+      search?: string;
+      page?: number;
+      limit?: number;
+    } = {},
+  ): Promise<
+    | Array<{ id: string; name: string }>
+    | PaginatedResult<{ id: string; name: string }>
+  > {
+    const where: Prisma.LabTestWhereInput = {
+      tenantId,
+      deletedAt: null,
+      isActive: true,
+    };
+    if (filters.branchId) {
+      where.branchId = filters.branchId;
+    }
+    const search = filters.search?.trim();
+    if (search) {
+      where.testName = { contains: search, mode: 'insensitive' };
+    }
+
+    const select = { id: true, testName: true } as const;
+    const orderBy = { testName: 'asc' } as const;
+
+    if (filters.page === undefined) {
+      const rows = await this.prisma.labTest.findMany({
+        where,
+        select,
+        orderBy,
+      });
+      return rows.map((r) => ({ id: r.id, name: r.testName }));
+    }
+
+    const page = filters.page;
+    const limit = filters.limit ?? 20;
+    const [rows, total] = await Promise.all([
+      this.prisma.labTest.findMany({
+        where,
+        select,
+        orderBy,
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.labTest.count({ where }),
+    ]);
+    return {
+      data: rows.map((r) => ({ id: r.id, name: r.testName })),
+      total,
+      page,
+      limit,
     };
   }
 
@@ -219,19 +330,60 @@ export class LabTestService {
   async findAll(
     masterDataId: string,
     tenantId: string,
-    page = 1,
-    limit = 20,
+    query: ListLabTestsDto = {},
   ): Promise<PaginatedResult<LabTest>> {
     await this.masterDataService.findById(masterDataId, tenantId);
-    const where = { masterDataId, tenantId, deletedAt: null };
-    const data = await this.prisma.labTest.findMany({
-      where,
-      skip: (page - 1) * limit,
-      take: limit,
-      orderBy: { createdAt: 'desc' },
-    });
-    const total = await this.prisma.labTest.count({ where });
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const where = await this.buildListWhere(masterDataId, tenantId, query);
+    const [data, total] = await Promise.all([
+      this.prisma.labTest.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.labTest.count({ where }),
+    ]);
     return { data, total, page, limit };
+  }
+
+  /**
+   * Build the shared `where` clause for the lab-test list/listing endpoints:
+   * tenant + master-data scope, `search` (testName/testCode), classification
+   * filters, `sampleType` (via a child-sample subquery, since `LabTestSample`
+   * has no Prisma relation back to the test), and `status` → `isActive`.
+   */
+  private async buildListWhere(
+    masterDataId: string,
+    tenantId: string,
+    query: ListLabTestsDto,
+  ): Promise<Prisma.LabTestWhereInput> {
+    const where: Prisma.LabTestWhereInput = {
+      masterDataId,
+      tenantId,
+      deletedAt: null,
+    };
+    const search = query.search?.trim();
+    if (search) {
+      where.OR = [
+        { testName: { contains: search, mode: 'insensitive' } },
+        { testCode: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+    if (query.departmentId) where.departmentId = query.departmentId;
+    if (query.categoryId) where.categoryId = query.categoryId;
+    if (query.subCategoryId) where.subCategoryId = query.subCategoryId;
+    const sampleType = query.sampleType?.trim();
+    if (sampleType) {
+      const sampleRows = await this.prisma.labTestSample.findMany({
+        where: { tenantId, sampleType, deletedAt: null },
+        select: { labTestId: true },
+      });
+      where.id = { in: sampleRows.map((s) => s.labTestId) };
+    }
+    if (query.status) where.isActive = query.status === 'ACTIVE';
+    return where;
   }
 
   /**
@@ -255,22 +407,7 @@ export class LabTestService {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
 
-    const where: Prisma.LabTestWhereInput = {
-      masterDataId,
-      tenantId,
-      deletedAt: null,
-    };
-    const search = query.search?.trim();
-    if (search) {
-      where.OR = [
-        { testName: { contains: search, mode: 'insensitive' } },
-        { testCode: { contains: search, mode: 'insensitive' } },
-      ];
-    }
-    if (query.departmentId) where.departmentId = query.departmentId;
-    if (query.categoryId) where.categoryId = query.categoryId;
-    if (query.subCategoryId) where.subCategoryId = query.subCategoryId;
-    if (query.status) where.isActive = query.status === 'ACTIVE';
+    const where = await this.buildListWhere(masterDataId, tenantId, query);
 
     const [tests, total] = await Promise.all([
       this.prisma.labTest.findMany({
@@ -295,7 +432,7 @@ export class LabTestService {
    */
   private async projectListRows(
     view: LabTestListView,
-    tenantId: string,
+    tenantId: string | null,
     tests: LabTest[],
   ): Promise<LabTestListRow[]> {
     if (tests.length === 0) {
@@ -584,7 +721,7 @@ export class LabTestService {
    */
   private async resolveNames(
     model: 'department' | 'category' | 'subCategory',
-    tenantId: string,
+    tenantId: string | null,
     idsRaw: (string | null)[],
   ): Promise<Map<string, string>> {
     const ids = [...new Set(idsRaw.filter((x): x is string => Boolean(x)))];
@@ -592,7 +729,11 @@ export class LabTestService {
     if (ids.length === 0) {
       return map;
     }
-    const where = { id: { in: ids }, tenantId };
+    // Classification tables are tenant-scoped (non-null tenantId). We only get
+    // here with ids when projecting a TENANT test (templates have null
+    // classification → empty ids → early return above), so tenantId is a real
+    // string; `?? undefined` just satisfies their non-nullable where type.
+    const where = { id: { in: ids }, tenantId: tenantId ?? undefined };
     const select = { id: true, name: true };
     const rows =
       model === 'department'
@@ -613,7 +754,7 @@ export class LabTestService {
 
   /** The default sample per test (`isDefault`), keyed by `labTestId`. */
   private async fetchDefaultSamples(
-    tenantId: string,
+    tenantId: string | null,
     ids: string[],
   ): Promise<Map<string, LabTestSample>> {
     const rows = await this.prisma.labTestSample.findMany({
@@ -635,7 +776,7 @@ export class LabTestService {
 
   /** All active samples grouped by `labTestId`. */
   private async fetchSamples(
-    tenantId: string,
+    tenantId: string | null,
     ids: string[],
   ): Promise<Map<string, LabTestSample[]>> {
     const rows = await this.prisma.labTestSample.findMany({
@@ -647,7 +788,7 @@ export class LabTestService {
 
   /** All active result parameters grouped by `labTestId`. */
   private async fetchParams(
-    tenantId: string,
+    tenantId: string | null,
     ids: string[],
   ): Promise<Map<string, LabTestResultParam[]>> {
     const rows = await this.prisma.labTestResultParam.findMany({
@@ -659,7 +800,7 @@ export class LabTestService {
 
   /** All active reference ranges grouped by `labTestId`. */
   private async fetchRanges(
-    tenantId: string,
+    tenantId: string | null,
     ids: string[],
   ): Promise<Map<string, LabTestReferenceRange[]>> {
     const rows = await this.prisma.labTestReferenceRange.findMany({
@@ -670,7 +811,7 @@ export class LabTestService {
 
   /** All active reference values grouped by `labTestId`. */
   private async fetchValues(
-    tenantId: string,
+    tenantId: string | null,
     ids: string[],
   ): Promise<Map<string, LabTestReferenceValue[]>> {
     const rows = await this.prisma.labTestReferenceValue.findMany({
@@ -682,7 +823,7 @@ export class LabTestService {
   /** Count active child rows of one model per test, keyed by `labTestId`. */
   private async countByTest(
     model: 'labTestSample' | 'labTestResultParam',
-    tenantId: string,
+    tenantId: string | null,
     ids: string[],
   ): Promise<Map<string, number>> {
     const where = { labTestId: { in: ids }, tenantId, deletedAt: null };
@@ -774,6 +915,14 @@ export class LabTestService {
         dto.repeatIntervalValue ?? existing.repeatIntervalValue ?? null,
       repeatIntervalUnit:
         dto.repeatIntervalUnit ?? existing.repeatIntervalUnit ?? null,
+    });
+    await this.assertCatalogueRefs(tenantId, {
+      departmentId: dto.departmentId,
+      categoryId: dto.categoryId,
+      subCategoryId: dto.subCategoryId,
+      mandatoryDeptId: dto.mandatoryDeptId,
+      mandatoryCatId: dto.mandatoryCatId,
+      mandatorySubcatId: dto.mandatorySubcatId,
     });
     (dto.resultParams ?? []).forEach((p) => this.assertParam(p));
 
@@ -944,77 +1093,406 @@ export class LabTestService {
           skipped += 1;
           continue;
         }
-        const newTest = await tx.labTest.create({
-          data: {
-            ...this.stripMeta(src),
-            tenantId,
-            branchId: target.branchId,
-            masterDataId: targetMasterDataId,
-            versionHistory: [
-              this.seedVersion(null),
-            ] as unknown as Prisma.InputJsonValue,
-          } as Prisma.LabTestUncheckedCreateInput,
+        await this.clonePersistTest(tx, src, {
+          tenantId,
+          branchId: target.branchId,
+          masterDataId: targetMasterDataId,
+          source: DataSource.TENANT,
+          actorId: null,
         });
-
-        const samples = await tx.labTestSample.findMany({
-          where: { labTestId: src.id, tenantId, deletedAt: null },
-        });
-        if (samples.length) {
-          await tx.labTestSample.createMany({
-            data: samples.map((s) => ({
-              ...this.stripMeta(s),
-              tenantId,
-              branchId: target.branchId,
-              labTestId: newTest.id,
-            })),
-          });
-        }
-
-        const params = await tx.labTestResultParam.findMany({
-          where: { labTestId: src.id, tenantId, deletedAt: null },
-        });
-        for (const param of params) {
-          const newParam = await tx.labTestResultParam.create({
-            data: {
-              ...this.stripMeta(param),
-              tenantId,
-              branchId: target.branchId,
-              labTestId: newTest.id,
-            } as Prisma.LabTestResultParamUncheckedCreateInput,
-          });
-          const ranges = await tx.labTestReferenceRange.findMany({
-            where: { paramId: param.id, tenantId, deletedAt: null },
-          });
-          if (ranges.length) {
-            await tx.labTestReferenceRange.createMany({
-              data: ranges.map((r) => ({
-                ...this.stripMeta(r),
-                tenantId,
-                branchId: target.branchId,
-                labTestId: newTest.id,
-                paramId: newParam.id,
-              })),
-            });
-          }
-          const values = await tx.labTestReferenceValue.findMany({
-            where: { paramId: param.id, tenantId, deletedAt: null },
-          });
-          if (values.length) {
-            await tx.labTestReferenceValue.createMany({
-              data: values.map((v) => ({
-                ...this.stripMeta(v),
-                tenantId,
-                branchId: target.branchId,
-                labTestId: newTest.id,
-                paramId: newParam.id,
-              })) as Prisma.LabTestReferenceValueCreateManyInput[],
-            });
-          }
-        }
         copied += 1;
       }
       return { copied, skipped };
     });
+  }
+
+  /**
+   * Deep-copy one (already-loaded) lab test plus its samples, result params and
+   * each param's reference ranges/values into a NEW test with fresh ids, the
+   * given scope (`tenantId`/`branchId`/`masterDataId`/`source`) and a fresh
+   * `versionHistory` v1. Child rows are read from the SOURCE's own scope
+   * (`src.tenantId`) — which is NULL for a SITE_ADMIN template — so this serves
+   * both tenant→tenant cloning and SITE_ADMIN→tenant template adoption. Runs
+   * inside the caller's transaction (`tx`); the caller owns commit/rollback.
+   * @returns the newly-created lab test core row
+   */
+  private async clonePersistTest(
+    tx: Prisma.TransactionClient,
+    src: LabTest,
+    target: {
+      tenantId: string | null;
+      branchId: string | null;
+      masterDataId: string | null;
+      source: DataSource;
+      actorId: string | null;
+    },
+  ): Promise<LabTest> {
+    const { tenantId, branchId, masterDataId, source, actorId } = target;
+    const srcTenantId = src.tenantId;
+    const newTest = await tx.labTest.create({
+      data: {
+        ...this.stripMeta(src),
+        tenantId,
+        branchId,
+        masterDataId,
+        source,
+        versionHistory: [
+          this.seedVersion(actorId),
+        ] as unknown as Prisma.InputJsonValue,
+      } as Prisma.LabTestUncheckedCreateInput,
+    });
+
+    const samples = await tx.labTestSample.findMany({
+      where: { labTestId: src.id, tenantId: srcTenantId, deletedAt: null },
+    });
+    if (samples.length) {
+      await tx.labTestSample.createMany({
+        data: samples.map((s) => ({
+          ...this.stripMeta(s),
+          tenantId,
+          branchId,
+          labTestId: newTest.id,
+        })),
+      });
+    }
+
+    const params = await tx.labTestResultParam.findMany({
+      where: { labTestId: src.id, tenantId: srcTenantId, deletedAt: null },
+    });
+    for (const param of params) {
+      const newParam = await tx.labTestResultParam.create({
+        data: {
+          ...this.stripMeta(param),
+          tenantId,
+          branchId,
+          labTestId: newTest.id,
+        } as Prisma.LabTestResultParamUncheckedCreateInput,
+      });
+      const ranges = await tx.labTestReferenceRange.findMany({
+        where: { paramId: param.id, tenantId: srcTenantId, deletedAt: null },
+      });
+      if (ranges.length) {
+        await tx.labTestReferenceRange.createMany({
+          data: ranges.map((r) => ({
+            ...this.stripMeta(r),
+            tenantId,
+            branchId,
+            labTestId: newTest.id,
+            paramId: newParam.id,
+          })),
+        });
+      }
+      const values = await tx.labTestReferenceValue.findMany({
+        where: { paramId: param.id, tenantId: srcTenantId, deletedAt: null },
+      });
+      if (values.length) {
+        await tx.labTestReferenceValue.createMany({
+          data: values.map((v) => ({
+            ...this.stripMeta(v),
+            tenantId,
+            branchId,
+            labTestId: newTest.id,
+            paramId: newParam.id,
+          })) as Prisma.LabTestReferenceValueCreateManyInput[],
+        });
+      }
+    }
+    return newTest;
+  }
+
+  // ── Site Admin global templates ─────────────────────────────────────────────────
+
+  /**
+   * Create a SITE_ADMIN global template lab test (no tenant/branch/master data).
+   * Reuses `CreateLabTestDto` but forces the tenant-FK classification refs NULL
+   * (departments/categories/sub-categories are tenant-scoped, so a global
+   * template can't reference them) and `isMandatoryTest` false. Children are
+   * created with NULL tenant/branch. There is no tenant GUC, so this runs in a
+   * plain transaction (RLS lets a GUC-less SiteAdmin connection write NULL-tenant
+   * rows). Seeds `versionHistory` v1.
+   * @param actorId site-admin id recorded as `modifiedBy` on v1 (or null)
+   * @param dto validated payload (classification refs ignored)
+   * @throws ValidationException on a cross-field invariant violation
+   * @throws LabTestNameConflictException / LabTestCodeConflictException / LabTestParamCodeConflictException
+   */
+  async createTemplate(
+    actorId: string | null,
+    dto: CreateLabTestDto,
+  ): Promise<LabTestWithChildren> {
+    this.assertCoreInvariants({
+      priceMsrp: dto.priceMsrp ?? 0,
+      priceMaximum: dto.priceMaximum ?? 0,
+      priceMinimum: dto.priceMinimum ?? 0,
+      isMandatoryTest: false,
+      mandatoryDeptId: null,
+      isRepeatIntervalRestriction: dto.isRepeatIntervalRestriction ?? false,
+      repeatIntervalValue: dto.repeatIntervalValue ?? null,
+      repeatIntervalUnit: dto.repeatIntervalUnit ?? null,
+    });
+    (dto.resultParams ?? []).forEach((p) => this.assertParam(p));
+
+    const { samples, resultParams, ...scalars } = dto;
+    let createdId: string;
+    try {
+      createdId = await this.prisma.$transaction(async (tx) => {
+        const labTest = await tx.labTest.create({
+          data: {
+            ...scalars,
+            ...TEMPLATE_NULLED_REFS,
+            tenantId: null,
+            branchId: null,
+            masterDataId: null,
+            source: DataSource.SITE_ADMIN,
+            versionHistory: [
+              this.seedVersion(actorId),
+            ] as unknown as Prisma.InputJsonValue,
+          },
+        });
+        await this.createSamples(tx, null, null, labTest.id, samples);
+        await this.createParams(tx, null, null, labTest.id, resultParams);
+        return labTest.id;
+      });
+    } catch (e) {
+      this.rethrowConflict(e, dto.testName, dto.testCode);
+      throw e;
+    }
+    return this.findTemplateById(createdId);
+  }
+
+  /**
+   * List SITE_ADMIN template lab tests for the configurable listing screen.
+   * Supports `search` (testName/testCode), `status` → `isActive`, and the same
+   * `view` projection as the tenant `listForView` (defaults to DEFAULT). The view
+   * projection runs with a NULL tenant — templates have no classification, so
+   * those denormalised name columns come back null; child-centric views
+   * (SAMPLE/RESULTS/REFERENCE_*) read the template's NULL-tenant children.
+   * Classification/`sampleType` filters don't apply to templates and are ignored.
+   * @param query view + search + status + pagination
+   */
+  async findAllTemplates(
+    query: ListLabTestsDto = {},
+  ): Promise<PaginatedResult<LabTestListRow>> {
+    const view = query.view ?? LabTestListView.DEFAULT;
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const where: Prisma.LabTestWhereInput = {
+      source: DataSource.SITE_ADMIN,
+      deletedAt: null,
+    };
+    const search = query.search?.trim();
+    if (search) {
+      where.OR = [
+        { testName: { contains: search, mode: 'insensitive' } },
+        { testCode: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+    if (query.status) {
+      where.isActive = query.status === 'ACTIVE';
+    }
+    const [tests, total] = await Promise.all([
+      this.prisma.labTest.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.labTest.count({ where }),
+    ]);
+    const data = await this.projectListRows(view, null, tests);
+    return { data, total, page, limit };
+  }
+
+  /**
+   * Fetch one SITE_ADMIN template lab test composed with its children.
+   * @param labTestId template id
+   * @throws LabTestNotFoundException if missing/soft-deleted/not a template
+   */
+  async findTemplateById(labTestId: string): Promise<LabTestWithChildren> {
+    const labTest = await this.findCoreTemplateById(labTestId);
+    return this.composeWithChildren(labTest);
+  }
+
+  /**
+   * Update a SITE_ADMIN template lab test (same child-replacement semantics as
+   * `update`). Classification refs stay NULL. Runs in a plain transaction.
+   * @param labTestId template id
+   * @param dto partial update (classification refs ignored)
+   * @throws LabTestNotFoundException / ValidationException / conflict exceptions
+   */
+  async updateTemplate(
+    labTestId: string,
+    dto: UpdateLabTestDto,
+  ): Promise<LabTestWithChildren> {
+    const existing = await this.findCoreTemplateById(labTestId);
+    this.assertCoreInvariants({
+      priceMsrp: dto.priceMsrp ?? existing.priceMsrp,
+      priceMaximum: dto.priceMaximum ?? existing.priceMaximum,
+      priceMinimum: dto.priceMinimum ?? existing.priceMinimum,
+      isMandatoryTest: false,
+      mandatoryDeptId: null,
+      isRepeatIntervalRestriction:
+        dto.isRepeatIntervalRestriction ?? existing.isRepeatIntervalRestriction,
+      repeatIntervalValue:
+        dto.repeatIntervalValue ?? existing.repeatIntervalValue ?? null,
+      repeatIntervalUnit:
+        dto.repeatIntervalUnit ?? existing.repeatIntervalUnit ?? null,
+    });
+    (dto.resultParams ?? []).forEach((p) => this.assertParam(p));
+
+    const { samples, resultParams, ...scalars } = dto;
+    const now = new Date();
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.labTest.update({
+          where: { id: labTestId },
+          data: { ...scalars, ...TEMPLATE_NULLED_REFS },
+        });
+        if (samples !== undefined) {
+          await tx.labTestSample.updateMany({
+            where: { labTestId, tenantId: null, deletedAt: null },
+            data: { deletedAt: now },
+          });
+          await this.createSamples(tx, null, null, labTestId, samples);
+        }
+        if (resultParams !== undefined) {
+          await tx.labTestReferenceRange.updateMany({
+            where: { labTestId, tenantId: null, deletedAt: null },
+            data: { deletedAt: now },
+          });
+          await tx.labTestReferenceValue.updateMany({
+            where: { labTestId, tenantId: null, deletedAt: null },
+            data: { deletedAt: now },
+          });
+          await tx.labTestResultParam.updateMany({
+            where: { labTestId, tenantId: null, deletedAt: null },
+            data: { deletedAt: now },
+          });
+          await this.createParams(tx, null, null, labTestId, resultParams);
+        }
+      });
+    } catch (e) {
+      this.rethrowConflict(e, dto.testName ?? '', dto.testCode ?? '');
+      throw e;
+    }
+    return this.findTemplateById(labTestId);
+  }
+
+  /**
+   * Soft-delete a SITE_ADMIN template lab test and cascade soft-delete its
+   * children, in one transaction.
+   * @param labTestId template id
+   * @throws LabTestNotFoundException if missing/soft-deleted/not a template
+   */
+  async removeTemplate(labTestId: string): Promise<LabTest> {
+    await this.findCoreTemplateById(labTestId);
+    const now = new Date();
+    return this.prisma.$transaction(async (tx) => {
+      const where = { labTestId, tenantId: null, deletedAt: null };
+      await tx.labTestReferenceRange.updateMany({
+        where,
+        data: { deletedAt: now },
+      });
+      await tx.labTestReferenceValue.updateMany({
+        where,
+        data: { deletedAt: now },
+      });
+      await tx.labTestResultParam.updateMany({
+        where,
+        data: { deletedAt: now },
+      });
+      await tx.labTestSample.updateMany({ where, data: { deletedAt: now } });
+      return tx.labTest.update({
+        where: { id: labTestId },
+        data: { deletedAt: now },
+      });
+    });
+  }
+
+  /**
+   * Clone a SITE_ADMIN template lab test into a tenant's catalogue (business-user
+   * flow). `tenantId` comes from the caller's JWT; `branchId` from the target
+   * master data; only `masterDataId` is client-supplied (validated to belong to
+   * the tenant). The new test is `source = TENANT` with fresh ids and a fresh
+   * `versionHistory` v1. Fully transactional.
+   * @param templateId the SITE_ADMIN template to clone
+   * @param tenantId caller's tenant
+   * @param masterDataId target master data (validated against the tenant)
+   * @returns the newly-created tenant lab test with children
+   * @throws LabTestNotFoundException if `templateId` is not a live template
+   * @throws MasterDataNotFoundException if the master data is missing/other tenant
+   * @throws LabTestNameConflictException / LabTestCodeConflictException on a clash
+   */
+  async cloneToTenant(
+    templateId: string,
+    tenantId: string,
+    masterDataId: string,
+  ): Promise<LabTestWithChildren> {
+    const masterData = await this.masterDataService.findById(
+      masterDataId,
+      tenantId,
+    );
+    const template = await this.findCoreTemplateById(templateId);
+    let newId: string;
+    try {
+      newId = await this.prisma.withTenant(tenantId, async (tx) => {
+        const created = await this.clonePersistTest(tx, template, {
+          tenantId,
+          branchId: masterData.branchId,
+          masterDataId,
+          source: DataSource.TENANT,
+          actorId: null,
+        });
+        return created.id;
+      });
+    } catch (e) {
+      this.rethrowConflict(e, template.testName, template.testCode);
+      throw e;
+    }
+    return this.findById(masterDataId, newId, tenantId);
+  }
+
+  /**
+   * Clone a SITE_ADMIN template lab test into a tenant within an EXISTING
+   * transaction — used by `LabPanelService` when adopting a template panel, so
+   * the panel and its cloned tests share one all-or-nothing transaction. Returns
+   * the new TENANT test row.
+   * @param tx the caller's transaction client (already in `withTenant`)
+   * @param templateId the SITE_ADMIN template test to clone
+   * @param target tenant/branch/master data for the new test
+   * @throws LabTestNotFoundException if `templateId` is not a live template
+   */
+  async cloneTemplateTestWithinTx(
+    tx: Prisma.TransactionClient,
+    templateId: string,
+    target: { tenantId: string; branchId: string; masterDataId: string },
+  ): Promise<LabTest> {
+    const template = await tx.labTest.findFirst({
+      where: { id: templateId, source: DataSource.SITE_ADMIN, deletedAt: null },
+    });
+    if (!template) {
+      throw new LabTestNotFoundException(templateId);
+    }
+    return this.clonePersistTest(tx, template, {
+      tenantId: target.tenantId,
+      branchId: target.branchId,
+      masterDataId: target.masterDataId,
+      source: DataSource.TENANT,
+      actorId: null,
+    });
+  }
+
+  /**
+   * Fetch one active SITE_ADMIN template lab test (core row only).
+   * @throws LabTestNotFoundException if missing/soft-deleted/not a template
+   */
+  private async findCoreTemplateById(labTestId: string): Promise<LabTest> {
+    const labTest = await this.prisma.labTest.findFirst({
+      where: { id: labTestId, source: DataSource.SITE_ADMIN, deletedAt: null },
+    });
+    if (!labTest) {
+      throw new LabTestNotFoundException(labTestId);
+    }
+    return labTest;
   }
 
   /**
@@ -1081,6 +1559,14 @@ export class LabTestService {
           changes.repeatIntervalValue ?? test.repeatIntervalValue ?? null,
         repeatIntervalUnit:
           changes.repeatIntervalUnit ?? test.repeatIntervalUnit ?? null,
+      });
+      await this.assertCatalogueRefs(tenantId, {
+        departmentId: changes.departmentId,
+        categoryId: changes.categoryId,
+        subCategoryId: changes.subCategoryId,
+        mandatoryDeptId: changes.mandatoryDeptId,
+        mandatoryCatId: changes.mandatoryCatId,
+        mandatorySubcatId: changes.mandatorySubcatId,
       });
     }
 
@@ -1151,6 +1637,14 @@ export class LabTestService {
           isRepeatIntervalRestriction: row.isRepeatIntervalRestriction ?? false,
           repeatIntervalValue: row.repeatIntervalValue ?? null,
           repeatIntervalUnit: row.repeatIntervalUnit ?? null,
+        });
+        await this.assertCatalogueRefs(tenantId, {
+          departmentId: row.departmentId,
+          categoryId: row.categoryId,
+          subCategoryId: row.subCategoryId,
+          mandatoryDeptId: row.mandatoryDeptId,
+          mandatoryCatId: row.mandatoryCatId,
+          mandatorySubcatId: row.mandatorySubcatId,
         });
       } catch (e) {
         if (e instanceof ValidationException) {
@@ -1299,11 +1793,14 @@ export class LabTestService {
     return labTest;
   }
 
-  /** Insert a test's sample rows (no-op for an empty/absent list). */
+  /**
+   * Insert a test's sample rows (no-op for an empty/absent list). `tenantId` /
+   * `branchId` are NULL when the parent test is a SITE_ADMIN template.
+   */
   private async createSamples(
     tx: Prisma.TransactionClient,
-    tenantId: string,
-    branchId: string,
+    tenantId: string | null,
+    branchId: string | null,
     labTestId: string,
     samples: CreateLabTestDto['samples'],
   ): Promise<void> {
@@ -1321,15 +1818,24 @@ export class LabTestService {
    */
   private async createParams(
     tx: Prisma.TransactionClient,
-    tenantId: string,
-    branchId: string,
+    tenantId: string | null,
+    branchId: string | null,
     labTestId: string,
     params: LabTestResultParamDto[] | undefined,
   ): Promise<void> {
     for (const p of params ?? []) {
-      const { referenceRanges, referenceValues, ...paramScalars } = p;
+      // `reflexTests` is stored as a JSON snapshot of { id, name } objects,
+      // exactly as sent (no FK extraction).
+      const { referenceRanges, referenceValues, reflexTests, ...paramScalars } =
+        p;
       const param = await tx.labTestResultParam.create({
-        data: { ...paramScalars, tenantId, branchId, labTestId },
+        data: {
+          ...paramScalars,
+          reflexTests: (reflexTests ?? []) as unknown as Prisma.InputJsonValue,
+          tenantId,
+          branchId,
+          labTestId,
+        },
       });
       if (referenceRanges?.length) {
         await tx.labTestReferenceRange.createMany({
@@ -1428,6 +1934,88 @@ export class LabTestService {
     }
   }
 
+  /**
+   * Check whether a catalogue row (department / category / sub-category) exists
+   * as an active row of the given tenant.
+   * @param tenantId tenant scope
+   * @param model which catalogue table to look in
+   * @param id the id to look up
+   * @returns true if a live row of this tenant has that id
+   */
+  private async catalogueRowExists(
+    tenantId: string,
+    model: 'department' | 'category' | 'subCategory',
+    id: string,
+  ): Promise<boolean> {
+    const where = { id, tenantId, deletedAt: null };
+    const select = { id: true };
+    switch (model) {
+      case 'department':
+        return (
+          (await this.prisma.department.findFirst({ where, select })) !== null
+        );
+      case 'category':
+        return (
+          (await this.prisma.category.findFirst({ where, select })) !== null
+        );
+      case 'subCategory':
+        return (
+          (await this.prisma.subCategory.findFirst({ where, select })) !== null
+        );
+    }
+  }
+
+  /**
+   * Validate that any provided classification / mandatory-test catalogue refs
+   * point at an active row of the caller's tenant. These columns are real
+   * foreign keys (CLAUDE.md §4.7), so an unknown id would otherwise surface as a
+   * raw DB error instead of a clean 400.
+   * @param tenantId tenant scope
+   * @param refs the dept/cat/subcat ids from the payload (any may be
+   *   undefined/null = not being set)
+   * @throws ValidationException if a provided id is not a live row of this tenant
+   */
+  private async assertCatalogueRefs(
+    tenantId: string,
+    refs: {
+      departmentId?: string | null;
+      categoryId?: string | null;
+      subCategoryId?: string | null;
+      mandatoryDeptId?: string | null;
+      mandatoryCatId?: string | null;
+      mandatorySubcatId?: string | null;
+    },
+  ): Promise<void> {
+    const checks: ReadonlyArray<
+      [
+        string | null | undefined,
+        'department' | 'category' | 'subCategory',
+        string,
+        string,
+      ]
+    > = [
+      [refs.departmentId, 'department', 'departmentId', 'department'],
+      [refs.categoryId, 'category', 'categoryId', 'category'],
+      [refs.subCategoryId, 'subCategory', 'subCategoryId', 'sub-category'],
+      [refs.mandatoryDeptId, 'department', 'mandatoryDeptId', 'department'],
+      [refs.mandatoryCatId, 'category', 'mandatoryCatId', 'category'],
+      [
+        refs.mandatorySubcatId,
+        'subCategory',
+        'mandatorySubcatId',
+        'sub-category',
+      ],
+    ];
+    for (const [id, model, field, label] of checks) {
+      if (id && !(await this.catalogueRowExists(tenantId, model, id))) {
+        throw new ValidationException(
+          `${field} does not reference an existing ${label}`,
+          { [field]: id },
+        );
+      }
+    }
+  }
+
   /** Validate a result parameter + its embedded reference ranges. */
   private assertParam(p: LabTestResultParamDto): void {
     if (p.parameterType === ParameterType.CALCULATED && !p.calculationFormula) {
@@ -1435,6 +2023,15 @@ export class LabTestService {
         'calculationFormula is required when parameterType is CALCULATED',
         { parameterCode: p.parameterCode },
       );
+    }
+    if (
+      p.criticalMin != null &&
+      p.criticalMax != null &&
+      p.criticalMin > p.criticalMax
+    ) {
+      throw new ValidationException('criticalMin must be ≤ criticalMax', {
+        parameterCode: p.parameterCode,
+      });
     }
     (p.referenceRanges ?? []).forEach((r) => this.assertRange(r));
   }

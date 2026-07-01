@@ -1,0 +1,43 @@
+meta {
+  name: 10 Create Sub-Category
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/sub-categories
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Complete Blood Count",
+    "shortName": "CBC",
+    "description": "Sub-category under the Hematology Panel category",
+    "isActive": true,
+    "subCategoryType": "UNDER_CATEGORY",
+    "categoryId": "{{categoryId}}",
+    "moduleMapping": ["DIAGNOSTIC"],
+    "personMappings": []
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("subCategoryId", data.id);
+}
+
+docs {
+  Step 10. Create an UNDER_CATEGORY sub-category linked to the category from
+  step 9. `categoryId` is required; `departmentId` must be omitted for this type.
+  Captures `subCategoryId`.
+}

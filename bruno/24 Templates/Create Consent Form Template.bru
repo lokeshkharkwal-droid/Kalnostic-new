@@ -1,0 +1,82 @@
+meta {
+  name: Create Consent Form Template
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/templates
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "type": "CONSENT_FORM",
+    "name": "Pre-Procedure Consent",
+    "triggerEvent": "PRE_PROCEDURE",
+    "version": "v1.0",
+    "isActive": true,
+    "body": "I, {patient_name}, consent to the procedure described below and confirm I have been informed of the associated risks.",
+    "consent": {
+      "signatureRequired": true,
+      "consent": {
+        "showHospitalHeader": true,
+        "hospitalLogoFile": "hospital-logo.png",
+        "hospitalName": "Apex Diagnostics & Labs",
+        "patientSignature": true,
+        "doctorSignature": true,
+        "showDate": true,
+        "referenceDocFile": "procedure-info.pdf"
+      }
+    },
+    "header": {
+      "enabled": true,
+      "type": "Image",
+      "text": "",
+      "imageFile": "consent-letterhead.png",
+      "alignment": "Center"
+    },
+    "footerBlock": {
+      "enabled": true,
+      "type": "Text",
+      "text": "Page 1 of 1",
+      "imageFile": "",
+      "alignment": "Right"
+    },
+    "attachment": {
+      "enabled": true,
+      "type": "PDF",
+      "files": ["terms.pdf"],
+      "position": "After Body",
+      "alignment": "Left",
+      "sizeProfile": "Full Width"
+    }
+  }
+}
+
+vars:pre-request {
+  businessAccessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwZXJzb25faWQiOiIyOTQ5N2I2NC0wNGUyLTQwZjktYTY2OS04NDBiZmNlOGU3ZDYiLCJ0ZW5hbnRfaWQiOiJhYjE2OTY1MC01Mzc1LTQwYmUtYTIxMi00ZGE0ZTJiMDE5NGQiLCJhY3RpdmVfYnJhbmNoX2lkIjpudWxsLCJhY3RpdmVfYnJhbmNoX3R5cGUiOm51bGwsImFjdGl2ZV9wcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwiaXNfcGF0aWVudF9jb250ZXh0IjpmYWxzZSwicHJvZmlsZXMiOlt7ImJyYW5jaF9pZCI6bnVsbCwiYnJhbmNoX25hbWUiOm51bGwsImJyYW5jaF90eXBlIjpudWxsLCJwcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwicHJvZmlsZV9sYWJlbCI6IkJ1c2luZXNzIEFkbWluIiwiaXNfZGVmYXVsdCI6dHJ1ZX1dLCJpc19wYXRpZW50IjpmYWxzZSwicGxhdGZvcm1fbXJuIjoiS0FMLTIwMjYwNjA4LTM2OTBCRkQxIiwiaWF0IjoxNzgwOTM5ODE2LCJleHAiOjE3ODA5NDA3MTZ9.J55wiEzB-FCqQGSFyaVmqeOfFIFJRrlK5d47mBUpMZ4
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("templateId", data.id);
+}
+
+docs {
+  Consent-form template. Adds the `consent` block (stored in `config`):
+  `signatureRequired` plus a nested `consent` object —
+  `{ showHospitalHeader, hospitalLogoFile?, hospitalName, patientSignature,
+  doctorSignature, showDate, referenceDocFile? }`. Consent `triggerEvent`s are
+  typically `PRE_PROCEDURE` / `AT_REGISTRATION` / `ON_DEMAND` / `RECURRING` /
+  `AT_DISCHARGE` / `CUSTOM`. See "Create SMS Template" for the shared fields.
+}

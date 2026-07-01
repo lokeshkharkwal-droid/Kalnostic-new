@@ -1,0 +1,33 @@
+meta {
+  name: 11 List Master Data
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{baseUrl}}/master-data?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.length && data[0].id) bru.setEnvVar("masterDataId", data[0].id);
+}
+
+docs {
+  Step 11. List the tenant's master data and capture the first item's id as
+  `masterDataId`. Every branch gets a default master data auto-created on branch
+  creation, so this is the easiest way to grab the branch's master data id for the
+  lab-test / lab-panel steps. (There is no endpoint to create the *default* master
+  data; manual create is only allowed on non-main branches.)
+}

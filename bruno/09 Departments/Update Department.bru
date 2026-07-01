@@ -27,8 +27,10 @@ body:json {
     "personMappings": [
       {
         "personId": "{{patientPersonId}}",
+        "type": "USER",
         "position": "MANAGER",
-        "priority": 1
+        "priority": 1,
+        "branchId": "{{branchId}}"
       }
     ]
   }
@@ -60,8 +62,18 @@ docs {
   - When `personMappings` is supplied it REPLACES the whole set: existing active
     mappings are soft-deleted and the new set is created. Omit `personMappings`
     to leave the current mappings untouched.
+  - Each `personMappings` entry also accepts an optional `type` (defaults
+    `USER`; one of `USER`, `CONSULTANT_DOCTOR`, `REPORTING_DOCTOR`,
+    `EXTERNAL_REFERRAL` — resolves `personId` against persons / doctors
+    (matching doctorType) / external_referrals respectively) and an optional
+    `branchId` (omit for a tenant-level mapping across all branches, or set to
+    scope to one branch — validated against the tenant → 404 `BRANCH_NOT_FOUND`).
   - The same validation rules as create apply to a replacement set:
     `INVALID_DEPARTMENT_PRIORITY`, `DUPLICATE_DEFAULT_POSITION`,
-    `PERSON_NOT_FOUND`. Renaming to a name used by another active department →
-    409 `DEPARTMENT_NAME_CONFLICT`.
+    `PERSON_NOT_FOUND` (and `INVALID_PERSON_MAPPING_REFERENCE` for a
+    doctor/external-referral reference that doesn't resolve, or a doctor whose
+    doctorType doesn't match the `type`). The priority cap and the "one default
+    per position" rule are scoped PER BRANCH (a tenant-level mapping with no
+    `branchId` is its own group). Renaming to a name used by another active
+    department → 409 `DEPARTMENT_NAME_CONFLICT`.
 }

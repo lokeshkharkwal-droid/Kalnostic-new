@@ -1,24 +1,21 @@
 import { Type } from 'class-transformer';
 import {
-  ArrayMinSize,
   IsArray,
   IsBoolean,
   IsOptional,
   IsString,
+  IsUUID,
   MaxLength,
   MinLength,
   ValidateNested,
 } from 'class-validator';
 import { OutsourceCenterContactDto } from './outsource-center-contact.dto';
-import { OutsourceCenterBranchAssignmentDto } from './outsource-center-branch-assignment.dto';
 
 /**
  * Body for updating an outsource center. All fields are optional (explicit, not
- * PartialType). `code` is immutable and never accepted. `contacts` and
- * `assignments` are replace-all when present and left unchanged when absent — so
- * unchecking a branch is expressed by omitting it from the `assignments` array.
- * When `assignments` is present it must still be non-empty (a center cannot be
- * left with no branch).
+ * PartialType). `code` is immutable and never accepted. `contacts` are replace-all
+ * when present and left unchanged when absent. `labTestId` / `labPanelId` are
+ * validated to be active lab tests/panels in the tenant when present.
  */
 export class UpdateOutsourceCenterDto {
   // ── Basic details ──
@@ -89,18 +86,23 @@ export class UpdateOutsourceCenterDto {
   @IsOptional()
   isActive?: boolean;
 
+  @IsBoolean()
+  @IsOptional()
+  isNablAccredited?: boolean;
+
+  // ── Assigned lab test / lab panel (single, optional) ──
+  @IsUUID()
+  @IsOptional()
+  labTestId?: string;
+
+  @IsUUID()
+  @IsOptional()
+  labPanelId?: string;
+
   // ── Contacts (replace-all when present) ──
   @IsArray()
   @IsOptional()
   @ValidateNested({ each: true })
   @Type(() => OutsourceCenterContactDto)
   contacts?: OutsourceCenterContactDto[];
-
-  // ── Branch assignments (replace-all when present; must stay non-empty) ──
-  @IsArray()
-  @IsOptional()
-  @ArrayMinSize(1)
-  @ValidateNested({ each: true })
-  @Type(() => OutsourceCenterBranchAssignmentDto)
-  assignments?: OutsourceCenterBranchAssignmentDto[];
 }

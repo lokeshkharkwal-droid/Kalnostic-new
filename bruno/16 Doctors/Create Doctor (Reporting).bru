@@ -33,6 +33,8 @@ body:json {
     "registrationNo": "KMC-2024-00123",
     "registrationCouncil": "Karnataka Medical Council",
     "registrationExpiry": "2030-12-31",
+    "categoryId": "1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed",
+    "departmentId": "2c8e7cde-ccfe-4c3e-ac6e-bc9efccd5cfe",
     "subCategory": "Histopathology",
     "isNablAuthorized": true,
     "isCapCertified": false,
@@ -44,10 +46,6 @@ body:json {
     "signatoryDepartmentIds": ["1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed"],
     "signatoryCategoryIds": [],
     "signatorySubCategoryIds": [],
-    "consultationFee": 800.00,
-    "emergencyFee": 1500,
-    "followUpFee": 400.50,
-    "isAllowDiscount": true,
     "accountHolderName": "Anita Sharma",
     "bankName": "HDFC Bank",
     "accountNumber": "50100123456789",
@@ -63,6 +61,18 @@ body:json {
     "experiences": [
       { "organisation": "Apollo Hospitals", "rolePosition": "Senior Pathologist", "fromDate": "2010-06-01", "toDate": "2019-03-31" },
       { "organisation": "Acme Diagnostics", "rolePosition": "Lab Director", "fromDate": "2019-04-01" }
+    ],
+    "branchAssignments": [
+      {
+        "branchId": "{{branchId}}",
+        "branchRole": "RESIDENT",
+        "availability": "FULL_TIME",
+        "isPrimary": true,
+        "consultationFee": 800.00,
+        "emergencyFee": 1500,
+        "followUpFee": 400.50,
+        "isAllowDiscount": true
+      }
     ]
   }
 }
@@ -83,12 +93,17 @@ tests {
     expect(res.getBody().data.qualifications).to.have.lengthOf(2);
     expect(res.getBody().data.experiences).to.have.lengthOf(2);
   });
+  test("branch assignment was created with its own fees", function () {
+    expect(res.getBody().data.branchAssignments).to.have.lengthOf(1);
+    expect(res.getBody().data.branchAssignments[0].isPrimary).to.equal(true);
+  });
 }
 
 docs {
   Register a REPORTING doctor in the caller's tenant (tenant id taken from the
-  JWT, never the body). Tenant-level — the doctor registry belongs to the
-  business as a whole, NOT a branch. Captures `doctorId`.
+  JWT, never the body). The doctor registry belongs to the business as a whole;
+  a doctor is then assigned to one or more branches, and **charges are per branch
+  assignment** (not on the doctor). Captures `doctorId`.
 
   ## Fields
 
@@ -115,8 +130,6 @@ docs {
     `signatoryName`, `signatoryDesignation`, `signatureImagePath` (strings);
     `signatoryDepartmentIds` / `signatoryCategoryIds` / `signatorySubCategoryIds`
     — optional arrays of UUIDs stored as JSON (format-validated only).
-  - Fees: `consultationFee`, `emergencyFee`, `followUpFee` — optional decimals
-    (≥ 0, up to 2 dp), default 0. `isAllowDiscount` — bool, default false.
   - Banking: `accountHolderName`, `bankName`, `accountNumber`, `ifscCode`
     (strings); `paymentMode` — `BANK_TRANSFER` (default) / `CASH` / `CHEQUE`.
   - `status` — `ACTIVE` (default) / `INACTIVE`. `remarks` — optional.
@@ -125,6 +138,20 @@ docs {
   - `experiences` — optional array; each entry: `organisation`, `rolePosition`
     (strings), `fromDate`, `toDate` (ISO dates; omit `toDate` = current role).
     REPLACES the set on update.
+  - `branchAssignments` — optional array; assigns the doctor to branches. Each
+    entry:
+    - `branchId` — REQUIRED UUID; must be an active **branch** of this tenant
+      (404 `BRANCH_NOT_FOUND` otherwise; never trusted from the body).
+    - `branchRole` — REQUIRED, `RESIDENT` | `VISITING`.
+    - `availability` — REQUIRED, `FULL_TIME` | `PART_TIME`.
+    - `isPrimary` — bool, default false. **At most one assignment per doctor may
+      be primary** (422 `MULTIPLE_PRIMARY_BRANCH_ASSIGNMENTS` otherwise).
+    - `consultationFee`, `emergencyFee`, `followUpFee` — optional decimals
+      (≥ 0, up to 2 dp), default 0. These are the **per-branch** charges.
+    - `isAllowDiscount` — bool, default false (per branch).
+    A branch may appear only once (422 `DUPLICATE_BRANCH_ASSIGNMENT`). REPLACES
+    the whole set on update.
 
-  The doctor + its qualifications/experiences are created in one transaction.
+  The doctor + its qualifications/experiences/branchAssignments are created in
+  one transaction.
 }

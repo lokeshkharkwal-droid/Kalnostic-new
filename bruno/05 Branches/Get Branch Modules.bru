@@ -1,7 +1,7 @@
 meta {
   name: Get Branch Modules
   type: http
-  seq: 9
+  seq: 8
 }
 
 get {
@@ -15,10 +15,10 @@ auth:bearer {
 }
 
 vars:pre-request {
-  branchId: fc9e3c69-e871-423e-ad60-fa819ca7199e
+  branchId: 37e8cb33-9c10-4778-bc4c-20490e1c0f75
 }
 
 docs {
-  List all 12 system modules with whether each is enabled at this branch
+  List all 14 system modules with whether each is enabled at this branch
   (`{ moduleKey, label, isEnabled }`). Modules with no row are reported disabled.
 }

@@ -18,7 +18,6 @@ import { BulkEditLabTestsDto } from './dto/bulk-edit-lab-tests.dto';
 import { ImportLabTestsDto } from './dto/import-lab-tests.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { ListLabTestsDto } from './dto/list-lab-tests.dto';
 import { Audit } from '../../common/decorators/audit.decorator';
 
@@ -50,20 +49,17 @@ export class LabTestController {
   }
 
   /**
-   * List the master data's lab tests (paginated, core rows only).
+   * List the master data's lab tests (paginated, full scalar rows). Supports the
+   * same server-side search + classification/sampleType/status filters as the
+   * `/listing` endpoint (the rich grid needs the full rows, not a view subset).
    */
   @Get()
   findAll(
     @CurrentTenant() tenantId: string,
     @Param('masterDataId') masterDataId: string,
-    @Query() query: PaginationQueryDto,
+    @Query() query: ListLabTestsDto,
   ) {
-    return this.labTestService.findAll(
-      masterDataId,
-      tenantId,
-      query.page ?? 1,
-      query.limit ?? 20,
-    );
+    return this.labTestService.findAll(masterDataId, tenantId, query);
   }
 
   /**

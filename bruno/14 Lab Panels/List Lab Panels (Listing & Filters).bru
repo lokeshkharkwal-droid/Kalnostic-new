@@ -5,7 +5,7 @@ meta {
 }
 
 get {
-  url: {{baseUrl}}/master-data/{{masterDataId}}/lab-panels/listing?page=1&limit=20&search=FBC
+  url: {{baseUrl}}/master-data/{{masterDataId}}/lab-panels/listing?page=1&limit=20
   body: none
   auth: bearer
 }
@@ -13,7 +13,7 @@ get {
 params:query {
   page: 1
   limit: 20
-  search: FBC
+  ~search: FBC
   ~categoryId: 00000000-0000-0000-0000-000000000000
   ~departmentId: 00000000-0000-0000-0000-000000000000
   ~status: ACTIVE
@@ -24,7 +24,7 @@ auth:bearer {
 }
 
 vars:pre-request {
-  masterDataId: 3bebbd8d-eef4-4bfa-88f3-3aff4a4a4516
+  masterDataId: f30adea9-a04b-4dc7-b02f-b60f690d23ff
 }
 
 tests {

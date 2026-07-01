@@ -41,7 +41,15 @@ script:post-response {
 
 docs {
   Create a SiteAdmin sub-account. Requires `siteadmin:manage` (super_owner only).
-  
-  `role` is one of: `CONTENT_ADMIN`, `OPERATIONS_ADMIN`, `FULL_ADMIN`,
-  `SUPER_OWNER` (cumulative permission tiers). Captures `siteAdminUserId`.
+
+  Fields:
+  - `firstName` (required).
+  - `lastName` (optional).
+  - `email` (required) — must be globally unique among siteadmins.
+  - `password` (required) — policy: min 8 chars, >=1 uppercase, >=1 digit.
+  - `role` (required) — one of `CONTENT_ADMIN`, `OPERATIONS_ADMIN`,
+    `FULL_ADMIN`, `SUPER_OWNER` (cumulative tiers). Note: creating a
+    `SUPER_OWNER` is rejected by the service.
+
+  Captures `siteAdminUserId`.
 }

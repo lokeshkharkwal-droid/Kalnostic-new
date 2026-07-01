@@ -1,0 +1,93 @@
+meta {
+  name: Create Report Template
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/templates
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "type": "REPORT_TEMPLATE",
+    "name": "Standard Lab Report",
+    "triggerEvent": "REPORT_READY",
+    "version": "v1.0",
+    "isActive": true,
+    "report": {
+      "headerHtml": "<div class='hdr'>{lab_name}</div>",
+      "footerHtml": "<div class='ftr'>Authorised by {doctor_name}</div>",
+      "bodyLayout": "Two Column",
+      "logoPosition": "Top Left",
+      "primaryFont": "Helvetica",
+      "fontSize": "11",
+      "pageSize": "A4",
+      "orientation": "Portrait",
+      "reportRefs": {
+        "imageSettingId": "11111111-1111-4111-8111-111111111111",
+        "pdfSettingId": "22222222-2222-4222-8222-222222222222",
+        "groupLayoutId": "33333333-3333-4333-8333-333333333333",
+        "iconSettingId": "44444444-4444-4444-8444-444444444444"
+      }
+    },
+    "header": {
+      "enabled": true,
+      "type": "Image",
+      "text": "",
+      "imageFile": "report-logo.png",
+      "alignment": "Left"
+    },
+    "footerBlock": {
+      "enabled": true,
+      "type": "Text",
+      "text": "Electronically signed report",
+      "imageFile": "",
+      "alignment": "Center"
+    },
+    "attachment": {
+      "enabled": true,
+      "type": "Image",
+      "files": ["graph1.png", "graph2.png"],
+      "position": "End of Report",
+      "alignment": "Center",
+      "sizeProfile": "Full Width",
+      "displayProfile": "Grid 2 per Row"
+    }
+  }
+}
+
+vars:pre-request {
+  businessAccessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwZXJzb25faWQiOiIyOTQ5N2I2NC0wNGUyLTQwZjktYTY2OS04NDBiZmNlOGU3ZDYiLCJ0ZW5hbnRfaWQiOiJhYjE2OTY1MC01Mzc1LTQwYmUtYTIxMi00ZGE0ZTJiMDE5NGQiLCJhY3RpdmVfYnJhbmNoX2lkIjpudWxsLCJhY3RpdmVfYnJhbmNoX3R5cGUiOm51bGwsImFjdGl2ZV9wcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwiaXNfcGF0aWVudF9jb250ZXh0IjpmYWxzZSwicHJvZmlsZXMiOlt7ImJyYW5jaF9pZCI6bnVsbCwiYnJhbmNoX25hbWUiOm51bGwsImJyYW5jaF90eXBlIjpudWxsLCJwcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwicHJvZmlsZV9sYWJlbCI6IkJ1c2luZXNzIEFkbWluIiwiaXNfZGVmYXVsdCI6dHJ1ZX1dLCJpc19wYXRpZW50IjpmYWxzZSwicGxhdGZvcm1fbXJuIjoiS0FMLTIwMjYwNjA4LTM2OTBCRkQxIiwiaWF0IjoxNzgwOTM5ODE2LCJleHAiOjE3ODA5NDA3MTZ9.J55wiEzB-FCqQGSFyaVmqeOfFIFJRrlK5d47mBUpMZ4
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("templateId", data.id);
+}
+
+docs {
+  Report template. Has NO `body` (it renders from the report config). Adds the
+  `report` block (stored as `config`):
+  - `headerHtml` / `footerHtml` (optional raw HTML).
+  - `bodyLayout`: `Single Column` | `Two Column` | `Grid`.
+  - `logoPosition`: `Top Left` | `Top Center` | `Top Right` | `None`.
+  - `primaryFont` (string), `fontSize` (string, points).
+  - `pageSize`: `A4` | `A3` | `Letter` | `Legal`.
+  - `orientation`: `Portrait` | `Landscape`.
+  - `reportRefs` (optional): `{ imageSettingId?, pdfSettingId?, groupLayoutId?, iconSettingId? }` — UUIDs of linked render settings (logical refs).
+
+  Shared `header` / `footerBlock` / `attachment` apply as for other types; report
+  attachments support `displayProfile` and report-specific `position` values
+  (`Before Params` / `After Params` / `End of Report`).
+}

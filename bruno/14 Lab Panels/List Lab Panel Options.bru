@@ -1,0 +1,37 @@
+meta {
+  name: List Lab Panel Options
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/lab-panels/options?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: FBC
+  ~branchId: 9fcbf225-7f94-4b57-b3b4-2127b7f5be78
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Lightweight `{ id, name }` options for the searchable selector (e.g. the Add
+  Outsource Center form's lab-panel picker). Flat route — NOT nested under a master
+  data — so it searches the tenant's active lab panels across a branch.
+
+  All query params optional:
+  - `branchId` — restrict to active lab panels on this branch.
+  - `search` — case-insensitive match against the lab panel `panelName`.
+  - `page` / `limit` — **opt-in** offset pagination. Omit `page` to get the full
+    `{ id, name }[]` array; supply `page` to get a `{ data, total, page, limit }`
+    envelope for the "Load More" selector.
+
+  Only active, non-deleted lab panels are returned. `name` is the `panelName`.
+}

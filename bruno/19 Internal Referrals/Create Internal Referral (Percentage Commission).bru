@@ -20,6 +20,7 @@ auth:bearer {
 
 body:json {
   {
+    "employeeId": "{{staffPersonId}}",
     "firstName": "Rahul",
     "lastName": "Verma",
     "fullName": "Rahul Verma",
@@ -28,6 +29,9 @@ body:json {
     "mobileNumber": "+919900000101",
     "email": "rahul.verma@kalnostics.com",
     "branchId": "{{branchId}}",
+    "referralPanelSettingsId": "{{referralPanelSettingsId}}",
+    "labTestIds": ["3772e02a-391a-4276-9d78-f06a0e078e44"],
+    "labPanelIds": ["7304fcdc-3c2a-4ee9-9837-7bbde89ca922"],
     "isCommissionApplicable": true,
     "commissionType": "PERCENTAGE",
     "commissionPctLabTest": 10,

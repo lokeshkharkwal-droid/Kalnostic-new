@@ -1,0 +1,27 @@
+meta {
+  name: Get Document Version
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/documents/{{documentId}}/versions/{{documentVersionId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Fetch a single read-only version snapshot of a document. 404
+  `DOCUMENT_VERSION_NOT_FOUND` if the version id does not belong to the document.
+  Use the `documentVersionId` captured by List Document Versions.
+}

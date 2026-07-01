@@ -1,0 +1,42 @@
+meta {
+  name: Update Document - Duplicate Version
+  type: http
+  seq: 8
+}
+
+patch {
+  url: {{baseUrl}}/documents/{{documentId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "version": "1.0",
+    "title": "Trying to reuse the original version string"
+  }
+}
+
+tests {
+  test("409 Conflict", function () {
+    expect(res.getStatus()).to.equal(409);
+  });
+  test("error code is DOCUMENT_VERSION_CONFLICT", function () {
+    expect(res.getBody().error.code).to.equal("DOCUMENT_VERSION_CONFLICT");
+  });
+}
+
+docs {
+  Negative case: every edit must introduce a NEW, unique version string. Reusing
+  an existing version (here `"1.0"`, the original) is rejected with 409
+  `DOCUMENT_VERSION_CONFLICT` and no new version is created. Run after Create +
+  Update Document.
+}

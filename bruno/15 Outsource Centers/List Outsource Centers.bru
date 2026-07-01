@@ -13,6 +13,9 @@ get {
 params:query {
   page: 1
   limit: 20
+  ~view: CONTACTS
+  ~search: Apex
+  ~status: ACTIVE
 }
 
 auth:bearer {
@@ -21,6 +24,15 @@ auth:bearer {
 
 docs {
   Paginated list of outsource centers in the caller's tenant (newest first).
-  `page`/`limit` optional. Contacts and assignments are NOT embedded here — use
-  *Get Outsource Center* for the full record.
+  `page`/`limit` optional. Each row resolves `labTestName` / `labPanelName` for the
+  single assigned test/panel. Contacts are NOT embedded here (in the default view)
+  — use *Get Outsource Center* for the full record.
+
+  Optional filters (disabled query params above — enable as needed):
+  - `view` — response shape. Allowed values: `DEFAULT` (or omitted; scalar rows)
+    and `CONTACTS` (each center with its active contacts embedded).
+  - `search` — case-insensitive match against the center `name` **OR** `code`.
+    Whitespace-only values are ignored.
+  - `status` — active state. Allowed values: `ACTIVE`, `INACTIVE` (mapped to
+    `isActive`).
 }

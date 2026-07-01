@@ -20,14 +20,24 @@ auth:bearer {
 
 body:json {
   {
-    "consultationFee": 950.00,
-    "followUpFee": 500,
     "status": "INACTIVE",
     "subCategory": "Cytopathology",
     "remarks": "Fees revised for FY26",
     "qualifications": [
       { "degree": "MD Pathology", "institution": "PGIMER Chandigarh", "yearOfPassing": 2008 },
       { "degree": "Fellowship in Cytopathology", "institution": "Tata Memorial", "yearOfPassing": 2012 }
+    ],
+    "branchAssignments": [
+      {
+        "branchId": "{{branchId}}",
+        "branchRole": "RESIDENT",
+        "availability": "FULL_TIME",
+        "isPrimary": true,
+        "consultationFee": 950.00,
+        "emergencyFee": 1800,
+        "followUpFee": 500,
+        "isAllowDiscount": true
+      }
     ]
   }
 }
@@ -46,6 +56,9 @@ tests {
   test("qualifications were replaced", function () {
     expect(res.getBody().data.qualifications).to.have.lengthOf(2);
   });
+  test("branch assignments were replaced", function () {
+    expect(res.getBody().data.branchAssignments).to.have.lengthOf(1);
+  });
 }
 
 docs {
@@ -59,8 +72,12 @@ docs {
     to link real rows.)
   - `registrationNo` — renaming to one used by another active doctor →
     409 `DUPLICATE_REGISTRATION_NO`.
-  - `qualifications` / `experiences` — when supplied, REPLACES the whole set:
-    existing active rows are soft-deleted and the new set is created (one
-    transaction). Omit to leave them untouched.
+  - `qualifications` / `experiences` / `branchAssignments` — when supplied,
+    REPLACES the whole set: existing active rows are soft-deleted and the new set
+    is created (one transaction). Omit to leave them untouched.
+  - `branchAssignments` — each entry's `branchId` is re-validated against the
+    tenant's active branches (404 `BRANCH_NOT_FOUND`). At most one may be
+    `isPrimary` (422 `MULTIPLE_PRIMARY_BRANCH_ASSIGNMENTS`); a branch may appear
+    only once (422 `DUPLICATE_BRANCH_ASSIGNMENT`). Charges live here, per branch.
   - 404 `DOCTOR_NOT_FOUND` if the doctor is missing/soft-deleted.
 }

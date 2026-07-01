@@ -1,0 +1,28 @@
+meta {
+  name: List Category Templates (Options)
+  type: http
+  seq: 20
+}
+
+get {
+  url: {{baseUrl}}/categories/templates?page=1&limit=20&search=
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  search:
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Browse SITE_ADMIN global category templates (read-only) so the tenant can pick
+  one to clone. Business JWT. Same filters as the SiteAdmin list
+  (`page`/`limit`/`search`/`status`/`categoryType`/`departmentId`). Returns only
+  `source = SITE_ADMIN`, `tenantId = null` rows.
+}

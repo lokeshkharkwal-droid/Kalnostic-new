@@ -1,0 +1,32 @@
+meta {
+  name: 01 SiteAdmin Login
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "email": "admin@kalnostics.com",
+    "password": "SuperSecret1"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.accessToken) bru.setEnvVar("siteAdminToken", data.accessToken);
+}
+
+docs {
+  Step 1. Email-only SiteAdmin login using the seeded super_owner. Returns an 8h
+  `jwt-siteadmin` token. Captures `siteAdminToken` (used by Create Tenant).
+}

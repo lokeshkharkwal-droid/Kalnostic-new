@@ -18,6 +18,7 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateBranchAssignmentDto } from './dto/update-branch-assignment.dto';
 import { UpdateBranchPermissionsDto } from './dto/update-branch-permissions.dto';
 import { ListUsersQueryDto } from './dto/list-users-query.dto';
+import { MyPermissionsQueryDto } from './dto/my-permissions-query.dto';
 import { InvalidProfilePhotoException } from './exceptions/users.exceptions';
 import {
   PROFILE_LABELS,
@@ -28,8 +29,6 @@ import { PERMISSION_CATALOG_BY_MODULE } from '../permissions/constants/module-pe
 import { ALLOWED_PHOTO_MIME_TYPES } from '../../common/constants/validation-patterns.constant';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
-import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /** 2 MB — the v2.0 profile-photo size cap. */
@@ -80,7 +79,7 @@ export class UserManagementController {
     }));
   }
 
-  /** The 12 master system modules (for dropdowns/filters). */
+  /** The 14 master system modules (for dropdowns/filters). */
   @Get('modules')
   modules() {
     return SYSTEM_MODULES;
@@ -97,21 +96,23 @@ export class UserManagementController {
   }
 
   /**
-   * The current user's effective permissions for their active branch, grouped by
-   * module (+ a flat `allowed` key list). Context comes from the JWT — used by the
-   * frontend to show/hide features.
+   * The current user's effective permissions at the requested branch, grouped by
+   * module (+ a flat `allowed` key list). The role is resolved from the user's
+   * assignment at that branch and the branch's own permission overrides, so the
+   * same user can have different permissions per branch. `branchId` is required
+   * and validated against the caller's tenant. Used by the frontend to show/hide
+   * features for the branch the user is currently working in.
    */
   @Get('me/permissions')
   myPermissions(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
-    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: MyPermissionsQueryDto,
   ) {
     return this.usersService.getMyPermissions(
       tenantId,
       personId,
-      profile.branchId,
-      profile.profileKey,
+      query.branchId,
     );
   }
 

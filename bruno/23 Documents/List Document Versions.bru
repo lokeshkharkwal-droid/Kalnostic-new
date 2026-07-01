@@ -1,0 +1,42 @@
+meta {
+  name: List Document Versions
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/documents/{{documentId}}/versions?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.length) bru.setEnvVar("documentVersionId", data[0].id);
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  The complete, READ-ONLY version history of a document, newest first (ordered by
+  `versionNo` desc). Each entry is a full immutable snapshot of every field at
+  that version (`versionNo`, `version`, `title`, `status`, dates, file refs,
+  `changedBy`, …). Captures the newest `documentVersionId`.
+
+  After creating then editing a document once, this returns 2 entries: v2 (the
+  current state) and v1 (the original, unchanged) — proving previous versions are
+  preserved. Pagination info is lifted into `meta`.
+}

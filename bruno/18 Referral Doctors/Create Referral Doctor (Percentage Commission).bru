@@ -29,7 +29,11 @@ body:json {
     "email": "rahul.verma@example.com",
     "aadhaarNumber": "123412341234",
     "panNumber": "ABCDE1234F",
+    "departmentId": "{{departmentId}}",
+    "categoryId": "{{categoryId}}",
+    "subCategoryId": "{{subCategoryId}}",
     "branchId": "{{branchId}}",
+    "referralPanelSettingsId": "{{referralPanelSettingsId}}",
     "medicalLicenseNumber": "DMC-2024-04567",
     "registrationCouncil": "Delhi Medical Council",
     "registrationValidTill": "2030-06-30",
@@ -41,11 +45,14 @@ body:json {
       { "position": "Consultant Physician", "organisation": "Apollo Hospitals", "fromDate": "2010-06-01", "toDate": "2018-03-31" },
       { "position": "Senior Consultant", "organisation": "Fortis Healthcare", "fromDate": "2018-04-01" }
     ],
+    "labTestIds": ["3772e02a-391a-4276-9d78-f06a0e078e44"],
+    "labPanelIds": ["7304fcdc-3c2a-4ee9-9837-7bbde89ca922"],
     "isCommissionApplicable": true,
     "commissionType": "PERCENTAGE",
     "commissionPctLabTest": 10,
     "commissionPctLabPanel": 7.5,
     "isTdsApplicable": true,
+    "tds": 10,
     "paymentCycle": "MONTHLY",
     "paymentMode": "BANK_TRANSFER",
     "monthlyTargetAmount": 50000,
@@ -146,8 +153,9 @@ docs {
   - `FIXED_AMOUNT` → set `fixedCommissionCycle` (the "Fixed Type"); `fixedAmount`
     required unless the cycle is `ORDER_WISE`.
   Inapplicable commission fields are nulled/emptied on save. `isTdsApplicable`
-  default false.
-  
+  default false; `tds` is an integer percentage 0-100 (only meaningful when TDS
+  applies).
+
   ## Payment & incentive
   
   - `paymentCycle` (`NA` default | `MONTHLY` | `QUARTERLY` | `HALF_YEARLY` |

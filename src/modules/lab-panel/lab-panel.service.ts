@@ -1,9 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { LabPanel, Prisma } from '@prisma/client';
+import { DataSource, LabPanel, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
 import { MasterDataService } from '../master-data/master-data.service';
+import { LabTestService } from '../lab-test/lab-test.service';
 import { CreateLabPanelDto } from './dto/create-lab-panel.dto';
 import { UpdateLabPanelDto } from './dto/update-lab-panel.dto';
 import { ListLabPanelsDto } from './dto/list-lab-panels.dto';
@@ -30,6 +31,18 @@ export interface BulkEditResult {
   updated: number;
 }
 
+/** Row keys that are re-derived (never copied) when cloning a panel. */
+const PANEL_META_KEYS = [
+  'id',
+  'tenantId',
+  'branchId',
+  'masterDataId',
+  'source',
+  'createdAt',
+  'updatedAt',
+  'deletedAt',
+];
+
 /** The cross-field configuration validated by `assertCoreInvariants`. */
 interface PanelInvariants {
   priceMsrp: number;
@@ -53,6 +66,7 @@ export class LabPanelService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly masterDataService: MasterDataService,
+    private readonly labTestService: LabTestService,
   ) {}
 
   /**
@@ -140,6 +154,72 @@ export class LabPanelService {
       throw new LabPanelNotFoundException(panelId);
     }
     return { ...withRefs, tests };
+  }
+
+  /**
+   * Lightweight `{ id, name }` options for the searchable selector
+   * (`GET /lab-panels/options`). Tenant-scoped to active, non-deleted lab panels;
+   * optionally filtered by `branchId` and a case-insensitive `panelName` search.
+   * Returns the full array when `page` is omitted, or a paginated envelope when
+   * `page` is supplied (mirrors `BranchService.findOptionsForTenant`).
+   * @param tenantId tenant scope
+   * @param filters optional `branchId`, `search`, and opt-in `page`/`limit`
+   */
+  async findOptions(
+    tenantId: string,
+    filters: {
+      branchId?: string;
+      search?: string;
+      page?: number;
+      limit?: number;
+    } = {},
+  ): Promise<
+    | Array<{ id: string; name: string }>
+    | PaginatedResult<{ id: string; name: string }>
+  > {
+    const where: Prisma.LabPanelWhereInput = {
+      tenantId,
+      deletedAt: null,
+      isActive: true,
+    };
+    if (filters.branchId) {
+      where.branchId = filters.branchId;
+    }
+    const search = filters.search?.trim();
+    if (search) {
+      where.panelName = { contains: search, mode: 'insensitive' };
+    }
+
+    const select = { id: true, panelName: true } as const;
+    const orderBy = { panelName: 'asc' } as const;
+
+    if (filters.page === undefined) {
+      const rows = await this.prisma.labPanel.findMany({
+        where,
+        select,
+        orderBy,
+      });
+      return rows.map((r) => ({ id: r.id, name: r.panelName }));
+    }
+
+    const page = filters.page;
+    const limit = filters.limit ?? 20;
+    const [rows, total] = await Promise.all([
+      this.prisma.labPanel.findMany({
+        where,
+        select,
+        orderBy,
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.labPanel.count({ where }),
+    ]);
+    return {
+      data: rows.map((r) => ({ id: r.id, name: r.panelName })),
+      total,
+      page,
+      limit,
+    };
   }
 
   /**
@@ -381,6 +461,323 @@ export class LabPanelService {
     });
   }
 
+  // ── Site Admin global templates ─────────────────────────────────────────────────
+
+  /**
+   * Create a SITE_ADMIN global template lab panel (no tenant/branch/master data).
+   * Reuses `CreateLabPanelDto` but forces the (tenant-scoped) category/department
+   * refs NULL. Every included `labTestId` must reference an active SITE_ADMIN
+   * template lab test. Runs in a plain transaction (no tenant GUC).
+   * @param dto validated payload (classification refs ignored)
+   * @throws ValidationException on a cross-field invariant violation
+   * @throws LabPanelTestNotFoundException if a test reference isn't a live template test
+   * @throws LabPanelNameConflictException / LabPanelCodeConflictException
+   */
+  async createTemplate(dto: CreateLabPanelDto): Promise<LabPanelWithTests> {
+    const { tests = [], ...scalars } = dto;
+    this.assertCoreInvariants({
+      priceMsrp: dto.priceMsrp ?? 0,
+      priceMaximum: dto.priceMaximum ?? 0,
+      priceMinimum: dto.priceMinimum ?? 0,
+      isAllowPartialBilling: dto.isAllowPartialBilling ?? false,
+      maxTestsRemovable: dto.maxTestsRemovable ?? 0,
+      testsCount: tests.length,
+    });
+    await this.assertTemplateTestRefs(tests);
+    let createdId: string;
+    try {
+      createdId = await this.prisma.$transaction(async (tx) => {
+        const panel = await tx.labPanel.create({
+          data: {
+            ...scalars,
+            categoryId: null,
+            departmentId: null,
+            tenantId: null,
+            branchId: null,
+            masterDataId: null,
+            source: DataSource.SITE_ADMIN,
+          },
+        });
+        await this.createTests(tx, null, null, panel.id, tests);
+        return panel.id;
+      });
+    } catch (e) {
+      this.rethrowConflict(e, dto.panelName, dto.panelCode);
+      throw e;
+    }
+    return this.findTemplateById(createdId);
+  }
+
+  /**
+   * List SITE_ADMIN template lab panels (with test counts; no tenant
+   * classification refs). Supports `search` and `status` → `isActive`.
+   * @param query search + status + pagination
+   */
+  async findAllTemplates(
+    query: ListLabPanelsDto,
+  ): Promise<PaginatedResult<LabPanelListRow>> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const where: Prisma.LabPanelWhereInput = {
+      source: DataSource.SITE_ADMIN,
+      deletedAt: null,
+    };
+    const search = query.search?.trim();
+    if (search) {
+      where.OR = [
+        { panelName: { contains: search, mode: 'insensitive' } },
+        { panelCode: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+    if (query.status) {
+      where.isActive = query.status === 'ACTIVE';
+    }
+    const [panels, total] = await Promise.all([
+      this.prisma.labPanel.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.labPanel.count({ where }),
+    ]);
+    const counts = await this.countTestsByPanel(
+      null,
+      panels.map((p) => p.id),
+    );
+    const data: LabPanelListRow[] = panels.map((p) => ({
+      ...p,
+      category: null,
+      department: null,
+      testsCount: counts.get(p.id) ?? 0,
+    }));
+    return { data, total, page, limit };
+  }
+
+  /**
+   * Fetch one SITE_ADMIN template lab panel composed with its included tests.
+   * @param panelId template id
+   * @throws LabPanelNotFoundException if missing/soft-deleted/not a template
+   */
+  async findTemplateById(panelId: string): Promise<LabPanelWithTests> {
+    const panel = await this.findCoreTemplateById(panelId);
+    const tests = await this.prisma.labPanelTest.findMany({
+      where: { labPanelId: panelId, tenantId: null, deletedAt: null },
+      orderBy: { sortOrder: 'asc' },
+    });
+    return { ...panel, category: null, department: null, tests };
+  }
+
+  /**
+   * Update a SITE_ADMIN template lab panel (same test-replacement semantics as
+   * `update`). Classification refs stay NULL; replacement tests must be SITE_ADMIN
+   * template tests. Runs in a plain transaction.
+   * @param panelId template id
+   * @param dto partial update (classification refs ignored)
+   * @throws LabPanelNotFoundException / ValidationException / conflict exceptions
+   * @throws LabPanelTestNotFoundException if a test reference isn't a live template test
+   */
+  async updateTemplate(
+    panelId: string,
+    dto: UpdateLabPanelDto,
+  ): Promise<LabPanelWithTests> {
+    const existing = await this.findCoreTemplateById(panelId);
+    const testsCount =
+      dto.tests !== undefined
+        ? dto.tests.length
+        : await this.prisma.labPanelTest.count({
+            where: { labPanelId: panelId, tenantId: null, deletedAt: null },
+          });
+    this.assertCoreInvariants({
+      priceMsrp: dto.priceMsrp ?? existing.priceMsrp,
+      priceMaximum: dto.priceMaximum ?? existing.priceMaximum,
+      priceMinimum: dto.priceMinimum ?? existing.priceMinimum,
+      isAllowPartialBilling:
+        dto.isAllowPartialBilling ?? existing.isAllowPartialBilling,
+      maxTestsRemovable: dto.maxTestsRemovable ?? existing.maxTestsRemovable,
+      testsCount,
+    });
+    if (dto.tests !== undefined) {
+      await this.assertTemplateTestRefs(dto.tests);
+    }
+    const { tests, ...scalars } = dto;
+    const now = new Date();
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.labPanel.update({
+          where: { id: panelId },
+          data: { ...scalars, categoryId: null, departmentId: null },
+        });
+        if (tests !== undefined) {
+          await tx.labPanelTest.updateMany({
+            where: { labPanelId: panelId, tenantId: null, deletedAt: null },
+            data: { deletedAt: now },
+          });
+          await this.createTests(tx, null, null, panelId, tests);
+        }
+      });
+    } catch (e) {
+      this.rethrowConflict(e, dto.panelName ?? '', dto.panelCode ?? '');
+      throw e;
+    }
+    return this.findTemplateById(panelId);
+  }
+
+  /**
+   * Soft-delete a SITE_ADMIN template lab panel and cascade soft-delete its
+   * included tests, in one transaction.
+   * @param panelId template id
+   * @throws LabPanelNotFoundException if missing/soft-deleted/not a template
+   */
+  async removeTemplate(panelId: string): Promise<LabPanel> {
+    await this.findCoreTemplateById(panelId);
+    const now = new Date();
+    return this.prisma.$transaction(async (tx) => {
+      await tx.labPanelTest.updateMany({
+        where: { labPanelId: panelId, tenantId: null, deletedAt: null },
+        data: { deletedAt: now },
+      });
+      return tx.labPanel.update({
+        where: { id: panelId },
+        data: { deletedAt: now },
+      });
+    });
+  }
+
+  /**
+   * Clone a SITE_ADMIN template lab panel into a tenant's catalogue (business-user
+   * flow). `tenantId` comes from the caller's JWT; `branchId` from the target
+   * master data; only `masterDataId` is client-supplied. The template's referenced
+   * SITE_ADMIN lab tests are cloned into the tenant FIRST (deduplicated within the
+   * request) so the new panel references tenant-owned tests, not the templates.
+   * The whole operation — panel, cloned tests, and join rows — is one transaction.
+   * @param templateId the SITE_ADMIN template panel to clone
+   * @param tenantId caller's tenant
+   * @param masterDataId target master data (validated against the tenant)
+   * @returns the newly-created tenant lab panel with its tests
+   * @throws LabPanelNotFoundException if `templateId` is not a live template
+   * @throws LabTestNotFoundException if a referenced template test is missing
+   * @throws MasterDataNotFoundException if the master data is missing/other tenant
+   * @throws LabPanelNameConflictException / LabPanelCodeConflictException on a clash
+   */
+  async cloneToTenant(
+    templateId: string,
+    tenantId: string,
+    masterDataId: string,
+  ): Promise<LabPanelWithTests> {
+    const masterData = await this.masterDataService.findById(
+      masterDataId,
+      tenantId,
+    );
+    const template = await this.findCoreTemplateById(templateId);
+    let newId: string;
+    try {
+      newId = await this.prisma.withTenant(tenantId, async (tx) => {
+        const templateTests = await tx.labPanelTest.findMany({
+          where: { labPanelId: templateId, tenantId: null, deletedAt: null },
+          orderBy: { sortOrder: 'asc' },
+        });
+        const panel = await tx.labPanel.create({
+          data: {
+            ...this.stripMeta(template),
+            tenantId,
+            branchId: masterData.branchId,
+            masterDataId,
+            source: DataSource.TENANT,
+          } as Prisma.LabPanelUncheckedCreateInput,
+        });
+
+        // Clone each referenced template test into the tenant once, remapping the
+        // join rows to the new tenant test ids.
+        const clonedTestIds = new Map<string, string>();
+        const joinRows: {
+          labTestId: string;
+          sortOrder: number;
+          isRemovable: boolean;
+        }[] = [];
+        for (const t of templateTests) {
+          let newTestId = clonedTestIds.get(t.labTestId);
+          if (!newTestId) {
+            const cloned = await this.labTestService.cloneTemplateTestWithinTx(
+              tx,
+              t.labTestId,
+              { tenantId, branchId: masterData.branchId, masterDataId },
+            );
+            newTestId = cloned.id;
+            clonedTestIds.set(t.labTestId, newTestId);
+          }
+          joinRows.push({
+            labTestId: newTestId,
+            sortOrder: t.sortOrder,
+            isRemovable: t.isRemovable,
+          });
+        }
+        if (joinRows.length) {
+          await tx.labPanelTest.createMany({
+            data: joinRows.map((r) => ({
+              ...r,
+              tenantId,
+              branchId: masterData.branchId,
+              labPanelId: panel.id,
+            })),
+          });
+        }
+        return panel.id;
+      });
+    } catch (e) {
+      this.rethrowConflict(e, template.panelName, template.panelCode);
+      throw e;
+    }
+    return this.findById(masterDataId, newId, tenantId);
+  }
+
+  /**
+   * Fetch one active SITE_ADMIN template lab panel (core row only).
+   * @throws LabPanelNotFoundException if missing/soft-deleted/not a template
+   */
+  private async findCoreTemplateById(panelId: string): Promise<LabPanel> {
+    const panel = await this.prisma.labPanel.findFirst({
+      where: { id: panelId, source: DataSource.SITE_ADMIN, deletedAt: null },
+    });
+    if (!panel) {
+      throw new LabPanelNotFoundException(panelId);
+    }
+    return panel;
+  }
+
+  /**
+   * Validate that every `labTestId` references an active SITE_ADMIN template lab
+   * test, with no duplicates within the panel (template equivalent of
+   * `assertTestRefs`, which is scoped to a tenant master data).
+   * @throws ValidationException on duplicate test references
+   * @throws LabPanelTestNotFoundException on missing/non-template test references
+   */
+  private async assertTemplateTestRefs(
+    tests: LabPanelTestDto[],
+  ): Promise<void> {
+    if (!tests.length) {
+      return;
+    }
+    const ids = tests.map((t) => t.labTestId);
+    const unique = new Set(ids);
+    if (unique.size !== ids.length) {
+      throw new ValidationException('Duplicate test references in panel');
+    }
+    const found = await this.prisma.labTest.findMany({
+      where: {
+        id: { in: [...unique] },
+        source: DataSource.SITE_ADMIN,
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+    if (found.length !== unique.size) {
+      const foundIds = new Set(found.map((t) => t.id));
+      const missing = [...unique].filter((id) => !foundIds.has(id));
+      throw new LabPanelTestNotFoundException(missing);
+    }
+  }
+
   // ── Helpers ───────────────────────────────────────────────────────────────────
 
   /**
@@ -426,11 +823,14 @@ export class LabPanelService {
     return panel;
   }
 
-  /** Insert a panel's included-test rows (no-op for an empty/absent list). */
+  /**
+   * Insert a panel's included-test rows (no-op for an empty/absent list).
+   * `tenantId` / `branchId` are NULL when the parent panel is a SITE_ADMIN template.
+   */
   private async createTests(
     tx: Prisma.TransactionClient,
-    tenantId: string,
-    branchId: string,
+    tenantId: string | null,
+    branchId: string | null,
     labPanelId: string,
     tests: LabPanelTestDto[],
   ): Promise<void> {
@@ -440,6 +840,15 @@ export class LabPanelService {
     await tx.labPanelTest.createMany({
       data: tests.map((t) => ({ ...t, tenantId, branchId, labPanelId })),
     });
+  }
+
+  /** A shallow copy of a row with the re-derived meta keys removed (for cloning). */
+  private stripMeta(row: Record<string, unknown>): Record<string, unknown> {
+    const copy: Record<string, unknown> = { ...row };
+    for (const key of PANEL_META_KEYS) {
+      delete copy[key];
+    }
+    return copy;
   }
 
   /**
@@ -542,9 +951,12 @@ export class LabPanelService {
     return id ? (map.get(id) ?? null) : null;
   }
 
-  /** Count active included tests per panel, keyed by `labPanelId`. */
+  /**
+   * Count active included tests per panel, keyed by `labPanelId`. `tenantId` is
+   * NULL when counting tests of SITE_ADMIN template panels.
+   */
   private async countTestsByPanel(
-    tenantId: string,
+    tenantId: string | null,
     ids: string[],
   ): Promise<Map<string, number>> {
     const map = new Map<string, number>();

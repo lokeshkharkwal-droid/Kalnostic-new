@@ -1,0 +1,38 @@
+meta {
+  name: Update Lab Panel Template
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/siteadmin/lab-panels/{{siteAdminLabPanelId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "panelInstructions": "Overnight fasting of 12 hours required.",
+    "priceMsrp": 2600,
+    "isActive": true
+  }
+}
+
+docs {
+  Update a SITE_ADMIN lab-panel template. Auth: SiteAdmin token, requires
+  `master-data:write`. Partial update of core fields; when `tests` is provided the
+  whole included-test set is **replaced** (old rows soft-deleted, new set created)
+  — replacement `tests[].labTestId` must reference active SITE_ADMIN template lab
+  tests (422 `LAB_PANEL_TEST_NOT_FOUND` otherwise).
+
+  Classification refs stay NULL. Conflicts/cross-field rules match Create Lab
+  Panel Template. 404 `LAB_PANEL_NOT_FOUND` if the id isn't a live template.
+}

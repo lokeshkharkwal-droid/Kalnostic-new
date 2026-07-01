@@ -1,0 +1,31 @@
+meta {
+  name: 07 Get My Permissions
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/users/manage/me/permissions?branchId={{branchId}}
+  body: none
+  auth: bearer
+}
+
+params:query {
+  branchId: {{branchId}}
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchId: d4956120-b9a9-4514-8bca-d7c2740d79ca
+}
+
+docs {
+  Step 7 (validation read). The current user's granted permissions at the
+  branch: `{ role, branchModules, modules, allowed }`. Each `modules[]` entry's
+  `permissions` is a flat array of the allowed `permissionKey`s (modules with no
+  allowed permission are omitted). `branchId` is required (omitting it -> 400).
+  The frontend keys off the flat `allowed` array for show/hide.
+}

@@ -16,6 +16,8 @@ params:query {
   search: Sharma
   ~departmentId: 00000000-0000-0000-0000-000000000000
   ~status: ACTIVE
+  ~doctorType: CONSULTANT
+  ~branchId: 00000000-0000-0000-0000-000000000000
 }
 
 auth:bearer {
@@ -41,6 +43,9 @@ docs {
 
   - `departmentId` — linked department (UUID).
   - `status` — `ACTIVE` | `INACTIVE`.
+  - `doctorType` — `CONSULTANT` | `REPORTING` (e.g. department person-mapping
+    pickers that need only consultant or only reporting doctors).
+  - `branchId` — restrict to doctors with an active assignment to this branch.
 
   ## Row shape (trimmed listing projection)
 
@@ -48,6 +53,8 @@ docs {
   `salutation`, `registrationNo`, `department` (`{ id, name }` or `null`),
   `specialization` (the linked category's name, or `null`), `superSpecialization`
   (the free-text `subCategory`, or `null`), `contact` (the doctor's phone),
-  `email`, `consultationFee`, `followUpFee`, and `status`. Fetch the full record
-  (including all fields, qualifications, and experiences) via "Get Doctor".
+  `email`, and `status`. Fees are now **per branch assignment**, so they are not
+  part of the listing — fetch the full record (all fields, qualifications,
+  experiences, and `branchAssignments` with their per-branch fees) via
+  "Get Doctor".
 }

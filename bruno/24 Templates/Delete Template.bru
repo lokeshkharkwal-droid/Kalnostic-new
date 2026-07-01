@@ -1,0 +1,25 @@
+meta {
+  name: Delete Template
+  type: http
+  seq: 11
+}
+
+delete {
+  url: {{baseUrl}}/templates/{{templateId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  businessAccessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwZXJzb25faWQiOiIyOTQ5N2I2NC0wNGUyLTQwZjktYTY2OS04NDBiZmNlOGU3ZDYiLCJ0ZW5hbnRfaWQiOiJhYjE2OTY1MC01Mzc1LTQwYmUtYTIxMi00ZGE0ZTJiMDE5NGQiLCJhY3RpdmVfYnJhbmNoX2lkIjpudWxsLCJhY3RpdmVfYnJhbmNoX3R5cGUiOm51bGwsImFjdGl2ZV9wcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwiaXNfcGF0aWVudF9jb250ZXh0IjpmYWxzZSwicHJvZmlsZXMiOlt7ImJyYW5jaF9pZCI6bnVsbCwiYnJhbmNoX25hbWUiOm51bGwsImJyYW5jaF90eXBlIjpudWxsLCJwcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwicHJvZmlsZV9sYWJlbCI6IkJ1c2luZXNzIEFkbWluIiwiaXNfZGVmYXVsdCI6dHJ1ZX1dLCJpc19wYXRpZW50IjpmYWxzZSwicGxhdGZvcm1fbXJuIjoiS0FMLTIwMjYwNjA4LTM2OTBCRkQxIiwiaWF0IjoxNzgwOTM5ODE2LCJleHAiOjE3ODA5NDA3MTZ9.J55wiEzB-FCqQGSFyaVmqeOfFIFJRrlK5d47mBUpMZ4
+}
+
+docs {
+  Soft-delete a template (sets `deletedAt`; the row is preserved and its name/code
+  are freed for reuse among active rows). Scoped to the caller's tenant + scope
+  branch. 404 `TEMPLATE_NOT_FOUND` if missing/already-deleted.
+}

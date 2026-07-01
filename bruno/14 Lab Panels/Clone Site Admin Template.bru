@@ -1,0 +1,52 @@
+meta {
+  name: Clone Site Admin Template
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/lab-panels/{{siteAdminLabPanelId}}/clone
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "masterDataId": "{{masterDataId}}"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("clonedLabPanelId", data.id);
+}
+
+docs {
+  Clone a SITE_ADMIN lab-panel template (the `:id` in the URL) into the caller's
+  tenant catalogue. Business JWT. **Only `masterDataId` is sent in the body** —
+  `tenantId`/`branchId` come from the JWT and the target master data (CLAUDE.md
+  §4.7). Captures `clonedLabPanelId`.
+
+  Behaviour: creates the panel as `source = "TENANT"` with fresh ids, then for
+  each included test it **clones the referenced SITE_ADMIN template test into the
+  tenant** (deduplicated within the request) and rewires the join rows to point at
+  the new tenant tests — so the cloned panel references tenant-owned tests, not the
+  templates. The whole operation (panel + cloned tests + join rows) is one
+  transaction; any failure rolls back with no partial rows.
+
+  - `siteAdminLabPanelId` is a live SITE_ADMIN template → else 404
+    `LAB_PANEL_NOT_FOUND`; a referenced template test missing → 404
+    `LAB_TEST_NOT_FOUND`.
+  - `masterDataId` must belong to the caller's tenant → else 404
+    `MASTER_DATA_NOT_FOUND`.
+  - 409 `LAB_PANEL_NAME_CONFLICT` / `LAB_PANEL_CODE_CONFLICT` (or a lab-test code
+    clash) if a name/code already exists (active) in the target master data.
+}

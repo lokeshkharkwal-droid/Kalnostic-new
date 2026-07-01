@@ -28,6 +28,8 @@ import { ReferralDoctorModule } from './modules/referral-doctor/referral-doctor.
 import { ExternalReferralModule } from './modules/external-referral/external-referral.module';
 import { InternalReferralModule } from './modules/internal-referral/internal-referral.module';
 import { MachineModule } from './modules/machine/machine.module';
+import { DocumentModule } from './modules/document/document.module';
+import { TemplateModule } from './modules/template/template.module';
 import { ScheduleModule } from './modules/schedule/schedule.module';
 import { TenantModule } from './modules/tenant/tenant.module';
 import { UsersModule } from './modules/users/users.module';
@@ -81,6 +83,8 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     ExternalReferralModule,
     InternalReferralModule,
     MachineModule,
+    DocumentModule,
+    TemplateModule,
     ScheduleModule,
     TenantModule,
     UsersModule,

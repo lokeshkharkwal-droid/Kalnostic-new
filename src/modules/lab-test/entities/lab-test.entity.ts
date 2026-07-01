@@ -17,10 +17,24 @@ import {
 /** Domain/response shape for a lab test (the Prisma model is the DB source of truth). */
 export type LabTestEntity = LabTest;
 
-/** A result parameter with its reference ranges and values attached. */
-export type LabTestResultParamWithRefs = LabTestResultParam & {
+/** A reflex-test reference ({ id, name }) as stored/returned in the JSON column. */
+export interface ReflexTestRef {
+  id: string;
+  name: string;
+}
+
+/**
+ * A result parameter with its reference ranges and values attached. `reflexTests`
+ * is the model's JSON column re-typed as `ReflexTestRef[]` (Prisma types JSON
+ * columns as `JsonValue`).
+ */
+export type LabTestResultParamWithRefs = Omit<
+  LabTestResultParam,
+  'reflexTests'
+> & {
   referenceRanges: LabTestReferenceRange[];
   referenceValues: LabTestReferenceValue[];
+  reflexTests: ReflexTestRef[];
 };
 
 /** A lab test composed with all of its child rows (the get-one response shape). */

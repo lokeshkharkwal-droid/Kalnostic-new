@@ -241,6 +241,37 @@ export class TenantService {
   }
 
   /**
+   * Aggregate business (tenant) counts for the SiteAdmin dashboard. All counts
+   * exclude soft-deleted tenants (`deletedAt: null`). The per-status counts map
+   * strictly to `SubscriptionStatus` values; `GRACE_PERIOD`/`CANCELLED` tenants
+   * contribute to `total` only.
+   * @returns counts: `total` (all), `active`, `trial`, `suspended`
+   */
+  async getDashboardCounts(): Promise<{
+    total: number;
+    active: number;
+    trial: number;
+    suspended: number;
+  }> {
+    const base: Prisma.TenantWhereInput = { deletedAt: null };
+
+    const [total, active, trial, suspended] = await this.prisma.$transaction([
+      this.prisma.tenant.count({ where: base }),
+      this.prisma.tenant.count({
+        where: { ...base, subscriptionStatus: SubscriptionStatus.ACTIVE },
+      }),
+      this.prisma.tenant.count({
+        where: { ...base, subscriptionStatus: SubscriptionStatus.TRIALING },
+      }),
+      this.prisma.tenant.count({
+        where: { ...base, subscriptionStatus: SubscriptionStatus.SUSPENDED },
+      }),
+    ]);
+
+    return { total, active, trial, suspended };
+  }
+
+  /**
    * Update a tenant's editable fields. Slug is immutable; `settings` is
    * deep-merged so partial updates don't wipe existing values.
    * @param id tenant id

@@ -89,12 +89,18 @@ CREATE POLICY rdm_tenant_isolation ON receptionist_doctor_mappings
   WITH CHECK (tenant_id = current_tenant_id());
 
 -- ── departments ─────────────────────────────────────────────────────────────────
+-- Tenant rows isolate by tenant_id; SITE_ADMIN global templates (tenant_id NULL)
+-- are readable by everyone and writable only by a GUC-less SiteAdmin connection
+-- (current_tenant_id() NULL), mirroring lab_test / lab_panels.
 ALTER TABLE departments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE departments FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS departments_tenant_isolation ON departments;
 CREATE POLICY departments_tenant_isolation ON departments
-  USING (tenant_id = current_tenant_id())
-  WITH CHECK (tenant_id = current_tenant_id());
+  USING (tenant_id = current_tenant_id() OR tenant_id IS NULL)
+  WITH CHECK (
+    tenant_id = current_tenant_id()
+    OR (tenant_id IS NULL AND current_tenant_id() IS NULL)
+  );
 
 -- Per-tenant uniqueness for department name + code, among ACTIVE rows only
 -- (partial index on deleted_at IS NULL), so a name/code freed by a soft-delete
@@ -109,6 +115,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS departments_tenant_name_active_unique
 CREATE UNIQUE INDEX IF NOT EXISTS departments_tenant_short_name_active_unique
   ON departments (tenant_id, short_name) WHERE deleted_at IS NULL;
 
+-- SITE_ADMIN templates have tenant_id NULL; Postgres treats NULLs as distinct,
+-- so the per-tenant indexes above don't constrain them. These enforce global
+-- uniqueness of code / name / short_name across ACTIVE template rows.
+CREATE UNIQUE INDEX IF NOT EXISTS departments_template_code_active_unique
+  ON departments (code) WHERE deleted_at IS NULL AND tenant_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS departments_template_name_active_unique
+  ON departments (name) WHERE deleted_at IS NULL AND tenant_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS departments_template_short_name_active_unique
+  ON departments (short_name) WHERE deleted_at IS NULL AND tenant_id IS NULL;
+
 -- ── department_person_mappings ────────────────────────────────────────────────────
 ALTER TABLE department_person_mappings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE department_person_mappings FORCE ROW LEVEL SECURITY;
@@ -118,12 +134,17 @@ CREATE POLICY dpm_tenant_isolation ON department_person_mappings
   WITH CHECK (tenant_id = current_tenant_id());
 
 -- ── categories ──────────────────────────────────────────────────────────────────
+-- Tenant rows isolate by tenant_id; SITE_ADMIN global templates (tenant_id NULL)
+-- are readable by everyone and writable only by a GUC-less SiteAdmin connection.
 ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE categories FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS categories_tenant_isolation ON categories;
 CREATE POLICY categories_tenant_isolation ON categories
-  USING (tenant_id = current_tenant_id())
-  WITH CHECK (tenant_id = current_tenant_id());
+  USING (tenant_id = current_tenant_id() OR tenant_id IS NULL)
+  WITH CHECK (
+    tenant_id = current_tenant_id()
+    OR (tenant_id IS NULL AND current_tenant_id() IS NULL)
+  );
 
 -- Per-tenant uniqueness for category name + code, among ACTIVE rows only
 -- (partial index on deleted_at IS NULL), mirroring departments. `code` is
@@ -146,6 +167,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS categories_independent_short_name_active_uniqu
   ON categories (tenant_id, short_name)
   WHERE deleted_at IS NULL AND department_id IS NULL;
 
+-- SITE_ADMIN templates (tenant_id NULL): global uniqueness of code / name, and
+-- short_name scoped to the template parent department (UNDER_DEPARTMENT) or
+-- global for INDEPENDENT — mirroring the per-tenant indexes above with the
+-- tenant_id IS NULL predicate (NULLs are distinct, so they need their own).
+CREATE UNIQUE INDEX IF NOT EXISTS categories_template_code_active_unique
+  ON categories (code) WHERE deleted_at IS NULL AND tenant_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS categories_template_name_active_unique
+  ON categories (name) WHERE deleted_at IS NULL AND tenant_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS categories_template_dept_short_name_active_unique
+  ON categories (department_id, short_name)
+  WHERE deleted_at IS NULL AND tenant_id IS NULL AND department_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS categories_template_independent_short_name_active_unique
+  ON categories (short_name)
+  WHERE deleted_at IS NULL AND tenant_id IS NULL AND department_id IS NULL;
+
 -- Invariant: UNDER_DEPARTMENT ⇒ department_id set; INDEPENDENT ⇒ NULL. Prisma
 -- can't express a conditional constraint, so it lives here (defence in depth on
 -- top of the DTO + CategoryService checks).
@@ -164,12 +200,17 @@ CREATE POLICY cpm_tenant_isolation ON category_person_mappings
   WITH CHECK (tenant_id = current_tenant_id());
 
 -- ── sub_categories ──────────────────────────────────────────────────────────────
+-- Tenant rows isolate by tenant_id; SITE_ADMIN global templates (tenant_id NULL)
+-- are readable by everyone and writable only by a GUC-less SiteAdmin connection.
 ALTER TABLE sub_categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sub_categories FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS sub_categories_tenant_isolation ON sub_categories;
 CREATE POLICY sub_categories_tenant_isolation ON sub_categories
-  USING (tenant_id = current_tenant_id())
-  WITH CHECK (tenant_id = current_tenant_id());
+  USING (tenant_id = current_tenant_id() OR tenant_id IS NULL)
+  WITH CHECK (
+    tenant_id = current_tenant_id()
+    OR (tenant_id IS NULL AND current_tenant_id() IS NULL)
+  );
 
 -- Per-tenant uniqueness for sub-category name + code, among ACTIVE rows only
 -- (partial index on deleted_at IS NULL), mirroring categories. `code` is
@@ -194,6 +235,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS sub_categories_dept_short_name_active_unique
 CREATE UNIQUE INDEX IF NOT EXISTS sub_categories_independent_short_name_active_unique
   ON sub_categories (tenant_id, short_name)
   WHERE deleted_at IS NULL AND department_id IS NULL AND category_id IS NULL;
+
+-- SITE_ADMIN templates (tenant_id NULL): global uniqueness of code / name, and
+-- short_name scoped to the template parent category (UNDER_CATEGORY), parent
+-- department (UNDER_DEPARTMENT), or global for INDEPENDENT — mirroring the
+-- per-tenant indexes above with the tenant_id IS NULL predicate.
+CREATE UNIQUE INDEX IF NOT EXISTS sub_categories_template_code_active_unique
+  ON sub_categories (code) WHERE deleted_at IS NULL AND tenant_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS sub_categories_template_name_active_unique
+  ON sub_categories (name) WHERE deleted_at IS NULL AND tenant_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS sub_categories_template_cat_short_name_active_unique
+  ON sub_categories (category_id, short_name)
+  WHERE deleted_at IS NULL AND tenant_id IS NULL AND category_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS sub_categories_template_dept_short_name_active_unique
+  ON sub_categories (department_id, short_name)
+  WHERE deleted_at IS NULL AND tenant_id IS NULL AND department_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS sub_categories_template_independent_short_name_active_unique
+  ON sub_categories (short_name)
+  WHERE deleted_at IS NULL AND tenant_id IS NULL AND department_id IS NULL AND category_id IS NULL;
 
 -- Invariant: UNDER_DEPARTMENT ⇒ department_id set (category_id NULL);
 -- UNDER_CATEGORY ⇒ category_id set (department_id NULL); INDEPENDENT ⇒ both
@@ -240,8 +299,11 @@ ALTER TABLE lab_test ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lab_test FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS lab_test_tenant_isolation ON lab_test;
 CREATE POLICY lab_test_tenant_isolation ON lab_test
-  USING (tenant_id = current_tenant_id())
-  WITH CHECK (tenant_id = current_tenant_id());
+  USING (tenant_id = current_tenant_id() OR tenant_id IS NULL)
+  WITH CHECK (
+    tenant_id = current_tenant_id()
+    OR (tenant_id IS NULL AND current_tenant_id() IS NULL)
+  );
 
 -- `test_name` / `test_code` unique per master data among ACTIVE rows only (a value
 -- freed by a soft-delete can be reused). Per master data (not tenant) so cloning a
@@ -250,6 +312,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS lab_test_md_name_active_unique
   ON lab_test (tenant_id, master_data_id, test_name) WHERE deleted_at IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS lab_test_md_code_active_unique
   ON lab_test (tenant_id, master_data_id, test_code) WHERE deleted_at IS NULL;
+
+-- SITE_ADMIN global templates have NULL tenant_id/master_data_id, so the
+-- per-master-data indexes above don't constrain them (NULLs are distinct). These
+-- enforce unique name/code across the SITE_ADMIN template catalogue.
+CREATE UNIQUE INDEX IF NOT EXISTS lab_test_siteadmin_name_active_unique
+  ON lab_test (test_name) WHERE deleted_at IS NULL AND source = 'SITE_ADMIN';
+CREATE UNIQUE INDEX IF NOT EXISTS lab_test_siteadmin_code_active_unique
+  ON lab_test (test_code) WHERE deleted_at IS NULL AND source = 'SITE_ADMIN';
 
 -- CHECK constraints (Prisma can't express them); defence in depth on top of the
 -- DTO + LabTestService validation.
@@ -277,13 +347,20 @@ ALTER TABLE lab_test_samples ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lab_test_samples FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS lab_test_samples_tenant_isolation ON lab_test_samples;
 CREATE POLICY lab_test_samples_tenant_isolation ON lab_test_samples
-  USING (tenant_id = current_tenant_id())
-  WITH CHECK (tenant_id = current_tenant_id());
+  USING (tenant_id = current_tenant_id() OR tenant_id IS NULL)
+  WITH CHECK (
+    tenant_id = current_tenant_id()
+    OR (tenant_id IS NULL AND current_tenant_id() IS NULL)
+  );
 
 -- At most one default sample per test among ACTIVE rows.
 CREATE UNIQUE INDEX IF NOT EXISTS lab_test_sample_default_active_unique
   ON lab_test_samples (tenant_id, lab_test_id)
   WHERE is_default = TRUE AND deleted_at IS NULL;
+-- Same rule for SITE_ADMIN template samples (NULL tenant_id).
+CREATE UNIQUE INDEX IF NOT EXISTS lab_test_sample_default_siteadmin_unique
+  ON lab_test_samples (lab_test_id)
+  WHERE is_default = TRUE AND deleted_at IS NULL AND tenant_id IS NULL;
 
 ALTER TABLE lab_test_samples DROP CONSTRAINT IF EXISTS chk_lab_test_sample_number;
 ALTER TABLE lab_test_samples ADD CONSTRAINT chk_lab_test_sample_number
@@ -294,12 +371,19 @@ ALTER TABLE lab_test_result_params ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lab_test_result_params FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS lab_test_result_params_tenant_isolation ON lab_test_result_params;
 CREATE POLICY lab_test_result_params_tenant_isolation ON lab_test_result_params
-  USING (tenant_id = current_tenant_id())
-  WITH CHECK (tenant_id = current_tenant_id());
+  USING (tenant_id = current_tenant_id() OR tenant_id IS NULL)
+  WITH CHECK (
+    tenant_id = current_tenant_id()
+    OR (tenant_id IS NULL AND current_tenant_id() IS NULL)
+  );
 
 -- `parameter_code` unique per test among ACTIVE rows.
 CREATE UNIQUE INDEX IF NOT EXISTS lab_test_param_code_active_unique
   ON lab_test_result_params (tenant_id, lab_test_id, parameter_code) WHERE deleted_at IS NULL;
+-- Same rule for SITE_ADMIN template params (NULL tenant_id).
+CREATE UNIQUE INDEX IF NOT EXISTS lab_test_param_code_siteadmin_unique
+  ON lab_test_result_params (lab_test_id, parameter_code)
+  WHERE deleted_at IS NULL AND tenant_id IS NULL;
 
 ALTER TABLE lab_test_result_params DROP CONSTRAINT IF EXISTS chk_lab_test_param_calc_formula;
 ALTER TABLE lab_test_result_params ADD CONSTRAINT chk_lab_test_param_calc_formula
@@ -307,14 +391,20 @@ ALTER TABLE lab_test_result_params ADD CONSTRAINT chk_lab_test_param_calc_formul
 ALTER TABLE lab_test_result_params DROP CONSTRAINT IF EXISTS chk_lab_test_param_decimals;
 ALTER TABLE lab_test_result_params ADD CONSTRAINT chk_lab_test_param_decimals
   CHECK (decimal_places BETWEEN 0 AND 6);
+ALTER TABLE lab_test_result_params DROP CONSTRAINT IF EXISTS chk_lab_test_param_critical_minmax;
+ALTER TABLE lab_test_result_params ADD CONSTRAINT chk_lab_test_param_critical_minmax
+  CHECK (critical_min IS NULL OR critical_max IS NULL OR critical_min <= critical_max);
 
 -- ── lab_test_reference_ranges ─────────────────────────────────────────────────────
 ALTER TABLE lab_test_reference_ranges ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lab_test_reference_ranges FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS lab_test_reference_ranges_tenant_isolation ON lab_test_reference_ranges;
 CREATE POLICY lab_test_reference_ranges_tenant_isolation ON lab_test_reference_ranges
-  USING (tenant_id = current_tenant_id())
-  WITH CHECK (tenant_id = current_tenant_id());
+  USING (tenant_id = current_tenant_id() OR tenant_id IS NULL)
+  WITH CHECK (
+    tenant_id = current_tenant_id()
+    OR (tenant_id IS NULL AND current_tenant_id() IS NULL)
+  );
 
 ALTER TABLE lab_test_reference_ranges DROP CONSTRAINT IF EXISTS chk_ref_range_lower_lte_upper;
 ALTER TABLE lab_test_reference_ranges ADD CONSTRAINT chk_ref_range_lower_lte_upper
@@ -334,8 +424,11 @@ ALTER TABLE lab_test_reference_values ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lab_test_reference_values FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS lab_test_reference_values_tenant_isolation ON lab_test_reference_values;
 CREATE POLICY lab_test_reference_values_tenant_isolation ON lab_test_reference_values
-  USING (tenant_id = current_tenant_id())
-  WITH CHECK (tenant_id = current_tenant_id());
+  USING (tenant_id = current_tenant_id() OR tenant_id IS NULL)
+  WITH CHECK (
+    tenant_id = current_tenant_id()
+    OR (tenant_id IS NULL AND current_tenant_id() IS NULL)
+  );
 
 ALTER TABLE lab_test_reference_values DROP CONSTRAINT IF EXISTS chk_ref_value_age;
 ALTER TABLE lab_test_reference_values ADD CONSTRAINT chk_ref_value_age
@@ -346,8 +439,11 @@ ALTER TABLE lab_panels ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lab_panels FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS lab_panels_tenant_isolation ON lab_panels;
 CREATE POLICY lab_panels_tenant_isolation ON lab_panels
-  USING (tenant_id = current_tenant_id())
-  WITH CHECK (tenant_id = current_tenant_id());
+  USING (tenant_id = current_tenant_id() OR tenant_id IS NULL)
+  WITH CHECK (
+    tenant_id = current_tenant_id()
+    OR (tenant_id IS NULL AND current_tenant_id() IS NULL)
+  );
 
 -- `panel_name` / `panel_code` unique per master data among ACTIVE rows only (a
 -- value freed by a soft-delete can be reused). Per master data (not tenant), like
@@ -356,6 +452,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS lab_panel_md_name_active_unique
   ON lab_panels (tenant_id, master_data_id, panel_name) WHERE deleted_at IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS lab_panel_md_code_active_unique
   ON lab_panels (tenant_id, master_data_id, panel_code) WHERE deleted_at IS NULL;
+
+-- SITE_ADMIN global templates (NULL tenant_id/master_data_id): unique name/code
+-- across the template catalogue, mirroring lab_test.
+CREATE UNIQUE INDEX IF NOT EXISTS lab_panel_siteadmin_name_active_unique
+  ON lab_panels (panel_name) WHERE deleted_at IS NULL AND source = 'SITE_ADMIN';
+CREATE UNIQUE INDEX IF NOT EXISTS lab_panel_siteadmin_code_active_unique
+  ON lab_panels (panel_code) WHERE deleted_at IS NULL AND source = 'SITE_ADMIN';
 
 -- CHECK constraints (Prisma can't express them); defence in depth on top of the
 -- DTO + LabPanelService validation.
@@ -378,12 +481,19 @@ ALTER TABLE lab_panel_tests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lab_panel_tests FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS lab_panel_tests_tenant_isolation ON lab_panel_tests;
 CREATE POLICY lab_panel_tests_tenant_isolation ON lab_panel_tests
-  USING (tenant_id = current_tenant_id())
-  WITH CHECK (tenant_id = current_tenant_id());
+  USING (tenant_id = current_tenant_id() OR tenant_id IS NULL)
+  WITH CHECK (
+    tenant_id = current_tenant_id()
+    OR (tenant_id IS NULL AND current_tenant_id() IS NULL)
+  );
 
 -- A lab test appears at most once per panel among ACTIVE rows.
 CREATE UNIQUE INDEX IF NOT EXISTS lab_panel_test_unique
   ON lab_panel_tests (tenant_id, lab_panel_id, lab_test_id) WHERE deleted_at IS NULL;
+-- Same rule for SITE_ADMIN template panels (NULL tenant_id).
+CREATE UNIQUE INDEX IF NOT EXISTS lab_panel_test_siteadmin_unique
+  ON lab_panel_tests (lab_panel_id, lab_test_id)
+  WHERE deleted_at IS NULL AND tenant_id IS NULL;
 
 -- ── outsource_centers ─────────────────────────────────────────────────────────
 ALTER TABLE outsource_centers ENABLE ROW LEVEL SECURITY;
@@ -413,45 +523,6 @@ CREATE POLICY occ_tenant_isolation ON outsource_center_contacts
 -- At most one active contact per role per center.
 CREATE UNIQUE INDEX IF NOT EXISTS occ_center_role_active_unique
   ON outsource_center_contacts (tenant_id, outsource_center_id, role)
-  WHERE deleted_at IS NULL;
-
--- ── outsource_center_branch_assignments ───────────────────────────────────────
-ALTER TABLE outsource_center_branch_assignments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE outsource_center_branch_assignments FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS ocba_tenant_isolation ON outsource_center_branch_assignments;
-CREATE POLICY ocba_tenant_isolation ON outsource_center_branch_assignments
-  USING (tenant_id = current_tenant_id())
-  WITH CHECK (tenant_id = current_tenant_id());
-
--- One active assignment per (center, branch) among ACTIVE rows only.
-CREATE UNIQUE INDEX IF NOT EXISTS ocba_center_branch_active_unique
-  ON outsource_center_branch_assignments (tenant_id, outsource_center_id, branch_id)
-  WHERE deleted_at IS NULL;
-
--- ── outsource_center_branch_tests ─────────────────────────────────────────────
-ALTER TABLE outsource_center_branch_tests ENABLE ROW LEVEL SECURITY;
-ALTER TABLE outsource_center_branch_tests FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS ocbt_tenant_isolation ON outsource_center_branch_tests;
-CREATE POLICY ocbt_tenant_isolation ON outsource_center_branch_tests
-  USING (tenant_id = current_tenant_id())
-  WITH CHECK (tenant_id = current_tenant_id());
-
--- A lab test appears at most once per assignment among ACTIVE rows.
-CREATE UNIQUE INDEX IF NOT EXISTS ocbt_assignment_test_active_unique
-  ON outsource_center_branch_tests (tenant_id, assignment_id, lab_test_id)
-  WHERE deleted_at IS NULL;
-
--- ── outsource_center_branch_panels ────────────────────────────────────────────
-ALTER TABLE outsource_center_branch_panels ENABLE ROW LEVEL SECURITY;
-ALTER TABLE outsource_center_branch_panels FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS ocbp_tenant_isolation ON outsource_center_branch_panels;
-CREATE POLICY ocbp_tenant_isolation ON outsource_center_branch_panels
-  USING (tenant_id = current_tenant_id())
-  WITH CHECK (tenant_id = current_tenant_id());
-
--- A lab panel appears at most once per assignment among ACTIVE rows.
-CREATE UNIQUE INDEX IF NOT EXISTS ocbp_assignment_panel_active_unique
-  ON outsource_center_branch_panels (tenant_id, assignment_id, lab_panel_id)
   WHERE deleted_at IS NULL;
 
 -- ── referral_panels ───────────────────────────────────────────────────────────
@@ -529,6 +600,21 @@ DROP POLICY IF EXISTS doctor_experience_tenant_isolation ON doctor_experience;
 CREATE POLICY doctor_experience_tenant_isolation ON doctor_experience
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── doctor_branch_assignments ────────────────────────────────────────────────────
+ALTER TABLE doctor_branch_assignments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE doctor_branch_assignments FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS dba_tenant_isolation ON doctor_branch_assignments;
+CREATE POLICY dba_tenant_isolation ON doctor_branch_assignments
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- One active assignment per (tenant, doctor, branch) among ACTIVE rows only (a
+-- pairing freed by a soft-delete can be re-created). Prisma can't express partial
+-- unique indexes, so it lives here.
+CREATE UNIQUE INDEX IF NOT EXISTS dba_doctor_branch_active_unique
+  ON doctor_branch_assignments (tenant_id, doctor_id, branch_id)
+  WHERE deleted_at IS NULL;
 
 -- ── referral_doctors ──────────────────────────────────────────────────────────
 ALTER TABLE referral_doctors ENABLE ROW LEVEL SECURITY;
@@ -755,6 +841,54 @@ CREATE POLICY ccm_tenant_isolation ON collection_center_mappings
 CREATE UNIQUE INDEX IF NOT EXISTS ccm_center_receiver_active_unique
   ON collection_center_mappings (collection_center_id, receiving_branch_id)
   WHERE deleted_at IS NULL;
+
+-- ── documents ─────────────────────────────────────────────────────────────────
+ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE documents FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS documents_tenant_isolation ON documents;
+CREATE POLICY documents_tenant_isolation ON documents
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- `document_number` is unique per branch among ACTIVE rows only (a number freed
+-- by a soft-delete can be reused). Prisma can't express partial unique indexes.
+CREATE UNIQUE INDEX IF NOT EXISTS documents_branch_number_active_unique
+  ON documents (tenant_id, branch_id, document_number) WHERE deleted_at IS NULL;
+
+-- ── document_versions ─────────────────────────────────────────────────────────
+ALTER TABLE document_versions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE document_versions FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS document_versions_tenant_isolation ON document_versions;
+CREATE POLICY document_versions_tenant_isolation ON document_versions
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── templates ─────────────────────────────────────────────────────────────────
+ALTER TABLE templates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE templates FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS templates_tenant_isolation ON templates;
+CREATE POLICY templates_tenant_isolation ON templates
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- `code` is system-generated and unique per tenant among ACTIVE rows only (a
+-- code freed by a soft-delete can be reused). Prisma can't express partial
+-- unique indexes.
+CREATE UNIQUE INDEX IF NOT EXISTS templates_tenant_code_active_unique
+  ON templates (tenant_id, code) WHERE deleted_at IS NULL;
+
+-- `name` is unique per (tenant, branch, type) among ACTIVE rows. Tenant-level
+-- templates (business-admin, branch_id NULL) and branch-level templates
+-- (branch-admin) live in the same table; Postgres treats NULLs as distinct in a
+-- unique index, so a single index over the nullable branch_id would NOT enforce
+-- uniqueness among tenant-level rows. Split into two partial indexes (mirroring
+-- the categories dept-vs-independent pattern).
+CREATE UNIQUE INDEX IF NOT EXISTS templates_branch_type_name_active_unique
+  ON templates (tenant_id, branch_id, type, name)
+  WHERE deleted_at IS NULL AND branch_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS templates_tenant_type_name_active_unique
+  ON templates (tenant_id, type, name)
+  WHERE deleted_at IS NULL AND branch_id IS NULL;
 
 -- Platform-level tables (tenants, persons, person_credentials, siteadmin_users,
 -- refresh_tokens, person_tenant_enrollments) are intentionally NOT covered —

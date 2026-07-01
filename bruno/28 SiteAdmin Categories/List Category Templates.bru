@@ -1,0 +1,31 @@
+meta {
+  name: List Category Templates
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/categories?page=1&limit=20&search=
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  search:
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  List SITE_ADMIN category templates (paginated). Auth: SiteAdmin token, requires
+  `master-data:read`.
+
+  Query params: `page` / `limit`; `search` (name/code); `status`
+  (`ACTIVE`|`INACTIVE`); `categoryType` (`INDEPENDENT`|`UNDER_DEPARTMENT`);
+  `departmentId` (cascading — only templates under that template department).
+  Returns only `source = SITE_ADMIN`, `tenantId = null` rows.
+}

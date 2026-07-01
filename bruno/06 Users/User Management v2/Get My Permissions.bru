@@ -5,9 +5,13 @@ meta {
 }
 
 get {
-  url: {{baseUrl}}/users/manage/me/permissions
+  url: {{baseUrl}}/users/manage/me/permissions?branchId=37e8cb33-9c10-4778-bc4c-20490e1c0f75
   body: none
   auth: bearer
+}
+
+params:query {
+  branchId: 37e8cb33-9c10-4778-bc4c-20490e1c0f75
 }
 
 auth:bearer {
@@ -15,18 +19,44 @@ auth:bearer {
 }
 
 docs {
-  The **current user's** effective permissions, resolved from the JWT (active
-  branch + active profile) — no path params. Returns `{ modules, allowed }`:
+  The **current user's** permissions **at a specific branch**, across the **full
+  system catalogue**. The caller (person + tenant) comes from the bearer token;
+  the branch is the **required `branchId` query param**.
 
-  - `modules`: array of `{ moduleKey, moduleLabel, permissions[] }`, where each
-    permission is `{ permissionKey, action, label, baseline, allowed }`. Effective
-    `allowed` = stored override ?? role baseline.
-  - `allowed`: flat array of every granted `permissionKey` (e.g.
-    `["admin:view", "admin:edit", "admin:manage_users"]`) — the frontend keys off
-    this for show/hide.
+  - `branchId` (**required**) — the branch to resolve for. Must belong to the
+    caller's tenant (validated server-side; a foreign/unknown branch → not-found,
+    so a client can't read another tenant's branch). Omitting it → `400`.
 
-  **Branch context** (active branch set): gated to the branch's enabled modules
-  with per-(user+branch) overrides applied. **Tenant-level** profiles
-  (`business_admin`/`administrator`, no active branch): all of the role's modules
-  with the role baseline as the grant.
+  The role used is the one the user holds **at that branch** (a branch-level
+  `UserBranchProfile`, else a tenant-level one — e.g. `business_admin` /
+  `administrator` — which applies at every branch). So the **same user can get
+  different permissions for different branches**: pass a different `branchId` to
+  see that branch's result.
+
+  Returns the user's **granted** permissions at this branch —
+  `{ role, branchModules, modules, allowed }`:
+
+  - `role`: `{ key, label }` — the role driving the permissions at this branch
+    (the resolved baseline role). `null` when the user has no assignment here.
+  - `branchModules`: `[{ moduleKey, label }]` — the modules **enabled for this
+    branch** (in canonical module order), regardless of the user's role.
+  - `modules`: array of `{ moduleKey, moduleLabel, moduleAllowed, permissions }`,
+    where `permissions` is a flat array of the **allowed `permissionKey`s** in that
+    module (e.g. `["admin:view", "admin:edit"]`). Only modules with at least one
+    allowed permission are included, so every emitted group has
+    `moduleAllowed: true`. Catalogue order is preserved.
+  - `allowed`: flat array of every `permissionKey` where `allowed === true` (e.g.
+    `["admin:view", "admin:edit", "admin:manage_users"]`) — the union of all the
+    module `permissions` arrays; the frontend keys off this for show/hide.
+
+  Effective value: `allowed = (module enabled for the branch) AND (branch override
+  ?? role baseline)`. The module gate is the branch's enabled modules
+  (`branch_modules`), and "special" permissions are the per-user overrides for
+  **this branch only** (`user_branch_permissions` where `branchId` = the queried
+  branch) — grants/denies at other branches never leak in. Set those overrides via
+  Update Branch Permissions.
+
+  A permission granted by the role but whose module is not enabled at the branch is
+  therefore omitted (disabled at this branch). If the user has **no assignment** at
+  the branch, `modules` is empty and `allowed` is `[]`.
 }

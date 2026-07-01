@@ -1,0 +1,50 @@
+meta {
+  name: Clone Site Admin Template
+  type: http
+  seq: 17
+}
+
+post {
+  url: {{baseUrl}}/lab-tests/{{siteAdminLabTestId}}/clone
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "masterDataId": "{{masterDataId}}"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("clonedLabTestId", data.id);
+}
+
+docs {
+  Clone a SITE_ADMIN lab-test template (the `:id` in the URL) into the caller's
+  tenant catalogue. Business JWT. **Only `masterDataId` is sent in the body** —
+  `tenantId`/`branchId` come from the JWT and the target master data, never the
+  client (CLAUDE.md §4.7). Captures `clonedLabTestId`.
+
+  Behaviour: deep-copies the template + its samples, result params, and each
+  param's reference ranges/values with fresh UUIDs, sets `source = "TENANT"`,
+  `tenantId` (JWT), `branchId` (from the master data), `masterDataId` (body), and
+  seeds a fresh `versionHistory` v1. Fully transactional — any failure rolls back
+  with no partial rows.
+
+  - `siteAdminLabTestId` is a live SITE_ADMIN template → else 404
+    `LAB_TEST_NOT_FOUND`.
+  - `masterDataId` must belong to the caller's tenant → else 404
+    `MASTER_DATA_NOT_FOUND`.
+  - 409 `LAB_TEST_NAME_CONFLICT` / `LAB_TEST_CODE_CONFLICT` if the template's
+    name/code already exists (active) in the target master data.
+}

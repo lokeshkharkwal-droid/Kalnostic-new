@@ -1,0 +1,31 @@
+meta {
+  name: Browse Site Admin Templates
+  type: http
+  seq: 15
+}
+
+get {
+  url: {{baseUrl}}/lab-tests/templates?page=1&limit=20&search=
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  search:
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Browse SITE_ADMIN global lab-test templates (read-only) so a business can pick
+  one to clone. Business JWT (no per-route RBAC yet). Returns only
+  `source = SITE_ADMIN` rows — never tenant data. Query: `page` / `limit`,
+  `search` (testName/testCode), `status` (`ACTIVE` | `INACTIVE`).
+
+  Declared before the `:id` routes so `templates` isn't matched as an id. Clone a
+  chosen template with "Clone Site Admin Template".
+}

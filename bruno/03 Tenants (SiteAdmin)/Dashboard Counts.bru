@@ -1,0 +1,32 @@
+meta {
+  name: Dashboard Counts
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/tenants/dashboard-counts
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+vars:pre-request {
+  siteAdminToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0eXBlIjoic2l0ZWFkbWluIiwic2l0ZWFkbWluX2lkIjoiMjM1ZmU0NjMtZTdiYS00Y2U4LTk4YmMtMzMwMzRiYWFmMmIyIiwiZW1haWwiOiJhZG1pbkBrYWxub3N0aWNzLmNvbSIsInJvbGUiOiJTVVBFUl9PV05FUiIsImlhdCI6MTc4MTEwOTA3OCwiZXhwIjoxNzgxMTM3ODc4fQ.ZVrV4BtqUSpVTIaE1PGht4xOA9gLmge4ZOsM-NRKIQE
+}
+
+docs {
+  Aggregate business (tenant) counts for the SiteAdmin dashboard. Requires
+  `business:read`. All counts exclude soft-deleted tenants.
+
+  Returns in `data`:
+  - `total` — all non-deleted tenants.
+  - `active` — `subscriptionStatus = ACTIVE`.
+  - `trial` — `subscriptionStatus = TRIALING`.
+  - `suspended` — `subscriptionStatus = SUSPENDED`.
+
+  `GRACE_PERIOD` / `CANCELLED` tenants count toward `total` only.
+}

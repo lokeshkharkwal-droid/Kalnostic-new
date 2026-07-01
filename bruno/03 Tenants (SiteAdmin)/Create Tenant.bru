@@ -34,7 +34,16 @@ body:json {
       "city": "Pune",
       "country": "IN"
     },
-    "settings": {}
+    "settings": {
+      "timezone": "Asia/Kolkata",
+      "currency": "INR",
+      "date_format": "DD/MM/YYYY",
+      "language": "en",
+      "logo_url": "https://cdn.acme.test/logo.png",
+      "primary_color": "#0B5FFF",
+      "secondary_color": "#1A1A2E",
+      "app_name": "Acme Labs"
+    }
   }
 }
 
@@ -63,10 +72,25 @@ docs {
   The script captures `tenantId`, `tenantSlug`, `adminPhone`, and
   `adminTempPassword` — used by **Business Auth → Login**.
   
-  - `slug`: lowercase alphanumeric + hyphens, not at start/end (subdomain).
-  - `adminPhone`: globally-unique login identifier.
-  - `mrnPrefix`: patient MRN prefix (e.g. "AC" -> "AC-00001").
-  
+  Fields:
+  - `name` (required) — business name.
+  - `slug` (required) — lowercase alphanumeric + hyphens, not at start/end
+    (subdomain `{slug}.kalnostics.com`).
+  - `adminFirstName` (required) — first business-admin's first name.
+  - `adminLastName` (optional) — admin's last name.
+  - `adminPhone` (required) — admin's globally-unique login identifier.
+  - `adminEmail` (optional) — admin's email (globally unique if set).
+  - `email` (optional) — tenant contact email.
+  - `phone` (optional) — tenant contact phone.
+  - `address` (optional) — free-form JSON object.
+  - `mrnPrefix` (optional) — patient MRN prefix (e.g. "AC" -> "AC-00001").
+  - `settings` (optional) — partial `TenantSettings` JSON; any omitted keys
+    fall back to platform defaults (timezone `Asia/Kolkata`, currency `INR`,
+    date_format `DD/MM/YYYY`, language `en`). Keys:
+    `timezone`, `currency`, `date_format`, `language`, `logo_url` (optional),
+    `primary_color` (optional), `secondary_color` (optional),
+    `app_name` (optional).
+
   > If the captured temp password is empty, open the create response and copy
   > the temp password field into the `adminTempPassword` env var manually.
 }

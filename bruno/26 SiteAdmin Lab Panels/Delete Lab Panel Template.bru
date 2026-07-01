@@ -1,0 +1,22 @@
+meta {
+  name: Delete Lab Panel Template
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/siteadmin/lab-panels/{{siteAdminLabPanelId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Soft-delete a SITE_ADMIN lab-panel template (sets `deletedAt`) and cascade
+  soft-delete its included-test rows, in one transaction. Auth: SiteAdmin token,
+  requires `master-data:write`. 404 `LAB_PANEL_NOT_FOUND` if the id isn't a live
+  template. Already-cloned tenant panels are unaffected.
+}

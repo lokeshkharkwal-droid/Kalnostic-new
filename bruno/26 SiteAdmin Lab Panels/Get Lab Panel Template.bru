@@ -1,0 +1,22 @@
+meta {
+  name: Get Lab Panel Template
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/lab-panels/{{siteAdminLabPanelId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Fetch one SITE_ADMIN lab-panel template with its included tests (ordered by
+  `sortOrder`). Auth: SiteAdmin token, requires `master-data:read`. 404
+  `LAB_PANEL_NOT_FOUND` if the id isn't a live template. Uses
+  `siteAdminLabPanelId` from Create Lab Panel Template.
+}

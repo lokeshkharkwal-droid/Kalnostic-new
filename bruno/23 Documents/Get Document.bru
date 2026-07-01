@@ -1,0 +1,26 @@
+meta {
+  name: Get Document
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/documents/{{documentId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Fetch one document (its current/active version) by id, scoped to the caller's
+  tenant + active branch. 404 `DOCUMENT_NOT_FOUND` if missing or soft-deleted.
+}

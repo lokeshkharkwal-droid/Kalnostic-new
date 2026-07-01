@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { MasterDataModule } from '../master-data/master-data.module';
 import { LabTestController } from './lab-test.controller';
+import { LabTestOptionsController } from './lab-test-options.controller';
+import { SiteAdminLabTestController } from './siteadmin-lab-test.controller';
 import { LabTestService } from './lab-test.service';
 
 /**
@@ -13,7 +15,11 @@ import { LabTestService } from './lab-test.service';
  */
 @Module({
   imports: [PrismaModule, MasterDataModule],
-  controllers: [LabTestController],
+  controllers: [
+    LabTestController,
+    LabTestOptionsController,
+    SiteAdminLabTestController,
+  ],
   providers: [LabTestService],
   exports: [LabTestService],
 })

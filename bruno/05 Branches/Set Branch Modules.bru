@@ -1,7 +1,7 @@
 meta {
   name: Set Branch Modules
   type: http
-  seq: 10
+  seq: 9
 }
 
 put {
@@ -25,13 +25,14 @@ body:json {
       { "moduleKey": "accession", "isEnabled": true },
       { "moduleKey": "lab_operations", "isEnabled": true },
       { "moduleKey": "sales", "isEnabled": true },
-      { "moduleKey": "finance", "isEnabled": false }
+      { "moduleKey": "finance", "isEnabled": false },
+          { "moduleKey": "branch_admin", "isEnabled": true }
     ]
   }
 }
 
 vars:pre-request {
-  branchId: 37e8cb33-9c10-4778-bc4c-20490e1c0f75
+  branchId: d3b91f75-b897-4c81-b216-48bde7d2aad1
 }
 
 docs {

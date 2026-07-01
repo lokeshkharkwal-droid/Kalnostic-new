@@ -1,0 +1,93 @@
+meta {
+  name: Create Lab Panel Template
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/lab-panels
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "bannerImage": "https://files.example.com/panels/fbc-banner.png",
+    "panelName": "Global Full Body Checkup Template",
+    "panelCode": "FBC-TPL",
+    "applicableGender": "ALL",
+    "applicableAgeGroup": "ADULT",
+    "reportType": "COMBINED",
+    "turnaroundPriority": "ROUTINE",
+    "isActive": true,
+    "priceMsrp": 2500,
+    "priceMaximum": 2300,
+    "priceMinimum": 1800,
+    "priceOriginal": 3000,
+    "franchisePrice": 1500,
+    "commissionPrice": 200,
+    "tatMinValue": 6,
+    "tatMinUnit": "HOURS",
+    "tatMaxValue": 48,
+    "tatMaxUnit": "HOURS",
+    "panelInstructions": "Overnight fasting of 10-12 hours recommended.",
+    "isDisableDiscount": false,
+    "isEnableCms": true,
+    "isPreference": false,
+    "isFastingRequired": true,
+    "isShowOnlineBooking": true,
+    "isHomeCollection": true,
+    "isAllowPartialBilling": true,
+    "maxTestsRemovable": 1,
+    "tests": [
+      { "labTestId": "{{siteAdminLabTestId}}", "sortOrder": 1, "isRemovable": true }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("siteAdminLabPanelId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  Create a **global SITE_ADMIN lab-panel template** (no tenant/branch/master
+  data). Auth: SiteAdmin token, requires `master-data:write` (CONTENT_ADMIN+).
+  Captures `siteAdminLabPanelId`.
+
+  The persisted row has `source = "SITE_ADMIN"` and null tenant/branch/master
+  data. `categoryId` / `departmentId` are forced NULL (tenant-scoped catalogue),
+  so omit them.
+
+  ## Included tests
+
+  Each `tests[].labTestId` must reference an **active SITE_ADMIN template lab
+  test** (use `siteAdminLabTestId` from `25 SiteAdmin Lab Tests → Create Lab Test
+  Template`) → otherwise 422 `LAB_PANEL_TEST_NOT_FOUND`. A test may appear at most
+  once.
+
+  ## Conflicts & cross-field rules
+
+  - `panelName` / `panelCode` unique **across the SITE_ADMIN template catalogue**
+    among active rows → 409 `LAB_PANEL_NAME_CONFLICT` / `LAB_PANEL_CODE_CONFLICT`.
+  - `priceMaximum ≤ priceMsrp`, `priceMinimum ≤ priceMaximum` (422).
+  - `maxTestsRemovable > 0` requires `isAllowPartialBilling: true`, and cannot
+    exceed the number of tests (422).
+
+  Businesses adopt this template via `14 Lab Panels → Clone Site Admin Template`,
+  which also clones the referenced template tests into the tenant.
+}

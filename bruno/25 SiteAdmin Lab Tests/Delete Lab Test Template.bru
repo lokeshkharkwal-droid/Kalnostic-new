@@ -1,0 +1,22 @@
+meta {
+  name: Delete Lab Test Template
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/siteadmin/lab-tests/{{siteAdminLabTestId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Soft-delete a SITE_ADMIN lab-test template (sets `deletedAt`) and cascade
+  soft-delete all its children, in one transaction. Auth: SiteAdmin token,
+  requires `master-data:write`. 404 `LAB_TEST_NOT_FOUND` if the id isn't a live
+  template. Already-cloned tenant copies are unaffected.
+}

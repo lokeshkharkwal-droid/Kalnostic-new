@@ -57,9 +57,9 @@ docs {
   - `name` — 2-255 chars, unique among active master data **on that branch** →
     409 `MASTER_DATA_NAME_CONFLICT` otherwise.
   - `description` — optional, ≤ 2000 chars.
-  - `copyFromMasterDataId` — OPTIONAL UUID of an existing master data to seed
-    this one from: all of its active lab tests are copied in (duplicate names
-    skipped). 404 `MASTER_DATA_NOT_FOUND` if the source is invalid. Omit it for
-    an empty master data; add e.g. `"copyFromMasterDataId": "{{masterDataId}}"`
-    to clone.
+
+  The full accepted body is exactly `{ branchId, name, description? }` — there
+  are no other fields. To seed the new master data with lab tests, use the
+  lab-test clone endpoint afterwards (the DTO does NOT accept a
+  `copyFromMasterDataId`).
 }

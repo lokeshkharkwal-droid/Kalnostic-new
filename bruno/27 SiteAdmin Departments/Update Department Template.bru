@@ -1,0 +1,34 @@
+meta {
+  name: Update Department Template
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/siteadmin/departments/{{siteAdminDepartmentTemplateId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "description": "Updated global pathology template",
+    "isActive": true,
+    "moduleMapping": ["DIAGNOSTIC", "RADIOLOGY"]
+  }
+}
+
+docs {
+  Update a SITE_ADMIN department template. Auth: SiteAdmin token, requires
+  `master-data:write`. `code` is immutable and `source`/`tenantId` are fixed.
+  `name`/`shortName` re-validated for uniqueness across active templates →
+  409 on a clash. 404 `DEPARTMENT_NOT_FOUND` if not a live template.
+}

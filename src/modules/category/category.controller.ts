@@ -13,7 +13,7 @@ import { CategoryService } from './category.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
-import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import { ListCategoryQueryDto } from './dto/list-category-query.dto';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
@@ -38,17 +38,25 @@ export class CategoryController {
   }
 
   /**
-   * List categories in the caller's tenant (paginated).
+   * List categories in the caller's tenant (paginated, optional `search` over
+   * name/code, `categoryType` filter, `status` active/inactive filter, and
+   * cascading `departmentId` filter).
    */
   @Get()
   findAll(
     @CurrentTenant() tenantId: string,
-    @Query() query: PaginationQueryDto,
+    @Query() query: ListCategoryQueryDto,
   ) {
     return this.categoryService.findAllForTenant(
       tenantId,
       query.page ?? 1,
       query.limit ?? 20,
+      {
+        search: query.search,
+        categoryType: query.categoryType,
+        status: query.status,
+        departmentId: query.departmentId,
+      },
     );
   }
 

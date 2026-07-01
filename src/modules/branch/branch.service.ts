@@ -137,6 +137,13 @@ export class BranchService {
           });
         }
 
+        // Enable/disable the requested system modules at the new branch in the
+        // same transaction, so a single POST sets up the branch and its modules
+        // (no separate PUT /branches/:id/modules round-trip needed).
+        if (dto.modules && dto.modules.length > 0) {
+          await this.upsertBranchModules(tx, tenantId, branch.id, dto.modules);
+        }
+
         // Auto-set as main branch when this is the tenant's only active branch.
         // An active branch = not soft-deleted AND status ACTIVE; a count of 1
         // therefore means the branch we just created is the sole active one.
@@ -192,16 +199,35 @@ export class BranchService {
 
   /**
    * List active branches for a tenant (offset pagination).
+   * Optional `filters` narrow the result set server-side: `search` does a
+   * case-insensitive match against branch `name` OR `code`; `status` and
+   * `branchType` are exact-match filters. Tenant + soft-delete scoping is
+   * always applied (CLAUDE.md §4.7), regardless of filters.
+   *
    * @param tenantId tenant scope
    * @param page 1-based page (default 1)
    * @param limit page size (default 20)
+   * @param filters optional search / status / branchType filters
    */
   async findAllForTenant(
     tenantId: string,
     page = 1,
     limit = 20,
+    filters: {
+      search?: string;
+      status?: BranchStatus;
+      branchType?: BranchType;
+    } = {},
   ): Promise<PaginatedResult<Branch>> {
-    const where = { tenantId, deletedAt: null };
+    const where: Prisma.BranchWhereInput = { tenantId, deletedAt: null };
+    if (filters.status) where.status = filters.status;
+    if (filters.branchType) where.branchType = filters.branchType;
+    if (filters.search) {
+      where.OR = [
+        { name: { contains: filters.search, mode: 'insensitive' } },
+        { code: { contains: filters.search, mode: 'insensitive' } },
+      ];
+    }
     // Sequential (not array-`$transaction`) so each call flows through the RLS
     // extension and carries the tenant GUC when RLS is enabled.
     const data = await this.prisma.branch.findMany({
@@ -209,6 +235,73 @@ export class BranchService {
       skip: (page - 1) * limit,
       take: limit,
       orderBy: { createdAt: 'desc' },
+    });
+    const total = await this.prisma.branch.count({ where });
+    return { data, total, page, limit };
+  }
+
+  /**
+   * Lightweight branch picker: returns only `{ id, name }` for active branches
+   * in the tenant, ordered by name. Used to populate selectors (e.g. the
+   * sample-receiving-branch dropdown) without shipping full branch records.
+   *
+   * Pagination is **opt-in**: when `filters.page` is omitted the full array is
+   * returned (legacy behaviour for callers that need every option, e.g. id→name
+   * resolution); when `page` is supplied a paginated `{ data, total, page,
+   * limit }` envelope is returned to drive the searchable, "Load More" selector.
+   * `search` (case-insensitive on name/code) applies in both modes.
+   *
+   * @param tenantId tenant scope
+   * @param filters optional `branchType` (include) / `excludeBranchType`
+   *   (exclude) — when both are set, the include filter wins — plus `search`
+   *   and opt-in `page` / `limit`
+   * @returns id + name of each matching branch (array, or paginated envelope
+   *   when `page` is supplied)
+   */
+  async findOptionsForTenant(
+    tenantId: string,
+    filters: {
+      branchType?: BranchType;
+      excludeBranchType?: BranchType;
+      search?: string;
+      page?: number;
+      limit?: number;
+    } = {},
+  ): Promise<
+    | Array<{ id: string; name: string }>
+    | PaginatedResult<{ id: string; name: string }>
+  > {
+    const where: Prisma.BranchWhereInput = { tenantId, deletedAt: null };
+    if (filters.branchType) {
+      where.branchType = filters.branchType;
+    } else if (filters.excludeBranchType) {
+      where.branchType = { not: filters.excludeBranchType };
+    }
+    if (filters.search) {
+      where.OR = [
+        { name: { contains: filters.search, mode: 'insensitive' } },
+        { code: { contains: filters.search, mode: 'insensitive' } },
+      ];
+    }
+
+    // Legacy mode: no `page` → return the full list unchanged.
+    if (filters.page === undefined) {
+      return this.prisma.branch.findMany({
+        where,
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      });
+    }
+
+    // Paginated (opt-in) mode for the searchable "Load More" selector.
+    const page = filters.page;
+    const limit = filters.limit ?? 20;
+    const data = await this.prisma.branch.findMany({
+      where,
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+      skip: (page - 1) * limit,
+      take: limit,
     });
     const total = await this.prisma.branch.count({ where });
     return { data, total, page, limit };
@@ -269,9 +362,15 @@ export class BranchService {
     if (dto.gstNo !== undefined) data.gstNo = dto.gstNo ?? null;
     if (dto.licenseNo !== undefined) data.licenseNo = dto.licenseNo ?? null;
     if (dto.remarks !== undefined) data.remarks = dto.remarks ?? null;
+    let updated: Branch;
     try {
-      return await this.prisma.withTenant(tenantId, async (tx) => {
-        const updated = await tx.branch.update({ where: { id }, data });
+      updated = await this.prisma.withTenant(tenantId, async (tx) => {
+        const branch = await tx.branch.update({ where: { id }, data });
+        // Apply any module enablement changes in the same transaction (only the
+        // supplied keys are touched). Mirrors PUT /branches/:id/modules.
+        if (dto.modules && dto.modules.length > 0) {
+          await this.upsertBranchModules(tx, tenantId, id, dto.modules);
+        }
         // Deactivating the main branch releases its pointer; deleteMany is a
         // safe no-op when this branch is not the main branch.
         if (dto.status === BranchStatus.INACTIVE) {
@@ -279,7 +378,7 @@ export class BranchService {
             where: { tenantId, branchId: id },
           });
         }
-        return updated;
+        return branch;
       });
     } catch (e) {
       if (this.isUniqueViolation(e)) {
@@ -287,6 +386,25 @@ export class BranchService {
       }
       throw e;
     }
+
+    // Replace the sample-receiving-branch mappings when provided. Delegates to
+    // setCollectionMappings (validates receivers + replaces the whole set), so
+    // editing a Collection Center needs no separate collection-mappings call.
+    if (dto.receivingBranchIds !== undefined) {
+      if (updated.branchType !== BranchType.COLLECTION_CENTER) {
+        if (dto.receivingBranchIds.length > 0) {
+          throw new ValidationException(
+            'receivingBranchIds can only be set when branchType is COLLECTION_CENTER',
+            {
+              receivingBranchIds: 'only allowed for COLLECTION_CENTER branches',
+            },
+          );
+        }
+      } else {
+        await this.setCollectionMappings(tenantId, id, dto.receivingBranchIds);
+      }
+    }
+    return updated;
   }
 
   /**
@@ -392,25 +510,45 @@ export class BranchService {
     items: BranchModuleItemDto[],
   ): Promise<Array<{ moduleKey: string; label: string; isEnabled: boolean }>> {
     await this.findById(branchId, tenantId);
-    await this.prisma.withTenant(tenantId, async (tx) => {
-      for (const item of items) {
-        const isEnabled = item.isEnabled ?? true;
-        await tx.branchModule.upsert({
-          where: {
-            branchId_moduleKey: { branchId, moduleKey: item.moduleKey },
-          },
-          create: {
-            tenantId,
-            branchId,
-            moduleKey: item.moduleKey,
-            isEnabled,
-            deletedAt: null,
-          },
-          update: { isEnabled, deletedAt: null },
-        });
-      }
-    });
+    await this.prisma.withTenant(tenantId, (tx) =>
+      this.upsertBranchModules(tx, tenantId, branchId, items),
+    );
     return this.getBranchModules(tenantId, branchId);
+  }
+
+  /**
+   * Upsert `branch_modules` rows for a branch inside an existing transaction.
+   * Shared by branch create/update (which set modules in the same transaction
+   * as the branch) and {@link setBranchModules}. Only the supplied module keys
+   * are touched; `isEnabled` defaults to true. The caller owns the transaction
+   * and tenant context.
+   * @param tx active tenant-scoped transaction client
+   * @param tenantId tenant scope
+   * @param branchId branch the modules belong to
+   * @param items the modules to enable/disable
+   */
+  private async upsertBranchModules(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    branchId: string,
+    items: BranchModuleItemDto[],
+  ): Promise<void> {
+    for (const item of items) {
+      const isEnabled = item.isEnabled ?? true;
+      await tx.branchModule.upsert({
+        where: {
+          branchId_moduleKey: { branchId, moduleKey: item.moduleKey },
+        },
+        create: {
+          tenantId,
+          branchId,
+          moduleKey: item.moduleKey,
+          isEnabled,
+          deletedAt: null,
+        },
+        update: { isEnabled, deletedAt: null },
+      });
+    }
   }
 
   // ── Collection Center → sample-receiving branch mappings ─────────────────────

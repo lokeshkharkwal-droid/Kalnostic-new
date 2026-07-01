@@ -1,22 +1,22 @@
 import { Type } from 'class-transformer';
 import {
-  ArrayMinSize,
   IsArray,
   IsBoolean,
   IsOptional,
   IsString,
+  IsUUID,
   MaxLength,
   MinLength,
   ValidateNested,
 } from 'class-validator';
 import { OutsourceCenterContactDto } from './outsource-center-contact.dto';
-import { OutsourceCenterBranchAssignmentDto } from './outsource-center-branch-assignment.dto';
 
 /**
- * Body for creating an outsource center together with its contacts and branch
- * assignments. `tenantId` and `code` are never accepted from the client — the
- * tenant comes from the JWT and the code is system-generated. At least one branch
- * assignment is required (`assignments` is non-empty).
+ * Body for creating an outsource center together with its contacts. `tenantId`
+ * and `code` are never accepted from the client — the tenant comes from the JWT
+ * and the code is system-generated. A single lab test and lab panel may be
+ * assigned (`labTestId` / `labPanelId`), each validated to be an active lab
+ * test/panel in the tenant.
  */
 export class CreateOutsourceCenterDto {
   // ── Basic details ──
@@ -85,17 +85,23 @@ export class CreateOutsourceCenterDto {
   @IsOptional()
   isActive?: boolean;
 
+  @IsBoolean()
+  @IsOptional()
+  isNablAccredited?: boolean;
+
+  // ── Assigned lab test / lab panel (single, optional) ──
+  @IsUUID()
+  @IsOptional()
+  labTestId?: string;
+
+  @IsUUID()
+  @IsOptional()
+  labPanelId?: string;
+
   // ── Contacts (up to five, all optional) ──
   @IsArray()
   @IsOptional()
   @ValidateNested({ each: true })
   @Type(() => OutsourceCenterContactDto)
   contacts?: OutsourceCenterContactDto[];
-
-  // ── Branch assignments (at least one required) ──
-  @IsArray()
-  @ArrayMinSize(1)
-  @ValidateNested({ each: true })
-  @Type(() => OutsourceCenterBranchAssignmentDto)
-  assignments: OutsourceCenterBranchAssignmentDto[];
 }

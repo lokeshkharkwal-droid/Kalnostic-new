@@ -13,7 +13,7 @@ import { DepartmentService } from './department.service';
 import { CreateDepartmentDto } from './dto/create-department.dto';
 import { UpdateDepartmentDto } from './dto/update-department.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
-import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import { ListDepartmentQueryDto } from './dto/list-department-query.dto';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
@@ -38,17 +38,23 @@ export class DepartmentController {
   }
 
   /**
-   * List departments in the caller's tenant (paginated).
+   * List departments in the caller's tenant (paginated, optional `search` over
+   * name/code, `status` active/inactive filter, and `moduleMapping` filter).
    */
   @Get()
   findAll(
     @CurrentTenant() tenantId: string,
-    @Query() query: PaginationQueryDto,
+    @Query() query: ListDepartmentQueryDto,
   ) {
     return this.departmentService.findAllForTenant(
       tenantId,
       query.page ?? 1,
       query.limit ?? 20,
+      {
+        search: query.search,
+        status: query.status,
+        moduleMapping: query.moduleMapping,
+      },
     );
   }
 

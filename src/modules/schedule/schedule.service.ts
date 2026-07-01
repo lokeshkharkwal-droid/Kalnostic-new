@@ -109,14 +109,28 @@ export class ScheduleService {
    * @param branchId owning branch
    * @param page 1-based page (default 1)
    * @param limit page size (default 20)
+   * @param filters optional case-insensitive `search` (matches `planName`) and
+   *   `status` (lifecycle state) filters
    */
   async findAllForBranch(
     tenantId: string,
     branchId: string,
     page = 1,
     limit = 20,
+    filters: { search?: string; status?: ScheduleStatus } = {},
   ): Promise<PaginatedResult<Schedule>> {
-    const where = { tenantId, branchId, deletedAt: null };
+    const where: Prisma.ScheduleWhereInput = {
+      tenantId,
+      branchId,
+      deletedAt: null,
+    };
+    const search = filters.search?.trim();
+    if (search) {
+      where.planName = { contains: search, mode: 'insensitive' };
+    }
+    if (filters.status) {
+      where.status = filters.status;
+    }
     // Sequential (not array-`$transaction`) so each call flows through the RLS
     // extension and carries the tenant GUC when RLS is enabled.
     const data = await this.prisma.schedule.findMany({

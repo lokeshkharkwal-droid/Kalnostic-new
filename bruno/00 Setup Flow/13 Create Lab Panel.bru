@@ -1,0 +1,57 @@
+meta {
+  name: 13 Create Lab Panel
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/lab-panels
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "panelName": "Full Body Checkup",
+    "panelCode": "FBC",
+    "applicableGender": "ALL",
+    "applicableAgeGroup": "ADULT",
+    "reportType": "COMBINED",
+    "turnaroundPriority": "ROUTINE",
+    "isActive": true,
+    "priceMsrp": 2500,
+    "priceMaximum": 2300,
+    "priceMinimum": 1800,
+    "tatMinValue": 6,
+    "tatMinUnit": "HOURS",
+    "tatMaxValue": 48,
+    "tatMaxUnit": "HOURS",
+    "isAllowPartialBilling": true,
+    "maxTestsRemovable": 1,
+    "tests": [
+      { "labTestId": "{{labTestId}}", "sortOrder": 1, "isRemovable": true }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("labPanelId", data.id);
+}
+
+docs {
+  Step 13. Create a lab panel inside the same master data, including the lab test
+  from step 12. `panelName` / `panelCode` unique per master data;
+  `tests[].labTestId` must be an active test in the SAME master data. Cross-field:
+  `priceMaximum <= priceMsrp`, `priceMinimum <= priceMaximum`, `maxTestsRemovable`
+  requires `isAllowPartialBilling: true` and cannot exceed the test count. Captures
+  `labPanelId`. This completes the end-to-end setup flow.
+}

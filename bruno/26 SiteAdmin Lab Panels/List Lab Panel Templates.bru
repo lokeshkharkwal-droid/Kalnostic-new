@@ -1,0 +1,31 @@
+meta {
+  name: List Lab Panel Templates
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/lab-panels?page=1&limit=20&search=
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  search:
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  List SITE_ADMIN lab-panel templates (paginated; each row carries a test count,
+  no tenant classification refs). Auth: SiteAdmin token, requires
+  `master-data:read`.
+
+  Query params: `page` / `limit` (defaults 1 / 20), `search` (panelName /
+  panelCode, optional), `status` (`ACTIVE` | `INACTIVE`, optional). Returns only
+  `source = SITE_ADMIN` rows; pagination lands in `meta`.
+}

@@ -32,20 +32,21 @@ body:json {
     "panNumber": "ABCDE1234F",
     "address": "12 MG Road, Bengaluru",
     "email": "anita.sharma222@acme.test",
-    "mobileNumber": "9812345678",
+    "mobileNumber": "9812348678",
     "emergencyContactName": "Ramesh Sharma",
-    "emergencyContactNumber": "9812300000",
+    "emergencyContactNumber": "9812300007",
     "password": "Str0ng@Pass1",
+    "roleKey": "branch_admin",
     "userType": "INTERNAL",
     "status": "ACTIVE",
     "branches": [
-      { "branchId": "{{branchId}}", "roleKey": "lab_technician", "moduleId": "lab_operations", "isDefault": true, "branchStatus": "ACTIVE" }
+      { "branchId": "{{branchId}}", "roleKey": "branch_admin", "moduleId": "branch_admin", "isDefault": true, "branchStatus": "ACTIVE" }
     ]
   }
 }
 
 vars:pre-request {
-  branchId: 37e8cb33-9c10-4778-bc4c-20490e1c0f75
+  branchId: d3b91f75-b897-4c81-b216-48bde7d2aad1
 }
 
 script:post-response {
@@ -63,11 +64,26 @@ docs {
   TenantStaffMembership (sequential `userCode`), branch assignment(s) →
   UserBranchProfile. Captures `manageUserId` and `manageUserCode`.
   
-  Validation (all declarative): `employeeName`/parents = letters+spaces;
-  `username` lowercase `[a-z0-9._]` (immutable); `dateOfBirth` ≥ 18 years;
-  `aadhaarNumber` 12 digits; `panNumber` `AAAAA9999A`; `mobileNumber` Indian
-  10-digit; `password` ≥8 with upper/lower/digit/special; `userType`
-  INTERNAL|EXTERNAL.
+  Fields (✱ = required):
+  - `employeeName` ✱, `fatherName`, `motherName` — letters + spaces only (≤100).
+  - `username` ✱ — lowercase `[a-z0-9._]`, ≤50, immutable.
+  - `dateOfBirth` ✱ — ISO date (≥ 18 years).
+  - `gender` ✱ — `MALE` | `FEMALE` | `OTHER` | `PREFER_NOT_TO_SAY`.
+  - `bloodGroup` (optional) — `A_POS`|`A_NEG`|`B_POS`|`B_NEG`|`O_POS`|`O_NEG`|`AB_POS`|`AB_NEG`|`UNKNOWN`.
+  - `nationality` (optional, ≤60).
+  - `aadhaarNumber` (optional) — 12 digits; `panNumber` (optional) — `AAAAA9999A`.
+  - `address` (optional, ≤300).
+  - `email` ✱ (valid email); `mobileNumber` ✱ — Indian 10-digit.
+  - `emergencyContactName` (optional, ≤100); `emergencyContactNumber` (optional) — Indian 10-digit.
+  - `password` ✱ — ≥8 with upper/lower/digit/special.
+  - `roleKey` (optional) — primary/default role (a STAFF_ROLE_KEY, e.g.
+    `business_admin`, `branch_admin`, `lab_technician`, `receptionist`, …). Omit to
+    create a user with no role and assign per-branch later.
+  - `userType` ✱ — `INTERNAL` | `EXTERNAL`.
+  - `status` (optional) — `StaffStatus`: `ACTIVE` | `INACTIVE` (defaults ACTIVE).
+  - `branches` (optional) — array of `{ branchId ✱, roleKey ✱, moduleId?, isDefault?,
+    branchStatus? }`. `roleKey` is a STAFF_ROLE_KEY; `branchStatus` is `ACTIVE`|`INACTIVE`
+    (defaults ACTIVE).
   
   Role model (v2.0):
   - The role is assigned **per branch** via `branches[].roleKey` (one role per

@@ -13,6 +13,9 @@ get {
 params:query {
   page: 1
   limit: 20
+  ~search: bio
+  ~status: ACTIVE
+  ~moduleMapping: DIAGNOSTIC
 }
 
 auth:bearer {
@@ -23,4 +26,14 @@ docs {
   Paginated list of departments in the caller's tenant, each with its active
   person mappings (ordered by `priority`). `page`/`limit` optional. Pagination
   info (`total`, `page`, `limit`, `totalPages`) is lifted into `meta`.
+
+  ## Filters (all optional — toggle the `~` to enable a query param)
+
+  - `search` — case-insensitive `contains` match on `name` **OR** `code` (backs
+    the lab-test form's infinite-scroll Department dropdown).
+  - `status` — `ACTIVE` | `INACTIVE` (mapped to the `isActive` flag).
+  - `moduleMapping` — `BranchType` enum value (`DIAGNOSTIC`, `RADIOLOGY`, `OPD`,
+    `IPD`, `PHARMACY`, `INVENTORY`, `BLOOD_BANK`, `FRANCHISE`, `COMBINED`,
+    `ASSISTANT`, `ACCESSION`); matches departments whose `moduleMapping` array
+    includes the value.
 }

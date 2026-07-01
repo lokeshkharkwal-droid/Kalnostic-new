@@ -13,7 +13,7 @@ import { SubCategoryService } from './sub-category.service';
 import { CreateSubCategoryDto } from './dto/create-sub-category.dto';
 import { UpdateSubCategoryDto } from './dto/update-sub-category.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
-import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import { ListSubCategoryQueryDto } from './dto/list-sub-category-query.dto';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
@@ -38,17 +38,26 @@ export class SubCategoryController {
   }
 
   /**
-   * List sub-categories in the caller's tenant (paginated).
+   * List sub-categories in the caller's tenant (paginated, optional `search`
+   * over name/code, `subCategoryType` filter, `status` active/inactive filter,
+   * and cascading `departmentId` / `categoryId` filters).
    */
   @Get()
   findAll(
     @CurrentTenant() tenantId: string,
-    @Query() query: PaginationQueryDto,
+    @Query() query: ListSubCategoryQueryDto,
   ) {
     return this.subCategoryService.findAllForTenant(
       tenantId,
       query.page ?? 1,
       query.limit ?? 20,
+      {
+        search: query.search,
+        subCategoryType: query.subCategoryType,
+        status: query.status,
+        departmentId: query.departmentId,
+        categoryId: query.categoryId,
+      },
     );
   }
 

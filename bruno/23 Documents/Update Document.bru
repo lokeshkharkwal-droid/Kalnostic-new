@@ -1,0 +1,54 @@
+meta {
+  name: Update Document (new version)
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/documents/{{documentId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "version": "2.0",
+    "title": "Sample Collection Procedure (revised)",
+    "status": "UNDER_REVIEW",
+    "fileName": "sop-001-v2.pdf",
+    "fileUrl": "https://files.example.com/sop-001-v2.pdf"
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("current version bumped to 2.0", function () {
+    expect(res.getBody().data.version).to.equal("2.0");
+    expect(res.getBody().data.latestVersionNo).to.equal(2);
+  });
+}
+
+docs {
+  Edit a document. **Every edit creates a new preserved version.** The current
+  row is updated in place AND a fresh immutable snapshot is appended; all earlier
+  snapshots remain read-only (use List Document Versions to see them).
+
+  - `version` — REQUIRED: the NEW version string. Must be unique within the
+    document → 409 `DOCUMENT_VERSION_CONFLICT` if it was used before (including
+    the current version). This is what makes every save a new version.
+  - All other fields are optional — omitted fields keep their current value.
+  - Changing `documentNumber` to one already used by another active document in
+    the branch → 409 `DOCUMENT_NUMBER_CONFLICT`.
+  - There is NO endpoint to edit or delete an individual version — history is
+    immutable.
+}

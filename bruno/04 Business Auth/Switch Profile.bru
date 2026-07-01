@@ -27,14 +27,20 @@ body:json {
 
 script:post-response {
   const data = res.getBody() && res.getBody().data;
-  if (data && data.accessToken) {
-    bru.setEnvVar("businessAccessToken", data.accessToken);
+  if (data) {
+    if (data.accessToken) bru.setEnvVar("businessAccessToken", data.accessToken);
+    if (data.refreshToken) bru.setEnvVar("businessRefreshToken", data.refreshToken);
   }
 }
 
 docs {
-  Switch the active branch/profile context. Returns a NEW access token only
-  (refresh token unchanged). Captures the new `businessAccessToken`.
+  Switch the active branch/profile context. Returns a NEW access **and** refresh
+  token: the refresh-token context is rotated to the switched branch/profile, so
+  a later `/auth/refresh` keeps the switched context instead of reverting.
+  Captures both `businessAccessToken` and `businessRefreshToken`.
+
+  Session-only: the user's default profile (`isDefault`) is not changed, so a
+  fresh login still lands on the admin-set default branch.
 
   `profileKey` is one of: `business_admin`, `branch_admin`, `doctor`,
   `lab_technician`, `receptionist`, `patient`. Omit `branchId` for tenant-level

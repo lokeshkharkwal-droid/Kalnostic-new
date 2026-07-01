@@ -13,6 +13,8 @@ get {
 params:query {
   page: 1
   limit: 20
+  ~search: main
+  ~branchId: 00000000-0000-0000-0000-000000000000
 }
 
 auth:bearer {
@@ -32,4 +34,10 @@ docs {
   Every branch gets a default master data automatically on branch creation (named
   after the branch), so this list is populated as soon as you have branches. Also
   feeds the "copy data from" dropdown on **Create Master Data**.
+
+  ## Filters (all optional — toggle the `~` to enable a query param)
+
+  - `search` — case-insensitive `contains` match on `name`.
+  - `branchId` — only master data belonging to that branch (UUID). Read filter
+    only; tenant scoping + RLS already guard cross-tenant access.
 }

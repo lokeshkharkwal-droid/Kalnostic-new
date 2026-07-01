@@ -1,0 +1,21 @@
+meta {
+  name: Get Department Template
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/departments/{{siteAdminDepartmentTemplateId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Fetch one SITE_ADMIN department template by id. Auth: SiteAdmin token, requires
+  `master-data:read`. 404 `DEPARTMENT_NOT_FOUND` if missing, soft-deleted, or not
+  a template.
+}

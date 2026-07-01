@@ -17,13 +17,14 @@ headers {
 body:json {
   {
     "identifier": "{{adminPhone}}",
-    "password": "{{adminTempPassword}}"
+    "password": "{{adminTempPassword}}",
+    "tenantSlug": "{{tenantSlug}}"
   }
 }
 
 vars:pre-request {
-  adminPhone: 9812348678
-  adminTempPassword: Str0ng@Pass1
+  adminPhone: +917812345675
+  adminTempPassword: Kgmyqz39
   tenantSlug: acme-diagnostics
 }
 
@@ -38,10 +39,13 @@ script:post-response {
 }
 
 docs {
-  Business-user login. `identifier` is resolved in precedence order
-  phone -> email -> system_username. `tenantSlug` sets the tenant context
-  (required for staff login).
-  
+  Business-user login. Fields:
+  - `identifier` (required) — phone, email, or system_username; resolved in
+    precedence order phone -> email -> system_username.
+  - `password` (required).
+  - `tenantSlug` (optional) — tenant subdomain slug; sets the tenant context
+    and is **required for staff login**. Omit for platform-level patient login.
+
   Returns access (15m) + refresh (30d) tokens. Captures `businessAccessToken`
   and `businessRefreshToken`.
   

@@ -10,6 +10,7 @@ import {
   IsBoolean,
   IsEnum,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
@@ -21,6 +22,7 @@ import {
 } from 'class-validator';
 import { LabTestReferenceRangeDto } from './lab-test-reference-range.dto';
 import { LabTestReferenceValueDto } from './lab-test-reference-value.dto';
+import { ReflexTestRefDto } from './reflex-test-ref.dto';
 
 /**
  * A result parameter for a lab test, embedded under the create/update payload.
@@ -104,11 +106,23 @@ export class LabTestResultParamDto {
   @IsOptional()
   decimalPlaces?: number;
 
-  // Reflex tests (LabTest ids)
-  @IsArray()
-  @IsUUID('4', { each: true })
+  // Result-level critical bounds (distinct from per-reference-range criticals).
+  @IsNumber()
   @IsOptional()
-  reflexTestIds?: string[];
+  criticalMin?: number;
+
+  @IsNumber()
+  @IsOptional()
+  criticalMax?: number;
+
+  // Reflex tests — `[{ id, name }]` stored verbatim as a JSON snapshot (the
+  // `reflex_tests` column) and returned as-is on read. The old bare
+  // `reflexTestIds` array input is no longer accepted.
+  @IsArray()
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => ReflexTestRefDto)
+  reflexTests?: ReflexTestRefDto[];
 
   // Meta
   @IsString()

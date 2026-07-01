@@ -13,6 +13,8 @@ get {
 params:query {
   page: 1
   limit: 20
+  ~search: Morning
+  ~status: ACTIVE
 }
 
 auth:bearer {
@@ -27,4 +29,9 @@ vars:pre-request {
 docs {
   Paginated list of schedules for the branch in the URL (scoped to the caller's
   tenant). `page`/`limit` optional. Ordered by `effectiveFrom` descending.
+
+  Optional filters (disabled query params above — enable as needed):
+  - `search` — case-insensitive match against the schedule `planName`.
+    Whitespace-only values are ignored.
+  - `status` — lifecycle state. Allowed values: `ACTIVE`, `INACTIVE`, `DRAFT`.
 }

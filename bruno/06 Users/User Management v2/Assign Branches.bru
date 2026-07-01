@@ -27,19 +27,14 @@ body:json {
         "moduleId": "lab_operations",
         "isDefault": true,
         "branchStatus": "ACTIVE"
-      },
-      {
-        "branchId": "{{branchId2}}",
-        "roleKey": "branch_admin",
-        "branchStatus": "ACTIVE"
       }
     ]
   }
 }
 
 vars:pre-request {
-  manageUserId: 1631b376-ce6f-438e-89b3-390dd45029b9
-  branchId: b0b8fb9d-7c16-4cd1-b527-5c6cb12508a1
+  manageUserId: 8de0c3f1-8e55-4995-8d83-2530a3053e34
+  branchId: fa799f45-fb95-4dff-b5c3-3bf54bb7e275
   branchId2: b0b8fb9d-7c16-4cd1-b527-5c6cb12508a1
 }
 
@@ -48,7 +43,7 @@ docs {
   `{ branchId, roleKey, moduleId? }`. The role is chosen **per branch** (one role
   per branch); a user can hold different roles at different branches. An existing
   assignment for a branch is re-roled in place.
-
+  
   - Each `roleKey` must be valid for that branch's type (PROFILE_BRANCH_MATRIX).
   - Exactly one branch may be `isDefault: true` (else 422 MULTIPLE_DEFAULT_BRANCH).
   - `moduleId` must be a module **enabled for that branch** (Branches → Set Branch

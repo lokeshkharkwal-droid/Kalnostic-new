@@ -182,16 +182,26 @@ export class AuthService {
   }
 
   /**
-   * Switch the active profile context (issues a new access token only).
+   * Switch the active profile context, issuing a fresh access + refresh token
+   * pair that captures the new branch/profile. Rotating the refresh token is
+   * essential: the stored refresh-token context drives `refresh()`, so without
+   * it the user would silently revert to their previous branch within one
+   * access-token lifetime. Session-only — the default profile (`isDefault`) is
+   * left untouched, so a fresh login still lands on the admin-set default.
    * @param personId logged-in person
    * @param tenantId current tenant context
    * @param dto target branch + profile
+   * @param clientIp client IP (audit)
+   * @returns a new access + refresh token pair for the switched context
+   * @throws ProfileSwitchDeniedException if the target assignment is missing,
+   *   inactive, or on a deactivated branch
    */
   async switchProfile(
     personId: string,
     tenantId: string,
     dto: SwitchProfileDto,
-  ): Promise<{ accessToken: string }> {
+    clientIp: string,
+  ): Promise<{ accessToken: string; refreshToken: string }> {
     const branchId = dto.branchId ?? null;
     const assignment = await this.prisma.userBranchProfile.findFirst({
       where: {
@@ -220,7 +230,11 @@ export class AuthService {
     const accessToken = this.jwtService.sign(payload, {
       expiresIn: this.accessTtl,
     });
-    return { accessToken };
+    const refreshToken = await this.createRefreshToken(payload, clientIp);
+    this.logger.log(
+      `Profile switched: person ${personId} -> ${dto.profileKey} @ ${branchId ?? 'tenant'}`,
+    );
+    return { accessToken, refreshToken };
   }
 
   /**
@@ -392,7 +406,19 @@ export class AuthService {
     const accessToken = this.jwtService.sign(payload, {
       expiresIn: this.accessTtl,
     });
+    const refreshToken = await this.createRefreshToken(payload, clientIp);
+    return { accessToken, refreshToken };
+  }
 
+  /**
+   * Persist a new refresh-token row capturing the active branch/profile from
+   * the given payload, returning the raw token (stored only as a SHA-256 hash).
+   * Shared by login/refresh (issueTokens) and profile switching.
+   */
+  private async createRefreshToken(
+    payload: JwtPayload,
+    clientIp: string | null,
+  ): Promise<string> {
     const rawRefreshToken = randomBytes(64).toString('hex');
     const tokenHash = this.hashToken(rawRefreshToken);
     const expiresAt = new Date();
@@ -400,7 +426,7 @@ export class AuthService {
 
     await this.prisma.refreshToken.create({
       data: {
-        personId,
+        personId: payload.person_id,
         tokenHash,
         branchId: payload.active_branch_id,
         profileKey: payload.active_profile_key,
@@ -411,7 +437,7 @@ export class AuthService {
       },
     });
 
-    return { accessToken, refreshToken: rawRefreshToken };
+    return rawRefreshToken;
   }
 
   /** SHA-256 hash a token for storage (raw tokens are never stored). */

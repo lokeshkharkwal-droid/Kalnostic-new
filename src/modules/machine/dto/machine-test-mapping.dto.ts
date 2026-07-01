@@ -10,8 +10,9 @@ import {
 } from 'class-validator';
 
 /**
- * One LIS↔analyzer test mapping for a machine. `isActive` enables/disables it.
- * `tenantId`/`machineId` come from context — never the body.
+ * One LIS↔analyzer test mapping for a machine. `decimalPlaces` is the result
+ * display precision, 1–4 (i.e. `0.0` / `0.00` / `0.000` / `0.0000`). `isActive`
+ * enables/disables it. `tenantId`/`machineId` come from context — never the body.
  */
 export class MachineTestMappingDto {
   @IsString()
@@ -40,8 +41,8 @@ export class MachineTestMappingDto {
   unit?: string;
 
   @IsInt()
-  @Min(0)
-  @Max(10)
+  @Min(1)
+  @Max(4)
   @IsOptional()
   decimalPlaces?: number;
 

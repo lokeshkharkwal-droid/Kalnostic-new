@@ -1,0 +1,51 @@
+meta {
+  name: Clone Site Admin Template
+  type: http
+  seq: 21
+}
+
+post {
+  url: {{baseUrl}}/sub-categories/{{siteAdminSubCategoryTemplateId}}/clone
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("clonedSubCategoryId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("cloned as a TENANT row with a fresh tenant code", function () {
+    const d = res.getBody().data;
+    expect(d.source).to.equal("TENANT");
+    expect(d.clonedFromId).to.equal(bru.getEnvVar("siteAdminSubCategoryTemplateId"));
+    expect(d.code).to.not.match(/^SA-SubCat-/);
+  });
+}
+
+docs {
+  Adopt a SITE_ADMIN sub-category template into the caller's tenant catalogue.
+  Business JWT; **no request body**. Captures `clonedSubCategoryId`.
+
+  Cascade: the parent template chain is cloned too — UNDER_CATEGORY clones the
+  parent SITE_ADMIN category template (which itself clones its parent department
+  template), UNDER_DEPARTMENT clones the parent department template. Each level
+  reuses an existing tenant clone (matched by `clonedFromId`) instead of
+  duplicating. The whole chain runs in one transaction. A fresh tenant `code`
+  (`{INITIALS}-SubCat-{n}`) is minted; no person mappings are copied.
+
+  Idempotent: any template already cloned is reused, not duplicated.
+
+  - `siteAdminSubCategoryTemplateId` must be a live SITE_ADMIN template →
+    else 404 `SUB_CATEGORY_NOT_FOUND`.
+  - 409 `SUB_CATEGORY_NAME_CONFLICT` / `SUB_CATEGORY_SHORT_NAME_CONFLICT` on a
+    clash with an existing tenant sub-category.
+}

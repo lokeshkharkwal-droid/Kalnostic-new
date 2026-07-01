@@ -1,0 +1,65 @@
+meta {
+  name: Create Category Template
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/categories
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "name": "Global Hematology Template",
+    "shortName": "HEM",
+    "description": "Global SITE_ADMIN category template under a template department",
+    "isActive": true,
+    "categoryType": "UNDER_DEPARTMENT",
+    "departmentId": "{{siteAdminDepartmentTemplateId}}",
+    "moduleMapping": ["DIAGNOSTIC"]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("siteAdminCategoryTemplateId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("is a SITE_ADMIN template with SA code", function () {
+    const d = res.getBody().data;
+    expect(d.source).to.equal("SITE_ADMIN");
+    expect(d.tenantId).to.equal(null);
+    expect(d.code).to.match(/^SA-Cat-\d+$/);
+  });
+}
+
+docs {
+  Create a **global SITE_ADMIN category template**. Auth: SiteAdmin token,
+  requires `master-data:write`. Captures `siteAdminCategoryTemplateId`.
+
+  `code` is system-generated `SA-Cat-{n}` (global sequence). Full hierarchy:
+  - `categoryType = INDEPENDENT` → omit `departmentId`.
+  - `categoryType = UNDER_DEPARTMENT` → `departmentId` REQUIRED and must reference
+    an active **SITE_ADMIN department template** (run `27 SiteAdmin Departments →
+    Create Department Template` first). A non-template / tenant department →
+    404 `DEPARTMENT_NOT_FOUND`; mismatch with the type →
+    400 `CATEGORY_DEPARTMENT_REQUIRED` / `INDEPENDENT_CATEGORY_DEPARTMENT`.
+
+  `name`/`shortName` unique across active templates → 409 on a clash. Businesses
+  adopt this via `10 Categories → Clone Site Admin Template` (which cascade-clones
+  the parent template department).
+}

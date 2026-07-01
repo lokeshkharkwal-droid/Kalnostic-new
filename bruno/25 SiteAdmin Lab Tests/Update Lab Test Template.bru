@@ -1,0 +1,44 @@
+meta {
+  name: Update Lab Test Template
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/siteadmin/lab-tests/{{siteAdminLabTestId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "testDisplayName": "CBC (revised)",
+    "priceMsrp": 750,
+    "priceMaximum": 700,
+    "isActive": true
+  }
+}
+
+vars:pre-request {
+  siteAdminLabTestId: 1f755449-12d7-4e4d-b5ea-4b708749d316
+}
+
+docs {
+  Update a SITE_ADMIN lab-test template. Auth: SiteAdmin token, requires
+  `master-data:write`. Partial update of core fields; when `samples` or
+  `resultParams` is provided, that whole child set is **replaced** (old active
+  rows soft-deleted, new set created) in one transaction — same semantics as the
+  tenant "Update Lab Test".
+  
+  Classification refs stay NULL (templates can't reference tenant catalogue).
+  Conflicts/cross-field rules match Create Lab Test Template. 404
+  `LAB_TEST_NOT_FOUND` if the id isn't a live template.
+}

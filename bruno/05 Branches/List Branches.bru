@@ -13,6 +13,9 @@ get {
 params:query {
   page: 1
   limit: 20
+  ~search: main
+  ~status: ACTIVE
+  ~branchType: COLLECTION_CENTER
 }
 
 auth:bearer {
@@ -24,5 +27,10 @@ vars:pre-request {
 }
 
 docs {
-  Paginated list of branches in the caller's tenant. `page`/`limit` optional.
+  Paginated list of branches in the caller's tenant. All query params optional:
+
+  - `page` / `limit` — offset pagination (defaults 1 / 20, limit capped at 100).
+  - `search` — case-insensitive match against branch `name` OR `code`.
+  - `status` — filter by `BranchStatus` (`ACTIVE` | `INACTIVE` | `UNDER_MAINTENANCE`).
+  - `branchType` — filter by `BranchType` (e.g. `COLLECTION_CENTER`, `DIAGNOSTIC`).
 }

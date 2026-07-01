@@ -151,13 +151,23 @@ export class MasterDataService {
    * @param tenantId tenant scope
    * @param page 1-based page (default 1)
    * @param limit page size (default 20)
+   * @param filters optional case-insensitive name `search` and a `branchId`
+   *   filter (read filter only — tenant scoping + RLS guard cross-tenant access)
    */
   async findAllForTenant(
     tenantId: string,
     page = 1,
     limit = 20,
+    filters: { search?: string; branchId?: string } = {},
   ): Promise<PaginatedResult<MasterData>> {
-    const where = { tenantId, deletedAt: null };
+    const where: Prisma.MasterDataWhereInput = { tenantId, deletedAt: null };
+    const search = filters.search?.trim();
+    if (search) {
+      where.name = { contains: search, mode: 'insensitive' };
+    }
+    if (filters.branchId) {
+      where.branchId = filters.branchId;
+    }
     // Sequential (not array-`$transaction`) so each call flows through the RLS
     // extension and carries the tenant GUC when RLS is enabled.
     const data = await this.prisma.masterData.findMany({

@@ -1,0 +1,44 @@
+meta {
+  name: Branch Options
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/branches/options?excludeBranchType=COLLECTION_CENTER
+  body: none
+  auth: bearer
+}
+
+params:query {
+  excludeBranchType: COLLECTION_CENTER
+  ~branchType: DIAGNOSTIC
+  ~search: main
+  ~page: 1
+  ~limit: 10
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Lightweight branch picker — returns only `{ id, name }` for active branches in
+  the caller's tenant, ordered by name. Used to populate selectors such as the
+  sample-receiving-branch dropdown.
+
+  Optional filters (both `BranchType` enum values):
+  - `branchType` — include only branches of this type.
+  - `excludeBranchType` — exclude branches of this type. Use
+    `excludeBranchType=COLLECTION_CENTER` to list valid sample-receiving
+    branches (a Collection Center cannot receive from another).
+
+  When both are supplied, `branchType` (include) takes precedence.
+
+  - `search` — case-insensitive match against branch `name` OR `code`.
+  - `page` / `limit` — **opt-in** offset pagination. Omit `page` to get the full
+    `{ id, name }[]` array (legacy; for callers needing every option). Supply
+    `page` (+ optional `limit`, default 20) to get a paginated
+    `{ data, total, page, limit }` envelope for the searchable "Load More"
+    selector.
+}

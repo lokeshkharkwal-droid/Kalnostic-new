@@ -1,0 +1,49 @@
+meta {
+  name: List Documents
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/documents?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: SOP-001
+  ~status: APPROVED
+  ~documentType: SOP
+  ~categoryId: {{categoryId}}
+  ~departmentId: {{departmentId}}
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Paginated list of active documents in the caller's ACTIVE BRANCH, newest
+  first. Each row carries its current values plus the loaded `category` and
+  `department` relations. Pagination info (`total`, `page`, `limit`,
+  `totalPages`) is lifted into `meta`.
+
+  Optional filters (disabled query params above — enable as needed):
+  - `search` — case-insensitive match against the `documentNumber` **OR**
+    `title`. Whitespace-only values are ignored.
+  - `status` — allowed values: `DRAFT`, `UNDER_REVIEW`, `APPROVED`, `EXPIRED`,
+    `ARCHIVED`.
+  - `documentType` — allowed values: `SOP`, `POLICY`, `FORM`, `CERTIFICATE`,
+    `ACCREDITATION`, `QC_DOCUMENT`, `WORK_INSTRUCTION`, `OTHER`.
+  - `categoryId`, `departmentId` — filter by catalogue references.
+
+  Requires an active-branch business token (see Create Document).
+}

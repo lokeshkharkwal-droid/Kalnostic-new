@@ -1,0 +1,85 @@
+meta {
+  name: Create Document
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/documents
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "documentNumber": "SOP-001",
+    "documentType": "SOP",
+    "title": "Sample Collection Procedure",
+    "version": "1.0",
+    "categoryId": "{{categoryId}}",
+    "departmentId": "{{departmentId}}",
+    "authorId": "{{patientPersonId}}",
+    "approvedById": "{{patientPersonId}}",
+    "status": "DRAFT",
+    "effectiveDate": "2026-07-01",
+    "expiryDate": "2028-07-01",
+    "reviewDate": "2027-07-01",
+    "fileName": "sop-001-v1.pdf",
+    "fileUrl": "https://files.example.com/sop-001-v1.pdf",
+    "description": "Standard operating procedure for venous sample collection."
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("documentId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("starts at version 1.0", function () {
+    expect(res.getBody().data.version).to.equal("1.0");
+    expect(res.getBody().data.latestVersionNo).to.equal(1);
+  });
+}
+
+docs {
+  Create a controlled document in the caller's ACTIVE BRANCH and seed version 1
+  of its preserved history. Captures `documentId`.
+
+  ## Context (important)
+
+  Documents are tenant-scoped AND branch-level. The branch is taken from the
+  JWT's `active_branch_id` (`@CurrentProfile()`) — NOT from the body. You must
+  call this with a business token that has an ACTIVE BRANCH (e.g. a staff login
+  with a branch profile). A tenant-level token (e.g. `business_admin` with
+  `active_branch_id = null`) is rejected with 400 `BRANCH_CONTEXT_REQUIRED`.
+
+  ## Fields
+
+  - `documentNumber` — REQUIRED, ≤ 120 chars. Unique per branch among active
+    documents → 409 `DOCUMENT_NUMBER_CONFLICT` otherwise.
+  - `documentType` — REQUIRED enum: `SOP`, `POLICY`, `FORM`, `CERTIFICATE`,
+    `ACCREDITATION`, `QC_DOCUMENT`, `WORK_INSTRUCTION`, `OTHER`.
+  - `title` — REQUIRED, ≤ 255 chars.
+  - `version` — REQUIRED version string (≤ 50 chars), unique within the document.
+  - `status` — optional enum (default `DRAFT`): `DRAFT`, `UNDER_REVIEW`,
+    `APPROVED`, `EXPIRED`, `ARCHIVED`.
+  - `categoryId` / `departmentId` — optional UUIDs; validated against the tenant
+    (404 `CATEGORY_NOT_FOUND` / `DEPARTMENT_NOT_FOUND`).
+  - `authorId` / `approvedById` — optional person UUIDs; must be active staff of
+    the tenant → 404 `INVALID_DOCUMENT_AUTHOR` otherwise.
+  - `effectiveDate` / `expiryDate` / `reviewDate` — optional ISO dates.
+  - `fileName` / `fileUrl` — optional file reference (upload handled elsewhere).
+  - `description` — optional, ≤ 5000 chars.
+}

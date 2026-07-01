@@ -1,0 +1,43 @@
+meta {
+  name: 09 Create Category
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/categories
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Hematology Panel",
+    "shortName": "HEM",
+    "description": "Category under the Pathology department",
+    "isActive": true,
+    "categoryType": "UNDER_DEPARTMENT",
+    "departmentId": "{{departmentId}}",
+    "moduleMapping": ["DIAGNOSTIC"],
+    "personMappings": []
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("categoryId", data.id);
+}
+
+docs {
+  Step 9. Create an UNDER_DEPARTMENT category linked to the department from step 8.
+  `departmentId` is required for this type. `shortName` unique under the parent
+  department. Captures `categoryId`.
+}

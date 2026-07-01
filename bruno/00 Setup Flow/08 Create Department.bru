@@ -1,0 +1,43 @@
+meta {
+  name: 08 Create Department
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/departments
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Pathology",
+    "shortName": "PATH",
+    "description": "Clinical pathology department",
+    "isActive": true,
+    "moduleMapping": ["DIAGNOSTIC"],
+    "personMappings": []
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("departmentId", data.id);
+  if (data && data.shortName) bru.setEnvVar("departmentShortName", data.shortName);
+}
+
+docs {
+  Step 8. Create a tenant-level department. `shortName` is required
+  (`^[A-Z0-9]{2,6}$`, unique per tenant). `code` is auto-generated
+  (`{INITIALS}-Dep-{n}`). Captures `departmentId`. (Names are unique per tenant;
+  each flow run uses a fresh tenant, so "Pathology"/"PATH" never collide.)
+}

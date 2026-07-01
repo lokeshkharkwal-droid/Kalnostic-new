@@ -25,19 +25,28 @@ body:json {
     "manufacturer": "Sysmex",
     "model": "XN-1000",
     "serialNo": "SN-XN1000-001",
+    "departmentId": "{{departmentId}}",
     "status": "OFFLINE",
     "lastCalibrationDate": "2026-06-01",
+    "lastMaintenanceDate": "2026-05-15",
     "nextCalibrationDate": "2026-12-01",
+    "nextMaintenanceDue": "2026-11-15",
+    "analyserImage": "https://files.example.com/machines/xn-1000.png",
+    "machineNotes": "Primary haematology analyser for the main lab.",
     "interfaceType": "ASTM",
+    "tokenNumber": "TKN-XN1000-01",
     "connectionType": "TCP/IP",
     "hostPcIpAddress": "192.168.1.10",
     "analyserIpAddress": "192.168.1.20",
     "port": 5600,
     "isAdapterServer": true,
     "adapterSupports": ["Histogram", "Scattergram"],
+    "referenceImages": ["https://files.example.com/machines/xn-1000-front.png"],
+    "interfaceNote": "Connect via the dedicated VLAN only.",
     "isBidirectionalInterface": true,
     "isAutoValidateResults": false,
     "isAutoFlagCritical": true,
+    "interfaceConfigurationNotes": "Baud rate 9600; ASTM E1394 framing.",
     "reagentKits": [
       {
         "reagentKitName": "CELLPACK DCL",
@@ -54,6 +63,15 @@ body:json {
         "unit": "g/dL",
         "decimalPlaces": 1,
         "isActive": true
+      }
+    ],
+    "adapterLogs": [
+      {
+        "srNo": 1,
+        "loggedAt": "2026-06-25T09:30:00.000Z",
+        "logType": "INFO",
+        "status": "Connection established",
+        "sourceIp": "192.168.1.20"
       }
     ],
     "branchIds": ["{{branchId}}"]
@@ -77,9 +95,10 @@ tests {
 
 docs {
   Create a machine (tenant from the JWT). Captures `machineId`. Reagent kits, test
-  mappings, and branch assignments are created in the same transaction; the
-  response embeds `reagentKits`, `testMappings`, and `branches` (adapter logs have
-  their own endpoints).
+  mappings, adapter logs, and branch assignments are created in the same
+  transaction; the response embeds `reagentKits`, `testMappings`, and `branches`.
+  Adapter logs are inserted but NOT embedded in the response — fetch them via
+  `GET /machines/:id/adapter-logs`.
   
   ## Key fields
   
@@ -89,6 +108,14 @@ docs {
   - Booleans are `is`-prefixed: `isAdapterServer`, `isBidirectionalInterface`,
     `isAutoValidateResults`, `isAutoFlagCritical`.
   - `adapterSupports` / `referenceImages` are string arrays; `port` is 0-65535.
+  - Optional free-text/media fields: `analyserImage`, `machineNotes`,
+    `interfaceType`, `tokenNumber`, `connectionType`, `hostPcIpAddress`,
+    `analyserIpAddress`, `interfaceNote`, `interfaceConfigurationNotes`.
+  - `testMappings[].decimalPlaces` is the result display precision, 1-4 (0.0 /
+    0.00 / 0.000 / 0.0000) → values outside that range are rejected (400).
+  - `adapterLogs[]` (optional) are append-only log lines: `srNo` (client-supplied
+    running number, ≥1), `loggedAt` (ISO date-time, the device/event time),
+    `logType` (ERROR | INFO | WARNING), `status`, `sourceIp` — all optional.
   - Date fields (`lastCalibrationDate`, `lastMaintenanceDate`,
     `nextCalibrationDate`, `nextMaintenanceDue`) accept ISO date strings.
   - `departmentId` (optional) must be an active Department in the tenant → 404

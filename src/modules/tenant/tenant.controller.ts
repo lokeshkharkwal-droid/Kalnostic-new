@@ -54,6 +54,17 @@ export class TenantController {
   }
 
   /**
+   * Aggregate business counts for the SiteAdmin dashboard
+   * (total / active / trial / suspended). Declared before `:id` so the static
+   * path isn't captured by the param route.
+   */
+  @Get('dashboard-counts')
+  @RequireSiteAdminPermission(SITE_ADMIN_PERM.BUSINESS_READ)
+  getDashboardCounts() {
+    return this.tenantService.getDashboardCounts();
+  }
+
+  /**
    * Fetch one tenant by id.
    */
   @Get(':id')

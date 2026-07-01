@@ -20,6 +20,7 @@ auth:bearer {
 
 body:json {
   {
+    "bannerImage": "https://files.example.com/panels/fbc-banner.png",
     "panelName": "Full Body Checkup",
     "panelCode": "FBC",
     "applicableGender": "ALL",
@@ -76,7 +77,8 @@ docs {
   same transaction; the response includes them, ordered by `sortOrder`.
   
   ## Key fields
-  
+
+  - `bannerImage` — optional URL/reference string (≤ 1024 chars).
   - `panelName` (2-255) and `panelCode` (1-50) — unique **per master data** among
     active rows → 409 `LAB_PANEL_NAME_CONFLICT` / `LAB_PANEL_CODE_CONFLICT`.
   - `categoryId` / `departmentId` are optional logical references (UUIDs of an

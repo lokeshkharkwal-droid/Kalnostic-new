@@ -30,10 +30,6 @@ body:json {
     "registrationNo": "MMC-2022-04567",
     "registrationCouncil": "Maharashtra Medical Council",
     "subCategory": "Interventional Cardiology",
-    "consultationFee": 1200,
-    "emergencyFee": 2500,
-    "followUpFee": 600,
-    "isAllowDiscount": false,
     "accountHolderName": "Rahul Verma",
     "bankName": "ICICI Bank",
     "accountNumber": "001401599999",
@@ -47,6 +43,18 @@ body:json {
     ],
     "experiences": [
       { "organisation": "Fortis Hospital", "rolePosition": "Consultant Cardiologist", "fromDate": "2017-07-01" }
+    ],
+    "branchAssignments": [
+      {
+        "branchId": "{{branchId}}",
+        "branchRole": "VISITING",
+        "availability": "PART_TIME",
+        "isPrimary": true,
+        "consultationFee": 1200,
+        "emergencyFee": 2500,
+        "followUpFee": 600,
+        "isAllowDiscount": false
+      }
     ]
   }
 }
@@ -70,7 +78,9 @@ docs {
   as "Create Doctor (Reporting)" — only `doctorType` differs. Consultants
   typically omit the signatory/accreditation block. Captures `doctorId`.
 
-  This example demonstrates the free-text "super specialization" (`subCategory`)
-  and `CASH` payment mode. `registrationNo` must be unique among active doctors
-  in the tenant (409 `DUPLICATE_REGISTRATION_NO`).
+  This example demonstrates the free-text "super specialization" (`subCategory`),
+  `CASH` payment mode, and a single branch assignment carrying its own per-branch
+  fees. `registrationNo` must be unique among active doctors in the tenant
+  (409 `DUPLICATE_REGISTRATION_NO`). See "Create Doctor (Reporting)" for the full
+  `branchAssignments` field reference and validation rules.
 }

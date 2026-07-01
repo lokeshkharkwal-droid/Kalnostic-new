@@ -1,0 +1,63 @@
+meta {
+  name: Assign other branches
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/users/manage/{{manageUserId}}/branches
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "branches": [
+      {
+        "branchId": "{{branchId}}",
+        "roleKey": "branch_admin",
+        "moduleId": "branch_admin",
+        "branchStatus": "ACTIVE"
+      }
+    ]
+  }
+}
+
+vars:pre-request {
+  manageUserId: 8de0c3f1-8e55-4995-8d83-2530a3053e34
+  branchId: 5adcc779-2d45-4494-aec1-acd2e2274cd2
+}
+
+docs {
+  Step 7. **Manually grant additional permissions to the staff user created in
+  step 6**, scoped to a single branch. This is how you give a staff member access
+  beyond their role's baseline (or revoke parts of it).
+  
+  - Endpoint: `PUT /users/manage/{{manageUserId}}/branch-permissions`. `manageUserId`
+    was captured by step 6; `branchId` by step 4.
+  - Body: `{ branchId, items: [{ moduleKey, permissionKey, allowed }] }`. The client
+    sends the **full override set for that branch** (it REPLACES the previous
+    grants — supports Select-All / Deselect-All per module). Any permission you omit
+    falls back to the role baseline.
+  - `allowed: true` grants extra access; `allowed: false` revokes a permission the
+    role would otherwise grant.
+  - **Only modules ENABLED for the branch are accepted** (see step 5), and each
+    `permissionKey` must belong to its `moduleKey` — else
+    `422 INVALID_MODULE_KEY` / `MODULE_NOT_ENABLED_FOR_BRANCH`. This example uses
+    `lab_operations` and `sales`, both enabled in step 5. Add other enabled modules
+    as needed (full keys via Users → `GET /users/manage/permission-catalog`).
+  
+  Effective value the frontend sees = `(module enabled for branch) AND (this override
+  ?? role baseline)`. Verify the result for the staff user with
+  `GET /users/manage/{{manageUserId}}/branch-permissions?branchId={{branchId}}`
+  (the per-user, per-branch read — distinct from the next step's `/me/permissions`,
+  which resolves the *caller's* own permissions).
+}

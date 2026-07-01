@@ -20,6 +20,8 @@ auth:bearer {
 
 body:json {
   {
+    "srNo": 1,
+    "loggedAt": "2026-06-25T09:30:00.000Z",
     "logType": "INFO",
     "status": "Connection established",
     "sourceIp": "192.168.1.20"
@@ -39,6 +41,9 @@ tests {
 
 docs {
   Append an adapter communication log line for a machine. Captures `adapterLogId`.
-  `logType` enum: ERROR | INFO | WARNING (optional). `sourceIp` is stored as text.
-  New logs default to `isViewed: false`.
+  `srNo` is a client-supplied running number (≥1); `loggedAt` is the device/event
+  time (ISO date-time), distinct from the DB insert time. `logType` enum: ERROR |
+  INFO | WARNING (optional). `sourceIp` is stored as text. All fields are optional;
+  new logs default to `isViewed: false`. The same fields can also be inserted in
+  bulk via the `adapterLogs[]` array on `POST /machines`.
 }

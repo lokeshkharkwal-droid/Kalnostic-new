@@ -81,6 +81,22 @@ export class PersonNotFoundException extends KaltrosException {
 }
 
 /**
+ * 404 — a mapping's `personId` does not resolve to an active row in the table its
+ * `type` points at (USER → persons, CONSULTANT_DOCTOR/REPORTING_DOCTOR → doctors
+ * with a matching doctorType, EXTERNAL_REFERRAL → external_referrals).
+ */
+export class InvalidPersonMappingReferenceException extends KaltrosException {
+  constructor(type: string, personId: string) {
+    super(
+      'INVALID_PERSON_MAPPING_REFERENCE',
+      'The mapped party does not exist for the supplied type',
+      { type, personId },
+      HttpStatus.NOT_FOUND,
+    );
+  }
+}
+
+/**
  * 400 — subCategoryType is UNDER_DEPARTMENT but no `departmentId` was supplied.
  * (A bad/foreign departmentId surfaces as DepartmentNotFoundException instead.)
  */

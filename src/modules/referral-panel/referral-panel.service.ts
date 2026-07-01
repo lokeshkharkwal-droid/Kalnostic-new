@@ -287,9 +287,12 @@ export class ReferralPanelService {
 
   /**
    * List active referral panels for a tenant (offset pagination). `search` matches
-   * the panel `name` or the user-supplied `panelCode` (case-insensitive).
+   * the panel `name` or the user-supplied `panelCode` (case-insensitive);
+   * `clientType` filters by billing relationship; `status` (ACTIVE/INACTIVE) maps
+   * to `isActive`.
    * @param tenantId tenant scope
-   * @param query pagination + optional `search` (panel name / panel code)
+   * @param query pagination + optional `search` (panel name / panel code),
+   *   `clientType`, and `status` filters
    */
   async findAll(
     tenantId: string,
@@ -306,6 +309,12 @@ export class ReferralPanelService {
           { panelCode: { contains: search, mode: 'insensitive' } },
         ];
       }
+    }
+    if (query.clientType) {
+      where.clientType = query.clientType;
+    }
+    if (query.status) {
+      where.isActive = query.status === 'ACTIVE';
     }
     const [rows, total] = await Promise.all([
       this.prisma.referralPanel.findMany({

@@ -1,4 +1,5 @@
 import { BranchStatus, BranchType, DayOfWeek } from '@prisma/client';
+import { Type } from 'class-transformer';
 import {
   ArrayUnique,
   IsArray,
@@ -13,7 +14,9 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
+import { BranchModuleItemDto } from './set-branch-modules.dto';
 
 /** 24-hour `HH:mm` clock time (branch-local), e.g. `08:30`, `19:00`. */
 const HH_MM = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -130,4 +133,17 @@ export class CreateBranchDto {
   @IsOptional()
   @MaxLength(2000)
   remarks?: string;
+
+  // ── Module enablement ────────────────────────────────────────────────────
+  // Optional: which system modules to enable/disable at the new branch. When
+  // provided, the service upserts `branch_modules` rows in the SAME transaction
+  // as the branch — so module setup needs no separate
+  // `PUT /branches/:id/modules` call. Each `moduleKey` must be a known system
+  // module; `isEnabled` defaults to true. The standalone modules endpoint
+  // remains available for later edits.
+  @IsArray()
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => BranchModuleItemDto)
+  modules?: BranchModuleItemDto[];
 }

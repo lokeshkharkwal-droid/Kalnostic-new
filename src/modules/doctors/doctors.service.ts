@@ -2,33 +2,42 @@ import { Injectable } from '@nestjs/common';
 import { DoctorPaymentMode, DoctorStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
+import { BranchService } from '../branch/branch.service';
 import { CategoryService } from '../category/category.service';
+import { SubCategoryService } from '../sub-category/sub-category.service';
 import { DepartmentService } from '../department/department.service';
 import { CreateDoctorDto } from './dto/create-doctor.dto';
 import { ListDoctorsDto } from './dto/list-doctors.dto';
 import { UpdateDoctorDto } from './dto/update-doctor.dto';
+import { DoctorBranchAssignmentDto } from './dto/doctor-branch-assignment.dto';
 import { DoctorExperienceDto } from './dto/doctor-experience.dto';
 import { DoctorQualificationDto } from './dto/doctor-qualification.dto';
 import {
+  ClassificationRef,
   DOCTOR_DETAIL_INCLUDE,
   DOCTOR_LIST_SELECT,
   DoctorDetail,
+  DoctorDetailResolved,
   DoctorListItem,
   DoctorListRow,
 } from './entities/doctor.entity';
 import {
   DoctorNotFoundException,
+  DuplicateBranchAssignmentException,
   DuplicateRegistrationNoException,
+  MultiplePrimaryBranchAssignmentsException,
 } from './exceptions/doctors.exceptions';
 
 /**
- * Doctor registry management. Tenant-scoped, tenant-level (CLAUDE.md §4.6) — the
- * registry belongs to the business as a whole, not a branch. Every query carries
- * `tenantId` (defence in depth on top of RLS, §4.3) and filters soft-deleted
- * rows. Classification ids (`departmentId`/`categoryId`) are validated against the
- * caller's tenant via the injected Department/Category services (CLAUDE.md
- * rule #3 — never import another service's file directly). Qualifications and
- * experiences are managed via the parent doctor (replace-on-update).
+ * Doctor registry management. Tenant-scoped (CLAUDE.md §4.6) — the registry
+ * belongs to the business as a whole. Every query carries `tenantId` (defence in
+ * depth on top of RLS, §4.3) and filters soft-deleted rows. Classification ids
+ * (`departmentId`/`categoryId`) and assigned branch ids are validated against the
+ * caller's tenant via the injected Department/Category/Branch services (CLAUDE.md
+ * rule #3 — never import another service's file directly). Qualifications,
+ * experiences, and branch assignments are managed via the parent doctor
+ * (replace-on-update). A doctor's charges live per branch assignment, not on the
+ * doctor (§4.5 branch-level data).
  */
 @Injectable()
 export class DoctorsService {
@@ -36,18 +45,26 @@ export class DoctorsService {
     private readonly prisma: PrismaService,
     private readonly departmentService: DepartmentService,
     private readonly categoryService: CategoryService,
+    private readonly subCategoryService: SubCategoryService,
+    private readonly branchService: BranchService,
   ) {}
 
   /**
-   * Register a doctor in a tenant, with its qualifications and experiences. The
-   * classification links (if supplied) are validated to be active department /
-   * category rows of the same tenant first; the doctor and its children are then
-   * created in one transaction.
+   * Register a doctor in a tenant, with its qualifications, experiences, and
+   * branch assignments. The classification links and each assigned branch (if
+   * supplied) are validated to be active rows of the same tenant first; the
+   * doctor and its children are then created in one transaction.
    * @param tenantId owning tenant (from the JWT, never the body)
    * @param dto validated doctor payload
-   * @returns the created doctor with its children and classification names
+   * @returns the created doctor with its children, branch assignments, and
+   *   classification names
    * @throws DepartmentNotFoundException / CategoryNotFoundException if a supplied
    *   classification id isn't an active row of this tenant
+   * @throws BranchNotFoundException if an assigned branch id isn't an active
+   *   branch of this tenant
+   * @throws MultiplePrimaryBranchAssignmentsException if more than one branch
+   *   assignment is marked primary
+   * @throws DuplicateBranchAssignmentException if the same branch is assigned twice
    * @throws DuplicateRegistrationNoException if the registration number is already
    *   used by an active doctor in this tenant
    */
@@ -56,7 +73,9 @@ export class DoctorsService {
       tenantId,
       dto.departmentId,
       dto.categoryId,
+      dto.subCategoryId,
     );
+    await this.validateBranchAssignments(tenantId, dto.branchAssignments);
 
     const data: Prisma.DoctorUncheckedCreateInput = {
       tenantId,
@@ -74,7 +93,7 @@ export class DoctorsService {
       registrationCouncil: dto.registrationCouncil ?? null,
       registrationExpiry: this.toDate(dto.registrationExpiry),
       categoryId: dto.categoryId ?? null,
-      subCategory: dto.subCategory ?? null,
+      subCategoryId: dto.subCategoryId ?? null,
       departmentId: dto.departmentId ?? null,
       isNablAuthorized: dto.isNablAuthorized ?? false,
       isCapCertified: dto.isCapCertified ?? false,
@@ -86,10 +105,6 @@ export class DoctorsService {
       signatoryDepartmentIds: dto.signatoryDepartmentIds ?? Prisma.DbNull,
       signatoryCategoryIds: dto.signatoryCategoryIds ?? Prisma.DbNull,
       signatorySubCategoryIds: dto.signatorySubCategoryIds ?? Prisma.DbNull,
-      consultationFee: dto.consultationFee ?? 0,
-      emergencyFee: dto.emergencyFee ?? 0,
-      followUpFee: dto.followUpFee ?? 0,
-      isAllowDiscount: dto.isAllowDiscount ?? false,
       accountHolderName: dto.accountHolderName ?? null,
       bankName: dto.bankName ?? null,
       accountNumber: dto.accountNumber ?? null,
@@ -108,6 +123,11 @@ export class DoctorsService {
           this.toExperienceCreate(tenantId, e),
         ),
       },
+      branchAssignments: {
+        create: (dto.branchAssignments ?? []).map((a) =>
+          this.toBranchAssignmentCreate(tenantId, a),
+        ),
+      },
     };
 
     try {
@@ -123,7 +143,9 @@ export class DoctorsService {
   /**
    * List active doctors for a tenant (offset pagination), returning the trimmed
    * listing projection (CLAUDE.md §6). Supports a free-text `search` (first/last
-   * name or registration number), a `departmentId` filter, and a `status` filter.
+   * name or registration number), a `departmentId` filter, a `status` filter, a
+   * `doctorType` filter (CONSULTANT / REPORTING), and a `branchId` filter
+   * (doctors with an active assignment to that branch).
    * @param tenantId tenant scope
    * @param query pagination + filters
    */
@@ -137,6 +159,12 @@ export class DoctorsService {
     const where: Prisma.DoctorWhereInput = { tenantId, deletedAt: null };
     if (query.status) where.status = query.status;
     if (query.departmentId) where.departmentId = query.departmentId;
+    if (query.doctorType) where.doctorType = query.doctorType;
+    if (query.branchId) {
+      where.branchAssignments = {
+        some: { branchId: query.branchId, deletedAt: null },
+      };
+    }
     if (query.search) {
       where.OR = [
         { firstName: { contains: query.search, mode: 'insensitive' } },
@@ -163,7 +191,7 @@ export class DoctorsService {
    * @param tenantId tenant scope
    * @throws DoctorNotFoundException if missing or soft-deleted
    */
-  async findById(id: string, tenantId: string): Promise<DoctorDetail> {
+  async findById(id: string, tenantId: string): Promise<DoctorDetailResolved> {
     const doctor = await this.prisma.doctor.findFirst({
       where: { id, tenantId, deletedAt: null },
       include: DOCTOR_DETAIL_INCLUDE,
@@ -171,20 +199,46 @@ export class DoctorsService {
     if (!doctor) {
       throw new DoctorNotFoundException(id);
     }
-    return doctor;
+    const [signatoryDepartments, signatoryCategories, signatorySubCategories] =
+      await Promise.all([
+        this.resolveDepartmentRefs(
+          tenantId,
+          this.toIdArray(doctor.signatoryDepartmentIds),
+        ),
+        this.resolveCategoryRefs(
+          tenantId,
+          this.toIdArray(doctor.signatoryCategoryIds),
+        ),
+        this.resolveSubCategoryRefs(
+          tenantId,
+          this.toIdArray(doctor.signatorySubCategoryIds),
+        ),
+      ]);
+    return {
+      ...doctor,
+      signatoryDepartments,
+      signatoryCategories,
+      signatorySubCategories,
+    };
   }
 
   /**
    * Update a doctor. Only supplied fields change. When `categoryId`/`departmentId`
-   * is supplied it is re-validated against the tenant. When `qualifications` or
-   * `experiences` is supplied it REPLACES the whole set (existing active rows are
-   * soft-deleted and the new set created), all in one transaction.
+   * is supplied it is re-validated against the tenant. When `qualifications`,
+   * `experiences`, or `branchAssignments` is supplied it REPLACES the whole set
+   * (existing active rows are soft-deleted and the new set created), all in one
+   * transaction.
    * @param id doctor id
    * @param tenantId tenant scope
    * @param dto partial update
    * @throws DoctorNotFoundException if missing/soft-deleted
    * @throws DepartmentNotFoundException / CategoryNotFoundException if a supplied
    *   classification id isn't an active row of this tenant
+   * @throws BranchNotFoundException if an assigned branch id isn't an active
+   *   branch of this tenant
+   * @throws MultiplePrimaryBranchAssignmentsException if more than one branch
+   *   assignment is marked primary
+   * @throws DuplicateBranchAssignmentException if the same branch is assigned twice
    * @throws DuplicateRegistrationNoException on a registration-number collision
    */
   async update(
@@ -197,7 +251,9 @@ export class DoctorsService {
       tenantId,
       dto.departmentId,
       dto.categoryId,
+      dto.subCategoryId,
     );
+    await this.validateBranchAssignments(tenantId, dto.branchAssignments);
 
     const data: Prisma.DoctorUncheckedUpdateInput = {};
     if (dto.doctorType !== undefined) data.doctorType = dto.doctorType;
@@ -224,8 +280,8 @@ export class DoctorsService {
       data.registrationExpiry = this.toDate(dto.registrationExpiry);
     }
     if (dto.categoryId !== undefined) data.categoryId = dto.categoryId;
-    if (dto.subCategory !== undefined) {
-      data.subCategory = dto.subCategory ?? null;
+    if (dto.subCategoryId !== undefined) {
+      data.subCategoryId = dto.subCategoryId ?? null;
     }
     if (dto.departmentId !== undefined) data.departmentId = dto.departmentId;
     if (dto.isNablAuthorized !== undefined) {
@@ -257,14 +313,6 @@ export class DoctorsService {
     }
     if (dto.signatorySubCategoryIds !== undefined) {
       data.signatorySubCategoryIds = dto.signatorySubCategoryIds;
-    }
-    if (dto.consultationFee !== undefined) {
-      data.consultationFee = dto.consultationFee;
-    }
-    if (dto.emergencyFee !== undefined) data.emergencyFee = dto.emergencyFee;
-    if (dto.followUpFee !== undefined) data.followUpFee = dto.followUpFee;
-    if (dto.isAllowDiscount !== undefined) {
-      data.isAllowDiscount = dto.isAllowDiscount;
     }
     if (dto.accountHolderName !== undefined) {
       data.accountHolderName = dto.accountHolderName ?? null;
@@ -306,6 +354,17 @@ export class DoctorsService {
             ),
           };
         }
+        if (dto.branchAssignments !== undefined) {
+          await tx.doctorBranchAssignment.updateMany({
+            where: { doctorId: id, tenantId, deletedAt: null },
+            data: { deletedAt: now },
+          });
+          data.branchAssignments = {
+            create: dto.branchAssignments.map((a) =>
+              this.toBranchAssignmentCreate(tenantId, a),
+            ),
+          };
+        }
         return tx.doctor.update({
           where: { id },
           data,
@@ -319,8 +378,8 @@ export class DoctorsService {
   }
 
   /**
-   * Soft-delete a doctor and its active qualifications/experiences (sets
-   * `deletedAt`; rows are preserved) in one transaction.
+   * Soft-delete a doctor and its active qualifications, experiences, and branch
+   * assignments (sets `deletedAt`; rows are preserved) in one transaction.
    * @param id doctor id
    * @param tenantId tenant scope
    * @throws DoctorNotFoundException if missing/soft-deleted
@@ -334,6 +393,10 @@ export class DoctorsService {
         data: { deletedAt: now },
       });
       await tx.doctorExperience.updateMany({
+        where: { doctorId: id, tenantId, deletedAt: null },
+        data: { deletedAt: now },
+      });
+      await tx.doctorBranchAssignment.updateMany({
         where: { doctorId: id, tenantId, deletedAt: null },
         data: { deletedAt: now },
       });
@@ -351,11 +414,13 @@ export class DoctorsService {
    * @param tenantId tenant scope
    * @param departmentId candidate department id, if any
    * @param categoryId candidate category id, if any
+   * @param subCategoryId candidate sub-category id, if any
    */
   private async validateClassification(
     tenantId: string,
     departmentId: string | undefined,
     categoryId: string | undefined,
+    subCategoryId: string | undefined,
   ): Promise<void> {
     if (departmentId) {
       await this.departmentService.findById(departmentId, tenantId);
@@ -363,12 +428,51 @@ export class DoctorsService {
     if (categoryId) {
       await this.categoryService.findById(categoryId, tenantId);
     }
+    if (subCategoryId) {
+      await this.subCategoryService.findById(subCategoryId, tenantId);
+    }
+  }
+
+  /**
+   * Validate a submitted set of branch assignments: at most one may be primary,
+   * no branch may appear twice, and every branch must be an active branch of this
+   * tenant. No-op when no assignments are supplied.
+   * @param tenantId tenant scope
+   * @param assignments the submitted branch assignments, if any
+   * @throws MultiplePrimaryBranchAssignmentsException if more than one is primary
+   * @throws DuplicateBranchAssignmentException if the same branch appears twice
+   * @throws BranchNotFoundException if a branch isn't an active row of this tenant
+   */
+  private async validateBranchAssignments(
+    tenantId: string,
+    assignments: DoctorBranchAssignmentDto[] | undefined,
+  ): Promise<void> {
+    if (!assignments || assignments.length === 0) return;
+
+    const primaryCount = assignments.filter((a) => a.isPrimary === true).length;
+    if (primaryCount > 1) {
+      throw new MultiplePrimaryBranchAssignmentsException(primaryCount);
+    }
+
+    const seen = new Set<string>();
+    for (const a of assignments) {
+      if (seen.has(a.branchId)) {
+        throw new DuplicateBranchAssignmentException(a.branchId);
+      }
+      seen.add(a.branchId);
+    }
+
+    // Each branch must belong to the caller's tenant (throws if not).
+    await Promise.all(
+      assignments.map((a) => this.branchService.findById(a.branchId, tenantId)),
+    );
   }
 
   /**
    * Reshape a selected list row into the listing response: composed `name`,
-   * `specialization` (category name), `superSpecialization` (free-text
-   * subCategory), and `contact` (phone).
+   * `specialization` (category name), `superSpecialization` (sub-category name),
+   * and `contact` (phone). Fees are per branch assignment now, so they are not
+   * part of the listing (use the detail endpoint).
    * @param row a row from `DOCTOR_LIST_SELECT`
    */
   private toListItem(row: DoctorListRow): DoctorListItem {
@@ -379,12 +483,11 @@ export class DoctorsService {
       registrationNo: row.registrationNo,
       department: row.department,
       specialization: row.category?.name ?? null,
-      superSpecialization: row.subCategory,
+      superSpecialization: row.subCategory?.name ?? null,
       contact: row.phone,
       email: row.email,
-      consultationFee: row.consultationFee,
-      followUpFee: row.followUpFee,
       status: row.status,
+      isReportSignatory: row.isReportSignatory,
     };
   }
 
@@ -423,6 +526,92 @@ export class DoctorsService {
       fromDate: this.toDate(e.fromDate),
       toDate: this.toDate(e.toDate),
     };
+  }
+
+  /**
+   * Shape a validated branch-assignment DTO into a nested-create row, stamping the
+   * tenant, connecting the (already tenant-validated) branch, and defaulting the
+   * optional flags/fees. `doctorId` comes from the parent create/update.
+   * @param tenantId tenant scope (set from context, never the body)
+   * @param a the validated branch assignment
+   */
+  private toBranchAssignmentCreate(
+    tenantId: string,
+    a: DoctorBranchAssignmentDto,
+  ): Prisma.DoctorBranchAssignmentCreateWithoutDoctorInput {
+    return {
+      tenantId,
+      branch: { connect: { id: a.branchId } },
+      branchRole: a.branchRole,
+      availability: a.availability,
+      isPrimary: a.isPrimary ?? false,
+      consultationFee: a.consultationFee ?? 0,
+      emergencyFee: a.emergencyFee ?? 0,
+      followUpFee: a.followUpFee ?? 0,
+      isAllowDiscount: a.isAllowDiscount ?? false,
+    };
+  }
+
+  /**
+   * Coerce a stored `signatory*Ids` JSON column into a string array. The column
+   * is `Json?` (an array of ids when set, `null`/absent otherwise); anything that
+   * isn't an array of strings collapses to `[]`.
+   * @param value the raw JSON value read from the doctor row
+   */
+  private toIdArray(value: Prisma.JsonValue | null): string[] {
+    if (!Array.isArray(value)) return [];
+    return value.filter((v): v is string => typeof v === 'string');
+  }
+
+  /**
+   * Resolve department ids into `{ id, name }` refs, scoped to active rows of the
+   * tenant. Order follows the database, not the input array; missing ids drop out.
+   * @param tenantId tenant scope
+   * @param ids the candidate department ids (may be empty)
+   */
+  private async resolveDepartmentRefs(
+    tenantId: string,
+    ids: string[],
+  ): Promise<ClassificationRef[]> {
+    if (ids.length === 0) return [];
+    return this.prisma.department.findMany({
+      where: { id: { in: ids }, tenantId, deletedAt: null },
+      select: { id: true, name: true },
+    });
+  }
+
+  /**
+   * Resolve category (specialty) ids into `{ id, name }` refs, scoped to active
+   * rows of the tenant.
+   * @param tenantId tenant scope
+   * @param ids the candidate category ids (may be empty)
+   */
+  private async resolveCategoryRefs(
+    tenantId: string,
+    ids: string[],
+  ): Promise<ClassificationRef[]> {
+    if (ids.length === 0) return [];
+    return this.prisma.category.findMany({
+      where: { id: { in: ids }, tenantId, deletedAt: null },
+      select: { id: true, name: true },
+    });
+  }
+
+  /**
+   * Resolve sub-category (super-specialty) ids into `{ id, name }` refs, scoped to
+   * active rows of the tenant.
+   * @param tenantId tenant scope
+   * @param ids the candidate sub-category ids (may be empty)
+   */
+  private async resolveSubCategoryRefs(
+    tenantId: string,
+    ids: string[],
+  ): Promise<ClassificationRef[]> {
+    if (ids.length === 0) return [];
+    return this.prisma.subCategory.findMany({
+      where: { id: { in: ids }, tenantId, deletedAt: null },
+      select: { id: true, name: true },
+    });
   }
 
   /**

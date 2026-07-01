@@ -1,0 +1,34 @@
+meta {
+  name: Update Category Template
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/siteadmin/categories/{{siteAdminCategoryTemplateId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "description": "Updated global hematology template",
+    "isActive": true
+  }
+}
+
+docs {
+  Update a SITE_ADMIN category template. Auth: SiteAdmin token, requires
+  `master-data:write`. `code` is immutable. Supplying `categoryType`/`departmentId`
+  re-resolves the parent link against SITE_ADMIN department templates (switching
+  INDEPENDENT ↔ UNDER_DEPARTMENT allowed). 404 `CATEGORY_NOT_FOUND` if not a live
+  template; 409 on name/shortName clash.
+}

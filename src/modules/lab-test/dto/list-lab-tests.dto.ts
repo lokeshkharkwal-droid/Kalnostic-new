@@ -34,6 +34,15 @@ export class ListLabTestsDto extends PaginationQueryDto {
   @IsString()
   subCategoryId?: string;
 
+  /**
+   * Filter to tests that have at least one (non-deleted) sample of this type.
+   * Matches against the `sampleType` free-text on the test's child samples.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  sampleType?: string;
+
   /** Active/inactive filter; mapped to `isActive` in the service. */
   @IsOptional()
   @IsIn(['ACTIVE', 'INACTIVE'])

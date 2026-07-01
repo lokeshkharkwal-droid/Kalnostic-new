@@ -1,0 +1,43 @@
+meta {
+  name: List Templates
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/templates?page=1&limit=20&type=SMS&search=report
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  type: SMS
+  search: report
+  ~isActive: true
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  businessAccessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwZXJzb25faWQiOiIyOTQ5N2I2NC0wNGUyLTQwZjktYTY2OS04NDBiZmNlOGU3ZDYiLCJ0ZW5hbnRfaWQiOiJhYjE2OTY1MC01Mzc1LTQwYmUtYTIxMi00ZGE0ZTJiMDE5NGQiLCJhY3RpdmVfYnJhbmNoX2lkIjpudWxsLCJhY3RpdmVfYnJhbmNoX3R5cGUiOm51bGwsImFjdGl2ZV9wcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwiaXNfcGF0aWVudF9jb250ZXh0IjpmYWxzZSwicHJvZmlsZXMiOlt7ImJyYW5jaF9pZCI6bnVsbCwiYnJhbmNoX25hbWUiOm51bGwsImJyYW5jaF90eXBlIjpudWxsLCJwcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwicHJvZmlsZV9sYWJlbCI6IkJ1c2luZXNzIEFkbWluIiwiaXNfZGVmYXVsdCI6dHJ1ZX1dLCJpc19wYXRpZW50IjpmYWxzZSwicGxhdGZvcm1fbXJuIjoiS0FMLTIwMjYwNjA4LTM2OTBCRkQxIiwiaWF0IjoxNzgwOTM5ODE2LCJleHAiOjE3ODA5NDA3MTZ9.J55wiEzB-FCqQGSFyaVmqeOfFIFJRrlK5d47mBUpMZ4
+}
+
+docs {
+  Paginated list of templates in the caller's scope (tenant-level for
+  business_admin, the active branch for branch-admin — scope comes from the JWT,
+  never the query). Each row is the full template record. Pagination lands in
+  `meta`. Ordered by `createdAt` descending.
+
+  ## Search
+
+  - `search` — case-insensitive match against `name`.
+
+  ## Filters (toggle the `~` to enable a query param)
+
+  - `type` — tab filter: `SMS` | `EMAIL` | `WHATSAPP` | `CONSENT_FORM` | `REPORT_TEMPLATE`.
+  - `isActive` — `true` | `false` status filter.
+}

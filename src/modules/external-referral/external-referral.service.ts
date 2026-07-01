@@ -198,7 +198,7 @@ export class ExternalReferralService {
    * List active external referrals for a tenant (offset pagination), returning the
    * trimmed listing projection. Supports a free-text `search` by referral name
    * (whitespace-tokenised, with organisation name / mobile number / referral code as
-   * fallbacks) plus a `status` filter.
+   * fallbacks), a `status` filter, and a `branchId` filter.
    * @param tenantId tenant scope
    * @param query pagination + filters
    */
@@ -214,6 +214,7 @@ export class ExternalReferralService {
       deletedAt: null,
     };
     if (query.status) where.status = query.status;
+    if (query.branchId) where.branchId = query.branchId;
     const term = query.search?.trim();
     if (term) {
       // Search by name: split into whitespace tokens and require EACH to match the

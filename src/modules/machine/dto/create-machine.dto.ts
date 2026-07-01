@@ -14,14 +14,15 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { MachineStatus } from '@prisma/client';
+import { CreateAdapterLogDto } from './create-adapter-log.dto';
 import { MachineReagentKitDto } from './machine-reagent-kit.dto';
 import { MachineTestMappingDto } from './machine-test-mapping.dto';
 
 /**
- * Payload to create a machine, with its reagent kits, test mappings, and the
- * branches it serves. `tenantId` is never in the body (set from context);
- * `departmentId` and every `branchIds` entry are validated against the caller's
- * tenant in `MachineService`.
+ * Payload to create a machine, with its reagent kits, test mappings, adapter
+ * logs, and the branches it serves. `tenantId` is never in the body (set from
+ * context); `departmentId` and every `branchIds` entry are validated against the
+ * caller's tenant in `MachineService`.
  */
 export class CreateMachineDto {
   // ── Identity ──────────────────────────────────────────────────────────────
@@ -163,6 +164,12 @@ export class CreateMachineDto {
   @ValidateNested({ each: true })
   @Type(() => MachineTestMappingDto)
   testMappings?: MachineTestMappingDto[];
+
+  @IsArray()
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => CreateAdapterLogDto)
+  adapterLogs?: CreateAdapterLogDto[];
 
   @IsArray()
   @IsString({ each: true })

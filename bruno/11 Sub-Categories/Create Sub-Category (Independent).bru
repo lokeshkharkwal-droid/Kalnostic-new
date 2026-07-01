@@ -29,10 +29,12 @@ body:json {
     "personMappings": [
       {
         "personId": "{{patientPersonId}}",
+        "type": "USER",
         "position": "HOD",
         "isSignatory": true,
         "priority": 1,
-        "isDefault": true
+        "isDefault": true,
+        "branchId": "{{branchId}}"
       }
     ]
   }
@@ -40,6 +42,7 @@ body:json {
 
 vars:pre-request {
   patientPersonId: 6ca062db-14ad-44f6-8419-cae5a7441eea
+  branchId: 5adcc779-2d45-4494-aec1-acd2e2274cd2
 }
 
 script:post-response {
@@ -89,7 +92,14 @@ docs {
       `TECHNICIAN`,
     - `isSignatory` (bool, default false),
     - `priority` (int ≥ 1),
-    - `isDefault` (bool, default false).
+    - `isDefault` (bool, default false),
+    - `type` — optional, defaults `USER`; one of `USER`, `CONSULTANT_DOCTOR`,
+      `REPORTING_DOCTOR`, `EXTERNAL_REFERRAL`. Resolves `personId` against the
+      persons / doctors (matching doctorType) / external_referrals table
+      respectively,
+    - `branchId` — optional UUID; omit for a tenant-level mapping (all
+      branches), or set to scope the mapping to one branch (validated against
+      the caller's tenant → 404 `BRANCH_NOT_FOUND`).
 
   NOTE: `code` is system-generated (`{INITIALS}-SubCat-{n}`, e.g. `AD-SubCat-0`
   for a tenant named "Acme Diagnostics"; `n` is a 0-based per-tenant counter) and

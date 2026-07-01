@@ -1,0 +1,137 @@
+meta {
+  name: Create Lab Test Template
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/lab-tests
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "testName": "Global CBC Template",
+    "testDisplayName": "CBC",
+    "testCode": "CBC-TPL",
+    "aka": "Full Blood Count",
+    "processMethod": "SINGLE_STEP",
+    "icdCode": "D64.9",
+    "loincCode": "58410-2",
+    "clinicalTags": ["haematology", "routine"],
+    "samplePriorityType": "ROUTINE",
+    "isEnableCms": true,
+    "priceMsrp": 700,
+    "priceMaximum": 650,
+    "priceMinimum": 400,
+    "priceOriginal": 680,
+    "franchisePrice": 500,
+    "emergencyPrice": 900,
+    "commissionPrice": 50,
+    "discountCapPct": 20,
+    "isAllowPriceOverride": false,
+    "isAllowDiscounts": true,
+    "tatMinValue": 2,
+    "tatMinUnit": "HOURS",
+    "tatMaxValue": 24,
+    "tatMaxUnit": "HOURS",
+    "isHideInOrderScreen": false,
+    "isPreferenceTest": true,
+    "isActive": true,
+    "usefulFor": "Diagnosis of anemia, infection and clotting disorders",
+    "interpretationOfResults": "Low haemoglobin indicates anaemia",
+    "limitations": "Results may vary with altitude",
+    "remarks": "Process within 24h of collection",
+    "references": "WHO 2011 Guidelines",
+    "samples": [
+      {
+        "sampleType": "Blood",
+        "containerType": "EDTA_TUBE_PURPLE_TOP",
+        "sampleSize": "3 mL",
+        "collectionMethod": "Venipuncture",
+        "numberOfSamples": 1,
+        "isFastingRequired": false,
+        "isDefault": true
+      }
+    ],
+    "resultParams": [
+      {
+        "groupName": "CBC Parameters",
+        "parameterName": "Haemoglobin",
+        "parameterCode": "HGB",
+        "method": "Spectrophotometry",
+        "reportingUnit": "g/dL",
+        "resultType": "QUANTITATIVE",
+        "parameterType": "MEASURED",
+        "resultEntryMode": "MANUAL",
+        "resultRoundingType": "ONE_DECIMAL",
+        "decimalPlaces": 1,
+        "isNabl": true,
+        "sortOrder": 1,
+        "referenceRanges": [
+          {
+            "gender": "MALE",
+            "ageFrom": 18,
+            "ageFromUnit": "YEARS",
+            "ageTo": 99,
+            "ageToUnit": "YEARS",
+            "lowerLimit": 13.0,
+            "upperLimit": 17.0,
+            "displayOfReferenceRange": "13.0 - 17.0 g/dL",
+            "abnormalFlagLogic": "BOLD_AND_RED"
+          }
+        ]
+      }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("siteAdminLabTestId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  Create a **global SITE_ADMIN lab-test template** (no tenant/branch/master data).
+  Auth: SiteAdmin token (`jwt-siteadmin`), requires `master-data:write`
+  (CONTENT_ADMIN+). Captures `siteAdminLabTestId`.
+
+  The persisted row has `source = "SITE_ADMIN"` and `tenantId = branchId =
+  masterDataId = null`. Samples / result params / reference ranges/values are
+  created in the same transaction (children also carry null tenant/branch), and a
+  `versionHistory` v1 is seeded.
+
+  ## Not accepted on a template
+
+  Classification refs are **real FKs to tenant-scoped catalogue tables**, so a
+  global template cannot reference them — `departmentId`, `categoryId`,
+  `subCategoryId`, `isMandatoryTest`, `mandatoryDeptId`, `mandatoryCatId`,
+  `mandatorySubcatId` are forced NULL/false by the service (omit them, as above).
+  Everything else mirrors the tenant "Create Lab Test" body.
+
+  ## Conflicts & cross-field rules
+
+  - `testName` / `testCode` unique **across the SITE_ADMIN template catalogue**
+    among active rows → 409 `LAB_TEST_NAME_CONFLICT` / `LAB_TEST_CODE_CONFLICT`;
+    `parameterCode` unique per template → 409 `LAB_TEST_PARAM_CODE_CONFLICT`.
+  - `priceMaximum ≤ priceMsrp`, `priceMinimum ≤ priceMaximum` (422).
+  - A `CALCULATED` parameter requires `calculationFormula`; per-range bound rules
+    apply exactly as for tenant lab tests (422).
+
+  Businesses adopt this template via `13 Lab Tests → Clone Site Admin Template`.
+}

@@ -18,7 +18,6 @@ import { EncryptionService } from '../security/encryption.service';
 import { BranchService } from '../branch/branch.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import {
-  isProfileValidForBranch,
   isValidProfileKey,
   PROFILE_BRANCH_MATRIX,
   PROFILE_LABELS,
@@ -32,6 +31,7 @@ import {
 import {
   isValidModuleKey,
   moduleLabel,
+  SYSTEM_MODULES,
 } from '../permissions/constants/system-modules.constant';
 import { BranchAssignmentItemDto, CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -118,29 +118,42 @@ export interface ResolvedBranchPermission {
   allowed: boolean; // effective value (override ?? baseline)
 }
 
-/** One resolved permission action within a module group. */
-export interface ResolvedPermissionAction {
-  permissionKey: string;
-  action: string; // the part after the colon, e.g. 'view'
-  label: string;
-  baseline: boolean;
-  allowed: boolean; // effective value (override ?? baseline)
-}
-
-/** A module with its resolved permission actions (grouped output). */
+/** A module with its allowed permission keys (grouped output). */
 export interface PermissionModuleGroup {
   moduleKey: string;
   moduleLabel: string;
-  permissions: ResolvedPermissionAction[];
+  moduleAllowed: boolean; // true if any permission in this module is allowed
+  permissions: string[]; // allowed permission keys only
+}
+
+/** The role driving a user's permissions at a branch. */
+export interface ResolvedRole {
+  key: string;
+  label: string;
+}
+
+/** A module enabled for a branch (id + display label). */
+export interface BranchModuleSummary {
+  moduleKey: string;
+  label: string;
+}
+
+/** The module-grouped permission output (no per-request context). */
+export interface GroupedPermissions {
+  modules: PermissionModuleGroup[];
+  allowed: string[];
 }
 
 /**
- * The current user's effective permissions: grouped by module plus a flat list
+ * The current user's effective permissions at a branch: the role driving them,
+ * the modules enabled for that branch, the module-grouped grid, and a flat list
  * of granted permission keys (the frontend keys off `allowed` for show/hide).
  */
-export interface MyPermissions {
-  modules: PermissionModuleGroup[];
-  allowed: string[];
+export interface MyPermissions extends GroupedPermissions {
+  /** The role driving permissions at the branch; null when the user is unassigned. */
+  role: ResolvedRole | null;
+  /** The modules enabled for the branch. */
+  branchModules: BranchModuleSummary[];
 }
 
 @Injectable()
@@ -740,16 +753,20 @@ export class UsersService {
       throw new ProfileNotFoundException(personId, branchId);
     }
 
-    const branch = await this.branchService.findById(branchId, tenantId);
+    await this.branchService.findById(branchId, tenantId);
     const targetRole = dto.roleKey ?? existing.profileKey;
     if (dto.roleKey) {
       if (!isValidProfileKey(dto.roleKey)) {
         throw new ProfileInvalidForBranchException(dto.roleKey, 'unknown');
       }
-      if (!isProfileValidForBranch(dto.roleKey, branch.branchType)) {
+      // Branch-type restriction lifted: any branch-level role may be assigned to
+      // any branch type. Tenant-level roles still can't be pinned to a branch.
+      const isTenantLevel =
+        (PROFILE_BRANCH_MATRIX[dto.roleKey] ?? []).length === 0;
+      if (isTenantLevel) {
         throw new ProfileInvalidForBranchException(
           dto.roleKey,
-          branch.branchType,
+          'none — this is a tenant-level role and cannot be assigned to a branch',
         );
       }
     }
@@ -868,95 +885,138 @@ export class UsersService {
   }
 
   /**
-   * Resolve the **current user's** effective permissions, grouped by module, plus
-   * a flat list of granted keys the frontend uses to show/hide features. Effective
-   * `allowed` = override ?? role baseline.
+   * Resolve the **current user's** effective permissions **at a specific branch**,
+   * across the **full** system catalogue (all 14 modules, every action), grouped
+   * by module, plus a flat list of granted keys the frontend uses to show/hide
+   * features. Every permission is returned with `allowed: true | false` so the
+   * frontend can render a complete permission grid.
    *
-   * - **Branch context** (`activeBranchId` set): gated to the branch's enabled
-   *   modules, with per-(user+branch) overrides applied.
-   * - **Tenant-level** (no active branch, e.g. `business_admin`/`administrator`):
-   *   gated to the role's modules with no overrides — the role baseline is the grant.
+   * The role is the one the user holds **at that branch** (a branch-level
+   * `UserBranchProfile`, else a tenant-level one — `branchId = null`, e.g.
+   * `business_admin`/`administrator` — which applies at every branch). Effective
+   * `allowed` = `(module enabled for the branch) AND (branch override ?? role
+   * baseline)`. The "special" overrides come from `user_branch_permissions` for
+   * **this branch only**, so the same user can have different permissions per
+   * branch. If the user has no assignment at the branch, every permission is
+   * `false` (all-false catalog).
    *
-   * @param tenantId         the caller's tenant (from the JWT)
-   * @param personId         the caller's person id (from the JWT)
-   * @param activeBranchId   the active branch id (null for tenant-level profiles)
-   * @param activeProfileKey the active profile/role key (drives the baseline)
-   * @returns the grouped modules and a flat `allowed` key list
+   * The response also carries the **role** driving the permissions at the branch
+   * (`{ key, label }`, or `null` when unassigned) and **`branchModules`** — the
+   * modules enabled for that branch — so the frontend has the full context in one
+   * call.
+   *
+   * @param tenantId the caller's tenant (from the JWT)
+   * @param personId the caller's person id (from the JWT)
+   * @param branchId the branch to resolve for (validated against the tenant)
+   * @returns the role, the branch's enabled modules, the grouped modules, and a
+   *   flat `allowed` key list
    */
   async getMyPermissions(
     tenantId: string,
     personId: string,
-    activeBranchId: string | null,
-    activeProfileKey: string | null,
+    branchId: string,
   ): Promise<MyPermissions> {
-    const baseline = roleBaselinePermissions(activeProfileKey ?? '');
-    let moduleFilter: Set<string>;
-    let overrideMap = new Map<string, boolean>();
+    await this.getMembership(tenantId, personId);
+    await this.branchService.findById(branchId, tenantId);
 
-    if (activeBranchId) {
-      moduleFilter = await this.getActiveBranchModuleKeys(
+    // Modules enabled for the branch (needed for branchModules + the gate), in
+    // canonical SYSTEM_MODULES order, independent of the user's role.
+    const moduleFilter = await this.getActiveBranchModuleKeys(
+      tenantId,
+      branchId,
+    );
+    const branchModules = SYSTEM_MODULES.filter((m) =>
+      moduleFilter.has(m.key),
+    ).map((m) => ({ moduleKey: m.key, label: m.label }));
+
+    // Role applicable to this branch: prefer a branch-level profile, else a
+    // tenant-level one (branchId = null), which applies at every branch.
+    const profiles = await this.prisma.userBranchProfile.findMany({
+      where: {
         tenantId,
-        activeBranchId,
-      );
+        personId,
+        isActive: true,
+        deletedAt: null,
+        OR: [{ branchId }, { branchId: null }],
+      },
+    });
+    const roleKey =
+      (
+        profiles.find((p) => p.branchId === branchId) ??
+        profiles.find((p) => p.branchId === null)
+      )?.profileKey ?? null;
+    const role: ResolvedRole | null = roleKey
+      ? {
+          key: roleKey,
+          label: PROFILE_LABELS[roleKey as ProfileKey] ?? roleKey,
+        }
+      : null;
+
+    // No role at this branch → empty baseline + overrides, so every permission
+    // resolves to false (all-false catalog), while branchModules still reflects
+    // the branch's enabled modules.
+    let baseline = new Set<string>();
+    let overrideMap = new Map<string, boolean>();
+    if (roleKey) {
+      baseline = roleBaselinePermissions(roleKey);
       const overrides = await this.prisma.userBranchPermission.findMany({
-        where: {
-          tenantId,
-          personId,
-          branchId: activeBranchId,
-          deletedAt: null,
-        },
+        where: { tenantId, personId, branchId, deletedAt: null },
       });
       overrideMap = new Map(overrides.map((o) => [o.permissionKey, o.allowed]));
-    } else {
-      // Tenant-level role: gate by the role's modules (business_admin = all 12).
-      moduleFilter = new Set(roleTemplateModules(activeProfileKey ?? ''));
     }
 
-    return this.groupResolvedPermissions(baseline, overrideMap, moduleFilter);
+    const grouped = this.groupResolvedPermissions(
+      baseline,
+      overrideMap,
+      moduleFilter,
+    );
+    return {
+      role,
+      branchModules,
+      modules: grouped.modules,
+      allowed: grouped.allowed,
+    };
   }
 
   /**
-   * Shape the permission catalogue (filtered to `moduleFilter`) into module groups
-   * with resolved grants, plus a flat list of allowed keys. Effective `allowed` =
-   * override ?? baseline. Catalogue order is preserved.
+   * Resolve the permission catalogue into module groups of **allowed** keys,
+   * plus a flat list of those same keys. Effective `allowed` is gated by module
+   * enablement: a permission whose module is not in `moduleFilter` (not enabled
+   * for the branch / not in the role's modules) is always denied; otherwise
+   * `allowed` = override ?? baseline. Only allowed `permissionKey`s appear in the
+   * output, so a module with no granted permission is omitted entirely (every
+   * emitted group therefore has `moduleAllowed: true`). Catalogue order is
+   * preserved.
    */
   private groupResolvedPermissions(
     baseline: Set<string>,
     overrideMap: Map<string, boolean>,
     moduleFilter: Set<string>,
-  ): MyPermissions {
+  ): GroupedPermissions {
     const groups = new Map<string, PermissionModuleGroup>();
     const allowed: string[] = [];
 
     for (const entry of MODULE_PERMISSION_CATALOG) {
-      if (!moduleFilter.has(entry.moduleKey)) {
-        continue;
-      }
+      const moduleEnabled = moduleFilter.has(entry.moduleKey);
       const base = baseline.has(entry.permissionKey);
-      const isAllowed = overrideMap.get(entry.permissionKey) ?? base;
-      const action = entry.permissionKey.slice(
-        entry.permissionKey.indexOf(':') + 1,
-      );
+      const isAllowed = moduleEnabled
+        ? (overrideMap.get(entry.permissionKey) ?? base)
+        : false;
+
+      if (!isAllowed) continue; // only allowed keys appear in the output
 
       let group = groups.get(entry.moduleKey);
       if (!group) {
         group = {
           moduleKey: entry.moduleKey,
           moduleLabel: moduleLabel(entry.moduleKey),
+          moduleAllowed: true,
           permissions: [],
         };
         groups.set(entry.moduleKey, group);
       }
-      group.permissions.push({
-        permissionKey: entry.permissionKey,
-        action,
-        label: entry.label,
-        baseline: base,
-        allowed: isAllowed,
-      });
-      if (isAllowed) {
-        allowed.push(entry.permissionKey);
-      }
+      group.permissions.push(entry.permissionKey);
+      allowed.push(entry.permissionKey);
     }
 
     return { modules: [...groups.values()], allowed };
@@ -1245,10 +1305,10 @@ export class UsersService {
           'none — this is a tenant-level role and cannot be assigned to a branch',
         );
       }
-      const branch = await this.branchService.findById(it.branchId, tenantId);
-      if (!isProfileValidForBranch(roleKey, branch.branchType)) {
-        throw new ProfileInvalidForBranchException(roleKey, branch.branchType);
-      }
+      // Branch-type restriction lifted: any branch-level role may be assigned to
+      // any branch type. We still verify the branch belongs to the caller's
+      // tenant (findById throws if it doesn't) per the never-trust-client-branchId rule.
+      await this.branchService.findById(it.branchId, tenantId);
       let moduleId: string | null = null;
       if (it.moduleId) {
         await this.assertModuleEnabledForBranch(

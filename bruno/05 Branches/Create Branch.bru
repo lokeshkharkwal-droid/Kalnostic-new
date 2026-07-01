@@ -19,26 +19,48 @@ auth:bearer {
 }
 
 body:json {
-  
-  
   {
     "name": "Kothrud Collection Center",
     "branchType": "COLLECTION_CENTER",
-    "phone": "+919822222222",
-      "email": "main@acme.test",
+    "status": "ACTIVE",
+    "establishedDate": "2024-01-15",
     "addressLine": "12 Lab Street",
     "city": "Pune",
     "state": "Maharashtra",
     "pincode": "411038",
+    "phone": "+919822222222",
+    "email": "main@acme.test",
+    "managerName": "Asha Patil",
+    "managerPhone": "+919822333444",
+    "labDirector": "Dr. Vivek Rao",
+    "openingTime": "08:00",
+    "closingTime": "20:00",
+    "dailyCapacity": 250,
+    "operationalDays": [
+      "MONDAY",
+      "TUESDAY",
+      "WEDNESDAY",
+      "THURSDAY",
+      "FRIDAY",
+      "SATURDAY"
+    ],
+    "gstNo": "27ABCDE1234F1Z5",
+    "licenseNo": "MH-LAB-2024-00123",
+    "remarks": "Primary sample-collection hub for west Pune.",
     "receivingBranchIds": [
       "{{branchId}}"
+    ],
+    "modules": [
+      { "moduleKey": "accession", "isEnabled": true },
+      { "moduleKey": "sales", "isEnabled": true },
+      { "moduleKey": "finance", "isEnabled": false }
     ]
   }
 }
 
 vars:pre-request {
   businessAccessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwZXJzb25faWQiOiIyOTQ5N2I2NC0wNGUyLTQwZjktYTY2OS04NDBiZmNlOGU3ZDYiLCJ0ZW5hbnRfaWQiOiJhYjE2OTY1MC01Mzc1LTQwYmUtYTIxMi00ZGE0ZTJiMDE5NGQiLCJhY3RpdmVfYnJhbmNoX2lkIjpudWxsLCJhY3RpdmVfYnJhbmNoX3R5cGUiOm51bGwsImFjdGl2ZV9wcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwiaXNfcGF0aWVudF9jb250ZXh0IjpmYWxzZSwicHJvZmlsZXMiOlt7ImJyYW5jaF9pZCI6bnVsbCwiYnJhbmNoX25hbWUiOm51bGwsImJyYW5jaF90eXBlIjpudWxsLCJwcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwicHJvZmlsZV9sYWJlbCI6IkJ1c2luZXNzIEFkbWluIiwiaXNfZGVmYXVsdCI6dHJ1ZX1dLCJpc19wYXRpZW50IjpmYWxzZSwicGxhdGZvcm1fbXJuIjoiS0FMLTIwMjYwNjA4LTM2OTBCRkQxIiwiaWF0IjoxNzgwOTE3ODQ0LCJleHAiOjE3ODA5MTg3NDR9.SvHviOXq5XC3_5hZ30iX0nsg3McXaCySgbwwmZP3ujY
-  branchId: b0b8fb9d-7c16-4cd1-b527-5c6cb12508a1
+  branchId: d3b91f75-b897-4c81-b216-48bde7d2aad1
 }
 
 script:post-response {
@@ -49,11 +71,36 @@ script:post-response {
 docs {
   Create a branch in the caller's tenant (tenant id taken from the JWT).
   Captures `branchId`.
-  
-  `branchType` is one of: `DIAGNOSTIC`, `RADIOLOGY`, `OPD`, `IPD`, `PHARMACY`,
-  `INVENTORY`, `BLOOD_BANK`, `FRANCHISE`, `COMBINED`. `name` 2-255 chars.
-  
+
+  Fields (✱ = required):
+
+  - `name` ✱ — 2-255 chars; unique among active branches in the tenant (409 otherwise).
+  - `branchType` ✱ — one of: `DIAGNOSTIC`, `RADIOLOGY`, `OPD`, `IPD`, `PHARMACY`,
+    `INVENTORY`, `BLOOD_BANK`, `FRANCHISE`, `COMBINED`, `ASSISTANT`, `ACCESSION`,
+    `TECHNICIAN`, `COLLECTION_CENTER`.
+  - `status` (optional) — `BranchStatus`: `ACTIVE` | `INACTIVE` | `UNDER_MAINTENANCE`.
+  - `establishedDate` (optional) — ISO-8601 date.
+  - `addressLine` (optional, ≤500), `city` (optional, ≤120), `state` (optional, ≤120),
+    `pincode` (optional, ≤20).
+  - `phone` (optional, ≤30), `email` (optional, valid email ≤255),
+    `managerName` (optional, ≤255), `managerPhone` (optional, ≤30),
+    `labDirector` (optional, ≤255).
+  - `openingTime` / `closingTime` (optional) — 24h `HH:mm`.
+  - `dailyCapacity` (optional) — integer ≥ 0.
+  - `operationalDays` (optional) — array of `DayOfWeek` (`MONDAY`..`SUNDAY`),
+    no duplicates.
+  - `gstNo` (optional, ≤50), `licenseNo` (optional, ≤100), `remarks` (optional, ≤2000).
+  - `receivingBranchIds` (optional) — UUIDs of sample-receiving branches to map.
+    Only valid when `branchType` is `COLLECTION_CENTER`; each receiver is validated
+    (non-CC receivers rejected). The branch + mappings are created atomically.
+  - `modules` (optional) — enable/disable system modules at the new branch in the
+    same request (no separate `PUT /branches/:id/modules` call needed). Each item:
+    `{ moduleKey, isEnabled? }`. `moduleKey` must be a known system module — one of:
+    `accession`, `inventory`, `sales`, `finance`, `phlebotomist`, `assistant`,
+    `operation`, `business_admin`, `branch_admin` (see `GET /users/manage/modules`).
+    `isEnabled` defaults to true.
+
   NOTE: `code` is system-generated (per-tenant sequential, e.g. `BR-00001`) and
   immutable — do NOT send it in the body (it is rejected as an unknown field).
-  `name` must be unique among active branches in the tenant (409 otherwise).
+  `tenantId` / `branchId` come from the JWT/context, never the body.
 }

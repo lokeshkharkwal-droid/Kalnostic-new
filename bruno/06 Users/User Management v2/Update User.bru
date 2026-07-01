@@ -20,16 +20,26 @@ auth:bearer {
 
 body:json {
   {
-    "employeeName": "Anita S Sharma",
-    "bloodGroup": "B_POS",
-    "address": "45 Brigade Road, Bengaluru",
-    "mobileNumber": "9812345699",
-    "emergencyContactNumber": "9812300011",
-    "password": "N3w@Strong1",
-    "roleKey": "branch_admin",
-    "userType": "INTERNAL",
-    "status": "ACTIVE"
+    "branches": [
+      {
+        "branchId": "d4956120-b9a9-4514-8bca-d7c2740d79ca",
+        "roleKey": "branch_admin",
+        "moduleId": "branch_admin",
+        "isDefault": true,
+        "branchStatus": "ACTIVE"
+      },
+      {
+        "branchId": "fa799f45-fb95-4dff-b5c3-3bf54bb7e275",
+        "roleKey": "branch_admin",
+        "moduleId": "branch_admin",
+        "branchStatus": "ACTIVE"
+      }
+    ]
   }
+}
+
+vars:pre-request {
+  manageUserId: 8de0c3f1-8e55-4995-8d83-2530a3053e34
 }
 
 docs {
@@ -37,7 +47,7 @@ docs {
   primary `roleKey`, and global `status`. `username`, `email`, and `userCode` are
   **immutable** — they are not accepted (the global validation pipe rejects unknown
   properties), so do not send them.
-
+  
   Role model (v2.0): `roleKey` here is only the membership's primary/default role —
   it is **NOT** propagated to branch assignments. Per-branch roles are managed via
   Assign Branches / Update Branch Assignment. To change a user's role at a specific

@@ -1,0 +1,69 @@
+meta {
+  name: Create Email Template
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/templates
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "type": "EMAIL",
+    "name": "Report Dispatch Email",
+    "triggerEvent": "REPORT_READY",
+    "version": "v1.0",
+    "isActive": true,
+    "subject": "Your {test_name} report from {lab_name}",
+    "body": "Dear {patient_name},\n\nYour report for {test_name} is now available. {{attachment_here}}\n\nRegards,\n{lab_name}",
+    "header": {
+      "enabled": true,
+      "type": "Image",
+      "text": "",
+      "imageFile": "letterhead-logo.png",
+      "alignment": "Center"
+    },
+    "footerBlock": {
+      "enabled": true,
+      "type": "Text",
+      "text": "This is a system-generated email. Do not reply.",
+      "imageFile": "",
+      "alignment": "Center"
+    },
+    "attachment": {
+      "enabled": true,
+      "type": "Both",
+      "files": ["report.pdf", "cover.png"],
+      "position": "Inline",
+      "alignment": "Center",
+      "sizeProfile": "Medium"
+    }
+  }
+}
+
+vars:pre-request {
+  businessAccessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwZXJzb25faWQiOiIyOTQ5N2I2NC0wNGUyLTQwZjktYTY2OS04NDBiZmNlOGU3ZDYiLCJ0ZW5hbnRfaWQiOiJhYjE2OTY1MC01Mzc1LTQwYmUtYTIxMi00ZGE0ZTJiMDE5NGQiLCJhY3RpdmVfYnJhbmNoX2lkIjpudWxsLCJhY3RpdmVfYnJhbmNoX3R5cGUiOm51bGwsImFjdGl2ZV9wcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwiaXNfcGF0aWVudF9jb250ZXh0IjpmYWxzZSwicHJvZmlsZXMiOlt7ImJyYW5jaF9pZCI6bnVsbCwiYnJhbmNoX25hbWUiOm51bGwsImJyYW5jaF90eXBlIjpudWxsLCJwcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwicHJvZmlsZV9sYWJlbCI6IkJ1c2luZXNzIEFkbWluIiwiaXNfZGVmYXVsdCI6dHJ1ZX1dLCJpc19wYXRpZW50IjpmYWxzZSwicGxhdGZvcm1fbXJuIjoiS0FMLTIwMjYwNjA4LTM2OTBCRkQxIiwiaWF0IjoxNzgwOTM5ODE2LCJleHAiOjE3ODA5NDA3MTZ9.J55wiEzB-FCqQGSFyaVmqeOfFIFJRrlK5d47mBUpMZ4
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("templateId", data.id);
+}
+
+docs {
+  Email template. Adds the email-only `subject` (≤500 chars) stored in
+  `config.subject`. `{{attachment_here}}` positions attachments inline in the
+  body. See "Create SMS Template" for the full field reference shared by all
+  types (name/triggerEvent/version/isActive/body + header/footerBlock/attachment).
+}

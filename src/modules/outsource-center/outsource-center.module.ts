@@ -1,16 +1,14 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
-import { BranchModule } from '../branch/branch.module';
 import { OutsourceCenterController } from './outsource-center.controller';
 import { OutsourceCenterService } from './outsource-center.service';
 
 /**
- * Outsource-center feature module. Imports `BranchModule` to validate
- * client-supplied branch ids (CLAUDE.md §4.7). Exports `OutsourceCenterService`
- * so a future accession-routing module can resolve a center's branch assignments.
+ * Outsource-center feature module. Exports `OutsourceCenterService` so a future
+ * accession-routing module can resolve a center's assigned lab test/panel.
  */
 @Module({
-  imports: [PrismaModule, BranchModule],
+  imports: [PrismaModule],
   controllers: [OutsourceCenterController],
   providers: [OutsourceCenterService],
   exports: [OutsourceCenterService],

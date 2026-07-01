@@ -13,6 +13,10 @@ get {
 params:query {
   page: 1
   limit: 20
+  ~search: routine
+  ~categoryType: UNDER_DEPARTMENT
+  ~status: ACTIVE
+  ~departmentId: 00000000-0000-0000-0000-000000000000
 }
 
 auth:bearer {
@@ -24,4 +28,13 @@ docs {
   person mappings (ordered by `priority`). `page`/`limit` optional. Pagination
   info (`total`, `page`, `limit`, `totalPages`) is lifted into `meta`. Each row
   carries `categoryType` and `departmentId` (null for Independent categories).
+
+  ## Filters (all optional — toggle the `~` to enable a query param)
+
+  - `search` — case-insensitive `contains` match on `name` **OR** `code`.
+  - `categoryType` — `INDEPENDENT` | `UNDER_DEPARTMENT`.
+  - `status` — `ACTIVE` | `INACTIVE` (mapped to the `isActive` flag).
+  - `departmentId` — cascading (only categories under that department).
+
+  Back the lab-test form's infinite-scroll Category dropdown.
 }

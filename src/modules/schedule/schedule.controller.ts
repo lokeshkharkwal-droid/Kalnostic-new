@@ -14,7 +14,7 @@ import { UpdateScheduleDto } from './dto/update-schedule.dto';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import { ListScheduleQueryDto } from './dto/list-schedule-query.dto';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
@@ -46,19 +46,21 @@ export class ScheduleController {
   }
 
   /**
-   * List schedules for the branch (paginated).
+   * List schedules for the branch (paginated). Optional `search` (matches the
+   * plan name, case-insensitive) and `status` filters.
    */
   @Get()
   findAll(
     @CurrentTenant() tenantId: string,
     @Param('branchId') branchId: string,
-    @Query() query: PaginationQueryDto,
+    @Query() query: ListScheduleQueryDto,
   ) {
     return this.scheduleService.findAllForBranch(
       tenantId,
       branchId,
       query.page ?? 1,
       query.limit ?? 20,
+      { search: query.search, status: query.status },
     );
   }
 

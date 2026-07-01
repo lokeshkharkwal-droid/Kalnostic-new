@@ -1,0 +1,37 @@
+meta {
+  name: List Lab Test Options
+  type: http
+  seq: 12
+}
+
+get {
+  url: {{baseUrl}}/lab-tests/options?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: CBC
+  ~branchId: 9fcbf225-7f94-4b57-b3b4-2127b7f5be78
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Lightweight `{ id, name }` options for the searchable selector (e.g. the Add
+  Outsource Center form's lab-test picker). Flat route — NOT nested under a master
+  data — so it searches the tenant's active lab tests across a branch.
+
+  All query params optional:
+  - `branchId` — restrict to active lab tests on this branch.
+  - `search` — case-insensitive match against the lab test `testName`.
+  - `page` / `limit` — **opt-in** offset pagination. Omit `page` to get the full
+    `{ id, name }[]` array; supply `page` to get a `{ data, total, page, limit }`
+    envelope for the "Load More" selector.
+
+  Only active, non-deleted lab tests are returned. `name` is the `testName`.
+}

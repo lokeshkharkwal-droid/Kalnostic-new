@@ -1,0 +1,27 @@
+meta {
+  name: Delete Document
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/documents/{{documentId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Soft-delete a document (sets `deletedAt`). It drops out of List/Get, but its
+  version snapshots are PRESERVED in the database for the record. 404
+  `DOCUMENT_NOT_FOUND` if already missing.
+}

@@ -1,0 +1,22 @@
+meta {
+  name: Get Site Admin Template
+  type: http
+  seq: 16
+}
+
+get {
+  url: {{baseUrl}}/lab-tests/templates/{{siteAdminLabTestId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Fetch one SITE_ADMIN lab-test template with its children (read-only), so a
+  business can preview before cloning. Business JWT. 404 `LAB_TEST_NOT_FOUND` if
+  the id isn't a live template. Uses `siteAdminLabTestId` captured by
+  `25 SiteAdmin Lab Tests → Create Lab Test Template`.
+}

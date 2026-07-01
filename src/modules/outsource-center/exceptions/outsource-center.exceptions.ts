@@ -25,45 +25,6 @@ export class OutsourceCenterNameConflictException extends KaltrosException {
   }
 }
 
-/** 422 — a center must be assigned to at least one branch. */
-export class OutsourceCenterNoBranchException extends KaltrosException {
-  constructor() {
-    super(
-      'OUTSOURCE_CENTER_NO_BRANCH',
-      'An outsource center must be assigned to at least one branch',
-      {},
-      HttpStatus.UNPROCESSABLE_ENTITY,
-    );
-  }
-}
-
-/** 400 — the same branch was assigned more than once. */
-export class DuplicateBranchAssignmentException extends KaltrosException {
-  constructor(branchId: string) {
-    super(
-      'OUTSOURCE_CENTER_DUPLICATE_BRANCH',
-      'A branch can only be assigned once to an outsource center',
-      { branchId },
-      HttpStatus.BAD_REQUEST,
-    );
-  }
-}
-
-/**
- * 400 — an assigned branch selected neither a lab test nor a lab panel. At least
- * one test or panel is required per assigned branch.
- */
-export class MissingSelectionException extends KaltrosException {
-  constructor(branchId: string) {
-    super(
-      'OUTSOURCE_CENTER_MISSING_SELECTION',
-      'Each assigned branch must select at least one lab test or lab panel',
-      { branchId },
-      HttpStatus.BAD_REQUEST,
-    );
-  }
-}
-
 /** 400 — the same contact role was provided more than once for a center. */
 export class DuplicateContactRoleException extends KaltrosException {
   constructor(role: string) {
@@ -77,30 +38,30 @@ export class DuplicateContactRoleException extends KaltrosException {
 }
 
 /**
- * 400 — one or more selected lab tests are not active lab tests on the branch they
- * were chosen for (wrong branch, soft-deleted, inactive, or non-existent).
+ * 400 — the selected lab test is not an active lab test in this tenant
+ * (soft-deleted, inactive, or non-existent).
  */
-export class InvalidTestForBranchException extends KaltrosException {
-  constructor(branchId: string, labTestIds: string[]) {
+export class InvalidLabTestException extends KaltrosException {
+  constructor(labTestId: string) {
     super(
       'OUTSOURCE_CENTER_INVALID_TEST',
-      'One or more selected lab tests are not valid for this branch',
-      { branchId, labTestIds },
+      'The selected lab test is not a valid active lab test',
+      { labTestId },
       HttpStatus.BAD_REQUEST,
     );
   }
 }
 
 /**
- * 400 — one or more selected lab panels are not active lab panels on the branch
- * they were chosen for (wrong branch, soft-deleted, inactive, or non-existent).
+ * 400 — the selected lab panel is not an active lab panel in this tenant
+ * (soft-deleted, inactive, or non-existent).
  */
-export class InvalidPanelForBranchException extends KaltrosException {
-  constructor(branchId: string, labPanelIds: string[]) {
+export class InvalidLabPanelException extends KaltrosException {
+  constructor(labPanelId: string) {
     super(
       'OUTSOURCE_CENTER_INVALID_PANEL',
-      'One or more selected lab panels are not valid for this branch',
-      { branchId, labPanelIds },
+      'The selected lab panel is not a valid active lab panel',
+      { labPanelId },
       HttpStatus.BAD_REQUEST,
     );
   }

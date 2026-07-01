@@ -21,7 +21,7 @@ import {
 /** Scalar fields of a machine (the DTO minus its nested children/branch ids). */
 type MachineScalars = Omit<
   CreateMachineDto,
-  'reagentKits' | 'testMappings' | 'branchIds'
+  'reagentKits' | 'testMappings' | 'adapterLogs' | 'branchIds'
 >;
 
 /**
@@ -41,10 +41,10 @@ export class MachineService {
   ) {}
 
   /**
-   * Create a machine with its reagent kits, test mappings, and branch
-   * assignments. The `departmentId` (if given) and every `branchIds` entry are
-   * validated to belong to the caller's tenant before any write. All inserts run
-   * in one transaction.
+   * Create a machine with its reagent kits, test mappings, adapter logs, and
+   * branch assignments. The `departmentId` (if given) and every `branchIds` entry
+   * are validated to belong to the caller's tenant before any write. All inserts
+   * run in one transaction.
    * @param tenantId owning tenant (from context)
    * @param dto validated payload (no `tenantId`)
    * @returns the created machine composed with its children + branch mappings
@@ -57,7 +57,8 @@ export class MachineService {
     tenantId: string,
     dto: CreateMachineDto,
   ): Promise<MachineWithChildren> {
-    const { reagentKits, testMappings, branchIds, ...scalars } = dto;
+    const { reagentKits, testMappings, adapterLogs, branchIds, ...scalars } =
+      dto;
     await this.assertReferences(tenantId, dto.departmentId, branchIds);
 
     let createdId: string;
@@ -68,6 +69,7 @@ export class MachineService {
         });
         await this.createReagentKits(tx, tenantId, machine.id, reagentKits);
         await this.createTestMappings(tx, tenantId, machine.id, testMappings);
+        await this.createAdapterLogs(tx, tenantId, machine.id, adapterLogs);
         await this.createBranchLinks(tx, tenantId, machine.id, branchIds);
         return machine.id;
       });
@@ -266,6 +268,8 @@ export class MachineService {
         data: {
           tenantId,
           machineId,
+          srNo: dto.srNo ?? null,
+          loggedAt: dto.loggedAt ? new Date(dto.loggedAt) : null,
           logType: dto.logType ?? null,
           status: dto.status ?? null,
           sourceIp: dto.sourceIp ?? null,
@@ -419,6 +423,33 @@ export class MachineService {
     }
     await tx.machineTestMapping.createMany({
       data: mappings.map((m) => ({ ...m, tenantId, machineId })),
+    });
+  }
+
+  /**
+   * Insert a machine's adapter log rows (no-op for an empty/absent list). Logs are
+   * append-only; `loggedAt` (the device/event time) is coerced from its ISO
+   * string, and the nullable fields default to null when omitted.
+   */
+  private async createAdapterLogs(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    machineId: string,
+    logs: CreateAdapterLogDto[] | undefined,
+  ): Promise<void> {
+    if (!logs?.length) {
+      return;
+    }
+    await tx.machineAdapterLog.createMany({
+      data: logs.map((l) => ({
+        tenantId,
+        machineId,
+        srNo: l.srNo ?? null,
+        loggedAt: l.loggedAt ? new Date(l.loggedAt) : null,
+        logType: l.logType ?? null,
+        status: l.status ?? null,
+        sourceIp: l.sourceIp ?? null,
+      })),
     });
   }
 

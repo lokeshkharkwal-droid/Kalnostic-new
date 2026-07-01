@@ -22,20 +22,30 @@ body:json {
   
   {
     "modules": [
-      { "moduleKey": "lab_operations", "isEnabled": true },
       { "moduleKey": "accession", "isEnabled": true },
-      { "moduleKey": "registration", "isEnabled": true }
+      { "moduleKey": "inventory", "isEnabled": true },
+      { "moduleKey": "finance", "isEnabled": false }
     ]
-  
   }
-  
 }
 
 vars:pre-request {
-  branchId: b0b8fb9d-7c16-4cd1-b527-5c6cb12508a1
+  branchId: f3900c9e-ddca-48e1-a1d3-9d77215d7382
   businessAccessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwZXJzb25faWQiOiIyOTQ5N2I2NC0wNGUyLTQwZjktYTY2OS04NDBiZmNlOGU3ZDYiLCJ0ZW5hbnRfaWQiOiJhYjE2OTY1MC01Mzc1LTQwYmUtYTIxMi00ZGE0ZTJiMDE5NGQiLCJhY3RpdmVfYnJhbmNoX2lkIjpudWxsLCJhY3RpdmVfYnJhbmNoX3R5cGUiOm51bGwsImFjdGl2ZV9wcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwiaXNfcGF0aWVudF9jb250ZXh0IjpmYWxzZSwicHJvZmlsZXMiOlt7ImJyYW5jaF9pZCI6bnVsbCwiYnJhbmNoX25hbWUiOm51bGwsImJyYW5jaF90eXBlIjpudWxsLCJwcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwicHJvZmlsZV9sYWJlbCI6IkJ1c2luZXNzIEFkbWluIiwiaXNfZGVmYXVsdCI6dHJ1ZX1dLCJpc19wYXRpZW50IjpmYWxzZSwicGxhdGZvcm1fbXJuIjoiS0FMLTIwMjYwNjA4LTM2OTBCRkQxIiwiaWF0IjoxNzgwOTM4OTYwLCJleHAiOjE3ODA5Mzk4NjB9.Yr6sJexCWb_6LL_RJOMe8aWsHLm7SkKcmGn0kcWb5wQ
 }
 
 docs {
   Update a branch (scoped to the caller's tenant). All fields optional.
+
+  Optional `modules`: enable/disable system modules in the same request (only
+  the keys you send are touched — omit a key to leave it unchanged). Each
+  `moduleKey` must be a known system module (`accession`, `inventory`, `sales`,
+  `finance`, `phlebotomist`, `assistant`, `operation`, `business_admin`,
+  `branch_admin`). Equivalent to `PUT /branches/:id/modules`, which still exists.
+
+  Optional `receivingBranchIds` (Collection Centers only): replaces the branch's
+  whole sample-receiving-branch mapping set (equivalent to
+  `PUT /branches/:id/collection-mappings`). Each id must be an existing,
+  non-Collection-Center branch in the tenant. Sending it for a non-Collection-
+  Center branch (with a non-empty list) is rejected.
 }

@@ -1,0 +1,22 @@
+meta {
+  name: Get Site Admin Template
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/lab-panels/templates/{{siteAdminLabPanelId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Fetch one SITE_ADMIN lab-panel template with its included tests (read-only).
+  Business JWT. 404 `LAB_PANEL_NOT_FOUND` if the id isn't a live template. Uses
+  `siteAdminLabPanelId` captured by `26 SiteAdmin Lab Panels → Create Lab Panel
+  Template`.
+}

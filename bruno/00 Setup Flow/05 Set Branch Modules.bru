@@ -1,0 +1,40 @@
+meta {
+  name: 05 Set Branch Modules
+  type: http
+  seq: 5
+}
+
+put {
+  url: {{baseUrl}}/branches/{{branchId}}/modules
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "modules": [
+      { "moduleKey": "accession", "isEnabled": true },
+      { "moduleKey": "sales", "isEnabled": true },
+      { "moduleKey": "branch_admin", "isEnabled": true }
+    ]
+  }
+}
+
+vars:pre-request {
+  branchId: 5adcc779-2d45-4494-aec1-acd2e2274cd2
+}
+
+docs {
+  Step 5 (REQUIRED before users). Enable system modules at the branch. This gates
+  which modules can be a user's default module and which appear in the per-user
+  permission modal. Skipping this makes step 6 fail with
+  `422 MODULE_NOT_ENABLED_FOR_BRANCH`.
+}

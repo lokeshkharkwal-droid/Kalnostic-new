@@ -1,0 +1,36 @@
+meta {
+  name: List Department Templates
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/departments?page=1&limit=20&search=
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  search:
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  List SITE_ADMIN department templates (paginated). Auth: SiteAdmin token,
+  requires `master-data:read`.
+
+  Query params:
+  - `page` / `limit` — offset pagination (defaults 1 / 20).
+  - `search` — case-insensitive match on `name` / `code` (optional).
+  - `status` — `ACTIVE` | `INACTIVE` (maps to `isActive`, optional).
+  - `moduleMapping` — a single `BranchType`; matches templates whose
+    `moduleMapping` includes it (optional).
+
+  Returns only `source = SITE_ADMIN`, `tenantId = null` rows; pagination lands in
+  `meta`.
+}

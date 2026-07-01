@@ -28,6 +28,16 @@ body:json {
       "line1": "12 Lab Street",
       "city": "Pune",
       "country": "IN"
+    },
+    "settings": {
+      "timezone": "Asia/Kolkata",
+      "currency": "INR",
+      "date_format": "DD/MM/YYYY",
+      "language": "en",
+      "logo_url": "https://cdn.acme.test/logo.png",
+      "primary_color": "#0B5FFF",
+      "secondary_color": "#1A1A2E",
+      "app_name": "Acme Labs"
     }
   }
 }
@@ -35,5 +45,17 @@ body:json {
 docs {
   Update a tenant's editable fields. Requires `business:create`.
   Slug is immutable and admin credentials are managed separately, so neither
-  is accepted here. All fields optional.
+  is accepted here. **All fields optional** — `settings` is deep-merged, so
+  sending a subset preserves the other stored keys.
+
+  Fields:
+  - `name` (optional) — business name.
+  - `email` (optional) — tenant contact email.
+  - `phone` (optional) — tenant contact phone.
+  - `address` (optional) — free-form JSON object.
+  - `mrnPrefix` (optional) — patient MRN prefix.
+  - `settings` (optional) — partial `TenantSettings` JSON (deep-merged):
+    `timezone`, `currency`, `date_format`, `language`, `logo_url` (optional),
+    `primary_color` (optional), `secondary_color` (optional),
+    `app_name` (optional).
 }

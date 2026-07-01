@@ -12,15 +12,14 @@ import {
   IsDateString,
   IsEmail,
   IsEnum,
-  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
   MaxLength,
-  Min,
   MinLength,
   ValidateNested,
 } from 'class-validator';
+import { DoctorBranchAssignmentDto } from './doctor-branch-assignment.dto';
 import { DoctorExperienceDto } from './doctor-experience.dto';
 import { DoctorQualificationDto } from './doctor-qualification.dto';
 
@@ -95,10 +94,9 @@ export class CreateDoctorDto {
   @IsOptional()
   categoryId?: string;
 
-  @IsString()
+  @IsUUID()
   @IsOptional()
-  @MaxLength(255)
-  subCategory?: string;
+  subCategoryId?: string;
 
   @IsUUID()
   @IsOptional()
@@ -151,26 +149,6 @@ export class CreateDoctorDto {
   @IsOptional()
   signatorySubCategoryIds?: string[];
 
-  // ── Fees (default 0; up to 2 decimal places) ──
-  @IsNumber({ maxDecimalPlaces: 2 })
-  @Min(0)
-  @IsOptional()
-  consultationFee?: number;
-
-  @IsNumber({ maxDecimalPlaces: 2 })
-  @Min(0)
-  @IsOptional()
-  emergencyFee?: number;
-
-  @IsNumber({ maxDecimalPlaces: 2 })
-  @Min(0)
-  @IsOptional()
-  followUpFee?: number;
-
-  @IsBoolean()
-  @IsOptional()
-  isAllowDiscount?: boolean;
-
   // ── Banking ──
   @IsString()
   @IsOptional()
@@ -222,4 +200,11 @@ export class CreateDoctorDto {
   @ValidateNested({ each: true })
   @Type(() => DoctorExperienceDto)
   experiences?: DoctorExperienceDto[];
+
+  // ── Branch assignments (each carries its own role / availability / fees) ──
+  @IsArray()
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => DoctorBranchAssignmentDto)
+  branchAssignments?: DoctorBranchAssignmentDto[];
 }

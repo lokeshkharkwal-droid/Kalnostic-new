@@ -14,6 +14,8 @@ params:query {
   page: 1
   limit: 20
   search: City
+  ~clientType: PREPAID
+  ~status: ACTIVE
 }
 
 auth:bearer {
@@ -29,11 +31,15 @@ tests {
 docs {
   Paginated list of referral panels in the caller's tenant (newest first).
 
-  ## Search
+  ## Filters
 
   - `search` — case-insensitive match against the panel `name` **OR** the
     user-supplied `panelCode`. Whitespace-only values are ignored. Omit it to list
     all panels.
+  - `clientType` — billing relationship. Allowed values: `CASH`, `PREPAID`,
+    `POSTPAID`.
+  - `status` — active state. Allowed values: `ACTIVE`, `INACTIVE` (mapped to
+    `isActive`).
 
   ## Pagination
 

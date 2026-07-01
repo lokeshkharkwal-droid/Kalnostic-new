@@ -23,6 +23,8 @@ body:json {
     "shortName": "Sample Ref Lab",
     "bankName": "ICICI Bank",
     "isActive": true,
+    "isNablAccredited": false,
+    "labTestId": "3772e02a-391a-4276-9d78-f06a0e078e44",
     "contacts": [
       {
         "role": "DIRECTOR",
@@ -30,32 +32,22 @@ body:json {
         "mobile": "+919811112222",
         "email": "director@acmeref.test"
       }
-    ],
-    "assignments": [
-      {
-        "branchId": "9fcbf225-7f94-4b57-b3b4-2127b7f5be78",
-        "labTestIds": ["3772e02a-391a-4276-9d78-f06a0e078e44"]
-      }
     ]
   }
 }
 
 docs {
   Update an outsource center (scoped to the caller's tenant). All fields are
-  optional; `code` is immutable and never accepted.
+  optional; `code` is immutable and never accepted. Also used to
+  **activate/inactivate** a center — just send `{ "isActive": false }`.
 
-  `contacts` and `assignments` are **replace-all when present** and left
-  untouched when omitted:
-  - Sending `contacts` replaces the whole contact set (soft-deletes the old,
-    creates the new). Omit the key to leave contacts unchanged.
-  - Sending `assignments` replaces the whole assignment set AND each branch's
-    selected tests/panels — so **unchecking a branch means leaving it out of the
-    array**, and changing a branch's selection just means sending the new
-    `labTestIds`/`labPanelIds`. When present, the array must be non-empty and
-    obeys the same validation as create (≥1 test or panel per branch; every id
-    active on that branch). Omit the key to leave assignments unchanged.
+  `contacts` are **replace-all when present** and left untouched when omitted:
+  sending `contacts` replaces the whole contact set (soft-deletes the old, creates
+  the new); omit the key to leave contacts unchanged.
 
-  In the example only `labTestIds` is sent for the branch (no panels), which is
-  allowed because at least one test or panel is selected. Targets the seeded
-  center `fc8c1e56…`.
+  `labTestId` / `labPanelId`, when present, must be an active lab test / lab panel
+  in the tenant (same validation as create). Send `null` to clear a selection;
+  omit the key to leave it unchanged.
+
+  Targets the seeded center `fc8c1e56…`.
 }

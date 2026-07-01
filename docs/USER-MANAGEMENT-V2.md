@@ -110,7 +110,7 @@ Module-grouped permission overrides per `(user + branch)`. Unique on
 
 | Field | Notes |
 | ----- | ----- |
-| `moduleKey` | one of the 12 modules |
+| `moduleKey` | one of the 14 modules |
 | `permissionKey` | e.g. `lab_operations:verify` |
 | `allowed` | `true` = grant, `false` = deny. **No row = inherit the role baseline.** |
 
@@ -172,8 +172,9 @@ Three constant files in `src/modules/permissions/constants/`:
 
 ### Modules — `system-modules.constant.ts`
 
-The 12 master modules: `registration`, `accession`, `lab_operations`, `inventory`,
-`sales`, `admin`, `radiology`, `pharmacy`, `opd`, `ipd`, `finance`, `phlebotomist`.
+The 14 master modules: `registration`, `accession`, `lab_operations`, `inventory`,
+`sales`, `admin`, `radiology`, `pharmacy`, `opd`, `ipd`, `finance`, `phlebotomist`,
+`assistant`, `operation`.
 
 ### Role templates & permissions — `module-permissions.constant.ts`
 

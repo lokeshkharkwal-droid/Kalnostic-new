@@ -1,0 +1,55 @@
+meta {
+  name: Clone Site Admin Template
+  type: http
+  seq: 21
+}
+
+post {
+  url: {{baseUrl}}/departments/{{siteAdminDepartmentTemplateId}}/clone
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  siteAdminDepartmentTemplateId: a6af056e-1039-4f47-9d01-d75d948490f8
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("clonedDepartmentId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("cloned as a TENANT row with a fresh tenant code", function () {
+    const d = res.getBody().data;
+    expect(d.source).to.equal("TENANT");
+    expect(d.clonedFromId).to.equal(bru.getEnvVar("siteAdminDepartmentTemplateId"));
+    expect(d.code).to.not.match(/^SA-Dep-/);
+  });
+}
+
+docs {
+  Adopt a SITE_ADMIN department template (the `:id` in the URL) into the caller's
+  tenant catalogue. Business JWT; **no request body** — the tenant comes from the
+  JWT. Captures `clonedDepartmentId`.
+  
+  Behaviour: copies the template's `name`/`shortName`/`description`/`isActive`/
+  `moduleMapping` into a new `source = "TENANT"` row, mints a fresh tenant `code`
+  (`{INITIALS}-Dep-{n}`, NOT the template's `SA-Dep-{n}`), and stamps
+  `clonedFromId`. No person mappings are copied.
+  
+  Idempotent: if this template was already cloned into the tenant, the existing
+  copy is returned (matched by `clonedFromId`) — no duplicate.
+  
+  - `siteAdminDepartmentTemplateId` must be a live SITE_ADMIN template →
+    else 404 `DEPARTMENT_NOT_FOUND`.
+  - 409 `DEPARTMENT_NAME_CONFLICT` / `DEPARTMENT_SHORT_NAME_CONFLICT` if the
+    template's name/shortName already exists (active) in the tenant.
+}

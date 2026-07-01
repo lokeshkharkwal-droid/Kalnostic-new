@@ -15,10 +15,11 @@ import { UpdateBranchDto } from './dto/update-branch.dto';
 import { SetMainBranchDto } from './dto/set-main-branch.dto';
 import { SetBranchModulesDto } from './dto/set-branch-modules.dto';
 import { SetCollectionMappingsDto } from './dto/set-collection-mappings.dto';
+import { BranchQueryDto } from './dto/branch-query.dto';
+import { BranchOptionsQueryDto } from './dto/branch-options-query.dto';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
@@ -48,26 +49,50 @@ export class BranchController {
   }
 
   /**
-   * List branches in the caller's tenant (paginated).
+   * List branches in the caller's tenant (paginated). Supports optional
+   * server-side `search` (name/code) and `status` / `branchType` filters.
    */
   @Get()
-  findAll(
-    @CurrentTenant() tenantId: string,
-    @Query() query: PaginationQueryDto,
-  ) {
+  findAll(@CurrentTenant() tenantId: string, @Query() query: BranchQueryDto) {
     return this.branchService.findAllForTenant(
       tenantId,
       query.page ?? 1,
       query.limit ?? 20,
+      {
+        search: query.search,
+        status: query.status,
+        branchType: query.branchType,
+      },
     );
   }
 
-  // ── Main-branch routes ──────────────────────────────────────────────────────
-  // ROUTE-ORDERING INVARIANT: these literal `main-branch` paths MUST stay above
-  // the `:id` param routes below. Express matches per-verb in declaration order,
-  // so moving `@Get(':id')` above `@Get('main-branch')` (or adding e.g.
-  // `@Patch('main-branch')` below `@Patch(':id')`) would make Nest treat
-  // "main-branch" as a branch id and 404. Keep new literal routes here.
+  // ── Literal routes (must precede `:id`) ──────────────────────────────────────
+  // ROUTE-ORDERING INVARIANT: these literal paths (`options`, `main-branch`)
+  // MUST stay above the `:id` param routes below. Express matches per-verb in
+  // declaration order, so moving `@Get(':id')` above `@Get('main-branch')` (or
+  // adding e.g. `@Patch('main-branch')` below `@Patch(':id')`) would make Nest
+  // treat the literal as a branch id and 404. Keep new literal routes here.
+
+  /**
+   * Lightweight branch picker (id + name only) for selectors. Optional
+   * `branchType` (include) / `excludeBranchType` (exclude) filters — e.g.
+   * `?excludeBranchType=COLLECTION_CENTER` lists valid sample-receiving branches.
+   * Optional `search` (name/code). Pagination is opt-in: omit `page` to get the
+   * full array; pass `page` (+ optional `limit`) for a paginated envelope.
+   */
+  @Get('options')
+  findOptions(
+    @CurrentTenant() tenantId: string,
+    @Query() query: BranchOptionsQueryDto,
+  ) {
+    return this.branchService.findOptionsForTenant(tenantId, {
+      branchType: query.branchType,
+      excludeBranchType: query.excludeBranchType,
+      search: query.search,
+      page: query.page,
+      limit: query.limit,
+    });
+  }
 
   /**
    * Get the tenant's current main branch.

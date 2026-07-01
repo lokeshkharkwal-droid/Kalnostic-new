@@ -136,6 +136,14 @@
   <a href="#lp-get">GET .../lab-panels/:id</a>
   <a href="#lp-update">PATCH .../lab-panels/:id</a>
   <a href="#lp-delete">DELETE .../lab-panels/:id</a>
+  <h3>Documents</h3>
+  <a href="#doc-create">POST /documents</a>
+  <a href="#doc-list">GET /documents</a>
+  <a href="#doc-get">GET /documents/:id</a>
+  <a href="#doc-versions">GET /documents/:id/versions</a>
+  <a href="#doc-version">GET /documents/:id/versions/:versionId</a>
+  <a href="#doc-update">PATCH /documents/:id</a>
+  <a href="#doc-delete">DELETE /documents/:id</a>
 </nav>
 <main>
 
@@ -412,6 +420,16 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>PATCH /siteadmin/tenants/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:create</code> · OPERATIONS_ADMIN+</td></tr>
   <tr><td>GET /siteadmin/tenants/:id/admin</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:read</code> · OPERATIONS_ADMIN+</td></tr>
   <tr><td>POST /siteadmin/tenants/:id/admin/reset-password</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:create</code> · OPERATIONS_ADMIN+</td></tr>
+  <tr><td>POST /siteadmin/lab-tests</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template)</td></tr>
+  <tr><td>GET /siteadmin/lab-tests</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global templates)</td></tr>
+  <tr><td>GET /siteadmin/lab-tests/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global template)</td></tr>
+  <tr><td>PATCH /siteadmin/lab-tests/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template)</td></tr>
+  <tr><td>DELETE /siteadmin/lab-tests/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template)</td></tr>
+  <tr><td>POST /siteadmin/lab-panels</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template)</td></tr>
+  <tr><td>GET /siteadmin/lab-panels</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global templates)</td></tr>
+  <tr><td>GET /siteadmin/lab-panels/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global template)</td></tr>
+  <tr><td>PATCH /siteadmin/lab-panels/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template)</td></tr>
+  <tr><td>DELETE /siteadmin/lab-panels/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template)</td></tr>
   <tr><td>POST /master-data/:masterDataId/lab-tests</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
   <tr><td>GET /master-data/:masterDataId/lab-tests</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
   <tr><td>GET /master-data/:masterDataId/lab-tests/listing</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
@@ -422,6 +440,9 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>POST /master-data/:masterDataId/lab-tests/:labTestId/versions</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
   <tr><td>POST /master-data/:masterDataId/lab-tests/clone</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
   <tr><td>DELETE /master-data/:masterDataId/lab-tests/:labTestId</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
+  <tr><td>GET /lab-tests/templates</td><td>Business JWT</td><td>browse Site Admin templates (read-only)</td></tr>
+  <tr><td>GET /lab-tests/templates/:id</td><td>Business JWT</td><td>browse Site Admin template (read-only)</td></tr>
+  <tr><td>POST /lab-tests/:id/clone</td><td>Business JWT</td><td>clone a Site Admin template into the tenant (body: masterDataId)</td></tr>
   <tr><td>POST /master-data/:masterDataId/lab-panels</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
   <tr><td>GET /master-data/:masterDataId/lab-panels</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
   <tr><td>GET /master-data/:masterDataId/lab-panels/listing</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
@@ -429,6 +450,33 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>GET /master-data/:masterDataId/lab-panels/:panelId</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
   <tr><td>PATCH /master-data/:masterDataId/lab-panels/:panelId</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
   <tr><td>DELETE /master-data/:masterDataId/lab-panels/:panelId</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
+  <tr><td>GET /lab-panels/templates</td><td>Business JWT</td><td>browse Site Admin templates (read-only)</td></tr>
+  <tr><td>GET /lab-panels/templates/:id</td><td>Business JWT</td><td>browse Site Admin template (read-only)</td></tr>
+  <tr><td>POST /lab-panels/:id/clone</td><td>Business JWT</td><td>clone a Site Admin template into the tenant (clones its tests too; body: masterDataId)</td></tr>
+  <tr><td>POST /siteadmin/departments</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template, code SA-Dep-{n})</td></tr>
+  <tr><td>GET /siteadmin/departments</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global templates)</td></tr>
+  <tr><td>GET /siteadmin/departments/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global template)</td></tr>
+  <tr><td>PATCH /siteadmin/departments/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template)</td></tr>
+  <tr><td>DELETE /siteadmin/departments/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template)</td></tr>
+  <tr><td>POST /siteadmin/categories</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template; UNDER_DEPARTMENT links a Site Admin department template)</td></tr>
+  <tr><td>GET /siteadmin/categories</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global templates)</td></tr>
+  <tr><td>GET /siteadmin/categories/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global template)</td></tr>
+  <tr><td>PATCH /siteadmin/categories/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template)</td></tr>
+  <tr><td>DELETE /siteadmin/categories/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template)</td></tr>
+  <tr><td>POST /siteadmin/sub-categories</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template; UNDER_DEPARTMENT/UNDER_CATEGORY link Site Admin templates)</td></tr>
+  <tr><td>GET /siteadmin/sub-categories</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global templates)</td></tr>
+  <tr><td>GET /siteadmin/sub-categories/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global template)</td></tr>
+  <tr><td>PATCH /siteadmin/sub-categories/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template)</td></tr>
+  <tr><td>DELETE /siteadmin/sub-categories/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template)</td></tr>
+  <tr><td>GET /departments/templates</td><td>Business JWT</td><td>browse Site Admin department templates (read-only)</td></tr>
+  <tr><td>GET /departments/templates/:id</td><td>Business JWT</td><td>browse Site Admin department template (read-only)</td></tr>
+  <tr><td>POST /departments/:id/clone</td><td>Business JWT</td><td>clone a Site Admin department template into the tenant (no body; idempotent via clonedFromId)</td></tr>
+  <tr><td>GET /categories/templates</td><td>Business JWT</td><td>browse Site Admin category templates (read-only)</td></tr>
+  <tr><td>GET /categories/templates/:id</td><td>Business JWT</td><td>browse Site Admin category template (read-only)</td></tr>
+  <tr><td>POST /categories/:id/clone</td><td>Business JWT</td><td>clone a Site Admin category template into the tenant (cascade-clones the parent department template; no body)</td></tr>
+  <tr><td>GET /sub-categories/templates</td><td>Business JWT</td><td>browse Site Admin sub-category templates (read-only)</td></tr>
+  <tr><td>GET /sub-categories/templates/:id</td><td>Business JWT</td><td>browse Site Admin sub-category template (read-only)</td></tr>
+  <tr><td>POST /sub-categories/:id/clone</td><td>Business JWT</td><td>clone a Site Admin sub-category template into the tenant (cascade-clones the parent category/department templates; no body)</td></tr>
 </table>
 
 <h2 id="data-model">Data model — models &amp; tiers</h2>
@@ -659,7 +707,7 @@ coherent example: SiteAdmin <i>owner@kalnostics.com</i> created tenant <b>City D
 <div class="ep" id="auth-switch">
   <div><span class="m post">POST</span><span class="path">/api/v1/auth/switch-profile</span></div>
   <div class="tags"><span class="tag biz">business JWT</span></div>
-  <p>Switch the active branch/profile context. Returns a new access token only (refresh continues). Omit <code>branchId</code> for tenant-level profiles.</p>
+  <p>Switch the active branch/profile context. Returns a new access <strong>and</strong> refresh token: the refresh-token context is rotated to the switched branch/profile, so a later <code>/auth/refresh</code> keeps the switched context instead of reverting. Session-only — the user's default profile (<code>isDefault</code>) is not changed, so a fresh login still lands on the admin-set default branch. Omit <code>branchId</code> for tenant-level profiles.</p>
   <p class="lbl">Request body</p>
   <pre>{ "branchId": "uuid-or-omit", "profileKey": "doctor" }</pre>
   <p class="lbl">curl</p>
@@ -667,7 +715,7 @@ coherent example: SiteAdmin <i>owner@kalnostics.com</i> created tenant <b>City D
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"branchId":"b-uuid","profileKey":"doctor"}'</pre>
   <p class="lbl">200 response</p>
-  <pre>{ "success": true, "data": { "accessToken": "…" }, "meta": { "timestamp": "…" } }</pre>
+  <pre>{ "success": true, "data": { "accessToken": "…", "refreshToken": "…" }, "meta": { "timestamp": "…" } }</pre>
 </div>
 
 <div class="ep" id="auth-changepw">
@@ -1027,14 +1075,20 @@ tests never appear regardless of status.</div>
   <p>Create a lab test with its children, in one transaction; seeds <code>versionHistory</code> v1.
   Conflicts: <span class="pill">409 LAB_TEST_NAME_CONFLICT</span> / <span class="pill">409 LAB_TEST_CODE_CONFLICT</span> /
   <span class="pill">409 LAB_TEST_PARAM_CODE_CONFLICT</span>. DTO/shape errors → <span class="pill">400 VALIDATION_ERROR</span>;
-  cross-field rules (price ordering, mandatory-dept, repeat-interval, calc-formula, range bounds) →
+  cross-field rules (price ordering, mandatory-dept, repeat-interval, calc-formula, range bounds,
+  result-level <code>criticalMin ≤ criticalMax</code>) →
   <span class="pill">422 VALIDATION_ERROR</span>. <code>isActive</code> optional (default <code>true</code>).</p>
+  <p>Each result param may carry result-level <code>criticalMin</code>/<code>criticalMax</code> and
+  <code>reflexTests</code>: a list of <code>{ id, name }</code> stored verbatim as a <b>JSON snapshot</b>
+  (the <code>reflex_tests</code> column) and returned as-is on read — ids are validated as UUIDs but not
+  existence-checked. (The old bare <code>reflexTestIds</code> array input is no longer accepted.)</p>
   <pre>{ "testName":"Complete Blood Count", "testCode":"CBC",
   "priceMsrp":700, "priceMaximum":650, "priceMinimum":400,
   "tatMaxValue":24, "tatMaxUnit":"HOURS",
   "samples":[ {"containerType":"EDTA_TUBE_PURPLE_TOP","isDefault":true} ],
   "resultParams":[ {"parameterName":"Haemoglobin","parameterCode":"HGB",
-    "resultType":"QUANTITATIVE",
+    "resultType":"QUANTITATIVE", "criticalMin":7.0, "criticalMax":20.0,
+    "reflexTests":[ {"id":"lt-uuid","name":"Peripheral Smear"} ],
     "referenceRanges":[ {"gender":"MALE","lowerLimit":13.0,"upperLimit":17.0} ]} ] }</pre>
 </div>
 
@@ -1119,7 +1173,9 @@ tests never appear regardless of status.</div>
   <div><span class="m get">GET</span><span class="path">/api/v1/master-data/:masterDataId/lab-tests/:labTestId</span></div>
   <div class="tags"><span class="tag biz">business JWT</span></div>
   <p>Fetch one lab test composed with all children (<code>samples</code>, <code>resultParams</code> each with
-  <code>referenceRanges</code>/<code>referenceValues</code>) + <code>versionHistory</code>.
+  <code>referenceRanges</code>/<code>referenceValues</code>) + <code>versionHistory</code>. Each result param also
+  returns result-level <code>criticalMin</code>/<code>criticalMax</code> and <code>reflexTests</code>
+  (the <code>{ id, name }</code> JSON snapshot stored on create/update, returned verbatim).
   <span class="pill">404 LAB_TEST_NOT_FOUND</span> if missing/soft-deleted/other master data.</p>
 </div>
 
@@ -1276,6 +1332,91 @@ among active rows. <code>isActive</code> (Active/Inactive) is separate from soft
   <p>Soft-delete a lab panel (sets <code>deletedAt</code>) and cascade soft-delete its included tests in one
   transaction. Frees <code>panelName</code>/<code>panelCode</code> for reuse among active rows.
   <span class="pill">404 LAB_PANEL_NOT_FOUND</span> if missing/already-deleted/other master data.</p>
+</div>
+
+<h2 id="documents">Documents</h2>
+<div class="note">Controlled documents (SOPs, policies, certificates, …) are tenant-scoped + <b>branch-level</b>:
+the tenant comes from the JWT and the branch from <code>active_branch_id</code> (<code>@CurrentProfile()</code>) —
+never the body. Calls therefore need a business token with an <b>active branch</b>; a tenant-level token
+(e.g. <code>business_admin</code> with <code>active_branch_id = null</code>) is rejected with
+<span class="pill">400 BRANCH_CONTEXT_REQUIRED</span>. The <code>documents</code> row is the
+<b>current/active</b> version; an immutable snapshot of <b>every</b> version is preserved in
+<code>document_versions</code> — <b>every edit creates a new version</b> and previous versions are read-only
+(never updated or deleted). <code>document_number</code> is unique per branch among active rows; the
+<code>version</code> string is unique per document. <code>fileName</code>/<code>fileUrl</code> store a file
+reference only (the upload itself is handled elsewhere).</div>
+
+<div class="ep" id="doc-create">
+  <div><span class="m post">POST</span><span class="path">/api/v1/documents</span></div>
+  <div class="tags"><span class="tag biz">business JWT (active branch)</span></div>
+  <p>Create a document in the caller's active branch and seed version 1 of its history.
+  Conflicts: <span class="pill">409 DOCUMENT_NUMBER_CONFLICT</span>. Bad category/department →
+  <span class="pill">404 CATEGORY_NOT_FOUND</span> / <span class="pill">404 DEPARTMENT_NOT_FOUND</span>;
+  author/approver not tenant staff → <span class="pill">404 INVALID_DOCUMENT_AUTHOR</span>;
+  DTO/shape errors → <span class="pill">400 VALIDATION_ERROR</span>. <code>status</code> optional (default
+  <code>DRAFT</code>).</p>
+  <pre>{ "documentNumber":"SOP-001", "documentType":"SOP",
+  "title":"Sample Collection Procedure", "version":"1.0",
+  "status":"DRAFT", "effectiveDate":"2026-07-01", "reviewDate":"2027-07-01",
+  "categoryId":null, "departmentId":null, "authorId":null, "approvedById":null,
+  "fileName":"sop-001-v1.pdf", "fileUrl":"https://files.example.com/sop-001-v1.pdf",
+  "description":"SOP for venous sample collection." }</pre>
+  <p class="lbl">Enums</p>
+  <p><code>documentType</code> SOP|POLICY|FORM|CERTIFICATE|ACCREDITATION|QC_DOCUMENT|WORK_INSTRUCTION|OTHER ·
+  <code>status</code> DRAFT|UNDER_REVIEW|APPROVED|EXPIRED|ARCHIVED.</p>
+</div>
+
+<div class="ep" id="doc-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/documents?page=1&amp;limit=20</span></div>
+  <div class="tags"><span class="tag biz">business JWT (active branch)</span></div>
+  <p>Paginated list of active documents in the caller's branch, newest first; each row carries the loaded
+  <code>category</code> / <code>department</code> relations. Optional filters: <code>status</code>,
+  <code>documentType</code>, <code>categoryId</code>, <code>departmentId</code>. Pagination info is lifted
+  into <code>meta</code>.</p>
+</div>
+
+<div class="ep" id="doc-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/documents/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT (active branch)</span></div>
+  <p>Fetch one document (its current version). <span class="pill">404 DOCUMENT_NOT_FOUND</span> if
+  missing/soft-deleted/other tenant or branch.</p>
+</div>
+
+<div class="ep" id="doc-versions">
+  <div><span class="m get">GET</span><span class="path">/api/v1/documents/:id/versions?page=1&amp;limit=20</span></div>
+  <div class="tags"><span class="tag biz">business JWT (active branch)</span></div>
+  <p>The complete, <b>read-only</b> version history, newest first (ordered by <code>versionNo</code> desc).
+  Each entry is a full immutable snapshot of every field at that version (<code>versionNo</code>,
+  <code>version</code>, <code>title</code>, <code>status</code>, dates, file refs, <code>changedBy</code>, …).
+  After one edit this returns v2 (current) and v1 (original, unchanged).</p>
+</div>
+
+<div class="ep" id="doc-version">
+  <div><span class="m get">GET</span><span class="path">/api/v1/documents/:id/versions/:versionId</span></div>
+  <div class="tags"><span class="tag biz">business JWT (active branch)</span></div>
+  <p>Fetch a single read-only version snapshot. <span class="pill">404 DOCUMENT_VERSION_NOT_FOUND</span>
+  if the version id does not belong to the document.</p>
+</div>
+
+<div class="ep" id="doc-update">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/documents/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT (active branch)</span></div>
+  <p><b>Edit = new version.</b> Updates the current row in place AND appends a fresh immutable snapshot;
+  earlier snapshots stay read-only. <code>version</code> is <b>required</b> and must be a NEW, unique version
+  string for this document → <span class="pill">409 DOCUMENT_VERSION_CONFLICT</span> if reused (including the
+  current version). All other fields optional (omitted → unchanged). Changing <code>documentNumber</code> to
+  one already used in the branch → <span class="pill">409 DOCUMENT_NUMBER_CONFLICT</span>. There is
+  <b>no</b> endpoint to edit or delete an individual version.</p>
+  <pre>{ "version":"2.0", "title":"Sample Collection Procedure (revised)",
+  "status":"UNDER_REVIEW", "fileName":"sop-001-v2.pdf",
+  "fileUrl":"https://files.example.com/sop-001-v2.pdf" }</pre>
+</div>
+
+<div class="ep" id="doc-delete">
+  <div><span class="m delete">DELETE</span><span class="path">/api/v1/documents/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT (active branch)</span></div>
+  <p>Soft-delete a document (sets <code>deletedAt</code>); it leaves List/Get but its version snapshots are
+  preserved. <span class="pill">404 DOCUMENT_NOT_FOUND</span> if already missing.</p>
 </div>
 
 <p style="margin:40px 0 10px;color:var(--muted);font-size:13px">

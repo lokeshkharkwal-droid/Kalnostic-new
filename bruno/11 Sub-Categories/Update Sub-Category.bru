@@ -29,8 +29,10 @@ body:json {
     "personMappings": [
       {
         "personId": "{{patientPersonId}}",
+        "type": "USER",
         "position": "MANAGER",
-        "priority": 1
+        "priority": 1,
+        "branchId": "{{branchId}}"
       }
     ]
   }
@@ -76,9 +78,16 @@ docs {
     Omit ALL three fields to leave the current type/link untouched.
   - When `personMappings` is supplied it REPLACES the whole set: existing active
     mappings are soft-deleted and the new set is created. Omit `personMappings`
-    to leave the current mappings untouched.
+    to leave the current mappings untouched. Each entry also accepts an optional
+    `type` (`USER` default / `CONSULTANT_DOCTOR` / `REPORTING_DOCTOR` /
+    `EXTERNAL_REFERRAL`, resolving `personId` against persons / doctors / external
+    referrals) and an optional `branchId` (omit for tenant-level; set to scope to
+    one branch, validated against the tenant → 404 `BRANCH_NOT_FOUND`).
   - The same validation rules as create apply to a replacement set:
-    `INVALID_SUB_CATEGORY_PRIORITY`, `DUPLICATE_DEFAULT_POSITION`,
-    `PERSON_NOT_FOUND`. Renaming to a name used by another active sub-category →
-    409 `SUB_CATEGORY_NAME_CONFLICT`.
+    `INVALID_SUB_CATEGORY_PRIORITY`, `DUPLICATE_DEFAULT_POSITION` (both now scoped
+    PER BRANCH — a mapping with no `branchId` is its own group), `PERSON_NOT_FOUND`
+    for a USER reference, and `INVALID_PERSON_MAPPING_REFERENCE` for a
+    doctor/external-referral reference that doesn't resolve (or a doctor whose
+    doctorType doesn't match the `type`). Renaming to a name used by another
+    active sub-category → 409 `SUB_CATEGORY_NAME_CONFLICT`.
 }

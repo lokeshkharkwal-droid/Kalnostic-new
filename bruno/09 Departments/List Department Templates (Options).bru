@@ -1,0 +1,29 @@
+meta {
+  name: List Department Templates (Options)
+  type: http
+  seq: 20
+}
+
+get {
+  url: {{baseUrl}}/departments/templates?page=1&limit=20&search=
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  search:
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Browse SITE_ADMIN global department templates (read-only) so the tenant can
+  pick one to clone. Business JWT (global `JwtAuthGuard`). Same filters as the
+  SiteAdmin list (`page`/`limit`/`search`/`status`/`moduleMapping`). Returns only
+  `source = SITE_ADMIN`, `tenantId = null` rows — tenant departments are not
+  included here.
+}

@@ -1,0 +1,52 @@
+meta {
+  name: 04 Create Branch
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/branches
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "{{flowBranchName}}",
+    "branchType": "DIAGNOSTIC",
+    "phone": "+919800000001",
+    "email": "branch@flow.test",
+    "addressLine": "1 Flow Street",
+    "city": "Pune",
+    "state": "Maharashtra",
+    "pincode": "411038"
+  }
+}
+
+vars:pre-request {
+  flowBranchName: flow branch
+}
+
+script:pre-request {
+  const rand = String(Math.floor(Math.random() * 900000) + 100000);
+  bru.setVar("flowBranchName", "Main Lab " + rand);
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("branchId", data.id);
+}
+
+docs {
+  Step 4. Create a branch in the caller's tenant (tenant id from the JWT). `code`
+  is auto-generated (`BR-00001`...) and must NOT be sent. The first branch in a
+  tenant is auto-set as the main branch. Captures `branchId`.
+}

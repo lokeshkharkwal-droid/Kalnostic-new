@@ -1,0 +1,59 @@
+meta {
+  name: Create Department Template
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/departments
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "name": "Global Pathology Template",
+    "shortName": "PATH",
+    "description": "Global SITE_ADMIN department template",
+    "isActive": true,
+    "moduleMapping": ["DIAGNOSTIC"]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("siteAdminDepartmentTemplateId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("is a SITE_ADMIN template with null tenant and SA code", function () {
+    const d = res.getBody().data;
+    expect(d.source).to.equal("SITE_ADMIN");
+    expect(d.tenantId).to.equal(null);
+    expect(d.code).to.match(/^SA-Dep-\d+$/);
+  });
+}
+
+docs {
+  Create a **global SITE_ADMIN department template** (no tenant, no person
+  mappings). Auth: SiteAdmin token (`jwt-siteadmin`), requires `master-data:write`
+  (CONTENT_ADMIN+). Captures `siteAdminDepartmentTemplateId`.
+
+  The persisted row has `source = "SITE_ADMIN"`, `tenantId = null`, and a
+  system-generated `code` `SA-Dep-{n}` (global sequence from `SiteAdminCounter`;
+  `code` is never client-supplied). `name` / `shortName` are unique across active
+  templates → 409 `DEPARTMENT_NAME_CONFLICT` / `DEPARTMENT_SHORT_NAME_CONFLICT`.
+
+  Businesses adopt this template via `09 Departments → Clone Site Admin Template`.
+}

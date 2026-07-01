@@ -20,15 +20,29 @@ auth:bearer {
 
 body:json {
   {
-    "testName": "Complete Blood Count",
-    "testCode": "CBC",
+    "testName": "full form Blood Count",
+    "testDisplayName": "CBC",
+    "testCode": "CBC-2-full",
+    "aka": "Full Blood Count",
+    "departmentId": "b94e2bc2-37e7-41b8-8ad3-5725b99f02c9",
+    "categoryId": "fd0c238e-9724-4084-83f8-f83b32e60096",
+    "subCategoryId": "b422e711-e269-455d-8c74-aaa1632946a3",
     "processMethod": "SINGLE_STEP",
+    "icdCode": "D64.9",
+    "loincCode": "58410-2",
+    "clinicalTags": ["haematology", "routine"],
     "samplePriorityType": "ROUTINE",
+    "isEnableCms": true,
     "priceMsrp": 700,
     "priceMaximum": 650,
     "priceMinimum": 400,
+    "priceOriginal": 680,
+    "franchisePrice": 500,
+    "emergencyPrice": 900,
     "commissionPrice": 50,
     "discountCapPct": 20,
+    "isAllowPriceOverride": false,
+    "isAllowDiscounts": true,
     "tatMinValue": 2,
     "tatMinUnit": "HOURS",
     "tatMaxValue": 24,
@@ -36,27 +50,68 @@ body:json {
     "scheduleDays": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
     "scheduleFrom": "08:00",
     "scheduleTo": "18:00",
-    "clinicalTags": ["haematology", "routine"],
+    "procTimeMinValue": 1,
+    "procTimeMinUnit": "HOURS",
+    "procTimeMaxValue": 2,
+    "procTimeMaxUnit": "HOURS",
+    "approvalTimeFrom": "09:00",
+    "approvalTimeTo": "17:00",
+    "isHideInOrderScreen": false,
+    "isPreferenceTest": true,
+    "isMandatoryTest": true,
+    "mandatoryDeptId": "b94e2bc2-37e7-41b8-8ad3-5725b99f02c9",
+    "mandatoryCatId": "fd0c238e-9724-4084-83f8-f83b32e60096",
+    "mandatorySubcatId": "b422e711-e269-455d-8c74-aaa1632946a3",
+    "isRepeatIntervalRestriction": true,
+    "repeatIntervalValue": 7,
+    "repeatIntervalUnit": "DAYS",
+    "isActive": true,
+    "usefulFor": "Diagnosis of anemia, infection and clotting disorders",
+    "interpretationOfResults": "Low haemoglobin indicates anaemia",
+    "limitations": "Results may vary with altitude",
+    "remarks": "Process within 24h of collection",
+    "references": "WHO 2011 Guidelines",
     "samples": [
       {
+        "sampleType": "Blood",
         "containerType": "EDTA_TUBE_PURPLE_TOP",
         "sampleSize": "3 mL",
+        "collectionMethod": "Venipuncture",
         "numberOfSamples": 1,
+        "stability": "24h at 4°C",
+        "transportTemperature": "2-8°C",
+        "preservative": "EDTA",
+        "sampleHandlingInstructions": "Mix gently by inverting 8-10 times",
         "isFastingRequired": false,
+        "isLightProtection": false,
         "isDefault": true
       }
     ],
     "resultParams": [
       {
+        "groupName": "CBC Parameters",
         "parameterName": "Haemoglobin",
         "parameterCode": "HGB",
+        "method": "Spectrophotometry",
         "reportingUnit": "g/dL",
         "resultType": "QUANTITATIVE",
         "parameterType": "MEASURED",
+        "resultEntryMode": "MANUAL",
+        "resultRoundingType": "ONE_DECIMAL",
+        "allowableUnits": "g/dL, g/L",
         "decimalPlaces": 1,
+        "criticalMin": 7.0,
+        "criticalMax": 20.0,
+        "reflexTests": [
+          { "id": "1", "name": "Peripheral Smear" }
+        ],
+        "notes": "Repeat if grossly abnormal",
+        "isNabl": true,
+        "isCap": false,
         "sortOrder": 1,
         "referenceRanges": [
           {
+            "method": "Spectrophotometry",
             "gender": "MALE",
             "ageFrom": 18,
             "ageFromUnit": "YEARS",
@@ -66,16 +121,67 @@ body:json {
             "upperLimit": 17.0,
             "criticalMin": 7.0,
             "criticalMax": 20.0,
+            "displayOfReferenceRange": "13.0 - 17.0 g/dL",
             "abnormalFlagLogic": "BOLD_AND_RED"
           }
         ]
       },
       {
+        "groupName": "CBC Parameters",
         "parameterName": "Blood Group",
         "parameterCode": "ABO",
+        "method": "Serology",
+        "attachFileUrl": "https://files.example.com/methods/abo-serology.pdf",
         "resultType": "QUALITATIVE",
+        "parameterType": "MEASURED",
+        "resultEntryMode": "MANUAL",
+        "reflexTests": [],
+        "isNabl": false,
+        "isCap": false,
+        "sortOrder": 2,
         "referenceValues": [
-          { "normalValueText": "Not Detected", "gender": "ALL" }
+          {
+            "method": "Serology",
+            "gender": "ALL",
+            "ageFrom": 0,
+            "ageFromUnit": "YEARS",
+            "ageTo": 99,
+            "ageToUnit": "YEARS",
+            "normalValueText": "Not Detected",
+            "displayOfReferenceRange": "Not Detected",
+            "abnormalFlagLogic": "BOLD_AND_RED"
+          }
+        ]
+      },
+      {
+        "groupName": "CBC Parameters",
+        "parameterName": "Mean Corpuscular Haemoglobin",
+        "parameterCode": "MCH",
+        "method": "Calculated",
+        "reportingUnit": "pg",
+        "resultType": "CALCULATED",
+        "parameterType": "CALCULATED",
+        "resultEntryMode": "AUTO",
+        "calculationFormula": "(HGB * 10) / RBC",
+        "resultRoundingType": "ONE_DECIMAL",
+        "allowableUnits": "pg",
+        "decimalPlaces": 1,
+        "reflexTests": [],
+        "isNabl": false,
+        "isCap": false,
+        "sortOrder": 3,
+        "referenceRanges": [
+          {
+            "gender": "ALL",
+            "ageFrom": 18,
+            "ageFromUnit": "YEARS",
+            "ageTo": 99,
+            "ageToUnit": "YEARS",
+            "lowerLimit": 27.0,
+            "upperLimit": 33.0,
+            "displayOfReferenceRange": "27.0 - 33.0 pg",
+            "abnormalFlagLogic": "BOLD_ONLY"
+          }
         ]
       }
     ]
@@ -83,7 +189,7 @@ body:json {
 }
 
 vars:pre-request {
-  masterDataId: 3bebbd8d-eef4-4bfa-88f3-3aff4a4a4516
+  masterDataId: "b8820bc4-718a-4324-9c94-d610d5bdf2f2
 }
 
 script:post-response {
@@ -103,34 +209,81 @@ docs {
   param's `referenceRanges`/`referenceValues`) are created in the same
   transaction; the response includes them all, plus a seeded `versionHistory` v1.
   
-  ## Key fields
+  This body is the **full field set the Add Test form (kaltros-fe) can send**, so
+  it doubles as the FE↔BE contract reference. `isMandatoryTest` is `true` here so
+  the three mandatory-scope ids (`mandatoryDeptId`/`mandatoryCatId`/
+  `mandatorySubcatId`) are shown; set it `false` and drop them when not needed.
   
-  - `testName` (2-255) and `testCode` (1-50) — unique **per master data** among
-    active rows → 409 `LAB_TEST_NAME_CONFLICT` / `LAB_TEST_CODE_CONFLICT`.
-  - Enums are UPPERCASE: `processMethod` (SINGLE_STEP|MULTI_STEP),
-    `samplePriorityType` (ROUTINE|URGENT|STAT), `tat*Unit` (MINUTES|HOURS|DAYS),
-    `scheduleDays` (MONDAY…SUNDAY), `containerType`, `resultType`
-    (QUANTITATIVE|QUALITATIVE|CALCULATED), `parameterType` (MEASURED|CALCULATED),
-    `gender` (ALL|MALE|FEMALE), `age*Unit` (DAYS|MONTHS|YEARS), `abnormalFlagLogic`.
-  - Prices are integers; `parameterCode` is unique per test → 409
-    `LAB_TEST_PARAM_CODE_CONFLICT`.
+  ## Field groups (form section → payload)
   
-  ## Cross-field rules (422 VALIDATION_ERROR)
+  - **Basic Details:** `testName`, `testDisplayName`, `testCode`, `aka`,
+    `departmentId`/`categoryId`/`subCategoryId`, `processMethod`, `icdCode`,
+    `loincCode`, `clinicalTags[]`, `samplePriorityType`, `isEnableCms`,
+    `isMandatoryTest` (+ `mandatoryDeptId`/`mandatoryCatId`/`mandatorySubcatId`),
+    `isHideInOrderScreen`, `isRepeatIntervalRestriction` (+ `repeatIntervalValue`
+    + `repeatIntervalUnit`).
+  - **Pricing:** `priceMsrp`, `priceMaximum`, `priceMinimum`, `priceOriginal`,
+    `franchisePrice`, `emergencyPrice`, `commissionPrice`, `discountCapPct`,
+    `isAllowPriceOverride`.
+  - **TAT:** `tatMinValue`/`tatMinUnit`, `tatMaxValue`/`tatMaxUnit`,
+    `scheduleDays[]`, `scheduleFrom`/`scheduleTo`, `procTimeMinValue`/
+    `procTimeMinUnit`, `procTimeMaxValue`/`procTimeMaxUnit`,
+    `approvalTimeFrom`/`approvalTimeTo`.
+  - **Flags:** `isAllowDiscounts`, `isPreferenceTest`, `isActive` (Active/Inactive).
+  - **Notes:** `usefulFor`, `interpretationOfResults`, `limitations`, `remarks`,
+    `references`.
+  - **Samples[]:** `sampleType`, `containerType`, `sampleSize`,
+    `collectionMethod`, `numberOfSamples`, `stability`, `transportTemperature`,
+    `preservative`, `sampleHandlingInstructions`, `isFastingRequired`,
+    `isLightProtection`, `isDefault`.
+  - **Result params[]:** `groupName`, `parameterName`, `parameterCode`, `method`,
+    `reportingUnit`, `resultType`, `parameterType`, `resultEntryMode`,
+    `calculationFormula` (required when `parameterType=CALCULATED`),
+    `resultRoundingType`, `allowableUnits`, `decimalPlaces`, `criticalMin`,
+    `criticalMax`, `reflexTests[]`, `notes`, `isNabl`, `isCap`, `sortOrder`,
+    `referenceRanges[]`, `referenceValues[]`.
   
-  - `priceMaximum ≤ priceMsrp`, `priceMinimum ≤ priceMaximum`.
-  - `isMandatoryTest: true` requires `mandatoryDeptId`.
+  ## Logical-reference ids (no existence check on create)
+  
+  `departmentId`/`categoryId`/`subCategoryId` and the `mandatory*Id` trio are
+  optional UUID **logical refs** — validated as UUIDs but not FK-checked here.
+  Replace the placeholder ids above with real ones from
+  `GET /departments` · `/categories` · `/sub-categories`. The 8 settings/template
+  ids (reportTemplateId, pdfSettingsId, imageSettingsId, approvalWorkflowId,
+  groupLayoutId, groupSettingsId, iconSettingsId, sampleNameId) are likewise
+  optional logical refs — omit until those modules exist.
+  
+  ## Reflex tests
+  
+  Each result param may carry `reflexTests: [{ id, name }]`. The whole array is
+  stored verbatim as a **JSON snapshot** (the `reflex_tests` column) and returned
+  as-is on read — the backend does not extract ids into a relational column or
+  resolve names. `id` must be a valid UUID and `name` a non-empty string, but the
+  id is **not existence-checked** against lab tests. (The old bare
+  `reflexTestIds: string[]` array input is no longer accepted.)
+  
+  ## Enums (UPPERCASE)
+  
+  `processMethod` (SINGLE_STEP|MULTI_STEP), `samplePriorityType`
+  (ROUTINE|URGENT|STAT), `tat*Unit`/`procTime*Unit` (MINUTES|HOURS|DAYS),
+  `repeatIntervalUnit` (HOURS|DAYS|MONTHS|YEARS), `scheduleDays` (MONDAY…SUNDAY),
+  `containerType`, `resultType` (QUANTITATIVE|QUALITATIVE|CALCULATED),
+  `parameterType` (MEASURED|CALCULATED), `resultEntryMode` (MANUAL|AUTO),
+  `resultRoundingType` (NO_ROUNDING|ONE_DECIMAL|TWO_DECIMAL|THREE_DECIMAL|WHOLE_NUMBER),
+  `gender` (ALL|MALE|FEMALE), `age*Unit` (DAYS|MONTHS|YEARS), `abnormalFlagLogic`
+  (BOLD_AND_RED|BOLD_ONLY|ITALIC|UNDERLINE|COLOUR_HIGHLIGHT).
+  
+  ## Conflicts & cross-field rules
+  
+  - `testName` (2-255) / `testCode` (1-50) unique **per master data** among active
+    rows → 409 `LAB_TEST_NAME_CONFLICT` / `LAB_TEST_CODE_CONFLICT`;
+    `parameterCode` unique per test → 409 `LAB_TEST_PARAM_CODE_CONFLICT`.
+  - `priceMaximum ≤ priceMsrp`, `priceMinimum ≤ priceMaximum` (422).
+  - `isMandatoryTest: true` requires `mandatoryDeptId` (422).
   - `isRepeatIntervalRestriction: true` requires `repeatIntervalValue` +
-    `repeatIntervalUnit`.
-  - A `CALCULATED` parameter requires `calculationFormula`.
+    `repeatIntervalUnit` (422).
+  - A `CALCULATED` parameter requires `calculationFormula` (422).
+  - Per result param: `criticalMin ≤ criticalMax` (422).
   - Per range: `lowerLimit ≤ upperLimit`, `criticalMin ≤ lowerLimit`,
-    `criticalMax ≥ upperLimit`, `ageFrom ≤ ageTo`.
-  
-  The 8 settings/template ids (reportTemplateId, pdfSettingsId, imageSettingsId,
-  approvalWorkflowId, groupLayoutId, groupSettingsId, iconSettingsId,
-  sampleNameId) are optional logical references — omit them until those modules
-  exist. Uses `masterDataId` from Master Data → List/Create.
-  
-  `isActive` (optional, default `true`) toggles Active/Inactive — used by the
-  `status` filter on "List Lab Tests (Listing & Views)". Soft delete (`deletedAt`)
-  is separate: deleted tests never appear regardless of `isActive`.
+    `criticalMax ≥ upperLimit`, `ageFrom ≤ ageTo` (422).
 }

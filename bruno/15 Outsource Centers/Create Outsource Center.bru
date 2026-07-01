@@ -33,6 +33,9 @@ body:json {
     "bankAccountNumber": "50100123456789",
     "ifscCode": "HDFC0001234",
     "isActive": true,
+    "isNablAccredited": true,
+    "labTestId": "3772e02a-391a-4276-9d78-f06a0e078e44",
+    "labPanelId": "7304fcdc-3c2a-4ee9-9837-7bbde89ca922",
     "contacts": [
       {
         "role": "DIRECTOR",
@@ -46,20 +49,12 @@ body:json {
         "mobile": "+919811113333",
         "email": "accounts@acmeref.test"
       }
-    ],
-    "assignments": [
-      {
-        "branchId": "9fcbf225-7f94-4b57-b3b4-2127b7f5be78",
-        "labTestIds": ["3772e02a-391a-4276-9d78-f06a0e078e44"],
-        "labPanelIds": ["7304fcdc-3c2a-4ee9-9837-7bbde89ca922"]
-      }
     ]
   }
 }
 
 docs {
-  Create an outsource center together with its contacts and branch assignments
-  (one transaction).
+  Create an outsource center together with its contacts (one transaction).
 
   **Basic details:** `name` (required, 2-255, unique among active centers in the
   tenant — 409 otherwise) and `city` (required) are the only mandatory fields;
@@ -68,26 +63,25 @@ docs {
   **Legal & financial** (`gstNumber`, `panNumber`, `accountHolderName`,
   `bankName`, `bankAccountNumber`, `ifscCode`) are all optional.
 
+  **Flags:** `isActive` (default true) and `isNablAccredited` (default false) are
+  optional booleans.
+
+  **Lab test / lab panel** — a single optional `labTestId` and `labPanelId`. Each,
+  when present, must be an active lab test / lab panel in the tenant (ids come from
+  *List Lab Test Options* / *List Lab Panel Options*), else 400
+  `OUTSOURCE_CENTER_INVALID_TEST` / `OUTSOURCE_CENTER_INVALID_PANEL`.
+
   **Contacts** — up to five, each with a fixed `role` of `DIRECTOR`,
   `ACCESSION_PERSON`, `REGISTRATION_PERSON`, `LOGISTICS_PERSON`, or
   `ACCOUNTS_PERSON`. `name`/`mobile`/`email` are all optional; a contact whose
   name, mobile, and email are all blank is dropped (not persisted). A role may
   appear at most once (400 otherwise).
 
-  **Assignments** — at least one branch is required. For each assigned branch,
-  `labTestIds` and `labPanelIds` are arrays of the specific active lab test / lab
-  panel ids the outsource party may handle for that branch (multi-select; ids
-  come from *Get Branch Lab Items*). Both arrays are optional, but at least one
-  must be non-empty per branch (400 `OUTSOURCE_CENTER_MISSING_SELECTION`
-  otherwise). Every id must be an active test/panel ON that branch, else 400
-  `OUTSOURCE_CENTER_INVALID_TEST` / `OUTSOURCE_CENTER_INVALID_PANEL`.
-
   NOTE: `code` is system-generated (per-tenant sequential, e.g. `OC-00001`) and
   immutable — never sent in the body. `tenantId` comes from the JWT, never the
   body.
 
-  The ids below are real rows in the dev DB (tenant "The Tenant"): branch
-  `9fcbf225…` (Test Main Lab), lab test `3772e02a…` (CBC2), lab panel
-  `7304fcdc…` (FBC). `name` must be unique among active centers — change it if a
-  center with this name already exists.
+  The ids below are real rows in the dev DB (tenant "The Tenant"): lab test
+  `3772e02a…` (CBC2), lab panel `7304fcdc…` (FBC). `name` must be unique among
+  active centers — change it if a center with this name already exists.
 }

@@ -13,7 +13,7 @@ import { MasterDataService } from './master-data.service';
 import { CreateMasterDataDto } from './dto/create-master-data.dto';
 import { UpdateMasterDataDto } from './dto/update-master-data.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
-import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import { ListMasterDataQueryDto } from './dto/list-master-data-query.dto';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
@@ -41,17 +41,19 @@ export class MasterDataController {
   }
 
   /**
-   * List the tenant's master data (paginated).
+   * List the tenant's master data (paginated, optional case-insensitive name
+   * `search` and `branchId` filter).
    */
   @Get()
   findAll(
     @CurrentTenant() tenantId: string,
-    @Query() query: PaginationQueryDto,
+    @Query() query: ListMasterDataQueryDto,
   ) {
     return this.masterDataService.findAllForTenant(
       tenantId,
       query.page ?? 1,
       query.limit ?? 20,
+      { search: query.search, branchId: query.branchId },
     );
   }
 

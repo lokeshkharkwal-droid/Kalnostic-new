@@ -3,8 +3,6 @@ import {
   Controller,
   Delete,
   Get,
-  HttpCode,
-  HttpStatus,
   Param,
   Patch,
   Post,
@@ -14,7 +12,6 @@ import { AuditAction, AuditModule } from '@prisma/client';
 import { OutsourceCenterService } from './outsource-center.service';
 import { CreateOutsourceCenterDto } from './dto/create-outsource-center.dto';
 import { UpdateOutsourceCenterDto } from './dto/update-outsource-center.dto';
-import { BranchLabItemsQueryDto } from './dto/branch-lab-items-query.dto';
 import { ListOutsourceCentersDto } from './dto/list-outsource-centers.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
@@ -58,38 +55,9 @@ export class OutsourceCenterController {
     return this.outsourceCenterService.findAll(tenantId, query);
   }
 
-  // ── Helper (selection) routes ───────────────────────────────────────────────
-  // ROUTE-ORDERING INVARIANT: these literal paths MUST stay above the `:id` param
-  // routes below, or Nest would treat "eligible-branches" / "branch-lab-items" as a
-  // center id. Keep new literal routes here.
-
   /**
-   * List branches eligible for assignment (those with an active lab test or lab
-   * panel), main branch first then by creation order.
-   */
-  @Get('eligible-branches')
-  findEligibleBranches(@CurrentTenant() tenantId: string) {
-    return this.outsourceCenterService.findEligibleBranches(tenantId);
-  }
-
-  /**
-   * For the given branch ids, list each branch's active lab tests and lab panels
-   * so the caller can choose which ones to assign to the outsource center.
-   */
-  @Post('branch-lab-items')
-  @HttpCode(HttpStatus.OK)
-  findBranchLabItems(
-    @CurrentTenant() tenantId: string,
-    @Body() dto: BranchLabItemsQueryDto,
-  ) {
-    return this.outsourceCenterService.findBranchLabItems(
-      tenantId,
-      dto.branchIds,
-    );
-  }
-
-  /**
-   * Fetch one outsource center by id (with contacts and assignments).
+   * Fetch one outsource center by id (with contacts and the resolved lab
+   * test/panel names).
    */
   @Get(':id')
   findOne(@CurrentTenant() tenantId: string, @Param('id') id: string) {
@@ -97,7 +65,8 @@ export class OutsourceCenterController {
   }
 
   /**
-   * Update an outsource center (contacts/assignments are replace-all when sent).
+   * Update an outsource center (contacts are replace-all when sent). Used for
+   * activate/inactivate too, via `{ isActive }`.
    */
   @Patch(':id')
   @Audit({
@@ -114,7 +83,7 @@ export class OutsourceCenterController {
   }
 
   /**
-   * Soft-delete an outsource center (cascades to contacts and assignments).
+   * Soft-delete an outsource center (cascades to its contacts).
    */
   @Delete(':id')
   @Audit({

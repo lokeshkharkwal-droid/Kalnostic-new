@@ -1,0 +1,66 @@
+meta {
+  name: Update Template
+  type: http
+  seq: 9
+}
+
+patch {
+  url: {{baseUrl}}/templates/{{templateId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Report Ready Alert (Revised)",
+    "triggerEvent": "REPORT_READY",
+    "version": "v1.1",
+    "isActive": true,
+    "body": "Hi {patient_name}, your {test_name} report is ready. View: {report_link}",
+    "header": {
+      "enabled": true,
+      "type": "Text",
+      "text": "Apex Diagnostics",
+      "imageFile": "",
+      "alignment": "Center"
+    },
+    "footerBlock": {
+      "enabled": false,
+      "type": "Text",
+      "text": "",
+      "imageFile": "",
+      "alignment": "Left"
+    },
+    "attachment": {
+      "enabled": false,
+      "type": "Image",
+      "files": [],
+      "position": "After Body",
+      "alignment": "Left",
+      "sizeProfile": "Small",
+      "shortLinkGenerator": true
+    }
+  }
+}
+
+vars:pre-request {
+  businessAccessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwZXJzb25faWQiOiIyOTQ5N2I2NC0wNGUyLTQwZjktYTY2OS04NDBiZmNlOGU3ZDYiLCJ0ZW5hbnRfaWQiOiJhYjE2OTY1MC01Mzc1LTQwYmUtYTIxMi00ZGE0ZTJiMDE5NGQiLCJhY3RpdmVfYnJhbmNoX2lkIjpudWxsLCJhY3RpdmVfYnJhbmNoX3R5cGUiOm51bGwsImFjdGl2ZV9wcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwiaXNfcGF0aWVudF9jb250ZXh0IjpmYWxzZSwicHJvZmlsZXMiOlt7ImJyYW5jaF9pZCI6bnVsbCwiYnJhbmNoX25hbWUiOm51bGwsImJyYW5jaF90eXBlIjpudWxsLCJwcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwicHJvZmlsZV9sYWJlbCI6IkJ1c2luZXNzIEFkbWluIiwiaXNfZGVmYXVsdCI6dHJ1ZX1dLCJpc19wYXRpZW50IjpmYWxzZSwicGxhdGZvcm1fbXJuIjoiS0FMLTIwMjYwNjA4LTM2OTBCRkQxIiwiaWF0IjoxNzgwOTM5ODE2LCJleHAiOjE3ODA5NDA3MTZ9.J55wiEzB-FCqQGSFyaVmqeOfFIFJRrlK5d47mBUpMZ4
+}
+
+docs {
+  Update a template (partial). All fields optional; `type` and `code` are
+  immutable and not accepted. When any config-affecting field
+  (`subject` / `consent` / `whatsapp` / `report`) is supplied, the whole `config`
+  JSON is rebuilt from the existing row's type; otherwise it is left unchanged.
+  Shared blocks (`header` / `footerBlock` / `attachment`) are replaced when
+  present. Supply only the fields you want to change. The accepted field set per
+  type matches the corresponding Create request.
+}
