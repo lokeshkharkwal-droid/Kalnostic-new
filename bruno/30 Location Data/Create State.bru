@@ -1,0 +1,51 @@
+meta {
+  name: Create State
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/locations/states
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "name": "Maharashtra",
+    "code": "MH",
+    "countryId": "{{countryId}}",
+    "isActive": true
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("stateId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  Create a state under a country. Auth: SiteAdmin token, requires
+  `master-data:write`. Captures `stateId`.
+
+  Fields (✱ = required):
+  - `name` ✱ — 2-100 chars.
+  - `code` ✱ — up to 10 chars.
+  - `countryId` ✱ — UUID of an active country; returns 404 `COUNTRY_NOT_FOUND`
+    for an unknown/soft-deleted country (invalid FK rejected).
+  - `isActive` — optional, defaults `true`.
+}

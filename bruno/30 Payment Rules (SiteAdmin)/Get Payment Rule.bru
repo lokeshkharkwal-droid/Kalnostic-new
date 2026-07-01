@@ -1,0 +1,60 @@
+meta {
+  name: Get Payment Rule
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/payment-rules/{{paymentRuleId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Fetch one payment rule by id. Requires `payment-rules:read` (full_admin and
+  above). 404 `PAYMENT_RULE_NOT_FOUND` if missing or soft-deleted. Uses
+  `{{paymentRuleId}}` captured by "Create Payment Rule".
+
+  ## Sample response
+
+  ```json
+  {
+    "success": true,
+    "data": {
+      "id": "b3f0…",
+      "ruleType": "CITRUS_COMMISSION",
+      "name": "Citrus standard commission",
+      "code": "CITRUS-STD-01",
+      "description": "Standard Citrus gateway commission for diagnostics",
+      "tenantId": 1001,
+      "branchId": 2001,
+      "rank": 1,
+      "contextType": 10,
+      "contextId": 500,
+      "class1": "GATEWAY",
+      "class2": "DIAGNOSTIC",
+      "calculationType": "PERCENT",
+      "calculationValue": "2",
+      "taxType": "GST",
+      "taxPercentage": 18,
+      "effectivePeriodStartDate": "2026-07-01T00:00:00.000Z",
+      "effectivePeriodEndDate": "2027-06-30T00:00:00.000Z",
+      "isActive": true,
+      "createdAt": "2026-07-01T10:00:00.000Z",
+      "updatedAt": "2026-07-01T10:00:00.000Z",
+      "deletedAt": null
+    },
+    "meta": { "timestamp": "2026-07-01T10:00:00.000Z" }
+  }
+  ```
+}

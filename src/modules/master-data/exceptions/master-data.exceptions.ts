@@ -37,6 +37,30 @@ export class CannotCreateMasterDataForMainBranchException extends KaltrosExcepti
   }
 }
 
+/** 409 — a branch maps to exactly one master data; it already has one. */
+export class BranchAlreadyHasMasterDataException extends KaltrosException {
+  constructor(branchId: string) {
+    super(
+      'BRANCH_ALREADY_HAS_MASTER_DATA',
+      'This branch already has a master data. A branch maps to exactly one master data.',
+      { branchId },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/** 404 — no master data is mapped to the given branch. */
+export class MasterDataNotMappedToBranchException extends KaltrosException {
+  constructor(branchId: string) {
+    super(
+      'MASTER_DATA_NOT_MAPPED_TO_BRANCH',
+      'No master data is mapped to this branch.',
+      { branchId },
+      HttpStatus.NOT_FOUND,
+    );
+  }
+}
+
 /** 409 — master data belonging to the main branch cannot be deleted. */
 export class CannotDeleteMainBranchMasterDataException extends KaltrosException {
   constructor(id: string) {

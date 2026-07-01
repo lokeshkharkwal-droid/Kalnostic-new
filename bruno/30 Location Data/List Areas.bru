@@ -1,0 +1,34 @@
+meta {
+  name: List Areas
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/locations/areas?page=1&limit=20&cityId={{cityId}}
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  cityId: {{cityId}}
+  ~stateId: {{stateId}}
+  ~countryId: {{countryId}}
+  ~search:
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  List areas (paginated). Auth: SiteAdmin token, requires `master-data:read`.
+
+  Query params:
+  - `page` / `limit` — offset pagination.
+  - `cityId` / `stateId` / `countryId` — cascading filters (optional).
+  - `search` — case-insensitive match on `name`/`locality` (optional).
+  - `isActive` — `true` | `false` filter (optional).
+}

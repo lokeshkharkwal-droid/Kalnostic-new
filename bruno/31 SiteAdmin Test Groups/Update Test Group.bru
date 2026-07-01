@@ -1,0 +1,44 @@
+meta {
+  name: Update Test Group
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/siteadmin/test-groups/{{testGroupId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "groupName": "Full Body Checkup (Advanced)",
+    "labTestIds": ["{{siteAdminLabTestId}}"]
+  }
+}
+
+docs {
+  Update a test group. Auth: SiteAdmin token, requires `master-data:write`.
+  All fields optional.
+
+  **Body**
+  - `groupName` — renamed; still unique among active groups → 409
+    `TEST_GROUP_NAME_CONFLICT` on a clash.
+  - `labTestIds` — when provided, the **entire mapping set is replaced** (old
+    active mappings soft-deleted, the new set created). Same validation as create
+    (must be active SITE_ADMIN templates, no duplicates). **Omit** `labTestIds`
+    to leave the current mappings untouched; pass `[]` to clear all mappings.
+
+  404 `TEST_GROUP_NOT_FOUND` if the group is missing/soft-deleted.
+
+  **Sample response — 200**: the updated group with its (new) `labTests[]`, same
+  shape as `Get Test Group`.
+}

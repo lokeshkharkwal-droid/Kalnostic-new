@@ -1,0 +1,20 @@
+meta {
+  name: Get City
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/locations/cities/{{cityId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Fetch one city by id. Auth: SiteAdmin token, requires `master-data:read`.
+  Returns 404 `CITY_NOT_FOUND` if missing or soft-deleted.
+}

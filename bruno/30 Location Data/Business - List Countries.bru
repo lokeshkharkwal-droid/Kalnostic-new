@@ -1,0 +1,28 @@
+meta {
+  name: Business - List Countries
+  type: http
+  seq: 17
+}
+
+get {
+  url: {{baseUrl}}/locations/countries?page=1&limit=50
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 50
+  ~search:
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Business-facing, read-only country list for cascading dropdowns. Auth: business
+  token (global `JwtAuthGuard`). Same platform-level data as the SiteAdmin list —
+  every tenant sees the same countries. A SiteAdmin write route rejects this
+  business token (and vice versa).
+}

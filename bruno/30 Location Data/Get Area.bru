@@ -1,0 +1,20 @@
+meta {
+  name: Get Area
+  type: http
+  seq: 15
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/locations/areas/{{areaId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Fetch one area by id. Auth: SiteAdmin token, requires `master-data:read`.
+  Returns 404 `AREA_NOT_FOUND` if missing or soft-deleted.
+}

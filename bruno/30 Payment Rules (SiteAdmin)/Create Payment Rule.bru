@@ -1,0 +1,120 @@
+meta {
+  name: Create Payment Rule
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/payment-rules
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "ruleType": "CITRUS_COMMISSION",
+    "name": "Citrus standard commission",
+    "code": "CITRUS-STD-01",
+    "description": "Standard Citrus gateway commission for diagnostics",
+    "tenantId": 1001,
+    "branchId": 2001,
+    "rank": 1,
+    "contextType": 10,
+    "contextId": 500,
+    "class1": "GATEWAY",
+    "class2": "DIAGNOSTIC",
+    "calculationType": "PERCENT",
+    "calculationValue": "2",
+    "taxType": "GST",
+    "taxPercentage": 18,
+    "effectivePeriodStartDate": "2026-07-01",
+    "effectivePeriodEndDate": "2027-06-30",
+    "isActive": true
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) {
+    bru.setEnvVar("paymentRuleId", data.id);
+  }
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("echoes the submitted code", function () {
+    expect(res.getBody().data.code).to.equal("CITRUS-STD-01");
+  });
+}
+
+docs {
+  Create a platform-level payment rule. Requires `payment-rules:write`
+  (full_admin and above). SiteAdmin token (`{{siteAdminToken}}`). Captures
+  `paymentRuleId`.
+
+  ## Fields
+
+  - `ruleType` (required, enum) — one of `CITRUS_COMMISSION`, `PAYU_COMMISSION`,
+    `PINELAB_COMMISSION`, `EZ_COMMISSION`, `PHARMACY_TAXES`. Any other value → 400.
+  - `name` (required, string ≤ 255).
+  - `code` (required, string ≤ 100) — unique among active rules; a duplicate →
+    409 `PAYMENT_RULE_CODE_CONFLICT`.
+  - `description` (optional, ≤ 2000).
+  - `tenantId` / `branchId` (optional, int) — scope/target references (plain
+    integers, not FK relations).
+  - `rank` (required, int) — priority of the rule.
+  - `contextType` / `contextId` (optional, int).
+  - `class1` / `class2` (optional, string ≤ 255) — primary / secondary
+    classification.
+  - `calculationType` (required, enum) — one of `FIXED`, `PERCENT`, `RULE`
+    (Rule / Formula). Any other value → 400.
+  - `calculationValue` (required, string ≤ 255) — a fixed amount, a percentage,
+    or a formula/rule expression depending on `calculationType`.
+  - `taxType` (optional, string ≤ 255) / `taxPercentage` (optional, int).
+  - `effectivePeriodStartDate` / `effectivePeriodEndDate` (optional, ISO-8601
+    date string) — stored as timestamps.
+  - `isActive` (optional, bool) — defaults `true`.
+
+  ## Sample response
+
+  ```json
+  {
+    "success": true,
+    "data": {
+      "id": "b3f0…",
+      "ruleType": "CITRUS_COMMISSION",
+      "name": "Citrus standard commission",
+      "code": "CITRUS-STD-01",
+      "description": "Standard Citrus gateway commission for diagnostics",
+      "tenantId": 1001,
+      "branchId": 2001,
+      "rank": 1,
+      "contextType": 10,
+      "contextId": 500,
+      "class1": "GATEWAY",
+      "class2": "DIAGNOSTIC",
+      "calculationType": "PERCENT",
+      "calculationValue": "2",
+      "taxType": "GST",
+      "taxPercentage": 18,
+      "effectivePeriodStartDate": "2026-07-01T00:00:00.000Z",
+      "effectivePeriodEndDate": "2027-06-30T00:00:00.000Z",
+      "isActive": true,
+      "createdAt": "2026-07-01T10:00:00.000Z",
+      "updatedAt": "2026-07-01T10:00:00.000Z",
+      "deletedAt": null
+    },
+    "meta": { "timestamp": "2026-07-01T10:00:00.000Z" }
+  }
+  ```
+}

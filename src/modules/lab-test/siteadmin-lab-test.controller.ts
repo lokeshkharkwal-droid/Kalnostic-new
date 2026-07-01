@@ -13,6 +13,7 @@ import { LabTestService } from './lab-test.service';
 import { CreateLabTestDto } from './dto/create-lab-test.dto';
 import { UpdateLabTestDto } from './dto/update-lab-test.dto';
 import { ListLabTestsDto } from './dto/list-lab-tests.dto';
+import { LabTestOptionsQueryDto } from './dto/lab-test-options-query.dto';
 import { SiteAdminPermissionGuard } from '../siteadmin/guards/siteadmin-permission.guard';
 import { RequireSiteAdminPermission } from '../siteadmin/decorators/require-siteadmin-permission.decorator';
 import { CurrentSiteAdmin } from '../siteadmin/decorators/current-siteadmin.decorator';
@@ -55,6 +56,23 @@ export class SiteAdminLabTestController {
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_READ)
   findAll(@Query() query: ListLabTestsDto) {
     return this.labTestService.findAllTemplates(query);
+  }
+
+  /**
+   * Lightweight `{ id, name }` options for SITE_ADMIN template lab tests — feeds
+   * the Test Groups multi-select. Declared before `:id` so `options` isn't matched
+   * as an id. Returns the full array when `page` is omitted, or a paginated
+   * envelope when `page` is supplied. `branchId` on the query is ignored (templates
+   * have no branch).
+   */
+  @Get('options')
+  @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_READ)
+  findOptions(@Query() query: LabTestOptionsQueryDto) {
+    return this.labTestService.findTemplateOptions({
+      search: query.search,
+      page: query.page,
+      limit: query.limit,
+    });
   }
 
   /**

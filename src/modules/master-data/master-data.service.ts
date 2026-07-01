@@ -1,16 +1,17 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
-import { MasterData, Prisma } from '@prisma/client';
+import { LabPanel, LabTest, MasterData, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { BranchService } from '../branch/branch.service';
 import { CreateMasterDataDto } from './dto/create-master-data.dto';
 import { UpdateMasterDataDto } from './dto/update-master-data.dto';
 import {
-  CannotCreateMasterDataForMainBranchException,
+  BranchAlreadyHasMasterDataException,
   CannotDeleteMainBranchMasterDataException,
   MasterDataNameConflictException,
   MasterDataNotFoundException,
+  MasterDataNotMappedToBranchException,
 } from './exceptions/master-data.exceptions';
 
 /** Payload of the `branch.created` event emitted by BranchService. */
@@ -91,14 +92,16 @@ export class MasterDataService {
 
   /**
    * Manually create a master data for a branch. The branch is validated to
-   * belong to the caller's tenant (CLAUDE.md §4.7), and the **main branch is
-   * rejected** (it keeps only its auto-created default). Seed lab tests into the
-   * new master data afterwards via the lab-test clone endpoint.
+   * belong to the caller's tenant (CLAUDE.md §4.7). A branch maps to **exactly
+   * one** master data (1:1), so creation is rejected when the branch already has
+   * an active one — in practice each branch is auto-provisioned its single master
+   * data on `branch.created`, making this a fallback for branches that somehow
+   * lack one.
    * @param tenantId owning tenant
    * @param dto validated payload (branchId, name, optional description)
    * @returns the created master data
    * @throws BranchNotFoundException if the branch is missing/other tenant
-   * @throws CannotCreateMasterDataForMainBranchException if the branch is the main branch
+   * @throws BranchAlreadyHasMasterDataException if the branch already has one
    * @throws MasterDataNameConflictException if the name is taken on this branch
    */
   async create(
@@ -108,8 +111,13 @@ export class MasterDataService {
     // Validate the client-supplied branch belongs to this tenant (§4.7).
     await this.branchService.findById(dto.branchId, tenantId);
 
-    if (await this.isMainBranch(tenantId, dto.branchId)) {
-      throw new CannotCreateMasterDataForMainBranchException(dto.branchId);
+    // Enforce the 1:1 branch ↔ master data relationship (defence in depth on top
+    // of the partial-unique index `master_data_branch_active_unique`).
+    const existing = await this.prisma.masterData.count({
+      where: { tenantId, branchId: dto.branchId, deletedAt: null },
+    });
+    if (existing > 0) {
+      throw new BranchAlreadyHasMasterDataException(dto.branchId);
     }
 
     try {
@@ -143,6 +151,109 @@ export class MasterDataService {
       throw new MasterDataNotFoundException(id);
     }
     return masterData;
+  }
+
+  /**
+   * Resolve the single active master data mapped to a branch (the 1:1 pointer).
+   * The branch is validated to belong to the caller's tenant first (§4.7) so a
+   * client-supplied branch id can never leak another tenant's data.
+   * @param branchId the branch whose master data to resolve
+   * @param tenantId tenant scope
+   * @throws BranchNotFoundException if the branch is missing/other tenant
+   * @throws MasterDataNotMappedToBranchException if the branch has no master data
+   */
+  async findByBranch(branchId: string, tenantId: string): Promise<MasterData> {
+    await this.branchService.findById(branchId, tenantId);
+    const masterData = await this.prisma.masterData.findFirst({
+      where: { branchId, tenantId, deletedAt: null },
+    });
+    if (!masterData) {
+      throw new MasterDataNotMappedToBranchException(branchId);
+    }
+    return masterData;
+  }
+
+  /**
+   * Import source: the active lab tests of the master data mapped to `branchId`.
+   * Resolves the branch's master data (1:1), then returns its lab tests paginated
+   * so the frontend can present them for selection. Read-only — the actual import
+   * into a branch's list is a client-side action.
+   * @param branchId active branch (from the JWT, supplied by the client)
+   * @param tenantId tenant scope
+   * @param page 1-based page (default 1)
+   * @param limit page size (default 20)
+   * @param search optional case-insensitive match on `testName`/`testCode`
+   * @throws MasterDataNotMappedToBranchException if the branch has no master data
+   */
+  async getImportableLabTests(
+    branchId: string,
+    tenantId: string,
+    page = 1,
+    limit = 20,
+    search?: string,
+  ): Promise<PaginatedResult<LabTest>> {
+    const masterData = await this.findByBranch(branchId, tenantId);
+    const where: Prisma.LabTestWhereInput = {
+      masterDataId: masterData.id,
+      tenantId,
+      deletedAt: null,
+    };
+    const term = search?.trim();
+    if (term) {
+      where.OR = [
+        { testName: { contains: term, mode: 'insensitive' } },
+        { testCode: { contains: term, mode: 'insensitive' } },
+      ];
+    }
+    const data = await this.prisma.labTest.findMany({
+      where,
+      skip: (page - 1) * limit,
+      take: limit,
+      orderBy: { testName: 'asc' },
+    });
+    const total = await this.prisma.labTest.count({ where });
+    return { data, total, page, limit };
+  }
+
+  /**
+   * Import source: the active lab panels of the master data mapped to `branchId`.
+   * Resolves the branch's master data (1:1), then returns its lab panels paginated
+   * for selection. Read-only, mirroring {@link getImportableLabTests}.
+   * @param branchId active branch (from the JWT, supplied by the client)
+   * @param tenantId tenant scope
+   * @param page 1-based page (default 1)
+   * @param limit page size (default 20)
+   * @param search optional case-insensitive match on `panelName`/`panelCode`
+   * @throws MasterDataNotMappedToBranchException if the branch has no master data
+   */
+  async getImportableLabPanels(
+    branchId: string,
+    tenantId: string,
+    page = 1,
+    limit = 20,
+    search?: string,
+  ): Promise<PaginatedResult<LabPanel>> {
+    const masterData = await this.findByBranch(branchId, tenantId);
+    const where: Prisma.LabPanelWhereInput = {
+      masterDataId: masterData.id,
+      tenantId,
+      deletedAt: null,
+    };
+    const term = search?.trim();
+    if (term) {
+      where.OR = [
+        { panelName: { contains: term, mode: 'insensitive' } },
+        { panelCode: { contains: term, mode: 'insensitive' } },
+      ];
+    }
+    const data = await this.prisma.labPanel.findMany({
+      where,
+      skip: (page - 1) * limit,
+      take: limit,
+      orderBy: { panelName: 'asc' },
+    });
+    const total = await this.prisma.labPanel.count({ where });
+    return { data, total, page, limit };
   }
 
   /**

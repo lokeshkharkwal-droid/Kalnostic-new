@@ -14,6 +14,7 @@ import { CreateMasterDataDto } from './dto/create-master-data.dto';
 import { UpdateMasterDataDto } from './dto/update-master-data.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { ListMasterDataQueryDto } from './dto/list-master-data-query.dto';
+import { ImportFromMasterDataQueryDto } from './dto/import-from-master-data-query.dto';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
@@ -54,6 +55,44 @@ export class MasterDataController {
       query.page ?? 1,
       query.limit ?? 20,
       { search: query.search, branchId: query.branchId },
+    );
+  }
+
+  /**
+   * Import source — the lab tests of the master data mapped to the active
+   * branch. The client passes its active `branchId` (from the JWT); the backend
+   * resolves that branch's single master data and returns its lab tests for the
+   * import picker. 404 if no master data is mapped to the branch.
+   */
+  @Get('import/lab-tests')
+  importLabTests(
+    @CurrentTenant() tenantId: string,
+    @Query() query: ImportFromMasterDataQueryDto,
+  ) {
+    return this.masterDataService.getImportableLabTests(
+      query.branchId,
+      tenantId,
+      query.page ?? 1,
+      query.limit ?? 20,
+      query.search,
+    );
+  }
+
+  /**
+   * Import source — the lab panels of the master data mapped to the active
+   * branch. Mirrors {@link importLabTests}.
+   */
+  @Get('import/lab-panels')
+  importLabPanels(
+    @CurrentTenant() tenantId: string,
+    @Query() query: ImportFromMasterDataQueryDto,
+  ) {
+    return this.masterDataService.getImportableLabPanels(
+      query.branchId,
+      tenantId,
+      query.page ?? 1,
+      query.limit ?? 20,
+      query.search,
     );
   }
 

@@ -725,6 +725,106 @@ model PersonTenantEnrollment {
   @@map("person_tenant_enrollments")
 }
 
+// ── Location master (platform-level geographic reference data) ───────────────────
+// Global Country → State → City → Area/Locality hierarchy owned and maintained by
+// SiteAdmin (no tenant_id, no RLS — shared by every tenant). Businesses consume it
+// read-only to populate cascading location dropdowns. Denormalized ancestor FKs on
+// City/Area (per spec) are kept mutually consistent in the services.
+
+/// A country (e.g. India / "IN"). Top of the location hierarchy.
+model Country {
+  id   String @id @default(uuid())
+  name String
+  code String
+
+  isActive Boolean @default(true) @map("is_active")
+
+  states State[]
+  cities City[]
+  areas  Area[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([deletedAt])
+  @@map("countries")
+}
+
+/// A state/province belonging to one country.
+model State {
+  id   String @id @default(uuid())
+  name String
+  code String
+
+  countryId String  @map("country_id")
+  country   Country @relation(fields: [countryId], references: [id])
+
+  isActive Boolean @default(true) @map("is_active")
+
+  cities City[]
+  areas  Area[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([countryId])
+  @@index([deletedAt])
+  @@map("states")
+}
+
+/// A city belonging to one state (and, denormalized, one country).
+model City {
+  id      String @id @default(uuid())
+  name    String
+  pinCode String @map("pin_code")
+
+  stateId   String @map("state_id")
+  countryId String @map("country_id")
+  state     State   @relation(fields: [stateId], references: [id])
+  country   Country @relation(fields: [countryId], references: [id])
+
+  isActive Boolean @default(true) @map("is_active")
+
+  areas Area[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([stateId])
+  @@index([countryId])
+  @@index([deletedAt])
+  @@map("cities")
+}
+
+/// An area/locality belonging to one city (and, denormalized, one state + country).
+model Area {
+  id       String @id @default(uuid())
+  name     String
+  locality String
+
+  cityId    String @map("city_id")
+  stateId   String @map("state_id")
+  countryId String @map("country_id")
+  city      City    @relation(fields: [cityId], references: [id])
+  state     State   @relation(fields: [stateId], references: [id])
+  country   Country @relation(fields: [countryId], references: [id])
+
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([cityId])
+  @@index([stateId])
+  @@index([countryId])
+  @@index([deletedAt])
+  @@map("areas")
+}
+
 // ── Tenant-scoped models (tenant_id + RLS) ──────────────────────────────────────
 
 /// A physical location belonging to a tenant.
@@ -1964,6 +2064,51 @@ model LabPanelTest {
   @@map("lab_panel_tests")
 }
 
+/// A SiteAdmin-curated named group of SITE_ADMIN lab-test templates (e.g. "Full
+/// Body Checkup"). Platform-level (CLAUDE.md §4.2) — no `tenantId`/`source` and
+/// intentionally excluded from RLS, like siteadmin_users. `groupName` is unique
+/// among active rows (partial unique index in prisma/rls.sql). The mapped lab
+/// tests are managed via `TestGroupMapping`.
+model TestGroup {
+  id        String @id @default(uuid())
+  groupName String @map("group_name")
+
+  // Actor trail: the SiteAdmin who created/last-updated the group.
+  createdBy String? @map("created_by")
+  updatedBy String? @map("updated_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  mappings TestGroupMapping[]
+
+  @@index([deletedAt])
+  @@map("test_groups")
+}
+
+/// Junction: one row per (test group, SITE_ADMIN lab test) pair. `labTestId` is a
+/// logical ref to an active SITE_ADMIN LabTest (validated in TestGroupService),
+/// mirroring LabPanelTest. Platform-level (no tenant scoping); a lab test appears
+/// at most once per group among active rows (partial unique index in
+/// prisma/rls.sql).
+model TestGroupMapping {
+  id          String @id @default(uuid())
+  testGroupId String @map("test_group_id")
+  labTestId   String @map("lab_test_id")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  testGroup TestGroup @relation(fields: [testGroupId], references: [id])
+
+  @@index([testGroupId])
+  @@index([labTestId])
+  @@index([deletedAt])
+  @@map("test_group_mappings")
+}
+
 /// An external reference lab a tenant sends samples to. Tenant-scoped,
 /// tenant-level (CLAUDE.md §4.6) — the center belongs to the business as a whole.
 /// Carries a single selected lab test + lab panel (`labTestId`/`labPanelId`) and a
@@ -3038,4 +3183,67 @@ model MachineBranch {
   @@index([machineId])
   @@index([branchId])
   @@map("machine_branches")
+}
+
+// ── Payment Rules (SiteAdmin, platform-level) ────────────────────────────────
+// Commission/tax rules managed by SiteAdmin across all tenants. Platform-level
+// (no `tenant_id` RLS policy — SiteAdmin operates cross-tenant, like
+// `siteadmin_users`). `tenantId`/`branchId`/`contextType`/`contextId` are
+// optional scope/target references stored as plain Int scalars (no FK relation).
+
+/** The payment gateway / tax family a rule belongs to. */
+enum PaymentRuleType {
+  CITRUS_COMMISSION
+  PAYU_COMMISSION
+  PINELAB_COMMISSION
+  EZ_COMMISSION
+  PHARMACY_TAXES
+}
+
+/** How a rule's `calculationValue` is applied. */
+enum PaymentCalculationType {
+  FIXED
+  PERCENT
+  RULE
+}
+
+model PaymentRule {
+  id String @id @default(uuid())
+
+  ruleType    PaymentRuleType @map("rule_type")
+  name        String
+  code        String
+  description String?
+
+  // Optional scope/target references (Int per spec; NOT FK relations).
+  tenantId Int? @map("tenant_id")
+  branchId Int? @map("branch_id")
+
+  rank        Int
+  contextType Int? @map("context_type")
+  contextId   Int? @map("context_id")
+
+  class1 String? @map("class_1")
+  class2 String? @map("class_2")
+
+  calculationType  PaymentCalculationType @map("calculation_type")
+  calculationValue String                 @map("calculation_value")
+
+  taxType       String? @map("tax_type")
+  taxPercentage Int?    @map("tax_percentage")
+
+  effectivePeriodStartDate DateTime? @map("effective_period_start_date")
+  effectivePeriodEndDate   DateTime? @map("effective_period_end_date")
+
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([ruleType])
+  @@index([tenantId])
+  @@index([code])
+  @@index([deletedAt])
+  @@map("payment_rules")
 }

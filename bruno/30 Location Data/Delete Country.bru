@@ -1,0 +1,22 @@
+meta {
+  name: Delete Country
+  type: http
+  seq: 24
+}
+
+delete {
+  url: {{baseUrl}}/siteadmin/locations/countries/{{countryId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Soft-delete a country. Auth: SiteAdmin token, requires `master-data:write`.
+  Blocked with 409 `LOCATION_HAS_CHILDREN` while it still has active states — run
+  Delete Area → Delete City → Delete State first (this folder is ordered that
+  way). Returns 404 `COUNTRY_NOT_FOUND` if missing/already-deleted.
+}

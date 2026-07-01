@@ -1,0 +1,33 @@
+meta {
+  name: Update State
+  type: http
+  seq: 8
+}
+
+patch {
+  url: {{baseUrl}}/siteadmin/locations/states/{{stateId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "name": "Maharashtra",
+    "isActive": true
+  }
+}
+
+docs {
+  Update a state. Auth: SiteAdmin token, requires `master-data:write`. Editable
+  fields: `name`, `code`, `isActive`. The parent `countryId` is NOT re-parentable
+  here (keeps the hierarchy stable). Returns 404 `STATE_NOT_FOUND` if
+  missing/soft-deleted.
+}

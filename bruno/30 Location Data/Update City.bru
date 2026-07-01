@@ -1,0 +1,33 @@
+meta {
+  name: Update City
+  type: http
+  seq: 12
+}
+
+patch {
+  url: {{baseUrl}}/siteadmin/locations/cities/{{cityId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "name": "Pune",
+    "pinCode": "411002",
+    "isActive": true
+  }
+}
+
+docs {
+  Update a city. Auth: SiteAdmin token, requires `master-data:write`. Editable
+  fields: `name`, `pinCode`, `isActive`. Parent `stateId`/`countryId` are NOT
+  re-parentable here. Returns 404 `CITY_NOT_FOUND` if missing/soft-deleted.
+}

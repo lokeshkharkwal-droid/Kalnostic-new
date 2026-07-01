@@ -1,0 +1,20 @@
+meta {
+  name: Get State
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/locations/states/{{stateId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Fetch one state by id. Auth: SiteAdmin token, requires `master-data:read`.
+  Returns 404 `STATE_NOT_FOUND` if missing or soft-deleted.
+}

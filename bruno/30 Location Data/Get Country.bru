@@ -1,0 +1,20 @@
+meta {
+  name: Get Country
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/locations/countries/{{countryId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Fetch one country by id. Auth: SiteAdmin token, requires `master-data:read`.
+  Returns 404 `COUNTRY_NOT_FOUND` if missing or soft-deleted.
+}

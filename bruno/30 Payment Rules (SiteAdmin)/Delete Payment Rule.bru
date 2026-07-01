@@ -1,0 +1,42 @@
+meta {
+  name: Delete Payment Rule
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/siteadmin/payment-rules/{{paymentRuleId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Soft-delete a payment rule (sets `deletedAt`). Requires `payment-rules:write`
+  (full_admin and above). 404 `PAYMENT_RULE_NOT_FOUND` if missing or already
+  soft-deleted. The rule's `code` is freed for reuse among active rules
+  afterward.
+
+  ## Sample response
+
+  ```json
+  {
+    "success": true,
+    "data": {
+      "id": "b3f0…",
+      "code": "CITRUS-STD-01",
+      "deletedAt": "2026-07-01T10:10:00.000Z"
+    },
+    "meta": { "timestamp": "2026-07-01T10:10:00.000Z" }
+  }
+  ```
+}

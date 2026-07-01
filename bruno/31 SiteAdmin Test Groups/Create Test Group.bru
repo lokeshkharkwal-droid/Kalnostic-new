@@ -1,0 +1,90 @@
+meta {
+  name: Create Test Group
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/test-groups
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "groupName": "Full Body Checkup",
+    "labTestIds": ["{{siteAdminLabTestId}}"]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("testGroupId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("returns the group with its mapped lab tests", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("id");
+    expect(d.groupName).to.equal("Full Body Checkup");
+    expect(d.labTests).to.be.an("array");
+  });
+}
+
+docs {
+  Create a **test group** — a SiteAdmin-only, platform-level bundle of SITE_ADMIN
+  lab-test templates. Auth: SiteAdmin token, requires `master-data:write`.
+  Captures `testGroupId`.
+
+  **Body**
+  - `groupName` (required) — unique among active groups → 409
+    `TEST_GROUP_NAME_CONFLICT` on a clash.
+  - `labTestIds` (optional) — array of **SITE_ADMIN lab-test template** ids to map
+    to the group. Every id must reference an active template
+    (`source = SITE_ADMIN`) → 422 `TEST_GROUP_LAB_TEST_NOT_FOUND` otherwise. A
+    duplicated id in the array → 422 `VALIDATION_ERROR`. Create the templates
+    first via `25 SiteAdmin Lab Tests → Create Lab Test Template`.
+
+  **Sample request**
+  ```json
+  {
+    "groupName": "Full Body Checkup",
+    "labTestIds": [
+      "3f1a…lab-test-uuid-1",
+      "9c2b…lab-test-uuid-2"
+    ]
+  }
+  ```
+
+  **Sample response — 201**
+  ```json
+  {
+    "success": true,
+    "data": {
+      "id": "6d0e2f4a-1b2c-4d3e-8f90-a1b2c3d4e5f6",
+      "groupName": "Full Body Checkup",
+      "createdBy": "a612182e-3038-4d2c-ab1b-b46c43f9d65c",
+      "updatedBy": "a612182e-3038-4d2c-ab1b-b46c43f9d65c",
+      "createdAt": "2026-07-01T09:00:00.000Z",
+      "updatedAt": "2026-07-01T09:00:00.000Z",
+      "deletedAt": null,
+      "labTests": [
+        { "id": "3f1a…lab-test-uuid-1", "testName": "Complete Blood Count", "testCode": "CBC-TPL" },
+        { "id": "9c2b…lab-test-uuid-2", "testName": "Lipid Profile", "testCode": "LIP-TPL" }
+      ]
+    },
+    "meta": { "timestamp": "2026-07-01T09:00:00.000Z" }
+  }
+  ```
+}

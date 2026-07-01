@@ -1,0 +1,21 @@
+meta {
+  name: Delete Area
+  type: http
+  seq: 21
+}
+
+delete {
+  url: {{baseUrl}}/siteadmin/locations/areas/{{areaId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Soft-delete an area (sets `deletedAt`). Auth: SiteAdmin token, requires
+  `master-data:write`. An area is a leaf, so there is no child check. Returns 404
+  `AREA_NOT_FOUND` if missing/already-deleted.
+}

@@ -1,0 +1,33 @@
+meta {
+  name: Update Area
+  type: http
+  seq: 16
+}
+
+patch {
+  url: {{baseUrl}}/siteadmin/locations/areas/{{areaId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "name": "Kothrud",
+    "locality": "Kothrud Depot Road",
+    "isActive": true
+  }
+}
+
+docs {
+  Update an area. Auth: SiteAdmin token, requires `master-data:write`. Editable
+  fields: `name`, `locality`, `isActive`. Parent `cityId`/`stateId`/`countryId`
+  are NOT re-parentable here. Returns 404 `AREA_NOT_FOUND` if missing/soft-deleted.
+}

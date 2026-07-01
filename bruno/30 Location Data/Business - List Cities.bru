@@ -1,0 +1,26 @@
+meta {
+  name: Business - List Cities
+  type: http
+  seq: 19
+}
+
+get {
+  url: {{baseUrl}}/locations/cities?stateId={{stateId}}&page=1&limit=50
+  body: none
+  auth: bearer
+}
+
+params:query {
+  stateId: {{stateId}}
+  page: 1
+  limit: 50
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Business-facing, read-only city list, filtered by `stateId` for the cascading
+  dropdown. Auth: business token.
+}

@@ -1,0 +1,50 @@
+meta {
+  name: Create Country
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/locations/countries
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "name": "India",
+    "code": "IN",
+    "isActive": true
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("countryId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  Create a country. Auth: SiteAdmin token (`jwt-siteadmin`), requires
+  `master-data:write` (CONTENT_ADMIN+). Captures `countryId`.
+
+  Fields (✱ = required):
+  - `name` ✱ — 2-100 chars.
+  - `code` ✱ — up to 10 chars (e.g. ISO 3166-1 "IN").
+  - `isActive` — optional, defaults `true`.
+
+  Platform-level: no tenant/branch. The persisted row has no `tenantId`.
+}

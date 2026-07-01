@@ -320,6 +320,68 @@ export class LabTestService {
   }
 
   /**
+   * Lightweight `{ id, name }` options for **SITE_ADMIN template** lab tests
+   * (`GET /siteadmin/lab-tests/options`) — the template equivalent of
+   * `findOptions`, used by the SiteAdmin Test Groups multi-select. Filters active,
+   * non-deleted templates (`source = SITE_ADMIN`, `tenantId = null`) by a
+   * case-insensitive `testName` search. Returns the full array when `page` is
+   * omitted, or a paginated envelope when `page` is supplied.
+   * @param filters optional `search` and opt-in `page`/`limit`
+   */
+  async findTemplateOptions(
+    filters: {
+      search?: string;
+      page?: number;
+      limit?: number;
+    } = {},
+  ): Promise<
+    | Array<{ id: string; name: string }>
+    | PaginatedResult<{ id: string; name: string }>
+  > {
+    const where: Prisma.LabTestWhereInput = {
+      source: DataSource.SITE_ADMIN,
+      tenantId: null,
+      deletedAt: null,
+      isActive: true,
+    };
+    const search = filters.search?.trim();
+    if (search) {
+      where.testName = { contains: search, mode: 'insensitive' };
+    }
+
+    const select = { id: true, testName: true } as const;
+    const orderBy = { testName: 'asc' } as const;
+
+    if (filters.page === undefined) {
+      const rows = await this.prisma.labTest.findMany({
+        where,
+        select,
+        orderBy,
+      });
+      return rows.map((r) => ({ id: r.id, name: r.testName }));
+    }
+
+    const page = filters.page;
+    const limit = filters.limit ?? 20;
+    const [rows, total] = await Promise.all([
+      this.prisma.labTest.findMany({
+        where,
+        select,
+        orderBy,
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.labTest.count({ where }),
+    ]);
+    return {
+      data: rows.map((r) => ({ id: r.id, name: r.testName })),
+      total,
+      page,
+      limit,
+    };
+  }
+
+  /**
    * List active lab tests in a master data (offset pagination; core rows only).
    * @param masterDataId parent master data id
    * @param tenantId tenant scope

@@ -17,6 +17,8 @@ export const SITE_ADMIN_PERM = {
   REPORTS_OPERATIONAL: 'reports:operational',
   // full_admin and above
   REPORTS_FINANCE: 'reports:finance',
+  PAYMENT_RULES_READ: 'payment-rules:read',
+  PAYMENT_RULES_WRITE: 'payment-rules:write',
   // super_owner only
   SYSTEM_CONFIG: 'system:config',
   SUBSCRIPTION_PLANS_WRITE: 'subscription-plans:write',
@@ -45,6 +47,8 @@ const OPERATIONS_ADMIN: SiteAdminPermission[] = [
 const FULL_ADMIN: SiteAdminPermission[] = [
   ...OPERATIONS_ADMIN,
   SITE_ADMIN_PERM.REPORTS_FINANCE,
+  SITE_ADMIN_PERM.PAYMENT_RULES_READ,
+  SITE_ADMIN_PERM.PAYMENT_RULES_WRITE,
 ];
 
 const SUPER_OWNER: SiteAdminPermission[] = [

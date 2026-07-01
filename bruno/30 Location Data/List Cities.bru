@@ -1,0 +1,33 @@
+meta {
+  name: List Cities
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/locations/cities?page=1&limit=20&stateId={{stateId}}
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  stateId: {{stateId}}
+  ~countryId: {{countryId}}
+  ~search:
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  List cities (paginated). Auth: SiteAdmin token, requires `master-data:read`.
+
+  Query params:
+  - `page` / `limit` — offset pagination.
+  - `stateId` / `countryId` — cascading filters (optional).
+  - `search` — case-insensitive match on `name`/`pinCode` (optional).
+  - `isActive` — `true` | `false` filter (optional).
+}

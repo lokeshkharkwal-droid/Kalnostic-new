@@ -1,0 +1,22 @@
+meta {
+  name: 30 Location Data
+  seq: 30
+}
+
+docs {
+  Global **location master** — a Country → State → City → Area/Locality hierarchy.
+  Platform-level reference data (no tenant/branch, not covered by RLS): SiteAdmin
+  owns full CRUD under `/siteadmin/locations/...` (SiteAdmin token, `master-data`
+  read/write), and business users read it under `/locations/...` (business token)
+  to populate cascading dropdowns.
+
+  Run the folder top-to-bottom: it creates a Country → State → City → Area chain
+  (capturing `countryId`/`stateId`/`cityId`/`areaId`), exercises the reads and
+  updates, demonstrates the business-side reads, then deletes the chain leaf-first
+  (deleting a parent with active children returns 409 `LOCATION_HAS_CHILDREN`).
+
+  Foreign keys are validated server-side: an unknown parent id → 404
+  (`COUNTRY_NOT_FOUND` / `STATE_NOT_FOUND` / `CITY_NOT_FOUND`); a denormalized
+  ancestor that doesn't match the resolved parent → 400
+  `LOCATION_HIERARCHY_MISMATCH`.
+}

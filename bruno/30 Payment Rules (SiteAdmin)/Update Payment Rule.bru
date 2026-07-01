@@ -1,0 +1,73 @@
+meta {
+  name: Update Payment Rule
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/siteadmin/payment-rules/{{paymentRuleId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "name": "Citrus standard commission (revised)",
+    "rank": 2,
+    "calculationType": "FIXED",
+    "calculationValue": "50",
+    "taxPercentage": 12,
+    "isActive": false
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("rank was updated", function () {
+    expect(res.getBody().data.rank).to.equal(2);
+  });
+}
+
+docs {
+  Update a payment rule. Requires `payment-rules:write` (full_admin and above).
+  All fields optional; only supplied fields change. 404 `PAYMENT_RULE_NOT_FOUND`
+  if missing/soft-deleted. Changing `code` to one used by another active rule →
+  409 `PAYMENT_RULE_CODE_CONFLICT`.
+
+  Accepts the same fields as create (all optional):
+  `ruleType`, `name`, `code`, `description`, `tenantId`, `branchId`, `rank`,
+  `contextType`, `contextId`, `class1`, `class2`, `calculationType`,
+  `calculationValue`, `taxType`, `taxPercentage`, `effectivePeriodStartDate`,
+  `effectivePeriodEndDate`, `isActive`. Enum values are validated exactly as on
+  create.
+
+  ## Sample response
+
+  ```json
+  {
+    "success": true,
+    "data": {
+      "id": "b3f0…",
+      "name": "Citrus standard commission (revised)",
+      "code": "CITRUS-STD-01",
+      "rank": 2,
+      "calculationType": "FIXED",
+      "calculationValue": "50",
+      "taxPercentage": 12,
+      "isActive": false,
+      "updatedAt": "2026-07-01T10:05:00.000Z"
+    },
+    "meta": { "timestamp": "2026-07-01T10:05:00.000Z" }
+  }
+  ```
+}

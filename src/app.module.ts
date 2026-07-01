@@ -20,6 +20,8 @@ import { SubCategoryModule } from './modules/sub-category/sub-category.module';
 import { MasterDataModule } from './modules/master-data/master-data.module';
 import { LabTestModule } from './modules/lab-test/lab-test.module';
 import { LabPanelModule } from './modules/lab-panel/lab-panel.module';
+import { TestGroupModule } from './modules/test-group/test-group.module';
+import { LocationModule } from './modules/location/location.module';
 import { OutsourceCenterModule } from './modules/outsource-center/outsource-center.module';
 import { ReferralPanelModule } from './modules/referral-panel/referral-panel.module';
 import { ReferralPanelSettingsModule } from './modules/referral-panel-settings/referral-panel-settings.module';
@@ -35,6 +37,7 @@ import { TenantModule } from './modules/tenant/tenant.module';
 import { UsersModule } from './modules/users/users.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { SiteAdminModule } from './modules/siteadmin/siteadmin.module';
+import { PaymentRulesModule } from './modules/payment-rules/payment-rules.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 
 /**
@@ -75,6 +78,8 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     MasterDataModule,
     LabTestModule,
     LabPanelModule,
+    TestGroupModule,
+    LocationModule,
     OutsourceCenterModule,
     ReferralPanelModule,
     ReferralPanelSettingsModule,
@@ -90,6 +95,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     UsersModule,
     AuthModule,
     SiteAdminModule,
+    PaymentRulesModule,
   ],
   providers: [
     // Global business authentication. SiteAdmin routes use @Public() + their

@@ -294,6 +294,11 @@ CREATE POLICY md_tenant_isolation ON master_data
 CREATE UNIQUE INDEX IF NOT EXISTS master_data_branch_name_active_unique
   ON master_data (tenant_id, branch_id, name) WHERE deleted_at IS NULL;
 
+-- A branch maps to exactly ONE active master data (1:1). Enforced among ACTIVE
+-- rows only, so a branch whose master data is soft-deleted can be re-provisioned.
+CREATE UNIQUE INDEX IF NOT EXISTS master_data_branch_active_unique
+  ON master_data (branch_id) WHERE deleted_at IS NULL;
+
 -- ── lab_test ────────────────────────────────────────────────────────────────────
 ALTER TABLE lab_test ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lab_test FORCE ROW LEVEL SECURITY;
@@ -494,6 +499,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS lab_panel_test_unique
 CREATE UNIQUE INDEX IF NOT EXISTS lab_panel_test_siteadmin_unique
   ON lab_panel_tests (lab_panel_id, lab_test_id)
   WHERE deleted_at IS NULL AND tenant_id IS NULL;
+
+-- ── test_groups (platform-level, NO RLS — like siteadmin_users) ─────────────────
+-- SiteAdmin-only groupings of SITE_ADMIN lab-test templates; they sit above the
+-- tenant boundary so they are deliberately NOT row-level-secured. Prisma can't
+-- express partial unique indexes, so they live here:
+-- group_name unique among ACTIVE rows (a name freed by soft-delete is reusable).
+CREATE UNIQUE INDEX IF NOT EXISTS test_groups_name_active_unique
+  ON test_groups (group_name) WHERE deleted_at IS NULL;
+
+-- ── test_group_mappings (platform-level, NO RLS) ────────────────────────────────
+-- a lab test appears at most once per group among ACTIVE rows.
+CREATE UNIQUE INDEX IF NOT EXISTS test_group_mapping_active_unique
+  ON test_group_mappings (test_group_id, lab_test_id) WHERE deleted_at IS NULL;
 
 -- ── outsource_centers ─────────────────────────────────────────────────────────
 ALTER TABLE outsource_centers ENABLE ROW LEVEL SECURITY;
@@ -891,8 +909,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS templates_tenant_type_name_active_unique
   WHERE deleted_at IS NULL AND branch_id IS NULL;
 
 -- Platform-level tables (tenants, persons, person_credentials, siteadmin_users,
--- refresh_tokens, person_tenant_enrollments) are intentionally NOT covered —
--- they sit above the tenant boundary.
+-- refresh_tokens, person_tenant_enrollments, test_groups, test_group_mappings)
+-- are intentionally NOT covered — they sit above the tenant boundary. (The
+-- test_groups partial unique indexes above are added for correctness, not RLS.)
 --
 -- NOTE on Person.aadhaar_number / pan_number: no unique index. Aadhaar is stored
 -- encrypted (AES-256-GCM with a random IV → identical inputs yield different

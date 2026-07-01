@@ -1,0 +1,26 @@
+meta {
+  name: Business - List Areas
+  type: http
+  seq: 20
+}
+
+get {
+  url: {{baseUrl}}/locations/areas?cityId={{cityId}}&page=1&limit=50
+  body: none
+  auth: bearer
+}
+
+params:query {
+  cityId: {{cityId}}
+  page: 1
+  limit: 50
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Business-facing, read-only area/locality list, filtered by `cityId` for the
+  cascading dropdown. Auth: business token.
+}

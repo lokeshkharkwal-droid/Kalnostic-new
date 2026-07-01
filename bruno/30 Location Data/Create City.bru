@@ -1,0 +1,53 @@
+meta {
+  name: Create City
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/locations/cities
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "name": "Pune",
+    "pinCode": "411001",
+    "stateId": "{{stateId}}",
+    "countryId": "{{countryId}}",
+    "isActive": true
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("cityId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  Create a city under a state. Auth: SiteAdmin token, requires `master-data:write`.
+  Captures `cityId`.
+
+  Fields (✱ = required):
+  - `name` ✱ — 2-100 chars.
+  - `pinCode` ✱ — exactly 6 digits (Indian PIN).
+  - `stateId` ✱ — UUID of an active state (404 `STATE_NOT_FOUND` if unknown).
+  - `countryId` ✱ — UUID of an active country; **must equal the state's country**,
+    else 400 `LOCATION_HIERARCHY_MISMATCH` (denormalized FK kept consistent).
+  - `isActive` — optional, defaults `true`.
+}

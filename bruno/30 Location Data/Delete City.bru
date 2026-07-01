@@ -1,0 +1,21 @@
+meta {
+  name: Delete City
+  type: http
+  seq: 22
+}
+
+delete {
+  url: {{baseUrl}}/siteadmin/locations/cities/{{cityId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Soft-delete a city. Auth: SiteAdmin token, requires `master-data:write`.
+  Blocked with 409 `LOCATION_HAS_CHILDREN` while the city still has active areas
+  (delete the areas first). Returns 404 `CITY_NOT_FOUND` if missing/already-deleted.
+}

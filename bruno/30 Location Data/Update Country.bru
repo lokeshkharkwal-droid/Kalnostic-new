@@ -1,0 +1,33 @@
+meta {
+  name: Update Country
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/siteadmin/locations/countries/{{countryId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "name": "India",
+    "code": "IND",
+    "isActive": true
+  }
+}
+
+docs {
+  Update a country. Auth: SiteAdmin token, requires `master-data:write`. All
+  fields optional (`name`, `code`, `isActive`). Returns 404 `COUNTRY_NOT_FOUND`
+  if missing/soft-deleted.
+}

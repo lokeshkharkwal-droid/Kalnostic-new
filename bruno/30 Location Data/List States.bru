@@ -1,0 +1,32 @@
+meta {
+  name: List States
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/locations/states?page=1&limit=20&countryId={{countryId}}
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  countryId: {{countryId}}
+  ~search:
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  List states (paginated). Auth: SiteAdmin token, requires `master-data:read`.
+
+  Query params:
+  - `page` / `limit` — offset pagination.
+  - `countryId` — cascading filter: only states in this country (optional).
+  - `search` — case-insensitive match on `name`/`code` (optional).
+  - `isActive` — `true` | `false` filter (optional).
+}

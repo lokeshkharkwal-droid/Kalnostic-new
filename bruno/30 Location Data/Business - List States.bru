@@ -1,0 +1,26 @@
+meta {
+  name: Business - List States
+  type: http
+  seq: 18
+}
+
+get {
+  url: {{baseUrl}}/locations/states?countryId={{countryId}}&page=1&limit=50
+  body: none
+  auth: bearer
+}
+
+params:query {
+  countryId: {{countryId}}
+  page: 1
+  limit: 50
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Business-facing, read-only state list, filtered by `countryId` for the cascading
+  dropdown. Auth: business token.
+}

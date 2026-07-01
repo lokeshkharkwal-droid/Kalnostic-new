@@ -1,0 +1,50 @@
+meta {
+  name: List Test Groups
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/test-groups?page=1&limit=20&search=
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  search:
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  List test groups (paginated). Auth: SiteAdmin token, requires `master-data:read`.
+
+  **Query params**
+  - `page` (>=1) / `limit` (1–100) — offset pagination (defaults 1 / 20).
+  - `search` — case-insensitive substring matched against `groupName`.
+
+  Each row carries the **total number of mapped lab tests** (`labTestsCount`).
+  Pagination info lands in `meta` (`total`, `page`, `limit`, `totalPages`).
+
+  **Sample response — 200**
+  ```json
+  {
+    "success": true,
+    "data": [
+      { "id": "6d0e2f4a-1b2c-4d3e-8f90-a1b2c3d4e5f6", "groupName": "Full Body Checkup", "labTestsCount": 2 },
+      { "id": "1a2b3c4d-5e6f-7081-92a3-b4c5d6e7f809", "groupName": "Thyroid Profile", "labTestsCount": 3 }
+    ],
+    "meta": {
+      "timestamp": "2026-07-01T09:05:00.000Z",
+      "total": 2,
+      "page": 1,
+      "limit": 20,
+      "totalPages": 1
+    }
+  }
+  ```
+}

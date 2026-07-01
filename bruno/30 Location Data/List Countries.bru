@@ -1,0 +1,33 @@
+meta {
+  name: List Countries
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/locations/countries?page=1&limit=20&search=
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  search:
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  List countries (paginated). Auth: SiteAdmin token, requires `master-data:read`.
+
+  Query params:
+  - `page` / `limit` — offset pagination (defaults 1 / 20, limit capped at 100).
+  - `search` — case-insensitive match on `name` or `code` (optional).
+  - `isActive` — `true` | `false` filter (optional).
+
+  Returns only active (not soft-deleted) rows ordered by `name`; pagination lands
+  in `meta` (`total`/`page`/`limit`/`totalPages`).
+}

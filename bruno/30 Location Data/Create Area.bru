@@ -1,0 +1,54 @@
+meta {
+  name: Create Area
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/locations/areas
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "name": "Kothrud",
+    "locality": "Kothrud Depot",
+    "cityId": "{{cityId}}",
+    "stateId": "{{stateId}}",
+    "countryId": "{{countryId}}",
+    "isActive": true
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("areaId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  Create an area/locality under a city. Auth: SiteAdmin token, requires
+  `master-data:write`. Captures `areaId`.
+
+  Fields (✱ = required):
+  - `name` ✱ — 2-100 chars.
+  - `locality` ✱ — 2-100 chars.
+  - `cityId` ✱ — UUID of an active city (404 `CITY_NOT_FOUND` if unknown).
+  - `stateId` ✱ / `countryId` ✱ — denormalized ancestors; **must equal the
+    city's own state and country**, else 400 `LOCATION_HIERARCHY_MISMATCH`.
+  - `isActive` — optional, defaults `true`.
+}

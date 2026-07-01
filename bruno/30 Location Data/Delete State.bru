@@ -1,0 +1,21 @@
+meta {
+  name: Delete State
+  type: http
+  seq: 23
+}
+
+delete {
+  url: {{baseUrl}}/siteadmin/locations/states/{{stateId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Soft-delete a state. Auth: SiteAdmin token, requires `master-data:write`.
+  Blocked with 409 `LOCATION_HAS_CHILDREN` while it still has active cities.
+  Returns 404 `STATE_NOT_FOUND` if missing/already-deleted.
+}

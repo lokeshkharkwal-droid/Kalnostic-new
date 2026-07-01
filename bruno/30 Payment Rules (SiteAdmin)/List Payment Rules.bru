@@ -1,0 +1,74 @@
+meta {
+  name: List Payment Rules
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/payment-rules?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~name: citrus
+  ~code: CITRUS-STD
+  ~tenantId: 1001
+  ~ruleType: CITRUS_COMMISSION
+  ~status: ACTIVE
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Paginated list of payment rules. Requires `payment-rules:read` (full_admin and
+  above). All query params optional; pagination info lands in `meta` (`total` /
+  `page` / `limit` / `totalPages`). Ordered by `rank` ascending, then newest first.
+
+  ## Query params (toggle the `~` to enable a filter)
+
+  - `page` (>=1) / `limit` (1-100) — offset pagination (defaults 1 / 20).
+  - `name` — case-insensitive substring match against `name`.
+  - `code` — case-insensitive substring match against `code`.
+  - `tenantId` — exact match on the rule's scope `tenantId` (int).
+  - `ruleType` — exact enum: `CITRUS_COMMISSION` | `PAYU_COMMISSION` |
+    `PINELAB_COMMISSION` | `EZ_COMMISSION` | `PHARMACY_TAXES`.
+  - `status` — `ACTIVE` | `INACTIVE` (maps to the `isActive` boolean).
+
+  ## Sample response
+
+  ```json
+  {
+    "success": true,
+    "data": [
+      {
+        "id": "b3f0…",
+        "ruleType": "CITRUS_COMMISSION",
+        "name": "Citrus standard commission",
+        "code": "CITRUS-STD-01",
+        "rank": 1,
+        "calculationType": "PERCENT",
+        "calculationValue": "2",
+        "isActive": true
+      }
+    ],
+    "meta": {
+      "timestamp": "2026-07-01T10:00:00.000Z",
+      "total": 1,
+      "page": 1,
+      "limit": 20,
+      "totalPages": 1
+    }
+  }
+  ```
+}

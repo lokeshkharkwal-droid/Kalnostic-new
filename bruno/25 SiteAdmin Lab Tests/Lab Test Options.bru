@@ -1,0 +1,54 @@
+meta {
+  name: Lab Test Options
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/lab-tests/options?page=1&limit=10&search=
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 10
+  search:
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Lightweight `{ id, name }` options for SITE_ADMIN lab-test templates — feeds the
+  Test Groups multi-select (`PaginatedSelect`) in the Site Admin FE. Auth:
+  SiteAdmin token, requires `master-data:read`.
+
+  Filters active, non-deleted templates (`source = SITE_ADMIN`, `tenantId = null`);
+  `name` is the template's `testName`.
+
+  Query params:
+  - `page` / `limit` — **opt-in** offset pagination. Omit `page` to get the full
+    `{ id, name }[]` array; supply `page` to get a paginated envelope (pagination
+    info lands in `meta`, incl. `totalPages`).
+  - `search` — case-insensitive match on `testName` (optional).
+
+  **Sample response — 200 (paginated)**
+  ```json
+  {
+    "success": true,
+    "data": [
+      { "id": "3f1a…lab-test-uuid-1", "name": "Complete Blood Count" },
+      { "id": "9c2b…lab-test-uuid-2", "name": "Lipid Profile" }
+    ],
+    "meta": {
+      "timestamp": "2026-07-01T09:00:00.000Z",
+      "total": 2,
+      "page": 1,
+      "limit": 10,
+      "totalPages": 1
+    }
+  }
+  ```
+}
