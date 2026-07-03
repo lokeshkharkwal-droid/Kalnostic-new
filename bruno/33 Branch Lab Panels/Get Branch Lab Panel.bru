@@ -1,0 +1,25 @@
+meta {
+  name: Get Branch Lab Panel
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/branch-lab-panels/{{branchLabPanelId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchLabPanelId: 00000000-0000-0000-0000-000000000000
+}
+
+docs {
+  Fetch one branch lab panel composed with its member tests (`tests[]` →
+  BranchLabPanelTest rows referencing BranchLabTest ids). 404
+  `BRANCH_LAB_PANEL_NOT_FOUND` if missing/soft-deleted/other branch.
+}

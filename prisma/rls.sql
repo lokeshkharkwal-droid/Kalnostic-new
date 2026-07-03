@@ -56,6 +56,40 @@ CREATE POLICY schedules_tenant_isolation ON schedules
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── auth_roles ──────────────────────────────────────────────────────────────────
+-- Tenant rows are custom roles isolated by tenant_id; system roles (tenant_id
+-- NULL) are seeded, shared, and readable by every tenant (writable only by a
+-- GUC-less connection, e.g. the seed), mirroring the departments/lab_test
+-- template pattern. This policy is strictly more permissive than
+-- user_branch_profiles below (it also allows NULL-tenant reads), so a profile's
+-- role relation always resolves wherever the profile itself is visible.
+ALTER TABLE auth_roles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE auth_roles FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS auth_roles_tenant_isolation ON auth_roles;
+CREATE POLICY auth_roles_tenant_isolation ON auth_roles
+  USING (tenant_id = current_tenant_id() OR tenant_id IS NULL)
+  WITH CHECK (
+    tenant_id = current_tenant_id()
+    OR (tenant_id IS NULL AND current_tenant_id() IS NULL)
+  );
+
+-- Custom roles: key/name unique per tenant among ACTIVE rows (a key/name freed
+-- by a soft-delete can be reused). Prisma can't express partial unique indexes.
+CREATE UNIQUE INDEX IF NOT EXISTS auth_roles_tenant_key_active_unique
+  ON auth_roles (tenant_id, key)
+  WHERE deleted_at IS NULL AND tenant_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS auth_roles_tenant_name_active_unique
+  ON auth_roles (tenant_id, name)
+  WHERE deleted_at IS NULL AND tenant_id IS NOT NULL;
+
+-- System roles have tenant_id NULL; Postgres treats NULLs as distinct, so the
+-- per-tenant indexes above don't constrain them. These enforce global
+-- uniqueness of key / name across ACTIVE system rows.
+CREATE UNIQUE INDEX IF NOT EXISTS auth_roles_system_key_active_unique
+  ON auth_roles (key) WHERE deleted_at IS NULL AND tenant_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS auth_roles_system_name_active_unique
+  ON auth_roles (name) WHERE deleted_at IS NULL AND tenant_id IS NULL;
+
 -- ── user_branch_profiles ────────────────────────────────────────────────────────
 ALTER TABLE user_branch_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_branch_profiles FORCE ROW LEVEL SECURITY;
@@ -907,6 +941,99 @@ CREATE UNIQUE INDEX IF NOT EXISTS templates_branch_type_name_active_unique
 CREATE UNIQUE INDEX IF NOT EXISTS templates_tenant_type_name_active_unique
   ON templates (tenant_id, type, name)
   WHERE deleted_at IS NULL AND branch_id IS NULL;
+
+-- ── pdf_report_templates ──────────────────────────────────────────────────────
+-- Tenant rows isolate by tenant_id; SITE_ADMIN global templates (tenant_id NULL)
+-- are readable by everyone and writable only by a GUC-less SiteAdmin connection.
+ALTER TABLE pdf_report_templates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pdf_report_templates FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS prt_tenant_isolation ON pdf_report_templates;
+CREATE POLICY prt_tenant_isolation ON pdf_report_templates
+  USING (tenant_id = current_tenant_id() OR tenant_id IS NULL)
+  WITH CHECK (
+    tenant_id = current_tenant_id()
+    OR (tenant_id IS NULL AND current_tenant_id() IS NULL)
+  );
+
+-- Template name is unique per tenant among ACTIVE rows only (a name freed by a
+-- soft-delete can be reused). Independent of branch_id — a tenant cannot hold
+-- two active templates with the same name whether tenant-wide or branch-scoped.
+-- Prisma can't express partial unique indexes.
+CREATE UNIQUE INDEX IF NOT EXISTS prt_tenant_name_active_unique
+  ON pdf_report_templates (tenant_id, name) WHERE deleted_at IS NULL;
+
+-- ── branch_lab_tests ──────────────────────────────────────────────────────────
+ALTER TABLE branch_lab_tests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE branch_lab_tests FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS branch_lab_tests_tenant_isolation ON branch_lab_tests;
+CREATE POLICY branch_lab_tests_tenant_isolation ON branch_lab_tests
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- NOTE: `test_name`/`test_code` are intentionally NOT unique per branch — a user
+-- may create independent DUPLICATES of an imported test (same code, different
+-- pricing), so the earlier unique indexes are dropped if present.
+DROP INDEX IF EXISTS branch_lab_test_name_active_unique;
+DROP INDEX IF EXISTS branch_lab_test_code_active_unique;
+
+-- Variant model: rows sharing a `source_lab_test_id` form a group (one imported
+-- original + its duplicates). Exactly ONE active row per group may be the default
+-- (used for order creation). Prisma can't express partial unique indexes.
+CREATE UNIQUE INDEX IF NOT EXISTS branch_lab_test_default_per_source_unique
+  ON branch_lab_tests (tenant_id, branch_id, source_lab_test_id)
+  WHERE is_default AND deleted_at IS NULL;
+
+-- Price-ordering CHECK constraints, mirroring lab_test (defence in depth).
+ALTER TABLE branch_lab_tests DROP CONSTRAINT IF EXISTS chk_branch_lab_test_price_max_lte_msrp;
+ALTER TABLE branch_lab_tests ADD CONSTRAINT chk_branch_lab_test_price_max_lte_msrp
+  CHECK (price_maximum <= price_msrp);
+ALTER TABLE branch_lab_tests DROP CONSTRAINT IF EXISTS chk_branch_lab_test_price_min_lte_max;
+ALTER TABLE branch_lab_tests ADD CONSTRAINT chk_branch_lab_test_price_min_lte_max
+  CHECK (price_minimum <= price_maximum);
+ALTER TABLE branch_lab_tests DROP CONSTRAINT IF EXISTS chk_branch_lab_test_discount_cap_range;
+ALTER TABLE branch_lab_tests ADD CONSTRAINT chk_branch_lab_test_discount_cap_range
+  CHECK (discount_cap_pct BETWEEN 0 AND 100);
+
+-- ── branch_lab_panels ─────────────────────────────────────────────────────────
+ALTER TABLE branch_lab_panels ENABLE ROW LEVEL SECURITY;
+ALTER TABLE branch_lab_panels FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS branch_lab_panels_tenant_isolation ON branch_lab_panels;
+CREATE POLICY branch_lab_panels_tenant_isolation ON branch_lab_panels
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- Duplicates are allowed (mirrors branch_lab_tests) — drop the old name/code
+-- unique indexes if present; enforce ONE default per source group instead.
+DROP INDEX IF EXISTS branch_lab_panel_name_active_unique;
+DROP INDEX IF EXISTS branch_lab_panel_code_active_unique;
+
+CREATE UNIQUE INDEX IF NOT EXISTS branch_lab_panel_default_per_source_unique
+  ON branch_lab_panels (tenant_id, branch_id, source_lab_panel_id)
+  WHERE is_default AND deleted_at IS NULL;
+
+-- Price-ordering CHECK constraints, mirroring lab_panels (defence in depth).
+ALTER TABLE branch_lab_panels DROP CONSTRAINT IF EXISTS chk_branch_lab_panel_price_max_lte_msrp;
+ALTER TABLE branch_lab_panels ADD CONSTRAINT chk_branch_lab_panel_price_max_lte_msrp
+  CHECK (price_maximum <= price_msrp);
+ALTER TABLE branch_lab_panels DROP CONSTRAINT IF EXISTS chk_branch_lab_panel_price_min_lte_max;
+ALTER TABLE branch_lab_panels ADD CONSTRAINT chk_branch_lab_panel_price_min_lte_max
+  CHECK (price_minimum <= price_maximum);
+ALTER TABLE branch_lab_panels DROP CONSTRAINT IF EXISTS chk_branch_lab_panel_max_removable_nonneg;
+ALTER TABLE branch_lab_panels ADD CONSTRAINT chk_branch_lab_panel_max_removable_nonneg
+  CHECK (max_tests_removable >= 0);
+
+-- ── branch_lab_panel_tests ────────────────────────────────────────────────────
+ALTER TABLE branch_lab_panel_tests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE branch_lab_panel_tests FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS branch_lab_panel_tests_tenant_isolation ON branch_lab_panel_tests;
+CREATE POLICY branch_lab_panel_tests_tenant_isolation ON branch_lab_panel_tests
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- A branch test appears at most once per branch panel among ACTIVE rows.
+CREATE UNIQUE INDEX IF NOT EXISTS branch_lab_panel_test_active_unique
+  ON branch_lab_panel_tests (tenant_id, branch_lab_panel_id, branch_lab_test_id)
+  WHERE deleted_at IS NULL;
 
 -- Platform-level tables (tenants, persons, person_credentials, siteadmin_users,
 -- refresh_tokens, person_tenant_enrollments, test_groups, test_group_mappings)

@@ -22,8 +22,12 @@ docs {
   Full detail for one staff user: person identity (Aadhaar returned **masked**
   as `XXXX-XXXX-1234`), the tenant membership (userCode/type/optional primary
   role/status), the username, and all active branch assignments.
-  
+
+  The `membership` carries the primary role as `authRoleId` (FK) plus the derived
+  `roleKey` (its stable key) — the legacy `role_key` column was replaced by the FK.
+
   Each `branches[]` entry carries its **own role** and module:
   `{ id, branchId, branchName, roleKey, roleLabel, branchStatus, isDefault,
-  moduleId, moduleLabel }`. Roles may differ across branches (one role per branch).
+  moduleId, moduleLabel }` (`roleKey`/`roleLabel` come from the assigned AuthRole).
+  Roles may differ across branches (one role per branch).
 }

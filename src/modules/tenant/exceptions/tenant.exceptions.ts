@@ -24,3 +24,15 @@ export class TenantSlugTakenException extends KaltrosException {
     );
   }
 }
+
+/** 409 — custom domain already claimed by another tenant. */
+export class TenantCustomDomainTakenException extends KaltrosException {
+  constructor(customDomain: string) {
+    super(
+      'TENANT_CUSTOM_DOMAIN_TAKEN',
+      'This custom domain is already in use',
+      { customDomain },
+      HttpStatus.CONFLICT,
+    );
+  }
+}

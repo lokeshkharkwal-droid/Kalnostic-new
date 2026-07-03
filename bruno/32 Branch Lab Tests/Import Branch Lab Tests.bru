@@ -1,0 +1,52 @@
+meta {
+  name: Import Branch Lab Tests
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/branch-lab-tests/import
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "labTestIds": [
+      "00000000-0000-0000-0000-000000000000"
+    ]
+  }
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("reports copied/skipped", function () {
+    const data = res.getBody() && res.getBody().data;
+    expect(data).to.have.property("copied");
+    expect(data).to.have.property("skipped");
+  });
+}
+
+docs {
+  Persist-import Master Data lab tests into the **active branch's Lab Test List**.
+  `labTestIds` are ids of lab tests in the branch's (1:1) master data. Each is
+  deep-copied as an independent snapshot (clinical children folded into
+  `configSnapshot`) with a fresh id and `sourceLabTestId` provenance.
+
+  Tenant + active branch come from the JWT (never the body). Idempotent:
+  re-importing an already-present test (by testName/testCode) is **skipped**, as
+  is any id not found in the branch's master data → `{ copied, skipped }`.
+
+  400 `ACTIVE_BRANCH_REQUIRED` if the JWT has no active branch. 404
+  `MASTER_DATA_NOT_MAPPED_TO_BRANCH` if the branch has no master data.
+}

@@ -1,0 +1,50 @@
+meta {
+  name: Update Configuration
+  type: http
+  seq: 9
+}
+
+put {
+  url: {{baseUrl}}/siteadmin/tenants/{{tenantId}}/configuration
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "siteAdminUrl": "https://admin.acme.test",
+    "siteTitle": "Acme Diagnostics",
+    "logoPath": "/uploads/acme/logo.png",
+    "logoLink": "https://acme.test",
+    "template": "default",
+    "theme": "LIGHT",
+    "patientOrderUrl": "https://order.acme.test",
+    "maxOrdersPerDayPerBranch": 200,
+    "maxUsersAllowed": 50
+  }
+}
+
+docs {
+  Update (upsert) a tenant's Business Configuration. Requires `business:create`.
+  All fields optional — a partial payload patches only the supplied keys; the
+  row is created on first write.
+
+  Fields:
+  - `siteAdminUrl` (optional) — URL to the business's Site Admin.
+  - `siteTitle` (optional) — display title.
+  - `logoPath` (optional) — stored logo path.
+  - `logoLink` (optional) — URL the logo links to.
+  - `template` (optional) — template key.
+  - `theme` (optional) — `LIGHT` | `DARK` (defaults `LIGHT`).
+  - `patientOrderUrl` (optional) — patient ordering URL.
+  - `maxOrdersPerDayPerBranch` (optional) — positive integer.
+  - `maxUsersAllowed` (optional) — positive integer (business-wide).
+}

@@ -1,0 +1,42 @@
+meta {
+  name: Update PDF Report Template
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/siteadmin/pdf-report-templates/{{siteAdminPdfReportTemplateId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "name": "Global Lab Report Default (v2)",
+    "isActive": true,
+    "meta": {
+      "orientation": "L",
+      "page_size": "A4",
+      "watermark_text": "COPY",
+      "template_version": "v2.0",
+      "header_html": "<div class='title'>{hospital_name}</div>",
+      "body_html": "<h3>Patient: {patient_name}</h3>",
+      "footer_html": "<signing_authority_tag></signing_authority_tag>"
+    }
+  }
+}
+
+docs {
+  Partial update of a global SITE_ADMIN template. Auth: SiteAdmin token, requires
+  `master-data:write`. Any supplied `meta` REPLACES the stored blob (defaults are
+  re-applied). `type` must remain a supported key; `branchId` is ignored (global
+  templates are never branch-scoped). 404 if missing.
+}

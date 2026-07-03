@@ -29,9 +29,11 @@ body:json {
 
 docs {
   Patch a single (user + branch) assignment. All fields optional:
-  - `roleKey` — change the role at THIS branch only (one role per branch). Must be
-    valid for the branch's type (PROFILE_BRANCH_MATRIX). Changing it does not
-    affect the user's other branches.
+  - `roleKey` — change the role at THIS branch only (one role per branch). Any role
+    key (built-in system role or tenant custom role from `/roles`), resolved to an
+    AuthRole FK; unknown → 404 ROLE_NOT_FOUND. Must be a branch-level role (validity
+    from the role's allowed branch types — system: PROFILE_BRANCH_MATRIX; custom:
+    `allowedBranchTypes`). Changing it does not affect the user's other branches.
   - `branchStatus` ACTIVE|INACTIVE — INACTIVE blocks access to THIS branch only
     (the user stays usable at other branches; tenant-global Deactivate overrides
     all branches).

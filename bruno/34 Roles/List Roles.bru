@@ -1,0 +1,35 @@
+meta {
+  name: List Roles
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/roles?page=1&limit=100
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 100
+  ~search: admin
+  ~status: ACTIVE
+  ~scope: SYSTEM
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Paginated list of roles visible to the caller's tenant: its own **custom**
+  roles plus the global **system** roles (seeded from PROFILE_REGISTRY). System
+  roles are ordered first. Pagination info is lifted into `meta`.
+
+  ## Filters (all optional — toggle the `~` to enable a query param)
+
+  - `search` — case-insensitive `contains` match on `name` **OR** `key`.
+  - `status` — `ACTIVE` | `INACTIVE`.
+  - `scope` — `SYSTEM` (global seeded roles) | `CUSTOM` (this tenant's roles).
+}

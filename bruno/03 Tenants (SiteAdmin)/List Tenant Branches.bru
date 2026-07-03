@@ -1,0 +1,41 @@
+meta {
+  name: List Tenant Branches
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/tenants/{{tenantId}}/branches?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search:
+  ~status:
+  ~branchType:
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  List a tenant's branches (paginated) for the SiteAdmin business summary.
+  Requires `business:read`.
+
+  This is a cross-tenant SiteAdmin read: the service establishes the tenant's
+  RLS context (`runWithTenant`) before delegating to the tenant-scoped branch
+  query, so branches are returned rather than an empty list.
+
+  Query params (all optional except pagination):
+  - `page` / `limit` — offset pagination.
+  - `search` — case-insensitive match on branch name or code.
+  - `status` — exact `BranchStatus` (e.g. `ACTIVE`).
+  - `branchType` — exact `BranchType` (e.g. `COLLECTION_CENTER`).
+
+  Pagination lands in the response `meta` (`total`, `totalPages`) via the global
+  response interceptor. An unknown tenant id returns 404.
+}

@@ -17,14 +17,13 @@ headers {
 body:json {
   {
     "identifier": "{{adminPhone}}",
-    "password": "{{adminTempPassword}}",
-    "tenantSlug": "{{tenantSlug}}"
+    "password": "{{adminTempPassword}}"
   }
 }
 
 vars:pre-request {
-  adminTempPassword: Str0ng@Pass1
-  adminPhone: user.528812@flow.test
+  adminTempPassword: Artsxn32
+  adminPhone: +919526317102
 }
 
 script:post-response {

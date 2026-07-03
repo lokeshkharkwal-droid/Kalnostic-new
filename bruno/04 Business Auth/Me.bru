@@ -18,4 +18,9 @@ docs {
   Current session info decoded from the business JWT: `person_id`, `tenant_id`,
   `active_branch_id`, `active_profile_key`, `is_patient_context`,
   `platform_mrn`, and the full `profiles[]` array.
+
+  Note (AuthRole): the JWT contract is unchanged. `active_profile_key` and each
+  `profiles[].profile_key` / `profile_label` are now sourced from the assigned
+  role entity (its `key` / `name`) instead of a string column, but the shape and
+  values are identical — the frontend needs no changes.
 }

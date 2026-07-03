@@ -42,8 +42,9 @@ script:post-response {
 docs {
   Register a staff user with **no role and no branches** — just basic details +
   tenant membership. `roleKey` and `branches` are omitted; the membership's role is
-  null until branches are assigned.
+  null (`authRoleId` null, derived `roleKey` null) until branches are assigned.
 
   Follow up with "Assign Branches" to give the user a role + module per branch.
-  Captures `manageUserId` and `manageUserCode`.
+  Roles resolve to an AuthRole — a built-in system role or a tenant custom role
+  from `/roles` (see "34 Roles"). Captures `manageUserId` and `manageUserCode`.
 }

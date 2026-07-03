@@ -1,0 +1,27 @@
+meta {
+  name: Get Settings
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/tenants/{{tenantId}}/settings
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Fetch a tenant's Business Settings. Requires `business:read`.
+
+  Returns a defaults row on first access (upsert): every toggle `false`, every
+  commission type `EXCLUSIVE`. Fields — referral: `isExternalDoctorOutReferralAllowed`,
+  `isExternalDoctorInReferralAllowed`, `isExternalHospitalOutReferralAllowed`,
+  `isExternalHospitalInReferralAllowed`; payment: `isPatientOrderPaymentAllowed`,
+  `isCmsOrderBillGenerationEnabled`; commission (`EXCLUSIVE` | `INCLUSIVE`):
+  `referralPgCommissionType`, `patientPgCommissionType`,
+  `franchiseBranchPgCommissionType`; wallet: `canPatientWalletGoNegative`.
+}

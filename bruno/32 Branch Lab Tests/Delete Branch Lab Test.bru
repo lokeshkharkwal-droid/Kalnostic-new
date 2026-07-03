@@ -1,0 +1,24 @@
+meta {
+  name: Delete Branch Lab Test
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/branch-lab-tests/{{branchLabTestId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchLabTestId: 00000000-0000-0000-0000-000000000000
+}
+
+docs {
+  Soft-delete a branch lab test (remove it from the branch's Lab Test List). A
+  soft-deleted testName/testCode is freed for re-import.
+}

@@ -42,7 +42,7 @@ vars:pre-request {
   flowUsername: flow user
   flowUserEmail: flowuser@gmail.com
   flowUserMobile: 9876541101
-  branchId: c6bc4215-7667-4ce3-a82d-455a11f6e31a
+  branchId: 888e1eb8-7b8e-4754-84b7-129c9ebbfe76
 }
 
 script:pre-request {
@@ -71,4 +71,7 @@ docs {
   `aadhaarNumber` is intentionally omitted so this works without `ENCRYPTION_KEY`.
   `moduleId` must be enabled for the branch (step 5) and valid for the role.
   Exactly one branch entry may be `isDefault: true`.
+  
+  Each `roleKey` is resolved to an AuthRole (a built-in system role or a tenant
+  custom role from `/roles`, see "34 Roles"); an unknown key → 404 ROLE_NOT_FOUND.
 }

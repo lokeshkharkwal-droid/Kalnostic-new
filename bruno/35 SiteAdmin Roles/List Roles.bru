@@ -1,0 +1,35 @@
+meta {
+  name: List Roles
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/roles?page=1&limit=100
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 100
+  ~search: admin
+  ~status: ACTIVE
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  SiteAdmin view of the **global** role catalogue (`tenant_id = null`): the 24
+  seeded built-ins (`isSystem: true`) plus any SiteAdmin-created global roles,
+  built-ins first. Paginated; pagination info is lifted into `meta`.
+
+  Requires `master-data:read` (content_admin and above). Distinct from the
+  business `GET /roles` (see "34 Roles"), which is tenant-scoped.
+
+  ## Filters (optional — toggle the `~`)
+  - `search` — case-insensitive match on `name` **or** `key`.
+  - `status` — `ACTIVE` | `INACTIVE`.
+}

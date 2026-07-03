@@ -1,0 +1,41 @@
+meta {
+  name: Update Branch Lab Test
+  type: http
+  seq: 5
+}
+
+put {
+  url: {{baseUrl}}/branch-lab-tests/{{branchLabTestId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchLabTestId: 00000000-0000-0000-0000-000000000000
+}
+
+body:json {
+  {
+    "priceMsrp": 1500,
+    "priceMaximum": 1400,
+    "priceMinimum": 1000,
+    "isHideInOrderScreen": false,
+    "remarks": "Branch-specific pricing"
+  }
+}
+
+docs {
+  Edit a branch lab test's branch-tunable fields (pricing, flags, TAT, notes,
+  display, active). Identity/classification/clinical snapshot are not editable
+  here (managed via re-import/sync). Price ordering (min ≤ max ≤ msrp) is
+  validated → 422 `VALIDATION_ERROR` on violation. Note: a later **sync**
+  overwrites these edits.
+}

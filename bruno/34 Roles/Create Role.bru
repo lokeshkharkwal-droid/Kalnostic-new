@@ -1,0 +1,40 @@
+meta {
+  name: Create Role
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/roles
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Sample Custom Role",
+    "description": "A tenant-defined role created via the Roles CRUD",
+    "isActive": true,
+    "allowedBranchTypes": ["DIAGNOSTIC"]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("authRoleId", data.id);
+}
+
+docs {
+  Create a **custom** role in the caller's tenant. `key` is NOT accepted — it is
+  system-generated (a deduplicated slug of `name`) and immutable. An empty (or
+  omitted) `allowedBranchTypes` makes the role tenant-level (no branch). System
+  roles are seeded, never created here. 409 on a duplicate name.
+}

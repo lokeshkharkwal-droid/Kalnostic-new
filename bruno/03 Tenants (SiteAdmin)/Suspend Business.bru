@@ -1,0 +1,20 @@
+meta {
+  name: Suspend Business
+  type: http
+  seq: 14
+}
+
+patch {
+  url: {{baseUrl}}/siteadmin/tenants/{{tenantId}}/suspend
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Suspend a business — sets `subscriptionStatus` to `SUSPENDED`.
+  Requires `business:suspend` (OPERATIONS_ADMIN+).
+}

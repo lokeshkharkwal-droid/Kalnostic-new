@@ -1,0 +1,21 @@
+meta {
+  name: List Template Types
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/pdf-report-templates/options/types
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Returns the supported template `type` keys plus their display labels for the
+  frontend "type" select: `{ types: string[], labels: Record<type,label> }`.
+  Declared before `:id` so the path isn't captured as a template id.
+}

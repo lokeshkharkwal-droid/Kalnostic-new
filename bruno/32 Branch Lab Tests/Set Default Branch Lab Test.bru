@@ -1,0 +1,24 @@
+meta {
+  name: Set Default Branch Lab Test
+  type: http
+  seq: 9
+}
+
+patch {
+  url: {{baseUrl}}/branch-lab-tests/{{branchLabTestId}}/default
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchLabTestId: 00000000-0000-0000-0000-000000000000
+}
+
+docs {
+  Mark this row the default of its variant group (used when creating a lab order).
+  Clears `isDefault` on the group's other active rows in one transaction. No body.
+}

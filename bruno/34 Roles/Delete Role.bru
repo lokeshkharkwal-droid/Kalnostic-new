@@ -1,0 +1,21 @@
+meta {
+  name: Delete Role
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/roles/{{authRoleId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Soft-delete a **custom** role. System roles cannot be deleted (403
+  SYSTEM_ROLE_IMMUTABLE). A custom role still assigned to active users is
+  refused (409 ROLE_IN_USE) — unassign it first.
+}

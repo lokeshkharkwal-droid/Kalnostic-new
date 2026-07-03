@@ -42,7 +42,12 @@ docs {
   Session-only: the user's default profile (`isDefault`) is not changed, so a
   fresh login still lands on the admin-set default branch.
 
-  `profileKey` is one of: `business_admin`, `branch_admin`, `doctor`,
-  `lab_technician`, `receptionist`, `patient`. Omit `branchId` for tenant-level
-  profiles (e.g. `business_admin`, `patient`).
+  `profileKey` is the **key** of a role the user actually holds at the target
+  branch — a built-in system role (`business_admin`, `branch_admin`, `doctor`,
+  `lab_technician`, `receptionist`, `patient`, …) or a tenant **custom** role
+  (from `/roles`, see "34 Roles"). The switch is validated against the user's
+  assignment for `(branchId, role.key)`; a role/branch the user doesn't hold →
+  ProfileSwitchDenied. Omit `branchId` for tenant-level profiles (e.g.
+  `business_admin`, `patient`). The resulting JWT `active_profile_key` /
+  `profile_label` still equal the role's `key` / `name` (unchanged contract).
 }

@@ -1,0 +1,35 @@
+meta {
+  name: Update Role
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/roles/{{authRoleId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Sample Custom Role (renamed)",
+    "description": "Updated description",
+    "isActive": true,
+    "allowedBranchTypes": ["DIAGNOSTIC", "OPD"]
+  }
+}
+
+docs {
+  Update a role. For a **custom** role, all fields are editable. For a **system**
+  role, only `description` and `isActive` apply — sending a changed `name` or
+  `allowedBranchTypes` returns 403 (SYSTEM_ROLE_IMMUTABLE). `key` is never
+  editable. 409 on a name collision.
+}

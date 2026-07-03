@@ -7,6 +7,7 @@ import { SecurityModule } from '../security/security.module';
 import { UsersModule } from '../users/users.module';
 import { TenantModule } from '../tenant/tenant.module';
 import { BranchModule } from '../branch/branch.module';
+import { AuthRoleModule } from '../auth-role/auth-role.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
@@ -22,6 +23,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     UsersModule,
     TenantModule,
     BranchModule,
+    AuthRoleModule,
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],

@@ -23,6 +23,12 @@ body:json {
     "name": "Acme Diagnostics & Labs",
     "email": "hello@acme.test",
     "phone": "+919800000001",
+    "shortName": "AcmeDx",
+    "customDomain": "labs.acme.test",
+    "addressLine": "12 Lab Street",
+    "pincode": "411001",
+    "logoUrl": "https://cdn.acme.test/logo.png",
+    "photoUrl": "https://cdn.acme.test/photo.jpg",
     "mrnPrefix": "AC",
     "address": {
       "line1": "12 Lab Street",
@@ -52,7 +58,16 @@ docs {
   - `name` (optional) — business name.
   - `email` (optional) — tenant contact email.
   - `phone` (optional) — tenant contact phone.
-  - `address` (optional) — free-form JSON object.
+  - `shortName` (optional) — business abbreviation.
+  - `customDomain` (optional) — custom domain; must be globally unique
+    (409 `TENANT_CUSTOM_DOMAIN_TAKEN` if claimed). Send `""` to clear it.
+  - `addressLine` (optional) — street address.
+  - `pincode` (optional) — zip / pin code.
+  - `countryId` / `stateId` / `cityId` / `areaId` (optional) — location hierarchy
+    ids; validated for consistency (against each other and any already-stored
+    ids). Send `null` to clear a link.
+  - `logoUrl` / `photoUrl` (optional) — media URL strings.
+  - `address` (optional) — free-form JSON object (legacy).
   - `mrnPrefix` (optional) — patient MRN prefix.
   - `settings` (optional) — partial `TenantSettings` JSON (deep-merged):
     `timezone`, `currency`, `date_format`, `language`, `logo_url` (optional),

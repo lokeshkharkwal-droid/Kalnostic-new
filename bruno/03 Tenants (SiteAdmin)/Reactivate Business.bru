@@ -1,0 +1,20 @@
+meta {
+  name: Reactivate Business
+  type: http
+  seq: 15
+}
+
+patch {
+  url: {{baseUrl}}/siteadmin/tenants/{{tenantId}}/reactivate
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Reactivate a suspended business — sets `subscriptionStatus` to `ACTIVE`.
+  Requires `business:reactivate` (OPERATIONS_ADMIN+).
+}

@@ -2,11 +2,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
+  AuthRole,
   Person,
   Prisma,
   StaffStatus,
   TenantStaffMembership,
   UserBranchProfile,
+  UserType,
 } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { mkdir, writeFile } from 'fs/promises';
@@ -18,11 +20,11 @@ import { EncryptionService } from '../security/encryption.service';
 import { BranchService } from '../branch/branch.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import {
-  isValidProfileKey,
   PROFILE_BRANCH_MATRIX,
   PROFILE_LABELS,
   ProfileKey,
 } from '../permissions/constants/profile-registry.constant';
+import { AuthRoleService } from '../auth-role/auth-role.service';
 import {
   MODULE_PERMISSION_CATALOG,
   roleBaselinePermissions,
@@ -38,6 +40,7 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateBranchAssignmentDto } from './dto/update-branch-assignment.dto';
 import { UpdateBranchPermissionsDto } from './dto/update-branch-permissions.dto';
 import { ListUsersQueryDto, UserSortField } from './dto/list-users-query.dto';
+import { ListRegisteredUsersQueryDto } from './dto/list-registered-users-query.dto';
 import {
   InvalidModuleKeyException,
   ModuleNotEnabledForBranchException,
@@ -60,11 +63,26 @@ const MIN_USER_AGE = 18;
 /** A validated, normalised branch assignment (internal to UsersService). */
 interface PreparedAssignment {
   branchId: string;
-  profileKey: string;
+  authRoleId: string;
+  /** Resolved role key — kept for module-template checks and error messages. */
+  roleKey: string;
   isDefault: boolean;
   defaultModuleId: string | null;
   branchStatus: StaffStatus;
 }
+
+/** Eager-load the assigned role, so its stable `key`/`name` are available. */
+const PROFILE_WITH_ROLE = {
+  authRole: true,
+} satisfies Prisma.UserBranchProfileInclude;
+
+/** A branch profile with its role relation loaded. */
+type UserBranchProfileWithRole = UserBranchProfile & {
+  authRole: AuthRole | null;
+};
+
+/** A staff membership with its (optional) primary-role relation loaded. */
+type MembershipWithRole = TenantStaffMembership & { authRole: AuthRole | null };
 
 /** One assigned branch (with its role + module) on a user-list row. */
 export interface UserListBranch {
@@ -156,6 +174,56 @@ export interface MyPermissions extends GroupedPermissions {
   branchModules: BranchModuleSummary[];
 }
 
+// ── SiteAdmin: Registered Users (cross-portal, platform-level) ────────────────
+
+/** Person kind on the SiteAdmin Registered Users surface. */
+export type RegisteredUserType = 'STAFF' | 'PATIENT';
+
+/** A row in the SiteAdmin Registered Users list (one per person). */
+export interface RegisteredUserRow {
+  id: string;
+  name: string;
+  username: string | null;
+  email: string | null;
+  userType: RegisteredUserType;
+  status: 'ACTIVE' | 'INACTIVE';
+}
+
+/** One branch assignment on a registered-user's business membership. */
+export interface RegisteredUserMembershipBranch {
+  branchId: string | null;
+  branchName: string | null;
+  roleKey: string;
+  roleLabel: string;
+  branchStatus: StaffStatus;
+  isDefault: boolean;
+  moduleLabel: string | null;
+}
+
+/** A person's staff membership at one business (for the read-only detail). */
+export interface RegisteredUserMembership {
+  tenantId: string;
+  tenantName: string;
+  userCode: string;
+  userType: UserType;
+  status: StaffStatus;
+  roleKey: string | null;
+  roleLabel: string | null;
+  branches: RegisteredUserMembershipBranch[];
+}
+
+/** Full SiteAdmin detail for one registered person (read-only). */
+export interface RegisteredUserDetail {
+  person: Omit<Person, 'aadhaarNumber'> & { aadhaarMasked: string | null };
+  username: string | null;
+  loginPhone: string | null;
+  loginEmail: string | null;
+  userType: RegisteredUserType;
+  status: 'ACTIVE' | 'INACTIVE';
+  /** Staff memberships across businesses; empty for a pure patient. */
+  memberships: RegisteredUserMembership[];
+}
+
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
@@ -166,9 +234,34 @@ export class UsersService {
     private readonly usernameService: UsernameGeneratorService,
     private readonly encryptionService: EncryptionService,
     private readonly branchService: BranchService,
+    private readonly authRoleService: AuthRoleService,
     private readonly eventEmitter: EventEmitter2,
     private readonly config: ConfigService,
   ) {}
+
+  /**
+   * The stable role key/label for a loaded profile — from the role relation, with
+   * a fallback to the (deprecated, transition-only) `profileKey` column.
+   */
+  private roleView(
+    role: AuthRole | null,
+    fallbackKey?: string | null,
+  ): { key: string; label: string } {
+    const key = role?.key ?? fallbackKey ?? '';
+    const label =
+      role?.name ?? (key ? (PROFILE_LABELS[key as ProfileKey] ?? key) : '');
+    return { key, label };
+  }
+
+  /**
+   * Whether a role is tenant-level (cannot be pinned to a branch). System roles
+   * use PROFILE_BRANCH_MATRIX (code); custom roles use their `allowedBranchTypes`.
+   */
+  private isTenantLevelRole(role: AuthRole): boolean {
+    return role.isSystem
+      ? (PROFILE_BRANCH_MATRIX[role.key as ProfileKey] ?? []).length === 0
+      : role.allowedBranchTypes.length === 0;
+  }
 
   /**
    * Fetch a person by id (platform-level lookup, no tenant scope).
@@ -218,11 +311,16 @@ export class UsersService {
   }
 
   /**
-   * All active profile assignments for a person (used to build the JWT).
+   * All active profile assignments for a person, each with its role relation
+   * loaded (used to build the JWT — `authRole.key`/`.name` feed `profile_key`/
+   * `profile_label`).
    */
-  async getPersonProfiles(personId: string): Promise<UserBranchProfile[]> {
+  async getPersonProfiles(
+    personId: string,
+  ): Promise<UserBranchProfileWithRole[]> {
     return this.prisma.userBranchProfile.findMany({
       where: { personId, isActive: true, deletedAt: null },
+      include: PROFILE_WITH_ROLE,
     });
   }
 
@@ -243,14 +341,15 @@ export class UsersService {
     createdBy: string,
   ): Promise<{
     person: Person;
-    membership: TenantStaffMembership;
+    membership: TenantStaffMembership & { roleKey: string | null };
     userCode: string;
     loginIdentifier: string;
   }> {
     this.assertAdult(dto.dateOfBirth);
-    if (dto.roleKey && !isValidProfileKey(dto.roleKey)) {
-      throw new ProfileInvalidForBranchException(dto.roleKey, 'unknown');
-    }
+    // Resolve the optional primary role to a role row (throws if unknown).
+    const primaryRole = dto.roleKey
+      ? await this.authRoleService.resolveByKey(tenantId, dto.roleKey)
+      : null;
     await this.assertContactUnique(dto.mobileNumber, dto.email);
     await this.assertUsernameUnique(dto.username);
 
@@ -266,9 +365,9 @@ export class UsersService {
       : null;
     const platformMrn = this.generatePlatformMrn();
     const status = dto.status ?? StaffStatus.ACTIVE;
-    const isTenantLevelRole =
-      !!dto.roleKey &&
-      (PROFILE_BRANCH_MATRIX[dto.roleKey as ProfileKey] ?? []).length === 0;
+    const isTenantLevelRole = primaryRole
+      ? this.isTenantLevelRole(primaryRole)
+      : false;
 
     const result = await this.prisma.withTenant(tenantId, async (tx) => {
       const tenant = await tx.tenant.update({
@@ -321,7 +420,7 @@ export class UsersService {
           personId: person.id,
           userCode,
           userType: dto.userType,
-          roleKey: dto.roleKey ?? null,
+          authRoleId: primaryRole?.id ?? null,
           status,
         },
       });
@@ -333,7 +432,7 @@ export class UsersService {
               tenantId,
               personId: person.id,
               branchId: a.branchId,
-              profileKey: a.profileKey,
+              authRoleId: a.authRoleId,
               branchStatus: a.branchStatus,
               defaultModuleId: a.defaultModuleId,
               isDefault: a.isDefault,
@@ -343,7 +442,7 @@ export class UsersService {
             },
           });
         }
-      } else if (isTenantLevelRole && dto.roleKey) {
+      } else if (isTenantLevelRole && primaryRole) {
         // Tenant-level role with no branch list: create the tenant-level profile
         // so the auth/JWT path has a profile to land on.
         await tx.userBranchProfile.create({
@@ -351,7 +450,7 @@ export class UsersService {
             tenantId,
             personId: person.id,
             branchId: null,
-            profileKey: dto.roleKey,
+            authRoleId: primaryRole.id,
             isDefault: true,
             isActive: true,
             assignedAt: new Date(),
@@ -369,7 +468,15 @@ export class UsersService {
       userCode: result.userCode,
       createdBy,
     });
-    return { ...result, loginIdentifier: dto.mobileNumber };
+    return {
+      person: result.person,
+      membership: {
+        ...result.membership,
+        roleKey: primaryRole?.key ?? null,
+      },
+      userCode: result.userCode,
+      loginIdentifier: dto.mobileNumber,
+    };
   }
 
   /**
@@ -383,7 +490,10 @@ export class UsersService {
     tenantId: string,
     dto: UpdateUserDto,
     updatedBy: string,
-  ): Promise<{ person: Person; membership: TenantStaffMembership }> {
+  ): Promise<{
+    person: Person;
+    membership: TenantStaffMembership & { roleKey: string | null };
+  }> {
     const person = await this.findById(personId);
     this.assertCanEdit(person, tenantId, updatedBy);
     const membership = await this.getMembership(tenantId, personId);
@@ -394,9 +504,11 @@ export class UsersService {
     if (dto.mobileNumber && dto.mobileNumber !== person.phone) {
       await this.assertPhoneUnique(dto.mobileNumber, personId);
     }
-    if (dto.roleKey && !isValidProfileKey(dto.roleKey)) {
-      throw new ProfileInvalidForBranchException(dto.roleKey, 'unknown');
-    }
+    // Resolve the optional new primary role (throws if unknown).
+    const newPrimaryRole =
+      dto.roleKey !== undefined
+        ? await this.authRoleService.resolveByKey(tenantId, dto.roleKey)
+        : null;
 
     const data: Prisma.PersonUpdateInput = {};
     if (dto.employeeName !== undefined) data.firstName = dto.employeeName;
@@ -444,7 +556,9 @@ export class UsersService {
       if (dto.userType !== undefined) membershipData.userType = dto.userType;
       if (dto.status !== undefined) membershipData.status = dto.status;
       // Primary role is informational only — never propagated to branch profiles.
-      if (dto.roleKey !== undefined) membershipData.roleKey = dto.roleKey;
+      if (newPrimaryRole) {
+        membershipData.authRole = { connect: { id: newPrimaryRole.id } };
+      }
       const updatedMembership = await tx.tenantStaffMembership.update({
         where: { id: membership.id },
         data: membershipData,
@@ -458,7 +572,11 @@ export class UsersService {
       updatedBy,
       changes: Object.keys(dto),
     });
-    return updated;
+    const roleKey = newPrimaryRole?.key ?? membership.authRole?.key ?? null;
+    return {
+      person: updated.person,
+      membership: { ...updated.membership, roleKey },
+    };
   }
 
   /**
@@ -506,6 +624,7 @@ export class UsersService {
 
     const memberships = await this.prisma.tenantStaffMembership.findMany({
       where: { tenantId, deletedAt: null },
+      include: { authRole: true },
       orderBy: { createdAt: 'asc' },
     });
     if (memberships.length === 0) {
@@ -525,6 +644,7 @@ export class UsersService {
           isActive: true,
           deletedAt: null,
         },
+        include: PROFILE_WITH_ROLE,
       }),
     ]);
     const branchIds = [
@@ -539,7 +659,7 @@ export class UsersService {
     const personMap = new Map(persons.map((p) => [p.id, p]));
     const credMap = new Map(credentials.map((c) => [c.personId, c]));
     const branchNameMap = new Map(branches.map((b) => [b.id, b.name]));
-    const profilesByPerson = new Map<string, UserBranchProfile[]>();
+    const profilesByPerson = new Map<string, UserBranchProfileWithRole[]>();
     for (const p of profiles) {
       const list = profilesByPerson.get(p.personId) ?? [];
       list.push(p);
@@ -557,9 +677,11 @@ export class UsersService {
         defaultProfile?.branchId != null
           ? (branchNameMap.get(defaultProfile.branchId) ?? null)
           : null;
-      // Role now lives per-branch; show the default profile's role (or the
-      // membership's optional primary role) as the row's primary role.
-      const primaryRole = m.roleKey ?? defaultProfile?.profileKey ?? null;
+      // Role now lives per-branch; show the membership's optional primary role
+      // (else the default profile's role) as the row's primary role.
+      const primary = this.roleView(
+        m.authRole ?? defaultProfile?.authRole ?? null,
+      );
       return {
         id: m.personId,
         userCode: m.userCode,
@@ -567,27 +689,28 @@ export class UsersService {
         username: cred?.systemUsername ?? null,
         email: person?.email ?? null,
         mobile: person?.phone ?? null,
-        role: primaryRole ?? '',
-        roleLabel: primaryRole
-          ? (PROFILE_LABELS[primaryRole as ProfileKey] ?? primaryRole)
-          : '',
+        role: primary.key,
+        roleLabel: primary.label,
         assignedBranches: branchProfiles
           .map((p) => (p.branchId ? branchNameMap.get(p.branchId) : null))
           .filter((n): n is string => !!n),
-        branches: mProfiles.map((p) => ({
-          branchId: p.branchId,
-          branchName: p.branchId
-            ? (branchNameMap.get(p.branchId) ?? null)
-            : null,
-          roleKey: p.profileKey,
-          roleLabel: PROFILE_LABELS[p.profileKey as ProfileKey] ?? p.profileKey,
-          branchStatus: p.branchStatus,
-          isDefault: p.isDefault,
-          moduleId: p.defaultModuleId,
-          moduleLabel: p.defaultModuleId
-            ? moduleLabel(p.defaultModuleId)
-            : null,
-        })),
+        branches: mProfiles.map((p) => {
+          const rv = this.roleView(p.authRole);
+          return {
+            branchId: p.branchId,
+            branchName: p.branchId
+              ? (branchNameMap.get(p.branchId) ?? null)
+              : null,
+            roleKey: rv.key,
+            roleLabel: rv.label,
+            branchStatus: p.branchStatus,
+            isDefault: p.isDefault,
+            moduleId: p.defaultModuleId,
+            moduleLabel: p.defaultModuleId
+              ? moduleLabel(p.defaultModuleId)
+              : null,
+          };
+        }),
         defaultBranch: defaultBranchName,
         defaultModule: defaultProfile?.defaultModuleId
           ? moduleLabel(defaultProfile.defaultModuleId)
@@ -613,7 +736,7 @@ export class UsersService {
     personId: string,
   ): Promise<{
     person: Omit<Person, 'aadhaarNumber'> & { aadhaarMasked: string | null };
-    membership: TenantStaffMembership;
+    membership: TenantStaffMembership & { roleKey: string | null };
     username: string | null;
     branches: Array<{
       id: string;
@@ -634,6 +757,7 @@ export class UsersService {
     });
     const profiles = await this.prisma.userBranchProfile.findMany({
       where: { tenantId, personId, isActive: true, deletedAt: null },
+      include: PROFILE_WITH_ROLE,
     });
     const branchIds = profiles
       .map((p) => p.branchId)
@@ -649,19 +773,26 @@ export class UsersService {
         ...rest,
         aadhaarMasked: this.maskAadhaar(aadhaarNumber),
       },
-      membership,
+      membership: this.membershipResponse(membership),
       username: cred?.systemUsername ?? null,
-      branches: profiles.map((p) => ({
-        id: p.id,
-        branchId: p.branchId,
-        branchName: p.branchId ? (branchNameMap.get(p.branchId) ?? null) : null,
-        roleKey: p.profileKey,
-        roleLabel: PROFILE_LABELS[p.profileKey as ProfileKey] ?? p.profileKey,
-        branchStatus: p.branchStatus,
-        isDefault: p.isDefault,
-        moduleId: p.defaultModuleId,
-        moduleLabel: p.defaultModuleId ? moduleLabel(p.defaultModuleId) : null,
-      })),
+      branches: profiles.map((p) => {
+        const rv = this.roleView(p.authRole);
+        return {
+          id: p.id,
+          branchId: p.branchId,
+          branchName: p.branchId
+            ? (branchNameMap.get(p.branchId) ?? null)
+            : null,
+          roleKey: rv.key,
+          roleLabel: rv.label,
+          branchStatus: p.branchStatus,
+          isDefault: p.isDefault,
+          moduleId: p.defaultModuleId,
+          moduleLabel: p.defaultModuleId
+            ? moduleLabel(p.defaultModuleId)
+            : null,
+        };
+      }),
     };
   }
 
@@ -680,7 +811,7 @@ export class UsersService {
     const membership = await this.getMembership(tenantId, personId);
     const prepared = await this.prepareBranchAssignments(
       tenantId,
-      membership.roleKey ?? null,
+      membership.authRole?.key ?? null,
       branches,
     );
 
@@ -700,7 +831,7 @@ export class UsersService {
           await tx.userBranchProfile.update({
             where: { id: existing.id },
             data: {
-              profileKey: a.profileKey,
+              authRoleId: a.authRoleId,
               isActive: true,
               branchStatus: a.branchStatus,
               defaultModuleId: a.defaultModuleId,
@@ -715,7 +846,7 @@ export class UsersService {
               tenantId,
               personId,
               branchId: a.branchId,
-              profileKey: a.profileKey,
+              authRoleId: a.authRoleId,
               branchStatus: a.branchStatus,
               defaultModuleId: a.defaultModuleId,
               isDefault: a.isDefault,
@@ -748,31 +879,29 @@ export class UsersService {
     await this.getMembership(tenantId, personId);
     const existing = await this.prisma.userBranchProfile.findFirst({
       where: { tenantId, personId, branchId, isActive: true, deletedAt: null },
+      include: PROFILE_WITH_ROLE,
     });
     if (!existing) {
       throw new ProfileNotFoundException(personId, branchId);
     }
 
     await this.branchService.findById(branchId, tenantId);
-    const targetRole = dto.roleKey ?? existing.profileKey;
-    if (dto.roleKey) {
-      if (!isValidProfileKey(dto.roleKey)) {
-        throw new ProfileInvalidForBranchException(dto.roleKey, 'unknown');
-      }
-      // Branch-type restriction lifted: any branch-level role may be assigned to
-      // any branch type. Tenant-level roles still can't be pinned to a branch.
-      const isTenantLevel =
-        (PROFILE_BRANCH_MATRIX[dto.roleKey] ?? []).length === 0;
-      if (isTenantLevel) {
-        throw new ProfileInvalidForBranchException(
-          dto.roleKey,
-          'none — this is a tenant-level role and cannot be assigned to a branch',
-        );
-      }
+    // Resolve the new role if one is supplied (throws if unknown); else keep the
+    // existing one. Branch-type restriction is lifted (any branch-level role may
+    // be assigned to any branch type); tenant-level roles still can't be pinned.
+    const newRole = dto.roleKey
+      ? await this.authRoleService.resolveByKey(tenantId, dto.roleKey)
+      : null;
+    if (newRole && this.isTenantLevelRole(newRole)) {
+      throw new ProfileInvalidForBranchException(
+        newRole.key,
+        'none — this is a tenant-level role and cannot be assigned to a branch',
+      );
     }
+    const targetRoleKey = newRole?.key ?? existing.authRole?.key ?? '';
     if (dto.moduleId !== undefined && dto.moduleId !== null) {
       await this.assertModuleEnabledForBranch(tenantId, branchId, dto.moduleId);
-      this.assertModuleInRoleTemplate(targetRole, dto.moduleId);
+      this.assertModuleInRoleTemplate(targetRoleKey, dto.moduleId);
     }
 
     return this.prisma.withTenant(tenantId, async (tx) => {
@@ -783,7 +912,7 @@ export class UsersService {
         });
       }
       const data: Prisma.UserBranchProfileUpdateInput = {};
-      if (dto.roleKey !== undefined) data.profileKey = dto.roleKey;
+      if (newRole) data.authRole = { connect: { id: newRole.id } };
       if (dto.branchStatus !== undefined) data.branchStatus = dto.branchStatus;
       if (dto.isDefault !== undefined) data.isDefault = dto.isDefault;
       if (dto.moduleId !== undefined) {
@@ -849,6 +978,7 @@ export class UsersService {
     await this.branchService.findById(branchId, tenantId);
     const profile = await this.prisma.userBranchProfile.findFirst({
       where: { tenantId, personId, branchId, isActive: true, deletedAt: null },
+      include: PROFILE_WITH_ROLE,
     });
     if (!profile) {
       return [];
@@ -860,7 +990,7 @@ export class UsersService {
     if (enabledModules.size === 0) {
       return [];
     }
-    const baseline = roleBaselinePermissions(profile.profileKey);
+    const baseline = roleBaselinePermissions(profile.authRole?.key ?? '');
     const overrides = await this.prisma.userBranchPermission.findMany({
       where: { tenantId, personId, branchId, deletedAt: null },
     });
@@ -939,17 +1069,15 @@ export class UsersService {
         deletedAt: null,
         OR: [{ branchId }, { branchId: null }],
       },
+      include: PROFILE_WITH_ROLE,
     });
-    const roleKey =
-      (
-        profiles.find((p) => p.branchId === branchId) ??
-        profiles.find((p) => p.branchId === null)
-      )?.profileKey ?? null;
+    const activeProfile =
+      profiles.find((p) => p.branchId === branchId) ??
+      profiles.find((p) => p.branchId === null) ??
+      null;
+    const roleKey = activeProfile?.authRole?.key ?? null;
     const role: ResolvedRole | null = roleKey
-      ? {
-          key: roleKey,
-          label: PROFILE_LABELS[roleKey as ProfileKey] ?? roleKey,
-        }
+      ? this.roleView(activeProfile?.authRole ?? null)
       : null;
 
     // No role at this branch → empty baseline + overrides, so every permission
@@ -1107,6 +1235,7 @@ export class UsersService {
           deletedAt: null,
           branchId: { not: null },
         },
+        include: PROFILE_WITH_ROLE,
       }),
     ]);
     const credMap = new Map(credentials.map((c) => [c.personId, c]));
@@ -1123,16 +1252,178 @@ export class UsersService {
     return profiles.map((p) => {
       const m = membershipMap.get(p.personId);
       const cred = credMap.get(p.personId);
+      const rv = this.roleView(p.authRole);
       return {
         id: p.id,
         userCode: m?.userCode ?? '',
         username: cred?.systemUsername ?? null,
-        role: p.profileKey,
-        roleLabel: PROFILE_LABELS[p.profileKey as ProfileKey] ?? p.profileKey,
+        role: rv.key,
+        roleLabel: rv.label,
         branch: p.branchId ? (branchNameMap.get(p.branchId) ?? '') : '',
         status: StaffStatus.ACTIVE,
       };
     });
+  }
+
+  // ── SiteAdmin: Registered Users (cross-portal) ──────────────────────────────
+
+  /**
+   * List every registered person across the whole portal (SiteAdmin surface,
+   * no tenant filtering). `persons` / `person_credentials` are platform-level
+   * (no RLS), so this is a normal paginated DB query. `search` matches the
+   * person's email or login username (case-insensitive); `status` maps to
+   * `Person.isActive`. `userType` is derived from the `isStaff` / `isPatient`
+   * flags.
+   * @param query pagination + optional `search` / `status`
+   * @returns `{ data, total, page, limit }` for the `meta` envelope
+   */
+  async listRegisteredUsers(
+    query: ListRegisteredUsersQueryDto,
+  ): Promise<PaginatedResult<RegisteredUserRow>> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+
+    const where: Prisma.PersonWhereInput = { deletedAt: null };
+    if (query.status) {
+      where.isActive = query.status === 'active';
+    }
+    const search = query.search?.trim();
+    if (search) {
+      // No Person↔PersonCredentials Prisma relation exists, so resolve
+      // username matches to person ids first, then OR with the email match.
+      const credMatches = await this.prisma.personCredentials.findMany({
+        where: {
+          systemUsername: { contains: search, mode: 'insensitive' },
+          deletedAt: null,
+        },
+        select: { personId: true },
+      });
+      where.OR = [
+        { email: { contains: search, mode: 'insensitive' } },
+        { id: { in: credMatches.map((c) => c.personId) } },
+      ];
+    }
+
+    const [persons, total] = await this.prisma.$transaction([
+      this.prisma.person.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.person.count({ where }),
+    ]);
+
+    const credentials = await this.prisma.personCredentials.findMany({
+      where: { personId: { in: persons.map((p) => p.id) } },
+      select: { personId: true, systemUsername: true },
+    });
+    const usernameMap = new Map(
+      credentials.map((c) => [c.personId, c.systemUsername]),
+    );
+
+    const data: RegisteredUserRow[] = persons.map((p) => ({
+      id: p.id,
+      name: [p.firstName, p.lastName].filter(Boolean).join(' '),
+      username: usernameMap.get(p.id) ?? null,
+      email: p.email,
+      userType: p.isStaff ? 'STAFF' : 'PATIENT',
+      status: p.isActive ? 'ACTIVE' : 'INACTIVE',
+    }));
+    return { data, total, page, limit };
+  }
+
+  /**
+   * Full read-only detail for one registered person (SiteAdmin surface): the
+   * person's identity (Aadhaar masked), login identifiers, and all staff
+   * memberships across businesses with per-branch roles. Membership/role data
+   * lives in RLS-protected tables, so each business is queried under its own
+   * `withTenant` context; a pure patient yields an empty `memberships` array.
+   * @param personId the person to load
+   * @returns the person, login identifiers, and business memberships
+   * @throws PersonNotFoundException if the person is missing
+   */
+  async getRegisteredUser(personId: string): Promise<RegisteredUserDetail> {
+    const person = await this.findById(personId);
+    const cred = await this.prisma.personCredentials.findUnique({
+      where: { personId },
+    });
+
+    const tenants = await this.prisma.tenant.findMany({
+      where: { deletedAt: null },
+      select: { id: true, name: true },
+    });
+
+    const memberships: RegisteredUserMembership[] = [];
+    for (const tenant of tenants) {
+      const scoped = await this.prisma.withTenant(tenant.id, async (tx) => {
+        const membership = await tx.tenantStaffMembership.findFirst({
+          where: { personId, deletedAt: null },
+          include: { authRole: true },
+        });
+        if (!membership) {
+          return null;
+        }
+        const profiles = await tx.userBranchProfile.findMany({
+          where: { personId, isActive: true, deletedAt: null },
+          include: PROFILE_WITH_ROLE,
+        });
+        const branchIds = profiles
+          .map((p) => p.branchId)
+          .filter((b): b is string => !!b);
+        const branches = branchIds.length
+          ? await tx.branch.findMany({ where: { id: { in: branchIds } } })
+          : [];
+        return { membership, profiles, branches };
+      });
+      if (!scoped) {
+        continue;
+      }
+
+      const branchNameMap = new Map(scoped.branches.map((b) => [b.id, b.name]));
+      const defaultProfile =
+        scoped.profiles.find((p) => p.isDefault) ?? scoped.profiles[0] ?? null;
+      const primary = this.roleView(
+        scoped.membership.authRole ?? defaultProfile?.authRole ?? null,
+      );
+
+      memberships.push({
+        tenantId: tenant.id,
+        tenantName: tenant.name,
+        userCode: scoped.membership.userCode,
+        userType: scoped.membership.userType,
+        status: scoped.membership.status,
+        roleKey: primary.key || null,
+        roleLabel: primary.label || null,
+        branches: scoped.profiles.map((p) => {
+          const rv = this.roleView(p.authRole);
+          return {
+            branchId: p.branchId,
+            branchName: p.branchId
+              ? (branchNameMap.get(p.branchId) ?? null)
+              : null,
+            roleKey: rv.key,
+            roleLabel: rv.label,
+            branchStatus: p.branchStatus,
+            isDefault: p.isDefault,
+            moduleLabel: p.defaultModuleId
+              ? moduleLabel(p.defaultModuleId)
+              : null,
+          };
+        }),
+      });
+    }
+
+    const { aadhaarNumber, ...rest } = person;
+    return {
+      person: { ...rest, aadhaarMasked: this.maskAadhaar(aadhaarNumber) },
+      username: cred?.systemUsername ?? null,
+      loginPhone: cred?.phone ?? null,
+      loginEmail: cred?.email ?? null,
+      userType: person.isStaff ? 'STAFF' : 'PATIENT',
+      status: person.isActive ? 'ACTIVE' : 'INACTIVE',
+      memberships,
+    };
   }
 
   // ── v2.0 private helpers ─────────────────────────────────────────────────────
@@ -1165,18 +1456,31 @@ export class UsersService {
     }
   }
 
-  /** Fetch the tenant membership for a person or throw. */
+  /** Fetch the tenant membership for a person (with its role relation) or throw. */
   private async getMembership(
     tenantId: string,
     personId: string,
-  ): Promise<TenantStaffMembership> {
+  ): Promise<MembershipWithRole> {
     const m = await this.prisma.tenantStaffMembership.findFirst({
       where: { tenantId, personId, deletedAt: null },
+      include: { authRole: true },
     });
     if (!m) {
       throw new StaffMembershipNotFoundException(personId, tenantId);
     }
     return m;
+  }
+
+  /**
+   * Reshape a membership for API responses, re-deriving the informational
+   * `roleKey` (dropped as a column; now sourced from the role relation) so the
+   * response contract is preserved.
+   */
+  private membershipResponse(
+    m: MembershipWithRole,
+  ): TenantStaffMembership & { roleKey: string | null } {
+    const { authRole, ...rest } = m;
+    return { ...rest, roleKey: authRole?.key ?? null };
   }
 
   /** Set the tenant-global membership status and emit an event. */
@@ -1292,14 +1596,13 @@ export class UsersService {
     const prepared: PreparedAssignment[] = [];
     for (const [idx, it] of unique.entries()) {
       const roleKey = it.roleKey ?? fallbackRoleKey;
-      if (!roleKey || !isValidProfileKey(roleKey)) {
-        throw new ProfileInvalidForBranchException(
-          roleKey ?? 'none',
-          'unknown',
-        );
+      if (!roleKey) {
+        throw new ProfileInvalidForBranchException('none', 'unknown');
       }
-      const isTenantLevel = (PROFILE_BRANCH_MATRIX[roleKey] ?? []).length === 0;
-      if (isTenantLevel) {
+      // Resolve the role (throws RoleNotFoundException if unknown — replaces the
+      // old static registry check, and now accepts tenant custom roles too).
+      const role = await this.authRoleService.resolveByKey(tenantId, roleKey);
+      if (this.isTenantLevelRole(role)) {
         throw new ProfileInvalidForBranchException(
           roleKey,
           'none — this is a tenant-level role and cannot be assigned to a branch',
@@ -1316,12 +1619,13 @@ export class UsersService {
           it.branchId,
           it.moduleId,
         );
-        this.assertModuleInRoleTemplate(roleKey, it.moduleId);
+        this.assertModuleInRoleTemplate(role.key, it.moduleId);
         moduleId = it.moduleId;
       }
       prepared.push({
         branchId: it.branchId,
-        profileKey: roleKey,
+        authRoleId: role.id,
+        roleKey: role.key,
         isDefault: defaultsCount === 0 ? idx === 0 : !!it.isDefault,
         defaultModuleId: moduleId,
         branchStatus: it.branchStatus ?? StaffStatus.ACTIVE,
@@ -1334,7 +1638,7 @@ export class UsersService {
   private applyUserListFilters(
     rows: UserListRow[],
     query: ListUsersQueryDto,
-    profilesByPerson: Map<string, UserBranchProfile[]>,
+    profilesByPerson: Map<string, UserBranchProfileWithRole[]>,
   ): UserListRow[] {
     let out = rows;
     if (query.search) {
@@ -1359,7 +1663,9 @@ export class UsersService {
       out = out.filter(
         (r) =>
           r.role === role ||
-          (profilesByPerson.get(r.id) ?? []).some((p) => p.profileKey === role),
+          (profilesByPerson.get(r.id) ?? []).some(
+            (p) => p.authRole?.key === role,
+          ),
       );
     }
     if (query.moduleKey) {

@@ -1,0 +1,20 @@
+meta {
+  name: Get Role
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/roles/{{siteAdminRoleId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Fetch one global role by id (built-in or SiteAdmin-created). Requires
+  `master-data:read`. 404 if it isn't a global role.
+}

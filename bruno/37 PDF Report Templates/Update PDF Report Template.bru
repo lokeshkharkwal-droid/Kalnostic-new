@@ -1,0 +1,42 @@
+meta {
+  name: Update PDF Report Template
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/pdf-report-templates/{{pdfReportTemplateId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Lab Report Default (v2)",
+    "isActive": true,
+    "meta": {
+      "orientation": "L",
+      "page_size": "A4",
+      "watermark_text": "COPY",
+      "template_version": "v2.0",
+      "header_html": "<div class='title'>{hospital_name}</div>",
+      "body_html": "<h3>Patient: {patient_name}</h3>",
+      "footer_html": "<signing_authority_tag></signing_authority_tag>"
+    }
+  }
+}
+
+docs {
+  Partial update. Any supplied `meta` REPLACES the stored blob (defaults are
+  re-applied). A supplied `branchId` is re-validated against the tenant. `type`
+  must remain a supported key. 404 if missing; 409
+  (`PDF_REPORT_TEMPLATE_NAME_CONFLICT`) on a duplicate active name.
+}

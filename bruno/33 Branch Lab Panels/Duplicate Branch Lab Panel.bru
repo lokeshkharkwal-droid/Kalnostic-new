@@ -1,0 +1,26 @@
+meta {
+  name: Duplicate Branch Lab Panel
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/branch-lab-panels/{{branchLabPanelId}}/duplicate
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchLabPanelId: 00000000-0000-0000-0000-000000000000
+}
+
+docs {
+  Create an independent panel variant in the same group (same `sourceLabPanelId`):
+  copies the panel + its member join rows (still referencing the same branch-test
+  copies), non-default duplicate (name suffixed " (Copy)"). Returns the new panel
+  with its member tests.
+}

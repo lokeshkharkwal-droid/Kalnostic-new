@@ -1,0 +1,25 @@
+meta {
+  name: Preview HTML (Advance)
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/pdf-report-templates/{{siteAdminPdfReportTemplateId}}/preview-html
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Render the template's block document (`doc`) to preview HTML against SAMPLE
+  data — this feeds the Advance PDF editor's live iframe. Returns raw
+  `text/html` (NOT the JSON envelope). Auth: SiteAdmin token, requires
+  `master-data:read`. 404 if the template is missing/soft-deleted/not global.
+
+  Note: this is the block-designer counterpart. Classic HTML-`meta` templates
+  have a null `doc`, so this falls back to a seed document.
+}
