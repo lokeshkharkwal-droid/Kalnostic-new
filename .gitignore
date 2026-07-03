@@ -25,3 +25,5 @@ pnpm-debug.log*
 # Prisma generated client (regenerated via `prisma generate`)
 # (kept out by default; uncomment if you generate into the repo)
 # /generated
+
+/uploads

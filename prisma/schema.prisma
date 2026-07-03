@@ -3254,6 +3254,7 @@ model PaymentRule {
 model LabImageSetting {
   id               String    @id @default(uuid())
   tenantId         String    @map("tenant_id")
+  branchId         String?   @map("branch_id")
   name             String
   displayPosition  String    @map("display_position")
   layout           String
@@ -3272,6 +3273,7 @@ model LabImageSetting {
   deletedAt        DateTime? @map("deleted_at")
 
   @@index([tenantId])
+  @@index([branchId])
   @@index([deletedAt])
   @@map("lab_image_settings")
 }
@@ -3279,6 +3281,7 @@ model LabImageSetting {
 model LabPdfSetting {
   id               String    @id @default(uuid())
   tenantId         String    @map("tenant_id")
+  branchId         String?   @map("branch_id")
   name             String
   pdfMode          String    @map("pdf_mode")
   placement        String
@@ -3291,6 +3294,7 @@ model LabPdfSetting {
   deletedAt        DateTime? @map("deleted_at")
 
   @@index([tenantId])
+  @@index([branchId])
   @@index([deletedAt])
   @@map("lab_pdf_settings")
 }
@@ -3298,6 +3302,7 @@ model LabPdfSetting {
 model LabGroupLayoutSetting {
   id              String    @id @default(uuid())
   tenantId        String    @map("tenant_id")
+  branchId        String?   @map("branch_id")
   name            String
   nameAlignment   String    @map("name_alignment")
   columnLayout    String    @map("column_layout")
@@ -3309,6 +3314,7 @@ model LabGroupLayoutSetting {
   deletedAt       DateTime? @map("deleted_at")
 
   @@index([tenantId])
+  @@index([branchId])
   @@index([deletedAt])
   @@map("lab_group_layout_settings")
 }
@@ -3317,6 +3323,7 @@ model LabGroupLayoutSetting {
 model LabIconSetting {
   id         String    @id @default(uuid())
   tenantId   String    @map("tenant_id")
+  branchId   String?   @map("branch_id")
   name       String
   iconCount  Int       @map("icon_count")
   icons      Json
@@ -3326,6 +3333,7 @@ model LabIconSetting {
   deletedAt  DateTime? @map("deleted_at")
 
   @@index([tenantId])
+  @@index([branchId])
   @@index([deletedAt])
   @@map("lab_icon_settings")
 }

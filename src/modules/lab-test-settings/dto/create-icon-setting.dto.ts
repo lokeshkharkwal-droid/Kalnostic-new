@@ -4,6 +4,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsIn,
+  IsOptional,
   IsString,
   MaxLength,
   ValidateNested,
@@ -72,5 +73,6 @@ export class CreateIconSettingDto {
   icons: IconConfigDto[];
 
   @IsIn(ICON_STATUSES)
+  @IsOptional()
   status?: string;
 }

@@ -15,6 +15,8 @@ import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
+import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
+import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
 import { LabTestSettingsService } from './lab-test-settings.service';
 import { CreateImageSettingDto } from './dto/create-image-setting.dto';
@@ -46,9 +48,15 @@ export class LabTestSettingsController {
   @Get('image-settings')
   findAll(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Query() query: ListImageSettingsQueryDto,
   ) {
-    return this.service.findAll(tenantId, query.page, query.limit);
+    return this.service.findAll(
+      tenantId,
+      query.page,
+      query.limit,
+      profile.branchId,
+    );
   }
 
   @Post('image-settings')
@@ -59,14 +67,19 @@ export class LabTestSettingsController {
   })
   create(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Body() dto: CreateImageSettingDto,
   ) {
-    return this.service.create(tenantId, dto);
+    return this.service.create(tenantId, dto, profile.branchId);
   }
 
   @Get('image-settings/:id')
-  findOne(@CurrentTenant() tenantId: string, @Param('id') id: string) {
-    return this.service.findById(id, tenantId);
+  findOne(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+  ) {
+    return this.service.findById(id, tenantId, profile.branchId);
   }
 
   @Patch('image-settings/:id')
@@ -77,10 +90,11 @@ export class LabTestSettingsController {
   })
   update(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Param('id') id: string,
     @Body() dto: UpdateImageSettingDto,
   ) {
-    return this.service.update(id, tenantId, dto);
+    return this.service.update(id, tenantId, dto, profile.branchId);
   }
 
   @Delete('image-settings/:id')
@@ -89,8 +103,12 @@ export class LabTestSettingsController {
     action: AuditAction.DELETE,
     description: 'Deleted a lab image setting',
   })
-  remove(@CurrentTenant() tenantId: string, @Param('id') id: string) {
-    return this.service.remove(id, tenantId);
+  remove(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+  ) {
+    return this.service.remove(id, tenantId, profile.branchId);
   }
 
   // ── PDF Settings ─────────────────────────────────────────────────────────
@@ -98,9 +116,15 @@ export class LabTestSettingsController {
   @Get('pdf-settings')
   findAllPdfSettings(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Query() query: ListPdfSettingsQueryDto,
   ) {
-    return this.service.findAllPdfSettings(tenantId, query.page, query.limit);
+    return this.service.findAllPdfSettings(
+      tenantId,
+      query.page,
+      query.limit,
+      profile.branchId,
+    );
   }
 
   @Post('pdf-settings')
@@ -111,17 +135,19 @@ export class LabTestSettingsController {
   })
   createPdfSetting(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Body() dto: CreatePdfSettingDto,
   ) {
-    return this.service.createPdfSetting(tenantId, dto);
+    return this.service.createPdfSetting(tenantId, dto, profile.branchId);
   }
 
   @Get('pdf-settings/:id')
   findOnePdfSetting(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Param('id') id: string,
   ) {
-    return this.service.findPdfSettingById(id, tenantId);
+    return this.service.findPdfSettingById(id, tenantId, profile.branchId);
   }
 
   @Patch('pdf-settings/:id')
@@ -132,10 +158,11 @@ export class LabTestSettingsController {
   })
   updatePdfSetting(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Param('id') id: string,
     @Body() dto: UpdatePdfSettingDto,
   ) {
-    return this.service.updatePdfSetting(id, tenantId, dto);
+    return this.service.updatePdfSetting(id, tenantId, dto, profile.branchId);
   }
 
   @Delete('pdf-settings/:id')
@@ -144,8 +171,12 @@ export class LabTestSettingsController {
     action: AuditAction.DELETE,
     description: 'Deleted a lab PDF setting',
   })
-  removePdfSetting(@CurrentTenant() tenantId: string, @Param('id') id: string) {
-    return this.service.removePdfSetting(id, tenantId);
+  removePdfSetting(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+  ) {
+    return this.service.removePdfSetting(id, tenantId, profile.branchId);
   }
 
   // ── Group Layout Settings ───────────────────────────────────────────────
@@ -153,12 +184,14 @@ export class LabTestSettingsController {
   @Get('group-layout-settings')
   findAllGroupLayoutSettings(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Query() query: ListGroupLayoutSettingsQueryDto,
   ) {
     return this.service.findAllGroupLayoutSettings(
       tenantId,
       query.page,
       query.limit,
+      profile.branchId,
     );
   }
 
@@ -170,17 +203,27 @@ export class LabTestSettingsController {
   })
   createGroupLayoutSetting(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Body() dto: CreateGroupLayoutSettingDto,
   ) {
-    return this.service.createGroupLayoutSetting(tenantId, dto);
+    return this.service.createGroupLayoutSetting(
+      tenantId,
+      dto,
+      profile.branchId,
+    );
   }
 
   @Get('group-layout-settings/:id')
   findOneGroupLayoutSetting(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Param('id') id: string,
   ) {
-    return this.service.findGroupLayoutSettingById(id, tenantId);
+    return this.service.findGroupLayoutSettingById(
+      id,
+      tenantId,
+      profile.branchId,
+    );
   }
 
   @Patch('group-layout-settings/:id')
@@ -191,10 +234,16 @@ export class LabTestSettingsController {
   })
   updateGroupLayoutSetting(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Param('id') id: string,
     @Body() dto: UpdateGroupLayoutSettingDto,
   ) {
-    return this.service.updateGroupLayoutSetting(id, tenantId, dto);
+    return this.service.updateGroupLayoutSetting(
+      id,
+      tenantId,
+      dto,
+      profile.branchId,
+    );
   }
 
   @Delete('group-layout-settings/:id')
@@ -205,9 +254,14 @@ export class LabTestSettingsController {
   })
   removeGroupLayoutSetting(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Param('id') id: string,
   ) {
-    return this.service.removeGroupLayoutSetting(id, tenantId);
+    return this.service.removeGroupLayoutSetting(
+      id,
+      tenantId,
+      profile.branchId,
+    );
   }
 
   // ── Icon Settings ────────────────────────────────────────────────────────
@@ -218,17 +272,24 @@ export class LabTestSettingsController {
   @Get('icon-settings')
   findAllIconSettings(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Query() query: ListIconSettingsQueryDto,
   ) {
-    return this.service.findAllIconSettings(tenantId, query.page, query.limit);
+    return this.service.findAllIconSettings(
+      tenantId,
+      query.page,
+      query.limit,
+      profile.branchId,
+    );
   }
 
   @Get('icon-settings/:id')
   findOneIconSetting(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Param('id') id: string,
   ) {
-    return this.service.findIconSettingById(id, tenantId);
+    return this.service.findIconSettingById(id, tenantId, profile.branchId);
   }
 
   @Post('icon-settings')
@@ -266,9 +327,12 @@ export class LabTestSettingsController {
   )
   async createIconSetting(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Body('payload') payload: string,
     @UploadedFiles()
-    uploaded: { icon1?: Express.Multer.File[]; icon2?: Express.Multer.File[] },
+    uploaded:
+      | { icon1?: Express.Multer.File[]; icon2?: Express.Multer.File[] }
+      | undefined,
   ) {
     const dto = await this.parseIconSettingDto(payload, CreateIconSettingDto);
     const files = this.orderedIconFiles(uploaded, dto.icons.length);
@@ -282,6 +346,7 @@ export class LabTestSettingsController {
       tenantId,
       dto,
       files as Express.Multer.File[],
+      profile.branchId,
     );
   }
 
@@ -320,17 +385,26 @@ export class LabTestSettingsController {
   )
   async updateIconSetting(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Param('id') id: string,
     @Body('payload') payload: string,
     @UploadedFiles()
-    uploaded: { icon1?: Express.Multer.File[]; icon2?: Express.Multer.File[] },
+    uploaded:
+      | { icon1?: Express.Multer.File[]; icon2?: Express.Multer.File[] }
+      | undefined,
   ) {
     const dto = await this.parseIconSettingDto(payload, UpdateIconSettingDto);
     const files =
       dto.icons !== undefined
         ? this.orderedIconFiles(uploaded, dto.icons.length)
         : [];
-    return this.service.updateIconSetting(id, tenantId, dto, files);
+    return this.service.updateIconSetting(
+      id,
+      tenantId,
+      dto,
+      files,
+      profile.branchId,
+    );
   }
 
   @Delete('icon-settings/:id')
@@ -341,9 +415,10 @@ export class LabTestSettingsController {
   })
   removeIconSetting(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Param('id') id: string,
   ) {
-    return this.service.removeIconSetting(id, tenantId);
+    return this.service.removeIconSetting(id, tenantId, profile.branchId);
   }
 
   /** Parse + validate the multipart request's JSON `payload` field. */
@@ -379,9 +454,11 @@ export class LabTestSettingsController {
    * truncated/padded to `count` entries (a missing slot becomes `undefined`).
    */
   private orderedIconFiles(
-    uploaded: { icon1?: Express.Multer.File[]; icon2?: Express.Multer.File[] },
+    uploaded:
+      | { icon1?: Express.Multer.File[]; icon2?: Express.Multer.File[] }
+      | undefined,
     count: number,
   ): Array<Express.Multer.File | undefined> {
-    return [uploaded.icon1?.[0], uploaded.icon2?.[0]].slice(0, count);
+    return [uploaded?.icon1?.[0], uploaded?.icon2?.[0]].slice(0, count);
   }
 }
