@@ -56,6 +56,7 @@ export class LabTestSettingsController {
       query.page,
       query.limit,
       profile.branchId,
+      { search: query.search },
     );
   }
 
@@ -124,6 +125,7 @@ export class LabTestSettingsController {
       query.page,
       query.limit,
       profile.branchId,
+      { search: query.search },
     );
   }
 
@@ -192,6 +194,7 @@ export class LabTestSettingsController {
       query.page,
       query.limit,
       profile.branchId,
+      { search: query.search },
     );
   }
 
@@ -280,6 +283,7 @@ export class LabTestSettingsController {
       query.page,
       query.limit,
       profile.branchId,
+      { search: query.search },
     );
   }
 

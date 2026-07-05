@@ -50,23 +50,30 @@ export class LabTestSettingsService {
 
   /**
    * List active image settings for a tenant (offset pagination), newest first.
+   * Optional `filters.search` narrows the result set server-side with a
+   * case-insensitive match against the setting `name`.
    * @param tenantId owning tenant
    * @param page 1-based page (default 1)
    * @param limit page size (default 20)
    * @param branchId when set (Branch Admin), narrows to that branch's rows;
    *   when omitted/null (Business Admin), returns tenant-wide across all branches
+   * @param filters optional search filter
    */
   async findAll(
     tenantId: string,
     page = 1,
     limit = 20,
     branchId?: string | null,
+    filters: { search?: string } = {},
   ): Promise<PaginatedResult<LabImageSetting>> {
     const where: Prisma.LabImageSettingWhereInput = {
       tenantId,
       deletedAt: null,
     };
     if (branchId) where.branchId = branchId;
+    if (filters.search) {
+      where.name = { contains: filters.search, mode: 'insensitive' };
+    }
     const data = await this.prisma.labImageSetting.findMany({
       where,
       skip: (page - 1) * limit,
@@ -223,12 +230,16 @@ export class LabTestSettingsService {
     page = 1,
     limit = 20,
     branchId?: string | null,
+    filters: { search?: string } = {},
   ): Promise<PaginatedResult<LabPdfSetting>> {
     const where: Prisma.LabPdfSettingWhereInput = {
       tenantId,
       deletedAt: null,
     };
     if (branchId) where.branchId = branchId;
+    if (filters.search) {
+      where.name = { contains: filters.search, mode: 'insensitive' };
+    }
     const data = await this.prisma.labPdfSetting.findMany({
       where,
       skip: (page - 1) * limit,
@@ -362,12 +373,16 @@ export class LabTestSettingsService {
     page = 1,
     limit = 20,
     branchId?: string | null,
+    filters: { search?: string } = {},
   ): Promise<PaginatedResult<LabGroupLayoutSetting>> {
     const where: Prisma.LabGroupLayoutSettingWhereInput = {
       tenantId,
       deletedAt: null,
     };
     if (branchId) where.branchId = branchId;
+    if (filters.search) {
+      where.name = { contains: filters.search, mode: 'insensitive' };
+    }
     const data = await this.prisma.labGroupLayoutSetting.findMany({
       where,
       skip: (page - 1) * limit,
@@ -502,12 +517,16 @@ export class LabTestSettingsService {
     page = 1,
     limit = 20,
     branchId?: string | null,
+    filters: { search?: string } = {},
   ): Promise<PaginatedResult<LabIconSetting>> {
     const where: Prisma.LabIconSettingWhereInput = {
       tenantId,
       deletedAt: null,
     };
     if (branchId) where.branchId = branchId;
+    if (filters.search) {
+      where.name = { contains: filters.search, mode: 'insensitive' };
+    }
     const data = await this.prisma.labIconSetting.findMany({
       where,
       skip: (page - 1) * limit,
