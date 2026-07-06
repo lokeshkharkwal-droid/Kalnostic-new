@@ -1,0 +1,23 @@
+meta {
+  name: Duplicate Template
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/templates/{{siteAdminTemplateId}}/duplicate
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Duplicate a **global SITE_ADMIN** messaging template. Auth: SiteAdmin token,
+  requires `master-data:write`. Copies the source with " (Copy)" appended to the
+  `displayTitle` and `isDefault` reset to `false`; all other fields are copied
+  verbatim. No request body. 404 `TEMPLATE_NOT_FOUND` if the source is missing/
+  soft-deleted.
+}

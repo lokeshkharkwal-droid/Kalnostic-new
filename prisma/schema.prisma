@@ -112,6 +112,20 @@ enum ScheduleStatus {
   DRAFT
 }
 
+/// Audience a support-information record targets: business-level or branch-level
+/// screens. A descriptor tag on SupportInfo — not a scoping column.
+enum SupportTenantType {
+  BUSINESS
+  BRANCH
+}
+
+/// Active/inactive lifecycle for a support-information record (distinct from soft
+/// delete; NULL deletedAt = not deleted).
+enum SupportStatus {
+  ACTIVE
+  INACTIVE
+}
+
 /// The position a person holds within a department.
 enum DepartmentPosition {
   HOD
@@ -241,46 +255,67 @@ enum AuditAction {
   OTHER
 }
 
-// ── Template enums ────────────────────────────────────────────────────────────
+// ── Messaging template enums ──────────────────────────────────────────────────
 
-/// Kind of communication/document template (the FE tab dimension). Filtered in
-/// list queries, so it earns enum status + an index on Template.
-enum TemplateType {
-  SMS
+/// Delivery channel for a messaging template (the `preference` field). Filtered
+/// in list queries, so it earns enum status + an index on Template.
+enum MessagingChannel {
   EMAIL
+  SMS
+  IAM // Internal App Messaging
+  IAA // Internal App Alert
+  PBN // Push-Based Notification
   WHATSAPP
-  CONSENT_FORM
-  REPORT_TEMPLATE
+  TEMPLATE
 }
 
-/// WhatsApp Business template category. Lives inside the Template.config JSON
-/// (typed via the DTO), kept as an enum because it is a small, closed set.
+/// Purpose classification for a messaging template.
+enum MessageType {
+  OTP
+  TRANSACTIONAL
+  MARKETING
+}
+
+/// DLT SMS route type.
+enum SmsType {
+  TRANSACTIONAL
+  PROMOTIONAL
+}
+
+/// WhatsApp media message type (used when preference = WHATSAPP).
+enum WhatsappMessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  DOCUMENT
+}
+
+/// WhatsApp Business template category (used when preference = WHATSAPP), kept
+/// as an enum because it is a small, closed set.
 enum WhatsappTemplateCategory {
   MARKETING
   UTILITY
   AUTHENTICATION
 }
 
-/// Event that triggers a template. Combines the FE TRIGGER_EVENTS (messaging)
-/// and CONSENT_EVENTS (consent forms) lists into one strict set.
-enum TriggerEvent {
-  REPORT_READY
-  APPOINTMENT_CONFIRMED
-  APPOINTMENT_REMINDER
-  SAMPLE_COLLECTED
-  SAMPLE_RECEIVED
-  CRITICAL_ALERT
-  INVOICE_GENERATED
-  PAYMENT_RECEIVED
-  OTP
-  REGISTRATION
-  PASSWORD_RESET
-  PRE_PROCEDURE
-  AT_REGISTRATION
-  ON_DEMAND
-  RECURRING
-  AT_DISCHARGE
-  CUSTOM
+/// Branch type a template applies to. NULL = applies to all branch types.
+enum ApplicableBranchType {
+  LAB
+  CLINIC
+  HOSPITAL
+  BLOOD_BANK
+  RADIOLOGY
+}
+
+/// Delivery scope level — admin-facing vs business/end-user-facing.
+enum MessagingLevel {
+  ADMIN
+  BUSINESS
+}
+
+/// Application a template is restricted to. NULL = all applications.
+enum ApplicationScope {
+  KALNOSTIC
 }
 
 // ── Lab-test enums (UPPERCASE per project convention; values map to the raw
@@ -594,7 +629,6 @@ model Tenant {
   subCategoryCounter     Int     @default(0) @map("sub_category_counter") // per-tenant sequential sub-category code
   outsourceCenterCounter Int     @default(0) @map("outsource_center_counter") // per-tenant sequential outsource-center code
   referralPanelCounter   Int     @default(0) @map("referral_panel_counter") // per-tenant sequential referral-panel code
-  templateCounter        Int     @default(0) @map("template_counter") // per-tenant sequential template code
   createdBy              String? @map("created_by") // SiteAdmin user id (creator)
   updatedBy              String? @map("updated_by") // SiteAdmin user id (last editor)
 
@@ -1252,57 +1286,51 @@ model Schedule {
 }
 
 /// A messaging/document template (SMS, Email, WhatsApp, Consent Form, Report).
-/// Tenant-scoped + branch-level (CLAUDE.md §4.6): `branch_id` NULL = a
-/// tenant-level template managed by business-admin; `branch_id` set = a
-/// branch-level template managed by branch-admin for that location. The two
-/// scopes are independent — neither sees the other's rows.
+/// A messaging template (Email / SMS / WhatsApp / IAM / IAA / PBN). A flat
+/// record keyed on a delivery `preference` (channel) and a `feature` (the ~88
+/// business events, validated app-side against FEATURE_TYPES).
 ///
-/// `code` is system-generated & immutable: `{INITIALS}-Tpl-{n}`, where INITIALS
-/// derive from the tenant name and `n` is a 0-based per-tenant sequence
-/// (Tenant.templateCounter). Unique per tenant among active rows; name is unique
-/// per (tenant, branch, type) among active rows (partial unique indexes in
-/// prisma/rls.sql). RLS policy in prisma/rls.sql.
+/// Tenant-scoped + branch-level (CLAUDE.md §4.6): `tenant_id` NULL = a SITE_ADMIN
+/// global master template shared across tenants; `branch_id` NULL = a
+/// tenant-level template, set = a branch-level template. The scopes are
+/// independent — neither sees the other's rows. RLS policy in prisma/rls.sql.
 ///
-/// Type-specific and shared optional blocks are stored as DTO-validated JSON
-/// (like Schedule.shifts), the shape gated by `type` (see the template DTOs):
-///   - `config`: type-specific payload —
-///       SMS             → {}                (body only)
-///       EMAIL           → { subject }
-///       CONSENT_FORM    → { signatureRequired, consent: { showHospitalHeader,
-///                           hospitalLogoFile, hospitalName, patientSignature,
-///                           doctorSignature, showDate, referenceDocFile } }
-///       WHATSAPP        → { whatsapp: { templateCategory, approvedTemplateId } }
-///       REPORT_TEMPLATE → { headerHtml, footerHtml, bodyLayout, logoPosition,
-///                           primaryFont, fontSize, pageSize, orientation,
-///                           reportRefs: { imageSettingId, pdfSettingId,
-///                           groupLayoutId, iconSettingId } }
-///   - `headerBlock`/`footerBlock`: HeaderFooter { enabled, type, text,
-///       imageFile, alignment } (shared optional; null = absent)
-///   - `attachment`: AttachmentRule { enabled, type, files[], position,
-///       alignment, sizeProfile, displayProfile?, shortLinkGenerator? }
-/// File fields hold filename/key strings only (no upload pipeline in this phase).
+/// Multiple templates may exist per (feature, preference, level); `is_default`
+/// marks the fallback among them, so there is no name/feature uniqueness.
 model Template {
   id       String  @id @default(uuid())
-  tenantId String  @map("tenant_id")
+  tenantId String? @map("tenant_id") // null = SITE_ADMIN global master template (shared across tenants)
   branchId String? @map("branch_id") // null = tenant-level (business-admin)
 
-  type         TemplateType
-  name         String
-  code         String
-  triggerEvent TriggerEvent @map("trigger_event")
-  version      String       @default("v1.0")
-  isActive     Boolean      @default(true) @map("is_active")
+  // ── Core settings ──
+  preference   MessagingChannel // delivery channel
+  feature      String // business event key, validated against FEATURE_TYPES
+  displayTitle String?          @map("display_title")
+  messageType  MessageType?     @map("message_type")
+  isActive     Boolean          @default(true) @map("is_active")
+  isDefault    Boolean          @default(false) @map("is_default")
+  isEnabled    Boolean          @default(false) @map("is_enabled")
 
-  /// Shared message body. Empty for REPORT_TEMPLATE (renders from config.*Html).
-  body String @db.Text
+  // ── Scope & targeting ──
+  specificApplication  ApplicationScope?     @map("specific_application") // null = all applications
+  applicableBranchType ApplicableBranchType? @map("applicable_branch_type") // null = all branch types
+  level                MessagingLevel        @default(BUSINESS)
+  entityId             String?               @map("entity_id")
+  entityType           String?               @map("entity_type")
 
-  /// Type-specific payload — shape gated by `type` (see model doc + DTOs).
-  config Json @default("{}")
+  // ── SMS settings ──
+  smsTemplateId String?  @map("sms_template_id") // DLT template id
+  smsSenderId   String?  @map("sms_sender_id")
+  smsType       SmsType? @map("sms_type")
 
-  /// Shared optional blocks (HeaderFooter / AttachmentRule). Null = absent.
-  headerBlock Json? @map("header_block")
-  footerBlock Json? @map("footer_block")
-  attachment  Json?
+  /// Template body — rich HTML when preference = EMAIL, otherwise plain text with
+  /// `{variable_name}` placeholders.
+  template String @db.Text
+
+  // ── WhatsApp settings (used when preference = WHATSAPP) ──
+  templateType     WhatsappMessageType?      @map("template_type")
+  templateCategory WhatsappTemplateCategory? @map("template_category")
+  fileName         String?                   @map("file_name")
 
   createdBy String? @map("created_by")
   updatedBy String? @map("updated_by")
@@ -1313,7 +1341,8 @@ model Template {
 
   @@index([tenantId])
   @@index([branchId])
-  @@index([type])
+  @@index([preference])
+  @@index([feature])
   @@index([deletedAt])
   @@map("templates")
 }
@@ -3676,4 +3705,58 @@ model PaymentRule {
   @@index([code])
   @@index([deletedAt])
   @@map("payment_rules")
+}
+
+/// SiteAdmin-authored support/help information (platform-level, CLAUDE.md §4.2 —
+/// no tenant_id, no RLS; it sits above the tenant boundary and is shared across
+/// all businesses). `helpContent` stores the full HTML body. `title` is globally
+/// unique among ACTIVE rows (partial unique index in prisma/rls.sql). `code` is
+/// user-supplied and NOT unique. `tenantType` tags whether the content targets
+/// business-level or branch-level screens. `createdBy`/`updatedBy` hold the
+/// authoring SiteAdmin id (SiteAdmin routes are not covered by the business
+/// AuditInterceptor, so authorship is tracked on the row instead).
+model SupportInfo {
+  id String @id @default(uuid())
+
+  metaType    String            @map("meta_type")
+  code        String?
+  title       String
+  tenantType  SupportTenantType @map("tenant_type")
+  status      SupportStatus     @default(ACTIVE)
+  requestUrl  String?           @map("request_url")
+  helpContent String            @map("help_content")
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([metaType])
+  @@index([code])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("support_infos")
+}
+
+/// A "Contact Us" form submission from the public marketing site. Platform-level
+/// (CLAUDE.md §4.2 — no tenant_id, no RLS; it sits above the tenant boundary as a
+/// global lead inbox). Captured unauthenticated via the public `POST /contact-us`
+/// and reviewed by SiteAdmin. `companyName` is surfaced as "organization" in the
+/// listing API. Submissions are anonymous, so there is no `createdBy`.
+model ContactSubmission {
+  id           String @id @default(uuid())
+  name         String
+  mobileNumber String @map("mobile_number")
+  companyName  String @map("company_name")
+  email        String
+  message      String @db.Text
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@map("contact_submissions")
 }

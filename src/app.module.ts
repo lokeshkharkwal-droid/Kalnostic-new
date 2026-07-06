@@ -42,6 +42,8 @@ import { AuthModule } from './modules/auth/auth.module';
 import { AuthRoleModule } from './modules/auth-role/auth-role.module';
 import { SiteAdminModule } from './modules/siteadmin/siteadmin.module';
 import { PaymentRulesModule } from './modules/payment-rules/payment-rules.module';
+import { SupportInfoModule } from './modules/support-info/support-info.module';
+import { ContactUsModule } from './modules/contact-us/contact-us.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 
 /**
@@ -104,6 +106,8 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     AuthRoleModule,
     SiteAdminModule,
     PaymentRulesModule,
+    SupportInfoModule,
+    ContactUsModule,
   ],
   providers: [
     // Global business authentication. SiteAdmin routes use @Public() + their

@@ -916,31 +916,21 @@ CREATE POLICY document_versions_tenant_isolation ON document_versions
   WITH CHECK (tenant_id = current_tenant_id());
 
 -- ── templates ─────────────────────────────────────────────────────────────────
+-- Tenant rows isolate by tenant_id; SITE_ADMIN global templates (tenant_id NULL)
+-- are readable by everyone and writable only by a GUC-less SiteAdmin connection
+-- (mirrors the pdf_report_templates pattern below).
 ALTER TABLE templates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE templates FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS templates_tenant_isolation ON templates;
 CREATE POLICY templates_tenant_isolation ON templates
-  USING (tenant_id = current_tenant_id())
-  WITH CHECK (tenant_id = current_tenant_id());
+  USING (tenant_id = current_tenant_id() OR tenant_id IS NULL)
+  WITH CHECK (
+    tenant_id = current_tenant_id()
+    OR (tenant_id IS NULL AND current_tenant_id() IS NULL)
+  );
 
--- `code` is system-generated and unique per tenant among ACTIVE rows only (a
--- code freed by a soft-delete can be reused). Prisma can't express partial
--- unique indexes.
-CREATE UNIQUE INDEX IF NOT EXISTS templates_tenant_code_active_unique
-  ON templates (tenant_id, code) WHERE deleted_at IS NULL;
-
--- `name` is unique per (tenant, branch, type) among ACTIVE rows. Tenant-level
--- templates (business-admin, branch_id NULL) and branch-level templates
--- (branch-admin) live in the same table; Postgres treats NULLs as distinct in a
--- unique index, so a single index over the nullable branch_id would NOT enforce
--- uniqueness among tenant-level rows. Split into two partial indexes (mirroring
--- the categories dept-vs-independent pattern).
-CREATE UNIQUE INDEX IF NOT EXISTS templates_branch_type_name_active_unique
-  ON templates (tenant_id, branch_id, type, name)
-  WHERE deleted_at IS NULL AND branch_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS templates_tenant_type_name_active_unique
-  ON templates (tenant_id, type, name)
-  WHERE deleted_at IS NULL AND branch_id IS NULL;
+-- Messaging templates carry no name/code uniqueness: multiple templates may
+-- exist per (feature, preference, level) and `is_default` marks the fallback.
 
 -- ── pdf_report_templates ──────────────────────────────────────────────────────
 -- Tenant rows isolate by tenant_id; SITE_ADMIN global templates (tenant_id NULL)
@@ -1035,10 +1025,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS branch_lab_panel_test_active_unique
   ON branch_lab_panel_tests (tenant_id, branch_lab_panel_id, branch_lab_test_id)
   WHERE deleted_at IS NULL;
 
+-- ── support_infos (platform-level, NO RLS — like siteadmin_users) ───────────────
+-- SiteAdmin-authored help/support content shared across all tenants; it sits
+-- above the tenant boundary so it is deliberately NOT row-level-secured. Prisma
+-- can't express partial unique indexes, so it lives here: title unique among
+-- ACTIVE rows (a title freed by soft-delete is reusable). `code` is user-supplied
+-- and intentionally NOT unique.
+CREATE UNIQUE INDEX IF NOT EXISTS support_infos_title_active_unique
+  ON support_infos (title) WHERE deleted_at IS NULL;
+
 -- Platform-level tables (tenants, persons, person_credentials, siteadmin_users,
--- refresh_tokens, person_tenant_enrollments, test_groups, test_group_mappings)
--- are intentionally NOT covered — they sit above the tenant boundary. (The
--- test_groups partial unique indexes above are added for correctness, not RLS.)
+-- refresh_tokens, person_tenant_enrollments, test_groups, test_group_mappings,
+-- support_infos) are intentionally NOT covered — they sit above the tenant
+-- boundary. (The test_groups / support_infos partial unique indexes above are
+-- added for correctness, not RLS.)
 --
 -- NOTE on Person.aadhaar_number / pan_number: no unique index. Aadhaar is stored
 -- encrypted (AES-256-GCM with a random IV → identical inputs yield different

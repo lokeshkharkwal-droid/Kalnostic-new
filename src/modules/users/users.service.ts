@@ -1358,21 +1358,28 @@ export class UsersService {
     for (const tenant of tenants) {
       const scoped = await this.prisma.withTenant(tenant.id, async (tx) => {
         const membership = await tx.tenantStaffMembership.findFirst({
-          where: { personId, deletedAt: null },
+          where: { tenantId: tenant.id, personId, deletedAt: null },
           include: { authRole: true },
         });
         if (!membership) {
           return null;
         }
         const profiles = await tx.userBranchProfile.findMany({
-          where: { personId, isActive: true, deletedAt: null },
+          where: {
+            tenantId: tenant.id,
+            personId,
+            isActive: true,
+            deletedAt: null,
+          },
           include: PROFILE_WITH_ROLE,
         });
         const branchIds = profiles
           .map((p) => p.branchId)
           .filter((b): b is string => !!b);
         const branches = branchIds.length
-          ? await tx.branch.findMany({ where: { id: { in: branchIds } } })
+          ? await tx.branch.findMany({
+              where: { tenantId: tenant.id, id: { in: branchIds } },
+            })
           : [];
         return { membership, profiles, branches };
       });

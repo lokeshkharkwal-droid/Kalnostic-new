@@ -5,7 +5,7 @@ meta {
 }
 
 get {
-  url: {{baseUrl}}/templates?page=1&limit=20&type=SMS&search=report
+  url: {{baseUrl}}/templates?page=1&limit=20&preference=SMS&search=report
   body: none
   auth: bearer
 }
@@ -13,9 +13,15 @@ get {
 params:query {
   page: 1
   limit: 20
-  type: SMS
+  preference: SMS
   search: report
+  ~feature: lab_order_report_published_inform_patient
+  ~messageType: TRANSACTIONAL
+  ~level: BUSINESS
+  ~applicableBranchType: LAB
   ~isActive: true
+  ~isEnabled: true
+  ~isDefault: true
 }
 
 auth:bearer {
@@ -34,10 +40,14 @@ docs {
 
   ## Search
 
-  - `search` — case-insensitive match against `name`.
+  - `search` — case-insensitive match against `displayTitle`.
 
   ## Filters (toggle the `~` to enable a query param)
 
-  - `type` — tab filter: `SMS` | `EMAIL` | `WHATSAPP` | `CONSENT_FORM` | `REPORT_TEMPLATE`.
-  - `isActive` — `true` | `false` status filter.
+  - `preference` — channel: `EMAIL` | `SMS` | `IAM` | `IAA` | `PBN` | `WHATSAPP` | `TEMPLATE`.
+  - `feature` — one of the FEATURE_TYPES keys.
+  - `messageType` — `OTP` | `TRANSACTIONAL` | `MARKETING`.
+  - `level` — `ADMIN` | `BUSINESS`.
+  - `applicableBranchType` — `LAB` | `CLINIC` | `HOSPITAL` | `BLOOD_BANK` | `RADIOLOGY`.
+  - `isActive` / `isEnabled` / `isDefault` — `true` | `false` boolean filters.
 }

@@ -1,0 +1,30 @@
+meta {
+  name: Get Support Info - Not Found
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/support-info/{{supportInfoId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+tests {
+  test("404 Not Found", function () {
+    expect(res.getStatus()).to.equal(404);
+  });
+  test("error code is SUPPORT_INFO_NOT_FOUND", function () {
+    expect(res.getBody().error.code).to.equal("SUPPORT_INFO_NOT_FOUND");
+  });
+}
+
+docs {
+  Negative case: fetching a soft-deleted (or non-existent) record returns 404
+  `SUPPORT_INFO_NOT_FOUND`. Run "Delete Support Info" first — this reuses the now
+  soft-deleted `supportInfoId`, confirming deleted rows drop out of reads.
+}

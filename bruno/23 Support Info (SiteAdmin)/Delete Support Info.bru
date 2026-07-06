@@ -1,0 +1,31 @@
+meta {
+  name: Delete Support Info
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/siteadmin/support-info/{{supportInfoId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("record is soft-deleted (deletedAt set)", function () {
+    expect(res.getBody().data.deletedAt).to.not.equal(null);
+  });
+}
+
+docs {
+  Soft-delete a support-information record (sets `deletedAt`). The title becomes
+  reusable afterwards (verify by re-running "Create Support Info"). Requires
+  `master-data:write`. Run "Create Support Info" first. 404
+  `SUPPORT_INFO_NOT_FOUND` if already missing.
+}

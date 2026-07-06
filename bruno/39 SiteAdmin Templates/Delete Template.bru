@@ -1,0 +1,21 @@
+meta {
+  name: Delete Template
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/siteadmin/templates/{{siteAdminTemplateId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Soft-delete a **global SITE_ADMIN** messaging template (sets `deletedAt`; the
+  row is preserved). Auth: SiteAdmin token, requires `master-data:write`. 404
+  `TEMPLATE_NOT_FOUND` if missing/already deleted.
+}

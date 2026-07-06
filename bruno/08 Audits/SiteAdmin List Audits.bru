@@ -1,0 +1,56 @@
+meta {
+  name: SiteAdmin List Audits
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/audits?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~tenantId: 00000000-0000-0000-0000-000000000000
+  ~module: BRANCH
+  ~action: CREATE
+  ~search: branch
+  ~actorPersonId: 00000000-0000-0000-0000-000000000000
+  ~branchId: 00000000-0000-0000-0000-000000000000
+  ~from: 2026-06-01
+  ~to: 2026-06-30
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  SiteAdmin cross-tenant audit view: paginated audit-trail entries across ALL
+  businesses (or a single one via `tenantId`), newest first. Pagination info
+  (`total / page / limit / totalPages`) is lifted into `meta`.
+
+  Auth: SiteAdmin token, permission `audit-logs:read` (operations_admin and above).
+
+  All query params are optional (the `~`-prefixed ones above are disabled
+  examples — enable the ones you need):
+
+  - `page` (>=1, default 1) / `limit` (1-100, default 20) — pagination.
+  - `tenantId` — restrict to a single business/tenant (omit for all businesses).
+  - `module` — filter by functional area (e.g. `USER`, `BRANCH`, `SCHEDULE`,
+    `TENANT`, `AUTH`).
+  - `action` — filter by operation. One of:
+    `CREATE`, `UPDATE`, `DELETE`, `LOGIN`, `LOGOUT`, `EXPORT`, `OTHER`.
+  - `actorPersonId` — exact person id of the actor.
+  - `branchId` — exact branch id (branch-level events).
+  - `from` / `to` — inclusive `createdAt` bounds (ISO-8601 date or datetime).
+  - `search` — case-insensitive substring matched against the actor
+    (person id / role label) and the description.
+
+  Each item carries the audit fields (`createdAt`, `module`, `action`,
+  `description`, `ipAddress`, `actorPersonId`, `actorRoleKey`, `actorRoleLabel`,
+  `branchId`, `resourceId`, `metadata`) PLUS SiteAdmin enrichment: `actorName`,
+  `actorUsername` (system username), and `tenantName` (business name).
+}

@@ -1,101 +1,136 @@
-import { TemplateType, TriggerEvent } from '@prisma/client';
-import { Type } from 'class-transformer';
+import {
+  ApplicableBranchType,
+  ApplicationScope,
+  MessageType,
+  MessagingChannel,
+  MessagingLevel,
+  SmsType,
+  WhatsappMessageType,
+  WhatsappTemplateCategory,
+} from '@prisma/client';
 import {
   IsBoolean,
   IsEnum,
+  IsIn,
   IsOptional,
   IsString,
   Matches,
   MaxLength,
   MinLength,
   ValidateIf,
-  ValidateNested,
 } from 'class-validator';
-import { HeaderFooterDto } from './blocks/header-footer.dto';
-import { AttachmentRuleDto } from './blocks/attachment-rule.dto';
-import { ConsentConfigDto } from './blocks/consent-config.dto';
-import { WhatsappConfigDto } from './blocks/whatsapp-config.dto';
-import { ReportConfigDto } from './blocks/report-config.dto';
+import { FEATURE_TYPE_VALUES } from '../constants/feature-types';
 
 /**
- * Create payload for a template. Type-specific fields are gated by `type` with
- * `@ValidateIf` (the CreateCategoryDto pattern), so e.g. `whatsapp` is only
- * validated/accepted for a WHATSAPP template. The service assembles the JSON
- * columns (`config`, `headerBlock`, `footerBlock`, `attachment`) from these
- * fields.
- *
- * NOTE: `code` is NOT accepted from the client — it is system-generated
- * (`{INITIALS}-Tpl-{n}`, per-tenant sequential) and immutable. `tenantId` /
- * `branchId` likewise come from the request context, never the body (§4.7).
+ * Payload for creating a messaging template. Flat by design — a delivery
+ * `preference` (channel) plus a `feature` (business event) and channel-specific
+ * settings. `tenantId`/`branchId` are NOT accepted here — they come from the
+ * request context (CLAUDE.md §4.7). WhatsApp fields are required only when
+ * `preference === WHATSAPP`.
  */
 export class CreateTemplateDto {
-  @IsEnum(TemplateType)
-  type: TemplateType;
+  // ── Core settings ──
 
+  /** Delivery channel. */
+  @IsEnum(MessagingChannel)
+  preference: MessagingChannel;
+
+  /** Business event key — must be one of the known FEATURE_TYPES. */
   @IsString()
-  @MinLength(2)
-  @MaxLength(255)
-  name: string;
+  @IsIn(FEATURE_TYPE_VALUES)
+  feature: string;
 
-  @IsEnum(TriggerEvent)
-  triggerEvent: TriggerEvent;
-
-  /** Editable version label, e.g. `v1.0`. Defaults to `v1.0` in the service. */
+  /** Optional human-readable title. */
   @IsOptional()
   @IsString()
-  @Matches(/^v\d+\.\d+$/, { message: 'version must look like v1.0' })
-  version?: string;
+  @MaxLength(300)
+  displayTitle?: string;
+
+  @IsOptional()
+  @IsEnum(MessageType)
+  messageType?: MessageType;
 
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
 
-  /** Message body — required for every type except REPORT_TEMPLATE. */
-  @ValidateIf((o: CreateTemplateDto) => o.type !== TemplateType.REPORT_TEMPLATE)
+  @IsOptional()
+  @IsBoolean()
+  isDefault?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isEnabled?: boolean;
+
+  // ── Scope & targeting ──
+
+  @IsOptional()
+  @IsEnum(ApplicationScope)
+  specificApplication?: ApplicationScope;
+
+  @IsOptional()
+  @IsEnum(ApplicableBranchType)
+  applicableBranchType?: ApplicableBranchType;
+
+  @IsOptional()
+  @IsEnum(MessagingLevel)
+  level?: MessagingLevel;
+
+  @IsOptional()
   @IsString()
+  @MaxLength(45)
+  entityId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(45)
+  entityType?: string;
+
+  // ── SMS settings ──
+
+  /** DLT-registered SMS template id. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  smsTemplateId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  smsSenderId?: string;
+
+  @IsOptional()
+  @IsEnum(SmsType)
+  smsType?: SmsType;
+
+  // ── Body ──
+
+  /** Rich HTML when `preference = EMAIL`, otherwise plain text with `{placeholders}`. */
+  @IsString()
+  @MinLength(1)
   @MaxLength(20000)
-  body: string;
+  template: string;
 
-  // ── Type-specific (gated by `type`) ──────────────────────────────────────────
+  // ── WhatsApp settings (required when preference = WHATSAPP) ──
 
-  /** EMAIL only — subject line. Stored as `config.subject`. */
-  @ValidateIf((o: CreateTemplateDto) => o.type === TemplateType.EMAIL)
+  @ValidateIf(
+    (o: CreateTemplateDto) => o.preference === MessagingChannel.WHATSAPP,
+  )
+  @IsEnum(WhatsappMessageType)
+  templateType?: WhatsappMessageType;
+
+  @ValidateIf(
+    (o: CreateTemplateDto) => o.preference === MessagingChannel.WHATSAPP,
+  )
+  @IsEnum(WhatsappTemplateCategory)
+  templateCategory?: WhatsappTemplateCategory;
+
+  /** Attachment file name — alphanumeric plus `_` and `-` only. */
+  @IsOptional()
   @IsString()
-  @MaxLength(500)
-  subject?: string;
-
-  /** CONSENT_FORM only — stored as `config` (`{ signatureRequired, consent }`). */
-  @ValidateIf((o: CreateTemplateDto) => o.type === TemplateType.CONSENT_FORM)
-  @ValidateNested()
-  @Type(() => ConsentConfigDto)
-  consent?: ConsentConfigDto;
-
-  /** WHATSAPP only — stored as `config.whatsapp`. */
-  @ValidateIf((o: CreateTemplateDto) => o.type === TemplateType.WHATSAPP)
-  @ValidateNested()
-  @Type(() => WhatsappConfigDto)
-  whatsapp?: WhatsappConfigDto;
-
-  /** REPORT_TEMPLATE only — layout descriptors + HTML, stored as `config`. */
-  @ValidateIf((o: CreateTemplateDto) => o.type === TemplateType.REPORT_TEMPLATE)
-  @ValidateNested()
-  @Type(() => ReportConfigDto)
-  report?: ReportConfigDto;
-
-  // ── Shared optional blocks (any type) ────────────────────────────────────────
-
-  @IsOptional()
-  @ValidateNested()
-  @Type(() => HeaderFooterDto)
-  header?: HeaderFooterDto;
-
-  @IsOptional()
-  @ValidateNested()
-  @Type(() => HeaderFooterDto)
-  footerBlock?: HeaderFooterDto;
-
-  @IsOptional()
-  @ValidateNested()
-  @Type(() => AttachmentRuleDto)
-  attachment?: AttachmentRuleDto;
+  @MaxLength(255)
+  @Matches(/^[A-Za-z0-9_-]+$/, {
+    message: 'fileName may contain only letters, digits, underscore and hyphen',
+  })
+  fileName?: string;
 }

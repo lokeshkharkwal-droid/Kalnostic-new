@@ -1,87 +1,116 @@
-import { TriggerEvent } from '@prisma/client';
-import { Type } from 'class-transformer';
+import {
+  ApplicableBranchType,
+  ApplicationScope,
+  MessageType,
+  MessagingChannel,
+  MessagingLevel,
+  SmsType,
+  WhatsappMessageType,
+  WhatsappTemplateCategory,
+} from '@prisma/client';
 import {
   IsBoolean,
   IsEnum,
+  IsIn,
   IsOptional,
   IsString,
   Matches,
   MaxLength,
   MinLength,
-  ValidateNested,
 } from 'class-validator';
-import { HeaderFooterDto } from './blocks/header-footer.dto';
-import { AttachmentRuleDto } from './blocks/attachment-rule.dto';
-import { ConsentConfigDto } from './blocks/consent-config.dto';
-import { WhatsappConfigDto } from './blocks/whatsapp-config.dto';
-import { ReportConfigDto } from './blocks/report-config.dto';
+import { FEATURE_TYPE_VALUES } from '../constants/feature-types';
 
 /**
- * Partial update for a template. All fields optional. `type` is IMMUTABLE and
- * therefore omitted — changing a template's type would invalidate its stored
- * `config` (mirrors how `code` is never updated). The service uses the existing
- * row's `type` to know which config to rebuild; a type-specific field is gated
- * by class-validator's `@IsOptional` here and only consumed when relevant to
- * that type. When a config-affecting field is supplied, the whole `config` JSON
- * is rebuilt; otherwise it is left unchanged.
+ * Partial update for a messaging template. Every field is optional (explicit
+ * fields, not `PartialType`, per SKILL.md). `tenantId`/`branchId` are never
+ * accepted — scope stays fixed. Only fields present in the body are changed.
  */
 export class UpdateTemplateDto {
   @IsOptional()
-  @IsString()
-  @MinLength(2)
-  @MaxLength(255)
-  name?: string;
-
-  @IsOptional()
-  @IsEnum(TriggerEvent)
-  triggerEvent?: TriggerEvent;
+  @IsEnum(MessagingChannel)
+  preference?: MessagingChannel;
 
   @IsOptional()
   @IsString()
-  @Matches(/^v\d+\.\d+$/, { message: 'version must look like v1.0' })
-  version?: string;
+  @IsIn(FEATURE_TYPE_VALUES)
+  feature?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  displayTitle?: string;
+
+  @IsOptional()
+  @IsEnum(MessageType)
+  messageType?: MessageType;
 
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
 
   @IsOptional()
+  @IsBoolean()
+  isDefault?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isEnabled?: boolean;
+
+  @IsOptional()
+  @IsEnum(ApplicationScope)
+  specificApplication?: ApplicationScope;
+
+  @IsOptional()
+  @IsEnum(ApplicableBranchType)
+  applicableBranchType?: ApplicableBranchType;
+
+  @IsOptional()
+  @IsEnum(MessagingLevel)
+  level?: MessagingLevel;
+
+  @IsOptional()
   @IsString()
+  @MaxLength(45)
+  entityId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(45)
+  entityType?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  smsTemplateId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  smsSenderId?: string;
+
+  @IsOptional()
+  @IsEnum(SmsType)
+  smsType?: SmsType;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
   @MaxLength(20000)
-  body?: string;
+  template?: string;
+
+  @IsOptional()
+  @IsEnum(WhatsappMessageType)
+  templateType?: WhatsappMessageType;
+
+  @IsOptional()
+  @IsEnum(WhatsappTemplateCategory)
+  templateCategory?: WhatsappTemplateCategory;
 
   @IsOptional()
   @IsString()
-  @MaxLength(500)
-  subject?: string;
-
-  @IsOptional()
-  @ValidateNested()
-  @Type(() => ConsentConfigDto)
-  consent?: ConsentConfigDto;
-
-  @IsOptional()
-  @ValidateNested()
-  @Type(() => WhatsappConfigDto)
-  whatsapp?: WhatsappConfigDto;
-
-  @IsOptional()
-  @ValidateNested()
-  @Type(() => ReportConfigDto)
-  report?: ReportConfigDto;
-
-  @IsOptional()
-  @ValidateNested()
-  @Type(() => HeaderFooterDto)
-  header?: HeaderFooterDto;
-
-  @IsOptional()
-  @ValidateNested()
-  @Type(() => HeaderFooterDto)
-  footerBlock?: HeaderFooterDto;
-
-  @IsOptional()
-  @ValidateNested()
-  @Type(() => AttachmentRuleDto)
-  attachment?: AttachmentRuleDto;
+  @MaxLength(255)
+  @Matches(/^[A-Za-z0-9_-]+$/, {
+    message: 'fileName may contain only letters, digits, underscore and hyphen',
+  })
+  fileName?: string;
 }

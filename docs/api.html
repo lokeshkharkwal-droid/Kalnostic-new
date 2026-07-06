@@ -439,6 +439,7 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>PATCH /siteadmin/users/:id/deactivate</td><td>SiteAdmin JWT</td><td><b>required</b> <code>siteadmin:manage</code> · SUPER_OWNER</td></tr>
   <tr><td>GET /siteadmin/registered-users</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:read</code> · OPERATIONS_ADMIN+</td></tr>
   <tr><td>GET /siteadmin/registered-users/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:read</code> · OPERATIONS_ADMIN+</td></tr>
+  <tr><td>GET /siteadmin/audits</td><td>SiteAdmin JWT</td><td><b>required</b> <code>audit-logs:read</code> · OPERATIONS_ADMIN+</td></tr>
   <tr><td>POST /siteadmin/tenants</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:create</code> · OPERATIONS_ADMIN+</td></tr>
   <tr><td>GET /siteadmin/tenants</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:read</code> · OPERATIONS_ADMIN+</td></tr>
   <tr><td>GET /siteadmin/tenants/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:read</code> · OPERATIONS_ADMIN+</td></tr>
@@ -529,6 +530,29 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>PATCH /pdf-report-templates/:id</td><td>Business JWT</td><td>update a PDF report template (a supplied meta replaces the stored blob)</td></tr>
   <tr><td>DELETE /pdf-report-templates/:id</td><td>Business JWT</td><td>soft-delete a PDF report template</td></tr>
   <tr><td>POST /pdf-report-templates/:id/generate</td><td>Business JWT</td><td>render the template to a PDF (returns <code>application/pdf</code>); body = render context (variables/images/sections/signatories)</td></tr>
+  <tr><td>POST /templates</td><td>Business JWT</td><td>create a messaging template (tenant/branch from JWT; preference EMAIL/SMS/IAM/IAA/PBN/WHATSAPP/TEMPLATE + feature + template body; optional messageType, scope targeting, SMS/WhatsApp settings)</td></tr>
+  <tr><td>GET /templates</td><td>Business JWT</td><td>list tenant messaging templates (paginated; preference/feature/messageType/level/applicableBranchType + displayTitle search + isActive/isEnabled/isDefault filters)</td></tr>
+  <tr><td>GET /templates/features</td><td>Business JWT</td><td>grouped feature catalogue (~88 keys) for the form dropdown</td></tr>
+  <tr><td>GET /templates/lookup</td><td>Business JWT</td><td>dropdown listing (id, displayTitle, preference, feature; preference/feature filters)</td></tr>
+  <tr><td>GET /templates/:id</td><td>Business JWT</td><td>get one messaging template</td></tr>
+  <tr><td>PATCH /templates/:id</td><td>Business JWT</td><td>update a messaging template (partial; scope fixed)</td></tr>
+  <tr><td>DELETE /templates/:id</td><td>Business JWT</td><td>soft-delete a messaging template</td></tr>
+  <tr><td>POST /templates/:id/duplicate</td><td>Business JWT</td><td>duplicate a messaging template (" (Copy)" displayTitle, isDefault reset)</td></tr>
+  <tr><td>POST /siteadmin/templates</td><td>SiteAdmin · master-data:write</td><td>create a global messaging master template (tenant_id NULL; preference + feature + template body + optional messageType/scope/SMS/WhatsApp settings)</td></tr>
+  <tr><td>GET /siteadmin/templates</td><td>SiteAdmin · master-data:read</td><td>list global messaging templates (paginated; same filter set as GET /templates)</td></tr>
+  <tr><td>GET /siteadmin/templates/:id</td><td>SiteAdmin · master-data:read</td><td>get one global messaging template</td></tr>
+  <tr><td>PATCH /siteadmin/templates/:id</td><td>SiteAdmin · master-data:write</td><td>update a global messaging template (partial)</td></tr>
+  <tr><td>DELETE /siteadmin/templates/:id</td><td>SiteAdmin · master-data:write</td><td>soft-delete a global messaging template</td></tr>
+  <tr><td>POST /siteadmin/templates/:id/duplicate</td><td>SiteAdmin · master-data:write</td><td>duplicate a global messaging template (" (Copy)" displayTitle, isDefault reset)</td></tr>
+  <tr><td>POST /siteadmin/support-info</td><td>SiteAdmin · master-data:write</td><td>create a platform-level support/help record (no tenant; metaType + user-supplied code + globally-unique title + tenantType BUSINESS/BRANCH + status + requestUrl + helpContent HTML)</td></tr>
+  <tr><td>GET /siteadmin/support-info</td><td>SiteAdmin · master-data:read</td><td>list support/help records (paginated; search over metaType/code, status filter; returns metaType/code/title/updatedAt/tenantType/status)</td></tr>
+  <tr><td>GET /siteadmin/support-info/:id</td><td>SiteAdmin · master-data:read</td><td>get one support/help record (full record incl. helpContent)</td></tr>
+  <tr><td>PATCH /siteadmin/support-info/:id</td><td>SiteAdmin · master-data:write</td><td>update a support/help record (partial; changed title re-validated for uniqueness)</td></tr>
+  <tr><td>DELETE /siteadmin/support-info/:id</td><td>SiteAdmin · master-data:write</td><td>soft-delete a support/help record (title becomes reusable)</td></tr>
+  <tr><td>POST /contact-us</td><td>Public (no auth)</td><td>submit a contact-us form from the public marketing site (platform-level, no tenant; name + mobileNumber + companyName + email + message)</td></tr>
+  <tr><td>GET /siteadmin/contact-us</td><td>SiteAdmin · business:read</td><td>list contact submissions (paginated; search over name/mobileNumber/email, from/to createdAt range; returns id/name/organization/mobileNumber/email/message/createdOn)</td></tr>
+  <tr><td>GET /siteadmin/contact-us/:id</td><td>SiteAdmin · business:read</td><td>get one contact submission (full record)</td></tr>
+  <tr><td>DELETE /siteadmin/contact-us/:id</td><td>SiteAdmin · business:suspend</td><td>soft-delete a contact submission</td></tr>
 </table>
 
 <h2 id="data-model">Data model — models &amp; tiers</h2>

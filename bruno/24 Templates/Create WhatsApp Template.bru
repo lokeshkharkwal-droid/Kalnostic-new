@@ -20,38 +20,17 @@ auth:bearer {
 
 body:json {
   {
-    "type": "WHATSAPP",
-    "name": "Appointment Reminder WA",
-    "triggerEvent": "APPOINTMENT_REMINDER",
-    "version": "v1.0",
+    "preference": "WHATSAPP",
+    "feature": "appointment_reminder_inform_patient",
+    "displayTitle": "Appointment Reminder WA",
+    "messageType": "TRANSACTIONAL",
     "isActive": true,
-    "body": "*Reminder*: Hi {patient_name}, your appointment is on {appointment_date} at {appointment_time}.",
-    "whatsapp": {
-      "templateCategory": "UTILITY",
-      "approvedTemplateId": "appt_reminder_en_v3"
-    },
-    "header": {
-      "enabled": true,
-      "type": "Image",
-      "text": "",
-      "imageFile": "wa-header.png",
-      "alignment": "Center"
-    },
-    "footerBlock": {
-      "enabled": false,
-      "type": "Text",
-      "text": "",
-      "imageFile": "",
-      "alignment": "Left"
-    },
-    "attachment": {
-      "enabled": true,
-      "type": "PDF",
-      "files": ["appointment-card.pdf"],
-      "position": "Media Header",
-      "alignment": "Left",
-      "sizeProfile": "Full Width"
-    }
+    "isEnabled": true,
+    "level": "BUSINESS",
+    "template": "*Reminder*: Hi {patient_name}, your appointment is on {appointment_date} at {appointment_time}.",
+    "templateType": "DOCUMENT",
+    "templateCategory": "UTILITY",
+    "fileName": "appointment-card"
   }
 }
 
@@ -65,9 +44,12 @@ script:post-response {
 }
 
 docs {
-  WhatsApp template. Adds the `whatsapp` block (stored in `config.whatsapp`):
-  `templateCategory` (`MARKETING` | `UTILITY` | `AUTHENTICATION`) and
-  `approvedTemplateId` (the WhatsApp Business pre-approved template id).
-  Attachment `position` for WhatsApp is `Media Header` / `Media Footer`. See
-  "Create SMS Template" for the shared field reference.
+  WhatsApp messaging template. When `preference` is `WHATSAPP` the WhatsApp
+  settings are **required**:
+
+  - `templateType` (required): media type — `TEXT` | `IMAGE` | `VIDEO` | `DOCUMENT`.
+  - `templateCategory` (required): WABA category — `UTILITY` | `MARKETING` | `AUTHENTICATION`.
+  - `fileName` (optional): attachment file name — letters, digits, `_` and `-` only.
+
+  See "Create SMS Template" for the shared core/scope fields.
 }
