@@ -38,6 +38,23 @@ export interface IconEntry {
 }
 
 /**
+ * Number of aspect-ratio slots a given `imageSize` needs. Mirrors the
+ * frontend's `aspectCountForSize` (LabTestSettings/utils) — keep in sync.
+ */
+function imageAspectRatioSlotCount(imageSize: string): number {
+  switch (imageSize) {
+    case 'Fixed Size 2':
+      return 2;
+    case 'Fixed Size 3':
+      return 3;
+    case 'Fixed Size 4':
+      return 4;
+    default:
+      return 0;
+  }
+}
+
+/**
  * Lab Test Settings service. Tenant-scoped: every query carries `tenantId`
  * (defence in depth on top of RLS — CLAUDE.md §4.3) and filters soft-deleted rows.
  */
@@ -120,6 +137,10 @@ export class LabTestSettingsService {
     dto: CreateImageSettingDto,
     branchId?: string | null,
   ): Promise<LabImageSetting> {
+    // Only persist aspect-ratio slots the chosen imageSize actually needs —
+    // ignore/clear any extra aspectRatioN the client sends beyond that count
+    // (see update()'s comment for the matching downsize-on-edit case).
+    const slotCount = imageAspectRatioSlotCount(dto.imageSize);
     return this.prisma.labImageSetting.create({
       data: {
         tenantId,
@@ -129,10 +150,10 @@ export class LabTestSettingsService {
         layout: dto.layout,
         alignment: dto.alignment,
         imageSize: dto.imageSize,
-        aspectRatio1: dto.aspectRatio1 ?? null,
-        aspectRatio2: dto.aspectRatio2 ?? null,
-        aspectRatio3: dto.aspectRatio3 ?? null,
-        aspectRatio4: dto.aspectRatio4 ?? null,
+        aspectRatio1: slotCount >= 1 ? (dto.aspectRatio1 ?? null) : null,
+        aspectRatio2: slotCount >= 2 ? (dto.aspectRatio2 ?? null) : null,
+        aspectRatio3: slotCount >= 3 ? (dto.aspectRatio3 ?? null) : null,
+        aspectRatio4: slotCount >= 4 ? (dto.aspectRatio4 ?? null) : null,
         pageBreakControl: dto.pageBreakControl,
         headerRetention: dto.headerRetention,
         replacementMode: dto.replacementMode,
@@ -157,7 +178,15 @@ export class LabTestSettingsService {
     dto: UpdateImageSettingDto,
     branchId?: string | null,
   ): Promise<LabImageSetting> {
-    await this.findById(id, tenantId, branchId);
+    const existing = await this.findById(id, tenantId, branchId);
+
+    // Aspect ratio slots are only meaningful up to the count the resolved
+    // (new-or-existing) imageSize requires — clear any slots beyond that
+    // count so switching to a smaller/no-aspect-ratio size doesn't leave
+    // stale values from the previous imageSize sitting in the row.
+    const resolvedImageSize = dto.imageSize ?? existing.imageSize;
+    const slotCount = imageAspectRatioSlotCount(resolvedImageSize);
+
     return this.prisma.labImageSetting.update({
       where: { id },
       data: {
@@ -168,18 +197,14 @@ export class LabTestSettingsService {
         ...(dto.layout !== undefined && { layout: dto.layout }),
         ...(dto.alignment !== undefined && { alignment: dto.alignment }),
         ...(dto.imageSize !== undefined && { imageSize: dto.imageSize }),
-        ...(dto.aspectRatio1 !== undefined && {
-          aspectRatio1: dto.aspectRatio1,
-        }),
-        ...(dto.aspectRatio2 !== undefined && {
-          aspectRatio2: dto.aspectRatio2,
-        }),
-        ...(dto.aspectRatio3 !== undefined && {
-          aspectRatio3: dto.aspectRatio3,
-        }),
-        ...(dto.aspectRatio4 !== undefined && {
-          aspectRatio4: dto.aspectRatio4,
-        }),
+        aspectRatio1:
+          slotCount >= 1 ? (dto.aspectRatio1 ?? existing.aspectRatio1) : null,
+        aspectRatio2:
+          slotCount >= 2 ? (dto.aspectRatio2 ?? existing.aspectRatio2) : null,
+        aspectRatio3:
+          slotCount >= 3 ? (dto.aspectRatio3 ?? existing.aspectRatio3) : null,
+        aspectRatio4:
+          slotCount >= 4 ? (dto.aspectRatio4 ?? existing.aspectRatio4) : null,
         ...(dto.pageBreakControl !== undefined && {
           pageBreakControl: dto.pageBreakControl,
         }),
