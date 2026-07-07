@@ -21,23 +21,16 @@ auth:bearer {
 body:json {
   {
     "status": "INACTIVE",
+    "branchId": "{{branchId}}",
     "subCategory": "Cytopathology",
     "remarks": "Fees revised for FY26",
+    "consultationFee": 950.00,
+    "emergencyFee": 1800,
+    "followUpFee": 500,
+    "isAllowDiscount": true,
     "qualifications": [
       { "degree": "MD Pathology", "institution": "PGIMER Chandigarh", "yearOfPassing": 2008 },
       { "degree": "Fellowship in Cytopathology", "institution": "Tata Memorial", "yearOfPassing": 2012 }
-    ],
-    "branchAssignments": [
-      {
-        "branchId": "{{branchId}}",
-        "branchRole": "RESIDENT",
-        "availability": "FULL_TIME",
-        "isPrimary": true,
-        "consultationFee": 950.00,
-        "emergencyFee": 1800,
-        "followUpFee": 500,
-        "isAllowDiscount": true
-      }
     ]
   }
 }
@@ -56,8 +49,9 @@ tests {
   test("qualifications were replaced", function () {
     expect(res.getBody().data.qualifications).to.have.lengthOf(2);
   });
-  test("branch assignments were replaced", function () {
-    expect(res.getBody().data.branchAssignments).to.have.lengthOf(1);
+  test("charges were updated", function () {
+    expect(Number(res.getBody().data.consultationFee)).to.equal(950);
+    expect(res.getBody().data.isAllowDiscount).to.equal(true);
   });
 }
 
@@ -65,6 +59,9 @@ docs {
   Update a doctor (scoped to the caller's tenant). All fields optional; only
   supplied fields change. Same field rules as create.
 
+  - `branchId` — if supplied, re-validated against the tenant's active branches
+    (404 `BRANCH_NOT_FOUND`); moves the doctor to that branch. Omit to leave the
+    current branch untouched.
   - `categoryId` / `departmentId` — if supplied, re-validated against the
     tenant's active rows (404 `CATEGORY_NOT_FOUND` / `DEPARTMENT_NOT_FOUND`).
     Omit to leave the current link untouched. (Use the env vars `{{categoryId}}`
@@ -72,12 +69,10 @@ docs {
     to link real rows.)
   - `registrationNo` — renaming to one used by another active doctor →
     409 `DUPLICATE_REGISTRATION_NO`.
-  - `qualifications` / `experiences` / `branchAssignments` — when supplied,
-    REPLACES the whole set: existing active rows are soft-deleted and the new set
-    is created (one transaction). Omit to leave them untouched.
-  - `branchAssignments` — each entry's `branchId` is re-validated against the
-    tenant's active branches (404 `BRANCH_NOT_FOUND`). At most one may be
-    `isPrimary` (422 `MULTIPLE_PRIMARY_BRANCH_ASSIGNMENTS`); a branch may appear
-    only once (422 `DUPLICATE_BRANCH_ASSIGNMENT`). Charges live here, per branch.
+  - `qualifications` / `experiences` — when supplied, REPLACES the whole set:
+    existing active rows are soft-deleted and the new set is created (one
+    transaction). Omit to leave them untouched.
+  - `consultationFee` / `emergencyFee` / `followUpFee` / `isAllowDiscount` — the
+    doctor's charges; supply to update, omit to leave untouched.
   - 404 `DOCTOR_NOT_FOUND` if the doctor is missing/soft-deleted.
 }

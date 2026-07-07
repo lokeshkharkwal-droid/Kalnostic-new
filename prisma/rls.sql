@@ -653,21 +653,6 @@ CREATE POLICY doctor_experience_tenant_isolation ON doctor_experience
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
--- ── doctor_branch_assignments ────────────────────────────────────────────────────
-ALTER TABLE doctor_branch_assignments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE doctor_branch_assignments FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS dba_tenant_isolation ON doctor_branch_assignments;
-CREATE POLICY dba_tenant_isolation ON doctor_branch_assignments
-  USING (tenant_id = current_tenant_id())
-  WITH CHECK (tenant_id = current_tenant_id());
-
--- One active assignment per (tenant, doctor, branch) among ACTIVE rows only (a
--- pairing freed by a soft-delete can be re-created). Prisma can't express partial
--- unique indexes, so it lives here.
-CREATE UNIQUE INDEX IF NOT EXISTS dba_doctor_branch_active_unique
-  ON doctor_branch_assignments (tenant_id, doctor_id, branch_id)
-  WHERE deleted_at IS NULL;
-
 -- ── referral_doctors ──────────────────────────────────────────────────────────
 ALTER TABLE referral_doctors ENABLE ROW LEVEL SECURITY;
 ALTER TABLE referral_doctors FORCE ROW LEVEL SECURITY;

@@ -466,18 +466,6 @@ enum DoctorStatus {
   INACTIVE
 }
 
-/// A doctor's role at a specific branch.
-enum DoctorBranchRole {
-  RESIDENT
-  VISITING
-}
-
-/// A doctor's availability commitment at a specific branch.
-enum DoctorAvailability {
-  FULL_TIME
-  PART_TIME
-}
-
 enum ReferralDoctorStatus {
   ACTIVE
   INACTIVE
@@ -1009,8 +997,8 @@ model Branch {
   licenseNo String? @map("license_no")
   remarks   String?
 
-  // Doctors assigned to this branch (junction; managed via DoctorsService).
-  doctorAssignments DoctorBranchAssignment[]
+  // Doctors scoped to this branch (managed via DoctorsService).
+  doctors Doctor[]
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -2884,6 +2872,12 @@ model Doctor {
   tenantId   String     @map("tenant_id")
   doctorType DoctorType @map("doctor_type")
 
+  // Branch scope (CLAUDE.md §4.5). Nullable column so legacy/tenant-level rows
+  // can exist, but the create API requires it. Client-supplied — validated
+  // against the caller's tenant in DoctorsService (never trusted from the body).
+  branchId String? @map("branch_id")
+  branch   Branch? @relation(fields: [branchId], references: [id])
+
   // Identity
   salutation     Salutation?
   firstName      String      @map("first_name")
@@ -2929,21 +2923,27 @@ model Doctor {
   ifscCode          String?           @map("ifsc_code")
   paymentMode       DoctorPaymentMode @default(BANK_TRANSFER) @map("payment_mode")
 
+  // Charges
+  consultationFee Decimal @default(0) @map("consultation_fee") @db.Decimal(10, 2)
+  emergencyFee    Decimal @default(0) @map("emergency_fee") @db.Decimal(10, 2)
+  followUpFee     Decimal @default(0) @map("follow_up_fee") @db.Decimal(10, 2)
+  isAllowDiscount Boolean @default(false) @map("is_allow_discount")
+
   // Status & misc
   status      DoctorStatus @default(ACTIVE)
   joiningDate DateTime?    @map("joining_date") @db.Date
   remarks     String?
 
   // Children (managed via the parent in DoctorsService)
-  qualifications    DoctorQualification[]
-  experiences       DoctorExperience[]
-  branchAssignments DoctorBranchAssignment[]
+  qualifications DoctorQualification[]
+  experiences    DoctorExperience[]
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
   @@index([tenantId])
+  @@index([branchId])
   @@index([categoryId])
   @@index([subCategoryId])
   @@index([departmentId])
@@ -2998,44 +2998,6 @@ model DoctorExperience {
   @@index([doctorId])
   @@index([deletedAt])
   @@map("doctor_experience")
-}
-
-/// Assigns a doctor to a branch with a role, availability, primary flag, and the
-/// per-branch charges (consultation/emergency/follow-up fee + allow-discount).
-/// Tenant-scoped + branch-level (CLAUDE.md §4.5): carries `tenantId` (RLS) and a
-/// non-nullable `branchId` (a row always represents a doctor AT a branch). The
-/// branch id is client-supplied, so DoctorsService validates it against the
-/// caller's tenant first. Managed via the parent doctor (replace-on-update;
-/// soft-deleted with the parent). At most one active row per (tenant, doctor,
-/// branch) — partial unique index in prisma/rls.sql. RLS policy in prisma/rls.sql.
-model DoctorBranchAssignment {
-  id       String @id @default(uuid())
-  tenantId String @map("tenant_id")
-  doctorId String @map("doctor_id")
-  branchId String @map("branch_id")
-
-  doctor Doctor @relation(fields: [doctorId], references: [id], onDelete: Cascade)
-  branch Branch @relation(fields: [branchId], references: [id])
-
-  branchRole   DoctorBranchRole   @map("branch_role")
-  availability DoctorAvailability
-  isPrimary    Boolean            @default(false) @map("is_primary")
-
-  // Per-branch charges
-  consultationFee Decimal @default(0) @map("consultation_fee") @db.Decimal(10, 2)
-  emergencyFee    Decimal @default(0) @map("emergency_fee") @db.Decimal(10, 2)
-  followUpFee     Decimal @default(0) @map("follow_up_fee") @db.Decimal(10, 2)
-  isAllowDiscount Boolean @default(false) @map("is_allow_discount")
-
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  deletedAt DateTime? @map("deleted_at")
-
-  @@index([tenantId])
-  @@index([doctorId])
-  @@index([branchId])
-  @@index([deletedAt])
-  @@map("doctor_branch_assignments")
 }
 
 /// An external referring doctor in a tenant's registry who sends business to the

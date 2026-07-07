@@ -21,6 +21,7 @@ auth:bearer {
 body:json {
   {
     "doctorType": "CONSULTANT",
+    "branchId": "{{branchId}}",
     "salutation": "DR",
     "firstName": "Rahul",
     "lastName": "Verma",
@@ -35,6 +36,10 @@ body:json {
     "accountNumber": "001401599999",
     "ifscCode": "ICIC0000014",
     "paymentMode": "CASH",
+    "consultationFee": 1200,
+    "emergencyFee": 2500,
+    "followUpFee": 600,
+    "isAllowDiscount": false,
     "status": "ACTIVE",
     "joiningDate": "2023-09-01",
     "qualifications": [
@@ -43,18 +48,6 @@ body:json {
     ],
     "experiences": [
       { "organisation": "Fortis Hospital", "rolePosition": "Consultant Cardiologist", "fromDate": "2017-07-01" }
-    ],
-    "branchAssignments": [
-      {
-        "branchId": "{{branchId}}",
-        "branchRole": "VISITING",
-        "availability": "PART_TIME",
-        "isPrimary": true,
-        "consultationFee": 1200,
-        "emergencyFee": 2500,
-        "followUpFee": 600,
-        "isAllowDiscount": false
-      }
     ]
   }
 }
@@ -74,13 +67,15 @@ tests {
 }
 
 docs {
-  Register a CONSULTANT doctor in the caller's tenant. Same endpoint and fields
-  as "Create Doctor (Reporting)" — only `doctorType` differs. Consultants
-  typically omit the signatory/accreditation block. Captures `doctorId`.
+  Register a CONSULTANT doctor in the caller's tenant, scoped to a branch. Same
+  endpoint and fields as "Create Doctor (Reporting)" — only `doctorType` differs.
+  Consultants typically omit the signatory/accreditation block. `branchId` is
+  REQUIRED and validated against the tenant's active branches. Captures `doctorId`.
 
   This example demonstrates the free-text "super specialization" (`subCategory`),
-  `CASH` payment mode, and a single branch assignment carrying its own per-branch
-  fees. `registrationNo` must be unique among active doctors in the tenant
-  (409 `DUPLICATE_REGISTRATION_NO`). See "Create Doctor (Reporting)" for the full
-  `branchAssignments` field reference and validation rules.
+  `CASH` payment mode, and the doctor-level charges (`consultationFee`,
+  `emergencyFee`, `followUpFee`, `isAllowDiscount`). `registrationNo` must be
+  unique among active doctors in the tenant (409 `DUPLICATE_REGISTRATION_NO`).
+  See "Create Doctor (Reporting)" for the full field reference and validation
+  rules.
 }

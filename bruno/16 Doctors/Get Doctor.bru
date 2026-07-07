@@ -20,8 +20,9 @@ vars:pre-request {
 
 docs {
   Fetch one doctor by id (scoped to the caller's tenant). Returns the FULL
-  record — every column plus the linked `department` and `category` (each
-  `{ id, name }` or `null`) and the doctor's active `qualifications` and
-  `experiences` arrays (ordered by creation time). 404 `DOCTOR_NOT_FOUND` if
-  missing, soft-deleted, or owned by another tenant.
+  record — every column (incl. `branchId` and the doctor's charges) plus the
+  linked `branch`, `department`, and `category` (each `{ id, name }` or `null`)
+  and the doctor's active `qualifications` and `experiences` arrays (ordered by
+  creation time). 404 `DOCTOR_NOT_FOUND` if missing, soft-deleted, or owned by
+  another tenant.
 }

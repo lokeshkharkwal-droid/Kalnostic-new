@@ -12,14 +12,15 @@ import {
   IsDateString,
   IsEmail,
   IsEnum,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
   MaxLength,
+  Min,
   MinLength,
   ValidateNested,
 } from 'class-validator';
-import { DoctorBranchAssignmentDto } from './doctor-branch-assignment.dto';
 import { DoctorExperienceDto } from './doctor-experience.dto';
 import { DoctorQualificationDto } from './doctor-qualification.dto';
 
@@ -33,6 +34,12 @@ export class UpdateDoctorDto {
   @IsEnum(DoctorType)
   @IsOptional()
   doctorType?: DoctorType;
+
+  // Branch scope — optional on update; when supplied, re-validated against the
+  // caller's tenant in the service (never trusted from the body — CLAUDE.md §4.7).
+  @IsUUID()
+  @IsOptional()
+  branchId?: string;
 
   @IsEnum(Salutation)
   @IsOptional()
@@ -179,6 +186,26 @@ export class UpdateDoctorDto {
   @IsOptional()
   paymentMode?: DoctorPaymentMode;
 
+  // ── Charges (default 0; up to 2 decimal places) ──
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @IsOptional()
+  consultationFee?: number;
+
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @IsOptional()
+  emergencyFee?: number;
+
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @IsOptional()
+  followUpFee?: number;
+
+  @IsBoolean()
+  @IsOptional()
+  isAllowDiscount?: boolean;
+
   // ── Status & misc ──
   @IsEnum(DoctorStatus)
   @IsOptional()
@@ -205,11 +232,4 @@ export class UpdateDoctorDto {
   @ValidateNested({ each: true })
   @Type(() => DoctorExperienceDto)
   experiences?: DoctorExperienceDto[];
-
-  // ── Branch assignments (replace-on-update; each carries its own fees) ──
-  @IsArray()
-  @IsOptional()
-  @ValidateNested({ each: true })
-  @Type(() => DoctorBranchAssignmentDto)
-  branchAssignments?: DoctorBranchAssignmentDto[];
 }

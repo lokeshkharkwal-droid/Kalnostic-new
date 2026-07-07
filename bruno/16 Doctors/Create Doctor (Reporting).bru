@@ -21,6 +21,7 @@ auth:bearer {
 body:json {
   {
     "doctorType": "REPORTING",
+    "branchId": "{{branchId}}",
     "salutation": "DR",
     "firstName": "Anita",
     "lastName": "Sharma",
@@ -51,6 +52,10 @@ body:json {
     "accountNumber": "50100123456789",
     "ifscCode": "HDFC0001234",
     "paymentMode": "BANK_TRANSFER",
+    "consultationFee": 800.00,
+    "emergencyFee": 1500,
+    "followUpFee": 400.50,
+    "isAllowDiscount": true,
     "status": "ACTIVE",
     "joiningDate": "2024-01-15",
     "remarks": "Lead reporting pathologist",
@@ -61,18 +66,6 @@ body:json {
     "experiences": [
       { "organisation": "Apollo Hospitals", "rolePosition": "Senior Pathologist", "fromDate": "2010-06-01", "toDate": "2019-03-31" },
       { "organisation": "Acme Diagnostics", "rolePosition": "Lab Director", "fromDate": "2019-04-01" }
-    ],
-    "branchAssignments": [
-      {
-        "branchId": "{{branchId}}",
-        "branchRole": "RESIDENT",
-        "availability": "FULL_TIME",
-        "isPrimary": true,
-        "consultationFee": 800.00,
-        "emergencyFee": 1500,
-        "followUpFee": 400.50,
-        "isAllowDiscount": true
-      }
     ]
   }
 }
@@ -89,25 +82,31 @@ tests {
   test("is a REPORTING doctor", function () {
     expect(res.getBody().data.doctorType).to.equal("REPORTING");
   });
+  test("doctor is scoped to the branch", function () {
+    expect(res.getBody().data.branchId).to.equal(bru.getEnvVar("branchId"));
+  });
   test("nested qualifications + experiences were created", function () {
     expect(res.getBody().data.qualifications).to.have.lengthOf(2);
     expect(res.getBody().data.experiences).to.have.lengthOf(2);
   });
-  test("branch assignment was created with its own fees", function () {
-    expect(res.getBody().data.branchAssignments).to.have.lengthOf(1);
-    expect(res.getBody().data.branchAssignments[0].isPrimary).to.equal(true);
+  test("charges are on the doctor", function () {
+    expect(res.getBody().data).to.have.property("consultationFee");
+    expect(res.getBody().data.isAllowDiscount).to.equal(true);
   });
 }
 
 docs {
   Register a REPORTING doctor in the caller's tenant (tenant id taken from the
-  JWT, never the body). The doctor registry belongs to the business as a whole;
-  a doctor is then assigned to one or more branches, and **charges are per branch
-  assignment** (not on the doctor). Captures `doctorId`.
+  JWT, never the body). The doctor registry belongs to the business as a whole,
+  and the doctor's **charges** (consultation / emergency / follow-up fee +
+  allow-discount) live **on the doctor record**. Captures `doctorId`.
 
   ## Fields
 
   - `doctorType` — REQUIRED, `REPORTING` or `CONSULTANT`.
+  - `branchId` — REQUIRED UUID; the branch this doctor belongs to. Must be an
+    active **branch** of this tenant (404 `BRANCH_NOT_FOUND` otherwise; never
+    trusted from the body — validated against the caller's tenant).
   - `salutation` — optional, one of `DR`, `MR`, `MRS`, `MS`, `PROF` (display
     labels like "Dr." are resolved on the frontend).
   - `firstName`, `lastName` — REQUIRED (1-255 chars).
@@ -132,26 +131,16 @@ docs {
     — optional arrays of UUIDs stored as JSON (format-validated only).
   - Banking: `accountHolderName`, `bankName`, `accountNumber`, `ifscCode`
     (strings); `paymentMode` — `BANK_TRANSFER` (default) / `CASH` / `CHEQUE`.
+  - Charges (on the doctor):
+    - `consultationFee`, `emergencyFee`, `followUpFee` — optional decimals
+      (≥ 0, up to 2 dp), default 0.
+    - `isAllowDiscount` — bool, default false.
   - `status` — `ACTIVE` (default) / `INACTIVE`. `remarks` — optional.
   - `qualifications` — optional array; each entry: `degree`, `institution`
     (strings), `yearOfPassing` (int 1900-2100). REPLACES the set on update.
   - `experiences` — optional array; each entry: `organisation`, `rolePosition`
     (strings), `fromDate`, `toDate` (ISO dates; omit `toDate` = current role).
     REPLACES the set on update.
-  - `branchAssignments` — optional array; assigns the doctor to branches. Each
-    entry:
-    - `branchId` — REQUIRED UUID; must be an active **branch** of this tenant
-      (404 `BRANCH_NOT_FOUND` otherwise; never trusted from the body).
-    - `branchRole` — REQUIRED, `RESIDENT` | `VISITING`.
-    - `availability` — REQUIRED, `FULL_TIME` | `PART_TIME`.
-    - `isPrimary` — bool, default false. **At most one assignment per doctor may
-      be primary** (422 `MULTIPLE_PRIMARY_BRANCH_ASSIGNMENTS` otherwise).
-    - `consultationFee`, `emergencyFee`, `followUpFee` — optional decimals
-      (≥ 0, up to 2 dp), default 0. These are the **per-branch** charges.
-    - `isAllowDiscount` — bool, default false (per branch).
-    A branch may appear only once (422 `DUPLICATE_BRANCH_ASSIGNMENT`). REPLACES
-    the whole set on update.
 
-  The doctor + its qualifications/experiences/branchAssignments are created in
-  one transaction.
+  The doctor + its qualifications/experiences are created in one transaction.
 }
