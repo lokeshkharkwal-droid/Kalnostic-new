@@ -289,10 +289,10 @@ export class ReferralPanelService {
    * List active referral panels for a tenant (offset pagination). `search` matches
    * the panel `name` or the user-supplied `panelCode` (case-insensitive);
    * `clientType` filters by billing relationship; `status` (ACTIVE/INACTIVE) maps
-   * to `isActive`.
+   * to `isActive`; `branchId` restricts to panels scoped to that branch.
    * @param tenantId tenant scope
    * @param query pagination + optional `search` (panel name / panel code),
-   *   `clientType`, and `status` filters
+   *   `clientType`, `status`, and `branchId` filters
    */
   async findAll(
     tenantId: string,
@@ -315,6 +315,9 @@ export class ReferralPanelService {
     }
     if (query.status) {
       where.isActive = query.status === 'ACTIVE';
+    }
+    if (query.branchId) {
+      where.branchId = query.branchId;
     }
     const [rows, total] = await Promise.all([
       this.prisma.referralPanel.findMany({

@@ -228,7 +228,8 @@ export class ReferralDoctorService {
    * List active referral doctors for a tenant (offset pagination), returning the
    * trimmed listing projection. Supports a free-text `search` by doctor name
    * (whitespace-tokenised across first/middle/last name, with the mobile number as
-   * a fallback) plus `departmentId`, `categoryId`, and `status` filters.
+   * a fallback) plus `departmentId`, `categoryId`, `status`, and `branchId`
+   * filters.
    * @param tenantId tenant scope
    * @param query pagination + filters
    */
@@ -246,6 +247,7 @@ export class ReferralDoctorService {
     if (query.status) where.status = query.status;
     if (query.departmentId) where.departmentId = query.departmentId;
     if (query.categoryId) where.categoryId = query.categoryId;
+    if (query.branchId) where.branchId = query.branchId;
     const term = query.search?.trim();
     if (term) {
       // Search by doctor name: split into whitespace tokens and require EACH to

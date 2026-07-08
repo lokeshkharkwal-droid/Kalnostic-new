@@ -1,5 +1,5 @@
 import { ReferralClientType } from '@prisma/client';
-import { IsEnum, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsEnum, IsIn, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 
 /**
@@ -7,7 +7,8 @@ import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
  * (`GET /referral-panels`). Extends the shared pagination DTO. `search` matches
  * the panel `name` or the user-supplied `panelCode` (case-insensitive);
  * `clientType` filters by billing relationship; `status` filters by active
- * state. Validated by `class-validator` only.
+ * state; `branchId` restricts to panels scoped to that branch. Validated by
+ * `class-validator` only.
  */
 export class ListReferralPanelsDto extends PaginationQueryDto {
   /** Case-insensitive match against panel name or panel code. */
@@ -25,4 +26,9 @@ export class ListReferralPanelsDto extends PaginationQueryDto {
   @IsOptional()
   @IsIn(['ACTIVE', 'INACTIVE'])
   status?: 'ACTIVE' | 'INACTIVE';
+
+  /** Restrict to referral panels scoped to this branch. */
+  @IsOptional()
+  @IsUUID()
+  branchId?: string;
 }
