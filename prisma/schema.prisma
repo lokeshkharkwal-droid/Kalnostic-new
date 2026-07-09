@@ -578,13 +578,13 @@ model Tenant {
   shortName String? @map("short_name") // business abbreviation
 
   // ── Registered address ──
-  address     Json?   // registered business address (free-form; legacy/back-compat)
-  addressLine String? @map("address_line") // street address
+  address     Json? // registered business address (free-form; legacy/back-compat)
+  addressLine String?  @map("address_line") // street address
   pincode     String? // zip / pin code
-  countryId   String? @map("country_id")
-  stateId     String? @map("state_id")
-  cityId      String? @map("city_id")
-  areaId      String? @map("area_id")
+  countryId   String?  @map("country_id")
+  stateId     String?  @map("state_id")
+  cityId      String?  @map("city_id")
+  areaId      String?  @map("area_id")
   country     Country? @relation(fields: [countryId], references: [id])
   state       State?   @relation(fields: [stateId], references: [id])
   city        City?    @relation(fields: [cityId], references: [id])
@@ -910,8 +910,8 @@ model City {
   name    String
   pinCode String @map("pin_code")
 
-  stateId   String @map("state_id")
-  countryId String @map("country_id")
+  stateId   String  @map("state_id")
+  countryId String  @map("country_id")
   state     State   @relation(fields: [stateId], references: [id])
   country   Country @relation(fields: [countryId], references: [id])
 
@@ -936,9 +936,9 @@ model Area {
   name     String
   locality String
 
-  cityId    String @map("city_id")
-  stateId   String @map("state_id")
-  countryId String @map("country_id")
+  cityId    String  @map("city_id")
+  stateId   String  @map("state_id")
+  countryId String  @map("country_id")
   city      City    @relation(fields: [cityId], references: [id])
   state     State   @relation(fields: [stateId], references: [id])
   country   Country @relation(fields: [countryId], references: [id])
@@ -1048,10 +1048,10 @@ model AuthRole {
 
 /// Assigns a person a profile (role) at a branch (or tenant-level when branch is null).
 model UserBranchProfile {
-  id         String    @id @default(uuid())
-  tenantId   String    @map("tenant_id")
-  personId   String    @map("person_id")
-  branchId   String?   @map("branch_id") // null = tenant-level profile (e.g. business_admin)
+  id         String   @id @default(uuid())
+  tenantId   String   @map("tenant_id")
+  personId   String   @map("person_id")
+  branchId   String?  @map("branch_id") // null = tenant-level profile (e.g. business_admin)
   // The assigned role. A restrict FK (Prisma default) — a role still referenced
   // here can't be hard-deleted; the /roles CRUD blocks it and soft-deletes.
   authRoleId String   @map("auth_role_id")
@@ -1085,9 +1085,9 @@ model UserBranchProfile {
 
 /// Per-assignment permission overrides (allow/deny; inherit = no row).
 model UserProfilePermissionOverride {
-  id             String    @id @default(uuid())
-  tenantId       String    @map("tenant_id")
-  personId       String    @map("person_id")
+  id             String   @id @default(uuid())
+  tenantId       String   @map("tenant_id")
+  personId       String   @map("person_id")
   branchId       String?  @map("branch_id")
   authRoleId     String   @map("auth_role_id")
   authRole       AuthRole @relation(fields: [authRoleId], references: [id])
@@ -1117,13 +1117,13 @@ model TenantStaffMembership {
   // System-generated, immutable, per-tenant sequential code ("USR-00001")
   // derived from Tenant.staffCounter. Unique per tenant among active rows
   // (partial unique index in prisma/rls.sql); never client-supplied.
-  userCode String      @map("user_code")
-  userType UserType    @default(INTERNAL) @map("user_type")
+  userCode   String      @map("user_code")
+  userType   UserType    @default(INTERNAL) @map("user_type")
   // Optional primary/default role. The authoritative role lives per-branch on
   // UserBranchProfile.authRoleId; a user can be a tenant member with no role yet.
-  authRoleId String?   @map("auth_role_id")
-  authRole   AuthRole? @relation(fields: [authRoleId], references: [id])
-  status   StaffStatus @default(ACTIVE) // tenant-global account status
+  authRoleId String?     @map("auth_role_id")
+  authRole   AuthRole?   @relation(fields: [authRoleId], references: [id])
+  status     StaffStatus @default(ACTIVE) // tenant-global account status
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -3622,7 +3622,9 @@ model MachineBranch {
 // `siteadmin_users`). `tenantId`/`branchId`/`contextType`/`contextId` are
 // optional scope/target references stored as plain Int scalars (no FK relation).
 
-/** The payment gateway / tax family a rule belongs to. */
+/**
+ * The payment gateway / tax family a rule belongs to.
+ */
 enum PaymentRuleType {
   CITRUS_COMMISSION
   PAYU_COMMISSION
@@ -3631,7 +3633,9 @@ enum PaymentRuleType {
   PHARMACY_TAXES
 }
 
-/** How a rule's `calculationValue` is applied. */
+/**
+ * How a rule's `calculationValue` is applied.
+ */
 enum PaymentCalculationType {
   FIXED
   PERCENT
@@ -3679,7 +3683,6 @@ model PaymentRule {
   @@map("payment_rules")
 }
 
-<<<<<<< HEAD
 // ── Lab Test Settings ─────────────────────────────────────────────────────────
 
 model LabImageSetting {
@@ -3752,22 +3755,23 @@ model LabGroupLayoutSetting {
 
 /// Each icon entry: { iconUrl, position, alignment, size, visibility }.
 model LabIconSetting {
-  id         String    @id @default(uuid())
-  tenantId   String    @map("tenant_id")
-  branchId   String?   @map("branch_id")
-  name       String
-  iconCount  Int       @map("icon_count")
-  icons      Json
-  status     String    @default("Active")
-  createdAt  DateTime  @default(now()) @map("created_at")
-  updatedAt  DateTime  @updatedAt @map("updated_at")
-  deletedAt  DateTime? @map("deleted_at")
+  id        String    @id @default(uuid())
+  tenantId  String    @map("tenant_id")
+  branchId  String?   @map("branch_id")
+  name      String
+  iconCount Int       @map("icon_count")
+  icons     Json
+  status    String    @default("Active")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
 
   @@index([tenantId])
   @@index([branchId])
   @@index([deletedAt])
   @@map("lab_icon_settings")
-=======
+}
+
 /// SiteAdmin-authored support/help information (platform-level, CLAUDE.md §4.2 —
 /// no tenant_id, no RLS; it sits above the tenant boundary and is shared across
 /// all businesses). `helpContent` stores the full HTML body. `title` is globally
@@ -3820,5 +3824,4 @@ model ContactSubmission {
   @@index([createdAt])
   @@index([deletedAt])
   @@map("contact_submissions")
->>>>>>> b6c735e2ceede533ec7fd06f0df4fe55c79e2050
 }
