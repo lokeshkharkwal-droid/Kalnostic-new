@@ -1,0 +1,64 @@
+meta {
+  name: Create Group Layout Setting
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/business-admin/lab-test-settings/group-layout-settings
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Standard 2-Column",
+    "nameAlignment": "Left",
+    "columnLayout": "2 Columns",
+    "resultAlignment": "Left",
+    "displayStyle": "Grid (Side-by-side)",
+    "status": "Active"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("groupLayoutSettingId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("has id", function () {
+    expect(res.getBody().data.id).to.be.a("string");
+  });
+  test("name matches", function () {
+    expect(res.getBody().data.name).to.equal("Standard 2-Column");
+  });
+}
+
+docs {
+  Create a lab group layout setting for the caller's tenant (tenant id taken
+  from JWT).
+
+  ## Required fields
+  - `name` — display name for this layout (max 255 chars)
+  - `nameAlignment` — "Left" | "Center" | "Right"
+  - `columnLayout` — "1 Column" | "2 Columns" | "3 Columns"
+  - `resultAlignment` — "Left" | "Center" | "Right"
+  - `displayStyle` — "Grid (Side-by-side)" | "Sequential (Top → Bottom)"
+
+  ## Optional fields
+  - `status` — "Active" | "Inactive" (defaults to "Active")
+
+  Captures `groupLayoutSettingId` for use in subsequent requests.
+}

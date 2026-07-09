@@ -1,0 +1,45 @@
+meta {
+  name: Update Pdf Setting
+  type: http
+  seq: 9
+}
+
+patch {
+  url: {{baseUrl}}/business-admin/lab-test-settings/pdf-settings/{{pdfSettingId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Outsource Reports – End (Updated)",
+    "status": "Inactive"
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("name updated", function () {
+    expect(res.getBody().data.name).to.equal("Outsource Reports – End (Updated)");
+  });
+  test("status updated", function () {
+    expect(res.getBody().data.status).to.equal("Inactive");
+  });
+}
+
+docs {
+  Partially update a lab PDF setting. Only send the fields you want to change —
+  all fields from Create Pdf Setting are accepted but all are optional here.
+  Returns 404 LAB_PDF_SETTING_NOT_FOUND if missing or soft-deleted.
+  Requires `pdfSettingId` env var (set by Create Pdf Setting).
+}
