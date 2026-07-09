@@ -1,0 +1,20 @@
+meta {
+  name: Get PDF Report Template
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/pdf-report-templates/{{pdfReportTemplateId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Fetch one PDF report template by id (scoped to the caller's tenant). 404
+  (`PDF_REPORT_TEMPLATE_NOT_FOUND`) if missing or soft-deleted.
+}

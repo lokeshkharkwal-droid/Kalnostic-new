@@ -9,6 +9,7 @@ import { PasswordService } from '../security/password.service';
 import { UsersService } from '../users/users.service';
 import { TenantService } from '../tenant/tenant.service';
 import { BranchService } from '../branch/branch.service';
+import { AuthRoleService } from '../auth-role/auth-role.service';
 import {
   PROFILE_LABELS,
   ProfileKey,
@@ -42,6 +43,7 @@ export class AuthService {
     private readonly usersService: UsersService,
     private readonly tenantService: TenantService,
     private readonly branchService: BranchService,
+    private readonly authRoleService: AuthRoleService,
     private readonly config: ConfigService,
   ) {
     this.accessTtl = this.config.get<string>(
@@ -156,6 +158,7 @@ export class AuthService {
     const tokenHash = this.hashToken(refreshTokenValue);
     const stored = await this.prisma.refreshToken.findFirst({
       where: { tokenHash, deletedAt: null },
+      include: { authRole: true },
     });
     if (
       !stored ||
@@ -176,7 +179,8 @@ export class AuthService {
       stored.personId,
       tenantId,
       stored.branchId,
-      stored.profileKey,
+      // Restore the switched profile from the role relation (stable key).
+      stored.authRole?.key ?? null,
       clientIp,
     );
   }
@@ -208,7 +212,7 @@ export class AuthService {
         tenantId,
         personId,
         branchId,
-        profileKey: dto.profileKey,
+        authRole: { key: dto.profileKey },
         isActive: true,
         // Can't switch into a deactivated branch (per-branch status).
         branchStatus: StaffStatus.ACTIVE,
@@ -322,14 +326,17 @@ export class AuthService {
             p.branchStatus !== StaffStatus.INACTIVE,
         )
         .map(async (p) => {
+          // Stable key/label come from the role relation; for system roles these
+          // equal the old profileKey/PROFILE_LABELS, so the JWT is unchanged.
+          const key = p.authRole?.key ?? '';
           const label =
-            PROFILE_LABELS[p.profileKey as ProfileKey] ?? p.profileKey;
+            p.authRole?.name ?? PROFILE_LABELS[key as ProfileKey] ?? key;
           if (!p.branchId) {
             return {
               branch_id: null,
               branch_name: null,
               branch_type: null,
-              profile_key: p.profileKey,
+              profile_key: key,
               profile_label: label,
               is_default: p.isDefault,
             };
@@ -342,7 +349,7 @@ export class AuthService {
             branch_id: p.branchId,
             branch_name: branch?.name ?? null,
             branch_type: branch?.branchType ?? null,
-            profile_key: p.profileKey,
+            profile_key: key,
             profile_label: label,
             is_default: p.isDefault,
           };
@@ -424,12 +431,22 @@ export class AuthService {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + this.refreshDays);
 
+    // Snapshot the active role as an FK so refresh() can restore the context.
+    const authRoleId = payload.active_profile_key
+      ? (
+          await this.authRoleService.resolveByKey(
+            payload.tenant_id,
+            payload.active_profile_key,
+          )
+        ).id
+      : null;
+
     await this.prisma.refreshToken.create({
       data: {
         personId: payload.person_id,
         tokenHash,
         branchId: payload.active_branch_id,
-        profileKey: payload.active_profile_key,
+        authRoleId,
         issuedToIp: clientIp,
         expiresAt,
         isUsed: false,

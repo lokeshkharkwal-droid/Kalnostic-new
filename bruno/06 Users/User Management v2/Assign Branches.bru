@@ -33,8 +33,8 @@ body:json {
 }
 
 vars:pre-request {
-  manageUserId: 8de0c3f1-8e55-4995-8d83-2530a3053e34
-  branchId: fa799f45-fb95-4dff-b5c3-3bf54bb7e275
+  manageUserId: 204f8ce7-17e0-4251-b575-5f1b6255c8f8
+  branchId: c1a13dd2-6562-446c-83ca-4f0220976134
   branchId2: b0b8fb9d-7c16-4cd1-b527-5c6cb12508a1
 }
 
@@ -44,7 +44,11 @@ docs {
   per branch); a user can hold different roles at different branches. An existing
   assignment for a branch is re-roled in place.
   
-  - Each `roleKey` must be valid for that branch's type (PROFILE_BRANCH_MATRIX).
+  - `roleKey` is any role key — a built-in system role or a tenant custom role
+    (`/roles`, see "34 Roles"); it is resolved to an AuthRole FK and an unknown key
+    → 404 ROLE_NOT_FOUND. It must be a **branch-level** role (a tenant-level role
+    can't be pinned to a branch); validity comes from the role's allowed branch
+    types (system: PROFILE_BRANCH_MATRIX; custom: `allowedBranchTypes`).
   - Exactly one branch may be `isDefault: true` (else 422 MULTIPLE_DEFAULT_BRANCH).
   - `moduleId` must be a module **enabled for that branch** (Branches → Set Branch
     Modules first) else 422 MODULE_NOT_ENABLED_FOR_BRANCH; if the role template

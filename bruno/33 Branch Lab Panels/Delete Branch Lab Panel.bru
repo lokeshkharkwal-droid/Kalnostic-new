@@ -1,0 +1,24 @@
+meta {
+  name: Delete Branch Lab Panel
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/branch-lab-panels/{{branchLabPanelId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchLabPanelId: 00000000-0000-0000-0000-000000000000
+}
+
+docs {
+  Soft-delete a branch lab panel (and its member join rows). Removes it from the
+  branch's Lab Panel List; a soft-deleted panelName/panelCode is freed for re-import.
+}

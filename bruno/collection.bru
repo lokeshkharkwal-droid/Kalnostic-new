@@ -51,6 +51,20 @@ docs {
       `manageUserCode`. Then Assign Branches, Get/Update Branch Permissions,
       Deactivate/Activate, and the List/Get read screens.
 
+  ## SiteAdmin global content (platform-level, no tenant)
+
+  These collections only need `siteAdminToken` (step 1) — no business login or
+  tenant required. Each is a self-contained CRUD + negative-case suite:
+
+  - **Support Info (SiteAdmin)** — help/support articles shared across all
+    tenants (`metaType`, user-supplied `code`, globally-unique `title`,
+    `tenantType` BUSINESS/BRANCH, `status`, `requestUrl`, `helpContent` HTML).
+    Run in folder order: **Create** (captures `supportInfoId` /
+    `supportInfoTitle`) → **List** → **Get** → **Update** → **Create - Duplicate
+    Title** (409) → **Create - Missing Required Field** (400) → **Delete** →
+    **Get - Not Found** (404) → **List - Unauthorized** (401). Reads require
+    `master-data:read`, writes `master-data:write` (content_admin+).
+
   Run the requests in order; the post-response scripts populate the `Local`
   environment variables automatically. Select the **Local** environment first.
 }

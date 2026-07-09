@@ -1,0 +1,66 @@
+meta {
+  name: Submit Contact Us
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/contact-us
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "Priya Nair",
+    "mobileNumber": "+919812345678",
+    "companyName": "Sunrise Labs",
+    "email": "priya@sunrise-labs.test",
+    "message": "We'd like a demo of Kalnostics for our 3-branch lab network."
+  }
+}
+
+script:post-response {
+  const responseData = res.getBody();
+  if (responseData && responseData.success && responseData.data) {
+    bru.setVar("contactSubmissionId", responseData.data.id);
+  }
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("returns the created submission with an id", function () {
+    expect(res.getBody().data.id).to.be.a("string");
+  });
+  test("echoes the submitted fields", function () {
+    expect(res.getBody().data.companyName).to.equal("Sunrise Labs");
+    expect(res.getBody().data.email).to.equal("priya@sunrise-labs.test");
+  });
+}
+
+docs {
+  Public, **unauthenticated** contact-us form submission — no `Authorization`
+  header required. Captures `contactSubmissionId`.
+
+  ## Body (all fields required)
+
+  - `name` — 1-255 chars.
+  - `mobileNumber` — 1-30 chars (free-form; not format-validated).
+  - `companyName` — 1-255 chars. Surfaced as `organization` in the listing API.
+  - `email` — valid email, ≤255 chars.
+  - `message` — 1-5000 chars.
+
+  ## Response
+
+  Standard envelope: `{ success: true, data: <submission>, meta: { timestamp } }`.
+  The `data` is the full stored row (incl. `id`, `createdAt`).
+
+  Invalid/oversized fields → `400` from the validation pipe (see "Submit Contact
+  Us - Missing Field").
+}

@@ -1,0 +1,54 @@
+meta {
+  name: Generate PDF
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/pdf-report-templates/{{siteAdminPdfReportTemplateId}}/generate
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "variables": {
+      "hospital_name": "Apex Diagnostics",
+      "hospital_address": "12 Lab Street, Pune",
+      "patient_name": "Jane Doe"
+    },
+    "images": {
+      "logo": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    },
+    "sections": {
+      "results": [
+        { "test_name": "Hemoglobin", "value": "13.5" },
+        { "test_name": "WBC", "value": "6.2" }
+      ]
+    },
+    "signatories": [
+      { "name": "Dr. A. Smith", "designation": "MD, Pathologist", "registrationNumber": "REG-123" }
+    ]
+  }
+}
+
+docs {
+  Render the global SITE_ADMIN template to a PDF and stream it back as
+  `application/pdf` (a raw binary body — NOT the JSON envelope). Auth: SiteAdmin
+  token, requires `master-data:read`. The request body is the render context:
+  - `variables` → `{placeholder}` substitutions.
+  - `images` → `{{image:ID}}` sources (URL or data URI).
+  - `sections` → named row-sets for `{{#each key}}…{{/each}}` blocks.
+  - `signatories` → footer `<signing_authority_tag>` blocks.
+
+  Send an empty body `{}` to preview the raw template with unresolved
+  `{placeholders}`. In Bruno, use "Save Response → Save to file" to inspect the PDF.
+}

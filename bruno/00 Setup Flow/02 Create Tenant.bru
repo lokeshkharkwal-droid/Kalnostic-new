@@ -43,6 +43,13 @@ body:json {
   }
 }
 
+vars:pre-request {
+  flowTenantName: ftn
+  flowSlug: ftn-h
+  flowAdminPhone: 9876766666
+  flowAdminEmail: fdm@gmail.com
+}
+
 script:pre-request {
   // Randomize globally-unique fields so the flow is re-runnable.
   const rand = String(Math.floor(Math.random() * 900000) + 100000);
@@ -70,7 +77,12 @@ docs {
   `business:create`). Returns the tenant plus a one-time temp password.
   Captures `tenantId`, `tenantSlug`, `adminPhone`, `adminTempPassword` — consumed
   by Business Login.
-
+  
+  The initial admin is granted the seeded global **`business_admin`** system role
+  (an AuthRole FK, tenant-level / no branch). This requires the system roles to
+  have been seeded (`pnpm prisma db seed`); if they're missing, tenant creation
+  fails fast with an INTERNAL_ERROR.
+  
   If your environment does not echo the temp password into `adminTempPassword`,
   open the response and copy it into the env var manually before running step 3.
 }

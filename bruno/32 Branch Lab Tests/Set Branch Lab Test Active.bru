@@ -1,0 +1,34 @@
+meta {
+  name: Set Branch Lab Test Active
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{baseUrl}}/branch-lab-tests/{{branchLabTestId}}/active
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchLabTestId: 00000000-0000-0000-0000-000000000000
+}
+
+body:json {
+  {
+    "isActive": false
+  }
+}
+
+docs {
+  Enable/disable a branch lab test in the branch's Lab Test List (`isActive`).
+  Distinct from soft delete.
+}

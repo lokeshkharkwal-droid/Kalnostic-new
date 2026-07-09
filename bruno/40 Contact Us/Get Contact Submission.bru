@@ -1,0 +1,32 @@
+meta {
+  name: Get Contact Submission
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/contact-us/{{contactSubmissionId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the full submission", function () {
+    expect(res.getBody().data.id).to.equal(bru.getVar("contactSubmissionId"));
+    expect(res.getBody().data.message).to.be.a("string");
+  });
+}
+
+docs {
+  Fetch one contact submission by id (full stored row, incl. `companyName` and
+  `message`). Requires `business:read`. Run "Submit Contact Us" first (captures
+  `contactSubmissionId`). 404 `CONTACT_SUBMISSION_NOT_FOUND` if missing or
+  soft-deleted.
+}

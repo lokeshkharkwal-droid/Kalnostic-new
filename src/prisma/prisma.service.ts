@@ -126,4 +126,22 @@ export class PrismaService
       );
     });
   }
+
+  /**
+   * Run `work` with the RLS tenant context set (via `AsyncLocalStorage`) but
+   * WITHOUT opening a wrapping transaction — so each Prisma model call inside
+   * gets its own tenant-GUC transaction through the RLS extension, exactly like
+   * a normal business request set up by `TenantContextInterceptor`.
+   *
+   * Use this for SiteAdmin cross-tenant *reads* that delegate to tenant-scoped
+   * services (e.g. listing a tenant's branches), where the base-client queries
+   * would otherwise run without the GUC. Unlike `withTenant`, it does **not**
+   * set `rlsTxActive`, so the per-op extension stays active.
+   *
+   * @param tenantId the tenant whose rows the delegated queries should see
+   * @param work callback whose model calls should be tenant-scoped
+   */
+  runWithTenant<T>(tenantId: string, work: () => Promise<T>): Promise<T> {
+    return tenantContext.run({ tenantId }, work);
+  }
 }

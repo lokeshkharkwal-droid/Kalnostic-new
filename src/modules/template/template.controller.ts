@@ -14,6 +14,7 @@ import { CreateTemplateDto } from './dto/create-template.dto';
 import { UpdateTemplateDto } from './dto/update-template.dto';
 import { ListTemplateQueryDto } from './dto/list-template-query.dto';
 import { LookupTemplateQueryDto } from './dto/lookup-template-query.dto';
+import { MESSAGING_FEATURES_GROUPED } from './constants/feature-types';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
 import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
@@ -21,19 +22,19 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
- * Template endpoints (business-authenticated; tenant comes from the JWT). One
- * controller serves both FE route trees: the scope is derived from the active
- * profile's `branchId` (`@CurrentProfile()`) — null for tenant-level templates
- * (business-admin), the active branch for branch-level templates (branch-admin).
- * The branch is never taken from the body (CLAUDE.md §4.7). The global
- * `JwtAuthGuard` protects all routes.
+ * Messaging template endpoints (business-authenticated; tenant comes from the
+ * JWT). One controller serves both FE route trees: the scope is derived from the
+ * active profile's `branchId` (`@CurrentProfile()`) — null for tenant-level
+ * templates (business-admin), the active branch for branch-level templates
+ * (branch-admin). The branch is never taken from the body (CLAUDE.md §4.7). The
+ * global `JwtAuthGuard` protects all routes.
  */
 @Controller('templates')
 export class TemplateController {
   constructor(private readonly templateService: TemplateService) {}
 
   /**
-   * Create a template in the caller's scope.
+   * Create a messaging template in the caller's scope.
    */
   @Post()
   @Audit({
@@ -56,8 +57,8 @@ export class TemplateController {
   }
 
   /**
-   * List templates in the caller's scope (paginated; optional type tab, name
-   * search, and status filters).
+   * List templates in the caller's scope (paginated; optional channel/feature/
+   * type/level/branch-type filters, display-title search, and boolean flags).
    */
   @Get()
   findAll(
@@ -70,14 +71,34 @@ export class TemplateController {
       profile.branchId,
       query.page ?? 1,
       query.limit ?? 20,
-      { type: query.type, search: query.search, isActive: query.isActive },
+      {
+        preference: query.preference,
+        feature: query.feature,
+        messageType: query.messageType,
+        level: query.level,
+        applicableBranchType: query.applicableBranchType,
+        search: query.search,
+        isActive: query.isActive,
+        isEnabled: query.isEnabled,
+        isDefault: query.isDefault,
+      },
     );
   }
 
   /**
-   * Partial, dropdown-optimised listing — returns only `{ id, name }` per row,
-   * scoped to the caller's tenant + active branch. Declared before `:id` so the
-   * literal `lookup` segment is not captured as a template id.
+   * The grouped feature catalogue for the form dropdown. Declared before `:id`
+   * so the literal `features` segment is not captured as a template id.
+   */
+  @Get('features')
+  features() {
+    return MESSAGING_FEATURES_GROUPED;
+  }
+
+  /**
+   * Partial, dropdown-optimised listing — returns `{ id, displayTitle,
+   * preference, feature }` per row, scoped to the caller's tenant + active
+   * branch. Declared before `:id` so the literal `lookup` segment is not
+   * captured as a template id.
    */
   @Get('lookup')
   lookup(
@@ -90,7 +111,7 @@ export class TemplateController {
       profile.branchId,
       query.page ?? 1,
       query.limit ?? 20,
-      query.type,
+      { preference: query.preference, feature: query.feature },
     );
   }
 

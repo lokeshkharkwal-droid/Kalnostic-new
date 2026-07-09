@@ -1,0 +1,33 @@
+meta {
+  name: Set Branch Lab Panel Active
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{baseUrl}}/branch-lab-panels/{{branchLabPanelId}}/active
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchLabPanelId: 00000000-0000-0000-0000-000000000000
+}
+
+body:json {
+  {
+    "isActive": false
+  }
+}
+
+docs {
+  Enable/disable a branch lab panel in the branch's Lab Panel List (`isActive`).
+}

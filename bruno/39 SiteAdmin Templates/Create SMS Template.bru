@@ -1,0 +1,43 @@
+meta {
+  name: Create SMS Template
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/templates
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "preference": "SMS",
+    "feature": "request_otp_for_login",
+    "displayTitle": "Global OTP SMS",
+    "messageType": "OTP",
+    "isActive": true,
+    "isDefault": true,
+    "isEnabled": true,
+    "level": "BUSINESS",
+    "smsTemplateId": "1207160000000000000",
+    "smsSenderId": "KALNOS",
+    "smsType": "TRANSACTIONAL",
+    "template": "Your OTP is {code}. Valid for 10 minutes."
+  }
+}
+
+docs {
+  Create a **global SITE_ADMIN** SMS master template. Auth: SiteAdmin token,
+  requires `master-data:write`. SMS settings are the top-level `smsTemplateId` /
+  `smsSenderId` / `smsType` fields. See "Create Email Template" for the full
+  shared field reference.
+}

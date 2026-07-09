@@ -20,35 +20,19 @@ auth:bearer {
 
 body:json {
   {
-    "type": "SMS",
-    "name": "Report Ready Alert",
-    "triggerEvent": "REPORT_READY",
-    "version": "v1.0",
+    "preference": "SMS",
+    "feature": "lab_order_report_published_inform_patient",
+    "displayTitle": "Report Ready Alert",
+    "messageType": "TRANSACTIONAL",
     "isActive": true,
-    "body": "Hi {patient_name}, your {test_name} report is ready: {report_link}",
-    "header": {
-      "enabled": true,
-      "type": "Text",
-      "text": "Apex Diagnostics",
-      "imageFile": "",
-      "alignment": "Left"
-    },
-    "footerBlock": {
-      "enabled": true,
-      "type": "Text",
-      "text": "Reply STOP to opt out",
-      "imageFile": "",
-      "alignment": "Left"
-    },
-    "attachment": {
-      "enabled": false,
-      "type": "Image",
-      "files": [],
-      "position": "After Body",
-      "alignment": "Left",
-      "sizeProfile": "Small",
-      "shortLinkGenerator": true
-    }
+    "isDefault": false,
+    "isEnabled": true,
+    "level": "BUSINESS",
+    "applicableBranchType": "LAB",
+    "smsTemplateId": "1707161234567890123",
+    "smsSenderId": "KALNOS",
+    "smsType": "TRANSACTIONAL",
+    "template": "Hi {patient_name}, your {test_name} report is ready: {report_link}"
   }
 }
 
@@ -62,26 +46,31 @@ script:post-response {
 }
 
 docs {
-  Create a template in the caller's scope. Scope is derived from the JWT
-  (`@CurrentProfile`): a **business_admin** token (`active_branch_id: null`)
+  Create a messaging template in the caller's scope. Scope is derived from the
+  JWT (`@CurrentProfile`): a **business_admin** token (`active_branch_id: null`)
   creates a **tenant-level** template; a **branch-admin** token creates a
-  **branch-level** template for the active branch. `tenantId` / `branchId` /
-  `code` are never sent in the body — they come from context (`code` is the
-  system-generated `{INITIALS}-Tpl-{n}`). Captures `templateId`.
+  **branch-level** template for the active branch. `tenantId` / `branchId` are
+  never sent in the body — they come from context. Captures `templateId`.
 
-  ## Fields (all types)
+  ## Core fields (all channels)
 
-  - `type` (required): `SMS` | `EMAIL` | `WHATSAPP` | `CONSENT_FORM` | `REPORT_TEMPLATE`. Immutable after create.
-  - `name` (required): 2–255 chars. Unique per (scope, type) among active rows.
-  - `triggerEvent` (required): `REPORT_READY` | `APPOINTMENT_CONFIRMED` | `APPOINTMENT_REMINDER` | `SAMPLE_COLLECTED` | `SAMPLE_RECEIVED` | `CRITICAL_ALERT` | `INVOICE_GENERATED` | `PAYMENT_RECEIVED` | `OTP` | `REGISTRATION` | `PASSWORD_RESET` | `PRE_PROCEDURE` | `AT_REGISTRATION` | `ON_DEMAND` | `RECURRING` | `AT_DISCHARGE` | `CUSTOM`.
-  - `version` (optional, default `v1.0`): label matching `vN.N`.
-  - `isActive` (optional, default `true`).
-  - `body` (required for all types except `REPORT_TEMPLATE`): up to 20000 chars.
+  - `preference` (required): channel — `EMAIL` | `SMS` | `IAM` | `IAA` | `PBN` | `WHATSAPP` | `TEMPLATE`.
+  - `feature` (required): one of the ~88 FEATURE_TYPES keys (see "Get Features").
+  - `displayTitle` (optional): human-readable title (≤300 chars).
+  - `messageType` (optional): `OTP` | `TRANSACTIONAL` | `MARKETING`.
+  - `isActive` (optional, default `true`), `isDefault` (optional, default `false`), `isEnabled` (optional, default `false`).
+  - `template` (required): body — rich HTML for `EMAIL`, else plain text with `{placeholders}` (≤20000 chars).
 
-  ## Shared optional blocks (any type)
+  ## Scope & targeting (optional)
 
-  - `header` / `footerBlock` (HeaderFooter): `{ enabled, type: Text|Image, text?, imageFile?, alignment: Left|Center|Right }`.
-  - `attachment` (AttachmentRule): `{ enabled, type: Image|PDF|Both, files: string[], position, alignment: Left|Center|Right, sizeProfile: Small|Medium|Full Width, displayProfile?, shortLinkGenerator? }`. `position`: `Before Body` | `Inline` | `After Body` | `Before Params` | `After Params` | `End of Report` | `Media Header` | `Media Footer`. `displayProfile` (report only): `Full Width` | `Grid 2 per Row` | `Grid 3 per Row` | `Original Size`. `shortLinkGenerator` is the SMS short-link toggle (SMS has no real attachments).
+  - `specificApplication`: `KALNOSTIC` (omit = all applications).
+  - `applicableBranchType`: `LAB` | `CLINIC` | `HOSPITAL` | `BLOOD_BANK` | `RADIOLOGY` (omit = all).
+  - `level`: `ADMIN` | `BUSINESS` (default `BUSINESS`).
+  - `entityId` / `entityType`: free-text targeting values (≤45 chars each).
 
-  File fields (`imageFile`, attachment `files`, consent docs) hold filename/key strings only — there is no upload pipeline yet.
+  ## SMS settings (SMS only)
+
+  - `smsTemplateId`: DLT-registered SMS template id (≤255 chars).
+  - `smsSenderId`: registered sender / header id, e.g. `KALNOS` (≤255 chars).
+  - `smsType`: `TRANSACTIONAL` | `PROMOTIONAL`.
 }

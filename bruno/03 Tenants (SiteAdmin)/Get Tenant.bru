@@ -21,4 +21,15 @@ vars:pre-request {
 
 docs {
   Fetch one tenant by id. Requires `business:read`.
+
+  The response includes the resolved location relations (`country`, `state`,
+  `city`, `area`) — each `{ id, name, … }` or `null` — alongside the tenant's
+  own fields (`shortName`, `addressLine`, `pincode`, `countryId`/`stateId`/
+  `cityId`/`areaId`, `logoUrl`, `photoUrl`), so the UI can render location
+  labels without extra lookups.
+
+  Audit fields: `createdBy` / `updatedBy` (SiteAdmin user ids of the creator /
+  last editor), their resolved display names `createdByName` / `updatedByName`,
+  and `createdAt` / `updatedAt`. `updatedBy` is set on every tenant edit
+  (including suspend/reactivate).
 }

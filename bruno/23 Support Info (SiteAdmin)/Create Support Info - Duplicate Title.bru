@@ -1,0 +1,48 @@
+meta {
+  name: Create Support Info - Duplicate Title
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/support-info
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "metaType": "FAQ",
+    "code": "SUP-999",
+    "title": "{{supportInfoTitle}}",
+    "tenantType": "BRANCH",
+    "helpContent": "<p>Duplicate title attempt.</p>"
+  }
+}
+
+tests {
+  test("409 Conflict", function () {
+    expect(res.getStatus()).to.equal(409);
+  });
+  test("error code is SUPPORT_INFO_TITLE_CONFLICT", function () {
+    expect(res.getBody().error.code).to.equal("SUPPORT_INFO_TITLE_CONFLICT");
+  });
+}
+
+docs {
+  Negative case: `title` is globally unique among active rows. Run "Create
+  Support Info" first (it captures `supportInfoTitle`). This request reuses that
+  exact title (under a different `metaType`/`code`) → 409
+  `SUPPORT_INFO_TITLE_CONFLICT`.
+
+  > `code` is intentionally NOT unique, so only the title collides here. After a
+  > record is soft-deleted its title is freed and can be reused.
+}

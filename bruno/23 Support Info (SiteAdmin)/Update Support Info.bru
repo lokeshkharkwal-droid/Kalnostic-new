@@ -1,0 +1,45 @@
+meta {
+  name: Update Support Info
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/siteadmin/support-info/{{supportInfoId}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "status": "INACTIVE",
+    "helpContent": "<h1>Welcome</h1><p>Updated help content.</p>"
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("status was updated", function () {
+    expect(res.getBody().data.status).to.equal("INACTIVE");
+  });
+  test("helpContent was updated", function () {
+    expect(res.getBody().data.helpContent).to.contain("Updated help content");
+  });
+}
+
+docs {
+  Partial update (all fields optional; explicit optionals, not PartialType). A
+  changed `title` is re-validated for uniqueness among active rows (409
+  `SUPPORT_INFO_TITLE_CONFLICT`). `updatedBy` is set to the acting SiteAdmin.
+  Requires `master-data:write`. Run "Create Support Info" first.
+}

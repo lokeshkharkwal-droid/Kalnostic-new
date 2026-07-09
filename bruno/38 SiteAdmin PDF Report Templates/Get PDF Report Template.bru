@@ -1,0 +1,21 @@
+meta {
+  name: Get PDF Report Template
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/pdf-report-templates/{{siteAdminPdfReportTemplateId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Fetch one global SITE_ADMIN PDF report template by id. Auth: SiteAdmin token,
+  requires `master-data:read`. 404 (`PDF_REPORT_TEMPLATE_NOT_FOUND`) if missing,
+  soft-deleted, or not a global (tenant-scoped) template.
+}

@@ -1,0 +1,38 @@
+meta {
+  name: List Registered Users
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/registered-users?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: john
+  ~status: active
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  SiteAdmin read-only view of **every registered person** across the whole
+  portal — staff and self-registered patients, with **no tenant filtering**.
+  Each row: `{ id, name, username, email, userType (STAFF|PATIENT), status
+  (ACTIVE|INACTIVE) }`. Paginated; pagination info is lifted into `meta`.
+
+  `persons` / `person_credentials` are platform-level (no RLS), so this is a
+  normal cross-portal query. Requires `business:read` (operations_admin and
+  above). Distinct from the business `GET /users/manage` (see "06 Users"),
+  which is tenant-scoped.
+
+  ## Filters (optional — toggle the `~`)
+  - `search` — case-insensitive match on `username` **or** `email`.
+  - `status` — `active` | `inactive` (maps to `Person.isActive`).
+}

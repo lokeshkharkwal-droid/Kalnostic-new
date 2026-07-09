@@ -8,12 +8,12 @@ import { DoctorsController } from './doctors.controller';
 import { DoctorsService } from './doctors.service';
 
 /**
- * Doctors feature module. Tenant-scoped — manages a business's registry of
- * reporting/consultant doctors, their qualifications/experiences, and their
- * per-branch assignments (role / availability / fees). Imports DepartmentModule,
- * CategoryModule, and SubCategoryModule to validate classification links, and
- * BranchModule to validate assigned branches, via the exported services
- * (CLAUDE.md rule #3 — never import another service directly).
+ * Doctors feature module. Tenant-scoped and branch-scoped — manages a business's
+ * registry of reporting/consultant doctors, their qualifications/experiences, and
+ * their charges (consultation/emergency/follow-up fee + allow-discount). Imports
+ * DepartmentModule, CategoryModule, and SubCategoryModule to validate
+ * classification links, and BranchModule to validate the doctor's branch, via the
+ * exported services (CLAUDE.md rule #3 — never import another service directly).
  */
 @Module({
   imports: [

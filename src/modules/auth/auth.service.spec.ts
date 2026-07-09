@@ -6,6 +6,7 @@ import { PasswordService } from '../security/password.service';
 import { UsersService } from '../users/users.service';
 import { TenantService } from '../tenant/tenant.service';
 import { BranchService } from '../branch/branch.service';
+import { AuthRoleService } from '../auth-role/auth-role.service';
 import { AuthService } from './auth.service';
 import { JwtPayload } from './types/jwt-payload.type';
 
@@ -14,7 +15,7 @@ interface RefreshCreateArg {
   data: {
     personId: string;
     branchId: string | null;
-    profileKey: string | null;
+    authRoleId: string | null;
   };
 }
 
@@ -25,12 +26,13 @@ interface RefreshCreateArg {
  */
 describe('AuthService — switchProfile / refresh context', () => {
   // A multi-branch user: default = branch_admin @ branch A; also doctor @ branch
-  // B and a tenant-level business_admin (branchId null).
+  // B and a tenant-level business_admin (branchId null). Roles now come from the
+  // eager-loaded `authRole` relation (key + label).
   const PROFILES = [
     {
       tenantId: 't1',
       branchId: 'branch-A',
-      profileKey: 'branch_admin',
+      authRole: { key: 'branch_admin', name: 'Branch Admin' },
       isDefault: true,
       isActive: true,
       branchStatus: StaffStatus.ACTIVE,
@@ -38,7 +40,7 @@ describe('AuthService — switchProfile / refresh context', () => {
     {
       tenantId: 't1',
       branchId: 'branch-B',
-      profileKey: 'doctor',
+      authRole: { key: 'doctor', name: 'Doctor' },
       isDefault: false,
       isActive: true,
       branchStatus: StaffStatus.ACTIVE,
@@ -46,7 +48,7 @@ describe('AuthService — switchProfile / refresh context', () => {
     {
       tenantId: 't1',
       branchId: null,
-      profileKey: 'business_admin',
+      authRole: { key: 'business_admin', name: 'Business Admin' },
       isDefault: false,
       isActive: true,
       branchStatus: StaffStatus.ACTIVE,
@@ -65,6 +67,13 @@ describe('AuthService — switchProfile / refresh context', () => {
   const jwtMock = { sign: jest.fn() };
   const usersServiceMock = { getPersonProfiles: jest.fn() };
   const branchServiceMock = { findById: jest.fn() };
+  // resolveByKey maps a role key to a stub role row (`role-<key>` id) so the
+  // refresh-token snapshot can store the FK.
+  const authRoleServiceMock = {
+    resolveByKey: jest.fn((_tenantId: string, key: string) =>
+      Promise.resolve({ id: `role-${key}`, key }),
+    ),
+  };
   const configMock = { get: jest.fn((_key: string, def: unknown) => def) };
 
   let service: AuthService;
@@ -111,6 +120,7 @@ describe('AuthService — switchProfile / refresh context', () => {
       usersServiceMock as unknown as UsersService,
       {} as unknown as TenantService,
       branchServiceMock as unknown as BranchService,
+      authRoleServiceMock as unknown as AuthRoleService,
       configMock as unknown as ConfigService,
     );
   });
@@ -133,18 +143,19 @@ describe('AuthService — switchProfile / refresh context', () => {
     const created = lastRefreshCreateData();
     expect(created.personId).toBe('p1');
     expect(created.branchId).toBe('branch-B');
-    expect(created.profileKey).toBe('doctor');
+    expect(created.authRoleId).toBe('role-doctor');
     expect(lastSignedPayload().active_branch_id).toBe('branch-B');
     expect(lastSignedPayload().active_profile_key).toBe('doctor');
   });
 
   it('keeps the switched context on a subsequent refresh (regression guard)', async () => {
-    // Simulate the refresh-token row that switchProfile persisted for branch B.
+    // Simulate the refresh-token row that switchProfile persisted for branch B,
+    // with its role relation eagerly loaded.
     prismaMock.refreshToken.findFirst.mockResolvedValue({
       id: 'r1',
       personId: 'p1',
       branchId: 'branch-B',
-      profileKey: 'doctor',
+      authRole: { key: 'doctor' },
       isUsed: false,
       isRevoked: false,
       expiresAt: new Date(Date.now() + 86_400_000),
@@ -170,7 +181,7 @@ describe('AuthService — switchProfile / refresh context', () => {
     expect(result.refreshToken).toBeTruthy();
     const created = lastRefreshCreateData();
     expect(created.branchId).toBeNull();
-    expect(created.profileKey).toBe('business_admin');
+    expect(created.authRoleId).toBe('role-business_admin');
     expect(lastSignedPayload().active_branch_id).toBeNull();
     expect(lastSignedPayload().active_profile_key).toBe('business_admin');
   });

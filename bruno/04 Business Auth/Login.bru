@@ -23,8 +23,8 @@ body:json {
 }
 
 vars:pre-request {
-  adminPhone: +917812345675
-  adminTempPassword: Kgmyqz39
+  adminPhone: anita.sharma2022@acme.test
+  adminTempPassword: Str0ng@Pass1
   tenantSlug: acme-diagnostics
 }
 
@@ -45,7 +45,7 @@ docs {
   - `password` (required).
   - `tenantSlug` (optional) — tenant subdomain slug; sets the tenant context
     and is **required for staff login**. Omit for platform-level patient login.
-
+  
   Returns access (15m) + refresh (30d) tokens. Captures `businessAccessToken`
   and `businessRefreshToken`.
   

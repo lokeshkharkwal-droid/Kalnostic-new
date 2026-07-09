@@ -1,0 +1,32 @@
+meta {
+  name: Render Advance PDF
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/pdf-report-templates/{{siteAdminPdfReportTemplateId}}/render
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {}
+}
+
+docs {
+  Render the template's block document (`doc`) to a PDF and stream it back as
+  `application/pdf` (a raw binary body — NOT the JSON envelope). Uses SAMPLE
+  data derived from the template `type`. This is the block-designer counterpart
+  of `Generate PDF` (which renders the classic HTML `meta` model). Auth:
+  SiteAdmin token, requires `master-data:read`. In Bruno, use
+  "Save Response → Save to file" to inspect the PDF.
+}

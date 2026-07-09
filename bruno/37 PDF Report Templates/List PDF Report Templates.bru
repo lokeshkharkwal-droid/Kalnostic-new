@@ -1,0 +1,38 @@
+meta {
+  name: List PDF Report Templates
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/pdf-report-templates?page=1&limit=20&type=lab_report&search=lab
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  type: lab_report
+  search: lab
+  ~status: ACTIVE
+  ~branchId: {{branchId}}
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Paginated list of PDF report templates in the caller's tenant (scope from the
+  JWT, never the query). Pagination lands in `meta`; ordered by `createdAt`
+  descending.
+
+  ## Search
+  - `search` — case-insensitive match against `name`.
+
+  ## Filters (toggle the `~` to enable a query param)
+  - `type` — one of the supported template type keys (see "List Template Types").
+  - `status` — `ACTIVE` | `INACTIVE`.
+  - `branchId` — only templates scoped to that branch.
+}

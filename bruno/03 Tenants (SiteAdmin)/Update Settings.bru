@@ -1,0 +1,50 @@
+meta {
+  name: Update Settings
+  type: http
+  seq: 11
+}
+
+put {
+  url: {{baseUrl}}/siteadmin/tenants/{{tenantId}}/settings
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "isExternalDoctorOutReferralAllowed": true,
+    "isExternalDoctorInReferralAllowed": true,
+    "isExternalHospitalOutReferralAllowed": false,
+    "isExternalHospitalInReferralAllowed": false,
+    "isPatientOrderPaymentAllowed": true,
+    "isCmsOrderBillGenerationEnabled": false,
+    "referralPgCommissionType": "EXCLUSIVE",
+    "patientPgCommissionType": "INCLUSIVE",
+    "franchiseBranchPgCommissionType": "EXCLUSIVE",
+    "canPatientWalletGoNegative": false
+  }
+}
+
+docs {
+  Update (upsert) a tenant's Business Settings. Requires `business:create`.
+  All fields optional — a partial payload patches only the supplied keys; the
+  row is created on first write.
+
+  Groups:
+  - Referral (boolean): `isExternalDoctorOutReferralAllowed`,
+    `isExternalDoctorInReferralAllowed`, `isExternalHospitalOutReferralAllowed`,
+    `isExternalHospitalInReferralAllowed`.
+  - Payment (boolean): `isPatientOrderPaymentAllowed`,
+    `isCmsOrderBillGenerationEnabled`.
+  - Commission (`EXCLUSIVE` | `INCLUSIVE`): `referralPgCommissionType`,
+    `patientPgCommissionType`, `franchiseBranchPgCommissionType`.
+  - Wallet (boolean): `canPatientWalletGoNegative`.
+}

@@ -1,0 +1,37 @@
+meta {
+  name: List PDF Report Templates
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/pdf-report-templates?page=1&limit=20&type=lab_report&search=lab
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  type: lab_report
+  search: lab
+  ~status: ACTIVE
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Paginated list of **global SITE_ADMIN** PDF report templates (`tenant_id`
+  NULL — shared across every business). Auth: SiteAdmin token, requires
+  `master-data:read`. Pagination lands in `meta`; ordered by `createdAt`
+  descending.
+
+  ## Search
+  - `search` — case-insensitive match against `name`.
+
+  ## Filters (toggle the `~` to enable a query param)
+  - `type` — one of the supported template type keys (see "List Template Types").
+  - `status` — `ACTIVE` | `INACTIVE`.
+}

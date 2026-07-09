@@ -21,13 +21,18 @@ auth:bearer {
 body:json {
   {
     "name": "For testing master data",
-    "slug": "acme-diagnostics",
     "adminFirstName": "Alice",
+    "adminMiddleName": "M",
     "adminLastName": "Admin",
     "adminPhone": "+919812345675",
     "adminEmail": "alice.admin5@acme.test",
     "email": "contact@acme.test",
     "phone": "+919800000000",
+    "shortName": "AcmeDx",
+    "addressLine": "12 Lab Street",
+    "pincode": "411001",
+    "logoUrl": "https://cdn.acme.test/logo.png",
+    "photoUrl": "https://cdn.acme.test/photo.jpg",
     "mrnPrefix": "AC",
     "address": {
       "line1": "12 Lab Street",
@@ -74,15 +79,26 @@ docs {
   
   Fields:
   - `name` (required) — business name.
-  - `slug` (required) — lowercase alphanumeric + hyphens, not at start/end
-    (subdomain `{slug}.kalnostics.com`).
+  - `slug` (optional) — lowercase alphanumeric + hyphens, not at start/end
+    (subdomain `{slug}.kalnostics.com`). When omitted, a unique slug is
+    auto-generated from `name`.
   - `adminFirstName` (required) — first business-admin's first name.
+  - `adminMiddleName` (optional) — admin's middle name.
   - `adminLastName` (optional) — admin's last name.
   - `adminPhone` (required) — admin's globally-unique login identifier.
   - `adminEmail` (optional) — admin's email (globally unique if set).
   - `email` (optional) — tenant contact email.
   - `phone` (optional) — tenant contact phone.
-  - `address` (optional) — free-form JSON object.
+  - `shortName` (optional) — business abbreviation.
+  - `addressLine` (optional) — street address.
+  - `pincode` (optional) — zip / pin code.
+  - `countryId` / `stateId` / `cityId` / `areaId` (optional) — location hierarchy
+    ids from **Location Data**. Any subset is allowed but must be consistent
+    (an area's city/state/country must match the supplied ids) or the request is
+    rejected with a hierarchy-mismatch error.
+  - `logoUrl` / `photoUrl` (optional) — media URL strings.
+  - `address` (optional) — free-form JSON object (legacy; structured fields above
+    are preferred).
   - `mrnPrefix` (optional) — patient MRN prefix (e.g. "AC" -> "AC-00001").
   - `settings` (optional) — partial `TenantSettings` JSON; any omitted keys
     fall back to platform defaults (timezone `Asia/Kolkata`, currency `INR`,

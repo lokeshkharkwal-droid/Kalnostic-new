@@ -4,19 +4,16 @@ import { DoctorStatus, Prisma, Salutation } from '@prisma/client';
 export type DoctorEntity = Prisma.DoctorGetPayload<object>;
 
 /**
- * Relations eager-loaded by the GET-single endpoint: all active qualifications,
- * experiences, and branch assignments (each with its branch id + name), plus the
- * linked department/category/sub-category (id + name only). Ordered
- * deterministically by creation time.
+ * Relations eager-loaded by the GET-single endpoint: all active qualifications
+ * and experiences, plus the doctor's branch and linked
+ * department/category/sub-category (id + name only). Ordered deterministically by
+ * creation time. The doctor's charges are scalar columns on the doctor row and
+ * come back automatically.
  */
 export const DOCTOR_DETAIL_INCLUDE = {
   qualifications: { where: { deletedAt: null }, orderBy: { createdAt: 'asc' } },
   experiences: { where: { deletedAt: null }, orderBy: { createdAt: 'asc' } },
-  branchAssignments: {
-    where: { deletedAt: null },
-    orderBy: { createdAt: 'asc' },
-    include: { branch: { select: { id: true, name: true } } },
-  },
+  branch: { select: { id: true, name: true } },
   department: { select: { id: true, name: true } },
   category: { select: { id: true, name: true } },
   subCategory: { select: { id: true, name: true } },

@@ -1,0 +1,24 @@
+meta {
+  name: Get Registered User
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/registered-users/{{registeredUserId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Full read-only detail for one registered person: identity (Aadhaar masked),
+  login identifiers, and all staff memberships across businesses with their
+  per-branch roles. A pure patient returns an empty `memberships` array.
+
+  Membership/role data lives in RLS-protected tables, so each business is
+  queried under its own tenant context server-side. Requires `business:read`.
+}

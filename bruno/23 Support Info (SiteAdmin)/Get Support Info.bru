@@ -1,0 +1,31 @@
+meta {
+  name: Get Support Info
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/support-info/{{supportInfoId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the full record incl. helpContent", function () {
+    expect(res.getBody().data.id).to.equal(bru.getVar("supportInfoId"));
+    expect(res.getBody().data.helpContent).to.be.a("string");
+  });
+}
+
+docs {
+  Fetch one support-information record by id (full record, incl. `helpContent`).
+  Requires `master-data:read`. Run "Create Support Info" first (captures
+  `supportInfoId`). 404 `SUPPORT_INFO_NOT_FOUND` if missing/soft-deleted.
+}

@@ -5,7 +5,7 @@ meta {
 }
 
 get {
-  url: {{baseUrl}}/templates/lookup?page=1&limit=50&type=SMS
+  url: {{baseUrl}}/templates/lookup?page=1&limit=50&preference=SMS
   body: none
   auth: bearer
 }
@@ -13,7 +13,8 @@ get {
 params:query {
   page: 1
   limit: 50
-  type: SMS
+  preference: SMS
+  ~feature: lab_order_report_published_inform_patient
 }
 
 auth:bearer {
@@ -25,9 +26,9 @@ vars:pre-request {
 }
 
 docs {
-  Partial, dropdown-optimised listing. Returns only `{ id, name }` per row (not
-  the full template record), ordered by `name` ascending — ideal for select /
-  lookup fields.
+  Partial, dropdown-optimised listing. Returns only
+  `{ id, displayTitle, preference, feature }` per row (not the full template
+  record), ordered by `createdAt` descending — ideal for select / lookup fields.
 
   Scope (`tenantId` + `branchId`) comes from the JWT, never the query
   (CLAUDE.md §4.7): a business_admin token returns tenant-level templates; a
@@ -35,6 +36,7 @@ docs {
 
   ## Query params
 
-  - `type` (optional) — restrict to one type: `SMS` | `EMAIL` | `WHATSAPP` | `CONSENT_FORM` | `REPORT_TEMPLATE`.
+  - `preference` (optional) — restrict to one channel: `EMAIL` | `SMS` | `IAM` | `IAA` | `PBN` | `WHATSAPP` | `TEMPLATE`.
+  - `feature` (optional) — restrict to one FEATURE_TYPES key.
   - `page` / `limit` (optional) — offset pagination; pagination info lands in `meta`.
 }

@@ -1,0 +1,44 @@
+meta {
+  name: Sync Branch Lab Panels
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/branch-lab-panels/sync
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {}
+}
+
+tests {
+  test("201/200", function () {
+    expect([200, 201]).to.include(res.getStatus());
+  });
+  test("reports synced/skipped", function () {
+    const data = res.getBody() && res.getBody().data;
+    expect(data).to.have.property("synced");
+    expect(data).to.have.property("skipped");
+  });
+}
+
+docs {
+  Re-snapshot branch lab panels from their source Master Data panels. Send `{}`
+  to sync **all** copies, or `{ "branchLabPanelIds": ["<id>", ...] }` for a subset.
+
+  **Overwrite semantics:** each copy's parent fields are replaced and its member
+  composition (`BranchLabPanelTest`) is **rebuilt** from the source (materializing
+  any missing member-test copies). Branch-level edits are discarded. Copies whose
+  source is gone are skipped → `{ synced, skipped }`.
+}

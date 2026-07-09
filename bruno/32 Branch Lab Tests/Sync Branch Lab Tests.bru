@@ -1,0 +1,45 @@
+meta {
+  name: Sync Branch Lab Tests
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/branch-lab-tests/sync
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {}
+}
+
+tests {
+  test("201/200", function () {
+    expect([200, 201]).to.include(res.getStatus());
+  });
+  test("reports synced/skipped", function () {
+    const data = res.getBody() && res.getBody().data;
+    expect(data).to.have.property("synced");
+    expect(data).to.have.property("skipped");
+  });
+}
+
+docs {
+  Re-snapshot branch lab tests from their source Master Data tests. Send `{}` to
+  sync **all** copies, or `{ "branchLabTestIds": ["<id>", ...] }` to sync a subset.
+
+  **Overwrite semantics:** each copy's parent fields **and** its clinical
+  `configSnapshot` (samples, result params, reference ranges/values) are replaced
+  with the current Master Data values — any branch-level edits are discarded.
+  Copies whose source is missing/soft-deleted are left untouched and counted in
+  `skipped` → `{ synced, skipped }`.
+}

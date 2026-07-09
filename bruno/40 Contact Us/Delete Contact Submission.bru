@@ -1,0 +1,30 @@
+meta {
+  name: Delete Contact Submission
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{baseUrl}}/siteadmin/contact-us/{{contactSubmissionId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("submission is soft-deleted (deletedAt set)", function () {
+    expect(res.getBody().data.deletedAt).to.not.equal(null);
+  });
+}
+
+docs {
+  Soft-delete a contact submission (sets `deletedAt`; it drops out of the
+  listing). Requires `business:suspend` (operations_admin+). Run "Submit Contact
+  Us" first. 404 `CONTACT_SUBMISSION_NOT_FOUND` if already missing.
+}

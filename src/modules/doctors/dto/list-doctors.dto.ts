@@ -13,7 +13,7 @@ import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
  * pagination DTO with a free-text `search` (matched against first/last name and
  * registration number), a `departmentId` filter, a `status` filter, a
  * `doctorType` filter (CONSULTANT / REPORTING) used by pickers that need only
- * one kind of doctor, and a `branchId` filter (doctors assigned to that branch).
+ * one kind of doctor, and a `branchId` filter (doctors scoped to that branch).
  */
 export class ListDoctorsDto extends PaginationQueryDto {
   /** Free-text match against firstName, lastName, or registrationNo. */
@@ -34,7 +34,7 @@ export class ListDoctorsDto extends PaginationQueryDto {
   @IsOptional()
   doctorType?: DoctorType;
 
-  /** Restrict to doctors with an active assignment to this branch. */
+  /** Restrict to doctors scoped to this branch. */
   @IsUUID()
   @IsOptional()
   branchId?: string;

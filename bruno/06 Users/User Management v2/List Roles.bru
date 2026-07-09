@@ -15,6 +15,11 @@ auth:bearer {
 }
 
 docs {
-  The predefined role catalogue (21 staff roles) as `{ key, label }` for the
-  role dropdown.
+  The **built-in** staff role catalogue (the seeded system roles, minus
+  `patient`) as `{ key, label }` — a lightweight source for a role dropdown.
+
+  This lists system roles only. For the full role set — system roles **plus** the
+  tenant's own custom roles, with ids/status/branch types — use `GET /roles`
+  (see the "34 Roles" collection), which is the entity-backed CRUD introduced with
+  AuthRole. Prefer `/roles` for the FE role picker so custom roles appear too.
 }

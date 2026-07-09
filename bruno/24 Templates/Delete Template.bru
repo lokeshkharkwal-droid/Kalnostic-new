@@ -19,7 +19,7 @@ vars:pre-request {
 }
 
 docs {
-  Soft-delete a template (sets `deletedAt`; the row is preserved and its name/code
-  are freed for reuse among active rows). Scoped to the caller's tenant + scope
-  branch. 404 `TEMPLATE_NOT_FOUND` if missing/already-deleted.
+  Soft-delete a template (sets `deletedAt`; the row is preserved). Scoped to the
+  caller's tenant + scope branch. 404 `TEMPLATE_NOT_FOUND` if
+  missing/already-deleted.
 }

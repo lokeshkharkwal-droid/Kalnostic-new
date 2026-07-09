@@ -1,0 +1,24 @@
+meta {
+  name: Get Configuration
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/tenants/{{tenantId}}/configuration
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Fetch a tenant's Business Configuration. Requires `business:read`.
+
+  Returns a defaults row on first access (upsert): `theme` defaults to `LIGHT`,
+  every other field `null`. Fields: `siteAdminUrl`, `siteTitle`, `logoPath`,
+  `logoLink`, `template`, `theme` (`LIGHT` | `DARK`), `patientOrderUrl`,
+  `maxOrdersPerDayPerBranch`, `maxUsersAllowed`.
+}

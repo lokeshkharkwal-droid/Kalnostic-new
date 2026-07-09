@@ -1,0 +1,20 @@
+meta {
+  name: Get Role
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/roles/{{authRoleId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Fetch one role by id — a custom role of this tenant, or a global system role.
+  404 if it is out of scope / soft-deleted.
+}

@@ -64,6 +64,10 @@ just open the response, copy the value, and paste it into the matching
   deactivate
 - **Tenants** (`/siteadmin/tenants`): create, list, get, update, get-admin,
   reset-admin-password
+- **SiteAdmin roles** (`/siteadmin/roles`): manage the **global** role catalogue
+  (`tenant_id = null`) — list, create, get, update. Built-in (`isSystem`) roles are
+  description/status-only; SiteAdmin-created global roles are fully editable and
+  available to all tenants. `master-data:read`/`write` (content_admin+).
 - **Branches** (`/branches`): create (incl. Collection Center with inline
   `receivingBranchIds`), list, get, update, delete, get/set modules (work-area
   enablement), get/set collection-center sample-receiving mappings
@@ -74,7 +78,12 @@ just open the response, copy the value, and paste it into the matching
   upload profile photo, assign branches, update branch assignment, global
   deactivate / activate, get / update branch permissions, **get my permissions
   (`me/permissions`)**, **get permission catalog (`permission-catalog`)**, list
-  profile permissions, list roles, list modules
+  profile permissions, list roles (built-in catalogue), list modules
+- **Roles** (`/roles`): list (system + tenant custom), create / get / update /
+  delete a tenant **custom** role. Roles are a first-class entity (`AuthRole`):
+  the 24 built-in **system** roles are seeded and have immutable `name`/`key`
+  (only `description`/`isActive` are editable); tenants define their own custom
+  roles here. `roleKey`/`profileKey` in other requests resolve to one of these.
 
 ## Enum reference
 
@@ -84,13 +93,16 @@ just open the response, copy the value, and paste it into the matching
 - `SiteAdminRole`: CONTENT_ADMIN, OPERATIONS_ADMIN, FULL_ADMIN, SUPER_OWNER
 - `UserType` (User Mgmt v2): INTERNAL, EXTERNAL
 - `StaffStatus` (User Mgmt v2): ACTIVE, INACTIVE
-- `ProfileKey` / role keys: original — business_admin, branch_admin, doctor,
+- Role keys (`roleKey` / `profileKey`) — the **key** of an `AuthRole`. The seeded
+  **system** roles: original — business_admin, branch_admin, doctor,
   lab_technician, receptionist, patient; v2 predefined — administrator,
   junior_lab_technician, senior_lab_technician, consultant_doctor,
   reporting_doctor, phlebotomist, marketing_executive, marketing_manager,
   inventory_manager, chemist, chemist_assistant, finance_manager,
   finance_assistant, logistics_executive, opd_assistant, radiology_assistant,
-  nursing_staff, nursing_incharge
+  nursing_staff, nursing_incharge. Tenants may also define **custom** role keys
+  via `/roles` (auto-generated slug of the role name). Any request taking a
+  `roleKey`/`profileKey` accepts either; an unknown key → 404 ROLE_NOT_FOUND.
 - System modules (`moduleKey`): registration, accession, lab_operations,
   inventory, sales, admin, radiology, pharmacy, opd, ipd, finance, phlebotomist
 - Permission keys (`permissionKey`): `module:action`. Every module exposes the

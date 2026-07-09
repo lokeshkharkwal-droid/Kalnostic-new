@@ -110,6 +110,8 @@
   <a href="#sa-list">GET /siteadmin/users</a>
   <a href="#sa-pw">PATCH /siteadmin/users/:id/password</a>
   <a href="#sa-deact">PATCH /siteadmin/users/:id/deactivate</a>
+  <a href="#sa-ru-list">GET /siteadmin/registered-users</a>
+  <a href="#sa-ru-get">GET /siteadmin/registered-users/:id</a>
   <h3>Tenants (SiteAdmin)</h3>
   <a href="#tenant-create">POST /siteadmin/tenants</a>
   <a href="#tenant-list">GET /siteadmin/tenants</a>
@@ -117,6 +119,8 @@
   <a href="#tenant-update">PATCH /siteadmin/tenants/:id</a>
   <a href="#tenant-admin">GET /siteadmin/tenants/:id/admin</a>
   <a href="#tenant-adminpw">POST .../admin/reset-password</a>
+  <a href="#tenant-suspend">PATCH .../:id/suspend</a>
+  <a href="#tenant-reactivate">PATCH .../:id/reactivate</a>
   <h3>Lab Tests <span style="text-transform:none;letter-spacing:0">(under master data)</span></h3>
   <a href="#lt-create">POST .../lab-tests</a>
   <a href="#lt-list">GET .../lab-tests</a>
@@ -136,6 +140,25 @@
   <a href="#lp-get">GET .../lab-panels/:id</a>
   <a href="#lp-update">PATCH .../lab-panels/:id</a>
   <a href="#lp-delete">DELETE .../lab-panels/:id</a>
+  <h3>Branch Lab Lists <span style="text-transform:none;letter-spacing:0">(branch catalogue)</span></h3>
+  <a href="#blt-import">POST /branch-lab-tests/import</a>
+  <a href="#blt-sync">POST /branch-lab-tests/sync</a>
+  <a href="#blt-duplicate">POST /branch-lab-tests/:id/duplicate</a>
+  <a href="#blt-default">PATCH /branch-lab-tests/:id/default</a>
+  <a href="#blt-list">GET /branch-lab-tests</a>
+  <a href="#blt-get">GET /branch-lab-tests/:id</a>
+  <a href="#blt-update">PUT /branch-lab-tests/:id</a>
+  <a href="#blt-active">PATCH /branch-lab-tests/:id/active</a>
+  <a href="#blt-delete">DELETE /branch-lab-tests/:id</a>
+  <a href="#blp-import">POST /branch-lab-panels/import</a>
+  <a href="#blp-sync">POST /branch-lab-panels/sync</a>
+  <a href="#blp-duplicate">POST /branch-lab-panels/:id/duplicate</a>
+  <a href="#blp-default">PATCH /branch-lab-panels/:id/default</a>
+  <a href="#blp-list">GET /branch-lab-panels</a>
+  <a href="#blp-get">GET /branch-lab-panels/:id</a>
+  <a href="#blp-update">PUT /branch-lab-panels/:id</a>
+  <a href="#blp-active">PATCH /branch-lab-panels/:id/active</a>
+  <a href="#blp-delete">DELETE /branch-lab-panels/:id</a>
   <h3>Documents</h3>
   <a href="#doc-create">POST /documents</a>
   <a href="#doc-list">GET /documents</a>
@@ -414,12 +437,17 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>GET /siteadmin/users</td><td>SiteAdmin JWT</td><td><b>required</b> <code>siteadmin:manage</code> · SUPER_OWNER</td></tr>
   <tr><td>PATCH /siteadmin/users/:id/password</td><td>SiteAdmin JWT</td><td><b>required</b> <code>siteadmin:manage</code> · SUPER_OWNER</td></tr>
   <tr><td>PATCH /siteadmin/users/:id/deactivate</td><td>SiteAdmin JWT</td><td><b>required</b> <code>siteadmin:manage</code> · SUPER_OWNER</td></tr>
+  <tr><td>GET /siteadmin/registered-users</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:read</code> · OPERATIONS_ADMIN+</td></tr>
+  <tr><td>GET /siteadmin/registered-users/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:read</code> · OPERATIONS_ADMIN+</td></tr>
+  <tr><td>GET /siteadmin/audits</td><td>SiteAdmin JWT</td><td><b>required</b> <code>audit-logs:read</code> · OPERATIONS_ADMIN+</td></tr>
   <tr><td>POST /siteadmin/tenants</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:create</code> · OPERATIONS_ADMIN+</td></tr>
   <tr><td>GET /siteadmin/tenants</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:read</code> · OPERATIONS_ADMIN+</td></tr>
   <tr><td>GET /siteadmin/tenants/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:read</code> · OPERATIONS_ADMIN+</td></tr>
   <tr><td>PATCH /siteadmin/tenants/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:create</code> · OPERATIONS_ADMIN+</td></tr>
   <tr><td>GET /siteadmin/tenants/:id/admin</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:read</code> · OPERATIONS_ADMIN+</td></tr>
   <tr><td>POST /siteadmin/tenants/:id/admin/reset-password</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:create</code> · OPERATIONS_ADMIN+</td></tr>
+  <tr><td>PATCH /siteadmin/tenants/:id/suspend</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:suspend</code> · OPERATIONS_ADMIN+</td></tr>
+  <tr><td>PATCH /siteadmin/tenants/:id/reactivate</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:reactivate</code> · OPERATIONS_ADMIN+</td></tr>
   <tr><td>POST /siteadmin/lab-tests</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template)</td></tr>
   <tr><td>GET /siteadmin/lab-tests</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global templates)</td></tr>
   <tr><td>GET /siteadmin/lab-tests/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global template)</td></tr>
@@ -453,6 +481,24 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>GET /lab-panels/templates</td><td>Business JWT</td><td>browse Site Admin templates (read-only)</td></tr>
   <tr><td>GET /lab-panels/templates/:id</td><td>Business JWT</td><td>browse Site Admin template (read-only)</td></tr>
   <tr><td>POST /lab-panels/:id/clone</td><td>Business JWT</td><td>clone a Site Admin template into the tenant (clones its tests too; body: masterDataId)</td></tr>
+  <tr><td>POST /branch-lab-tests/import</td><td>Business JWT</td><td>materialize selected master-data tests into the active branch's Lab Test List (tenant+branch from JWT)</td></tr>
+  <tr><td>POST /branch-lab-tests/sync</td><td>Business JWT</td><td>re-snapshot imported originals from master data (duplicates untouched; all or selected ids)</td></tr>
+  <tr><td>POST /branch-lab-tests/:id/duplicate</td><td>Business JWT</td><td>create an independent variant in the same group (non-default duplicate)</td></tr>
+  <tr><td>PATCH /branch-lab-tests/:id/default</td><td>Business JWT</td><td>mark this row the variant group's default (used for order creation)</td></tr>
+  <tr><td>GET /branch-lab-tests</td><td>Business JWT</td><td>list the active branch's Lab Test List (search + status)</td></tr>
+  <tr><td>GET /branch-lab-tests/:id</td><td>Business JWT</td><td>get one branch lab test (with configSnapshot)</td></tr>
+  <tr><td>PUT /branch-lab-tests/:id</td><td>Business JWT</td><td>edit branch-tunable fields (pricing/flags/TAT/notes/active)</td></tr>
+  <tr><td>PATCH /branch-lab-tests/:id/active</td><td>Business JWT</td><td>enable/disable a branch lab test</td></tr>
+  <tr><td>DELETE /branch-lab-tests/:id</td><td>Business JWT</td><td>soft-delete a branch lab test</td></tr>
+  <tr><td>POST /branch-lab-panels/import</td><td>Business JWT</td><td>materialize selected master-data panels (and their member tests) into the active branch's Lab Panel List</td></tr>
+  <tr><td>POST /branch-lab-panels/sync</td><td>Business JWT</td><td>re-snapshot imported originals from master data (rebuild members; duplicates untouched)</td></tr>
+  <tr><td>POST /branch-lab-panels/:id/duplicate</td><td>Business JWT</td><td>create an independent panel variant (copies member tests; non-default)</td></tr>
+  <tr><td>PATCH /branch-lab-panels/:id/default</td><td>Business JWT</td><td>mark this row the variant group's default (used for order creation)</td></tr>
+  <tr><td>GET /branch-lab-panels</td><td>Business JWT</td><td>list the active branch's Lab Panel List (search + status)</td></tr>
+  <tr><td>GET /branch-lab-panels/:id</td><td>Business JWT</td><td>get one branch lab panel (with member tests)</td></tr>
+  <tr><td>PUT /branch-lab-panels/:id</td><td>Business JWT</td><td>edit branch-tunable fields (pricing/applicability/flags/TAT/active)</td></tr>
+  <tr><td>PATCH /branch-lab-panels/:id/active</td><td>Business JWT</td><td>enable/disable a branch lab panel</td></tr>
+  <tr><td>DELETE /branch-lab-panels/:id</td><td>Business JWT</td><td>soft-delete a branch lab panel</td></tr>
   <tr><td>POST /siteadmin/departments</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template, code SA-Dep-{n})</td></tr>
   <tr><td>GET /siteadmin/departments</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global templates)</td></tr>
   <tr><td>GET /siteadmin/departments/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global template)</td></tr>
@@ -477,6 +523,36 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>GET /sub-categories/templates</td><td>Business JWT</td><td>browse Site Admin sub-category templates (read-only)</td></tr>
   <tr><td>GET /sub-categories/templates/:id</td><td>Business JWT</td><td>browse Site Admin sub-category template (read-only)</td></tr>
   <tr><td>POST /sub-categories/:id/clone</td><td>Business JWT</td><td>clone a Site Admin sub-category template into the tenant (cascade-clones the parent category/department templates; no body)</td></tr>
+  <tr><td>POST /pdf-report-templates</td><td>Business JWT</td><td>create a PDF report template (tenant from JWT; type + name + isActive + meta JSON; optional branchId validated against tenant)</td></tr>
+  <tr><td>GET /pdf-report-templates</td><td>Business JWT</td><td>list tenant PDF report templates (paginated; search/type/status/branchId filters)</td></tr>
+  <tr><td>GET /pdf-report-templates/options/types</td><td>Business JWT</td><td>supported template type keys + labels for the FE select</td></tr>
+  <tr><td>GET /pdf-report-templates/:id</td><td>Business JWT</td><td>get one PDF report template</td></tr>
+  <tr><td>PATCH /pdf-report-templates/:id</td><td>Business JWT</td><td>update a PDF report template (a supplied meta replaces the stored blob)</td></tr>
+  <tr><td>DELETE /pdf-report-templates/:id</td><td>Business JWT</td><td>soft-delete a PDF report template</td></tr>
+  <tr><td>POST /pdf-report-templates/:id/generate</td><td>Business JWT</td><td>render the template to a PDF (returns <code>application/pdf</code>); body = render context (variables/images/sections/signatories)</td></tr>
+  <tr><td>POST /templates</td><td>Business JWT</td><td>create a messaging template (tenant/branch from JWT; preference EMAIL/SMS/IAM/IAA/PBN/WHATSAPP/TEMPLATE + feature + template body; optional messageType, scope targeting, SMS/WhatsApp settings)</td></tr>
+  <tr><td>GET /templates</td><td>Business JWT</td><td>list tenant messaging templates (paginated; preference/feature/messageType/level/applicableBranchType + displayTitle search + isActive/isEnabled/isDefault filters)</td></tr>
+  <tr><td>GET /templates/features</td><td>Business JWT</td><td>grouped feature catalogue (~88 keys) for the form dropdown</td></tr>
+  <tr><td>GET /templates/lookup</td><td>Business JWT</td><td>dropdown listing (id, displayTitle, preference, feature; preference/feature filters)</td></tr>
+  <tr><td>GET /templates/:id</td><td>Business JWT</td><td>get one messaging template</td></tr>
+  <tr><td>PATCH /templates/:id</td><td>Business JWT</td><td>update a messaging template (partial; scope fixed)</td></tr>
+  <tr><td>DELETE /templates/:id</td><td>Business JWT</td><td>soft-delete a messaging template</td></tr>
+  <tr><td>POST /templates/:id/duplicate</td><td>Business JWT</td><td>duplicate a messaging template (" (Copy)" displayTitle, isDefault reset)</td></tr>
+  <tr><td>POST /siteadmin/templates</td><td>SiteAdmin · master-data:write</td><td>create a global messaging master template (tenant_id NULL; preference + feature + template body + optional messageType/scope/SMS/WhatsApp settings)</td></tr>
+  <tr><td>GET /siteadmin/templates</td><td>SiteAdmin · master-data:read</td><td>list global messaging templates (paginated; same filter set as GET /templates)</td></tr>
+  <tr><td>GET /siteadmin/templates/:id</td><td>SiteAdmin · master-data:read</td><td>get one global messaging template</td></tr>
+  <tr><td>PATCH /siteadmin/templates/:id</td><td>SiteAdmin · master-data:write</td><td>update a global messaging template (partial)</td></tr>
+  <tr><td>DELETE /siteadmin/templates/:id</td><td>SiteAdmin · master-data:write</td><td>soft-delete a global messaging template</td></tr>
+  <tr><td>POST /siteadmin/templates/:id/duplicate</td><td>SiteAdmin · master-data:write</td><td>duplicate a global messaging template (" (Copy)" displayTitle, isDefault reset)</td></tr>
+  <tr><td>POST /siteadmin/support-info</td><td>SiteAdmin · master-data:write</td><td>create a platform-level support/help record (no tenant; metaType + user-supplied code + globally-unique title + tenantType BUSINESS/BRANCH + status + requestUrl + helpContent HTML)</td></tr>
+  <tr><td>GET /siteadmin/support-info</td><td>SiteAdmin · master-data:read</td><td>list support/help records (paginated; search over metaType/code, status filter; returns metaType/code/title/updatedAt/tenantType/status)</td></tr>
+  <tr><td>GET /siteadmin/support-info/:id</td><td>SiteAdmin · master-data:read</td><td>get one support/help record (full record incl. helpContent)</td></tr>
+  <tr><td>PATCH /siteadmin/support-info/:id</td><td>SiteAdmin · master-data:write</td><td>update a support/help record (partial; changed title re-validated for uniqueness)</td></tr>
+  <tr><td>DELETE /siteadmin/support-info/:id</td><td>SiteAdmin · master-data:write</td><td>soft-delete a support/help record (title becomes reusable)</td></tr>
+  <tr><td>POST /contact-us</td><td>Public (no auth)</td><td>submit a contact-us form from the public marketing site (platform-level, no tenant; name + mobileNumber + companyName + email + message)</td></tr>
+  <tr><td>GET /siteadmin/contact-us</td><td>SiteAdmin · business:read</td><td>list contact submissions (paginated; search over name/mobileNumber/email, from/to createdAt range; returns id/name/organization/mobileNumber/email/message/createdOn)</td></tr>
+  <tr><td>GET /siteadmin/contact-us/:id</td><td>SiteAdmin · business:read</td><td>get one contact submission (full record)</td></tr>
+  <tr><td>DELETE /siteadmin/contact-us/:id</td><td>SiteAdmin · business:suspend</td><td>soft-delete a contact submission</td></tr>
 </table>
 
 <h2 id="data-model">Data model — models &amp; tiers</h2>
@@ -997,6 +1073,21 @@ coherent example: SiteAdmin <i>owner@kalnostics.com</i> created tenant <b>City D
   <p>Deactivate a SiteAdmin (the <code>SUPER_OWNER</code> cannot be deactivated).</p>
 </div>
 
+<div class="ep" id="sa-ru-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/siteadmin/registered-users</span></div>
+  <div class="tags"><span class="tag sa">SiteAdmin JWT</span><span class="tag">perm: business:read</span></div>
+  <p>List <b>every registered person</b> across the whole portal — staff and self-registered patients, with <b>no tenant filtering</b>. Paginated; pagination info is lifted into <code>meta</code>. Optional <code>search</code> (username or email, case-insensitive) and <code>status</code> (<code>active</code>/<code>inactive</code>).</p>
+  <pre>{ "success": true, "data": [ { "id":"uuid","name":"Dilip Kumar","username":"INABC-12345",
+  "email":"dilip@citydx.com","userType":"STAFF","status":"ACTIVE" } ],
+  "meta": { "timestamp":"…","total":42,"page":1,"limit":20,"totalPages":3 } }</pre>
+</div>
+
+<div class="ep" id="sa-ru-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/siteadmin/registered-users/:id</span></div>
+  <div class="tags"><span class="tag sa">SiteAdmin JWT</span><span class="tag">perm: business:read</span></div>
+  <p>Full read-only detail for one person: identity (Aadhaar masked), login identifiers, and all staff memberships across businesses with per-branch roles. A pure patient returns an empty <code>memberships</code> array.</p>
+</div>
+
 <!-- ───────────────────────── TENANTS ───────────────────────── -->
 <h2>Tenant Management <span style="font-size:13px;color:var(--muted)">(SiteAdmin only)</span></h2>
 
@@ -1057,6 +1148,18 @@ coherent example: SiteAdmin <i>owner@kalnostics.com</i> created tenant <b>City D
   <div class="tags"><span class="tag sa">SiteAdmin JWT</span><span class="tag">perm: business:create</span></div>
   <p>Reset the business admin's password; returns a one-time temp password.</p>
   <pre>{ "success": true, "data": { "adminPhone":"+919876543210","tempPassword":"Bcdfgh92" }, "meta": { "timestamp":"…" } }</pre>
+</div>
+
+<div class="ep" id="tenant-suspend">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/siteadmin/tenants/:id/suspend</span></div>
+  <div class="tags"><span class="tag sa">SiteAdmin JWT</span><span class="tag">perm: business:suspend</span></div>
+  <p>Suspend a business — sets <code>subscriptionStatus</code> to <code>SUSPENDED</code> (leaves <code>isActive</code> untouched).</p>
+</div>
+
+<div class="ep" id="tenant-reactivate">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/siteadmin/tenants/:id/reactivate</span></div>
+  <div class="tags"><span class="tag sa">SiteAdmin JWT</span><span class="tag">perm: business:reactivate</span></div>
+  <p>Reactivate a suspended business — sets <code>subscriptionStatus</code> to <code>ACTIVE</code>.</p>
 </div>
 
 <!-- ───────────────────────── LAB TESTS ───────────────────────── -->
@@ -1332,6 +1435,160 @@ among active rows. <code>isActive</code> (Active/Inactive) is separate from soft
   <p>Soft-delete a lab panel (sets <code>deletedAt</code>) and cascade soft-delete its included tests in one
   transaction. Frees <code>panelName</code>/<code>panelCode</code> for reuse among active rows.
   <span class="pill">404 LAB_PANEL_NOT_FOUND</span> if missing/already-deleted/other master data.</p>
+</div>
+
+<h2 id="branch-lab-lists">Branch Lab Test &amp; Panel Lists <span style="font-size:13px;color:var(--muted)">(the branch's operational catalogue)</span></h2>
+<div class="note">A branch's <b>Lab Test List</b> (<code>/branch-lab-tests</code>) and <b>Lab Panel List</b>
+(<code>/branch-lab-panels</code>) are <b>materialized, independent snapshots</b> copied from the branch's
+Master Data via <b>import</b>. They are tenant-scoped + branch-level — the tenant comes from the JWT and the
+branch from <code>active_branch_id</code> (<code>@CurrentProfile()</code>), never the body
+(<span class="pill">400 ACTIVE_BRANCH_REQUIRED</span> if the JWT has no active branch). This list is the
+future source for Lab Test Orders. A test copy stores the source's deep clinical config
+(samples, result params, reference ranges/values) in a JSON <code>configSnapshot</code>; a panel copy holds
+its member tests relationally, each pointing at a <code>BranchLabTest</code> copy. Edits here <b>never</b>
+propagate back to Master Data. <code>sourceLabTestId</code>/<code>sourceLabPanelId</code> record provenance so
+<b>sync</b> can re-snapshot.
+<b>Variants &amp; default:</b> rows sharing a source form a group — the imported original
+(<code>isDuplicate=false</code>) plus user <b>duplicates</b> (<code>isDuplicate=true</code>, edited
+independently). Exactly one row per group is the <code>isDefault</code> (used for order creation).
+<b>Sync only re-snapshots the imported originals</b> — duplicates keep their edits.
+(<code>testName</code>/<code>testCode</code> are intentionally NOT unique per branch — duplicates share them.)</div>
+
+<div class="ep" id="blt-import">
+  <div><span class="m post">POST</span><span class="path">/api/v1/branch-lab-tests/import</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Materialize the selected Master Data lab tests (of the branch's 1:1 master data) into the branch's
+  Lab Test List. <b>Idempotent</b>: a source already present (by testName/testCode) is skipped, as is any id
+  not in the branch's master data → <code>{ copied, skipped }</code>.
+  <span class="pill">404 MASTER_DATA_NOT_MAPPED_TO_BRANCH</span> if the branch has no master data.</p>
+  <pre>{ "labTestIds": ["lt-uuid-1", "lt-uuid-2"] }</pre>
+</div>
+
+<div class="ep" id="blt-sync">
+  <div><span class="m post">POST</span><span class="path">/api/v1/branch-lab-tests/sync</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Re-snapshot branch lab tests from their source Master Data tests. Send <code>{}</code> to sync all, or
+  <code>{ "branchLabTestIds": ["id", …] }</code> for a subset. <b>Overwrite</b>: parent fields and the
+  <code>configSnapshot</code> are replaced with current Master Data values (branch edits discarded). Copies whose
+  source is missing/soft-deleted are skipped → <code>{ synced, skipped }</code>.</p>
+</div>
+
+<div class="ep" id="blt-duplicate">
+  <div><span class="m post">POST</span><span class="path">/api/v1/branch-lab-tests/:id/duplicate</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Create an independent variant of a branch lab test in the same group (same <code>sourceLabTestId</code>):
+  copies all fields + <code>configSnapshot</code>, marks it a non-default duplicate (<code>isDuplicate=true</code>,
+  <code>isDefault=false</code>, name suffixed " (Copy)"). Duplicates are editable independently and untouched by
+  sync. Returns the new row.</p>
+</div>
+
+<div class="ep" id="blt-default">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/branch-lab-tests/:id/default</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Mark this row the default of its variant group (the one used when creating a lab order). Clears
+  <code>isDefault</code> on the group's other active rows in the same transaction. No body.</p>
+</div>
+
+<div class="ep" id="blt-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/branch-lab-tests?page=1&amp;limit=20</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Paginated Lab Test List for the active branch. Optional <code>search</code> (testName/testCode,
+  case-insensitive) and <code>status</code> (<code>ACTIVE</code>|<code>INACTIVE</code>).</p>
+</div>
+
+<div class="ep" id="blt-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/branch-lab-tests/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>One branch lab test with its <code>configSnapshot</code>. <span class="pill">404 BRANCH_LAB_TEST_NOT_FOUND</span>.</p>
+</div>
+
+<div class="ep" id="blt-update">
+  <div><span class="m put">PUT</span><span class="path">/api/v1/branch-lab-tests/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Edit branch-tunable fields (pricing, flags, TAT, notes, display, <code>isActive</code>). Identity,
+  classification, and the clinical snapshot are not editable here (managed via re-import/sync). Price ordering
+  (min ≤ max ≤ msrp) → <span class="pill">422 VALIDATION_ERROR</span> on violation. A later sync overwrites these edits.</p>
+  <pre>{ "priceMsrp":1500, "priceMaximum":1400, "priceMinimum":1000, "isHideInOrderScreen":false }</pre>
+</div>
+
+<div class="ep" id="blt-active">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/branch-lab-tests/:id/active</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Enable/disable a branch lab test. <pre>{ "isActive": false }</pre></p>
+</div>
+
+<div class="ep" id="blt-delete">
+  <div><span class="m delete">DELETE</span><span class="path">/api/v1/branch-lab-tests/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Soft-delete a branch lab test (frees its testName/testCode for re-import).</p>
+</div>
+
+<div class="ep" id="blp-import">
+  <div><span class="m post">POST</span><span class="path">/api/v1/branch-lab-panels/import</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Materialize the selected Master Data lab panels into the branch's Lab Panel List. Each panel's member
+  tests are materialized into the branch's Lab Test List (existing copies of the same source test are reused),
+  so the panel references branch-owned tests. Idempotent (by panelName/panelCode) → <code>{ copied, skipped }</code>.</p>
+  <pre>{ "labPanelIds": ["lp-uuid-1"] }</pre>
+</div>
+
+<div class="ep" id="blp-sync">
+  <div><span class="m post">POST</span><span class="path">/api/v1/branch-lab-panels/sync</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Re-snapshot branch lab panels from Master Data. Overwrites parent fields and <b>rebuilds</b> the member
+  composition from the source (materializing any missing member-test copies). <code>{}</code> = all, or
+  <code>{ "branchLabPanelIds": ["id", …] }</code> for a subset → <code>{ synced, skipped }</code>.
+  Only imported originals are synced; duplicates are untouched.</p>
+</div>
+
+<div class="ep" id="blp-duplicate">
+  <div><span class="m post">POST</span><span class="path">/api/v1/branch-lab-panels/:id/duplicate</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Create an independent panel variant in the same group (same <code>sourceLabPanelId</code>): copies the
+  panel + its member join rows (still pointing at the same branch-test copies), marks it a non-default
+  duplicate (name suffixed " (Copy)"). Returns the new panel with its member tests.</p>
+</div>
+
+<div class="ep" id="blp-default">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/branch-lab-panels/:id/default</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Mark this row the default of its variant group (used for order creation). Clears <code>isDefault</code>
+  on the group's other active rows in the same transaction. No body.</p>
+</div>
+
+<div class="ep" id="blp-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/branch-lab-panels?page=1&amp;limit=20</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Paginated Lab Panel List for the active branch. Optional <code>search</code> (panelName/panelCode) and
+  <code>status</code> (<code>ACTIVE</code>|<code>INACTIVE</code>).</p>
+</div>
+
+<div class="ep" id="blp-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/branch-lab-panels/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>One branch lab panel composed with its member <code>tests[]</code> (BranchLabPanelTest rows referencing
+  BranchLabTest ids). <span class="pill">404 BRANCH_LAB_PANEL_NOT_FOUND</span>.</p>
+</div>
+
+<div class="ep" id="blp-update">
+  <div><span class="m put">PUT</span><span class="path">/api/v1/branch-lab-panels/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Edit branch-tunable fields (pricing, applicability, flags, TAT, instructions, <code>isActive</code>).
+  Identity and member composition are not editable here (managed via re-import/sync). Price ordering →
+  <span class="pill">422 VALIDATION_ERROR</span>. A later sync overwrites these edits.</p>
+  <pre>{ "priceMsrp":3000, "priceMaximum":2800, "priceMinimum":2000, "isHomeCollection":true }</pre>
+</div>
+
+<div class="ep" id="blp-active">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/branch-lab-panels/:id/active</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Enable/disable a branch lab panel. <pre>{ "isActive": false }</pre></p>
+</div>
+
+<div class="ep" id="blp-delete">
+  <div><span class="m delete">DELETE</span><span class="path">/api/v1/branch-lab-panels/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Soft-delete a branch lab panel and its member join rows (frees its panelName/panelCode for re-import).</p>
 </div>
 
 <h2 id="documents">Documents</h2>

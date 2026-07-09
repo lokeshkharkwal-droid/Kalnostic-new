@@ -1,0 +1,34 @@
+meta {
+  name: Update Template
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/siteadmin/templates/{{siteAdminTemplateId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "displayTitle": "Global Report Dispatch Email v2",
+    "isActive": false,
+    "template": "<p>Updated: your {test_name} report is ready at {report_link}.</p>"
+  }
+}
+
+docs {
+  Update a **global SITE_ADMIN** master messaging template. Auth: SiteAdmin
+  token, requires `master-data:write`. Every field is optional; only the fields
+  present in the body are changed. The accepted field set matches the Create
+  request.
+}

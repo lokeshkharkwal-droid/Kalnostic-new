@@ -20,6 +20,8 @@ import { SubCategoryModule } from './modules/sub-category/sub-category.module';
 import { MasterDataModule } from './modules/master-data/master-data.module';
 import { LabTestModule } from './modules/lab-test/lab-test.module';
 import { LabPanelModule } from './modules/lab-panel/lab-panel.module';
+import { BranchLabTestModule } from './modules/branch-lab-test/branch-lab-test.module';
+import { BranchLabPanelModule } from './modules/branch-lab-panel/branch-lab-panel.module';
 import { TestGroupModule } from './modules/test-group/test-group.module';
 import { LocationModule } from './modules/location/location.module';
 import { OutsourceCenterModule } from './modules/outsource-center/outsource-center.module';
@@ -33,12 +35,16 @@ import { MachineModule } from './modules/machine/machine.module';
 import { LabTestSettingsModule } from './modules/lab-test-settings/lab-test-settings.module';
 import { DocumentModule } from './modules/document/document.module';
 import { TemplateModule } from './modules/template/template.module';
+import { PdfReportTemplateModule } from './modules/pdf-report-template/pdf-report-template.module';
 import { ScheduleModule } from './modules/schedule/schedule.module';
 import { TenantModule } from './modules/tenant/tenant.module';
 import { UsersModule } from './modules/users/users.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { AuthRoleModule } from './modules/auth-role/auth-role.module';
 import { SiteAdminModule } from './modules/siteadmin/siteadmin.module';
 import { PaymentRulesModule } from './modules/payment-rules/payment-rules.module';
+import { SupportInfoModule } from './modules/support-info/support-info.module';
+import { ContactUsModule } from './modules/contact-us/contact-us.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 
 /**
@@ -79,6 +85,8 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     MasterDataModule,
     LabTestModule,
     LabPanelModule,
+    BranchLabTestModule,
+    BranchLabPanelModule,
     TestGroupModule,
     LocationModule,
     OutsourceCenterModule,
@@ -92,12 +100,16 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     LabTestSettingsModule,
     DocumentModule,
     TemplateModule,
+    PdfReportTemplateModule,
     ScheduleModule,
     TenantModule,
     UsersModule,
     AuthModule,
+    AuthRoleModule,
     SiteAdminModule,
     PaymentRulesModule,
+    SupportInfoModule,
+    ContactUsModule,
   ],
   providers: [
     // Global business authentication. SiteAdmin routes use @Public() + their

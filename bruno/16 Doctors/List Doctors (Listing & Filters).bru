@@ -45,7 +45,7 @@ docs {
   - `status` — `ACTIVE` | `INACTIVE`.
   - `doctorType` — `CONSULTANT` | `REPORTING` (e.g. department person-mapping
     pickers that need only consultant or only reporting doctors).
-  - `branchId` — restrict to doctors with an active assignment to this branch.
+  - `branchId` — restrict to doctors scoped to this branch (UUID).
 
   ## Row shape (trimmed listing projection)
 
@@ -53,8 +53,7 @@ docs {
   `salutation`, `registrationNo`, `department` (`{ id, name }` or `null`),
   `specialization` (the linked category's name, or `null`), `superSpecialization`
   (the free-text `subCategory`, or `null`), `contact` (the doctor's phone),
-  `email`, and `status`. Fees are now **per branch assignment**, so they are not
-  part of the listing — fetch the full record (all fields, qualifications,
-  experiences, and `branchAssignments` with their per-branch fees) via
-  "Get Doctor".
+  `email`, `status`, and `isReportSignatory`. Fees are not part of the listing —
+  fetch the full record (all fields incl. the doctor's charges, plus
+  qualifications and experiences) via "Get Doctor".
 }

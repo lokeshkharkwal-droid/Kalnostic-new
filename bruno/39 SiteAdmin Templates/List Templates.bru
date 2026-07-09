@@ -1,0 +1,47 @@
+meta {
+  name: List Templates
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/templates?page=1&limit=20&preference=EMAIL&search=report
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  preference: EMAIL
+  search: report
+  ~feature: lab_order_report_published_inform_patient
+  ~messageType: TRANSACTIONAL
+  ~level: BUSINESS
+  ~applicableBranchType: LAB
+  ~isActive: true
+  ~isEnabled: true
+  ~isDefault: true
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Paginated list of **global SITE_ADMIN** master messaging templates (`tenant_id`
+  NULL — shared across every business). Auth: SiteAdmin token, requires
+  `master-data:read`. Pagination lands in `meta`; ordered by `createdAt`
+  descending.
+
+  ## Search
+  - `search` — case-insensitive match against `displayTitle`.
+
+  ## Filters (toggle the `~` to enable a query param)
+  - `preference` — `EMAIL` | `SMS` | `IAM` | `IAA` | `PBN` | `WHATSAPP` | `TEMPLATE`.
+  - `feature` — one of the FEATURE_TYPES keys.
+  - `messageType` — `OTP` | `TRANSACTIONAL` | `MARKETING`.
+  - `level` — `ADMIN` | `BUSINESS`.
+  - `applicableBranchType` — `LAB` | `CLINIC` | `HOSPITAL` | `BLOOD_BANK` | `RADIOLOGY`.
+  - `isActive` / `isEnabled` / `isDefault` — `true` | `false`.
+}

@@ -1,0 +1,70 @@
+meta {
+  name: List Contact Submissions
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/contact-us?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: priya
+  ~from: 2026-01-01
+  ~to: 2026-12-31
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("pagination info lands in meta", function () {
+    const meta = res.getBody().meta;
+    expect(meta.total).to.be.a("number");
+    expect(meta.page).to.equal(1);
+    expect(meta.limit).to.equal(20);
+    expect(meta.totalPages).to.be.a("number");
+  });
+  test("each item returns only the listing columns", function () {
+    const rows = res.getBody().data;
+    if (rows.length > 0) {
+      expect(rows[0]).to.have.all.keys(
+        "id", "name", "organization", "mobileNumber", "email", "message", "createdOn"
+      );
+    }
+  });
+}
+
+docs {
+  SiteAdmin contact-us inbox — paginated list of submissions, newest first by
+  `createdOn`. Requires `business:read` (operations_admin+).
+
+  ## Filters (all optional — toggle the `~` to enable a query param)
+
+  - `search` — case-insensitive `contains` match on `name` **OR** `mobileNumber`
+    **OR** `email`. Whitespace-only values are ignored.
+  - `from` — inclusive lower bound on `createdOn` (ISO-8601 date or datetime).
+  - `to` — inclusive upper bound on `createdOn` (ISO-8601 date or datetime).
+
+  Filters combine (AND). `from`/`to` may be used together or independently.
+
+  ## Pagination
+
+  `page` (default 1) / `limit` (default 20, max 100). Pagination info lands in
+  `meta` (`total` / `page` / `limit` / `totalPages`).
+
+  ## Projection (frontend contract)
+
+  Each item is exactly:
+  `{ id, name, organization, mobileNumber, email, message, createdOn }`
+  where `organization` = the submitter's company name and `createdOn` = the
+  submission timestamp.
+}

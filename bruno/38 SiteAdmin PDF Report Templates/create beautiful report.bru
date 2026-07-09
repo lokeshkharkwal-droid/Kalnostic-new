@@ -1,0 +1,50 @@
+meta {
+  name: create beautiful report
+  type: http
+  seq: 8
+}
+
+post {
+  url: http://localhost:3000/api/v1/siteadmin/pdf-report-templates
+  body: json
+  auth: inherit
+}
+
+headers {
+  authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0eXBlIjoic2l0ZWFkbWluIiwic2l0ZWFkbWluX2lkIjoiMjM1ZmU0NjMtZTdiYS00Y2U4LTk4YmMtMzMwMzRiYWFmMmIyIiwiZW1haWwiOiJhZG1pbkBrYWxub3N0aWNzLmNvbSIsInJvbGUiOiJTVVBFUl9PV05FUiIsImlhdCI6MTc4MzA3NDUyMCwiZXhwIjoxNzgzMTAzMzIwfQ.r8zi_W3FqrRSpri_DU-S7tqE3FavydflnLY3x7PFF6c
+  content-type: application/json
+}
+
+body:json {
+  {
+    "type": "lab_report",
+    "name": "Perfect Clinical Lab Report",
+    "isActive": true,
+    "meta": {
+      "orientation": "P",
+      "page_size": "A4",
+      "default_font_size": "10",
+      "default_font": "helvetica",
+      "margin_left": "15",
+      "margin_right": "10",
+      "margin_top": "10",
+      "margin_bottom": "10",
+      "margin_header": "5",
+      "margin_footer": "5",
+      "watermark_text": "",
+      "template_version": "v2.0",
+      "custom_css": "@page { size: A4; margin: 0; } body { font-family: 'Helvetica', sans-serif; color: #1e293b; line-height: 1.5; } .report-header { background: linear-gradient(135deg, #0ea5e9 0%, #3b82f6 100%); color: white; padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; border-radius: 8px 8px 0 0; margin-bottom: 0; } .report-header .logo { max-height: 50px; } .report-header .hospital-info { text-align: right; } .report-header h1 { font-size: 18px; margin: 0; } .report-header .address { font-size: 10px; opacity: 0.9; } .patient-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 20px; background: #f8fafc; padding: 12px 16px; border-left: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; } .patient-grid .field { margin-bottom: 4px; } .patient-grid label { font-size: 8px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; display: block; } .patient-grid span { font-size: 11px; font-weight: 600; } .section-title { background: #dbeafe; color: #1e40af; font-size: 12px; font-weight: bold; padding: 6px 16px; margin: 0; border-left: 4px solid #0ea5e9; text-transform: uppercase; } .results-table { width: 100%; border-collapse: collapse; margin: 0; font-size: 10px; } .results-table th { background: #e0f2fe; color: #0c4a6e; font-weight: 700; padding: 8px 6px; text-align: left; border-bottom: 2px solid #0ea5e9; } .results-table td { padding: 6px 6px; border-bottom: 1px solid #e2e8f0; } .results-table tr:nth-child(even) td { background: #f8fafc; } .flag-high { color: #dc2626; font-weight: bold; } .flag-low { color: #2563eb; font-weight: bold; } .flag-normal { color: #16a34a; } .notes-box { background: #fffbeb; border: 1px solid #fcd34d; border-radius: 6px; padding: 10px 14px; margin: 12px 16px; font-size: 9px; color: #92400e; } .footer { border-top: 2px solid #0ea5e9; padding: 8px 16px; display: flex; justify-content: space-between; font-size: 8px; color: #475569; } .signature { text-align: right; } .signature img { max-height: 40px; } .page-number { font-style: italic; }",
+      "header_name": "Modern Clinical Header",
+      "header_html": "<div class='report-header'>{{image:logo class='logo'}}<div class='hospital-info'><h1>{hospital_name}</h1><div class='address'>{hospital_address}</div><div style='font-size:9px; margin-top:4px'>CLIA # {clia_number} &bull; CAP # {cap_number}</div></div></div>",
+      "body_name": "Comprehensive Patient Report Body",
+      "body_html": "<div class='patient-grid'><div class='field'><label>Patient Name</label><span>{patient_name}</span></div><div class='field'><label>Patient ID</label><span>{patient_id}</span></div><div class='field'><label>Age / Gender</label><span>{patient_age} Y / {patient_gender}</span></div><div class='field'><label>Referring Physician</label><span>{referring_doctor}</span></div><div class='field'><label>Sample Collected</label><span>{collection_date} {collection_time}</span></div><div class='field'><label>Report Date</label><span>{report_date} {report_time}</span></div><div class='field'><label>Specimen</label><span>{specimen_type} ({specimen_condition})</span></div><div class='field'><label>Accession No</label><span>{accession_number}</span></div></div><div class='section-title'>Laboratory Results</div><table class='results-table'><thead><tr><th>Test Name</th><th>Result</th><th>Units</th><th>Reference Range</th><th>Flag</th></tr></thead><tbody>{{#each results}}<tr><td><strong>{{this.test_name}}</strong></td><td>{{this.result}}</td><td>{{this.units}}</td><td>{{this.reference_range}}</td><td>{{#if (eq this.flag 'H')}}<span class='flag-high'>▲ High</span>{{else if (eq this.flag 'L')}}<span class='flag-low'>▼ Low</span>{{else}}<span class='flag-normal'>Normal</span>{{/if}}</td></tr>{{/each}}</tbody></table>{{#if notes}}<div class='notes-box'><strong>Clinical Notes / Interpretation:</strong><br/>{{notes}}</div>{{/if}}<div style='padding:0 16px; font-size:9px; color:#64748b; margin-top:8px'><strong>Methodology:</strong> {methodology} &bull; This test was performed in an ISO 15189 accredited laboratory.</div>",
+      "associate_body_image": "",
+      "footer_name": "Secure Electronic Footer",
+      "footer_html": "<div class='footer'><div>Electronically verified by {lab_director} &bull; Report Status: <strong>FINAL</strong></div><div class='signature'>{{image:signature_image}} <div style='margin-top:2px'>Authorised Signatory</div></div><div class='page-number'>Page {page_number} of {total_pages}</div></div>"
+    }
+  }
+}
+
+settings {
+  encodeUrl: false
+}

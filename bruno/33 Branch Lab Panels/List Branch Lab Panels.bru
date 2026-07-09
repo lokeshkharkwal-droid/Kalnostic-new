@@ -1,0 +1,28 @@
+meta {
+  name: List Branch Lab Panels
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/branch-lab-panels?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: Health
+  ~status: ACTIVE
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  List the active branch's Lab Panel List (paginated). Optional `search`
+  (case-insensitive on panelName/panelCode) and `status` (ACTIVE | INACTIVE).
+  Scoped to the JWT tenant + active branch; soft-deleted rows are excluded.
+}

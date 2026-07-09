@@ -1,0 +1,40 @@
+meta {
+  name: Update Branch Lab Panel
+  type: http
+  seq: 5
+}
+
+put {
+  url: {{baseUrl}}/branch-lab-panels/{{branchLabPanelId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchLabPanelId: 00000000-0000-0000-0000-000000000000
+}
+
+body:json {
+  {
+    "priceMsrp": 3000,
+    "priceMaximum": 2800,
+    "priceMinimum": 2000,
+    "isHomeCollection": true,
+    "panelInstructions": "12 hours fasting recommended"
+  }
+}
+
+docs {
+  Edit a branch lab panel's branch-tunable fields (pricing, applicability, flags,
+  TAT, instructions, active). Identity and member-test composition are not
+  editable here (managed via re-import/sync). Price ordering (min ≤ max ≤ msrp)
+  is validated → 422 `VALIDATION_ERROR`. A later **sync** overwrites these edits.
+}

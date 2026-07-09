@@ -48,8 +48,11 @@ docs {
   **immutable** — they are not accepted (the global validation pipe rejects unknown
   properties), so do not send them.
   
-  Role model (v2.0): `roleKey` here is only the membership's primary/default role —
-  it is **NOT** propagated to branch assignments. Per-branch roles are managed via
-  Assign Branches / Update Branch Assignment. To change a user's role at a specific
-  branch, use those endpoints.
+  Role model (v2.0 + AuthRole): `roleKey` here is only the membership's
+  primary/default role — it is **NOT** propagated to branch assignments. It may be
+  any role key (built-in system role or a tenant custom role from `/roles`); it is
+  resolved to an AuthRole FK, and an unknown key → 404 ROLE_NOT_FOUND. Per-branch
+  roles are managed via Assign Branches / Update Branch Assignment. To change a
+  user's role at a specific branch, use those endpoints. The response `membership`
+  carries both `authRoleId` and the derived `roleKey`.
 }

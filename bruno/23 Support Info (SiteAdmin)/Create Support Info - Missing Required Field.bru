@@ -1,0 +1,44 @@
+meta {
+  name: Create Support Info - Missing Required Field
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/support-info
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "code": "SUP-400",
+    "title": "No Meta Type Or Help Content",
+    "tenantType": "BUSINESS"
+  }
+}
+
+tests {
+  test("400 Bad Request", function () {
+    expect(res.getStatus()).to.equal(400);
+  });
+}
+
+docs {
+  Negative case: `metaType` and `helpContent` are required, and `tenantType` must
+  be a valid enum. This body omits `metaType` and `helpContent`, so the global
+  validation pipe (class-validator) rejects it with 400 before the service runs.
+
+  Other invalid values that should also return 400:
+  - `tenantType` not in `BUSINESS` | `BRANCH`
+  - `status` not in `ACTIVE` | `INACTIVE`
+  - an unknown property (the pipe uses `forbidNonWhitelisted`)
+}

@@ -112,6 +112,20 @@ enum ScheduleStatus {
   DRAFT
 }
 
+/// Audience a support-information record targets: business-level or branch-level
+/// screens. A descriptor tag on SupportInfo — not a scoping column.
+enum SupportTenantType {
+  BUSINESS
+  BRANCH
+}
+
+/// Active/inactive lifecycle for a support-information record (distinct from soft
+/// delete; NULL deletedAt = not deleted).
+enum SupportStatus {
+  ACTIVE
+  INACTIVE
+}
+
 /// The position a person holds within a department.
 enum DepartmentPosition {
   HOD
@@ -194,6 +208,7 @@ enum AuditModule {
   MACHINE
   DOCUMENT
   TEMPLATE
+  PDF_REPORT_TEMPLATE
   AUTH
   SITEADMIN // reserved; not written to in this phase (business audit only)
   LAB_TEST_SETTINGS
@@ -241,46 +256,67 @@ enum AuditAction {
   OTHER
 }
 
-// ── Template enums ────────────────────────────────────────────────────────────
+// ── Messaging template enums ──────────────────────────────────────────────────
 
-/// Kind of communication/document template (the FE tab dimension). Filtered in
-/// list queries, so it earns enum status + an index on Template.
-enum TemplateType {
-  SMS
+/// Delivery channel for a messaging template (the `preference` field). Filtered
+/// in list queries, so it earns enum status + an index on Template.
+enum MessagingChannel {
   EMAIL
+  SMS
+  IAM // Internal App Messaging
+  IAA // Internal App Alert
+  PBN // Push-Based Notification
   WHATSAPP
-  CONSENT_FORM
-  REPORT_TEMPLATE
+  TEMPLATE
 }
 
-/// WhatsApp Business template category. Lives inside the Template.config JSON
-/// (typed via the DTO), kept as an enum because it is a small, closed set.
+/// Purpose classification for a messaging template.
+enum MessageType {
+  OTP
+  TRANSACTIONAL
+  MARKETING
+}
+
+/// DLT SMS route type.
+enum SmsType {
+  TRANSACTIONAL
+  PROMOTIONAL
+}
+
+/// WhatsApp media message type (used when preference = WHATSAPP).
+enum WhatsappMessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  DOCUMENT
+}
+
+/// WhatsApp Business template category (used when preference = WHATSAPP), kept
+/// as an enum because it is a small, closed set.
 enum WhatsappTemplateCategory {
   MARKETING
   UTILITY
   AUTHENTICATION
 }
 
-/// Event that triggers a template. Combines the FE TRIGGER_EVENTS (messaging)
-/// and CONSENT_EVENTS (consent forms) lists into one strict set.
-enum TriggerEvent {
-  REPORT_READY
-  APPOINTMENT_CONFIRMED
-  APPOINTMENT_REMINDER
-  SAMPLE_COLLECTED
-  SAMPLE_RECEIVED
-  CRITICAL_ALERT
-  INVOICE_GENERATED
-  PAYMENT_RECEIVED
-  OTP
-  REGISTRATION
-  PASSWORD_RESET
-  PRE_PROCEDURE
-  AT_REGISTRATION
-  ON_DEMAND
-  RECURRING
-  AT_DISCHARGE
-  CUSTOM
+/// Branch type a template applies to. NULL = applies to all branch types.
+enum ApplicableBranchType {
+  LAB
+  CLINIC
+  HOSPITAL
+  BLOOD_BANK
+  RADIOLOGY
+}
+
+/// Delivery scope level — admin-facing vs business/end-user-facing.
+enum MessagingLevel {
+  ADMIN
+  BUSINESS
+}
+
+/// Application a template is restricted to. NULL = all applications.
+enum ApplicationScope {
+  KALNOSTIC
 }
 
 // ── Lab-test enums (UPPERCASE per project convention; values map to the raw
@@ -431,18 +467,6 @@ enum DoctorStatus {
   INACTIVE
 }
 
-/// A doctor's role at a specific branch.
-enum DoctorBranchRole {
-  RESIDENT
-  VISITING
-}
-
-/// A doctor's availability commitment at a specific branch.
-enum DoctorAvailability {
-  FULL_TIME
-  PART_TIME
-}
-
 enum ReferralDoctorStatus {
   ACTIVE
   INACTIVE
@@ -523,6 +547,21 @@ enum ReferralBonusType {
   FIXED_AMOUNT
 }
 
+/// UI theme for a business's Site Admin experience (TenantConfiguration.theme).
+enum Theme {
+  LIGHT
+  DARK
+}
+
+/// Whether a payment-gateway commission is added on top of the amount
+/// (EXCLUSIVE — customer pays more) or absorbed within it (INCLUSIVE — the
+/// business receives less). Mirrors kaltros-master's `exclusive | inclusive`.
+/// Distinct from `CommissionType` above, which sizes referral commissions.
+enum PgCommissionType {
+  EXCLUSIVE
+  INCLUSIVE
+}
+
 // ── Platform-level models (NO tenant_id) ────────────────────────────────────────
 
 /// One row per registered business. "Business info" = the fields here.
@@ -534,9 +573,26 @@ model Tenant {
   slug         String  @unique
   customDomain String? @unique @map("custom_domain")
 
-  email   String? // primary contact email (billing/notifications)
-  phone   String?
-  address Json? // registered business address
+  email     String? // primary contact email (billing/notifications)
+  phone     String?
+  shortName String? @map("short_name") // business abbreviation
+
+  // ── Registered address ──
+  address     Json?   // registered business address (free-form; legacy/back-compat)
+  addressLine String? @map("address_line") // street address
+  pincode     String? // zip / pin code
+  countryId   String? @map("country_id")
+  stateId     String? @map("state_id")
+  cityId      String? @map("city_id")
+  areaId      String? @map("area_id")
+  country     Country? @relation(fields: [countryId], references: [id])
+  state       State?   @relation(fields: [stateId], references: [id])
+  city        City?    @relation(fields: [cityId], references: [id])
+  area        Area?    @relation(fields: [areaId], references: [id])
+
+  // ── Media (URL strings; no upload pipeline yet) ──
+  logoUrl  String? @map("logo_url")
+  photoUrl String? @map("photo_url")
 
   // ── Subscription ──
   subscriptionStatus SubscriptionStatus @default(TRIALING) @map("subscription_status")
@@ -548,6 +604,10 @@ model Tenant {
   // ── Locale & branding (timezone/currency/date_format/language/logo/colors) ──
   settings Json?
 
+  // ── SiteAdmin-managed extensions (1:1) ──
+  configuration TenantConfiguration? // site URLs / branding / limits / theme
+  setting       TenantSetting? // referral / payment / commission / wallet rules
+
   isActive               Boolean @default(true) @map("is_active")
   mrnCounter             Int     @default(0) @map("mrn_counter") // per-tenant sequential patient MRN
   mrnPrefix              String? @map("mrn_prefix")
@@ -558,15 +618,78 @@ model Tenant {
   subCategoryCounter     Int     @default(0) @map("sub_category_counter") // per-tenant sequential sub-category code
   outsourceCenterCounter Int     @default(0) @map("outsource_center_counter") // per-tenant sequential outsource-center code
   referralPanelCounter   Int     @default(0) @map("referral_panel_counter") // per-tenant sequential referral-panel code
-  templateCounter        Int     @default(0) @map("template_counter") // per-tenant sequential template code
-  createdBy              String? @map("created_by") // SiteAdmin user id
+  createdBy              String? @map("created_by") // SiteAdmin user id (creator)
+  updatedBy              String? @map("updated_by") // SiteAdmin user id (last editor)
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
+  @@index([countryId])
+  @@index([stateId])
+  @@index([cityId])
+  @@index([areaId])
   @@index([deletedAt])
   @@map("tenants")
+}
+
+/// Business Configuration — a 1:1 platform-level extension of a Tenant holding
+/// SiteAdmin-managed site/branding/limit settings. No tenant_id RLS policy: like
+/// Tenant itself it sits above per-request tenant context and is managed only via
+/// SiteAdmin routes. Created on first read/write via upsert (theme defaults LIGHT).
+model TenantConfiguration {
+  id       String @id @default(uuid())
+  tenantId String @unique @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  siteAdminUrl    String? @map("site_admin_url")
+  siteTitle       String? @map("site_title")
+  logoPath        String? @map("logo_path")
+  logoLink        String? @map("logo_link")
+  template        String?
+  theme           Theme   @default(LIGHT)
+  patientOrderUrl String? @map("patient_order_url")
+
+  maxOrdersPerDayPerBranch Int? @map("max_orders_per_day_per_branch")
+  maxUsersAllowed          Int? @map("max_users_allowed")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("tenant_configurations")
+}
+
+/// Business Settings — a 1:1 platform-level extension of a Tenant holding
+/// SiteAdmin-managed referral / payment / commission / wallet rules. Same tier
+/// rationale as TenantConfiguration (no RLS; SiteAdmin-only). Booleans carry the
+/// mandated is/can prefix (CLAUDE.md §3); created on first access via upsert.
+model TenantSetting {
+  id       String @id @default(uuid())
+  tenantId String @unique @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  // ── Referral settings ──
+  isExternalDoctorOutReferralAllowed   Boolean @default(false) @map("is_external_doctor_out_referral_allowed")
+  isExternalDoctorInReferralAllowed    Boolean @default(false) @map("is_external_doctor_in_referral_allowed")
+  isExternalHospitalOutReferralAllowed Boolean @default(false) @map("is_external_hospital_out_referral_allowed")
+  isExternalHospitalInReferralAllowed  Boolean @default(false) @map("is_external_hospital_in_referral_allowed")
+
+  // ── Payment settings ──
+  isPatientOrderPaymentAllowed    Boolean @default(false) @map("is_patient_order_payment_allowed")
+  isCmsOrderBillGenerationEnabled Boolean @default(false) @map("is_cms_order_bill_generation_enabled")
+
+  // ── Commission types (payment gateway) ──
+  referralPgCommissionType        PgCommissionType @default(EXCLUSIVE) @map("referral_pg_commission_type")
+  patientPgCommissionType         PgCommissionType @default(EXCLUSIVE) @map("patient_pg_commission_type")
+  franchiseBranchPgCommissionType PgCommissionType @default(EXCLUSIVE) @map("franchise_branch_pg_commission_type")
+
+  // ── Wallet settings ──
+  canPatientWalletGoNegative Boolean @default(false) @map("can_patient_wallet_go_negative")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("tenant_settings")
 }
 
 /// Platform-level, single-row sequence source for Site Admin global template
@@ -594,6 +717,7 @@ model Person {
 
   salutation  String?
   firstName   String      @map("first_name")
+  middleName  String?     @map("middle_name")
   lastName    String?     @map("last_name")
   dateOfBirth DateTime?   @map("date_of_birth") @db.Date
   gender      Gender?
@@ -687,13 +811,15 @@ model SiteAdminUser {
 
 /// Refresh tokens — server-side, single-use rotation, SHA-256 hashed at rest.
 model RefreshToken {
-  id         String  @id @default(uuid())
-  personId   String  @map("person_id")
-  tokenHash  String  @unique @map("token_hash")
-  branchId   String? @map("branch_id")
-  profileKey String? @map("profile_key")
-  issuedToIp String? @map("issued_to_ip")
-  userAgent  String? @map("user_agent")
+  id         String    @id @default(uuid())
+  personId   String    @map("person_id")
+  tokenHash  String    @unique @map("token_hash")
+  branchId   String?   @map("branch_id")
+  // Snapshot of the active role, used to restore the switched context on refresh.
+  authRoleId String?   @map("auth_role_id")
+  authRole   AuthRole? @relation(fields: [authRoleId], references: [id])
+  issuedToIp String?   @map("issued_to_ip")
+  userAgent  String?   @map("user_agent")
 
   expiresAt DateTime @map("expires_at")
   isUsed    Boolean  @default(false) @map("is_used")
@@ -704,6 +830,7 @@ model RefreshToken {
   deletedAt DateTime? @map("deleted_at")
 
   @@index([personId])
+  @@index([authRoleId])
   @@map("refresh_tokens")
 }
 
@@ -740,9 +867,10 @@ model Country {
 
   isActive Boolean @default(true) @map("is_active")
 
-  states State[]
-  cities City[]
-  areas  Area[]
+  states  State[]
+  cities  City[]
+  areas   Area[]
+  tenants Tenant[]
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -763,8 +891,9 @@ model State {
 
   isActive Boolean @default(true) @map("is_active")
 
-  cities City[]
-  areas  Area[]
+  cities  City[]
+  areas   Area[]
+  tenants Tenant[]
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -788,7 +917,8 @@ model City {
 
   isActive Boolean @default(true) @map("is_active")
 
-  areas Area[]
+  areas   Area[]
+  tenants Tenant[]
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -814,6 +944,8 @@ model Area {
   country   Country @relation(fields: [countryId], references: [id])
 
   isActive Boolean @default(true) @map("is_active")
+
+  tenants Tenant[]
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -866,8 +998,8 @@ model Branch {
   licenseNo String? @map("license_no")
   remarks   String?
 
-  // Doctors assigned to this branch (junction; managed via DoctorsService).
-  doctorAssignments DoctorBranchAssignment[]
+  // Doctors scoped to this branch (managed via DoctorsService).
+  doctors Doctor[]
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -878,13 +1010,52 @@ model Branch {
   @@map("branches")
 }
 
+/// A business-user role. System roles (tenant_id = NULL) are seeded from
+/// PROFILE_REGISTRY, immutable, and shared by every tenant (readable across
+/// tenants via the same RLS "template" pattern as departments/lab tests). Rows
+/// with a tenant_id are custom roles a tenant defines through the /roles CRUD.
+///
+/// `key` is the stable identifier carried in the JWT (== the old profileKey);
+/// for system roles it must equal the PROFILE_REGISTRY value so the token stays
+/// byte-identical. `name` is the human-readable label (== old PROFILE_LABELS).
+/// `allowedBranchTypes` is only consulted for custom roles — system roles derive
+/// their branch validity from PROFILE_BRANCH_MATRIX in code.
+model AuthRole {
+  id                 String       @id @default(uuid())
+  tenantId           String?      @map("tenant_id") // null = global system role
+  key                String
+  name               String
+  description        String?
+  allowedBranchTypes BranchType[] @map("allowed_branch_types")
+  isSystem           Boolean      @default(false) @map("is_system")
+  isActive           Boolean      @default(true) @map("is_active")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  // Uniqueness (key/name, scoped per tenant for custom roles and globally for
+  // system roles) is enforced by partial unique indexes in prisma/rls.sql.
+  profiles            UserBranchProfile[]
+  staffMemberships    TenantStaffMembership[]
+  permissionOverrides UserProfilePermissionOverride[]
+  refreshTokens       RefreshToken[]
+
+  @@index([tenantId])
+  @@index([deletedAt])
+  @@map("auth_roles")
+}
+
 /// Assigns a person a profile (role) at a branch (or tenant-level when branch is null).
 model UserBranchProfile {
-  id         String  @id @default(uuid())
-  tenantId   String  @map("tenant_id")
-  personId   String  @map("person_id")
-  branchId   String? @map("branch_id") // null = tenant-level profile (e.g. business_admin)
-  profileKey String  @map("profile_key")
+  id         String    @id @default(uuid())
+  tenantId   String    @map("tenant_id")
+  personId   String    @map("person_id")
+  branchId   String?   @map("branch_id") // null = tenant-level profile (e.g. business_admin)
+  // The assigned role. A restrict FK (Prisma default) — a role still referenced
+  // here can't be hard-deleted; the /roles CRUD blocks it and soft-deletes.
+  authRoleId String   @map("auth_role_id")
+  authRole   AuthRole @relation(fields: [authRoleId], references: [id])
 
   // ── User Management v2.0 ──
   // Per-branch activation: INACTIVE blocks access to THIS branch only (the
@@ -908,17 +1079,19 @@ model UserBranchProfile {
   @@index([tenantId])
   @@index([personId])
   @@index([branchId])
+  @@index([authRoleId])
   @@map("user_branch_profiles")
 }
 
 /// Per-assignment permission overrides (allow/deny; inherit = no row).
 model UserProfilePermissionOverride {
-  id             String  @id @default(uuid())
-  tenantId       String  @map("tenant_id")
-  personId       String  @map("person_id")
-  branchId       String? @map("branch_id")
-  profileKey     String  @map("profile_key")
-  permissionCode String  @map("permission_code")
+  id             String    @id @default(uuid())
+  tenantId       String    @map("tenant_id")
+  personId       String    @map("person_id")
+  branchId       String?  @map("branch_id")
+  authRoleId     String   @map("auth_role_id")
+  authRole       AuthRole @relation(fields: [authRoleId], references: [id])
+  permissionCode String   @map("permission_code")
   override       String // 'allow' | 'deny'
 
   setBy String? @map("set_by")
@@ -927,7 +1100,7 @@ model UserProfilePermissionOverride {
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
-  @@index([tenantId, personId, profileKey])
+  @@index([tenantId, personId, authRoleId])
   @@map("user_profile_permission_overrides")
 }
 
@@ -946,9 +1119,10 @@ model TenantStaffMembership {
   // (partial unique index in prisma/rls.sql); never client-supplied.
   userCode String      @map("user_code")
   userType UserType    @default(INTERNAL) @map("user_type")
-  // Optional primary/default role. The authoritative role now lives per-branch on
-  // UserBranchProfile.profileKey; a user can be a tenant member with no role yet.
-  roleKey  String?     @map("role_key")
+  // Optional primary/default role. The authoritative role lives per-branch on
+  // UserBranchProfile.authRoleId; a user can be a tenant member with no role yet.
+  authRoleId String?   @map("auth_role_id")
+  authRole   AuthRole? @relation(fields: [authRoleId], references: [id])
   status   StaffStatus @default(ACTIVE) // tenant-global account status
 
   createdAt DateTime  @default(now()) @map("created_at")
@@ -958,6 +1132,7 @@ model TenantStaffMembership {
   @@unique([tenantId, personId])
   @@index([tenantId])
   @@index([personId])
+  @@index([authRoleId])
   @@map("tenant_staff_memberships")
 }
 
@@ -1100,57 +1275,93 @@ model Schedule {
 }
 
 /// A messaging/document template (SMS, Email, WhatsApp, Consent Form, Report).
-/// Tenant-scoped + branch-level (CLAUDE.md §4.6): `branch_id` NULL = a
-/// tenant-level template managed by business-admin; `branch_id` set = a
-/// branch-level template managed by branch-admin for that location. The two
-/// scopes are independent — neither sees the other's rows.
+/// A messaging template (Email / SMS / WhatsApp / IAM / IAA / PBN). A flat
+/// record keyed on a delivery `preference` (channel) and a `feature` (the ~88
+/// business events, validated app-side against FEATURE_TYPES).
 ///
-/// `code` is system-generated & immutable: `{INITIALS}-Tpl-{n}`, where INITIALS
-/// derive from the tenant name and `n` is a 0-based per-tenant sequence
-/// (Tenant.templateCounter). Unique per tenant among active rows; name is unique
-/// per (tenant, branch, type) among active rows (partial unique indexes in
-/// prisma/rls.sql). RLS policy in prisma/rls.sql.
+/// Tenant-scoped + branch-level (CLAUDE.md §4.6): `tenant_id` NULL = a SITE_ADMIN
+/// global master template shared across tenants; `branch_id` NULL = a
+/// tenant-level template, set = a branch-level template. The scopes are
+/// independent — neither sees the other's rows. RLS policy in prisma/rls.sql.
 ///
-/// Type-specific and shared optional blocks are stored as DTO-validated JSON
-/// (like Schedule.shifts), the shape gated by `type` (see the template DTOs):
-///   - `config`: type-specific payload —
-///       SMS             → {}                (body only)
-///       EMAIL           → { subject }
-///       CONSENT_FORM    → { signatureRequired, consent: { showHospitalHeader,
-///                           hospitalLogoFile, hospitalName, patientSignature,
-///                           doctorSignature, showDate, referenceDocFile } }
-///       WHATSAPP        → { whatsapp: { templateCategory, approvedTemplateId } }
-///       REPORT_TEMPLATE → { headerHtml, footerHtml, bodyLayout, logoPosition,
-///                           primaryFont, fontSize, pageSize, orientation,
-///                           reportRefs: { imageSettingId, pdfSettingId,
-///                           groupLayoutId, iconSettingId } }
-///   - `headerBlock`/`footerBlock`: HeaderFooter { enabled, type, text,
-///       imageFile, alignment } (shared optional; null = absent)
-///   - `attachment`: AttachmentRule { enabled, type, files[], position,
-///       alignment, sizeProfile, displayProfile?, shortLinkGenerator? }
-/// File fields hold filename/key strings only (no upload pipeline in this phase).
+/// Multiple templates may exist per (feature, preference, level); `is_default`
+/// marks the fallback among them, so there is no name/feature uniqueness.
 model Template {
   id       String  @id @default(uuid())
-  tenantId String  @map("tenant_id")
+  tenantId String? @map("tenant_id") // null = SITE_ADMIN global master template (shared across tenants)
   branchId String? @map("branch_id") // null = tenant-level (business-admin)
 
-  type         TemplateType
-  name         String
-  code         String
-  triggerEvent TriggerEvent @map("trigger_event")
-  version      String       @default("v1.0")
-  isActive     Boolean      @default(true) @map("is_active")
+  // ── Core settings ──
+  preference   MessagingChannel // delivery channel
+  feature      String // business event key, validated against FEATURE_TYPES
+  displayTitle String?          @map("display_title")
+  messageType  MessageType?     @map("message_type")
+  isActive     Boolean          @default(true) @map("is_active")
+  isDefault    Boolean          @default(false) @map("is_default")
+  isEnabled    Boolean          @default(false) @map("is_enabled")
 
-  /// Shared message body. Empty for REPORT_TEMPLATE (renders from config.*Html).
-  body String @db.Text
+  // ── Scope & targeting ──
+  specificApplication  ApplicationScope?     @map("specific_application") // null = all applications
+  applicableBranchType ApplicableBranchType? @map("applicable_branch_type") // null = all branch types
+  level                MessagingLevel        @default(BUSINESS)
+  entityId             String?               @map("entity_id")
+  entityType           String?               @map("entity_type")
 
-  /// Type-specific payload — shape gated by `type` (see model doc + DTOs).
-  config Json @default("{}")
+  // ── SMS settings ──
+  smsTemplateId String?  @map("sms_template_id") // DLT template id
+  smsSenderId   String?  @map("sms_sender_id")
+  smsType       SmsType? @map("sms_type")
 
-  /// Shared optional blocks (HeaderFooter / AttachmentRule). Null = absent.
-  headerBlock Json? @map("header_block")
-  footerBlock Json? @map("footer_block")
-  attachment  Json?
+  /// Template body — rich HTML when preference = EMAIL, otherwise plain text with
+  /// `{variable_name}` placeholders.
+  template String @db.Text
+
+  // ── WhatsApp settings (used when preference = WHATSAPP) ──
+  templateType     WhatsappMessageType?      @map("template_type")
+  templateCategory WhatsappTemplateCategory? @map("template_category")
+  fileName         String?                   @map("file_name")
+
+  createdBy String? @map("created_by")
+  updatedBy String? @map("updated_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([preference])
+  @@index([feature])
+  @@index([deletedAt])
+  @@map("templates")
+}
+
+/// A PDF report template (CLAUDE.md §4.6 tenant-scoped, branch-level). Defines a
+/// named, typed report layout — page settings, header/body/footer HTML and CSS —
+/// used to render PDFs (lab reports, invoices, prescriptions, …). `type` is one
+/// of ~49 supported keys validated app-side against `PDF_REPORT_TEMPLATE_TYPES`
+/// (not a Prisma enum, so the list can grow without a migration). All page +
+/// section settings live in the `meta` JSON blob (general/header/body/footer),
+/// validated via `PdfTemplateMetaDto`. `branchId` is nullable: null = a
+/// tenant-wide template; set = scoped to one branch (validated against the
+/// tenant). Status is the boolean `isActive` (the frontend maps 1/0 ⇄
+/// true/false).
+model PdfReportTemplate {
+  id       String  @id @default(uuid())
+  tenantId String? @map("tenant_id") // null = SITE_ADMIN global template (shared across tenants)
+  branchId String? @map("branch_id") // null = tenant-wide
+
+  type     String // validated app-side against PDF_REPORT_TEMPLATE_TYPES
+  name     String
+  isActive Boolean @default(true) @map("is_active")
+
+  /// General/header/body/footer settings (shape validated by PdfTemplateMetaDto).
+  meta Json @default("{}")
+
+  /// Block-based Advance PDF document (AdvanceDocument JSON) for templates
+  /// edited in the visual block designer. NULL for classic HTML-`meta`
+  /// templates; the two engines are independent.
+  doc Json?
 
   createdBy String? @map("created_by")
   updatedBy String? @map("updated_by")
@@ -1163,7 +1374,7 @@ model Template {
   @@index([branchId])
   @@index([type])
   @@index([deletedAt])
-  @@map("templates")
+  @@map("pdf_report_templates")
 }
 
 /// A department within a tenant (business-wide; NOT branch-scoped — CLAUDE.md
@@ -2065,6 +2276,242 @@ model LabPanelTest {
   @@map("lab_panel_tests")
 }
 
+/// A branch's operational Lab Test List entry — a materialized, independent
+/// snapshot copied from a Master Data `LabTest` via the branch-lab-test import
+/// (CLAUDE.md §4.6: tenant-scoped + branch-level). Parent scalar fields mirror
+/// `LabTest`; the deep clinical sub-structure (samples, result params, reference
+/// ranges/values) is snapshotted into `configSnapshot` JSON at import/sync time.
+/// Edits here NEVER propagate back to Master Data. `sourceLabTestId` records the
+/// Master Data test this copy came from (logical ref, no relation) so `sync` can
+/// re-snapshot it. `testName`/`testCode` are unique per branch among active rows
+/// (partial unique indexes in prisma/rls.sql). Classification ids are nullable
+/// logical references (no Prisma relation), mirroring how LabPanel treats them.
+model BranchLabTest {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  // Provenance (logical refs; no relation — the snapshot is independent).
+  sourceLabTestId    String? @map("source_lab_test_id")
+  sourceMasterDataId String? @map("source_master_data_id")
+
+  // Identity
+  testName        String  @map("test_name")
+  testDisplayName String? @map("test_display_name")
+  testCode        String  @map("test_code")
+  aka             String?
+
+  // Classification (logical refs)
+  departmentId  String? @map("department_id")
+  categoryId    String? @map("category_id")
+  subCategoryId String? @map("sub_category_id")
+
+  // Basic config
+  processMethod      ProcessMethod  @default(SINGLE_STEP) @map("process_method")
+  icdCode            String?        @map("icd_code")
+  loincCode          String?        @map("loinc_code")
+  clinicalTags       String[]       @map("clinical_tags")
+  reportTemplateId   String?        @map("report_template_id")
+  samplePriorityType SamplePriority @default(ROUTINE) @map("sample_priority_type")
+  pdfSettingsId      String?        @map("pdf_settings_id")
+  imageSettingsId    String?        @map("image_settings_id")
+  isEnableCms        Boolean        @default(true) @map("is_enable_cms")
+  approvalWorkflowId String?        @map("approval_workflow_id")
+
+  // Pricing (integer minor units)
+  priceMsrp            Int     @default(0) @map("price_msrp")
+  priceMaximum         Int     @default(0) @map("price_maximum")
+  priceMinimum         Int     @default(0) @map("price_minimum")
+  priceOriginal        Int     @default(0) @map("price_original")
+  franchisePrice       Int     @default(0) @map("franchise_price")
+  emergencyPrice       Int     @default(0) @map("emergency_price")
+  commissionPrice      Int     @default(0) @map("commission_price")
+  discountCapPct       Int     @default(0) @map("discount_cap_pct")
+  isAllowPriceOverride Boolean @default(false) @map("is_allow_price_override")
+  isAllowDiscounts     Boolean @default(true) @map("is_allow_discounts")
+
+  // TAT
+  tatMinValue Int?     @map("tat_min_value")
+  tatMinUnit  TatUnit? @map("tat_min_unit")
+  tatMaxValue Int?     @map("tat_max_value")
+  tatMaxUnit  TatUnit? @map("tat_max_unit")
+
+  // Schedule (times stored as "HH:mm" strings)
+  scheduleDays DayOfWeek[] @map("schedule_days")
+  scheduleFrom String?     @map("schedule_from")
+  scheduleTo   String?     @map("schedule_to")
+
+  // Processing time
+  procTimeMinValue Int?     @map("proc_time_min_value")
+  procTimeMinUnit  TatUnit? @map("proc_time_min_unit")
+  procTimeMaxValue Int?     @map("proc_time_max_value")
+  procTimeMaxUnit  TatUnit? @map("proc_time_max_unit")
+
+  // Approval window
+  approvalTimeFrom String? @map("approval_time_from")
+  approvalTimeTo   String? @map("approval_time_to")
+
+  // Flags
+  isHideInOrderScreen Boolean @default(false) @map("is_hide_in_order_screen")
+  isPreferenceTest    Boolean @default(false) @map("is_preference_test")
+  isMandatoryTest     Boolean @default(false) @map("is_mandatory_test")
+
+  // Mandatory-test classification (logical refs)
+  mandatoryDeptId             String?             @map("mandatory_dept_id")
+  mandatoryCatId              String?             @map("mandatory_cat_id")
+  mandatorySubcatId           String?             @map("mandatory_subcat_id")
+  isRepeatIntervalRestriction Boolean             @default(false) @map("is_repeat_interval_restriction")
+  repeatIntervalValue         Int?                @map("repeat_interval_value")
+  repeatIntervalUnit          RepeatIntervalUnit? @map("repeat_interval_unit")
+
+  // Enable/disable in the branch list (distinct from soft delete).
+  isActive Boolean @default(true) @map("is_active")
+
+  // Variant model: rows sharing a `sourceLabTestId` form a group (one imported
+  // original + its user duplicates). `isDuplicate` = false for the direct import
+  // (sync refreshes these), true for a user-created copy (sync leaves these
+  // alone). Exactly one row per group is `isDefault` (used for order creation).
+  isDefault   Boolean @default(true) @map("is_default")
+  isDuplicate Boolean @default(false) @map("is_duplicate")
+
+  // Notes
+  usefulFor               String? @map("useful_for")
+  interpretationOfResults String? @map("interpretation_of_results")
+  limitations             String?
+  remarks                 String?
+  references              String?
+
+  // Point-in-time snapshot of the source test's children:
+  // { samples: [...], resultParams: [{ ..., referenceRanges: [...], referenceValues: [...] }] }
+  configSnapshot Json @default("{}") @map("config_snapshot")
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([sourceLabTestId])
+  @@index([isActive])
+  @@index([isDefault])
+  @@index([deletedAt])
+  @@map("branch_lab_tests")
+}
+
+/// A branch's operational Lab Panel List entry — a materialized, independent
+/// snapshot copied from a Master Data `LabPanel` via the branch-lab-panel import
+/// (tenant-scoped + branch-level). Parent scalar fields mirror `LabPanel`; the
+/// panel's member tests are held relationally in `BranchLabPanelTest` pointing at
+/// this branch's `BranchLabTest` copies. `sourceLabPanelId` records the Master
+/// Data panel this copy came from (logical ref) so `sync` can re-snapshot it.
+/// `panelName`/`panelCode` are unique per branch among active rows (partial unique
+/// indexes in prisma/rls.sql).
+model BranchLabPanel {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  // Provenance (logical refs; no relation — the snapshot is independent).
+  sourceLabPanelId   String? @map("source_lab_panel_id")
+  sourceMasterDataId String? @map("source_master_data_id")
+
+  // Identity
+  bannerImage String? @map("banner_image")
+  panelName   String  @map("panel_name")
+  panelCode   String  @map("panel_code")
+
+  // Classification (logical refs)
+  categoryId   String? @map("category_id")
+  departmentId String? @map("department_id")
+
+  // Applicability + reporting
+  applicableGender   ReferenceGender @default(ALL) @map("applicable_gender")
+  applicableAgeGroup AgeGroup        @default(ALL) @map("applicable_age_group")
+  reportType         ReportType      @default(COMBINED) @map("report_type")
+  turnaroundPriority SamplePriority  @default(ROUTINE) @map("turnaround_priority")
+
+  // Enable/disable in the branch list (distinct from soft delete).
+  isActive Boolean @default(true) @map("is_active")
+
+  // Variant model (mirrors BranchLabTest): rows sharing a `sourceLabPanelId` form
+  // a group (one imported original + user duplicates). `isDuplicate` = false for
+  // the direct import (sync refreshes), true for a user copy (sync skips). Exactly
+  // one row per group is `isDefault` (used for order creation).
+  isDefault   Boolean @default(true) @map("is_default")
+  isDuplicate Boolean @default(false) @map("is_duplicate")
+
+  // Pricing (integer minor units)
+  priceMsrp       Int @default(0) @map("price_msrp")
+  priceMinimum    Int @default(0) @map("price_minimum")
+  priceMaximum    Int @default(0) @map("price_maximum")
+  priceOriginal   Int @default(0) @map("price_original")
+  franchisePrice  Int @default(0) @map("franchise_price")
+  commissionPrice Int @default(0) @map("commission_price")
+
+  // TAT (defaults to HOURS per the panel spec)
+  tatMinValue Int?     @map("tat_min_value")
+  tatMinUnit  TatUnit? @default(HOURS) @map("tat_min_unit")
+  tatMaxValue Int?     @map("tat_max_value")
+  tatMaxUnit  TatUnit? @default(HOURS) @map("tat_max_unit")
+
+  // Instructions
+  panelInstructions String? @map("panel_instructions")
+
+  // Flags
+  isDisableDiscount     Boolean @default(false) @map("is_disable_discount")
+  isEnableCms           Boolean @default(true) @map("is_enable_cms")
+  isPreference          Boolean @default(false) @map("is_preference")
+  isFastingRequired     Boolean @default(false) @map("is_fasting_required")
+  isShowOnlineBooking   Boolean @default(true) @map("is_show_online_booking")
+  isHomeCollection      Boolean @default(false) @map("is_home_collection")
+  isAllowPartialBilling Boolean @default(false) @map("is_allow_partial_billing")
+
+  maxTestsRemovable Int @default(0) @map("max_tests_removable")
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([sourceLabPanelId])
+  @@index([isActive])
+  @@index([isDefault])
+  @@index([deletedAt])
+  @@map("branch_lab_panels")
+}
+
+/// A test included in a branch's Lab Panel List entry. `branchLabTestId` points at
+/// a `BranchLabTest` copy in the same branch (not a Master Data test). Rebuilt on
+/// sync to match the source panel's current composition. Unique per panel among
+/// active rows (partial unique index in prisma/rls.sql).
+model BranchLabPanelTest {
+  id               String @id @default(uuid())
+  tenantId         String @map("tenant_id")
+  branchId         String @map("branch_id")
+  branchLabPanelId String @map("branch_lab_panel_id")
+  branchLabTestId  String @map("branch_lab_test_id")
+
+  sortOrder   Int     @default(0) @map("sort_order")
+  isRemovable Boolean @default(true) @map("is_removable")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([branchLabPanelId])
+  @@index([branchLabPanelId, sortOrder])
+  @@index([branchLabTestId])
+  @@index([deletedAt])
+  @@map("branch_lab_panel_tests")
+}
+
 /// A SiteAdmin-curated named group of SITE_ADMIN lab-test templates (e.g. "Full
 /// Body Checkup"). Platform-level (CLAUDE.md §4.2) — no `tenantId`/`source` and
 /// intentionally excluded from RLS, like siteadmin_users. `groupName` is unique
@@ -2426,6 +2873,12 @@ model Doctor {
   tenantId   String     @map("tenant_id")
   doctorType DoctorType @map("doctor_type")
 
+  // Branch scope (CLAUDE.md §4.5). Nullable column so legacy/tenant-level rows
+  // can exist, but the create API requires it. Client-supplied — validated
+  // against the caller's tenant in DoctorsService (never trusted from the body).
+  branchId String? @map("branch_id")
+  branch   Branch? @relation(fields: [branchId], references: [id])
+
   // Identity
   salutation     Salutation?
   firstName      String      @map("first_name")
@@ -2471,21 +2924,27 @@ model Doctor {
   ifscCode          String?           @map("ifsc_code")
   paymentMode       DoctorPaymentMode @default(BANK_TRANSFER) @map("payment_mode")
 
+  // Charges
+  consultationFee Decimal @default(0) @map("consultation_fee") @db.Decimal(10, 2)
+  emergencyFee    Decimal @default(0) @map("emergency_fee") @db.Decimal(10, 2)
+  followUpFee     Decimal @default(0) @map("follow_up_fee") @db.Decimal(10, 2)
+  isAllowDiscount Boolean @default(false) @map("is_allow_discount")
+
   // Status & misc
   status      DoctorStatus @default(ACTIVE)
   joiningDate DateTime?    @map("joining_date") @db.Date
   remarks     String?
 
   // Children (managed via the parent in DoctorsService)
-  qualifications    DoctorQualification[]
-  experiences       DoctorExperience[]
-  branchAssignments DoctorBranchAssignment[]
+  qualifications DoctorQualification[]
+  experiences    DoctorExperience[]
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
   @@index([tenantId])
+  @@index([branchId])
   @@index([categoryId])
   @@index([subCategoryId])
   @@index([departmentId])
@@ -2540,44 +2999,6 @@ model DoctorExperience {
   @@index([doctorId])
   @@index([deletedAt])
   @@map("doctor_experience")
-}
-
-/// Assigns a doctor to a branch with a role, availability, primary flag, and the
-/// per-branch charges (consultation/emergency/follow-up fee + allow-discount).
-/// Tenant-scoped + branch-level (CLAUDE.md §4.5): carries `tenantId` (RLS) and a
-/// non-nullable `branchId` (a row always represents a doctor AT a branch). The
-/// branch id is client-supplied, so DoctorsService validates it against the
-/// caller's tenant first. Managed via the parent doctor (replace-on-update;
-/// soft-deleted with the parent). At most one active row per (tenant, doctor,
-/// branch) — partial unique index in prisma/rls.sql. RLS policy in prisma/rls.sql.
-model DoctorBranchAssignment {
-  id       String @id @default(uuid())
-  tenantId String @map("tenant_id")
-  doctorId String @map("doctor_id")
-  branchId String @map("branch_id")
-
-  doctor Doctor @relation(fields: [doctorId], references: [id], onDelete: Cascade)
-  branch Branch @relation(fields: [branchId], references: [id])
-
-  branchRole   DoctorBranchRole   @map("branch_role")
-  availability DoctorAvailability
-  isPrimary    Boolean            @default(false) @map("is_primary")
-
-  // Per-branch charges
-  consultationFee Decimal @default(0) @map("consultation_fee") @db.Decimal(10, 2)
-  emergencyFee    Decimal @default(0) @map("emergency_fee") @db.Decimal(10, 2)
-  followUpFee     Decimal @default(0) @map("follow_up_fee") @db.Decimal(10, 2)
-  isAllowDiscount Boolean @default(false) @map("is_allow_discount")
-
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  deletedAt DateTime? @map("deleted_at")
-
-  @@index([tenantId])
-  @@index([doctorId])
-  @@index([branchId])
-  @@index([deletedAt])
-  @@map("doctor_branch_assignments")
 }
 
 /// An external referring doctor in a tenant's registry who sends business to the
@@ -3249,6 +3670,7 @@ model PaymentRule {
   @@map("payment_rules")
 }
 
+<<<<<<< HEAD
 // ── Lab Test Settings ─────────────────────────────────────────────────────────
 
 model LabImageSetting {
@@ -3336,4 +3758,58 @@ model LabIconSetting {
   @@index([branchId])
   @@index([deletedAt])
   @@map("lab_icon_settings")
+=======
+/// SiteAdmin-authored support/help information (platform-level, CLAUDE.md §4.2 —
+/// no tenant_id, no RLS; it sits above the tenant boundary and is shared across
+/// all businesses). `helpContent` stores the full HTML body. `title` is globally
+/// unique among ACTIVE rows (partial unique index in prisma/rls.sql). `code` is
+/// user-supplied and NOT unique. `tenantType` tags whether the content targets
+/// business-level or branch-level screens. `createdBy`/`updatedBy` hold the
+/// authoring SiteAdmin id (SiteAdmin routes are not covered by the business
+/// AuditInterceptor, so authorship is tracked on the row instead).
+model SupportInfo {
+  id String @id @default(uuid())
+
+  metaType    String            @map("meta_type")
+  code        String?
+  title       String
+  tenantType  SupportTenantType @map("tenant_type")
+  status      SupportStatus     @default(ACTIVE)
+  requestUrl  String?           @map("request_url")
+  helpContent String            @map("help_content")
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([metaType])
+  @@index([code])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("support_infos")
+}
+
+/// A "Contact Us" form submission from the public marketing site. Platform-level
+/// (CLAUDE.md §4.2 — no tenant_id, no RLS; it sits above the tenant boundary as a
+/// global lead inbox). Captured unauthenticated via the public `POST /contact-us`
+/// and reviewed by SiteAdmin. `companyName` is surfaced as "organization" in the
+/// listing API. Submissions are anonymous, so there is no `createdBy`.
+model ContactSubmission {
+  id           String @id @default(uuid())
+  name         String
+  mobileNumber String @map("mobile_number")
+  companyName  String @map("company_name")
+  email        String
+  message      String @db.Text
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@map("contact_submissions")
+>>>>>>> b6c735e2ceede533ec7fd06f0df4fe55c79e2050
 }

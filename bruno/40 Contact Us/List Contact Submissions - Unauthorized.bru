@@ -1,0 +1,25 @@
+meta {
+  name: List Contact Submissions - Unauthorized
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/contact-us
+  body: none
+  auth: none
+}
+
+tests {
+  test("401 Unauthorized", function () {
+    expect(res.getStatus()).to.equal(401);
+  });
+}
+
+docs {
+  Negative case: the `/siteadmin/contact-us` routes are SiteAdmin-only. With no
+  `Authorization` header the `SiteAdminPermissionGuard` rejects the request with
+  401. A business JWT (`{{businessAccessToken}}`) is likewise rejected — the two
+  token types are not interchangeable. (The public form itself, `POST
+  /contact-us`, needs no auth.)
+}

@@ -1,0 +1,24 @@
+meta {
+  name: List Support Info - Unauthorized
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/support-info
+  body: none
+  auth: none
+}
+
+tests {
+  test("401 Unauthorized", function () {
+    expect(res.getStatus()).to.equal(401);
+  });
+}
+
+docs {
+  Negative case: these routes are SiteAdmin-only. With no `Authorization` header
+  the `SiteAdminPermissionGuard` rejects the request with 401. A business JWT
+  (`{{businessAccessToken}}`) is likewise rejected — the two token types are not
+  interchangeable.
+}

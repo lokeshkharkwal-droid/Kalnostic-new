@@ -1,0 +1,24 @@
+meta {
+  name: Get Branch Lab Test
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/branch-lab-tests/{{branchLabTestId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchLabTestId: 00000000-0000-0000-0000-000000000000
+}
+
+docs {
+  Fetch one branch lab test with its clinical `configSnapshot`. 404
+  `BRANCH_LAB_TEST_NOT_FOUND` if missing/soft-deleted/other branch.
+}

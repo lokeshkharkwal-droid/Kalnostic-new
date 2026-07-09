@@ -1,0 +1,86 @@
+meta {
+  name: Create PDF Report Template
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/pdf-report-templates
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "type": "lab_report",
+    "name": "Global Lab Report Default",
+    "isActive": true,
+    "meta": {
+      "orientation": "P",
+      "page_size": "A4",
+      "default_font_size": "10",
+      "default_font": "helvetica",
+      "margin_left": "15",
+      "margin_right": "10",
+      "margin_top": "10",
+      "margin_bottom": "10",
+      "margin_header": "5",
+      "margin_footer": "5",
+      "watermark_text": "",
+      "template_version": "v1.0",
+      "custom_css": ".title{color:#0ea5e9;font-weight:bold} table{width:100%;border-collapse:collapse} td,th{border:1px solid #ccc;padding:4px}",
+      "header_name": "Default Header",
+      "header_html": "<div class='title'>{hospital_name}</div><div>{hospital_address}</div>{{image:logo}}",
+      "body_name": "Default Body",
+      "body_html": "<h3>Patient: {patient_name}</h3><table><tr><th>Test</th><th>Result</th></tr>{{#each results}}<tr><td>{{this.test_name}}</td><td>{value}</td></tr>{{/each}}</table>",
+      "associate_body_image": "",
+      "footer_name": "Default Footer",
+      "footer_html": "<div>Authorised by:</div><signing_authority_tag></signing_authority_tag>"
+    }
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("siteAdminPdfReportTemplateId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("is a global template (tenantId null)", function () {
+    expect(res.getBody().data.tenantId).to.equal(null);
+  });
+}
+
+docs {
+  Create a **global SITE_ADMIN** PDF report template (`tenant_id` NULL — shared
+  across every business). Auth: SiteAdmin token, requires `master-data:write`.
+  Captures `siteAdminPdfReportTemplateId`.
+
+  `status` is expressed as the boolean `isActive` (the frontend maps 1/0 ⇄
+  true/false). All page + section settings live in `meta`
+  (general/header/body/footer); omitted meta keys fall back to defaults. `type`
+  must be one of the supported keys (see "List Template Types"), default
+  `lab_report`. Global templates carry no `branchId`.
+
+  Placeholder syntax supported by the HTML fields (used at generate time):
+  - `{placeholder}` — single value from the render context.
+  - `{{image:ID}}` — image from the render context.
+  - `{{#each key}}…{{/each}}` — repeating rows (`{{this.col}}` / `{col}`).
+  - `<signing_authority_tag>` (in the footer) — expands per signatory.
+
+  Block-designer (Advance PDF) templates instead send an optional `doc`
+  (AdvanceDocument JSON — `page`/`theme`/`header`/`footer`/`body.blocks`) which
+  is stored verbatim in the `doc` column and rendered via the `preview-html` /
+  `render` endpoints. `meta` and `doc` are independent engines.
+}

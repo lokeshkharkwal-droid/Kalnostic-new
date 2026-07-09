@@ -1,0 +1,60 @@
+meta {
+  name: Create Email Template
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/templates
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "preference": "EMAIL",
+    "feature": "lab_order_report_published_inform_patient",
+    "displayTitle": "Global Report Dispatch Email",
+    "messageType": "TRANSACTIONAL",
+    "isActive": true,
+    "isDefault": true,
+    "isEnabled": true,
+    "level": "BUSINESS",
+    "template": "<p>Dear {patient_name},</p><p>Your report for {test_name} is now available at {report_link}.</p>"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("siteAdminTemplateId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("is a global template (tenantId null)", function () {
+    expect(res.getBody().data.tenantId).to.equal(null);
+    expect(res.getBody().data.branchId).to.equal(null);
+  });
+}
+
+docs {
+  Create a **global SITE_ADMIN** master messaging template (`tenant_id` NULL —
+  shared across every business). Auth: SiteAdmin token, requires
+  `master-data:write`. Captures `siteAdminTemplateId`.
+
+  The accepted field set is identical to the business `POST /templates` request
+  (preference / feature / displayTitle / messageType / flags / scope targeting /
+  SMS settings / template / WhatsApp settings). WhatsApp settings
+  (`templateType` / `templateCategory`) are required when `preference` is
+  `WHATSAPP`.
+}

@@ -1,0 +1,21 @@
+meta {
+  name: Get Template
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/templates/{{siteAdminTemplateId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Fetch one **global SITE_ADMIN** messaging template by id. Auth: SiteAdmin
+  token, requires `master-data:read`. 404 `TEMPLATE_NOT_FOUND` if missing,
+  soft-deleted, or not a global template.
+}

@@ -1,0 +1,38 @@
+meta {
+  name: Update Role
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/siteadmin/roles/{{siteAdminRoleId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "name": "Regional Coordinator (updated)",
+    "description": "Updated by Site Admin",
+    "isActive": true,
+    "allowedBranchTypes": ["DIAGNOSTIC", "OPD", "IPD"]
+  }
+}
+
+docs {
+  Update a global role. Requires `master-data:write`.
+
+  - **SiteAdmin-created** global roles (`isSystem: false`): all fields editable.
+  - **Built-in** roles (`isSystem: true`): only `description` and `isActive` are
+    applied — sending a changed `name` or `allowedBranchTypes` returns 403
+    (SYSTEM_ROLE_IMMUTABLE), because their `key`/`name` back the JWT and the
+    in-code branch/permission matrices. `key` is never editable.
+}

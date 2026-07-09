@@ -20,34 +20,11 @@ auth:bearer {
 
 body:json {
   {
-    "name": "Report Ready Alert (Revised)",
-    "triggerEvent": "REPORT_READY",
-    "version": "v1.1",
+    "displayTitle": "Report Ready Alert (Revised)",
     "isActive": true,
-    "body": "Hi {patient_name}, your {test_name} report is ready. View: {report_link}",
-    "header": {
-      "enabled": true,
-      "type": "Text",
-      "text": "Apex Diagnostics",
-      "imageFile": "",
-      "alignment": "Center"
-    },
-    "footerBlock": {
-      "enabled": false,
-      "type": "Text",
-      "text": "",
-      "imageFile": "",
-      "alignment": "Left"
-    },
-    "attachment": {
-      "enabled": false,
-      "type": "Image",
-      "files": [],
-      "position": "After Body",
-      "alignment": "Left",
-      "sizeProfile": "Small",
-      "shortLinkGenerator": true
-    }
+    "isEnabled": true,
+    "isDefault": true,
+    "template": "Hi {patient_name}, your {test_name} report is ready. View: {report_link}"
   }
 }
 
@@ -56,11 +33,9 @@ vars:pre-request {
 }
 
 docs {
-  Update a template (partial). All fields optional; `type` and `code` are
-  immutable and not accepted. When any config-affecting field
-  (`subject` / `consent` / `whatsapp` / `report`) is supplied, the whole `config`
-  JSON is rebuilt from the existing row's type; otherwise it is left unchanged.
-  Shared blocks (`header` / `footerBlock` / `attachment`) are replaced when
-  present. Supply only the fields you want to change. The accepted field set per
-  type matches the corresponding Create request.
+  Update a messaging template (partial). Every field is optional and only the
+  fields present in the body are changed; `tenantId` / `branchId` are never
+  accepted (scope is fixed). The accepted field set matches the Create request
+  (preference / feature / displayTitle / messageType / flags / scope targeting /
+  SMS settings / template / WhatsApp settings).
 }

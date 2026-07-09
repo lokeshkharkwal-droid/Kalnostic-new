@@ -1,37 +1,48 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma, Template, TemplateType } from '@prisma/client';
+import {
+  ApplicableBranchType,
+  MessageType,
+  MessagingChannel,
+  MessagingLevel,
+  Prisma,
+  Template,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { BranchService } from '../branch/branch.service';
 import { CreateTemplateDto } from './dto/create-template.dto';
 import { UpdateTemplateDto } from './dto/update-template.dto';
-import { ConsentConfigDto } from './dto/blocks/consent-config.dto';
-import { WhatsappConfigDto } from './dto/blocks/whatsapp-config.dto';
-import { ReportConfigDto } from './dto/blocks/report-config.dto';
-import {
-  TemplateNameConflictException,
-  TemplateNotFoundException,
-} from './exceptions/template.exceptions';
+import { TemplateNotFoundException } from './exceptions/template.exceptions';
 
-/** The DTO fields that determine a template's type-specific `config` JSON. */
-interface ConfigSource {
-  subject?: string;
-  consent?: ConsentConfigDto;
-  whatsapp?: WhatsappConfigDto;
-  report?: ReportConfigDto;
+/** Filters shared by the tenant and global list queries. */
+interface ListFilters {
+  preference?: MessagingChannel;
+  feature?: string;
+  messageType?: MessageType;
+  level?: MessagingLevel;
+  applicableBranchType?: ApplicableBranchType;
+  search?: string;
+  isActive?: boolean;
+  isEnabled?: boolean;
+  isDefault?: boolean;
+}
+
+/** Dropdown row shape returned by `lookup`. */
+export interface TemplateLookupRow {
+  id: string;
+  displayTitle: string | null;
+  preference: MessagingChannel;
+  feature: string;
 }
 
 /**
- * Template management. Tenant-scoped + branch-level (CLAUDE.md §4.6/§4.7):
- * `branchId` is NULL for tenant-level templates (business-admin) and the active
- * branch for branch-level templates (branch-admin). The scope is decided by the
- * caller (from `@CurrentProfile()`) and passed in as `scopeBranchId`; the two
- * scopes are independent (a query with `branchId: null` matches tenant-level
- * rows only). Every query carries `tenantId` (defence in depth on top of RLS)
- * and filters soft-deleted rows.
- *
- * Type-specific and shared optional blocks are stored as DTO-validated JSON
- * (like Schedule.shifts), assembled from the DTO via `buildConfig`.
+ * Messaging template management. Tenant-scoped + branch-level (CLAUDE.md
+ * §4.6/§4.7): `branchId` is NULL for tenant-level templates (business-admin) and
+ * the active branch for branch-level templates (branch-admin). The scope is
+ * decided by the caller (from `@CurrentProfile()`) and passed as `scopeBranchId`;
+ * the two scopes are independent. Every query carries `tenantId` (defence in
+ * depth on top of RLS) and filters soft-deleted rows. SITE_ADMIN global master
+ * templates carry `tenantId: null` and are managed via the `*Global` methods.
  */
 @Injectable()
 export class TemplateService {
@@ -41,19 +52,13 @@ export class TemplateService {
   ) {}
 
   /**
-   * Create a template in the caller's scope. The `code` is system-generated and
-   * immutable: `{INITIALS}-Tpl-{n}`, where INITIALS derive from the tenant name
-   * and `n` is a 0-based per-tenant sequence taken by atomically incrementing
-   * `Tenant.templateCounter` in the same transaction (so concurrent creates
-   * never collide).
+   * Create a messaging template in the caller's scope.
    * @param tenantId owning tenant (from JWT)
    * @param scopeBranchId active branch (branch-admin) or null (business-admin)
-   * @param dto validated template payload (no `code`/`tenantId`/`branchId`)
+   * @param dto validated template payload (no `tenantId`/`branchId`)
    * @param actorId person id of the creator (optional audit trail)
    * @returns the created template
    * @throws BranchNotFoundException if a non-null scope branch isn't in the tenant
-   * @throws TemplateNameConflictException if the name is already used by an
-   *   active template of the same type in this scope
    */
   async create(
     tenantId: string,
@@ -61,50 +66,21 @@ export class TemplateService {
     dto: CreateTemplateDto,
     actorId?: string,
   ): Promise<Template> {
-    // Validate the scope branch belongs to the caller's tenant (§4.7) before the
-    // RLS transaction. Tenant-level (null) needs no branch check.
+    // Validate the scope branch belongs to the caller's tenant (§4.7).
     if (scopeBranchId !== null) {
       await this.branchService.findById(scopeBranchId, tenantId);
     }
-    const config = this.buildConfig(dto.type, dto);
-    try {
-      return await this.prisma.withTenant(tenantId, async (tx) => {
-        const tenant = await tx.tenant.update({
-          where: { id: tenantId },
-          data: { templateCounter: { increment: 1 } },
-          select: { templateCounter: true, name: true },
-        });
-        // 0-based sequence: post-increment counter, so subtract 1 for this row.
-        const code = `${this.buildInitials(tenant.name)}-Tpl-${tenant.templateCounter - 1}`;
-
-        return tx.template.create({
-          data: {
-            tenantId,
-            branchId: scopeBranchId,
-            type: dto.type,
-            name: dto.name,
-            code,
-            triggerEvent: dto.triggerEvent,
-            version: dto.version ?? 'v1.0',
-            isActive: dto.isActive ?? true,
-            body: dto.body ?? '',
-            config,
-            headerBlock: dto.header ? this.asJson(dto.header) : undefined,
-            footerBlock: dto.footerBlock
-              ? this.asJson(dto.footerBlock)
-              : undefined,
-            attachment: dto.attachment
-              ? this.asJson(dto.attachment)
-              : undefined,
-            createdBy: actorId ?? null,
-            updatedBy: actorId ?? null,
-          },
-        });
-      });
-    } catch (e) {
-      this.rethrowUniqueViolation(e, dto.name);
-      throw e;
-    }
+    return this.prisma.withTenant(tenantId, (tx) =>
+      tx.template.create({
+        data: {
+          tenantId,
+          branchId: scopeBranchId,
+          ...this.buildCreateData(dto),
+          createdBy: actorId ?? null,
+          updatedBy: actorId ?? null,
+        },
+      }),
+    );
   }
 
   /**
@@ -134,31 +110,20 @@ export class TemplateService {
    * @param scopeBranchId active branch, or null for tenant-level
    * @param page 1-based page (default 1)
    * @param limit page size (default 20)
-   * @param filters optional `type` tab filter, case-insensitive name `search`,
-   *   and `isActive` status filter
+   * @param filters optional channel/feature/type/level/branch-type filters, a
+   *   case-insensitive `displayTitle` search, and the boolean flags
    */
   async findAll(
     tenantId: string,
     scopeBranchId: string | null,
     page = 1,
     limit = 20,
-    filters: { type?: TemplateType; search?: string; isActive?: boolean } = {},
+    filters: ListFilters = {},
   ): Promise<PaginatedResult<Template>> {
-    const where: Prisma.TemplateWhereInput = {
-      tenantId,
-      branchId: scopeBranchId,
-      deletedAt: null,
-    };
-    if (filters.type) {
-      where.type = filters.type;
-    }
-    const search = filters.search?.trim();
-    if (search) {
-      where.name = { contains: search, mode: 'insensitive' };
-    }
-    if (filters.isActive !== undefined) {
-      where.isActive = filters.isActive;
-    }
+    const where = this.buildWhere(
+      { tenantId, branchId: scopeBranchId, deletedAt: null },
+      filters,
+    );
     // Sequential (not array-`$transaction`) so each call flows through the RLS
     // extension and carries the tenant GUC when RLS is enabled.
     const data = await this.prisma.template.findMany({
@@ -172,53 +137,47 @@ export class TemplateService {
   }
 
   /**
-   * Partial, dropdown-optimised listing: returns only `{ id, name }` per row,
-   * scoped to the caller's tenant + branch (from the JWT, never the query), with
-   * an optional `type` filter and offset pagination. Ordered by `name` ascending
-   * for predictable dropdowns.
+   * Partial, dropdown-optimised listing: returns `{ id, displayTitle,
+   * preference, feature }` per row, scoped to the caller's tenant + branch (from
+   * the JWT, never the query), with optional channel/feature filters and offset
+   * pagination. Ordered by `createdAt` descending.
    * @param tenantId tenant scope
    * @param scopeBranchId active branch, or null for tenant-level
    * @param page 1-based page (default 1)
    * @param limit page size (default 20)
-   * @param type optional template-type filter
+   * @param filters optional `preference`/`feature` filters
    */
   async lookup(
     tenantId: string,
     scopeBranchId: string | null,
     page = 1,
     limit = 20,
-    type?: TemplateType,
-  ): Promise<PaginatedResult<{ id: string; name: string }>> {
-    const where: Prisma.TemplateWhereInput = {
-      tenantId,
-      branchId: scopeBranchId,
-      deletedAt: null,
-    };
-    if (type) {
-      where.type = type;
-    }
+    filters: { preference?: MessagingChannel; feature?: string } = {},
+  ): Promise<PaginatedResult<TemplateLookupRow>> {
+    const where = this.buildWhere(
+      { tenantId, branchId: scopeBranchId, deletedAt: null },
+      filters,
+    );
     const data = await this.prisma.template.findMany({
       where,
-      select: { id: true, name: true },
+      select: { id: true, displayTitle: true, preference: true, feature: true },
       skip: (page - 1) * limit,
       take: limit,
-      orderBy: { name: 'asc' },
+      orderBy: { createdAt: 'desc' },
     });
     const total = await this.prisma.template.count({ where });
     return { data, total, page, limit };
   }
 
   /**
-   * Update a template. `type` and `code` are immutable. When any config-affecting
-   * field (`subject`/`consent`/`whatsapp`/`report`) is supplied the whole `config`
-   * JSON is rebuilt from the existing row's type; otherwise it is left unchanged.
-   * Shared blocks (`header`/`footerBlock`/`attachment`) are replaced when present.
+   * Update a template in the caller's scope. Only fields present on the DTO are
+   * changed; the scope (tenant/branch) is fixed.
    * @param id template id
    * @param tenantId tenant scope
    * @param scopeBranchId active branch, or null for tenant-level
    * @param dto partial update
    * @param actorId person id of the editor (optional audit trail)
-   * @throws TemplateNotFoundException / TemplateNameConflictException
+   * @throws TemplateNotFoundException if missing/soft-deleted
    */
   async update(
     id: string,
@@ -227,44 +186,14 @@ export class TemplateService {
     dto: UpdateTemplateDto,
     actorId?: string,
   ): Promise<Template> {
-    const existing = await this.findById(id, tenantId, scopeBranchId);
-
-    const data: Prisma.TemplateUpdateInput = {};
-    if (dto.name !== undefined) data.name = dto.name;
-    if (dto.triggerEvent !== undefined) data.triggerEvent = dto.triggerEvent;
-    if (dto.version !== undefined) data.version = dto.version;
-    if (dto.isActive !== undefined) data.isActive = dto.isActive;
-    if (dto.body !== undefined) data.body = dto.body;
-
-    const touchesConfig =
-      dto.subject !== undefined ||
-      dto.consent !== undefined ||
-      dto.whatsapp !== undefined ||
-      dto.report !== undefined;
-    if (touchesConfig) {
-      data.config = this.buildConfig(existing.type, dto);
-    }
-    if (dto.header !== undefined) data.headerBlock = this.asJson(dto.header);
-    if (dto.footerBlock !== undefined) {
-      data.footerBlock = this.asJson(dto.footerBlock);
-    }
-    if (dto.attachment !== undefined) {
-      data.attachment = this.asJson(dto.attachment);
-    }
-    // Only stamp the actor when one was supplied — never clobber an existing
-    // updatedBy with null on actor-less internal calls.
+    await this.findById(id, tenantId, scopeBranchId);
+    const data = this.buildUpdateData(dto);
     if (actorId !== undefined) {
       data.updatedBy = actorId;
     }
-
-    try {
-      return await this.prisma.withTenant(tenantId, (tx) =>
-        tx.template.update({ where: { id }, data }),
-      );
-    } catch (e) {
-      this.rethrowUniqueViolation(e, dto.name ?? existing.name);
-      throw e;
-    }
+    return this.prisma.withTenant(tenantId, (tx) =>
+      tx.template.update({ where: { id }, data }),
+    );
   }
 
   /**
@@ -286,15 +215,13 @@ export class TemplateService {
   }
 
   /**
-   * Duplicate a template within the same scope: a deep copy with a fresh `code`,
-   * " (Copy)" appended to the name, and the version reset to `v1.0`. All JSON
-   * config/blocks are copied verbatim.
+   * Duplicate a template within the same scope: a copy with " (Copy)" appended
+   * to the display title (or a default title when the source had none).
    * @param id source template id
    * @param tenantId tenant scope
    * @param scopeBranchId active branch, or null for tenant-level
    * @param actorId person id of the creator (optional audit trail)
    * @throws TemplateNotFoundException if the source is missing/soft-deleted
-   * @throws TemplateNameConflictException if the copied name already exists
    */
   async duplicate(
     id: string,
@@ -303,131 +230,270 @@ export class TemplateService {
     actorId?: string,
   ): Promise<Template> {
     const source = await this.findById(id, tenantId, scopeBranchId);
-    try {
-      return await this.prisma.withTenant(tenantId, async (tx) => {
-        const tenant = await tx.tenant.update({
-          where: { id: tenantId },
-          data: { templateCounter: { increment: 1 } },
-          select: { templateCounter: true, name: true },
-        });
-        const code = `${this.buildInitials(tenant.name)}-Tpl-${tenant.templateCounter - 1}`;
-        return tx.template.create({
-          data: {
-            tenantId,
-            branchId: source.branchId,
-            type: source.type,
-            name: `${source.name} (Copy)`,
-            code,
-            triggerEvent: source.triggerEvent,
-            version: 'v1.0',
-            isActive: source.isActive,
-            body: source.body,
-            config: source.config as Prisma.InputJsonValue,
-            headerBlock: this.copyJson(source.headerBlock),
-            footerBlock: this.copyJson(source.footerBlock),
-            attachment: this.copyJson(source.attachment),
-            createdBy: actorId ?? null,
-            updatedBy: actorId ?? null,
-          },
-        });
-      });
-    } catch (e) {
-      this.rethrowUniqueViolation(e, `${source.name} (Copy)`);
-      throw e;
-    }
-  }
-
-  // ── Helpers ───────────────────────────────────────────────────────────────────
-
-  /**
-   * Assemble the type-specific `config` JSON from the relevant DTO fields. Each
-   * type's config is fully determined by one field/block, so this is a complete
-   * (re)build — used on create, update (when a config field changes), and never
-   * needs to merge.
-   * @param type the template's (immutable) type
-   * @param src the DTO fields that feed the config
-   */
-  private buildConfig(
-    type: TemplateType,
-    src: ConfigSource,
-  ): Prisma.InputJsonValue {
-    switch (type) {
-      case TemplateType.EMAIL:
-        return { subject: src.subject ?? '' };
-      case TemplateType.CONSENT_FORM:
-        return src.consent
-          ? {
-              signatureRequired: src.consent.signatureRequired,
-              consent: { ...src.consent.consent },
-            }
-          : {};
-      case TemplateType.WHATSAPP:
-        return src.whatsapp ? { whatsapp: { ...src.whatsapp } } : {};
-      case TemplateType.REPORT_TEMPLATE:
-        return src.report
-          ? { ...src.report, reportRefs: { ...(src.report.reportRefs ?? {}) } }
-          : {};
-      case TemplateType.SMS:
-      default:
-        return {};
-    }
-  }
-
-  /** Cast a validated block DTO into a Prisma JSON value (it is plain data). */
-  private asJson(block: object): Prisma.InputJsonValue {
-    return block;
-  }
-
-  /**
-   * Copy an existing nullable JSON column for duplication: `null` columns stay
-   * unset (undefined), present values are passed through.
-   */
-  private copyJson(
-    value: Prisma.JsonValue | null,
-  ): Prisma.InputJsonValue | undefined {
-    return value == null ? undefined : value;
-  }
-
-  /**
-   * Derive a template-code prefix from a tenant name: the first letter of up to
-   * the first three words, uppercased, letters only (e.g. "Apex Bio Care" →
-   * "ABC"). Falls back to "TPL" when the name has no letters.
-   * @param name the tenant's business name
-   */
-  private buildInitials(name: string): string {
-    const initials = name
-      .split(/\s+/)
-      .filter((w) => w.length > 0)
-      .slice(0, 3)
-      .map((w) => w.replace(/[^a-zA-Z]/g, '').charAt(0))
-      .filter((c) => c.length > 0)
-      .join('')
-      .toUpperCase();
-    return initials.length > 0 ? initials : 'TPL';
-  }
-
-  /**
-   * If the caught error is a Prisma unique-constraint violation (P2002) on a
-   * name index, throw the typed 409. The system-generated `code` index never
-   * collides in practice (per-tenant sequential), so a `code` violation is left
-   * to bubble up as an internal error. Returns normally for any other error so
-   * the caller can rethrow.
-   * @param e the caught error
-   * @param name the attempted name (for the conflict's context)
-   * @throws TemplateNameConflictException
-   */
-  private rethrowUniqueViolation(e: unknown, name: string): void {
-    if (
-      !(e instanceof Prisma.PrismaClientKnownRequestError) ||
-      e.code !== 'P2002'
-    ) {
-      return;
-    }
-    const target = String(
-      (e.meta as { target?: string | string[] } | undefined)?.target ?? '',
+    return this.prisma.withTenant(tenantId, (tx) =>
+      tx.template.create({
+        data: {
+          ...this.cloneData(source),
+          tenantId,
+          branchId: source.branchId,
+          createdBy: actorId ?? null,
+          updatedBy: actorId ?? null,
+        },
+      }),
     );
-    if (target.includes('name')) {
-      throw new TemplateNameConflictException(name);
+  }
+
+  // ── SITE_ADMIN global master templates (tenant_id NULL) ─────────────────────
+  // Global templates are shared across tenants and managed by SiteAdmin. They
+  // carry no tenant and no branch, so writes go through the plain Prisma client
+  // (no `withTenant` GUC) — the RLS `WITH CHECK` permits NULL-tenant rows only
+  // when the connection has no tenant set (mirrors the pdf_report_templates
+  // pattern).
+
+  /**
+   * Create a global (SITE_ADMIN) master template. `tenantId`/`branchId` are null.
+   * @param dto validated template payload
+   * @param actorId siteadmin id for the audit trail (optional)
+   * @returns the created global template
+   */
+  async createGlobal(
+    dto: CreateTemplateDto,
+    actorId?: string,
+  ): Promise<Template> {
+    return this.prisma.template.create({
+      data: {
+        tenantId: null,
+        branchId: null,
+        ...this.buildCreateData(dto),
+        createdBy: actorId ?? null,
+        updatedBy: actorId ?? null,
+      },
+    });
+  }
+
+  /**
+   * List active global (SITE_ADMIN) templates (offset pagination).
+   * @param page 1-based page (default 1)
+   * @param limit page size (default 20)
+   * @param filters same filter set as the tenant list
+   */
+  async findAllGlobal(
+    page = 1,
+    limit = 20,
+    filters: ListFilters = {},
+  ): Promise<PaginatedResult<Template>> {
+    const where = this.buildWhere({ tenantId: null, deletedAt: null }, filters);
+    const data = await this.prisma.template.findMany({
+      where,
+      skip: (page - 1) * limit,
+      take: limit,
+      orderBy: { createdAt: 'desc' },
+    });
+    const total = await this.prisma.template.count({ where });
+    return { data, total, page, limit };
+  }
+
+  /**
+   * Fetch one active global (SITE_ADMIN) template.
+   * @param id template id
+   * @throws TemplateNotFoundException if missing/soft-deleted/not global
+   */
+  async findGlobalById(id: string): Promise<Template> {
+    const template = await this.prisma.template.findFirst({
+      where: { id, tenantId: null, deletedAt: null },
+    });
+    if (!template) {
+      throw new TemplateNotFoundException(id);
     }
+    return template;
+  }
+
+  /**
+   * Update a global (SITE_ADMIN) template.
+   * @param id template id
+   * @param dto partial update
+   * @param actorId siteadmin id for the audit trail (optional)
+   * @throws TemplateNotFoundException if missing/soft-deleted/not global
+   */
+  async updateGlobal(
+    id: string,
+    dto: UpdateTemplateDto,
+    actorId?: string,
+  ): Promise<Template> {
+    await this.findGlobalById(id);
+    const data = this.buildUpdateData(dto);
+    if (actorId !== undefined) {
+      data.updatedBy = actorId;
+    }
+    return this.prisma.template.update({ where: { id }, data });
+  }
+
+  /**
+   * Soft-delete a global (SITE_ADMIN) template.
+   * @param id template id
+   * @throws TemplateNotFoundException if missing/soft-deleted/not global
+   */
+  async removeGlobal(id: string): Promise<Template> {
+    await this.findGlobalById(id);
+    return this.prisma.template.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
+  }
+
+  /**
+   * Duplicate a global (SITE_ADMIN) template: a copy with " (Copy)" appended to
+   * the display title.
+   * @param id source template id
+   * @param actorId siteadmin id for the audit trail (optional)
+   * @throws TemplateNotFoundException if the source is missing/soft-deleted
+   */
+  async duplicateGlobal(id: string, actorId?: string): Promise<Template> {
+    const source = await this.findGlobalById(id);
+    return this.prisma.template.create({
+      data: {
+        ...this.cloneData(source),
+        tenantId: null,
+        branchId: null,
+        createdBy: actorId ?? null,
+        updatedBy: actorId ?? null,
+      },
+    });
+  }
+
+  // ── Helpers ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Extend a base `where` (scope + soft-delete) with the optional list filters.
+   * @param base the scope predicate (`tenantId`/`branchId`/`deletedAt`)
+   * @param filters user-supplied filters
+   */
+  private buildWhere(
+    base: Prisma.TemplateWhereInput,
+    filters: ListFilters & { preference?: MessagingChannel; feature?: string },
+  ): Prisma.TemplateWhereInput {
+    const where: Prisma.TemplateWhereInput = { ...base };
+    if (filters.preference) where.preference = filters.preference;
+    if (filters.feature) where.feature = filters.feature;
+    if (filters.messageType) where.messageType = filters.messageType;
+    if (filters.level) where.level = filters.level;
+    if (filters.applicableBranchType) {
+      where.applicableBranchType = filters.applicableBranchType;
+    }
+    const search = filters.search?.trim();
+    if (search) {
+      where.displayTitle = { contains: search, mode: 'insensitive' };
+    }
+    if (filters.isActive !== undefined) where.isActive = filters.isActive;
+    if (filters.isEnabled !== undefined) where.isEnabled = filters.isEnabled;
+    if (filters.isDefault !== undefined) where.isDefault = filters.isDefault;
+    return where;
+  }
+
+  /**
+   * Map a create DTO onto the Prisma create payload (channel + feature + all
+   * optional settings), applying the model defaults for the boolean flags.
+   * Excludes scope/actor fields, which the caller sets from context.
+   * @param dto validated create payload
+   */
+  private buildCreateData(
+    dto: CreateTemplateDto,
+  ): Omit<
+    Prisma.TemplateUncheckedCreateInput,
+    'tenantId' | 'branchId' | 'createdBy' | 'updatedBy'
+  > {
+    return {
+      preference: dto.preference,
+      feature: dto.feature,
+      displayTitle: dto.displayTitle ?? null,
+      messageType: dto.messageType ?? null,
+      isActive: dto.isActive ?? true,
+      isDefault: dto.isDefault ?? false,
+      isEnabled: dto.isEnabled ?? false,
+      specificApplication: dto.specificApplication ?? null,
+      applicableBranchType: dto.applicableBranchType ?? null,
+      level: dto.level ?? MessagingLevel.BUSINESS,
+      entityId: dto.entityId ?? null,
+      entityType: dto.entityType ?? null,
+      smsTemplateId: dto.smsTemplateId ?? null,
+      smsSenderId: dto.smsSenderId ?? null,
+      smsType: dto.smsType ?? null,
+      template: dto.template,
+      templateType: dto.templateType ?? null,
+      templateCategory: dto.templateCategory ?? null,
+      fileName: dto.fileName ?? null,
+    };
+  }
+
+  /**
+   * Map a partial update DTO onto a Prisma update payload — only keys present on
+   * the DTO are included (so untouched columns are left as-is).
+   * @param dto partial update payload
+   */
+  private buildUpdateData(dto: UpdateTemplateDto): Prisma.TemplateUpdateInput {
+    const data: Prisma.TemplateUpdateInput = {};
+    if (dto.preference !== undefined) data.preference = dto.preference;
+    if (dto.feature !== undefined) data.feature = dto.feature;
+    if (dto.displayTitle !== undefined) data.displayTitle = dto.displayTitle;
+    if (dto.messageType !== undefined) data.messageType = dto.messageType;
+    if (dto.isActive !== undefined) data.isActive = dto.isActive;
+    if (dto.isDefault !== undefined) data.isDefault = dto.isDefault;
+    if (dto.isEnabled !== undefined) data.isEnabled = dto.isEnabled;
+    if (dto.specificApplication !== undefined) {
+      data.specificApplication = dto.specificApplication;
+    }
+    if (dto.applicableBranchType !== undefined) {
+      data.applicableBranchType = dto.applicableBranchType;
+    }
+    if (dto.level !== undefined) data.level = dto.level;
+    if (dto.entityId !== undefined) data.entityId = dto.entityId;
+    if (dto.entityType !== undefined) data.entityType = dto.entityType;
+    if (dto.smsTemplateId !== undefined) data.smsTemplateId = dto.smsTemplateId;
+    if (dto.smsSenderId !== undefined) data.smsSenderId = dto.smsSenderId;
+    if (dto.smsType !== undefined) data.smsType = dto.smsType;
+    if (dto.template !== undefined) data.template = dto.template;
+    if (dto.templateType !== undefined) data.templateType = dto.templateType;
+    if (dto.templateCategory !== undefined) {
+      data.templateCategory = dto.templateCategory;
+    }
+    if (dto.fileName !== undefined) data.fileName = dto.fileName;
+    return data;
+  }
+
+  /**
+   * Build the create payload for a duplicate: copy every content/config column
+   * from the source, appending " (Copy)" to the display title. Scope and actor
+   * fields are set by the caller.
+   * @param source the template being duplicated
+   */
+  private cloneData(
+    source: Template,
+  ): Omit<
+    Prisma.TemplateUncheckedCreateInput,
+    'tenantId' | 'branchId' | 'createdBy' | 'updatedBy'
+  > {
+    return {
+      preference: source.preference,
+      feature: source.feature,
+      displayTitle: source.displayTitle
+        ? `${source.displayTitle} (Copy)`
+        : 'Untitled (Copy)',
+      messageType: source.messageType,
+      isActive: source.isActive,
+      isDefault: false,
+      isEnabled: source.isEnabled,
+      specificApplication: source.specificApplication,
+      applicableBranchType: source.applicableBranchType,
+      level: source.level,
+      entityId: source.entityId,
+      entityType: source.entityType,
+      smsTemplateId: source.smsTemplateId,
+      smsSenderId: source.smsSenderId,
+      smsType: source.smsType,
+      template: source.template,
+      templateType: source.templateType,
+      templateCategory: source.templateCategory,
+      fileName: source.fileName,
+    };
   }
 }

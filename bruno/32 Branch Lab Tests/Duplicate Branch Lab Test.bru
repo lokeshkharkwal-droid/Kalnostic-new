@@ -1,0 +1,26 @@
+meta {
+  name: Duplicate Branch Lab Test
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/branch-lab-tests/{{branchLabTestId}}/duplicate
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchLabTestId: 00000000-0000-0000-0000-000000000000
+}
+
+docs {
+  Create an independent variant of a branch lab test in the same group (same
+  `sourceLabTestId`). The copy is a non-default duplicate (isDuplicate=true,
+  isDefault=false, name suffixed " (Copy)"), editable independently and untouched
+  by sync. Returns the new row.
+}

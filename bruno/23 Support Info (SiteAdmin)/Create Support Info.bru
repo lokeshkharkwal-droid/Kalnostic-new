@@ -1,0 +1,67 @@
+meta {
+  name: Create Support Info
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/support-info
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "metaType": "HELP",
+    "code": "SUP-100",
+    "title": "Getting Started",
+    "tenantType": "BUSINESS",
+    "status": "ACTIVE",
+    "requestUrl": "/dashboard",
+    "helpContent": "<h1>Welcome</h1><p>How to get started.</p>"
+  }
+}
+
+script:post-response {
+  const responseData = res.getBody();
+  if (responseData && responseData.success && responseData.data) {
+    bru.setVar("supportInfoId", responseData.data.id);
+    bru.setVar("supportInfoTitle", responseData.data.title);
+  }
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("returns the created record with an id", function () {
+    expect(res.getBody().data.id).to.be.a("string");
+  });
+  test("helpContent HTML round-trips", function () {
+    expect(res.getBody().data.helpContent).to.contain("<h1>Welcome</h1>");
+  });
+  test("createdBy/updatedBy set to the SiteAdmin id", function () {
+    expect(res.getBody().data.createdBy).to.be.a("string");
+    expect(res.getBody().data.updatedBy).to.equal(res.getBody().data.createdBy);
+  });
+}
+
+docs {
+  Create a platform-level (SiteAdmin) support-information record. `helpContent`
+  stores the full HTML body. `code` is user-supplied and NOT unique; `title` is
+  globally unique among active rows. `tenantType` (`BUSINESS`/`BRANCH`) tags the
+  audience; `status` defaults to `ACTIVE`. Requires `master-data:write`
+  (content_admin+). Captures `supportInfoId` and `supportInfoTitle` for the
+  requests below.
+
+  Re-running this while the record still exists returns 409 (title already in
+  use) — see "Create Support Info - Duplicate Title".
+}
