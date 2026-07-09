@@ -1,0 +1,28 @@
+meta {
+  name: Delete Image Setting
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/business-admin/lab-test-settings/image-settings/{{imageSettingId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Soft-delete a lab image setting. The record is preserved in the database
+  (deletedAt is set) and will no longer appear in List or Get responses.
+  Returns 404 LAB_IMAGE_SETTING_NOT_FOUND if already deleted or not found.
+  Requires `imageSettingId` env var (set by Create Image Setting).
+}

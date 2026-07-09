@@ -1,0 +1,29 @@
+meta {
+  name: Delete Group Layout Setting
+  type: http
+  seq: 15
+}
+
+delete {
+  url: {{baseUrl}}/business-admin/lab-test-settings/group-layout-settings/{{groupLayoutSettingId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Soft-delete a lab group layout setting. The record is preserved in the
+  database (deletedAt is set) and will no longer appear in List or Get
+  responses.
+  Returns 404 LAB_GROUP_LAYOUT_SETTING_NOT_FOUND if already deleted or not found.
+  Requires `groupLayoutSettingId` env var (set by Create Group Layout Setting).
+}

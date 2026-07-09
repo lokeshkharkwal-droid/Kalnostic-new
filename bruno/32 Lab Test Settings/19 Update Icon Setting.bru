@@ -1,0 +1,44 @@
+meta {
+  name: Update Icon Setting
+  type: http
+  seq: 19
+}
+
+patch {
+  url: {{baseUrl}}/business-admin/lab-test-settings/icon-settings/{{iconSettingId}}
+  body: multipartForm
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:multipart-form {
+  payload: {"name":"Abnormal Up/Down (Updated)","status":"Inactive"}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("name updated", function () {
+    expect(res.getBody().data.name).to.equal("Abnormal Up/Down (Updated)");
+  });
+  test("status updated", function () {
+    expect(res.getBody().data.status).to.equal("Inactive");
+  });
+}
+
+docs {
+  Partially update a lab icon setting. Multipart request; only send the
+  `payload` fields you want to change (all optional).
+
+  To replace an icon's image, include `icons` in `payload` (all 1 or 2 entries
+  — this replaces the full array) and attach the corresponding `icon1` /
+  `icon2` file(s). Omitting a file for a slot keeps that slot's existing
+  image; the count of uploaded files must still match `icons.length`.
+
+  Returns 404 LAB_ICON_SETTING_NOT_FOUND if missing or soft-deleted.
+  Requires `iconSettingId` env var (set by Create Icon Setting).
+}
