@@ -44,7 +44,7 @@ export class InternalReferralController {
 
   /**
    * List internal referrals in the caller's tenant (paginated; trimmed fields).
-   * Supports `search` (employee name / mobile) and `status`.
+   * Supports `search` (employee name / mobile), `status`, and `branchId`.
    */
   @Get()
   findAll(

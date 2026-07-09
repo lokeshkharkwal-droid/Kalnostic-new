@@ -60,7 +60,8 @@ export type InternalReferralDetail = Omit<
 
 /**
  * Trimmed projection backing the list endpoint. Only the columns the listing needs
- * are selected; the service returns these rows directly.
+ * are selected; the service reshapes these into `InternalReferralListItem`
+ * (mirrors `EXTERNAL_REFERRAL_LIST_SELECT`).
  */
 export const INTERNAL_REFERRAL_LIST_SELECT = {
   id: true,
@@ -68,17 +69,37 @@ export const INTERNAL_REFERRAL_LIST_SELECT = {
   firstName: true,
   lastName: true,
   fullName: true,
+  department: true,
+  designation: true,
   mobileNumber: true,
   email: true,
   isCommissionApplicable: true,
+  commissionType: true,
+  tds: true,
+  paymentCycle: true,
   isIncludedInPayroll: true,
   status: true,
 } satisfies Prisma.InternalReferralSelect;
 
+/** A reference to an assigned lab test/panel (id + resolved name). */
+export interface InternalReferralLabRef {
+  id: string;
+  name: string;
+}
+
 /** The raw row shape returned by `INTERNAL_REFERRAL_LIST_SELECT`. */
-export type InternalReferralListItem = Prisma.InternalReferralGetPayload<{
+export type InternalReferralListRow = Prisma.InternalReferralGetPayload<{
   select: typeof INTERNAL_REFERRAL_LIST_SELECT;
 }>;
+
+/**
+ * The list endpoint response: the selected columns plus the assigned lab
+ * test/panel references (`[{ id, name }]`), resolved by the service.
+ */
+export type InternalReferralListItem = InternalReferralListRow & {
+  labTestList: InternalReferralLabRef[];
+  labPanelList: InternalReferralLabRef[];
+};
 
 /** Re-export for convenience at call sites. */
 export type { InternalReferralStatus };

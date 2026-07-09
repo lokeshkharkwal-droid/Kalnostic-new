@@ -16,6 +16,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import {
@@ -64,10 +65,13 @@ export class UpdateInternalReferralDto {
   @MaxLength(255)
   lastName?: string;
 
+  // fullName is never accepted from the client — it's always derived from
+  // firstName/lastName in the service (see InternalReferralService.create/update).
+
   @IsString()
   @IsOptional()
-  @MaxLength(511)
-  fullName?: string;
+  @MaxLength(255)
+  department?: string;
 
   @IsString()
   @IsOptional()
@@ -110,18 +114,33 @@ export class UpdateInternalReferralDto {
   @IsOptional()
   commissionType?: CommissionType;
 
+  // Relevant only when this same PATCH also sets Commission Type = PERCENTAGE.
+  // (Cannot see the existing row's type here — the authoritative check against
+  // the merged/effective state happens in the service's assertCommission.)
+  @ValidateIf(
+    (o: UpdateInternalReferralDto) =>
+      o.commissionType === CommissionType.PERCENTAGE,
+  )
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(100)
   @IsOptional()
   commissionPctLabTest?: number;
 
+  @ValidateIf(
+    (o: UpdateInternalReferralDto) =>
+      o.commissionType === CommissionType.PERCENTAGE,
+  )
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(100)
   @IsOptional()
   commissionPctLabPanel?: number;
 
+  @ValidateIf(
+    (o: UpdateInternalReferralDto) =>
+      o.commissionType === CommissionType.SLAB_BASED,
+  )
   @IsArray()
   @IsOptional()
   @ArrayMinSize(1)
@@ -141,6 +160,13 @@ export class UpdateInternalReferralDto {
   @IsBoolean()
   @IsOptional()
   isTdsApplicable?: boolean;
+
+  // TDS percentage; only meaningful when TDS applies (normalised in the service).
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  @IsOptional()
+  tds?: number;
 
   // ── Payroll & payment ──
   @IsBoolean()

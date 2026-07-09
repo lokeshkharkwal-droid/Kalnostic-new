@@ -4,6 +4,7 @@ import {
   Injectable,
   NestInterceptor,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 
@@ -61,7 +62,7 @@ export class ResponseInterceptor implements NestInterceptor {
       const { data, total, page, limit, ...rest } = payload;
       return {
         success: true,
-        data,
+        data: this.decimalsToNumbers(data),
         meta: {
           total,
           page,
@@ -73,7 +74,33 @@ export class ResponseInterceptor implements NestInterceptor {
       };
     }
 
-    return { success: true, data: payload, meta: { timestamp } };
+    return { success: true, data: this.decimalsToNumbers(payload), meta: { timestamp } };
+  }
+
+  /**
+   * Recursively convert every Prisma `Decimal` instance in the payload to a
+   * plain `number` before it's serialized to JSON. Without this, Express's
+   * default `JSON.stringify` invokes decimal.js's `Decimal.prototype.toJSON`,
+   * which returns a numeric STRING (e.g. `"12.50"`) — silently breaking every
+   * frontend type that declares the field as `number` (CLAUDE.md-adjacent:
+   * the API contract must match what the DTO/entity types promise).
+   * @param value any response payload value, at any nesting depth
+   */
+  private decimalsToNumbers<T>(value: T): T {
+    if (value instanceof Prisma.Decimal) {
+      return value.toNumber() as unknown as T;
+    }
+    if (Array.isArray(value)) {
+      return value.map((v) => this.decimalsToNumbers(v)) as unknown as T;
+    }
+    if (value !== null && typeof value === 'object' && !(value instanceof Date)) {
+      const out: Record<string, unknown> = {};
+      for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+        out[key] = this.decimalsToNumbers(val);
+      }
+      return out as unknown as T;
+    }
+    return value;
   }
 
   /**
