@@ -1,0 +1,48 @@
+meta {
+  name: List Modules by Branch Type
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/modules?branch_type=DIAGNOSTIC
+  body: none
+  auth: none
+}
+
+params:query {
+  branch_type: DIAGNOSTIC
+}
+
+docs {
+  Public. Returns the ordered module list for one branch type as
+  `{ key, label }` objects (key = the unified SYSTEM_MODULES key; label = its
+  display name). The `branch_type` query param is snake_case and must match a
+  key in the config constant (case-sensitive).
+
+  `GET {{baseUrl}}/modules?branch_type=DIAGNOSTIC` →
+
+      { "success": true,
+        "data": [
+          { "key": "registration",   "label": "Registration" },
+          { "key": "accession",      "label": "Accession" },
+          { "key": "lab_operations", "label": "Laboratory" },
+          { "key": "finance",        "label": "Finance" },
+          { "key": "phlebotomist",   "label": "Phlebotomist" },
+          { "key": "inventory",      "label": "Inventory" },
+          { "key": "sales",          "label": "Sales" },
+          { "key": "branch_admin",   "label": "Branch Admin" },
+          { "key": "business_admin", "label": "Business Admin" }
+        ],
+        "meta": { "timestamp": "..." } }
+
+  - Unknown `branch_type` → 400 (see "Modules - Invalid Branch Type").
+  - Known type with no modules → `data: []` (see "Modules - Empty List").
+
+  This list is the **source of truth** for a User Management v2 branch assignment's
+  `modules`: a user's per-branch `modules` (and `defaultModule`) must be drawn from
+  this branch-type catalogue (else 422 MODULE_NOT_VALID_FOR_BRANCH_TYPE) **and** be
+  enabled on the specific branch (Branches → Set Branch Modules; else 422
+  MODULE_NOT_ENABLED_FOR_BRANCH). See "06 Users → User Management v2 → Create User /
+  Assign Branches".
+}

@@ -1,0 +1,19 @@
+meta {
+  name: Delete Radiologist
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/radiologists/{{radiologistId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Soft-delete a radiologist (sets `deletedAt`). Scoped to the caller's tenant.
+}

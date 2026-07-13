@@ -1,0 +1,62 @@
+meta {
+  name: 17 Grant Order and Registration Permissions
+  type: http
+  seq: 17
+}
+
+put {
+  url: {{baseUrl}}/users/manage/{{orderUserId}}/branch-permissions
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "branchId": "{{branchId}}",
+    "items": [
+      { "moduleKey": "registration", "permissionKey": "registration:view", "allowed": true },
+      { "moduleKey": "registration", "permissionKey": "registration:write", "allowed": true },
+      { "moduleKey": "registration", "permissionKey": "registration:edit", "allowed": true },
+      { "moduleKey": "registration", "permissionKey": "registration:delete", "allowed": true },
+      { "moduleKey": "sales", "permissionKey": "sales:view", "allowed": true },
+      { "moduleKey": "sales", "permissionKey": "sales:write", "allowed": true },
+      { "moduleKey": "sales", "permissionKey": "sales:edit", "allowed": true },
+      { "moduleKey": "sales", "permissionKey": "sales:delete", "allowed": true }
+    ]
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Step 17 — grant the order-capable user **all permissions needed to create and
+  manage orders** at the branch (`PUT /users/manage/{{orderUserId}}/branch-permissions`).
+  Admin token.
+
+  Order and patient creation are exposed through the **Registration** module (and
+  front-desk billing through **Sales**), so we grant the full CRUD set of both:
+  `registration:view|write|edit|delete` and `sales:view|write|edit|delete`. Each
+  item is `{ moduleKey, permissionKey, allowed }`; `allowed: true` grants it.
+
+  Notes:
+  - The `permissionKey` format is `${moduleKey}:${action}`.
+  - Only modules **enabled at the branch** (step 14) are accepted — grants for a
+    disabled module are rejected.
+  - This **replaces** the user's full grant set for the branch (send everything
+    you want granted, as here).
+  - Business order routes are not yet RBAC-gated server-side, so these grants
+    primarily drive **frontend module visibility** — the receptionist can then see
+    and use the Registration module to create an order in the UI.
+}

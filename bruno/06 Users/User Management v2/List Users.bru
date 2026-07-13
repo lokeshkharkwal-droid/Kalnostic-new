@@ -5,7 +5,7 @@ meta {
 }
 
 get {
-  url: {{baseUrl}}/users/manage?page=1&limit=20&search=&role=&branchId=&moduleKey=&sortBy=employeeName&sortOrder=asc
+  url: {{baseUrl}}/users/manage?page=1&limit=20&search=&role=&status=&branchId=&moduleKey=&sortBy=employeeName&sortOrder=asc
   body: none
   auth: bearer
 }
@@ -15,6 +15,7 @@ params:query {
   limit: 20
   search:
   role:
+  status:
   branchId:
   moduleKey:
   sortBy: employeeName
@@ -38,8 +39,9 @@ docs {
   branch).
 
   Filters (all optional): `search` (matches employeeName/username/email/userCode),
-  `role` (matches any of the user's branch roles), `branchId` (assigned to that
-  branch), `moduleKey` (module on any branch). Sort `sortBy` ∈ {userCode,
+  `role` (matches any of the user's branch roles), `status` (ACTIVE|INACTIVE —
+  tenant-global account status), `branchId` (assigned to that branch), `moduleKey`
+  (module on any branch). Sort `sortBy` ∈ {userCode,
   employeeName, email, mobile, role, assignedBranches, defaultBranch,
   defaultModule, status}, `sortOrder` asc|desc. Leave a param blank to skip it.
 }

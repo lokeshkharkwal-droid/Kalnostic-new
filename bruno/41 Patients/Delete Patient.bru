@@ -1,0 +1,24 @@
+meta {
+  name: Delete Patient
+  type: http
+  seq: 10
+}
+
+delete {
+  url: {{baseUrl}}/patients/{{patientId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Soft-delete a patient (sets `deletedAt`) and cascade soft-delete its active
+  medical-history records, in one transaction. Scoped to the caller's tenant.
+  The patient's `mobile` is freed for reuse among active rows afterward.
+
+  404 `PATIENT_NOT_FOUND` if missing/other tenant. A subsequent **Get Patient**
+  returns 404.
+}

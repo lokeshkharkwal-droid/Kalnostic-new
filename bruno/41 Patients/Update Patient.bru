@@ -1,0 +1,41 @@
+meta {
+  name: Update Patient
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/patients/{{patientId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "city": "Mysuru",
+    "patientCategory": "VIP",
+    "maritalStatus": "MARRIED",
+    "status": "CREATED",
+    "alternateMobileNumber": "+919822222222"
+  }
+}
+
+docs {
+  Update a patient's details (scoped to the caller's tenant). Every field is
+  optional — send only what changes; same field rules as **Create Patient**.
+  This includes `status` (`DRAFT`/`CREATED`) — e.g. promote a `DRAFT` patient to
+  `CREATED`. Medical-history records are managed via their own nested endpoints,
+  NOT here.
+
+  `tenantId`/`branchId` are never accepted. A duplicate active `mobile` in the
+  tenant → 409 `PATIENT_MOBILE_CONFLICT`. 404 `PATIENT_NOT_FOUND` if
+  missing/other tenant.
+}

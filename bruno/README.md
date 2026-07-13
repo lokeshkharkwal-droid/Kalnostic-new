@@ -47,6 +47,22 @@ If a capture script can't find a field (the exact response shape may differ),
 just open the response, copy the value, and paste it into the matching
 **Local** environment variable by hand.
 
+## End-to-end flows (self-contained, Run-Folder friendly)
+
+Two folders are complete, top-to-bottom runs — each request feeds the ids/tokens
+it captures into the next, so you can **Run Folder** with the **Local**
+environment and no manual edits:
+
+- **47 Order Flow (E2E)** — Business Login → catalogue → branch import → master
+  records → patient → **Create Order (every field)**. The exhaustive order
+  contract.
+- **48 Create User Flow (E2E)** — Admin Login → enable branch modules → **create
+  an order-capable user** (`receptionist` + `sales` permissions) → **log in as
+  that new user** → **Registration** phase (register patient → create order) run
+  *as the new user*. Proves a freshly-provisioned account can do front-desk work
+  end-to-end. Prereq: the branch has an imported catalogue (run 47 once first if
+  empty).
+
 ## How it's wired
 
 - **Global prefix** `/api/v1` (from `src/main.ts`).
@@ -84,11 +100,23 @@ just open the response, copy the value, and paste it into the matching
   the 24 built-in **system** roles are seeded and have immutable `name`/`key`
   (only `description`/`isActive` are editable); tenants define their own custom
   roles here. `roleKey`/`profileKey` in other requests resolve to one of these.
+- **Patients** (`/patients`): list, get (with medical histories), create (with
+  optional nested `medicalHistories`), update, delete (cascade soft-delete).
+  Tenant-scoped + branch-level (registration branch from the JWT); duplicate
+  active `mobile` per tenant → 409 `PATIENT_MOBILE_CONFLICT`.
+- **Medical history** (`/patients/:patientId/medical-history`): add, list, get,
+  update, delete — one-to-many per patient (boolean symptom/condition/medication/
+  allergy flags + free-text notes).
 
 ## Enum reference
 
 - `Gender`: MALE, FEMALE, OTHER, PREFER_NOT_TO_SAY
 - `BloodGroup`: A_POS, A_NEG, B_POS, B_NEG, O_POS, O_NEG, AB_POS, AB_NEG, UNKNOWN
+- `Salutation`: DR, MR, MRS, MS, PROF
+- `PatientCategory`: GENERAL, VIP, SENIOR_CITIZEN, PEDIATRIC, EMPLOYEE
+- `MaritalStatus`: SINGLE, MARRIED, DIVORCED, WIDOWED, SEPARATED, OTHER
+- `AgeType`: YEARS, MONTHS, DAYS
+- `Relationship` (patient `relationship` / `guardianRelationship`): SELF, SPOUSE, SON, DAUGHTER, FATHER, MOTHER, BROTHER, SISTER, GUARDIAN, FRIEND, OTHER
 - `BranchType`: DIAGNOSTIC, RADIOLOGY, OPD, IPD, PHARMACY, INVENTORY, BLOOD_BANK, FRANCHISE, COMBINED, ASSISTANT, ACCESSION, TECHNICIAN, COLLECTION_CENTER
 - `SiteAdminRole`: CONTENT_ADMIN, OPERATIONS_ADMIN, FULL_ADMIN, SUPER_OWNER
 - `UserType` (User Mgmt v2): INTERNAL, EXTERNAL
@@ -103,8 +131,12 @@ just open the response, copy the value, and paste it into the matching
   nursing_staff, nursing_incharge. Tenants may also define **custom** role keys
   via `/roles` (auto-generated slug of the role name). Any request taking a
   `roleKey`/`profileKey` accepts either; an unknown key → 404 ROLE_NOT_FOUND.
-- System modules (`moduleKey`): registration, accession, lab_operations,
-  inventory, sales, admin, radiology, pharmacy, opd, ipd, finance, phlebotomist
+- System modules (`moduleKey`): accession, inventory, sales, finance,
+  phlebotomist, assistant, operation, business_admin, branch_admin, registration,
+  lab_operations, patient_management, radiology, pharmacy. The subset **valid for a
+  given branch** is branch-type dependent — see `GET /modules?branchType=…`
+  (`BRANCH_MODULES`). A user's per-branch `modules` (User Mgmt v2 branch
+  assignments) must come from that subset **and** be enabled on the branch.
 - Permission keys (`permissionKey`): `module:action`. Every module exposes the
   four standard actions — `view`, `write`, `edit`, `delete` (e.g. `admin:view`,
   `inventory:write`) — plus domain-specific extras: `lab_operations:enter_results`,

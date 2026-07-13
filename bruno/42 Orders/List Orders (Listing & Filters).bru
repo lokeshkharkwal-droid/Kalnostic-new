@@ -1,0 +1,48 @@
+meta {
+  name: List Orders (Listing & Filters)
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/orders?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: ORD-00001
+  ~status: ORDER
+  ~orderType: WALK_IN
+  ~billingType: CASH_CLIENT
+  ~patientId: {{patientId}}
+  ~branchId: {{branchId}}
+  ~isBillGenerated: false
+  ~dateFrom: 2026-07-01
+  ~dateTo: 2026-07-31
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Paginated list of orders in the caller's tenant, each with the patient ref and
+  an active-item count (`itemCount`). Pagination info lands in `meta`.
+
+  ## Search
+
+  - `search` — case-insensitive match on `orderCode`.
+
+  ## Filters (toggle the `~` to enable a query param)
+
+  - `status` — `DRAFT` | `QUOTE` | `APPOINTMENT` | `ORDER`.
+  - `orderType` — `WALK_IN` | `APP` | `WEBSITE`.
+  - `billingType` — `CASH_CLIENT` | `INSURANCE` | `CORPORATE` |
+    `GOVERNMENT_SCHEME` | `TPA`.
+  - `patientId` / `branchId` — UUID filters.
+  - `isBillGenerated` — `true` | `false`.
+  - `dateFrom` / `dateTo` — inclusive ISO-8601 date bounds on `orderDate`.
+}

@@ -162,6 +162,7 @@
   <h3>Documents</h3>
   <a href="#doc-create">POST /documents</a>
   <a href="#doc-list">GET /documents</a>
+  <a href="#doc-summary">GET /documents/status-summary</a>
   <a href="#doc-get">GET /documents/:id</a>
   <a href="#doc-versions">GET /documents/:id/versions</a>
   <a href="#doc-version">GET /documents/:id/versions/:versionId</a>
@@ -1592,11 +1593,14 @@ independently). Exactly one row per group is the <code>isDefault</code> (used fo
 </div>
 
 <h2 id="documents">Documents</h2>
-<div class="note">Controlled documents (SOPs, policies, certificates, …) are tenant-scoped + <b>branch-level</b>:
-the tenant comes from the JWT and the branch from <code>active_branch_id</code> (<code>@CurrentProfile()</code>) —
-never the body. Calls therefore need a business token with an <b>active branch</b>; a tenant-level token
+<div class="note">Controlled documents (SOPs, policies, certificates, …) are tenant-scoped + <b>branch-level</b>.
+<b>Reads</b> (list, status-summary, get, versions) take an <b>optional <code>branchId</code> query param</b>:
+present → scoped to that branch (Branch Admin; the id is verified against the caller's tenant, else
+<span class="pill">404 BRANCH_NOT_FOUND</span>); absent → across <b>all branches</b> of the tenant (Business Admin).
+<b>Writes</b> (create/update/delete) still require an <b>active branch</b> from the JWT
+(<code>active_branch_id</code>, <code>@CurrentProfile()</code>) — a tenant-level token
 (e.g. <code>business_admin</code> with <code>active_branch_id = null</code>) is rejected with
-<span class="pill">400 BRANCH_CONTEXT_REQUIRED</span>. The <code>documents</code> row is the
+<span class="pill">400 BRANCH_CONTEXT_REQUIRED</span>. Tenant isolation is always enforced. The <code>documents</code> row is the
 <b>current/active</b> version; an immutable snapshot of <b>every</b> version is preserved in
 <code>document_versions</code> — <b>every edit creates a new version</b> and previous versions are read-only
 (never updated or deleted). <code>document_number</code> is unique per branch among active rows; the
@@ -1625,24 +1629,39 @@ reference only (the upload itself is handled elsewhere).</div>
 
 <div class="ep" id="doc-list">
   <div><span class="m get">GET</span><span class="path">/api/v1/documents?page=1&amp;limit=20</span></div>
-  <div class="tags"><span class="tag biz">business JWT (active branch)</span></div>
-  <p>Paginated list of active documents in the caller's branch, newest first; each row carries the loaded
-  <code>category</code> / <code>department</code> relations. Optional filters: <code>status</code>,
-  <code>documentType</code>, <code>categoryId</code>, <code>departmentId</code>. Pagination info is lifted
-  into <code>meta</code>.</p>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Paginated list of active documents, newest first; each row carries the loaded
+  <code>category</code> / <code>department</code> relations. Branch scope follows the optional
+  <code>branchId</code> query param (present → that branch, verified; absent → all branches of the tenant).
+  Optional filters: <code>status</code>, <code>documentType</code>, <code>categoryId</code>,
+  <code>departmentId</code>, <code>search</code> (matches <code>documentNumber</code>/<code>title</code>).
+  Pagination info is lifted into <code>meta</code>.</p>
+</div>
+
+<div class="ep" id="doc-summary">
+  <div><span class="m get">GET</span><span class="path">/api/v1/documents/status-summary</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Exact document count per status, computed in the database (not derived from a page). Returns an object
+  keyed by every <code>DocumentStatus</code> — each key always present (0 when none). Branch scope follows the
+  optional <code>branchId</code> query param (present → that branch, verified against the tenant, else
+  <span class="pill">404 BRANCH_NOT_FOUND</span>; absent → all branches of the tenant). Counts describe the full
+  status distribution and are <b>not</b> narrowed by list filters. Powers the status summary cards.</p>
+  <pre>{ "DRAFT":3, "UNDER_REVIEW":1, "APPROVED":12, "EXPIRED":2, "ARCHIVED":0 }</pre>
 </div>
 
 <div class="ep" id="doc-get">
   <div><span class="m get">GET</span><span class="path">/api/v1/documents/:id</span></div>
-  <div class="tags"><span class="tag biz">business JWT (active branch)</span></div>
-  <p>Fetch one document (its current version). <span class="pill">404 DOCUMENT_NOT_FOUND</span> if
-  missing/soft-deleted/other tenant or branch.</p>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Fetch one document (its current version). Optional <code>branchId</code> query param scopes the lookup
+  (absent → tenant-wide). <span class="pill">404 DOCUMENT_NOT_FOUND</span> if
+  missing/soft-deleted/other tenant (or other branch when <code>branchId</code> is given).</p>
 </div>
 
 <div class="ep" id="doc-versions">
   <div><span class="m get">GET</span><span class="path">/api/v1/documents/:id/versions?page=1&amp;limit=20</span></div>
-  <div class="tags"><span class="tag biz">business JWT (active branch)</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
   <p>The complete, <b>read-only</b> version history, newest first (ordered by <code>versionNo</code> desc).
+  Optional <code>branchId</code> query param scopes the lookup (absent → tenant-wide).
   Each entry is a full immutable snapshot of every field at that version (<code>versionNo</code>,
   <code>version</code>, <code>title</code>, <code>status</code>, dates, file refs, <code>changedBy</code>, …).
   After one edit this returns v2 (current) and v1 (original, unchanged).</p>
@@ -1650,8 +1669,9 @@ reference only (the upload itself is handled elsewhere).</div>
 
 <div class="ep" id="doc-version">
   <div><span class="m get">GET</span><span class="path">/api/v1/documents/:id/versions/:versionId</span></div>
-  <div class="tags"><span class="tag biz">business JWT (active branch)</span></div>
-  <p>Fetch a single read-only version snapshot. <span class="pill">404 DOCUMENT_VERSION_NOT_FOUND</span>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Fetch a single read-only version snapshot. Optional <code>branchId</code> query param scopes the lookup
+  (absent → tenant-wide). <span class="pill">404 DOCUMENT_VERSION_NOT_FOUND</span>
   if the version id does not belong to the document.</p>
 </div>
 

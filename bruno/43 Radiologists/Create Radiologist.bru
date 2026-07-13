@@ -1,0 +1,54 @@
+meta {
+  name: Create Radiologist
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/radiologists
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Dr. Anita Rao",
+    "departmentId": "{{departmentId}}",
+    "speciality": "MRI & CT imaging",
+    "qualification": "MD Radiodiagnosis",
+    "licenseNumber": "RAD-2026-0091",
+    "mobile": "+919812345001",
+    "email": "anita.rao@example.com"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("radiologistId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  Create a radiologist master record in the caller's tenant (tenant from the JWT,
+  branch from the active profile). Captures `radiologistId`.
+
+  ## Fields
+
+  - `name` — required, 1-255 chars.
+  - `departmentId` — optional UUID; validated to be an active department in the
+    caller's tenant (422 `RADIOLOGIST_DEPARTMENT_NOT_FOUND` otherwise).
+  - `speciality`, `qualification`, `licenseNumber`, `mobile`, `email` — optional.
+}

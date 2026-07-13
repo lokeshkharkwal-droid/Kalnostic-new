@@ -1,0 +1,37 @@
+meta {
+  name: 26 Get Order
+  type: http
+  seq: 26
+}
+
+get {
+  url: {{baseUrl}}/orders/{{orderId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the composed order", function () {
+    const d = res.getBody().data;
+    expect(d.id).to.equal(bru.getVar("orderId"));
+    expect(d.items.length).to.be.greaterThan(0);
+  });
+}
+
+docs {
+  Step 26 — verification: re-fetch the order created in step 25 fully composed
+  (patient ref, active `items` with resolved test/panel, the `diagnostics`/`opd`/
+  `radiology` sections, and the active `payments` ledger). Confirms the whole
+  graph persisted — and that the order-capable user (step 18) both created and can
+  read it. 404 `ORDER_NOT_FOUND` if missing, soft-deleted, or owned by another
+  tenant.
+
+  Full CRUD (List / Update / Delete) lives in the **42 Orders** folder.
+}

@@ -6,6 +6,7 @@ import { DepartmentModule } from '../department/department.module';
 import { SubCategoryModule } from '../sub-category/sub-category.module';
 import { ReferralPanelSettingsModule } from '../referral-panel-settings/referral-panel-settings.module';
 import { ReferralDoctorController } from './referral-doctor.controller';
+import { ReferralDoctorOptionsController } from './referral-doctor-options.controller';
 import { ReferralDoctorService } from './referral-doctor.service';
 
 /**
@@ -26,7 +27,7 @@ import { ReferralDoctorService } from './referral-doctor.service';
     SubCategoryModule,
     ReferralPanelSettingsModule,
   ],
-  controllers: [ReferralDoctorController],
+  controllers: [ReferralDoctorOptionsController, ReferralDoctorController],
   providers: [ReferralDoctorService],
   exports: [ReferralDoctorService],
 })

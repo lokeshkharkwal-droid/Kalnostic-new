@@ -40,7 +40,7 @@ body:json {
     "userType": "INTERNAL",
     "status": "ACTIVE",
     "branches": [
-      { "branchId": "{{branchId}}", "roleKey": "branch_admin", "moduleId": "branch_admin", "isDefault": true, "branchStatus": "ACTIVE" }
+      { "branchId": "{{branchId}}", "role": "branch_admin", "modules": ["branch_admin"], "defaultModule": "branch_admin", "defaultBranch": true, "status": "ACTIVE" }
     ]
   }
 }
@@ -83,9 +83,11 @@ docs {
     create a user with no role and assign per-branch later.
   - `userType` ✱ — `INTERNAL` | `EXTERNAL`.
   - `status` (optional) — `StaffStatus`: `ACTIVE` | `INACTIVE` (defaults ACTIVE).
-  - `branches` (optional) — array of `{ branchId ✱, roleKey ✱, moduleId?, isDefault?,
-    branchStatus? }`. `roleKey` is any role key (system or custom); `branchStatus` is
-    `ACTIVE`|`INACTIVE` (defaults ACTIVE).
+  - `branches` (optional) — array of `{ branchId ✱, role ✱, modules?, defaultModule?,
+    defaultBranch?, status? }`. `role` is any role key (system or custom); `status`
+    is `ACTIVE`|`INACTIVE` (defaults ACTIVE). `modules` is the set of module keys the
+    user may access at that branch; `defaultModule` (the landing module) must be one
+    of them. `defaultBranch` accepts a boolean (or `"Yes"`/`"No"`).
 
   Role model (v2.0 + AuthRole):
   - Roles are a first-class entity (`auth_roles`). A `roleKey` in any request body
@@ -94,17 +96,20 @@ docs {
     stored value is an `auth_role_id` FK; the response `membership` carries both
     `authRoleId` and the (derived) `roleKey`. The JWT is unchanged — `profile_key`
     / `profile_label` still equal the role's `key` / `name`.
-  - The role is assigned **per branch** via `branches[].roleKey` (one role per
+  - The role is assigned **per branch** via `branches[].role` (one role per
     branch). The top-level `roleKey` is an OPTIONAL primary/default role — omit it
     to create a user with no role and assign roles later (see "Register User
     (no role)" + "Assign Branches").
-  - `branches[].moduleId` is the module linked to that assignment. It must be
-    enabled for the branch (Branches → Set Branch Modules) else 422
-    MODULE_NOT_ENABLED_FOR_BRANCH; if the role template links specific modules, it
+  - `branches[].modules` are the modules the user may access at that branch. Each
+    must be a valid module key, offered by the branch's type (GET /modules?branchType
+    → BRANCH_MODULES) else 422 MODULE_NOT_VALID_FOR_BRANCH_TYPE, and enabled for the
+    branch (Branches → Set Branch Modules) else 422 MODULE_NOT_ENABLED_FOR_BRANCH.
+  - `branches[].defaultModule` (the landing module) must be one of `modules` else 422
+    DEFAULT_MODULE_NOT_IN_MODULES; if the role template links specific modules, it
     must be one of them else 422 MODULE_NOT_IN_ROLE_TEMPLATE.
-  - Each branch `roleKey` must be a **branch-level** role — a tenant-level role
+  - Each branch `role` must be a **branch-level** role — a tenant-level role
     (`business_admin`, `administrator`, `patient`) can't be pinned to a branch.
     Validity comes from the role's allowed branch types (system roles:
     PROFILE_BRANCH_MATRIX; custom roles: their `allowedBranchTypes`). Exactly one
-    branch entry may be `isDefault: true`.
+    branch entry may be `defaultBranch: true`.
 }

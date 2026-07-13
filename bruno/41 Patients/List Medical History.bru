@@ -1,0 +1,26 @@
+meta {
+  name: List Medical History
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/patients/{{patientId}}/medical-history
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.length && data[0].id) bru.setEnvVar("medicalHistoryId", data[0].id);
+}
+
+docs {
+  List the patient's active medical-history records (most recent first), scoped
+  to the caller's tenant. Captures `medicalHistoryId` from the first item. 404
+  `PATIENT_NOT_FOUND` if the patient is missing/other tenant.
+}

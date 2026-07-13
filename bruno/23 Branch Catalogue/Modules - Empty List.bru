@@ -1,0 +1,24 @@
+meta {
+  name: Modules - Empty List
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/modules?branch_type=COLLECTION_CENTER
+  body: none
+  auth: none
+}
+
+params:query {
+  branch_type: COLLECTION_CENTER
+}
+
+docs {
+  Public. A branch type that exists but has no modules configured returns an
+  empty array (not a 404/400):
+
+      { "success": true, "data": [], "meta": { "timestamp": "..." } }
+
+  Both `COLLECTION_CENTER` and `BLOOD_BANK` are empty in the current config.
+}

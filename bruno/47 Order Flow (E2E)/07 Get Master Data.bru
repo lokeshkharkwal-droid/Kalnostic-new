@@ -1,0 +1,46 @@
+meta {
+  name: 07 Get Master Data
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/master-data?branchId={{branchId}}&page=1&limit=1
+  body: none
+  auth: bearer
+}
+
+params:query {
+  branchId: {{branchId}}
+  page: 1
+  limit: 1
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.length && data[0].id) bru.setVar("masterDataId", data[0].id);
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("captured a masterDataId", function () {
+    expect(res.getBody().data[0].id).to.be.a("string");
+  });
+}
+
+docs {
+  Step 7 — resolve the branch's **auto-provisioned** master data and capture its
+  id as `masterDataId`. Every branch gets exactly one master data when it is
+  created (there is no "create default master data" route), so we list filtered
+  by `branchId` and take the first row. `masterDataId` is the path container for
+  creating lab tests and panels (steps 8-9).
+  
+  Pagination info lands in `meta`. If the list is empty, the branch has no master
+  data mapped — verify `branchId` points at a real branch.
+}

@@ -1,0 +1,30 @@
+meta {
+  name: List Branch Lab Panel Options
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/branch-lab-panels/options?page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 10
+  ~search: Thyroid
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Lightweight `{ id, name }` options for the Create-Order lab-panel picker. Returns
+  the active branch's **active default-variant** lab panels only (one orderable row
+  per variant group), so a selected id is directly usable as an order item's
+  `branchLabPanelId`. Scoped to the JWT tenant + active branch (no `branchId` in the
+  query). `search` matches panelName (case-insensitive). Omit `page` for the full
+  array; supply `page` for a `{ data, total, page, limit }` envelope.
+}

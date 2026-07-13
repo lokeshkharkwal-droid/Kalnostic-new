@@ -1,0 +1,21 @@
+meta {
+  name: Delete Order
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/orders/{{orderId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Soft-delete an order (sets `deletedAt`) and cascade soft-delete its items,
+  sections, and payments, in one transaction. Scoped to the caller's tenant. The
+  `orderCode` is freed for reuse among active rows afterward.
+}

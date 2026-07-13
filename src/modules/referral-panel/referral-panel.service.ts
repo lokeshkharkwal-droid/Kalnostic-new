@@ -83,6 +83,69 @@ export class ReferralPanelService {
   ) {}
 
   /**
+   * Lightweight `{ id, name }` options for the searchable selector
+   * (`GET /referral-panels/options`). Tenant-scoped to active, non-deleted
+   * referral panels; optionally filtered by a case-insensitive `name` search.
+   * Returns the full array when `page` is omitted, or a paginated envelope when
+   * `page` is supplied.
+   * @param tenantId tenant scope
+   * @param filters optional `search` and opt-in `page`/`limit`
+   * @returns the full `{ id, name }[]` array, or a paginated `{ data, total, page, limit }` envelope
+   */
+  async findOptions(
+    tenantId: string,
+    filters: {
+      search?: string;
+      page?: number;
+      limit?: number;
+    } = {},
+  ): Promise<
+    | Array<{ id: string; name: string }>
+    | PaginatedResult<{ id: string; name: string }>
+  > {
+    const where: Prisma.ReferralPanelWhereInput = {
+      tenantId,
+      deletedAt: null,
+      isActive: true,
+    };
+    const search = filters.search?.trim();
+    if (search) {
+      where.name = { contains: search, mode: 'insensitive' };
+    }
+
+    const select = { id: true, name: true } as const;
+    const orderBy = { name: 'asc' } as const;
+
+    if (filters.page === undefined) {
+      const rows = await this.prisma.referralPanel.findMany({
+        where,
+        select,
+        orderBy,
+      });
+      return rows.map((r) => ({ id: r.id, name: r.name }));
+    }
+
+    const page = filters.page;
+    const limit = filters.limit ?? 20;
+    const [rows, total] = await Promise.all([
+      this.prisma.referralPanel.findMany({
+        where,
+        select,
+        orderBy,
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.referralPanel.count({ where }),
+    ]);
+    return {
+      data: rows.map((r) => ({ id: r.id, name: r.name })),
+      total,
+      page,
+      limit,
+    };
+  }
+
+  /**
    * Validate that a referenced settings template exists in the caller's tenant.
    * No-op when no id is supplied.
    * @param tenantId tenant scope

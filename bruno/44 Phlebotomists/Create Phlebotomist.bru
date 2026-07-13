@@ -1,0 +1,49 @@
+meta {
+  name: Create Phlebotomist
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/phlebotomists
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Ravi Kumar",
+    "designation": "Senior Phlebotomist",
+    "mobile": "+919812345010",
+    "email": "ravi.kumar@example.com"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("phlebotomistId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  Create a phlebotomist master record in the caller's tenant (tenant from the
+  JWT, branch from the active profile). Captures `phlebotomistId`.
+
+  ## Fields
+
+  - `name` — required, 1-255 chars.
+  - `designation`, `mobile`, `email` — optional.
+}

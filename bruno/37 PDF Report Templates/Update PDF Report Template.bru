@@ -29,7 +29,31 @@ body:json {
       "template_version": "v2.0",
       "header_html": "<div class='title'>{hospital_name}</div>",
       "body_html": "<h3>Patient: {patient_name}</h3>",
-      "footer_html": "<signing_authority_tag></signing_authority_tag>"
+      "footer_html": "<signing_authority_tag></signing_authority_tag>",
+      "body_layout": "Two Column",
+      "logo_position": "Top Center",
+      "report_refs": {
+        "image_setting_id": "IMG-2",
+        "pdf_setting_id": "PDF-2",
+        "group_layout_id": "GL-2",
+        "icon_setting_id": "IC-2"
+      },
+      "header_block": {
+        "enabled": true,
+        "type": "Image",
+        "text": "",
+        "image_file": "logo.png",
+        "alignment": "Left"
+      },
+      "attachment": {
+        "enabled": true,
+        "type": "PDF",
+        "files": ["ref.pdf"],
+        "position": "After Params",
+        "alignment": "Center",
+        "size_profile": "Full Width",
+        "display_profile": "Grid 2 per Row"
+      }
     }
   }
 }

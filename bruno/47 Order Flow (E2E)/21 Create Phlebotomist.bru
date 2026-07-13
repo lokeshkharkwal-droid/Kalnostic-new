@@ -1,0 +1,48 @@
+meta {
+  name: 21 Create Phlebotomist
+  type: http
+  seq: 21
+}
+
+post {
+  url: {{baseUrl}}/phlebotomists
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Ravi Kumar",
+    "designation": "Senior Phlebotomist",
+    "mobile": "+919812345010",
+    "email": "ravi.kumar.e2e@example.com"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setVar("phlebotomistId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("captured a phlebotomistId", function () {
+    expect(res.getBody().data.id).to.be.a("string");
+  });
+}
+
+docs {
+  Step 21 — create a **Phlebotomist** (as the receptionist, step 18 token).
+  Captures `phlebotomistId`, used by the order's `diagnostics.phlebotomistId`.
+  Only `name` is required; `designation` / `mobile` / `email` are optional.
+}

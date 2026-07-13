@@ -24,10 +24,7 @@ body:json {
     "documentType": "SOP",
     "title": "Sample Collection Procedure",
     "version": "1.0",
-    "categoryId": "{{categoryId}}",
     "departmentId": "{{departmentId}}",
-    "authorId": "{{patientPersonId}}",
-    "approvedById": "{{patientPersonId}}",
     "status": "DRAFT",
     "effectiveDate": "2026-07-01",
     "expiryDate": "2028-07-01",
@@ -36,6 +33,10 @@ body:json {
     "fileUrl": "https://files.example.com/sop-001-v1.pdf",
     "description": "Standard operating procedure for venous sample collection."
   }
+}
+
+vars:pre-request {
+  departmentId: ad8992fd-aa5f-49cb-9e16-4f5bee1815a2
 }
 
 script:post-response {
@@ -56,17 +57,17 @@ tests {
 docs {
   Create a controlled document in the caller's ACTIVE BRANCH and seed version 1
   of its preserved history. Captures `documentId`.
-
+  
   ## Context (important)
-
+  
   Documents are tenant-scoped AND branch-level. The branch is taken from the
   JWT's `active_branch_id` (`@CurrentProfile()`) — NOT from the body. You must
   call this with a business token that has an ACTIVE BRANCH (e.g. a staff login
   with a branch profile). A tenant-level token (e.g. `business_admin` with
   `active_branch_id = null`) is rejected with 400 `BRANCH_CONTEXT_REQUIRED`.
-
+  
   ## Fields
-
+  
   - `documentNumber` — REQUIRED, ≤ 120 chars. Unique per branch among active
     documents → 409 `DOCUMENT_NUMBER_CONFLICT` otherwise.
   - `documentType` — REQUIRED enum: `SOP`, `POLICY`, `FORM`, `CERTIFICATE`,

@@ -17,9 +17,10 @@ This guide covers what User Management v2.0 is, how to use it, and how
   **optional primary role** (`roleKey`, may be `null`), and a **tenant-global
   on/off switch** (`status`).
 - The person is **assigned to one or more branches** via `UserBranchProfile`. Each
-  branch assignment carries its **own role** (`profileKey`), an optional **module**
-  (`defaultModuleId`), an **on/off switch** (`branchStatus`), and a **default flag**
-  (`isDefault`). **One role per branch** — but the role can differ across branches.
+  branch assignment carries its **own role** (`profileKey`), a **set of accessible
+  modules** (`enabledModules`), a **default landing module** (`defaultModuleId`), an
+  **on/off switch** (`branchStatus`), and a **default flag** (`isDefault`). **One
+  role per branch** — but the role can differ across branches.
 - **Registration is decoupled from roles:** you can create a user with just basic
   details (no role), then assign role + module per branch later.
 - A **role template** (predefined in code) bundles **two independent lists**: the
@@ -88,9 +89,10 @@ This is the user↔branch↔role↔module junction.
 | ----- | ----- |
 | `branchId` | the branch; `NULL` = tenant-level profile (e.g. `business_admin`) |
 | `profileKey` | **the role at this branch** — set per assignment (independent across branches) |
-| `defaultModuleId` | the module linked to this assignment (the API field is `moduleId`); must be enabled for the branch |
-| `branchStatus` | `ACTIVE` \| `INACTIVE` — **per-branch** switch (this branch only) |
-| `isDefault` | exactly one per person — the JWT landing profile |
+| `defaultModuleId` | the default landing module for this assignment (the API field is `defaultModule`); must be one of `enabledModules` and enabled for the branch |
+| `enabledModules` | `String[]` — the set of module keys this user may access at this branch (API field `modules`); each must be valid for the branch type and enabled for the branch |
+| `branchStatus` | `ACTIVE` \| `INACTIVE` — **per-branch** switch (this branch only) (API field `status`) |
+| `isDefault` | exactly one per person — the JWT landing profile (API field `defaultBranch`) |
 | `isActive` | soft-revoke (`false` = revoked); `revokedAt` / `revokedBy` trail |
 
 > **One role per branch** is enforced by a partial unique index
@@ -256,8 +258,9 @@ Branch→module enablement is on the **branch** module: `GET|PUT /branches/:id/m
   "userType": "INTERNAL",
   // roleKey is OPTIONAL (primary role). Omit to create a user with no role.
   "branches": [                        // optional initial assignments
-    { "branchId": "<uuid>", "roleKey": "lab_technician",
-      "moduleId": "lab_operations", "isDefault": true, "branchStatus": "ACTIVE" }
+    { "branchId": "<uuid>", "role": "lab_technician",
+      "modules": ["lab_operations"], "defaultModule": "lab_operations",
+      "defaultBranch": true, "status": "ACTIVE" }
   ]
 }
 ```
@@ -274,24 +277,27 @@ The body is the **array of objects** you map to the user:
 
 ```jsonc
 { "branches": [
-  { "branchId": "<branch-A>", "roleKey": "doctor",       "moduleId": "lab_operations", "isDefault": true },
-  { "branchId": "<branch-B>", "roleKey": "branch_admin", "branchStatus": "ACTIVE" }
+  { "branchId": "<branch-A>", "role": "doctor", "modules": ["lab_operations"],
+    "defaultModule": "lab_operations", "defaultBranch": true },
+  { "branchId": "<branch-B>", "role": "branch_admin", "status": "ACTIVE" }
 ] }
 ```
 
-Each item is `{ branchId, roleKey, moduleId? }` (+ optional `isDefault`,
-`branchStatus`). One role per branch — an existing branch assignment is re-roled in
-place. Exactly one item may be `isDefault: true`. Each `roleKey` must be valid for
-that branch's type; `moduleId` must be enabled for the branch (and linked to the
-role template, when it links any).
+Each item is `{ branchId, role, modules?, defaultModule?, defaultBranch?, status? }`.
+One role per branch — an existing branch assignment is re-roled in place. Exactly one
+item may be `defaultBranch: true`. Each `role` must be valid for that branch's type;
+every key in `modules` must be valid for the branch type (`GET /modules?branchType`)
+and enabled for the branch; `defaultModule` must be one of `modules` (and linked to
+the role template, when it links any).
 
 ### Patch one branch — `PATCH /users/manage/:id/branches/:branchId`
 
 ```jsonc
-{ "roleKey": "receptionist", "branchStatus": "INACTIVE", "isDefault": false, "moduleId": "registration" }
+{ "role": "receptionist", "status": "INACTIVE", "defaultBranch": false, "modules": ["registration"], "defaultModule": "registration" }
 ```
 
-All fields optional, including changing just that branch's `roleKey`.
+All fields optional, including changing just that branch's `role`. When `modules` is
+supplied it replaces the set; otherwise the existing set stands.
 
 ### Read & set permissions
 
@@ -311,11 +317,11 @@ rows of `{ moduleKey, moduleLabel, permissionKey, label, baseline, allowed }`
 
 1. `GET /users/manage/roles` and `/modules` to populate dropdowns.
 2. `POST /users/manage` (with or without a role).
-3. `POST /users/manage/:id/branches` with the `{ branchId, roleKey, moduleId }`
-   array; set one branch as default.
+3. `POST /users/manage/:id/branches` with the `{ branchId, role, modules,
+   defaultModule }` array; set one branch as default.
 4. Ensure the branch runs the modules you need: `PUT /branches/:id/modules`.
 5. `PUT /users/manage/:id/branch-permissions` to tune one branch's capabilities.
-6. `PATCH …/branches/:branchId` with `branchStatus: INACTIVE` to suspend one
+6. `PATCH …/branches/:branchId` with `status: INACTIVE` to suspend one
    branch, or `/deactivate` for the whole account.
 
 ### Notes
@@ -338,23 +344,26 @@ This is the core of v2.0's role model, now implemented.
 - The role lives on each `UserBranchProfile.profileKey` row — **one per
   (user, branch)**, set independently. `TenantStaffMembership.roleKey` is only an
   optional primary/default and is **never** propagated to branch profiles.
-- The frontend sends, per user, an array of `{ branchId, roleKey, moduleId }`
-  (Assign Branches). Each maps to one branch profile row.
+- The frontend sends, per user, an array of `{ branchId, role, modules,
+  defaultModule }` (Assign Branches). Each maps to one branch profile row.
 - A partial unique index enforces **one active role per (tenant, person, branch)**.
 
 ## C.2 Where it's enforced (code map)
 
 - `BranchAssignmentItemDto` / `UpdateBranchAssignmentDto`
-  (`src/modules/users/dto/`) carry per-item `roleKey` (+ `moduleId`).
-  `CreateUserDto.roleKey` is optional.
+  (`src/modules/users/dto/`) carry per-item `role` (+ `modules`, `defaultModule`,
+  `defaultBranch`, `status`). `CreateUserDto.roleKey` (the optional primary role)
+  is unchanged.
 - `users.service.ts`:
   - `prepareBranchAssignments(tenantId, fallbackRoleKey, items)` — resolves each
-    item's role (`item.roleKey ?? fallback`), validates it for the branch type
-    (`isProfileValidForBranch`) and the module (enabled + linked to the template).
+    item's role (`item.role ?? fallback`), validates it for the branch, validates
+    every `modules` key via `assertModulesValidForBranch` (branch-type catalogue +
+    branch enablement), and requires `defaultModule` ∈ `modules` (and linked to the
+    template).
   - `createUser` / `assignBranches` — write each profile's `profileKey` from its own
     item; `assignBranches` matches existing rows by `(tenant, person, branch)` and
     re-roles in place (one role per branch).
-  - `updateBranchAssignment` — can change a single branch's `roleKey`.
+  - `updateBranchAssignment` — can change a single branch's `role`, `modules`, etc.
   - `updateUser` — updates only the membership's optional primary role; **no**
     propagation to branch profiles.
   - `getBranchPermissions` — resolves the baseline from the branch's `profileKey`.

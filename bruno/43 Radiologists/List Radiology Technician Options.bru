@@ -1,0 +1,32 @@
+meta {
+  name: List Radiology Technician Options
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/radiology-technicians/options?page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 10
+  ~search: suresh
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Lightweight `{ id, name }` options for the Create-Order Radiology section's
+  Technician picker. A technician is a **Person** holding an active radiology
+  technician profile (role `radiology_assistant`) at the active branch; the
+  returned id is a `personId`, directly usable as an order's
+  `radiology.radiologyTechnicianId`. Scoped to the JWT tenant + active branch (no
+  `branchId` in the query). `search` matches the person name (case-insensitive).
+  Omit `page` for the full array; supply `page` for a `{ data, total, page, limit }`
+  envelope.
+}

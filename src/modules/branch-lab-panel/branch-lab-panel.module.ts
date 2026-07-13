@@ -5,6 +5,7 @@ import { LabPanelModule } from '../lab-panel/lab-panel.module';
 import { LabTestModule } from '../lab-test/lab-test.module';
 import { BranchLabTestModule } from '../branch-lab-test/branch-lab-test.module';
 import { BranchLabPanelController } from './branch-lab-panel.controller';
+import { BranchLabPanelOptionsController } from './branch-lab-panel-options.controller';
 import { BranchLabPanelService } from './branch-lab-panel.service';
 
 /**
@@ -23,7 +24,7 @@ import { BranchLabPanelService } from './branch-lab-panel.service';
     LabTestModule,
     BranchLabTestModule,
   ],
-  controllers: [BranchLabPanelController],
+  controllers: [BranchLabPanelOptionsController, BranchLabPanelController],
   providers: [BranchLabPanelService],
   exports: [BranchLabPanelService],
 })

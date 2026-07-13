@@ -1,0 +1,44 @@
+meta {
+  name: 09 Registration - List Branch Lab Panel
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/branch-lab-panels?status=ACTIVE&page=1&limit=50
+  body: none
+  auth: bearer
+}
+
+params:query {
+  status: ACTIVE
+  page: 1
+  limit: 50
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  // Capture an active Branch Lab Panel for a second order item (prefers default).
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.length) {
+    const pick = data.find(function (p) { return p.isDefault; }) || data[0];
+    if (pick && pick.id) bru.setVar("branchLabPanelId", pick.id);
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Step 9 (Registration) — run **as the new user**, list the branch's active Lab
+  Panel List and capture a `branchLabPanelId` for a second order item. Optional:
+  if the branch has no panels this captures nothing and the order in step 11 is
+  created with just the lab-test item (the panel item is easy to drop from the
+  body). Scoped to the active branch from the JWT.
+}

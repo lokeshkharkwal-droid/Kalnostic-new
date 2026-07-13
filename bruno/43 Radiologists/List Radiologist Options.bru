@@ -1,0 +1,29 @@
+meta {
+  name: List Radiologist Options
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/radiologists/options?page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 10
+  ~search: patel
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Lightweight `{ id, name }` options for the Create-Order Radiology section's
+  Radiologist picker. Scoped to the JWT tenant + active branch (no `branchId` in
+  the query). `search` matches the radiologist name (case-insensitive). Omit
+  `page` for the full array; supply `page` for a `{ data, total, page, limit }`
+  envelope.
+}

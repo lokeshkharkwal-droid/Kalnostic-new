@@ -1,4 +1,5 @@
-import { IsIn, IsOptional, IsString } from 'class-validator';
+import { IsEnum, IsIn, IsOptional, IsString } from 'class-validator';
+import { StaffStatus } from '@prisma/client';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 
 /** Columns the user list may be sorted on (v2.0 spec). */
@@ -35,6 +36,11 @@ export class ListUsersQueryDto extends PaginationQueryDto {
   @IsString()
   @IsOptional()
   role?: string;
+
+  /** Filter by tenant-global account status (Active/Inactive). */
+  @IsEnum(StaffStatus)
+  @IsOptional()
+  status?: StaffStatus;
 
   /** Filter to users whose default module (on any branch) matches this key. */
   @IsString()

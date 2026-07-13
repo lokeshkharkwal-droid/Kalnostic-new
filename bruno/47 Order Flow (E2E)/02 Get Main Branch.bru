@@ -1,0 +1,48 @@
+meta {
+  name: 02 Get Main Branch
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/branches?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setVar("branchId", data.id);
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("captured a branchId", function () {
+    expect(res.getBody().data.id).to.be.a("string");
+  });
+}
+
+docs {
+  Step 2 — resolve the tenant's main branch and capture its id as `branchId`.
+  This is the branch every branch-level step below is scoped to (master data,
+  branch lab tests/panels, module enablement, the order-capable user, doctors,
+  the order itself).
+
+  Returns the `Branch` directly (`data.id`, `data.code` `BR-00001`…). 404
+  `MAIN_BRANCH_NOT_SET` if the tenant has no main branch yet — create one via
+  Branches → Create Branch (the first branch is auto-set as main).
+
+  **Skip this + step 3** if your login (step 1) is already scoped to the branch
+  you want to work in — step 1 already captured that `branchId` from the JWT.
+}

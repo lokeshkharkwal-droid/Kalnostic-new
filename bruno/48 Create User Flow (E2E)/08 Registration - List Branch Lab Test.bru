@@ -1,0 +1,49 @@
+meta {
+  name: 08 Registration - List Branch Lab Test
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/branch-lab-tests?status=ACTIVE&page=1&limit=50
+  body: none
+  auth: bearer
+}
+
+params:query {
+  status: ACTIVE
+  page: 1
+  limit: 50
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  // Capture an active Branch Lab Test to put on the order (prefers a default row).
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.length) {
+    const pick = data.find(function (t) { return t.isDefault; }) || data[0];
+    if (pick && pick.id) bru.setVar("branchLabTestId", pick.id);
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("captured a branchLabTestId", function () {
+    expect(bru.getVar("branchLabTestId")).to.be.a("string").and.not.equal("");
+  });
+}
+
+docs {
+  Step 8 (Registration) — run **as the new user**, list the branch's active Lab
+  Test List and capture a `branchLabTestId` for the order item. Scoped to the
+  active branch from the JWT.
+
+  If this captures nothing, the branch has no imported catalogue yet — run
+  **47 Order Flow (E2E)** (or **32 Branch Lab Tests** import) once first. This
+  proves the new user can also **read** the branch catalogue they order from.
+}

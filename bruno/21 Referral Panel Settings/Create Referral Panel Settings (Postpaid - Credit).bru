@@ -40,7 +40,7 @@ body:json {
     "isRestrictOrderPostInvoice": false,
     "isRestrictReportPostInvoice": false,
     "isAutoInvoice": true,
-    "raiseInvoiceCreditLimit": 150000,
+    "isRaiseInvoiceOnCreditLimit": true,
     "invoiceFrequencyDays": 30,
     "isOverlapMonthEndClose": true,
     "isAllowManualInvoice": true,
@@ -84,9 +84,10 @@ docs {
   `isRestrictOrder/ReportCreditLimit`, `creditAllowedDays`,
   `isRestrictOrder/ReportCreditDays`, `daysAfterInvoice`,
   `isRestrictOrder/ReportPostInvoice`, `isAutoInvoice`,
-  `raiseInvoiceCreditLimit`, `invoiceFrequencyDays`, `isOverlapMonthEndClose`,
+  `isRaiseInvoiceOnCreditLimit`, `invoiceFrequencyDays`, `isOverlapMonthEndClose`,
   `isAllowManualInvoice`, `invoiceEmailTriggerHours`. All optional; money fields
-  are decimals, day/hour fields are integers.
+  are decimals, day/hour fields are integers, and `isRaiseInvoiceOnCreditLimit`
+  is a boolean toggle.
 
   **Payment** — `isAllowOtherPaymentModes`.
 

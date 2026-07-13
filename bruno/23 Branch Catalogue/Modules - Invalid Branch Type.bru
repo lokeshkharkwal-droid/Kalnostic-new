@@ -1,0 +1,27 @@
+meta {
+  name: Modules - Invalid Branch Type
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/modules?branch_type=XYZ
+  body: none
+  auth: none
+}
+
+params:query {
+  branch_type: XYZ
+}
+
+docs {
+  Public. Negative case: an unrecognised `branch_type` returns 400 Bad Request
+  via `InvalidBranchTypeException`, with a message listing the valid types
+  (pulled live from the config constant):
+
+      { "success": false,
+        "error": {
+          "code": "INVALID_BRANCH_TYPE",
+          "message": "Invalid branch_type 'XYZ'. Available types: DIAGNOSTIC, OPD, RADIOLOGY, PHARMACY, COMBINED, COLLECTION_CENTER, BLOOD_BANK"
+        } }
+}

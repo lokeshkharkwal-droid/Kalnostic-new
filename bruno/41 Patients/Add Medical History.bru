@@ -1,0 +1,91 @@
+meta {
+  name: Add Medical History
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/patients/{{patientId}}/medical-history
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "isCurrentSmoker": false,
+    "isFormerSmoker": true,
+    "isCurrentAlcoholic": false,
+    "isFormerAlcoholic": false,
+    "hasCough": true,
+    "hasFever": true,
+    "hasShortnessOfBreath": false,
+    "hasChestPain": false,
+    "hasAbdominalPain": false,
+    "hasHeadache": true,
+    "hasVomiting": false,
+    "hasDiarrhea": false,
+    "hasFatigue": true,
+    "hasWeightLoss": false,
+    "hasBodyPains": true,
+    "hasDizziness": false,
+    "hasDiabetes": true,
+    "hasHypertension": true,
+    "hasCardiacDisease": false,
+    "hasThyroidDisease": false,
+    "hasKidneyDisease": false,
+    "hasAntiDiabeticDrugs": true,
+    "hasAntiHypertensionDrugs": true,
+    "hasBloodThinners": false,
+    "hasVitaminSupplements": true,
+    "otherMedications": "Metformin 500mg, Amlodipine 5mg",
+    "hasLatexAllergy": false,
+    "hasFoodAllergy": true,
+    "hasDrugAllergy": false,
+    "surgicalHistory": "Appendectomy (2015)",
+    "remarks": "Follow-up visit"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("medicalHistoryId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  Add a medical-history record to the patient in the URL (a patient can have many
+  — one-to-many). The record inherits the patient's registration `branchId`.
+  Captures `medicalHistoryId`.
+
+  ## Fields (all optional)
+
+  Every clinical flag is a boolean defaulting to `false`:
+
+  - Smoking/alcohol: `isCurrentSmoker`, `isFormerSmoker`, `isCurrentAlcoholic`,
+    `isFormerAlcoholic`.
+  - Symptoms: `hasCough`, `hasFever`, `hasShortnessOfBreath`, `hasChestPain`,
+    `hasAbdominalPain`, `hasHeadache`, `hasVomiting`, `hasDiarrhea`, `hasFatigue`,
+    `hasWeightLoss`, `hasBodyPains`, `hasDizziness`.
+  - Conditions: `hasDiabetes`, `hasHypertension`, `hasCardiacDisease`,
+    `hasThyroidDisease`, `hasKidneyDisease`.
+  - Medications: `hasAntiDiabeticDrugs`, `hasAntiHypertensionDrugs`,
+    `hasBloodThinners`, `hasVitaminSupplements`, plus `otherMedications` (string).
+  - Allergies: `hasLatexAllergy`, `hasFoodAllergy`, `hasDrugAllergy`.
+  - Additional: `surgicalHistory` (string), `remarks` (string).
+
+  `tenantId`/`branchId`/`patientId` are never accepted in the body. 404
+  `PATIENT_NOT_FOUND` if the patient is missing/other tenant.
+}

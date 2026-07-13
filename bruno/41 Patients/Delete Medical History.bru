@@ -1,0 +1,21 @@
+meta {
+  name: Delete Medical History
+  type: http
+  seq: 9
+}
+
+delete {
+  url: {{baseUrl}}/patients/{{patientId}}/medical-history/{{medicalHistoryId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Soft-delete a medical-history record (sets `deletedAt`), scoped to the caller's
+  tenant. 404 `MEDICAL_HISTORY_NOT_FOUND` if missing/not owned by this
+  patient/tenant.
+}

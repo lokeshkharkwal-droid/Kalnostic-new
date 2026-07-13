@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   AuthRole,
+  Branch,
   Person,
   Prisma,
   StaffStatus,
@@ -35,6 +36,7 @@ import {
   moduleLabel,
   SYSTEM_MODULES,
 } from '../permissions/constants/system-modules.constant';
+import { BRANCH_MODULES } from '../branch-catalogue/constants/branch-modules.constant';
 import { BranchAssignmentItemDto, CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateBranchAssignmentDto } from './dto/update-branch-assignment.dto';
@@ -42,9 +44,11 @@ import { UpdateBranchPermissionsDto } from './dto/update-branch-permissions.dto'
 import { ListUsersQueryDto, UserSortField } from './dto/list-users-query.dto';
 import { ListRegisteredUsersQueryDto } from './dto/list-registered-users-query.dto';
 import {
+  DefaultModuleNotInModulesException,
   InvalidModuleKeyException,
   ModuleNotEnabledForBranchException,
   ModuleNotInRoleTemplateException,
+  ModuleNotValidForBranchTypeException,
   MultipleDefaultBranchException,
   NotOwnerTenantException,
   PersonEmailTakenException,
@@ -60,6 +64,13 @@ import {
 /** Minimum age (in whole years) for a staff user (v2.0). */
 const MIN_USER_AGE = 18;
 
+/**
+ * Profile/role keys (AuthRole.key) that identify a **radiology technician** for
+ * the Create-Order Radiology section's Technician picker. Backed by the radiology
+ * technician role in PROFILE_REGISTRY.
+ */
+const RADIOLOGY_TECHNICIAN_ROLE_KEYS: string[] = ['radiology_assistant'];
+
 /** A validated, normalised branch assignment (internal to UsersService). */
 interface PreparedAssignment {
   branchId: string;
@@ -68,6 +79,7 @@ interface PreparedAssignment {
   roleKey: string;
   isDefault: boolean;
   defaultModuleId: string | null;
+  enabledModules: string[];
   branchStatus: StaffStatus;
 }
 
@@ -278,6 +290,93 @@ export class UsersService {
   }
 
   /**
+   * Lightweight `{ id, name }` options for the Create-Order **Radiology
+   * Technician** picker. A technician is a Person holding an active radiology
+   * technician profile (`RADIOLOGY_TECHNICIAN_ROLE_KEYS`) at the active branch;
+   * the returned id is a `personId`, directly usable as an order's
+   * `radiology.radiologyTechnicianId`. Resolves in two steps (there is no Person
+   * relation on `user_branch_profiles`): the branch's technician personIds, then
+   * the active Persons, with a case-insensitive name `search`.
+   * @param tenantId tenant scope (from JWT)
+   * @param branchId active branch (from JWT profile)
+   * @param filters optional search + offset pagination
+   * @returns full `{ id, name }[]` when `page` is omitted, else a paginated envelope
+   */
+  async findRadiologyTechnicianOptions(
+    tenantId: string,
+    branchId: string,
+    filters: { search?: string; page?: number; limit?: number } = {},
+  ): Promise<
+    | Array<{ id: string; name: string }>
+    | PaginatedResult<{ id: string; name: string }>
+  > {
+    const limit = filters.limit ?? 20;
+    const profiles = await this.prisma.userBranchProfile.findMany({
+      where: {
+        tenantId,
+        branchId,
+        deletedAt: null,
+        branchStatus: StaffStatus.ACTIVE,
+        authRole: { key: { in: RADIOLOGY_TECHNICIAN_ROLE_KEYS } },
+      },
+      select: { personId: true },
+      distinct: ['personId'],
+    });
+    const personIds = profiles.map((p) => p.personId);
+    if (personIds.length === 0) {
+      return filters.page === undefined
+        ? []
+        : { data: [], total: 0, page: filters.page, limit };
+    }
+
+    const where: Prisma.PersonWhereInput = {
+      id: { in: personIds },
+      deletedAt: null,
+      isActive: true,
+    };
+    const term = filters.search?.trim();
+    if (term) {
+      where.OR = [
+        { firstName: { contains: term, mode: 'insensitive' } },
+        { lastName: { contains: term, mode: 'insensitive' } },
+      ];
+    }
+
+    const select = { id: true, firstName: true, lastName: true } as const;
+    const orderBy = { firstName: 'asc' } as const;
+    const toOption = (r: {
+      id: string;
+      firstName: string;
+      lastName: string | null;
+    }) => ({
+      id: r.id,
+      name: [r.firstName, r.lastName].filter(Boolean).join(' '),
+    });
+
+    if (filters.page === undefined) {
+      const rows = await this.prisma.person.findMany({
+        where,
+        select,
+        orderBy,
+      });
+      return rows.map(toOption);
+    }
+
+    const page = filters.page;
+    const [rows, total] = await Promise.all([
+      this.prisma.person.findMany({
+        where,
+        select,
+        orderBy,
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.person.count({ where }),
+    ]);
+    return { data: rows.map(toOption), total, page, limit };
+  }
+
+  /**
    * Whether a person is an active staff member of a tenant — i.e. holds at least one
    * active branch/tenant-level profile (`user_branch_profiles`) in that tenant and is
    * an active, non-deleted person. Used by other modules to validate an employee link.
@@ -435,6 +534,7 @@ export class UsersService {
               authRoleId: a.authRoleId,
               branchStatus: a.branchStatus,
               defaultModuleId: a.defaultModuleId,
+              enabledModules: a.enabledModules,
               isDefault: a.isDefault,
               isActive: true,
               assignedAt: new Date(),
@@ -748,6 +848,7 @@ export class UsersService {
       isDefault: boolean;
       moduleId: string | null;
       moduleLabel: string | null;
+      enabledModules: string[];
     }>;
   }> {
     const person = await this.findById(personId);
@@ -791,6 +892,7 @@ export class UsersService {
           moduleLabel: p.defaultModuleId
             ? moduleLabel(p.defaultModuleId)
             : null,
+          enabledModules: p.enabledModules,
         };
       }),
     };
@@ -798,9 +900,10 @@ export class UsersService {
 
   /**
    * Assign (or update) the user's branch assignments in bulk. Each item carries
-   * its own role (`roleKey`) and optional `moduleId`: `{ branchId, roleKey,
-   * moduleId? }`. One role per branch — an existing assignment for a branch is
-   * re-roled in place. Enforces a single default branch.
+   * its own role and optional module access: `{ branchId, role, modules?,
+   * defaultModule?, defaultBranch?, status? }`. One role per branch — an
+   * existing assignment for a branch is re-roled in place. Enforces a single
+   * default branch.
    */
   async assignBranches(
     tenantId: string,
@@ -835,6 +938,7 @@ export class UsersService {
               isActive: true,
               branchStatus: a.branchStatus,
               defaultModuleId: a.defaultModuleId,
+              enabledModules: a.enabledModules,
               isDefault: a.isDefault,
               revokedAt: null,
               revokedBy: null,
@@ -849,6 +953,7 @@ export class UsersService {
               authRoleId: a.authRoleId,
               branchStatus: a.branchStatus,
               defaultModuleId: a.defaultModuleId,
+              enabledModules: a.enabledModules,
               isDefault: a.isDefault,
               isActive: true,
               assignedAt: new Date(),
@@ -885,12 +990,12 @@ export class UsersService {
       throw new ProfileNotFoundException(personId, branchId);
     }
 
-    await this.branchService.findById(branchId, tenantId);
+    const branch = await this.branchService.findById(branchId, tenantId);
     // Resolve the new role if one is supplied (throws if unknown); else keep the
     // existing one. Branch-type restriction is lifted (any branch-level role may
     // be assigned to any branch type); tenant-level roles still can't be pinned.
-    const newRole = dto.roleKey
-      ? await this.authRoleService.resolveByKey(tenantId, dto.roleKey)
+    const newRole = dto.role
+      ? await this.authRoleService.resolveByKey(tenantId, dto.role)
       : null;
     if (newRole && this.isTenantLevelRole(newRole)) {
       throw new ProfileInvalidForBranchException(
@@ -899,13 +1004,23 @@ export class UsersService {
       );
     }
     const targetRoleKey = newRole?.key ?? existing.authRole?.key ?? '';
-    if (dto.moduleId !== undefined && dto.moduleId !== null) {
-      await this.assertModuleEnabledForBranch(tenantId, branchId, dto.moduleId);
-      this.assertModuleInRoleTemplate(targetRoleKey, dto.moduleId);
+
+    // Validate the module access. When `modules` is supplied it replaces the
+    // set (validated against the branch type + enablement); otherwise the
+    // existing set stands. The default module must be one of the effective set.
+    if (dto.modules !== undefined && dto.modules.length > 0) {
+      await this.assertModulesValidForBranch(tenantId, branch, dto.modules);
+    }
+    const effectiveModules = dto.modules ?? existing.enabledModules;
+    if (dto.defaultModule !== undefined && dto.defaultModule !== null) {
+      if (!effectiveModules.includes(dto.defaultModule)) {
+        throw new DefaultModuleNotInModulesException(dto.defaultModule);
+      }
+      this.assertModuleInRoleTemplate(targetRoleKey, dto.defaultModule);
     }
 
     return this.prisma.withTenant(tenantId, async (tx) => {
-      if (dto.isDefault === true) {
+      if (dto.defaultBranch === true) {
         await tx.userBranchProfile.updateMany({
           where: { tenantId, personId, isDefault: true },
           data: { isDefault: false },
@@ -913,10 +1028,13 @@ export class UsersService {
       }
       const data: Prisma.UserBranchProfileUpdateInput = {};
       if (newRole) data.authRole = { connect: { id: newRole.id } };
-      if (dto.branchStatus !== undefined) data.branchStatus = dto.branchStatus;
-      if (dto.isDefault !== undefined) data.isDefault = dto.isDefault;
-      if (dto.moduleId !== undefined) {
-        data.defaultModuleId = dto.moduleId ?? null;
+      if (dto.status !== undefined) data.branchStatus = dto.status;
+      if (dto.defaultBranch !== undefined) data.isDefault = dto.defaultBranch;
+      if (dto.modules !== undefined) {
+        data.enabledModules = { set: dto.modules };
+      }
+      if (dto.defaultModule !== undefined) {
+        data.defaultModuleId = dto.defaultModule ?? null;
       }
       const updated = await tx.userBranchProfile.update({
         where: { id: existing.id },
@@ -929,6 +1047,51 @@ export class UsersService {
         actorId,
       });
       return updated;
+    });
+  }
+
+  /**
+   * Revoke (remove) a single (user + branch) assignment. Soft-deletes the active
+   * `UserBranchProfile` for the (tenant, person, branch): sets `deletedAt`,
+   * `isActive = false`, and stamps `revokedAt`/`revokedBy`. Idempotent from the
+   * caller's view — throws {@link ProfileNotFoundException} if no active
+   * assignment exists for that branch.
+   * @param tenantId tenant scope (from the JWT)
+   * @param personId the staff user's person id
+   * @param branchId the branch whose assignment is being removed
+   * @param actorId the acting admin's person id (recorded as the revoker)
+   */
+  async revokeBranchAssignment(
+    tenantId: string,
+    personId: string,
+    branchId: string,
+    actorId: string,
+  ): Promise<void> {
+    await this.getMembership(tenantId, personId);
+    const existing = await this.prisma.userBranchProfile.findFirst({
+      where: { tenantId, personId, branchId, isActive: true, deletedAt: null },
+    });
+    if (!existing) {
+      throw new ProfileNotFoundException(personId, branchId);
+    }
+
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      await tx.userBranchProfile.update({
+        where: { id: existing.id },
+        data: {
+          isActive: false,
+          isDefault: false,
+          deletedAt: new Date(),
+          revokedAt: new Date(),
+          revokedBy: actorId,
+        },
+      });
+      await this.eventEmitter.emitAsync('users.branch.assignment.updated', {
+        tenantId,
+        personId,
+        branchId,
+        actorId,
+      });
     });
   }
 
@@ -1548,18 +1711,30 @@ export class UsersService {
     return new Set(rows.map((r) => r.moduleKey));
   }
 
-  /** Validate a module key exists and is enabled for the branch. */
-  private async assertModuleEnabledForBranch(
+  /**
+   * Validate every module key for a branch assignment: each must be a known
+   * system module, offered by the branch's type (`BRANCH_MODULES` — the source
+   * behind `GET /modules?branchType`), and enabled at that specific branch
+   * (`branch_modules`). Branch types with no matrix entry fall back to the
+   * known-key + enablement checks.
+   */
+  private async assertModulesValidForBranch(
     tenantId: string,
-    branchId: string,
-    moduleKey: string,
+    branch: Branch,
+    moduleKeys: string[],
   ): Promise<void> {
-    if (!isValidModuleKey(moduleKey)) {
-      throw new InvalidModuleKeyException(moduleKey);
-    }
-    const enabled = await this.getActiveBranchModuleKeys(tenantId, branchId);
-    if (!enabled.has(moduleKey)) {
-      throw new ModuleNotEnabledForBranchException(moduleKey, branchId);
+    const catalogue = BRANCH_MODULES[branch.branchType] ?? null;
+    const enabled = await this.getActiveBranchModuleKeys(tenantId, branch.id);
+    for (const key of moduleKeys) {
+      if (!isValidModuleKey(key)) {
+        throw new InvalidModuleKeyException(key);
+      }
+      if (catalogue && !catalogue.includes(key)) {
+        throw new ModuleNotValidForBranchTypeException(key, branch.branchType);
+      }
+      if (!enabled.has(key)) {
+        throw new ModuleNotEnabledForBranchException(key, branch.id);
+      }
     }
   }
 
@@ -1595,14 +1770,14 @@ export class UsersService {
       byBranch.set(it.branchId, it);
     }
     const unique = [...byBranch.values()];
-    const defaultsCount = unique.filter((i) => i.isDefault).length;
+    const defaultsCount = unique.filter((i) => i.defaultBranch).length;
     if (defaultsCount > 1) {
       throw new MultipleDefaultBranchException();
     }
 
     const prepared: PreparedAssignment[] = [];
     for (const [idx, it] of unique.entries()) {
-      const roleKey = it.roleKey ?? fallbackRoleKey;
+      const roleKey = it.role ?? fallbackRoleKey;
       if (!roleKey) {
         throw new ProfileInvalidForBranchException('none', 'unknown');
       }
@@ -1618,24 +1793,33 @@ export class UsersService {
       // Branch-type restriction lifted: any branch-level role may be assigned to
       // any branch type. We still verify the branch belongs to the caller's
       // tenant (findById throws if it doesn't) per the never-trust-client-branchId rule.
-      await this.branchService.findById(it.branchId, tenantId);
-      let moduleId: string | null = null;
-      if (it.moduleId) {
-        await this.assertModuleEnabledForBranch(
-          tenantId,
-          it.branchId,
-          it.moduleId,
-        );
-        this.assertModuleInRoleTemplate(role.key, it.moduleId);
-        moduleId = it.moduleId;
+      const branch = await this.branchService.findById(it.branchId, tenantId);
+
+      // Validate the user's module access for this branch (type + enablement).
+      const modules = it.modules ?? [];
+      if (modules.length > 0) {
+        await this.assertModulesValidForBranch(tenantId, branch, modules);
       }
+
+      // The default (landing) module must be one of the enabled modules and
+      // linked to the role template (when the template links any).
+      let moduleId: string | null = null;
+      if (it.defaultModule) {
+        if (!modules.includes(it.defaultModule)) {
+          throw new DefaultModuleNotInModulesException(it.defaultModule);
+        }
+        this.assertModuleInRoleTemplate(role.key, it.defaultModule);
+        moduleId = it.defaultModule;
+      }
+
       prepared.push({
         branchId: it.branchId,
         authRoleId: role.id,
         roleKey: role.key,
-        isDefault: defaultsCount === 0 ? idx === 0 : !!it.isDefault,
+        isDefault: defaultsCount === 0 ? idx === 0 : !!it.defaultBranch,
         defaultModuleId: moduleId,
-        branchStatus: it.branchStatus ?? StaffStatus.ACTIVE,
+        enabledModules: modules,
+        branchStatus: it.status ?? StaffStatus.ACTIVE,
       });
     }
     return prepared;
@@ -1682,6 +1866,10 @@ export class UsersService {
           (p) => p.defaultModuleId === mk,
         ),
       );
+    }
+    if (query.status) {
+      const status = query.status;
+      out = out.filter((r) => r.status === status);
     }
     return out;
   }

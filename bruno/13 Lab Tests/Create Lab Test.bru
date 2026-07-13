@@ -30,7 +30,10 @@ body:json {
     "processMethod": "SINGLE_STEP",
     "icdCode": "D64.9",
     "loincCode": "58410-2",
-    "clinicalTags": ["haematology", "routine"],
+    "clinicalTags": [
+      "haematology",
+      "routine"
+    ],
     "samplePriorityType": "ROUTINE",
     "isEnableCms": true,
     "priceMsrp": 700,
@@ -47,7 +50,13 @@ body:json {
     "tatMinUnit": "HOURS",
     "tatMaxValue": 24,
     "tatMaxUnit": "HOURS",
-    "scheduleDays": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+    "scheduleDays": [
+      "MONDAY",
+      "TUESDAY",
+      "WEDNESDAY",
+      "THURSDAY",
+      "FRIDAY"
+    ],
     "scheduleFrom": "08:00",
     "scheduleTo": "18:00",
     "procTimeMinValue": 1,
@@ -102,9 +111,7 @@ body:json {
         "decimalPlaces": 1,
         "criticalMin": 7.0,
         "criticalMax": 20.0,
-        "reflexTests": [
-          { "id": "1", "name": "Peripheral Smear" }
-        ],
+  
         "notes": "Repeat if grossly abnormal",
         "isNabl": true,
         "isCap": false,
@@ -189,7 +196,7 @@ body:json {
 }
 
 vars:pre-request {
-  masterDataId: "b8820bc4-718a-4324-9c94-d610d5bdf2f2
+  masterDataId: 2db13b5e-4a25-412f-bcd9-68bcbeea9d59
 }
 
 script:post-response {

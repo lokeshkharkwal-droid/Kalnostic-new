@@ -1,0 +1,78 @@
+meta {
+  name: 06 Login as New User
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "identifier": "{{newUserLoginIdentifier}}",
+    "password": "{{newUserPassword}}",
+    "tenantSlug": "{{tenantSlug}}"
+  }
+}
+
+vars:pre-request {
+  newUserPassword: Str0ng@Pass1
+}
+
+script:post-response {
+  // Swap the working token to the NEW USER so every Registration step below runs
+  // as them. Decode the JWT and make branchId authoritative = the token's active
+  // branch (receptionist is branch-level, so login lands branch-scoped).
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.accessToken) {
+    bru.setVar("businessAccessToken", data.accessToken);
+    try {
+      const claims = JSON.parse(atob(data.accessToken.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+      if (claims.active_branch_id) bru.setVar("branchId", claims.active_branch_id);
+    } catch (e) {
+      // Token not decodable in this runtime — keep branchId from step 2.
+    }
+  }
+  if (data && data.refreshToken) bru.setVar("businessRefreshToken", data.refreshToken);
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns an access token", function () {
+    expect(res.getBody().data.accessToken).to.be.a("string");
+  });
+  test("logged in branch-scoped", function () {
+    const t = res.getBody().data.accessToken;
+    const claims = JSON.parse(atob(t.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    expect(claims.active_branch_id, "receptionist login should carry an active branch").to.be.a("string");
+  });
+}
+
+docs {
+  Step 6 — **log in as the newly-created user**. `identifier` is
+  `{{newUserLoginIdentifier}}` (their mobile, captured in step 4); `password` is
+  `{{newUserPassword}}` (env, = the password sent in step 4); `tenantSlug` sets
+  the tenant context (**required** for staff login).
+
+  This **replaces** `businessAccessToken` with the new user's token — every step
+  after this runs **as the new user**, proving the provisioned account really can
+  do the work. Because `receptionist` is a **branch-level** role assigned with
+  `defaultBranch: true`, the login lands on a **branch-scoped** JWT
+  (`active_branch_id` set) — exactly what `POST /orders` requires (it reads the
+  active branch from the token, never the body).
+
+  - If the login 401s → check the identifier/password (lockout is 10 tries → 15m).
+  - If `active_branch_id` is null (the assertion fails) → the user has no default
+    branch profile; re-check step 4's `branches[0].defaultBranch` or add a
+    `POST /auth/switch-profile` (see **04 Business Auth → Switch Profile**) before
+    the Registration steps.
+}

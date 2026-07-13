@@ -1,0 +1,225 @@
+meta {
+  name: 25 Create Order (COMPLETE)
+  type: http
+  seq: 25
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "ORDER",
+    "orderDate": "2026-07-09",
+    "orderType": "WALK_IN",
+    "billingType": "CASH_CLIENT",
+    "isUrgentBill": false,
+    "isBillGenerated": false,
+    "orderNotes": "Fasting sample; collect in the morning. Created by Order Flow E2E.",
+    "patientId": "{{patientId}}",
+    "appointmentAt": "2026-07-10T09:30:00.000Z",
+    "items": [
+      {
+        "branchLabTestId": "{{branchLabTestId}}"
+      },
+      {
+        "branchLabPanelId": "{{branchLabPanelId}}"
+      }
+    ],
+    "diagnostics": {
+      "prescriptionUrl": "https://files.example.com/rx/abc.pdf",
+      "diagnosticPanelId": "{{labPanelId}}",
+      "sampleSource": "IN_HOUSE",
+      "sampleCollectionCharges": 10000,
+      "logisticsSuppliedBy": "In-house courier",
+      "isFasting": true,
+      "isHomeVisit": true,
+      "collectionAddress": "42 MG Road, Bengaluru 560038",
+      "phlebotomistId": "{{phlebotomistId}}",
+      "visitCharges": 20000,
+      "collectionAt": "2026-07-10T08:00:00.000Z",
+      "geoLocation": "12.9716,77.5946"
+    },
+    "opd": {
+      "departmentId": "{{departmentId}}",
+      "categoryId": "{{categoryId}}",
+      "doctorId": "{{consultantDoctorId}}",
+      "consultantType": "INITIAL",
+      "visitType": "WALK_IN",
+      "consultationAt": "2026-07-10T10:00:00.000Z"
+    },
+    "radiology": {
+      "radiologistId": "{{radiologistId}}",
+      "radiologistDepartmentId": "{{departmentId}}",
+      "radiologistCategoryId": "{{categoryId}}",
+      "radiologyTechnicianId": "{{radiologyTechnicianId}}"
+    },
+    "payments": [
+      {
+        "totalAmount": 110000,
+        "orderDiscount": 10000,
+        "visitingCharges": 20000,
+        "netAmount": 120000,
+        "deductFromWallet": 0,
+        "deductFromPoints": 0,
+        "hasClearedPreviousDues": false,
+        "tdsDeduction": 0,
+        "payableAmount": 120000,
+        "paidAmount": 120000,
+        "remainingBalance": 0,
+        "paymentMode": "UPI",
+        "paymentDate": "2026-07-09T10:15:00.000Z",
+        "notes": "Paid in full via UPI"
+      }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setVar("orderId", data.id);
+  if (data && data.payments && data.payments[0]) bru.setVar("paymentId", data.payments[0].id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("generated an order code", function () {
+    expect(res.getBody().data.orderCode).to.match(/^ORD-\d{5}$/);
+  });
+  test("composed every section", function () {
+    const d = res.getBody().data;
+    expect(d.items.length).to.be.greaterThan(0);
+    expect(d.diagnostics).to.be.an("object");
+    expect(d.opd).to.be.an("object");
+    expect(d.radiology).to.be.an("object");
+    expect(d.payments.length).to.be.greaterThan(0);
+  });
+}
+
+docs {
+  Step 25 — **Create the complete order** as the order-capable user (the
+  receptionist token from step 18), using every id captured above. This is the
+  *exhaustive* request: it sends **every field** of `CreateOrderDto` and all
+  nested sections (`items`, `diagnostics`, `opd`, `radiology`, `payments`), so it
+  doubles as the full contract for the frontend "Create Order" form. The whole
+  graph is created in one transaction; the response is the fully-composed order.
+  Captures `orderId` and the first `paymentId`.
+
+  ## Field reference (all fields present)
+
+  - **Top level:** `status` (`DRAFT`|`QUOTE`|`APPOINTMENT`|`ORDER`, default
+    `DRAFT`), `orderDate` (ISO date, required), `orderType`
+    (`WALK_IN`|`APP`|`WEBSITE`), `billingType`
+    (`CASH_CLIENT`|`INSURANCE`|`CORPORATE`|`GOVERNMENT_SCHEME`|`TPA`),
+    `isUrgentBill`, `isBillGenerated`, `orderNotes` (≤2048), `patientId`
+    (required), `appointmentAt` (ISO date-time). `orderCode`/`tenantId`/`branchId`
+    are system/JWT-derived — never sent.
+  - **items[]:** each references **exactly one** of `branchLabTestId` /
+    `branchLabPanelId` (both or neither → 422 `INVALID_ORDER_ITEM`). Here one of
+    each. These are **branch** ids (steps 12 & 13).
+  - **diagnostics:** `prescriptionUrl` (≤1024), `diagnosticPanelId` → a
+    **master-data** `LabPanel` (`{{labPanelId}}`, step 9 — NOT the branch copy),
+    `sampleSource` (`IN_HOUSE`|`SUPPLIED`), `sampleCollectionCharges`,
+    `logisticsSuppliedBy` (≤255), `isFasting`, `isHomeVisit`, `collectionAddress`
+    (≤1024), `phlebotomistId`, `visitCharges`, `collectionAt` (ISO date-time),
+    `geoLocation` (≤255).
+  - **opd:** `departmentId` (optional, → Department, 422
+    `ORDER_DEPARTMENT_NOT_FOUND`), `categoryId` (optional, → Category, 422
+    `ORDER_CATEGORY_NOT_FOUND`), `doctorId` (**required** when opd is present;
+    must be a `CONSULTANT` → 422 `ORDER_CONSULTANT_DOCTOR_NOT_FOUND`),
+    `consultantType` (`INITIAL`|`FIRST`|`FOLLOW_UP`), `visitType`
+    (`WALK_IN`|`TELECONSULTATION`|`HOME_VISIT`), `consultationAt`.
+  - **radiology:** `radiologistId` (**required** when radiology is present),
+    `radiologistDepartmentId` (optional, → Department),
+    `radiologistCategoryId` (optional, → Category, 422
+    `ORDER_CATEGORY_NOT_FOUND`), `radiologyTechnicianId` (optional).
+  - **payments[]:** `totalAmount`, `orderDiscount`, `visitingCharges`,
+    `netAmount`, `deductFromWallet`, `deductFromPoints`, `hasClearedPreviousDues`,
+    `tdsDeduction`, `payableAmount`, `paidAmount`, `remainingBalance`,
+    `paymentMode` (`CASH`|`CREDIT`|`UPI`), `paymentDate`, `notes` (≤1024).
+
+  **All monetary amounts are integer minor units** (e.g. `110000` = ₹1,100.00).
+
+  ## Copy-paste cURL for the frontend team
+
+  Replace the bearer token and the example UUIDs with real ones. Every field the
+  Create Order form must support is present below.
+
+  ```bash
+  curl -X POST "http://localhost:3000/api/v1/orders" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer <BUSINESS_ACCESS_TOKEN>" \
+    -d '{
+    "status": "ORDER",
+    "orderDate": "2026-07-09",
+    "orderType": "WALK_IN",
+    "billingType": "CASH_CLIENT",
+    "isUrgentBill": false,
+    "isBillGenerated": false,
+    "orderNotes": "Fasting sample; collect in the morning",
+    "patientId": "11111111-1111-1111-1111-111111111111",
+    "appointmentAt": "2026-07-10T09:30:00.000Z",
+    "items": [
+      { "branchLabTestId": "22222222-2222-2222-2222-222222222222" },
+      { "branchLabPanelId": "33333333-3333-3333-3333-333333333333" }
+    ],
+    "diagnostics": {
+      "prescriptionUrl": "https://files.example.com/rx/abc.pdf",
+      "diagnosticPanelId": "44444444-4444-4444-4444-444444444444",
+      "sampleSource": "IN_HOUSE",
+      "sampleCollectionCharges": 10000,
+      "logisticsSuppliedBy": "In-house courier",
+      "isFasting": true,
+      "isHomeVisit": true,
+      "collectionAddress": "42 MG Road, Bengaluru 560038",
+      "phlebotomistId": "55555555-5555-5555-5555-555555555555",
+      "visitCharges": 20000,
+      "collectionAt": "2026-07-10T08:00:00.000Z",
+      "geoLocation": "12.9716,77.5946"
+    },
+    "opd": {
+      "departmentId": "66666666-6666-6666-6666-666666666666",
+      "doctorId": "77777777-7777-7777-7777-777777777777",
+      "consultantType": "INITIAL",
+      "visitType": "WALK_IN",
+      "consultationAt": "2026-07-10T10:00:00.000Z"
+    },
+    "radiology": {
+      "radiologistId": "88888888-8888-8888-8888-888888888888",
+      "radiologistDepartmentId": "66666666-6666-6666-6666-666666666666",
+      "radiologyTechnicianId": "99999999-9999-9999-9999-999999999999"
+    },
+    "payments": [
+      {
+        "totalAmount": 110000,
+        "orderDiscount": 10000,
+        "visitingCharges": 20000,
+        "netAmount": 120000,
+        "deductFromWallet": 0,
+        "deductFromPoints": 0,
+        "hasClearedPreviousDues": false,
+        "tdsDeduction": 0,
+        "payableAmount": 120000,
+        "paidAmount": 120000,
+        "remainingBalance": 0,
+        "paymentMode": "UPI",
+        "paymentDate": "2026-07-09T10:15:00.000Z",
+        "notes": "Paid in full via UPI"
+      }
+    ]
+  }'
+  ```
+}

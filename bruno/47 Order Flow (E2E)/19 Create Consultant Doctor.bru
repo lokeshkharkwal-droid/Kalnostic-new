@@ -1,0 +1,75 @@
+meta {
+  name: 19 Create Consultant Doctor
+  type: http
+  seq: 19
+}
+
+post {
+  url: {{baseUrl}}/doctors
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "doctorType": "CONSULTANT",
+    "branchId": "{{branchId}}",
+    "salutation": "DR",
+    "firstName": "Rahul",
+    "lastName": "Verma",
+    "gender": "MALE",
+    "phone": "+919800000010",
+    "email": "rahul.verma.e2e@example.com",
+    "registrationNo": "MMC-E2E-04567",
+    "registrationCouncil": "Maharashtra Medical Council",
+    "departmentId": "{{departmentId}}",
+    "paymentMode": "CASH",
+    "consultationFee": 1200,
+    "emergencyFee": 2500,
+    "followUpFee": 600,
+    "isAllowDiscount": false,
+    "status": "ACTIVE",
+    "joiningDate": "2023-09-01",
+    "qualifications": [
+      { "degree": "MBBS", "institution": "Grant Medical College", "yearOfPassing": 2009 }
+    ],
+    "experiences": [
+      { "organisation": "Fortis Hospital", "rolePosition": "Consultant", "fromDate": "2017-07-01" }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setVar("consultantDoctorId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("is a CONSULTANT doctor", function () {
+    expect(res.getBody().data.doctorType).to.equal("CONSULTANT");
+  });
+}
+
+docs {
+  Step 19 — the first master record created **as the order-capable user** (the
+  receptionist token from step 18). Register a **CONSULTANT** doctor at the
+  branch. Captures `consultantDoctorId`, required by the order's `opd.doctorId`
+  (the OPD section requires a doctor whose `doctorType` is `CONSULTANT`).
+
+  Required: `doctorType`, `branchId` (`{{branchId}}`, validated against the
+  tenant), `firstName`, `lastName`, `phone`, `registrationNo` (unique among
+  active doctors → 409 `DUPLICATE_REGISTRATION_NO`; bump `MMC-E2E-04567` if a
+  prior run used it). `departmentId` is an optional classification ref. See the
+  Doctors folder for the full field reference.
+}

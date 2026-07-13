@@ -3,6 +3,7 @@ import { PrismaModule } from '../../prisma/prisma.module';
 import { BranchModule } from '../branch/branch.module';
 import { ReferralPanelSettingsModule } from '../referral-panel-settings/referral-panel-settings.module';
 import { ExternalReferralController } from './external-referral.controller';
+import { ExternalReferralOptionsController } from './external-referral-options.controller';
 import { ExternalReferralService } from './external-referral.service';
 
 /**
@@ -16,7 +17,7 @@ import { ExternalReferralService } from './external-referral.service';
  */
 @Module({
   imports: [PrismaModule, BranchModule, ReferralPanelSettingsModule],
-  controllers: [ExternalReferralController],
+  controllers: [ExternalReferralOptionsController, ExternalReferralController],
   providers: [ExternalReferralService],
   exports: [ExternalReferralService],
 })

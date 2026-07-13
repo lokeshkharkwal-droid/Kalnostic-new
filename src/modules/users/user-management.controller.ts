@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -218,6 +219,27 @@ export class UserManagementController {
       id,
       branchId,
       dto,
+      actorId,
+    );
+  }
+
+  /** Revoke (remove) a single (user + branch) assignment. */
+  @Delete(':id/branches/:branchId')
+  @Audit({
+    module: AuditModule.USER,
+    action: AuditAction.UPDATE,
+    description: 'Revoked a staff user branch assignment',
+  })
+  revokeBranchAssignment(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') actorId: string,
+    @Param('id') id: string,
+    @Param('branchId') branchId: string,
+  ) {
+    return this.usersService.revokeBranchAssignment(
+      tenantId,
+      id,
+      branchId,
       actorId,
     );
   }

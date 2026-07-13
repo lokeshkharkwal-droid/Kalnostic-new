@@ -1,0 +1,78 @@
+meta {
+  name: 06 Create Staff User
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/users/manage
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "employeeName": "Sushant badhani",
+    "username": "{{flowUsername}}",
+    "dateOfBirth": "1995-04-12",
+    "gender": "MALE",
+    "bloodGroup": "O_POS",
+    "nationality": "Indian",
+    "address": "1 Flow Street, Pune",
+    "email": "{{flowUserEmail}}",
+    "mobileNumber": "{{flowUserMobile}}",
+    "password": "Str0ng@Pass1",
+    "userType": "INTERNAL",
+    "status": "ACTIVE",
+    "branches": [
+      { "branchId": "{{branchId}}", "role": "branch_admin", "modules": ["branch_admin"], "defaultModule": "branch_admin", "defaultBranch": true, "status": "ACTIVE" }
+    ]
+  }
+}
+
+vars:pre-request {
+  flowUsername: sushant_badhani
+  flowUserEmail: flowuser1234567@gmail.com
+  flowUserMobile: 9876541105
+  branchId: d78a08e1-0056-4449-a0be-337994ae0bc8
+}
+
+script:pre-request {
+  const rand = String(Math.floor(Math.random() * 900000) + 100000);
+  const extra = String(Math.floor(Math.random() * 900) + 100);
+  bru.setVar("flowUsername", "user." + rand);
+  bru.setVar("flowUserEmail", "user." + rand + "@flow.test");
+  bru.setVar("flowUserMobile", "9" + rand + extra); // Indian 10-digit
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data) {
+    if (data.person && data.person.id) bru.setEnvVar("manageUserId", data.person.id);
+    if (data.userCode) bru.setEnvVar("manageUserCode", data.userCode);
+    if (data.loginIdentifier) bru.setEnvVar("manageLoginIdentifier", data.loginIdentifier);
+  }
+}
+
+docs {
+  Step 6. Create a staff user with a branch_admin assignment at the branch from
+  step 4. Identity -> Person, credentials -> PersonCredentials, employment ->
+  TenantStaffMembership (sequential `userCode`), assignment -> UserBranchProfile.
+  Captures `manageUserId`, `manageUserCode`, `manageLoginIdentifier`.
+  
+  `aadhaarNumber` is intentionally omitted so this works without `ENCRYPTION_KEY`.
+  Each key in `modules` must be valid for the branch type and enabled for the branch
+  (step 5); `defaultModule` must be one of them and valid for the role.
+  Exactly one branch entry may be `defaultBranch: true`.
+
+  Each `role` is resolved to an AuthRole (a built-in system role or a tenant
+  custom role from `/roles`, see "34 Roles"); an unknown key → 404 ROLE_NOT_FOUND.
+}

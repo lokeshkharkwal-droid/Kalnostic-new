@@ -5,6 +5,7 @@ import { CategoryModule } from '../category/category.module';
 import { SubCategoryModule } from '../sub-category/sub-category.module';
 import { DepartmentModule } from '../department/department.module';
 import { DoctorsController } from './doctors.controller';
+import { DoctorsOptionsController } from './doctors-options.controller';
 import { DoctorsService } from './doctors.service';
 
 /**
@@ -23,7 +24,7 @@ import { DoctorsService } from './doctors.service';
     SubCategoryModule,
     BranchModule,
   ],
-  controllers: [DoctorsController],
+  controllers: [DoctorsOptionsController, DoctorsController],
   providers: [DoctorsService],
   exports: [DoctorsService],
 })

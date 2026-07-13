@@ -1,0 +1,54 @@
+meta {
+  name: Update Order
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{baseUrl}}/orders/{{orderId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "APPOINTMENT",
+    "isBillGenerated": true,
+    "orderNotes": "Rescheduled collection",
+    "items": [
+      { "branchLabPanelId": "{{branchLabPanelId}}" }
+    ],
+    "opd": {
+      "categoryId": "{{categoryId}}",
+      "doctorId": "{{consultantDoctorId}}",
+      "consultantType": "FOLLOW_UP",
+      "visitType": "TELECONSULTATION"
+    }
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Update an order (scoped to the caller's tenant). Scalar fields (incl. `status`)
+  are patched. When `items` is supplied the whole set is REPLACED (old active rows
+  soft-deleted, the new set created). When a section object (`diagnostics`/`opd`/
+  `radiology`) is supplied it is upserted (created if absent, else replaced).
+  The `opd` section carries optional `departmentId` and `categoryId` (both →
+  422 `ORDER_DEPARTMENT_NOT_FOUND` / `ORDER_CATEGORY_NOT_FOUND` on a bad ref);
+  the `radiology` section carries optional `radiologistDepartmentId` and
+  `radiologistCategoryId`.
+  `patientId` is not editable; payments are managed via the Order Payments folder.
+}

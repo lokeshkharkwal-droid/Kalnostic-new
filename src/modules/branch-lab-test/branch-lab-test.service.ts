@@ -280,6 +280,67 @@ export class BranchLabTestService {
   }
 
   /**
+   * Lightweight `{ id, name }` options for the Create-Order lab-test selector.
+   * Returns the branch's **active default-variant** rows only (one orderable row
+   * per variant group), so a selected id is directly usable as an order item's
+   * `branchLabTestId`. Supports a case-insensitive `search` on testName.
+   * @param tenantId tenant scope (from JWT)
+   * @param branchId active branch (from JWT profile)
+   * @param filters optional search + offset pagination
+   * @returns full `{ id, name }[]` when `page` is omitted, else a paginated envelope
+   */
+  async findOptions(
+    tenantId: string,
+    branchId: string,
+    filters: { search?: string; page?: number; limit?: number } = {},
+  ): Promise<
+    | Array<{ id: string; name: string }>
+    | PaginatedResult<{ id: string; name: string }>
+  > {
+    const where: Prisma.BranchLabTestWhereInput = {
+      tenantId,
+      branchId,
+      deletedAt: null,
+      isActive: true,
+      isDefault: true,
+    };
+    const term = filters.search?.trim();
+    if (term) {
+      where.testName = { contains: term, mode: 'insensitive' };
+    }
+
+    const select = { id: true, testName: true } as const;
+    const orderBy = { testName: 'asc' } as const;
+    const toOption = (r: { id: string; testName: string }) => ({
+      id: r.id,
+      name: r.testName,
+    });
+
+    if (filters.page === undefined) {
+      const rows = await this.prisma.branchLabTest.findMany({
+        where,
+        select,
+        orderBy,
+      });
+      return rows.map(toOption);
+    }
+
+    const page = filters.page;
+    const limit = filters.limit ?? 20;
+    const [rows, total] = await Promise.all([
+      this.prisma.branchLabTest.findMany({
+        where,
+        select,
+        orderBy,
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.branchLabTest.count({ where }),
+    ]);
+    return { data: rows.map(toOption), total, page, limit };
+  }
+
+  /**
    * Fetch one branch lab test (with its `configSnapshot`) scoped to tenant+branch.
    * @throws BranchLabTestNotFoundException if missing/soft-deleted/other branch
    */

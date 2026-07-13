@@ -4,6 +4,7 @@ import { BranchModule } from '../branch/branch.module';
 import { UsersModule } from '../users/users.module';
 import { ReferralPanelSettingsModule } from '../referral-panel-settings/referral-panel-settings.module';
 import { InternalReferralController } from './internal-referral.controller';
+import { InternalReferralOptionsController } from './internal-referral-options.controller';
 import { InternalReferralService } from './internal-referral.service';
 
 /**
@@ -23,7 +24,7 @@ import { InternalReferralService } from './internal-referral.service';
     UsersModule,
     ReferralPanelSettingsModule,
   ],
-  controllers: [InternalReferralController],
+  controllers: [InternalReferralOptionsController, InternalReferralController],
   providers: [InternalReferralService],
   exports: [InternalReferralService],
 })

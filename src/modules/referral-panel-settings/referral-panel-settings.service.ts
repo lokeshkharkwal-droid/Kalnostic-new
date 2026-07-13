@@ -5,7 +5,10 @@ import { PaginatedResult } from '../../common/dto/response.dto';
 import { CreateReferralPanelSettingsDto } from './dto/create-referral-panel-settings.dto';
 import { UpdateReferralPanelSettingsDto } from './dto/update-referral-panel-settings.dto';
 import { ListReferralPanelSettingsDto } from './dto/list-referral-panel-settings.dto';
-import { ReferralPanelSettingsEntity } from './entities/referral-panel-settings.entity';
+import {
+  ReferralPanelSettingsEntity,
+  ReferralPanelSettingsWithCreator,
+} from './entities/referral-panel-settings.entity';
 import {
   InvalidReferralPanelSettingsBonusException,
   ReferralPanelSettingsDefaultConflictException,
@@ -85,14 +88,20 @@ export class ReferralPanelSettingsService {
   async findById(
     id: string,
     tenantId: string,
-  ): Promise<ReferralPanelSettingsEntity> {
+  ): Promise<ReferralPanelSettingsWithCreator> {
     const settings = await this.prisma.referralPanelSettings.findFirst({
       where: { id, tenantId, deletedAt: null },
     });
     if (!settings) {
       throw new ReferralPanelSettingsNotFoundException(id);
     }
-    return settings;
+    const nameById = await this.resolveCreatorNames([settings.createdBy]);
+    return {
+      ...settings,
+      createdByName: settings.createdBy
+        ? (nameById.get(settings.createdBy) ?? null)
+        : null,
+    };
   }
 
   /**
@@ -105,7 +114,7 @@ export class ReferralPanelSettingsService {
   async findAll(
     tenantId: string,
     query: ListReferralPanelSettingsDto,
-  ): Promise<PaginatedResult<ReferralPanelSettingsEntity>> {
+  ): Promise<PaginatedResult<ReferralPanelSettingsWithCreator>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const where: Prisma.ReferralPanelSettingsWhereInput = {
@@ -129,7 +138,40 @@ export class ReferralPanelSettingsService {
       }),
       this.prisma.referralPanelSettings.count({ where }),
     ]);
-    return { data, total, page, limit };
+    const nameById = await this.resolveCreatorNames(
+      data.map((r) => r.createdBy),
+    );
+    const enriched: ReferralPanelSettingsWithCreator[] = data.map((r) => ({
+      ...r,
+      createdByName: r.createdBy ? (nameById.get(r.createdBy) ?? null) : null,
+    }));
+    return { data: enriched, total, page, limit };
+  }
+
+  /**
+   * Batch-resolve a set of creator `person_id`s into their full display names
+   * (persons are platform-level, looked up in one query). Null/duplicate ids are
+   * ignored; the returned map only contains ids that resolved to a person.
+   * @param createdByIds the raw `createdBy` values (may contain null/duplicates)
+   * @returns a map of person id → `"First Last"`
+   */
+  private async resolveCreatorNames(
+    createdByIds: (string | null)[],
+  ): Promise<Map<string, string>> {
+    const ids = [...new Set(createdByIds.filter((v): v is string => !!v))];
+    if (!ids.length) {
+      return new Map();
+    }
+    const persons = await this.prisma.person.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, firstName: true, lastName: true },
+    });
+    return new Map(
+      persons.map((p) => [
+        p.id,
+        [p.firstName, p.lastName].filter(Boolean).join(' '),
+      ]),
+    );
   }
 
   /**

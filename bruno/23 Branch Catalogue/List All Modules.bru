@@ -1,0 +1,40 @@
+meta {
+  name: List All Modules
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/modules
+  body: none
+  auth: none
+}
+
+docs {
+  Public. With no `branch_type` query param, returns the de-duplicated union of
+  every module across all branch types as `{ key, label }` objects, in
+  first-appearance order. Each module key appears exactly once.
+
+  Envelope:
+
+      { "success": true,
+        "data": [
+          { "key": "registration",       "label": "Registration" },
+          { "key": "accession",          "label": "Accession" },
+          { "key": "lab_operations",      "label": "Laboratory" },
+          { "key": "finance",             "label": "Finance" },
+          { "key": "phlebotomist",        "label": "Phlebotomist" },
+          { "key": "inventory",           "label": "Inventory" },
+          { "key": "sales",               "label": "Sales" },
+          { "key": "branch_admin",        "label": "Branch Admin" },
+          { "key": "business_admin",      "label": "Business Admin" },
+          { "key": "patient_management",  "label": "Patient Management" },
+          { "key": "radiology",           "label": "Radiology" },
+          { "key": "pharmacy",            "label": "Pharmacy" }
+        ],
+        "meta": { "timestamp": "..." } }
+
+  Module keys resolve to the unified SYSTEM_MODULES catalogue; the branch-type →
+  module mapping is sourced from the `BRANCH_MODULES` config constant. See
+  "List Modules by Branch Type" for the filtered form.
+}

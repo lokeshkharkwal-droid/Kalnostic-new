@@ -209,6 +209,13 @@ enum AuditModule {
   DOCUMENT
   TEMPLATE
   PDF_REPORT_TEMPLATE
+  PATIENT
+  MEDICAL_HISTORY
+  ORDER
+  RADIOLOGIST
+  PHLEBOTOMIST
+  RADIOLOGY_TECHNICIAN
+  PAYMENT_DETAILS
   AUTH
   SITEADMIN // reserved; not written to in this phase (business audit only)
 }
@@ -452,6 +459,57 @@ enum Salutation {
   PROF
 }
 
+/// Patient category / privilege tier. Display labels are resolved on the frontend.
+enum PatientCategory {
+  GENERAL
+  VIP
+  SENIOR_CITIZEN
+  PEDIATRIC
+  EMPLOYEE
+}
+
+/// Marital status of a patient.
+enum MaritalStatus {
+  SINGLE
+  MARRIED
+  DIVORCED
+  WIDOWED
+  SEPARATED
+  OTHER
+}
+
+/// Lifecycle stage of a patient record. `DRAFT` = a partially-entered patient
+/// saved before registration is complete; `CREATED` = a fully registered
+/// patient. New patients default to `CREATED`.
+enum PatientStatus {
+  DRAFT
+  CREATED
+}
+
+/// Unit in which a patient's `age` is expressed (paediatric patients are often
+/// measured in months/days).
+enum AgeType {
+  YEARS
+  MONTHS
+  DAYS
+}
+
+/// Relationship of a patient (or guardian) to the primary contact. Used for the
+/// patient's `relationship` and `guardianRelationship` fields.
+enum Relationship {
+  SELF
+  SPOUSE
+  SON
+  DAUGHTER
+  FATHER
+  MOTHER
+  BROTHER
+  SISTER
+  GUARDIAN
+  FRIEND
+  OTHER
+}
+
 /// How a doctor is paid out.
 enum DoctorPaymentMode {
   BANK_TRANSFER
@@ -577,13 +635,13 @@ model Tenant {
   shortName String? @map("short_name") // business abbreviation
 
   // ── Registered address ──
-  address     Json?   // registered business address (free-form; legacy/back-compat)
-  addressLine String? @map("address_line") // street address
+  address     Json? // registered business address (free-form; legacy/back-compat)
+  addressLine String?  @map("address_line") // street address
   pincode     String? // zip / pin code
-  countryId   String? @map("country_id")
-  stateId     String? @map("state_id")
-  cityId      String? @map("city_id")
-  areaId      String? @map("area_id")
+  countryId   String?  @map("country_id")
+  stateId     String?  @map("state_id")
+  cityId      String?  @map("city_id")
+  areaId      String?  @map("area_id")
   country     Country? @relation(fields: [countryId], references: [id])
   state       State?   @relation(fields: [stateId], references: [id])
   city        City?    @relation(fields: [cityId], references: [id])
@@ -617,6 +675,7 @@ model Tenant {
   subCategoryCounter     Int     @default(0) @map("sub_category_counter") // per-tenant sequential sub-category code
   outsourceCenterCounter Int     @default(0) @map("outsource_center_counter") // per-tenant sequential outsource-center code
   referralPanelCounter   Int     @default(0) @map("referral_panel_counter") // per-tenant sequential referral-panel code
+  orderCounter           Int     @default(0) @map("order_counter") // per-tenant sequential order code (ORD-00001)
   createdBy              String? @map("created_by") // SiteAdmin user id (creator)
   updatedBy              String? @map("updated_by") // SiteAdmin user id (last editor)
 
@@ -740,12 +799,19 @@ model Person {
   emergencyContactName   String? @map("emergency_contact_name")
   emergencyContactNumber String? @map("emergency_contact_number")
 
+  /// Staff attributes (e.g. for a radiology technician mapped to this person).
+  designation   String?
+  qualification String?
+
   /// First business to register this person owns their basic details. NULL = self-registered.
   ownerTenantId String? @map("owner_tenant_id")
 
   isPatient Boolean @default(false) @map("is_patient")
   isStaff   Boolean @default(false) @map("is_staff")
   isActive  Boolean @default(true) @map("is_active")
+
+  /// Order-management back-relations (radiology technician).
+  radiologyOrders OrderRadiology[] @relation("OrderRadiologyTechnician")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -909,8 +975,8 @@ model City {
   name    String
   pinCode String @map("pin_code")
 
-  stateId   String @map("state_id")
-  countryId String @map("country_id")
+  stateId   String  @map("state_id")
+  countryId String  @map("country_id")
   state     State   @relation(fields: [stateId], references: [id])
   country   Country @relation(fields: [countryId], references: [id])
 
@@ -935,9 +1001,9 @@ model Area {
   name     String
   locality String
 
-  cityId    String @map("city_id")
-  stateId   String @map("state_id")
-  countryId String @map("country_id")
+  cityId    String  @map("city_id")
+  stateId   String  @map("state_id")
+  countryId String  @map("country_id")
   city      City    @relation(fields: [cityId], references: [id])
   state     State   @relation(fields: [stateId], references: [id])
   country   Country @relation(fields: [countryId], references: [id])
@@ -1047,10 +1113,10 @@ model AuthRole {
 
 /// Assigns a person a profile (role) at a branch (or tenant-level when branch is null).
 model UserBranchProfile {
-  id         String    @id @default(uuid())
-  tenantId   String    @map("tenant_id")
-  personId   String    @map("person_id")
-  branchId   String?   @map("branch_id") // null = tenant-level profile (e.g. business_admin)
+  id         String   @id @default(uuid())
+  tenantId   String   @map("tenant_id")
+  personId   String   @map("person_id")
+  branchId   String?  @map("branch_id") // null = tenant-level profile (e.g. business_admin)
   // The assigned role. A restrict FK (Prisma default) — a role still referenced
   // here can't be hard-deleted; the /roles CRUD blocks it and soft-deletes.
   authRoleId String   @map("auth_role_id")
@@ -1063,6 +1129,10 @@ model UserBranchProfile {
   // The module (key from SYSTEM_MODULES) this assignment lands on by default;
   // must be enabled for the branch (branch_modules). Null = none chosen.
   defaultModuleId String?     @map("default_module_id")
+  // The set of module keys this user may access at THIS branch (subset of the
+  // branch type's catalogue AND the branch's enabled modules). defaultModuleId,
+  // when set, must be one of these. Empty = no explicit module access granted.
+  enabledModules  String[]    @default([]) @map("enabled_modules")
 
   isDefault  Boolean   @default(false) @map("is_default")
   isActive   Boolean   @default(true) @map("is_active")
@@ -1084,9 +1154,9 @@ model UserBranchProfile {
 
 /// Per-assignment permission overrides (allow/deny; inherit = no row).
 model UserProfilePermissionOverride {
-  id             String    @id @default(uuid())
-  tenantId       String    @map("tenant_id")
-  personId       String    @map("person_id")
+  id             String   @id @default(uuid())
+  tenantId       String   @map("tenant_id")
+  personId       String   @map("person_id")
   branchId       String?  @map("branch_id")
   authRoleId     String   @map("auth_role_id")
   authRole       AuthRole @relation(fields: [authRoleId], references: [id])
@@ -1116,13 +1186,13 @@ model TenantStaffMembership {
   // System-generated, immutable, per-tenant sequential code ("USR-00001")
   // derived from Tenant.staffCounter. Unique per tenant among active rows
   // (partial unique index in prisma/rls.sql); never client-supplied.
-  userCode String      @map("user_code")
-  userType UserType    @default(INTERNAL) @map("user_type")
+  userCode   String      @map("user_code")
+  userType   UserType    @default(INTERNAL) @map("user_type")
   // Optional primary/default role. The authoritative role lives per-branch on
   // UserBranchProfile.authRoleId; a user can be a tenant member with no role yet.
-  authRoleId String?   @map("auth_role_id")
-  authRole   AuthRole? @relation(fields: [authRoleId], references: [id])
-  status   StaffStatus @default(ACTIVE) // tenant-global account status
+  authRoleId String?     @map("auth_role_id")
+  authRole   AuthRole?   @relation(fields: [authRoleId], references: [id])
+  status     StaffStatus @default(ACTIVE) // tenant-global account status
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -1433,6 +1503,11 @@ model Department {
   /// Lab tests that name this department as their mandatory-test department.
   mandatoryLabTests LabTest[] @relation("LabTestMandatoryDept")
 
+  /// Order-management back-relations (OPD/radiology sections + radiology masters).
+  orderOpds        OrderOpd[]
+  orderRadiologies OrderRadiology[]
+  radiologists     Radiologist[]
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -1542,6 +1617,10 @@ model Category {
   /// Lab tests that name this category as their mandatory-test category.
   mandatoryLabTests LabTest[] @relation("LabTestMandatoryCat")
 
+  /// Order-management back-relations (OPD/radiology section category links).
+  orderOpds        OrderOpd[]
+  orderRadiologies OrderRadiology[]
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -1565,7 +1644,10 @@ model Category {
 model Document {
   id       String @id @default(uuid())
   tenantId String @map("tenant_id")
-  branchId String @map("branch_id")
+
+  /// Owning branch for branch-level documents (Branch Admin). NULL for
+  /// tenant-level documents managed by a Business Admin (no active branch).
+  branchId String? @map("branch_id")
 
   /// Required human-facing document number. Unique per branch among active rows
   /// (partial unique index in prisma/rls.sql).
@@ -1625,7 +1707,10 @@ model Document {
 model DocumentVersion {
   id       String @id @default(uuid())
   tenantId String @map("tenant_id")
-  branchId String @map("branch_id")
+
+  /// Mirrors the parent document's branch: a branch id for branch-level
+  /// documents, NULL for tenant-level (Business Admin) documents.
+  branchId String? @map("branch_id")
 
   documentId String   @map("document_id")
   document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
@@ -2231,6 +2316,9 @@ model LabPanel {
   // isAllowPartialBilling = true (enforced in service + CHECK in prisma/rls.sql).
   maxTestsRemovable Int @default(0) @map("max_tests_removable")
 
+  // Order diagnostics sections that reference this panel.
+  orderDiagnostics OrderDiagnostics[]
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -2384,6 +2472,9 @@ model BranchLabTest {
   // { samples: [...], resultParams: [{ ..., referenceRanges: [...], referenceValues: [...] }] }
   configSnapshot Json @default("{}") @map("config_snapshot")
 
+  // Order items that reference this branch lab test.
+  orderItems OrderItem[]
+
   createdBy String?   @map("created_by")
   updatedBy String?   @map("updated_by")
   createdAt DateTime  @default(now()) @map("created_at")
@@ -2468,6 +2559,9 @@ model BranchLabPanel {
   isAllowPartialBilling Boolean @default(false) @map("is_allow_partial_billing")
 
   maxTestsRemovable Int @default(0) @map("max_tests_removable")
+
+  // Order items that reference this branch lab panel.
+  orderItems OrderItem[]
 
   createdBy String?   @map("created_by")
   updatedBy String?   @map("updated_by")
@@ -2681,7 +2775,7 @@ model ReferralPanelSettings {
   isRestrictOrderPostInvoice  Boolean  @default(false) @map("is_restrict_order_post_invoice")
   isRestrictReportPostInvoice Boolean  @default(false) @map("is_restrict_report_post_invoice")
   isAutoInvoice               Boolean  @default(false) @map("is_auto_invoice")
-  raiseInvoiceCreditLimit     Decimal? @map("raise_invoice_credit_limit") @db.Decimal(12, 2)
+  isRaiseInvoiceOnCreditLimit Boolean  @default(false) @map("is_raise_invoice_on_credit_limit")
   invoiceFrequencyDays        Int?     @map("invoice_frequency_days")
   isOverlapMonthEndClose      Boolean  @default(false) @map("is_overlap_month_end_close")
   isAllowManualInvoice        Boolean  @default(false) @map("is_allow_manual_invoice")
@@ -2797,6 +2891,9 @@ model ReferralPanel {
 
   labTests  ReferralPanelLabTest[]
   labPanels ReferralPanelLabPanel[]
+
+  /// Orders billed to this referral (B2B) panel.
+  orders Order[]
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -2937,6 +3034,9 @@ model Doctor {
   // Children (managed via the parent in DoctorsService)
   qualifications DoctorQualification[]
   experiences    DoctorExperience[]
+
+  // OPD order sections that name this doctor as the consultant.
+  orderOpds OrderOpd[]
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -3079,6 +3179,9 @@ model ReferralDoctor {
   experiences    ReferralDoctorExperience[]
   labTests       ReferralDoctorLabTest[]
   labPanels      ReferralDoctorLabPanel[]
+
+  /// Orders that name this doctor as the referring doctor.
+  orders Order[]
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -3262,6 +3365,9 @@ model ExternalReferral {
   labTests  ExternalReferralLabTest[]
   labPanels ExternalReferralLabPanel[]
 
+  // Orders that name this external referral (back-relation).
+  orders Order[]
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -3383,6 +3489,9 @@ model InternalReferral {
   // Children (managed via the parent in InternalReferralService)
   labTests  InternalReferralLabTest[]
   labPanels InternalReferralLabPanel[]
+
+  // Orders that name this internal referral (back-relation).
+  orders Order[]
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -3612,7 +3721,9 @@ model MachineBranch {
 // `siteadmin_users`). `tenantId`/`branchId`/`contextType`/`contextId` are
 // optional scope/target references stored as plain Int scalars (no FK relation).
 
-/** The payment gateway / tax family a rule belongs to. */
+/**
+ * The payment gateway / tax family a rule belongs to.
+ */
 enum PaymentRuleType {
   CITRUS_COMMISSION
   PAYU_COMMISSION
@@ -3621,7 +3732,9 @@ enum PaymentRuleType {
   PHARMACY_TAXES
 }
 
-/** How a rule's `calculationValue` is applied. */
+/**
+ * How a rule's `calculationValue` is applied.
+ */
 enum PaymentCalculationType {
   FIXED
   PERCENT
@@ -3721,4 +3834,517 @@ model ContactSubmission {
   @@index([createdAt])
   @@index([deletedAt])
   @@map("contact_submissions")
+}
+
+/// A patient registered by a tenant. Tenant-scoped (RLS) and branch-level:
+/// `branchId` records the branch where the patient was registered (nullable),
+/// while the patient remains visible tenant-wide. Only `firstName` and `mobile`
+/// are required; everything else is optional. Per-tenant uniqueness on `mobile`
+/// among active rows is enforced by a partial unique index in prisma/rls.sql.
+model Patient {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  // ── Identity ──
+  salutation   Salutation?
+  firstName    String        @map("first_name")
+  middleName   String?       @map("middle_name")
+  lastName     String?       @map("last_name")
+  gender       Gender?
+  relationship Relationship?
+  dateOfBirth  DateTime?     @map("date_of_birth") @db.Date
+  age          Int?
+  ageType      AgeType?      @map("age_type")
+
+  // ── Contact ──
+  mobile                String // required
+  whatsappNumber        String? @map("whatsapp_number")
+  email                 String?
+  alternateEmail        String? @map("alternate_email")
+  alternateMobileNumber String? @map("alternate_mobile_number")
+
+  // ── Address ──
+  country      String?
+  addressLine1 String? @map("address_line_1")
+  addressLine2 String? @map("address_line_2")
+  area         String?
+  city         String?
+  state        String?
+  pincode      String?
+
+  // ── Privilege / category ──
+  hasPrivilegeCard Boolean          @default(false) @map("has_privilege_card")
+  privilegeNumber  String?          @map("privilege_number")
+  patientCategory  PatientCategory? @map("patient_category")
+  maritalStatus    MaritalStatus?   @map("marital_status")
+
+  // ── Identity documents ──
+  umId           String? @map("um_id")
+  aadhaarNumber  String? @map("aadhaar_number")
+  panNumber      String? @map("pan_number")
+  passportNumber String? @map("passport_number")
+
+  // ── Guardian ──
+  guardianName         String?       @map("guardian_name")
+  guardianRelationship Relationship? @map("guardian_relationship")
+  guardianEmail        String?       @map("guardian_email")
+  guardianMobileNumber String?       @map("guardian_mobile_number")
+
+  // ── Emergency contact ──
+  emergencyContactName         String? @map("emergency_contact_name")
+  emergencyContactMobileNumber String? @map("emergency_contact_mobile_number")
+
+  // ── Lifecycle ──
+  status PatientStatus @default(CREATED)
+
+  // One-to-many: a patient can have multiple medical-history records.
+  medicalHistories MedicalHistory[]
+
+  // Orders placed for this patient.
+  orders Order[]
+
+  createdBy String? @map("created_by")
+  updatedBy String? @map("updated_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([deletedAt])
+  @@map("patients")
+}
+
+/// A medical-history record for a patient (one-to-many). Tenant-scoped (RLS) and
+/// branch-level. All clinical flags are booleans defaulting to false; free-text
+/// notes (`otherMedications`, `surgicalHistory`, `remarks`) are optional.
+model MedicalHistory {
+  id        String  @id @default(uuid())
+  tenantId  String  @map("tenant_id")
+  branchId  String? @map("branch_id")
+  patientId String  @map("patient_id")
+
+  patient Patient @relation(fields: [patientId], references: [id])
+
+  // ── Smoking & alcohol status ──
+  isCurrentSmoker    Boolean @default(false) @map("is_current_smoker")
+  isFormerSmoker     Boolean @default(false) @map("is_former_smoker")
+  isCurrentAlcoholic Boolean @default(false) @map("is_current_alcoholic")
+  isFormerAlcoholic  Boolean @default(false) @map("is_former_alcoholic")
+
+  // ── Symptoms ──
+  hasCough             Boolean @default(false) @map("has_cough")
+  hasFever             Boolean @default(false) @map("has_fever")
+  hasShortnessOfBreath Boolean @default(false) @map("has_shortness_of_breath")
+  hasChestPain         Boolean @default(false) @map("has_chest_pain")
+  hasAbdominalPain     Boolean @default(false) @map("has_abdominal_pain")
+  hasHeadache          Boolean @default(false) @map("has_headache")
+  hasVomiting          Boolean @default(false) @map("has_vomiting")
+  hasDiarrhea          Boolean @default(false) @map("has_diarrhea")
+  hasFatigue           Boolean @default(false) @map("has_fatigue")
+  hasWeightLoss        Boolean @default(false) @map("has_weight_loss")
+  hasBodyPains         Boolean @default(false) @map("has_body_pains")
+  hasDizziness         Boolean @default(false) @map("has_dizziness")
+
+  // ── Medical conditions ──
+  hasDiabetes       Boolean @default(false) @map("has_diabetes")
+  hasHypertension   Boolean @default(false) @map("has_hypertension")
+  hasCardiacDisease Boolean @default(false) @map("has_cardiac_disease")
+  hasThyroidDisease Boolean @default(false) @map("has_thyroid_disease")
+  hasKidneyDisease  Boolean @default(false) @map("has_kidney_disease")
+
+  // ── Medications ──
+  hasAntiDiabeticDrugs     Boolean @default(false) @map("has_anti_diabetic_drugs")
+  hasAntiHypertensionDrugs Boolean @default(false) @map("has_anti_hypertension_drugs")
+  hasBloodThinners         Boolean @default(false) @map("has_blood_thinners")
+  hasVitaminSupplements    Boolean @default(false) @map("has_vitamin_supplements")
+  otherMedications         String? @map("other_medications")
+
+  // ── Allergies ──
+  hasLatexAllergy Boolean @default(false) @map("has_latex_allergy")
+  hasFoodAllergy  Boolean @default(false) @map("has_food_allergy")
+  hasDrugAllergy  Boolean @default(false) @map("has_drug_allergy")
+
+  // ── Additional information ──
+  surgicalHistory String? @map("surgical_history")
+  remarks         String?
+
+  createdBy String? @map("created_by")
+  updatedBy String? @map("updated_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([patientId])
+  @@index([branchId])
+  @@index([deletedAt])
+  @@map("medical_histories")
+}
+
+// ── Order Management ────────────────────────────────────────────────────────────
+
+/// Lifecycle stage of an order (Draft → Quote → Appointment → Order).
+enum OrderStatus {
+  DRAFT
+  QUOTE
+  APPOINTMENT
+  ORDER
+}
+
+/// Channel the order originated from.
+enum OrderType {
+  WALK_IN
+  APP
+  WEBSITE
+}
+
+/// How the order is billed.
+enum BillingType {
+  CASH_CLIENT
+  INSURANCE
+  CORPORATE
+  GOVERNMENT_SCHEME
+  TPA
+}
+
+/// Where the diagnostic sample comes from.
+enum SampleSource {
+  IN_HOUSE
+  SUPPLIED
+}
+
+/// OPD consultation type.
+enum ConsultantType {
+  INITIAL
+  FIRST
+  FOLLOW_UP
+}
+
+/// OPD visit type.
+enum OpdVisitType {
+  WALK_IN
+  TELECONSULTATION
+  HOME_VISIT
+}
+
+/// Mode a payment was made in.
+enum PaymentMode {
+  CASH
+  CREDIT
+  UPI
+}
+
+/// B2B client billing type on an order.
+enum B2bClientType {
+  CASH
+  CREDIT
+  WALLET
+}
+
+/// The central order record a lab/clinic creates for a patient. Tenant-scoped
+/// (RLS) + branch-level (CLAUDE.md §4.5). Carries basic billing info plus up to
+/// three optional 1:1 service sections (diagnostics / OPD / radiology), a set of
+/// selected catalogue items (`OrderItem` junction), and a payment ledger
+/// (`PaymentDetails`). `orderCode` is a per-tenant sequential value
+/// (`ORD-00001`…) generated from `Tenant.orderCounter`, unique per tenant among
+/// active rows (partial unique index in prisma/rls.sql).
+model Order {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  // Identity & basic info
+  orderCode       String      @map("order_code")
+  status          OrderStatus @default(DRAFT)
+  orderDate       DateTime    @map("order_date") @db.Date
+  orderType       OrderType   @map("order_type")
+  billingType     BillingType @map("billing_type")
+  isUrgentBill    Boolean     @default(false) @map("is_urgent_bill")
+  isBillGenerated Boolean     @default(false) @map("is_bill_generated")
+  orderNotes      String?     @map("order_notes")
+
+  // Patient (required) + appointment
+  patientId     String    @map("patient_id")
+  patient       Patient   @relation(fields: [patientId], references: [id])
+  appointmentAt DateTime? @map("appointment_at")
+
+  // Referral & B2B billing (all optional)
+  referredByDoctorId String?         @map("referred_by_doctor_id")
+  referredByDoctor   ReferralDoctor? @relation(fields: [referredByDoctorId], references: [id])
+
+  referralPanelId String?        @map("referral_panel_id")
+  referralPanel   ReferralPanel? @relation(fields: [referralPanelId], references: [id])
+
+  b2bClient B2bClientType? @map("b2b_client")
+
+  internalReferralId String?           @map("internal_referral_id")
+  internalReferral   InternalReferral? @relation(fields: [internalReferralId], references: [id])
+
+  externalReferralId String?           @map("external_referral_id")
+  externalReferral   ExternalReferral? @relation(fields: [externalReferralId], references: [id])
+
+  // Sections & children
+  items       OrderItem[]
+  diagnostics OrderDiagnostics?
+  opd         OrderOpd?
+  radiology   OrderRadiology?
+  payments    PaymentDetails[]
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([patientId])
+  @@index([status])
+  @@index([referredByDoctorId])
+  @@index([referralPanelId])
+  @@index([internalReferralId])
+  @@index([externalReferralId])
+  @@index([deletedAt])
+  @@map("orders")
+}
+
+/// Junction linking an order to its selected catalogue entries, so one order can
+/// hold any combination of multiple branch lab tests and panels. Exactly one of
+/// `branchLabTestId` / `branchLabPanelId` / `direct` is set per row (a catalogue
+/// test, a catalogue panel, or a free-text direct entry) — enforced in
+/// OrderService + a CHECK constraint in prisma/rls.sql. Tenant-scoped +
+/// branch-level.
+model OrderItem {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  orderId String @map("order_id")
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  branchLabTestId String?         @map("branch_lab_test_id")
+  branchLabTest   BranchLabTest?  @relation(fields: [branchLabTestId], references: [id])
+  branchLabPanelId String?        @map("branch_lab_panel_id")
+  branchLabPanel   BranchLabPanel? @relation(fields: [branchLabPanelId], references: [id])
+
+  /// Free-text catalogue entry passed directly from the frontend (mutually
+  /// exclusive with the test/panel refs).
+  direct String?
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([orderId])
+  @@index([branchLabTestId])
+  @@index([branchLabPanelId])
+  @@index([deletedAt])
+  @@map("order_items")
+}
+
+/// The Diagnostics section of an order (1:1). Tenant-scoped + branch-level.
+model OrderDiagnostics {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  orderId String @unique @map("order_id")
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  prescriptionUrl String? @map("prescription_url")
+
+  diagnosticPanelId String?   @map("diagnostic_panel_id")
+  diagnosticPanel   LabPanel? @relation(fields: [diagnosticPanelId], references: [id])
+
+  sampleSource            SampleSource @default(IN_HOUSE) @map("sample_source")
+  sampleCollectionCharges Int          @default(0) @map("sample_collection_charges")
+  logisticsSuppliedBy     String?      @map("logistics_supplied_by")
+  isFasting               Boolean      @default(false) @map("is_fasting")
+  isHomeVisit             Boolean      @default(false) @map("is_home_visit")
+  collectionAddress       String?      @map("collection_address")
+
+  phlebotomistId String?       @map("phlebotomist_id")
+  phlebotomist   Phlebotomist? @relation(fields: [phlebotomistId], references: [id])
+
+  visitCharges Int       @default(0) @map("visit_charges")
+  collectionAt DateTime? @map("collection_at")
+  geoLocation  String?   @map("geo_location")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([diagnosticPanelId])
+  @@index([phlebotomistId])
+  @@index([deletedAt])
+  @@map("order_diagnostics")
+}
+
+/// The OPD section of an order (1:1). `doctorId` references a CONSULTANT doctor
+/// (validated in OrderService). Tenant-scoped + branch-level.
+model OrderOpd {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  orderId String @unique @map("order_id")
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  departmentId String?     @map("department_id")
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  categoryId String?   @map("category_id")
+  category   Category? @relation(fields: [categoryId], references: [id])
+
+  doctorId String @map("doctor_id")
+  doctor   Doctor @relation(fields: [doctorId], references: [id])
+
+  consultantType ConsultantType? @map("consultant_type")
+  visitType      OpdVisitType?   @map("visit_type")
+  consultationAt DateTime?       @map("consultation_at")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([departmentId])
+  @@index([categoryId])
+  @@index([doctorId])
+  @@index([deletedAt])
+  @@map("order_opd")
+}
+
+/// The Radiology section of an order (1:1). References the Radiologist master
+/// table, a department, and a radiology technician (a `Person`). Tenant-scoped +
+/// branch-level.
+model OrderRadiology {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  orderId String @unique @map("order_id")
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  radiologistId String      @map("radiologist_id")
+  radiologist   Radiologist @relation(fields: [radiologistId], references: [id])
+
+  radiologistDepartmentId String?     @map("radiologist_department_id")
+  radiologistDepartment   Department? @relation(fields: [radiologistDepartmentId], references: [id])
+
+  radiologistCategoryId String?   @map("radiologist_category_id")
+  radiologistCategory   Category? @relation(fields: [radiologistCategoryId], references: [id])
+
+  radiologyTechnicianId String? @map("radiology_technician_id")
+  radiologyTechnician   Person? @relation("OrderRadiologyTechnician", fields: [radiologyTechnicianId], references: [id])
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([radiologistId])
+  @@index([radiologistDepartmentId])
+  @@index([radiologistCategoryId])
+  @@index([radiologyTechnicianId])
+  @@index([deletedAt])
+  @@map("order_radiology")
+}
+
+/// Radiologist master table. Tenant-scoped + branch-level (CLAUDE.md §4.5).
+model Radiologist {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  name          String
+  departmentId  String?     @map("department_id")
+  department    Department? @relation(fields: [departmentId], references: [id])
+  speciality    String?
+  qualification String?
+  licenseNumber String?     @map("license_number")
+  mobile        String?
+  email         String?
+
+  orderRadiologies OrderRadiology[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([departmentId])
+  @@index([deletedAt])
+  @@map("radiologists")
+}
+
+/// Phlebotomist master table. Tenant-scoped + branch-level (CLAUDE.md §4.5).
+model Phlebotomist {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  name        String
+  designation String?
+  mobile      String?
+  email       String?
+
+  orderDiagnostics OrderDiagnostics[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([deletedAt])
+  @@map("phlebotomists")
+}
+
+/// A payment/ledger entry against an order (1:many). Amounts are integer minor
+/// units. Wallet/Points/Previous-Dues columns exist per spec but are NOT computed
+/// this phase (deferred). Tenant-scoped + branch-level.
+model PaymentDetails {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  orderId String @map("order_id")
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  totalAmount            Int         @default(0) @map("total_amount")
+  orderDiscount          Int         @default(0) @map("order_discount")
+  visitingCharges        Int         @default(0) @map("visiting_charges")
+  netAmount              Int         @default(0) @map("net_amount")
+  deductFromWallet       Int         @default(0) @map("deduct_from_wallet")
+  deductFromPoints       Int         @default(0) @map("deduct_from_points")
+  hasClearedPreviousDues Boolean     @default(false) @map("has_cleared_previous_dues")
+  tdsDeduction           Int         @default(0) @map("tds_deduction")
+  payableAmount          Int         @default(0) @map("payable_amount")
+  paidAmount             Int         @default(0) @map("paid_amount")
+  remainingBalance       Int         @default(0) @map("remaining_balance")
+  paymentMode            PaymentMode @default(CASH) @map("payment_mode")
+  paymentDate            DateTime?   @map("payment_date")
+  notes                  String?
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([orderId])
+  @@index([deletedAt])
+  @@map("payment_details")
 }

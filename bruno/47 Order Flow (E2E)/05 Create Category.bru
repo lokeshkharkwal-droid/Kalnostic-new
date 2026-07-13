@@ -1,0 +1,57 @@
+meta {
+  name: 05 Create Category
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/categories
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Biochemistry (E2E)",
+    "shortName": "BIOE2",
+    "description": "Biochemistry category created by the Order Flow E2E run",
+    "isActive": true,
+    "categoryType": "UNDER_DEPARTMENT",
+    "departmentId": "{{departmentId}}",
+    "moduleMapping": ["DIAGNOSTIC"]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setVar("categoryId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("captured a categoryId", function () {
+    expect(res.getBody().data.id).to.be.a("string");
+  });
+}
+
+docs {
+  Step 5 — create a **Category** under the department from step 4. Captures
+  `categoryId` (parent for the Sub-Category and a classification ref on Lab Test).
+  
+  - `categoryType` — `INDEPENDENT` | `UNDER_DEPARTMENT`. We use `UNDER_DEPARTMENT`,
+    which makes `departmentId` (`{{departmentId}}`) required and validated against
+    the caller's tenant.
+  - `name` / `shortName` — same rules as Department; `shortName` matches
+    `^[A-Z0-9]{2,6}$`. Bump `BIOE2` if a previous run already used it.
+  - `moduleMapping` — required (`branchType` enum values).
+}

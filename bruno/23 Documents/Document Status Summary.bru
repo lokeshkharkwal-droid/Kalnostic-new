@@ -1,0 +1,49 @@
+meta {
+  name: Document Status Summary
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/documents/status-summary
+  body: none
+  auth: bearer
+}
+
+params:query {
+  ~branchId: {{branchId}}
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns a count for every status", function () {
+    const data = res.getBody().data;
+    ["DRAFT", "UNDER_REVIEW", "APPROVED", "EXPIRED", "ARCHIVED"].forEach((s) => {
+      expect(data).to.have.property(s);
+      expect(data[s]).to.be.a("number");
+    });
+  });
+}
+
+docs {
+  Exact document count per status, computed in the database (not derived from a
+  page of results). The response `data` is an object keyed by every
+  `DocumentStatus` value — each key is always present (0 when none):
+
+      { "DRAFT": 3, "UNDER_REVIEW": 1, "APPROVED": 12, "EXPIRED": 2, "ARCHIVED": 0 }
+
+  Branch scope follows the optional `branchId` query param:
+  - **Present** (Branch Admin) — counts for that branch only (id verified against
+    the caller's tenant; foreign/unknown branch → 404).
+  - **Absent** (Business Admin) — counts across ALL branches of the tenant.
+
+  Counts describe the full status distribution for the scope and are NOT narrowed
+  by the list filters (status / type / department / search). Powers the status
+  summary cards on the Documents pages.
+}

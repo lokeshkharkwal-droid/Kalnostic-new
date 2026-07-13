@@ -1,0 +1,57 @@
+meta {
+  name: 06 Create Sub-Category
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/sub-categories
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Lipid Profile (E2E)",
+    "shortName": "LIPE2",
+    "description": "Lipid sub-category created by the Order Flow E2E run",
+    "isActive": true,
+    "subCategoryType": "UNDER_CATEGORY",
+    "categoryId": "{{categoryId}}",
+    "moduleMapping": ["DIAGNOSTIC"]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setVar("subCategoryId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("captured a subCategoryId", function () {
+    expect(res.getBody().data.id).to.be.a("string");
+  });
+}
+
+docs {
+  Step 6 — create a **Sub-Category** under the category from step 5. Captures
+  `subCategoryId` (a classification ref on the Lab Test).
+  
+  - `subCategoryType` — `INDEPENDENT` | `UNDER_DEPARTMENT` | `UNDER_CATEGORY`.
+    We use `UNDER_CATEGORY`, which makes `categoryId` (`{{categoryId}}`) required
+    and validated against the caller's tenant. (Use `UNDER_DEPARTMENT` +
+    `departmentId` instead if you prefer to hang it off the department.)
+  - `name` / `shortName` — same rules; bump `LIPE2` if already used.
+  - `moduleMapping` — required (`branchType` enum values).
+}

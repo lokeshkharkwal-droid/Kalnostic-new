@@ -1,9 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, DocumentStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { CategoryService } from '../category/category.service';
 import { DepartmentService } from '../department/department.service';
+import { BranchService } from '../branch/branch.service';
 import { CreateDocumentDto } from './dto/create-document.dto';
 import { UpdateDocumentDto } from './dto/update-document.dto';
 import { ListDocumentsQueryDto } from './dto/list-documents-query.dto';
@@ -58,20 +59,44 @@ export class DocumentService {
     private readonly prisma: PrismaService,
     private readonly categoryService: CategoryService,
     private readonly departmentService: DepartmentService,
+    private readonly branchService: BranchService,
   ) {}
+
+  /**
+   * Build the base `where` for a document query, scoped to the tenant, active
+   * (non-soft-deleted) rows, and — when `branchId` is supplied — a single
+   * branch. A supplied `branchId` is verified to belong to the tenant first
+   * (§4.5); absent → all branches of the tenant. This is the single place that
+   * decides branch scope for reads.
+   * @throws BranchNotFoundException if `branchId` is not a branch of the tenant
+   */
+  private async scopedWhere(
+    tenantId: string,
+    branchId?: string,
+  ): Promise<Prisma.DocumentWhereInput> {
+    if (branchId) {
+      await this.branchService.findById(branchId, tenantId);
+    }
+    return {
+      tenantId,
+      deletedAt: null,
+      ...(branchId ? { branchId } : {}),
+    };
+  }
 
   /**
    * Create a document and seed version 1 of its history (one transaction).
    * @param tenantId owning tenant (from context)
-   * @param branchId owning branch (active branch from the JWT)
+   * @param branchId owning branch (active branch from the JWT) — `null` for a
+   *   tenant-level document created by a Business Admin (no active branch)
    * @param dto validated document payload
    * @param actorId person id of the creator (recorded on the version)
    * @returns the created document with its catalogue relations
-   * @throws DocumentNumberConflictException if the number is taken in the branch
+   * @throws DocumentNumberConflictException if the number is taken in the scope
    */
   async create(
     tenantId: string,
-    branchId: string,
+    branchId: string | null,
     dto: CreateDocumentDto,
     actorId: string,
   ): Promise<DocumentWithRelations> {
@@ -124,16 +149,19 @@ export class DocumentService {
   }
 
   /**
-   * Fetch one active document scoped to its tenant + branch.
+   * Fetch one active document scoped to its tenant (and branch when supplied).
+   * @param branchId optional branch scope — omit for a tenant-wide lookup
+   *   (Business Admin views a document that may live in any branch)
    * @throws DocumentNotFoundException if missing or soft-deleted
+   * @throws BranchNotFoundException if `branchId` is not a branch of the tenant
    */
   async findById(
     id: string,
     tenantId: string,
-    branchId: string,
+    branchId?: string,
   ): Promise<DocumentWithRelations> {
     const doc = await this.prisma.document.findFirst({
-      where: { id, tenantId, branchId, deletedAt: null },
+      where: { id, ...(await this.scopedWhere(tenantId, branchId)) },
       include: DOCUMENT_INCLUDE,
     });
     if (!doc) {
@@ -143,21 +171,21 @@ export class DocumentService {
   }
 
   /**
-   * List active documents for a branch (offset pagination), newest first.
-   * Optional filters: case-insensitive `search` (matches `documentNumber` or
-   * `title`), status, document type, category, department.
+   * List active documents (offset pagination), newest first. Scope is decided by
+   * `query.branchId`: present → that branch only (verified against the tenant);
+   * absent → all branches of the tenant (Business Admin). Optional filters:
+   * case-insensitive `search` (matches `documentNumber` or `title`), status,
+   * document type, category, department.
+   * @throws BranchNotFoundException if `query.branchId` is not a tenant branch
    */
-  async findAllForBranch(
+  async findAll(
     tenantId: string,
-    branchId: string,
     query: ListDocumentsQueryDto,
   ): Promise<PaginatedResult<DocumentWithRelations>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const where: Prisma.DocumentWhereInput = {
-      tenantId,
-      branchId,
-      deletedAt: null,
+      ...(await this.scopedWhere(tenantId, query.branchId)),
       ...(query.status ? { status: query.status } : {}),
       ...(query.documentType ? { documentType: query.documentType } : {}),
       ...(query.categoryId ? { categoryId: query.categoryId } : {}),
@@ -182,6 +210,35 @@ export class DocumentService {
   }
 
   /**
+   * Exact document count per status for the caller's scope, computed in the
+   * database (one `count` per status in a single transaction — the parallel-count
+   * pattern used by `TenantService.getDashboardCounts`). Every `DocumentStatus`
+   * key is always present (0 when none). Scope follows `branchId`: present → that
+   * branch (verified); absent → all branches of the tenant. Counts describe the
+   * full status distribution and are **not** narrowed by list filters.
+   * @throws BranchNotFoundException if `branchId` is not a branch of the tenant
+   */
+  async getStatusSummary(
+    tenantId: string,
+    branchId?: string,
+  ): Promise<Record<DocumentStatus, number>> {
+    const base = await this.scopedWhere(tenantId, branchId);
+    const statuses = Object.values(DocumentStatus);
+    const counts = await this.prisma.$transaction(
+      statuses.map((status) =>
+        this.prisma.document.count({ where: { ...base, status } }),
+      ),
+    );
+    return statuses.reduce(
+      (acc, status, i) => {
+        acc[status] = counts[i] ?? 0;
+        return acc;
+      },
+      {} as Record<DocumentStatus, number>,
+    );
+  }
+
+  /**
    * Edit a document. **Every edit creates a new preserved version**: the current
    * row is updated in place and a fresh immutable snapshot (next `versionNo`) is
    * appended; all earlier snapshots are untouched. The new `version` string must
@@ -192,11 +249,11 @@ export class DocumentService {
   async update(
     id: string,
     tenantId: string,
-    branchId: string,
+    branchId: string | null,
     dto: UpdateDocumentDto,
     actorId: string,
   ): Promise<DocumentWithRelations> {
-    const current = await this.findById(id, tenantId, branchId);
+    const current = await this.findById(id, tenantId, branchId ?? undefined);
     await this.validateRefs(tenantId, dto);
 
     // The version string must introduce a new, unique value for this document.
@@ -212,9 +269,11 @@ export class DocumentService {
       dto.documentNumber !== undefined &&
       dto.documentNumber !== current.documentNumber
     ) {
+      // Uniqueness is checked in the document's own scope, not the caller's —
+      // a Business Admin (branchId null) may edit a branch-level document.
       await this.assertNumberAvailable(
         tenantId,
-        branchId,
+        current.branchId,
         dto.documentNumber,
         id,
       );
@@ -269,7 +328,9 @@ export class DocumentService {
       await tx.documentVersion.create({
         data: {
           tenantId,
-          branchId,
+          // Mirror the document's own branch so the row and its version stay
+          // consistent regardless of the caller's active branch.
+          branchId: current.branchId,
           documentId: id,
           versionNo: nextNo,
           version: dto.version,
@@ -287,10 +348,10 @@ export class DocumentService {
   async remove(
     id: string,
     tenantId: string,
-    branchId: string,
+    branchId: string | null,
     actorId: string,
   ): Promise<DocumentWithRelations> {
-    await this.findById(id, tenantId, branchId);
+    await this.findById(id, tenantId, branchId ?? undefined);
     return this.prisma.withTenant(tenantId, async (tx) => {
       return tx.document.update({
         where: { id },
@@ -307,7 +368,7 @@ export class DocumentService {
   async findVersions(
     id: string,
     tenantId: string,
-    branchId: string,
+    branchId: string | undefined,
     page = 1,
     limit = 20,
   ): Promise<PaginatedResult<DocumentVersionEntity>> {
@@ -334,7 +395,7 @@ export class DocumentService {
     id: string,
     versionId: string,
     tenantId: string,
-    branchId: string,
+    branchId?: string,
   ): Promise<DocumentVersionEntity> {
     await this.findById(id, tenantId, branchId);
     const version = await this.prisma.documentVersion.findFirst({
@@ -389,12 +450,14 @@ export class DocumentService {
   }
 
   /**
-   * Throw if another active document in the branch already uses `documentNumber`.
+   * Throw if another active document in the same scope already uses
+   * `documentNumber`. Scope is the branch for branch-level docs, or the
+   * tenant-level set (`branchId === null`) for Business-Admin documents.
    * @param excludeId optional document id to exclude (the row being updated)
    */
   private async assertNumberAvailable(
     tenantId: string,
-    branchId: string,
+    branchId: string | null,
     documentNumber: string,
     excludeId?: string,
   ): Promise<void> {

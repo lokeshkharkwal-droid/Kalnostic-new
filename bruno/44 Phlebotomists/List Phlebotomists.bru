@@ -1,0 +1,30 @@
+meta {
+  name: List Phlebotomists
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/phlebotomists?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: ravi
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Paginated list of phlebotomists in the caller's tenant. Pagination info lands
+  in `meta`.
+
+  ## Filters (toggle the `~` to enable a query param)
+
+  - `search` — case-insensitive match on `name` OR `email` OR `mobile`.
+}

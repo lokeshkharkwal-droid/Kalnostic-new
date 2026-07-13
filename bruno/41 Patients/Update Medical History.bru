@@ -1,0 +1,34 @@
+meta {
+  name: Update Medical History
+  type: http
+  seq: 8
+}
+
+patch {
+  url: {{baseUrl}}/patients/{{patientId}}/medical-history/{{medicalHistoryId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "hasFever": false,
+    "hasVitaminSupplements": true,
+    "otherMedications": "Metformin 500mg",
+    "remarks": "Fever resolved on follow-up"
+  }
+}
+
+docs {
+  Update a medical-history record for the patient. Every field is optional — send
+  only what changes; same field list as **Add Medical History**. 404
+  `MEDICAL_HISTORY_NOT_FOUND` if missing/not owned by this patient/tenant.
+}

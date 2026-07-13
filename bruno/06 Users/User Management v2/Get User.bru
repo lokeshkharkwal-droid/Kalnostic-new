@@ -26,8 +26,10 @@ docs {
   The `membership` carries the primary role as `authRoleId` (FK) plus the derived
   `roleKey` (its stable key) — the legacy `role_key` column was replaced by the FK.
 
-  Each `branches[]` entry carries its **own role** and module:
+  Each `branches[]` entry carries its **own role** and modules:
   `{ id, branchId, branchName, roleKey, roleLabel, branchStatus, isDefault,
-  moduleId, moduleLabel }` (`roleKey`/`roleLabel` come from the assigned AuthRole).
-  Roles may differ across branches (one role per branch).
+  moduleId, moduleLabel, enabledModules }` (`roleKey`/`roleLabel` come from the
+  assigned AuthRole; `enabledModules` is the set of module keys the user may access
+  at that branch, `moduleId` the default landing module). Roles may differ across
+  branches (one role per branch).
 }

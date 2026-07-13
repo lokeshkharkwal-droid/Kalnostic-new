@@ -1,0 +1,87 @@
+meta {
+  name: 24 Create Patient
+  type: http
+  seq: 24
+}
+
+post {
+  url: {{baseUrl}}/patients
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "salutation": "MR",
+    "firstName": "John",
+    "middleName": "Robert",
+    "lastName": "Doe",
+    "gender": "MALE",
+    "relationship": "SELF",
+    "dateOfBirth": "1990-05-14",
+    "age": 36,
+    "ageType": "YEARS",
+    "mobile": "+919812349000",
+    "whatsappNumber": "+919812349000",
+    "email": "john.doe.e2e@example.com",
+    "country": "India",
+    "addressLine1": "12 MG Road",
+    "area": "Indiranagar",
+    "city": "Bengaluru",
+    "state": "Karnataka",
+    "pincode": "560038",
+    "patientCategory": "GENERAL",
+    "maritalStatus": "SINGLE",
+    "guardianName": "Robert Doe",
+    "guardianRelationship": "FATHER",
+    "emergencyContactName": "Jane Doe",
+    "emergencyContactMobileNumber": "+919811111111",
+    "medicalHistories": [
+      {
+        "isFormerSmoker": true,
+        "hasDiabetes": true,
+        "hasHypertension": true,
+        "hasAntiDiabeticDrugs": true,
+        "otherMedications": "Metformin 500mg",
+        "hasDrugAllergy": true,
+        "surgicalHistory": "Appendectomy (2015)",
+        "remarks": "Reviewed at registration"
+      }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setVar("patientId", data.id);
+  if (data && data.medicalHistories && data.medicalHistories.length) bru.setVar("medicalHistoryId", data.medicalHistories[0].id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("captured a patientId", function () {
+    expect(res.getBody().data.id).to.be.a("string");
+  });
+}
+
+docs {
+  Step 24 — register the **Patient** for the order (as the receptionist, step 18
+  token — patient registration is exactly what the Registration module is for).
+  Captures `patientId` (required by Create Order) and, from the nested
+  `medicalHistories`, the first `medicalHistoryId`.
+
+  Only `firstName` and `mobile` are required. A duplicate active `mobile` in the
+  tenant → 409 `PATIENT_MOBILE_CONFLICT` (bump `+919812349000` on a re-run).
+  `tenantId`/`branchId` are taken from the JWT, never the body. See the Patients
+  folder for the full field reference.
+}

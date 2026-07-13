@@ -1,0 +1,90 @@
+meta {
+  name: 18 Login as Order-Capable User
+  type: http
+  seq: 18
+}
+
+post {
+  url: {{baseUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "identifier": "{{orderUserIdentifier}}",
+    "password": "{{orderUserPassword}}"
+  }
+}
+
+vars:pre-request {
+  orderUserPassword: Strong@123
+}
+
+script:post-response {
+  // Switch the WHOLE rest of the flow into the order-capable user's context by
+  // OVERWRITING businessAccessToken. Steps 19-26 read {{businessAccessToken}}, so
+  // they now run as the receptionist — proving that user can create the order.
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.accessToken) {
+    bru.setVar("businessAccessToken", data.accessToken);
+    try {
+      const claims = JSON.parse(atob(data.accessToken.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+      // Stash the decoded claims the tests assert on (decoding here, not in the
+      // tests block, matches how steps 1 & 3 use atob).
+      bru.setVar("orderUserActiveProfile", claims.active_profile_key || "");
+      bru.setVar("orderUserActiveBranchId", claims.active_branch_id || "");
+      if (claims.active_branch_id) bru.setVar("branchId", claims.active_branch_id);
+      if (!claims.active_branch_id) {
+        console.log(
+          "Login is NOT branch-scoped (active_branch_id is null). The receptionist " +
+          "assignment (step 16) should have set defaultBranch:true. Re-check step 16, " +
+          "or add a POST /auth/switch-profile step (see step 3) before continuing."
+        );
+      }
+    } catch (e) {
+      // Token not decodable in this runtime — branchId stays as captured in step 2.
+    }
+  }
+  if (data && data.refreshToken) bru.setVar("businessRefreshToken", data.refreshToken);
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns an access token", function () {
+    expect(res.getBody().data.accessToken).to.be.a("string");
+  });
+  test("logged in as the receptionist, branch-scoped", function () {
+    expect(bru.getVar("orderUserActiveProfile")).to.equal("receptionist");
+    expect(bru.getVar("orderUserActiveBranchId")).to.be.a("string").and.not.equal("");
+  });
+}
+
+docs {
+  Step 18 — **log in as the order-capable user** created above, using
+  `orderUserIdentifier` (the mobile from step 15) + `orderUserPassword`. This is
+  the pivot of the flow: the post-response script **overwrites**
+  `businessAccessToken`, so every step from here (19–26: doctors, patient, order)
+  runs as the **receptionist**, not the admin. That is exactly what proves a
+  freshly-provisioned order-capable user can create an order.
+  
+  Because the branch assignment was marked `defaultBranch: true` (step 16), the
+  login is already branch-scoped (`active_branch_id` set, `active_profile_key`
+  = `receptionist`), so no separate profile switch is needed — the test asserts
+  this. The person's `phone` is globally unique, so the tenant resolves from the
+  identifier alone (like step 1); if your setup needs it, add `tenantSlug` to the
+  body. If `active_branch_id` comes back null, add a `POST /auth/switch-profile`
+  step (see step 3) before step 19.
+  
+  ## Reproduce in the frontend
+  Copy `orderUserIdentifier` + `orderUserPassword` (from the `Local` environment)
+  into the business frontend login. The Registration module (enabled +
+  permissioned in steps 14/17) will be visible, and you can create an order in
+  the UI — the same order this flow creates via the API in steps 19–26.
+}

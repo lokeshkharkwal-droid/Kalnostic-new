@@ -1,0 +1,77 @@
+meta {
+  name: 09 Create Lab Panel
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/lab-panels
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "panelName": "Lipid Profile Panel (E2E)",
+    "panelCode": "LIPID-E2E",
+    "categoryId": "{{categoryId}}",
+    "departmentId": "{{departmentId}}",
+    "applicableGender": "ALL",
+    "applicableAgeGroup": "ALL",
+    "reportType": "COMBINED",
+    "turnaroundPriority": "ROUTINE",
+    "isActive": true,
+    "priceMsrp": 80000,
+    "priceMinimum": 60000,
+    "priceMaximum": 80000,
+    "priceOriginal": 70000,
+    "tatMinValue": 4,
+    "tatMinUnit": "HOURS",
+    "tatMaxValue": 24,
+    "tatMaxUnit": "HOURS",
+    "panelInstructions": "Overnight fasting of 10-12 hours recommended.",
+    "isFastingRequired": true,
+    "tests": [
+      {
+        "labTestId": "{{labTestId}}",
+        "sortOrder": 1,
+        "isRemovable": false
+      }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setVar("labPanelId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("captured a labPanelId", function () {
+    expect(res.getBody().data.id).to.be.a("string");
+  });
+}
+
+docs {
+  Step 9 — create a master-data **Lab Panel** under the same master data,
+  containing the lab test from step 8. Captures `labPanelId`, which is:
+  
+  - imported into the branch in step 11 (→ `branchLabPanelId` for order items), and
+  - used directly as the order's `diagnostics.diagnosticPanelId` (that field
+    references a **master-data** `LabPanel`, not the branch copy).
+  
+  Each `tests[].labTestId` must be an active lab test in the **same** master data
+  (validated in the service). Required: `panelName`, `panelCode`. Prices are
+  integer minor units. See 14 Lab Panels for the full field reference.
+}

@@ -1,0 +1,35 @@
+meta {
+  name: Update Phlebotomist
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/phlebotomists/{{phlebotomistId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "designation": "Lead Phlebotomist"
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Update a phlebotomist (scoped to the caller's tenant). All fields optional.
+}

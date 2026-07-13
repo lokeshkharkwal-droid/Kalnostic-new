@@ -1,0 +1,79 @@
+meta {
+  name: 03 Switch to Branch Profile
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/auth/switch-profile
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "branchId": "{{branchId}}",
+    "profileKey": "{{branchProfileKey}}"
+  }
+}
+
+vars:pre-request {
+  branchProfileKey: branch_admin
+}
+
+script:post-response {
+  // Re-capture the branch-scoped tokens, then decode the JWT and make `branchId`
+  // authoritative = the token's active branch. This guarantees the catalogue
+  // (steps 7-9) and the branch import (steps 10-13) all target the SAME branch,
+  // which is exactly what the import validates against (avoids copied:0/skipped).
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.accessToken) {
+    bru.setVar("businessAccessToken", data.accessToken);
+    try {
+      const claims = JSON.parse(atob(data.accessToken.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+      if (claims.active_branch_id) bru.setVar("branchId", claims.active_branch_id);
+    } catch (e) {
+      // Token not decodable in this runtime — keep branchId from step 2.
+    }
+  }
+  if (data && data.refreshToken) bru.setVar("businessRefreshToken", data.refreshToken);
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Step 3 — switch into a **branch-scoped** context so the JWT carries an
+  `active_branch_id`. The branch-level steps below (Import Parent Lab Tests /
+  Panels, and the branch-scoped order) require this — a tenant-level
+  `business_admin` token would fail those with 400 `ACTIVE_BRANCH_REQUIRED`.
+  
+  Re-captures `businessAccessToken` / `businessRefreshToken` with the new
+  context. Body:
+  
+  - `branchId` — `{{branchId}}` from step 2.
+  - `profileKey` — a **branch-level** profile the caller holds at that branch
+    (env var `branchProfileKey`, e.g. `receptionist`, `branch_admin`). Set it in
+    the `Local` environment to match a profile the login user actually has.
+  
+  ## If this returns 403 `PROFILE_SWITCH_DENIED`
+  
+  The login user has no `UserBranchProfile` for that `(branchId, profileKey)`.
+  Options: (a) set `branchProfileKey` to a profile the user really holds at that
+  branch (see `GET /auth/me` → `profiles[]` for valid branch/key pairs), or
+  (b) assign the user a branch profile (Users flow), or (c) if your existing
+  Business Login is **already** branch-scoped, **skip this step** — the token
+  from step 1 is enough. Omit `branchId` only when switching to a tenant-level
+  profile (not what we want here).
+}

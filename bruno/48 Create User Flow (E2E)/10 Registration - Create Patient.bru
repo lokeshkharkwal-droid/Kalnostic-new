@@ -1,0 +1,66 @@
+meta {
+  name: 10 Registration - Create Patient
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/patients
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "salutation": "MS",
+    "firstName": "Aarohi",
+    "lastName": "Nair",
+    "gender": "FEMALE",
+    "relationship": "SELF",
+    "dateOfBirth": "1994-02-11",
+    "age": 32,
+    "ageType": "YEARS",
+    "mobile": "+919812350100",
+    "email": "aarohi.nair.reg@example.com",
+    "country": "India",
+    "addressLine1": "7 Church Street",
+    "city": "Bengaluru",
+    "state": "Karnataka",
+    "pincode": "560001",
+    "patientCategory": "GENERAL",
+    "maritalStatus": "SINGLE"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setVar("patientId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("captured a patientId", function () {
+    expect(res.getBody().data.id).to.be.a("string");
+  });
+}
+
+docs {
+  Step 10 (Registration) — the new user registers a **Patient**. This is the first
+  half of the front-desk registration duty (`patient:create`). Captures
+  `patientId` for the order. `tenantId`/`branchId` come from the JWT, never the
+  body.
+
+  Only `firstName` + `mobile` are required. A duplicate active `mobile` in the
+  tenant → 409 `PATIENT_MOBILE_CONFLICT` (bump `+919812350100` on a re-run).
+  Full field reference: **41 Patients**.
+}

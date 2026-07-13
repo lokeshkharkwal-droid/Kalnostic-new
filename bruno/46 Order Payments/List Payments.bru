@@ -1,0 +1,30 @@
+meta {
+  name: List Payments
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/payments?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~orderId: {{orderId}}
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Paginated list of payment records in the caller's tenant, optionally filtered to
+  one order. Pagination info lands in `meta`.
+
+  ## Filters (toggle the `~` to enable a query param)
+
+  - `orderId` — filter to payments of a single order (UUID).
+}

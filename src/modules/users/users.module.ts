@@ -5,6 +5,7 @@ import { BranchModule } from '../branch/branch.module';
 import { AuthRoleModule } from '../auth-role/auth-role.module';
 import { UserManagementController } from './user-management.controller';
 import { SiteAdminRegisteredUsersController } from './siteadmin-registered-users.controller';
+import { RadiologyTechnicianOptionsController } from './radiology-technician-options.controller';
 import { UsersService } from './users.service';
 
 /**
@@ -15,7 +16,11 @@ import { UsersService } from './users.service';
  */
 @Module({
   imports: [PrismaModule, SecurityModule, BranchModule, AuthRoleModule],
-  controllers: [UserManagementController, SiteAdminRegisteredUsersController],
+  controllers: [
+    UserManagementController,
+    SiteAdminRegisteredUsersController,
+    RadiologyTechnicianOptionsController,
+  ],
   providers: [UsersService],
   exports: [UsersService],
 })

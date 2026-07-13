@@ -1,0 +1,46 @@
+meta {
+  name: 02 Get Main Branch
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/branches/main-branch
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  // Resolve the tenant's main branch; capture its id (+ type) for the branch
+  // assignment, module enablement, and the branch-scoped registration steps.
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setVar("branchId", data.id);
+  if (data && data.branchType) bru.setVar("branchType", data.branchType);
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("captured a branchId", function () {
+    expect(res.getBody().data.id).to.be.a("string");
+  });
+}
+
+docs {
+  Step 2 — resolve the tenant's **main branch** and capture its id as `branchId`
+  (and `branchType`). This is the branch the new user is assigned to and the
+  Registration steps are scoped to.
+
+  Returns the `Branch` directly (`data.id`, `data.code` `BR-00001`…,
+  `data.branchType`). 404 `MAIN_BRANCH_NOT_SET` if the tenant has no main branch
+  yet — create one via **05 Branches → Create Branch** (the first branch is
+  auto-set as main).
+
+  **Skip this** if step 1's login was already branch-scoped — `branchId` is
+  already captured from the JWT.
+}

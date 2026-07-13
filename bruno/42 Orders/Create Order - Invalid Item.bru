@@ -1,0 +1,47 @@
+meta {
+  name: Create Order - Invalid Item
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "orderDate": "2026-07-09",
+    "orderType": "WALK_IN",
+    "billingType": "CASH_CLIENT",
+    "patientId": "{{patientId}}",
+    "items": [
+      { "branchLabTestId": "{{branchLabTestId}}", "branchLabPanelId": "{{branchLabPanelId}}" }
+    ]
+  }
+}
+
+tests {
+  test("422 Unprocessable Entity", function () {
+    expect(res.getStatus()).to.equal(422);
+  });
+  test("INVALID_ORDER_ITEM", function () {
+    expect(res.getBody().error.code).to.equal("INVALID_ORDER_ITEM");
+  });
+}
+
+docs {
+  Negative case: an order item must set **exactly one** of `branchLabTestId`,
+  `branchLabPanelId`, or `direct`. Setting more than one (as here, both
+  `branchLabTestId` and `branchLabPanelId`) — or none — is rejected with 422
+  `INVALID_ORDER_ITEM`.
+}

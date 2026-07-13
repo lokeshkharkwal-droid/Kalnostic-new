@@ -1,0 +1,67 @@
+meta {
+  name: 14 Enable Registration and Sales Modules
+  type: http
+  seq: 14
+}
+
+put {
+  url: {{baseUrl}}/branches/{{branchId}}/modules
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "modules": [
+      { "moduleKey": "registration", "isEnabled": true },
+      { "moduleKey": "sales", "isEnabled": true }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (Array.isArray(data)) {
+    const on = data.filter(function (m) { return m.isEnabled; }).map(function (m) { return m.moduleKey; });
+    console.log("Enabled modules at branch: " + on.join(", "));
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("registration + sales are enabled", function () {
+    const data = res.getBody() && res.getBody().data;
+    const on = (data || []).filter(function (m) { return m.isEnabled; }).map(function (m) { return m.moduleKey; });
+    expect(on).to.include("registration");
+    expect(on).to.include("sales");
+  });
+}
+
+docs {
+  Step 14 — enable the **Registration** and **Sales** modules on the branch
+  (`PUT /branches/{{branchId}}/modules`). Still using the **admin** token from
+  step 3 (only an admin manages branch config).
+
+  This is a prerequisite for the next three steps:
+  - the receptionist's per-branch `modules` (step 16) must be a subset of what is
+    **enabled at the branch**, and
+  - the permission grants (step 17) are only accepted for modules enabled at the
+    branch, and
+  - the frontend only shows a module the user is enabled + permissioned for (see
+    the Registration module the order-capable user needs to create an order).
+
+  The endpoint **upserts only the supplied keys** (`isEnabled` defaults to `true`
+  when omitted) — other modules already on the branch are left untouched. The
+  response is the full module list with each `isEnabled` flag; the test asserts
+  `registration` and `sales` are both on.
+}

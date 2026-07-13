@@ -13,35 +13,30 @@ import { DocumentService } from './document.service';
 import { CreateDocumentDto } from './dto/create-document.dto';
 import { UpdateDocumentDto } from './dto/update-document.dto';
 import { ListDocumentsQueryDto } from './dto/list-documents-query.dto';
-import { BranchContextRequiredException } from './exceptions/document.exceptions';
+import { DocumentSummaryQueryDto } from './dto/document-summary-query.dto';
+import { DocumentVersionsQueryDto } from './dto/document-versions-query.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
 import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
-import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
- * Document endpoints (business-authenticated). Tenant comes from the JWT and the
- * branch from the active profile (`active_branch_id`); both are branch-level, so
- * the JWT must carry an active branch. The global `JwtAuthGuard` protects all
- * routes. Version history is read-only — there is no endpoint to edit or delete
- * an individual version.
+ * Document endpoints (business-authenticated). Tenant comes from the JWT; the
+ * branch comes from the active profile (`active_branch_id`) and may be null.
+ * Documents are tenant-scoped and either **branch-level** (Branch Admin, scoped
+ * to the active branch) or **tenant-level** (Business Admin, which has no active
+ * branch → `branchId` null). The global `JwtAuthGuard` protects all routes.
+ * Version history is read-only — there is no endpoint to edit or delete an
+ * individual version.
  */
 @Controller('documents')
 export class DocumentController {
   constructor(private readonly documentService: DocumentService) {}
 
-  /** Resolve the active branch from the JWT or reject the request. */
-  private requireBranch(profile: ActiveProfile): string {
-    if (!profile.branchId) {
-      throw new BranchContextRequiredException();
-    }
-    return profile.branchId;
-  }
-
   /**
-   * Create a document in the caller's active branch (seeds version 1).
+   * Create a document in the caller's scope (seeds version 1). Branch Admin →
+   * the active branch; Business Admin → tenant-level (`branchId` null).
    */
   @Post()
   @Audit({
@@ -57,78 +52,88 @@ export class DocumentController {
   ) {
     return this.documentService.create(
       tenantId,
-      this.requireBranch(profile),
+      profile.branchId,
       dto,
       actorId,
     );
   }
 
   /**
-   * List documents in the caller's active branch (paginated, with filters).
+   * List documents (paginated, with filters). Branch scope follows the optional
+   * `branchId` query param: present → that branch only (Branch Admin, verified
+   * to belong to the tenant); absent → all branches of the tenant (Business
+   * Admin). Tenant isolation is always enforced.
    */
   @Get()
   findAll(
     @CurrentTenant() tenantId: string,
-    @CurrentProfile() profile: ActiveProfile,
     @Query() query: ListDocumentsQueryDto,
   ) {
-    return this.documentService.findAllForBranch(
-      tenantId,
-      this.requireBranch(profile),
-      query,
-    );
+    return this.documentService.findAll(tenantId, query);
   }
 
   /**
-   * Fetch one document (current version) by id.
+   * Exact document count per status for the caller's scope, computed in the
+   * database. Declared before `:id` so this static path is not captured by the
+   * param route. Branch scope follows the optional `branchId` query param
+   * (present → that branch; absent → all branches of the tenant).
+   */
+  @Get('status-summary')
+  getStatusSummary(
+    @CurrentTenant() tenantId: string,
+    @Query() query: DocumentSummaryQueryDto,
+  ) {
+    return this.documentService.getStatusSummary(tenantId, query.branchId);
+  }
+
+  /**
+   * Fetch one document (current version) by id. Scoped to the optional
+   * `branchId` when supplied, otherwise tenant-wide.
    */
   @Get(':id')
   findOne(
     @CurrentTenant() tenantId: string,
-    @CurrentProfile() profile: ActiveProfile,
     @Param('id') id: string,
+    @Query('branchId') branchId?: string,
   ) {
-    return this.documentService.findById(
-      id,
-      tenantId,
-      this.requireBranch(profile),
-    );
+    return this.documentService.findById(id, tenantId, branchId);
   }
 
   /**
    * List the complete, read-only version history of a document (newest first).
+   * Scoped to the optional `branchId` when supplied, otherwise tenant-wide.
    */
   @Get(':id/versions')
   findVersions(
     @CurrentTenant() tenantId: string,
-    @CurrentProfile() profile: ActiveProfile,
     @Param('id') id: string,
-    @Query() query: PaginationQueryDto,
+    @Query() query: DocumentVersionsQueryDto,
   ) {
     return this.documentService.findVersions(
       id,
       tenantId,
-      this.requireBranch(profile),
+      query.branchId,
       query.page ?? 1,
       query.limit ?? 20,
     );
   }
 
   /**
-   * Fetch a single read-only version snapshot of a document.
+   * Fetch a single read-only version snapshot of a document. Scoped to the
+   * optional `branchId` when supplied, otherwise tenant-wide.
    */
   @Get(':id/versions/:versionId')
   findVersion(
     @CurrentTenant() tenantId: string,
-    @CurrentProfile() profile: ActiveProfile,
     @Param('id') id: string,
     @Param('versionId') versionId: string,
+    @Query('branchId') branchId?: string,
   ) {
     return this.documentService.findVersionById(
       id,
       versionId,
       tenantId,
-      this.requireBranch(profile),
+      branchId,
     );
   }
 
@@ -151,7 +156,7 @@ export class DocumentController {
     return this.documentService.update(
       id,
       tenantId,
-      this.requireBranch(profile),
+      profile.branchId,
       dto,
       actorId,
     );
@@ -172,11 +177,6 @@ export class DocumentController {
     @CurrentUser('person_id') actorId: string,
     @Param('id') id: string,
   ) {
-    return this.documentService.remove(
-      id,
-      tenantId,
-      this.requireBranch(profile),
-      actorId,
-    );
+    return this.documentService.remove(id, tenantId, profile.branchId, actorId);
   }
 }

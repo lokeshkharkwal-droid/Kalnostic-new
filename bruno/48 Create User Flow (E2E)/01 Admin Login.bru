@@ -1,0 +1,68 @@
+meta {
+  name: 01 Admin Login
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "identifier": "{{adminPhone}}",
+    "password": "{{adminTempPassword}}",
+    "tenantSlug": "{{tenantSlug}}"
+  }
+}
+
+vars:pre-request {
+  adminPhone: anita.sharma2022@acme.test
+  adminTempPassword: Str0ng@Pass1
+}
+
+script:post-response {
+  // Authenticate as the tenant's business_admin — the actor that provisions the
+  // new user (steps 3-5). Capture the token + decode the JWT for tenant/branch.
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.accessToken) {
+    bru.setVar("businessAccessToken", data.accessToken);
+    try {
+      const claims = JSON.parse(atob(data.accessToken.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+      if (claims.tenant_id) bru.setVar("tenantId", claims.tenant_id);
+      if (claims.active_branch_id) bru.setVar("branchId", claims.active_branch_id);
+    } catch (e) {
+      // Token not decodable in this runtime — branchId is resolved by step 2.
+    }
+  }
+  if (data && data.refreshToken) bru.setVar("businessRefreshToken", data.refreshToken);
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns an access token", function () {
+    expect(res.getBody().data.accessToken).to.be.a("string");
+  });
+}
+
+docs {
+  Step 1 — authenticate as the existing **business_admin**. This is the actor
+  that creates the new user and configures the branch (steps 3-5). Uses the
+  `Local` environment's `adminPhone` / `adminTempPassword` / `tenantSlug`.
+
+  Captures the admin `businessAccessToken` (15m) + `businessRefreshToken` (30d),
+  and decodes the JWT to set `tenantId` (and `branchId` when the login is already
+  branch-scoped). A `business_admin` token is tenant-level
+  (`active_branch_id: null`); step 2 resolves the branch id from the API.
+
+  In step 6 this same `businessAccessToken` var is **replaced** with the new
+  user's token so the Registration steps run as the new user.
+}

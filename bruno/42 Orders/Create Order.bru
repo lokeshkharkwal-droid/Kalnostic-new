@@ -1,0 +1,169 @@
+meta {
+  name: Create Order
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "ORDER",
+    "orderDate": "2026-07-09",
+    "orderType": "WALK_IN",
+    "billingType": "CASH_CLIENT",
+    "isUrgentBill": false,
+    "isBillGenerated": false,
+    "orderNotes": "Fasting sample; collect in the morning",
+    "patientId": "{{patientId}}",
+    "appointmentAt": "2026-07-10T09:30:00.000Z",
+    "referredByDoctorId": "{{referralDoctorId}}",
+    "referralPanelId": "{{referralPanelId}}",
+    "b2bClient": "CREDIT",
+    "internalReferralId": "{{internalReferralId}}",
+    "externalReferralId": "{{externalReferralId}}",
+    "items": [
+      {
+        "branchLabTestId": "{{branchLabTestId}}"
+      },
+      {
+        "branchLabPanelId": "{{branchLabPanelId}}"
+      },
+      {
+        "direct": "Custom investigation - outside catalogue"
+      }
+    ],
+    "diagnostics": {
+      "prescriptionUrl": "https://files.example.com/rx/abc.pdf",
+      "diagnosticPanelId": "{{diagnosticPanelId}}",
+      "sampleSource": "IN_HOUSE",
+      "sampleCollectionCharges": 100,
+      "logisticsSuppliedBy": "In-house courier",
+      "isFasting": true,
+      "isHomeVisit": true,
+      "collectionAddress": "42 MG Road, Bengaluru",
+      "phlebotomistId": "{{phlebotomistId}}",
+      "visitCharges": 200,
+      "collectionAt": "2026-07-10T08:00:00.000Z",
+      "geoLocation": "12.9716,77.5946"
+    },
+    "opd": {
+      "departmentId": "{{departmentId}}",
+      "categoryId": "{{categoryId}}",
+      "doctorId": "{{consultantDoctorId}}",
+      "consultantType": "INITIAL",
+      "visitType": "WALK_IN",
+      "consultationAt": "2026-07-10T10:00:00.000Z"
+    },
+    "radiology": {
+      "radiologistId": "{{radiologistId}}",
+      "radiologistDepartmentId": "{{departmentId}}",
+      "radiologistCategoryId": "{{categoryId}}",
+      "radiologyTechnicianId": "{{radiologyTechnicianPersonId}}"
+    },
+    "payments": [
+      {
+        "totalAmount": 3000,
+        "orderDiscount": 200,
+        "visitingCharges": 200,
+        "netAmount": 3000,
+        "tdsDeduction": 0,
+        "payableAmount": 3000,
+        "paidAmount": 3000,
+        "remainingBalance": 0,
+        "paymentMode": "UPI",
+        "paymentDate": "2026-07-09",
+        "notes": "Paid in full via UPI"
+      }
+    ]
+  }
+}
+
+vars:pre-request {
+  patientId: 93918c15-d663-4df5-913b-adb050d9da44
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("orderId", data.id);
+  if (data && data.payments && data.payments[0]) bru.setEnvVar("paymentId", data.payments[0].id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("generated an order code", function () {
+    expect(res.getBody().data.orderCode).to.match(/^ORD-\d{5}$/);
+  });
+}
+
+docs {
+  Create an order in the caller's tenant/branch (tenant from the JWT, branch from
+  the active profile). The frontend submits everything in one call — basic info,
+  the selected catalogue `items`, and the optional `diagnostics`/`opd`/`radiology`
+  sections plus any `payments`. The whole graph is created in one transaction and
+  the response is the fully-composed order. Captures `orderId` (and the first
+  `paymentId`).
+  
+  ## Basic fields
+  
+  - `status` — `DRAFT` | `QUOTE` | `APPOINTMENT` | `ORDER` (defaults to `DRAFT`).
+  - `orderDate` — ISO-8601 date (required). `orderType` — `WALK_IN` | `APP` |
+    `WEBSITE`. `billingType` — `CASH_CLIENT` | `INSURANCE` | `CORPORATE` |
+    `GOVERNMENT_SCHEME` | `TPA`.
+  - `patientId` — required; validated to be an active patient in the tenant (422
+    `ORDER_PATIENT_NOT_FOUND` otherwise). `appointmentAt` — ISO date-time.
+  - `orderCode` is system-generated (`ORD-00001`…) — never sent in the body.
+
+  ## Referral & B2B (all optional)
+
+  - `referredByDoctorId` → a `ReferralDoctor` in the tenant (422
+    `ORDER_REFERRAL_DOCTOR_NOT_FOUND`).
+  - `referralPanelId` → a `ReferralPanel` (B2B) in the tenant (422
+    `ORDER_REFERRAL_PANEL_NOT_FOUND`).
+  - `b2bClient` — B2B client billing type: `CASH` | `CREDIT` | `WALLET`.
+  - `internalReferralId` → an `InternalReferral` in the tenant (422
+    `ORDER_INTERNAL_REFERRAL_NOT_FOUND`).
+  - `externalReferralId` → an `ExternalReferral` in the tenant (422
+    `ORDER_EXTERNAL_REFERRAL_NOT_FOUND`).
+
+  ## items[]
+
+  Each entry references **exactly one** of `branchLabTestId` / `branchLabPanelId` /
+  `direct` (none/more-than-one → 422 `INVALID_ORDER_ITEM`). `branchLabTestId` /
+  `branchLabPanelId` are validated against the tenant's branch catalogue (422
+  `ORDER_BRANCH_LAB_TEST_NOT_FOUND` / `ORDER_BRANCH_LAB_PANEL_NOT_FOUND`); `direct`
+  is a free-text catalogue entry passed straight from the frontend (no ref check).
+  
+  ## Sections (all optional)
+  
+  - `diagnostics` — `diagnosticPanelId` → LabPanel; `phlebotomistId` →
+    Phlebotomist; `sampleSource` `IN_HOUSE`|`SUPPLIED`; charges are integer minor units.
+  - `opd` — `doctorId` (required) must be a CONSULTANT doctor (422
+    `ORDER_CONSULTANT_DOCTOR_NOT_FOUND`); optional `departmentId` → Department
+    and `categoryId` → Category (422 `ORDER_DEPARTMENT_NOT_FOUND` /
+    `ORDER_CATEGORY_NOT_FOUND`); `consultantType` `INITIAL`|`FIRST`|`FOLLOW_UP`;
+    `visitType` `WALK_IN`|`TELECONSULTATION`|`HOME_VISIT`.
+  - `radiology` — `radiologistId` (required) + optional `radiologistDepartmentId`
+    → Department, `radiologistCategoryId` → Category (422
+    `ORDER_CATEGORY_NOT_FOUND`) and `radiologyTechnicianId` → a `Person` (the
+    radiology technician is now a Person; 422 `ORDER_PERSON_NOT_FOUND`).
+  
+  ## payments[]
+  
+  Ledger entries (1:many). Amounts are integer minor units. Wallet/Points/
+  Previous-Dues fields are accepted but not computed this phase.
+}

@@ -1,0 +1,78 @@
+meta {
+  name: 15 Create Order-Capable User
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{baseUrl}}/users/manage
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "employeeName": "Order Desk User",
+    "username": "order.desk.e2e",
+    "dateOfBirth": "1995-04-20",
+    "gender": "MALE",
+    "email": "order.desk.e2e@example.com",
+    "mobileNumber": "9812345070",
+    "password": "{{orderUserPassword}}",
+    "userType": "INTERNAL"
+  }
+}
+
+vars:pre-request {
+  orderUserPassword: Strong@123
+}
+
+script:post-response {
+  // createUser returns { person, membership, userCode, loginIdentifier }.
+  // The /users/manage/:id/* routes key off the PERSON id, so capture person.id.
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.person && data.person.id) bru.setVar("orderUserId", data.person.id);
+  if (data && data.loginIdentifier) bru.setVar("orderUserIdentifier", data.loginIdentifier);
+  if (data && data.userCode) bru.setVar("orderUserCode", data.userCode);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("captured the order user id + identifier", function () {
+    expect(bru.getVar("orderUserId")).to.be.a("string").and.not.equal("");
+    expect(bru.getVar("orderUserIdentifier")).to.be.a("string").and.not.equal("");
+  });
+}
+
+docs {
+  Step 15 — create the **Order-Capable User**: a plain staff person, created with
+  the **admin** token. No branch/role is set here (assigned in step 16) — the user
+  is created "bare" so the branch assignment owns the role/modules.
+  
+  Field rules (all enforced by `CreateUserDto`):
+  - `employeeName` — letters and spaces only.
+  - `username` — lowercase letters/digits/dot/underscore; globally unique.
+  - `mobileNumber` — a valid 10-digit Indian mobile (`^[6-9]\d{9}$`); becomes the
+    person's globally-unique `phone` and the **login identifier** (step 18).
+  - `email` — unique; `dateOfBirth` — must be an adult.
+  - `password` — `{{orderUserPassword}}` (≥8 chars incl. upper, lower, digit and
+    special). We set it explicitly so it can be reused at login (step 18) and by
+    whoever logs into the frontend.
+  - `userType` — `INTERNAL` (internal staff; the enum is `INTERNAL | EXTERNAL`).
+  
+  Captures `orderUserId` (= `data.person.id`, used by steps 16–17),
+  `orderUserIdentifier` (= the login mobile) and `orderUserCode` (`USR-#####`).
+  
+  Re-run note: `username` / `email` / `mobileNumber` are unique — a second run on
+  the same DB returns a 409 conflict. Bump those values or reset the DB.
+}

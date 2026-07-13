@@ -1,0 +1,61 @@
+meta {
+  name: 16 Assign Branch Role and Modules
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{baseUrl}}/users/manage/{{orderUserId}}/branches
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "branches": [
+      {
+        "branchId": "{{branchId}}",
+        "role": "receptionist",
+        "modules": ["registration", "sales"],
+        "defaultModule": "registration",
+        "defaultBranch": true,
+        "status": "ACTIVE"
+      }
+    ]
+  }
+}
+
+tests {
+  test("2xx OK", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201]);
+  });
+}
+
+docs {
+  Step 16 — assign the order-capable user to the branch **with a role and
+  modules** (`POST /users/manage/{{orderUserId}}/branches`). Admin token.
+
+  A branch assignment carries the role, so this single call fulfils both "assign
+  to the branch" and "assign the appropriate role and modules":
+  - `role: receptionist` — the front-desk role (baseline modules `sales` +
+    `registration`). Must be a valid staff role key.
+  - `modules: ["registration", "sales"]` — the module keys the user may access at
+    this branch. Each is validated to be (a) a known module, (b) in the branch
+    type's catalogue, and (c) **enabled at the branch** (step 14 did that).
+  - `defaultModule: "registration"` — the landing module (must be one of
+    `modules`).
+  - `defaultBranch: true` — makes this the user's default branch, so their login
+    (step 18) lands branch-scoped with an `active_branch_id`.
+  - `status: ACTIVE` — per-branch activation.
+
+  This **replaces** the user's full branch-assignment set (here just the one
+  branch). Permissions are granted in step 17.
+}

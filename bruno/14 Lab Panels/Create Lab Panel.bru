@@ -56,8 +56,8 @@ body:json {
 }
 
 vars:pre-request {
-  masterDataId: 3bebbd8d-eef4-4bfa-88f3-3aff4a4a4516
-  labTestId: 75ac4c6f-8a05-4a42-bf9a-d9ed7d01ec09
+  masterDataId: 2db13b5e-4a25-412f-bcd9-68bcbeea9d59
+  labTestId: 86161c8f-5a98-41cd-8ed2-7f80fea71d8f
 }
 
 script:post-response {
@@ -77,7 +77,7 @@ docs {
   same transaction; the response includes them, ordered by `sortOrder`.
   
   ## Key fields
-
+  
   - `bannerImage` — optional URL/reference string (≤ 1024 chars).
   - `panelName` (2-255) and `panelCode` (1-50) — unique **per master data** among
     active rows → 409 `LAB_PANEL_NAME_CONFLICT` / `LAB_PANEL_CODE_CONFLICT`.

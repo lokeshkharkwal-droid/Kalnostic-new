@@ -14,6 +14,7 @@ import {
 } from './common/interceptors';
 import { AuditModule } from './modules/audit/audit.module';
 import { BranchModule } from './modules/branch/branch.module';
+import { BranchCatalogueModule } from './modules/branch-catalogue/branch-catalogue.module';
 import { CategoryModule } from './modules/category/category.module';
 import { DepartmentModule } from './modules/department/department.module';
 import { SubCategoryModule } from './modules/sub-category/sub-category.module';
@@ -44,6 +45,11 @@ import { SiteAdminModule } from './modules/siteadmin/siteadmin.module';
 import { PaymentRulesModule } from './modules/payment-rules/payment-rules.module';
 import { SupportInfoModule } from './modules/support-info/support-info.module';
 import { ContactUsModule } from './modules/contact-us/contact-us.module';
+import { PatientModule } from './modules/patient/patient.module';
+import { RadiologistModule } from './modules/radiologist/radiologist.module';
+import { PhlebotomistModule } from './modules/phlebotomist/phlebotomist.module';
+import { OrderModule } from './modules/order/order.module';
+import { PaymentDetailsModule } from './modules/payment-details/payment-details.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 
 /**
@@ -78,6 +84,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     // Feature + infrastructure modules.
     AuditModule,
     BranchModule,
+    BranchCatalogueModule,
     CategoryModule,
     SubCategoryModule,
     DepartmentModule,
@@ -108,6 +115,11 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     PaymentRulesModule,
     SupportInfoModule,
     ContactUsModule,
+    PatientModule,
+    RadiologistModule,
+    PhlebotomistModule,
+    OrderModule,
+    PaymentDetailsModule,
   ],
   providers: [
     // Global business authentication. SiteAdmin routes use @Public() + their

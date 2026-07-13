@@ -14,6 +14,15 @@ import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
  * `search` matches the `documentNumber` or `title` (case-insensitive).
  */
 export class ListDocumentsQueryDto extends PaginationQueryDto {
+  /**
+   * Scope the list to a single branch. Present → only that branch's documents
+   * (verified to belong to the caller's tenant); absent → all branches of the
+   * tenant. Never trusted blindly — the service validates ownership (§4.5).
+   */
+  @IsUUID()
+  @IsOptional()
+  branchId?: string;
+
   /** Case-insensitive match against the document number or title. */
   @IsOptional()
   @IsString()

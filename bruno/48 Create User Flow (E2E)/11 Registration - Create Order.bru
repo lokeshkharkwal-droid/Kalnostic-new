@@ -1,0 +1,91 @@
+meta {
+  name: 11 Registration - Create Order
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "ORDER",
+    "orderDate": "2026-07-12",
+    "orderType": "WALK_IN",
+    "billingType": "CASH_CLIENT",
+    "isUrgentBill": false,
+    "isBillGenerated": false,
+    "orderNotes": "Walk-in registration order created by the new receptionist (Create User Flow E2E).",
+    "patientId": "{{patientId}}",
+    "items": [
+      { "branchLabTestId": "{{branchLabTestId}}" },
+      { "branchLabPanelId": "{{branchLabPanelId}}" }
+    ],
+    "payments": [
+      {
+        "totalAmount": 50000,
+        "orderDiscount": 0,
+        "netAmount": 50000,
+        "payableAmount": 50000,
+        "paidAmount": 50000,
+        "remainingBalance": 0,
+        "paymentMode": "CASH",
+        "paymentDate": "2026-07-12T10:15:00.000Z",
+        "notes": "Paid in full (cash) at the front desk"
+      }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setVar("orderId", data.id);
+  if (data && data.payments && data.payments[0]) bru.setVar("paymentId", data.payments[0].id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("generated an order code", function () {
+    expect(res.getBody().data.orderCode).to.match(/^ORD-\d{5}$/);
+  });
+  test("order has at least one item", function () {
+    expect(res.getBody().data.items.length).to.be.greaterThan(0);
+  });
+}
+
+docs {
+  Step 11 (Registration) — the new user **creates the order**. This is the goal
+  of the whole flow: a freshly-provisioned receptionist, authenticated with their
+  own branch-scoped token, successfully calls `POST /orders`. Captures `orderId`
+  (+ `paymentId`).
+
+  Deliberately **minimal** — a walk-in cash order with the two catalogue items
+  captured in steps 8-9 and a single full payment. The optional `diagnostics` /
+  `opd` / `radiology` sections are omitted (they'd need doctor/radiologist ids);
+  see **47 Order Flow (E2E) → 19 Create Order (COMPLETE)** for the exhaustive
+  every-field request.
+
+  - `orderDate` + `patientId` are the only strictly-required fields; `items`
+    and `payments` are optional. Each item references **exactly one** of
+    `branchLabTestId` / `branchLabPanelId` (both/neither → 422
+    `INVALID_ORDER_ITEM`).
+  - If step 9 captured no panel, drop the `branchLabPanelId` item.
+  - `orderCode` / `tenantId` / `branchId` are system/JWT-derived — never sent.
+  - All monetary amounts are **integer minor units** (`50000` = ₹500.00).
+
+  A 400 `ACTIVE_BRANCH_REQUIRED` here means the new user's token isn't
+  branch-scoped — revisit step 6 (see its docs).
+}

@@ -23,10 +23,11 @@ body:json {
     "branches": [
       {
         "branchId": "{{branchId}}",
-        "roleKey": "lab_technician",
-        "moduleId": "lab_operations",
-        "isDefault": true,
-        "branchStatus": "ACTIVE"
+        "role": "lab_technician",
+        "modules": ["lab_operations"],
+        "defaultModule": "lab_operations",
+        "defaultBranch": true,
+        "status": "ACTIVE"
       }
     ]
   }
@@ -40,19 +41,23 @@ vars:pre-request {
 
 docs {
   Assign (or update) the user's branch assignments in bulk — an array of
-  `{ branchId, roleKey, moduleId? }`. The role is chosen **per branch** (one role
-  per branch); a user can hold different roles at different branches. An existing
-  assignment for a branch is re-roled in place.
-  
-  - `roleKey` is any role key — a built-in system role or a tenant custom role
+  `{ branchId, role, modules?, defaultModule?, defaultBranch?, status? }`. The role
+  is chosen **per branch** (one role per branch); a user can hold different roles at
+  different branches. An existing assignment for a branch is re-roled in place.
+
+  - `role` is any role key — a built-in system role or a tenant custom role
     (`/roles`, see "34 Roles"); it is resolved to an AuthRole FK and an unknown key
     → 404 ROLE_NOT_FOUND. It must be a **branch-level** role (a tenant-level role
     can't be pinned to a branch); validity comes from the role's allowed branch
     types (system: PROFILE_BRANCH_MATRIX; custom: `allowedBranchTypes`).
-  - Exactly one branch may be `isDefault: true` (else 422 MULTIPLE_DEFAULT_BRANCH).
-  - `moduleId` must be a module **enabled for that branch** (Branches → Set Branch
-    Modules first) else 422 MODULE_NOT_ENABLED_FOR_BRANCH; if the role template
-    links specific modules it must be one of them else 422
-    MODULE_NOT_IN_ROLE_TEMPLATE. Omit it to leave the work-area unset.
-  - `branchStatus` ACTIVE|INACTIVE controls access to that branch only.
+  - Exactly one branch may be `defaultBranch: true` (else 422 MULTIPLE_DEFAULT_BRANCH).
+    Accepts a boolean or `"Yes"`/`"No"`.
+  - `modules` are the modules the user may access at that branch. Each must be a
+    valid module key, offered by the branch's type (GET /modules?branchType) else
+    422 MODULE_NOT_VALID_FOR_BRANCH_TYPE, and enabled for the branch (Branches → Set
+    Branch Modules first) else 422 MODULE_NOT_ENABLED_FOR_BRANCH.
+  - `defaultModule` (landing module) must be one of `modules` else 422
+    DEFAULT_MODULE_NOT_IN_MODULES; if the role template links specific modules it
+    must be one of them else 422 MODULE_NOT_IN_ROLE_TEMPLATE. Omit to leave unset.
+  - `status` ACTIVE|INACTIVE controls access to that branch only.
 }

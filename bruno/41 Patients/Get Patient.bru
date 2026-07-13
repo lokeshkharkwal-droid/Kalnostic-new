@@ -1,0 +1,27 @@
+meta {
+  name: Get Patient
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/patients/{{patientId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  patientId: e1e008ed-2db9-412f-9098-3669eb69c436
+}
+
+docs {
+  Fetch one patient by id (scoped to the caller's tenant), including its active
+  (non-deleted) `medicalHistories`. 404 `PATIENT_NOT_FOUND` if missing,
+  soft-deleted, or owned by another tenant.
+  
+  Uses `patientId` captured by **List Patients** / **Create Patient**.
+}

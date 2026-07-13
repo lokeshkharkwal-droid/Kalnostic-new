@@ -1,0 +1,20 @@
+meta {
+  name: Get Payment
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/payments/{{paymentId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Fetch one payment record by id (scoped to the caller's tenant). 404
+  `PAYMENT_DETAILS_NOT_FOUND` if missing, soft-deleted, or owned by another tenant.
+}

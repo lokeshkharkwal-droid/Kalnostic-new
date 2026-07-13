@@ -1,0 +1,21 @@
+meta {
+  name: Get Radiologist
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/radiologists/{{radiologistId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Fetch one radiologist by id (scoped to the caller's tenant), with its resolved
+  `department`. 404 `RADIOLOGIST_NOT_FOUND` if missing, soft-deleted, or owned by
+  another tenant.
+}

@@ -1,0 +1,122 @@
+meta {
+  name: Create Patient
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/patients
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "salutation": "MR",
+    "firstName": "John",
+    "middleName": "Robert",
+    "lastName": "Doe",
+    "gender": "MALE",
+    "relationship": "SELF",
+    "dateOfBirth": "1990-05-14",
+    "age": 36,
+    "ageType": "YEARS",
+    "mobile": "+919812345678",
+    "whatsappNumber": "+919812345678",
+    "email": "john.doe@example.com",
+    "alternateEmail": "j.doe@work.example.com",
+    "alternateMobileNumber": "+919812300000",
+    "country": "India",
+    "addressLine1": "12 MG Road",
+    "addressLine2": "Near City Mall",
+    "area": "Indiranagar",
+    "city": "Bengaluru",
+    "state": "Karnataka",
+    "pincode": "560038",
+    "hasPrivilegeCard": true,
+    "privilegeNumber": "PRIV-00123",
+    "patientCategory": "GENERAL",
+    "maritalStatus": "SINGLE",
+    "status": "CREATED",
+    "umId": "UM-98765",
+    "aadhaarNumber": "123456789012",
+    "panNumber": "ABCDE1234F",
+    "passportNumber": "M1234567",
+    "guardianName": "Robert Doe",
+    "guardianRelationship": "FATHER",
+    "guardianEmail": "robert.doe@example.com",
+    "guardianMobileNumber": "+919800000000",
+    "emergencyContactName": "Jane Doe",
+    "emergencyContactMobileNumber": "+919811111111",
+    "medicalHistories": [
+      {
+        "isCurrentSmoker": false,
+        "isFormerSmoker": true,
+        "hasCough": true,
+        "hasFever": false,
+        "hasDiabetes": true,
+        "hasHypertension": true,
+        "hasAntiDiabeticDrugs": true,
+        "hasBloodThinners": false,
+        "otherMedications": "Metformin 500mg",
+        "hasDrugAllergy": true,
+        "surgicalHistory": "Appendectomy (2015)",
+        "remarks": "Reviewed at registration"
+      }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("patientId", data.id);
+  if (data && data.medicalHistories && data.medicalHistories.length) bru.setEnvVar("medicalHistoryId", data.medicalHistories[0].id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  Register a patient in the caller's tenant (tenant id from the JWT; the
+  registration `branchId` comes from the active profile in the JWT — never the
+  body). Captures `patientId` and, when `medicalHistories` is sent, the first
+  `medicalHistoryId`.
+
+  ## Fields
+
+  Only `firstName` and `mobile` are REQUIRED; everything else is optional.
+
+  - Enums: `salutation` (`DR`/`MR`/`MRS`/`MS`/`PROF`), `gender`
+    (`MALE`/`FEMALE`/`OTHER`/`PREFER_NOT_TO_SAY`), `relationship` &
+    `guardianRelationship` (`SELF`/`SPOUSE`/`SON`/`DAUGHTER`/`FATHER`/`MOTHER`/
+    `BROTHER`/`SISTER`/`GUARDIAN`/`FRIEND`/`OTHER`), `ageType`
+    (`YEARS`/`MONTHS`/`DAYS`), `patientCategory`
+    (`GENERAL`/`VIP`/`SENIOR_CITIZEN`/`PEDIATRIC`/`EMPLOYEE`), `maritalStatus`
+    (`SINGLE`/`MARRIED`/`DIVORCED`/`WIDOWED`/`SEPARATED`/`OTHER`), `status`
+    (`DRAFT`/`CREATED`).
+  - `dateOfBirth` — ISO date string (`YYYY-MM-DD`).
+  - `aadhaarNumber` — exactly 12 digits; `panNumber` — `ABCDE1234F` format
+    (uppercase). `email`/`alternateEmail`/`guardianEmail` must be valid emails.
+  - `hasPrivilegeCard` — boolean (defaults false).
+  - `status` — lifecycle stage; `DRAFT` (partially-entered) or `CREATED` (fully
+    registered). Optional; defaults to `CREATED` when omitted.
+  - `medicalHistories` — OPTIONAL array; each item creates a medical-history
+    record atomically with the patient. Every clinical flag is an optional
+    boolean defaulting to false; `otherMedications`/`surgicalHistory`/`remarks`
+    are optional strings. See the **Add Medical History** request for the full
+    field list.
+
+  `tenantId`/`branchId` are NEVER accepted in the body. A duplicate active
+  `mobile` in the tenant → 409 `PATIENT_MOBILE_CONFLICT`.
+}

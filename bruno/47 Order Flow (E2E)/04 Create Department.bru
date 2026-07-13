@@ -1,0 +1,59 @@
+meta {
+  name: 04 Create Department
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/departments
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Pathology (E2E) 2",
+    "shortName": "222123",
+    "description": "Clinical pathology department created by the Order Flow E2E run",
+    "isActive": true,
+    "moduleMapping": ["DIAGNOSTIC", "RADIOLOGY", "OPD"]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setVar("departmentId", data.id);
+  if (data && data.shortName) bru.setVar("departmentShortName", data.shortName);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("captured a departmentId", function () {
+    expect(res.getBody().data.id).to.be.a("string");
+  });
+}
+
+docs {
+  Step 4 — create a tenant-level **Department** (classification top level).
+  Captures `departmentId` (used by Category, Sub-Category, Doctor, and the order
+  OPD/radiology sections) and `departmentShortName`.
+  
+  - `name` — 2-255 chars, unique among active departments (409
+    `DEPARTMENT_NAME_CONFLICT`).
+  - `shortName` — 2-6 chars, `^[A-Z0-9]{2,6}$`, unique per tenant (409
+    `DEPARTMENT_SHORT_NAME_CONFLICT`). If a prior run already used `PATHE2`,
+    bump it (e.g. `PATHE3`).
+  - `moduleMapping` — required, uses the `branchType` enum values.
+  - `code` is system-generated (`{INITIALS}-Dep-{n}`) — never sent.
+  - `personMappings` omitted here (optional); see 09 Departments for that.
+}

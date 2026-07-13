@@ -19,9 +19,12 @@ import { VALIDATION_PATTERNS } from '../../../common/constants/validation-patter
 
 /**
  * A single branch assignment supplied when creating a user or via Assign
- * Branches: `{ branchId, roleKey, moduleId? }`. The role (role template) is chosen
- * **per branch** — one role per branch. `moduleId` is the module linked to this
- * assignment (stored on the `default_module_id` column).
+ * Branches: `{ branchId, role, defaultBranch?, defaultModule?, status?, modules? }`.
+ * The role (role template) is chosen **per branch** — one role per branch.
+ * `modules` is the set of module keys this user may access at the branch;
+ * `defaultModule` (the landing module, stored on `default_module_id`) must be
+ * one of them. Both are validated against the branch type + branch enablement
+ * in the service.
  */
 export class BranchAssignmentItemDto {
   @IsString()
@@ -29,22 +32,40 @@ export class BranchAssignmentItemDto {
 
   /** Role template assigned at this branch (one role per branch). */
   @IsIn(STAFF_ROLE_KEYS as readonly string[])
-  roleKey: string;
+  role: string;
 
-  /** Module linked to this assignment (must be enabled for the branch). */
+  /**
+   * The set of module keys enabled for this user at this branch. Membership is
+   * validated in the service (must be a known module, in the branch type's
+   * catalogue, and enabled at the branch), so no static `@IsIn` here.
+   */
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  modules?: string[];
+
+  /** Default landing module for this assignment (must be one of `modules`). */
   @IsString()
   @IsOptional()
-  moduleId?: string;
+  defaultModule?: string;
 
   /** Marks this branch as the user's default. Exactly one default is allowed. */
+  @Transform(({ value }: { value: unknown }) => {
+    if (typeof value === 'string') {
+      const v = value.trim().toLowerCase();
+      if (v === 'yes' || v === 'true') return true;
+      if (v === 'no' || v === 'false') return false;
+    }
+    return value;
+  })
   @IsBoolean()
   @IsOptional()
-  isDefault?: boolean;
+  defaultBranch?: boolean;
 
   /** Per-branch activation status (defaults to ACTIVE). */
   @IsEnum(StaffStatus)
   @IsOptional()
-  branchStatus?: StaffStatus;
+  status?: StaffStatus;
 }
 
 /**

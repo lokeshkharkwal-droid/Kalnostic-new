@@ -1,0 +1,62 @@
+meta {
+  name: 11 Import Parent Lab Panels
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/branch-lab-panels/import
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "labPanelIds": [
+      "{{labPanelId}}"
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.copied === 0 && data.skipped > 0) {
+    console.log(
+      "Import skipped (copied:0). Either the panel is ALREADY in this branch " +
+      "(idempotent — step 13 still captures it), OR labPanelId is not in the " +
+      "ACTIVE branch's master data. Same cause/fix as step 10."
+    );
+  }
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("reports copied/skipped", function () {
+    const data = res.getBody() && res.getBody().data;
+    expect(data).to.have.property("copied");
+    expect(data).to.have.property("skipped");
+  });
+}
+
+docs {
+  Step 11 — **Import Parent Lab Panels**: copy the master-data lab panel
+  (`{{labPanelId}}`) into the active branch's Lab Panel List as an independent
+  `BranchLabPanel` snapshot. Its member tests are materialized into the branch's
+  Lab Test List too (reusing existing copies).
+
+  Returns only `{ copied, skipped }` (idempotent), so the new `branchLabPanelId`
+  is captured by step 13 (List Branch Lab Panels). Requires an active branch (400
+  `ACTIVE_BRANCH_REQUIRED` otherwise). `copied:0, skipped:1` means the same as in
+  step 10 — already imported (fine; step 13 still captures it) or a branch
+  mismatch. See step 10's docs for the full explanation.
+}

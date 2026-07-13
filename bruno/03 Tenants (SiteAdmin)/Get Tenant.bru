@@ -15,19 +15,19 @@ auth:bearer {
 }
 
 vars:pre-request {
-  tenantId: ab169650-5375-40be-a212-4da4e2b0194d
+  tenantId: a7b28463-78f9-4308-b4fb-ea80afff3723
   siteAdminToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0eXBlIjoic2l0ZWFkbWluIiwic2l0ZWFkbWluX2lkIjoiMjM1ZmU0NjMtZTdiYS00Y2U4LTk4YmMtMzMwMzRiYWFmMmIyIiwiZW1haWwiOiJhZG1pbkBrYWxub3N0aWNzLmNvbSIsInJvbGUiOiJTVVBFUl9PV05FUiIsImlhdCI6MTc4MDkxNzU3MywiZXhwIjoxNzgwOTQ2MzczfQ.MfMWYmrhqLI2hlgMwQkz-y_wcG2i4aiLinvTrDuXdCY
 }
 
 docs {
   Fetch one tenant by id. Requires `business:read`.
-
+  
   The response includes the resolved location relations (`country`, `state`,
   `city`, `area`) — each `{ id, name, … }` or `null` — alongside the tenant's
   own fields (`shortName`, `addressLine`, `pincode`, `countryId`/`stateId`/
   `cityId`/`areaId`, `logoUrl`, `photoUrl`), so the UI can render location
   labels without extra lookups.
-
+  
   Audit fields: `createdBy` / `updatedBy` (SiteAdmin user ids of the creator /
   last editor), their resolved display names `createdByName` / `updatedByName`,
   and `createdAt` / `updatedAt`. `updatedBy` is set on every tenant edit

@@ -1,0 +1,29 @@
+import { IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+
+/**
+ * One catalogue entry on an order. Exactly one of `branchLabTestId` /
+ * `branchLabPanelId` / `direct` must be set — a catalogue test, a catalogue
+ * panel, or a free-text direct entry (the rule is enforced in `OrderService` and
+ * by a CHECK constraint in prisma/rls.sql). `orderId`/`tenantId`/`branchId` come
+ * from context — never the body.
+ */
+export class OrderItemDto {
+  /** The branch lab test this line represents (mutually exclusive with panel/direct). */
+  @IsOptional()
+  @IsUUID()
+  branchLabTestId?: string;
+
+  /** The branch lab panel this line represents (mutually exclusive with test/direct). */
+  @IsOptional()
+  @IsUUID()
+  branchLabPanelId?: string;
+
+  /**
+   * A free-text catalogue entry passed directly from the frontend (mutually
+   * exclusive with the test/panel refs).
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  direct?: string;
+}

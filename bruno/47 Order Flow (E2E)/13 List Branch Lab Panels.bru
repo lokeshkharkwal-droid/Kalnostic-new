@@ -1,0 +1,51 @@
+meta {
+  name: 13 List Branch Lab Panels
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/branch-lab-panels?status=ACTIVE&search=LIPID-E2E&page=1&limit=50
+  body: none
+  auth: bearer
+}
+
+params:query {
+  status: ACTIVE
+  search: LIPID-E2E
+  page: 1
+  limit: 50
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.length) {
+    const bySource = data.filter(function (p) { return p.sourceLabPanelId === bru.getVar("labPanelId"); });
+    const pool = bySource.length ? bySource : data;
+    const pick = pool.find(function (p) { return p.isDefault; }) || pool[0];
+    if (pick && pick.id) bru.setVar("branchLabPanelId", pick.id);
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("captured a branchLabPanelId", function () {
+    expect(bru.getVar("branchLabPanelId")).to.be.a("string").and.not.equal("");
+  });
+}
+
+docs {
+  Step 13 — list the active branch's Lab Panel List and capture `branchLabPanelId`
+  (used by an order item in step 25). This doubles as the **verify-import** check
+  for panels. The import in step 11 only returns counts.
+  
+  `search` (`LIPID-E2E`, the panel code from step 9) narrows the page; the script
+  prefers the row whose `sourceLabPanelId` equals the captured `labPanelId` and is
+  the group's `isDefault`, falling back to the first active match.
+}

@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { DoctorPaymentMode, DoctorStatus, Prisma } from '@prisma/client';
+import {
+  DoctorPaymentMode,
+  DoctorStatus,
+  DoctorType,
+  Prisma,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { BranchService } from '../branch/branch.service';
@@ -47,6 +52,76 @@ export class DoctorsService {
     private readonly subCategoryService: SubCategoryService,
     private readonly branchService: BranchService,
   ) {}
+
+  /**
+   * Lightweight `{ id, name }` options for the searchable selector
+   * (`GET /doctors/options`). Tenant-scoped to non-deleted CONSULTANT doctors
+   * (`doctorType = CONSULTANT`); optionally filtered by `branchId` and a
+   * case-insensitive `firstName` search. The `name` is the doctor's first + last
+   * name joined. Returns the full array when `page` is omitted, or a paginated
+   * envelope when `page` is supplied.
+   * @param tenantId tenant scope
+   * @param filters optional `branchId`, `search`, and opt-in `page`/`limit`
+   * @returns the full `{ id, name }[]` array, or a paginated `{ data, total, page, limit }` envelope
+   */
+  async findOptions(
+    tenantId: string,
+    filters: {
+      branchId?: string;
+      search?: string;
+      page?: number;
+      limit?: number;
+    } = {},
+  ): Promise<
+    | Array<{ id: string; name: string }>
+    | PaginatedResult<{ id: string; name: string }>
+  > {
+    const where: Prisma.DoctorWhereInput = {
+      tenantId,
+      deletedAt: null,
+      doctorType: DoctorType.CONSULTANT,
+    };
+    if (filters.branchId) {
+      where.branchId = filters.branchId;
+    }
+    const search = filters.search?.trim();
+    if (search) {
+      where.firstName = { contains: search, mode: 'insensitive' };
+    }
+
+    const select = { id: true, firstName: true, lastName: true } as const;
+    const orderBy = { firstName: 'asc' } as const;
+    const toName = (r: { firstName: string; lastName: string }) =>
+      [r.firstName, r.lastName].filter(Boolean).join(' ');
+
+    if (filters.page === undefined) {
+      const rows = await this.prisma.doctor.findMany({
+        where,
+        select,
+        orderBy,
+      });
+      return rows.map((r) => ({ id: r.id, name: toName(r) }));
+    }
+
+    const page = filters.page;
+    const limit = filters.limit ?? 20;
+    const [rows, total] = await Promise.all([
+      this.prisma.doctor.findMany({
+        where,
+        select,
+        orderBy,
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.doctor.count({ where }),
+    ]);
+    return {
+      data: rows.map((r) => ({ id: r.id, name: toName(r) })),
+      total,
+      page,
+      limit,
+    };
+  }
 
   /**
    * Register a doctor in a tenant, scoped to a branch, with its qualifications and

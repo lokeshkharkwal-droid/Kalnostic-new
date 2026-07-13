@@ -23,10 +23,11 @@ body:json {
     "branches": [
       {
         "branchId": "{{branchId}}",
-        "roleKey": "reporting_doctor",
-        "moduleId": "assistant",
-        "isDefault": true,
-        "branchStatus": "ACTIVE"
+        "role": "reporting_doctor",
+        "modules": ["assistant"],
+        "defaultModule": "assistant",
+        "defaultBranch": true,
+        "status": "ACTIVE"
       }
     ]
   }
@@ -40,15 +41,18 @@ vars:pre-request {
 
 docs {
   Assign (or update) the user's branch assignments in bulk — an array of
-  `{ branchId, roleKey, moduleId? }`. The role is chosen **per branch** (one role
-  per branch); a user can hold different roles at different branches. An existing
-  assignment for a branch is re-roled in place.
-  
-  - Each `roleKey` must be valid for that branch's type (PROFILE_BRANCH_MATRIX).
-  - Exactly one branch may be `isDefault: true` (else 422 MULTIPLE_DEFAULT_BRANCH).
-  - `moduleId` must be a module **enabled for that branch** (Branches → Set Branch
-    Modules first) else 422 MODULE_NOT_ENABLED_FOR_BRANCH; if the role template
-    links specific modules it must be one of them else 422
-    MODULE_NOT_IN_ROLE_TEMPLATE. Omit it to leave the work-area unset.
-  - `branchStatus` ACTIVE|INACTIVE controls access to that branch only.
+  `{ branchId, role, modules?, defaultModule?, defaultBranch?, status? }`. The role
+  is chosen **per branch** (one role per branch); a user can hold different roles at
+  different branches. An existing assignment for a branch is re-roled in place.
+
+  - `role` must be a branch-level role (validity from the role's allowed branch
+    types — system: PROFILE_BRANCH_MATRIX).
+  - Exactly one branch may be `defaultBranch: true` (else 422 MULTIPLE_DEFAULT_BRANCH).
+  - `modules` must each be valid for the branch type (GET /modules?branchType) else
+    422 MODULE_NOT_VALID_FOR_BRANCH_TYPE, and **enabled for that branch** (Branches →
+    Set Branch Modules first) else 422 MODULE_NOT_ENABLED_FOR_BRANCH.
+  - `defaultModule` must be one of `modules` (else 422 DEFAULT_MODULE_NOT_IN_MODULES)
+    and, when the role template links specific modules, one of them else 422
+    MODULE_NOT_IN_ROLE_TEMPLATE.
+  - `status` ACTIVE|INACTIVE controls access to that branch only.
 }

@@ -1,0 +1,54 @@
+meta {
+  name: 12 List Branch Lab Tests
+  type: http
+  seq: 12
+}
+
+get {
+  url: {{baseUrl}}/branch-lab-tests?status=ACTIVE&page=1&limit=50
+  body: none
+  auth: bearer
+}
+
+params:query {
+  status: ACTIVE
+  page: 1
+  limit: 50
+  ~search: CHOL-E2E
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.length) {
+    const bySource = data.filter(function (t) { return t.sourceLabTestId === bru.getVar("labTestId"); });
+    const pool = bySource.length ? bySource : data;
+    const pick = pool.find(function (t) { return t.isDefault; }) || pool[0];
+    if (pick && pick.id) bru.setVar("branchLabTestId", pick.id);
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("captured a branchLabTestId", function () {
+    expect(bru.getVar("branchLabTestId")).to.be.a("string").and.not.equal("");
+  });
+}
+
+docs {
+  Step 12 — list the active branch's Lab Test List and capture `branchLabTestId`
+  (used by an order item in step 25). This doubles as the **verify-import** check
+  for tests: the import in step 10 only returns counts, so we read the list here
+  to confirm the test actually landed in the branch.
+
+  The `search` (`CHOL-E2E`, the test code from step 8) narrows the page; the
+  post-response script prefers the row whose `sourceLabTestId` equals the
+  captured `labTestId` and that is the variant group's `isDefault` (the row used
+  for order creation), falling back to the first active match. Scoped to the
+  active branch from the JWT.
+}

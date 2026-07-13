@@ -1,0 +1,102 @@
+meta {
+  name: 10 Import Parent Lab Tests
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/branch-lab-tests/import
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "labTestIds": [
+      "{{labTestId}}"
+    ]
+  }
+}
+
+script:post-response {
+  // Surface WHY nothing was imported so it's obvious in the response/console.
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.copied === 0 && data.skipped > 0) {
+    console.log(
+      "Import skipped (copied:0). Either the lab test is ALREADY in this branch " +
+      "(idempotent — fine, step 12 still captures it), OR labTestId is not in the " +
+      "ACTIVE branch's master data (branchId must equal the JWT active_branch_id; " +
+      "run steps 2-3 so the catalogue and the import target the same branch)."
+    );
+  }
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("reports copied/skipped", function () {
+    const data = res.getBody() && res.getBody().data;
+    expect(data).to.have.property("copied");
+    expect(data).to.have.property("skipped");
+  });
+}
+
+docs {
+  Step 10 — **Import Parent Lab Tests**: copy the master-data lab test
+  (`{{labTestId}}`) into the **active branch's** Lab Test List as an independent
+  `BranchLabTest` snapshot. Tenant + active branch come from the JWT (the
+  branch-scoped token from step 3) — never the body.
+  
+  Returns only `{ copied, skipped }` (idempotent — a re-import is skipped), so it
+  does NOT expose the new `branchLabTestId`. Step 12 (List Branch Lab Tests)
+  captures that id. Requires an active branch (400 `ACTIVE_BRANCH_REQUIRED`
+  otherwise — run step 3 first).
+  
+  ## Why did I get `{ "copied": 0, "skipped": 1 }`?
+  
+  The server (`BranchLabTestService.importFromMasterData`) accepts a
+  `labTestId` **only** if it belongs to the master data of the branch that is
+  **active in your JWT** (`findByBranch(active_branch_id)`), and it skips any test
+  whose variant group is already imported. So `copied:0, skipped:1` means one of:
+  
+  1. **Already imported** (most common on a re-run) — a `BranchLabTest` with this
+     `sourceLabTestId` already exists. This is expected/idempotent: **step 12 still
+     finds and captures `branchLabTestId`**, so the flow continues fine.
+  2. **Branch mismatch** — the lab test lives in a *different* branch's master
+     data than the one active in your token. This run avoids that: step 3 switches
+     the token to `{{branchId}}` and re-derives `branchId` from the token, and step
+     7 resolves that same branch's master data — so steps 8/10 use one branch.
+     If you built the test under another branch (e.g. skipped step 3, or your login
+     was scoped elsewhere), re-run from step 2, or bump the test code in step 8 to
+     create a fresh test in the active branch's master data.
+  3. **Wrong master data on a non-main branch** — a *non-main* branch may hold
+     **several** master data records. Import resolves the branch's master data with
+     `findFirst` (no ordering), while step 7's list orders by newest first — so on
+     such a branch the test can land in a different master data than import reads.
+     The **main branch has exactly one** master data, so this flow (steps 2-3 target
+     the main branch) is immune. Running against the main branch avoids it.
+  
+  ## Definitive check (do this to know which case)
+  
+  Send a GET to `{{baseUrl}}/master-data/import/lab-tests?branchId={{branchId}}`
+  (bearer `{{businessAccessToken}}`). That endpoint lists exactly the lab tests the
+  import will accept for the active branch (it uses the same `findByBranch`
+  resolution). Then:
+  
+  - If your `{{labTestId}}` **is** in that list → import would copy it, so a
+    `skipped` result means case **(1) already imported** → just run step 12.
+  - If it is **not** in that list → case **(2)/(3) mismatch**: the test isn't in the
+    active branch's (resolved) master data. Re-run from step 2 (main branch), or
+    recreate the test (step 8) with the active branch's `masterDataId` from step 7.
+  
+  Or simply run step 12 — if it lists the test, it was case (1).
+}

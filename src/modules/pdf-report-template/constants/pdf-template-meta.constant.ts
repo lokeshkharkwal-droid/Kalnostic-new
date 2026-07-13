@@ -24,6 +24,65 @@ export const PDF_FONTS = [
 ] as const;
 export type PdfFont = (typeof PDF_FONTS)[number];
 
+// ── Report layout enums (frontend "Report Layout" section) ───────────────────
+// Allowed values for the report-only layout fields carried in `meta`. Kept
+// verbatim from the frontend contract so the two sides validate identically.
+
+/** Body column layout. */
+export const PDF_BODY_LAYOUTS = [
+  'Single Column',
+  'Two Column',
+  'Grid',
+] as const;
+export type PdfBodyLayout = (typeof PDF_BODY_LAYOUTS)[number];
+
+/** Logo placement. */
+export const PDF_LOGO_POSITIONS = [
+  'Top Left',
+  'Top Center',
+  'Top Right',
+  'None',
+] as const;
+export type PdfLogoPosition = (typeof PDF_LOGO_POSITIONS)[number];
+
+/** Header/footer block content type. */
+export const PDF_BLOCK_TYPES = ['Text', 'Image'] as const;
+export type PdfBlockType = (typeof PDF_BLOCK_TYPES)[number];
+
+/** Horizontal alignment (blocks + attachment). */
+export const PDF_ALIGNMENTS = ['Left', 'Center', 'Right'] as const;
+export type PdfAlignment = (typeof PDF_ALIGNMENTS)[number];
+
+/** Attachment media type. */
+export const PDF_ATTACHMENT_TYPES = ['Image', 'PDF', 'Both'] as const;
+export type PdfAttachmentType = (typeof PDF_ATTACHMENT_TYPES)[number];
+
+/** Attachment position (full frontend union; report uses the last three). */
+export const PDF_ATTACHMENT_POSITIONS = [
+  'Before Body',
+  'Inline',
+  'After Body',
+  'Before Params',
+  'After Params',
+  'End of Report',
+  'Media Header',
+  'Media Footer',
+] as const;
+export type PdfAttachmentPosition = (typeof PDF_ATTACHMENT_POSITIONS)[number];
+
+/** Attachment size profile. */
+export const PDF_SIZE_PROFILES = ['Small', 'Medium', 'Full Width'] as const;
+export type PdfSizeProfile = (typeof PDF_SIZE_PROFILES)[number];
+
+/** Attachment display profile (report only). */
+export const PDF_DISPLAY_PROFILES = [
+  'Full Width',
+  'Grid 2 per Row',
+  'Grid 3 per Row',
+  'Original Size',
+] as const;
+export type PdfDisplayProfile = (typeof PDF_DISPLAY_PROFILES)[number];
+
 /**
  * Default meta values (spec "Default" columns). Empty-string defaults are
  * represented as `''`. Applied by the service, so a persisted template always

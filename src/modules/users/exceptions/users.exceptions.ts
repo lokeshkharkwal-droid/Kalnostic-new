@@ -135,6 +135,30 @@ export class ModuleNotEnabledForBranchException extends KaltrosException {
   }
 }
 
+/** 422 — chosen module is not offered by the branch's type. */
+export class ModuleNotValidForBranchTypeException extends KaltrosException {
+  constructor(moduleKey: string, branchType: string) {
+    super(
+      'MODULE_NOT_VALID_FOR_BRANCH_TYPE',
+      `Module '${moduleKey}' is not valid for branch type '${branchType}'`,
+      { moduleKey, branchType },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/** 422 — default module is not one of the assignment's enabled modules. */
+export class DefaultModuleNotInModulesException extends KaltrosException {
+  constructor(moduleKey: string) {
+    super(
+      'DEFAULT_MODULE_NOT_IN_MODULES',
+      `Default module '${moduleKey}' must be one of the assignment's modules`,
+      { moduleKey },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
 /** 422 — chosen module is not linked to the role template. */
 export class ModuleNotInRoleTemplateException extends KaltrosException {
   constructor(moduleKey: string, roleKey: string) {

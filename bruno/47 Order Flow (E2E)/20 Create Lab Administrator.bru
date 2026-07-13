@@ -1,0 +1,71 @@
+meta {
+  name: 20 Create Lab Administrator
+  type: http
+  seq: 20
+}
+
+post {
+  url: {{baseUrl}}/doctors
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "doctorType": "REPORTING",
+    "branchId": "{{branchId}}",
+    "salutation": "DR",
+    "firstName": "Sunita",
+    "lastName": "Iyer",
+    "gender": "FEMALE",
+    "phone": "+919800000020",
+    "email": "sunita.iyer.e2e@example.com",
+    "registrationNo": "MMC-E2E-07890",
+    "registrationCouncil": "Maharashtra Medical Council",
+    "departmentId": "{{departmentId}}",
+    "isReportSignatory": true,
+    "signatoryName": "Dr. Sunita Iyer",
+    "signatoryDesignation": "Lab Administrator",
+    "status": "ACTIVE",
+    "joiningDate": "2021-02-01",
+    "qualifications": [
+      { "degree": "MD Pathology", "institution": "AIIMS", "yearOfPassing": 2012 }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setVar("labAdministratorId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("is a REPORTING doctor", function () {
+    expect(res.getBody().data.doctorType).to.equal("REPORTING");
+  });
+}
+
+docs {
+  Step 20 — create the **Lab Administrator** as a **REPORTING** doctor (the report
+  signatory / lab administrator; `doctorType` enum is `CONSULTANT | REPORTING`).
+  Created as the receptionist (step 18 token). Captures `labAdministratorId`.
+
+  Same endpoint and rules as the consultant (step 19), differing only by
+  `doctorType: REPORTING` and `isReportSignatory: true`. `registrationNo`
+  (`MMC-E2E-07890`) is unique among active doctors — bump it on a re-run.
+
+  Note: the order body has **no lab-admin / signatory field**, so this id is not
+  referenced by Create Order (step 25). It is created here to complete the
+  branch's staff master data (report signing is configured on the doctor record).
+}

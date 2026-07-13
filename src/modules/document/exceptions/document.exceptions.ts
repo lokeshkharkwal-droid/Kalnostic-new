@@ -63,15 +63,3 @@ export class InvalidDocumentAuthorException extends KaltrosException {
     );
   }
 }
-
-/** 400 — the request has no active branch context (JWT lacks active_branch_id). */
-export class BranchContextRequiredException extends KaltrosException {
-  constructor() {
-    super(
-      'BRANCH_CONTEXT_REQUIRED',
-      'An active branch context is required for this operation',
-      {},
-      HttpStatus.BAD_REQUEST,
-    );
-  }
-}

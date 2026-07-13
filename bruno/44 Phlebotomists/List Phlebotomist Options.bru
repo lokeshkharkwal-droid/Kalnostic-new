@@ -1,0 +1,30 @@
+meta {
+  name: List Phlebotomist Options
+  type: http
+  seq: 30
+}
+
+get {
+  url: {{baseUrl}}/phlebotomists/options?page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 10
+  ~search: ravi
+  ~branchId: 9fcbf225-7f94-4b57-b3b4-2127b7f5be78
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Lightweight `{ id, name }` options for the Lab Technician (Phlebotomist) selector in
+  the Diagnostic section. Tenant-scoped, non-deleted phlebotomists ordered by name.
+  `branchId` (optional) restricts to one branch; `search` matches the name
+  (case-insensitive). Omit `page` for the full array; supply `page` for a
+  `{ data, total, page, limit }` envelope.
+}

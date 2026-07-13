@@ -1,0 +1,52 @@
+meta {
+  name: 03 Enable Branch Modules
+  type: http
+  seq: 3
+}
+
+put {
+  url: {{baseUrl}}/branches/{{branchId}}/modules
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "modules": [
+      { "moduleKey": "registration", "isEnabled": true },
+      { "moduleKey": "sales", "isEnabled": true },
+      { "moduleKey": "branch_admin", "isEnabled": true }
+    ]
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Step 3 — enable the work-area modules the new user needs at the branch.
+  A branch assignment (step 4) may only use modules that are **enabled here**
+  AND **valid for the branch type** — otherwise Create User 422s with
+  `MODULE_NOT_ENABLED_FOR_BRANCH` / `MODULE_NOT_VALID_FOR_BRANCH_TYPE`.
+
+  - `registration` — the front-desk work area (patient registration + order
+    creation). The receptionist's landing / default module.
+  - `sales` — the module that carries the order/billing **permissions**
+    (`sales:view`/`sales:write`/`sales:edit`), granted in step 5.
+  - `branch_admin` — kept enabled so the admin can still manage the branch.
+
+  Uses the admin token (step 1). `moduleKey` must be one of the master modules
+  (**06 Users → User Management v2 → List Modules**); the subset valid for a
+  branch type comes from `GET /modules?branchType=…`.
+}

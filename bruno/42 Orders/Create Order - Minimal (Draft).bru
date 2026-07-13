@@ -1,0 +1,46 @@
+meta {
+  name: Create Order - Minimal (Draft)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "orderDate": "2026-07-09",
+    "orderType": "APP",
+    "billingType": "CASH_CLIENT",
+    "patientId": "{{patientId}}",
+    "items": [
+      { "branchLabTestId": "{{branchLabTestId}}" }
+    ]
+  }
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("defaults to DRAFT", function () {
+    expect(res.getBody().data.status).to.equal("DRAFT");
+  });
+}
+
+docs {
+  Minimal order: only basic info + a patient + one catalogue item, no sections or
+  payments. `status` defaults to `DRAFT`. Useful for verifying required-field
+  validation and the default lifecycle stage.
+}

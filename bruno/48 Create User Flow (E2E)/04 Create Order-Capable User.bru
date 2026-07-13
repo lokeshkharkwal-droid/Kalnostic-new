@@ -1,0 +1,103 @@
+meta {
+  name: 04 Create Order-Capable User
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/users/manage
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "employeeName": "Riya Menon",
+    "username": "riya.reception",
+    "dateOfBirth": "1996-08-21",
+    "gender": "FEMALE",
+    "bloodGroup": "B_POS",
+    "nationality": "Indian",
+    "address": "18 Residency Road, Bengaluru",
+    "email": "riya.reception@acme.test",
+    "mobileNumber": "9812350001",
+    "password": "Str0ng@Pass1",
+    "roleKey": "receptionist",
+    "userType": "INTERNAL",
+    "status": "ACTIVE",
+    "branches": [
+      {
+        "branchId": "{{branchId}}",
+        "role": "receptionist",
+        "modules": ["registration", "sales"],
+        "defaultModule": "registration",
+        "defaultBranch": true,
+        "status": "ACTIVE"
+      }
+    ]
+  }
+}
+
+script:post-response {
+  // Capture the new user's id/code and the identifier they log in with (their
+  // mobile number). Password is the one sent above (env: newUserPassword).
+  const data = res.getBody() && res.getBody().data;
+  if (data) {
+    if (data.person && data.person.id) bru.setVar("newUserId", data.person.id);
+    if (data.userCode) bru.setVar("newUserCode", data.userCode);
+    if (data.loginIdentifier) bru.setVar("newUserLoginIdentifier", data.loginIdentifier);
+  }
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("captured the new user id", function () {
+    expect(res.getBody().data.person.id).to.be.a("string");
+  });
+  test("assigned the receptionist role", function () {
+    expect(res.getBody().data.membership.roleKey).to.equal("receptionist");
+  });
+}
+
+docs {
+  Step 4 — create the **order-capable** staff user, run as the admin (step 1).
+
+  Why `receptionist`: it is a **branch-level** role whose permission baseline
+  (via the `sales` module) includes `patient:create` + `order:create` — the
+  front-desk registration duties. It is valid for DIAGNOSTIC/OPD/IPD/PHARMACY/
+  FRANCHISE/COLLECTION_CENTER branch types (`PROFILE_BRANCH_MATRIX`).
+
+  Body highlights:
+  - `roleKey: receptionist` — the primary/default role (resolved to an AuthRole
+    FK server-side; unknown key → 404 `ROLE_NOT_FOUND`).
+  - `branches[0]` — the branch assignment: `role: receptionist`,
+    `modules: [registration, sales]` (both enabled in step 3 + valid for the
+    branch type), `defaultModule: registration` (the front-desk landing),
+    `defaultBranch: true` (this branch becomes the login's active branch).
+
+  > **`defaultModule` must be one of the role template's linked modules** (else
+  > 422 `MODULE_NOT_IN_ROLE_TEMPLATE`). The `receptionist` template links
+  > `sales` **and `registration`** (`ROLE_DEFAULT_MODULES`), so either is valid —
+  > we use `registration` as the natural front-desk landing. (`registration` was
+  > made a permission-bearing module so its FE tab/route can surface — see the
+  > folder docs.)
+  - `password: Str0ng@Pass1` — ≥8 with upper/lower/digit/special. This is the
+    `newUserPassword` used to log in at step 6.
+
+  Captures `newUserId`, `newUserCode` (`USR-00001`…), and `newUserLoginIdentifier`
+  (the user's `mobileNumber` — the login identifier). On a **re-run** the
+  `username` / `email` / `mobileNumber` must be unique — bump them (or delete the
+  prior user) to avoid a 409 conflict.
+
+  Full field reference: **06 Users → User Management v2 → Create User**.
+}

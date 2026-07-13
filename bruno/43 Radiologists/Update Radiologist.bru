@@ -1,0 +1,37 @@
+meta {
+  name: Update Radiologist
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/radiologists/{{radiologistId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "speciality": "MRI, CT & ultrasound imaging",
+    "mobile": "+919812345099"
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Update a radiologist (scoped to the caller's tenant). All fields optional.
+  `departmentId` is re-validated when supplied.
+}

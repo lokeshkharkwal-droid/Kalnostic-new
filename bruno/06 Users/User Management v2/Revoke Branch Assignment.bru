@@ -1,0 +1,27 @@
+meta {
+  name: Revoke Branch Assignment
+  type: http
+  seq: 8
+}
+
+delete {
+  url: {{baseUrl}}/users/manage/{{manageUserId}}/branches/{{branchId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Revoke (remove) a single (user + branch) assignment. Soft-deletes the active
+  `UserBranchProfile` for the (tenant, person, branch): sets `deletedAt`,
+  `isActive = false`, clears the default flag, and stamps `revokedAt`/`revokedBy`.
+
+  - 204/200 on success; the assignment disappears from `GET /users/manage/:id`.
+  - 404 PROFILE_NOT_FOUND if there is no active assignment for that branch.
+  - The user's assignments at other branches and any tenant-level (business_admin)
+    profile are untouched. Used by Business Admin's Edit flow when a branch is
+    de-selected.
+}

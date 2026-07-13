@@ -1,0 +1,19 @@
+meta {
+  name: Delete Phlebotomist
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/phlebotomists/{{phlebotomistId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Soft-delete a phlebotomist (sets `deletedAt`). Scoped to the caller's tenant.
+}

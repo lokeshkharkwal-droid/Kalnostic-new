@@ -20,6 +20,16 @@ export interface SiteAdminAuditLog extends AuditLog {
 }
 
 /**
+ * An audit-log row enriched for the business (tenant) view: the raw row plus the
+ * actor's human name/username (the row itself only stores `actorPersonId`), so
+ * the frontend can show a name instead of a UUID.
+ */
+export interface TenantAuditLog extends AuditLog {
+  actorName: string | null;
+  actorUsername: string | null;
+}
+
+/**
  * Payload for recording a single audit event. Built by the `AuditInterceptor`
  * from route metadata + the request context, or by a caller logging explicitly.
  * `tenantId` and the actor fields come from the authenticated JWT, never from a
@@ -101,7 +111,7 @@ export class AuditService {
   async findAllForTenant(
     tenantId: string,
     query: QueryAuditDto,
-  ): Promise<PaginatedResult<AuditLog>> {
+  ): Promise<PaginatedResult<TenantAuditLog>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
 
@@ -129,13 +139,14 @@ export class AuditService {
       };
     }
 
-    const data = await this.prisma.auditLog.findMany({
+    const rows = await this.prisma.auditLog.findMany({
       where,
       skip: (page - 1) * limit,
       take: limit,
       orderBy: { createdAt: 'desc' },
     });
     const total = await this.prisma.auditLog.count({ where });
+    const data = await this.enrichActorNames(rows);
     return { data, total, page, limit };
   }
 
@@ -258,14 +269,24 @@ export class AuditService {
     rows: AuditLog[],
     tenantNameById: Map<string, string>,
   ): Promise<SiteAdminAuditLog[]> {
+    const withActors = await this.enrichActorNames(rows);
+    return withActors.map((r) => ({
+      ...r,
+      tenantName: tenantNameById.get(r.tenantId) ?? null,
+    }));
+  }
+
+  /**
+   * Attach each actor's human name + system username to audit rows. `persons` /
+   * `person_credentials` are platform-level (no RLS), so these lookups run
+   * without a tenant context. Shared by the tenant list (`findAllForTenant`) and
+   * the SiteAdmin view (`enrichForSiteAdmin`).
+   * @param rows the page of audit rows to enrich
+   */
+  private async enrichActorNames(rows: AuditLog[]): Promise<TenantAuditLog[]> {
     const personIds = [...new Set(rows.map((r) => r.actorPersonId))];
     if (personIds.length === 0) {
-      return rows.map((r) => ({
-        ...r,
-        actorName: null,
-        actorUsername: null,
-        tenantName: tenantNameById.get(r.tenantId) ?? null,
-      }));
+      return rows.map((r) => ({ ...r, actorName: null, actorUsername: null }));
     }
 
     const [persons, credentials] = await Promise.all([
@@ -293,7 +314,6 @@ export class AuditService {
       ...r,
       actorName: nameById.get(r.actorPersonId) ?? null,
       actorUsername: usernameById.get(r.actorPersonId) ?? null,
-      tenantName: tenantNameById.get(r.tenantId) ?? null,
     }));
   }
 

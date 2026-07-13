@@ -1,0 +1,53 @@
+meta {
+  name: 22 Create Radiologist
+  type: http
+  seq: 22
+}
+
+post {
+  url: {{baseUrl}}/radiologists
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Dr. Anita Rao",
+    "departmentId": "{{departmentId}}",
+    "speciality": "MRI & CT imaging",
+    "qualification": "MD Radiodiagnosis",
+    "licenseNumber": "RAD-E2E-0091",
+    "mobile": "+919812345001",
+    "email": "anita.rao.e2e@example.com"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setVar("radiologistId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("captured a radiologistId", function () {
+    expect(res.getBody().data.id).to.be.a("string");
+  });
+}
+
+docs {
+  Step 22 — create a **Radiologist** (as the receptionist, step 18 token).
+  Captures `radiologistId`, required by the order's `radiology.radiologistId`.
+  Only `name` is required; `departmentId` (`{{departmentId}}`) is validated to be
+  an active department in the tenant (422 `RADIOLOGIST_DEPARTMENT_NOT_FOUND`
+  otherwise); the rest are optional.
+}

@@ -1,0 +1,28 @@
+meta {
+  name: List Referral Panel Options
+  type: http
+  seq: 30
+}
+
+get {
+  url: {{baseUrl}}/referral-panels/options?page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 10
+  ~search: apollo
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Lightweight `{ id, name }` options for the Referring Panel selector. Tenant-scoped,
+  active (`isActive: true`), non-deleted panels ordered by name. `search` matches the
+  panel name (case-insensitive). Omit `page` for the full array; supply `page` for a
+  `{ data, total, page, limit }` envelope (the "Load More" selector).
+}

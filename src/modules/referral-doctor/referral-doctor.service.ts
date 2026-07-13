@@ -90,6 +90,70 @@ export class ReferralDoctorService {
   ) {}
 
   /**
+   * Lightweight `{ id, name }` options for the searchable selector
+   * (`GET /referral-doctors/options`). Tenant-scoped to non-deleted referral
+   * doctors; optionally filtered by a case-insensitive `firstName` search. The
+   * `name` is the doctor's first + last name joined. Returns the full array when
+   * `page` is omitted, or a paginated envelope when `page` is supplied.
+   * @param tenantId tenant scope
+   * @param filters optional `search` and opt-in `page`/`limit`
+   * @returns the full `{ id, name }[]` array, or a paginated `{ data, total, page, limit }` envelope
+   */
+  async findOptions(
+    tenantId: string,
+    filters: {
+      search?: string;
+      page?: number;
+      limit?: number;
+    } = {},
+  ): Promise<
+    | Array<{ id: string; name: string }>
+    | PaginatedResult<{ id: string; name: string }>
+  > {
+    const where: Prisma.ReferralDoctorWhereInput = {
+      tenantId,
+      deletedAt: null,
+    };
+    const search = filters.search?.trim();
+    if (search) {
+      where.firstName = { contains: search, mode: 'insensitive' };
+    }
+
+    const select = { id: true, firstName: true, lastName: true } as const;
+    const orderBy = { firstName: 'asc' } as const;
+    const toName = (r: { firstName: string; lastName: string | null }) =>
+      [r.firstName, r.lastName].filter(Boolean).join(' ');
+
+    if (filters.page === undefined) {
+      const rows = await this.prisma.referralDoctor.findMany({
+        where,
+        select,
+        orderBy,
+      });
+      return rows.map((r) => ({ id: r.id, name: toName(r) }));
+    }
+
+    const page = filters.page;
+    const limit = filters.limit ?? 20;
+    const [rows, total] = await Promise.all([
+      this.prisma.referralDoctor.findMany({
+        where,
+        select,
+        orderBy,
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.referralDoctor.count({ where }),
+    ]);
+    return {
+      data: rows.map((r) => ({ id: r.id, name: toName(r) })),
+      total,
+      page,
+      limit,
+    };
+  }
+
+  /**
    * Validate that a referenced settings template exists in the caller's tenant.
    * No-op when no id is supplied.
    * @param tenantId tenant scope

@@ -1,0 +1,45 @@
+meta {
+  name: List Patients
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/patients?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: john
+  ~patientCategory: GENERAL
+  ~status: CREATED
+  ~branchId: 00000000-0000-0000-0000-000000000000
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.length && data[0].id) bru.setEnvVar("patientId", data[0].id);
+}
+
+docs {
+  Paginated list of the tenant's patients (visible tenant-wide; ordered by
+  `createdAt` descending). `page`/`limit` optional. Captures `patientId` from the
+  first item. Pagination info (`total`/`page`/`limit`/`totalPages`) lands in `meta`.
+
+  ## Filters (all optional — toggle the `~` to enable a query param)
+
+  - `search` — case-insensitive `contains` match across first/middle/last name
+    and `mobile`. Whitespace-only values are ignored.
+  - `patientCategory` — one of `GENERAL`, `VIP`, `SENIOR_CITIZEN`, `PEDIATRIC`,
+    `EMPLOYEE`.
+  - `status` — lifecycle stage; one of `DRAFT`, `CREATED`.
+  - `branchId` — only patients registered at that branch (UUID). Read filter
+    only; tenant scoping + RLS already guard cross-tenant access.
+}

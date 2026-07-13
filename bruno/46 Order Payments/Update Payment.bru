@@ -1,0 +1,39 @@
+meta {
+  name: Update Payment
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/payments/{{paymentId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "paidAmount": 1500,
+    "remainingBalance": 0,
+    "paymentMode": "UPI",
+    "notes": "Balance cleared via UPI"
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Update a payment record (scoped to the caller's tenant). All fields optional.
+  `orderId` is not editable after creation.
+}

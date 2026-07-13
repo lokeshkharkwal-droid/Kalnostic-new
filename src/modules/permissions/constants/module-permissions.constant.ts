@@ -1,5 +1,5 @@
 import { ProfileKey } from './profile-registry.constant';
-import { SYSTEM_MODULES } from './system-modules.constant';
+import { PERMISSION_MODULES } from './system-modules.constant';
 
 /**
  * Module-grouped, fine-grained permission catalogue (User Management v2.0).
@@ -164,15 +164,17 @@ const RESOURCE_PERMISSION_DEFS: { permissionKey: string; label: string }[] =
   ]);
 
 /**
- * Module-grouped permission catalogue. The 14 operational modules emit the four
- * standard actions (`view`/`write`/`edit`/`delete`) plus any domain-specific
- * extras (keys `module:action`). The two admin-console modules
+ * Module-grouped permission catalogue. Generated from the permission-bearing
+ * modules only (`PERMISSION_MODULES`) — enablement-only branch-catalogue modules
+ * (Registration, Laboratory, …) never appear here. The operational modules emit
+ * the four standard actions (`view`/`write`/`edit`/`delete`) plus any
+ * domain-specific extras (keys `module:action`). The two admin-console modules
  * (`business_admin`, `branch_admin`) instead emit the full API resource
  * catalogue (keys `resource:action`) — so each console exposes every management
  * capability. Permission keys are therefore identical across the two consoles.
  */
 export const MODULE_PERMISSION_CATALOG: ModulePermissionEntry[] =
-  SYSTEM_MODULES.flatMap((m) =>
+  PERMISSION_MODULES.flatMap((m) =>
     ADMIN_CONSOLE_MODULE_KEYS.includes(m.key)
       ? RESOURCE_PERMISSION_DEFS.map((p) => ({
           moduleKey: m.key,
@@ -214,7 +216,7 @@ export interface PermissionCatalogModule {
  * overrides.
  */
 export const PERMISSION_CATALOG_BY_MODULE: PermissionCatalogModule[] =
-  SYSTEM_MODULES.map((m) => ({
+  PERMISSION_MODULES.map((m) => ({
     moduleKey: m.key,
     moduleLabel: m.label,
     permissions: MODULE_PERMISSION_CATALOG.filter(
@@ -250,10 +252,10 @@ export const ROLE_DEFAULT_MODULES: Record<ProfileKey, string[]> = {
   doctor: [],
   consultant_doctor: [],
   reporting_doctor: [],
-  lab_technician: ['accession'],
-  junior_lab_technician: ['accession'],
-  senior_lab_technician: ['accession'],
-  receptionist: ['sales'],
+  lab_technician: ['accession', 'lab_operations'],
+  junior_lab_technician: ['accession', 'lab_operations'],
+  senior_lab_technician: ['accession', 'lab_operations'],
+  receptionist: ['sales', 'registration'],
   phlebotomist: ['phlebotomist', 'accession'],
   marketing_executive: ['sales'],
   marketing_manager: ['sales', 'finance'],
@@ -310,7 +312,13 @@ export function roleTemplateModules(roleKey: string): string[] {
   return ROLE_TEMPLATES[roleKey as ProfileKey]?.modules ?? [];
 }
 
-/** All 7 operational module keys (helper to avoid importing the array eagerly above). */
+/**
+ * All permission-bearing **operational / feature-area** module keys (i.e. every
+ * module except the two admin consoles). Used for the all-access `administrator`
+ * baseline, so it automatically picks up newly-permissioned feature areas such as
+ * `registration` and `lab_operations`. Kept as a helper to avoid importing the
+ * SYSTEM_MODULES array eagerly above.
+ */
 function SYSTEM_MODULES_ALL(): string[] {
   return [
     'accession',
@@ -320,5 +328,7 @@ function SYSTEM_MODULES_ALL(): string[] {
     'phlebotomist',
     'assistant',
     'operation',
+    'registration',
+    'lab_operations',
   ];
 }

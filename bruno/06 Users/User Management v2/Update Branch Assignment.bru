@@ -20,24 +20,29 @@ auth:bearer {
 
 body:json {
   {
-    "roleKey": "receptionist",
-    "branchStatus": "INACTIVE",
-    "isDefault": false,
-    "moduleId": "registration"
+    "role": "receptionist",
+    "status": "INACTIVE",
+    "defaultBranch": false,
+    "modules": ["registration"],
+    "defaultModule": "registration"
   }
 }
 
 docs {
   Patch a single (user + branch) assignment. All fields optional:
-  - `roleKey` — change the role at THIS branch only (one role per branch). Any role
+  - `role` — change the role at THIS branch only (one role per branch). Any role
     key (built-in system role or tenant custom role from `/roles`), resolved to an
     AuthRole FK; unknown → 404 ROLE_NOT_FOUND. Must be a branch-level role (validity
     from the role's allowed branch types — system: PROFILE_BRANCH_MATRIX; custom:
     `allowedBranchTypes`). Changing it does not affect the user's other branches.
-  - `branchStatus` ACTIVE|INACTIVE — INACTIVE blocks access to THIS branch only
+  - `status` ACTIVE|INACTIVE — INACTIVE blocks access to THIS branch only
     (the user stays usable at other branches; tenant-global Deactivate overrides
     all branches).
-  - `isDefault` — setting true clears any other default branch.
-  - `moduleId` — must be enabled for the branch (and linked to the role template,
-    when it links any).
+  - `defaultBranch` — setting true clears any other default branch (accepts a
+    boolean or `"Yes"`/`"No"`).
+  - `modules` — replacement set of modules the user may access here; each must be
+    valid for the branch type and enabled for the branch. When omitted the existing
+    set stands.
+  - `defaultModule` — must be one of the effective `modules` (else 422
+    DEFAULT_MODULE_NOT_IN_MODULES) and linked to the role template, when it links any.
 }

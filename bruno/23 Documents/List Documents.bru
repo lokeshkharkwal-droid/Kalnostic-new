@@ -13,6 +13,7 @@ get {
 params:query {
   page: 1
   limit: 20
+  ~branchId: {{branchId}}
   ~search: SOP-001
   ~status: APPROVED
   ~documentType: SOP
@@ -31,10 +32,16 @@ tests {
 }
 
 docs {
-  Paginated list of active documents in the caller's ACTIVE BRANCH, newest
-  first. Each row carries its current values plus the loaded `category` and
-  `department` relations. Pagination info (`total`, `page`, `limit`,
-  `totalPages`) is lifted into `meta`.
+  Paginated list of active documents, newest first. Each row carries its current
+  values plus the loaded `category` and `department` relations. Pagination info
+  (`total`, `page`, `limit`, `totalPages`) is lifted into `meta`.
+
+  Branch scope is controlled by the optional `branchId` query param:
+  - **Present** (Branch Admin) — only that branch's documents. The id is verified
+    to belong to the caller's tenant; a foreign/unknown branch → 404.
+  - **Absent** (Business Admin) — documents across ALL branches of the tenant.
+
+  Tenant isolation is always enforced (RLS + `tenantId`).
 
   Optional filters (disabled query params above — enable as needed):
   - `search` — case-insensitive match against the `documentNumber` **OR**
@@ -45,5 +52,5 @@ docs {
     `ACCREDITATION`, `QC_DOCUMENT`, `WORK_INSTRUCTION`, `OTHER`.
   - `categoryId`, `departmentId` — filter by catalogue references.
 
-  Requires an active-branch business token (see Create Document).
+  Requires a business token (see Create Document).
 }

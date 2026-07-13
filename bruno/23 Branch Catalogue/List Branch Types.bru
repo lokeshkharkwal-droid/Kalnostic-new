@@ -1,0 +1,27 @@
+meta {
+  name: List Branch Types
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/branch-types
+  body: none
+  auth: none
+}
+
+docs {
+  Public. Returns a flat JSON array of every available branch-type name, taken
+  directly from the `BRANCH_MODULES` config constant (the single source of
+  truth — no database).
+
+  Wrapped by the global response envelope:
+
+      { "success": true,
+        "data": ["DIAGNOSTIC","OPD","RADIOLOGY","PHARMACY","COMBINED",
+                 "COLLECTION_CENTER","BLOOD_BANK"],
+        "meta": { "timestamp": "..." } }
+
+  No auth required. Adding a key to the config file makes it appear here with no
+  code change.
+}

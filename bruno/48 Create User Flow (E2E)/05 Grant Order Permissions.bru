@@ -1,0 +1,63 @@
+meta {
+  name: 05 Grant Order Permissions
+  type: http
+  seq: 5
+}
+
+put {
+  url: {{baseUrl}}/users/manage/{{newUserId}}/branch-permissions
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "branchId": "{{branchId}}",
+    "items": [
+      { "moduleKey": "registration", "permissionKey": "registration:view", "allowed": true },
+      { "moduleKey": "registration", "permissionKey": "registration:write", "allowed": true },
+      { "moduleKey": "registration", "permissionKey": "registration:edit", "allowed": true },
+      { "moduleKey": "sales", "permissionKey": "sales:view", "allowed": true },
+      { "moduleKey": "sales", "permissionKey": "sales:write", "allowed": true },
+      { "moduleKey": "sales", "permissionKey": "sales:edit", "allowed": true }
+    ]
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Step 5 — explicitly grant the new user the front-desk **registration** +
+  order/billing (**sales**) permissions at the branch, run as the admin (step 1).
+  This is what "all the permissions to create orders" resolves to: the
+  `registration` and `sales` modules' `view` / `write` (create) / `edit` actions.
+  Absent permissions fall back to the role baseline, so with the `receptionist`
+  role these are already implied — sending them here makes the grant explicit and
+  independent of the role template.
+
+  > `registration` is a **permission-bearing** module (it backs the built
+  > `/registration` FE page). Its `registration:view` grant is what makes the
+  > **Registration tab/route visible** in kaltros-fe — the FE reveals a module
+  > only when `GET /users/manage/me/permissions` reports it as `moduleAllowed`.
+
+  Replaces the (user + branch) grant set (Select-All/Deselect-All semantics). Only
+  modules **enabled for the branch** (step 3) are accepted, and each
+  `permissionKey` must belong to its `moduleKey` (else 422 `INVALID_MODULE_KEY` /
+  `MODULE_NOT_ENABLED_FOR_BRANCH`).
+
+  > Every module exposes the four canonical actions `view` / `write` / `edit` /
+  > `delete`; `write` **is** the create capability. See **06 Users → User
+  > Management v2 → Get Permission Catalog** for the full key list.
+}

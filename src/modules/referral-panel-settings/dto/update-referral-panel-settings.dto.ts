@@ -109,10 +109,9 @@ export class UpdateReferralPanelSettingsDto {
   @IsOptional()
   isAutoInvoice?: boolean;
 
-  @IsNumber({ maxDecimalPlaces: 2 })
-  @Min(0)
+  @IsBoolean()
   @IsOptional()
-  raiseInvoiceCreditLimit?: number;
+  isRaiseInvoiceOnCreditLimit?: boolean;
 
   @IsInt()
   @Min(0)

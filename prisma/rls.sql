@@ -889,8 +889,16 @@ CREATE POLICY documents_tenant_isolation ON documents
 
 -- `document_number` is unique per branch among ACTIVE rows only (a number freed
 -- by a soft-delete can be reused). Prisma can't express partial unique indexes.
+-- This index covers branch-level rows; Postgres treats NULL branch_id as
+-- distinct, so tenant-level docs are handled by the companion index below.
 CREATE UNIQUE INDEX IF NOT EXISTS documents_branch_number_active_unique
   ON documents (tenant_id, branch_id, document_number) WHERE deleted_at IS NULL;
+
+-- Tenant-level documents (branch_id IS NULL, managed by a Business Admin) are
+-- unique per (tenant, number) among ACTIVE rows.
+CREATE UNIQUE INDEX IF NOT EXISTS documents_tenant_number_active_unique
+  ON documents (tenant_id, document_number)
+  WHERE deleted_at IS NULL AND branch_id IS NULL;
 
 -- ── document_versions ─────────────────────────────────────────────────────────
 ALTER TABLE document_versions ENABLE ROW LEVEL SECURITY;
@@ -1018,6 +1026,112 @@ CREATE UNIQUE INDEX IF NOT EXISTS branch_lab_panel_test_active_unique
 -- and intentionally NOT unique.
 CREATE UNIQUE INDEX IF NOT EXISTS support_infos_title_active_unique
   ON support_infos (title) WHERE deleted_at IS NULL;
+
+-- ── patients ─────────────────────────────────────────────────────────────────
+ALTER TABLE patients ENABLE ROW LEVEL SECURITY;
+ALTER TABLE patients FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS patients_tenant_isolation ON patients;
+CREATE POLICY patients_tenant_isolation ON patients
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- Per-tenant unique mobile among ACTIVE rows (a number freed by a soft-delete is
+-- reusable). Prevents duplicate active patients on the same mobile. Prisma can't
+-- express partial unique indexes, so it lives here.
+CREATE UNIQUE INDEX IF NOT EXISTS patients_tenant_mobile_active_unique
+  ON patients (tenant_id, mobile) WHERE deleted_at IS NULL;
+
+-- ── medical_histories ───────────────────────────────────────────────────────────
+ALTER TABLE medical_histories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE medical_histories FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS medical_histories_tenant_isolation ON medical_histories;
+CREATE POLICY medical_histories_tenant_isolation ON medical_histories
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── Order Management ────────────────────────────────────────────────────────────
+
+-- ── orders ──────────────────────────────────────────────────────────────────────
+ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE orders FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS orders_tenant_isolation ON orders;
+CREATE POLICY orders_tenant_isolation ON orders
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- Per-tenant unique order code among ACTIVE rows (a code freed by a soft-delete
+-- is reusable). `order_code` is system-generated (ORD-00001…) & immutable.
+CREATE UNIQUE INDEX IF NOT EXISTS orders_tenant_code_active_unique
+  ON orders (tenant_id, order_code) WHERE deleted_at IS NULL;
+
+-- ── order_items ───────────────────────────────────────────────────────────────
+ALTER TABLE order_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE order_items FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS order_items_tenant_isolation ON order_items;
+CREATE POLICY order_items_tenant_isolation ON order_items
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- Exactly one of branch_lab_test_id / branch_lab_panel_id / direct must be set
+-- per row (an order item is a catalogue test, a catalogue panel, or a free-text
+-- direct entry). Prisma can't express this, so it lives here. Defence in front
+-- of the same check in OrderService.
+ALTER TABLE order_items DROP CONSTRAINT IF EXISTS order_items_test_xor_panel;
+ALTER TABLE order_items DROP CONSTRAINT IF EXISTS order_items_source_exactly_one;
+ALTER TABLE order_items ADD CONSTRAINT order_items_source_exactly_one
+  CHECK (
+      (CASE WHEN branch_lab_test_id  IS NOT NULL THEN 1 ELSE 0 END)
+    + (CASE WHEN branch_lab_panel_id IS NOT NULL THEN 1 ELSE 0 END)
+    + (CASE WHEN direct              IS NOT NULL THEN 1 ELSE 0 END) = 1
+  );
+
+-- ── order_diagnostics ───────────────────────────────────────────────────────────
+ALTER TABLE order_diagnostics ENABLE ROW LEVEL SECURITY;
+ALTER TABLE order_diagnostics FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS order_diagnostics_tenant_isolation ON order_diagnostics;
+CREATE POLICY order_diagnostics_tenant_isolation ON order_diagnostics
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── order_opd ─────────────────────────────────────────────────────────────────
+ALTER TABLE order_opd ENABLE ROW LEVEL SECURITY;
+ALTER TABLE order_opd FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS order_opd_tenant_isolation ON order_opd;
+CREATE POLICY order_opd_tenant_isolation ON order_opd
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── order_radiology ─────────────────────────────────────────────────────────────
+ALTER TABLE order_radiology ENABLE ROW LEVEL SECURITY;
+ALTER TABLE order_radiology FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS order_radiology_tenant_isolation ON order_radiology;
+CREATE POLICY order_radiology_tenant_isolation ON order_radiology
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── radiologists ────────────────────────────────────────────────────────────────
+ALTER TABLE radiologists ENABLE ROW LEVEL SECURITY;
+ALTER TABLE radiologists FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS radiologists_tenant_isolation ON radiologists;
+CREATE POLICY radiologists_tenant_isolation ON radiologists
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── phlebotomists ─────────────────────────────────────────────────────────────
+ALTER TABLE phlebotomists ENABLE ROW LEVEL SECURITY;
+ALTER TABLE phlebotomists FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS phlebotomists_tenant_isolation ON phlebotomists;
+CREATE POLICY phlebotomists_tenant_isolation ON phlebotomists
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── payment_details ─────────────────────────────────────────────────────────────
+ALTER TABLE payment_details ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payment_details FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS payment_details_tenant_isolation ON payment_details;
+CREATE POLICY payment_details_tenant_isolation ON payment_details
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
 
 -- Platform-level tables (tenants, persons, person_credentials, siteadmin_users,
 -- refresh_tokens, person_tenant_enrollments, test_groups, test_group_mappings,

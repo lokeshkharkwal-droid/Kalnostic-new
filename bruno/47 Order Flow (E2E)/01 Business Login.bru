@@ -1,0 +1,76 @@
+meta {
+  name: 01 Business Login
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "identifier": "{{adminPhone}}",
+    "password": "{{adminTempPassword}}"
+  }
+}
+
+vars:pre-request {
+  adminPhone: anita.sharma2022@acme.test
+  adminTempPassword: Str0ng@Pass1
+}
+
+script:post-response {
+  // Auto-capture the tokens, and decode the JWT so downstream requests are always
+  // scoped to the branch/tenant this token actually carries (no manual copy-paste).
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.accessToken) {
+    bru.setVar("businessAccessToken", data.accessToken);
+    try {
+      const claims = JSON.parse(atob(data.accessToken.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+      if (claims.tenant_id) bru.setVar("tenantId", claims.tenant_id);
+      // Only set when the login is already branch-scoped; a tenant-level
+      // business_admin token has active_branch_id = null (resolved by steps 2-3).
+      if (claims.active_branch_id) bru.setVar("branchId", claims.active_branch_id);
+    } catch (e) {
+      // Token not decodable in this runtime — branchId is resolved by step 2.
+    }
+  }
+  if (data && data.refreshToken) bru.setVar("businessRefreshToken", data.refreshToken);
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns an access token", function () {
+    expect(res.getBody().data.accessToken).to.be.a("string");
+  });
+}
+
+docs {
+  Step 1 — authenticate as the existing business user. Uses the `Local`
+  environment's `adminPhone` / `adminTempPassword` / `tenantSlug` (captured by
+  the Tenants → Create Tenant flow, or set manually to your own creds).
+  Captures `businessAccessToken` (15m) and `businessRefreshToken` (30d).
+  
+  - `identifier` — phone, email, or system_username (precedence phone → email →
+    system_username).
+  - `tenantSlug` — required for **staff** login (sets the tenant context); omit
+    only for platform-level patient login.
+  
+  A `business_admin` token is tenant-level (`active_branch_id: null`). The next
+  two steps resolve the branch and switch into a branch-scoped token so the
+  branch-level import/order steps work.
+  
+  **Automation:** the post-response script auto-captures both tokens AND decodes
+  the JWT to set `tenantId` and (when already branch-scoped) `branchId`. If your
+  login is already scoped to the branch you want to work in, you can **skip steps
+  2-3** — everything downstream reads the captured `branchId`.
+}

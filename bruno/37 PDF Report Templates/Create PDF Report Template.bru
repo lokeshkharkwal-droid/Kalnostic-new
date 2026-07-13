@@ -43,7 +43,38 @@ body:json {
       "body_html": "<h3>Patient: {patient_name}</h3><table><tr><th>Test</th><th>Result</th></tr>{{#each results}}<tr><td>{{this.test_name}}</td><td>{value}</td></tr>{{/each}}</table>",
       "associate_body_image": "",
       "footer_name": "Default Footer",
-      "footer_html": "<div>Authorised by:</div><signing_authority_tag></signing_authority_tag>"
+      "footer_html": "<div>Authorised by:</div><signing_authority_tag></signing_authority_tag>",
+      "body_layout": "Single Column",
+      "logo_position": "Top Left",
+      "report_refs": {
+        "image_setting_id": "IMG-1",
+        "pdf_setting_id": "PDF-1",
+        "group_layout_id": "GL-1",
+        "icon_setting_id": "IC-1"
+      },
+      "header_block": {
+        "enabled": true,
+        "type": "Text",
+        "text": "Header text",
+        "image_file": "",
+        "alignment": "Center"
+      },
+      "footer_block": {
+        "enabled": false,
+        "type": "Text",
+        "text": "",
+        "image_file": "",
+        "alignment": "Center"
+      },
+      "attachment": {
+        "enabled": false,
+        "type": "Image",
+        "files": [],
+        "position": "End of Report",
+        "alignment": "Center",
+        "size_profile": "Medium",
+        "display_profile": "Full Width"
+      }
     }
   }
 }
@@ -58,6 +89,10 @@ docs {
   the JWT, never the body. `status` is expressed as the boolean `isActive` (the
   frontend maps 1/0 ⇄ true/false). All page + section settings live in `meta`
   (general/header/body/footer); omitted meta keys fall back to defaults.
+
+  The `meta` blob also carries the frontend "Report Layout" fields: `body_layout`,
+  `logo_position`, `report_refs` (image/pdf/group/icon setting ids), the structured
+  `header_block` / `footer_block`, and the `attachment` rule.
 
   `type` must be one of the supported keys (see "List Template Types"), default
   `lab_report`. An optional `branchId` scopes the template to one branch and is

@@ -1,0 +1,82 @@
+meta {
+  name: 07 Verify Registration Access
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/users/manage/me/permissions?branchId={{branchId}}
+  body: none
+  auth: bearer
+}
+
+params:query {
+  branchId: {{branchId}}
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  // This is the EXACT endpoint kaltros-fe calls to decide which module tabs/routes
+  // to show. The FE reveals a module when it is BOTH enabled for the branch
+  // (`branchModules`) AND permission-allowed (`modules[].moduleAllowed`). We assert
+  // Registration satisfies both — i.e. the new user will see it in kaltros-fe.
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("registration is ENABLED for the branch (branchModules)", function () {
+    const mods = (res.getBody().data.branchModules || []).map(function (m) { return m.moduleKey; });
+    expect(mods, "branchModules should include 'registration'").to.include("registration");
+  });
+  test("registration is PERMISSION-ALLOWED (moduleAllowed)", function () {
+    const allowedModules = (res.getBody().data.modules || [])
+      .filter(function (m) { return m.moduleAllowed; })
+      .map(function (m) { return m.moduleKey; });
+    expect(allowedModules, "modules[] should include an allowed 'registration' group").to.include("registration");
+  });
+  test("has the registration:view capability", function () {
+    expect(res.getBody().data.allowed || [], "allowed[] should include 'registration:view'").to.include("registration:view");
+  });
+}
+
+docs {
+  Step 7 — **verify the new user can access the Registration module in
+  kaltros-fe**, run **as the new user** (token swapped in step 6). This calls the
+  *exact* endpoint the front-end uses to build its module tab bar and gate its
+  routes: `GET /users/manage/me/permissions?branchId=…`.
+
+  ## How kaltros-fe decides module visibility
+
+  In `PermissionsProvider.tsx` a module's tab **and** route are shown only when it
+  is **both**:
+
+  1. **enabled for the branch** — present in the response's `branchModules`
+     (driven by Branch→Module enablement, step 3), **AND**
+  2. **permission-allowed** — present in `modules[]` with `moduleAllowed: true`
+     (i.e. the user has at least one allowed permission in it — from the role
+     baseline and/or the explicit grant in step 5).
+
+  `ModuleGuard` applies the same check to the `/registration` route, so a module
+  that fails either half is hidden **and** its route redirects to the user's first
+  allowed module.
+
+  This request asserts Registration passes both halves (`branchModules` includes
+  `registration`, `modules[]` has an allowed `registration` group, and `allowed[]`
+  includes `registration:view`). If all three pass, logging into kaltros-fe as this
+  user shows the **Registration** tab and lets them open `/registration`.
+
+  ## If the `moduleAllowed` / `registration:view` assertions FAIL
+
+  `registration` must be a **permission-bearing** module for the FE to ever reveal
+  it — an enablement-only module (no permission keys) can never be `moduleAllowed`.
+  This was fixed in the backend (`system-modules.constant.ts` — `registration` +
+  `lab_operations` are permission-bearing; `ROLE_DEFAULT_MODULES` grants
+  `registration` to `receptionist`). **Restart the backend** so the change loads.
+
+  ## If only the `branchModules` assertion fails
+
+  The branch hasn't enabled `registration` — re-run step 3 (Enable Branch Modules)
+  for this branch.
+}

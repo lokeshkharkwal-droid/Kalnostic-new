@@ -1,0 +1,106 @@
+meta {
+  name: 08 Create Lab Test
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/lab-tests
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "testName": "Serum Cholesterol (E2E)",
+    "testDisplayName": "Cholesterol, Total",
+    "testCode": "CHOL-E2E",
+    "aka": "Total Cholesterol",
+    "departmentId": "{{departmentId}}",
+    "categoryId": "{{categoryId}}",
+    "subCategoryId": "{{subCategoryId}}",
+    "processMethod": "SINGLE_STEP",
+    "samplePriorityType": "ROUTINE",
+    "priceMsrp": 30000,
+    "priceMaximum": 30000,
+    "priceMinimum": 20000,
+    "priceOriginal": 25000,
+    "isAllowDiscounts": true,
+    "tatMinValue": 2,
+    "tatMinUnit": "HOURS",
+    "tatMaxValue": 24,
+    "tatMaxUnit": "HOURS",
+    "isActive": true,
+    "usefulFor": "Cardiovascular risk assessment",
+    "samples": [
+      {
+        "sampleType": "Serum",
+        "containerType": "PLAIN_TUBE_RED_TOP",
+        "sampleSize": "3 mL",
+        "collectionMethod": "Venipuncture",
+        "numberOfSamples": 1,
+        "isFastingRequired": true,
+        "isDefault": true
+      }
+    ],
+    "resultParams": [
+      {
+        "parameterName": "Total Cholesterol",
+        "parameterCode": "CHOL",
+        "reportingUnit": "mg/dL",
+        "resultType": "QUANTITATIVE",
+        "parameterType": "MEASURED",
+        "decimalPlaces": 1,
+        "criticalMax": 300,
+        "sortOrder": 1,
+        "referenceRanges": [
+          {
+            "gender": "ALL",
+            "ageFrom": 18,
+            "ageFromUnit": "YEARS",
+            "ageTo": 120,
+            "ageToUnit": "YEARS",
+            "lowerLimit": 125,
+            "upperLimit": 200,
+            "displayOfReferenceRange": "125 - 200 mg/dL",
+            "abnormalFlagLogic": "BOLD_AND_RED"
+          }
+        ]
+      }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setVar("labTestId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("captured a labTestId", function () {
+    expect(res.getBody().data.id).to.be.a("string");
+  });
+}
+
+docs {
+  Step 8 — create a master-data **Lab Test** under the branch's master data
+  (`{{masterDataId}}`). Captures `labTestId` (imported into the branch in step 10
+  and referenced by the panel in step 9).
+  
+  Realistic payload: identity + pricing (integer minor units) + TAT + one sample
+  and one result parameter with a reference range. Required: `testName`,
+  `testCode`, and per result param `parameterName` / `parameterCode` /
+  `resultType`. Classification refs (`departmentId`/`categoryId`/`subCategoryId`)
+  come from steps 4-6. See 13 Lab Tests for the full field reference.
+}
