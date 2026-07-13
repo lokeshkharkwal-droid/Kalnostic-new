@@ -1,0 +1,68 @@
+meta {
+  name: Create Pdf Setting
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/business-admin/lab-test-settings/pdf-settings
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Outsource Reports – End",
+    "pdfMode": "Append at End",
+    "placement": "End of Report",
+    "scaleMode": "Fit to Page",
+    "pageBreakControl": "Each PDF New Page",
+    "status": "Active"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("pdfSettingId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("has id", function () {
+    expect(res.getBody().data.id).to.be.a("string");
+  });
+  test("name matches", function () {
+    expect(res.getBody().data.name).to.equal("Outsource Reports – End");
+  });
+}
+
+docs {
+  Create a lab PDF setting for the caller's tenant (tenant id taken from JWT).
+
+  ## Required fields
+  - `name` — display name for this setting (max 255 chars)
+  - `pdfMode` — one of:
+      "Append at End" | "Replace Full Report" | "Header + PDF" | "Inline"
+  - `placement` — one of:
+      "After Parameter" | "End of Report" | "Custom Section"
+  - `scaleMode` — one of:
+      "Auto" | "Fit to Page" | "Custom %"
+  - `pageBreakControl` — one of:
+      "Auto Flow" | "Each PDF New Page" | "Group per Page"
+
+  ## Optional fields
+  - `customScalePct` — integer 1–500, meaningful when scaleMode is "Custom %"
+  - `status` — "Active" | "Inactive" (defaults to "Active")
+
+  Captures `pdfSettingId` for use in subsequent requests.
+}

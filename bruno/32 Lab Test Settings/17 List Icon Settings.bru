@@ -1,0 +1,31 @@
+meta {
+  name: List Icon Settings
+  type: http
+  seq: 17
+}
+
+get {
+  url: {{baseUrl}}/business-admin/lab-test-settings/icon-settings
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns array", function () {
+    expect(res.getBody().data).to.be.an("array");
+  });
+}
+
+docs {
+  List lab icon settings for the caller's tenant (tenant id from JWT),
+  offset-paginated. Soft-deleted records are excluded. Ordered newest first.
+
+  Optional query params: `page` (default 1), `limit` (default 20, max 100).
+}

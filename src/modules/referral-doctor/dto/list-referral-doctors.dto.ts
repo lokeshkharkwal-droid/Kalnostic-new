@@ -12,7 +12,8 @@ import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
  * Query params for the referral-doctors list endpoint. Extends the shared offset
  * pagination DTO with a free-text `search` by doctor name (tokenised across
  * first/middle/last name, mobile number as a fallback), a `departmentId` filter, a
- * `categoryId` (Specialty) filter, and a `status` filter.
+ * `categoryId` (Specialty) filter, a `status` filter, and a `branchId` filter
+ * (doctors scoped to that branch).
  */
 export class ListReferralDoctorsDto extends PaginationQueryDto {
   /**
@@ -36,4 +37,9 @@ export class ListReferralDoctorsDto extends PaginationQueryDto {
   @IsEnum(ReferralDoctorStatus)
   @IsOptional()
   status?: ReferralDoctorStatus;
+
+  /** Restrict to referral doctors scoped to this branch. */
+  @IsUUID()
+  @IsOptional()
+  branchId?: string;
 }

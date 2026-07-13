@@ -33,6 +33,7 @@ import { ReferralDoctorModule } from './modules/referral-doctor/referral-doctor.
 import { ExternalReferralModule } from './modules/external-referral/external-referral.module';
 import { InternalReferralModule } from './modules/internal-referral/internal-referral.module';
 import { MachineModule } from './modules/machine/machine.module';
+import { LabTestSettingsModule } from './modules/lab-test-settings/lab-test-settings.module';
 import { DocumentModule } from './modules/document/document.module';
 import { TemplateModule } from './modules/template/template.module';
 import { PdfReportTemplateModule } from './modules/pdf-report-template/pdf-report-template.module';
@@ -103,6 +104,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     ExternalReferralModule,
     InternalReferralModule,
     MachineModule,
+    LabTestSettingsModule,
     DocumentModule,
     TemplateModule,
     PdfReportTemplateModule,

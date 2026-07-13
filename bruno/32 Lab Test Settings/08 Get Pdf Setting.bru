@@ -1,0 +1,30 @@
+meta {
+  name: Get Pdf Setting
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/business-admin/lab-test-settings/pdf-settings/{{pdfSettingId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("id matches", function () {
+    expect(res.getBody().data.id).to.equal(bru.getEnvVar("pdfSettingId"));
+  });
+}
+
+docs {
+  Fetch a single lab PDF setting by id.
+  Returns 404 LAB_PDF_SETTING_NOT_FOUND if missing or soft-deleted.
+  Requires `pdfSettingId` env var (set by Create Pdf Setting).
+}

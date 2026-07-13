@@ -42,7 +42,8 @@ export class ReferralDoctorController {
 
   /**
    * List referral doctors in the caller's tenant (paginated; trimmed fields).
-   * Supports `search` (name / mobile), `departmentId`, `categoryId`, and `status`.
+   * Supports `search` (name / mobile), `departmentId`, `categoryId`, `status`,
+   * and `branchId`.
    */
   @Get()
   findAll(

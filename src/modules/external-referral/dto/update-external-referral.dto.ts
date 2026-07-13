@@ -15,6 +15,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import {
@@ -156,18 +157,33 @@ export class UpdateExternalReferralDto {
   @IsOptional()
   commissionType?: CommissionType;
 
+  // Relevant only when this same PATCH also sets Commission Type = PERCENTAGE.
+  // (Cannot see the existing row's type here — the authoritative check against
+  // the merged/effective state happens in the service's assertCommission.)
+  @ValidateIf(
+    (o: UpdateExternalReferralDto) =>
+      o.commissionType === CommissionType.PERCENTAGE,
+  )
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(100)
   @IsOptional()
   commissionPctLabTest?: number;
 
+  @ValidateIf(
+    (o: UpdateExternalReferralDto) =>
+      o.commissionType === CommissionType.PERCENTAGE,
+  )
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(100)
   @IsOptional()
   commissionPctLabPanel?: number;
 
+  @ValidateIf(
+    (o: UpdateExternalReferralDto) =>
+      o.commissionType === CommissionType.SLAB_BASED,
+  )
   @IsArray()
   @IsOptional()
   @ArrayMinSize(1)

@@ -41,7 +41,8 @@ export class ReferralPanelController {
   }
 
   /**
-   * List referral panels in the caller's tenant (paginated; optional `search`).
+   * List referral panels in the caller's tenant (paginated; optional `search`,
+   * `clientType`, `status`, and `branchId`).
    */
   @Get()
   findAll(

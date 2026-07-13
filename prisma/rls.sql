@@ -1133,6 +1133,38 @@ CREATE POLICY payment_details_tenant_isolation ON payment_details
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── lab_image_settings ────────────────────────────────────────────────────────
+ALTER TABLE lab_image_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lab_image_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lab_image_settings_tenant_isolation ON lab_image_settings;
+CREATE POLICY lab_image_settings_tenant_isolation ON lab_image_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── lab_pdf_settings ──────────────────────────────────────────────────────────
+ALTER TABLE lab_pdf_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lab_pdf_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lab_pdf_settings_tenant_isolation ON lab_pdf_settings;
+CREATE POLICY lab_pdf_settings_tenant_isolation ON lab_pdf_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── lab_group_layout_settings ─────────────────────────────────────────────────
+ALTER TABLE lab_group_layout_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lab_group_layout_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lab_group_layout_settings_tenant_isolation ON lab_group_layout_settings;
+CREATE POLICY lab_group_layout_settings_tenant_isolation ON lab_group_layout_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── lab_icon_settings ─────────────────────────────────────────────────────────
+ALTER TABLE lab_icon_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lab_icon_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lab_icon_settings_tenant_isolation ON lab_icon_settings;
+CREATE POLICY lab_icon_settings_tenant_isolation ON lab_icon_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- Platform-level tables (tenants, persons, person_credentials, siteadmin_users,
 -- refresh_tokens, person_tenant_enrollments, test_groups, test_group_mappings,
 -- support_infos) are intentionally NOT covered — they sit above the tenant

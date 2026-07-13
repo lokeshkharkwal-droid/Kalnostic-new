@@ -1,0 +1,69 @@
+meta {
+  name: Create Icon Setting
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{baseUrl}}/business-admin/lab-test-settings/icon-settings
+  body: multipartForm
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:multipart-form {
+  payload: {"name":"Abnormal Up/Down","icons":[{"position":"After Result","alignment":"Right","size":"Small","visibility":"Abnormal Only"},{"position":"After Result","alignment":"Right","size":"Small","visibility":"Abnormal Only"}],"status":"Active"}
+  icon1: @file(C:\path\to\up-arrow.png)
+  icon2: @file(C:\path\to\down-arrow.png)
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("iconSettingId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("has id", function () {
+    expect(res.getBody().data.id).to.be.a("string");
+  });
+  test("name matches", function () {
+    expect(res.getBody().data.name).to.equal("Abnormal Up/Down");
+  });
+  test("stored 2 icons", function () {
+    expect(res.getBody().data.icons.length).to.equal(2);
+  });
+}
+
+docs {
+  Create a lab icon setting for the caller's tenant (tenant id taken from
+  JWT). Multipart request:
+
+  - `payload` — JSON-encoded metadata (see below)
+  - `icon1` — the first icon's image file (required)
+  - `icon2` — the second icon's image file (required only when `icons` has 2 entries)
+
+  Only PNG / SVG / JPG are accepted, max **2 MB** each; otherwise 400
+  INVALID_ICON_SETTING_PAYLOAD.
+
+  ## `payload` shape
+  - `name` — display name for this configuration (max 255 chars)
+  - `icons` — array of 1 or 2 objects, each:
+      - `position` — "Before Parameter Name" | "After Parameter Name" |
+        "Before Result" | "After Result" | "Extreme Left" | "Extreme Right"
+      - `alignment` — "Left" | "Center" | "Right"
+      - `size` — "Small" | "Medium" | "Large"
+      - `visibility` — "Always" | "Abnormal Only" | "Critical Only"
+  - `status` — "Active" | "Inactive" (defaults to "Active")
+
+  The number of uploaded icon files (`icon1`, plus `icon2` if present) must
+  exactly match `icons.length`, or 400 ICON_FILE_MISMATCH is returned.
+
+  Edit the `@file(...)` paths to real images on your machine before sending.
+  Captures `iconSettingId` for use in subsequent requests.
+}
