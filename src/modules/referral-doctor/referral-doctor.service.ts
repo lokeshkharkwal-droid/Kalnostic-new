@@ -228,7 +228,8 @@ export class ReferralDoctorService {
    * List active referral doctors for a tenant (offset pagination), returning the
    * trimmed listing projection. Supports a free-text `search` by doctor name
    * (whitespace-tokenised across first/middle/last name, with the mobile number as
-   * a fallback) plus `departmentId`, `categoryId`, and `status` filters.
+   * a fallback) plus `departmentId`, `categoryId`, `status`, and `branchId`
+   * filters.
    * @param tenantId tenant scope
    * @param query pagination + filters
    */
@@ -246,6 +247,7 @@ export class ReferralDoctorService {
     if (query.status) where.status = query.status;
     if (query.departmentId) where.departmentId = query.departmentId;
     if (query.categoryId) where.categoryId = query.categoryId;
+    if (query.branchId) where.branchId = query.branchId;
     const term = query.search?.trim();
     if (term) {
       // Search by doctor name: split into whitespace tokens and require EACH to
@@ -608,6 +610,19 @@ export class ReferralDoctorService {
           'commission slab monthlyBusinessFrom must be <= monthlyBusinessTo',
         );
       }
+      // Catches a slab row added via "Add More Slabs" and left untouched (the
+      // UI's default is {from: 0, to: 0, pct: 0}) — a genuine ₹0-anchored slab
+      // (e.g. ₹0–50,000) always has to > from, so this exact combination can
+      // only be the untouched default, never a real band.
+      if (
+        s.monthlyBusinessFrom === 0 &&
+        s.monthlyBusinessTo === 0 &&
+        s.commissionPct === 0
+      ) {
+        throw new InvalidCommissionConfigException(
+          'commission slab rows must be filled in — remove any empty slab left at its default values',
+        );
+      }
     }
   }
 
@@ -628,6 +643,16 @@ export class ReferralDoctorService {
       if (s.monthlyBusinessFrom > s.monthlyBusinessTo) {
         throw new InvalidCommissionConfigException(
           'bonus slab monthlyBusinessFrom must be <= monthlyBusinessTo',
+        );
+      }
+      // Same untouched-default check as assertCommission's slab loop.
+      if (
+        s.monthlyBusinessFrom === 0 &&
+        s.monthlyBusinessTo === 0 &&
+        s.bonusPct === 0
+      ) {
+        throw new InvalidCommissionConfigException(
+          'bonus slab rows must be filled in — remove any empty slab left at its default values',
         );
       }
     }

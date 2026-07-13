@@ -68,10 +68,13 @@ export class CreateInternalReferralDto {
   @MaxLength(255)
   lastName?: string;
 
+  // fullName is never accepted from the client — it's always derived from
+  // firstName/lastName in the service (see InternalReferralService.create/update).
+
   @IsString()
   @IsOptional()
-  @MaxLength(511)
-  fullName?: string;
+  @MaxLength(255)
+  department?: string;
 
   @IsString()
   @IsOptional()
@@ -171,6 +174,13 @@ export class CreateInternalReferralDto {
   @IsBoolean()
   @IsOptional()
   isTdsApplicable?: boolean;
+
+  // TDS percentage; only meaningful when TDS applies (normalised in the service).
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  @IsOptional()
+  tds?: number;
 
   // ── Payroll & payment (unique to internal referrals) ──
   @IsBoolean()

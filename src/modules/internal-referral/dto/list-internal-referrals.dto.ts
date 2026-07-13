@@ -1,11 +1,18 @@
 import { InternalReferralStatus } from '@prisma/client';
-import { IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsEnum,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+} from 'class-validator';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 
 /**
  * Query params for the internal-referrals list endpoint. Extends the shared offset
  * pagination DTO with a free-text `search` by employee name (tokenised across
- * first/last/full name, with the mobile number as a fallback) and a `status` filter.
+ * first/last/full name, with the mobile number as a fallback), a `status` filter,
+ * and a `branchId` filter (referrals belonging to that branch).
  */
 export class ListInternalReferralsDto extends PaginationQueryDto {
   /**
@@ -21,4 +28,9 @@ export class ListInternalReferralsDto extends PaginationQueryDto {
   @IsEnum(InternalReferralStatus)
   @IsOptional()
   status?: InternalReferralStatus;
+
+  /** Restrict to internal referrals belonging to this branch. */
+  @IsUUID()
+  @IsOptional()
+  branchId?: string;
 }

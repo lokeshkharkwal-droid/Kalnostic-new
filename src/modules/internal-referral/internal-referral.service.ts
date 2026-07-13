@@ -22,6 +22,7 @@ import {
   INTERNAL_REFERRAL_DETAIL_INCLUDE,
   INTERNAL_REFERRAL_LIST_SELECT,
   InternalReferralDetail,
+  InternalReferralLabRef,
   InternalReferralListItem,
   InternalReferralWithRelations,
 } from './entities/internal-referral.entity';
@@ -157,7 +158,8 @@ export class InternalReferralService {
       employeeId: dto.employeeId ?? null,
       firstName: dto.firstName,
       lastName: dto.lastName ?? null,
-      fullName: dto.fullName ?? null,
+      fullName: this.computeFullName(dto.firstName, dto.lastName ?? null),
+      department: dto.department ?? null,
       designation: dto.designation ?? null,
       joiningDate: this.toDate(dto.joiningDate),
       mobileNumber: dto.mobileNumber ?? null,
@@ -165,6 +167,7 @@ export class InternalReferralService {
       // Commission (normalised)
       ...this.normalizeCommission(commissionEff),
       isTdsApplicable: dto.isTdsApplicable ?? false,
+      tds: dto.isTdsApplicable ? (dto.tds ?? null) : null,
       // Payroll & payment
       isIncludedInPayroll: dto.isIncludedInPayroll ?? false,
       paymentCycle: dto.paymentCycle ?? PaymentCycle.MONTHLY,
@@ -192,7 +195,7 @@ export class InternalReferralService {
    * List active internal referrals for a tenant (offset pagination), returning the
    * trimmed listing projection. Supports a free-text `search` by employee name
    * (whitespace-tokenised across first/last/full name, with the mobile number as a
-   * fallback) plus a `status` filter.
+   * fallback) plus `status` and `branchId` filters.
    * @param tenantId tenant scope
    * @param query pagination + filters
    */
@@ -208,6 +211,7 @@ export class InternalReferralService {
       deletedAt: null,
     };
     if (query.status) where.status = query.status;
+    if (query.branchId) where.branchId = query.branchId;
     const term = query.search?.trim();
     if (term) {
       // Search by employee name: split into whitespace tokens and require EACH to
@@ -224,7 +228,7 @@ export class InternalReferralService {
       }));
     }
 
-    const [data, total] = await Promise.all([
+    const [rows, total] = await Promise.all([
       this.prisma.internalReferral.findMany({
         where,
         select: INTERNAL_REFERRAL_LIST_SELECT,
@@ -234,7 +238,96 @@ export class InternalReferralService {
       }),
       this.prisma.internalReferral.count({ where }),
     ]);
+    const labLists = await this.resolveLabLists(
+      tenantId,
+      rows.map((r) => r.id),
+    );
+    const data: InternalReferralListItem[] = rows.map((r) => ({
+      ...r,
+      ...(labLists.get(r.id) ?? { labTestList: [], labPanelList: [] }),
+    }));
     return { data, total, page, limit };
+  }
+
+  /**
+   * Resolve the assigned lab test/panel references for a page of internal
+   * referrals, keyed by referral id, each shaped as `[{ id, name }]`. Uses a
+   * bounded number of queries regardless of page size: one per join table plus
+   * one per lab model (no N+1). Names of since-deleted lab tests/panels are
+   * omitted. Mirrors `ExternalReferralService.resolveLabLists`.
+   * @param tenantId tenant scope
+   * @param referralIds the internal referral ids on the current page
+   */
+  private async resolveLabLists(
+    tenantId: string,
+    referralIds: string[],
+  ): Promise<
+    Map<string, { labTestList: InternalReferralLabRef[]; labPanelList: InternalReferralLabRef[] }>
+  > {
+    const result = new Map<
+      string,
+      { labTestList: InternalReferralLabRef[]; labPanelList: InternalReferralLabRef[] }
+    >();
+    for (const id of referralIds) {
+      result.set(id, { labTestList: [], labPanelList: [] });
+    }
+    if (referralIds.length === 0) {
+      return result;
+    }
+
+    const [testLinks, panelLinks] = await Promise.all([
+      this.prisma.internalReferralLabTest.findMany({
+        where: {
+          internalReferralId: { in: referralIds },
+          tenantId,
+          deletedAt: null,
+        },
+        select: { internalReferralId: true, labTestId: true },
+      }),
+      this.prisma.internalReferralLabPanel.findMany({
+        where: {
+          internalReferralId: { in: referralIds },
+          tenantId,
+          deletedAt: null,
+        },
+        select: { internalReferralId: true, labPanelId: true },
+      }),
+    ]);
+
+    const testIds = [...new Set(testLinks.map((l) => l.labTestId))];
+    const panelIds = [...new Set(panelLinks.map((l) => l.labPanelId))];
+    const [tests, panels] = await Promise.all([
+      testIds.length
+        ? this.prisma.labTest.findMany({
+            where: { tenantId, id: { in: testIds } },
+            select: { id: true, testName: true },
+          })
+        : Promise.resolve([]),
+      panelIds.length
+        ? this.prisma.labPanel.findMany({
+            where: { tenantId, id: { in: panelIds } },
+            select: { id: true, panelName: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    const testName = new Map(tests.map((t) => [t.id, t.testName]));
+    const panelName = new Map(panels.map((p) => [p.id, p.panelName]));
+
+    for (const link of testLinks) {
+      const name = testName.get(link.labTestId);
+      const entry = result.get(link.internalReferralId);
+      if (name !== undefined && entry) {
+        entry.labTestList.push({ id: link.labTestId, name });
+      }
+    }
+    for (const link of panelLinks) {
+      const name = panelName.get(link.labPanelId);
+      const entry = result.get(link.internalReferralId);
+      if (name !== undefined && entry) {
+        entry.labPanelList.push({ id: link.labPanelId, name });
+      }
+    }
+    return result;
   }
 
   /**
@@ -292,6 +385,16 @@ export class InternalReferralService {
 
     let data: Prisma.InternalReferralUpdateInput = this.toScalarUpdateData(dto);
 
+    // fullName is never accepted from the client — recompute it whenever either
+    // name part is touched, using the existing value as the fallback for the
+    // untouched part.
+    if (dto.firstName !== undefined || dto.lastName !== undefined) {
+      data.fullName = this.computeFullName(
+        dto.firstName ?? existing.firstName,
+        (dto.lastName ?? existing.lastName) ?? null,
+      );
+    }
+
     const commissionTouched =
       dto.isCommissionApplicable !== undefined ||
       dto.commissionType !== undefined ||
@@ -336,6 +439,13 @@ export class InternalReferralService {
         isIncentiveBonusApplicable: incentive,
         bonusSlabs: incentive ? slabs : [],
       };
+    }
+
+    // TDS percentage is normalised against the effective applicability: cleared to
+    // null when TDS doesn't apply, otherwise the patched (or existing) value.
+    if (dto.isTdsApplicable !== undefined || dto.tds !== undefined) {
+      const tdsApplicable = dto.isTdsApplicable ?? existing.isTdsApplicable;
+      data.tds = tdsApplicable ? (dto.tds ?? existing.tds ?? null) : null;
     }
 
     const now = new Date();
@@ -511,6 +621,19 @@ export class InternalReferralService {
           'commission slab monthlyBusinessFrom must be <= monthlyBusinessTo',
         );
       }
+      // Catches a slab row added via "Add More Slabs" and left untouched (the
+      // UI's default is {from: 0, to: 0, pct: 0}) — a genuine ₹0-anchored slab
+      // (e.g. ₹0–50,000) always has to > from, so this exact combination can
+      // only be the untouched default, never a real band.
+      if (
+        s.monthlyBusinessFrom === 0 &&
+        s.monthlyBusinessTo === 0 &&
+        s.commissionPct === 0
+      ) {
+        throw new InvalidCommissionConfigException(
+          'commission slab rows must be filled in — remove any empty slab left at its default values',
+        );
+      }
     }
   }
 
@@ -531,6 +654,16 @@ export class InternalReferralService {
       if (s.monthlyBusinessFrom > s.monthlyBusinessTo) {
         throw new InvalidCommissionConfigException(
           'bonus slab monthlyBusinessFrom must be <= monthlyBusinessTo',
+        );
+      }
+      // Same untouched-default check as assertCommission's slab loop.
+      if (
+        s.monthlyBusinessFrom === 0 &&
+        s.monthlyBusinessTo === 0 &&
+        s.bonusPct === 0
+      ) {
+        throw new InvalidCommissionConfigException(
+          'bonus slab rows must be filled in — remove any empty slab left at its default values',
         );
       }
     }
@@ -617,7 +750,7 @@ export class InternalReferralService {
     if (dto.branchId !== undefined) data.branchId = dto.branchId ?? null;
     if (dto.firstName !== undefined) data.firstName = dto.firstName;
     if (dto.lastName !== undefined) data.lastName = dto.lastName ?? null;
-    if (dto.fullName !== undefined) data.fullName = dto.fullName ?? null;
+    if (dto.department !== undefined) data.department = dto.department ?? null;
     if (dto.designation !== undefined) {
       data.designation = dto.designation ?? null;
     }
@@ -715,6 +848,16 @@ export class InternalReferralService {
    */
   private toDate(value: string | undefined): Date | null {
     return value ? new Date(value) : null;
+  }
+
+  /**
+   * Derive the stored `fullName` from first/last name (mirrors
+   * ReferralDoctorService.computeFullName). Never accepted from the client.
+   * @param first the employee's first name
+   * @param last the employee's last name, or null
+   */
+  private computeFullName(first: string, last: string | null): string {
+    return [first, last].filter(Boolean).join(' ');
   }
 
   /**
