@@ -53,7 +53,8 @@ export class PatientController {
 
   /**
    * List patients in the caller's tenant (paginated). Supports optional
-   * `search` (name/mobile), `patientCategory`, `status`, and `branchId` filters.
+   * `search` (name/mobile), `patientCategory`, `status`, `isActive`, `gender`,
+   * `bloodGroup`, a registration-date range, and `branchId` filters.
    */
   @Get()
   findAll(
@@ -68,9 +69,27 @@ export class PatientController {
         search: query.search,
         patientCategory: query.patientCategory,
         status: query.status,
+        isActive: query.isActive,
+        gender: query.gender,
+        bloodGroup: query.bloodGroup,
+        dateFrom: query.dateFrom,
+        dateTo: query.dateTo,
         branchId: query.branchId,
       },
     );
+  }
+
+  /**
+   * Aggregate patient counts for the dashboard summary cards, scoped to the
+   * caller's tenant and active branch. Declared before `:id` so `stats` is not
+   * captured as a patient id.
+   */
+  @Get('stats')
+  getStats(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+  ) {
+    return this.patientService.getStats(tenantId, profile.branchId);
   }
 
   /** Fetch one patient (with active medical-history records). */

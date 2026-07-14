@@ -811,8 +811,11 @@ model Person {
   isStaff   Boolean @default(false) @map("is_staff")
   isActive  Boolean @default(true) @map("is_active")
 
-  /// Order-management back-relations (radiology technician).
-  radiologyOrders OrderRadiology[] @relation("OrderRadiologyTechnician")
+  /// Order-management back-relations. A radiologist / phlebotomist is now a
+  /// staff Person (holding the matching role at a branch), not a master row.
+  radiologyOrders          OrderRadiology[]   @relation("OrderRadiologyTechnician")
+  radiologistOrders        OrderRadiology[]   @relation("OrderRadiologist")
+  phlebotomistDiagnostics  OrderDiagnostics[] @relation("OrderPhlebotomist")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -1504,10 +1507,9 @@ model Department {
   /// Lab tests that name this department as their mandatory-test department.
   mandatoryLabTests LabTest[] @relation("LabTestMandatoryDept")
 
-  /// Order-management back-relations (OPD/radiology sections + radiology masters).
+  /// Order-management back-relations (OPD/radiology sections).
   orderOpds        OrderOpd[]
   orderRadiologies OrderRadiology[]
-  radiologists     Radiologist[]
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -2290,11 +2292,11 @@ model LabPanel {
   isActive Boolean @default(true) @map("is_active")
 
   // Pricing (integer minor units)
-  priceMsrp       Int @default(0) @map("price_msrp")
-  priceMinimum    Int @default(0) @map("price_minimum")
-  priceMaximum    Int @default(0) @map("price_maximum")
-  priceOriginal   Int @default(0) @map("price_original")
-  franchisePrice  Int @default(0) @map("franchise_price")
+  priceMsrp       Int  @default(0) @map("price_msrp")
+  priceMinimum    Int  @default(0) @map("price_minimum")
+  priceMaximum    Int  @default(0) @map("price_maximum")
+  priceOriginal   Int  @default(0) @map("price_original")
+  franchisePrice  Int  @default(0) @map("franchise_price")
   // Per-order commission for Fixed Amount / Order Wise referral commission
   // (doc §9.2). NULL = not set yet (shown as "—"), distinct from an actual ₹0.
   commissionPrice Int? @map("commission_price")
@@ -2540,11 +2542,11 @@ model BranchLabPanel {
   isDuplicate Boolean @default(false) @map("is_duplicate")
 
   // Pricing (integer minor units)
-  priceMsrp       Int @default(0) @map("price_msrp")
-  priceMinimum    Int @default(0) @map("price_minimum")
-  priceMaximum    Int @default(0) @map("price_maximum")
-  priceOriginal   Int @default(0) @map("price_original")
-  franchisePrice  Int @default(0) @map("franchise_price")
+  priceMsrp       Int  @default(0) @map("price_msrp")
+  priceMinimum    Int  @default(0) @map("price_minimum")
+  priceMaximum    Int  @default(0) @map("price_maximum")
+  priceOriginal   Int  @default(0) @map("price_original")
+  franchisePrice  Int  @default(0) @map("franchise_price")
   // Per-order commission for Fixed Amount / Order Wise referral commission
   // (doc §9.2). NULL = not set yet (shown as "—"), distinct from an actual ₹0.
   commissionPrice Int? @map("commission_price")
@@ -3136,6 +3138,12 @@ model ReferralDoctor {
   aadhaarNumber String?   @map("aadhaar_number")
   panNumber     String?   @map("pan_number")
 
+  // Practice/location details (captured on quick-add; Branch Admin fills the rest)
+  hospitalName String? @map("hospital_name")
+  city         String?
+  state        String?
+  pincode      String?
+
   // Professional details — classification links to active rows of the same tenant
   // (validated in ReferralDoctorService). category = Specialty, subCategory = Super
   // Specialty.
@@ -3460,6 +3468,11 @@ model InternalReferral {
   joiningDate  DateTime? @map("joining_date") @db.Date
   mobileNumber String?   @map("mobile_number")
   email        String?
+
+  // Location details (captured on quick-add; Branch Admin fills the rest)
+  city    String?
+  state   String?
+  pincode String?
 
   // Logical ref to a ReferralPanelSettings template in the tenant (validated in
   // InternalReferralService to belong to the caller's tenant).
@@ -3951,6 +3964,7 @@ model Patient {
   middleName   String?       @map("middle_name")
   lastName     String?       @map("last_name")
   gender       Gender?
+  bloodGroup   BloodGroup?   @map("blood_group")
   relationship Relationship?
   dateOfBirth  DateTime?     @map("date_of_birth") @db.Date
   age          Int?
@@ -3995,7 +4009,8 @@ model Patient {
   emergencyContactMobileNumber String? @map("emergency_contact_mobile_number")
 
   // ── Lifecycle ──
-  status PatientStatus @default(CREATED)
+  status   PatientStatus @default(CREATED)
+  isActive Boolean       @default(true) @map("is_active")
 
   // One-to-many: a patient can have multiple medical-history records.
   medicalHistories MedicalHistory[]
@@ -4012,6 +4027,7 @@ model Patient {
 
   @@index([tenantId])
   @@index([branchId])
+  @@index([isActive])
   @@index([deletedAt])
   @@map("patients")
 }
@@ -4094,6 +4110,16 @@ enum OrderStatus {
   ORDER
 }
 
+/// Lifecycle of a quotation (an order with `status = QUOTE`). `DRAFT` is an open
+/// quote; `CONVERTED` is stored when a quote becomes an order (no convert flow
+/// yet — reserved); `EXPIRED` is derived at query time when `quotationValidTill`
+/// has passed, and may also be stored explicitly.
+enum QuotationStatus {
+  DRAFT
+  CONVERTED
+  EXPIRED
+}
+
 /// Channel the order originated from.
 enum OrderType {
   WALK_IN
@@ -4166,6 +4192,11 @@ model Order {
   isBillGenerated Boolean     @default(false) @map("is_bill_generated")
   orderNotes      String?     @map("order_notes")
 
+  // Quotation lifecycle (only meaningful when status = QUOTE). EXPIRED is also
+  // derived at query time from quotationValidTill.
+  quotationStatus    QuotationStatus? @map("quotation_status")
+  quotationValidTill DateTime?        @map("quotation_valid_till") @db.Date
+
   // Patient (required) + appointment
   patientId     String    @map("patient_id")
   patient       Patient   @relation(fields: [patientId], references: [id])
@@ -4203,6 +4234,7 @@ model Order {
   @@index([branchId])
   @@index([patientId])
   @@index([status])
+  @@index([quotationStatus])
   @@index([referredByDoctorId])
   @@index([referralPanelId])
   @@index([internalReferralId])
@@ -4225,9 +4257,9 @@ model OrderItem {
   orderId String @map("order_id")
   order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
-  branchLabTestId String?         @map("branch_lab_test_id")
-  branchLabTest   BranchLabTest?  @relation(fields: [branchLabTestId], references: [id])
-  branchLabPanelId String?        @map("branch_lab_panel_id")
+  branchLabTestId  String?         @map("branch_lab_test_id")
+  branchLabTest    BranchLabTest?  @relation(fields: [branchLabTestId], references: [id])
+  branchLabPanelId String?         @map("branch_lab_panel_id")
   branchLabPanel   BranchLabPanel? @relation(fields: [branchLabPanelId], references: [id])
 
   /// Free-text catalogue entry passed directly from the frontend (mutually
@@ -4268,12 +4300,13 @@ model OrderDiagnostics {
   isHomeVisit             Boolean      @default(false) @map("is_home_visit")
   collectionAddress       String?      @map("collection_address")
 
-  phlebotomistId String?       @map("phlebotomist_id")
-  phlebotomist   Phlebotomist? @relation(fields: [phlebotomistId], references: [id])
+  phlebotomistId String? @map("phlebotomist_id")
+  phlebotomist   Person? @relation("OrderPhlebotomist", fields: [phlebotomistId], references: [id])
 
-  visitCharges Int       @default(0) @map("visit_charges")
-  collectionAt DateTime? @map("collection_at")
-  geoLocation  String?   @map("geo_location")
+  visitCharges  Int       @default(0) @map("visit_charges")
+  collectionAt  DateTime? @map("collection_at")
+  appointmentAt DateTime? @map("appointment_at")
+  geoLocation   String?   @map("geo_location")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -4309,6 +4342,7 @@ model OrderOpd {
   consultantType ConsultantType? @map("consultant_type")
   visitType      OpdVisitType?   @map("visit_type")
   consultationAt DateTime?       @map("consultation_at")
+  appointmentAt  DateTime?       @map("appointment_at")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -4323,9 +4357,9 @@ model OrderOpd {
   @@map("order_opd")
 }
 
-/// The Radiology section of an order (1:1). References the Radiologist master
-/// table, a department, and a radiology technician (a `Person`). Tenant-scoped +
-/// branch-level.
+/// The Radiology section of an order (1:1). References the radiologist (a staff
+/// `Person`), a department, and a radiology technician (a `Person`).
+/// Tenant-scoped + branch-level.
 model OrderRadiology {
   id       String  @id @default(uuid())
   tenantId String  @map("tenant_id")
@@ -4334,8 +4368,8 @@ model OrderRadiology {
   orderId String @unique @map("order_id")
   order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
-  radiologistId String      @map("radiologist_id")
-  radiologist   Radiologist @relation(fields: [radiologistId], references: [id])
+  radiologistId String @map("radiologist_id")
+  radiologist   Person @relation("OrderRadiologist", fields: [radiologistId], references: [id])
 
   radiologistDepartmentId String?     @map("radiologist_department_id")
   radiologistDepartment   Department? @relation(fields: [radiologistDepartmentId], references: [id])
@@ -4345,6 +4379,8 @@ model OrderRadiology {
 
   radiologyTechnicianId String? @map("radiology_technician_id")
   radiologyTechnician   Person? @relation("OrderRadiologyTechnician", fields: [radiologyTechnicianId], references: [id])
+
+  appointmentAt DateTime? @map("appointment_at")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -4360,55 +4396,24 @@ model OrderRadiology {
   @@map("order_radiology")
 }
 
-/// Radiologist master table. Tenant-scoped + branch-level (CLAUDE.md §4.5).
-model Radiologist {
-  id       String  @id @default(uuid())
-  tenantId String  @map("tenant_id")
-  branchId String? @map("branch_id")
+/// Per-branch customization of which fields show on the Create Order form.
+/// One config per branch (`config` is the `{ section: { field: boolean } }` map
+/// the frontend's "Customize Fields" drawer manages). Tenant-scoped + branch-level.
+model OrderFieldConfig {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
 
-  name          String
-  departmentId  String?     @map("department_id")
-  department    Department? @relation(fields: [departmentId], references: [id])
-  speciality    String?
-  qualification String?
-  licenseNumber String?     @map("license_number")
-  mobile        String?
-  email         String?
-
-  orderRadiologies OrderRadiology[]
+  config Json @default("{}")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
+  @@unique([tenantId, branchId])
   @@index([tenantId])
   @@index([branchId])
-  @@index([departmentId])
-  @@index([deletedAt])
-  @@map("radiologists")
-}
-
-/// Phlebotomist master table. Tenant-scoped + branch-level (CLAUDE.md §4.5).
-model Phlebotomist {
-  id       String  @id @default(uuid())
-  tenantId String  @map("tenant_id")
-  branchId String? @map("branch_id")
-
-  name        String
-  designation String?
-  mobile      String?
-  email       String?
-
-  orderDiagnostics OrderDiagnostics[]
-
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  deletedAt DateTime? @map("deleted_at")
-
-  @@index([tenantId])
-  @@index([branchId])
-  @@index([deletedAt])
-  @@map("phlebotomists")
+  @@map("order_field_configs")
 }
 
 /// A payment/ledger entry against an order (1:many). Amounts are integer minor

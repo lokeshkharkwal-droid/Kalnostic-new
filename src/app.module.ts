@@ -47,9 +47,9 @@ import { PaymentRulesModule } from './modules/payment-rules/payment-rules.module
 import { SupportInfoModule } from './modules/support-info/support-info.module';
 import { ContactUsModule } from './modules/contact-us/contact-us.module';
 import { PatientModule } from './modules/patient/patient.module';
-import { RadiologistModule } from './modules/radiologist/radiologist.module';
-import { PhlebotomistModule } from './modules/phlebotomist/phlebotomist.module';
 import { OrderModule } from './modules/order/order.module';
+import { PricingModule } from './modules/pricing/pricing.module';
+import { OrderFieldConfigModule } from './modules/order-field-config/order-field-config.module';
 import { PaymentDetailsModule } from './modules/payment-details/payment-details.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 
@@ -118,9 +118,9 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     SupportInfoModule,
     ContactUsModule,
     PatientModule,
-    RadiologistModule,
-    PhlebotomistModule,
     OrderModule,
+    PricingModule,
+    OrderFieldConfigModule,
     PaymentDetailsModule,
   ],
   providers: [

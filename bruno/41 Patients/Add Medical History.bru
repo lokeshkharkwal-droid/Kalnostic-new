@@ -1,7 +1,7 @@
 meta {
   name: Add Medical History
   type: http
-  seq: 5
+  seq: 6
 }
 
 post {
@@ -69,11 +69,11 @@ docs {
   Add a medical-history record to the patient in the URL (a patient can have many
   — one-to-many). The record inherits the patient's registration `branchId`.
   Captures `medicalHistoryId`.
-
+  
   ## Fields (all optional)
-
+  
   Every clinical flag is a boolean defaulting to `false`:
-
+  
   - Smoking/alcohol: `isCurrentSmoker`, `isFormerSmoker`, `isCurrentAlcoholic`,
     `isFormerAlcoholic`.
   - Symptoms: `hasCough`, `hasFever`, `hasShortnessOfBreath`, `hasChestPain`,
@@ -85,7 +85,7 @@ docs {
     `hasBloodThinners`, `hasVitaminSupplements`, plus `otherMedications` (string).
   - Allergies: `hasLatexAllergy`, `hasFoodAllergy`, `hasDrugAllergy`.
   - Additional: `surgicalHistory` (string), `remarks` (string).
-
+  
   `tenantId`/`branchId`/`patientId` are never accepted in the body. 404
   `PATIENT_NOT_FOUND` if the patient is missing/other tenant.
 }

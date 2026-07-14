@@ -3,6 +3,7 @@ import {
   BillingType,
   OrderStatus,
   OrderType,
+  QuotationStatus,
 } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
@@ -32,6 +33,16 @@ export class UpdateOrderDto {
   @IsOptional()
   @IsEnum(OrderStatus)
   status?: OrderStatus;
+
+  /** Quotation lifecycle (only meaningful when `status = QUOTE`). */
+  @IsOptional()
+  @IsEnum(QuotationStatus)
+  quotationStatus?: QuotationStatus;
+
+  /** Quotation validity date (ISO-8601 date); used to derive EXPIRED. */
+  @IsOptional()
+  @IsDateString()
+  quotationValidTill?: string;
 
   @IsOptional()
   @IsDateString()

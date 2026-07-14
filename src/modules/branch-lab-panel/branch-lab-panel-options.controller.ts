@@ -8,7 +8,8 @@ import { ActiveBranchRequiredException } from '../branch-lab-test/exceptions/bra
 
 /**
  * Branch Lab Panel **options** endpoint (`GET /branch-lab-panels/options`) — a
- * lightweight `{ id, name }` selector for the Create-Order lab-panel picker.
+ * lightweight `{ id, name, price, sampleType, isFasting }` selector for the
+ * Create-Order lab-panel picker.
  * Separate from the CRUD controller (mirrors the lab-panel module's split).
  * Business-authenticated; tenant from the JWT (`@CurrentTenant`) and the active
  * branch from the JWT profile (`@CurrentProfile`) — never the body (CLAUDE.md §4.7).
@@ -26,8 +27,9 @@ export class BranchLabPanelOptionsController {
   }
 
   /**
-   * Lightweight `{ id, name }` options for the searchable selector — the active
-   * branch's active default-variant panels, optionally filtered by `search`.
+   * Lightweight `{ id, name, price, sampleType, isFasting }` options for the
+   * searchable selector — the active branch's active default-variant panels,
+   * optionally filtered by `search`.
    */
   @Get('options')
   findOptions(

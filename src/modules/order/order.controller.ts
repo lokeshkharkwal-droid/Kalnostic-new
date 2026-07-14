@@ -43,10 +43,14 @@ export class OrderController {
     return this.orderService.create(tenantId, profile.branchId, dto);
   }
 
-  /** List orders (paginated, with search + filters). */
+  /** List orders (paginated, with search + filters). Scoped to the active branch. */
   @Get()
-  findAll(@CurrentTenant() tenantId: string, @Query() query: ListOrdersDto) {
-    return this.orderService.findAll(tenantId, query);
+  findAll(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: ListOrdersDto,
+  ) {
+    return this.orderService.findAll(tenantId, profile.branchId, query);
   }
 
   /** Fetch one order fully composed. */

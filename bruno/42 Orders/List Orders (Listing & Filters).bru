@@ -14,10 +14,18 @@ params:query {
   page: 1
   limit: 20
   ~search: ORD-00001
+  ~quoteId: ORD-00001
+  ~patientName: john
+  ~patientMobile: 98765
   ~status: ORDER
+  ~quotationStatus: DRAFT
   ~orderType: WALK_IN
   ~billingType: CASH_CLIENT
   ~patientId: {{patientId}}
+  ~referredByDoctorId: {{referralDoctorId}}
+  ~referralPanelId: {{referralPanelId}}
+  ~internalReferralId: {{internalReferralId}}
+  ~externalReferralId: {{externalReferralId}}
   ~branchId: {{branchId}}
   ~isBillGenerated: false
   ~dateFrom: 2026-07-01
@@ -29,20 +37,34 @@ auth:bearer {
 }
 
 docs {
-  Paginated list of orders in the caller's tenant, each with the patient ref and
-  an active-item count (`itemCount`). Pagination info lands in `meta`.
+  Paginated list of orders in the caller's tenant. Each row carries the patient
+  ref (with age/gender), the referral refs (doctor/panel/internal/external names),
+  the payment rollups (`grossAmount`/`discountAmount`/`netAmount`), the active-item
+  count (`itemCount`) and the `effectiveQuotationStatus` (stored `quotationStatus`
+  upgraded to `EXPIRED` when `quotationValidTill` has passed). Defaults branch
+  scope to the caller's active branch; an explicit `branchId` overrides it.
+  Pagination info lands in `meta`.
 
   ## Search
 
   - `search` — case-insensitive match on `orderCode`.
+  - `quoteId` — dedicated `orderCode` match; overrides `search`. Use with
+    `status=QUOTE` for the quotations screen.
 
   ## Filters (toggle the `~` to enable a query param)
 
   - `status` — `DRAFT` | `QUOTE` | `APPOINTMENT` | `ORDER`.
+  - `quotationStatus` — `DRAFT` | `CONVERTED` | `EXPIRED`. `EXPIRED` is derived
+    at query time (an open `DRAFT` whose `quotationValidTill` has passed counts as
+    expired and is excluded from `DRAFT`).
   - `orderType` — `WALK_IN` | `APP` | `WEBSITE`.
   - `billingType` — `CASH_CLIENT` | `INSURANCE` | `CORPORATE` |
     `GOVERNMENT_SCHEME` | `TPA`.
+  - `patientName` — case-insensitive match on the patient's first/middle/last name.
+  - `patientMobile` — case-insensitive match on the patient's mobile.
   - `patientId` / `branchId` — UUID filters.
+  - `referredByDoctorId` / `referralPanelId` / `internalReferralId` /
+    `externalReferralId` — referral UUID filters.
   - `isBillGenerated` — `true` | `false`.
   - `dateFrom` / `dateTo` — inclusive ISO-8601 date bounds on `orderDate`.
 }

@@ -1,7 +1,7 @@
 meta {
   name: Update Patient
   type: http
-  seq: 4
+  seq: 5
 }
 
 patch {
@@ -21,9 +21,11 @@ auth:bearer {
 body:json {
   {
     "city": "Mysuru",
+    "bloodGroup": "A_POS",
     "patientCategory": "VIP",
     "maritalStatus": "MARRIED",
     "status": "CREATED",
+    "isActive": false,
     "alternateMobileNumber": "+919822222222"
   }
 }
@@ -34,7 +36,7 @@ docs {
   This includes `status` (`DRAFT`/`CREATED`) — e.g. promote a `DRAFT` patient to
   `CREATED`. Medical-history records are managed via their own nested endpoints,
   NOT here.
-
+  
   `tenantId`/`branchId` are never accepted. A duplicate active `mobile` in the
   tenant → 409 `PATIENT_MOBILE_CONFLICT`. 404 `PATIENT_NOT_FOUND` if
   missing/other tenant.

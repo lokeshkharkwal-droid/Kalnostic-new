@@ -172,6 +172,22 @@ export class OrderExternalReferralNotFoundException extends KaltrosException {
 }
 
 /**
+ * 422 — the order is being saved as an APPOINTMENT but one or more filled
+ * sections are missing their appointment time. `sections` lists the offending
+ * section keys (diagnostics / opd / radiology).
+ */
+export class AppointmentTimeRequiredException extends KaltrosException {
+  constructor(sections: string[]) {
+    super(
+      'APPOINTMENT_TIME_REQUIRED',
+      'Appointment time is required for every filled section when creating an appointment',
+      { sections },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
  * 422 — a referenced person does not exist (or is inactive). Covers the
  * radiology technician (a `Person`). The `field` identifies which reference
  * failed.

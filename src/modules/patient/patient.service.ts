@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { MedicalHistory, Patient, Prisma } from '@prisma/client';
+import { Gender, MedicalHistory, Patient, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { CreatePatientDto } from './dto/create-patient.dto';
@@ -88,11 +88,13 @@ export class PatientService {
 
   /**
    * List patients in the tenant (paginated). Visible tenant-wide with optional
-   * `search` (name/mobile), `patientCategory`, `status`, and `branchId` filters.
+   * `search` (name/mobile), `patientCategory`, `status`, `isActive`, `gender`,
+   * `bloodGroup`, a registration-date range (on `createdAt`), and `branchId`.
    * @param tenantId tenant scope
    * @param page 1-based page number
    * @param limit page size
-   * @param filters optional search + category + status + branch filters
+   * @param filters optional search + category/status/isActive/gender/bloodGroup
+   *   + registration-date range + branch filters
    */
   async findAllForTenant(
     tenantId: string,
@@ -102,6 +104,11 @@ export class PatientService {
       search?: string;
       patientCategory?: Patient['patientCategory'];
       status?: Patient['status'];
+      isActive?: boolean;
+      gender?: Patient['gender'];
+      bloodGroup?: Patient['bloodGroup'];
+      dateFrom?: string;
+      dateTo?: string;
       branchId?: string;
     } = {},
   ): Promise<PaginatedResult<Patient>> {
@@ -112,8 +119,22 @@ export class PatientService {
     if (filters.status) {
       where.status = filters.status;
     }
+    if (filters.isActive !== undefined) {
+      where.isActive = filters.isActive;
+    }
+    if (filters.gender) {
+      where.gender = filters.gender;
+    }
+    if (filters.bloodGroup) {
+      where.bloodGroup = filters.bloodGroup;
+    }
     if (filters.branchId) {
       where.branchId = filters.branchId;
+    }
+    if (filters.dateFrom || filters.dateTo) {
+      where.createdAt = {};
+      if (filters.dateFrom) where.createdAt.gte = new Date(filters.dateFrom);
+      if (filters.dateTo) where.createdAt.lte = new Date(filters.dateTo);
     }
     const search = filters.search?.trim();
     if (search) {
@@ -132,6 +153,47 @@ export class PatientService {
     });
     const total = await this.prisma.patient.count({ where });
     return { data, total, page, limit };
+  }
+
+  /**
+   * Aggregate patient counts for the dashboard summary cards. Scoped to the
+   * caller's tenant (RLS + explicit `tenantId`) and, when provided, the active
+   * branch; excludes soft-deleted rows. "Active" means `isActive = true`.
+   * @param tenantId tenant scope (from the JWT)
+   * @param branchId optional active-branch scope (from the JWT profile)
+   * @returns totals: all / active / male / female patients
+   */
+  async getStats(
+    tenantId: string,
+    branchId?: string | null,
+  ): Promise<{
+    totalPatients: number;
+    totalActivePatients: number;
+    totalMalePatients: number;
+    totalFemalePatients: number;
+  }> {
+    const base: Prisma.PatientWhereInput = { tenantId, deletedAt: null };
+    if (branchId) base.branchId = branchId;
+
+    const [
+      totalPatients,
+      totalActivePatients,
+      totalMalePatients,
+      totalFemalePatients,
+    ] = await Promise.all([
+      this.prisma.patient.count({ where: base }),
+      this.prisma.patient.count({ where: { ...base, isActive: true } }),
+      this.prisma.patient.count({ where: { ...base, gender: Gender.MALE } }),
+      this.prisma.patient.count({
+        where: { ...base, gender: Gender.FEMALE },
+      }),
+    ]);
+    return {
+      totalPatients,
+      totalActivePatients,
+      totalMalePatients,
+      totalFemalePatients,
+    };
   }
 
   /**

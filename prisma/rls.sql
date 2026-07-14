@@ -1109,6 +1109,14 @@ CREATE POLICY order_radiology_tenant_isolation ON order_radiology
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── order_field_configs ─────────────────────────────────────────────────────────
+ALTER TABLE order_field_configs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE order_field_configs FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS order_field_configs_tenant_isolation ON order_field_configs;
+CREATE POLICY order_field_configs_tenant_isolation ON order_field_configs
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- ── radiologists ────────────────────────────────────────────────────────────────
 ALTER TABLE radiologists ENABLE ROW LEVEL SECURITY;
 ALTER TABLE radiologists FORCE ROW LEVEL SECURITY;

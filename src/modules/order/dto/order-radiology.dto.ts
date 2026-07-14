@@ -1,4 +1,4 @@
-import { IsOptional, IsUUID } from 'class-validator';
+import { IsDateString, IsOptional, IsUUID } from 'class-validator';
 
 /**
  * The Radiology section of an order. `radiologistId` is required and references
@@ -21,4 +21,10 @@ export class OrderRadiologyDto {
   @IsOptional()
   @IsUUID()
   radiologyTechnicianId?: string;
+
+  /** Appointment date & time for this section (ISO-8601). Required when the
+   * order is saved with status APPOINTMENT and this section is filled. */
+  @IsOptional()
+  @IsDateString()
+  appointmentAt?: string;
 }

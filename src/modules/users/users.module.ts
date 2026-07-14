@@ -6,6 +6,9 @@ import { AuthRoleModule } from '../auth-role/auth-role.module';
 import { UserManagementController } from './user-management.controller';
 import { SiteAdminRegisteredUsersController } from './siteadmin-registered-users.controller';
 import { RadiologyTechnicianOptionsController } from './radiology-technician-options.controller';
+import { RadiologistOptionsController } from './radiologist-options.controller';
+import { PhlebotomistOptionsController } from './phlebotomist-options.controller';
+import { BranchUserOptionsController } from './branch-user-options.controller';
 import { UsersService } from './users.service';
 
 /**
@@ -20,6 +23,9 @@ import { UsersService } from './users.service';
     UserManagementController,
     SiteAdminRegisteredUsersController,
     RadiologyTechnicianOptionsController,
+    RadiologistOptionsController,
+    PhlebotomistOptionsController,
+    BranchUserOptionsController,
   ],
   providers: [UsersService],
   exports: [UsersService],

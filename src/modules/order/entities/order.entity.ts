@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, QuotationStatus } from '@prisma/client';
 
 /**
  * Prisma `include` for a fully-composed order read: patient ref, the referral
@@ -32,7 +32,14 @@ export const ORDER_INCLUDE = {
   diagnostics: {
     include: {
       diagnosticPanel: { select: { id: true, panelName: true } },
-      phlebotomist: true,
+      phlebotomist: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          designation: true,
+        },
+      },
     },
   },
   opd: {
@@ -44,7 +51,15 @@ export const ORDER_INCLUDE = {
   },
   radiology: {
     include: {
-      radiologist: true,
+      radiologist: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          designation: true,
+          qualification: true,
+        },
+      },
       radiologistDepartment: { select: { id: true, name: true } },
       radiologistCategory: { select: { id: true, name: true } },
       radiologyTechnician: {
@@ -66,16 +81,47 @@ export type OrderWithRelations = Prisma.OrderGetPayload<{
   include: typeof ORDER_INCLUDE;
 }>;
 
-/** Lighter `include` for listing rows: just the patient ref. */
+/**
+ * `include` for listing rows: patient ref (with age/gender for display), the
+ * referral refs (name only), and the active payment ledger (amount fields only)
+ * so the row can carry gross/discount/net rollups — everything the quotation and
+ * order lists render without a second fetch.
+ */
 export const ORDER_LIST_INCLUDE = {
   patient: {
-    select: { id: true, firstName: true, lastName: true, mobile: true },
+    select: {
+      id: true,
+      firstName: true,
+      middleName: true,
+      lastName: true,
+      mobile: true,
+      gender: true,
+      age: true,
+      dateOfBirth: true,
+    },
+  },
+  referredByDoctor: { select: { id: true, firstName: true, lastName: true } },
+  referralPanel: { select: { id: true, name: true, code: true } },
+  internalReferral: { select: { id: true, fullName: true } },
+  externalReferral: { select: { id: true, name: true } },
+  payments: {
+    where: { deletedAt: null },
+    select: { totalAmount: true, orderDiscount: true, netAmount: true },
   },
 } satisfies Prisma.OrderInclude;
 
-/** One order row for the listing endpoint: the order + patient ref + item count. */
+/**
+ * One order row for the listing endpoint: the order + refs + item count, plus
+ * the payment rollups (`grossAmount`/`discountAmount`/`netAmount`) and the
+ * `effectiveQuotationStatus` (stored `quotationStatus` upgraded to EXPIRED when
+ * `quotationValidTill` has passed).
+ */
 export type OrderListRow = Prisma.OrderGetPayload<{
   include: typeof ORDER_LIST_INCLUDE;
 }> & {
   itemCount: number;
+  grossAmount: number;
+  discountAmount: number;
+  netAmount: number;
+  effectiveQuotationStatus: QuotationStatus | null;
 };

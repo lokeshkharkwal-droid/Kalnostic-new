@@ -21,10 +21,13 @@ auth:bearer {
 }
 
 docs {
-  Lightweight `{ id, name }` options for the Create-Order lab-panel picker. Returns
-  the active branch's **active default-variant** lab panels only (one orderable row
-  per variant group), so a selected id is directly usable as an order item's
-  `branchLabPanelId`. Scoped to the JWT tenant + active branch (no `branchId` in the
-  query). `search` matches panelName (case-insensitive). Omit `page` for the full
-  array; supply `page` for a `{ data, total, page, limit }` envelope.
+  Lightweight `{ id, name, price, sampleType, isFasting }` options for the
+  Create-Order lab-panel picker. Returns the active branch's **active default-variant**
+  lab panels only (one orderable row per variant group), so a selected id is directly
+  usable as an order item's `branchLabPanelId`; `price` is the list price (`priceMsrp`,
+  minor units), `sampleType` is always `null` (a panel has no single specimen) and
+  `isFasting` reflects the panel's `isFastingRequired`. Scoped to the JWT tenant +
+  active branch (no `branchId` in the query). `search` matches panelName
+  (case-insensitive). Omit `page` for the full array; supply `page` for a
+  `{ data, total, page, limit }` envelope.
 }

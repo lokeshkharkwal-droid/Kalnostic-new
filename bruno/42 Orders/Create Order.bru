@@ -27,6 +27,8 @@ body:json {
     "isUrgentBill": false,
     "isBillGenerated": false,
     "orderNotes": "Fasting sample; collect in the morning",
+    "quotationStatus": "DRAFT",
+    "quotationValidTill": "2026-07-23",
     "patientId": "{{patientId}}",
     "appointmentAt": "2026-07-10T09:30:00.000Z",
     "referredByDoctorId": "{{referralDoctorId}}",
@@ -57,6 +59,7 @@ body:json {
       "phlebotomistId": "{{phlebotomistId}}",
       "visitCharges": 200,
       "collectionAt": "2026-07-10T08:00:00.000Z",
+      "appointmentAt": "2026-07-10T09:00:00.000Z",
       "geoLocation": "12.9716,77.5946"
     },
     "opd": {
@@ -65,13 +68,15 @@ body:json {
       "doctorId": "{{consultantDoctorId}}",
       "consultantType": "INITIAL",
       "visitType": "WALK_IN",
-      "consultationAt": "2026-07-10T10:00:00.000Z"
+      "consultationAt": "2026-07-10T10:00:00.000Z",
+      "appointmentAt": "2026-07-10T10:30:00.000Z"
     },
     "radiology": {
       "radiologistId": "{{radiologistId}}",
       "radiologistDepartmentId": "{{departmentId}}",
       "radiologistCategoryId": "{{categoryId}}",
-      "radiologyTechnicianId": "{{radiologyTechnicianPersonId}}"
+      "radiologyTechnicianId": "{{radiologyTechnicianPersonId}}",
+      "appointmentAt": "2026-07-10T11:00:00.000Z"
     },
     "payments": [
       {
@@ -128,6 +133,13 @@ docs {
     `ORDER_PATIENT_NOT_FOUND` otherwise). `appointmentAt` — ISO date-time.
   - `orderCode` is system-generated (`ORD-00001`…) — never sent in the body.
 
+  ## Quotation (only meaningful when `status = QUOTE`)
+
+  - `quotationStatus` — `DRAFT` | `CONVERTED` | `EXPIRED`. Optional; defaults to
+    `DRAFT` when the order is created with `status = QUOTE` and none is supplied.
+  - `quotationValidTill` — ISO-8601 date. Used to derive `EXPIRED` at listing
+    time (an open `DRAFT` past this date lists as `EXPIRED`).
+
   ## Referral & B2B (all optional)
 
   - `referredByDoctorId` → a `ReferralDoctor` in the tenant (422
@@ -149,7 +161,12 @@ docs {
   is a free-text catalogue entry passed straight from the frontend (no ref check).
   
   ## Sections (all optional)
-  
+
+  Each section carries its own `appointmentAt` (ISO date-time). When the order is
+  saved with `status = APPOINTMENT`, **every filled section must include its
+  `appointmentAt`** (422 `APPOINTMENT_TIME_REQUIRED`, listing the offending
+  sections, otherwise). Sections not present in the body are not required.
+
   - `diagnostics` — `diagnosticPanelId` → LabPanel; `phlebotomistId` →
     Phlebotomist; `sampleSource` `IN_HOUSE`|`SUPPLIED`; charges are integer minor units.
   - `opd` — `doctorId` (required) must be a CONSULTANT doctor (422

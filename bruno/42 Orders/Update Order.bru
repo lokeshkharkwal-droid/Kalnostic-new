@@ -20,7 +20,9 @@ auth:bearer {
 
 body:json {
   {
-    "status": "APPOINTMENT",
+    "status": "QUOTE",
+    "quotationStatus": "DRAFT",
+    "quotationValidTill": "2026-07-25",
     "isBillGenerated": true,
     "orderNotes": "Rescheduled collection",
     "items": [
@@ -50,5 +52,7 @@ docs {
   422 `ORDER_DEPARTMENT_NOT_FOUND` / `ORDER_CATEGORY_NOT_FOUND` on a bad ref);
   the `radiology` section carries optional `radiologistDepartmentId` and
   `radiologistCategoryId`.
+  `quotationStatus` (`DRAFT`/`CONVERTED`/`EXPIRED`) and `quotationValidTill`
+  (ISO date) are patchable for quotes; omit them to leave existing values intact.
   `patientId` is not editable; payments are managed via the Order Payments folder.
 }

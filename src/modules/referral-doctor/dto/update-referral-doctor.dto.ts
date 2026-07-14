@@ -87,6 +87,27 @@ export class UpdateReferralDoctorDto {
   @MaxLength(20)
   panNumber?: string;
 
+  // ── Practice/location details ──
+  @IsString()
+  @IsOptional()
+  @MaxLength(255)
+  hospitalName?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(255)
+  city?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(255)
+  state?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(20)
+  pincode?: string;
+
   // ── Professional details ──
   @IsUUID()
   @IsOptional()

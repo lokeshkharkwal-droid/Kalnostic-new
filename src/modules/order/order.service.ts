@@ -1,9 +1,13 @@
 import { Injectable } from '@nestjs/common';
-import { DoctorType, Order, OrderStatus, Prisma } from '@prisma/client';
+import {
+  DoctorType,
+  Order,
+  OrderStatus,
+  Prisma,
+  QuotationStatus,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
-import { RadiologistService } from '../radiologist/radiologist.service';
-import { PhlebotomistService } from '../phlebotomist/phlebotomist.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { ListOrdersDto } from './dto/list-orders.dto';
@@ -18,6 +22,7 @@ import {
   OrderWithRelations,
 } from './entities/order.entity';
 import {
+  AppointmentTimeRequiredException,
   InvalidOrderItemException,
   OrderBranchLabPanelNotFoundException,
   OrderBranchLabTestNotFoundException,
@@ -41,16 +46,13 @@ import {
  * against the caller's tenant, then builds the whole order graph (order + items
  * + optional sections + payments) in one `withTenant` transaction, generating a
  * per-tenant sequential `orderCode` (`ORD-00001`…) from `Tenant.orderCounter`.
- * Prisma-direct; master-table references are validated via injected services
- * (rule #3). Reads always filter `{ tenantId, deletedAt: null }`.
+ * Prisma-direct; every foreign reference is validated against the tenant. The
+ * radiologist/phlebotomist references are staff `Person`s (validated as active
+ * persons). Reads always filter `{ tenantId, deletedAt: null }`.
  */
 @Injectable()
 export class OrderService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly radiologistService: RadiologistService,
-    private readonly phlebotomistService: PhlebotomistService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   /**
    * Create an order with everything the frontend submits (items, sections,
@@ -80,6 +82,7 @@ export class OrderService {
     if (dto.radiology) {
       await this.assertRadiology(tenantId, dto.radiology);
     }
+    this.assertAppointmentTimes(dto.status, dto);
 
     let createdId: string;
     try {
@@ -102,6 +105,12 @@ export class OrderService {
             isUrgentBill: dto.isUrgentBill ?? false,
             isBillGenerated: dto.isBillGenerated ?? false,
             orderNotes: dto.orderNotes ?? null,
+            quotationStatus:
+              dto.quotationStatus ??
+              (dto.status === OrderStatus.QUOTE ? QuotationStatus.DRAFT : null),
+            quotationValidTill: dto.quotationValidTill
+              ? new Date(dto.quotationValidTill)
+              : null,
             patientId: dto.patientId,
             appointmentAt: dto.appointmentAt
               ? new Date(dto.appointmentAt)
@@ -189,29 +198,55 @@ export class OrderService {
   }
 
   /**
-   * List orders in the caller's tenant (offset pagination) with the patient ref
-   * and active-item count. Supports search (`orderCode`), status/type/billing
-   * filters, patient/branch filters, `isBillGenerated`, and an `orderDate` range.
-   * @param tenantId tenant scope
+   * List orders in the caller's tenant (offset pagination) with the patient ref,
+   * referral refs, payment rollups (gross/discount/net) and active-item count.
+   * Supports `search`/`quoteId` (`orderCode`), status/type/billing filters,
+   * patient id/name/mobile filters, the four referral filters, `isBillGenerated`,
+   * an `orderDate` range, and a `quotationStatus` filter (EXPIRED derived from
+   * `quotationValidTill`). Defaults branch scope to the caller's active branch;
+   * an explicit `query.branchId` overrides it (SiteAdmin/cross-branch tooling).
+   * @param tenantId tenant scope (from JWT)
+   * @param activeBranchId active branch (from JWT profile; may be null)
    * @param query search + filters + pagination
    */
   async findAll(
     tenantId: string,
+    activeBranchId: string | null,
     query: ListOrdersDto,
   ): Promise<PaginatedResult<OrderListRow>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
 
     const where: Prisma.OrderWhereInput = { tenantId, deletedAt: null };
+
+    // Branch scope: explicit query.branchId wins; otherwise default to the
+    // active branch (null active branch = tenant-wide for tenant-level profiles).
+    const branchId = query.branchId ?? activeBranchId;
+    if (branchId) where.branchId = branchId;
+
+    // Quote ID takes precedence over the generic search on orderCode.
+    const quoteId = query.quoteId?.trim();
     const search = query.search?.trim();
-    if (search) {
+    if (quoteId) {
+      where.orderCode = { contains: quoteId, mode: 'insensitive' };
+    } else if (search) {
       where.orderCode = { contains: search, mode: 'insensitive' };
     }
+
     if (query.status) where.status = query.status;
     if (query.orderType) where.orderType = query.orderType;
     if (query.billingType) where.billingType = query.billingType;
     if (query.patientId) where.patientId = query.patientId;
-    if (query.branchId) where.branchId = query.branchId;
+    if (query.referredByDoctorId) {
+      where.referredByDoctorId = query.referredByDoctorId;
+    }
+    if (query.referralPanelId) where.referralPanelId = query.referralPanelId;
+    if (query.internalReferralId) {
+      where.internalReferralId = query.internalReferralId;
+    }
+    if (query.externalReferralId) {
+      where.externalReferralId = query.externalReferralId;
+    }
     if (query.isBillGenerated !== undefined) {
       where.isBillGenerated = query.isBillGenerated;
     }
@@ -219,6 +254,60 @@ export class OrderService {
       where.orderDate = {};
       if (query.dateFrom) where.orderDate.gte = new Date(query.dateFrom);
       if (query.dateTo) where.orderDate.lte = new Date(query.dateTo);
+    }
+
+    // Patient name / mobile via the to-one patient relation filter.
+    const patientName = query.patientName?.trim();
+    const patientMobile = query.patientMobile?.trim();
+    if (patientName || patientMobile) {
+      const patientWhere: Prisma.PatientWhereInput = {};
+      if (patientName) {
+        patientWhere.OR = [
+          { firstName: { contains: patientName, mode: 'insensitive' } },
+          { middleName: { contains: patientName, mode: 'insensitive' } },
+          { lastName: { contains: patientName, mode: 'insensitive' } },
+        ];
+      }
+      if (patientMobile) {
+        patientWhere.mobile = { contains: patientMobile, mode: 'insensitive' };
+      }
+      where.patient = { is: patientWhere };
+    }
+
+    // Quotation status filter (EXPIRED derived from quotationValidTill).
+    const now = new Date();
+    if (query.quotationStatus) {
+      switch (query.quotationStatus) {
+        case QuotationStatus.CONVERTED:
+          where.quotationStatus = QuotationStatus.CONVERTED;
+          break;
+        case QuotationStatus.EXPIRED:
+          // Stored EXPIRED, or an open DRAFT whose validity has passed.
+          where.AND = [
+            {
+              OR: [
+                { quotationStatus: QuotationStatus.EXPIRED },
+                {
+                  quotationStatus: QuotationStatus.DRAFT,
+                  quotationValidTill: { lt: now },
+                },
+              ],
+            },
+          ];
+          break;
+        case QuotationStatus.DRAFT:
+          // DRAFT that has NOT expired (no validity, or validity still in future).
+          where.quotationStatus = QuotationStatus.DRAFT;
+          where.AND = [
+            {
+              OR: [
+                { quotationValidTill: null },
+                { quotationValidTill: { gte: now } },
+              ],
+            },
+          ];
+          break;
+      }
     }
 
     const [rows, total] = await Promise.all([
@@ -236,10 +325,28 @@ export class OrderService {
       tenantId,
       rows.map((r) => r.id),
     );
-    const data: OrderListRow[] = rows.map((r) => ({
-      ...r,
-      itemCount: counts.get(r.id) ?? 0,
-    }));
+    const data: OrderListRow[] = rows.map((r) => {
+      const grossAmount = r.payments.reduce((s, p) => s + p.totalAmount, 0);
+      const discountAmount = r.payments.reduce(
+        (s, p) => s + p.orderDiscount,
+        0,
+      );
+      const netAmount = r.payments.reduce((s, p) => s + p.netAmount, 0);
+      const effectiveQuotationStatus =
+        r.quotationStatus === QuotationStatus.DRAFT &&
+        r.quotationValidTill != null &&
+        r.quotationValidTill < now
+          ? QuotationStatus.EXPIRED
+          : r.quotationStatus;
+      return {
+        ...r,
+        itemCount: counts.get(r.id) ?? 0,
+        grossAmount,
+        discountAmount,
+        netAmount,
+        effectiveQuotationStatus,
+      };
+    });
     return { data, total, page, limit };
   }
 
@@ -269,6 +376,7 @@ export class OrderService {
     if (dto.radiology) {
       await this.assertRadiology(tenantId, dto.radiology);
     }
+    this.assertAppointmentTimes(dto.status, dto);
 
     const now = new Date();
     // Branch of the existing order (sections/items inherit it).
@@ -289,6 +397,10 @@ export class OrderService {
           isUrgentBill: dto.isUrgentBill,
           isBillGenerated: dto.isBillGenerated,
           orderNotes: dto.orderNotes,
+          quotationStatus: dto.quotationStatus,
+          quotationValidTill: dto.quotationValidTill
+            ? new Date(dto.quotationValidTill)
+            : undefined,
           appointmentAt: dto.appointmentAt
             ? new Date(dto.appointmentAt)
             : undefined,
@@ -588,7 +700,7 @@ export class OrderService {
       }
     }
     if (d.phlebotomistId) {
-      await this.phlebotomistService.assertExists(d.phlebotomistId, tenantId);
+      await this.assertPerson('phlebotomistId', d.phlebotomistId);
     }
   }
 
@@ -618,13 +730,14 @@ export class OrderService {
   }
 
   /**
-   * Validate the radiology section's master-table + department/category refs.
+   * Validate the radiology section's radiologist (a staff `Person`) +
+   * department/category refs.
    */
   private async assertRadiology(
     tenantId: string,
     r: OrderRadiologyDto,
   ): Promise<void> {
-    await this.radiologistService.assertExists(r.radiologistId, tenantId);
+    await this.assertPerson('radiologistId', r.radiologistId);
     if (r.radiologistDepartmentId) {
       await this.assertDepartment(tenantId, r.radiologistDepartmentId);
     }
@@ -667,6 +780,38 @@ export class OrderService {
   // ── Section data builders ─────────────────────────────────────────────────────
 
   /** Build the create-data for the diagnostics section. */
+  /**
+   * When an order is saved with status APPOINTMENT, every section that is
+   * present in the payload must carry its own `appointmentAt`. Sections that
+   * are not filled are ignored.
+   * @throws AppointmentTimeRequiredException listing the offending sections
+   */
+  private assertAppointmentTimes(
+    status: OrderStatus | undefined,
+    dto: {
+      diagnostics?: OrderDiagnosticsDto;
+      opd?: OrderOpdDto;
+      radiology?: OrderRadiologyDto;
+    },
+  ): void {
+    if (status !== OrderStatus.APPOINTMENT) {
+      return;
+    }
+    const missing: string[] = [];
+    if (dto.diagnostics && !dto.diagnostics.appointmentAt) {
+      missing.push('diagnostics');
+    }
+    if (dto.opd && !dto.opd.appointmentAt) {
+      missing.push('opd');
+    }
+    if (dto.radiology && !dto.radiology.appointmentAt) {
+      missing.push('radiology');
+    }
+    if (missing.length) {
+      throw new AppointmentTimeRequiredException(missing);
+    }
+  }
+
   private diagnosticsData(
     d: OrderDiagnosticsDto,
     tenantId: string,
@@ -688,6 +833,7 @@ export class OrderService {
       phlebotomistId: d.phlebotomistId ?? null,
       visitCharges: d.visitCharges ?? undefined,
       collectionAt: d.collectionAt ? new Date(d.collectionAt) : null,
+      appointmentAt: d.appointmentAt ? new Date(d.appointmentAt) : null,
       geoLocation: d.geoLocation ?? null,
     };
   }
@@ -709,6 +855,7 @@ export class OrderService {
       consultantType: opd.consultantType ?? null,
       visitType: opd.visitType ?? null,
       consultationAt: opd.consultationAt ? new Date(opd.consultationAt) : null,
+      appointmentAt: opd.appointmentAt ? new Date(opd.appointmentAt) : null,
     };
   }
 
@@ -727,6 +874,7 @@ export class OrderService {
       radiologistDepartmentId: r.radiologistDepartmentId ?? null,
       radiologistCategoryId: r.radiologistCategoryId ?? null,
       radiologyTechnicianId: r.radiologyTechnicianId ?? null,
+      appointmentAt: r.appointmentAt ? new Date(r.appointmentAt) : null,
     };
   }
 

@@ -65,12 +65,12 @@ export class CreateReferralPanelDto {
 
   /**
    * Ref to a ReferralPanelSettings template in the tenant (validated in the
-   * service). Required — a panel cannot be created without a billing/credit
-   * settings template linked (doc §5.1: "the relevant Referral Panel
-   * Settings template... must exist" before a panel can be created).
+   * service). Optional — a quick in-flow panel add (Create Order) can be created
+   * without a billing/credit settings template; the Branch Admin links one later.
    */
   @IsUUID()
-  referralPanelSettingsId: string;
+  @IsOptional()
+  referralPanelSettingsId?: string;
 
   @IsBoolean()
   @IsOptional()

@@ -14,6 +14,7 @@ params:query {
   page: 1
   limit: 10
   ~search: labcorp
+  ~branchId: {{branchId}}
 }
 
 auth:bearer {
@@ -23,6 +24,7 @@ auth:bearer {
 docs {
   Lightweight `{ id, name }` options for the External Referral selector. Tenant-scoped,
   non-deleted external referrals ordered by name; `name` is the external referral name.
-  `search` matches the name (case-insensitive). Omit `page` for the full array; supply
+  `search` matches the name (case-insensitive). `branchId` restricts to a single branch
+  (strict — records with no branch are excluded). Omit `page` for the full array; supply
   `page` for a `{ data, total, page, limit }` envelope.
 }

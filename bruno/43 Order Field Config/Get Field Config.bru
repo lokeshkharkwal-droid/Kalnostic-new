@@ -1,0 +1,29 @@
+meta {
+  name: Get Field Config
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/order-field-config
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Fetch the active branch's Create-Order field configuration (the "Customize
+  Fields" visibility map). Tenant comes from the JWT, branch from the active
+  profile. Returns `null` in `data` when the branch has not saved a config yet
+  (the frontend falls back to its defaults). Requires an active branch (422
+  `ORDER_FIELD_CONFIG_BRANCH_REQUIRED` for a tenant-level profile).
+}

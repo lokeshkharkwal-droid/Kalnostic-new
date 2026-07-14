@@ -4,6 +4,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   AuthRole,
   Branch,
+  Gender,
   Person,
   Prisma,
   StaffStatus,
@@ -21,6 +22,7 @@ import { EncryptionService } from '../security/encryption.service';
 import { BranchService } from '../branch/branch.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import {
+  isProfileValidForBranch,
   PROFILE_BRANCH_MATRIX,
   PROFILE_LABELS,
   ProfileKey,
@@ -38,6 +40,7 @@ import {
 } from '../permissions/constants/system-modules.constant';
 import { BRANCH_MODULES } from '../branch-catalogue/constants/branch-modules.constant';
 import { BranchAssignmentItemDto, CreateUserDto } from './dto/create-user.dto';
+import { CreateQuickStaffDto } from './dto/create-quick-staff.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateBranchAssignmentDto } from './dto/update-branch-assignment.dto';
 import { UpdateBranchPermissionsDto } from './dto/update-branch-permissions.dto';
@@ -70,6 +73,22 @@ const MIN_USER_AGE = 18;
  * technician role in PROFILE_REGISTRY.
  */
 const RADIOLOGY_TECHNICIAN_ROLE_KEYS: string[] = ['radiology_assistant'];
+
+/**
+ * Profile/role keys (AuthRole.key) that identify a **radiologist** for the
+ * Create-Order Radiology section's Radiologist picker. A radiologist is now a
+ * staff Person holding this role at a branch (the old Radiologist master table
+ * was deprecated).
+ */
+const RADIOLOGIST_ROLE_KEYS: string[] = ['radiologist'];
+
+/**
+ * Profile/role keys (AuthRole.key) that identify a **phlebotomist** for the
+ * Create-Order Diagnostics section's Phlebotomist picker. A phlebotomist is now
+ * a staff Person holding this role at a branch (the old Phlebotomist master
+ * table was deprecated).
+ */
+const PHLEBOTOMIST_ROLE_KEYS: string[] = ['phlebotomist'];
 
 /** A validated, normalised branch assignment (internal to UsersService). */
 interface PreparedAssignment {
@@ -310,6 +329,118 @@ export class UsersService {
     | Array<{ id: string; name: string }>
     | PaginatedResult<{ id: string; name: string }>
   > {
+    return this.findStaffOptionsByRole(
+      tenantId,
+      branchId,
+      RADIOLOGY_TECHNICIAN_ROLE_KEYS,
+      filters,
+    );
+  }
+
+  /**
+   * Lightweight `{ id, name }` options for the Create-Order **Radiologist**
+   * picker — the active branch's staff holding the `radiologist` role. The
+   * returned id is a `personId`, directly usable as an order's
+   * `radiology.radiologistId`.
+   * @param tenantId tenant scope (from JWT)
+   * @param branchId active branch (from JWT profile)
+   * @param filters optional search + offset pagination
+   * @returns full `{ id, name }[]` when `page` is omitted, else a paginated envelope
+   */
+  async findRadiologistOptions(
+    tenantId: string,
+    branchId: string,
+    filters: { search?: string; page?: number; limit?: number } = {},
+  ): Promise<
+    | Array<{ id: string; name: string }>
+    | PaginatedResult<{ id: string; name: string }>
+  > {
+    return this.findStaffOptionsByRole(
+      tenantId,
+      branchId,
+      RADIOLOGIST_ROLE_KEYS,
+      filters,
+    );
+  }
+
+  /**
+   * Lightweight `{ id, name }` options for the Create-Order **Phlebotomist**
+   * picker — the active branch's staff holding the `phlebotomist` role. The
+   * returned id is a `personId`, directly usable as an order's
+   * `diagnostics.phlebotomistId`.
+   * @param tenantId tenant scope (from JWT)
+   * @param branchId active branch (from JWT profile)
+   * @param filters optional search + offset pagination
+   * @returns full `{ id, name }[]` when `page` is omitted, else a paginated envelope
+   */
+  async findPhlebotomistOptions(
+    tenantId: string,
+    branchId: string,
+    filters: { search?: string; page?: number; limit?: number } = {},
+  ): Promise<
+    | Array<{ id: string; name: string }>
+    | PaginatedResult<{ id: string; name: string }>
+  > {
+    return this.findStaffOptionsByRole(
+      tenantId,
+      branchId,
+      PHLEBOTOMIST_ROLE_KEYS,
+      filters,
+    );
+  }
+
+  /**
+   * Assert that `personId` is an active Person holding one of `roleKeys` at the
+   * given branch (a valid staff pick for an order section). Used by OrderService
+   * to validate radiologist/phlebotomist references now that they are Persons.
+   * @param tenantId tenant scope
+   * @param branchId branch the role must be held at (null → tenant-level only)
+   * @param personId the candidate person id
+   * @param roleKeys acceptable AuthRole keys
+   * @throws PersonNotFoundException if no active matching profile exists
+   */
+  async assertBranchRole(
+    tenantId: string,
+    branchId: string | null,
+    personId: string,
+    roleKeys: string[],
+  ): Promise<void> {
+    const profile = await this.prisma.userBranchProfile.findFirst({
+      where: {
+        tenantId,
+        branchId,
+        personId,
+        deletedAt: null,
+        branchStatus: StaffStatus.ACTIVE,
+        authRole: { key: { in: roleKeys } },
+      },
+      select: { id: true },
+    });
+    if (!profile) {
+      throw new PersonNotFoundException(personId);
+    }
+  }
+
+  /**
+   * Shared resolver for the branch-staff-by-role option pickers. Resolves in two
+   * steps (there is no Person relation on `user_branch_profiles`): the branch's
+   * active personIds holding one of `roleKeys`, then the active Persons, with a
+   * case-insensitive name `search`.
+   * @param tenantId tenant scope (from JWT)
+   * @param branchId active branch (from JWT profile)
+   * @param roleKeys AuthRole keys that qualify
+   * @param filters optional search + offset pagination
+   * @returns full `{ id, name }[]` when `page` is omitted, else a paginated envelope
+   */
+  private async findStaffOptionsByRole(
+    tenantId: string,
+    branchId: string,
+    roleKeys: string[],
+    filters: { search?: string; page?: number; limit?: number } = {},
+  ): Promise<
+    | Array<{ id: string; name: string }>
+    | PaginatedResult<{ id: string; name: string }>
+  > {
     const limit = filters.limit ?? 20;
     const profiles = await this.prisma.userBranchProfile.findMany({
       where: {
@@ -317,7 +448,94 @@ export class UsersService {
         branchId,
         deletedAt: null,
         branchStatus: StaffStatus.ACTIVE,
-        authRole: { key: { in: RADIOLOGY_TECHNICIAN_ROLE_KEYS } },
+        authRole: { key: { in: roleKeys } },
+      },
+      select: { personId: true },
+      distinct: ['personId'],
+    });
+    const personIds = profiles.map((p) => p.personId);
+    if (personIds.length === 0) {
+      return filters.page === undefined
+        ? []
+        : { data: [], total: 0, page: filters.page, limit };
+    }
+
+    const where: Prisma.PersonWhereInput = {
+      id: { in: personIds },
+      deletedAt: null,
+      isActive: true,
+    };
+    const term = filters.search?.trim();
+    if (term) {
+      where.OR = [
+        { firstName: { contains: term, mode: 'insensitive' } },
+        { lastName: { contains: term, mode: 'insensitive' } },
+      ];
+    }
+
+    const select = { id: true, firstName: true, lastName: true } as const;
+    const orderBy = { firstName: 'asc' } as const;
+    const toOption = (r: {
+      id: string;
+      firstName: string;
+      lastName: string | null;
+    }) => ({
+      id: r.id,
+      name: [r.firstName, r.lastName].filter(Boolean).join(' '),
+    });
+
+    if (filters.page === undefined) {
+      const rows = await this.prisma.person.findMany({
+        where,
+        select,
+        orderBy,
+      });
+      return rows.map(toOption);
+    }
+
+    const page = filters.page;
+    const [rows, total] = await Promise.all([
+      this.prisma.person.findMany({
+        where,
+        select,
+        orderBy,
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.person.count({ where }),
+    ]);
+    return { data: rows.map(toOption), total, page, limit };
+  }
+
+  /**
+   * Lightweight `{ id, name }` options listing **every active user** at the active
+   * branch, regardless of role — used by the Create-Order Radiology section's
+   * Technician picker (which must offer all branch staff, not only radiology
+   * technicians). Like {@link findRadiologyTechnicianOptions} but without the
+   * role filter: any Person holding an active `user_branch_profiles` row at the
+   * branch qualifies. Resolves in two steps (there is no Person relation on
+   * `user_branch_profiles`): the branch's active personIds, then the active
+   * Persons, with a case-insensitive name `search`.
+   * @param tenantId tenant scope (from JWT)
+   * @param branchId active branch (from JWT profile)
+   * @param filters optional search + offset pagination
+   * @returns full `{ id, name }[]` when `page` is omitted, else a paginated envelope
+   */
+  async findActiveBranchUserOptions(
+    tenantId: string,
+    branchId: string,
+    filters: { search?: string; page?: number; limit?: number } = {},
+  ): Promise<
+    | Array<{ id: string; name: string }>
+    | PaginatedResult<{ id: string; name: string }>
+  > {
+    const limit = filters.limit ?? 20;
+    const profiles = await this.prisma.userBranchProfile.findMany({
+      where: {
+        tenantId,
+        branchId,
+        deletedAt: null,
+        branchStatus: StaffStatus.ACTIVE,
       },
       select: { personId: true },
       distinct: ['personId'],
@@ -577,6 +795,152 @@ export class UsersService {
       userCode: result.userCode,
       loginIdentifier: dto.mobileNumber,
     };
+  }
+
+  /**
+   * Quick staff-add for the Create-Order page's Radiologist/Phlebotomist "+"
+   * buttons. Creates a real staff Person with auto-generated login credentials
+   * (system username + temp password) and a single UserBranchProfile at the
+   * **active branch** (from the JWT — never the body) holding `dto.role` with
+   * `enabledModules`. Only the in-flow fields are captured; the rest of the staff
+   * profile is completed later by the Branch Admin. The returned `id` is the
+   * `personId`, directly usable as an order's `radiologistId` / `phlebotomistId`.
+   * @param tenantId tenant scope (from JWT)
+   * @param branchId active branch (from JWT profile); required
+   * @param dto the quick-add fields
+   * @param createdBy actor person id (for the assignment trail)
+   * @returns `{ id, name }` of the created staff person
+   * @throws ProfileInvalidForBranchException if the role is tenant-level or not
+   *   valid for the active branch's type
+   * @throws InvalidModuleKeyException if a supplied module key is unknown
+   */
+  async createQuickStaff(
+    tenantId: string,
+    branchId: string,
+    dto: CreateQuickStaffDto,
+    createdBy: string,
+  ): Promise<{ id: string; name: string }> {
+    // Resolve the role (throws if unknown) and validate it against the branch.
+    const role = await this.authRoleService.resolveByKey(tenantId, dto.role);
+    const branch = await this.branchService.findById(branchId, tenantId);
+    if (
+      role.isSystem &&
+      !isProfileValidForBranch(role.key as ProfileKey, branch.branchType)
+    ) {
+      throw new ProfileInvalidForBranchException(role.key, branch.branchType);
+    }
+
+    // Resolve enabled modules: caller override, else a per-role default.
+    const enabledModules = (dto.modules ?? this.defaultQuickModules(dto.role))
+      .map((m) => m.trim())
+      .filter((m) => m.length > 0);
+    for (const key of enabledModules) {
+      if (!isValidModuleKey(key)) {
+        throw new InvalidModuleKeyException(key);
+      }
+    }
+
+    await this.assertContactUnique(dto.mobileNumber, dto.email);
+
+    const [firstName, ...rest] = dto.name.trim().split(/\s+/);
+    const lastName = rest.length > 0 ? rest.join(' ') : null;
+    const username = await this.usernameService.generate();
+    const passwordHash = await this.passwordService.hash(
+      this.passwordService.generateTempPassword(),
+    );
+    const platformMrn = this.generatePlatformMrn();
+
+    const person = await this.prisma.withTenant(tenantId, async (tx) => {
+      const tenant = await tx.tenant.update({
+        where: { id: tenantId },
+        data: { staffCounter: { increment: 1 } },
+        select: { staffCounter: true },
+      });
+      const userCode = `USR-${String(tenant.staffCounter).padStart(5, '0')}`;
+
+      const created = await tx.person.create({
+        data: {
+          platformMrn,
+          firstName: firstName ?? dto.name.trim(),
+          lastName,
+          dateOfBirth: new Date('1990-01-01'),
+          gender: Gender.PREFER_NOT_TO_SAY,
+          phone: dto.mobileNumber ?? null,
+          email: dto.email ?? null,
+          nationality: 'Indian',
+          ownerTenantId: tenantId,
+          isPatient: false,
+          isStaff: true,
+          isActive: true,
+        },
+      });
+
+      await tx.personCredentials.create({
+        data: {
+          personId: created.id,
+          phone: dto.mobileNumber ?? null,
+          email: dto.email ?? null,
+          systemUsername: username,
+          isSystemGeneratedUsername: true,
+          passwordHash,
+          isTempPassword: true,
+        },
+      });
+
+      await tx.tenantStaffMembership.create({
+        data: {
+          tenantId,
+          personId: created.id,
+          userCode,
+          userType: UserType.INTERNAL,
+          authRoleId: role.id,
+          status: StaffStatus.ACTIVE,
+        },
+      });
+
+      await tx.userBranchProfile.create({
+        data: {
+          tenantId,
+          personId: created.id,
+          branchId,
+          authRoleId: role.id,
+          branchStatus: StaffStatus.ACTIVE,
+          enabledModules,
+          isDefault: true,
+          isActive: true,
+          assignedAt: new Date(),
+          assignedBy: createdBy,
+        },
+      });
+
+      return created;
+    });
+
+    await this.eventEmitter.emitAsync('users.user.created', {
+      personId: person.id,
+      tenantId,
+      createdBy,
+    });
+
+    return {
+      id: person.id,
+      name: [person.firstName, person.lastName].filter(Boolean).join(' '),
+    };
+  }
+
+  /**
+   * Per-role default `enabledModules` for the quick staff-add flow.
+   * @param roleKey the staff role key
+   */
+  private defaultQuickModules(roleKey: string): string[] {
+    switch (roleKey) {
+      case 'phlebotomist':
+        return ['phlebotomist', 'registration', 'accession'];
+      case 'radiologist':
+        return ['radiology'];
+      default:
+        return [];
+    }
   }
 
   /**

@@ -1,7 +1,7 @@
 meta {
   name: Get Medical History
   type: http
-  seq: 7
+  seq: 8
 }
 
 get {
@@ -18,6 +18,6 @@ docs {
   Fetch one medical-history record for the patient (scoped to the caller's
   tenant). 404 `MEDICAL_HISTORY_NOT_FOUND` if missing, soft-deleted, or not owned
   by this patient/tenant.
-
+  
   Uses `patientId` + `medicalHistoryId` captured by the list/create requests.
 }

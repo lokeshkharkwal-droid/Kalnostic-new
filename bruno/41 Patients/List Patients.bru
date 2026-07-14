@@ -16,6 +16,11 @@ params:query {
   ~search: john
   ~patientCategory: GENERAL
   ~status: CREATED
+  ~isActive: true
+  ~gender: MALE
+  ~bloodGroup: O_POS
+  ~dateFrom: 2026-07-01
+  ~dateTo: 2026-07-31
   ~branchId: 00000000-0000-0000-0000-000000000000
 }
 
@@ -40,6 +45,12 @@ docs {
   - `patientCategory` — one of `GENERAL`, `VIP`, `SENIOR_CITIZEN`, `PEDIATRIC`,
     `EMPLOYEE`.
   - `status` — lifecycle stage; one of `DRAFT`, `CREATED`.
+  - `isActive` — `true` (Active) | `false` (Inactive).
+  - `gender` — one of `MALE`, `FEMALE`, `OTHER`, `PREFER_NOT_TO_SAY`.
+  - `bloodGroup` — one of `A_POS`, `A_NEG`, `B_POS`, `B_NEG`, `O_POS`, `O_NEG`,
+    `AB_POS`, `AB_NEG`, `UNKNOWN`.
+  - `dateFrom` / `dateTo` — inclusive ISO-8601 bounds on the registration date
+    (`createdAt`).
   - `branchId` — only patients registered at that branch (UUID). Read filter
     only; tenant scoping + RLS already guard cross-tenant access.
 }

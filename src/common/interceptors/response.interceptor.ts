@@ -74,7 +74,11 @@ export class ResponseInterceptor implements NestInterceptor {
       };
     }
 
-    return { success: true, data: this.decimalsToNumbers(payload), meta: { timestamp } };
+    return {
+      success: true,
+      data: this.decimalsToNumbers(payload),
+      meta: { timestamp },
+    };
   }
 
   /**
@@ -91,11 +95,19 @@ export class ResponseInterceptor implements NestInterceptor {
       return value.toNumber() as unknown as T;
     }
     if (Array.isArray(value)) {
-      return value.map((v) => this.decimalsToNumbers(v)) as unknown as T;
+      return (value as unknown[]).map((v) =>
+        this.decimalsToNumbers(v),
+      ) as unknown as T;
     }
-    if (value !== null && typeof value === 'object' && !(value instanceof Date)) {
+    if (
+      value !== null &&
+      typeof value === 'object' &&
+      !(value instanceof Date)
+    ) {
       const out: Record<string, unknown> = {};
-      for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+      for (const [key, val] of Object.entries(
+        value as Record<string, unknown>,
+      )) {
         out[key] = this.decimalsToNumbers(val);
       }
       return out as unknown as T;

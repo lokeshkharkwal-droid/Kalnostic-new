@@ -24,6 +24,15 @@ import {
   BranchLabPanelWithTests,
 } from './entities/branch-lab-panel.entity';
 
+/** A Create-Order lab-panel option row (Diagnostic Items table). */
+export interface BranchLabPanelOption {
+  id: string;
+  name: string;
+  price: number;
+  sampleType: string | null;
+  isFasting: boolean;
+}
+
 /** A resolved panel member: the source test id + its ordering/removable flags. */
 interface MemberPlan {
   sourceTestId: string;
@@ -336,22 +345,25 @@ export class BranchLabPanelService {
   }
 
   /**
-   * Lightweight `{ id, name }` options for the Create-Order lab-panel selector.
-   * Returns the branch's **active default-variant** rows only (one orderable row
-   * per variant group), so a selected id is directly usable as an order item's
-   * `branchLabPanelId`. Supports a case-insensitive `search` on panelName.
+   * Lightweight `{ id, name, price, sampleType, isFasting }` options for the
+   * Create-Order lab-panel selector. Returns the branch's **active default-variant**
+   * rows only (one orderable row per variant group), so a selected id is directly
+   * usable as an order item's `branchLabPanelId`. `price` is the list price
+   * (`priceMsrp`, minor units); a panel has no single specimen so `sampleType` is
+   * always `null`, and `isFasting` reflects the panel's `isFastingRequired`. Both
+   * feed the form's Diagnostic Items table. Supports a case-insensitive `search`
+   * on panelName.
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT profile)
    * @param filters optional search + offset pagination
-   * @returns full `{ id, name }[]` when `page` is omitted, else a paginated envelope
+   * @returns full option array when `page` is omitted, else a paginated envelope
    */
   async findOptions(
     tenantId: string,
     branchId: string,
     filters: { search?: string; page?: number; limit?: number } = {},
   ): Promise<
-    | Array<{ id: string; name: string }>
-    | PaginatedResult<{ id: string; name: string }>
+    Array<BranchLabPanelOption> | PaginatedResult<BranchLabPanelOption>
   > {
     const where: Prisma.BranchLabPanelWhereInput = {
       tenantId,
@@ -365,11 +377,24 @@ export class BranchLabPanelService {
       where.panelName = { contains: term, mode: 'insensitive' };
     }
 
-    const select = { id: true, panelName: true } as const;
+    const select = {
+      id: true,
+      panelName: true,
+      priceMsrp: true,
+      isFastingRequired: true,
+    } as const;
     const orderBy = { panelName: 'asc' } as const;
-    const toOption = (r: { id: string; panelName: string }) => ({
+    const toOption = (r: {
+      id: string;
+      panelName: string;
+      priceMsrp: number;
+      isFastingRequired: boolean;
+    }): BranchLabPanelOption => ({
       id: r.id,
       name: r.panelName,
+      price: r.priceMsrp,
+      sampleType: null,
+      isFasting: r.isFastingRequired,
     });
 
     if (filters.page === undefined) {

@@ -1,0 +1,53 @@
+meta {
+  name: Save Field Config
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{baseUrl}}/order-field-config
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "config": {
+      "Diagnostics": {
+        "Sample Source": true,
+        "Home Visit": false,
+        "Appointment Time": true
+      },
+      "OPD": {
+        "Doctor Name": true,
+        "Appointment Time": true
+      },
+      "Radiology": {
+        "Radiologist Name": true,
+        "Appointment Time": true
+      }
+    }
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Create or replace the active branch's Create-Order field configuration
+  (branch-specific; one config per branch). `config` is a free-form
+  `{ section: { field: boolean } }` visibility map — a `false` value hides that
+  field on the Create Order form. Tenant/branch are server-owned (from the JWT).
+  Upserts on `(tenantId, branchId)`.
+}

@@ -15,6 +15,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { UsersService } from './users.service';
 import { CreateUserDto, AssignBranchesDto } from './dto/create-user.dto';
+import { CreateQuickStaffDto } from './dto/create-quick-staff.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateBranchAssignmentDto } from './dto/update-branch-assignment.dto';
 import { UpdateBranchPermissionsDto } from './dto/update-branch-permissions.dto';
@@ -30,6 +31,9 @@ import { PERMISSION_CATALOG_BY_MODULE } from '../permissions/constants/module-pe
 import { ALLOWED_PHOTO_MIME_TYPES } from '../../common/constants/validation-patterns.constant';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
+import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
+import { ActiveBranchRequiredException } from '../branch-lab-test/exceptions/branch-lab-test.exceptions';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /** 2 MB — the v2.0 profile-photo size cap. */
@@ -57,6 +61,34 @@ export class UserManagementController {
     @Body() dto: CreateUserDto,
   ) {
     return this.usersService.createUser(tenantId, dto, actorId);
+  }
+
+  /**
+   * Quick staff-add (Create-Order Radiologist/Phlebotomist "+"). Creates a staff
+   * Person assigned to the **active branch** (from the JWT) with the chosen role
+   * and modules; returns `{ id, name }` (id = personId).
+   */
+  @Post('quick-staff')
+  @Audit({
+    module: AuditModule.USER,
+    action: AuditAction.CREATE,
+    description: 'Quick-added a staff user from Create Order',
+  })
+  createQuickStaff(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') actorId: string,
+    @Body() dto: CreateQuickStaffDto,
+  ) {
+    if (!profile.branchId) {
+      throw new ActiveBranchRequiredException();
+    }
+    return this.usersService.createQuickStaff(
+      tenantId,
+      profile.branchId,
+      dto,
+      actorId,
+    );
   }
 
   /** List staff users (paginated, filterable, sortable). */
