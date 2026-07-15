@@ -1,10 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import {
+  AppointmentType,
   DoctorType,
   Order,
   OrderStatus,
   Prisma,
   QuotationStatus,
+  SampleSource,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
@@ -22,8 +24,9 @@ import {
   OrderWithRelations,
 } from './entities/order.entity';
 import {
-  AppointmentTimeRequiredException,
+  DiagnosticAppointmentRequiredException,
   InvalidOrderItemException,
+  OrderItemNotFoundException,
   OrderBranchLabPanelNotFoundException,
   OrderBranchLabTestNotFoundException,
   OrderCodeConflictException,
@@ -82,7 +85,22 @@ export class OrderService {
     if (dto.radiology) {
       await this.assertRadiology(tenantId, dto.radiology);
     }
-    this.assertAppointmentTimes(dto.status, dto);
+    this.assertDiagnosticAppointment(dto.status, dto);
+
+    // Appointments are created only for the Diagnostic section: when saving as
+    // APPOINTMENT, the order's appointment is the Diagnostic appointment and the
+    // type is DIAGNOSTIC (asserted above). Otherwise fall back to any explicit
+    // top-level appointmentAt and leave the type unset.
+    const appointmentAt =
+      dto.status === OrderStatus.APPOINTMENT && dto.diagnostics?.appointmentAt
+        ? new Date(dto.diagnostics.appointmentAt)
+        : dto.appointmentAt
+          ? new Date(dto.appointmentAt)
+          : null;
+    const appointmentType =
+      dto.status === OrderStatus.APPOINTMENT
+        ? AppointmentType.DIAGNOSTIC
+        : null;
 
     let createdId: string;
     try {
@@ -112,9 +130,8 @@ export class OrderService {
               ? new Date(dto.quotationValidTill)
               : null,
             patientId: dto.patientId,
-            appointmentAt: dto.appointmentAt
-              ? new Date(dto.appointmentAt)
-              : null,
+            appointmentAt,
+            appointmentType,
             referredByDoctorId: dto.referredByDoctorId ?? null,
             referralPanelId: dto.referralPanelId ?? null,
             b2bClient: dto.b2bClient ?? null,
@@ -200,10 +217,13 @@ export class OrderService {
   /**
    * List orders in the caller's tenant (offset pagination) with the patient ref,
    * referral refs, payment rollups (gross/discount/net) and active-item count.
-   * Supports `search`/`quoteId` (`orderCode`), status/type/billing filters,
-   * patient id/name/mobile filters, the four referral filters, `isBillGenerated`,
-   * an `orderDate` range, and a `quotationStatus` filter (EXPIRED derived from
-   * `quotationValidTill`). Defaults branch scope to the caller's active branch;
+   * Supports `search` (order code OR patient name/mobile/UMID)/`quoteId`
+   * (`orderCode`), status/type/billing filters, patient id/name/mobile filters,
+   * the four referral filters, `isBillGenerated`, an `orderDate` range, a
+   * `quotationStatus` filter (EXPIRED derived from `quotationValidTill`), a
+   * `section` scope, department/lab-test/lab-panel item filters, a derived
+   * `sampleStatus` (PENDING/PARTIAL/COLLECTED), and the diagnostics flags
+   * `isHomeVisit`/`isOutsource`/`isUrgent`. Defaults branch scope to the active branch;
    * an explicit `query.branchId` overrides it (SiteAdmin/cross-branch tooling).
    * @param tenantId tenant scope (from JWT)
    * @param activeBranchId active branch (from JWT profile; may be null)
@@ -218,19 +238,38 @@ export class OrderService {
     const limit = query.limit ?? 20;
 
     const where: Prisma.OrderWhereInput = { tenantId, deletedAt: null };
+    // Extra clauses are pushed here so independent filters compose (never
+    // clobber each other by re-assigning `where.AND`).
+    const and: Prisma.OrderWhereInput[] = [];
 
     // Branch scope: explicit query.branchId wins; otherwise default to the
     // active branch (null active branch = tenant-wide for tenant-level profiles).
     const branchId = query.branchId ?? activeBranchId;
     if (branchId) where.branchId = branchId;
 
-    // Quote ID takes precedence over the generic search on orderCode.
+    // Quote ID takes precedence over the generic search. A bare `search`
+    // matches the order code OR any of the patient's name / mobile / UMID.
     const quoteId = query.quoteId?.trim();
     const search = query.search?.trim();
     if (quoteId) {
       where.orderCode = { contains: quoteId, mode: 'insensitive' };
     } else if (search) {
-      where.orderCode = { contains: search, mode: 'insensitive' };
+      where.OR = [
+        { orderCode: { contains: search, mode: 'insensitive' } },
+        {
+          patient: {
+            is: {
+              OR: [
+                { firstName: { contains: search, mode: 'insensitive' } },
+                { middleName: { contains: search, mode: 'insensitive' } },
+                { lastName: { contains: search, mode: 'insensitive' } },
+                { mobile: { contains: search, mode: 'insensitive' } },
+                { umId: { contains: search, mode: 'insensitive' } },
+              ],
+            },
+          },
+        },
+      ];
     }
 
     if (query.status) where.status = query.status;
@@ -250,10 +289,88 @@ export class OrderService {
     if (query.isBillGenerated !== undefined) {
       where.isBillGenerated = query.isBillGenerated;
     }
+    if (query.isUrgent !== undefined) where.isUrgentBill = query.isUrgent;
     if (query.dateFrom || query.dateTo) {
       where.orderDate = {};
       if (query.dateFrom) where.orderDate.gte = new Date(query.dateFrom);
       if (query.dateTo) where.orderDate.lte = new Date(query.dateTo);
+    }
+
+    // Section scope + diagnostics-only flags collapse into one relation filter
+    // on the diagnostics section (so an order without a diagnostics row is
+    // excluded when any of these is set).
+    const diagnosticsWhere: Prisma.OrderDiagnosticsWhereInput = {};
+    let hasDiagnosticsFilter = query.section === 'DIAGNOSTICS';
+    if (query.isHomeVisit !== undefined) {
+      diagnosticsWhere.isHomeVisit = query.isHomeVisit;
+      hasDiagnosticsFilter = true;
+    }
+    if (query.isOutsource !== undefined) {
+      diagnosticsWhere.sampleSource = query.isOutsource
+        ? SampleSource.SUPPLIED
+        : SampleSource.IN_HOUSE;
+      hasDiagnosticsFilter = true;
+    }
+    if (hasDiagnosticsFilter) where.diagnostics = { is: diagnosticsWhere };
+    if (query.section === 'OPD') where.opd = { is: {} };
+    if (query.section === 'RADIOLOGY') where.radiology = { is: {} };
+
+    // Item-relation filters (department / test / panel / sample status) are
+    // pushed as separate AND clauses so several can co-exist without a single
+    // `items` key overwriting the others.
+    if (query.departmentId) {
+      and.push({
+        items: {
+          some: {
+            deletedAt: null,
+            OR: [
+              { branchLabTest: { is: { departmentId: query.departmentId } } },
+              { branchLabPanel: { is: { departmentId: query.departmentId } } },
+            ],
+          },
+        },
+      });
+    }
+    if (query.branchLabTestId) {
+      and.push({
+        items: {
+          some: { deletedAt: null, branchLabTestId: query.branchLabTestId },
+        },
+      });
+    }
+    if (query.branchLabPanelId) {
+      and.push({
+        items: {
+          some: { deletedAt: null, branchLabPanelId: query.branchLabPanelId },
+        },
+      });
+    }
+    if (query.sampleStatus) {
+      switch (query.sampleStatus) {
+        case 'PENDING':
+          // Has items, none collected.
+          and.push({ items: { some: { deletedAt: null } } });
+          and.push({
+            items: { none: { deletedAt: null, collectedAt: { not: null } } },
+          });
+          break;
+        case 'COLLECTED':
+          // Has items, none still uncollected.
+          and.push({ items: { some: { deletedAt: null } } });
+          and.push({
+            items: { none: { deletedAt: null, collectedAt: null } },
+          });
+          break;
+        case 'PARTIAL':
+          // At least one collected and at least one still uncollected.
+          and.push({
+            items: { some: { deletedAt: null, collectedAt: { not: null } } },
+          });
+          and.push({
+            items: { some: { deletedAt: null, collectedAt: null } },
+          });
+          break;
+      }
     }
 
     // Patient name / mobile via the to-one patient relation filter.
@@ -283,32 +400,30 @@ export class OrderService {
           break;
         case QuotationStatus.EXPIRED:
           // Stored EXPIRED, or an open DRAFT whose validity has passed.
-          where.AND = [
-            {
-              OR: [
-                { quotationStatus: QuotationStatus.EXPIRED },
-                {
-                  quotationStatus: QuotationStatus.DRAFT,
-                  quotationValidTill: { lt: now },
-                },
-              ],
-            },
-          ];
+          and.push({
+            OR: [
+              { quotationStatus: QuotationStatus.EXPIRED },
+              {
+                quotationStatus: QuotationStatus.DRAFT,
+                quotationValidTill: { lt: now },
+              },
+            ],
+          });
           break;
         case QuotationStatus.DRAFT:
           // DRAFT that has NOT expired (no validity, or validity still in future).
           where.quotationStatus = QuotationStatus.DRAFT;
-          where.AND = [
-            {
-              OR: [
-                { quotationValidTill: null },
-                { quotationValidTill: { gte: now } },
-              ],
-            },
-          ];
+          and.push({
+            OR: [
+              { quotationValidTill: null },
+              { quotationValidTill: { gte: now } },
+            ],
+          });
           break;
       }
     }
+
+    if (and.length) where.AND = and;
 
     const [rows, total] = await Promise.all([
       this.prisma.order.findMany({
@@ -332,6 +447,8 @@ export class OrderService {
         0,
       );
       const netAmount = r.payments.reduce((s, p) => s + p.netAmount, 0);
+      const paidAmount = r.payments.reduce((s, p) => s + p.paidAmount, 0);
+      const count = counts.get(r.id);
       const effectiveQuotationStatus =
         r.quotationStatus === QuotationStatus.DRAFT &&
         r.quotationValidTill != null &&
@@ -340,10 +457,12 @@ export class OrderService {
           : r.quotationStatus;
       return {
         ...r,
-        itemCount: counts.get(r.id) ?? 0,
+        itemCount: count?.total ?? 0,
+        collectedItemCount: count?.collected ?? 0,
         grossAmount,
         discountAmount,
         netAmount,
+        paidAmount,
         effectiveQuotationStatus,
       };
     });
@@ -376,7 +495,7 @@ export class OrderService {
     if (dto.radiology) {
       await this.assertRadiology(tenantId, dto.radiology);
     }
-    this.assertAppointmentTimes(dto.status, dto);
+    this.assertDiagnosticAppointment(dto.status, dto);
 
     const now = new Date();
     // Branch of the existing order (sections/items inherit it).
@@ -401,9 +520,22 @@ export class OrderService {
           quotationValidTill: dto.quotationValidTill
             ? new Date(dto.quotationValidTill)
             : undefined,
-          appointmentAt: dto.appointmentAt
-            ? new Date(dto.appointmentAt)
-            : undefined,
+          // Derive the appointment from the Diagnostic section when saving as
+          // APPOINTMENT; clear the type when the status is explicitly changed to
+          // something else; leave both untouched when status isn't in the patch.
+          appointmentAt:
+            dto.status === OrderStatus.APPOINTMENT &&
+            dto.diagnostics?.appointmentAt
+              ? new Date(dto.diagnostics.appointmentAt)
+              : dto.appointmentAt
+                ? new Date(dto.appointmentAt)
+                : undefined,
+          appointmentType:
+            dto.status === undefined
+              ? undefined
+              : dto.status === OrderStatus.APPOINTMENT
+                ? AppointmentType.DIAGNOSTIC
+                : null,
           referredByDoctorId: dto.referredByDoctorId,
           referralPanelId: dto.referralPanelId,
           b2bClient: dto.b2bClient,
@@ -463,6 +595,42 @@ export class OrderService {
     });
 
     return this.findById(id, tenantId);
+  }
+
+  /**
+   * Mark an order item's sample as collected. Idempotent — if the item is
+   * already collected the original `collectedAt`/`collectedBy` are preserved.
+   * Both the order and the item are validated against the caller's tenant first.
+   * @param orderId order the item belongs to
+   * @param itemId order item id
+   * @param tenantId tenant scope (from JWT)
+   * @param actorId acting person id (recorded as `collectedBy`), may be null
+   * @returns the fully-composed order after the update
+   * @throws OrderNotFoundException / OrderItemNotFoundException
+   */
+  async collectItem(
+    orderId: string,
+    itemId: string,
+    tenantId: string,
+    actorId: string | null,
+  ): Promise<OrderWithRelations> {
+    await this.findById(orderId, tenantId);
+    const item = await this.prisma.orderItem.findFirst({
+      where: { id: itemId, orderId, tenantId, deletedAt: null },
+      select: { id: true, collectedAt: true },
+    });
+    if (!item) {
+      throw new OrderItemNotFoundException(orderId, itemId);
+    }
+    if (!item.collectedAt) {
+      await this.prisma.withTenant(tenantId, async (tx) => {
+        await tx.orderItem.update({
+          where: { id: itemId },
+          data: { collectedAt: new Date(), collectedBy: actorId },
+        });
+      });
+    }
+    return this.findById(orderId, tenantId);
   }
 
   /**
@@ -779,36 +947,24 @@ export class OrderService {
 
   // ── Section data builders ─────────────────────────────────────────────────────
 
-  /** Build the create-data for the diagnostics section. */
   /**
-   * When an order is saved with status APPOINTMENT, every section that is
-   * present in the payload must carry its own `appointmentAt`. Sections that
-   * are not filled are ignored.
-   * @throws AppointmentTimeRequiredException listing the offending sections
+   * When an order is saved with status APPOINTMENT, an appointment is created
+   * only for the Diagnostic section: the Diagnostic section must be present and
+   * carry an `appointmentAt`. OPD/Radiology appointment input is ignored for now
+   * (they still save as ordinary sections). The order's top-level `appointmentAt`
+   * + `appointmentType` are derived from the Diagnostic section by the caller.
+   * @throws DiagnosticAppointmentRequiredException when the Diagnostic section is
+   *   missing or has no appointment time
    */
-  private assertAppointmentTimes(
+  private assertDiagnosticAppointment(
     status: OrderStatus | undefined,
-    dto: {
-      diagnostics?: OrderDiagnosticsDto;
-      opd?: OrderOpdDto;
-      radiology?: OrderRadiologyDto;
-    },
+    dto: { diagnostics?: OrderDiagnosticsDto },
   ): void {
     if (status !== OrderStatus.APPOINTMENT) {
       return;
     }
-    const missing: string[] = [];
-    if (dto.diagnostics && !dto.diagnostics.appointmentAt) {
-      missing.push('diagnostics');
-    }
-    if (dto.opd && !dto.opd.appointmentAt) {
-      missing.push('opd');
-    }
-    if (dto.radiology && !dto.radiology.appointmentAt) {
-      missing.push('radiology');
-    }
-    if (missing.length) {
-      throw new AppointmentTimeRequiredException(missing);
+    if (!dto.diagnostics || !dto.diagnostics.appointmentAt) {
+      throw new DiagnosticAppointmentRequiredException();
     }
   }
 
@@ -892,18 +1048,34 @@ export class OrderService {
   private async countItemsByOrder(
     tenantId: string,
     ids: string[],
-  ): Promise<Map<string, number>> {
-    const map = new Map<string, number>();
+  ): Promise<Map<string, { total: number; collected: number }>> {
+    const map = new Map<string, { total: number; collected: number }>();
     if (!ids.length) {
       return map;
     }
-    const grouped = await this.prisma.orderItem.groupBy({
-      by: ['orderId'],
-      where: { orderId: { in: ids }, tenantId, deletedAt: null },
-      _count: { _all: true },
-    });
+    const [grouped, collectedGrouped] = await Promise.all([
+      this.prisma.orderItem.groupBy({
+        by: ['orderId'],
+        where: { orderId: { in: ids }, tenantId, deletedAt: null },
+        _count: { _all: true },
+      }),
+      this.prisma.orderItem.groupBy({
+        by: ['orderId'],
+        where: {
+          orderId: { in: ids },
+          tenantId,
+          deletedAt: null,
+          collectedAt: { not: null },
+        },
+        _count: { _all: true },
+      }),
+    ]);
     for (const g of grouped) {
-      map.set(g.orderId, g._count._all);
+      map.set(g.orderId, { total: g._count._all, collected: 0 });
+    }
+    for (const g of collectedGrouped) {
+      const entry = map.get(g.orderId);
+      if (entry) entry.collected = g._count._all;
     }
     return map;
   }

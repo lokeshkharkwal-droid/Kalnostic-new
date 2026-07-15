@@ -1070,6 +1070,9 @@ model Branch {
   // Doctors scoped to this branch (managed via DoctorsService).
   doctors Doctor[]
 
+  // Orders placed at this branch (back-reference for Order.branch).
+  orders Order[]
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -4170,6 +4173,15 @@ enum B2bClientType {
   WALLET
 }
 
+/// Which service section an order-level appointment was created for. Currently
+/// only DIAGNOSTIC is produced by the create/appointment flow; OPD/RADIOLOGY are
+/// reserved for when their appointment flows are implemented.
+enum AppointmentType {
+  DIAGNOSTIC
+  OPD
+  RADIOLOGY
+}
+
 /// The central order record a lab/clinic creates for a patient. Tenant-scoped
 /// (RLS) + branch-level (CLAUDE.md §4.5). Carries basic billing info plus up to
 /// three optional 1:1 service sections (diagnostics / OPD / radiology), a set of
@@ -4181,6 +4193,7 @@ model Order {
   id       String  @id @default(uuid())
   tenantId String  @map("tenant_id")
   branchId String? @map("branch_id")
+  branch   Branch? @relation(fields: [branchId], references: [id])
 
   // Identity & basic info
   orderCode       String      @map("order_code")
@@ -4197,10 +4210,13 @@ model Order {
   quotationStatus    QuotationStatus? @map("quotation_status")
   quotationValidTill DateTime?        @map("quotation_valid_till") @db.Date
 
-  // Patient (required) + appointment
-  patientId     String    @map("patient_id")
-  patient       Patient   @relation(fields: [patientId], references: [id])
-  appointmentAt DateTime? @map("appointment_at")
+  // Patient (required) + appointment. `appointmentType` is server-derived when an
+  // order is saved with status = APPOINTMENT (see OrderService); currently always
+  // DIAGNOSTIC as appointments are only created from the Diagnostic section.
+  patientId       String           @map("patient_id")
+  patient         Patient          @relation(fields: [patientId], references: [id])
+  appointmentAt   DateTime?        @map("appointment_at")
+  appointmentType AppointmentType? @map("appointment_type")
 
   // Referral & B2B billing (all optional)
   referredByDoctorId String?         @map("referred_by_doctor_id")
@@ -4265,6 +4281,11 @@ model OrderItem {
   /// Free-text catalogue entry passed directly from the frontend (mutually
   /// exclusive with the test/panel refs).
   direct String?
+
+  /// Sample collection tracking. `collectedAt` NULL = not collected yet; once set
+  /// the sample is considered collected (`collectedBy` records the acting person).
+  collectedAt DateTime? @map("collected_at")
+  collectedBy String?   @map("collected_by")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")

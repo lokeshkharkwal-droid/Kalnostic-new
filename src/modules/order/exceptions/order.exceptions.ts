@@ -172,17 +172,29 @@ export class OrderExternalReferralNotFoundException extends KaltrosException {
 }
 
 /**
- * 422 — the order is being saved as an APPOINTMENT but one or more filled
- * sections are missing their appointment time. `sections` lists the offending
- * section keys (diagnostics / opd / radiology).
+ * 422 — the order is being saved as an APPOINTMENT but the Diagnostic section is
+ * missing (or has no appointment time). Appointments are only created for the
+ * Diagnostic section; OPD/Radiology appointment input is ignored for now.
  */
-export class AppointmentTimeRequiredException extends KaltrosException {
-  constructor(sections: string[]) {
+export class DiagnosticAppointmentRequiredException extends KaltrosException {
+  constructor() {
     super(
-      'APPOINTMENT_TIME_REQUIRED',
-      'Appointment time is required for every filled section when creating an appointment',
-      { sections },
+      'DIAGNOSTIC_APPOINTMENT_REQUIRED',
+      'Appointments can only be created for Diagnostic orders with an appointment date and time',
+      {},
       HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/** 404 — the order item does not exist on this order within the tenant. */
+export class OrderItemNotFoundException extends KaltrosException {
+  constructor(orderId: string, itemId: string) {
+    super(
+      'ORDER_ITEM_NOT_FOUND',
+      'Order item not found',
+      { orderId, itemId },
+      HttpStatus.NOT_FOUND,
     );
   }
 }

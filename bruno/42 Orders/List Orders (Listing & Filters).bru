@@ -30,6 +30,14 @@ params:query {
   ~isBillGenerated: false
   ~dateFrom: 2026-07-01
   ~dateTo: 2026-07-31
+  ~section: DIAGNOSTICS
+  ~departmentId: {{departmentId}}
+  ~branchLabTestId: {{branchLabTestId}}
+  ~branchLabPanelId: {{branchLabPanelId}}
+  ~sampleStatus: PENDING
+  ~isHomeVisit: false
+  ~isOutsource: false
+  ~isUrgent: false
 }
 
 auth:bearer {
@@ -39,15 +47,16 @@ auth:bearer {
 docs {
   Paginated list of orders in the caller's tenant. Each row carries the patient
   ref (with age/gender), the referral refs (doctor/panel/internal/external names),
-  the payment rollups (`grossAmount`/`discountAmount`/`netAmount`), the active-item
-  count (`itemCount`) and the `effectiveQuotationStatus` (stored `quotationStatus`
-  upgraded to `EXPIRED` when `quotationValidTill` has passed). Defaults branch
-  scope to the caller's active branch; an explicit `branchId` overrides it.
-  Pagination info lands in `meta`.
+  the payment rollups (`grossAmount`/`discountAmount`/`netAmount`/`paidAmount`), the
+  active-item count (`itemCount`), the collected-item count (`collectedItemCount`)
+  and the `effectiveQuotationStatus` (stored `quotationStatus` upgraded to `EXPIRED`
+  when `quotationValidTill` has passed). Defaults branch scope to the caller's active
+  branch; an explicit `branchId` overrides it. Pagination info lands in `meta`.
 
   ## Search
 
-  - `search` — case-insensitive match on `orderCode`.
+  - `search` — case-insensitive match on `orderCode` OR the patient's
+    name / mobile / UMID. Powers the order-console search box.
   - `quoteId` — dedicated `orderCode` match; overrides `search`. Use with
     `status=QUOTE` for the quotations screen.
 
@@ -67,4 +76,14 @@ docs {
     `externalReferralId` — referral UUID filters.
   - `isBillGenerated` — `true` | `false`.
   - `dateFrom` / `dateTo` — inclusive ISO-8601 date bounds on `orderDate`.
+  - `section` — `DIAGNOSTICS` | `OPD` | `RADIOLOGY`; keeps only orders that carry
+    that section (the order-console Diagnostics tab sends `DIAGNOSTICS`).
+  - `departmentId` — matches orders with an item whose test/panel carries this
+    (logical) department id.
+  - `branchLabTestId` / `branchLabPanelId` — matches orders containing that item.
+  - `sampleStatus` — `PENDING` (no items collected) | `PARTIAL` (some collected) |
+    `COLLECTED` (all collected), derived from each item's `collectedAt`.
+  - `isHomeVisit` — `OrderDiagnostics.isHomeVisit`.
+  - `isOutsource` — `true` → diagnostics `sampleSource=SUPPLIED`, `false` → `IN_HOUSE`.
+  - `isUrgent` — `Order.isUrgentBill`.
 }

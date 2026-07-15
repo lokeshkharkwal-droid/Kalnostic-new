@@ -16,6 +16,7 @@ import { ListOrdersDto } from './dto/list-orders.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
 import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
@@ -72,6 +73,22 @@ export class OrderController {
     @Body() dto: UpdateOrderDto,
   ) {
     return this.orderService.update(id, tenantId, dto);
+  }
+
+  /** Mark one order item's sample as collected (idempotent). */
+  @Patch(':id/items/:itemId/collect')
+  @Audit({
+    module: AuditModule.ORDER,
+    action: AuditAction.UPDATE,
+    description: 'Collected an order item sample',
+  })
+  collectItem(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+  ) {
+    return this.orderService.collectItem(id, itemId, tenantId, personId);
   }
 
   /** Soft-delete an order (cascade soft-deletes items, sections, payments). */

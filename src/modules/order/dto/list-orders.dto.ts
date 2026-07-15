@@ -8,6 +8,7 @@ import {
   IsBoolean,
   IsDateString,
   IsEnum,
+  IsIn,
   IsOptional,
   IsString,
   IsUUID,
@@ -110,4 +111,60 @@ export class ListOrdersDto extends PaginationQueryDto {
   @IsOptional()
   @IsDateString()
   dateTo?: string;
+
+  /**
+   * Scope to orders carrying a given section. The order console tabs use this
+   * (`DIAGNOSTICS`); an order matches when the corresponding section row exists.
+   */
+  @IsOptional()
+  @IsIn(['DIAGNOSTICS', 'OPD', 'RADIOLOGY'])
+  section?: 'DIAGNOSTICS' | 'OPD' | 'RADIOLOGY';
+
+  /**
+   * Department filter — matches orders with an item whose test/panel carries
+   * this (logical) `departmentId`.
+   */
+  @IsOptional()
+  @IsUUID()
+  departmentId?: string;
+
+  /** Lab-test filter — matches orders with an item for this branch lab test. */
+  @IsOptional()
+  @IsUUID()
+  branchLabTestId?: string;
+
+  /** Lab-panel filter — matches orders with an item for this branch lab panel. */
+  @IsOptional()
+  @IsUUID()
+  branchLabPanelId?: string;
+
+  /**
+   * Sample collection status, derived across the order's items from
+   * `collectedAt`: `PENDING` (none collected), `COLLECTED` (all collected),
+   * `PARTIAL` (some collected).
+   */
+  @IsOptional()
+  @IsIn(['PENDING', 'PARTIAL', 'COLLECTED'])
+  sampleStatus?: 'PENDING' | 'PARTIAL' | 'COLLECTED';
+
+  /** Home-visit filter (`OrderDiagnostics.isHomeVisit`). */
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  isHomeVisit?: boolean;
+
+  /**
+   * Outsource filter — maps to the diagnostics sample source
+   * (`true` → `SUPPLIED`, `false` → `IN_HOUSE`).
+   */
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  isOutsource?: boolean;
+
+  /** Urgent filter (`Order.isUrgentBill`). */
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  isUrgent?: boolean;
 }

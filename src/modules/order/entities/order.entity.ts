@@ -10,8 +10,23 @@ import { Prisma, QuotationStatus } from '@prisma/client';
  */
 export const ORDER_INCLUDE = {
   patient: {
-    select: { id: true, firstName: true, lastName: true, mobile: true },
+    select: {
+      id: true,
+      firstName: true,
+      middleName: true,
+      lastName: true,
+      mobile: true,
+      gender: true,
+      age: true,
+      dateOfBirth: true,
+      bloodGroup: true,
+      email: true,
+      alternateMobileNumber: true,
+      alternateEmail: true,
+      umId: true,
+    },
   },
+  branch: { select: { id: true, name: true, code: true } },
   referredByDoctor: {
     select: { id: true, firstName: true, lastName: true },
   },
@@ -98,6 +113,7 @@ export const ORDER_LIST_INCLUDE = {
       gender: true,
       age: true,
       dateOfBirth: true,
+      umId: true,
     },
   },
   referredByDoctor: { select: { id: true, firstName: true, lastName: true } },
@@ -106,7 +122,12 @@ export const ORDER_LIST_INCLUDE = {
   externalReferral: { select: { id: true, name: true } },
   payments: {
     where: { deletedAt: null },
-    select: { totalAmount: true, orderDiscount: true, netAmount: true },
+    select: {
+      totalAmount: true,
+      orderDiscount: true,
+      netAmount: true,
+      paidAmount: true,
+    },
   },
 } satisfies Prisma.OrderInclude;
 
@@ -120,8 +141,12 @@ export type OrderListRow = Prisma.OrderGetPayload<{
   include: typeof ORDER_LIST_INCLUDE;
 }> & {
   itemCount: number;
+  /** Count of the order's active items with a `collectedAt` timestamp. */
+  collectedItemCount: number;
   grossAmount: number;
   discountAmount: number;
   netAmount: number;
+  /** Sum of `paidAmount` across the active payment ledger. */
+  paidAmount: number;
   effectiveQuotationStatus: QuotationStatus | null;
 };

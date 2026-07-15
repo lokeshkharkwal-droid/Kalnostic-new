@@ -1,0 +1,29 @@
+meta {
+  name: Collect Order Item
+  type: http
+  seq: 8
+}
+
+patch {
+  url: {{baseUrl}}/orders/{{orderId}}/items/{{orderItemId}}/collect
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Mark one order item's sample as collected. Sets `collectedAt` (now) and
+  `collectedBy` (the caller's person id) on the item and returns the refreshed,
+  fully-composed order. Idempotent: calling it again keeps the original
+  `collectedAt`. 404 `ORDER_NOT_FOUND` if the order is missing/other-tenant;
+  404 `ORDER_ITEM_NOT_FOUND` if the item does not belong to that order.
+}
