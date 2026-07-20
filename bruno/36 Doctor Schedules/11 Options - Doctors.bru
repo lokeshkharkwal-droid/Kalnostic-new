@@ -1,0 +1,27 @@
+meta {
+  name: Options - Doctors
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/doctor-schedules/options/doctors
+  body: none
+  auth: bearer
+}
+
+params:query {
+  ~branchId: {{branchId}}
+  ~search: smith
+  ~page: 1
+  ~limit: 20
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  CONSULTANT doctor `{ id, name }` options. Optional `branchId` / `search`; opt-in
+  `page`/`limit` (array when `page` omitted, paginated envelope when supplied).
+}

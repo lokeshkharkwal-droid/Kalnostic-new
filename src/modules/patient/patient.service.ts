@@ -6,12 +6,32 @@ import { CreatePatientDto } from './dto/create-patient.dto';
 import { UpdatePatientDto } from './dto/update-patient.dto';
 import { MedicalHistoryDto } from './dto/medical-history.dto';
 import { UpdateMedicalHistoryDto } from './dto/update-medical-history.dto';
-import { PatientWithHistory } from './entities/patient.entity';
+import { CreateFamilyMemberDto } from './dto/create-family-member.dto';
 import {
+  FamilyMemberResult,
+  FamilyMemberSummary,
+  PatientWithFamily,
+  PatientWithHistory,
+} from './entities/patient.entity';
+import {
+  FamilyLinkNotFoundException,
   MedicalHistoryNotFoundException,
   PatientMobileConflictException,
   PatientNotFoundException,
 } from './exceptions/patient.exceptions';
+
+/**
+ * Prisma `select` for the lightweight member summary embedded in family
+ * responses (kept identical between the list endpoint and the family endpoint).
+ */
+const FAMILY_MEMBER_SELECT = {
+  id: true,
+  firstName: true,
+  lastName: true,
+  age: true,
+  mobile: true,
+  umId: true,
+} as const;
 
 /** Context set from the JWT for a write: registration branch + acting person. */
 export interface PatientWriteContext {
@@ -110,8 +130,9 @@ export class PatientService {
       dateFrom?: string;
       dateTo?: string;
       branchId?: string;
+      includeFamily?: boolean;
     } = {},
-  ): Promise<PaginatedResult<Patient>> {
+  ): Promise<PaginatedResult<PatientWithFamily>> {
     const where: Prisma.PatientWhereInput = { tenantId, deletedAt: null };
     if (filters.patientCategory) {
       where.patientCategory = filters.patientCategory;
@@ -150,9 +171,40 @@ export class PatientService {
       skip: (page - 1) * limit,
       take: limit,
       orderBy: { createdAt: 'desc' },
+      ...(filters.includeFamily
+        ? {
+            include: {
+              familyLinks: {
+                where: { deletedAt: null },
+                orderBy: { createdAt: 'desc' },
+                include: { member: { select: FAMILY_MEMBER_SELECT } },
+              },
+            },
+          }
+        : {}),
     });
     const total = await this.prisma.patient.count({ where });
-    return { data, total, page, limit };
+    if (!filters.includeFamily) {
+      return { data, total, page, limit };
+    }
+    const withFamily: PatientWithFamily[] = data.map((p) => {
+      const { familyLinks, ...patient } = p as Patient & {
+        familyLinks: Array<{
+          id: string;
+          relationship: FamilyMemberSummary['relationship'];
+          member: FamilyMemberSummary['member'];
+        }>;
+      };
+      return {
+        ...patient,
+        familyMembers: familyLinks.map((l) => ({
+          linkId: l.id,
+          relationship: l.relationship,
+          member: l.member,
+        })),
+      };
+    });
+    return { data: withFamily, total, page, limit };
   }
 
   /**
@@ -386,6 +438,116 @@ export class PatientService {
       where: { id },
       data: { deletedAt: new Date() },
     });
+  }
+
+  // ── Family members ──────────────────────────────────────────────────────────
+
+  /**
+   * Add a family member to an anchor patient. Creates a new, independent
+   * `Patient` (only name/age/mobile/relationship/umId — the anchor's data is
+   * never copied) and links it to the anchor via a `PatientFamilyLink`, both in
+   * one transaction. The new member inherits the anchor's registration branch.
+   * @param tenantId tenant scope (from the JWT)
+   * @param patientId anchor patient the member is linked to
+   * @param dto validated family-member payload (FE-supplied UMID)
+   * @param ctx registration branch + acting person from the JWT
+   * @returns the created link together with the new member patient
+   * @throws PatientNotFoundException if the anchor patient is missing
+   * @throws PatientMobileConflictException if the member's mobile is already used
+   *   by an active patient in this tenant
+   */
+  async addFamilyMember(
+    tenantId: string,
+    patientId: string,
+    dto: CreateFamilyMemberDto,
+    ctx: PatientWriteContext,
+  ): Promise<FamilyMemberResult> {
+    const anchor = await this.ensurePatient(patientId, tenantId);
+    try {
+      return await this.prisma.withTenant(tenantId, async (tx) => {
+        const member = await tx.patient.create({
+          data: {
+            firstName: dto.name,
+            age: dto.age ?? null,
+            mobile: dto.mobile,
+            relationship: dto.relationship,
+            umId: dto.umId ?? null,
+            tenantId,
+            branchId: anchor.branchId,
+            createdBy: ctx.actorId ?? null,
+            updatedBy: ctx.actorId ?? null,
+          },
+        });
+        const link = await tx.patientFamilyLink.create({
+          data: {
+            tenantId,
+            branchId: anchor.branchId,
+            patientId,
+            memberId: member.id,
+            relationship: dto.relationship,
+            createdBy: ctx.actorId ?? null,
+            updatedBy: ctx.actorId ?? null,
+          },
+        });
+        return { link, member };
+      });
+    } catch (e) {
+      if (this.isUniqueViolation(e)) {
+        throw new PatientMobileConflictException(dto.mobile);
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * List an anchor patient's active family members (newest first). Each entry
+   * carries the link id + relationship and a lightweight summary of the linked
+   * member patient.
+   * @param tenantId tenant scope
+   * @param patientId anchor patient
+   * @throws PatientNotFoundException if the anchor patient is missing
+   */
+  async findFamilyMembers(
+    tenantId: string,
+    patientId: string,
+  ): Promise<FamilyMemberSummary[]> {
+    await this.ensurePatient(patientId, tenantId);
+    const links = await this.prisma.patientFamilyLink.findMany({
+      where: { patientId, tenantId, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+      include: { member: { select: FAMILY_MEMBER_SELECT } },
+    });
+    return links.map((l) => ({
+      linkId: l.id,
+      relationship: l.relationship,
+      member: l.member,
+    }));
+  }
+
+  /**
+   * Unlink a family member: soft-delete the mapping row only. The member's
+   * `Patient` record is left untouched (it may have its own orders / links).
+   * @param tenantId tenant scope
+   * @param patientId anchor patient the link must belong to
+   * @param linkId the family-link id to remove
+   * @throws FamilyLinkNotFoundException if the link is missing for this anchor
+   */
+  async removeFamilyMember(
+    tenantId: string,
+    patientId: string,
+    linkId: string,
+  ): Promise<{ id: string }> {
+    const link = await this.prisma.patientFamilyLink.findFirst({
+      where: { id: linkId, patientId, tenantId, deletedAt: null },
+    });
+    if (!link) {
+      throw new FamilyLinkNotFoundException(linkId);
+    }
+    await this.prisma.patientFamilyLink.update({
+      where: { id: linkId },
+      data: { deletedAt: new Date() },
+    });
+    return { id: linkId };
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────

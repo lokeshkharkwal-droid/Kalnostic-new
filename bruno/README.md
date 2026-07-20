@@ -107,6 +107,12 @@ environment and no manual edits:
 - **Medical history** (`/patients/:patientId/medical-history`): add, list, get,
   update, delete — one-to-many per patient (boolean symptom/condition/medication/
   allergy flags + free-text notes).
+- **Appointments** (`/appointments`): create (generates `APT-00001` + records the
+  initial status), list (paginated; `search`/`status`/`appointmentType` filters),
+  get (with status history), update-status (`PATCH /:id/status` — updates the
+  current status AND appends a history row atomically), get-history
+  (`GET /:id/history`), delete (soft). Tenant-scoped + branch-level; the current
+  status lives on the appointment, every change on an append-only history log.
 
 ## Enum reference
 
@@ -119,6 +125,8 @@ environment and no manual edits:
 - `Relationship` (patient `relationship` / `guardianRelationship`): SELF, SPOUSE, SON, DAUGHTER, FATHER, MOTHER, BROTHER, SISTER, GUARDIAN, FRIEND, OTHER
 - `BranchType`: DIAGNOSTIC, RADIOLOGY, OPD, IPD, PHARMACY, INVENTORY, BLOOD_BANK, FRANCHISE, COMBINED, ASSISTANT, ACCESSION, TECHNICIAN, COLLECTION_CENTER
 - `SiteAdminRole`: CONTENT_ADMIN, OPERATIONS_ADMIN, FULL_ADMIN, SUPER_OWNER
+- `AppointmentType`: DIAGNOSTIC, OPD, RADIOLOGY
+- `AppointmentStatus`: NEW, CONFIRMED, CHECKED_IN, IN_PROGRESS, COMPLETED, CANCELLED, RESCHEDULED
 - `UserType` (User Mgmt v2): INTERNAL, EXTERNAL
 - `StaffStatus` (User Mgmt v2): ACTIVE, INACTIVE
 - Role keys (`roleKey` / `profileKey`) — the **key** of an `AuthRole`. The seeded

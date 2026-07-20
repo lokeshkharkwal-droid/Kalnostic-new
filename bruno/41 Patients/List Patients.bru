@@ -22,6 +22,7 @@ params:query {
   ~dateFrom: 2026-07-01
   ~dateTo: 2026-07-31
   ~branchId: 00000000-0000-0000-0000-000000000000
+  ~includeFamily: true
 }
 
 auth:bearer {
@@ -53,4 +54,7 @@ docs {
     (`createdAt`).
   - `branchId` — only patients registered at that branch (UUID). Read filter
     only; tenant scoping + RLS already guard cross-tenant access.
+  - `includeFamily` — `true` attaches each patient's active `familyMembers`
+    (`{ linkId, relationship, member: { id, firstName, lastName, age, mobile,
+    umId } }`). Default OFF, so other consumers are unaffected.
 }

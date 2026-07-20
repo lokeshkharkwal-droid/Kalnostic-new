@@ -1,0 +1,30 @@
+meta {
+  name: Get Appointment
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/appointments/{{appointmentId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("includes the status history", function () {
+    expect(res.getBody().data.statusHistory).to.be.an("array");
+  });
+}
+
+docs {
+  Fetch one appointment fully composed (with its `statusHistory`, newest first),
+  scoped to the caller's tenant. 404 `APPOINTMENT_NOT_FOUND` if it is
+  missing / soft-deleted / belongs to another tenant.
+}

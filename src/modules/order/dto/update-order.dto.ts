@@ -18,16 +18,19 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { OrderItemDto } from './order-item.dto';
+import { BillingDetailsDto } from './billing-details.dto';
 import { OrderDiagnosticsDto } from './order-diagnostics.dto';
 import { OrderOpdDto } from './order-opd.dto';
 import { OrderRadiologyDto } from './order-radiology.dto';
+import { OrderPaymentDto } from './order-payment.dto';
 
 /**
  * Partial update for an order. Scalar fields (incl. `status`) are patched. When
  * `items` is provided the whole set is REPLACED (old active rows soft-deleted,
  * the new set created). When a section object is provided it is upserted (created
- * if absent, else patched). Payments are managed via the payment-details module,
- * not here. `patientId` is not editable after creation.
+ * if absent, else patched). When `payments` is provided the ledger is REPLACED
+ * (old rows soft-deleted, the new set created) and the order's payment status is
+ * recomputed. `patientId` is not editable after creation.
  */
 export class UpdateOrderDto {
   @IsOptional()
@@ -68,6 +71,18 @@ export class UpdateOrderDto {
   @IsString()
   @MaxLength(2048)
   orderNotes?: string;
+
+  /** Order time-of-day ("HH:mm"), separate from the DATE-only `orderDate`. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(5)
+  orderTime?: string;
+
+  /** Billing-type-specific sub-form; replaced wholesale when provided. */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => BillingDetailsDto)
+  billingDetails?: BillingDetailsDto;
 
   @IsOptional()
   @IsDateString()
@@ -113,4 +128,12 @@ export class UpdateOrderDto {
   @ValidateNested()
   @Type(() => OrderRadiologyDto)
   radiology?: OrderRadiologyDto;
+
+  /** Payment ledger entries. When provided, the whole ledger is replaced and the
+   *  order's payment status is recomputed from these rows. */
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => OrderPaymentDto)
+  payments?: OrderPaymentDto[];
 }

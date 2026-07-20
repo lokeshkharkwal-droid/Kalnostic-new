@@ -1,0 +1,56 @@
+meta {
+  name: Update Appointment Status
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/appointments/{{appointmentId}}/status
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "CONFIRMED",
+    "notes": "Confirmed by patient over phone"
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("current status was updated", function () {
+    expect(res.getBody().data.status).to.equal("CONFIRMED");
+  });
+  test("appended a history entry", function () {
+    const h = res.getBody().data.statusHistory;
+    expect(h[0].status).to.equal("CONFIRMED");
+  });
+}
+
+docs {
+  Transition an appointment to a new `status`. Updates the appointment's current
+  `status` **and** appends a row to the status-history log, atomically (one
+  transaction). `updatedBy` (on the appointment) and `changedBy` (on the history
+  row) are set to the caller's `person_id`.
+
+  ## Body
+
+  - `status` — **required**: `NEW` | `CONFIRMED` | `CHECKED_IN` | `IN_PROGRESS` |
+    `COMPLETED` | `CANCELLED` | `RESCHEDULED`.
+  - `notes` — optional (≤500 chars); stored on this history entry.
+
+  Transitions are not server-restricted this phase (any target status is
+  accepted). 404 `APPOINTMENT_NOT_FOUND` if the appointment is
+  missing / soft-deleted / other-tenant.
+}

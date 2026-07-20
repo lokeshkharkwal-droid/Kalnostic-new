@@ -1,7 +1,9 @@
 import {
+  AppointmentStatus,
   BillingType,
   OrderStatus,
   OrderType,
+  PaymentStatus,
   QuotationStatus,
 } from '@prisma/client';
 import {
@@ -14,7 +16,7 @@ import {
   IsUUID,
   MaxLength,
 } from 'class-validator';
-import { Transform } from 'class-transformer';
+import { ToBoolean } from '../../../common/decorators/to-boolean.decorator';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 
 /**
@@ -55,10 +57,27 @@ export class ListOrdersDto extends PaginationQueryDto {
   @IsEnum(OrderStatus)
   status?: OrderStatus;
 
+  /**
+   * Lifecycle status of the linked appointment (the appointments list filter).
+   * Matches the `Appointment.status` on orders saved with `status = APPOINTMENT`.
+   */
+  @IsOptional()
+  @IsEnum(AppointmentStatus)
+  appointmentStatus?: AppointmentStatus;
+
   /** Quotation lifecycle filter (EXPIRED derived from `quotationValidTill`). */
   @IsOptional()
   @IsEnum(QuotationStatus)
   quotationStatus?: QuotationStatus;
+
+  /**
+   * Payment status filter, matched against the order's stored `paymentStatus`
+   * (`NOT_PAID` | `PARTIALLY_PAID` | `PAID`), which is derived from the payment
+   * ledger and kept in sync on every payment write.
+   */
+  @IsOptional()
+  @IsEnum(PaymentStatus)
+  paymentStatus?: PaymentStatus;
 
   /** Referring doctor filter (FK). */
   @IsOptional()
@@ -69,6 +88,16 @@ export class ListOrdersDto extends PaginationQueryDto {
   @IsOptional()
   @IsUUID()
   referralPanelId?: string;
+
+  /**
+   * B2B filter — `true` returns only orders that have a referral panel set
+   * (`referralPanelId` not null); `false` returns only orders with no referral
+   * panel. Presence of a referral panel is what makes an order B2B.
+   */
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  isB2b?: boolean;
 
   /** Internal referral filter (FK). */
   @IsOptional()
@@ -98,7 +127,7 @@ export class ListOrdersDto extends PaginationQueryDto {
 
   /** `isBillGenerated` filter (query strings `'true'`/`'false'` are coerced). */
   @IsOptional()
-  @Transform(({ value }) => value === 'true' || value === true)
+  @ToBoolean()
   @IsBoolean()
   isBillGenerated?: boolean;
 
@@ -149,7 +178,7 @@ export class ListOrdersDto extends PaginationQueryDto {
 
   /** Home-visit filter (`OrderDiagnostics.isHomeVisit`). */
   @IsOptional()
-  @Transform(({ value }) => value === 'true' || value === true)
+  @ToBoolean()
   @IsBoolean()
   isHomeVisit?: boolean;
 
@@ -158,13 +187,13 @@ export class ListOrdersDto extends PaginationQueryDto {
    * (`true` → `SUPPLIED`, `false` → `IN_HOUSE`).
    */
   @IsOptional()
-  @Transform(({ value }) => value === 'true' || value === true)
+  @ToBoolean()
   @IsBoolean()
   isOutsource?: boolean;
 
   /** Urgent filter (`Order.isUrgentBill`). */
   @IsOptional()
-  @Transform(({ value }) => value === 'true' || value === true)
+  @ToBoolean()
   @IsBoolean()
   isUrgent?: boolean;
 }

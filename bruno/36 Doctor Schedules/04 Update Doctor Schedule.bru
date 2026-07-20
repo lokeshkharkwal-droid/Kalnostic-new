@@ -1,0 +1,33 @@
+meta {
+  name: Update Doctor Schedule
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/doctor-schedules/{{doctorScheduleId}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "endTime": "18:00",
+    "maxPatientsPerSlot": 6,
+    "selectedDays": ["MONDAY", "WEDNESDAY", "FRIDAY"]
+  }
+}
+
+docs {
+  Partial update. `doctorId`/`branchId` are immutable. Children
+  (days/holidays/overrides) are replaced when supplied. When the effective config
+  or status changes, future **unbooked** slots are regenerated — past and booked
+  slots are never touched. Setting `status` away from ACTIVE retires future
+  unbooked slots.
+
+  Errors: `DOCTOR_SCHEDULE_OVERLAP` (409); `INVALID_SCHEDULE_CONFIG` (400).
+}

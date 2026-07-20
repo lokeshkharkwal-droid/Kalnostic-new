@@ -24,3 +24,27 @@ export class PaymentOrderNotFoundException extends KaltrosException {
     );
   }
 }
+
+/** 422 — the payment would exceed the order's pending (net − already-paid) amount. */
+export class PaymentOverpaymentException extends KaltrosException {
+  constructor(pending: number, attempted: number) {
+    super(
+      'PAYMENT_OVERPAYMENT',
+      'The payment amount exceeds the pending balance for this order',
+      { pending, attempted },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/** 422 — the parent order is cancelled, so no further payments are allowed. */
+export class PaymentOrderCancelledException extends KaltrosException {
+  constructor(orderId: string) {
+    super(
+      'PAYMENT_ORDER_CANCELLED',
+      'The referenced order is cancelled; no further payments are allowed',
+      { orderId },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}

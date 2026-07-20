@@ -1,0 +1,70 @@
+meta {
+  name: Create Doctor Schedule
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/doctor-schedules
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "doctorId": "{{doctorId}}",
+    "branchId": "{{branchId}}",
+    "consultationMode": ["IN_PERSON", "VIDEO"],
+    "slotType": "NEW_CONSULTATION",
+    "status": "ACTIVE",
+    "startTime": "09:00",
+    "endTime": "17:00",
+    "breakStart": "13:00",
+    "breakEnd": "14:00",
+    "durationMinutes": 30,
+    "slotIntervalMinutes": 30,
+    "maxPatientsPerSlot": 5,
+    "bufferMinutes": 0,
+    "recurrencePattern": "WEEKLY",
+    "selectedDays": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+    "holidays": [{ "date": "2026-08-15", "remarks": "Independence Day" }],
+    "overrides": [{ "date": "2026-07-20", "startTime": "10:00", "endTime": "13:00" }],
+    "horizonWeeks": 8
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("doctorScheduleId", data.id);
+}
+
+docs {
+  Create a doctor's schedule and generate its future slots. `doctorId`/`branchId`
+  are validated against the caller's tenant; `tenantId` comes from the JWT.
+  Captures `doctorScheduleId`.
+
+  - `consultationMode`: array of `IN_PERSON` | `VIDEO` | `PHONE` (≥1, unique).
+  - `slotType`: `NEW_CONSULTATION` | `FOLLOW_UP` | `OTHER`.
+  - `status`: `ACTIVE` | `INACTIVE` | `ON_LEAVE` (defaults ACTIVE). Slots are
+    generated only for ACTIVE schedules; only one ACTIVE schedule is allowed per
+    doctor+branch.
+  - Times are 24h `HH:mm`. `breakStart`/`breakEnd` optional but must both be set
+    and fall within the working window.
+  - `slotIntervalMinutes` ≥ `durationMinutes`; `bufferMinutes` ≥ 0.
+  - `recurrencePattern`: `DAILY` (every day) | `WEEKLY` | `CUSTOM`. `selectedDays`
+    required for WEEKLY/CUSTOM.
+  - `holidays`: skipped dates. `overrides`: one-off windows (omit both times = day
+    off). `horizonWeeks` (1–52, default 8) = how far ahead to generate slots.
+
+  Errors: `DOCTOR_SCHEDULE_OVERLAP` (409) if an active schedule already exists;
+  `INVALID_SCHEDULE_CONFIG` (400) on a bad config.
+}
+
+vars:pre-request {
+  ~doctorId: replace-with-a-consultant-doctor-id
+  ~branchId: replace-with-a-branch-id
+}

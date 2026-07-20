@@ -1,0 +1,28 @@
+meta {
+  name: Remove Family Member
+  type: http
+  seq: 14
+}
+
+delete {
+  url: {{baseUrl}}/patients/{{patientId}}/family-members/{{familyLinkId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Unlink a family member: soft-deletes the mapping row (`PatientFamilyLink`) only.
+  The member's `Patient` record is left untouched (it may have its own orders /
+  links and still appears in `GET /patients/:memberId`). 404
+  `FAMILY_LINK_NOT_FOUND` if the link is missing for this anchor/tenant.
+}

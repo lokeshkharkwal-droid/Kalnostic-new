@@ -82,6 +82,12 @@ export class CreatePaymentDetailsDto {
   @IsDateString()
   paymentDate?: string;
 
+  /** Payment reference / transaction id for this ledger entry (e.g. UPI ref). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  reference?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(1024)

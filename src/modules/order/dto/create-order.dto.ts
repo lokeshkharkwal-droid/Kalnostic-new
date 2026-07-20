@@ -18,6 +18,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { OrderItemDto } from './order-item.dto';
+import { BillingDetailsDto } from './billing-details.dto';
 import { OrderDiagnosticsDto } from './order-diagnostics.dto';
 import { OrderOpdDto } from './order-opd.dto';
 import { OrderRadiologyDto } from './order-radiology.dto';
@@ -71,6 +72,21 @@ export class CreateOrderDto {
   @IsString()
   @MaxLength(2048)
   orderNotes?: string;
+
+  /** Order time-of-day ("HH:mm"), separate from the DATE-only `orderDate`. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(5)
+  orderTime?: string;
+
+  /**
+   * Billing-type-specific sub-form (insurance / corporate / govt-scheme / TPA).
+   * Persisted as-is so the whole billing sub-section round-trips on edit.
+   */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => BillingDetailsDto)
+  billingDetails?: BillingDetailsDto;
 
   /** The patient this order is for (required). */
   @IsUUID()

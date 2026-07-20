@@ -112,6 +112,61 @@ enum ScheduleStatus {
   DRAFT
 }
 
+// ── Doctor Schedule enums ─────────────────────────────────────────────────────
+
+/// How a doctor consults for a schedule (a schedule may offer several modes).
+enum ConsultationMode {
+  IN_PERSON
+  VIDEO
+  PHONE
+}
+
+/// The kind of appointment a doctor schedule produces slots for.
+enum ScheduleSlotType {
+  NEW_CONSULTATION
+  FOLLOW_UP
+  OTHER
+}
+
+/// Lifecycle of a doctor schedule. ON_LEAVE surfaces on the Doctor List as the
+/// doctor's current status; INACTIVE disables the schedule without deleting it.
+enum DoctorScheduleStatus {
+  ACTIVE
+  INACTIVE
+  ON_LEAVE
+}
+
+/// Recurrence pattern of a doctor schedule. DAILY = every day; WEEKLY/CUSTOM use
+/// the schedule's selected `days`.
+enum RecurrencePattern {
+  DAILY
+  WEEKLY
+  CUSTOM
+}
+
+/// Stored coarse state of a generated slot. PAST (date/time elapsed) and
+/// UNAVAILABLE (no slots configured that day) are derived at read time, not stored.
+enum SlotStatus {
+  AVAILABLE
+  BOOKED
+  FULL
+}
+
+// ── Phlebotomist Schedule enums ───────────────────────────────────────────────
+
+/// Lifecycle of a phlebotomist schedule. INACTIVE disables the schedule (and its
+/// future slots) without deleting it.
+enum PhlebotomistScheduleStatus {
+  ACTIVE
+  INACTIVE
+}
+
+/// How a phlebotomist's visits are delivered for a schedule.
+enum PhleboServiceType {
+  HOME_COLLECTION
+  IN_CENTER
+}
+
 /// Audience a support-information record targets: business-level or branch-level
 /// screens. A descriptor tag on SupportInfo — not a scoping column.
 enum SupportTenantType {
@@ -216,6 +271,10 @@ enum AuditModule {
   PHLEBOTOMIST
   RADIOLOGY_TECHNICIAN
   PAYMENT_DETAILS
+  APPOINTMENT
+  DOCTOR_SCHEDULE
+  PHLEBOTOMIST_SCHEDULE
+  SERVICE_ZONE
   AUTH
   SITEADMIN // reserved; not written to in this phase (business audit only)
   LAB_TEST_SETTINGS
@@ -506,6 +565,7 @@ enum Relationship {
   MOTHER
   BROTHER
   SISTER
+  SIBLING
   GUARDIAN
   FRIEND
   OTHER
@@ -677,6 +737,8 @@ model Tenant {
   outsourceCenterCounter Int     @default(0) @map("outsource_center_counter") // per-tenant sequential outsource-center code
   referralPanelCounter   Int     @default(0) @map("referral_panel_counter") // per-tenant sequential referral-panel code
   orderCounter           Int     @default(0) @map("order_counter") // per-tenant sequential order code (ORD-00001)
+  appointmentCounter     Int     @default(0) @map("appointment_counter") // per-tenant sequential appointment code (APT-00001)
+  diagnosticBillCounter  Int     @default(0) @map("diagnostic_bill_counter") // per-tenant sequential diagnostic bill id (DIG-001)
   createdBy              String? @map("created_by") // SiteAdmin user id (creator)
   updatedBy              String? @map("updated_by") // SiteAdmin user id (last editor)
 
@@ -813,9 +875,13 @@ model Person {
 
   /// Order-management back-relations. A radiologist / phlebotomist is now a
   /// staff Person (holding the matching role at a branch), not a master row.
-  radiologyOrders          OrderRadiology[]   @relation("OrderRadiologyTechnician")
-  radiologistOrders        OrderRadiology[]   @relation("OrderRadiologist")
-  phlebotomistDiagnostics  OrderDiagnostics[] @relation("OrderPhlebotomist")
+  radiologyOrders         OrderRadiology[]   @relation("OrderRadiologyTechnician")
+  radiologistOrders       OrderRadiology[]   @relation("OrderRadiologist")
+  phlebotomistDiagnostics OrderDiagnostics[] @relation("OrderPhlebotomist")
+
+  /// Phlebotomist-schedule back-relations (a phlebotomist is a staff Person).
+  phlebotomistSchedules PhlebotomistSchedule[] @relation("PhlebotomistScheduleStaff")
+  phlebotomistSlots     PhlebotomistSlot[]     @relation("PhlebotomistSlotStaff")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -3045,12 +3111,20 @@ model Doctor {
   joiningDate DateTime?    @map("joining_date") @db.Date
   remarks     String?
 
+  // Average rating (0.0–5.0), surfaced on the Doctor Schedule calendar header.
+  // Nullable — unset until a rating source populates it.
+  rating Decimal? @map("rating") @db.Decimal(2, 1)
+
   // Children (managed via the parent in DoctorsService)
   qualifications DoctorQualification[]
   experiences    DoctorExperience[]
 
   // OPD order sections that name this doctor as the consultant.
   orderOpds OrderOpd[]
+
+  // Doctor Schedule module: recurring schedule configs and generated slots.
+  doctorSchedules DoctorSchedule[]
+  doctorSlots     DoctorSlot[]
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -3112,6 +3186,407 @@ model DoctorExperience {
   @@index([doctorId])
   @@index([deletedAt])
   @@map("doctor_experience")
+}
+
+// ── Doctor Schedule ─────────────────────────────────────────────────────────────
+
+/// A doctor's recurring availability configuration at a branch (the "Configure
+/// Doctor Schedule" form). Tenant-scoped + branch-level (CLAUDE.md §4.5–4.7):
+/// `tenantId`/`branchId` come from the request context, the `doctorId` is
+/// validated against the caller's tenant. Working-window times are 24h `HH:mm`
+/// branch-local strings; `breakStart`/`breakEnd` are optional. Slot generation
+/// derives `DoctorSlot` rows from this config, honouring `days` (weekly
+/// recurrence), `holidays` (skipped dates), and `overrides` (one-off windows).
+/// At most one ACTIVE schedule per (tenant, doctor, branch) — enforced by a
+/// partial unique index in prisma/rls.sql. RLS policy in prisma/rls.sql.
+model DoctorSchedule {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  doctorId String @map("doctor_id")
+  doctor   Doctor @relation(fields: [doctorId], references: [id])
+
+  consultationMode ConsultationMode[]   @map("consultation_mode")
+  slotType         ScheduleSlotType     @map("slot_type")
+  status           DoctorScheduleStatus @default(ACTIVE)
+
+  startTime  String  @map("start_time")
+  endTime    String  @map("end_time")
+  breakStart String? @map("break_start")
+  breakEnd   String? @map("break_end")
+
+  durationMinutes     Int @map("duration_minutes")
+  slotIntervalMinutes Int @map("slot_interval_minutes")
+  maxPatientsPerSlot  Int @map("max_patients_per_slot")
+  bufferMinutes       Int @default(0) @map("buffer_minutes")
+
+  recurrencePattern RecurrencePattern @map("recurrence_pattern")
+
+  days      DoctorScheduleDay[]
+  holidays  DoctorScheduleHoliday[]
+  overrides DoctorScheduleOverride[]
+  slots     DoctorSlot[]
+
+  createdBy String? @map("created_by")
+  updatedBy String? @map("updated_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([doctorId])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("doctor_schedules")
+}
+
+/// A weekly-recurrence day of a schedule (WEEKLY/CUSTOM patterns). One row per
+/// active day. Cascades with its parent schedule. Tenant-scoped.
+model DoctorScheduleDay {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+
+  scheduleId String         @map("schedule_id")
+  schedule   DoctorSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  dayOfWeek DayOfWeek @map("day_of_week")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([scheduleId, dayOfWeek])
+  @@index([tenantId])
+  @@index([scheduleId])
+  @@map("doctor_schedule_days")
+}
+
+/// A holiday/exception date on which a schedule generates no slots. Tenant-scoped;
+/// cascades with its parent schedule.
+model DoctorScheduleHoliday {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+
+  scheduleId String         @map("schedule_id")
+  schedule   DoctorSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  holidayDate DateTime @map("holiday_date") @db.Date
+  remarks     String?
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([scheduleId])
+  @@map("doctor_schedule_holidays")
+}
+
+/// A one-off override of a schedule for a specific date. `startTime`/`endTime`
+/// NULL means the doctor is off that date (no slots); otherwise the override
+/// window replaces the recurring window. Tenant-scoped; cascades with its parent.
+model DoctorScheduleOverride {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+
+  scheduleId String         @map("schedule_id")
+  schedule   DoctorSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  overrideDate DateTime @map("override_date") @db.Date
+  startTime    String?  @map("start_time")
+  endTime      String?  @map("end_time")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([scheduleId])
+  @@map("doctor_schedule_overrides")
+}
+
+/// A concrete appointment slot generated from a `DoctorSchedule`. Times are 24h
+/// `HH:mm`. `bookedPatients` is a counter mutated atomically by reserve/release;
+/// `status` is the stored coarse state (AVAILABLE/BOOKED/FULL) — PAST/UNAVAILABLE
+/// are derived at read time. Tenant-scoped + branch-level. One slot per
+/// (schedule, date, start time), enforced by a partial unique index in
+/// prisma/rls.sql so regeneration upserts rather than duplicates.
+model DoctorSlot {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  doctorId String @map("doctor_id")
+  doctor   Doctor @relation(fields: [doctorId], references: [id])
+
+  scheduleId String         @map("schedule_id")
+  schedule   DoctorSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  slotDate  DateTime @map("slot_date") @db.Date
+  startTime String   @map("start_time")
+  endTime   String   @map("end_time")
+
+  maxPatients    Int        @map("max_patients")
+  bookedPatients Int        @default(0) @map("booked_patients")
+  status         SlotStatus @default(AVAILABLE)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([doctorId, slotDate])
+  @@index([scheduleId])
+  @@index([deletedAt])
+  @@map("doctor_slots")
+}
+
+/// A tenant's service area / zone (the phlebotomist "Area / Zone" master).
+/// Tenant-scoped + branch-level (CLAUDE.md §4.5–4.7): a zone belongs to a branch.
+/// Referenced by phlebotomist schedules (many-to-many via
+/// `PhlebotomistScheduleZone`). RLS policy in prisma/rls.sql.
+model ServiceZone {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  name     String
+  code     String?
+  isActive Boolean @default(true) @map("is_active")
+
+  scheduleLinks PhlebotomistScheduleZone[]
+
+  createdBy String? @map("created_by")
+  updatedBy String? @map("updated_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([isActive])
+  @@index([deletedAt])
+  @@map("service_zones")
+}
+
+/// A phlebotomist's recurring availability configuration at a branch (the
+/// "Configure Phlebotomist Schedule" form). Tenant-scoped + branch-level
+/// (CLAUDE.md §4.5–4.7): `tenantId`/`branchId` come from the request context, the
+/// `phlebotomistId` (a staff Person holding the `phlebotomist` role at the branch)
+/// is validated against the caller's tenant/branch. Working-window times are 24h
+/// `HH:mm` branch-local strings. Slot generation derives `PhlebotomistSlot` rows,
+/// honouring `days` (weekly recurrence), `zones` (service areas), `holidays`
+/// (skipped dates), and `overrides` (one-off windows). At most one ACTIVE schedule
+/// per (tenant, phlebotomist, branch) — enforced by a partial unique index in
+/// prisma/rls.sql. RLS policy in prisma/rls.sql.
+model PhlebotomistSchedule {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  phlebotomistId String @map("phlebotomist_id")
+  phlebotomist   Person @relation("PhlebotomistScheduleStaff", fields: [phlebotomistId], references: [id])
+
+  serviceType PhleboServiceType          @map("service_type")
+  status      PhlebotomistScheduleStatus @default(ACTIVE)
+
+  startTime String @map("start_time")
+  endTime   String @map("end_time")
+
+  intervalMinutes     Int @map("interval_minutes")
+  travelBufferMinutes Int @default(0) @map("travel_buffer_minutes")
+  maxVisitsPerDay     Int @map("max_visits_per_day")
+  slotCapacity        Int @map("slot_capacity")
+
+  recurrencePattern RecurrencePattern @map("recurrence_pattern")
+
+  days      PhlebotomistScheduleDay[]
+  zones     PhlebotomistScheduleZone[]
+  holidays  PhlebotomistScheduleHoliday[]
+  overrides PhlebotomistScheduleOverride[]
+  slots     PhlebotomistSlot[]
+
+  createdBy String? @map("created_by")
+  updatedBy String? @map("updated_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([phlebotomistId])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("phlebotomist_schedules")
+}
+
+/// A weekly-recurrence day of a phlebotomist schedule (WEEKLY/CUSTOM patterns).
+/// One row per active day. Cascades with its parent schedule. Tenant-scoped.
+model PhlebotomistScheduleDay {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+
+  scheduleId String               @map("schedule_id")
+  schedule   PhlebotomistSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  dayOfWeek DayOfWeek @map("day_of_week")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([scheduleId, dayOfWeek])
+  @@index([tenantId])
+  @@index([scheduleId])
+  @@map("phlebotomist_schedule_days")
+}
+
+/// A service area assigned to a phlebotomist schedule (a phlebotomist can serve
+/// multiple areas). Join between a schedule and a `ServiceZone`. Cascades with its
+/// parent schedule. Tenant-scoped.
+model PhlebotomistScheduleZone {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+
+  scheduleId String               @map("schedule_id")
+  schedule   PhlebotomistSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  zoneId String      @map("zone_id")
+  zone   ServiceZone @relation(fields: [zoneId], references: [id])
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([scheduleId, zoneId])
+  @@index([tenantId])
+  @@index([scheduleId])
+  @@index([zoneId])
+  @@map("phlebotomist_schedule_zones")
+}
+
+/// A holiday/exception date on which a phlebotomist schedule generates no slots.
+/// Tenant-scoped; cascades with its parent schedule.
+model PhlebotomistScheduleHoliday {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+
+  scheduleId String               @map("schedule_id")
+  schedule   PhlebotomistSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  holidayDate DateTime @map("holiday_date") @db.Date
+  remarks     String?
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([scheduleId])
+  @@map("phlebotomist_schedule_holidays")
+}
+
+/// A one-off override of a phlebotomist schedule for a specific date.
+/// `startTime`/`endTime` NULL means the phlebotomist is off that date (no slots);
+/// otherwise the override window replaces the recurring window. An override for a
+/// Sunday is the only way slots are generated on a Sunday. Tenant-scoped; cascades
+/// with its parent schedule.
+model PhlebotomistScheduleOverride {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+
+  scheduleId String               @map("schedule_id")
+  schedule   PhlebotomistSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  overrideDate DateTime @map("override_date") @db.Date
+  startTime    String?  @map("start_time")
+  endTime      String?  @map("end_time")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([scheduleId])
+  @@map("phlebotomist_schedule_overrides")
+}
+
+/// A concrete visit slot generated from a `PhlebotomistSchedule`. Times are 24h
+/// `HH:mm`. `bookedCount` is a **maintained reservation counter** (the atomic
+/// concurrency gate for home-visit booking): it is incremented/decremented as
+/// orders are created / rescheduled / cancelled / deleted (see
+/// `SlotReservationService`) and periodically reconciled from `OrderDiagnostics`
+/// (the business source of truth) via `reconcileBookedCounts`. `status` is the
+/// stored coarse state (AVAILABLE); PAST, FULL, BOOKED, OFF-DUTY and UNAVAILABLE
+/// are derived. Tenant-scoped + branch-level. One slot per (schedule, date, start
+/// time), enforced by a partial unique index in prisma/rls.sql so regeneration
+/// upserts rather than duplicates.
+model PhlebotomistSlot {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  phlebotomistId String @map("phlebotomist_id")
+  phlebotomist   Person @relation("PhlebotomistSlotStaff", fields: [phlebotomistId], references: [id])
+
+  scheduleId String               @map("schedule_id")
+  schedule   PhlebotomistSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  slotDate  DateTime @map("slot_date") @db.Date
+  startTime String   @map("start_time")
+  endTime   String   @map("end_time")
+
+  slotCapacity Int        @map("slot_capacity")
+  /// Live count of active (non-cancelled) home-visit bookings occupying this slot.
+  /// Guarded by a conditional atomic update (`bookedCount < slotCapacity`) so
+  /// concurrent bookings cannot exceed capacity. Reconciled from OrderDiagnostics.
+  bookedCount  Int        @default(0) @map("booked_count")
+  status       SlotStatus @default(AVAILABLE)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([phlebotomistId, slotDate])
+  @@index([scheduleId])
+  @@index([deletedAt])
+  @@map("phlebotomist_slots")
+}
+
+/// Per-day reservation load for a phlebotomist at a branch — the atomic gate for
+/// the schedule's `maxVisitsPerDay` cap (a per-slot counter cannot guard a
+/// cross-slot daily total). `bookedCount` is incremented/decremented alongside
+/// `PhlebotomistSlot.bookedCount` by `SlotReservationService` and reconciled from
+/// `OrderDiagnostics`. `branchId` is required (home visits are always
+/// branch-level) so the uniqueness key is well-defined (Postgres treats NULLs as
+/// distinct). Tenant-scoped + branch-level. RLS policy in prisma/rls.sql.
+model PhlebotomistDayLoad {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  phlebotomistId String @map("phlebotomist_id")
+
+  loadDate    DateTime @map("load_date") @db.Date
+  bookedCount Int      @default(0) @map("booked_count")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([tenantId, phlebotomistId, branchId, loadDate])
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([phlebotomistId, loadDate])
+  @@map("phlebotomist_day_loads")
 }
 
 /// An external referring doctor in a tenant's registry who sends business to the
@@ -4021,6 +4496,10 @@ model Patient {
   // Orders placed for this patient.
   orders Order[]
 
+  // Family links: rows where this patient is the anchor / the linked member.
+  familyLinks    PatientFamilyLink[] @relation("FamilyAnchor")
+  familyMemberOf PatientFamilyLink[] @relation("FamilyMember")
+
   createdBy String? @map("created_by")
   updatedBy String? @map("updated_by")
 
@@ -4033,6 +4512,37 @@ model Patient {
   @@index([isActive])
   @@index([deletedAt])
   @@map("patients")
+}
+
+/// Directional family relationship between two patients within a tenant. Each
+/// family member is an independent `Patient`; this mapping row links an anchor
+/// patient to a member patient with a `relationship`. Tenant-scoped (RLS) and
+/// branch-aware; soft-deleted (`deletedAt`) to unlink without touching either
+/// patient record.
+model PatientFamilyLink {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  patientId    String       @map("patient_id") // anchor patient
+  memberId     String       @map("member_id") // linked (family member) patient
+  relationship Relationship
+
+  patient Patient @relation("FamilyAnchor", fields: [patientId], references: [id])
+  member  Patient @relation("FamilyMember", fields: [memberId], references: [id])
+
+  createdBy String? @map("created_by")
+  updatedBy String? @map("updated_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([patientId])
+  @@index([memberId])
+  @@map("patient_family_links")
 }
 
 /// A medical-history record for a patient (one-to-many). Tenant-scoped (RLS) and
@@ -4105,12 +4615,14 @@ model MedicalHistory {
 
 // ── Order Management ────────────────────────────────────────────────────────────
 
-/// Lifecycle stage of an order (Draft → Quote → Appointment → Order).
+/// Lifecycle stage of an order (Draft → Quote → Appointment → Order). CANCELLED is
+/// a terminal state set from the billing page (no refund handling this phase).
 enum OrderStatus {
   DRAFT
   QUOTE
   APPOINTMENT
   ORDER
+  CANCELLED
 }
 
 /// Lifecycle of a quotation (an order with `status = QUOTE`). `DRAFT` is an open
@@ -4128,6 +4640,16 @@ enum OrderType {
   WALK_IN
   APP
   WEBSITE
+}
+
+/// Derived payment status of an order, computed from its payment ledger
+/// (sum of `paidAmount` vs `netAmount` across active PaymentDetails rows).
+/// Stored on `Order` so the orders/appointments lists can filter + paginate by
+/// it server-side; recomputed whenever payments change.
+enum PaymentStatus {
+  NOT_PAID
+  PARTIALLY_PAID
+  PAID
 }
 
 /// How the order is billed.
@@ -4182,6 +4704,19 @@ enum AppointmentType {
   RADIOLOGY
 }
 
+/// Lifecycle status of an appointment. Held as the CURRENT status on
+/// `Appointment` and appended to `AppointmentStatusHistory` on every change so a
+/// full update history is preserved.
+enum AppointmentStatus {
+  NEW
+  CONFIRMED
+  CHECKED_IN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  RESCHEDULED
+}
+
 /// The central order record a lab/clinic creates for a patient. Tenant-scoped
 /// (RLS) + branch-level (CLAUDE.md §4.5). Carries basic billing info plus up to
 /// three optional 1:1 service sections (diagnostics / OPD / radiology), a set of
@@ -4197,6 +4732,9 @@ model Order {
 
   // Identity & basic info
   orderCode       String      @map("order_code")
+  // Per-tenant sequential bill id for a diagnostic order (DIG-001…), generated
+  // from Tenant.diagnosticBillCounter at creation. Null for non-diagnostic orders.
+  billId          String?     @map("bill_id")
   status          OrderStatus @default(DRAFT)
   orderDate       DateTime    @map("order_date") @db.Date
   orderType       OrderType   @map("order_type")
@@ -4205,18 +4743,38 @@ model Order {
   isBillGenerated Boolean     @default(false) @map("is_bill_generated")
   orderNotes      String?     @map("order_notes")
 
+  // Order time-of-day ("HH:mm"), captured separately from the DATE-only
+  // `orderDate` so the form's Order Time field round-trips on edit.
+  orderTime String? @map("order_time")
+
+  // Billing-type-specific sub-form (insurance / corporate / govt-scheme / TPA
+  // details), stored as-is so the whole billing sub-section round-trips on edit.
+  // Shape mirrors the FE `useOrderMeta` billing fields (see BillingDetailsDto).
+  billingDetails Json? @map("billing_details")
+
+  // Derived from the payment ledger (recomputed on every payment write). Stored
+  // so the orders/appointments lists can filter + paginate by payment status
+  // server-side (a summed comparison Prisma can't express in a `where`).
+  paymentStatus PaymentStatus @default(NOT_PAID) @map("payment_status")
+
   // Quotation lifecycle (only meaningful when status = QUOTE). EXPIRED is also
   // derived at query time from quotationValidTill.
   quotationStatus    QuotationStatus? @map("quotation_status")
   quotationValidTill DateTime?        @map("quotation_valid_till") @db.Date
 
   // Patient (required) + appointment. `appointmentType` is server-derived when an
-  // order is saved with status = APPOINTMENT (see OrderService); currently always
-  // DIAGNOSTIC as appointments are only created from the Diagnostic section.
+  // order is saved with status = APPOINTMENT (see OrderService) from whichever
+  // service section is present (DIAGNOSTIC / OPD / RADIOLOGY).
   patientId       String           @map("patient_id")
   patient         Patient          @relation(fields: [patientId], references: [id])
   appointmentAt   DateTime?        @map("appointment_at")
   appointmentType AppointmentType? @map("appointment_type")
+
+  // Lifecycle link (1:1) — set when the order is saved with status = APPOINTMENT.
+  // The linked `Appointment` carries the lifecycle status (NEW → CONFIRMED → …)
+  // and its append-only status history. Nullable: DRAFT/QUOTE/ORDER rows have none.
+  appointmentId String?      @unique @map("appointment_id")
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id])
 
   // Referral & B2B billing (all optional)
   referredByDoctorId String?         @map("referred_by_doctor_id")
@@ -4255,6 +4813,9 @@ model Order {
   @@index([referralPanelId])
   @@index([internalReferralId])
   @@index([externalReferralId])
+  @@index([appointmentId])
+  @@index([paymentStatus])
+  @@index([billId])
   @@index([deletedAt])
   @@map("orders")
 }
@@ -4281,6 +4842,11 @@ model OrderItem {
   /// Free-text catalogue entry passed directly from the frontend (mutually
   /// exclusive with the test/panel refs).
   direct String?
+
+  /// Per-line discount in minor units (0 = none). Captured at order/quotation
+  /// time so item-level discounts round-trip on edit; the order-level aggregate
+  /// still lives on PaymentDetails.orderDiscount for list rollups.
+  discount Int @default(0) @map("discount")
 
   /// Sample collection tracking. `collectedAt` NULL = not collected yet; once set
   /// the sample is considered collected (`collectedBy` records the acting person).
@@ -4461,6 +5027,7 @@ model PaymentDetails {
   remainingBalance       Int         @default(0) @map("remaining_balance")
   paymentMode            PaymentMode @default(CASH) @map("payment_mode")
   paymentDate            DateTime?   @map("payment_date")
+  reference              String?     @map("reference")
   notes                  String?
 
   createdAt DateTime  @default(now()) @map("created_at")
@@ -4472,4 +5039,76 @@ model PaymentDetails {
   @@index([orderId])
   @@index([deletedAt])
   @@map("payment_details")
+}
+
+// ── Appointment Status Tracking ─────────────────────────────────────────────────
+
+/// Tracks the current status of an appointment. Tenant-scoped (RLS) + branch-level
+/// (CLAUDE.md §4.5) — an appointment happens at a location, so `branchId` is set
+/// from the active-branch context (nullable for tenant-level rows). `code` is a
+/// per-tenant sequential value (`APT-00001`…) generated from
+/// `Tenant.appointmentCounter`, unique per tenant among active rows (partial
+/// unique index in prisma/rls.sql). `status` holds the CURRENT lifecycle stage;
+/// every change is appended to `AppointmentStatusHistory` so the update history is
+/// preserved. Linked 1:1 to the `Order` that owns it (the FK lives on `Order`);
+/// created when an order is saved with `status = APPOINTMENT`. `updatedBy` records
+/// the person who last changed the record. RLS policy in prisma/rls.sql.
+model Appointment {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  code            String            @map("code")
+  appointmentType AppointmentType   @map("appointment_type")
+  status          AppointmentStatus @default(NEW)
+
+  statusHistory AppointmentStatusHistory[]
+
+  /// Back-relation to the order that owns this appointment (1:1). Set when an
+  /// order is saved with status = APPOINTMENT; the FK lives on `Order`.
+  order Order?
+
+  createdBy String? @map("created_by") // person who created the record
+  updatedBy String? @map("updated_by") // person who last updated the record
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([status])
+  @@index([appointmentType])
+  @@index([deletedAt])
+  @@map("appointments")
+}
+
+/// Append-only history of appointment status changes — one row per change, never
+/// mutated. Written alongside every update to `Appointment.status` (and the
+/// initial status on create) so the full audit trail of an appointment's
+/// lifecycle is preserved. Tenant-scoped (RLS) + branch-level, mirroring its
+/// parent. `changedBy` records the person who made the change. RLS policy in
+/// prisma/rls.sql.
+model AppointmentStatusHistory {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  appointmentId String      @map("appointment_id")
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  status    AppointmentStatus
+  notes     String? // optional reason/context for this status change
+  changedBy String?           @map("changed_by") // person who made this change
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([appointmentId])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@map("appointment_status_history")
 }

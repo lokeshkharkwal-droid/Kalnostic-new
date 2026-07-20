@@ -1,0 +1,21 @@
+meta {
+  name: Get Schedule By Doctor
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/doctor-schedules/doctor/{{doctorId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Fetch a doctor's active schedule config (with days/holidays/overrides) to
+  hydrate the Configure form. Falls back to the most recent non-deleted schedule
+  when none is ACTIVE. `DOCTOR_SCHEDULE_FOR_DOCTOR_NOT_FOUND` (404) if none.
+}

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  AppointmentStatus,
   AppointmentType,
   DoctorType,
   Order,
@@ -9,6 +10,8 @@ import {
   SampleSource,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AppointmentService } from '../appointment/appointment.service';
+import { SlotReservationService } from '../phlebotomist-schedule/slot-reservation.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
@@ -22,9 +25,10 @@ import {
   ORDER_LIST_INCLUDE,
   OrderListRow,
   OrderWithRelations,
+  derivePaymentStatus,
 } from './entities/order.entity';
 import {
-  DiagnosticAppointmentRequiredException,
+  AppointmentSectionRequiredException,
   InvalidOrderItemException,
   OrderItemNotFoundException,
   OrderBranchLabPanelNotFoundException,
@@ -35,6 +39,7 @@ import {
   OrderCategoryNotFoundException,
   OrderDiagnosticPanelNotFoundException,
   OrderExternalReferralNotFoundException,
+  OrderAlreadyCancelledException,
   OrderInternalReferralNotFoundException,
   OrderNotFoundException,
   OrderPatientNotFoundException,
@@ -55,7 +60,44 @@ import {
  */
 @Injectable()
 export class OrderService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly appointmentService: AppointmentService,
+    private readonly slotReservation: SlotReservationService,
+  ) {}
+
+  /**
+   * Resolve the home-visit slot reservation implied by an order's diagnostics
+   * section, or null when it is not a capacity-consuming home-visit booking.
+   * A booking consumes a phlebotomist slot when the order is a **confirmed**
+   * booking (status `APPOINTMENT` or `ORDER` — never `DRAFT`/`QUOTE`/`CANCELLED`),
+   * the diagnostics section is a home visit with a phlebotomist, a visit time is
+   * present, and the order is branch-scoped. This matches the set of visits the
+   * derived occupancy counts (`visitTimesInRange`) so the persisted counter, the
+   * picker's availability, and `reconcile` all agree. The reservation time mirrors
+   * the occupancy derivation: `collectionAt ?? appointmentAt`.
+   */
+  private homeVisitReservation(
+    status: OrderStatus | undefined,
+    branchId: string | null,
+    d:
+      | {
+          isHomeVisit?: boolean | null;
+          phlebotomistId?: string | null;
+          collectionAt?: Date | string | null;
+          appointmentAt?: Date | string | null;
+        }
+      | null
+      | undefined,
+  ): { branchId: string; phlebotomistId: string; at: Date } | null {
+    if (status !== OrderStatus.APPOINTMENT && status !== OrderStatus.ORDER) {
+      return null;
+    }
+    if (!branchId || !d?.isHomeVisit || !d.phlebotomistId) return null;
+    const when = d.collectionAt ?? d.appointmentAt;
+    if (!when) return null;
+    return { branchId, phlebotomistId: d.phlebotomistId, at: new Date(when) };
+  }
 
   /**
    * Create an order with everything the frontend submits (items, sections,
@@ -64,6 +106,7 @@ export class OrderService {
    * system-generated.
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT profile; may be null)
+   * @param personId acting person id (from JWT) — recorded on the linked appointment
    * @param dto validated payload
    * @returns the fully-composed created order
    * @throws OrderPatientNotFoundException, reference-validation 422s, OrderCodeConflictException
@@ -71,6 +114,7 @@ export class OrderService {
   async create(
     tenantId: string,
     branchId: string | null,
+    personId: string | null,
     dto: CreateOrderDto,
   ): Promise<OrderWithRelations> {
     await this.assertPatient(tenantId, dto.patientId);
@@ -85,37 +129,65 @@ export class OrderService {
     if (dto.radiology) {
       await this.assertRadiology(tenantId, dto.radiology);
     }
-    this.assertDiagnosticAppointment(dto.status, dto);
+    this.assertAppointmentSection(dto.status, dto);
 
-    // Appointments are created only for the Diagnostic section: when saving as
-    // APPOINTMENT, the order's appointment is the Diagnostic appointment and the
-    // type is DIAGNOSTIC (asserted above). Otherwise fall back to any explicit
-    // top-level appointmentAt and leave the type unset.
-    const appointmentAt =
-      dto.status === OrderStatus.APPOINTMENT && dto.diagnostics?.appointmentAt
-        ? new Date(dto.diagnostics.appointmentAt)
-        : dto.appointmentAt
-          ? new Date(dto.appointmentAt)
-          : null;
-    const appointmentType =
-      dto.status === OrderStatus.APPOINTMENT
-        ? AppointmentType.DIAGNOSTIC
-        : null;
+    // When saving as APPOINTMENT, the order's appointment date/type are derived
+    // from whichever service section is scheduled (Diagnostic / OPD / Radiology).
+    const { appointmentAt, appointmentType } = this.resolveAppointment(dto);
+
+    // Derive the stored payment status from the inline payment ledger (if any).
+    const payNet = (dto.payments ?? []).reduce(
+      (s, p) => s + (p.netAmount ?? 0),
+      0,
+    );
+    const payPaid = (dto.payments ?? []).reduce(
+      (s, p) => s + (p.paidAmount ?? 0),
+      0,
+    );
+    const paymentStatus = derivePaymentStatus(payNet, payPaid);
 
     let createdId: string;
     try {
       createdId = await this.prisma.withTenant(tenantId, async (tx) => {
+        // A diagnostic order is a bill — bump the per-tenant diagnostic bill
+        // counter alongside the order counter so it gets a `DIG-001…` bill id.
+        const isDiagnosticBill = Boolean(dto.diagnostics);
         const tenant = await tx.tenant.update({
           where: { id: tenantId },
-          data: { orderCounter: { increment: 1 } },
-          select: { orderCounter: true },
+          data: {
+            orderCounter: { increment: 1 },
+            ...(isDiagnosticBill
+              ? { diagnosticBillCounter: { increment: 1 } }
+              : {}),
+          },
+          select: { orderCounter: true, diagnosticBillCounter: true },
         });
         const orderCode = `ORD-${String(tenant.orderCounter).padStart(5, '0')}`;
+        const billId = isDiagnosticBill
+          ? `DIG-${String(tenant.diagnosticBillCounter).padStart(3, '0')}`
+          : null;
+        // For an APPOINTMENT order, create the linked lifecycle appointment
+        // (initial status NEW) in the same transaction and attach it via FK.
+        const appointmentId =
+          dto.status === OrderStatus.APPOINTMENT && appointmentType
+            ? await this.appointmentService.createInTx(
+                tx,
+                tenantId,
+                branchId,
+                personId,
+                { appointmentType },
+              )
+            : null;
         const order = await tx.order.create({
           data: {
             tenantId,
             branchId,
             orderCode,
+            billId,
+            appointmentId,
+            paymentStatus,
+            createdBy: personId,
+            updatedBy: personId,
             status: dto.status ?? OrderStatus.DRAFT,
             orderDate: new Date(dto.orderDate),
             orderType: dto.orderType,
@@ -123,6 +195,9 @@ export class OrderService {
             isUrgentBill: dto.isUrgentBill ?? false,
             isBillGenerated: dto.isBillGenerated ?? false,
             orderNotes: dto.orderNotes ?? null,
+            orderTime: dto.orderTime ?? null,
+            billingDetails:
+              (dto.billingDetails as Prisma.InputJsonValue) ?? Prisma.JsonNull,
             quotationStatus:
               dto.quotationStatus ??
               (dto.status === OrderStatus.QUOTE ? QuotationStatus.DRAFT : null),
@@ -148,6 +223,7 @@ export class OrderService {
               branchLabTestId: i.branchLabTestId ?? null,
               branchLabPanelId: i.branchLabPanelId ?? null,
               direct: i.direct ?? null,
+              discount: i.discount ?? 0,
             })),
           });
         }
@@ -186,6 +262,23 @@ export class OrderService {
               paymentDate: p.paymentDate ? new Date(p.paymentDate) : null,
             })),
           });
+        }
+        // Reserve the phlebotomist slot for a home-visit appointment (atomic
+        // capacity gate). Throws SlotFull/DailyCapReached/SlotUnavailable/
+        // ScheduleForStaffNotFound, rolling the whole order back.
+        const reservation = this.homeVisitReservation(
+          dto.status,
+          branchId,
+          dto.diagnostics,
+        );
+        if (reservation) {
+          await this.slotReservation.reserveInTx(
+            tx,
+            tenantId,
+            reservation.branchId,
+            reservation.phlebotomistId,
+            reservation.at,
+          );
         }
         return order.id;
       });
@@ -256,6 +349,7 @@ export class OrderService {
     } else if (search) {
       where.OR = [
         { orderCode: { contains: search, mode: 'insensitive' } },
+        { billId: { contains: search, mode: 'insensitive' } },
         {
           patient: {
             is: {
@@ -273,6 +367,10 @@ export class OrderService {
     }
 
     if (query.status) where.status = query.status;
+    if (query.paymentStatus) where.paymentStatus = query.paymentStatus;
+    if (query.appointmentStatus) {
+      where.appointment = { is: { status: query.appointmentStatus } };
+    }
     if (query.orderType) where.orderType = query.orderType;
     if (query.billingType) where.billingType = query.billingType;
     if (query.patientId) where.patientId = query.patientId;
@@ -280,6 +378,11 @@ export class OrderService {
       where.referredByDoctorId = query.referredByDoctorId;
     }
     if (query.referralPanelId) where.referralPanelId = query.referralPanelId;
+    // B2B filter: presence (or absence) of a referral panel. Pushed to `and[]`
+    // so it never clobbers an explicit `referralPanelId` filter.
+    if (query.isB2b !== undefined) {
+      and.push({ referralPanelId: query.isB2b ? { not: null } : null });
+    }
     if (query.internalReferralId) {
       where.internalReferralId = query.internalReferralId;
     }
@@ -481,6 +584,7 @@ export class OrderService {
   async update(
     id: string,
     tenantId: string,
+    personId: string | null,
     dto: UpdateOrderDto,
   ): Promise<OrderWithRelations> {
     await this.findById(id, tenantId);
@@ -495,46 +599,126 @@ export class OrderService {
     if (dto.radiology) {
       await this.assertRadiology(tenantId, dto.radiology);
     }
-    this.assertDiagnosticAppointment(dto.status, dto);
+    this.assertAppointmentSection(dto.status, dto);
 
     const now = new Date();
-    // Branch of the existing order (sections/items inherit it).
+    // Existing order: branch (sections/items inherit it), current status, any
+    // already-linked appointment (so a status flip to APPOINTMENT can create one),
+    // and the current diagnostics booking (to release/re-reserve the phleb slot).
     const existing = await this.prisma.order.findFirst({
       where: { id, tenantId, deletedAt: null },
-      select: { branchId: true },
+      select: {
+        branchId: true,
+        status: true,
+        appointmentId: true,
+        appointment: { select: { status: true } },
+        diagnostics: {
+          select: {
+            isHomeVisit: true,
+            phlebotomistId: true,
+            collectionAt: true,
+            appointmentAt: true,
+          },
+        },
+      },
     });
     const branchId = existing?.branchId ?? null;
+    const effectiveStatus = dto.status ?? existing?.status;
+
+    // Home-visit slot reservation: the booking as it stands now vs. after this
+    // patch. A cancelled appointment already released its slot, so it counts as no
+    // current reservation. The diagnostics section is unchanged when the patch
+    // omits it.
+    const oldReservation =
+      existing?.appointment?.status === AppointmentStatus.CANCELLED
+        ? null
+        : this.homeVisitReservation(
+            existing?.status,
+            branchId,
+            existing?.diagnostics,
+          );
+    const newReservation = this.homeVisitReservation(
+      effectiveStatus,
+      branchId,
+      dto.diagnostics ?? existing?.diagnostics,
+    );
+    const reservationUnchanged =
+      oldReservation !== null &&
+      newReservation !== null &&
+      oldReservation.phlebotomistId === newReservation.phlebotomistId &&
+      oldReservation.at.getTime() === newReservation.at.getTime();
+
+    // Appointment date: prefer a scheduled section, then the top-level field;
+    // `undefined` leaves it untouched (patch semantics).
+    const sectionAppt =
+      dto.diagnostics?.appointmentAt ??
+      dto.opd?.appointmentAt ??
+      dto.radiology?.appointmentAt ??
+      dto.appointmentAt;
+    const appointmentType = this.sectionAppointmentType(dto);
+
+    // When the payment ledger is being replaced, recompute the stored payment
+    // status from the incoming rows (same derivation as create).
+    const payNet = (dto.payments ?? []).reduce(
+      (s, p) => s + (p.netAmount ?? 0),
+      0,
+    );
+    const payPaid = (dto.payments ?? []).reduce(
+      (s, p) => s + (p.paidAmount ?? 0),
+      0,
+    );
+    const paymentStatus = derivePaymentStatus(payNet, payPaid);
 
     await this.prisma.withTenant(tenantId, async (tx) => {
+      // Flipping an existing order to APPOINTMENT without a linked lifecycle
+      // record yet — create + link one (initial status NEW) in the same tx.
+      const appointmentId =
+        effectiveStatus === OrderStatus.APPOINTMENT &&
+        !existing?.appointmentId &&
+        appointmentType
+          ? await this.appointmentService.createInTx(
+              tx,
+              tenantId,
+              branchId,
+              personId,
+              { appointmentType },
+            )
+          : undefined;
+
       await tx.order.update({
         where: { id },
         data: {
           status: dto.status,
+          updatedBy: personId,
+          appointmentId,
+          // Recompute only when the payment ledger is part of this patch;
+          // leave the stored status untouched otherwise.
+          paymentStatus: dto.payments !== undefined ? paymentStatus : undefined,
           orderDate: dto.orderDate ? new Date(dto.orderDate) : undefined,
           orderType: dto.orderType,
           billingType: dto.billingType,
           isUrgentBill: dto.isUrgentBill,
           isBillGenerated: dto.isBillGenerated,
           orderNotes: dto.orderNotes,
+          orderTime: dto.orderTime,
+          // Replace the billing sub-form when provided; leave untouched otherwise.
+          billingDetails:
+            dto.billingDetails !== undefined
+              ? (dto.billingDetails as Prisma.InputJsonValue)
+              : undefined,
           quotationStatus: dto.quotationStatus,
           quotationValidTill: dto.quotationValidTill
             ? new Date(dto.quotationValidTill)
             : undefined,
-          // Derive the appointment from the Diagnostic section when saving as
-          // APPOINTMENT; clear the type when the status is explicitly changed to
-          // something else; leave both untouched when status isn't in the patch.
-          appointmentAt:
-            dto.status === OrderStatus.APPOINTMENT &&
-            dto.diagnostics?.appointmentAt
-              ? new Date(dto.diagnostics.appointmentAt)
-              : dto.appointmentAt
-                ? new Date(dto.appointmentAt)
-                : undefined,
+          // Update the appointment time from the scheduled section / top-level
+          // field (leave untouched when none supplied). Set the type per section
+          // when status is in the patch; clear it when leaving APPOINTMENT.
+          appointmentAt: sectionAppt ? new Date(sectionAppt) : undefined,
           appointmentType:
             dto.status === undefined
               ? undefined
               : dto.status === OrderStatus.APPOINTMENT
-                ? AppointmentType.DIAGNOSTIC
+                ? (appointmentType ?? AppointmentType.DIAGNOSTIC)
                 : null,
           referredByDoctorId: dto.referredByDoctorId,
           referralPanelId: dto.referralPanelId,
@@ -558,6 +742,7 @@ export class OrderService {
               branchLabTestId: i.branchLabTestId ?? null,
               branchLabPanelId: i.branchLabPanelId ?? null,
               direct: i.direct ?? null,
+              discount: i.discount ?? 0,
             })),
           });
         }
@@ -591,6 +776,52 @@ export class OrderService {
           create: data,
           update: this.stripKeys(data),
         });
+      }
+
+      // Replace the payment ledger wholesale when provided: soft-delete the
+      // current rows and recreate from the patch (mirrors the item-set replace).
+      // Safe to soft-delete + recreate — payment_details has no child unique key.
+      if (dto.payments !== undefined) {
+        await tx.paymentDetails.updateMany({
+          where: { orderId: id, tenantId, deletedAt: null },
+          data: { deletedAt: now },
+        });
+        if (dto.payments.length) {
+          await tx.paymentDetails.createMany({
+            data: dto.payments.map((p) => ({
+              tenantId,
+              branchId,
+              orderId: id,
+              ...p,
+              paymentDate: p.paymentDate ? new Date(p.paymentDate) : null,
+            })),
+          });
+        }
+      }
+
+      // Re-point the phlebotomist slot reservation when the booking changed
+      // (reschedule / phlebotomist swap / home-visit toggle / status flip). Skip
+      // when nothing about the booking changed so we don't re-validate (and
+      // possibly reject) an untouched past appointment.
+      if (!reservationUnchanged) {
+        if (oldReservation) {
+          await this.slotReservation.releaseInTx(
+            tx,
+            tenantId,
+            oldReservation.branchId,
+            oldReservation.phlebotomistId,
+            oldReservation.at,
+          );
+        }
+        if (newReservation) {
+          await this.slotReservation.reserveInTx(
+            tx,
+            tenantId,
+            newReservation.branchId,
+            newReservation.phlebotomistId,
+            newReservation.at,
+          );
+        }
       }
     });
 
@@ -634,6 +865,96 @@ export class OrderService {
   }
 
   /**
+   * Cancel an order — set `status = CANCELLED` (terminal). Allowed regardless of
+   * payments already collected; no refund handling this phase. The order (and its
+   * payment ledger) are preserved, unlike `remove`.
+   * @param id order id
+   * @param tenantId tenant scope
+   * @param actorId acting person id (recorded as `updatedBy`), may be null
+   * @returns the fully-composed order after cancellation
+   * @throws OrderNotFoundException if missing/soft-deleted/other tenant
+   * @throws OrderAlreadyCancelledException if already cancelled
+   */
+  async cancel(
+    id: string,
+    tenantId: string,
+    actorId: string | null,
+  ): Promise<OrderWithRelations> {
+    const existing = await this.findById(id, tenantId);
+    if (existing.status === OrderStatus.CANCELLED) {
+      throw new OrderAlreadyCancelledException(id);
+    }
+    // Booking context for releasing the phlebotomist slot + cancelling the linked
+    // appointment lifecycle record.
+    const booking = await this.prisma.order.findFirst({
+      where: { id, tenantId, deletedAt: null },
+      select: {
+        branchId: true,
+        status: true,
+        appointmentId: true,
+        appointment: { select: { status: true, branchId: true } },
+        diagnostics: {
+          select: {
+            isHomeVisit: true,
+            phlebotomistId: true,
+            collectionAt: true,
+            appointmentAt: true,
+          },
+        },
+      },
+    });
+    // The slot held by this booking (null if its appointment already released it).
+    // Computed from the pre-cancel state; released below whether or not an
+    // appointment is linked (a walk-in ORDER holds a slot with no appointment).
+    const reservation =
+      booking?.appointment?.status === AppointmentStatus.CANCELLED
+        ? null
+        : this.homeVisitReservation(
+            booking?.status,
+            booking?.branchId ?? null,
+            booking?.diagnostics,
+          );
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      await tx.order.update({
+        where: { id },
+        data: { status: OrderStatus.CANCELLED, updatedBy: actorId },
+      });
+      // Cancel the linked appointment too (+ history) so a cancelled order no
+      // longer occupies a phlebotomist slot.
+      if (
+        booking?.appointmentId &&
+        booking.appointment?.status !== AppointmentStatus.CANCELLED
+      ) {
+        await tx.appointment.update({
+          where: { id: booking.appointmentId },
+          data: { status: AppointmentStatus.CANCELLED, updatedBy: actorId },
+        });
+        await tx.appointmentStatusHistory.create({
+          data: {
+            tenantId,
+            branchId: booking.appointment?.branchId ?? booking.branchId,
+            appointmentId: booking.appointmentId,
+            status: AppointmentStatus.CANCELLED,
+            notes: 'Order cancelled',
+            changedBy: actorId,
+          },
+        });
+      }
+      // Release the phlebotomist slot the (now-cancelled) order held.
+      if (reservation) {
+        await this.slotReservation.releaseInTx(
+          tx,
+          tenantId,
+          reservation.branchId,
+          reservation.phlebotomistId,
+          reservation.at,
+        );
+      }
+    });
+    return this.findById(id, tenantId);
+  }
+
+  /**
    * Soft-delete an order and cascade soft-delete its items, sections, and
    * payments, in one transaction.
    * @param id order id
@@ -642,6 +963,32 @@ export class OrderService {
    */
   async remove(id: string, tenantId: string): Promise<Order> {
     await this.findById(id, tenantId);
+    // Booking context so a soft-deleted order releases the phlebotomist slot it
+    // held (unless its appointment was already cancelled — that already released).
+    const booking = await this.prisma.order.findFirst({
+      where: { id, tenantId, deletedAt: null },
+      select: {
+        branchId: true,
+        status: true,
+        appointment: { select: { status: true } },
+        diagnostics: {
+          select: {
+            isHomeVisit: true,
+            phlebotomistId: true,
+            collectionAt: true,
+            appointmentAt: true,
+          },
+        },
+      },
+    });
+    const reservation =
+      booking?.appointment?.status === AppointmentStatus.CANCELLED
+        ? null
+        : this.homeVisitReservation(
+            booking?.status,
+            booking?.branchId ?? null,
+            booking?.diagnostics,
+          );
     const now = new Date();
     return this.prisma.withTenant(tenantId, async (tx) => {
       const where = { orderId: id, tenantId, deletedAt: null };
@@ -652,6 +999,15 @@ export class OrderService {
         tx.orderRadiology.updateMany({ where, data: { deletedAt: now } }),
         tx.paymentDetails.updateMany({ where, data: { deletedAt: now } }),
       ]);
+      if (reservation) {
+        await this.slotReservation.releaseInTx(
+          tx,
+          tenantId,
+          reservation.branchId,
+          reservation.phlebotomistId,
+          reservation.at,
+        );
+      }
       return tx.order.update({ where: { id }, data: { deletedAt: now } });
     });
   }
@@ -948,24 +1304,86 @@ export class OrderService {
   // ── Section data builders ─────────────────────────────────────────────────────
 
   /**
-   * When an order is saved with status APPOINTMENT, an appointment is created
-   * only for the Diagnostic section: the Diagnostic section must be present and
-   * carry an `appointmentAt`. OPD/Radiology appointment input is ignored for now
-   * (they still save as ordinary sections). The order's top-level `appointmentAt`
-   * + `appointmentType` are derived from the Diagnostic section by the caller.
-   * @throws DiagnosticAppointmentRequiredException when the Diagnostic section is
-   *   missing or has no appointment time
+   * When an order is saved with status APPOINTMENT it must have exactly one
+   * scheduled service section — a Diagnostic, OPD, or Radiology section carrying
+   * an `appointmentAt`. The order's top-level `appointmentAt` + `appointmentType`
+   * are derived from that section (see {@link resolveAppointment}).
+   * @throws AppointmentSectionRequiredException when no section carries an
+   *   appointment time
    */
-  private assertDiagnosticAppointment(
+  private assertAppointmentSection(
     status: OrderStatus | undefined,
-    dto: { diagnostics?: OrderDiagnosticsDto },
+    dto: {
+      diagnostics?: OrderDiagnosticsDto;
+      opd?: OrderOpdDto;
+      radiology?: OrderRadiologyDto;
+    },
   ): void {
     if (status !== OrderStatus.APPOINTMENT) {
       return;
     }
-    if (!dto.diagnostics || !dto.diagnostics.appointmentAt) {
-      throw new DiagnosticAppointmentRequiredException();
+    const hasScheduledSection =
+      Boolean(dto.diagnostics?.appointmentAt) ||
+      Boolean(dto.opd?.appointmentAt) ||
+      Boolean(dto.radiology?.appointmentAt);
+    if (!hasScheduledSection) {
+      throw new AppointmentSectionRequiredException();
     }
+  }
+
+  /**
+   * The appointment type implied by whichever service section is present on the
+   * payload (Diagnostic → OPD → Radiology precedence). Returns null when no
+   * section is present.
+   */
+  private sectionAppointmentType(dto: {
+    diagnostics?: OrderDiagnosticsDto;
+    opd?: OrderOpdDto;
+    radiology?: OrderRadiologyDto;
+  }): AppointmentType | null {
+    if (dto.diagnostics) return AppointmentType.DIAGNOSTIC;
+    if (dto.opd) return AppointmentType.OPD;
+    if (dto.radiology) return AppointmentType.RADIOLOGY;
+    return null;
+  }
+
+  /**
+   * Derive the order's top-level `appointmentAt` + `appointmentType` for a create.
+   * For an APPOINTMENT order these come from the scheduled section (Diagnostic →
+   * OPD → Radiology precedence); otherwise fall back to any explicit top-level
+   * `appointmentAt` and leave the type unset.
+   */
+  private resolveAppointment(dto: {
+    status?: OrderStatus;
+    appointmentAt?: string;
+    diagnostics?: OrderDiagnosticsDto;
+    opd?: OrderOpdDto;
+    radiology?: OrderRadiologyDto;
+  }): { appointmentAt: Date | null; appointmentType: AppointmentType | null } {
+    if (dto.status === OrderStatus.APPOINTMENT) {
+      if (dto.diagnostics?.appointmentAt) {
+        return {
+          appointmentAt: new Date(dto.diagnostics.appointmentAt),
+          appointmentType: AppointmentType.DIAGNOSTIC,
+        };
+      }
+      if (dto.opd?.appointmentAt) {
+        return {
+          appointmentAt: new Date(dto.opd.appointmentAt),
+          appointmentType: AppointmentType.OPD,
+        };
+      }
+      if (dto.radiology?.appointmentAt) {
+        return {
+          appointmentAt: new Date(dto.radiology.appointmentAt),
+          appointmentType: AppointmentType.RADIOLOGY,
+        };
+      }
+    }
+    return {
+      appointmentAt: dto.appointmentAt ? new Date(dto.appointmentAt) : null,
+      appointmentType: null,
+    };
   }
 
   private diagnosticsData(

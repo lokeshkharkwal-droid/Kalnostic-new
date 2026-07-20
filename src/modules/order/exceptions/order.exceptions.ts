@@ -172,17 +172,29 @@ export class OrderExternalReferralNotFoundException extends KaltrosException {
 }
 
 /**
- * 422 — the order is being saved as an APPOINTMENT but the Diagnostic section is
- * missing (or has no appointment time). Appointments are only created for the
- * Diagnostic section; OPD/Radiology appointment input is ignored for now.
+ * 422 — the order is being saved as an APPOINTMENT but none of its service
+ * sections (Diagnostic / OPD / Radiology) carries an appointment date and time.
+ * An appointment order must have exactly one section scheduled.
  */
-export class DiagnosticAppointmentRequiredException extends KaltrosException {
+export class AppointmentSectionRequiredException extends KaltrosException {
   constructor() {
     super(
-      'DIAGNOSTIC_APPOINTMENT_REQUIRED',
-      'Appointments can only be created for Diagnostic orders with an appointment date and time',
+      'APPOINTMENT_SECTION_REQUIRED',
+      'An appointment order must have a Diagnostic, OPD, or Radiology section with an appointment date and time',
       {},
       HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/** 409 — the order is already cancelled, so it can't be cancelled again. */
+export class OrderAlreadyCancelledException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'ORDER_ALREADY_CANCELLED',
+      'This order is already cancelled',
+      { id },
+      HttpStatus.CONFLICT,
     );
   }
 }

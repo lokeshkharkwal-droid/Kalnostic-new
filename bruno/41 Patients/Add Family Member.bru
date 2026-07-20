@@ -1,0 +1,63 @@
+meta {
+  name: Add Family Member
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/patients/{{patientId}}/family-members
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Priya Sharma",
+    "age": 34,
+    "mobile": "9876500011",
+    "relationship": "SPOUSE",
+    "umId": "PT-2001"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.link && data.link.id) bru.setEnvVar("familyLinkId", data.link.id);
+  if (data && data.member && data.member.id) bru.setEnvVar("familyMemberId", data.member.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  Add a family member to the anchor patient in the URL. Creates a NEW, independent
+  `Patient` (only `name`→firstName, `age`, `mobile`, `relationship`, `umId` — the
+  anchor's data is never copied) and links it to the anchor via a directional
+  `PatientFamilyLink`. The new member inherits the anchor's registration `branchId`.
+  Captures `familyLinkId` and `familyMemberId`.
+
+  ## Fields
+
+  - `name` (required) — the member's name, stored as the new patient's `firstName`.
+  - `mobile` (required) — unique per tenant among active patients.
+  - `relationship` (required) — one of `SELF`, `SPOUSE`, `SON`, `DAUGHTER`,
+    `FATHER`, `MOTHER`, `BROTHER`, `SISTER`, `SIBLING`, `GUARDIAN`, `FRIEND`,
+    `OTHER`. Invalid values are rejected (400) before any write.
+  - `age` (optional, integer ≥ 0).
+  - `umId` (optional) — frontend-supplied UMID for the new patient.
+
+  `tenantId`/`branchId`/`patientId` are never accepted in the body. 404
+  `PATIENT_NOT_FOUND` if the anchor is missing/other tenant. 409
+  `PATIENT_MOBILE_CONFLICT` if the mobile is already used by an active patient.
+}

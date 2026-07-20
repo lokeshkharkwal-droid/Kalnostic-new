@@ -906,6 +906,10 @@ export class UsersService {
           authRoleId: role.id,
           branchStatus: StaffStatus.ACTIVE,
           enabledModules,
+          defaultModuleId: this.defaultQuickLandingModule(
+            dto.role,
+            enabledModules,
+          ),
           isDefault: true,
           isActive: true,
           assignedAt: new Date(),
@@ -941,6 +945,26 @@ export class UsersService {
       default:
         return [];
     }
+  }
+
+  /**
+   * Pick the landing (default) module for a quick-added staff member, stored on
+   * `UserBranchProfile.defaultModuleId`. Prefers the module whose key equals the
+   * role key when it is a valid, enabled module (→ `phlebotomist` for a
+   * phlebotomist, `radiology` for a radiologist); otherwise falls back to the
+   * first enabled module, or `null` when none are enabled.
+   * @param roleKey the staff role key
+   * @param enabledModules the module keys granted at the branch
+   * @returns the default module key, or `null` if none applies
+   */
+  private defaultQuickLandingModule(
+    roleKey: string,
+    enabledModules: string[],
+  ): string | null {
+    if (isValidModuleKey(roleKey) && enabledModules.includes(roleKey)) {
+      return roleKey;
+    }
+    return enabledModules[0] ?? null;
   }
 
   /**

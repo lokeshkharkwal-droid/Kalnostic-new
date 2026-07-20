@@ -1,0 +1,29 @@
+meta {
+  name: Calendar (Weekly)
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/doctor-schedules/calendar?doctorId={{doctorId}}&weekStart=2026-07-13
+  body: none
+  auth: bearer
+}
+
+params:query {
+  doctorId: {{doctorId}}
+  weekStart: 2026-07-13
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Weekly calendar for a doctor: the doctor header (name, department, speciality,
+  branch, rating, years of experience, role, consultation fee) plus 7 day columns.
+  Each day has an `availabilityStatus` (`Available`/`Unavailable`) and its slots,
+  each carrying capacity/booked/available counts, occupancy %, and a derived
+  status (`Available`/`Booked`/`Full`/`Past`). Prev/next week = a different
+  `weekStart` (ISO `YYYY-MM-DD`) — no frontend logic needed.
+}

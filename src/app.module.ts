@@ -51,6 +51,9 @@ import { OrderModule } from './modules/order/order.module';
 import { PricingModule } from './modules/pricing/pricing.module';
 import { OrderFieldConfigModule } from './modules/order-field-config/order-field-config.module';
 import { PaymentDetailsModule } from './modules/payment-details/payment-details.module';
+import { AppointmentModule } from './modules/appointment/appointment.module';
+import { DoctorScheduleModule } from './modules/doctor-schedule/doctor-schedule.module';
+import { PhlebotomistScheduleModule } from './modules/phlebotomist-schedule/phlebotomist-schedule.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 
 /**
@@ -122,6 +125,9 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     PricingModule,
     OrderFieldConfigModule,
     PaymentDetailsModule,
+    AppointmentModule,
+    DoctorScheduleModule,
+    PhlebotomistScheduleModule,
   ],
   providers: [
     // Global business authentication. SiteAdmin routes use @Public() + their

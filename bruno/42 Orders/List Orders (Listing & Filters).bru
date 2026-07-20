@@ -18,12 +18,15 @@ params:query {
   ~patientName: john
   ~patientMobile: 98765
   ~status: ORDER
+  ~appointmentStatus: NEW
+  ~paymentStatus: PAID
   ~quotationStatus: DRAFT
   ~orderType: WALK_IN
   ~billingType: CASH_CLIENT
   ~patientId: {{patientId}}
   ~referredByDoctorId: {{referralDoctorId}}
   ~referralPanelId: {{referralPanelId}}
+  ~isB2b: true
   ~internalReferralId: {{internalReferralId}}
   ~externalReferralId: {{externalReferralId}}
   ~branchId: {{branchId}}
@@ -50,7 +53,11 @@ docs {
   the payment rollups (`grossAmount`/`discountAmount`/`netAmount`/`paidAmount`), the
   active-item count (`itemCount`), the collected-item count (`collectedItemCount`)
   and the `effectiveQuotationStatus` (stored `quotationStatus` upgraded to `EXPIRED`
-  when `quotationValidTill` has passed). Defaults branch scope to the caller's active
+  when `quotationValidTill` has passed). Each row also carries the section refs —
+  `items` (with test/panel names), and the `diagnostics` / `opd` / `radiology`
+  sections with their display refs — plus the linked `appointment` (`{ id, status }`,
+  for orders saved as APPOINTMENT), so the order-console and appointments lists render
+  every column without a second fetch. Defaults branch scope to the caller's active
   branch; an explicit `branchId` overrides it. Pagination info lands in `meta`.
 
   ## Search
@@ -63,6 +70,13 @@ docs {
   ## Filters (toggle the `~` to enable a query param)
 
   - `status` — `DRAFT` | `QUOTE` | `APPOINTMENT` | `ORDER`.
+  - `appointmentStatus` — `NEW` | `CONFIRMED` | `CHECKED_IN` | `IN_PROGRESS` |
+    `COMPLETED` | `CANCELLED` | `RESCHEDULED`. Filters on the linked appointment's
+    lifecycle status; the appointments list sends this with `status=APPOINTMENT`.
+  - `paymentStatus` — `NOT_PAID` | `PARTIALLY_PAID` | `PAID`. Matches the order's
+    stored `paymentStatus` (derived from the payment ledger — summed `paidAmount`
+    vs `netAmount` — and recomputed on every payment write). The appointments list
+    payment filter sends this.
   - `quotationStatus` — `DRAFT` | `CONVERTED` | `EXPIRED`. `EXPIRED` is derived
     at query time (an open `DRAFT` whose `quotationValidTill` has passed counts as
     expired and is excluded from `DRAFT`).
@@ -74,6 +88,9 @@ docs {
   - `patientId` / `branchId` — UUID filters.
   - `referredByDoctorId` / `referralPanelId` / `internalReferralId` /
     `externalReferralId` — referral UUID filters.
+  - `isB2b` — `true` → only orders that have a referral panel set
+    (`referralPanelId` not null); `false` → only orders with no referral panel.
+    Powers the order-console B2B (Yes/No) filter.
   - `isBillGenerated` — `true` | `false`.
   - `dateFrom` / `dateTo` — inclusive ISO-8601 date bounds on `orderDate`.
   - `section` — `DIAGNOSTICS` | `OPD` | `RADIOLOGY`; keeps only orders that carry

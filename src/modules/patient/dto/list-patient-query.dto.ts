@@ -13,7 +13,7 @@ import {
   IsUUID,
   MaxLength,
 } from 'class-validator';
-import { Transform } from 'class-transformer';
+import { ToBoolean } from '../../../common/decorators/to-boolean.decorator';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 
 /**
@@ -43,7 +43,7 @@ export class ListPatientQueryDto extends PaginationQueryDto {
 
   /** Filter: Active (`true`) / Inactive (`false`). Query strings coerced. */
   @IsOptional()
-  @Transform(({ value }) => value === 'true' || value === true)
+  @ToBoolean()
   @IsBoolean()
   isActive?: boolean;
 
@@ -71,4 +71,15 @@ export class ListPatientQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsUUID()
   branchId?: string;
+
+  /**
+   * When `true`, each returned patient carries its active family members
+   * (`familyMembers`). Default OFF so existing consumers are unaffected. Query
+   * strings are coerced via `@ToBoolean()` (avoids the implicit-conversion
+   * `false → true` bug).
+   */
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  includeFamily?: boolean;
 }

@@ -1,0 +1,41 @@
+meta {
+  name: Cancel Order
+  type: http
+  seq: 8
+}
+
+patch {
+  url: {{baseUrl}}/orders/{{orderId}}/cancel
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("status is CANCELLED", function () {
+    expect(res.getBody().data.status).to.equal("CANCELLED");
+  });
+}
+
+docs {
+  Cancel an order — sets `status = CANCELLED` (a terminal state). Scoped to the
+  caller's tenant. Allowed regardless of any payments already collected; there is
+  **no refund handling this phase**. Unlike `DELETE /orders/:id` (soft delete), the
+  order and its payment ledger are preserved and it still appears in the billing
+  list, shown as Cancelled.
+
+  Cancelling an already-cancelled order returns 409 `ORDER_ALREADY_CANCELLED`.
+  Once cancelled, `POST /payments` for the order is rejected with 422
+  `PAYMENT_ORDER_CANCELLED`.
+
+  When the cancelled order was a home-visit appointment, its linked `Appointment`
+  is cancelled too and the phlebotomist slot it held is **released** (the persisted
+  reservation counters are decremented in the same transaction), freeing the
+  opening for other bookings. Releasing is best-effort and never fails the cancel.
+}

@@ -1,0 +1,46 @@
+meta {
+  name: 49 Appointments
+  seq: 55
+}
+
+docs {
+  # Appointments
+
+  Appointment **status tracking**. An appointment is a tenant-scoped +
+  branch-level record that carries a system-generated `code` (`APT-00001`…), an
+  `appointmentType` (`DIAGNOSTIC` | `OPD` | `RADIOLOGY`), and its **current**
+  `status`. Every status change is appended to an append-only
+  **status-history** log, so the full lifecycle of an appointment is preserved.
+
+  > Appointments are **linked 1:1 to an `Order`**: saving an order with
+  > `status = APPOINTMENT` (Create-Order flow) creates a linked appointment
+  > record (initial status `NEW`) via `Order.appointmentId`. This module drives
+  > that record's status lifecycle; the order carries `appointmentAt` +
+  > `appointmentType` (derived from the scheduled section). `GET /orders` returns
+  > the linked `appointment` `{ id, status }` on each row, and the appointments
+  > list uses these endpoints to transition it.
+
+  ## Status lifecycle
+
+  `AppointmentStatus`: `NEW` → `CONFIRMED` → `CHECKED_IN` → `IN_PROGRESS` →
+  `COMPLETED`, plus `CANCELLED` and `RESCHEDULED`. Transitions are not
+  server-restricted this phase — any value is accepted and logged.
+
+  ## Run order
+
+  1. **Create Appointment** → captures `appointmentId` + `appointmentCode`
+     (asserts an `APT-00001`-style code and records the initial status in the
+     history).
+  2. **List Appointments** — paginated; filter by `status` / `appointmentType`;
+     `search` matches the code.
+  3. **Get Appointment** — one appointment with its status history.
+  4. **Update Appointment Status** — transitions the current status AND appends a
+     history row (one transaction).
+  5. **Get Appointment History** — the append-only status-change log (newest
+     first).
+  6. **Delete Appointment** — soft-delete (history rows are preserved).
+
+  All routes are business-authenticated (`Bearer {{businessAccessToken}}`);
+  tenant comes from the JWT and the branch from the active profile. Writes are
+  audited under `AuditModule.APPOINTMENT`.
+}

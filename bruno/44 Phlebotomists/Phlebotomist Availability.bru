@@ -1,0 +1,51 @@
+meta {
+  name: Phlebotomist Availability
+  type: http
+  seq: 31
+}
+
+get {
+  url: {{baseUrl}}/phlebotomist-schedules/options/availability?phlebotomistId={{phlebotomistId}}
+  body: none
+  auth: bearer
+}
+
+params:query {
+  phlebotomistId: {{phlebotomistId}}
+  ~from: 2026-07-17
+  ~to: 2026-09-11
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Home-visit availability for a phlebotomist, powering the create-order collection
+  Date/Time picker. Tenant + active branch come from the JWT; `phlebotomistId` is
+  required. `from`/`to` (`YYYY-MM-DD`) bound the window and default to today through
+  the generated ~8-week horizon (max 70 days).
+
+  Returns `{ phlebotomistId, hasSchedule, rangeStart, rangeEnd, days[] }`. Each day:
+  `{ date, dayName, status, selectable, reason, maxVisitsPerDay, bookedVisits, slots[] }`
+  where `status` is `available | past | no-schedule | holiday | off-day | fully-booked`.
+  Each slot: `{ slotId, startTime, endTime, capacity, booked, available, status, selectable }`.
+
+  The frontend disables dates where `selectable` is false and offers only slots where
+  `selectable` is true. `serviceType` is NOT filtered — any ACTIVE schedule drives
+  availability. Displayed occupancy (`booked`/`available`/`bookedVisits`) is derived
+  from all committed home-visit orders for the phlebotomist — both scheduled
+  appointments (`status = APPOINTMENT`) and immediate orders (`status = ORDER`) —
+  excluding drafts/quotes and cancelled orders. Travel buffer and the daily visit
+  cap are already baked into the generated slots. The same occupancy powers the
+  Phlebotomy Schedule calendar and today's-slots views.
+
+  Note: this endpoint is for display only. The authoritative capacity gate at
+  booking time is the persisted reservation counter enforced atomically when an
+  order/appointment is created (see Orders → Create/Update Order), so a slot shown
+  as available here can still be rejected with 409 `PHLEBOTOMIST_SLOT_FULL` /
+  `PHLEBOTOMIST_DAILY_CAP_REACHED` if it fills between the availability read and the
+  booking — the client should refresh availability on such a rejection.
+
+  404 `PHLEBOTOMIST_NOT_FOUND` if not an active phlebotomist at the branch.
+}

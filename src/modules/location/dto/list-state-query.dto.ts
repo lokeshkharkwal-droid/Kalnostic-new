@@ -1,4 +1,4 @@
-import { Transform } from 'class-transformer';
+import { ToBoolean } from '../../../common/decorators/to-boolean.decorator';
 import {
   IsBoolean,
   IsOptional,
@@ -27,9 +27,7 @@ export class ListStateQueryDto extends PaginationQueryDto {
 
   /** Status filter (query params arrive as strings; coerce to a boolean). */
   @IsOptional()
-  @Transform(({ value }) =>
-    value === undefined ? undefined : value === 'true' || value === true,
-  )
+  @ToBoolean()
   @IsBoolean()
   isActive?: boolean;
 }

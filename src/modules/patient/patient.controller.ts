@@ -75,6 +75,7 @@ export class PatientController {
         dateFrom: query.dateFrom,
         dateTo: query.dateTo,
         branchId: query.branchId,
+        includeFamily: query.includeFamily,
       },
     );
   }

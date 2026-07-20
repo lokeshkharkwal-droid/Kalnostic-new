@@ -1,0 +1,33 @@
+meta {
+  name: List Family Members
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/patients/{{patientId}}/family-members
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.length && data[0].linkId) bru.setEnvVar("familyLinkId", data[0].linkId);
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  List the anchor patient's active family members (most recent first). Each entry:
+  `{ linkId, relationship, member: { id, firstName, lastName, age, mobile, umId } }`.
+  Directional — shows only the members linked FROM this anchor patient. 404
+  `PATIENT_NOT_FOUND` if the anchor is missing/other tenant.
+}

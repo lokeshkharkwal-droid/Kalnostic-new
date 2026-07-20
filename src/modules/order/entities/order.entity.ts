@@ -1,4 +1,19 @@
-import { Prisma, QuotationStatus } from '@prisma/client';
+import { PaymentStatus, Prisma, QuotationStatus } from '@prisma/client';
+
+/**
+ * Derive an order's {@link PaymentStatus} from its payment ledger totals — the
+ * summed `netAmount` and `paidAmount` across active `PaymentDetails` rows.
+ * `NOT_PAID` when nothing is paid, `PAID` once the paid amount covers the net,
+ * otherwise `PARTIALLY_PAID`. Kept as a pure helper so the order create and the
+ * payment-details writes agree on the stored value (and the FE mapper mirrors it).
+ * @param net summed net amount
+ * @param paid summed paid amount
+ */
+export function derivePaymentStatus(net: number, paid: number): PaymentStatus {
+  if (paid <= 0) return PaymentStatus.NOT_PAID;
+  if (paid >= net) return PaymentStatus.PAID;
+  return PaymentStatus.PARTIALLY_PAID;
+}
 
 /**
  * Prisma `include` for a fully-composed order read: patient ref, the referral
@@ -38,9 +53,11 @@ export const ORDER_INCLUDE = {
   items: {
     where: { deletedAt: null },
     include: {
-      branchLabTest: { select: { id: true, testName: true, testCode: true } },
+      branchLabTest: {
+        select: { id: true, testName: true, testCode: true, priceMsrp: true },
+      },
       branchLabPanel: {
-        select: { id: true, panelName: true, panelCode: true },
+        select: { id: true, panelName: true, panelCode: true, priceMsrp: true },
       },
     },
   },
@@ -98,9 +115,12 @@ export type OrderWithRelations = Prisma.OrderGetPayload<{
 
 /**
  * `include` for listing rows: patient ref (with age/gender for display), the
- * referral refs (name only), and the active payment ledger (amount fields only)
- * so the row can carry gross/discount/net rollups — everything the quotation and
- * order lists render without a second fetch.
+ * referral refs (name only), the active payment ledger (amount fields only) so
+ * the row can carry gross/discount/net rollups, plus the section refs (items with
+ * their test/panel names, and the diagnostics / OPD / radiology sections with
+ * their display refs) and the linked appointment's lifecycle status. This lets
+ * the order/quotation lists AND the appointments list render every column without
+ * a second fetch.
  */
 export const ORDER_LIST_INCLUDE = {
   patient: {
@@ -120,6 +140,52 @@ export const ORDER_LIST_INCLUDE = {
   referralPanel: { select: { id: true, name: true, code: true } },
   internalReferral: { select: { id: true, fullName: true } },
   externalReferral: { select: { id: true, name: true } },
+  appointment: { select: { id: true, status: true } },
+  items: {
+    where: { deletedAt: null },
+    select: {
+      id: true,
+      direct: true,
+      branchLabTest: { select: { id: true, testName: true, testCode: true } },
+      branchLabPanel: {
+        select: { id: true, panelName: true, panelCode: true },
+      },
+    },
+  },
+  diagnostics: {
+    select: {
+      id: true,
+      appointmentAt: true,
+      collectionAt: true,
+      collectionAddress: true,
+      isHomeVisit: true,
+      sampleSource: true,
+      visitCharges: true,
+      sampleCollectionCharges: true,
+      diagnosticPanel: { select: { id: true, panelName: true } },
+      phlebotomist: { select: { id: true, firstName: true, lastName: true } },
+    },
+  },
+  opd: {
+    select: {
+      id: true,
+      appointmentAt: true,
+      consultantType: true,
+      visitType: true,
+      department: { select: { id: true, name: true } },
+      doctor: { select: { id: true, firstName: true, lastName: true } },
+    },
+  },
+  radiology: {
+    select: {
+      id: true,
+      appointmentAt: true,
+      radiologist: { select: { id: true, firstName: true, lastName: true } },
+      radiologyTechnician: {
+        select: { id: true, firstName: true, lastName: true },
+      },
+    },
+  },
   payments: {
     where: { deletedAt: null },
     select: {
