@@ -5,6 +5,7 @@ import {
   NestInterceptor,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { Prisma } from '@prisma/client';
 import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
 import { AuditService } from '../../modules/audit/audit.service';
@@ -15,6 +16,7 @@ import { extractClientIp } from '../utils/client-ip.util';
 /** The fields we read off the request after business authentication. */
 interface MaybeAuthedRequest {
   user?: AuthenticatedRequest['user'];
+  body?: unknown;
 }
 
 /**
@@ -74,6 +76,9 @@ export class AuditInterceptor implements NestInterceptor {
             actorRoleKey: user.active_profile_key,
             actorRoleLabel: roleLabel,
             ipAddress,
+            metadata: meta.captureBody
+              ? (request.body as Prisma.InputJsonValue)
+              : undefined,
           });
         },
       }),

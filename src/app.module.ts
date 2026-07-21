@@ -53,6 +53,7 @@ import { OrderModule } from './modules/order/order.module';
 import { PricingModule } from './modules/pricing/pricing.module';
 import { OrderFieldConfigModule } from './modules/order-field-config/order-field-config.module';
 import { PaymentDetailsModule } from './modules/payment-details/payment-details.module';
+import { BillingSettingsModule } from './modules/billing-settings/billing-settings.module';
 import { AppointmentModule } from './modules/appointment/appointment.module';
 import { AccessionModule } from './modules/accession/accession.module';
 import { DoctorScheduleModule } from './modules/doctor-schedule/doctor-schedule.module';
@@ -130,6 +131,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     PricingModule,
     OrderFieldConfigModule,
     PaymentDetailsModule,
+    BillingSettingsModule,
     AppointmentModule,
     AccessionModule,
     DoctorScheduleModule,
