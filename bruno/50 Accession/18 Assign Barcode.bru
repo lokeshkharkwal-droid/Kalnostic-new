@@ -1,0 +1,41 @@
+meta {
+  name: 18 Assign Barcode
+  type: http
+  seq: 18
+}
+
+post {
+  url: {{baseUrl}}/accession/samples/{{sampleId}}/assign-barcode
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "barcode": "BAR-00001-A"
+  }
+}
+
+tests {
+  test("200/201 OK", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201]);
+  });
+  test("barcode is set", function () {
+    expect(res.getBody().data.barcode).to.be.a("string");
+  });
+}
+
+docs {
+  Assign Barcode & Print (§A.10.2) — available at **any status, no status change**.
+  `barcode` is optional: omit it to assign the system-generated `BAR-#####-A`
+  (derived from the accession number); supply it to override (letters/digits/
+  hyphens). A clash returns 409 `ACCESSION_NUMBER_CONFLICT`.
+}

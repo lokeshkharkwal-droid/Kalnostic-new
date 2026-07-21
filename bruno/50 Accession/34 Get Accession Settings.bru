@@ -1,0 +1,34 @@
+meta {
+  name: 34 Get Accession Settings
+  type: http
+  seq: 34
+}
+
+get {
+  url: {{baseUrl}}/accession/settings
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the effective settings map", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("tubeTypes");
+    expect(d).to.have.property("tat");
+  });
+}
+
+docs {
+  Effective accession settings for the active branch (§G) — the branch's saved
+  `AccessionSetting` **merged over** the module defaults. Contains `tubeTypes`,
+  `sampleConditions`, `repeatReasons`, `discardMethods`, `rejectionReasons`,
+  `logisticsTypes`, and `tat` thresholds (used to derive the §A.4 TAT bands + as
+  the FE's action-modal dropdown sources).
+}

@@ -1,0 +1,38 @@
+meta {
+  name: 30 Transfer - Repeat
+  type: http
+  seq: 30
+}
+
+post {
+  url: {{baseUrl}}/accession/transfers/{{transferId}}/repeat
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "repeatReason": "Insufficient Volume",
+    "notes": "Origin asked to re-collect"
+  }
+}
+
+tests {
+  test("transition applied (or rejected by the state machine)", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201, 422]);
+  });
+}
+
+docs {
+  Repeat (§B.11.4) — **Received / Accepted → Repeat**. `repeatReason` is
+  **required**. Origin branch is notified to re-collect. Bulk:
+  `POST /accession/transfers/bulk/repeat`.
+}

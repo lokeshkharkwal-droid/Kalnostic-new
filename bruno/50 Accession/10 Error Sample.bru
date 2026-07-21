@@ -1,0 +1,35 @@
+meta {
+  name: 10 Error Sample
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/accession/samples/{{sampleId}}/error
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "notes": "Flagged erroneous — QC failure"
+  }
+}
+
+tests {
+  test("transition applied (or rejected by the state machine)", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201, 422]);
+  });
+}
+
+docs {
+  Error — **Halt → Error**. Note/attachment only.
+}

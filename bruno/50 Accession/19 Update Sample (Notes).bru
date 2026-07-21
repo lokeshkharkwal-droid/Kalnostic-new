@@ -1,0 +1,37 @@
+meta {
+  name: 19 Update Sample (Notes)
+  type: http
+  seq: 19
+}
+
+patch {
+  url: {{baseUrl}}/accession/samples/{{sampleId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "notes": "Observation added; no status change",
+    "attachmentUrl": "https://files.example.com/note.pdf"
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Update Sample (§A.10.3) — records a note/attachment on the history log with **no
+  status change**. Available at any status.
+}

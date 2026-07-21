@@ -1,0 +1,42 @@
+meta {
+  name: 37 Accession Report (by type)
+  type: http
+  seq: 37
+}
+
+get {
+  url: {{baseUrl}}/accession/reports?type=ERROR&page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  type: ERROR
+  page: 1
+  limit: 20
+  ~search: ACC-00001
+  ~dateFrom: 2026-07-01
+  ~dateTo: 2026-07-31
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("rows carry the exception reason", function () {
+    const d = res.getBody().data;
+    if (d.length) expect(d[0]).to.have.property("reason");
+  });
+}
+
+docs {
+  Accession Report data table for one exception `type` (§F.3). `type` is
+  **required**: `ERROR` | `HALT` | `HOLD` | `REPEAT` | `CANCELLED` | `RETURNED`.
+  Each row is a sample currently in that status, enriched with the `reason`
+  recorded on its most recent transition into that status. Report creation/dispatch
+  itself lives in the Finance/Reports module — this is exception tracking only.
+}

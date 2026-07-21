@@ -1,0 +1,49 @@
+meta {
+  name: 22 Send (Internal Transfer)
+  type: http
+  seq: 22
+}
+
+post {
+  url: {{baseUrl}}/accession/samples/{{sampleId}}/send
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "destinationBranchId": "{{branchId}}",
+    "sendDate": "2026-07-20T10:00:00.000Z",
+    "sendTime": "10:00",
+    "sampleForm": "Whole blood, 1 tube",
+    "logisticsType": "Lab Vehicle",
+    "logisticsPerson": "Amit Driver",
+    "notes": "Sent to processing branch"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data[0]) bru.setEnvVar("transferId", data[0].id);
+}
+
+tests {
+  test("transition applied (or rejected by the state machine)", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201, 422]);
+  });
+}
+
+docs {
+  Send (Internal Transfer) — **Accepted → Sent (Internal)**, creating an INTERNAL
+  `SampleTransfer` at `IN_TRANSIT`. `destinationBranchId` is another branch in the
+  same tenant (validated); omit it to assign later via **Assign Center** (§A.7).
+  Captures `transferId`. Bulk: `POST /accession/samples/bulk/send` with `ids[]`.
+}

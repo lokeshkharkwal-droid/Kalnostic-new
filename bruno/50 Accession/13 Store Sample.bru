@@ -1,0 +1,36 @@
+meta {
+  name: 13 Store Sample
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/accession/samples/{{sampleId}}/store
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "storeLocation": "Freezer 2 / Rack B / Slot 14",
+    "notes": "Stored for future reference"
+  }
+}
+
+tests {
+  test("transition applied (or rejected by the state machine)", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201, 422]);
+  });
+}
+
+docs {
+  Store — **Accepted → Stored**. `storeLocation` is **required**.
+}

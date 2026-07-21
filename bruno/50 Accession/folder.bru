@@ -1,0 +1,48 @@
+meta {
+  name: 50 Accession
+  seq: 56
+}
+
+docs {
+  # Accession
+
+  The **Accession module** manages a sample's full lifecycle *after* an order is
+  created (Registration/Order module) — collection → acceptance → processing →
+  transfer/outsource → storage/discard. Tenant-scoped (RLS) + branch-level.
+
+  ## How samples are created
+
+  Samples are **not** created directly. When a **diagnostic** order is saved with
+  `status = ORDER` or `APPOINTMENT`, the order module generates one
+  `AccessionSample` (status `NEW`) per required sample/tube, grouping the order's
+  items by their configured sample (container + type). Each sample gets a
+  per-tenant `accessionNo` (`ACC-00001`…). So the run order is:
+
+  1. **(Orders folder)** Create a diagnostic order with `status = ORDER` →
+     samples are generated automatically.
+  2. **List Samples** → captures `sampleId` + `accessionNo` from the first row.
+  3. Walk the **In-House state machine** (Collect → Accept → Acquire → …).
+  4. **Transfers** — Send (internal) / Forward (external) / Outsource create a
+     `SampleTransfer`; the receiving side runs pick-up → receive → accept.
+  5. **Settings / Reports** — per-branch dropdowns + TAT; exception reports.
+
+  ## Sample status lifecycle (§A.9)
+
+  `SampleStatus`: `NEW → COLLECTED → ACCEPTED → ACQUIRED`, plus `HALT`, `ERROR`,
+  `HOLD`, `REPEAT`, `SENT_INTERNAL`, `FORWARD_EXTERNAL`, `OUTSOURCED`, `STORED`,
+  `DISCARDED`, `RETURNED`, `CANCELLED`. Each action validates it is a legal
+  transition from the current status (422 `INVALID_SAMPLE_TRANSITION` otherwise),
+  moves the status, records `previousStatus` (for the universal **Retrieve** undo),
+  and appends an immutable `AccessionStatusHistory` row.
+
+  ## Transfer status lifecycle (§B.10)
+
+  `TransferStatus`: `IN_TRANSIT → PICKED_UP → RECEIVED → ACCEPTED`, plus `REPEAT`
+  and `REJECTED`. On INTERNAL **accept**, RULE 1 clones the sample into the
+  receiving branch's In-House list at `ACCEPTED`.
+
+  Every action has a **single** (`:id/<action>`) and a **bulk**
+  (`bulk/<action>`, `{ ids: [] }`) variant. All routes are business-authenticated
+  (`Bearer {{businessAccessToken}}`); tenant + branch come from the JWT. Writes
+  are audited under `AuditModule.ACCESSION`.
+}

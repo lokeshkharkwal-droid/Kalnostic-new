@@ -1,0 +1,34 @@
+meta {
+  name: 03 Get Sample (Overview)
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/accession/samples/{{sampleId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("includes tests, statusHistory and transfers", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("tests");
+    expect(d).to.have.property("statusHistory");
+    expect(d).to.have.property("transfers");
+  });
+}
+
+docs {
+  Fetch one sample fully composed for the Sample Overview panel (§A.10.4): its
+  `tests` (with snapshot test names), `statusHistory` (newest first), `transfers`,
+  and the linked `order` (patient / referral). 404 `ACCESSION_SAMPLE_NOT_FOUND`
+  if missing / soft-deleted / other tenant.
+}

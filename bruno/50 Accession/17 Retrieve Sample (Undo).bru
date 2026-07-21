@@ -1,0 +1,38 @@
+meta {
+  name: 17 Retrieve Sample (Undo)
+  type: http
+  seq: 17
+}
+
+post {
+  url: {{baseUrl}}/accession/samples/{{sampleId}}/retrieve
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "notes": "Recalled the sample"
+  }
+}
+
+tests {
+  test("transition applied (or rejected by the state machine)", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201, 422]);
+  });
+}
+
+docs {
+  Retrieve / Retry (§A.7/§A.10.19) — the **universal undo**. Reverts a transferred
+  sample (Sent / Forward / Outsourced / Returned) back to **Accepted**, and any
+  other status back to its recorded `previousStatus`. Also **recalls** any still-
+  open transfer for the sample (marks it `REJECTED` — "Recalled via Retrieve").
+}

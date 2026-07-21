@@ -113,6 +113,28 @@ environment and no manual edits:
   current status AND appends a history row atomically), get-history
   (`GET /:id/history`), delete (soft). Tenant-scoped + branch-level; the current
   status lives on the appointment, every change on an append-only history log.
+- **Accession** (`/accession`): the sample lifecycle after an order. Samples are
+  **auto-generated** (status `NEW`, `ACC-00001`…) when a diagnostic order is saved
+  as `ORDER`/`APPOINTMENT` — one per required tube. Endpoints:
+  - **Samples** (`/accession/samples`): list (`search`/`status`/`priority`/
+    `tatStatus`/branch/patient/referral filters; rows carry a derived `tatStatus`),
+    `summary` (status-tab + TAT-bar counts), get (Sample Overview), `:id/history`.
+  - **In-House state machine** (§A.9) as per-action POSTs — `collect`,
+    `collect-print`, `accept`, `acquire`, `halt`, `error`, `hold`, `repeat`,
+    `store`, `discard`, `return`, `cancel`, `retrieve` (universal undo),
+    `assign-barcode`, `PATCH :id` (notes), `:id/share`. Each has a bulk twin at
+    `samples/bulk/<action>` (`{ ids: [] }`). Illegal transition → 422
+    `INVALID_SAMPLE_TRANSITION`.
+  - **Transfers** (Parts B/C/D): `samples/:id/send` (internal), `/forward`
+    (external), `/outsource` create a `SampleTransfer`; the queue lives at
+    `/accession/transfers` with lifecycle `pick-up → receive → accept/repeat/reject`
+    (§B.10), plus `assign-center` and `outsource-status`. INTERNAL **accept** clones
+    the sample into the receiving branch's In-House list (RULE 1).
+  - **Settings** (`/accession/settings`, GET/PUT) — per-branch dropdowns + TAT
+    thresholds (fall back to defaults). **Reports** (`/accession/reports` +
+    `/counts`) — the six-exception (Error/Halt/Hold/Repeat/Cancelled/Returned)
+    tracking report. All tenant-scoped + branch-level; writes audited under
+    `AuditModule.ACCESSION`.
 
 ## Enum reference
 
@@ -127,6 +149,10 @@ environment and no manual edits:
 - `SiteAdminRole`: CONTENT_ADMIN, OPERATIONS_ADMIN, FULL_ADMIN, SUPER_OWNER
 - `AppointmentType`: DIAGNOSTIC, OPD, RADIOLOGY
 - `AppointmentStatus`: NEW, CONFIRMED, CHECKED_IN, IN_PROGRESS, COMPLETED, CANCELLED, RESCHEDULED
+- `SampleStatus` (accession): NEW, COLLECTED, ACCEPTED, ACQUIRED, HALT, ERROR, HOLD, REPEAT, SENT_INTERNAL, FORWARD_EXTERNAL, STORED, DISCARDED, RETURNED, CANCELLED, OUTSOURCED
+- `TransferKind`: INTERNAL, EXTERNAL, OUTSOURCE
+- `TransferStatus`: IN_TRANSIT, PICKED_UP, RECEIVED, ACCEPTED, REPEAT, REJECTED
+- Accession TAT band (derived, not stored): WITHIN, WARNING, CRITICAL, BREACHED
 - `UserType` (User Mgmt v2): INTERNAL, EXTERNAL
 - `StaffStatus` (User Mgmt v2): ACTIVE, INACTIVE
 - Role keys (`roleKey` / `profileKey`) — the **key** of an `AuthRole`. The seeded

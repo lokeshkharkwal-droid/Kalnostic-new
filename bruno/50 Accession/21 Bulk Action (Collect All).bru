@@ -1,0 +1,45 @@
+meta {
+  name: 21 Bulk Action (Collect All)
+  type: http
+  seq: 21
+}
+
+post {
+  url: {{baseUrl}}/accession/samples/bulk/collect
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "ids": ["{{sampleId}}"],
+    "tubeType": "EDTA (Purple)",
+    "notes": "Bulk collected from the selection toolbar"
+  }
+}
+
+tests {
+  test("transition applied (or rejected by the state machine)", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201, 422]);
+  });
+  test("returns an array of updated samples", function () {
+    if (res.getStatus() < 400) expect(res.getBody().data).to.be.an("array");
+  });
+}
+
+docs {
+  Representative **bulk** action (§A.11). Every single-sample action has a bulk
+  twin at `POST /accession/samples/bulk/<action>` taking `{ "ids": [...] }` **plus
+  the same action fields**, applying the transition to all ids in one transaction
+  (up to 500). Available bulk actions: `collect`, `collect-print`, `accept`,
+  `acquire`, `halt`, `error`, `hold`, `repeat`, `store`, `discard`, `return`,
+  `cancel`, `retrieve`, `assign-barcode`.
+}

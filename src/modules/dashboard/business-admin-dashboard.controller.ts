@@ -34,7 +34,10 @@ export class BusinessAdminDashboardController {
     @CurrentTenant() tenantId: string,
     @Query() query: BusinessAdminDashboardQueryDto,
   ) {
-    return this.dashboardService.getReferralPanelsSummary(tenantId, query.branchId);
+    return this.dashboardService.getReferralPanelsSummary(
+      tenantId,
+      query.branchId,
+    );
   }
 
   /** Active vs. inactive referral doctors. */
@@ -43,7 +46,10 @@ export class BusinessAdminDashboardController {
     @CurrentTenant() tenantId: string,
     @Query() query: BusinessAdminDashboardQueryDto,
   ) {
-    return this.dashboardService.getReferralDoctorsSummary(tenantId, query.branchId);
+    return this.dashboardService.getReferralDoctorsSummary(
+      tenantId,
+      query.branchId,
+    );
   }
 
   /** Active vs. inactive external referrals. */
@@ -52,7 +58,10 @@ export class BusinessAdminDashboardController {
     @CurrentTenant() tenantId: string,
     @Query() query: BusinessAdminDashboardQueryDto,
   ) {
-    return this.dashboardService.getExternalReferralsSummary(tenantId, query.branchId);
+    return this.dashboardService.getExternalReferralsSummary(
+      tenantId,
+      query.branchId,
+    );
   }
 
   /** Active vs. inactive internal referrals. */
@@ -61,6 +70,9 @@ export class BusinessAdminDashboardController {
     @CurrentTenant() tenantId: string,
     @Query() query: BusinessAdminDashboardQueryDto,
   ) {
-    return this.dashboardService.getInternalReferralsSummary(tenantId, query.branchId);
+    return this.dashboardService.getInternalReferralsSummary(
+      tenantId,
+      query.branchId,
+    );
   }
 }

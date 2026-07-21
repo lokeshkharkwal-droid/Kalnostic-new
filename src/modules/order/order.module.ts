@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { AppointmentModule } from '../appointment/appointment.module';
+import { AccessionModule } from '../accession/accession.module';
 import { PhlebotomistScheduleModule } from '../phlebotomist-schedule/phlebotomist-schedule.module';
 import { LabReportModule } from '../lab-report/lab-report.module';
 import { OrderController } from './order.controller';
@@ -12,7 +13,9 @@ import { OrderService } from './order.service';
  * person) are validated against Prisma directly. The radiologist, phlebotomist,
  * and radiology technician are now staff `Person`s (validated as active persons).
  * Imports `AppointmentModule` so an order saved as APPOINTMENT can create its
- * linked appointment lifecycle record via `AppointmentService` (rule #3 DI).
+ * linked appointment lifecycle record via `AppointmentService`, and
+ * `AccessionModule` so a confirmed order generates its accession samples via
+ * `AccessionSampleService` (rule #3 DI).
  * Imports `LabReportModule` so `collectItem` can trigger
  * `LabReportService.ensureCreatedForAcceptedItem` — the interim signal for
  * Technician Reporting until Accession's own sample-accept step exists (see
@@ -23,6 +26,7 @@ import { OrderService } from './order.service';
     PrismaModule,
     AppointmentModule,
     PhlebotomistScheduleModule,
+    AccessionModule,
     LabReportModule,
   ],
   controllers: [OrderController],
