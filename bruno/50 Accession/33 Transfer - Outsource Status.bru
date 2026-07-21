@@ -1,0 +1,38 @@
+meta {
+  name: 33 Transfer - Outsource Status
+  type: http
+  seq: 33
+}
+
+post {
+  url: {{baseUrl}}/accession/transfers/{{transferId}}/outsource-status
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "outsourceStatus": "Results Ready"
+  }
+}
+
+tests {
+  test("200/201 OK", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201]);
+  });
+}
+
+docs {
+  Manually update an OUTSOURCE transfer's status (§D.2/§D.3, CR-3). Because the
+  third-party lab doesn't use Kalnostic, staff set this free-text status from
+  communications received (e.g. `Picked Up`, `In Progress`, `Results Ready`). No
+  sync.
+}

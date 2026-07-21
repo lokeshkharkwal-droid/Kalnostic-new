@@ -278,6 +278,7 @@ enum AuditModule {
   AUTH
   SITEADMIN // reserved; not written to in this phase (business audit only)
   LAB_TEST_SETTINGS
+  ACCESSION
 }
 
 /// Type of controlled document managed by the document module.
@@ -739,6 +740,7 @@ model Tenant {
   orderCounter           Int     @default(0) @map("order_counter") // per-tenant sequential order code (ORD-00001)
   appointmentCounter     Int     @default(0) @map("appointment_counter") // per-tenant sequential appointment code (APT-00001)
   diagnosticBillCounter  Int     @default(0) @map("diagnostic_bill_counter") // per-tenant sequential diagnostic bill id (DIG-001)
+  accessionCounter       Int     @default(0) @map("accession_counter") // per-tenant sequential accession number (ACC-00001)
   createdBy              String? @map("created_by") // SiteAdmin user id (creator)
   updatedBy              String? @map("updated_by") // SiteAdmin user id (last editor)
 
@@ -4798,6 +4800,9 @@ model Order {
   radiology   OrderRadiology?
   payments    PaymentDetails[]
 
+  // Accession samples generated for this order (one per required sample/tube).
+  accessionSamples AccessionSample[]
+
   createdBy String?   @map("created_by")
   updatedBy String?   @map("updated_by")
   createdAt DateTime  @default(now()) @map("created_at")
@@ -4852,6 +4857,9 @@ model OrderItem {
   /// the sample is considered collected (`collectedBy` records the acting person).
   collectedAt DateTime? @map("collected_at")
   collectedBy String?   @map("collected_by")
+
+  // Accession sample links (which generated sample/tube carries this order item).
+  accessionSampleTests AccessionSampleTest[]
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -5111,4 +5119,273 @@ model AppointmentStatusHistory {
   @@index([createdAt])
   @@index([deletedAt])
   @@map("appointment_status_history")
+}
+
+// ── Accession Module ────────────────────────────────────────────────────────────
+
+/// Lifecycle status of an accession sample/tube (PDF §A.5). Held as the CURRENT
+/// status on `AccessionSample`; every change is appended to
+/// `AccessionStatusHistory`. `previousStatus` supports the universal Retrieve/undo
+/// action (PDF §A.10.19). Reason/condition/tube dropdowns are tenant-configurable
+/// strings (PDF §G) — only the status set itself is a hard enum.
+enum SampleStatus {
+  NEW
+  COLLECTED
+  ACCEPTED
+  ACQUIRED
+  HALT
+  ERROR
+  HOLD
+  REPEAT
+  SENT_INTERNAL
+  FORWARD_EXTERNAL
+  STORED
+  DISCARDED
+  RETURNED
+  CANCELLED
+  OUTSOURCED
+}
+
+/// Kind of sample transfer (PDF Parts B/C/D). INTERNAL = branch↔branch within the
+/// tenant; EXTERNAL = to a Kalnostic partner lab (another tenant); OUTSOURCE = to a
+/// third-party `OutsourceCenter`.
+enum TransferKind {
+  INTERNAL
+  EXTERNAL
+  OUTSOURCE
+}
+
+/// Lifecycle status of a `SampleTransfer` (PDF §B.5).
+enum TransferStatus {
+  IN_TRANSIT
+  PICKED_UP
+  RECEIVED
+  ACCEPTED
+  REPEAT
+  REJECTED
+}
+
+/// The core accession entity — one row per required sample/tube of an order (one
+/// accession list row = one sample). Tenant-scoped (RLS) + branch-level
+/// (CLAUDE.md §4.5/§4.7). Generated when a diagnostic order reaches
+/// `status ∈ {ORDER, APPOINTMENT}` (see AccessionSampleService.generateForOrderInTx):
+/// the order's items are grouped by required sample from
+/// `BranchLabTest.configSnapshot.samples`, one sample per group. `accessionNo`
+/// (`ACC-00001`…) is a per-tenant sequential value from `Tenant.accessionCounter`,
+/// unique per tenant among active rows (partial unique index in prisma/rls.sql).
+/// `barcode` (`BAR-00001-A`…) is nullable until assigned (unique per tenant among
+/// active rows). `status` holds the CURRENT lifecycle stage; `previousStatus`
+/// backs the universal Retrieve/undo. `reportStatus` is display-only here (the
+/// Finance/Reports module owns report creation). Branch ids (`originBranchId`/
+/// `processingBranchId`) are logical refs validated in the service via
+/// `BranchService.findById`. RLS policy in prisma/rls.sql.
+model AccessionSample {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  orderId String @map("order_id")
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  accessionNo String  @map("accession_no")
+  barcode     String? @map("barcode")
+
+  // Sample identity (snapshotted from the source test's configSnapshot.samples).
+  sampleType       String?        @map("sample_type")
+  containerType    ContainerType? @map("container_type")
+  sampleGroupLabel String?        @map("sample_group_label") // e.g. "EDTA ×2"
+
+  status         SampleStatus   @default(NEW)
+  previousStatus SampleStatus?  @map("previous_status") // for Retrieve/undo (PDF §A.10.19)
+  priority       SamplePriority @default(ROUTINE)
+
+  // Display-only; the Finance/Reports module owns actual report creation.
+  reportStatus String? @map("report_status")
+
+  // Collection (PDF §A.10.1)
+  collectedAt DateTime? @map("collected_at")
+  collectedBy String?   @map("collected_by")
+  tubeType    String?   @map("tube_type")
+
+  // Acceptance (PDF §A.10.x)
+  receivedAt      DateTime? @map("received_at")
+  acceptedAt      DateTime? @map("accepted_at")
+  sampleCondition String?   @map("sample_condition")
+
+  // Storage & logistics
+  storeLocation   String?   @map("store_location")
+  logisticsType   String?   @map("logistics_type")
+  logisticsPerson String?   @map("logistics_person")
+  dispatchedAt    DateTime? @map("dispatched_at")
+
+  // Branch context (logical refs — validated in the service).
+  originBranchId     String? @map("origin_branch_id")
+  processingBranchId String? @map("processing_branch_id")
+
+  tests         AccessionSampleTest[]
+  statusHistory AccessionStatusHistory[]
+  transfers     SampleTransfer[]
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([orderId])
+  @@index([status])
+  @@index([barcode])
+  @@index([originBranchId])
+  @@index([processingBranchId])
+  @@index([deletedAt])
+  @@map("accession_samples")
+}
+
+/// Junction linking an accession sample to the order items (tests) it carries, so
+/// one sample/tube can hold several tests. Snapshots `testName` for the Sample
+/// Overview "Test Details" table (PDF §A.10.4). Tenant-scoped + branch-level.
+model AccessionSampleTest {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  sampleId String          @map("sample_id")
+  sample   AccessionSample @relation(fields: [sampleId], references: [id], onDelete: Cascade)
+
+  orderItemId String    @map("order_item_id")
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  testName String? @map("test_name") // snapshot for display
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([sampleId])
+  @@index([orderItemId])
+  @@index([deletedAt])
+  @@map("accession_sample_tests")
+}
+
+/// Append-only history of accession sample status changes — one row per action,
+/// never mutated (mirrors `AppointmentStatusHistory`). Powers the Sample History
+/// panel (PDF §A.10.5). `attachmentUrl` stores a URL only (no upload endpoint —
+/// plan decision #4). Tenant-scoped (RLS) + branch-level. RLS policy in
+/// prisma/rls.sql.
+model AccessionStatusHistory {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  sampleId String          @map("sample_id")
+  sample   AccessionSample @relation(fields: [sampleId], references: [id], onDelete: Cascade)
+
+  action     String // the action that triggered this change (e.g. "collect")
+  toStatus   SampleStatus  @map("to_status")
+  fromStatus SampleStatus? @map("from_status")
+
+  reason        String?
+  notes         String?
+  attachmentUrl String? @map("attachment_url")
+  changedBy     String? @map("changed_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([sampleId])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@map("accession_status_history")
+}
+
+/// A sample transfer/referral (PDF Parts B/C/D). Distinct from the commission
+/// `InternalReferral`/`ExternalReferral` models (plan decision #2). `kind` selects
+/// the destination: INTERNAL → `destinationBranchId` (nullable → "Assign Center");
+/// EXTERNAL → partner lab (`externalPartnerRef`/`externalPartnerName`; cross-tenant
+/// sync is an open decision resolved in Phase 3); OUTSOURCE → `outsourceCenterId`
+/// (existing `OutsourceCenter` master). Branch ids are logical refs validated in
+/// the service. Tenant-scoped (RLS) + branch-level. RLS policy in prisma/rls.sql.
+model SampleTransfer {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  sampleId String          @map("sample_id")
+  sample   AccessionSample @relation(fields: [sampleId], references: [id], onDelete: Cascade)
+
+  kind           TransferKind
+  transferStatus TransferStatus @default(IN_TRANSIT) @map("transfer_status")
+
+  // Destinations (exactly one meaningful per `kind`).
+  originBranchId      String? @map("origin_branch_id")
+  destinationBranchId String? @map("destination_branch_id") // INTERNAL
+  outsourceCenterId   String? @map("outsource_center_id") // OUTSOURCE (logical ref)
+  externalPartnerRef  String? @map("external_partner_ref") // EXTERNAL
+  externalPartnerName String? @map("external_partner_name") // EXTERNAL
+
+  // Dispatch
+  sendDate        DateTime? @map("send_date")
+  sendTime        String?   @map("send_time") // "HH:mm"
+  sampleForm      String?   @map("sample_form")
+  logisticsType   String?   @map("logistics_type")
+  logisticsPerson String?   @map("logistics_person")
+
+  // Receipt / acceptance
+  pickedUpBy       String?   @map("picked_up_by")
+  pickedUpAt       DateTime? @map("picked_up_at")
+  receivedAt       DateTime? @map("received_at")
+  receiveCondition String?   @map("receive_condition")
+  acceptedAt       DateTime? @map("accepted_at")
+  rejectionReason  String?   @map("rejection_reason")
+  repeatReason     String?   @map("repeat_reason")
+
+  // Manual outsource tracking (PDF §D.3 / CR-3 — no sync).
+  outsourceStatus String? @map("outsource_status")
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([sampleId])
+  @@index([kind])
+  @@index([transferStatus])
+  @@index([destinationBranchId])
+  @@index([outsourceCenterId])
+  @@index([deletedAt])
+  @@map("sample_transfers")
+}
+
+/// Per-branch configurable accession dropdowns/thresholds (PDF §G). Mirrors
+/// `OrderFieldConfig`: one row per branch (`@@unique([tenantId, branchId])`),
+/// payload held as JSON (`AccessionSettingsMap`). Holds tube types, sample
+/// conditions, repeat/rejection reasons, discard methods, logistics types,
+/// notification templates and TAT thresholds. Read falls back to
+/// `DEFAULT_ACCESSION_SETTINGS` when a branch has no row yet. Tenant-scoped +
+/// branch-level. RLS policy in prisma/rls.sql.
+model AccessionSetting {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  config Json @default("{}")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([tenantId, branchId])
+  @@index([tenantId])
+  @@index([branchId])
+  @@map("accession_settings")
 }

@@ -1,0 +1,51 @@
+meta {
+  name: 25 List Transfers (Queue)
+  type: http
+  seq: 25
+}
+
+get {
+  url: {{baseUrl}}/accession/transfers?page=1&limit=20&direction=incoming
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  direction: incoming
+  ~kind: INTERNAL
+  ~status: IN_TRANSIT
+  ~search: ACC-00001
+  ~dateFrom: 2026-07-01
+  ~dateTo: 2026-07-31
+  ~referredByDoctorId: {{referralDoctorId}}
+  ~referralPanelId: {{referralPanelId}}
+  ~logisticsType: Courier
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data[0]) bru.setEnvVar("transferId", data[0].id);
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("pagination meta is present", function () {
+    expect(res.getBody().meta).to.have.property("total");
+  });
+}
+
+docs {
+  The referral/transfer queues (Internal Part B / External Part C). `direction`
+  = `incoming` (default — transfers destined for this branch, the receiving queue)
+  or `outgoing` (sent from this branch). `kind` = `INTERNAL` | `EXTERNAL` |
+  `OUTSOURCE`; `status` is the §B.5 tab; `search` matches the linked sample's
+  accession number. Captures `transferId`.
+}

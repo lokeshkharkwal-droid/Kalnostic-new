@@ -66,7 +66,11 @@ export class DashboardService {
     tenantId: string,
     branchId?: string,
   ): Promise<DashboardSlice[]> {
-    return this.countActiveInactive(this.prisma.referralDoctor, tenantId, branchId);
+    return this.countActiveInactive(
+      this.prisma.referralDoctor,
+      tenantId,
+      branchId,
+    );
   }
 
   /**
@@ -77,7 +81,11 @@ export class DashboardService {
     tenantId: string,
     branchId?: string,
   ): Promise<DashboardSlice[]> {
-    return this.countActiveInactive(this.prisma.externalReferral, tenantId, branchId);
+    return this.countActiveInactive(
+      this.prisma.externalReferral,
+      tenantId,
+      branchId,
+    );
   }
 
   /**
@@ -88,7 +96,11 @@ export class DashboardService {
     tenantId: string,
     branchId?: string,
   ): Promise<DashboardSlice[]> {
-    return this.countActiveInactive(this.prisma.internalReferral, tenantId, branchId);
+    return this.countActiveInactive(
+      this.prisma.internalReferral,
+      tenantId,
+      branchId,
+    );
   }
 
   /**
@@ -114,8 +126,12 @@ export class DashboardService {
   ): Promise<DashboardSlice[]> {
     const scope = { tenantId, ...(branchId ? { branchId } : {}) };
     const [active, inactive] = await Promise.all([
-      delegate.count({ where: { ...scope, status: 'ACTIVE', deletedAt: null } }),
-      delegate.count({ where: { ...scope, status: 'INACTIVE', deletedAt: null } }),
+      delegate.count({
+        where: { ...scope, status: 'ACTIVE', deletedAt: null },
+      }),
+      delegate.count({
+        where: { ...scope, status: 'INACTIVE', deletedAt: null },
+      }),
     ]);
     return [
       { label: 'Active', value: active },
@@ -133,7 +149,12 @@ export class DashboardService {
   ): Promise<DashboardSlice[]> {
     const grouped = await this.prisma.referralPanel.groupBy({
       by: ['clientType'],
-      where: { tenantId, ...(branchId ? { branchId } : {}), isActive: true, deletedAt: null },
+      where: {
+        tenantId,
+        ...(branchId ? { branchId } : {}),
+        isActive: true,
+        deletedAt: null,
+      },
       _count: { _all: true },
     });
     const labelByType: Record<string, string> = {

@@ -28,7 +28,10 @@ export class DashboardController {
    * @throws ActiveBranchRequiredException if the caller has no active branch
    * @throws BranchScopeDeniedException if `branchId` was supplied and doesn't match the caller's own branch
    */
-  private resolveBranch(profile: ActiveProfile, requestedBranchId?: string): string {
+  private resolveBranch(
+    profile: ActiveProfile,
+    requestedBranchId?: string,
+  ): string {
     if (!profile.branchId) {
       throw new ActiveBranchRequiredException();
     }

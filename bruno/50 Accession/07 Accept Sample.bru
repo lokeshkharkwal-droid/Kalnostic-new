@@ -1,0 +1,38 @@
+meta {
+  name: 07 Accept Sample
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/accession/samples/{{sampleId}}/accept
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "sampleCondition": "Good",
+    "notes": "Received in good condition"
+  }
+}
+
+tests {
+  test("transition applied (or rejected by the state machine)", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201, 422]);
+  });
+}
+
+docs {
+  Accept Sample — **Collected / Halt → Accepted**. `sampleCondition` is
+  **required** (branch-configured list). Stamps `receivedAt` + `acceptedAt`
+  server-side.
+}

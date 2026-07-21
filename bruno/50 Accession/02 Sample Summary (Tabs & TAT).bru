@@ -1,0 +1,38 @@
+meta {
+  name: 02 Sample Summary (Tabs & TAT)
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/accession/samples/summary
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns byStatus, byTat and total", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("byStatus");
+    expect(d).to.have.property("byTat");
+    expect(d).to.have.property("total");
+  });
+}
+
+docs {
+  Summary counts for the active branch — powers the §A.5 status tabs and §A.4 TAT
+  bar:
+
+  - `byStatus` — a count per `SampleStatus` (all statuses present, 0 default).
+  - `byTat` — a count per TAT band (`WITHIN` / `WARNING` / `CRITICAL` /
+    `BREACHED`), derived from each sample's age vs the branch's configured
+    thresholds (Accession Settings).
+  - `total` — total active samples.
+}

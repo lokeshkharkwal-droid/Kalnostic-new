@@ -1,0 +1,42 @@
+meta {
+  name: 23 Forward (External Transfer)
+  type: http
+  seq: 23
+}
+
+post {
+  url: {{baseUrl}}/accession/samples/{{sampleId}}/forward
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "externalPartnerName": "Pathkind - Gurgaon",
+    "externalPartnerRef": "PK-GGN-001",
+    "logisticsType": "Courier",
+    "notes": "Forwarded to partner lab"
+  }
+}
+
+tests {
+  test("transition applied (or rejected by the state machine)", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201, 422]);
+  });
+}
+
+docs {
+  Forward (External Transfer) — **Accepted → Forward (External)**, creating an
+  EXTERNAL `SampleTransfer` at `IN_TRANSIT`. `externalPartnerName` is **required**.
+  Phase 3 builds the **sending side only** — cross-tenant receiving is an open
+  decision; the transfer's `transferStatus` is the sending row's "External Order
+  Status" column. Bulk: `POST /accession/samples/bulk/forward`.
+}

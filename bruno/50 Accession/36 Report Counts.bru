@@ -1,0 +1,27 @@
+meta {
+  name: 36 Report Counts
+  type: http
+  seq: 36
+}
+
+get {
+  url: {{baseUrl}}/accession/reports/counts
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Accession Report count cards (§F.2) — a count per exception status for the
+  active branch: `ERROR`, `HALT`, `HOLD`, `REPEAT`, `CANCELLED`, `RETURNED` (all
+  present, 0 default).
+}

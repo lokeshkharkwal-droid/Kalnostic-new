@@ -1343,6 +1343,54 @@ CREATE POLICY phlebotomist_day_loads_tenant_isolation ON phlebotomist_day_loads
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── accession_samples ─────────────────────────────────────────────────────────
+ALTER TABLE accession_samples ENABLE ROW LEVEL SECURITY;
+ALTER TABLE accession_samples FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS accession_samples_tenant_isolation ON accession_samples;
+CREATE POLICY accession_samples_tenant_isolation ON accession_samples
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- Per-tenant unique accession number + barcode among ACTIVE rows (a value freed
+-- by a soft-delete is reusable). Both are system-generated (ACC-00001…/BAR-…).
+-- Prisma can't express partial unique indexes, so they live here.
+CREATE UNIQUE INDEX IF NOT EXISTS accession_samples_tenant_accession_no_active_unique
+  ON accession_samples (tenant_id, accession_no) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS accession_samples_tenant_barcode_active_unique
+  ON accession_samples (tenant_id, barcode) WHERE deleted_at IS NULL AND barcode IS NOT NULL;
+
+-- ── accession_sample_tests ────────────────────────────────────────────────────
+ALTER TABLE accession_sample_tests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE accession_sample_tests FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS accession_sample_tests_tenant_isolation ON accession_sample_tests;
+CREATE POLICY accession_sample_tests_tenant_isolation ON accession_sample_tests
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── accession_status_history ──────────────────────────────────────────────────
+ALTER TABLE accession_status_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE accession_status_history FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS accession_status_history_tenant_isolation ON accession_status_history;
+CREATE POLICY accession_status_history_tenant_isolation ON accession_status_history
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── sample_transfers ──────────────────────────────────────────────────────────
+ALTER TABLE sample_transfers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sample_transfers FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS sample_transfers_tenant_isolation ON sample_transfers;
+CREATE POLICY sample_transfers_tenant_isolation ON sample_transfers
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── accession_settings ────────────────────────────────────────────────────────
+ALTER TABLE accession_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE accession_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS accession_settings_tenant_isolation ON accession_settings;
+CREATE POLICY accession_settings_tenant_isolation ON accession_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- Platform-level tables (tenants, persons, person_credentials, siteadmin_users,
 -- refresh_tokens, person_tenant_enrollments, test_groups, test_group_mappings,
 -- support_infos) are intentionally NOT covered — they sit above the tenant

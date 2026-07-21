@@ -1,0 +1,35 @@
+meta {
+  name: 08 Acquire Sample
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/accession/samples/{{sampleId}}/acquire
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "notes": "Acquired by lab technician"
+  }
+}
+
+tests {
+  test("transition applied (or rejected by the state machine)", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201, 422]);
+  });
+}
+
+docs {
+  Acquire — **Accepted → Acquired**. Note/attachment only.
+}

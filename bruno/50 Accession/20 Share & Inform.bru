@@ -1,0 +1,45 @@
+meta {
+  name: 20 Share & Inform
+  type: http
+  seq: 20
+}
+
+post {
+  url: {{baseUrl}}/accession/samples/{{sampleId}}/share
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "channel": "SMS_API",
+    "informTo": "PATIENT",
+    "message": "Your sample has been collected.",
+    "recipient": "+911234567890",
+    "documentUrl": "https://files.example.com/report.pdf"
+  }
+}
+
+tests {
+  test("200/201 OK", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201]);
+  });
+}
+
+docs {
+  Share & Inform (§A.10.20) — records a notification/document share against the
+  sample (no status change). `channel` ∈ `SMS_API` | `SMS_DIRECT` | `WA_API` |
+  `WA_DIRECT` | `EMAIL_API` | `EMAIL_DIRECT`; `informTo` ∈ `PATIENT` |
+  `REFERRED_BY` | `REFERRAL_PANEL` | `EMPLOYER` | `INSURANCE` | `GUARDIAN`.
+
+  The intent is logged to history; **actual SMS/WhatsApp/Email dispatch is handled
+  by the messaging/Finance module** (out of scope here).
+}

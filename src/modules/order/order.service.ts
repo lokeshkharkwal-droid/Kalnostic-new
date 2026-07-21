@@ -11,6 +11,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AppointmentService } from '../appointment/appointment.service';
+import { AccessionSampleService } from '../accession/accession-sample.service';
 import { SlotReservationService } from '../phlebotomist-schedule/slot-reservation.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -63,8 +64,25 @@ export class OrderService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly appointmentService: AppointmentService,
+    private readonly accessionSamples: AccessionSampleService,
     private readonly slotReservation: SlotReservationService,
   ) {}
+
+  /**
+   * True when an order at `status` is a confirmed diagnostic order — the point at
+   * which its accession samples are generated (PDF: samples enter accession once
+   * an order is placed/booked). Never DRAFT/QUOTE/CANCELLED, and only when the
+   * diagnostics section is present.
+   */
+  private shouldGenerateSamples(
+    status: OrderStatus | undefined,
+    hasDiagnostics: boolean,
+  ): boolean {
+    return (
+      hasDiagnostics &&
+      (status === OrderStatus.ORDER || status === OrderStatus.APPOINTMENT)
+    );
+  }
 
   /**
    * Resolve the home-visit slot reservation implied by an order's diagnostics
@@ -278,6 +296,17 @@ export class OrderService {
             reservation.branchId,
             reservation.phlebotomistId,
             reservation.at,
+          );
+        }
+        // A confirmed diagnostic order enters accession: generate its samples
+        // (status NEW) from the ordered items. Idempotent per order.
+        if (this.shouldGenerateSamples(dto.status, Boolean(dto.diagnostics))) {
+          await this.accessionSamples.generateForOrderInTx(
+            tx,
+            tenantId,
+            branchId,
+            personId,
+            order.id,
           );
         }
         return order.id;
@@ -822,6 +851,20 @@ export class OrderService {
             newReservation.at,
           );
         }
+      }
+
+      // Generate accession samples once the order is confirmed as a diagnostic
+      // order (e.g. a DRAFT/QUOTE flipped to ORDER/APPOINTMENT). Idempotent —
+      // skips if this order already has samples.
+      const hasDiagnostics = Boolean(dto.diagnostics ?? existing?.diagnostics);
+      if (this.shouldGenerateSamples(effectiveStatus, hasDiagnostics)) {
+        await this.accessionSamples.generateForOrderInTx(
+          tx,
+          tenantId,
+          branchId,
+          personId,
+          id,
+        );
       }
     });
 

@@ -1,0 +1,38 @@
+meta {
+  name: 06 Collect & Print
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/accession/samples/{{sampleId}}/collect-print
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "tubeType": "SST (Yellow)",
+    "notes": "Collected & barcode printed"
+  }
+}
+
+tests {
+  test("transition applied (or rejected by the state machine)", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201, 422]);
+  });
+}
+
+docs {
+  Collect & Print (§A.10.1) — as **Collect** (New/Hold/Repeat → Collected) and
+  **assigns a barcode** (`BAR-#####-A`, derived from the accession number) if the
+  sample has none. Same body as Collect.
+}

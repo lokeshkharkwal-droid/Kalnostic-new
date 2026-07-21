@@ -1,0 +1,39 @@
+meta {
+  name: 32 Transfer - Assign Center
+  type: http
+  seq: 32
+}
+
+post {
+  url: {{baseUrl}}/accession/transfers/{{transferId}}/assign-center
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "destinationBranchId": "{{branchId}}"
+  }
+}
+
+tests {
+  test("200/201 OK (or 422 if none supplied for the kind)", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201, 422]);
+  });
+}
+
+docs {
+  Assign Center (§A.7) — set the destination on a transfer created without one.
+  The field required depends on the transfer's `kind`: INTERNAL →
+  `destinationBranchId`; OUTSOURCE → `outsourceCenterId`; EXTERNAL →
+  `externalPartnerName`. Missing the matching field → 422
+  `TRANSFER_DESTINATION_MISSING`.
+}

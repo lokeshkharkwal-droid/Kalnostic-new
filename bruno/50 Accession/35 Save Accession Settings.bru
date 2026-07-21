@@ -1,0 +1,44 @@
+meta {
+  name: 35 Save Accession Settings
+  type: http
+  seq: 35
+}
+
+put {
+  url: {{baseUrl}}/accession/settings
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "tubeTypes": ["EDTA (Purple)", "SST (Yellow)", "Fluoride Oxalate (Grey)"],
+    "sampleConditions": ["Good", "Hemolyzed", "Clotted"],
+    "repeatReasons": ["QC Failure", "Insufficient Volume"],
+    "discardMethods": ["Biohazard Bag", "Incineration"],
+    "rejectionReasons": ["Damaged in Transit", "Wrong Sample Type"],
+    "logisticsTypes": ["Courier", "Lab Vehicle"],
+    "tat": { "warningMinutes": 240, "criticalMinutes": 480, "breachedMinutes": 720 }
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Upsert the active branch's accession settings (§G). Every field is optional (a
+  partial patch); omitted lists fall back to the module defaults at read time. The
+  response is the effective (merged) settings map. Audited under
+  `AuditModule.ACCESSION`.
+}
