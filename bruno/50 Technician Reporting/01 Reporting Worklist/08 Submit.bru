@@ -1,0 +1,23 @@
+meta {
+  name: 08 Submit
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/submit
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Pending | Partial Pending | Saved → Validation Pending (LABORATORY.docx
+  §2.2, §4.6). Sends the results for validation.
+
+  404 `LAB_REPORT_NOT_FOUND`. 409 `LAB_REPORT_LOCKED`. 409
+  `INVALID_LAB_REPORT_TRANSITION` if the report isn't in an allowed status.
+}

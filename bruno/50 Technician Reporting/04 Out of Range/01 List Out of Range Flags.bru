@@ -1,0 +1,22 @@
+meta {
+  name: 01 List Out of Range Flags
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/out-of-range-flags
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Out of Range worklist list (LABORATORY.docx §8.3). Columns: SR, Date &
+  Time, Order, Branch, Patient, Referred By, Ref Panel, Order Item, Sample
+  Status, Bill Status, Report Status (snapshot at trigger time), Out of Range
+  Status, Action.
+}

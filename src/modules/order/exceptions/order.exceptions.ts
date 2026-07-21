@@ -226,3 +226,30 @@ export class OrderPersonNotFoundException extends KaltrosException {
     );
   }
 }
+
+/** 422 — an order item's chosen outsource center does not exist or is inactive. */
+export class OrderOutsourceCenterNotFoundException extends KaltrosException {
+  constructor(outsourceCenterId: string) {
+    super(
+      'ORDER_OUTSOURCE_CENTER_NOT_FOUND',
+      'The chosen outsource center does not exist or is inactive',
+      { outsourceCenterId },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — the chosen outsource center is not configured to handle this item's
+ * test/panel (`OutsourceCenter.labTestId`/`labPanelId` doesn't match).
+ */
+export class OrderOutsourceCenterNotEligibleException extends KaltrosException {
+  constructor(outsourceCenterId: string, itemRef: string) {
+    super(
+      'ORDER_OUTSOURCE_CENTER_NOT_ELIGIBLE',
+      'The chosen outsource center is not configured to handle this test/panel',
+      { outsourceCenterId, itemRef },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}

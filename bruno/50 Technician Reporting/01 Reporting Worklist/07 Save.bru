@@ -1,0 +1,23 @@
+meta {
+  name: 07 Save
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/save
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Pending | Partial Pending | Saved → Saved (LABORATORY.docx §2.2, §4.6).
+  Stores entered values without submitting for validation.
+
+  404 `LAB_REPORT_NOT_FOUND`. 409 `LAB_REPORT_LOCKED`. 409
+  `INVALID_LAB_REPORT_TRANSITION` if the report isn't in an allowed status.
+}

@@ -12,6 +12,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { AppointmentService } from '../appointment/appointment.service';
 import { SlotReservationService } from '../phlebotomist-schedule/slot-reservation.service';
+import { LabReportService } from '../lab-report/lab-report.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
@@ -42,6 +43,8 @@ import {
   OrderAlreadyCancelledException,
   OrderInternalReferralNotFoundException,
   OrderNotFoundException,
+  OrderOutsourceCenterNotEligibleException,
+  OrderOutsourceCenterNotFoundException,
   OrderPatientNotFoundException,
   OrderPersonNotFoundException,
   OrderReferralDoctorNotFoundException,
@@ -64,6 +67,7 @@ export class OrderService {
     private readonly prisma: PrismaService,
     private readonly appointmentService: AppointmentService,
     private readonly slotReservation: SlotReservationService,
+    private readonly labReportService: LabReportService,
   ) {}
 
   /**
@@ -224,6 +228,7 @@ export class OrderService {
               branchLabPanelId: i.branchLabPanelId ?? null,
               direct: i.direct ?? null,
               discount: i.discount ?? 0,
+              outsourceCenterId: i.outsourceCenterId ?? null,
             })),
           });
         }
@@ -743,6 +748,7 @@ export class OrderService {
               branchLabPanelId: i.branchLabPanelId ?? null,
               direct: i.direct ?? null,
               discount: i.discount ?? 0,
+              outsourceCenterId: i.outsourceCenterId ?? null,
             })),
           });
         }
@@ -860,6 +866,12 @@ export class OrderService {
           data: { collectedAt: new Date(), collectedBy: actorId },
         });
       });
+      // Interim Technician Reporting trigger: Accession's own New/Collected/
+      // Accepted sample lifecycle doesn't exist yet, so "collected" is treated
+      // as this order item's closest real "sample accepted" signal. When
+      // Accession's own FSM ships, move this call to its Accepted transition
+      // instead — see LabReportService.ensureCreatedForAcceptedItem doc comment.
+      await this.labReportService.ensureCreatedForAcceptedItem(tenantId, itemId);
     }
     return this.findById(orderId, tenantId);
   }
@@ -1067,6 +1079,65 @@ export class OrderService {
       this.assertBranchLabTests(tenantId, testIds),
       this.assertBranchLabPanels(tenantId, panelIds),
     ]);
+    await Promise.all(
+      items
+        .filter((item) => item.outsourceCenterId)
+        .map((item) => this.assertOutsourceCenter(tenantId, item)),
+    );
+  }
+
+  /**
+   * Validate an item's chosen outsource center: must be an active center in
+   * this tenant, and configured to handle this item's specific test/panel
+   * (`OutsourceCenter.labTestId`/`labPanelId`, resolved through
+   * `BranchLabTest.sourceLabTestId`/`BranchLabPanel.sourceLabPanelId` since
+   * order items reference the branch-level catalogue snapshot, not the
+   * tenant-level master row `OutsourceCenter` points to).
+   * @throws OrderOutsourceCenterNotFoundException / OrderOutsourceCenterNotEligibleException
+   */
+  private async assertOutsourceCenter(
+    tenantId: string,
+    item: OrderItemDto,
+  ): Promise<void> {
+    const outsourceCenterId = item.outsourceCenterId!;
+    const center = await this.prisma.outsourceCenter.findFirst({
+      where: {
+        id: outsourceCenterId,
+        tenantId,
+        isActive: true,
+        deletedAt: null,
+      },
+      select: { id: true, labTestId: true, labPanelId: true },
+    });
+    if (!center) {
+      throw new OrderOutsourceCenterNotFoundException(outsourceCenterId);
+    }
+
+    let sourceLabTestId: string | null = null;
+    let sourceLabPanelId: string | null = null;
+    if (item.branchLabTestId) {
+      const branchLabTest = await this.prisma.branchLabTest.findFirst({
+        where: { id: item.branchLabTestId, tenantId, deletedAt: null },
+        select: { sourceLabTestId: true },
+      });
+      sourceLabTestId = branchLabTest?.sourceLabTestId ?? null;
+    } else if (item.branchLabPanelId) {
+      const branchLabPanel = await this.prisma.branchLabPanel.findFirst({
+        where: { id: item.branchLabPanelId, tenantId, deletedAt: null },
+        select: { sourceLabPanelId: true },
+      });
+      sourceLabPanelId = branchLabPanel?.sourceLabPanelId ?? null;
+    }
+
+    const eligible =
+      (sourceLabTestId && center.labTestId === sourceLabTestId) ||
+      (sourceLabPanelId && center.labPanelId === sourceLabPanelId);
+    if (!eligible) {
+      throw new OrderOutsourceCenterNotEligibleException(
+        outsourceCenterId,
+        item.branchLabTestId ?? item.branchLabPanelId ?? 'direct',
+      );
+    }
   }
 
   /**

@@ -1,0 +1,26 @@
+meta {
+  name: 01 List Re-Run Requests
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/re-run-requests
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Re-Run worklist list (LABORATORY.docx §8.1). Columns: SR, Date & Time,
+  Order, Branch, Patient, Ref By, Ref Panel, Order Item, Sample Status,
+  Billing Status, Report Status (live), Re-Run By, Re-Run Status.
+
+  Report Status here is read live from the linked `LabReport` (the
+  re-processed test moving forward again — e.g. Validation Pending, Pending,
+  Published) — distinct from Critical Alerts/Out of Range, which snapshot the
+  status at trigger time instead.
+}

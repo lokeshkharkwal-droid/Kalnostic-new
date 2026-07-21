@@ -39,4 +39,13 @@ export class OrderItemDto {
   @IsInt()
   @Min(0)
   discount?: number;
+
+  /**
+   * The outsource center this line is sent to, chosen per-row. Omitted/undefined
+   * = processed in-house. Validated in `OrderService` to be an active center
+   * configured for this line's test/panel.
+   */
+  @IsOptional()
+  @IsUUID()
+  outsourceCenterId?: string;
 }

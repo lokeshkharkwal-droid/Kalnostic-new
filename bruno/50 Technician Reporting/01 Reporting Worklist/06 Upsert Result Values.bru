@@ -1,0 +1,39 @@
+meta {
+  name: 06 Upsert Result Values
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/results
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "values": [
+      {
+        "resultParamId": "{{resultParamId}}",
+        "observed1": "1.1",
+        "observed2": "",
+        "unit": "mg/dL",
+        "methodology": "Enzymatic",
+        "referenceRangeId": "{{referenceRangeId}}",
+        "referenceDisplay": "0.6 - 1.3 mg/dL"
+      }
+    ]
+  }
+}
+
+docs {
+  Bulk upsert result values on the Test Entry grid (LABORATORY.docx §4.3).
+  Does NOT change the report's status — call Save or Submit afterward. One
+  row per `resultParamId`; re-sending the same id updates it in place.
+
+  404 `LAB_REPORT_NOT_FOUND`. 409 `LAB_REPORT_LOCKED` if the report is locked.
+}

@@ -1,0 +1,29 @@
+meta {
+  name: 02 Update Status
+  type: http
+  seq: 2
+}
+
+patch {
+  url: {{baseUrl}}/out-of-range-flags/{{outOfRangeFlagId}}/status
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "COMPLETED",
+    "notes": "Repeat result confirmed the value; report released."
+  }
+}
+
+docs {
+  Manual status update (LABORATORY.docx §8.3): `status` one of `NEW` |
+  `PENDING` | `IN_PROGRESS` | `COMPLETED`. `notes` optional.
+
+  404 `OUT_OF_RANGE_FLAG_NOT_FOUND`.
+}

@@ -55,6 +55,7 @@ import { PaymentDetailsModule } from './modules/payment-details/payment-details.
 import { AppointmentModule } from './modules/appointment/appointment.module';
 import { DoctorScheduleModule } from './modules/doctor-schedule/doctor-schedule.module';
 import { PhlebotomistScheduleModule } from './modules/phlebotomist-schedule/phlebotomist-schedule.module';
+import { LabReportModule } from './modules/lab-report/lab-report.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 
 /**
@@ -130,6 +131,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     AppointmentModule,
     DoctorScheduleModule,
     PhlebotomistScheduleModule,
+    LabReportModule,
   ],
   providers: [
     // Global business authentication. SiteAdmin routes use @Public() + their

@@ -278,6 +278,12 @@ enum AuditModule {
   AUTH
   SITEADMIN // reserved; not written to in this phase (business audit only)
   LAB_TEST_SETTINGS
+  LAB_REPORT
+  RE_RUN_REQUEST
+  CRITICAL_ALERT
+  OUT_OF_RANGE_FLAG
+  DELTA_CHECK
+  SCHEDULED_TEST
 }
 
 /// Type of controlled document managed by the document module.
@@ -882,6 +888,11 @@ model Person {
   /// Phlebotomist-schedule back-relations (a phlebotomist is a staff Person).
   phlebotomistSchedules PhlebotomistSchedule[] @relation("PhlebotomistScheduleStaff")
   phlebotomistSlots     PhlebotomistSlot[]     @relation("PhlebotomistSlotStaff")
+
+  /// Technician Reporting: scheduled/deferred test processes assigned to this
+  /// staff Person (LABORATORY.docx §5.6, §8.5 — the Schedule Test worklist's
+  /// "Assign To" column).
+  scheduledTestAssignments ScheduledTest[] @relation("ScheduledTestAssignee")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -2767,7 +2778,8 @@ model OutsourceCenter {
   labTestId  String? @map("lab_test_id")
   labPanelId String? @map("lab_panel_id")
 
-  contacts OutsourceCenterContact[]
+  contacts   OutsourceCenterContact[]
+  orderItems OrderItem[]
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -4853,6 +4865,19 @@ model OrderItem {
   collectedAt DateTime? @map("collected_at")
   collectedBy String?   @map("collected_by")
 
+  /// The outsource center this line was sent to, chosen per-row at order
+  /// create/edit time. NULL = processed in-house (the default — no outsource
+  /// center was chosen). Validated in OrderService to be an active center
+  /// configured for this line's test/panel (`OutsourceCenter.labTestId`/`labPanelId`).
+  outsourceCenterId String?          @map("outsource_center_id")
+  outsourceCenter   OutsourceCenter? @relation(fields: [outsourceCenterId], references: [id])
+
+  /// Technician Reporting lifecycle (1:1). Created by
+  /// LabReportService.ensureCreatedForAcceptedItem once the sample is accepted —
+  /// interim trigger is OrderService.collectItem (see LabReport doc comment);
+  /// absent until then, so a not-yet-accepted item has no report row at all.
+  labReport LabReport?
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -4862,8 +4887,525 @@ model OrderItem {
   @@index([orderId])
   @@index([branchLabTestId])
   @@index([branchLabPanelId])
+  @@index([outsourceCenterId])
   @@index([deletedAt])
   @@map("order_items")
+}
+
+// ── Technician Reporting ─────────────────────────────────────────────────────
+//
+// Downstream of a separate, not-yet-built Accession sample lifecycle (New →
+// Collected → Accepted → ...). LabReport rows are created only once a sample is
+// accepted — see `LabReportService.ensureCreatedForAcceptedItem`, called (as an
+// interim trigger, until Accession's own FSM ships) from
+// `OrderService.collectItem` right after `OrderItem.collectedAt` is set.
+
+/// Lifecycle status of a Technician Reporting item (LABORATORY.docx §2.1). Two
+/// side-branches (ERROR_REPORTED, RESULT_REJECTED) rejoin the main flow via
+/// resubmit/edit rather than being terminal.
+enum LabReportStatus {
+  PENDING
+  PARTIAL_PENDING
+  SAVED
+  VALIDATION_PENDING
+  RESULT_DONE
+  APPROVED
+  PUBLISHED
+  ERROR_REPORTED
+  RESULT_REJECTED
+}
+
+/// One row per test-line-within-an-order that has entered the Reporting
+/// workflow. Distinct from `OrderItem` (the billed catalogue line) — a panel
+/// order item's several parameters are tracked as child `LabReportResultValue`
+/// rows, not as multiple `LabReport` rows; the whole panel/test line advances
+/// through the lifecycle together (LABORATORY.docx §2.2 applies status changes
+/// to "the report", not to individual parameters).
+///
+/// `labTestId` is a denormalized snapshot of the tenant-level `LabTest` this
+/// report's catalogue entry originated from, resolved at creation time via the
+/// logical chain `OrderItem.branchLabTestId -> BranchLabTest.sourceLabTestId`.
+/// Nullable: a branch-only test (no tenant `LabTest` source) has no result-param
+/// catalogue to resolve against.
+model LabReport {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  orderItemId String    @unique @map("order_item_id")
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  labTestId String? @map("lab_test_id")
+
+  status LabReportStatus @default(PENDING)
+
+  savedAt     DateTime? @map("saved_at")
+  savedBy     String?   @map("saved_by")
+  submittedAt DateTime? @map("submitted_at")
+  submittedBy String?   @map("submitted_by")
+  validatedAt DateTime? @map("validated_at")
+  validatedBy String?   @map("validated_by")
+  approvedAt  DateTime? @map("approved_at")
+  approvedBy  String?   @map("approved_by")
+  publishedAt DateTime? @map("published_at")
+  publishedBy String?   @map("published_by")
+
+  isLocked  Boolean   @default(false) @map("is_locked")
+  lockedAt  DateTime? @map("locked_at")
+  lockedBy  String?   @map("locked_by")
+  lockNotes String?   @map("lock_notes")
+
+  isUrgent Boolean @default(false) @map("is_urgent")
+
+  /// Denormalized copy of `OrderItem.outsourceCenterId IS NOT NULL`, stamped by
+  /// `ensureCreatedForAcceptedItem` when this report is created — a plain
+  /// indexed column so the worklist's ALL/IN_HOUSE/OUTSOURCE source filter
+  /// doesn't join through OrderItem on every list load. Not re-synced if the
+  /// order item's outsource center changes after report creation — outsourcing
+  /// is decided at order-creation time and not expected to change afterward.
+  isOutsourced Boolean @default(false) @map("is_outsourced")
+
+  resultValues     LabReportResultValue[]
+  notes            LabReportNote[]
+  attachments      LabReportAttachment[]
+  history          LabReportHistory[]
+  reRunRequests    ReRunRequest[]
+  criticalAlerts   CriticalAlert[]
+  outOfRangeFlags  OutOfRangeFlag[]
+  deltaChecks      DeltaCheck[]
+  scheduledTests   ScheduledTest[]
+  multiStepProcess MultiStepTestProcess?
+  inventoryUsage   LabReportInventoryUsage[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([status])
+  @@index([labTestId])
+  @@index([isOutsourced])
+  @@index([deletedAt])
+  @@map("lab_reports")
+}
+
+/// Where a result value came from: entered by the technician, or transferred by
+/// an analyzer/LIS adapter. Any `ADAPTER` row on a report not yet Saved/Submitted
+/// drives `LabReport.status = PARTIAL_PENDING` (resolved in service logic, not a
+/// stored flag on LabReport itself).
+enum ResultValueSource {
+  MANUAL
+  ADAPTER
+}
+
+/// One entered/transferred value per result parameter per report. `resultParamId`
+/// is a logical ref to `LabTestResultParam` (mirrors that table's own logical-ref
+/// convention — no Prisma relation, joined app-side). `referenceRangeId` is
+/// likewise a logical ref to whichever row matched at last resolution
+/// (`LabTestReferenceRange` for QUANTITATIVE params, `LabTestReferenceValue` for
+/// QUALITATIVE) — re-resolved whenever `methodology` changes, not a stored FK.
+model LabReportResultValue {
+  id          String    @id @default(uuid())
+  tenantId    String    @map("tenant_id")
+  labReportId String    @map("lab_report_id")
+  labReport   LabReport @relation(fields: [labReportId], references: [id], onDelete: Cascade)
+
+  resultParamId String @map("result_param_id")
+
+  observed1 String? @map("observed_1")
+  observed2 String? @map("observed_2")
+  unit      String?
+
+  /// Free-text, mirrors `LabTestResultParam.method` / `LabTestReferenceRange.method`
+  /// — no Methodology master table exists in the schema. Changing this value
+  /// re-resolves `referenceRangeId` via GET /lab-reports/:id/reference-range.
+  methodology String?
+
+  referenceRangeId String? @map("reference_range_id")
+  /// Snapshot of the display string shown to the technician at entry time (e.g.
+  /// "0.6 – 1.3 mg/dL"), so a later change to the master reference row doesn't
+  /// silently rewrite what was actually shown when this value was entered.
+  referenceDisplay String? @map("reference_display")
+
+  source ResultValueSource @default(MANUAL)
+
+  enteredAt DateTime? @map("entered_at")
+  enteredBy String?   @map("entered_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([labReportId, resultParamId])
+  @@index([tenantId])
+  @@index([labReportId])
+  @@index([resultParamId])
+  @@map("lab_report_result_values")
+}
+
+/// Which per-test action a note belongs to (LABORATORY.docx §4.2, §5). ORDER /
+/// SAMPLE / TECH / UPDATE_STATUS mirror the four Notes & Documents tabs; the rest
+/// correspond 1:1 to a per-test action icon's own modal.
+enum LabReportNoteCategory {
+  ORDER
+  SAMPLE
+  TECH
+  LOCK
+  DELTA
+  CRITICAL_ALERT
+  OUT_OF_RANGE
+  RE_RUN
+  SCHEDULE
+  ERROR_REPORTED
+  RESULT_REJECTED
+  UPDATE_STATUS
+}
+
+model LabReportNote {
+  id          String    @id @default(uuid())
+  tenantId    String    @map("tenant_id")
+  labReportId String    @map("lab_report_id")
+  labReport   LabReport @relation(fields: [labReportId], references: [id], onDelete: Cascade)
+
+  category LabReportNoteCategory
+  body     String
+
+  createdBy String   @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([labReportId])
+  @@index([category])
+  @@map("lab_report_notes")
+}
+
+/// One uploaded file from any of the three Upload modals (Image / Document /
+/// File, LABORATORY.docx §4.4) or a per-action attachment (Lock, Re-Run, etc.).
+/// `kind` distinguishes the originating modal; all three share this one table
+/// since their fields (Choose Files, list, Notes) are identical.
+model LabReportAttachment {
+  id          String    @id @default(uuid())
+  tenantId    String    @map("tenant_id")
+  labReportId String    @map("lab_report_id")
+  labReport   LabReport @relation(fields: [labReportId], references: [id], onDelete: Cascade)
+
+  kind     String // "image" | "document" | "file"
+  fileUrl  String @map("file_url")
+  fileName String @map("file_name")
+  notes    String?
+
+  uploadedBy String   @map("uploaded_by")
+  uploadedAt DateTime @default(now()) @map("uploaded_at")
+
+  @@index([tenantId])
+  @@index([labReportId])
+  @@map("lab_report_attachments")
+}
+
+/// Append-only audit trail (LABORATORY.docx §5.11) — every status transition and
+/// notable action on a report, newest-first via `GET /lab-reports/:id/history`.
+model LabReportHistory {
+  id          String    @id @default(uuid())
+  tenantId    String    @map("tenant_id")
+  labReportId String    @map("lab_report_id")
+  labReport   LabReport @relation(fields: [labReportId], references: [id], onDelete: Cascade)
+
+  fromStatus LabReportStatus?
+  toStatus   LabReportStatus
+  action     String
+  notes      String?
+
+  actorId   String   @map("actor_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([labReportId])
+  @@map("lab_report_history")
+}
+
+// ── Technician Reporting: special worklists ─────────────────────────────────
+//
+// Five independently trackable lists (LABORATORY.docx §8), each with its own
+// status field distinct from LabReport.status. Modeled as five separate tables
+// (not one polymorphic table) since each carries different typed fields (e.g.
+// only ScheduledTest has assignedTo/dispatchAt; only DeltaCheck uses its own
+// status vocabulary) that a shared JSON-metadata column would weaken.
+
+/// Shared status vocabulary for Critical Alerts and Out of Range worklists
+/// (LABORATORY.docx §8.2-8.3 — both list "Alert Status"/"Out of Range Status"
+/// as New/Pending/Completed). Re-Run and Schedule Test use
+/// `ActionWorklistStatus` instead (see below) — their own sections (§8.1, §8.5)
+/// only ever describe Pending/In Progress/Completed, no New. Delta Check has
+/// its own distinct `DeltaCheckStatus`.
+enum WorklistStatus {
+  NEW
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+}
+
+/// Status vocabulary for Re-Run and Schedule Test worklists (LABORATORY.docx
+/// §8.1, §8.5) — Pending/In Progress/Completed only; unlike Critical
+/// Alerts/Out of Range (`WorklistStatus`), neither section ever describes a
+/// "New" state for these two.
+enum ActionWorklistStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+}
+
+/// Delta Check's own status vocabulary (LABORATORY.docx §8.4): New items await
+/// review; Reviewed items are either sent for Re-Run or marked Accepted (no
+/// re-run needed); Completed once the report is released.
+enum DeltaCheckStatus {
+  NEW
+  REVIEWED
+  RE_RUN
+  ACCEPTED
+  COMPLETED
+}
+
+/// How a worklist entry was raised — manually via its per-test action icon, or
+/// automatically (Critical/Out-of-Range from Admin-configured ranges when
+/// auto-trigger is enabled in Technician → Reporting Settings; Delta Check from
+/// comparison against the patient's previous result).
+enum WorklistTrigger {
+  MANUAL
+  AUTO
+}
+
+/// A re-run request (LABORATORY.docx §5.5, §8.1). Raised from any LabReport
+/// status; clears that report's LabReportResultValue rows and returns it to
+/// PENDING (handled in LabReportService, not here) while this row tracks the
+/// reprocessing to completion independently.
+model ReRunRequest {
+  id          String    @id @default(uuid())
+  tenantId    String    @map("tenant_id")
+  branchId    String?   @map("branch_id")
+  labReportId String    @map("lab_report_id")
+  labReport   LabReport @relation(fields: [labReportId], references: [id], onDelete: Cascade)
+
+  status       ActionWorklistStatus @default(PENDING)
+  requestedBy  String               @map("requested_by")
+  requestNotes String?              @map("request_notes")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([labReportId])
+  @@index([status])
+  @@map("re_run_requests")
+}
+
+/// A critical-value alert (LABORATORY.docx §5.3, §8.2). `reportStatusAtTrigger`
+/// snapshots LabReport.status at the moment the alert fired (the spec's "Report
+/// Status" column shows the ORIGINAL status, not a live join). `resultParamId`
+/// is a logical ref to the LabTestResultParam that triggered it, when known.
+model CriticalAlert {
+  id          String    @id @default(uuid())
+  tenantId    String    @map("tenant_id")
+  branchId    String?   @map("branch_id")
+  labReportId String    @map("lab_report_id")
+  labReport   LabReport @relation(fields: [labReportId], references: [id], onDelete: Cascade)
+
+  status                WorklistStatus  @default(NEW)
+  trigger               WorklistTrigger @default(MANUAL)
+  reportStatusAtTrigger LabReportStatus @map("report_status_at_trigger")
+  resultParamId         String?         @map("result_param_id")
+
+  createdBy String?  @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([labReportId])
+  @@index([status])
+  @@map("critical_alerts")
+}
+
+/// A result flagged outside the configured normal range (LABORATORY.docx §5.4,
+/// §8.3). Same shape as CriticalAlert (see its field docs) but a separate table
+/// since it's a distinct worklist with its own tab/counts.
+model OutOfRangeFlag {
+  id          String    @id @default(uuid())
+  tenantId    String    @map("tenant_id")
+  branchId    String?   @map("branch_id")
+  labReportId String    @map("lab_report_id")
+  labReport   LabReport @relation(fields: [labReportId], references: [id], onDelete: Cascade)
+
+  status                WorklistStatus  @default(NEW)
+  trigger               WorklistTrigger @default(MANUAL)
+  reportStatusAtTrigger LabReportStatus @map("report_status_at_trigger")
+  resultParamId         String?         @map("result_param_id")
+
+  createdBy String?  @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([labReportId])
+  @@index([status])
+  @@map("out_of_range_flags")
+}
+
+/// A delta check (LABORATORY.docx §5.2, §8.4) — flags a result for review
+/// against the patient's previous result for the same parameter.
+/// `previousResultValueId` is a logical ref to the prior order's
+/// LabReportResultValue row being compared against, when known.
+model DeltaCheck {
+  id          String    @id @default(uuid())
+  tenantId    String    @map("tenant_id")
+  branchId    String?   @map("branch_id")
+  labReportId String    @map("lab_report_id")
+  labReport   LabReport @relation(fields: [labReportId], references: [id], onDelete: Cascade)
+
+  status  DeltaCheckStatus @default(NEW)
+  trigger WorklistTrigger  @default(MANUAL)
+
+  previousResultValueId String? @map("previous_result_value_id")
+  resultParamId         String? @map("result_param_id")
+
+  createdBy String?  @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([labReportId])
+  @@index([status])
+  @@map("delta_checks")
+}
+
+/// A scheduled/deferred test process (LABORATORY.docx §5.6, §8.5) — e.g.
+/// histopathology grossing/sectioning/staining/reporting tracked over time.
+/// `assignedToId` is a real FK to `Person` (the assigned technician), mirroring
+/// the `phlebotomistId`/`phlebotomist` FK pattern used elsewhere in this schema
+/// rather than a bare logical-ref string. No standalone "+ Add Schedule" creation
+/// path — per LABORATORY.docx CR-03, rows are created only via the per-test
+/// Schedule/Reschedule action (`POST /lab-reports/:id/schedule`).
+model ScheduledTest {
+  id          String    @id @default(uuid())
+  tenantId    String    @map("tenant_id")
+  branchId    String?   @map("branch_id")
+  labReportId String    @map("lab_report_id")
+  labReport   LabReport @relation(fields: [labReportId], references: [id], onDelete: Cascade)
+
+  status ActionWorklistStatus @default(PENDING)
+
+  scheduledAt DateTime  @map("scheduled_at")
+  dispatchAt  DateTime? @map("dispatch_at")
+
+  assignedToId String? @map("assigned_to_id")
+  assignedTo   Person? @relation("ScheduledTestAssignee", fields: [assignedToId], references: [id])
+
+  createdBy String?  @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([labReportId])
+  @@index([status])
+  @@index([assignedToId])
+  @@map("scheduled_tests")
+}
+
+// ── Technician Reporting: multi-step process & inventory ────────────────────
+
+/// A configured multi-step lab workflow a test can be assigned to (e.g.
+/// histopathology grossing/sectioning/staining/reporting, LABORATORY.docx §5.7).
+enum MultiStepProcessType {
+  HISTOPATHOLOGY_ROUTINE
+  BONE_MARROW_WORKUP
+  CYTOLOGY_WORKFLOW
+  IMMUNOHISTOCHEMISTRY_PANEL
+}
+
+/// The four processing stages tracked by every MultiStepProcessType above
+/// (LABORATORY.docx §5.7's example: grossing → sectioning → staining →
+/// reporting).
+enum MultiStepStage {
+  GROSSING
+  SECTIONING
+  STAINING
+  REPORTING
+}
+
+/// Tracks a test assigned to a multi-step laboratory process (LABORATORY.docx
+/// §5.7) through its stages — a separate, smaller state machine from
+/// LabReport.status, since a test can be mid-process (e.g. STAINING) while its
+/// report status is still VALIDATION_PENDING. One row per report (a report is
+/// either assigned to a multi-step process or it isn't).
+model MultiStepTestProcess {
+  id          String    @id @default(uuid())
+  tenantId    String    @map("tenant_id")
+  branchId    String?   @map("branch_id")
+  labReportId String    @unique @map("lab_report_id")
+  labReport   LabReport @relation(fields: [labReportId], references: [id], onDelete: Cascade)
+
+  processType  MultiStepProcessType @map("process_type")
+  currentStage MultiStepStage       @default(GROSSING) @map("current_stage")
+
+  /// Append-only stage history: `[{ stage, enteredAt, enteredBy }, ...]`. Kept as
+  /// JSON (like LabTest.versionHistory elsewhere in this schema) since it's a
+  /// simple ordered log, not something queried/filtered on independently.
+  stageHistory Json @default("[]") @map("stage_history")
+
+  createdBy String?  @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@map("multi_step_test_processes")
+}
+
+/// Per-test inventory consumption (LABORATORY.docx §5.9 "Generate Inventory") —
+/// Allocated / Re-Run / Wastage quantities in PU (Product Unit) and BU (Base
+/// Unit). `inventoryItemId` is a logical ref with NO target model in this schema
+/// today: this repo has no stock/batch inventory master (MachineReagentKit is
+/// catalogue data only — name/manufacturer, no batch/expiry/quantity fields).
+/// Building a real inventory subsystem is out of scope for Technician Reporting;
+/// this field is a placeholder join key for whenever that subsystem exists, and
+/// until then rows are populated only via the manual "Add Material Row" action,
+/// not auto-reflected from a test's attached materials.
+model LabReportInventoryUsage {
+  id          String    @id @default(uuid())
+  tenantId    String    @map("tenant_id")
+  labReportId String    @map("lab_report_id")
+  labReport   LabReport @relation(fields: [labReportId], references: [id], onDelete: Cascade)
+
+  inventoryItemId String    @map("inventory_item_id")
+  batchNumber     String?   @map("batch_number")
+  expiryDate      DateTime? @map("expiry_date") @db.Date
+
+  allocatedPu Decimal @default(0) @map("allocated_pu") @db.Decimal(10, 2)
+  allocatedBu Decimal @default(0) @map("allocated_bu") @db.Decimal(10, 2)
+  reRunPu     Decimal @default(0) @map("re_run_pu") @db.Decimal(10, 2)
+  reRunBu     Decimal @default(0) @map("re_run_bu") @db.Decimal(10, 2)
+  wastagePu   Decimal @default(0) @map("wastage_pu") @db.Decimal(10, 2)
+  wastageBu   Decimal @default(0) @map("wastage_bu") @db.Decimal(10, 2)
+
+  remarks String?
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([labReportId])
+  @@map("lab_report_inventory_usage")
 }
 
 /// The Diagnostics section of an order (1:1). Tenant-scoped + branch-level.

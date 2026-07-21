@@ -1,0 +1,34 @@
+meta {
+  name: 00 Get Filter Options
+  type: http
+  seq: 0
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/options
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Everything the Reporting Worklist's filter row needs in one call
+  (LABORATORY.docx §3.1), so the frontend doesn't fire 8 separate lookups.
+
+  Returns `{ branches, referredByDoctors, referralPanels, departments,
+  labTests, labPanels, sampleStatuses, reportStatuses }`. The first six are
+  real tenant/branch-scoped `{ id, name }` lookups (Branch, ReferralDoctor,
+  ReferralPanel, Department, active BranchLabTest, active BranchLabPanel —
+  the last two scoped to the caller's active branch, not tenant-wide).
+
+  `sampleStatuses` is a static placeholder list (`NOT_COLLECTED` |
+  `COLLECTED`) — Accession's own New/Collected/Accepted/... sample lifecycle
+  doesn't exist in the backend yet, so only the two states derivable from
+  `OrderItem.collectedAt` are real. `reportStatuses` is the real
+  `LabReportStatus` enum, same values as the status tabs.
+
+  422 `ACTIVE_BRANCH_REQUIRED` if the caller has no active branch.
+}

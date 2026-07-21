@@ -1,0 +1,29 @@
+meta {
+  name: 03 Get Report
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Full report detail — the Test Entry screen's header strip context
+  (LABORATORY.docx §4.1), result values, notes (4 categories), attachments,
+  and multi-step process if assigned.
+
+  Response also includes `contentSections` (§4.5) — `{ usefulFor,
+  interpretation, limitations, references }`, read-only, sourced from the
+  linked `LabTest` master. All null when the report has no linked LabTest
+  (a panel item, a direct/free-text entry, or a branch-only test with no
+  tenant catalogue source).
+
+  404 `LAB_REPORT_NOT_FOUND` if missing/other-tenant/other-branch.
+}

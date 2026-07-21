@@ -1,0 +1,25 @@
+meta {
+  name: 17 Unlock
+  type: http
+  seq: 17
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/unlock
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Unlock Test (LABORATORY.docx §5.1) — supervisor-only per the spec.
+
+  NOTE: the real supervisor permission check is not yet wired (tracked as a
+  TODO in LabReportController) — this route currently always returns 403
+  `UNLOCK_NOT_PERMITTED` until that guard is implemented.
+
+  404 `LAB_REPORT_NOT_FOUND`. 403 `UNLOCK_NOT_PERMITTED`.
+}

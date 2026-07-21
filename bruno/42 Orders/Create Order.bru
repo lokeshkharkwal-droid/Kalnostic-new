@@ -53,6 +53,10 @@ body:json {
       },
       {
         "direct": "Custom investigation - outside catalogue"
+      },
+      {
+        "branchLabTestId": "{{branchLabTestId}}",
+        "outsourceCenterId": "{{outsourceCenterId}}"
       }
     ],
     "diagnostics": {
@@ -185,7 +189,17 @@ docs {
   Optional `discount` (integer minor units, default 0) is the per-line discount,
   persisted so item-level discounts round-trip on edit (the order-level aggregate
   still lives on `payments[].orderDiscount`).
-  
+
+  Optional `outsourceCenterId` sends this specific line to an outside lab instead
+  of processing it in-house (omit = in-house, the default). Validated to be an
+  active `OutsourceCenter` in the tenant AND configured to handle this line's
+  specific test/panel (`OutsourceCenter.labTestId`/`labPanelId`, resolved through
+  the branch catalogue's source test/panel) — 422 `ORDER_OUTSOURCE_CENTER_NOT_FOUND`
+  if the center doesn't resolve, 422 `ORDER_OUTSOURCE_CENTER_NOT_ELIGIBLE` if it
+  isn't configured for this test/panel. Denormalized onto the item's eventual
+  `LabReport.isOutsourced` for the Technician Reporting worklist's
+  ALL/IN_HOUSE/OUTSOURCE source filter (see "50 Technician Reporting").
+
   ## Sections (all optional)
 
   Each section carries its own `appointmentAt` (ISO date-time). When the order is

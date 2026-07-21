@@ -1,0 +1,33 @@
+meta {
+  name: 02 Reschedule
+  type: http
+  seq: 2
+}
+
+patch {
+  url: {{baseUrl}}/scheduled-tests/{{scheduledTestId}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "scheduledAt": "2026-07-26T09:00:00.000Z",
+    "assignedToId": "{{technicianPersonId}}",
+    "dispatchAt": "2026-07-28T17:00:00.000Z",
+    "notes": "Pushed one day due to equipment availability."
+  }
+}
+
+docs {
+  Reschedule (LABORATORY.docx §5.6, §8.5) — the same fields as the per-test
+  Schedule action. Per CR-03 there is no standalone "+ Add Schedule" creation
+  route here; only reschedule/status-update on an existing row.
+
+  404 `SCHEDULED_TEST_NOT_FOUND`. 404 `TECHNICIAN_NOT_FOUND` if
+  `assignedToId` doesn't resolve to an active technician at the branch.
+}

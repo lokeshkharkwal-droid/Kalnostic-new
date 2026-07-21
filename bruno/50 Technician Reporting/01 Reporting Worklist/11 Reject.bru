@@ -1,0 +1,30 @@
+meta {
+  name: 11 Reject
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/reject
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "notes": "Sample appears hemolyzed — recommend re-collection before validation."
+  }
+}
+
+docs {
+  Validation Pending → Result Rejected (LABORATORY.docx §2.2, §6.4). `notes`
+  is required (rejection reason, on record).
+
+  404 `LAB_REPORT_NOT_FOUND`. 409 `LAB_REPORT_LOCKED`. 409
+  `INVALID_LAB_REPORT_TRANSITION` if the report isn't Validation Pending. 422
+  `LAB_REPORT_NOTES_REQUIRED` if `notes` is omitted/blank.
+}

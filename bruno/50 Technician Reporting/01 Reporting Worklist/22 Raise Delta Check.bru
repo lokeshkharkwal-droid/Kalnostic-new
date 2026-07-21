@@ -1,0 +1,36 @@
+meta {
+  name: 22 Raise Delta Check
+  type: http
+  seq: 22
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/delta-check
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "notes": "Value differs significantly from the patient's last result — flagging for review.",
+    "resultParamId": "{{resultParamId}}"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("deltaCheckId", data.id);
+}
+
+docs {
+  Delta Check (LABORATORY.docx §5.2). `notes` required; `resultParamId`
+  optional — when supplied, the server looks up the patient's most recent
+  prior value for that parameter (`previousResultValueId`) for comparison.
+  Lists the item under the Delta Check worklist (see "05 Delta Check").
+
+  Captures `deltaCheckId`. 404 `LAB_REPORT_NOT_FOUND`.
+}

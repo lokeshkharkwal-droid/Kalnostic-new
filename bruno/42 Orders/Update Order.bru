@@ -59,8 +59,10 @@ tests {
 docs {
   Update an order (scoped to the caller's tenant). Scalar fields (incl. `status`)
   are patched. When `items` is supplied the whole set is REPLACED (old active rows
-  soft-deleted, the new set created). When a section object (`diagnostics`/`opd`/
-  `radiology`) is supplied it is upserted (created if absent, else replaced).
+  soft-deleted, the new set created) — each item accepts the same fields as
+  Create Order, including `outsourceCenterId` (see that request's docs). When a
+  section object (`diagnostics`/`opd`/`radiology`) is supplied it is upserted
+  (created if absent, else replaced).
   The `opd` section carries optional `departmentId` and `categoryId` (both →
   422 `ORDER_DEPARTMENT_NOT_FOUND` / `ORDER_CATEGORY_NOT_FOUND` on a bad ref);
   the `radiology` section carries optional `radiologistDepartmentId` and

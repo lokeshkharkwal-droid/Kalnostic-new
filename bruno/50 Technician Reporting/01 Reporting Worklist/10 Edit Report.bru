@@ -1,0 +1,24 @@
+meta {
+  name: 10 Edit Report
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/edit-report
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Validation Pending | Result Done → Saved (LABORATORY.docx §2.2, §6.4, §6.6).
+  Sends the report back for correction; Enter → edit values → Submit returns
+  it to Validation Pending.
+
+  404 `LAB_REPORT_NOT_FOUND`. 409 `LAB_REPORT_LOCKED`. 409
+  `INVALID_LAB_REPORT_TRANSITION` if the report isn't in an allowed status.
+}

@@ -1,0 +1,19 @@
+meta {
+  name: 01 Reporting Worklist
+  seq: 1
+}
+
+docs {
+  LabReportController — the core worklist, Test Entry (result values,
+  reference-range resolution), and the status-lifecycle gates (Save, Submit,
+  Validate, Edit Report, Reject, Resubmit, Approve, Publish, Error Reported),
+  plus Lock/Unlock, Update Status, Audit Trail, and the per-test actions that
+  raise an entry in another worklist (Re-Run, Critical Alert, Out of Range,
+  Delta Check, Schedule Test).
+
+  `resultParamId` (used by Resolve Reference Range / Upsert Result Values /
+  the raise-worklist requests) is a `LabTestResultParam` id from the lab
+  test's own result-parameter catalogue (see "13 Lab Tests" → Get Lab Test) —
+  set it manually in the environment for now; no request in this folder
+  captures it automatically.
+}
