@@ -16,9 +16,19 @@ import {
   BranchLabTestNotFoundException,
 } from './exceptions/branch-lab-test.exceptions';
 import {
+  BranchLabTestConfigSnapshot,
   BranchLabTestImportResult,
   BranchLabTestSyncResult,
 } from './entities/branch-lab-test.entity';
+
+/** A Create-Order lab-test option row (Diagnostic Items table). */
+export interface BranchLabTestOption {
+  id: string;
+  name: string;
+  price: number;
+  sampleType: string | null;
+  isFasting: boolean;
+}
 
 /** The scope/actor a source Master Data test is materialized into. */
 interface ImportTarget {
@@ -280,22 +290,24 @@ export class BranchLabTestService {
   }
 
   /**
-   * Lightweight `{ id, name }` options for the Create-Order lab-test selector.
-   * Returns the branch's **active default-variant** rows only (one orderable row
-   * per variant group), so a selected id is directly usable as an order item's
-   * `branchLabTestId`. Supports a case-insensitive `search` on testName.
+   * Lightweight `{ id, name, price, sampleType, isFasting }` options for the
+   * Create-Order lab-test selector. Returns the branch's **active default-variant**
+   * rows only (one orderable row per variant group), so a selected id is directly
+   * usable as an order item's `branchLabTestId`. `price` is the list price
+   * (`priceMsrp`, minor units); `sampleType`/`isFasting` come from the first sample
+   * in `configSnapshot` — both feed the form's Diagnostic Items table. Supports a
+   * case-insensitive `search` on testName.
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT profile)
    * @param filters optional search + offset pagination
-   * @returns full `{ id, name }[]` when `page` is omitted, else a paginated envelope
+   * @returns full option array when `page` is omitted, else a paginated envelope
    */
   async findOptions(
     tenantId: string,
     branchId: string,
     filters: { search?: string; page?: number; limit?: number } = {},
   ): Promise<
-    | Array<{ id: string; name: string }>
-    | PaginatedResult<{ id: string; name: string }>
+    Array<BranchLabTestOption> | PaginatedResult<BranchLabTestOption>
   > {
     const where: Prisma.BranchLabTestWhereInput = {
       tenantId,
@@ -309,12 +321,30 @@ export class BranchLabTestService {
       where.testName = { contains: term, mode: 'insensitive' };
     }
 
-    const select = { id: true, testName: true } as const;
+    const select = {
+      id: true,
+      testName: true,
+      priceMsrp: true,
+      configSnapshot: true,
+    } as const;
     const orderBy = { testName: 'asc' } as const;
-    const toOption = (r: { id: string; testName: string }) => ({
-      id: r.id,
-      name: r.testName,
-    });
+    const toOption = (r: {
+      id: string;
+      testName: string;
+      priceMsrp: number;
+      configSnapshot: Prisma.JsonValue;
+    }): BranchLabTestOption => {
+      const sample = (
+        r.configSnapshot as unknown as BranchLabTestConfigSnapshot
+      )?.samples?.[0];
+      return {
+        id: r.id,
+        name: r.testName,
+        price: r.priceMsrp,
+        sampleType: sample?.sampleType ?? null,
+        isFasting: sample?.isFastingRequired ?? false,
+      };
+    };
 
     if (filters.page === undefined) {
       const rows = await this.prisma.branchLabTest.findMany({

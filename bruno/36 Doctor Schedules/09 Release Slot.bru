@@ -1,0 +1,20 @@
+meta {
+  name: Release Slot
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/doctor-schedules/slots/{{slotId}}/release
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Release one place in a slot (decrements the booked counter). Errors:
+  `SLOT_NOT_FOUND` (404), `SLOT_NOT_BOOKED` (409).
+}

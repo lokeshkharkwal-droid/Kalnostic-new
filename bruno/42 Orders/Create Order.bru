@@ -27,6 +27,14 @@ body:json {
     "isUrgentBill": false,
     "isBillGenerated": false,
     "orderNotes": "Fasting sample; collect in the morning",
+    "orderTime": "09:30",
+    "billingDetails": {
+      "insProvider": "Acme Health",
+      "insPolicyNo": "POL-12345",
+      "insType": "Individual"
+    },
+    "quotationStatus": "DRAFT",
+    "quotationValidTill": "2026-07-23",
     "patientId": "{{patientId}}",
     "appointmentAt": "2026-07-10T09:30:00.000Z",
     "referredByDoctorId": "{{referralDoctorId}}",
@@ -36,10 +44,12 @@ body:json {
     "externalReferralId": "{{externalReferralId}}",
     "items": [
       {
-        "branchLabTestId": "{{branchLabTestId}}"
+        "branchLabTestId": "{{branchLabTestId}}",
+        "discount": 50
       },
       {
-        "branchLabPanelId": "{{branchLabPanelId}}"
+        "branchLabPanelId": "{{branchLabPanelId}}",
+        "discount": 100
       },
       {
         "direct": "Custom investigation - outside catalogue"
@@ -57,6 +67,7 @@ body:json {
       "phlebotomistId": "{{phlebotomistId}}",
       "visitCharges": 200,
       "collectionAt": "2026-07-10T08:00:00.000Z",
+      "appointmentAt": "2026-07-10T09:00:00.000Z",
       "geoLocation": "12.9716,77.5946"
     },
     "opd": {
@@ -65,13 +76,15 @@ body:json {
       "doctorId": "{{consultantDoctorId}}",
       "consultantType": "INITIAL",
       "visitType": "WALK_IN",
-      "consultationAt": "2026-07-10T10:00:00.000Z"
+      "consultationAt": "2026-07-10T10:00:00.000Z",
+      "appointmentAt": "2026-07-10T10:30:00.000Z"
     },
     "radiology": {
       "radiologistId": "{{radiologistId}}",
       "radiologistDepartmentId": "{{departmentId}}",
       "radiologistCategoryId": "{{categoryId}}",
-      "radiologyTechnicianId": "{{radiologyTechnicianPersonId}}"
+      "radiologyTechnicianId": "{{radiologyTechnicianPersonId}}",
+      "appointmentAt": "2026-07-10T11:00:00.000Z"
     },
     "payments": [
       {
@@ -81,11 +94,17 @@ body:json {
         "netAmount": 3000,
         "tdsDeduction": 0,
         "payableAmount": 3000,
-        "paidAmount": 3000,
+        "paidAmount": 2000,
         "remainingBalance": 0,
         "paymentMode": "UPI",
+        "reference": "UPI-TXN-778812",
         "paymentDate": "2026-07-09",
-        "notes": "Paid in full via UPI"
+        "notes": "Split payment: UPI + Cash"
+      },
+      {
+        "paidAmount": 1000,
+        "paymentMode": "CASH",
+        "reference": "RCPT-0091"
       }
     ]
   }
@@ -127,6 +146,22 @@ docs {
   - `patientId` — required; validated to be an active patient in the tenant (422
     `ORDER_PATIENT_NOT_FOUND` otherwise). `appointmentAt` — ISO date-time.
   - `orderCode` is system-generated (`ORD-00001`…) — never sent in the body.
+  - `billId` is system-generated for **diagnostic** orders (`DIG-001`…, from
+    `Tenant.diagnosticBillCounter`) when a `diagnostics` section is present; it is
+    stored permanently and returned in the response. Non-diagnostic orders have a
+    null `billId`. It is searchable via the orders/billing `search` param.
+  - `orderTime` — optional time-of-day (`"HH:mm"`), stored separately from the
+    DATE-only `orderDate` so the form's Order Time round-trips on edit.
+  - `billingDetails` — optional billing-type-specific sub-form (insurance /
+    corporate / govt-scheme / TPA free-text fields), stored as-is and returned
+    verbatim so the whole billing sub-section round-trips on edit.
+
+  ## Quotation (only meaningful when `status = QUOTE`)
+
+  - `quotationStatus` — `DRAFT` | `CONVERTED` | `EXPIRED`. Optional; defaults to
+    `DRAFT` when the order is created with `status = QUOTE` and none is supplied.
+  - `quotationValidTill` — ISO-8601 date. Used to derive `EXPIRED` at listing
+    time (an open `DRAFT` past this date lists as `EXPIRED`).
 
   ## Referral & B2B (all optional)
 
@@ -147,11 +182,44 @@ docs {
   `branchLabPanelId` are validated against the tenant's branch catalogue (422
   `ORDER_BRANCH_LAB_TEST_NOT_FOUND` / `ORDER_BRANCH_LAB_PANEL_NOT_FOUND`); `direct`
   is a free-text catalogue entry passed straight from the frontend (no ref check).
+  Optional `discount` (integer minor units, default 0) is the per-line discount,
+  persisted so item-level discounts round-trip on edit (the order-level aggregate
+  still lives on `payments[].orderDiscount`).
   
   ## Sections (all optional)
-  
+
+  Each section carries its own `appointmentAt` (ISO date-time). When the order is
+  saved with `status = APPOINTMENT`, **at least one section must carry an
+  `appointmentAt`** (422 `APPOINTMENT_SECTION_REQUIRED` otherwise). The order's
+  top-level `appointmentAt` + `appointmentType` are derived from the scheduled
+  section (Diagnostic → OPD → Radiology precedence), and a linked `Appointment`
+  lifecycle record (initial status `NEW`) is created and attached via
+  `Order.appointmentId`.
+
   - `diagnostics` — `diagnosticPanelId` → LabPanel; `phlebotomistId` →
     Phlebotomist; `sampleSource` `IN_HOUSE`|`SUPPLIED`; charges are integer minor units.
+
+  ### Home-visit slot reservation (concurrency-safe)
+
+  When the order is saved with `status = APPOINTMENT` **and** the `diagnostics`
+  section is a home visit (`isHomeVisit = true` with a `phlebotomistId` and a
+  `collectionAt`/`appointmentAt`), one home-visit opening is **reserved
+  atomically** against the phlebotomist's schedule, inside the same transaction
+  that creates the order — so the reservation and the order commit (or roll back)
+  together. Capacity is enforced with conditional atomic counter updates
+  (`bookedCount < capacity`), so two concurrent bookings can never oversell a slot
+  or exceed the daily cap — the losing request is rejected. The reservation is
+  released automatically on cancel / soft-delete, and re-pointed on edit
+  (see Update / Cancel Order). Possible rejections (roll the whole order back):
+
+  - 404 `PHLEBOTOMIST_SCHEDULE_FOR_STAFF_NOT_FOUND` — the phlebotomist has no
+    ACTIVE schedule at the branch, so home visits cannot be booked.
+  - 422 `PHLEBOTOMIST_SLOT_UNAVAILABLE` — the collection time maps to no bookable
+    slot (outside the working window, holiday/off-day, or in the past).
+  - 409 `PHLEBOTOMIST_SLOT_FULL` — the slot has reached `slotCapacity` (another
+    booking took the last opening); refresh availability and pick another slot.
+  - 409 `PHLEBOTOMIST_DAILY_CAP_REACHED` — the phlebotomist is already at
+    `maxVisitsPerDay` for that date.
   - `opd` — `doctorId` (required) must be a CONSULTANT doctor (422
     `ORDER_CONSULTANT_DOCTOR_NOT_FOUND`); optional `departmentId` → Department
     and `categoryId` → Category (422 `ORDER_DEPARTMENT_NOT_FOUND` /
@@ -163,7 +231,16 @@ docs {
     radiology technician is now a Person; 422 `ORDER_PERSON_NOT_FOUND`).
   
   ## payments[]
-  
-  Ledger entries (1:many). Amounts are integer minor units. Wallet/Points/
-  Previous-Dues fields are accepted but not computed this phase.
+
+  Ledger entries (1:many) — one row per payment method, so a split payment sends
+  multiple rows. Amounts are integer minor units. Each row carries its own
+  `paidAmount`, `paymentMode` (`CASH`|`CREDIT`|`UPI`) and optional `reference`
+  (transaction / receipt id). The order-level billing (`totalAmount`,
+  `orderDiscount`, `netAmount`, `payableAmount`, charges) lives on the FIRST row
+  only, so the summed `netAmount` stays correct while `paidAmount` is summed
+  across every row. Wallet/Points/Previous-Dues fields are accepted but not
+  computed this phase. The order's stored `paymentStatus` (`NOT_PAID` |
+  `PARTIALLY_PAID` | `PAID`) is derived from these (summed `paidAmount` vs
+  `netAmount`) and recomputed whenever the ledger is replaced (create, and
+  `PATCH /orders/:id` when `payments` is supplied).
 }

@@ -1,0 +1,28 @@
+meta {
+  name: 04 Get Sample History
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/accession/samples/{{sampleId}}/history
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  The sample's append-only status-change log (§A.10.5), newest first. Each row
+  carries `action`, `fromStatus`, `toStatus`, optional `reason` / `notes` /
+  `attachmentUrl`, and `changedBy`. The first `generate` row is written when the
+  sample is created from the order.
+}

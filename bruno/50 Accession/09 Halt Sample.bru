@@ -1,0 +1,35 @@
+meta {
+  name: 09 Halt Sample
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/accession/samples/{{sampleId}}/halt
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "notes": "Paused — insufficient volume, awaiting recollection"
+  }
+}
+
+tests {
+  test("transition applied (or rejected by the state machine)", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201, 422]);
+  });
+}
+
+docs {
+  Hault — **Collected / Acquired → Halt**. Pauses processing. Note/attachment only.
+}

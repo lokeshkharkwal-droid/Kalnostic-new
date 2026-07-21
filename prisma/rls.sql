@@ -547,6 +547,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS test_groups_name_active_unique
 CREATE UNIQUE INDEX IF NOT EXISTS test_group_mapping_active_unique
   ON test_group_mappings (test_group_id, lab_test_id) WHERE deleted_at IS NULL;
 
+-- ── equipment (platform-level, NO RLS — like test_groups) ───────────────────────
+-- SiteAdmin-only global lab-equipment catalogue; it sits above the tenant
+-- boundary so it is deliberately NOT row-level-secured. Prisma can't express
+-- partial unique indexes, so they live here:
+-- name unique among ACTIVE rows (a name freed by soft-delete is reusable).
+CREATE UNIQUE INDEX IF NOT EXISTS equipment_name_active_unique
+  ON equipment (name) WHERE deleted_at IS NULL;
+
+-- ── equipment_lab_tests (platform-level, NO RLS) ────────────────────────────────
+-- a lab test appears at most once per equipment among ACTIVE rows.
+CREATE UNIQUE INDEX IF NOT EXISTS equipment_lab_test_active_unique
+  ON equipment_lab_tests (equipment_id, lab_test_id) WHERE deleted_at IS NULL;
+
 -- ── outsource_centers ─────────────────────────────────────────────────────────
 ALTER TABLE outsource_centers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE outsource_centers FORCE ROW LEVEL SECURITY;
@@ -1049,6 +1062,14 @@ CREATE POLICY medical_histories_tenant_isolation ON medical_histories
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── patient_family_links ──────────────────────────────────────────────────────
+ALTER TABLE patient_family_links ENABLE ROW LEVEL SECURITY;
+ALTER TABLE patient_family_links FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS patient_family_links_tenant_isolation ON patient_family_links;
+CREATE POLICY patient_family_links_tenant_isolation ON patient_family_links
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- ── Order Management ────────────────────────────────────────────────────────────
 
 -- ── orders ──────────────────────────────────────────────────────────────────────
@@ -1106,6 +1127,14 @@ ALTER TABLE order_radiology ENABLE ROW LEVEL SECURITY;
 ALTER TABLE order_radiology FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS order_radiology_tenant_isolation ON order_radiology;
 CREATE POLICY order_radiology_tenant_isolation ON order_radiology
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── order_field_configs ─────────────────────────────────────────────────────────
+ALTER TABLE order_field_configs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE order_field_configs FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS order_field_configs_tenant_isolation ON order_field_configs;
+CREATE POLICY order_field_configs_tenant_isolation ON order_field_configs
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
@@ -1173,11 +1202,221 @@ CREATE POLICY lab_icon_settings_tenant_isolation ON lab_icon_settings
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── Appointment Status Tracking ─────────────────────────────────────────────────
+
+-- ── appointments ──────────────────────────────────────────────────────────────
+ALTER TABLE appointments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE appointments FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS appointments_tenant_isolation ON appointments;
+CREATE POLICY appointments_tenant_isolation ON appointments
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- Per-tenant unique appointment code among ACTIVE rows (a code freed by a
+-- soft-delete is reusable). `code` is system-generated (APT-00001…) & immutable.
+-- Prisma can't express partial unique indexes, so it lives here.
+CREATE UNIQUE INDEX IF NOT EXISTS appointments_tenant_code_active_unique
+  ON appointments (tenant_id, code) WHERE deleted_at IS NULL;
+
+-- ── appointment_status_history ────────────────────────────────────────────────
+ALTER TABLE appointment_status_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE appointment_status_history FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS appointment_status_history_tenant_isolation ON appointment_status_history;
+CREATE POLICY appointment_status_history_tenant_isolation ON appointment_status_history
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── Doctor Schedule ─────────────────────────────────────────────────────────────
+
+-- ── doctor_schedules ──────────────────────────────────────────────────────────
+ALTER TABLE doctor_schedules ENABLE ROW LEVEL SECURITY;
+ALTER TABLE doctor_schedules FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS doctor_schedules_tenant_isolation ON doctor_schedules;
+CREATE POLICY doctor_schedules_tenant_isolation ON doctor_schedules
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- At most one ACTIVE schedule per (tenant, doctor, branch) among active rows.
+-- Prisma can't express partial unique indexes, so it lives here.
+CREATE UNIQUE INDEX IF NOT EXISTS doctor_schedules_active_doctor_branch_unique
+  ON doctor_schedules (tenant_id, doctor_id, branch_id)
+  WHERE deleted_at IS NULL AND status = 'ACTIVE';
+
+-- ── doctor_schedule_days ──────────────────────────────────────────────────────
+ALTER TABLE doctor_schedule_days ENABLE ROW LEVEL SECURITY;
+ALTER TABLE doctor_schedule_days FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS doctor_schedule_days_tenant_isolation ON doctor_schedule_days;
+CREATE POLICY doctor_schedule_days_tenant_isolation ON doctor_schedule_days
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── doctor_schedule_holidays ──────────────────────────────────────────────────
+ALTER TABLE doctor_schedule_holidays ENABLE ROW LEVEL SECURITY;
+ALTER TABLE doctor_schedule_holidays FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS doctor_schedule_holidays_tenant_isolation ON doctor_schedule_holidays;
+CREATE POLICY doctor_schedule_holidays_tenant_isolation ON doctor_schedule_holidays
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── doctor_schedule_overrides ─────────────────────────────────────────────────
+ALTER TABLE doctor_schedule_overrides ENABLE ROW LEVEL SECURITY;
+ALTER TABLE doctor_schedule_overrides FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS doctor_schedule_overrides_tenant_isolation ON doctor_schedule_overrides;
+CREATE POLICY doctor_schedule_overrides_tenant_isolation ON doctor_schedule_overrides
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── doctor_slots ──────────────────────────────────────────────────────────────
+ALTER TABLE doctor_slots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE doctor_slots FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS doctor_slots_tenant_isolation ON doctor_slots;
+CREATE POLICY doctor_slots_tenant_isolation ON doctor_slots
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- One slot per (schedule, date, start time) among active rows, so slot
+-- regeneration upserts rather than duplicating. Prisma can't express partial
+-- unique indexes, so it lives here.
+CREATE UNIQUE INDEX IF NOT EXISTS doctor_slots_schedule_date_start_active_unique
+  ON doctor_slots (schedule_id, slot_date, start_time) WHERE deleted_at IS NULL;
+
+-- ── Phlebotomist Schedule ───────────────────────────────────────────────────────
+
+-- ── service_zones ─────────────────────────────────────────────────────────────
+ALTER TABLE service_zones ENABLE ROW LEVEL SECURITY;
+ALTER TABLE service_zones FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS service_zones_tenant_isolation ON service_zones;
+CREATE POLICY service_zones_tenant_isolation ON service_zones
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- Per-branch uniqueness for zone name (and code when present) among ACTIVE rows.
+CREATE UNIQUE INDEX IF NOT EXISTS service_zones_tenant_branch_name_active_unique
+  ON service_zones (tenant_id, branch_id, name) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS service_zones_tenant_branch_code_active_unique
+  ON service_zones (tenant_id, branch_id, code) WHERE deleted_at IS NULL AND code IS NOT NULL;
+
+-- ── phlebotomist_schedules ────────────────────────────────────────────────────
+ALTER TABLE phlebotomist_schedules ENABLE ROW LEVEL SECURITY;
+ALTER TABLE phlebotomist_schedules FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS phlebotomist_schedules_tenant_isolation ON phlebotomist_schedules;
+CREATE POLICY phlebotomist_schedules_tenant_isolation ON phlebotomist_schedules
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- At most one ACTIVE schedule per (tenant, phlebotomist, branch) among active rows.
+-- Prisma can't express partial unique indexes, so it lives here.
+CREATE UNIQUE INDEX IF NOT EXISTS phlebotomist_schedules_active_phleb_branch_unique
+  ON phlebotomist_schedules (tenant_id, phlebotomist_id, branch_id)
+  WHERE deleted_at IS NULL AND status = 'ACTIVE';
+
+-- ── phlebotomist_schedule_days ────────────────────────────────────────────────
+ALTER TABLE phlebotomist_schedule_days ENABLE ROW LEVEL SECURITY;
+ALTER TABLE phlebotomist_schedule_days FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS phlebotomist_schedule_days_tenant_isolation ON phlebotomist_schedule_days;
+CREATE POLICY phlebotomist_schedule_days_tenant_isolation ON phlebotomist_schedule_days
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── phlebotomist_schedule_zones ───────────────────────────────────────────────
+ALTER TABLE phlebotomist_schedule_zones ENABLE ROW LEVEL SECURITY;
+ALTER TABLE phlebotomist_schedule_zones FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS phlebotomist_schedule_zones_tenant_isolation ON phlebotomist_schedule_zones;
+CREATE POLICY phlebotomist_schedule_zones_tenant_isolation ON phlebotomist_schedule_zones
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── phlebotomist_schedule_holidays ────────────────────────────────────────────
+ALTER TABLE phlebotomist_schedule_holidays ENABLE ROW LEVEL SECURITY;
+ALTER TABLE phlebotomist_schedule_holidays FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS phlebotomist_schedule_holidays_tenant_isolation ON phlebotomist_schedule_holidays;
+CREATE POLICY phlebotomist_schedule_holidays_tenant_isolation ON phlebotomist_schedule_holidays
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── phlebotomist_schedule_overrides ───────────────────────────────────────────
+ALTER TABLE phlebotomist_schedule_overrides ENABLE ROW LEVEL SECURITY;
+ALTER TABLE phlebotomist_schedule_overrides FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS phlebotomist_schedule_overrides_tenant_isolation ON phlebotomist_schedule_overrides;
+CREATE POLICY phlebotomist_schedule_overrides_tenant_isolation ON phlebotomist_schedule_overrides
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── phlebotomist_slots ────────────────────────────────────────────────────────
+ALTER TABLE phlebotomist_slots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE phlebotomist_slots FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS phlebotomist_slots_tenant_isolation ON phlebotomist_slots;
+CREATE POLICY phlebotomist_slots_tenant_isolation ON phlebotomist_slots
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- One slot per (schedule, date, start time) among active rows, so slot
+-- regeneration upserts rather than duplicating. Prisma can't express partial
+-- unique indexes, so it lives here.
+CREATE UNIQUE INDEX IF NOT EXISTS phlebotomist_slots_schedule_date_start_active_unique
+  ON phlebotomist_slots (schedule_id, slot_date, start_time) WHERE deleted_at IS NULL;
+
+-- ── phlebotomist_day_loads ────────────────────────────────────────────────────
+ALTER TABLE phlebotomist_day_loads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE phlebotomist_day_loads FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS phlebotomist_day_loads_tenant_isolation ON phlebotomist_day_loads;
+CREATE POLICY phlebotomist_day_loads_tenant_isolation ON phlebotomist_day_loads
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── accession_samples ─────────────────────────────────────────────────────────
+ALTER TABLE accession_samples ENABLE ROW LEVEL SECURITY;
+ALTER TABLE accession_samples FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS accession_samples_tenant_isolation ON accession_samples;
+CREATE POLICY accession_samples_tenant_isolation ON accession_samples
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- Per-tenant unique accession number + barcode among ACTIVE rows (a value freed
+-- by a soft-delete is reusable). Both are system-generated (ACC-00001…/BAR-…).
+-- Prisma can't express partial unique indexes, so they live here.
+CREATE UNIQUE INDEX IF NOT EXISTS accession_samples_tenant_accession_no_active_unique
+  ON accession_samples (tenant_id, accession_no) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS accession_samples_tenant_barcode_active_unique
+  ON accession_samples (tenant_id, barcode) WHERE deleted_at IS NULL AND barcode IS NOT NULL;
+
+-- ── accession_sample_tests ────────────────────────────────────────────────────
+ALTER TABLE accession_sample_tests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE accession_sample_tests FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS accession_sample_tests_tenant_isolation ON accession_sample_tests;
+CREATE POLICY accession_sample_tests_tenant_isolation ON accession_sample_tests
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── accession_status_history ──────────────────────────────────────────────────
+ALTER TABLE accession_status_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE accession_status_history FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS accession_status_history_tenant_isolation ON accession_status_history;
+CREATE POLICY accession_status_history_tenant_isolation ON accession_status_history
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── sample_transfers ──────────────────────────────────────────────────────────
+ALTER TABLE sample_transfers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sample_transfers FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS sample_transfers_tenant_isolation ON sample_transfers;
+CREATE POLICY sample_transfers_tenant_isolation ON sample_transfers
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── accession_settings ────────────────────────────────────────────────────────
+ALTER TABLE accession_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE accession_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS accession_settings_tenant_isolation ON accession_settings;
+CREATE POLICY accession_settings_tenant_isolation ON accession_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- Platform-level tables (tenants, persons, person_credentials, siteadmin_users,
 -- refresh_tokens, person_tenant_enrollments, test_groups, test_group_mappings,
--- support_infos) are intentionally NOT covered — they sit above the tenant
--- boundary. (The test_groups / support_infos partial unique indexes above are
--- added for correctness, not RLS.)
+-- equipment, equipment_lab_tests, support_infos) are intentionally NOT covered —
+-- they sit above the tenant boundary. (The test_groups / equipment /
+-- support_infos partial unique indexes above are added for correctness, not RLS.)
 --
 -- NOTE on Person.aadhaar_number / pan_number: no unique index. Aadhaar is stored
 -- encrypted (AES-256-GCM with a random IV → identical inputs yield different

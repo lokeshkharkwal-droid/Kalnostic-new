@@ -1,4 +1,11 @@
-import { IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import {
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 /**
  * One catalogue entry on an order. Exactly one of `branchLabTestId` /
@@ -26,4 +33,10 @@ export class OrderItemDto {
   @IsString()
   @MaxLength(255)
   direct?: string;
+
+  /** Per-line discount in minor units (0 = none). Defaults to 0 when omitted. */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  discount?: number;
 }

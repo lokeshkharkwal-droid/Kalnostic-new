@@ -1,0 +1,21 @@
+meta {
+  name: Delete Doctor Schedule
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/doctor-schedules/{{doctorScheduleId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Soft-delete a schedule (and its future unbooked slots + child rows). Blocked
+  with `SCHEDULE_HAS_BOOKINGS` (422) when future booked slots exist — booked
+  appointments are never removed automatically.
+}

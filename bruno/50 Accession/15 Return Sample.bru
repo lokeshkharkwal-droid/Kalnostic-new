@@ -1,0 +1,37 @@
+meta {
+  name: 15 Return Sample
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{baseUrl}}/accession/samples/{{sampleId}}/return
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "handoverPerson": "Amit (courier)",
+    "notes": "Returned to collector"
+  }
+}
+
+tests {
+  test("transition applied (or rejected by the state machine)", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201, 422]);
+  });
+}
+
+docs {
+  Return — **Accepted / Error / Stored → Returned**. Records `handoverPerson`
+  (stored as the sample's `logisticsPerson`).
+}

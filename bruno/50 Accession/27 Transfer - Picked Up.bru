@@ -1,0 +1,36 @@
+meta {
+  name: 27 Transfer - Picked Up
+  type: http
+  seq: 27
+}
+
+post {
+  url: {{baseUrl}}/accession/transfers/{{transferId}}/pick-up
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "pickedUpBy": "Amit Driver"
+  }
+}
+
+tests {
+  test("transition applied (or rejected by the state machine)", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201, 422]);
+  });
+}
+
+docs {
+  Picked Up (§B.11.1) — **In-Transit → Picked Up**. Records `pickedUpBy` +
+  `pickedUpAt`. Bulk: `POST /accession/transfers/bulk/pick-up` with `ids[]`.
+}

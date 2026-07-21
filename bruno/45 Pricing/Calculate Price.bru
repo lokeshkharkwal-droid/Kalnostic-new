@@ -1,0 +1,63 @@
+meta {
+  name: Calculate Price
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/pricing/calculate
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "labTestIds": ["{{branchLabTestId}}"],
+    "labPanelIds": ["{{branchLabPanelId}}"],
+    "visitingCharges": 200,
+    "sampleCollectionCharges": 100,
+    "orderDiscount": 150
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the payment breakdown", function () {
+    const data = res.getBody() && res.getBody().data;
+    expect(data).to.have.property("totalAmount");
+    expect(data).to.have.property("orderDiscount");
+    expect(data).to.have.property("sampleCollectionCharges");
+    expect(data).to.have.property("visitingCharges");
+    expect(data).to.have.property("payableAmount");
+    expect(data.payableAmount).to.equal(
+      data.totalAmount - data.orderDiscount + data.sampleCollectionCharges + data.visitingCharges,
+    );
+  });
+}
+
+docs {
+  Real-time price preview for the Create-Order (Registration) form. Send the
+  selected branch lab test/panel ids plus the visiting & sample-collection charges
+  and `orderDiscount` (the summed per-line diagnostic discounts) — all integer
+  minor units; the backend is the single source of the payable and returns
+  `{ totalAmount, orderDiscount, sampleCollectionCharges, visitingCharges,
+  payableAmount }`.
+
+  - `totalAmount` = sum of the selected branch lab tests' + panels' list prices
+    (`priceMsrp`). Unknown/deleted/other-branch ids are simply not summed.
+  - `orderDiscount` is echoed from the body, clamped to `≤ totalAmount`.
+  - `payableAmount` = `totalAmount - orderDiscount + sampleCollectionCharges + visitingCharges`.
+
+  Tenant + active branch come from the JWT (never the body). Drives the form's
+  Payment Details section directly.
+}

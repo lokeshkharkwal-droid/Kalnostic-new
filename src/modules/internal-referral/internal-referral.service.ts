@@ -92,6 +92,7 @@ export class InternalReferralService {
     tenantId: string,
     filters: {
       search?: string;
+      branchId?: string;
       page?: number;
       limit?: number;
     } = {},
@@ -103,9 +104,17 @@ export class InternalReferralService {
       tenantId,
       deletedAt: null,
     };
+    if (filters.branchId) {
+      where.branchId = filters.branchId;
+    }
     const search = filters.search?.trim();
     if (search) {
-      where.firstName = { contains: search, mode: 'insensitive' };
+      where.OR = [
+        { firstName: { contains: search, mode: 'insensitive' } },
+        { lastName: { contains: search, mode: 'insensitive' } },
+        { fullName: { contains: search, mode: 'insensitive' } },
+        { mobileNumber: { contains: search, mode: 'insensitive' } },
+      ];
     }
 
     const select = {
@@ -238,6 +247,9 @@ export class InternalReferralService {
       joiningDate: this.toDate(dto.joiningDate),
       mobileNumber: dto.mobileNumber ?? null,
       email: dto.email ?? null,
+      city: dto.city ?? null,
+      state: dto.state ?? null,
+      pincode: dto.pincode ?? null,
       // Commission (normalised)
       ...this.normalizeCommission(commissionEff),
       isTdsApplicable: dto.isTdsApplicable ?? false,
@@ -336,11 +348,20 @@ export class InternalReferralService {
     tenantId: string,
     referralIds: string[],
   ): Promise<
-    Map<string, { labTestList: InternalReferralLabRef[]; labPanelList: InternalReferralLabRef[] }>
+    Map<
+      string,
+      {
+        labTestList: InternalReferralLabRef[];
+        labPanelList: InternalReferralLabRef[];
+      }
+    >
   > {
     const result = new Map<
       string,
-      { labTestList: InternalReferralLabRef[]; labPanelList: InternalReferralLabRef[] }
+      {
+        labTestList: InternalReferralLabRef[];
+        labPanelList: InternalReferralLabRef[];
+      }
     >();
     for (const id of referralIds) {
       result.set(id, { labTestList: [], labPanelList: [] });
@@ -465,7 +486,7 @@ export class InternalReferralService {
     if (dto.firstName !== undefined || dto.lastName !== undefined) {
       data.fullName = this.computeFullName(
         dto.firstName ?? existing.firstName,
-        (dto.lastName ?? existing.lastName) ?? null,
+        dto.lastName ?? existing.lastName ?? null,
       );
     }
 
@@ -835,6 +856,9 @@ export class InternalReferralService {
       data.mobileNumber = dto.mobileNumber ?? null;
     }
     if (dto.email !== undefined) data.email = dto.email ?? null;
+    if (dto.city !== undefined) data.city = dto.city ?? null;
+    if (dto.state !== undefined) data.state = dto.state ?? null;
+    if (dto.pincode !== undefined) data.pincode = dto.pincode ?? null;
     // Settings template ref
     if (dto.referralPanelSettingsId !== undefined) {
       data.referralPanelSettings = dto.referralPanelSettingsId

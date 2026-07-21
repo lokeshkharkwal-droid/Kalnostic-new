@@ -1,0 +1,26 @@
+meta {
+  name: 26 Get Transfer
+  type: http
+  seq: 26
+}
+
+get {
+  url: {{baseUrl}}/accession/transfers/{{transferId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  One transfer with its linked `sample` (tests + order/patient/referral context).
+  404 `SAMPLE_TRANSFER_NOT_FOUND` if missing / other tenant.
+}

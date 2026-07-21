@@ -266,6 +266,7 @@ export const ROLE_DEFAULT_MODULES: Record<ProfileKey, string[]> = {
   finance_assistant: ['finance'],
   logistics_executive: ['inventory', 'accession'],
   opd_assistant: [],
+  radiologist: ['radiology'],
   radiology_assistant: [],
   nursing_staff: [],
   nursing_incharge: [],

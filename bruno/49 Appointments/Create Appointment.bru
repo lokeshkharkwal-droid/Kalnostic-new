@@ -1,0 +1,69 @@
+meta {
+  name: Create Appointment
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/appointments
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "appointmentType": "DIAGNOSTIC",
+    "status": "NEW",
+    "notes": "Booked at front desk; morning slot"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("appointmentId", data.id);
+  if (data && data.code) bru.setEnvVar("appointmentCode", data.code);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("generated an appointment code", function () {
+    expect(res.getBody().data.code).to.match(/^APT-\d{5}$/);
+  });
+  test("recorded the initial status in history", function () {
+    const h = res.getBody().data.statusHistory;
+    expect(h).to.be.an("array").with.length.of.at.least(1);
+    expect(h[0].status).to.equal("NEW");
+  });
+}
+
+docs {
+  Create an appointment in the caller's tenant/branch (tenant from the JWT,
+  branch from the active profile). Generates a per-tenant sequential `code`
+  (`APT-00001`…, from `Tenant.appointmentCounter`) and records the initial
+  status as the first `AppointmentStatusHistory` row — both in one transaction.
+  Returns the appointment with its `statusHistory`. Captures `appointmentId` +
+  `appointmentCode`.
+
+  ## Body
+
+  - `appointmentType` — **required**: `DIAGNOSTIC` | `OPD` | `RADIOLOGY`.
+  - `status` — optional initial status; defaults to `NEW`. One of `NEW` |
+    `CONFIRMED` | `CHECKED_IN` | `IN_PROGRESS` | `COMPLETED` | `CANCELLED` |
+    `RESCHEDULED`.
+  - `notes` — optional (≤500 chars); stored on the initial history entry.
+
+  `tenantId` / `branchId` come from context and are never accepted in the body;
+  `code` is system-generated. `createdBy` / `updatedBy` (and the history's
+  `changedBy`) are set to the caller's `person_id`. On a rare per-tenant counter
+  race the response is 409 `APPOINTMENT_CODE_CONFLICT` (safe to retry).
+}

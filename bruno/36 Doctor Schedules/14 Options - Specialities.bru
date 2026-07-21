@@ -1,0 +1,19 @@
+meta {
+  name: Options - Specialities
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{baseUrl}}/doctor-schedules/options/specialities
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Active speciality (category) `{ id, name }` options for the tenant.
+}

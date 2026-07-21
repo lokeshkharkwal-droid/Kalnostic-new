@@ -103,6 +103,7 @@ export class ReferralDoctorService {
     tenantId: string,
     filters: {
       search?: string;
+      branchId?: string;
       page?: number;
       limit?: number;
     } = {},
@@ -114,9 +115,16 @@ export class ReferralDoctorService {
       tenantId,
       deletedAt: null,
     };
+    if (filters.branchId) {
+      where.branchId = filters.branchId;
+    }
     const search = filters.search?.trim();
     if (search) {
-      where.firstName = { contains: search, mode: 'insensitive' };
+      where.OR = [
+        { firstName: { contains: search, mode: 'insensitive' } },
+        { lastName: { contains: search, mode: 'insensitive' } },
+        { mobileNumber: { contains: search, mode: 'insensitive' } },
+      ];
     }
 
     const select = { id: true, firstName: true, lastName: true } as const;
@@ -246,6 +254,10 @@ export class ReferralDoctorService {
       email: dto.email ?? null,
       aadhaarNumber: dto.aadhaarNumber ?? null,
       panNumber: dto.panNumber ?? null,
+      hospitalName: dto.hospitalName ?? null,
+      city: dto.city ?? null,
+      state: dto.state ?? null,
+      pincode: dto.pincode ?? null,
       departmentId: dto.departmentId ?? null,
       categoryId: dto.categoryId ?? null,
       subCategoryId: dto.subCategoryId ?? null,
@@ -812,6 +824,12 @@ export class ReferralDoctorService {
       data.aadhaarNumber = dto.aadhaarNumber ?? null;
     }
     if (dto.panNumber !== undefined) data.panNumber = dto.panNumber ?? null;
+    if (dto.hospitalName !== undefined) {
+      data.hospitalName = dto.hospitalName ?? null;
+    }
+    if (dto.city !== undefined) data.city = dto.city ?? null;
+    if (dto.state !== undefined) data.state = dto.state ?? null;
+    if (dto.pincode !== undefined) data.pincode = dto.pincode ?? null;
     if (dto.branchId !== undefined) data.branchId = dto.branchId ?? null;
     // Professional
     if (dto.departmentId !== undefined) {

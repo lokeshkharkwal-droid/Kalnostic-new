@@ -1,4 +1,4 @@
-import { Transform } from 'class-transformer';
+import { ToBoolean } from '../../../common/decorators/to-boolean.decorator';
 import { IsBoolean, IsOptional, IsString, MaxLength } from 'class-validator';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 
@@ -16,9 +16,7 @@ export class ListCountryQueryDto extends PaginationQueryDto {
 
   /** Status filter (query params arrive as strings; coerce to a boolean). */
   @IsOptional()
-  @Transform(({ value }) =>
-    value === undefined ? undefined : value === 'true' || value === true,
-  )
+  @ToBoolean()
   @IsBoolean()
   isActive?: boolean;
 }

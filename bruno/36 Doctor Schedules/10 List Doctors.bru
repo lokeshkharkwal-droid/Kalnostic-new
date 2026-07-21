@@ -1,0 +1,38 @@
+meta {
+  name: List Doctors (Tab 1)
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/doctor-schedules/doctors?page=1&limit=20&sortBy=name&sortOrder=asc
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  sortBy: name
+  sortOrder: asc
+  ~search: smith
+  ~branchId: {{branchId}}
+  ~departmentId: dept-id
+  ~specialityId: category-id
+  ~status: ACTIVE
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Doctor List tab: paginated CONSULTANT doctors with dynamic assigned/completed
+  appointment counts (from OPD orders → linked appointments) and current status
+  (`On Leave` when the doctor has an ON_LEAVE schedule, else `Active`).
+
+  Filters: `search` (name), `branchId`, `departmentId`, `specialityId` (category),
+  `status`. Sorting: `sortBy` in name/branch/department/speciality/
+  initialConsultationFee/followUpConsultationFee/assignedAppointments/
+  completedAppointments/status; `sortOrder` asc|desc.
+}

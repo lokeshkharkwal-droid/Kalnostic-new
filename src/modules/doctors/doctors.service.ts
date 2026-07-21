@@ -86,7 +86,11 @@ export class DoctorsService {
     }
     const search = filters.search?.trim();
     if (search) {
-      where.firstName = { contains: search, mode: 'insensitive' };
+      where.OR = [
+        { firstName: { contains: search, mode: 'insensitive' } },
+        { lastName: { contains: search, mode: 'insensitive' } },
+        { phone: { contains: search, mode: 'insensitive' } },
+      ];
     }
 
     const select = { id: true, firstName: true, lastName: true } as const;

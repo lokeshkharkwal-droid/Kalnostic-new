@@ -1,0 +1,25 @@
+meta {
+  name: Reserve Slot
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/doctor-schedules/slots/{{slotId}}/reserve
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Reserve one place in a slot (increments the booked counter; flips to `FULL` at
+  capacity). Errors: `SLOT_NOT_FOUND` (404), `SLOT_IN_PAST` (409),
+  `SLOT_FULL` (409).
+}
+
+vars:pre-request {
+  ~slotId: replace-with-a-slot-id-from-the-calendar
+}

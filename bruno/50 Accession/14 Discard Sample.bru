@@ -1,0 +1,37 @@
+meta {
+  name: 14 Discard Sample
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/accession/samples/{{sampleId}}/discard
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "discardMethod": "Biohazard Bag",
+    "notes": "Discarded after retention window"
+  }
+}
+
+tests {
+  test("transition applied (or rejected by the state machine)", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201, 422]);
+  });
+}
+
+docs {
+  Discard — **Stored → Discarded**. `discardMethod` is **required** (recorded as
+  the history reason).
+}

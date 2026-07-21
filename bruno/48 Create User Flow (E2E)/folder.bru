@@ -1,25 +1,25 @@
 meta {
   name: 48 Create User Flow (E2E)
-  seq: 48
+  seq: 54
 }
 
 docs {
   # Create User Flow (E2E)
-
+  
   A single, self-contained, top-to-bottom run that provisions a **brand-new
   order-capable staff user**, logs in as that user, and then walks the front-desk
   **Registration** phase (register a patient → create an order) **as the new
   user**. Each request feeds the ids/tokens it captures into the next — select
   the **Local** environment and **Run Folder** (or send each request in `seq`
   order); no manual edits are needed.
-
+  
   ## What "a user who can create orders" means here
-
+  
   Order creation is a front-desk (**Registration**) capability. The role that
   carries it out of the box is **`receptionist`** — a **branch-level** role whose
   permission baseline includes `patient:create` + `order:create` (via the
   `sales` module: `sales:view`/`sales:write`/`sales:edit`). So the flow:
-
+  
   1. **Enables** the `registration` + `sales` modules on the branch (a branch
      assignment may only use modules that are enabled + valid for the branch
      type — DIAGNOSTIC/OPD/IPD/PHARMACY/COMBINED all offer both).
@@ -34,7 +34,7 @@ docs {
   4. **Logs in** as the new user and (because `receptionist` is branch-level)
      lands on a **branch-scoped** JWT — exactly what `POST /orders` needs
      (it reads the active branch from the token, never the body).
-
+  
   > **FE module visibility (kaltros-fe):** the front-end reveals a module's
   > tab/route only when `GET /users/manage/me/permissions` reports it as
   > `moduleAllowed` for the active branch. `registration` is therefore a
@@ -43,7 +43,7 @@ docs {
   > module. (An "enablement-only" module with no permission keys can never be
   > `moduleAllowed`, so it would stay hidden — which is why `registration` mints
   > standard permissions.)
-
+  
   > **Note on RBAC enforcement (CLAUDE.md §8):** business routes are
   > authenticated but do **not** yet enforce per-permission RBAC at the route
   > level — permissions are resolved as *data* for the frontend + a future guard.
@@ -51,22 +51,22 @@ docs {
   > business JWT. Steps 3 + 5 still set the role/permissions correctly so the
   > user is provisioned exactly as the product intends (and stays correct once
   > the guard lands).
-
+  
   ## Fully automated — just click Send
-
+  
   Every request has a `script:post-response` that stores what it captures as
   **runtime variables** via `bru.setVar(...)`; every dependent request reads them
   via `{{...}}`. The only pre-request values you supply are the **admin login
   creds** in step 1 (`adminPhone` / `adminTempPassword` / `tenantSlug`) — the
   same ones the rest of the collection uses. Auto-captured variables:
-
+  
   `businessAccessToken` (admin, then swapped to the new user in step 6),
   `businessRefreshToken`, `tenantId`, `branchId`, `newUserId`, `newUserCode`,
   `newUserLoginIdentifier`, `branchLabTestId`, `branchLabPanelId`, `patientId`,
   `orderId`.
-
+  
   ## Prerequisites
-
+  
   - The backend is running (`pnpm start:dev` in `kalnostics-new/`) with Postgres
     and a **seeded tenant** whose `business_admin` login creds are in the `Local`
     environment (`adminPhone` / `adminTempPassword` / `tenantSlug`).
@@ -78,9 +78,9 @@ docs {
     branch is empty — steps 8-9 list & capture whatever is there.
   - The backend has `registration` as a **permission-bearing** module (see the
     FE-access note above). Step 7 asserts this; if it fails, restart the backend.
-
+  
   ## Steps
-
+  
   1. **Admin Login** — authenticate as `business_admin` (the provisioning actor).
   2. **Get Main Branch** — resolve `branchId`.
   3. **Enable Branch Modules** — enable `registration` + `sales` on the branch.
@@ -92,15 +92,15 @@ docs {
      kaltros-fe uses) and assert Registration is visible for this user.
   8-11. **Registration phase** — list branch catalogue → create patient → create
      order, all **as the new user**.
-
+  
   ## Chain of captured variables
-
+  
   Admin Login → admin `businessAccessToken` · Get Main Branch → `branchId` ·
   Enable Branch Modules → — · Create User → `newUserId` + `newUserCode` +
   `newUserLoginIdentifier` · Grant Order Permissions → — · **Login as New User**
   → new-user `businessAccessToken` (branch-scoped) · Verify Registration Access →
   — · List Branch Lab Test → `branchLabTestId` · List Branch Lab Panel →
   `branchLabPanelId` · Create Patient → `patientId` · **Create Order** → `orderId`.
-
+  
   Full user CRUD lives in **06 Users**; full order CRUD in **42 Orders**.
 }

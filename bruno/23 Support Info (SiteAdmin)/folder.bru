@@ -1,17 +1,17 @@
 meta {
   name: 23 Support Info (SiteAdmin)
-  seq: 23
+  seq: 25
 }
 
 docs {
   # Support Info (SiteAdmin)
-
+  
   SiteAdmin-authored **support / help information** — HTML help content tied to a
   screen (Request URL), categorised by a Meta Type and a Business/Branch
   audience. Records are **platform-level** (CLAUDE.md §4.2): they carry **no
   `tenant_id` and no RLS**, are authored once by SiteAdmin, and are shared across
   every business.
-
+  
   - **Base path:** `{{baseUrl}}/siteadmin/support-info`
   - **Auth:** SiteAdmin JWT only (`Authorization: Bearer {{siteAdminToken}}`).
     `@Public()` opts these routes out of the business `JwtAuthGuard`; the
@@ -23,11 +23,11 @@ docs {
   - **Response envelope:** success → `{ success: true, data, meta: { timestamp, … } }`;
     list responses lift `total / page / limit / totalPages` into `meta`. Errors →
     `{ success: false, error: { code, message } }`.
-
+  
   ---
-
+  
   ## Data model — `SupportInfo` (`support_infos`)
-
+  
   | Field         | Type                          | Notes                                                        |
   | ------------- | ----------------------------- | ------------------------------------------------------------ |
   | `id`          | string (uuid)                 | server-generated                                             |
@@ -40,40 +40,40 @@ docs {
   | `helpContent` | string **(required)**         | full HTML body (stored as Postgres `text`)                   |
   | `createdBy` / `updatedBy` | string \| null    | authoring SiteAdmin id (SiteAdmin routes aren't audit-logged)|
   | `createdAt` / `updatedAt` / `deletedAt` | datetime | soft delete: `deletedAt = NULL` means active            |
-
+  
   ---
-
+  
   ## Endpoints
-
+  
   ### POST `/siteadmin/support-info` — create · `master-data:write`
   Body (JSON): `metaType`* , `code?`, `title`* , `tenantType`* , `status?`,
   `requestUrl?`, `helpContent`* . Returns the created record (**201**). `title`
   must be unique among active rows → **409 `SUPPORT_INFO_TITLE_CONFLICT`**;
   invalid/missing fields → **400** (class-validator; unknown props rejected).
-
+  
   ### GET `/siteadmin/support-info` — list · `master-data:read`
   Query: `page` (default 1), `limit` (default 20, max 100), `search`
   (case-insensitive over `metaType` OR `code`; whitespace-only ignored), `status`
   (`ACTIVE`/`INACTIVE`). Ordered newest-first by `updatedAt`. Each item is
   projected to **exactly** `{ id, metaType, code, title, updatedAt, tenantType,
   status }` (the full `helpContent` is only returned by Get). Pagination in `meta`.
-
+  
   ### GET `/siteadmin/support-info/:id` — get one · `master-data:read`
   Returns the full record incl. `helpContent`. Missing/soft-deleted →
   **404 `SUPPORT_INFO_NOT_FOUND`**.
-
+  
   ### PATCH `/siteadmin/support-info/:id` — update · `master-data:write`
   Partial body (all fields optional). A changed `title` is re-validated for
   uniqueness → **409 `SUPPORT_INFO_TITLE_CONFLICT`**. Sets `updatedBy`.
   Missing → **404**.
-
+  
   ### DELETE `/siteadmin/support-info/:id` — soft delete · `master-data:write`
   Sets `deletedAt`; the title is freed for reuse. Missing → **404**.
-
+  
   ---
-
+  
   ## Error codes
-
+  
   | HTTP | `error.code`                  | When                                             |
   | ---- | ----------------------------- | ------------------------------------------------ |
   | 400  | (validation)                  | missing/invalid field, bad enum, unknown property |
@@ -81,15 +81,15 @@ docs {
   | 403  | `FORBIDDEN`                   | SiteAdmin lacks the required `master-data:*` perm |
   | 404  | `SUPPORT_INFO_NOT_FOUND`      | id missing or soft-deleted                        |
   | 409  | `SUPPORT_INFO_TITLE_CONFLICT` | title already used by an active record            |
-
+  
   ---
-
+  
   ## End-to-end run order
-
+  
   Only `siteAdminToken` is needed — no business login or tenant. Run
   **SiteAdmin Auth → Login** (`admin@kalnostics.com` / `SuperSecret1`) first,
   then this folder in sequence:
-
+  
   1. **Create Support Info** — 201; captures `supportInfoId` + `supportInfoTitle`.
   2. **List Support Info** — 200; verifies the projection + `meta` pagination.
   3. **Get Support Info** — 200; full record.
@@ -99,7 +99,7 @@ docs {
   7. **Delete Support Info** — 200; soft delete.
   8. **Get Support Info - Not Found** — 404 (the now-deleted id).
   9. **List Support Info - Unauthorized** — 401 (no token).
-
+  
   The post-response scripts populate the runtime vars automatically. Select the
   **Local** environment first.
 }

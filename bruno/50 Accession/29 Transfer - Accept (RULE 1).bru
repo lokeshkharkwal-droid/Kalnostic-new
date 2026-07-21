@@ -1,0 +1,40 @@
+meta {
+  name: 29 Transfer - Accept (RULE 1)
+  type: http
+  seq: 29
+}
+
+post {
+  url: {{baseUrl}}/accession/transfers/{{transferId}}/accept
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "notes": "Accepted at receiving branch"
+  }
+}
+
+tests {
+  test("transition applied (or rejected by the state machine)", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201, 422]);
+  });
+}
+
+docs {
+  Accept (§B.11.3) — **Received → Accepted**. **RULE 1:** for an INTERNAL transfer
+  this clones the sample into the **receiving branch's In-House list** as a new
+  `AccessionSample` at status `ACCEPTED` (fresh `ACC-` number, tests copied). All
+  further processing happens on that In-House copy. An INTERNAL transfer with no
+  destination assigned → 422 `TRANSFER_DESTINATION_MISSING`. Bulk:
+  `POST /accession/transfers/bulk/accept`.
+}

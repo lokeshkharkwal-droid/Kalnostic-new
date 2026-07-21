@@ -21,16 +21,10 @@ auth:bearer {
 body:json {
   {
     "orderId": "{{orderId}}",
-    "totalAmount": 1500,
-    "orderDiscount": 0,
-    "visitingCharges": 0,
-    "netAmount": 1500,
-    "tdsDeduction": 0,
-    "payableAmount": 1500,
     "paidAmount": 1000,
-    "remainingBalance": 500,
-    "paymentMode": "CASH",
-    "paymentDate": "2026-07-09",
+    "paymentMode": "UPI",
+    "reference": "UPI-TXN-551234",
+    "paymentDate": "2026-07-18",
     "notes": "Part payment"
   }
 }
@@ -50,7 +44,22 @@ docs {
   Create a payment record against an order (1:many ledger). `orderId` is validated
   to be an active order in the caller's tenant (422 `PAYMENT_ORDER_NOT_FOUND`
   otherwise); `tenantId`/`branchId` are inherited from the order. Amounts are
-  integer minor units. Captures `paymentId`.
+  integer minor units. Captures `paymentId`. Writing a payment recomputes the
+  order's stored `paymentStatus` (NOT_PAID / PARTIALLY_PAID / PAID).
+
+  ## Make-payment usage (billing page)
+
+  For an incremental payment against an existing order, send just `paidAmount`,
+  `paymentMode` (`CASH`|`CREDIT`|`UPI`), optional `reference` (txn id), and
+  `paymentDate`/`notes`. Do **not** resend `netAmount` — the order's net already
+  lives on the first ledger row created with the order, and the status is derived
+  from summed `netAmount` vs summed `paidAmount`.
+
+  ## Guards
+
+  - 422 `PAYMENT_OVERPAYMENT` — `paidAmount` exceeds the pending balance
+    (summed net − summed paid).
+  - 422 `PAYMENT_ORDER_CANCELLED` — the order is cancelled; no further payments.
 
   Wallet/Points/Previous-Dues fields (`deductFromWallet`, `deductFromPoints`,
   `hasClearedPreviousDues`) are accepted but NOT computed this phase (deferred).

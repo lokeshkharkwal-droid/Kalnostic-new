@@ -1,0 +1,87 @@
+meta {
+  name: 01 List Samples (Listing & Filters)
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/accession/samples?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: ACC-00001
+  ~status: NEW
+  ~priority: ROUTINE
+  ~tatStatus: WITHIN
+  ~orderId: {{orderId}}
+  ~originBranchId: {{branchId}}
+  ~processingBranchId: {{branchId}}
+  ~patientId: {{patientPersonId}}
+  ~referredByDoctorId: {{referralDoctorId}}
+  ~referralPanelId: {{referralPanelId}}
+  ~dateFrom: 2026-07-01
+  ~dateTo: 2026-07-31
+  ~departmentId: {{departmentId}}
+  ~branchLabTestId: {{branchLabTestId}}
+  ~branchLabPanelId: {{branchLabPanelId}}
+  ~orderMode: Home Visit
+  ~logisticsType: Courier
+  ~reportStatus: Pending
+  ~isOutsource: false
+  ~isUrgent: false
+  ~isHomeCollection: false
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data[0]) {
+    bru.setEnvVar("sampleId", data[0].id);
+    bru.setEnvVar("accessionNo", data[0].accessionNo);
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("pagination meta is present", function () {
+    expect(res.getBody().meta).to.have.property("total");
+  });
+  test("rows carry a derived tatStatus", function () {
+    const d = res.getBody().data;
+    if (d.length) expect(d[0]).to.have.property("tatStatus");
+  });
+}
+
+docs {
+  Paginated list of accession samples in the active branch (§A.6). Newest first.
+  Each row is enriched with a derived `tatStatus` (§A.4 — `WITHIN` | `WARNING` |
+  `CRITICAL` | `BREACHED` | `null` for terminal samples) and carries the linked
+  `order` (with patient / referral) plus its `tests`. Captures `sampleId` +
+  `accessionNo` from the first row for the action requests below.
+
+  ## Filters (toggle the `~` to enable a query param)
+
+  - `search` — matches accession number **or** barcode (case-insensitive).
+  - `status` — the §A.5 status tab (a `SampleStatus`).
+  - `priority` — `ROUTINE` | `URGENT` | `STAT`.
+  - `tatStatus` — derived TAT band (translated to a `createdAt` range server-side).
+  - `orderId` / `originBranchId` / `processingBranchId` — scoping filters.
+  - `patientId` / `referredByDoctorId` / `referralPanelId` — via the linked order.
+  - `dateFrom` / `dateTo` — linked order's `orderDate` range.
+  - `departmentId` / `branchLabTestId` / `branchLabPanelId` — via the order's items.
+  - `orderMode` — `Walk-in` | `Home Visit` | `Referral` | `Outsource` | `Emergency`.
+  - `logisticsType` / `reportStatus` — sample scalar filters.
+  - `isOutsource` / `isUrgent` / `isHomeCollection` — boolean toggles.
+
+  Requires a confirmed diagnostic order to exist first (Orders folder) so samples
+  have been generated.
+}

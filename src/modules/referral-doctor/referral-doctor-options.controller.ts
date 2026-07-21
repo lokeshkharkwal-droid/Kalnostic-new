@@ -14,9 +14,9 @@ export class ReferralDoctorOptionsController {
 
   /**
    * Lightweight `{ id, name }` options for the searchable selector. Filters to
-   * the tenant's referral doctors, optionally by a name `search`. Returns the
-   * full array when `page` is omitted, or a paginated envelope when `page` is
-   * supplied.
+   * the tenant's referral doctors, optionally by a name `search` and a
+   * `branchId` (strict branch scope). Returns the full array when `page` is
+   * omitted, or a paginated envelope when `page` is supplied.
    */
   @Get('options')
   findOptions(
@@ -25,6 +25,7 @@ export class ReferralDoctorOptionsController {
   ) {
     return this.referralDoctorService.findOptions(tenantId, {
       search: query.search,
+      branchId: query.branchId,
       page: query.page,
       limit: query.limit,
     });

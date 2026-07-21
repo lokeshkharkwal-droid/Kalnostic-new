@@ -91,6 +91,7 @@ export class ExternalReferralService {
     tenantId: string,
     filters: {
       search?: string;
+      branchId?: string;
       page?: number;
       limit?: number;
     } = {},
@@ -102,9 +103,16 @@ export class ExternalReferralService {
       tenantId,
       deletedAt: null,
     };
+    if (filters.branchId) {
+      where.branchId = filters.branchId;
+    }
     const search = filters.search?.trim();
     if (search) {
-      where.name = { contains: search, mode: 'insensitive' };
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { organisationName: { contains: search, mode: 'insensitive' } },
+        { mobileNumber: { contains: search, mode: 'insensitive' } },
+      ];
     }
 
     const select = { id: true, name: true } as const;

@@ -1,0 +1,32 @@
+meta {
+  name: Get Appointment History
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/appointments/{{appointmentId}}/history
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("history is a non-empty array", function () {
+    expect(res.getBody().data).to.be.an("array").with.length.of.at.least(1);
+  });
+}
+
+docs {
+  Return the appointment's append-only status-change history (newest first),
+  scoped to the caller's tenant. Each row records the `status` it moved to, the
+  optional `notes`, `changedBy` (the acting person), and `createdAt` (when the
+  change happened). 404 `APPOINTMENT_NOT_FOUND` if the appointment is
+  missing / soft-deleted / other-tenant.
+}

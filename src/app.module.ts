@@ -14,6 +14,7 @@ import {
 } from './common/interceptors';
 import { AuditModule } from './modules/audit/audit.module';
 import { BranchModule } from './modules/branch/branch.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { BranchCatalogueModule } from './modules/branch-catalogue/branch-catalogue.module';
 import { CategoryModule } from './modules/category/category.module';
 import { DepartmentModule } from './modules/department/department.module';
@@ -24,6 +25,7 @@ import { LabPanelModule } from './modules/lab-panel/lab-panel.module';
 import { BranchLabTestModule } from './modules/branch-lab-test/branch-lab-test.module';
 import { BranchLabPanelModule } from './modules/branch-lab-panel/branch-lab-panel.module';
 import { TestGroupModule } from './modules/test-group/test-group.module';
+import { EquipmentModule } from './modules/equipment/equipment.module';
 import { LocationModule } from './modules/location/location.module';
 import { OutsourceCenterModule } from './modules/outsource-center/outsource-center.module';
 import { ReferralPanelModule } from './modules/referral-panel/referral-panel.module';
@@ -47,11 +49,15 @@ import { PaymentRulesModule } from './modules/payment-rules/payment-rules.module
 import { SupportInfoModule } from './modules/support-info/support-info.module';
 import { ContactUsModule } from './modules/contact-us/contact-us.module';
 import { PatientModule } from './modules/patient/patient.module';
-import { RadiologistModule } from './modules/radiologist/radiologist.module';
-import { PhlebotomistModule } from './modules/phlebotomist/phlebotomist.module';
 import { OrderModule } from './modules/order/order.module';
+import { PricingModule } from './modules/pricing/pricing.module';
+import { OrderFieldConfigModule } from './modules/order-field-config/order-field-config.module';
 import { PaymentDetailsModule } from './modules/payment-details/payment-details.module';
 import { BillingSettingsModule } from './modules/billing-settings/billing-settings.module';
+import { AppointmentModule } from './modules/appointment/appointment.module';
+import { AccessionModule } from './modules/accession/accession.module';
+import { DoctorScheduleModule } from './modules/doctor-schedule/doctor-schedule.module';
+import { PhlebotomistScheduleModule } from './modules/phlebotomist-schedule/phlebotomist-schedule.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 
 /**
@@ -86,6 +92,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     // Feature + infrastructure modules.
     AuditModule,
     BranchModule,
+    DashboardModule,
     BranchCatalogueModule,
     CategoryModule,
     SubCategoryModule,
@@ -96,6 +103,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     BranchLabTestModule,
     BranchLabPanelModule,
     TestGroupModule,
+    EquipmentModule,
     LocationModule,
     OutsourceCenterModule,
     ReferralPanelModule,
@@ -119,11 +127,15 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     SupportInfoModule,
     ContactUsModule,
     PatientModule,
-    RadiologistModule,
-    PhlebotomistModule,
     OrderModule,
+    PricingModule,
+    OrderFieldConfigModule,
     PaymentDetailsModule,
     BillingSettingsModule,
+    AppointmentModule,
+    AccessionModule,
+    DoctorScheduleModule,
+    PhlebotomistScheduleModule,
   ],
   providers: [
     // Global business authentication. SiteAdmin routes use @Public() + their

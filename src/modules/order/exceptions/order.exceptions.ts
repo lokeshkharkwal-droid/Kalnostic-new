@@ -172,6 +172,46 @@ export class OrderExternalReferralNotFoundException extends KaltrosException {
 }
 
 /**
+ * 422 — the order is being saved as an APPOINTMENT but none of its service
+ * sections (Diagnostic / OPD / Radiology) carries an appointment date and time.
+ * An appointment order must have exactly one section scheduled.
+ */
+export class AppointmentSectionRequiredException extends KaltrosException {
+  constructor() {
+    super(
+      'APPOINTMENT_SECTION_REQUIRED',
+      'An appointment order must have a Diagnostic, OPD, or Radiology section with an appointment date and time',
+      {},
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/** 409 — the order is already cancelled, so it can't be cancelled again. */
+export class OrderAlreadyCancelledException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'ORDER_ALREADY_CANCELLED',
+      'This order is already cancelled',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/** 404 — the order item does not exist on this order within the tenant. */
+export class OrderItemNotFoundException extends KaltrosException {
+  constructor(orderId: string, itemId: string) {
+    super(
+      'ORDER_ITEM_NOT_FOUND',
+      'Order item not found',
+      { orderId, itemId },
+      HttpStatus.NOT_FOUND,
+    );
+  }
+}
+
+/**
  * 422 — a referenced person does not exist (or is inactive). Covers the
  * radiology technician (a `Person`). The `field` identifies which reference
  * failed.

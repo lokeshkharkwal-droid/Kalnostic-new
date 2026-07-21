@@ -1,0 +1,34 @@
+meta {
+  name: List Branch User Options
+  type: http
+  seq: 19
+}
+
+get {
+  url: {{baseUrl}}/users/branch-users/options?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: raj
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Lightweight `{ id, name }` options listing **every active user** at the active
+  branch, regardless of role — used by the Create-Order Radiology section's
+  Technician picker (which must offer all branch staff, not only radiology
+  technicians). The `id` is a `personId`.
+
+  The active branch is resolved server-side from the JWT profile (never a body/query
+  param, per CLAUDE.md §4.7); a request with no active branch returns 400
+  `ACTIVE_BRANCH_REQUIRED`. `search` matches the person's first/last name
+  (case-insensitive). Omit `page` for the full array; supply `page` for a
+  `{ data, total, page, limit }` envelope.
+}

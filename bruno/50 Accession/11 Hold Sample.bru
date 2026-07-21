@@ -1,0 +1,35 @@
+meta {
+  name: 11 Hold Sample
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/accession/samples/{{sampleId}}/hold
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "notes": "Deferred pending doctor confirmation"
+  }
+}
+
+tests {
+  test("transition applied (or rejected by the state machine)", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201, 422]);
+  });
+}
+
+docs {
+  Hold — **New / Repeat → Hold**. Defers collection/processing. Note/attachment only.
+}

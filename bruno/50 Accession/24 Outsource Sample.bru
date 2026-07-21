@@ -1,0 +1,44 @@
+meta {
+  name: 24 Outsource Sample
+  type: http
+  seq: 24
+}
+
+post {
+  url: {{baseUrl}}/accession/samples/{{sampleId}}/outsource
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "outsourceCenterId": "{{outsourceCenterId}}",
+    "logisticsType": "Courier",
+    "outsourceStatus": "Dispatched",
+    "notes": "Sent to third-party lab"
+  }
+}
+
+tests {
+  test("transition applied (or rejected by the state machine)", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201, 404, 422]);
+  });
+}
+
+docs {
+  Outsource — **Accepted → Outsourced**, creating an OUTSOURCE `SampleTransfer`.
+  `outsourceCenterId` references an existing `OutsourceCenter` (validated → 404
+  `ACCESSION_OUTSOURCE_CENTER_NOT_FOUND` if missing). Third-party labs don't use
+  Kalnostic, so tracking is **manual** via `outsourceStatus` (CR-3). Bulk:
+  `POST /accession/samples/bulk/outsource`.
+
+  > Set `{{outsourceCenterId}}` from the Outsource Centers folder first.
+}

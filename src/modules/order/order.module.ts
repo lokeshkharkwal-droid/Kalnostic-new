@@ -1,19 +1,28 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
-import { RadiologistModule } from '../radiologist/radiologist.module';
-import { PhlebotomistModule } from '../phlebotomist/phlebotomist.module';
+import { AppointmentModule } from '../appointment/appointment.module';
+import { AccessionModule } from '../accession/accession.module';
+import { PhlebotomistScheduleModule } from '../phlebotomist-schedule/phlebotomist-schedule.module';
 import { OrderController } from './order.controller';
 import { OrderService } from './order.service';
 
 /**
- * Order Management feature module. Tenant-scoped + branch-level. Imports the
- * radiologist/phlebotomist master-table modules to validate radiology/diagnostics
- * references via their services (rule #3 — DI, not direct file imports). Patient /
- * department / doctor / branch-catalogue / referral / person references are
- * validated against Prisma directly. The radiology technician is now a `Person`.
+ * Order Management feature module. Tenant-scoped + branch-level. All foreign
+ * references (patient / department / doctor / branch-catalogue / referral /
+ * person) are validated against Prisma directly. The radiologist, phlebotomist,
+ * and radiology technician are now staff `Person`s (validated as active persons).
+ * Imports `AppointmentModule` so an order saved as APPOINTMENT can create its
+ * linked appointment lifecycle record via `AppointmentService`, and
+ * `AccessionModule` so a confirmed order generates its accession samples via
+ * `AccessionSampleService` (rule #3 DI).
  */
 @Module({
-  imports: [PrismaModule, RadiologistModule, PhlebotomistModule],
+  imports: [
+    PrismaModule,
+    AppointmentModule,
+    AccessionModule,
+    PhlebotomistScheduleModule,
+  ],
   controllers: [OrderController],
   providers: [OrderService],
   exports: [OrderService],

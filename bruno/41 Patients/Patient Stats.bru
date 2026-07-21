@@ -1,0 +1,30 @@
+meta {
+  name: Patient Stats
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/patients/stats
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Aggregate patient counts for the dashboard summary cards, scoped to the
+  caller's tenant and active branch (from the JWT). Excludes soft-deleted rows.
+  
+  ## Response `data`
+  
+  - `totalPatients` — all patients in scope.
+  - `totalActivePatients` — patients with `isActive = true`.
+  - `totalMalePatients` — patients with `gender = MALE`.
+  - `totalFemalePatients` — patients with `gender = FEMALE`.
+  
+  Branch scope comes from the active profile in the JWT; tenant-level profiles
+  (no active branch) count tenant-wide.
+}

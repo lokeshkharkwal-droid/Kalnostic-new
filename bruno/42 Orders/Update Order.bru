@@ -20,7 +20,9 @@ auth:bearer {
 
 body:json {
   {
-    "status": "APPOINTMENT",
+    "status": "QUOTE",
+    "quotationStatus": "DRAFT",
+    "quotationValidTill": "2026-07-25",
     "isBillGenerated": true,
     "orderNotes": "Rescheduled collection",
     "items": [
@@ -31,7 +33,20 @@ body:json {
       "doctorId": "{{consultantDoctorId}}",
       "consultantType": "FOLLOW_UP",
       "visitType": "TELECONSULTATION"
-    }
+    },
+    "payments": [
+      {
+        "totalAmount": 3000,
+        "orderDiscount": 200,
+        "netAmount": 3000,
+        "payableAmount": 3000,
+        "paidAmount": 1500,
+        "remainingBalance": 1500,
+        "paymentMode": "UPI",
+        "reference": "UPI-TXN-990011",
+        "paymentDate": "2026-07-18"
+      }
+    ]
   }
 }
 
@@ -50,5 +65,24 @@ docs {
   422 `ORDER_DEPARTMENT_NOT_FOUND` / `ORDER_CATEGORY_NOT_FOUND` on a bad ref);
   the `radiology` section carries optional `radiologistDepartmentId` and
   `radiologistCategoryId`.
-  `patientId` is not editable; payments are managed via the Order Payments folder.
+  `quotationStatus` (`DRAFT`/`CONVERTED`/`EXPIRED`) and `quotationValidTill`
+  (ISO date) are patchable for quotes; omit them to leave existing values intact.
+  When `payments` is supplied the whole ledger is REPLACED (old rows soft-deleted,
+  the new set created) and the order's `paymentStatus` is recomputed from the new
+  rows (summed `paidAmount` vs `netAmount`); omit `payments` to leave the ledger
+  and status untouched. One row per payment method (split → multiple rows), each
+  with its own `paidAmount`/`paymentMode`/`reference`; order-level billing lives on
+  the first row. `patientId` is not editable.
+
+  ## Home-visit slot reservation on edit
+
+  The phlebotomist slot reservation is re-pointed when the booking changes
+  (reschedule, phlebotomist swap, home-visit toggle, or a status flip into/out of
+  `APPOINTMENT`): the old opening is released and the new one reserved atomically
+  in the same transaction. If nothing about the booking changed, the reservation
+  is left untouched (an unchanged past appointment is not re-validated). Re-pointing
+  can be rejected with the same codes as create — 404
+  `PHLEBOTOMIST_SCHEDULE_FOR_STAFF_NOT_FOUND`, 422 `PHLEBOTOMIST_SLOT_UNAVAILABLE`,
+  409 `PHLEBOTOMIST_SLOT_FULL`, 409 `PHLEBOTOMIST_DAILY_CAP_REACHED` — in which
+  case the whole update rolls back and the original reservation is preserved.
 }

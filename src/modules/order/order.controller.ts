@@ -16,6 +16,7 @@ import { ListOrdersDto } from './dto/list-orders.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
 import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
@@ -38,15 +39,20 @@ export class OrderController {
   create(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
     @Body() dto: CreateOrderDto,
   ) {
-    return this.orderService.create(tenantId, profile.branchId, dto);
+    return this.orderService.create(tenantId, profile.branchId, personId, dto);
   }
 
-  /** List orders (paginated, with search + filters). */
+  /** List orders (paginated, with search + filters). Scoped to the active branch. */
   @Get()
-  findAll(@CurrentTenant() tenantId: string, @Query() query: ListOrdersDto) {
-    return this.orderService.findAll(tenantId, query);
+  findAll(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: ListOrdersDto,
+  ) {
+    return this.orderService.findAll(tenantId, profile.branchId, query);
   }
 
   /** Fetch one order fully composed. */
@@ -64,10 +70,42 @@ export class OrderController {
   })
   update(
     @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
     @Param('id') id: string,
     @Body() dto: UpdateOrderDto,
   ) {
-    return this.orderService.update(id, tenantId, dto);
+    return this.orderService.update(id, tenantId, personId, dto);
+  }
+
+  /** Mark one order item's sample as collected (idempotent). */
+  @Patch(':id/items/:itemId/collect')
+  @Audit({
+    module: AuditModule.ORDER,
+    action: AuditAction.UPDATE,
+    description: 'Collected an order item sample',
+  })
+  collectItem(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+  ) {
+    return this.orderService.collectItem(id, itemId, tenantId, personId);
+  }
+
+  /** Cancel an order (sets status = CANCELLED). No refund handling this phase. */
+  @Patch(':id/cancel')
+  @Audit({
+    module: AuditModule.ORDER,
+    action: AuditAction.UPDATE,
+    description: 'Cancelled an order',
+  })
+  cancel(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+    @Param('id') id: string,
+  ) {
+    return this.orderService.cancel(id, tenantId, personId);
   }
 
   /** Soft-delete an order (cascade soft-deletes items, sections, payments). */

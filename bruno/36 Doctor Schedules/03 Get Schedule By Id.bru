@@ -1,0 +1,20 @@
+meta {
+  name: Get Schedule By Id
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/doctor-schedules/{{doctorScheduleId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Fetch one schedule by id (with its days/holidays/overrides).
+  `DOCTOR_SCHEDULE_NOT_FOUND` (404) if missing/soft-deleted.
+}

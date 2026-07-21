@@ -1,0 +1,46 @@
+meta {
+  name: List Appointments (Listing & Filters)
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/appointments?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: APT-00001
+  ~status: NEW
+  ~appointmentType: DIAGNOSTIC
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("pagination meta is present", function () {
+    expect(res.getBody().meta).to.have.property("total");
+  });
+}
+
+docs {
+  Paginated list of appointments in the caller's tenant, scoped to the active
+  branch. Newest first. Pagination info (`total` / `page` / `limit` /
+  `totalPages`) lands in `meta`; `data` is the array of appointments.
+
+  ## Filters (toggle the `~` to enable a query param)
+
+  - `search` — case-insensitive match on the appointment `code`
+    (e.g. `APT-00001`).
+  - `status` — `NEW` | `CONFIRMED` | `CHECKED_IN` | `IN_PROGRESS` | `COMPLETED` |
+    `CANCELLED` | `RESCHEDULED`.
+  - `appointmentType` — `DIAGNOSTIC` | `OPD` | `RADIOLOGY`.
+}

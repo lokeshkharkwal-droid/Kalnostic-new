@@ -95,6 +95,22 @@ export class CreateInternalReferralDto {
   @MaxLength(255)
   email?: string;
 
+  // ── Location details ──
+  @IsString()
+  @IsOptional()
+  @MaxLength(255)
+  city?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(255)
+  state?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(20)
+  pincode?: string;
+
   // ── Lab lists (assigned tests/panels; multi-select, optional) ──
   @IsArray()
   @IsOptional()

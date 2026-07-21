@@ -1,45 +1,45 @@
 meta {
   name: 47 Order Flow (E2E)
-  seq: 47
+  seq: 53
 }
 
 docs {
   # Order Flow (E2E)
-
+  
   A single, self-contained, top-to-bottom run that sets up a system **from
   scratch** and creates a **complete order** — Business Login → catalogue → branch
   import → **provision an order-capable user** → **log in as that user** → master
   records → patient → **Create Order** — with each request feeding the ids it
   captured into the next. Select the **Local** environment and **Run Folder** (or
   run each request in `seq` order); no manual edits are needed.
-
+  
   The payoff: after the run you can copy the new user's credentials
   (`orderUserIdentifier` + `orderUserPassword`), log into the business frontend,
   and reproduce the whole Create-Order flow in the UI.
-
+  
   ## Fully automated — just click Send
-
+  
   Every request has a `script:post-response` that extracts the ids it produces and
   stores them as **runtime variables** via `bru.setVar(...)`; every dependent
   request reads them via `{{...}}`. Runtime vars live for the duration of the run,
   so no values are written back to the `Local` environment file. There are **no
   hardcoded ids** — the only seeded values are the admin login creds and
   `orderUserPassword` in the `Local` environment. Auto-captured variables:
-
+  
   `businessAccessToken`, `businessRefreshToken`, `tenantId`, `branchId`,
   `departmentId`, `departmentShortName`, `categoryId`, `subCategoryId`,
   `masterDataId`, `labTestId`, `labPanelId`, `branchLabTestId`,
   `branchLabPanelId`, `orderUserId`, `orderUserIdentifier`, `orderUserCode`,
   `consultantDoctorId`, `labAdministratorId`, `phlebotomistId`, `radiologistId`,
   `radiologyTechnicianId`, `patientId`, `medicalHistoryId`, `orderId`, `paymentId`.
-
+  
   `branchId` is derived from the **JWT** (decoded in steps 1, 3 and 18), so the
   whole chain always targets the branch your token is actually scoped to — this is
   what keeps the branch import (steps 10-13) consistent with the catalogue
   (steps 7-9) and with the order-capable user's branch.
-
+  
   ## The 26 steps
-
+  
   1-3   **Auth + branch** — admin login, resolve main branch, switch to a
         branch-scoped token.
   4-9   **Catalogue** — Department, Category, Sub-Category, then master-data Lab
@@ -54,30 +54,30 @@ docs {
         doctor), Phlebotomist, Radiologist, and pick a Radiology Technician.
   24-25 **Patient + Order** — register the patient and create the complete order.
   26    **Verify** — re-fetch the composed order.
-
+  
   ## The pivot: steps 14-18 (Order-Capable User)
-
+  
   All requests authenticate with `Bearer {{businessAccessToken}}`. Steps 1-17 use
   the **admin** token (catalogue + branch config are admin work). **Step 18 logs
   in as the new receptionist and OVERWRITES `businessAccessToken`**, so every step
   from 19 on runs as that user — which is exactly what proves a freshly-provisioned
   order-capable user can create the order (not just an all-powerful admin).
-
+  
   The user is a `receptionist` with the **Registration** + **Sales** modules
   enabled at the branch and the matching `registration:*` / `sales:*` permissions
   granted. Business order routes aren't RBAC-gated server-side yet, so those grants
   mainly drive **frontend module visibility** (a module stays hidden in the FE
   unless the user is enabled + permissioned for it).
-
+  
   ## Reproduce in the frontend
-
+  
   After a green run, copy `orderUserIdentifier` + `orderUserPassword` from the
   `Local` environment into the business frontend login. The Registration module
   will be visible and you can create an order in the UI — the same order this flow
   creates via the API.
-
+  
   ## Prerequisites
-
+  
   - The backend is running (`pnpm start:dev` in `kalnostics-new/`) with Postgres
     and a **seeded tenant** that has a main branch and a business admin whose login
     creds are in the `Local` environment (`adminPhone` / `adminTempPassword`).
@@ -87,14 +87,14 @@ docs {
     Profile)** re-issues a branch-scoped token. That switch only succeeds if the
     login user holds a branch-level profile at the branch — see that request's docs
     if it 403s.
-
+  
   ## Re-run note
-
+  
   The fixed `E2E` identifiers — the user's `username`/`email`/`mobileNumber`
   (step 15), each doctor's `registrationNo` (steps 19-20), the department
   `shortName` (step 4), and the patient `mobile` (step 24) — are unique keys, so a
   second run against the same DB returns 409 conflicts. Reset the DB (or bump those
   values) before re-running.
-
+  
   Full CRUD (List / Update / Delete) for orders lives in **42 Orders**.
 }

@@ -1,0 +1,37 @@
+meta {
+  name: 28 Transfer - Receive
+  type: http
+  seq: 28
+}
+
+post {
+  url: {{baseUrl}}/accession/transfers/{{transferId}}/receive
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "receiveCondition": "Satisfactory",
+    "notes": "Arrived intact"
+  }
+}
+
+tests {
+  test("transition applied (or rejected by the state machine)", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201, 422]);
+  });
+}
+
+docs {
+  Receive (§B.11.2) — **Picked Up → Received**. `receiveCondition` is **required**
+  (branch-configured list). Bulk: `POST /accession/transfers/bulk/receive`.
+}

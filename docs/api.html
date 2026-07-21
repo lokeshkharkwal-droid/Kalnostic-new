@@ -1696,6 +1696,123 @@ reference only (the upload itself is handled elsewhere).</div>
   preserved. <span class="pill">404 DOCUMENT_NOT_FOUND</span> if already missing.</p>
 </div>
 
+<h2 id="doctor-schedules">Doctor Schedule <span style="font-size:13px;color:var(--muted)">(consultant doctor availability &amp; slots)</span></h2>
+<div class="note">Powers the FE <code>/registration/appointments/doctor-schedule</code> screen (Doctor List + Calendar tabs
+and the Configure form). Tenant-scoped + <b>branch-level</b>: <code>tenantId</code> comes from the JWT and
+<code>doctorId</code>/<code>branchId</code> are validated against the caller's tenant (never trusted from the body).
+A schedule is a recurring config; creating/updating an <b>ACTIVE</b> schedule generates concrete
+<code>doctor_slots</code> across a horizon (default 8 weeks). Regeneration only ever touches <b>future, unbooked</b>
+slots — booked and past slots are never modified or removed automatically. At most <b>one ACTIVE schedule
+per doctor + branch</b>. All times are 24h <code>HH:mm</code>; dates are ISO <code>YYYY-MM-DD</code>. Slot
+<code>status</code> is stored as AVAILABLE/BOOKED/FULL; <code>Past</code> (elapsed) and <code>Unavailable</code>
+(no slots that day) are derived at read time.</div>
+
+<div class="ep" id="ds-create">
+  <div><span class="m post">POST</span><span class="path">/api/v1/doctor-schedules</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Create a doctor schedule and generate its future slots (when ACTIVE). Validates the doctor/branch
+  (<span class="pill">404 DOCTOR_NOT_FOUND</span> / <span class="pill">404 BRANCH_NOT_FOUND</span>); rejects a
+  second active schedule (<span class="pill">409 DOCTOR_SCHEDULE_OVERLAP</span>) and a bad config
+  (<span class="pill">400 INVALID_SCHEDULE_CONFIG</span>: end&gt;start, break inside window, interval≥duration,
+  buffer≥0, days required for WEEKLY/CUSTOM).</p>
+  <pre>{ "doctorId":"…", "branchId":"…",
+  "consultationMode":["IN_PERSON","VIDEO"], "slotType":"NEW_CONSULTATION",
+  "status":"ACTIVE", "startTime":"09:00", "endTime":"17:00",
+  "breakStart":"13:00", "breakEnd":"14:00",
+  "durationMinutes":30, "slotIntervalMinutes":30, "maxPatientsPerSlot":5,
+  "bufferMinutes":0, "recurrencePattern":"WEEKLY",
+  "selectedDays":["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY"],
+  "holidays":[{"date":"2026-08-15","remarks":"Holiday"}],
+  "overrides":[{"date":"2026-07-20","startTime":"10:00","endTime":"13:00"}],
+  "horizonWeeks":8 }</pre>
+  <p class="lbl">Enums</p>
+  <p><code>consultationMode</code> IN_PERSON|VIDEO|PHONE · <code>slotType</code> NEW_CONSULTATION|FOLLOW_UP|OTHER ·
+  <code>status</code> ACTIVE|INACTIVE|ON_LEAVE · <code>recurrencePattern</code> DAILY|WEEKLY|CUSTOM.</p>
+</div>
+
+<div class="ep" id="ds-get-doctor">
+  <div><span class="m get">GET</span><span class="path">/api/v1/doctor-schedules/doctor/:doctorId</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>The doctor's active schedule config (with days/holidays/overrides) to hydrate the Configure form; falls
+  back to the most recent non-deleted schedule. <span class="pill">404 DOCTOR_SCHEDULE_FOR_DOCTOR_NOT_FOUND</span>
+  if none.</p>
+</div>
+
+<div class="ep" id="ds-calendar">
+  <div><span class="m get">GET</span><span class="path">/api/v1/doctor-schedules/calendar?doctorId=…&amp;weekStart=YYYY-MM-DD</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Weekly calendar: the doctor header (name, department, speciality, branch, <code>rating</code>,
+  <code>yearsOfExperience</code>, role, <code>consultationFee</code>) + 7 day columns. Each day has an
+  <code>availabilityStatus</code> (Available/Unavailable) and slots with capacity/booked/available counts,
+  occupancy %, and a derived status (Available/Booked/Full/Past). Prev/next week = a different
+  <code>weekStart</code> — no FE logic needed.</p>
+</div>
+
+<div class="ep" id="ds-today">
+  <div><span class="m get">GET</span><span class="path">/api/v1/doctor-schedules/today?doctorId=…</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Today's slots for a doctor, each with <code>occupancyRatio</code> ("2 / 5"), <code>occupancyPercentage</code>,
+  and a derived <code>availabilityStatus</code> (past → Past, at capacity → Full).</p>
+</div>
+
+<div class="ep" id="ds-reserve">
+  <div><span class="m post">POST</span><span class="path">/api/v1/doctor-schedules/slots/:slotId/reserve</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Reserve one place in a slot (increments the counter; flips to FULL at capacity). Also exposed as an
+  internal <code>reserveInTx</code> for the order flow. Errors: <span class="pill">404 SLOT_NOT_FOUND</span>,
+  <span class="pill">409 SLOT_IN_PAST</span>, <span class="pill">409 SLOT_FULL</span>.</p>
+</div>
+
+<div class="ep" id="ds-release">
+  <div><span class="m post">POST</span><span class="path">/api/v1/doctor-schedules/slots/:slotId/release</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Release one place in a slot (decrements the counter). Errors:
+  <span class="pill">404 SLOT_NOT_FOUND</span>, <span class="pill">409 SLOT_NOT_BOOKED</span>.</p>
+</div>
+
+<div class="ep" id="ds-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/doctor-schedules/doctors?page=1&amp;limit=20</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Doctor List (Tab 1): paginated CONSULTANT doctors with <b>dynamically computed</b> assigned/completed
+  appointment counts (from OPD orders → linked appointments) and current status (<code>On Leave</code> when the
+  doctor has an ON_LEAVE schedule, else <code>Active</code>). Filters: <code>search</code> (name),
+  <code>branchId</code>, <code>departmentId</code>, <code>specialityId</code>, <code>status</code>. Sorting:
+  <code>sortBy</code> (name|branch|department|speciality|initialConsultationFee|followUpConsultationFee|
+  assignedAppointments|completedAppointments|status), <code>sortOrder</code> asc|desc. Pagination lifted into
+  <code>meta</code>.</p>
+</div>
+
+<div class="ep" id="ds-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/doctor-schedules/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Fetch one schedule by id (with children). <span class="pill">404 DOCTOR_SCHEDULE_NOT_FOUND</span> if
+  missing/soft-deleted.</p>
+</div>
+
+<div class="ep" id="ds-update">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/doctor-schedules/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Partial update; <code>doctorId</code>/<code>branchId</code> immutable. Children (days/holidays/overrides)
+  replaced when supplied. Config/status changes regenerate future <b>unbooked</b> slots; moving off ACTIVE
+  retires future unbooked slots. Errors as for create.</p>
+</div>
+
+<div class="ep" id="ds-delete">
+  <div><span class="m delete">DELETE</span><span class="path">/api/v1/doctor-schedules/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Soft-delete a schedule (+ its future unbooked slots &amp; children). Blocked with
+  <span class="pill">422 SCHEDULE_HAS_BOOKINGS</span> when future booked slots exist.</p>
+</div>
+
+<div class="ep" id="ds-options">
+  <div><span class="m get">GET</span><span class="path">/api/v1/doctor-schedules/options/{doctors|branches|departments|specialities}</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Active-only <code>{ id, name }[]</code> dropdown sources. <code>doctors</code> (CONSULTANT; optional
+  <code>branchId</code>/<code>search</code>, opt-in <code>page</code>/<code>limit</code>) delegates to the
+  Doctors module; <code>branches</code> to the Branch module; <code>departments</code>/<code>specialities</code>
+  are the tenant's active departments/categories.</p>
+</div>
+
 <p style="margin:40px 0 10px;color:var(--muted);font-size:13px">
 Generated for Kalnostics New · reflects the implemented controllers under <code>src/modules</code>.
 Token TTLs, lockout, and password/MRN formats are defined in <code>CLAUDE.md §5</code>.

@@ -1,0 +1,25 @@
+meta {
+  name: Today Slots
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/doctor-schedules/today?doctorId={{doctorId}}
+  body: none
+  auth: bearer
+}
+
+params:query {
+  doctorId: {{doctorId}}
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Today's slots for a doctor. Each entry has start/end time, bookedCount,
+  maxCapacity, `occupancyRatio` ("2 / 5"), occupancyPercentage, and a derived
+  `availabilityStatus` (past slots flagged `Past`, full slots `Full`).
+}

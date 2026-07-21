@@ -96,6 +96,7 @@ export class ReferralPanelService {
     tenantId: string,
     filters: {
       search?: string;
+      branchId?: string;
       page?: number;
       limit?: number;
     } = {},
@@ -108,9 +109,20 @@ export class ReferralPanelService {
       deletedAt: null,
       isActive: true,
     };
+    if (filters.branchId) {
+      where.branchId = filters.branchId;
+    }
     const search = filters.search?.trim();
     if (search) {
-      where.name = { contains: search, mode: 'insensitive' };
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { panelCode: { contains: search, mode: 'insensitive' } },
+        { directorMobile: { contains: search, mode: 'insensitive' } },
+        { accessionPersonMobile: { contains: search, mode: 'insensitive' } },
+        { registrationPersonMobile: { contains: search, mode: 'insensitive' } },
+        { logisticsPersonMobile: { contains: search, mode: 'insensitive' } },
+        { accountsPersonMobile: { contains: search, mode: 'insensitive' } },
+      ];
     }
 
     const select = { id: true, name: true } as const;

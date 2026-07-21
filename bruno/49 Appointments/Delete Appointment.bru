@@ -1,0 +1,29 @@
+meta {
+  name: Delete Appointment
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{baseUrl}}/appointments/{{appointmentId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Soft-delete an appointment (sets `deletedAt`; the row and its status-history
+  are preserved and simply filtered out of reads). The freed `code` becomes
+  reusable by a later appointment (per-tenant unique index is on active rows
+  only). 404 `APPOINTMENT_NOT_FOUND` if the appointment is
+  missing / already-deleted / other-tenant.
+}

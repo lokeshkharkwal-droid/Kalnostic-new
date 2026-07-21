@@ -29,4 +29,10 @@ export class OrderOpdDto {
   @IsOptional()
   @IsDateString()
   consultationAt?: string;
+
+  /** Appointment date & time for this section (ISO-8601). Required when the
+   * order is saved with status APPOINTMENT and this section is filled. */
+  @IsOptional()
+  @IsDateString()
+  appointmentAt?: string;
 }

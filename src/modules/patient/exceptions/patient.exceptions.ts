@@ -36,3 +36,15 @@ export class MedicalHistoryNotFoundException extends KaltrosException {
     );
   }
 }
+
+/** 404 — family link not found for the given anchor patient/tenant. */
+export class FamilyLinkNotFoundException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'FAMILY_LINK_NOT_FOUND',
+      'Family member link not found',
+      { id },
+      HttpStatus.NOT_FOUND,
+    );
+  }
+}

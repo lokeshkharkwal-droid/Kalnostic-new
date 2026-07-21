@@ -1,5 +1,6 @@
 import {
   AgeType,
+  BloodGroup,
   Gender,
   MaritalStatus,
   PatientCategory,
@@ -59,6 +60,10 @@ export class CreatePatientDto {
   @IsEnum(Gender)
   @IsOptional()
   gender?: Gender;
+
+  @IsEnum(BloodGroup)
+  @IsOptional()
+  bloodGroup?: BloodGroup;
 
   @IsEnum(Relationship)
   @IsOptional()
@@ -161,6 +166,10 @@ export class CreatePatientDto {
   @IsEnum(PatientStatus)
   @IsOptional()
   status?: PatientStatus;
+
+  @IsBoolean()
+  @IsOptional()
+  isActive?: boolean;
 
   // ── Identity documents ──
   @IsString()

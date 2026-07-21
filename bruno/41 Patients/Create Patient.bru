@@ -1,7 +1,7 @@
 meta {
   name: Create Patient
   type: http
-  seq: 3
+  seq: 4
 }
 
 post {
@@ -25,6 +25,7 @@ body:json {
     "middleName": "Robert",
     "lastName": "Doe",
     "gender": "MALE",
+    "bloodGroup": "O_POS",
     "relationship": "SELF",
     "dateOfBirth": "1990-05-14",
     "age": 36,
@@ -46,6 +47,7 @@ body:json {
     "patientCategory": "GENERAL",
     "maritalStatus": "SINGLE",
     "status": "CREATED",
+    "isActive": true,
     "umId": "UM-98765",
     "aadhaarNumber": "123456789012",
     "panNumber": "ABCDE1234F",
@@ -92,13 +94,15 @@ docs {
   registration `branchId` comes from the active profile in the JWT — never the
   body). Captures `patientId` and, when `medicalHistories` is sent, the first
   `medicalHistoryId`.
-
+  
   ## Fields
-
+  
   Only `firstName` and `mobile` are REQUIRED; everything else is optional.
-
+  
   - Enums: `salutation` (`DR`/`MR`/`MRS`/`MS`/`PROF`), `gender`
-    (`MALE`/`FEMALE`/`OTHER`/`PREFER_NOT_TO_SAY`), `relationship` &
+    (`MALE`/`FEMALE`/`OTHER`/`PREFER_NOT_TO_SAY`), `bloodGroup`
+    (`A_POS`/`A_NEG`/`B_POS`/`B_NEG`/`O_POS`/`O_NEG`/`AB_POS`/`AB_NEG`/`UNKNOWN`),
+    `relationship` &
     `guardianRelationship` (`SELF`/`SPOUSE`/`SON`/`DAUGHTER`/`FATHER`/`MOTHER`/
     `BROTHER`/`SISTER`/`GUARDIAN`/`FRIEND`/`OTHER`), `ageType`
     (`YEARS`/`MONTHS`/`DAYS`), `patientCategory`
@@ -111,12 +115,13 @@ docs {
   - `hasPrivilegeCard` — boolean (defaults false).
   - `status` — lifecycle stage; `DRAFT` (partially-entered) or `CREATED` (fully
     registered). Optional; defaults to `CREATED` when omitted.
+  - `isActive` — boolean Active/Inactive flag; optional, defaults to `true`.
   - `medicalHistories` — OPTIONAL array; each item creates a medical-history
     record atomically with the patient. Every clinical flag is an optional
     boolean defaulting to false; `otherMedications`/`surgicalHistory`/`remarks`
     are optional strings. See the **Add Medical History** request for the full
     field list.
-
+  
   `tenantId`/`branchId` are NEVER accepted in the body. A duplicate active
   `mobile` in the tenant → 409 `PATIENT_MOBILE_CONFLICT`.
 }
