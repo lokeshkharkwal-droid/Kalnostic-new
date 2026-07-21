@@ -2732,6 +2732,59 @@ model TestGroupMapping {
   @@map("test_group_mappings")
 }
 
+/// A lab equipment master (SiteAdmin only). Platform-level (CLAUDE.md §4.2) — a
+/// global catalogue entry above the tenant boundary, so NO tenant scoping and no
+/// RLS (like `test_groups`). Carries an optional adapter `code`, a description,
+/// and three rich-text HTML documents (setup / lab-config / adopter). `name` is
+/// unique among active rows (partial unique index in prisma/rls.sql). The lab
+/// tests an equipment processes are mapped many-to-many via `EquipmentLabTest`.
+model Equipment {
+  id          String  @id @default(uuid())
+  name        String  @map("name")
+  code        String? @map("code")
+  description String? @map("description")
+
+  // Rich-text HTML documents (@db.Text — can exceed the varchar default).
+  setupDocument     String? @map("setup_document") @db.Text
+  labConfigDocument String? @map("labconfig_document") @db.Text
+  adopterDocument   String? @map("adopter_document") @db.Text
+
+  // Actor trail: the SiteAdmin who created/last-updated the equipment.
+  createdBy String? @map("created_by")
+  updatedBy String? @map("updated_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  mappings EquipmentLabTest[]
+
+  @@index([deletedAt])
+  @@map("equipment")
+}
+
+/// Junction: one row per (equipment, SITE_ADMIN lab test) pair. `labTestId` is a
+/// logical ref to an active SITE_ADMIN LabTest (validated in EquipmentService),
+/// mirroring TestGroupMapping. Platform-level (no tenant scoping); a lab test
+/// appears at most once per equipment among active rows (partial unique index in
+/// prisma/rls.sql).
+model EquipmentLabTest {
+  id          String @id @default(uuid())
+  equipmentId String @map("equipment_id")
+  labTestId   String @map("lab_test_id")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  equipment Equipment @relation(fields: [equipmentId], references: [id])
+
+  @@index([equipmentId])
+  @@index([labTestId])
+  @@index([deletedAt])
+  @@map("equipment_lab_tests")
+}
+
 /// An external reference lab a tenant sends samples to. Tenant-scoped,
 /// tenant-level (CLAUDE.md §4.6) — the center belongs to the business as a whole.
 /// Carries a single selected lab test + lab panel (`labTestId`/`labPanelId`) and a

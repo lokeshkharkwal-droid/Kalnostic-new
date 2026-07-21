@@ -1,0 +1,46 @@
+meta {
+  name: Delete Equipment
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/siteadmin/equipment/{{equipmentId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Soft-delete an equipment (sets `deletedAt`) **and** cascade soft-delete all its
+  lab-test mappings, in one transaction. Auth: SiteAdmin token, requires
+  `master-data:write`. 404 `EQUIPMENT_NOT_FOUND` if not a live equipment.
+
+  After deletion the `name` is freed for reuse (the unique index only covers
+  active rows), and a subsequent `Get Equipment` returns 404.
+
+  **Sample response — 200**
+  ```json
+  {
+    "success": true,
+    "data": {
+      "id": "6d0e2f4a-1b2c-4d3e-8f90-a1b2c3d4e5f6",
+      "name": "Sysmex XN-1000 (v2)",
+      "code": "sysmex-xn-1000",
+      "description": "Updated description",
+      "setupDocument": "<p>Installation steps…</p>",
+      "labConfigDocument": "<p>Configuration guide…</p>",
+      "adopterDocument": "<p>Adopter setup…</p>",
+      "createdBy": "a612182e-3038-4d2c-ab1b-b46c43f9d65c",
+      "updatedBy": "a612182e-3038-4d2c-ab1b-b46c43f9d65c",
+      "createdAt": "2026-07-01T09:00:00.000Z",
+      "updatedAt": "2026-07-01T09:10:00.000Z",
+      "deletedAt": "2026-07-01T09:10:00.000Z"
+    },
+    "meta": { "timestamp": "2026-07-01T09:10:00.000Z" }
+  }
+  ```
+}

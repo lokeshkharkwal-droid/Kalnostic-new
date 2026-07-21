@@ -25,6 +25,7 @@ import { LabPanelModule } from './modules/lab-panel/lab-panel.module';
 import { BranchLabTestModule } from './modules/branch-lab-test/branch-lab-test.module';
 import { BranchLabPanelModule } from './modules/branch-lab-panel/branch-lab-panel.module';
 import { TestGroupModule } from './modules/test-group/test-group.module';
+import { EquipmentModule } from './modules/equipment/equipment.module';
 import { LocationModule } from './modules/location/location.module';
 import { OutsourceCenterModule } from './modules/outsource-center/outsource-center.module';
 import { ReferralPanelModule } from './modules/referral-panel/referral-panel.module';
@@ -101,6 +102,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     BranchLabTestModule,
     BranchLabPanelModule,
     TestGroupModule,
+    EquipmentModule,
     LocationModule,
     OutsourceCenterModule,
     ReferralPanelModule,
