@@ -51,6 +51,7 @@ import { RadiologistModule } from './modules/radiologist/radiologist.module';
 import { PhlebotomistModule } from './modules/phlebotomist/phlebotomist.module';
 import { OrderModule } from './modules/order/order.module';
 import { PaymentDetailsModule } from './modules/payment-details/payment-details.module';
+import { BillingSettingsModule } from './modules/billing-settings/billing-settings.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 
 /**
@@ -122,6 +123,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     PhlebotomistModule,
     OrderModule,
     PaymentDetailsModule,
+    BillingSettingsModule,
   ],
   providers: [
     // Global business authentication. SiteAdmin routes use @Public() + their
