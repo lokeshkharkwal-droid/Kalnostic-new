@@ -1,0 +1,22 @@
+meta {
+  name: 54 Report Settings
+  seq: 61
+}
+
+docs {
+  # Report Settings
+
+  Registration › Report Settings — report header/branding, signatures, and
+  delivery/publishing policy applied to generated PDF reports. Tenant-scoped
+  (RLS), a single row per tenant (mirrors the Patient Settings / Console
+  Settings pattern — not per-branch):
+
+  - **GET** returns the current settings (created with defaults on first
+    access — never 404s).
+  - **PUT** upserts the tenant's settings (a partial patch — omitted fields
+    keep their previously-saved value, or the column default on first save).
+
+  Both routes are business-authenticated (`Bearer {{businessAccessToken}}`);
+  tenant comes from the JWT. Writes are audited under
+  `AuditModule.REPORT_SETTINGS`.
+}

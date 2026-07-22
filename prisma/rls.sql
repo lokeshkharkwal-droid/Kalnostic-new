@@ -1186,6 +1186,14 @@ CREATE POLICY console_settings_tenant_isolation ON console_settings
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── report_settings ────────────────────────────────────────────────────────────
+ALTER TABLE report_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE report_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS report_settings_tenant_isolation ON report_settings;
+CREATE POLICY report_settings_tenant_isolation ON report_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- ── lab_image_settings ────────────────────────────────────────────────────────
 ALTER TABLE lab_image_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lab_image_settings FORCE ROW LEVEL SECURITY;

@@ -282,6 +282,7 @@ enum AuditModule {
   ACCESSION
   PATIENT_SETTINGS
   CONSOLE_SETTINGS
+  REPORT_SETTINGS
 }
 
 /// Type of controlled document managed by the document module.
@@ -4458,6 +4459,38 @@ model ConsoleSetting {
 
   @@index([tenantId])
   @@map("console_settings")
+}
+
+/// Tenant-level report settings for Registration — report header/branding,
+/// signatures, and delivery/publishing policy applied to generated PDF
+/// reports. The row is created on first access so the frontend always
+/// receives a complete settings object.
+model ReportSetting {
+  id       String @id @default(uuid())
+  tenantId String @unique @map("tenant_id")
+
+  labNameOnHeader String @default("Kalnostic Diagnostics") @map("lab_name_on_header")
+  tagLine         String @default("Accuracy. Trust. Care.") @map("tag_line")
+  logoPosition    String @default("Left") @map("logo_position")
+  pageSize        String @default("A4") @map("page_size")
+
+  pathologistName      String @default("Dr. Priya Sharma") @map("pathologist_name")
+  pathologistRegNumber String @default("MCI/12345") @map("pathologist_reg_number")
+  labInChargeName      String @default("Dr. Amit Patel") @map("lab_incharge_name")
+
+  isDigitalSignatureImagePrinted             Boolean @default(true) @map("is_digital_signature_image_printed")
+  isAutoPublishAfterSecondValidationEnabled Boolean @default(true) @map("is_auto_publish_after_second_validation_enabled")
+  isEmailPdfOnPublishEnabled                Boolean @default(true) @map("is_email_pdf_on_publish_enabled")
+  isWhatsappLinkOnPublishEnabled            Boolean @default(true) @map("is_whatsapp_link_on_publish_enabled")
+  isReferringDoctorNotifyEnabled            Boolean @default(false) @map("is_referring_doctor_notify_enabled")
+  pdfWatermark     String @default("None") @map("pdf_watermark")
+  reportFooterNote String @default("Reports correlate clinically.") @map("report_footer_note")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@map("report_settings")
 }
 
 model LabImageSetting {
