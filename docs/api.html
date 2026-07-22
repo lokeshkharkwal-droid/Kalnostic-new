@@ -1813,6 +1813,36 @@ per doctor + branch</b>. All times are 24h <code>HH:mm</code>; dates are ISO <co
   are the tenant's active departments/categories.</p>
 </div>
 
+<h2>Appointment Settings</h2>
+
+<div class="ep" id="appt-settings-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/appointment-settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Effective Registration › Appointment Settings for the active branch (tenant from JWT, branch from the
+  active profile) — the branch's saved config <b>merged over</b> the module defaults. Never 404s; a branch that
+  has never saved gets the defaults (15 min slots, 08:00-20:00, Sunday off, 20 min no-show grace, etc.). Fields:
+  <code>slotDurationMinutes</code>, <code>bufferMinutes</code>, <code>maxWalkInsPerDay</code>,
+  <code>maxOnlineBookingsPerSlot</code>, <code>openTime</code>/<code>closeTime</code> (<code>HH:mm</code>),
+  <code>weeklyOff</code> (<code>None</code>|<code>Sunday</code>|<code>Saturday &amp; Sunday</code>),
+  <code>lunchBreak</code>, <code>isSmsReminder24hEnabled</code>, <code>isWhatsappReminder2hEnabled</code>,
+  <code>isEmailConfirmationEnabled</code>, <code>isVoiceCallForStatEnabled</code>,
+  <code>noShowGraceMinutes</code>, <code>cancellationCutoffHours</code>,
+  <code>isAutoCancelAfterGraceEnabled</code>, <code>isNoShowFeeChargeEnabled</code>.</p>
+</div>
+
+<div class="ep" id="appt-settings-save">
+  <div><span class="m put">PUT</span><span class="path">/api/v1/appointment-settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Upsert the active branch's appointment settings (partial patch — omitted fields keep their previously-saved
+  value, or the module default if never saved). Validated with <code>class-validator</code>:
+  <code>slotDurationMinutes</code> 5-240, <code>bufferMinutes</code> 0-60, <code>maxWalkInsPerDay</code> 0-1000,
+  <code>maxOnlineBookingsPerSlot</code> 0-100, <code>openTime</code>/<code>closeTime</code> must match
+  <code>HH:mm</code> (24h), <code>weeklyOff</code> restricted to its 3 values, <code>noShowGraceMinutes</code>
+  0-240, <code>cancellationCutoffHours</code> 0-72. Returns the effective (merged) settings map. Audited under
+  <code>AuditModule.APPOINTMENT</code>. Errors: <span class="pill">404 BRANCH_NOT_FOUND</span> if the caller has
+  no active branch.</p>
+</div>
+
 <p style="margin:40px 0 10px;color:var(--muted);font-size:13px">
 Generated for Kalnostics New · reflects the implemented controllers under <code>src/modules</code>.
 Token TTLs, lockout, and password/MRN formats are defined in <code>CLAUDE.md §5</code>.

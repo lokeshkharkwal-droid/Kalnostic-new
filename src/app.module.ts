@@ -56,6 +56,7 @@ import { PaymentDetailsModule } from './modules/payment-details/payment-details.
 import { BillingSettingsModule } from './modules/billing-settings/billing-settings.module';
 import { AppointmentModule } from './modules/appointment/appointment.module';
 import { AccessionModule } from './modules/accession/accession.module';
+import { AppointmentSettingsModule } from './modules/appointment-settings/appointment-settings.module';
 import { DoctorScheduleModule } from './modules/doctor-schedule/doctor-schedule.module';
 import { PhlebotomistScheduleModule } from './modules/phlebotomist-schedule/phlebotomist-schedule.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
@@ -133,6 +134,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     PaymentDetailsModule,
     BillingSettingsModule,
     AppointmentModule,
+    AppointmentSettingsModule,
     AccessionModule,
     DoctorScheduleModule,
     PhlebotomistScheduleModule,

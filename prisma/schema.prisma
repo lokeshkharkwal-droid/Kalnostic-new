@@ -5503,3 +5503,26 @@ model AccessionSetting {
   @@index([branchId])
   @@map("accession_settings")
 }
+
+/// Per-branch Registration › Appointment Settings (slot/capacity, working
+/// hours, reminder toggles, no-show/cancellation rules). Mirrors
+/// `AccessionSetting`: one row per branch (`@@unique([tenantId, branchId])`),
+/// payload held as JSON (`AppointmentSettingsMap`). Read falls back to
+/// `DEFAULT_APPOINTMENT_SETTINGS` when a branch has no row yet. Tenant-scoped +
+/// branch-level. RLS policy in prisma/rls.sql.
+model AppointmentSetting {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  config Json @default("{}")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([tenantId, branchId])
+  @@index([tenantId])
+  @@index([branchId])
+  @@map("appointment_settings")
+}
