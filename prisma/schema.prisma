@@ -283,6 +283,7 @@ enum AuditModule {
   PATIENT_SETTINGS
   CONSOLE_SETTINGS
   REPORT_SETTINGS
+  PHLEBOTOMIST_SETTINGS
 }
 
 /// Type of controlled document managed by the document module.
@@ -5620,4 +5621,27 @@ model AppointmentSetting {
   @@index([tenantId])
   @@index([branchId])
   @@map("appointment_settings")
+}
+
+/// Per-branch Registration › Phlebotomist Settings (routing/assignment, kit &
+/// sample handling, attendance & SLA). Mirrors `AppointmentSetting`: one row
+/// per branch (`@@unique([tenantId, branchId])`), payload held as JSON
+/// (`PhlebotomistSettingsMap`). Read falls back to
+/// `DEFAULT_PHLEBOTOMIST_SETTINGS` when a branch has no row yet. Tenant-scoped
+/// + branch-level. RLS policy in prisma/rls.sql.
+model PhlebotomistSetting {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  config Json @default("{}")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([tenantId, branchId])
+  @@index([tenantId])
+  @@index([branchId])
+  @@map("phlebotomist_settings")
 }

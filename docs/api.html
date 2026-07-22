@@ -1843,6 +1843,36 @@ per doctor + branch</b>. All times are 24h <code>HH:mm</code>; dates are ISO <co
   no active branch.</p>
 </div>
 
+<h2>Phlebotomist Settings</h2>
+
+<div class="ep" id="phlebo-settings-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/phlebotomist-settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Effective Registration › Phlebotomist Settings for the active branch (tenant from JWT, branch from the
+  active profile) — the branch's saved config <b>merged over</b> the module defaults. Never 404s; a branch that
+  has never saved gets the defaults (Nearest first, 12 visits/day, 8km radius, 07:00-15:00 shift, etc.). Fields:
+  <code>autoAssignStrategy</code> (<code>Nearest first</code>|<code>Round-robin</code>|<code>Manual</code>),
+  <code>maxVisitsPerPhleboPerDay</code>, <code>defaultServiceRadiusKm</code>,
+  <code>isPatientPickPhleboAllowed</code>, <code>defaultKitItems</code>, <code>minColdChainTempC</code>,
+  <code>maxColdChainTempC</code>, <code>isPhotoOfSampleAtPickupRequired</code>,
+  <code>isGeoTagCaptureOnCollectionEnabled</code>, <code>shiftStart</code>/<code>shiftEnd</code>
+  (<code>HH:mm</code>), <code>pickupSlaMinutes</code>, <code>dropBackSlaHours</code>,
+  <code>isManagerAlertOnSlaBreachEnabled</code>.</p>
+</div>
+
+<div class="ep" id="phlebo-settings-save">
+  <div><span class="m put">PUT</span><span class="path">/api/v1/phlebotomist-settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Upsert the active branch's phlebotomist settings (partial patch — omitted fields keep their
+  previously-saved value, or the module default if never saved). Validated with <code>class-validator</code>:
+  <code>maxVisitsPerPhleboPerDay</code> 1-100, <code>defaultServiceRadiusKm</code> 0-500 (max 1 decimal place),
+  <code>defaultKitItems</code> max 500 chars, <code>minColdChainTempC</code>/<code>maxColdChainTempC</code> -20
+  to 50, <code>shiftStart</code>/<code>shiftEnd</code> must match <code>HH:mm</code> (24h),
+  <code>pickupSlaMinutes</code> 1-1440, <code>dropBackSlaHours</code> 0-72. Returns the effective (merged)
+  settings map. Audited under <code>AuditModule.PHLEBOTOMIST_SETTINGS</code>. Errors:
+  <span class="pill">404 BRANCH_NOT_FOUND</span> if the caller has no active branch.</p>
+</div>
+
 <h2>Patient Settings</h2>
 
 <div class="ep" id="patient-settings-get">
