@@ -1871,6 +1871,35 @@ per doctor + branch</b>. All times are 24h <code>HH:mm</code>; dates are ISO <co
   <code>AuditModule.PATIENT_SETTINGS</code>.</p>
 </div>
 
+<h2>Console Settings</h2>
+
+<div class="ep" id="console-settings-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/console-settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Current tenant's Registration › Console Settings (tenant from JWT) — a single row per tenant, created
+  with column defaults on first access. Never 404s. Fields:
+  <code>defaultOrderMode</code> (<code>Walk-in</code>|<code>Home Visit</code>|<code>Online</code>|<code>Referral</code>),
+  <code>defaultPriority</code> (<code>Routine</code>|<code>Urgent</code>|<code>STAT</code>),
+  <code>isEditTestsAfterCollectionAllowed</code>, <code>isBarcodeRequiredBeforeAcceptance</code>,
+  <code>routineWarningHours</code>, <code>routineBreachHours</code>,
+  <code>urgentWarningHours</code>, <code>urgentBreachHours</code>,
+  <code>statWarningHours</code>, <code>statBreachHours</code>,
+  <code>isAudioChimeOnNewOrderEnabled</code>, <code>isAutoPrintLabelsOnSaveEnabled</code>,
+  <code>isOutsourceStationInQueueVisible</code>, <code>isBreachedTatHighlightEnabled</code>.</p>
+</div>
+
+<div class="ep" id="console-settings-save">
+  <div><span class="m put">PUT</span><span class="path">/api/v1/console-settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Upsert the tenant's console settings (partial patch — omitted fields keep their previously-saved value,
+  or the column default on first save). Validated with <code>class-validator</code>:
+  <code>defaultOrderMode</code>/<code>defaultPriority</code> each restricted to their listed values,
+  the six TAT hour fields are integers 0-999. For each priority tier (Routine/Urgent/STAT), breach hours
+  must strictly exceed warning hours (checked against the saved row for any field omitted from the
+  payload) — violating this returns <span class="pill">400 Bad Request</span>. Returns the saved row.
+  Audited under <code>AuditModule.CONSOLE_SETTINGS</code>.</p>
+</div>
+
 <p style="margin:40px 0 10px;color:var(--muted);font-size:13px">
 Generated for Kalnostics New · reflects the implemented controllers under <code>src/modules</code>.
 Token TTLs, lockout, and password/MRN formats are defined in <code>CLAUDE.md §5</code>.

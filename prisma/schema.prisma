@@ -281,6 +281,7 @@ enum AuditModule {
   BILLING_SETTINGS
   ACCESSION
   PATIENT_SETTINGS
+  CONSOLE_SETTINGS
 }
 
 /// Type of controlled document managed by the document module.
@@ -4425,6 +4426,38 @@ model PatientSetting {
 
   @@index([tenantId])
   @@map("patient_settings")
+}
+
+/// Tenant-level console settings for Registration — order workflow defaults,
+/// TAT thresholds, and sample-tracking behaviour. The row is created on first
+/// access so the frontend always receives a complete settings object.
+model ConsoleSetting {
+  id       String @id @default(uuid())
+  tenantId String @unique @map("tenant_id")
+
+  defaultOrderMode String @default("Walk-in") @map("default_order_mode")
+  defaultPriority  String @default("Routine") @map("default_priority")
+
+  isEditTestsAfterCollectionAllowed Boolean @default(false) @map("is_edit_tests_after_collection_allowed")
+  isBarcodeRequiredBeforeAcceptance Boolean @default(true) @map("is_barcode_required_before_acceptance")
+
+  routineWarningHours Int @default(4) @map("routine_warning_hours")
+  routineBreachHours  Int @default(8) @map("routine_breach_hours")
+  urgentWarningHours  Int @default(2) @map("urgent_warning_hours")
+  urgentBreachHours   Int @default(4) @map("urgent_breach_hours")
+  statWarningHours    Int @default(1) @map("stat_warning_hours")
+  statBreachHours     Int @default(2) @map("stat_breach_hours")
+
+  isAudioChimeOnNewOrderEnabled    Boolean @default(true) @map("is_audio_chime_on_new_order_enabled")
+  isAutoPrintLabelsOnSaveEnabled   Boolean @default(true) @map("is_auto_print_labels_on_save_enabled")
+  isOutsourceStationInQueueVisible Boolean @default(true) @map("is_outsource_station_in_queue_visible")
+  isBreachedTatHighlightEnabled    Boolean @default(true) @map("is_breached_tat_highlight_enabled")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@map("console_settings")
 }
 
 model LabImageSetting {

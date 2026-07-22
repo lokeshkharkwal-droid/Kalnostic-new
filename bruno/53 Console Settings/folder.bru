@@ -1,0 +1,24 @@
+meta {
+  name: 53 Console Settings
+  seq: 60
+}
+
+docs {
+  # Console Settings
+
+  Registration › Console Settings — order workflow defaults, TAT (turnaround
+  time) warning/breach thresholds per priority tier, and sample-tracking
+  behaviour. Tenant-scoped (RLS), a single row per tenant (mirrors the
+  Patient Settings / Billing Settings pattern — not per-branch):
+
+  - **GET** returns the current settings (created with defaults on first
+    access — never 404s).
+  - **PUT** upserts the tenant's settings (a partial patch — omitted fields
+    keep their previously-saved value, or the column default on first save).
+    Each priority tier's breach hours must exceed its warning hours or the
+    request is rejected with `400 Bad Request`.
+
+  Both routes are business-authenticated (`Bearer {{businessAccessToken}}`);
+  tenant comes from the JWT. Writes are audited under
+  `AuditModule.CONSOLE_SETTINGS`.
+}

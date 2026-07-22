@@ -55,6 +55,7 @@ import { PricingModule } from './modules/pricing/pricing.module';
 import { OrderFieldConfigModule } from './modules/order-field-config/order-field-config.module';
 import { PaymentDetailsModule } from './modules/payment-details/payment-details.module';
 import { BillingSettingsModule } from './modules/billing-settings/billing-settings.module';
+import { ConsoleSettingsModule } from './modules/console-settings/console-settings.module';
 import { AppointmentModule } from './modules/appointment/appointment.module';
 import { AccessionModule } from './modules/accession/accession.module';
 import { AppointmentSettingsModule } from './modules/appointment-settings/appointment-settings.module';
@@ -135,6 +136,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     OrderFieldConfigModule,
     PaymentDetailsModule,
     BillingSettingsModule,
+    ConsoleSettingsModule,
     AppointmentModule,
     AppointmentSettingsModule,
     AccessionModule,
