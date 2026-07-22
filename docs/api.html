@@ -1843,6 +1843,34 @@ per doctor + branch</b>. All times are 24h <code>HH:mm</code>; dates are ISO <co
   no active branch.</p>
 </div>
 
+<h2>Patient Settings</h2>
+
+<div class="ep" id="patient-settings-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/patient-settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Current tenant's Registration › Patient Settings (tenant from JWT) — a single row per tenant, created
+  with column defaults on first access. Never 404s. Fields:
+  <code>patientIdFormat</code>, <code>nextPatientNumber</code>,
+  <code>duplicateCheckStrategy</code> (<code>Mobile + DOB</code>|<code>Mobile only</code>|<code>Mobile + Name</code>),
+  <code>defaultTitle</code> (<code>Mr.</code>|<code>Mrs.</code>|<code>Ms.</code>|<code>Dr.</code>|<code>—</code>),
+  <code>isMobileNumberMandatory</code>, <code>isEmailMandatory</code>, <code>isDobMandatory</code>,
+  <code>isGenderMandatory</code>, <code>isAddressMandatory</code>, <code>isIdProofNumberMandatory</code>,
+  <code>isDigitalConsentCaptureEnabled</code>, <code>isMobileMaskingInPrintoutsEnabled</code>,
+  <code>isWhatsappReportSharingEnabled</code>,
+  <code>dataRetentionPeriod</code> (<code>1 year</code>|<code>3 years</code>|<code>5 years</code>|<code>Indefinite</code>).</p>
+</div>
+
+<div class="ep" id="patient-settings-save">
+  <div><span class="m put">PUT</span><span class="path">/api/v1/patient-settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Upsert the tenant's patient settings (partial patch — omitted fields keep their previously-saved value,
+  or the column default on first save). Validated with <code>class-validator</code>:
+  <code>patientIdFormat</code> 3-50 chars restricted to letters/digits/<code>{'{'}</code>/<code>{'}'}</code>/<code>-</code>/<code>_</code>,
+  <code>nextPatientNumber</code> 1-999999, <code>duplicateCheckStrategy</code>/<code>defaultTitle</code>/
+  <code>dataRetentionPeriod</code> each restricted to their listed values. Returns the saved row. Audited under
+  <code>AuditModule.PATIENT_SETTINGS</code>.</p>
+</div>
+
 <p style="margin:40px 0 10px;color:var(--muted);font-size:13px">
 Generated for Kalnostics New · reflects the implemented controllers under <code>src/modules</code>.
 Token TTLs, lockout, and password/MRN formats are defined in <code>CLAUDE.md §5</code>.

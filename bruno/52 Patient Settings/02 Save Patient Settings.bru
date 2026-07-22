@@ -1,0 +1,62 @@
+meta {
+  name: 02 Save Patient Settings
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{baseUrl}}/patient-settings
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "patientIdFormat": "PT-{YY}{AUTO}",
+    "nextPatientNumber": 1016,
+    "duplicateCheckStrategy": "Mobile + DOB",
+    "defaultTitle": "—",
+    "isMobileNumberMandatory": true,
+    "isEmailMandatory": false,
+    "isDobMandatory": true,
+    "isGenderMandatory": true,
+    "isAddressMandatory": false,
+    "isIdProofNumberMandatory": false,
+    "isDigitalConsentCaptureEnabled": true,
+    "isMobileMaskingInPrintoutsEnabled": false,
+    "isWhatsappReportSharingEnabled": true,
+    "dataRetentionPeriod": "5 years"
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("echoes back the saved values", function () {
+    const d = res.getBody().data;
+    expect(d.patientIdFormat).to.equal("PT-{YY}{AUTO}");
+    expect(d.duplicateCheckStrategy).to.equal("Mobile + DOB");
+  });
+}
+
+docs {
+  Upsert the tenant's patient settings. Every field is optional (a partial
+  patch) — omitted fields keep their previously-saved value (or the column
+  default on first save). The response is the saved row. Audited under
+  `AuditModule.PATIENT_SETTINGS`.
+
+  Validation: `patientIdFormat` 3-50 chars, letters/digits/`{`/`}`/`-`/`_`
+  only; `nextPatientNumber` 1-999999; `duplicateCheckStrategy` must be one of
+  `Mobile + DOB` | `Mobile only` | `Mobile + Name`; `defaultTitle` must be one
+  of `Mr.` | `Mrs.` | `Ms.` | `Dr.` | `—`; `dataRetentionPeriod` must be one of
+  `1 year` | `3 years` | `5 years` | `Indefinite`.
+}

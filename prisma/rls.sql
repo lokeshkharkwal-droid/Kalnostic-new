@@ -1170,6 +1170,14 @@ CREATE POLICY billing_settings_tenant_isolation ON billing_settings
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── patient_settings ───────────────────────────────────────────────────────────
+ALTER TABLE patient_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE patient_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS patient_settings_tenant_isolation ON patient_settings;
+CREATE POLICY patient_settings_tenant_isolation ON patient_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- ── lab_image_settings ────────────────────────────────────────────────────────
 ALTER TABLE lab_image_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lab_image_settings FORCE ROW LEVEL SECURITY;

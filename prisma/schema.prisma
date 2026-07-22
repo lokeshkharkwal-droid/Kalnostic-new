@@ -280,6 +280,7 @@ enum AuditModule {
   LAB_TEST_SETTINGS
   BILLING_SETTINGS
   ACCESSION
+  PATIENT_SETTINGS
 }
 
 /// Type of controlled document managed by the document module.
@@ -4396,6 +4397,34 @@ model BillingSetting {
 
   @@index([tenantId])
   @@map("billing_settings")
+}
+
+model PatientSetting {
+  id       String @id @default(uuid())
+  tenantId String @unique @map("tenant_id")
+
+  patientIdFormat        String @default("PT-{YY}{AUTO}") @map("patient_id_format")
+  nextPatientNumber      Int    @default(1) @map("next_patient_number")
+  duplicateCheckStrategy String @default("Mobile + DOB") @map("duplicate_check_strategy")
+  defaultTitle           String @default("—") @map("default_title")
+
+  isMobileNumberMandatory  Boolean @default(true) @map("is_mobile_number_mandatory")
+  isEmailMandatory         Boolean @default(false) @map("is_email_mandatory")
+  isDobMandatory           Boolean @default(true) @map("is_dob_mandatory")
+  isGenderMandatory        Boolean @default(true) @map("is_gender_mandatory")
+  isAddressMandatory       Boolean @default(false) @map("is_address_mandatory")
+  isIdProofNumberMandatory Boolean @default(false) @map("is_id_proof_number_mandatory")
+
+  isDigitalConsentCaptureEnabled    Boolean @default(true) @map("is_digital_consent_capture_enabled")
+  isMobileMaskingInPrintoutsEnabled Boolean @default(false) @map("is_mobile_masking_in_printouts_enabled")
+  isWhatsappReportSharingEnabled    Boolean @default(true) @map("is_whatsapp_report_sharing_enabled")
+  dataRetentionPeriod               String  @default("5 years") @map("data_retention_period")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@map("patient_settings")
 }
 
 model LabImageSetting {
