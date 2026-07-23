@@ -1,0 +1,37 @@
+meta {
+  name: 02 Get Billing Settings
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/business-admin/billing-settings
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the settings row", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("invoicePrefix");
+    expect(d).to.have.property("gstMode");
+    expect(d).to.have.property("refundApprovalLevel");
+  });
+}
+
+docs {
+  The caller's tenant billing settings (tenant id taken from the JWT). Created
+  with the schema defaults (`invoicePrefix: "INV-"`, `nextInvoiceNumber: 1`,
+  `invoiceResetCycle: "YEARLY"`, `gstMode: "INCLUSIVE"`,
+  `defaultGstPercent: 18`, `counterDiscountMax: 10`, `managerDiscountMax: 25`,
+  `refundApprovalLevel: "MANAGER_ONLY"`, `refundWindowDays: 7`, cash/card/UPI/
+  credit-B2B enabled, wallet/bank-transfer disabled) on first access — this
+  endpoint never 404s.
+}
