@@ -1,0 +1,23 @@
+meta {
+  name: 01 List Scheduled Tests
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/scheduled-tests
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Schedule Test worklist list (LABORATORY.docx §8.5), ordered by
+  `scheduledAt` ascending. Columns: SR, Date & Time, Branch, Patient, Ref
+  Panel, Referred By, Order Item, Sample Status, Billing Status, Schedule
+  Date, Assigned (technician), Dispatch Date, Report Status, Schedule Status,
+  Action.
+}

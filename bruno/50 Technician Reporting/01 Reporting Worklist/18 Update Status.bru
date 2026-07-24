@@ -1,0 +1,29 @@
+meta {
+  name: 18 Update Status
+  type: http
+  seq: 18
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/update-status
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "notes": "Called patient to confirm fasting status before running the sample."
+  }
+}
+
+docs {
+  Update Status (LABORATORY.docx §5.8) — a generic note visible to other
+  technicians who open this report. `notes` is required. Available at every
+  status.
+
+  404 `LAB_REPORT_NOT_FOUND`.
+}

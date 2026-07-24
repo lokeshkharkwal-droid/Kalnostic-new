@@ -1,0 +1,35 @@
+meta {
+  name: 19 Raise Re-Run
+  type: http
+  seq: 19
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/re-run
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "notes": "Adapter-fed value looks doubtful — re-running before validation."
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("reRunRequestId", data.id);
+}
+
+docs {
+  Re-Run Request (LABORATORY.docx §2.2 "Any status" row, §5.5). Clears the
+  report's result values and returns it to Pending; also creates a tracking
+  row in the Re-Run worklist (see "02 Re-Run"). `notes` optional. Allowed
+  from ANY report status — no transition gate applies.
+
+  Captures `reRunRequestId`. 404 `LAB_REPORT_NOT_FOUND`.
+}

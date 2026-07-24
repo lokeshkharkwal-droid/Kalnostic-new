@@ -1,0 +1,23 @@
+meta {
+  name: 02 Get Status Counts
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/counts
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Live per-status-tab counts (LABORATORY.docx §1.1 element 6). Same filter
+  params as List Reports, minus `status`.
+
+  Returns `{ all, pending, partialPending, saved, validationPending,
+  resultDone, approved, published, errorReported, resultRejected }`.
+}

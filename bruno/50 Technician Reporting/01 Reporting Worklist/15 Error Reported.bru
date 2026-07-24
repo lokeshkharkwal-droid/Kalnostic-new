@@ -1,0 +1,31 @@
+meta {
+  name: 15 Error Reported
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/error-reported
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "notes": "Wrong patient name printed on the released report — correcting before re-share."
+  }
+}
+
+docs {
+  Approved | Published → Error Reported (LABORATORY.docx §2.2, §6.7, §6.8).
+  `notes` is required (error description, on record). Resubmit after
+  correcting.
+
+  404 `LAB_REPORT_NOT_FOUND`. 409 `LAB_REPORT_LOCKED`. 409
+  `INVALID_LAB_REPORT_TRANSITION` if the report isn't Approved/Published. 422
+  `LAB_REPORT_NOTES_REQUIRED` if `notes` is omitted/blank.
+}

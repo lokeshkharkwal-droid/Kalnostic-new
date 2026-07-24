@@ -1,0 +1,34 @@
+meta {
+  name: 05 Resolve Reference Range
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/reference-range?resultParamId={{resultParamId}}
+  body: none
+  auth: bearer
+}
+
+params:query {
+  resultParamId: {{resultParamId}}
+  ~methodology: Enzymatic
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Resolve the reference range/value for one result parameter given the
+  current methodology and the report's patient (age/gender) — backs the Test
+  Entry grid's "changing methodology swaps the reference range" behaviour
+  (LABORATORY.docx §4.3). Selects `LabTestReferenceRange` for QUANTITATIVE
+  params, `LabTestReferenceValue` for QUALITATIVE.
+
+  Returns `{ referenceRangeId, referenceDisplay }` (both null if nothing
+  matches). Pass the result back into Upsert Result Values.
+
+  404 `LAB_TEST_CATALOGUE_MISSING` if the report has no linked LabTest (a
+  branch-only test with no tenant catalogue source, or a panel/direct entry).
+}

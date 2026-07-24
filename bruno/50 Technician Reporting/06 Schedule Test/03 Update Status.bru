@@ -1,0 +1,31 @@
+meta {
+  name: 03 Update Status
+  type: http
+  seq: 3
+}
+
+patch {
+  url: {{baseUrl}}/scheduled-tests/{{scheduledTestId}}/status
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "IN_PROGRESS",
+    "notes": "Grossing in progress."
+  }
+}
+
+docs {
+  Manual status update (LABORATORY.docx §8.5): `status` one of `PENDING` |
+  `IN_PROGRESS` | `COMPLETED` (`ActionWorklistStatus` — no `NEW`, unlike
+  Critical Alerts/Out of Range), updated manually as the process steps
+  progress. `notes` optional.
+
+  404 `SCHEDULED_TEST_NOT_FOUND`.
+}

@@ -1,0 +1,23 @@
+meta {
+  name: 04 Get History
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/history
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Audit Trail (LABORATORY.docx §5.11) — every status transition on this
+  report, newest first: `{ fromStatus, toStatus, action, notes, actorId,
+  createdAt }[]`.
+
+  404 `LAB_REPORT_NOT_FOUND` if missing/other-tenant/other-branch.
+}

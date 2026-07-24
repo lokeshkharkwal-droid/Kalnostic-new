@@ -1,0 +1,21 @@
+meta {
+  name: 01 List Delta Checks
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/delta-checks
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Delta Check worklist list (LABORATORY.docx §8.4). Columns: SR, Date & Time,
+  Branch, Patient, Ref Panel, Ref By, Test Name, Billing Status, Sample
+  Status, Report Status, Delta Status, Action.
+}

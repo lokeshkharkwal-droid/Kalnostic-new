@@ -1,0 +1,37 @@
+meta {
+  name: 20 Raise Critical Alert
+  type: http
+  seq: 20
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/critical-alert
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "notes": "Potassium 6.8 mmol/L — informing consultant immediately.",
+    "resultParamId": "{{resultParamId}}"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("criticalAlertId", data.id);
+}
+
+docs {
+  Inform Critical Alert (LABORATORY.docx §5.3). `notes` required;
+  `resultParamId` optional (which parameter triggered it). Lists the item
+  under the Critical Alerts worklist (see "03 Critical Alerts") with
+  `trigger: MANUAL` and a snapshot of the report's status at the moment of
+  triggering.
+
+  Captures `criticalAlertId`. 404 `LAB_REPORT_NOT_FOUND`.
+}

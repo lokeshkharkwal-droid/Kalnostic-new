@@ -1,0 +1,22 @@
+meta {
+  name: 13 Approve
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/approve
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Result Done → Approved (LABORATORY.docx §2.2, §6.6).
+
+  404 `LAB_REPORT_NOT_FOUND`. 409 `LAB_REPORT_LOCKED`. 409
+  `INVALID_LAB_REPORT_TRANSITION` if the report isn't Result Done.
+}

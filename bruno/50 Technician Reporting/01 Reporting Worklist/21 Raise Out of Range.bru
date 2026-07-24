@@ -1,0 +1,35 @@
+meta {
+  name: 21 Raise Out of Range
+  type: http
+  seq: 21
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/out-of-range
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "notes": "Result outside the configured normal range for this age group.",
+    "resultParamId": "{{resultParamId}}"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("outOfRangeFlagId", data.id);
+}
+
+docs {
+  Out of Range (LABORATORY.docx §5.4). `notes` required; `resultParamId`
+  optional. Lists the item under the Out of Range worklist (see "04 Out of
+  Range").
+
+  Captures `outOfRangeFlagId`. 404 `LAB_REPORT_NOT_FOUND`.
+}

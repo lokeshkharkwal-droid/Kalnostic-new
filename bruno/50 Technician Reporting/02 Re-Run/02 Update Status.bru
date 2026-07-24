@@ -1,0 +1,32 @@
+meta {
+  name: 02 Update Status
+  type: http
+  seq: 2
+}
+
+patch {
+  url: {{baseUrl}}/re-run-requests/{{reRunRequestId}}/status
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "IN_PROGRESS",
+    "notes": "Re-processing sample now."
+  }
+}
+
+docs {
+  Manual status update (LABORATORY.docx §8.1): `status` one of `PENDING` |
+  `IN_PROGRESS` | `COMPLETED` (`ActionWorklistStatus` — no `NEW`, unlike
+  Critical Alerts/Out of Range; §8.1 never describes a "New" state). Mark In
+  Progress while re-processing; mark Completed once the re-run report is
+  approved/released. `notes` optional.
+
+  404 `RE_RUN_REQUEST_NOT_FOUND`.
+}

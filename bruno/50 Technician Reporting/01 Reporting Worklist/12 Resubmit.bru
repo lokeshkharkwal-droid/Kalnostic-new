@@ -1,0 +1,23 @@
+meta {
+  name: 12 Resubmit
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/resubmit
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Result Rejected | Error Reported → Validation Pending (LABORATORY.docx
+  §2.2, §6.5, §6.9), after the technician has corrected the report.
+
+  404 `LAB_REPORT_NOT_FOUND`. 409 `LAB_REPORT_LOCKED`. 409
+  `INVALID_LAB_REPORT_TRANSITION` if the report isn't in an allowed status.
+}

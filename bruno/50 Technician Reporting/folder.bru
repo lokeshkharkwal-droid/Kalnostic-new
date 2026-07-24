@@ -1,0 +1,28 @@
+meta {
+  name: 50 Technician Reporting
+  seq: 50
+}
+
+docs {
+  Technician → Reporting module: the report-status lifecycle (Pending →
+  Partial Pending → Saved → Validation Pending → Result Done → Approved →
+  Published, plus Error Reported / Result Rejected) and its five special
+  worklists (Re-Run, Critical Alerts, Out of Range, Delta Check, Schedule
+  Test).
+
+  A `LabReport` row is created per order item only once its sample is
+  accepted — the interim trigger is `PATCH /orders/:id/items/:itemId/collect`
+  (see "42 Orders" → Collect Order Item). Run that first to get a
+  `labReportId` to exercise these requests against.
+
+  Sub-folders mirror the backend's controllers:
+  1. Reporting Worklist — list/detail/entry/lifecycle gates (LabReportController)
+  2. Re-Run
+  3. Critical Alerts
+  4. Out of Range
+  5. Delta Check
+  6. Schedule Test
+
+  All routes are business-authenticated; tenant + active branch come from the
+  JWT (`businessAccessToken`), never the body.
+}

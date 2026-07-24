@@ -63,6 +63,7 @@ import { AppointmentSettingsModule } from './modules/appointment-settings/appoin
 import { DoctorScheduleModule } from './modules/doctor-schedule/doctor-schedule.module';
 import { PhlebotomistScheduleModule } from './modules/phlebotomist-schedule/phlebotomist-schedule.module';
 import { PhlebotomistSettingsModule } from './modules/phlebotomist-settings/phlebotomist-settings.module';
+import { LabReportModule } from './modules/lab-report/lab-report.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 
 /**
@@ -146,6 +147,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     DoctorScheduleModule,
     PhlebotomistScheduleModule,
     PhlebotomistSettingsModule,
+    LabReportModule,
   ],
   providers: [
     // Global business authentication. SiteAdmin routes use @Public() + their
