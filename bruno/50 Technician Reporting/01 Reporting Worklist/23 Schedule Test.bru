@@ -1,0 +1,36 @@
+meta {
+  name: 23 Schedule Test
+  type: http
+  seq: 23
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/schedule
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "scheduledAt": "2026-07-25T09:00:00.000Z",
+    "assignedToId": "{{technicianPersonId}}",
+    "dispatchAt": "2026-07-27T17:00:00.000Z",
+    "notes": "Grossing scheduled for Thursday morning."
+  }
+}
+
+docs {
+  Schedule / Reschedule Test (LABORATORY.docx §5.6). `scheduledAt` required
+  (ISO datetime); `assignedToId`, `dispatchAt`, `notes` optional.
+  `assignedToId` must be an active technician (lab_technician /
+  junior_lab_technician / senior_lab_technician) at the branch. Lists the
+  item under the Schedule Test worklist (see "06 Schedule Test") — the same
+  fields serve rescheduling from that worklist directly.
+
+  404 `LAB_REPORT_NOT_FOUND`. 404 `TECHNICIAN_NOT_FOUND` if `assignedToId`
+  doesn't resolve to an active technician at the branch.
+}

@@ -1,0 +1,30 @@
+meta {
+  name: 02 Update Status
+  type: http
+  seq: 2
+}
+
+patch {
+  url: {{baseUrl}}/critical-alerts/{{criticalAlertId}}/status
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "IN_PROGRESS",
+    "notes": "Consultant informed by phone; awaiting acknowledgement."
+  }
+}
+
+docs {
+  Manual status update (LABORATORY.docx §8.2): `status` one of `NEW` |
+  `PENDING` | `IN_PROGRESS` | `COMPLETED` — e.g. In Progress while informing
+  the consultant, Completed when done. `notes` optional.
+
+  404 `CRITICAL_ALERT_NOT_FOUND`.
+}

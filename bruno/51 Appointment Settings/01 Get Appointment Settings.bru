@@ -1,0 +1,46 @@
+meta {
+  name: 01 Get Appointment Settings
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/appointment-settings
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the effective settings map", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("slotDurationMinutes");
+    expect(d).to.have.property("openTime");
+    expect(d).to.have.property("weeklyOff");
+  });
+}
+
+docs {
+  Effective appointment settings for the active branch — the branch's saved
+  `AppointmentSetting` **merged over** the module defaults. Contains:
+
+  - **Slot & Capacity:** `slotDurationMinutes`, `bufferMinutes`,
+    `maxWalkInsPerDay`, `maxOnlineBookingsPerSlot`
+  - **Working Hours:** `openTime` / `closeTime` (`HH:mm`), `weeklyOff`
+    (`None` | `Sunday` | `Saturday & Sunday`), `lunchBreak` (free text)
+  - **Reminders & Notifications:** `isSmsReminder24hEnabled`,
+    `isWhatsappReminder2hEnabled`, `isEmailConfirmationEnabled`,
+    `isVoiceCallForStatEnabled`
+  - **No-Show & Cancellation:** `noShowGraceMinutes`,
+    `cancellationCutoffHours`, `isAutoCancelAfterGraceEnabled`,
+    `isNoShowFeeChargeEnabled`
+
+  A branch that has never saved settings gets the module defaults (15 min
+  slots, 08:00-20:00, Sunday off, etc.) — this endpoint never 404s.
+}

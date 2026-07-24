@@ -1,0 +1,22 @@
+meta {
+  name: 14 Publish
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/publish
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Approved → Published (LABORATORY.docx §2.2, §6.7). Releases the report.
+
+  404 `LAB_REPORT_NOT_FOUND`. 409 `LAB_REPORT_LOCKED`. 409
+  `INVALID_LAB_REPORT_TRANSITION` if the report isn't Approved.
+}

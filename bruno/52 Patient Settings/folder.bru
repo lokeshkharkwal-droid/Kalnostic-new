@@ -1,0 +1,22 @@
+meta {
+  name: 52 Patient Settings
+  seq: 59
+}
+
+docs {
+  # Patient Settings
+
+  Registration › Patient Settings — patient ID format/numbering, duplicate
+  check strategy, default title, mandatory-field toggles, and
+  consent/privacy settings. Tenant-scoped (RLS), a single row per tenant
+  (mirrors the Billing Settings `§G` pattern — not per-branch):
+
+  - **GET** returns the current settings (created with defaults on first
+    access — never 404s).
+  - **PUT** upserts the tenant's settings (a partial patch — omitted fields
+    keep their previously-saved value, or the column default on first save).
+
+  Both routes are business-authenticated (`Bearer {{businessAccessToken}}`);
+  tenant comes from the JWT. Writes are audited under
+  `AuditModule.PATIENT_SETTINGS`.
+}

@@ -1,0 +1,26 @@
+meta {
+  name: 01 List Critical Alerts
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/critical-alerts
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Critical Alerts worklist list (LABORATORY.docx §8.2). Columns: SR, Date &
+  Time, Order, Branch, Patient, Referred By, Ref Panel, Order Item, Sample
+  Status, Bill Status, Report Status (the ORIGINAL status at the moment the
+  alert triggered — a snapshot, not a live join), Alert Status, Action.
+
+  Per CR-02, this worklist's own actions do NOT include "Inform Critical
+  Alert" again — raising an alert only happens from the Test Entry screen
+  (see "01 Reporting Worklist" → Raise Critical Alert).
+}

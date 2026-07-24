@@ -1183,6 +1183,38 @@ CREATE POLICY payment_details_tenant_isolation ON payment_details
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── billing_settings ───────────────────────────────────────────────────────────
+ALTER TABLE billing_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE billing_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS billing_settings_tenant_isolation ON billing_settings;
+CREATE POLICY billing_settings_tenant_isolation ON billing_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── patient_settings ───────────────────────────────────────────────────────────
+ALTER TABLE patient_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE patient_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS patient_settings_tenant_isolation ON patient_settings;
+CREATE POLICY patient_settings_tenant_isolation ON patient_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── console_settings ───────────────────────────────────────────────────────────
+ALTER TABLE console_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE console_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS console_settings_tenant_isolation ON console_settings;
+CREATE POLICY console_settings_tenant_isolation ON console_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── report_settings ────────────────────────────────────────────────────────────
+ALTER TABLE report_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE report_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS report_settings_tenant_isolation ON report_settings;
+CREATE POLICY report_settings_tenant_isolation ON report_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- ── lab_image_settings ────────────────────────────────────────────────────────
 ALTER TABLE lab_image_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lab_image_settings FORCE ROW LEVEL SECURITY;
@@ -1482,6 +1514,22 @@ CREATE POLICY lab_adapter_tests_tenant_isolation ON lab_adapter_tests
 CREATE UNIQUE INDEX IF NOT EXISTS lab_adapter_test_active_unique
   ON lab_adapter_tests (tenant_id, lab_adapter_id, branch_lab_test_id)
   WHERE deleted_at IS NULL;
+
+-- ── appointment_settings ─────────────────────────────────────────────────────
+ALTER TABLE appointment_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE appointment_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS appointment_settings_tenant_isolation ON appointment_settings;
+CREATE POLICY appointment_settings_tenant_isolation ON appointment_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── phlebotomist_settings ────────────────────────────────────────────────────
+ALTER TABLE phlebotomist_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE phlebotomist_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS phlebotomist_settings_tenant_isolation ON phlebotomist_settings;
+CREATE POLICY phlebotomist_settings_tenant_isolation ON phlebotomist_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
 
 -- Platform-level tables (tenants, persons, person_credentials, siteadmin_users,
 -- refresh_tokens, person_tenant_enrollments, test_groups, test_group_mappings,

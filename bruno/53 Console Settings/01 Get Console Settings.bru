@@ -1,0 +1,47 @@
+meta {
+  name: 01 Get Console Settings
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/console-settings
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the tenant's console settings", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("defaultOrderMode");
+    expect(d).to.have.property("defaultPriority");
+    expect(d).to.have.property("routineWarningHours");
+    expect(d).to.have.property("routineBreachHours");
+  });
+}
+
+docs {
+  Current tenant's console settings — created with column defaults on first
+  access (`defaultOrderMode: "Walk-in"`, `defaultPriority: "Routine"`,
+  `routineWarningHours: 4`, `routineBreachHours: 8`, etc.). Contains:
+
+  - **Order Workflow:** `defaultOrderMode` (`Walk-in` | `Home Visit` |
+    `Online` | `Referral`), `defaultPriority` (`Routine` | `Urgent` | `STAT`),
+    `isEditTestsAfterCollectionAllowed`, `isBarcodeRequiredBeforeAcceptance`
+  - **TAT Thresholds (hours):** `routineWarningHours`, `routineBreachHours`,
+    `urgentWarningHours`, `urgentBreachHours`, `statWarningHours`,
+    `statBreachHours`
+  - **Sample Tracking:** `isAudioChimeOnNewOrderEnabled`,
+    `isAutoPrintLabelsOnSaveEnabled`, `isOutsourceStationInQueueVisible`,
+    `isBreachedTatHighlightEnabled`
+
+  This endpoint never 404s — a tenant that has never saved settings gets the
+  column defaults.
+}

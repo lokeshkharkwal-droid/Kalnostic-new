@@ -21,6 +21,10 @@ body:json {
   }
 }
 
+vars:pre-request {
+  baseUrl: http://localhost:3000/api/v1
+}
+
 script:post-response {
   // Parse the response body
   const responseData = res.getBody();

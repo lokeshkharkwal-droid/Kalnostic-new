@@ -50,12 +50,17 @@ import { PaymentRulesModule } from './modules/payment-rules/payment-rules.module
 import { SupportInfoModule } from './modules/support-info/support-info.module';
 import { ContactUsModule } from './modules/contact-us/contact-us.module';
 import { PatientModule } from './modules/patient/patient.module';
+import { PatientSettingsModule } from './modules/patient-settings/patient-settings.module';
 import { OrderModule } from './modules/order/order.module';
 import { PricingModule } from './modules/pricing/pricing.module';
 import { OrderFieldConfigModule } from './modules/order-field-config/order-field-config.module';
 import { PaymentDetailsModule } from './modules/payment-details/payment-details.module';
+import { BillingSettingsModule } from './modules/billing-settings/billing-settings.module';
+import { ConsoleSettingsModule } from './modules/console-settings/console-settings.module';
+import { ReportSettingsModule } from './modules/report-settings/report-settings.module';
 import { AppointmentModule } from './modules/appointment/appointment.module';
 import { AccessionModule } from './modules/accession/accession.module';
+import { AppointmentSettingsModule } from './modules/appointment-settings/appointment-settings.module';
 import { DoctorScheduleModule } from './modules/doctor-schedule/doctor-schedule.module';
 import { PhlebotomistScheduleModule } from './modules/phlebotomist-schedule/phlebotomist-schedule.module';
 import { PhlebotomistCollectionModule } from './modules/phlebotomist-collection/phlebotomist-collection.module';
@@ -66,6 +71,8 @@ import { SalesFollowUpModule } from './modules/sales-follow-up/sales-follow-up.m
 import { SalesReportModule } from './modules/sales-report/sales-report.module';
 import { SalesDashboardModule } from './modules/sales-dashboard/sales-dashboard.module';
 import { SalesSettingsModule } from './modules/sales-settings/sales-settings.module';
+import { PhlebotomistSettingsModule } from './modules/phlebotomist-settings/phlebotomist-settings.module';
+import { LabReportModule } from './modules/lab-report/lab-report.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 
 /**
@@ -136,11 +143,16 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     SupportInfoModule,
     ContactUsModule,
     PatientModule,
+    PatientSettingsModule,
     OrderModule,
     PricingModule,
     OrderFieldConfigModule,
     PaymentDetailsModule,
+    BillingSettingsModule,
+    ConsoleSettingsModule,
+    ReportSettingsModule,
     AppointmentModule,
+    AppointmentSettingsModule,
     AccessionModule,
     DoctorScheduleModule,
     PhlebotomistScheduleModule,
@@ -152,6 +164,8 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     SalesReportModule,
     SalesDashboardModule,
     SalesSettingsModule,
+    PhlebotomistSettingsModule,
+    LabReportModule
   ],
   providers: [
     // Global business authentication. SiteAdmin routes use @Public() + their

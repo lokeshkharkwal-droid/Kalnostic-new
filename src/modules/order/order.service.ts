@@ -44,6 +44,8 @@ import {
   OrderAlreadyCancelledException,
   OrderInternalReferralNotFoundException,
   OrderNotFoundException,
+  OrderOutsourceCenterNotEligibleException,
+  OrderOutsourceCenterNotFoundException,
   OrderPatientNotFoundException,
   OrderPersonNotFoundException,
   OrderReferralDoctorNotFoundException,
@@ -244,6 +246,7 @@ export class OrderService {
               branchLabPanelId: i.branchLabPanelId ?? null,
               direct: i.direct ?? null,
               discount: i.discount ?? 0,
+              outsourceCenterId: i.outsourceCenterId ?? null,
             })),
           });
         }
@@ -784,6 +787,7 @@ export class OrderService {
               branchLabPanelId: i.branchLabPanelId ?? null,
               direct: i.direct ?? null,
               discount: i.discount ?? 0,
+              outsourceCenterId: i.outsourceCenterId ?? null,
             })),
           });
         }
@@ -925,6 +929,19 @@ export class OrderService {
           data: { collectedAt: new Date(), collectedBy: actorId },
         });
       });
+      // Technician Reporting's LabReport is no longer created from here.
+      // Accession's own sample lifecycle now exists — LabReport creation is
+      // triggered by AccessionSampleService when a sample reaches ACCEPTED
+      // (see AccessionSampleService.ensureLabReportsForAcceptedSample), which
+      // is the real "sample accepted" signal, not this order-item-level
+      // collectedAt flag. collectedAt/collectedBy are kept as-is — they are
+      // NOT read anywhere in the lab-report module (no such filter exists on
+      // ListLabReportsDto; that was a stale claim in an earlier version of
+      // this comment). Their real remaining uses are in THIS module: this
+      // order's own PENDING/PARTIAL/COLLECTED rollup (`findAll`, filtering by
+      // collectedAt null/not-null across an order's items) and a fallback
+      // actor id for a report's first Audit Trail entry
+      // (LabReportService.createReportForAcceptedItem).
     }
     return this.findById(orderId, tenantId);
   }
@@ -1133,6 +1150,65 @@ export class OrderService {
       this.assertBranchLabTests(tenantId, testIds),
       this.assertBranchLabPanels(tenantId, panelIds),
     ]);
+    await Promise.all(
+      items
+        .filter((item) => item.outsourceCenterId)
+        .map((item) => this.assertOutsourceCenter(tenantId, item)),
+    );
+  }
+
+  /**
+   * Validate an item's chosen outsource center: must be an active center in
+   * this tenant, and configured to handle this item's specific test/panel
+   * (`OutsourceCenter.labTestId`/`labPanelId`, resolved through
+   * `BranchLabTest.sourceLabTestId`/`BranchLabPanel.sourceLabPanelId` since
+   * order items reference the branch-level catalogue snapshot, not the
+   * tenant-level master row `OutsourceCenter` points to).
+   * @throws OrderOutsourceCenterNotFoundException / OrderOutsourceCenterNotEligibleException
+   */
+  private async assertOutsourceCenter(
+    tenantId: string,
+    item: OrderItemDto,
+  ): Promise<void> {
+    const outsourceCenterId = item.outsourceCenterId!;
+    const center = await this.prisma.outsourceCenter.findFirst({
+      where: {
+        id: outsourceCenterId,
+        tenantId,
+        isActive: true,
+        deletedAt: null,
+      },
+      select: { id: true, labTestId: true, labPanelId: true },
+    });
+    if (!center) {
+      throw new OrderOutsourceCenterNotFoundException(outsourceCenterId);
+    }
+
+    let sourceLabTestId: string | null = null;
+    let sourceLabPanelId: string | null = null;
+    if (item.branchLabTestId) {
+      const branchLabTest = await this.prisma.branchLabTest.findFirst({
+        where: { id: item.branchLabTestId, tenantId, deletedAt: null },
+        select: { sourceLabTestId: true },
+      });
+      sourceLabTestId = branchLabTest?.sourceLabTestId ?? null;
+    } else if (item.branchLabPanelId) {
+      const branchLabPanel = await this.prisma.branchLabPanel.findFirst({
+        where: { id: item.branchLabPanelId, tenantId, deletedAt: null },
+        select: { sourceLabPanelId: true },
+      });
+      sourceLabPanelId = branchLabPanel?.sourceLabPanelId ?? null;
+    }
+
+    const eligible =
+      (sourceLabTestId && center.labTestId === sourceLabTestId) ||
+      (sourceLabPanelId && center.labPanelId === sourceLabPanelId);
+    if (!eligible) {
+      throw new OrderOutsourceCenterNotEligibleException(
+        outsourceCenterId,
+        item.branchLabTestId ?? item.branchLabPanelId ?? 'direct',
+      );
+    }
   }
 
   /**

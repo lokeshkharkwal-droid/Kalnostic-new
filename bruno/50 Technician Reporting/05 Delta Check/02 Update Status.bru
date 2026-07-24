@@ -1,0 +1,33 @@
+meta {
+  name: 02 Update Status
+  type: http
+  seq: 2
+}
+
+patch {
+  url: {{baseUrl}}/delta-checks/{{deltaCheckId}}/status
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "REVIEWED",
+    "notes": "Reviewed against clinical history — consistent with known condition."
+  }
+}
+
+docs {
+  Manual status update — Delta Check's OWN vocabulary (LABORATORY.docx §8.4),
+  distinct from the other four worklists: `status` one of `NEW` | `REVIEWED`
+  | `RE_RUN` | `ACCEPTED` | `COMPLETED`. New items await review; after review
+  the technician decides whether to re-run (`RE_RUN`) or accept without
+  re-run (`ACCEPTED`); `COMPLETED` once the report is released. `notes`
+  optional.
+
+  404 `DELTA_CHECK_NOT_FOUND`.
+}

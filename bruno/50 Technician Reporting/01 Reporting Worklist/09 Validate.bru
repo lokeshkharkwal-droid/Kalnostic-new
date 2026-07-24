@@ -1,0 +1,29 @@
+meta {
+  name: 09 Validate
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/validate
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "notes": "Values reviewed against reference ranges — within expected limits."
+  }
+}
+
+docs {
+  Validation Pending → Result Done (LABORATORY.docx §2.2, §6.4). `notes` is
+  optional; when present it's recorded as a TECH note on the report.
+
+  404 `LAB_REPORT_NOT_FOUND`. 409 `LAB_REPORT_LOCKED`. 409
+  `INVALID_LAB_REPORT_TRANSITION` if the report isn't Validation Pending.
+}

@@ -1,0 +1,46 @@
+meta {
+  name: 01 Get Report Settings
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/report-settings
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the tenant's report settings", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("labNameOnHeader");
+    expect(d).to.have.property("pathologistName");
+    expect(d).to.have.property("pdfWatermark");
+  });
+}
+
+docs {
+  Current tenant's report settings — created with column defaults on first
+  access (`labNameOnHeader: "Kalnostic Diagnostics"`, `pageSize: "A4"`,
+  `pdfWatermark: "None"`, etc.). Contains:
+
+  - **Report Header & Branding:** `labNameOnHeader`, `tagLine`,
+    `logoPosition` (`Left` | `Center` | `Right`), `pageSize`
+    (`A4` | `Letter` | `A5`)
+  - **Signatures:** `pathologistName`, `pathologistRegNumber`,
+    `labInChargeName`, `isDigitalSignatureImagePrinted`
+  - **Delivery & Publishing:** `isAutoPublishAfterSecondValidationEnabled`,
+    `isEmailPdfOnPublishEnabled`, `isWhatsappLinkOnPublishEnabled`,
+    `isReferringDoctorNotifyEnabled`, `pdfWatermark`
+    (`None` | `DRAFT` | `FINAL` | `DUPLICATE`), `reportFooterNote`
+
+  This endpoint never 404s — a tenant that has never saved settings gets the
+  column defaults.
+}

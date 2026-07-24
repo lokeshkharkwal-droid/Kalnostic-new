@@ -1,0 +1,62 @@
+meta {
+  name: 02 Save Phlebotomist Settings
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{baseUrl}}/phlebotomist-settings
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "autoAssignStrategy": "Nearest first",
+    "maxVisitsPerPhleboPerDay": 12,
+    "defaultServiceRadiusKm": 8,
+    "isPatientPickPhleboAllowed": false,
+    "defaultKitItems": "EDTA x2, Serum x2, Citrate x1, Urine cup x1",
+    "minColdChainTempC": 2,
+    "maxColdChainTempC": 8,
+    "isPhotoOfSampleAtPickupRequired": true,
+    "isGeoTagCaptureOnCollectionEnabled": true,
+    "shiftStart": "07:00",
+    "shiftEnd": "15:00",
+    "pickupSlaMinutes": 45,
+    "dropBackSlaHours": 2,
+    "isManagerAlertOnSlaBreachEnabled": true
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("echoes back the saved values", function () {
+    const d = res.getBody().data;
+    expect(d.autoAssignStrategy).to.equal("Nearest first");
+    expect(d.shiftStart).to.equal("07:00");
+  });
+}
+
+docs {
+  Upsert the active branch's phlebotomist settings. Every field is optional (a
+  partial patch) — omitted fields keep their previously-saved value (or the
+  module default if this branch has never saved). The response is the
+  effective (merged) settings map. Audited under
+  `AuditModule.PHLEBOTOMIST_SETTINGS`.
+
+  Validation: `maxVisitsPerPhleboPerDay` 1-100, `defaultServiceRadiusKm` 0-500
+  (max 1 decimal place), `defaultKitItems` max 500 chars, `minColdChainTempC` /
+  `maxColdChainTempC` -20 to 50, `shiftStart` / `shiftEnd` must be `HH:mm`
+  (24h), `pickupSlaMinutes` 1-1440, `dropBackSlaHours` 0-72.
+}

@@ -511,7 +511,7 @@ export class SampleTransferService {
       select: { accessionCounter: true },
     });
     const accessionNo = `ACC-${String(tenant.accessionCounter).padStart(5, '0')}`;
-    await tx.accessionSample.create({
+    const cloned = await tx.accessionSample.create({
       data: {
         tenantId,
         branchId: destBranch,
@@ -548,6 +548,16 @@ export class SampleTransferService {
         },
       },
     });
+
+    // Real Technician Reporting trigger — this clone is created directly at
+    // ACCEPTED (RULE 1), bypassing transitionIds/transitionInTx, so it needs
+    // its own call (see AccessionSampleService.ensureLabReportsForAcceptedSample).
+    await this.samples.ensureLabReportsForAcceptedSample(
+      tx,
+      tenantId,
+      cloned.id,
+      personId,
+    );
   }
 
   /** Validate an outsource center belongs to the caller's tenant. */

@@ -53,6 +53,11 @@ body:json {
   }
 }
 
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("outsourceCenterId", data.id);
+}
+
 docs {
   Create an outsource center together with its contacts (one transaction).
 

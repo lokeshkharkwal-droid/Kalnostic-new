@@ -1,0 +1,28 @@
+meta {
+  name: 16 Lock
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/lock
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "notes": "Locking pending supervisor review of a repeated critical value."
+  }
+}
+
+docs {
+  Lock Test (LABORATORY.docx §5.1). Prevents further result edits until
+  unlocked. `notes` optional (reason for locking).
+
+  404 `LAB_REPORT_NOT_FOUND`.
+}

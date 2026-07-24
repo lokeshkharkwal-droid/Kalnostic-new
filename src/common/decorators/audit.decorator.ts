@@ -16,6 +16,13 @@ export interface AuditMeta {
   action?: AuditAction;
   /** Human-readable summary of what the user performed. */
   description: string;
+  /**
+   * When true, the request body is recorded on the audit row's `metadata`
+   * column. Opt-in (defaults to falsy/unset) so existing routes are
+   * unaffected; only enable for routes whose body doesn't carry secrets
+   * (passwords, tokens, etc).
+   */
+  captureBody?: boolean;
 }
 
 /**
