@@ -1,4 +1,4 @@
-import { LabReportStatus } from '@prisma/client';
+import { LabReportStatus, SampleStatus } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
@@ -74,14 +74,25 @@ export class ListLabReportsDto {
   branchLabTestId?: string;
 
   /**
-   * "All Sample Status" filter (LABORATORY.docx §3.1). Only the two states
-   * derivable from `OrderItem.collectedAt` are real today — Accession's own
-   * New/Collected/Accepted/... sample lifecycle doesn't exist in the backend
-   * yet (see `SAMPLE_STATUS_OPTIONS`).
+   * Patient Entry's "this patient's other tests in the same status" view —
+   * a real server-side filter, matching the reference project's own
+   * `patient_id` query param on its Report Console (`order.customer_id`
+   * equality). Callers should pair this with `status` to reproduce "same
+   * status" scoping; this filter alone just narrows to one patient.
    */
   @IsOptional()
-  @IsIn(['NOT_COLLECTED', 'COLLECTED'])
-  sampleStatus?: 'NOT_COLLECTED' | 'COLLECTED';
+  @IsUUID()
+  patientId?: string;
+
+  /**
+   * "All Sample Status" filter (LABORATORY.docx §3.1) — the real Accession
+   * sample-lifecycle enum, matching what `LabReportWorklistRow.sampleStatuses`
+   * already returns (see `LabReportService.attachSampleStatuses`). Narrows to
+   * reports where at least one linked `AccessionSample` has this status.
+   */
+  @IsOptional()
+  @IsEnum(SampleStatus)
+  sampleStatus?: SampleStatus;
 
   @IsOptional()
   @IsBoolean()

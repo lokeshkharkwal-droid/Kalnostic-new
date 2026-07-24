@@ -3,7 +3,6 @@ import { PrismaModule } from '../../prisma/prisma.module';
 import { AppointmentModule } from '../appointment/appointment.module';
 import { AccessionModule } from '../accession/accession.module';
 import { PhlebotomistScheduleModule } from '../phlebotomist-schedule/phlebotomist-schedule.module';
-import { LabReportModule } from '../lab-report/lab-report.module';
 import { OrderController } from './order.controller';
 import { OrderService } from './order.service';
 
@@ -15,11 +14,10 @@ import { OrderService } from './order.service';
  * Imports `AppointmentModule` so an order saved as APPOINTMENT can create its
  * linked appointment lifecycle record via `AppointmentService`, and
  * `AccessionModule` so a confirmed order generates its accession samples via
- * `AccessionSampleService` (rule #3 DI).
- * Imports `LabReportModule` so `collectItem` can trigger
- * `LabReportService.ensureCreatedForAcceptedItem` — the interim signal for
- * Technician Reporting until Accession's own sample-accept step exists (see
- * LabReportService doc comment).
+ * `AccessionSampleService` (rule #3 DI). Technician Reporting's `LabReport`
+ * creation is no longer triggered from here — `AccessionModule` now owns that
+ * trigger (a sample reaching `ACCEPTED`), so `OrderModule` no longer needs
+ * `LabReportModule`.
  */
 @Module({
   imports: [
@@ -27,7 +25,6 @@ import { OrderService } from './order.service';
     AppointmentModule,
     PhlebotomistScheduleModule,
     AccessionModule,
-    LabReportModule,
   ],
   controllers: [OrderController],
   providers: [OrderService],

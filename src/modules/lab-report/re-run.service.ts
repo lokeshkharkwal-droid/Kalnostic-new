@@ -4,7 +4,13 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { LabReportService } from './lab-report.service';
 import { RaiseReRunDto } from './dto/re-run.dto';
 import { UpdateActionWorklistStatusDto } from './dto/update-worklist-status.dto';
-import { WORKLIST_REPORT_INCLUDE } from './entities/worklist.entity';
+import {
+  WORKLIST_REPORT_INCLUDE,
+  attachWorklistBranchNames,
+  attachWorklistSampleStatuses,
+  resolveActorNames,
+  toWorklistReportContext,
+} from './entities/worklist.entity';
 import {
   ActiveBranchRequiredException,
   LabReportNotFoundException,
@@ -67,11 +73,24 @@ export class ReRunService {
 
   async findAll(tenantId: string, branchId: string | null) {
     const activeBranchId = this.requireBranch(branchId);
-    return this.prisma.reRunRequest.findMany({
+    const rows = await this.prisma.reRunRequest.findMany({
       where: { tenantId, branchId: activeBranchId, deletedAt: null },
       include: WORKLIST_REPORT_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
+    let reports = rows.map((r) => toWorklistReportContext(r.labReport));
+    reports = await attachWorklistBranchNames(this.prisma, tenantId, reports);
+    reports = await attachWorklistSampleStatuses(this.prisma, tenantId, reports);
+    const requestedByName = await resolveActorNames(
+      this.prisma,
+      rows.map((r) => r.requestedBy),
+    );
+
+    return rows.map(({ labReport: _labReport, ...reRun }, i) => ({
+      ...reRun,
+      requestedByName: requestedByName.get(reRun.requestedBy) ?? reRun.requestedBy,
+      report: reports[i],
+    }));
   }
 
   async updateStatus(

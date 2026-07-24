@@ -1,4 +1,4 @@
-import { LabReportStatus } from '@prisma/client';
+import { LabReportStatus, SampleStatus } from '@prisma/client';
 
 /** A single `{ id, name }` dropdown option. */
 export interface LabReportOption {
@@ -19,14 +19,6 @@ export interface LabReportOptions {
   departments: LabReportOption[];
   labPanels: LabReportOption[];
   labTests: LabReportOption[];
-  sampleStatuses: string[];
+  sampleStatuses: SampleStatus[];
   reportStatuses: LabReportStatus[];
 }
-
-/**
- * Sample-status values, exposed as a static list for now. This is Accession's
- * not-yet-built sample lifecycle (New/Collected/Accepted/...) — until that
- * ships, only the two states derivable from `OrderItem.collectedAt` are real.
- * Kept here (not in the enum) since it isn't backed by a Prisma enum today.
- */
-export const SAMPLE_STATUS_OPTIONS = ['NOT_COLLECTED', 'COLLECTED'] as const;

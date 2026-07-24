@@ -4,7 +4,13 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { LabReportDirectoryService } from './lab-report-directory.service';
 import { ScheduleTestDto } from './dto/schedule-test.dto';
 import { UpdateActionWorklistStatusDto } from './dto/update-worklist-status.dto';
-import { SCHEDULED_TEST_INCLUDE } from './entities/worklist.entity';
+import {
+  SCHEDULED_TEST_INCLUDE,
+  attachWorklistBranchNames,
+  attachWorklistSampleStatuses,
+  toAssignedTo,
+  toWorklistReportContext,
+} from './entities/worklist.entity';
 import {
   ActiveBranchRequiredException,
   LabReportNotFoundException,
@@ -77,17 +83,27 @@ export class ScheduledTestService {
           },
         });
       }
-      return scheduled;
+      const { labReport, assignedTo, ...rest } = scheduled;
+      return { ...rest, report: toWorklistReportContext(labReport), assignedTo: toAssignedTo(assignedTo) };
     });
   }
 
   async findAll(tenantId: string, branchId: string | null) {
     const activeBranchId = this.requireBranch(branchId);
-    return this.prisma.scheduledTest.findMany({
+    const rows = await this.prisma.scheduledTest.findMany({
       where: { tenantId, branchId: activeBranchId, deletedAt: null },
       include: SCHEDULED_TEST_INCLUDE,
       orderBy: { scheduledAt: 'asc' },
     });
+    let reports = rows.map((r) => toWorklistReportContext(r.labReport));
+    reports = await attachWorklistBranchNames(this.prisma, tenantId, reports);
+    reports = await attachWorklistSampleStatuses(this.prisma, tenantId, reports);
+
+    return rows.map(({ labReport: _labReport, assignedTo, ...rest }, i) => ({
+      ...rest,
+      report: reports[i],
+      assignedTo: toAssignedTo(assignedTo),
+    }));
   }
 
   /** Reschedule — same fields as `schedule`, applied to an existing row. */
@@ -132,7 +148,8 @@ export class ScheduledTestService {
           },
         });
       }
-      return updated;
+      const { labReport, assignedTo, ...rest } = updated;
+      return { ...rest, report: toWorklistReportContext(labReport), assignedTo: toAssignedTo(assignedTo) };
     });
   }
 

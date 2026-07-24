@@ -65,6 +65,32 @@ export class UnlockNotPermittedException extends KaltrosException {
   }
 }
 
+/** 404 — the report has not been assigned to a multi-step process. */
+export class MultiStepProcessNotFoundException extends KaltrosException {
+  constructor(labReportId: string) {
+    super(
+      'MULTI_STEP_PROCESS_NOT_FOUND',
+      'This report has not been assigned to a multi-step process',
+      { labReportId },
+      HttpStatus.NOT_FOUND,
+    );
+  }
+}
+
+/** 409 — a multi-step process's stage can only advance forward one step at a
+ * time (LABORATORY.docx §5.7's own sequence — grossing → sectioning →
+ * staining → reporting is a physical lab workflow, not an arbitrary label). */
+export class InvalidMultiStepTransitionException extends KaltrosException {
+  constructor(currentStage: string, requestedStage: string, expectedNextStage: string) {
+    super(
+      'INVALID_MULTI_STEP_TRANSITION',
+      `Cannot move from ${currentStage} to ${requestedStage} — the next stage must be ${expectedNextStage}`,
+      { currentStage, requestedStage, expectedNextStage },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
 /** 422 — reject/error-reported/re-run require notes per LABORATORY.docx §5/§6. */
 export class LabReportNotesRequiredException extends KaltrosException {
   constructor(action: string) {
@@ -126,6 +152,34 @@ export class TechnicianNotFoundException extends KaltrosException {
       'No active technician found for this branch',
       { personId },
       HttpStatus.NOT_FOUND,
+    );
+  }
+}
+
+/** 404 — Print/Download (LABORATORY.docx §5, §6) has no active `lab_report`
+ * PDF template to render with. The tenant must create one via
+ * `PdfReportTemplateModule` (or the caller must pass an explicit
+ * `templateId`) before a report can be printed. */
+export class NoActivePrintTemplateException extends KaltrosException {
+  constructor(tenantId: string) {
+    super(
+      'NO_ACTIVE_PRINT_TEMPLATE',
+      'No active lab report PDF template is configured for this tenant',
+      { tenantId },
+      HttpStatus.NOT_FOUND,
+    );
+  }
+}
+
+/** 409 — more than one active `lab_report` template exists and the caller
+ * did not specify which one to use. */
+export class AmbiguousPrintTemplateException extends KaltrosException {
+  constructor(tenantId: string, templateIds: string[]) {
+    super(
+      'AMBIGUOUS_PRINT_TEMPLATE',
+      'Multiple active lab report PDF templates exist — specify templateId',
+      { tenantId, templateIds },
+      HttpStatus.CONFLICT,
     );
   }
 }

@@ -1,17 +1,26 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, Res } from '@nestjs/common';
 import { AuditAction, AuditModule } from '@prisma/client';
+import type { Response } from 'express';
 import { LabReportService } from './lab-report.service';
 import { ReRunService } from './re-run.service';
 import { CriticalAlertService } from './critical-alert.service';
 import { OutOfRangeService } from './out-of-range.service';
 import { DeltaCheckService } from './delta-check.service';
 import { ScheduledTestService } from './scheduled-test.service';
+import { MultiStepProcessService } from './multi-step-process.service';
 import { ListLabReportsDto } from './dto/list-lab-reports.dto';
 import { UpsertResultValuesDto } from './dto/upsert-result-values.dto';
 import { ReferenceRangeQueryDto } from './dto/reference-range-query.dto';
+import { TrendReportQueryDto } from './dto/trend-report-query.dto';
+import { PrintReportDto } from './dto/print-report.dto';
+import { CreateLabReportNoteDto, ListLabReportNotesDto } from './dto/lab-report-note.dto';
 import { RaiseReRunDto } from './dto/re-run.dto';
 import { RaiseWorklistEntryDto } from './dto/raise-worklist-entry.dto';
 import { ScheduleTestDto } from './dto/schedule-test.dto';
+import {
+  AdvanceMultiStepStageDto,
+  AssignMultiStepProcessDto,
+} from './dto/multi-step-process.dto';
 import {
   ActionNotesDto,
   RequiredActionNotesDto,
@@ -37,6 +46,7 @@ export class LabReportController {
     private readonly outOfRangeService: OutOfRangeService,
     private readonly deltaCheckService: DeltaCheckService,
     private readonly scheduledTestService: ScheduledTestService,
+    private readonly multiStepProcessService: MultiStepProcessService,
   ) {}
 
   @Get('counts')
@@ -71,7 +81,7 @@ export class LabReportController {
     @CurrentProfile() profile: ActiveProfile,
     @Param('id') id: string,
   ) {
-    return this.labReportService.findById(id, tenantId, profile.branchId);
+    return this.labReportService.findByIdForApi(id, tenantId, profile.branchId);
   }
 
   @Get(':id/history')
@@ -81,6 +91,33 @@ export class LabReportController {
     @Param('id') id: string,
   ) {
     return this.labReportService.getHistory(id, tenantId, profile.branchId);
+  }
+
+  /** Order Notes / Sample Notes / Tech Notes tabs (LABORATORY.docx §4.2). */
+  @Get(':id/notes')
+  findNotes(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+    @Query() query: ListLabReportNotesDto,
+  ) {
+    return this.labReportService.findNotes(id, tenantId, profile.branchId, query);
+  }
+
+  @Post(':id/notes')
+  @Audit({
+    module: AuditModule.LAB_REPORT,
+    action: AuditAction.CREATE,
+    description: 'Added an order/sample/tech note',
+  })
+  createNote(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Param('id') id: string,
+    @Body() dto: CreateLabReportNoteDto,
+  ) {
+    return this.labReportService.createNote(id, tenantId, profile.branchId, personId, dto);
   }
 
   @Get(':id/reference-range')
@@ -96,6 +133,44 @@ export class LabReportController {
       profile.branchId,
       query,
     );
+  }
+
+  @Get(':id/trend')
+  findTrend(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+    @Query() query: TrendReportQueryDto,
+  ) {
+    return this.labReportService.findTrend(id, tenantId, profile.branchId, query);
+  }
+
+  /** Print/Download Report (LABORATORY.docx §6.10). Streams the rendered PDF
+   * back directly, matching `PdfReportTemplateController.generate`'s own
+   * binary-response pattern (bypasses `ResponseInterceptor`'s JSON envelope). */
+  @Post(':id/print')
+  @Audit({
+    module: AuditModule.LAB_REPORT,
+    action: AuditAction.OTHER,
+    description: 'Printed/downloaded a report',
+  })
+  async print(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+    @Body() dto: PrintReportDto,
+    @Res() res: Response,
+  ): Promise<void> {
+    const pdf = await this.labReportService.print(
+      id,
+      tenantId,
+      profile.branchId,
+      dto.templateId,
+    );
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="lab-report-${id}.pdf"`);
+    res.setHeader('Content-Length', pdf.length);
+    res.end(pdf);
   }
 
   @Patch(':id/results')
@@ -459,6 +534,59 @@ export class LabReportController {
     @Body() dto: ScheduleTestDto,
   ) {
     return this.scheduledTestService.schedule(
+      id,
+      tenantId,
+      profile.branchId,
+      personId,
+      dto,
+    );
+  }
+
+  @Get(':id/multi-step-process')
+  getMultiStepProcess(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+  ) {
+    return this.multiStepProcessService.findByReport(id, tenantId, profile.branchId);
+  }
+
+  @Post(':id/multi-step-process')
+  @Audit({
+    module: AuditModule.MULTI_STEP_PROCESS,
+    action: AuditAction.CREATE,
+    description: 'Assigned a multi-step test process',
+  })
+  assignMultiStepProcess(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Param('id') id: string,
+    @Body() dto: AssignMultiStepProcessDto,
+  ) {
+    return this.multiStepProcessService.assign(
+      id,
+      tenantId,
+      profile.branchId,
+      personId,
+      dto,
+    );
+  }
+
+  @Post(':id/multi-step-process/advance')
+  @Audit({
+    module: AuditModule.MULTI_STEP_PROCESS,
+    action: AuditAction.UPDATE,
+    description: 'Advanced a multi-step test process stage',
+  })
+  advanceMultiStepProcess(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Param('id') id: string,
+    @Body() dto: AdvanceMultiStepStageDto,
+  ) {
+    return this.multiStepProcessService.advance(
       id,
       tenantId,
       profile.branchId,

@@ -13,7 +13,6 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AppointmentService } from '../appointment/appointment.service';
 import { AccessionSampleService } from '../accession/accession-sample.service';
 import { SlotReservationService } from '../phlebotomist-schedule/slot-reservation.service';
-import { LabReportService } from '../lab-report/lab-report.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
@@ -69,7 +68,6 @@ export class OrderService {
     private readonly appointmentService: AppointmentService,
     private readonly accessionSamples: AccessionSampleService,
     private readonly slotReservation: SlotReservationService,
-    private readonly labReportService: LabReportService,
   ) {}
 
   /**
@@ -909,12 +907,19 @@ export class OrderService {
           data: { collectedAt: new Date(), collectedBy: actorId },
         });
       });
-      // Interim Technician Reporting trigger: Accession's own New/Collected/
-      // Accepted sample lifecycle doesn't exist yet, so "collected" is treated
-      // as this order item's closest real "sample accepted" signal. When
-      // Accession's own FSM ships, move this call to its Accepted transition
-      // instead — see LabReportService.ensureCreatedForAcceptedItem doc comment.
-      await this.labReportService.ensureCreatedForAcceptedItem(tenantId, itemId);
+      // Technician Reporting's LabReport is no longer created from here.
+      // Accession's own sample lifecycle now exists — LabReport creation is
+      // triggered by AccessionSampleService when a sample reaches ACCEPTED
+      // (see AccessionSampleService.ensureLabReportsForAcceptedSample), which
+      // is the real "sample accepted" signal, not this order-item-level
+      // collectedAt flag. collectedAt/collectedBy are kept as-is — they are
+      // NOT read anywhere in the lab-report module (no such filter exists on
+      // ListLabReportsDto; that was a stale claim in an earlier version of
+      // this comment). Their real remaining uses are in THIS module: this
+      // order's own PENDING/PARTIAL/COLLECTED rollup (`findAll`, filtering by
+      // collectedAt null/not-null across an order's items) and a fallback
+      // actor id for a report's first Audit Trail entry
+      // (LabReportService.createReportForAcceptedItem).
     }
     return this.findById(orderId, tenantId);
   }

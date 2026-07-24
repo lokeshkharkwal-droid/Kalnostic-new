@@ -285,6 +285,8 @@ enum AuditModule {
   OUT_OF_RANGE_FLAG
   DELTA_CHECK
   SCHEDULED_TEST
+  INVENTORY_USAGE
+  MULTI_STEP_PROCESS
 }
 
 /// Type of controlled document managed by the document module.
@@ -4867,6 +4869,13 @@ model OrderItem {
 
   /// Sample collection tracking. `collectedAt` NULL = not collected yet; once set
   /// the sample is considered collected (`collectedBy` records the acting person).
+  /// Does NOT trigger LabReport creation (that's Accession's ACCEPTED transition
+  /// — see the LabReport doc comment below). Real remaining consumers:
+  /// `ListOrdersDto.sampleStatus` (PENDING/PARTIAL/COLLECTED, derived across an
+  /// order's items purely from `collectedAt`, see `OrderService.findAll`), and a
+  /// fallback actor id for a report's first Audit Trail entry, written by
+  /// `LabReportService.createReportForAcceptedItem`
+  /// (`collectedBy` only, used when the real accepting person is unavailable).
   collectedAt DateTime? @map("collected_at")
   collectedBy String?   @map("collected_by")
 
@@ -4881,8 +4890,8 @@ model OrderItem {
   outsourceCenter   OutsourceCenter? @relation(fields: [outsourceCenterId], references: [id])
 
   /// Technician Reporting lifecycle (1:1). Created by
-  /// LabReportService.ensureCreatedForAcceptedItem once the sample is accepted —
-  /// interim trigger is OrderService.collectItem (see LabReport doc comment);
+  /// LabReportService.ensureCreatedForAcceptedItem, triggered by Accession's
+  /// own sample lifecycle reaching ACCEPTED (see LabReport doc comment) —
   /// absent until then, so a not-yet-accepted item has no report row at all.
   labReport LabReport?
 
@@ -4902,11 +4911,15 @@ model OrderItem {
 
 // ── Technician Reporting ─────────────────────────────────────────────────────
 //
-// Downstream of a separate, not-yet-built Accession sample lifecycle (New →
-// Collected → Accepted → ...). LabReport rows are created only once a sample is
-// accepted — see `LabReportService.ensureCreatedForAcceptedItem`, called (as an
-// interim trigger, until Accession's own FSM ships) from
-// `OrderService.collectItem` right after `OrderItem.collectedAt` is set.
+// Downstream of Accession's own sample lifecycle (New → Collected → Accepted →
+// ...). LabReport rows are created only once a sample is accepted — see
+// `AccessionSampleService.ensureLabReportsForAcceptedSample`, called when a
+// sample's status transitions to ACCEPTED (either via the normal
+// accept-transition path, or `SampleTransferService.cloneIntoDestination`'s
+// internal-transfer-accept path), which calls
+// `LabReportService.ensureCreatedForAcceptedItem` per linked order item.
+// `OrderService.collectItem`/`OrderItem.collectedAt` no longer trigger this —
+// that was an interim signal, superseded once Accession's FSM shipped.
 
 /// Lifecycle status of a Technician Reporting item (LABORATORY.docx §2.1). Two
 /// side-branches (ERROR_REPORTED, RESULT_REJECTED) rejoin the main flow via
@@ -5068,6 +5081,7 @@ enum LabReportNoteCategory {
   ERROR_REPORTED
   RESULT_REJECTED
   UPDATE_STATUS
+  MULTI_STEP
 }
 
 model LabReportNote {
@@ -5099,8 +5113,8 @@ model LabReportAttachment {
   labReport   LabReport @relation(fields: [labReportId], references: [id], onDelete: Cascade)
 
   kind     String // "image" | "document" | "file"
-  fileUrl  String @map("file_url")
-  fileName String @map("file_name")
+  fileUrl  String  @map("file_url")
+  fileName String  @map("file_name")
   notes    String?
 
   uploadedBy String   @map("uploaded_by")
@@ -5225,9 +5239,9 @@ model CriticalAlert {
   reportStatusAtTrigger LabReportStatus @map("report_status_at_trigger")
   resultParamId         String?         @map("result_param_id")
 
-  createdBy String?  @map("created_by")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  createdBy String?   @map("created_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
   @@index([tenantId])
@@ -5252,9 +5266,9 @@ model OutOfRangeFlag {
   reportStatusAtTrigger LabReportStatus @map("report_status_at_trigger")
   resultParamId         String?         @map("result_param_id")
 
-  createdBy String?  @map("created_by")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  createdBy String?   @map("created_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
   @@index([tenantId])
@@ -5281,9 +5295,9 @@ model DeltaCheck {
   previousResultValueId String? @map("previous_result_value_id")
   resultParamId         String? @map("result_param_id")
 
-  createdBy String?  @map("created_by")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  createdBy String?   @map("created_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
   @@index([tenantId])
@@ -5315,9 +5329,9 @@ model ScheduledTest {
   assignedToId String? @map("assigned_to_id")
   assignedTo   Person? @relation("ScheduledTestAssignee", fields: [assignedToId], references: [id])
 
-  createdBy String?  @map("created_by")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  createdBy String?   @map("created_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
   @@index([tenantId])
@@ -5369,9 +5383,9 @@ model MultiStepTestProcess {
   /// simple ordered log, not something queried/filtered on independently.
   stageHistory Json @default("[]") @map("stage_history")
 
-  createdBy String?  @map("created_by")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  createdBy String?   @map("created_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
   @@index([tenantId])

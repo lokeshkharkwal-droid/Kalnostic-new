@@ -11,6 +11,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
+import { LabReportService } from '../lab-report/lab-report.service';
 import { BranchLabTestConfigSnapshot } from '../branch-lab-test/entities/branch-lab-test.entity';
 import {
   SampleAction,
@@ -88,6 +89,7 @@ export class AccessionSampleService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly settings: AccessionSettingsService,
+    private readonly labReportService: LabReportService,
   ) {}
 
   // ── Sample generation (order → accession) ─────────────────────────────────
@@ -743,6 +745,14 @@ export class AccessionSampleService {
             note,
           );
           done.push(updated.id);
+          if (updated.status === SampleStatus.ACCEPTED) {
+            await this.ensureLabReportsForAcceptedSample(
+              tx,
+              tenantId,
+              updated.id,
+              personId,
+            );
+          }
         }
         return done;
       });
@@ -751,6 +761,43 @@ export class AccessionSampleService {
       throw e;
     }
     return Promise.all(changed.map((id) => this.findById(id, tenantId)));
+  }
+
+  /**
+   * Real Technician Reporting trigger (see `LabReportService.
+   * ensureCreatedForAcceptedItem` doc comment): once a sample transitions to
+   * `ACCEPTED`, create a `LabReport` for every `OrderItem` it serves — one
+   * sample can carry several order items (e.g. one EDTA tube for both CBC and
+   * HbA1c), via the `AccessionSampleTest` junction, so this creates one report
+   * per linked item, not one per sample. Runs inside the caller's transaction
+   * so report creation and the sample's own status change commit atomically.
+   * Idempotent (delegates to `ensureCreatedForAcceptedItem`, a no-op if a
+   * report already exists for that item).
+   *
+   * Public (not private) so `SampleTransferService.cloneIntoDestination` —
+   * the other real path into `ACCEPTED` (RULE 1, internal transfer accept,
+   * which creates a new `AccessionSample` directly rather than transitioning
+   * an existing one through `transitionIds`) — can call it too, keeping one
+   * single place that knows how to create LabReports for an accepted sample.
+   */
+  async ensureLabReportsForAcceptedSample(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sampleId: string,
+    acceptedBy: string | null,
+  ): Promise<void> {
+    const sampleTests = await tx.accessionSampleTest.findMany({
+      where: { sampleId, tenantId, deletedAt: null },
+      select: { orderItemId: true },
+    });
+    for (const { orderItemId } of sampleTests) {
+      await this.labReportService.ensureCreatedForAcceptedItem(
+        tenantId,
+        orderItemId,
+        tx,
+        acceptedBy,
+      );
+    }
   }
 
   /**

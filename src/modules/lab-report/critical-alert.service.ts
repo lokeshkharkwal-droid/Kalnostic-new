@@ -3,7 +3,12 @@ import { WorklistStatus, WorklistTrigger } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RaiseWorklistEntryDto } from './dto/raise-worklist-entry.dto';
 import { UpdateWorklistStatusDto } from './dto/update-worklist-status.dto';
-import { CRITICAL_ALERT_INCLUDE } from './entities/worklist.entity';
+import {
+  CRITICAL_ALERT_INCLUDE,
+  attachWorklistBranchNames,
+  attachWorklistSampleStatuses,
+  toWorklistReportContext,
+} from './entities/worklist.entity';
 import {
   ActiveBranchRequiredException,
   LabReportNotFoundException,
@@ -72,11 +77,19 @@ export class CriticalAlertService {
 
   async findAll(tenantId: string, branchId: string | null) {
     const activeBranchId = this.requireBranch(branchId);
-    return this.prisma.criticalAlert.findMany({
+    const rows = await this.prisma.criticalAlert.findMany({
       where: { tenantId, branchId: activeBranchId, deletedAt: null },
       include: CRITICAL_ALERT_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
+    let reports = rows.map((r) => toWorklistReportContext(r.labReport));
+    reports = await attachWorklistBranchNames(this.prisma, tenantId, reports);
+    reports = await attachWorklistSampleStatuses(this.prisma, tenantId, reports);
+
+    return rows.map(({ labReport: _labReport, ...alert }, i) => ({
+      ...alert,
+      report: reports[i],
+    }));
   }
 
   async updateStatus(

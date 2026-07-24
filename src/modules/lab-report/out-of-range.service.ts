@@ -3,7 +3,12 @@ import { WorklistStatus, WorklistTrigger } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RaiseWorklistEntryDto } from './dto/raise-worklist-entry.dto';
 import { UpdateWorklistStatusDto } from './dto/update-worklist-status.dto';
-import { OUT_OF_RANGE_INCLUDE } from './entities/worklist.entity';
+import {
+  OUT_OF_RANGE_INCLUDE,
+  attachWorklistBranchNames,
+  attachWorklistSampleStatuses,
+  toWorklistReportContext,
+} from './entities/worklist.entity';
 import {
   ActiveBranchRequiredException,
   LabReportNotFoundException,
@@ -66,11 +71,19 @@ export class OutOfRangeService {
 
   async findAll(tenantId: string, branchId: string | null) {
     const activeBranchId = this.requireBranch(branchId);
-    return this.prisma.outOfRangeFlag.findMany({
+    const rows = await this.prisma.outOfRangeFlag.findMany({
       where: { tenantId, branchId: activeBranchId, deletedAt: null },
       include: OUT_OF_RANGE_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
+    let reports = rows.map((r) => toWorklistReportContext(r.labReport));
+    reports = await attachWorklistBranchNames(this.prisma, tenantId, reports);
+    reports = await attachWorklistSampleStatuses(this.prisma, tenantId, reports);
+
+    return rows.map(({ labReport: _labReport, ...flag }, i) => ({
+      ...flag,
+      report: reports[i],
+    }));
   }
 
   async updateStatus(

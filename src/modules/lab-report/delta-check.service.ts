@@ -3,7 +3,12 @@ import { DeltaCheckStatus, WorklistTrigger } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RaiseWorklistEntryDto } from './dto/raise-worklist-entry.dto';
 import { UpdateDeltaCheckStatusDto } from './dto/update-worklist-status.dto';
-import { DELTA_CHECK_INCLUDE } from './entities/worklist.entity';
+import {
+  DELTA_CHECK_INCLUDE,
+  attachWorklistBranchNames,
+  attachWorklistSampleStatuses,
+  toWorklistReportContext,
+} from './entities/worklist.entity';
 import {
   ActiveBranchRequiredException,
   LabReportNotFoundException,
@@ -105,11 +110,19 @@ export class DeltaCheckService {
 
   async findAll(tenantId: string, branchId: string | null) {
     const activeBranchId = this.requireBranch(branchId);
-    return this.prisma.deltaCheck.findMany({
+    const rows = await this.prisma.deltaCheck.findMany({
       where: { tenantId, branchId: activeBranchId, deletedAt: null },
       include: DELTA_CHECK_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
+    let reports = rows.map((r) => toWorklistReportContext(r.labReport));
+    reports = await attachWorklistBranchNames(this.prisma, tenantId, reports);
+    reports = await attachWorklistSampleStatuses(this.prisma, tenantId, reports);
+
+    return rows.map(({ labReport: _labReport, ...delta }, i) => ({
+      ...delta,
+      report: reports[i],
+    }));
   }
 
   async updateStatus(
