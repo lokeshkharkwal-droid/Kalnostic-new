@@ -1813,6 +1813,195 @@ per doctor + branch</b>. All times are 24h <code>HH:mm</code>; dates are ISO <co
   are the tenant's active departments/categories.</p>
 </div>
 
+<h2>Appointment Settings</h2>
+
+<div class="ep" id="appt-settings-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/appointment-settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Effective Registration › Appointment Settings for the active branch (tenant from JWT, branch from the
+  active profile) — the branch's saved config <b>merged over</b> the module defaults. Never 404s; a branch that
+  has never saved gets the defaults (15 min slots, 08:00-20:00, Sunday off, 20 min no-show grace, etc.). Fields:
+  <code>slotDurationMinutes</code>, <code>bufferMinutes</code>, <code>maxWalkInsPerDay</code>,
+  <code>maxOnlineBookingsPerSlot</code>, <code>openTime</code>/<code>closeTime</code> (<code>HH:mm</code>),
+  <code>weeklyOff</code> (<code>None</code>|<code>Sunday</code>|<code>Saturday &amp; Sunday</code>),
+  <code>lunchBreak</code>, <code>isSmsReminder24hEnabled</code>, <code>isWhatsappReminder2hEnabled</code>,
+  <code>isEmailConfirmationEnabled</code>, <code>isVoiceCallForStatEnabled</code>,
+  <code>noShowGraceMinutes</code>, <code>cancellationCutoffHours</code>,
+  <code>isAutoCancelAfterGraceEnabled</code>, <code>isNoShowFeeChargeEnabled</code>.</p>
+</div>
+
+<div class="ep" id="appt-settings-save">
+  <div><span class="m put">PUT</span><span class="path">/api/v1/appointment-settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Upsert the active branch's appointment settings (partial patch — omitted fields keep their previously-saved
+  value, or the module default if never saved). Validated with <code>class-validator</code>:
+  <code>slotDurationMinutes</code> 5-240, <code>bufferMinutes</code> 0-60, <code>maxWalkInsPerDay</code> 0-1000,
+  <code>maxOnlineBookingsPerSlot</code> 0-100, <code>openTime</code>/<code>closeTime</code> must match
+  <code>HH:mm</code> (24h), <code>weeklyOff</code> restricted to its 3 values, <code>noShowGraceMinutes</code>
+  0-240, <code>cancellationCutoffHours</code> 0-72. Returns the effective (merged) settings map. Audited under
+  <code>AuditModule.APPOINTMENT</code>. Errors: <span class="pill">404 BRANCH_NOT_FOUND</span> if the caller has
+  no active branch.</p>
+</div>
+
+<h2>Phlebotomist Settings</h2>
+
+<div class="ep" id="phlebo-settings-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/phlebotomist-settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Effective Registration › Phlebotomist Settings for the active branch (tenant from JWT, branch from the
+  active profile) — the branch's saved config <b>merged over</b> the module defaults. Never 404s; a branch that
+  has never saved gets the defaults (Nearest first, 12 visits/day, 8km radius, 07:00-15:00 shift, etc.). Fields:
+  <code>autoAssignStrategy</code> (<code>Nearest first</code>|<code>Round-robin</code>|<code>Manual</code>),
+  <code>maxVisitsPerPhleboPerDay</code>, <code>defaultServiceRadiusKm</code>,
+  <code>isPatientPickPhleboAllowed</code>, <code>defaultKitItems</code>, <code>minColdChainTempC</code>,
+  <code>maxColdChainTempC</code>, <code>isPhotoOfSampleAtPickupRequired</code>,
+  <code>isGeoTagCaptureOnCollectionEnabled</code>, <code>shiftStart</code>/<code>shiftEnd</code>
+  (<code>HH:mm</code>), <code>pickupSlaMinutes</code>, <code>dropBackSlaHours</code>,
+  <code>isManagerAlertOnSlaBreachEnabled</code>.</p>
+</div>
+
+<div class="ep" id="phlebo-settings-save">
+  <div><span class="m put">PUT</span><span class="path">/api/v1/phlebotomist-settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Upsert the active branch's phlebotomist settings (partial patch — omitted fields keep their
+  previously-saved value, or the module default if never saved). Validated with <code>class-validator</code>:
+  <code>maxVisitsPerPhleboPerDay</code> 1-100, <code>defaultServiceRadiusKm</code> 0-500 (max 1 decimal place),
+  <code>defaultKitItems</code> max 500 chars, <code>minColdChainTempC</code>/<code>maxColdChainTempC</code> -20
+  to 50, <code>shiftStart</code>/<code>shiftEnd</code> must match <code>HH:mm</code> (24h),
+  <code>pickupSlaMinutes</code> 1-1440, <code>dropBackSlaHours</code> 0-72. Returns the effective (merged)
+  settings map. Audited under <code>AuditModule.PHLEBOTOMIST_SETTINGS</code>. Errors:
+  <span class="pill">404 BRANCH_NOT_FOUND</span> if the caller has no active branch.</p>
+</div>
+
+<h2>Patient Settings</h2>
+
+<div class="ep" id="patient-settings-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/patient-settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Current tenant's Registration › Patient Settings (tenant from JWT) — a single row per tenant, created
+  with column defaults on first access. Never 404s. Fields:
+  <code>patientIdFormat</code>, <code>nextPatientNumber</code>,
+  <code>duplicateCheckStrategy</code> (<code>Mobile + DOB</code>|<code>Mobile only</code>|<code>Mobile + Name</code>),
+  <code>defaultTitle</code> (<code>Mr.</code>|<code>Mrs.</code>|<code>Ms.</code>|<code>Dr.</code>|<code>—</code>),
+  <code>isMobileNumberMandatory</code>, <code>isEmailMandatory</code>, <code>isDobMandatory</code>,
+  <code>isGenderMandatory</code>, <code>isAddressMandatory</code>, <code>isIdProofNumberMandatory</code>,
+  <code>isDigitalConsentCaptureEnabled</code>, <code>isMobileMaskingInPrintoutsEnabled</code>,
+  <code>isWhatsappReportSharingEnabled</code>,
+  <code>dataRetentionPeriod</code> (<code>1 year</code>|<code>3 years</code>|<code>5 years</code>|<code>Indefinite</code>).</p>
+</div>
+
+<div class="ep" id="patient-settings-save">
+  <div><span class="m put">PUT</span><span class="path">/api/v1/patient-settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Upsert the tenant's patient settings (partial patch — omitted fields keep their previously-saved value,
+  or the column default on first save). Validated with <code>class-validator</code>:
+  <code>patientIdFormat</code> 3-50 chars restricted to letters/digits/<code>{'{'}</code>/<code>{'}'}</code>/<code>-</code>/<code>_</code>,
+  <code>nextPatientNumber</code> 1-999999, <code>duplicateCheckStrategy</code>/<code>defaultTitle</code>/
+  <code>dataRetentionPeriod</code> each restricted to their listed values. Returns the saved row. Audited under
+  <code>AuditModule.PATIENT_SETTINGS</code>.</p>
+</div>
+
+<h2>Console Settings</h2>
+
+<div class="ep" id="console-settings-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/console-settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Current tenant's Registration › Console Settings (tenant from JWT) — a single row per tenant, created
+  with column defaults on first access. Never 404s. Fields:
+  <code>defaultOrderMode</code> (<code>Walk-in</code>|<code>Home Visit</code>|<code>Online</code>|<code>Referral</code>),
+  <code>defaultPriority</code> (<code>Routine</code>|<code>Urgent</code>|<code>STAT</code>),
+  <code>isEditTestsAfterCollectionAllowed</code>, <code>isBarcodeRequiredBeforeAcceptance</code>,
+  <code>routineWarningHours</code>, <code>routineBreachHours</code>,
+  <code>urgentWarningHours</code>, <code>urgentBreachHours</code>,
+  <code>statWarningHours</code>, <code>statBreachHours</code>,
+  <code>isAudioChimeOnNewOrderEnabled</code>, <code>isAutoPrintLabelsOnSaveEnabled</code>,
+  <code>isOutsourceStationInQueueVisible</code>, <code>isBreachedTatHighlightEnabled</code>.</p>
+</div>
+
+<div class="ep" id="console-settings-save">
+  <div><span class="m put">PUT</span><span class="path">/api/v1/console-settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Upsert the tenant's console settings (partial patch — omitted fields keep their previously-saved value,
+  or the column default on first save). Validated with <code>class-validator</code>:
+  <code>defaultOrderMode</code>/<code>defaultPriority</code> each restricted to their listed values,
+  the six TAT hour fields are integers 0-999. For each priority tier (Routine/Urgent/STAT), breach hours
+  must strictly exceed warning hours (checked against the saved row for any field omitted from the
+  payload) — violating this returns <span class="pill">400 Bad Request</span>. Returns the saved row.
+  Audited under <code>AuditModule.CONSOLE_SETTINGS</code>.</p>
+</div>
+
+<h2>Report Settings</h2>
+
+<div class="ep" id="report-settings-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/report-settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Current tenant's Registration › Report Settings (tenant from JWT) — a single row per tenant, created
+  with column defaults on first access. Never 404s. Fields:
+  <code>labNameOnHeader</code>, <code>tagLine</code>,
+  <code>logoPosition</code> (<code>Left</code>|<code>Center</code>|<code>Right</code>),
+  <code>pageSize</code> (<code>A4</code>|<code>Letter</code>|<code>A5</code>),
+  <code>pathologistName</code>, <code>pathologistRegNumber</code>, <code>labInChargeName</code>,
+  <code>isDigitalSignatureImagePrinted</code>,
+  <code>isAutoPublishAfterSecondValidationEnabled</code>, <code>isEmailPdfOnPublishEnabled</code>,
+  <code>isWhatsappLinkOnPublishEnabled</code>, <code>isReferringDoctorNotifyEnabled</code>,
+  <code>pdfWatermark</code> (<code>None</code>|<code>DRAFT</code>|<code>FINAL</code>|<code>DUPLICATE</code>),
+  <code>reportFooterNote</code>.</p>
+</div>
+
+<div class="ep" id="report-settings-save">
+  <div><span class="m put">PUT</span><span class="path">/api/v1/report-settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Upsert the tenant's report settings (partial patch — omitted fields keep their previously-saved value,
+  or the column default on first save). Validated with <code>class-validator</code>:
+  <code>labNameOnHeader</code>/<code>pathologistName</code>/<code>labInChargeName</code> are strings
+  2-150 chars; <code>tagLine</code>/<code>pathologistRegNumber</code> up to 150/50 chars;
+  <code>reportFooterNote</code> up to 500 chars; <code>logoPosition</code>, <code>pageSize</code>, and
+  <code>pdfWatermark</code> each restricted to their listed values. Returns the saved row. Audited under
+  <code>AuditModule.REPORT_SETTINGS</code>.</p>
+</div>
+
+<h2>Billing Settings</h2>
+
+<div class="ep" id="billing-settings-enums">
+  <div><span class="m get">GET</span><span class="path">/api/v1/business-admin/billing-settings/enums</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Allowed values for the billing settings enum fields: <code>invoiceResetCycles</code>
+  (<code>NEVER</code>|<code>YEARLY</code>|<code>MONTHLY</code>), <code>gstModes</code>
+  (<code>INCLUSIVE</code>|<code>EXCLUSIVE</code>|<code>EXEMPT</code>), <code>refundApprovalLevels</code>
+  (<code>COUNTER</code>|<code>MANAGER_ONLY</code>|<code>FINANCE_ONLY</code>). Payment-mode toggles are plain
+  booleans and are not included here.</p>
+</div>
+
+<div class="ep" id="billing-settings-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/business-admin/billing-settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Current tenant's Registration › Billing Settings (tenant from JWT) — a single row per tenant, created
+  with schema defaults on first access. Never 404s. Fields:
+  <code>invoicePrefix</code>, <code>nextInvoiceNumber</code>, <code>invoiceResetCycle</code>,
+  <code>receiptFooter</code>, <code>gstMode</code>, <code>defaultGstPercent</code>,
+  <code>counterDiscountMax</code>, <code>managerDiscountMax</code>,
+  <code>isApprovalRequiredAboveCounterLimit</code>, <code>isLineItemDiscountAllowed</code>,
+  <code>isCashEnabled</code>, <code>isCardEnabled</code>, <code>isUpiEnabled</code>, <code>isWalletEnabled</code>,
+  <code>isBankTransferEnabled</code>, <code>isCreditB2bEnabled</code>, <code>refundApprovalLevel</code>,
+  <code>refundWindowDays</code>, <code>isCreditNoteAutoGeneratedOnRefund</code>,
+  <code>isRefundBlockedAfterReportDispatch</code>.</p>
+</div>
+
+<div class="ep" id="billing-settings-save">
+  <div><span class="m post">POST</span><span class="path">/api/v1/business-admin/billing-settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Upsert the tenant's billing settings (partial patch — omitted fields keep their previously-saved value,
+  or the schema default on first save). Validated with <code>class-validator</code>:
+  <code>invoicePrefix</code> up to 24 chars matching <code>/^[A-Za-z0-9\-_/]*$/</code>,
+  <code>nextInvoiceNumber</code> 1-2147483647, <code>receiptFooter</code> up to 512 chars,
+  <code>defaultGstPercent</code>/<code>counterDiscountMax</code>/<code>managerDiscountMax</code> each 0-100,
+  <code>refundWindowDays</code> 0-3650, <code>invoiceResetCycle</code>/<code>gstMode</code>/
+  <code>refundApprovalLevel</code> each restricted to their enum values. Cross-field rule:
+  <code>counterDiscountMax</code> must not exceed <code>managerDiscountMax</code> (checked against the merged
+  existing+incoming values) — otherwise <span class="pill">400 VALIDATION_ERROR</span>. Returns the saved row.
+  Audited under <code>AuditModule.BILLING_SETTINGS</code>.</p>
+</div>
+
 <p style="margin:40px 0 10px;color:var(--muted);font-size:13px">
 Generated for Kalnostics New · reflects the implemented controllers under <code>src/modules</code>.
 Token TTLs, lockout, and password/MRN formats are defined in <code>CLAUDE.md §5</code>.

@@ -25,6 +25,7 @@ import { LabPanelModule } from './modules/lab-panel/lab-panel.module';
 import { BranchLabTestModule } from './modules/branch-lab-test/branch-lab-test.module';
 import { BranchLabPanelModule } from './modules/branch-lab-panel/branch-lab-panel.module';
 import { TestGroupModule } from './modules/test-group/test-group.module';
+import { EquipmentModule } from './modules/equipment/equipment.module';
 import { LocationModule } from './modules/location/location.module';
 import { OutsourceCenterModule } from './modules/outsource-center/outsource-center.module';
 import { ReferralPanelModule } from './modules/referral-panel/referral-panel.module';
@@ -48,14 +49,20 @@ import { PaymentRulesModule } from './modules/payment-rules/payment-rules.module
 import { SupportInfoModule } from './modules/support-info/support-info.module';
 import { ContactUsModule } from './modules/contact-us/contact-us.module';
 import { PatientModule } from './modules/patient/patient.module';
+import { PatientSettingsModule } from './modules/patient-settings/patient-settings.module';
 import { OrderModule } from './modules/order/order.module';
 import { PricingModule } from './modules/pricing/pricing.module';
 import { OrderFieldConfigModule } from './modules/order-field-config/order-field-config.module';
 import { PaymentDetailsModule } from './modules/payment-details/payment-details.module';
+import { BillingSettingsModule } from './modules/billing-settings/billing-settings.module';
+import { ConsoleSettingsModule } from './modules/console-settings/console-settings.module';
+import { ReportSettingsModule } from './modules/report-settings/report-settings.module';
 import { AppointmentModule } from './modules/appointment/appointment.module';
 import { AccessionModule } from './modules/accession/accession.module';
+import { AppointmentSettingsModule } from './modules/appointment-settings/appointment-settings.module';
 import { DoctorScheduleModule } from './modules/doctor-schedule/doctor-schedule.module';
 import { PhlebotomistScheduleModule } from './modules/phlebotomist-schedule/phlebotomist-schedule.module';
+import { PhlebotomistSettingsModule } from './modules/phlebotomist-settings/phlebotomist-settings.module';
 import { LabReportModule } from './modules/lab-report/lab-report.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 
@@ -102,6 +109,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     BranchLabTestModule,
     BranchLabPanelModule,
     TestGroupModule,
+    EquipmentModule,
     LocationModule,
     OutsourceCenterModule,
     ReferralPanelModule,
@@ -125,14 +133,20 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     SupportInfoModule,
     ContactUsModule,
     PatientModule,
+    PatientSettingsModule,
     OrderModule,
     PricingModule,
     OrderFieldConfigModule,
     PaymentDetailsModule,
+    BillingSettingsModule,
+    ConsoleSettingsModule,
+    ReportSettingsModule,
     AppointmentModule,
+    AppointmentSettingsModule,
     AccessionModule,
     DoctorScheduleModule,
     PhlebotomistScheduleModule,
+    PhlebotomistSettingsModule,
     LabReportModule,
   ],
   providers: [

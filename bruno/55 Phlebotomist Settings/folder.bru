@@ -1,0 +1,23 @@
+meta {
+  name: 55 Phlebotomist Settings
+  seq: 58
+}
+
+docs {
+  # Phlebotomist Settings
+
+  Registration › Phlebotomist Settings — per-branch routing/assignment, kit &
+  sample handling, and attendance/SLA rules for phlebotomists. Tenant-scoped
+  (RLS) + branch-level, mirroring the Appointment Settings pattern:
+
+  - **GET** returns the effective settings (the branch's saved
+    `PhlebotomistSetting` merged over the module defaults — never 404s for a
+    branch that hasn't saved yet).
+  - **PUT** upserts the active branch's settings (a partial patch — omitted
+    fields keep their previously-saved value, or the module default if never
+    saved).
+
+  Both routes are business-authenticated (`Bearer {{businessAccessToken}}`);
+  tenant + branch come from the JWT (active profile). Writes are audited
+  under `AuditModule.PHLEBOTOMIST_SETTINGS`.
+}

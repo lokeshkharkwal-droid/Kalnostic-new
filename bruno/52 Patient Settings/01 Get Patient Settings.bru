@@ -1,0 +1,47 @@
+meta {
+  name: 01 Get Patient Settings
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/patient-settings
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the tenant's patient settings", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("patientIdFormat");
+    expect(d).to.have.property("duplicateCheckStrategy");
+    expect(d).to.have.property("dataRetentionPeriod");
+  });
+}
+
+docs {
+  Current tenant's patient settings — created with column defaults on first
+  access (`patientIdFormat: "PT-{YY}{AUTO}"`, `nextPatientNumber: 1`,
+  `duplicateCheckStrategy: "Mobile + DOB"`, `defaultTitle: "—"`, etc.).
+  Contains:
+
+  - **Patient Identity:** `patientIdFormat`, `nextPatientNumber`,
+    `duplicateCheckStrategy` (`Mobile + DOB` | `Mobile only` | `Mobile + Name`),
+    `defaultTitle` (`Mr.` | `Mrs.` | `Ms.` | `Dr.` | `—`)
+  - **Mandatory Fields:** `isMobileNumberMandatory`, `isEmailMandatory`,
+    `isDobMandatory`, `isGenderMandatory`, `isAddressMandatory`,
+    `isIdProofNumberMandatory`
+  - **Consent & Privacy:** `isDigitalConsentCaptureEnabled`,
+    `isMobileMaskingInPrintoutsEnabled`, `isWhatsappReportSharingEnabled`,
+    `dataRetentionPeriod` (`1 year` | `3 years` | `5 years` | `Indefinite`)
+
+  This endpoint never 404s — a tenant that has never saved settings gets the
+  column defaults.
+}

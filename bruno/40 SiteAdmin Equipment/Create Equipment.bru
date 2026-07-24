@@ -1,0 +1,93 @@
+meta {
+  name: Create Equipment
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/equipment
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "name": "Sysmex XN-1000",
+    "code": "sysmex-xn-1000",
+    "description": "5-part differential hematology analyzer",
+    "setupDocument": "<p>Installation steps…</p>",
+    "labConfigDocument": "<p>Configuration guide…</p>",
+    "adopterDocument": "<p>Adopter setup…</p>",
+    "labTestIds": ["{{siteAdminLabTestId}}"]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("equipmentId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("returns the equipment with its mapped lab tests", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("id");
+    expect(d.name).to.equal("Sysmex XN-1000");
+    expect(d.labTests).to.be.an("array");
+  });
+}
+
+docs {
+  Create a **lab equipment** — a SiteAdmin-only, platform-level global catalogue
+  entry that lists the SITE_ADMIN lab tests it processes. Auth: SiteAdmin token,
+  requires `master-data:write`. Captures `equipmentId`.
+
+  **Body**
+  - `name` (required) — unique among active equipment → 409
+    `EQUIPMENT_NAME_CONFLICT` on a clash.
+  - `code` (optional) — adapter code (e.g. a slug of the name); free-text, not
+    unique.
+  - `description` (optional) — free text.
+  - `setupDocument` / `labConfigDocument` / `adopterDocument` (optional) —
+    rich-text HTML documents.
+  - `labTestIds` (optional) — array of **SITE_ADMIN lab-test template** ids the
+    equipment processes. Every id must reference an active template
+    (`source = SITE_ADMIN`) → 422 `EQUIPMENT_LAB_TEST_NOT_FOUND` otherwise. A
+    duplicated id in the array → 422 `VALIDATION_ERROR`. Create the templates
+    first via `25 SiteAdmin Lab Tests → Create Lab Test Template`.
+
+  **Sample response — 201**
+  ```json
+  {
+    "success": true,
+    "data": {
+      "id": "6d0e2f4a-1b2c-4d3e-8f90-a1b2c3d4e5f6",
+      "name": "Sysmex XN-1000",
+      "code": "sysmex-xn-1000",
+      "description": "5-part differential hematology analyzer",
+      "setupDocument": "<p>Installation steps…</p>",
+      "labConfigDocument": "<p>Configuration guide…</p>",
+      "adopterDocument": "<p>Adopter setup…</p>",
+      "createdBy": "a612182e-3038-4d2c-ab1b-b46c43f9d65c",
+      "updatedBy": "a612182e-3038-4d2c-ab1b-b46c43f9d65c",
+      "createdAt": "2026-07-01T09:00:00.000Z",
+      "updatedAt": "2026-07-01T09:00:00.000Z",
+      "deletedAt": null,
+      "labTests": [
+        { "id": "3f1a…lab-test-uuid-1", "testName": "Complete Blood Count", "testCode": "CBC-TPL" }
+      ]
+    },
+    "meta": { "timestamp": "2026-07-01T09:00:00.000Z" }
+  }
+  ```
+}

@@ -1,0 +1,64 @@
+meta {
+  name: 02 Save Appointment Settings
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{baseUrl}}/appointment-settings
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "slotDurationMinutes": 15,
+    "bufferMinutes": 5,
+    "maxWalkInsPerDay": 40,
+    "maxOnlineBookingsPerSlot": 2,
+    "openTime": "08:00",
+    "closeTime": "20:00",
+    "weeklyOff": "Sunday",
+    "lunchBreak": "13:00 - 14:00",
+    "isSmsReminder24hEnabled": true,
+    "isWhatsappReminder2hEnabled": true,
+    "isEmailConfirmationEnabled": true,
+    "isVoiceCallForStatEnabled": false,
+    "noShowGraceMinutes": 20,
+    "cancellationCutoffHours": 2,
+    "isAutoCancelAfterGraceEnabled": true,
+    "isNoShowFeeChargeEnabled": false
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("echoes back the saved values", function () {
+    const d = res.getBody().data;
+    expect(d.slotDurationMinutes).to.equal(15);
+    expect(d.weeklyOff).to.equal("Sunday");
+  });
+}
+
+docs {
+  Upsert the active branch's appointment settings. Every field is optional (a
+  partial patch) — omitted fields keep their previously-saved value (or the
+  module default if this branch has never saved). The response is the
+  effective (merged) settings map. Audited under `AuditModule.APPOINTMENT`.
+
+  Validation: `slotDurationMinutes` 5-240, `bufferMinutes` 0-60,
+  `maxWalkInsPerDay` 0-1000, `maxOnlineBookingsPerSlot` 0-100, `openTime` /
+  `closeTime` must be `HH:mm` (24h), `weeklyOff` must be one of `None` |
+  `Sunday` | `Saturday & Sunday`, `noShowGraceMinutes` 0-240,
+  `cancellationCutoffHours` 0-72.
+}

@@ -1,0 +1,23 @@
+meta {
+  name: 51 Appointment Settings
+  seq: 57
+}
+
+docs {
+  # Appointment Settings
+
+  Registration › Appointment Settings — per-branch slot/capacity, working
+  hours, reminder toggles, and no-show/cancellation rules. Tenant-scoped
+  (RLS) + branch-level, mirroring the Accession `§G` settings pattern:
+
+  - **GET** returns the effective settings (the branch's saved
+    `AppointmentSetting` merged over the module defaults — never 404s for a
+    branch that hasn't saved yet).
+  - **PUT** upserts the active branch's settings (a partial patch — omitted
+    fields keep their previously-saved value, or the module default if never
+    saved).
+
+  Both routes are business-authenticated (`Bearer {{businessAccessToken}}`);
+  tenant + branch come from the JWT (active profile). Writes are audited
+  under `AuditModule.APPOINTMENT`.
+}

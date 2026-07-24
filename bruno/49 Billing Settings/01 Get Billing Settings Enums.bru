@@ -1,0 +1,41 @@
+meta {
+  name: 01 Get Billing Settings Enums
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/business-admin/billing-settings/enums
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the three enum arrays", function () {
+    const d = res.getBody().data;
+    expect(d.invoiceResetCycles).to.include.members(["NEVER", "YEARLY", "MONTHLY"]);
+    expect(d.gstModes).to.include.members(["INCLUSIVE", "EXCLUSIVE", "EXEMPT"]);
+    expect(d.refundApprovalLevels).to.include.members(["COUNTER", "MANAGER_ONLY", "FINANCE_ONLY"]);
+    expect(d).to.not.have.property("paymentModes");
+  });
+}
+
+docs {
+  Allowed values for the billing settings enum fields:
+
+  - `invoiceResetCycles` — `NEVER` | `YEARLY` | `MONTHLY` (for `invoiceResetCycle`).
+  - `gstModes` — `INCLUSIVE` | `EXCLUSIVE` | `EXEMPT` (for `gstMode`).
+  - `refundApprovalLevels` — `COUNTER` | `MANAGER_ONLY` | `FINANCE_ONLY` (for
+    `refundApprovalLevel`).
+
+  Payment modes (`isCashEnabled`, `isCardEnabled`, `isUpiEnabled`,
+  `isWalletEnabled`, `isBankTransferEnabled`, `isCreditB2bEnabled`) are plain
+  booleans and are not part of this response.
+}

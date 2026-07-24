@@ -1,0 +1,47 @@
+meta {
+  name: Update Equipment
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/siteadmin/equipment/{{equipmentId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "name": "Sysmex XN-1000 (v2)",
+    "description": "Updated description",
+    "labTestIds": ["{{siteAdminLabTestId}}"]
+  }
+}
+
+docs {
+  Update an equipment. Auth: SiteAdmin token, requires `master-data:write`.
+  All fields optional.
+
+  **Body**
+  - `name` — renamed; still unique among active equipment → 409
+    `EQUIPMENT_NAME_CONFLICT` on a clash.
+  - `code` / `description` / `setupDocument` / `labConfigDocument` /
+    `adopterDocument` — patched when provided.
+  - `labTestIds` — when provided, the **entire mapping set is replaced** (old
+    active mappings soft-deleted, the new set created). Same validation as create
+    (must be active SITE_ADMIN templates, no duplicates). **Omit** `labTestIds`
+    to leave the current mappings untouched; pass `[]` to clear all mappings.
+
+  404 `EQUIPMENT_NOT_FOUND` if the equipment is missing/soft-deleted.
+
+  **Sample response — 200**: the updated equipment with its (new) `labTests[]`,
+  same shape as `Get Equipment`.
+}

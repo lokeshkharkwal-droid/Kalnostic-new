@@ -1,0 +1,46 @@
+meta {
+  name: 01 Get Phlebotomist Settings
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/phlebotomist-settings
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the effective settings map", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("autoAssignStrategy");
+    expect(d).to.have.property("shiftStart");
+    expect(d).to.have.property("pickupSlaMinutes");
+  });
+}
+
+docs {
+  Effective phlebotomist settings for the active branch — the branch's saved
+  `PhlebotomistSetting` **merged over** the module defaults. Contains:
+
+  - **Routing & Assignment:** `autoAssignStrategy` (`Nearest first` |
+    `Round-robin` | `Manual`), `maxVisitsPerPhleboPerDay`,
+    `defaultServiceRadiusKm`, `isPatientPickPhleboAllowed`
+  - **Kit & Sample Handling:** `defaultKitItems` (free text),
+    `minColdChainTempC` / `maxColdChainTempC`,
+    `isPhotoOfSampleAtPickupRequired`, `isGeoTagCaptureOnCollectionEnabled`
+  - **Attendance & SLA:** `shiftStart` / `shiftEnd` (`HH:mm`),
+    `pickupSlaMinutes`, `dropBackSlaHours`,
+    `isManagerAlertOnSlaBreachEnabled`
+
+  A branch that has never saved settings gets the module defaults (Nearest
+  first, 12 visits/day, 8km radius, 07:00-15:00 shift, etc.) — this endpoint
+  never 404s.
+}

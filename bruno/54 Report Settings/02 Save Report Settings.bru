@@ -1,0 +1,63 @@
+meta {
+  name: 02 Save Report Settings
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{baseUrl}}/report-settings
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "labNameOnHeader": "Kalnostic Diagnostics",
+    "tagLine": "Accuracy. Trust. Care.",
+    "logoPosition": "Left",
+    "pageSize": "A4",
+    "pathologistName": "Dr. Priya Sharma",
+    "pathologistRegNumber": "MCI/12345",
+    "labInChargeName": "Dr. Amit Patel",
+    "isDigitalSignatureImagePrinted": true,
+    "isAutoPublishAfterSecondValidationEnabled": true,
+    "isEmailPdfOnPublishEnabled": true,
+    "isWhatsappLinkOnPublishEnabled": true,
+    "isReferringDoctorNotifyEnabled": false,
+    "pdfWatermark": "None",
+    "reportFooterNote": "Reports correlate clinically."
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("echoes back the saved values", function () {
+    const d = res.getBody().data;
+    expect(d.labNameOnHeader).to.equal("Kalnostic Diagnostics");
+    expect(d.pdfWatermark).to.equal("None");
+  });
+}
+
+docs {
+  Upsert the tenant's report settings. Every field is optional (a partial
+  patch) — omitted fields keep their previously-saved value (or the column
+  default on first save). The response is the saved row. Audited under
+  `AuditModule.REPORT_SETTINGS`.
+
+  Validation: `labNameOnHeader`, `pathologistName`, `labInChargeName` are
+  strings 2-150 chars; `tagLine` and `pathologistRegNumber` are strings up
+  to 150/50 chars; `reportFooterNote` up to 500 chars; `logoPosition` must be
+  one of `Left` | `Center` | `Right`; `pageSize` must be one of `A4` |
+  `Letter` | `A5`; `pdfWatermark` must be one of `None` | `DRAFT` | `FINAL` |
+  `DUPLICATE`; the four `is...Enabled`/`is...Printed` fields are booleans.
+}

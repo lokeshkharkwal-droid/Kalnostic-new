@@ -547,6 +547,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS test_groups_name_active_unique
 CREATE UNIQUE INDEX IF NOT EXISTS test_group_mapping_active_unique
   ON test_group_mappings (test_group_id, lab_test_id) WHERE deleted_at IS NULL;
 
+-- ── equipment (platform-level, NO RLS — like test_groups) ───────────────────────
+-- SiteAdmin-only global lab-equipment catalogue; it sits above the tenant
+-- boundary so it is deliberately NOT row-level-secured. Prisma can't express
+-- partial unique indexes, so they live here:
+-- name unique among ACTIVE rows (a name freed by soft-delete is reusable).
+CREATE UNIQUE INDEX IF NOT EXISTS equipment_name_active_unique
+  ON equipment (name) WHERE deleted_at IS NULL;
+
+-- ── equipment_lab_tests (platform-level, NO RLS) ────────────────────────────────
+-- a lab test appears at most once per equipment among ACTIVE rows.
+CREATE UNIQUE INDEX IF NOT EXISTS equipment_lab_test_active_unique
+  ON equipment_lab_tests (equipment_id, lab_test_id) WHERE deleted_at IS NULL;
+
 -- ── outsource_centers ─────────────────────────────────────────────────────────
 ALTER TABLE outsource_centers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE outsource_centers FORCE ROW LEVEL SECURITY;
@@ -1149,6 +1162,38 @@ CREATE POLICY payment_details_tenant_isolation ON payment_details
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── billing_settings ───────────────────────────────────────────────────────────
+ALTER TABLE billing_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE billing_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS billing_settings_tenant_isolation ON billing_settings;
+CREATE POLICY billing_settings_tenant_isolation ON billing_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── patient_settings ───────────────────────────────────────────────────────────
+ALTER TABLE patient_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE patient_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS patient_settings_tenant_isolation ON patient_settings;
+CREATE POLICY patient_settings_tenant_isolation ON patient_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── console_settings ───────────────────────────────────────────────────────────
+ALTER TABLE console_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE console_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS console_settings_tenant_isolation ON console_settings;
+CREATE POLICY console_settings_tenant_isolation ON console_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── report_settings ────────────────────────────────────────────────────────────
+ALTER TABLE report_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE report_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS report_settings_tenant_isolation ON report_settings;
+CREATE POLICY report_settings_tenant_isolation ON report_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- ── lab_image_settings ────────────────────────────────────────────────────────
 ALTER TABLE lab_image_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lab_image_settings FORCE ROW LEVEL SECURITY;
@@ -1391,11 +1436,27 @@ CREATE POLICY accession_settings_tenant_isolation ON accession_settings
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── appointment_settings ─────────────────────────────────────────────────────
+ALTER TABLE appointment_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE appointment_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS appointment_settings_tenant_isolation ON appointment_settings;
+CREATE POLICY appointment_settings_tenant_isolation ON appointment_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── phlebotomist_settings ────────────────────────────────────────────────────
+ALTER TABLE phlebotomist_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE phlebotomist_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS phlebotomist_settings_tenant_isolation ON phlebotomist_settings;
+CREATE POLICY phlebotomist_settings_tenant_isolation ON phlebotomist_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- Platform-level tables (tenants, persons, person_credentials, siteadmin_users,
 -- refresh_tokens, person_tenant_enrollments, test_groups, test_group_mappings,
--- support_infos) are intentionally NOT covered — they sit above the tenant
--- boundary. (The test_groups / support_infos partial unique indexes above are
--- added for correctness, not RLS.)
+-- equipment, equipment_lab_tests, support_infos) are intentionally NOT covered —
+-- they sit above the tenant boundary. (The test_groups / equipment /
+-- support_infos partial unique indexes above are added for correctness, not RLS.)
 --
 -- NOTE on Person.aadhaar_number / pan_number: no unique index. Aadhaar is stored
 -- encrypted (AES-256-GCM with a random IV → identical inputs yield different

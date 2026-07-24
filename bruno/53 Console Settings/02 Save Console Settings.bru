@@ -1,0 +1,64 @@
+meta {
+  name: 02 Save Console Settings
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{baseUrl}}/console-settings
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "defaultOrderMode": "Walk-in",
+    "defaultPriority": "Routine",
+    "isEditTestsAfterCollectionAllowed": false,
+    "isBarcodeRequiredBeforeAcceptance": true,
+    "routineWarningHours": 4,
+    "routineBreachHours": 8,
+    "urgentWarningHours": 2,
+    "urgentBreachHours": 4,
+    "statWarningHours": 1,
+    "statBreachHours": 2,
+    "isAudioChimeOnNewOrderEnabled": true,
+    "isAutoPrintLabelsOnSaveEnabled": true,
+    "isOutsourceStationInQueueVisible": true,
+    "isBreachedTatHighlightEnabled": true
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("echoes back the saved values", function () {
+    const d = res.getBody().data;
+    expect(d.defaultOrderMode).to.equal("Walk-in");
+    expect(d.routineBreachHours).to.equal(8);
+  });
+}
+
+docs {
+  Upsert the tenant's console settings. Every field is optional (a partial
+  patch) — omitted fields keep their previously-saved value (or the column
+  default on first save). The response is the saved row. Audited under
+  `AuditModule.CONSOLE_SETTINGS`.
+
+  Validation: `defaultOrderMode` must be one of `Walk-in` | `Home Visit` |
+  `Online` | `Referral`; `defaultPriority` must be one of `Routine` |
+  `Urgent` | `STAT`; all six TAT hour fields are integers 0-999. For each
+  priority tier, breach hours must strictly exceed warning hours (checked
+  against the saved row for any field omitted from the payload) — violating
+  this returns `400 Bad Request` with a message naming the offending tier,
+  e.g. "Routine breach hours must exceed warning hours".
+}

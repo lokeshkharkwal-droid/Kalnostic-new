@@ -1,0 +1,27 @@
+meta {
+  name: 49 Billing Settings
+  seq: 62
+}
+
+docs {
+  # Billing Settings
+
+  Registration › Billing Settings — tenant-level invoice numbering, GST/discount
+  rules, payment-mode toggles, and refund/credit-note policy. Tenant-scoped
+  (RLS), singleton per tenant:
+
+  - **GET `/enums`** — the allowed values for the three enum fields
+    (`invoiceResetCycle`, `gstMode`, `refundApprovalLevel`). Payment-mode
+    toggles are plain booleans, not an enum.
+  - **GET** — the tenant's billing settings row, auto-created with Prisma
+    defaults on first access (never 404s).
+  - **POST** — upserts the tenant's billing settings (a partial patch —
+    omitted fields keep their previously-saved value, or the schema default on
+    first save). Server-side rule: `counterDiscountMax` must not exceed
+    `managerDiscountMax` (checked against the merged existing+incoming
+    values) — `400 VALIDATION_ERROR` otherwise.
+
+  All routes are business-authenticated (`Bearer {{businessAccessToken}}`);
+  tenant comes from the JWT. `POST` is audited under
+  `AuditModule.BILLING_SETTINGS`.
+}
