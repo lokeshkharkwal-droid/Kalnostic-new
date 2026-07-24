@@ -1,0 +1,44 @@
+meta {
+  name: Report - Patient-wise
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/phlebotomist-collections/reports/patient-wise?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: ORD-00001
+  ~status: COMPLETED
+  ~phlebotomistId: {{phlebotomistId}}
+  ~paymentStatus: PAID
+  ~referralPanelId: {{referralPanelId}}
+  ~dateFrom: 2026-01-01
+  ~dateTo: 2026-12-31
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("paginated", function () {
+    expect(res.getBody().meta).to.have.property("total");
+  });
+}
+
+docs {
+  Patient-wise report — the same enriched, paginated collection rows as the
+  Collection Schedule list (the FE flattens them into report columns: date,
+  patient, booking id, mobile, UMID, referred-by, referral panel, phlebotomist,
+  gross / visit / sample-collection / net / paid / balance, payment status,
+  status). Accepts the full schedule filter set (see **List Collections**).
+}

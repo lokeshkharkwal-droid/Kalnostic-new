@@ -1,0 +1,27 @@
+meta {
+  name: 56 Sales Reports & Dashboard
+  seq: 63
+}
+
+docs {
+  # Sales Reports & Dashboard
+
+  Read-only Sales analytics. Two report tables (Lead-wise + Salesperson-wise) and
+  a composed dashboard overview. All tenant-scoped + branch-level.
+
+  ## Scoping
+
+  All routes are **business-authenticated** (`Bearer {{businessAccessToken}}`).
+  Tenant comes from the JWT and branch from the active profile. Read-only — no
+  `@Audit`. **Do NOT send `tenantId` / `branchId`.** No active branch →
+  `400 ACTIVE_BRANCH_REQUIRED`.
+
+  ## Endpoints
+
+  1. **Report - Lead-wise** (`GET /sales/reports/lead-wise`) — one flat row per
+     lead, with the shared report filters.
+  2. **Report - Salesperson-wise** (`GET /sales/reports/salesperson-wise`) —
+     per-salesperson aggregates, same filters.
+  3. **Dashboard Overview** (`GET /sales/dashboard`) — composed overview
+     (KPIs, funnel, recent activity) for the active branch.
+}

@@ -1,0 +1,31 @@
+meta {
+  name: 24 Status → COLLECTION_VERIFIED
+  type: http
+  seq: 25
+}
+
+patch {
+  url: {{baseUrl}}/phlebotomist-collections/{{collectionId}}/status
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "status": "COLLECTION_VERIFIED",
+    "notes": "Collection verified by supervisor."
+  }
+}
+
+docs {
+  **Step 24 — SAMPLE_COLLECTED → COLLECTION_VERIFIED.** Supervisor verifies the
+  collected samples.
+}

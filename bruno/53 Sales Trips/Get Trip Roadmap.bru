@@ -1,0 +1,28 @@
+meta {
+  name: Get Trip Roadmap
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/sales/trips/{{tripId}}/roadmap
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Roadmap view of a trip: ordered visits + start/end waypoints + totals (a
+  composed read for the Trips roadmap UI). Scoped to the caller's tenant + active
+  branch.
+
+  Path param `id` ✱ — trip UUID (`tripId`).
+
+  Response: `{ success, data: { start, end, visits: [...], totals: {...} },
+  meta }`.
+
+  Errors: `TRIP_NOT_FOUND` (404), `ACTIVE_BRANCH_REQUIRED` (400).
+}

@@ -1,0 +1,38 @@
+meta {
+  name: Update Trip Status
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{baseUrl}}/sales/trips/{{tripId}}/status
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "IN_PROGRESS"
+  }
+}
+
+docs {
+  Transition a trip to a new lifecycle status.
+
+  Fields (✱ = required):
+  - `status` ✱ — `TripStatus`: `PLANNED` | `IN_PROGRESS` | `COMPLETED` |
+    `CANCELLED`.
+
+  Path param `id` ✱ — trip UUID (`tripId`).
+
+  Tenant + active branch come from the JWT; do NOT send `tenantId` / `branchId`.
+  Errors: `TRIP_NOT_FOUND` (404), `ACTIVE_BRANCH_REQUIRED` (400).
+}

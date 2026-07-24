@@ -1,0 +1,48 @@
+meta {
+  name: Create Territory
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/sales/territories
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "North Zone",
+    "code": "NZ",
+    "isActive": true
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("territoryId", data.id);
+}
+
+docs {
+  Create a sales territory at the caller's active branch. Captures `territoryId`.
+
+  Fields (✱ = required):
+
+  - `name` ✱ — string ≤ 255. Must be unique among active territories at the
+    branch (409 `SALES_TERRITORY_NAME_CONFLICT` otherwise).
+  - `code` (optional) — string ≤ 64.
+  - `isActive` (optional, boolean) — defaults to true.
+
+  Response: `{ success, data: { id, name, code, isActive, ... }, meta }`.
+
+  Tenant + active branch come from the JWT; do NOT send `tenantId` / `branchId`.
+  Errors: `SALES_TERRITORY_NAME_CONFLICT` (409), `ACTIVE_BRANCH_REQUIRED` (400).
+}

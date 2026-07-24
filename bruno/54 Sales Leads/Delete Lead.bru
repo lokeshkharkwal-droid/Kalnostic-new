@@ -1,0 +1,24 @@
+meta {
+  name: Delete Lead
+  type: http
+  seq: 12
+}
+
+delete {
+  url: {{baseUrl}}/sales/leads/{{leadId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Soft-delete a lead (sets `deletedAt`; the row + its history are preserved).
+
+  Path param `id` ✱ — lead UUID (`leadId`).
+
+  Tenant + active branch come from the JWT; do NOT send `tenantId` / `branchId`.
+  Errors: `LEAD_NOT_FOUND` (404), `ACTIVE_BRANCH_REQUIRED` (400).
+}

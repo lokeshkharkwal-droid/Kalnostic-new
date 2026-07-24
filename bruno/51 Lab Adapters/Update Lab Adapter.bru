@@ -1,0 +1,50 @@
+meta {
+  name: Update Lab Adapter
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/lab-adapters/{{labAdapterId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Hematology Bridge 1 (updated)",
+    "branchIds": ["{{branchId}}"],
+    "labTestIds": ["{{branchLabTestId}}"],
+    "isActive": true
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Update a **lab adapter**. Auth: **business** token; tenant from the JWT. All
+  fields optional. When `branchIds` or `labTestIds` is **provided**, that whole
+  set is **replaced** (old active rows soft-deleted, the new set created);
+  omitting a set leaves it untouched. `token` is immutable and cannot be sent.
+
+  **Body (all optional)**
+  - `name` — new unique name → 409 `LAB_ADAPTER_NAME_CONFLICT` on a clash.
+  - `equipmentId` — new equipment ref → 422 `LAB_ADAPTER_EQUIPMENT_NOT_FOUND`.
+  - `branchIds` — replacement branch set → 422 `LAB_ADAPTER_BRANCH_NOT_FOUND`.
+  - `labTestIds` — replacement lab-test set → 422 `LAB_ADAPTER_LAB_TEST_NOT_FOUND`.
+  - `isActive` — enable/disable.
+
+  404 `LAB_ADAPTER_NOT_FOUND` if the adapter is missing/other tenant.
+}

@@ -1,0 +1,32 @@
+meta {
+  name: 22 Status → REACHED_PATIENT_LOCATION
+  type: http
+  seq: 23
+}
+
+patch {
+  url: {{baseUrl}}/phlebotomist-collections/{{collectionId}}/status
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "status": "REACHED_PATIENT_LOCATION",
+    "notes": "Arrived at the patient's address.",
+    "gpsLocation": "18.5314,73.8446"
+  }
+}
+
+docs {
+  **Step 22 — STARTED_FROM_CENTER → REACHED_PATIENT_LOCATION.** Phlebotomist
+  reaches the patient.
+}

@@ -1,0 +1,25 @@
+meta {
+  name: 33 Report — Phlebotomist-wise
+  type: http
+  seq: 34
+}
+
+get {
+  url: {{baseUrl}}/phlebotomist-collections/reports/phlebotomist-wise
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+docs {
+  **Step 33 — Phlebotomist-wise report.** Per-phlebotomist rollup (assigned /
+  completed / pending / cancelled counts + total charges), sorted by assigned
+  volume. Accepts `dateFrom`, `dateTo`, `phlebotomistId`, `branchId`.
+
+  This closes the end-to-end Phlebotomist flow: login → branch + module → user +
+  permissions → phlebotomist → schedule → patient → catalogue (master data + lab
+  tests/panels + branch import) → order → collection lifecycle → reports.
+}

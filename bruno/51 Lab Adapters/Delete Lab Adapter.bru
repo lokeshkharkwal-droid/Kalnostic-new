@@ -1,0 +1,28 @@
+meta {
+  name: Delete Lab Adapter
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/lab-adapters/{{labAdapterId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Soft-delete a **lab adapter** (sets `deletedAt`) and cascade soft-delete its
+  branch-assignment and lab-test-mapping rows, in one transaction. Auth:
+  **business** token; tenant from the JWT. Deleted adapters leave the list and
+  free their `name` for reuse. 404 `LAB_ADAPTER_NOT_FOUND` if missing/other tenant.
+}

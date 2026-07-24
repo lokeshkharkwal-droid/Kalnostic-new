@@ -17,6 +17,13 @@ import {
   EquipmentNotFoundException,
 } from './exceptions/equipment.exceptions';
 
+/** A lightweight equipment option row for business selectors. */
+export interface EquipmentOption {
+  id: string;
+  name: string;
+  code: string | null;
+}
+
 /**
  * Lab-equipment management (SiteAdmin only). An equipment is a global catalogue
  * entry carrying an adapter code, a description, three rich-text HTML documents,
@@ -107,6 +114,44 @@ export class EquipmentService {
       code: e.code,
       labTestsCount: counts.get(e.id) ?? 0,
     }));
+    return { data, total, page, limit };
+  }
+
+  /**
+   * Lightweight `{ id, name, code }` options for business selectors (the Lab
+   * Adapter form's Equipment picker). Returns active global equipment, optionally
+   * filtered by a case-insensitive `search` on the name.
+   * @param filters optional search + offset pagination
+   * @returns the full option array when `page` is omitted, else a paginated envelope
+   */
+  async findOptions(
+    filters: { search?: string; page?: number; limit?: number } = {},
+  ): Promise<EquipmentOption[] | PaginatedResult<EquipmentOption>> {
+    const where: Prisma.EquipmentWhereInput = { deletedAt: null };
+    const term = filters.search?.trim();
+    if (term) {
+      where.name = { contains: term, mode: 'insensitive' };
+    }
+
+    const select = { id: true, name: true, code: true } as const;
+    const orderBy = { name: 'asc' } as const;
+
+    if (filters.page === undefined) {
+      return this.prisma.equipment.findMany({ where, select, orderBy });
+    }
+
+    const page = filters.page;
+    const limit = filters.limit ?? 20;
+    const [data, total] = await Promise.all([
+      this.prisma.equipment.findMany({
+        where,
+        select,
+        orderBy,
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.equipment.count({ where }),
+    ]);
     return { data, total, page, limit };
   }
 

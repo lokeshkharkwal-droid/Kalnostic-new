@@ -1,0 +1,37 @@
+meta {
+  name: Save Template Config
+  type: http
+  seq: 14
+}
+
+put {
+  url: {{baseUrl}}/pdf-report-templates/config
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "assignments": [
+      { "slotKey": "lab_report", "templateId": "{{pdfTemplateId}}" },
+      { "slotKey": "invoice", "templateId": null }
+    ]
+  }
+}
+
+vars:pre-request {
+  businessAccessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwZXJzb25faWQiOiIyOTQ5N2I2NC0wNGUyLTQwZjktYTY2OS04NDBiZmNlOGU3ZDYiLCJ0ZW5hbnRfaWQiOiJhYjE2OTY1MC01Mzc1LTQwYmUtYTIxMi00ZGE0ZTJiMDE5NGQiLCJhY3RpdmVfYnJhbmNoX2lkIjpudWxsLCJhY3RpdmVfYnJhbmNoX3R5cGUiOm51bGwsImFjdGl2ZV9wcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwiaXNfcGF0aWVudF9jb250ZXh0IjpmYWxzZSwicHJvZmlsZXMiOlt7ImJyYW5jaF9pZCI6bnVsbCwiYnJhbmNoX25hbWUiOm51bGwsImJyYW5jaF90eXBlIjpudWxsLCJwcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwicHJvZmlsZV9sYWJlbCI6IkJ1c2luZXNzIEFkbWluIiwiaXNfZGVmYXVsdCI6dHJ1ZX1dLCJpc19wYXRpZW50IjpmYWxzZSwicGxhdGZvcm1fbXJuIjoiS0FMLTIwMjYwNjA4LTM2OTBCRkQxIiwiaWF0IjoxNzgwOTM5ODE2LCJleHAiOjE3ODA5NDA3MTZ9.J55wiEzB-FCqQGSFyaVmqeOfFIFJRrlK5d47mBUpMZ4
+}
+
+docs {
+  Upsert the caller's slot -> template assignments for the active scope. Each
+  `slotKey` must be a known slot (`GET config/slots`); a non-null `templateId`
+  must be one of the caller's active templates. A null `templateId` clears the
+  slot. Returns the resulting map. 400 `INVALID_PDF_TEMPLATE_CONFIG_SLOT` on an
+  unknown slot; 404 `PDF_REPORT_TEMPLATE_NOT_FOUND` if a `templateId` isn't the
+  tenant's.
+}

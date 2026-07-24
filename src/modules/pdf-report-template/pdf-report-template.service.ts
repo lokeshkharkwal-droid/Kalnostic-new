@@ -399,6 +399,60 @@ export class PdfReportTemplateService {
     }
   }
 
+  /**
+   * Clone a SITE_ADMIN global PDF report template into the caller's tenant.
+   * Idempotent: a template already cloned into the tenant returns the existing
+   * copy (matched on `clonedFromId`). The clone keeps the source
+   * name/type/meta/doc, is tenant-wide (`branchId` null), and records
+   * `clonedFromId`. Runs inside `withTenant` — the pdf_report_templates RLS
+   * policy permits reading the NULL-tenant source while a tenant GUC is set.
+   * @param id the SITE_ADMIN global template to clone
+   * @param tenantId caller's tenant (from JWT)
+   * @returns the tenant template (existing clone or newly created)
+   * @throws PdfReportTemplateNotFoundException if the source isn't a live global template
+   * @throws PdfReportTemplateNameConflictException if the name clashes with an
+   *   existing active tenant template
+   */
+  async cloneToTenant(
+    id: string,
+    tenantId: string,
+  ): Promise<PdfReportTemplateEntity> {
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const existing = await tx.pdfReportTemplate.findFirst({
+        where: { tenantId, clonedFromId: id, deletedAt: null },
+      });
+      if (existing) {
+        return existing;
+      }
+      const source = await tx.pdfReportTemplate.findFirst({
+        where: { id, tenantId: null, deletedAt: null },
+      });
+      if (!source) {
+        throw new PdfReportTemplateNotFoundException(id);
+      }
+      try {
+        return await tx.pdfReportTemplate.create({
+          data: {
+            tenantId,
+            branchId: null,
+            clonedFromId: id,
+            type: source.type,
+            name: source.name,
+            isActive: source.isActive,
+            meta: source.meta as Prisma.InputJsonValue,
+            doc:
+              source.doc === null
+                ? undefined
+                : (source.doc as Prisma.InputJsonValue),
+          },
+        });
+      } catch (e) {
+        this.rethrowUniqueViolation(e, source.name);
+        throw e;
+      }
+    });
+  }
+
   // ── Advance (block-based) rendering ──────────────────────────────────────────
   // Block templates store an `AdvanceDocument` in the `doc` column and are
   // rendered by the ported block renderer against SAMPLE context data (site-admin

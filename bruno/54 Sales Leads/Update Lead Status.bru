@@ -1,0 +1,46 @@
+meta {
+  name: Update Lead Status
+  type: http
+  seq: 7
+}
+
+patch {
+  url: {{baseUrl}}/sales/leads/{{leadId}}/status
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "SCHEDULED",
+    "gps": "18.5204,73.8567",
+    "remarks": "Meeting scheduled for next week."
+  }
+}
+
+docs {
+  Transition a lead to a new status (the per-row "Immediate Action" / manual
+  status change). Records a `LeadStatusHistory` entry.
+
+  > Special case: when the transition is `CONFIRMED → STARTED` and the lead has
+  > an assigned salesperson, a linked Trip is created automatically (the
+  > "Start Trip" flow).
+
+  Fields (✱ = required):
+  - `status` ✱ — target `LeadStatus` (see folder docs for the full list).
+  - `gps` (optional, ≤ 120) — captured with the change.
+  - `remarks` (optional, ≤ 2000).
+
+  Path param `id` ✱ — lead UUID (`leadId`).
+
+  Tenant + active branch come from the JWT; do NOT send `tenantId` / `branchId`.
+  Errors: `LEAD_NOT_FOUND` (404), `ACTIVE_BRANCH_REQUIRED` (400).
+}

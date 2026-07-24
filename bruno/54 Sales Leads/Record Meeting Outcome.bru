@@ -1,0 +1,58 @@
+meta {
+  name: Record Meeting Outcome
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/sales/leads/{{leadId}}/meeting-outcome
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "outcome": "PROPOSAL_SHARED",
+    "summary": "Positive meeting; procurement team keen on the API integration.",
+    "requirement": "Outsourced pathology + home collection for 3 branches.",
+    "objections": "Concerned about TAT on specialised tests.",
+    "competitor": "MetroLabs",
+    "expectedMonthlyBusiness": 900,
+    "expectedClosure": "2026-09-30",
+    "nextAction": "Share detailed proposal + rate card.",
+    "nextFollowUp": "2026-07-30",
+    "gps": "18.5310,73.8440",
+    "attachmentUrl": "https://files.example/meeting-notes.pdf"
+  }
+}
+
+docs {
+  Record the outcome of a completed meeting. The outcome maps to the lead's next
+  status; the captured fields update the lead's denormalised meeting/commercial
+  fields and create a `LeadMeeting` history row + a `LeadStatusHistory` entry.
+
+  Fields (✱ = required):
+  - `outcome` ✱ — `MeetingOutcome` (see folder docs — e.g. `PROPOSAL_SHARED`,
+    `QUOTATION_SHARED`, `NEGOTIATION`, `CONVERTED`, `NOT_INTERESTED`, `LOST`,
+    `RESCHEDULED`, `FOLLOW_UP_REQUIRED`, and the `PENDING_*` / `NEED_*` variants).
+  - `summary` / `requirement` / `objections` (optional, ≤ 4000).
+  - `competitor` (optional, ≤ 255).
+  - `expectedMonthlyBusiness` (optional, int ≥ 0).
+  - `expectedClosure` / `nextFollowUp` (optional, ISO date).
+  - `nextAction` (optional, ≤ 500).
+  - `gps` (optional, ≤ 120).
+  - `attachmentUrl` (optional, ≤ 1000).
+
+  Path param `id` ✱ — lead UUID (`leadId`).
+
+  Tenant + active branch come from the JWT; do NOT send `tenantId` / `branchId`.
+  Errors: `LEAD_NOT_FOUND` (404), `ACTIVE_BRANCH_REQUIRED` (400).
+}

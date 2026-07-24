@@ -1,0 +1,44 @@
+meta {
+  name: Update Trip
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/sales/trips/{{tripId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "endingTime": "18:00",
+    "kmTravelled": 55,
+    "notes": "Added an extra stop; trip ran longer than planned."
+  }
+}
+
+docs {
+  Partial update of a trip's own fields (all optional). Visits are managed via
+  the dedicated visit endpoints, not here.
+
+  Fields (all optional; same rules as Create Trip):
+  - `salespersonId` (UUID; re-validated), `tripDate`, `startingLocation` /
+    `endingLocation` (≤ 255), `startingGps` / `endingGps` (≤ 120),
+    `startingTime` / `endingTime` (≤ 8), `kmTravelled` (int ≥ 0),
+    `status` (`TripStatus`), `notes` (≤ 2000).
+
+  Path param `id` ✱ — trip UUID (`tripId`).
+
+  Tenant + active branch come from the JWT; do NOT send `tenantId` / `branchId`.
+  Errors: `TRIP_NOT_FOUND` (404), `INVALID_SALESPERSON` (400),
+  `ACTIVE_BRANCH_REQUIRED` (400).
+}

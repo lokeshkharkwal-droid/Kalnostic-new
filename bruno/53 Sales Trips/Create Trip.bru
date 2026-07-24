@@ -1,0 +1,84 @@
+meta {
+  name: Create Trip
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/sales/trips
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "salespersonId": "{{salespersonId}}",
+    "leadId": "{{leadId}}",
+    "tripDate": "2026-07-25",
+    "startingLocation": "Kalnostics HQ, Pune",
+    "startingGps": "18.5204,73.8567",
+    "startingTime": "09:30",
+    "endingLocation": "City Hospital, Pune",
+    "endingGps": "18.5310,73.8440",
+    "endingTime": "17:00",
+    "kmTravelled": 42,
+    "status": "PLANNED",
+    "notes": "Quarterly visit to prospective tie-up hospitals.",
+    "visits": [
+      {
+        "sequence": 1,
+        "leadId": "{{leadId}}",
+        "label": "City Hospital",
+        "gps": "18.5310,73.8440",
+        "plannedAt": "2026-07-25T11:00:00.000Z",
+        "status": "PLANNED",
+        "notes": "Meet procurement head."
+      }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("tripId", data.id);
+  if (data && data.visits && data.visits[0] && data.visits[0].id) {
+    bru.setEnvVar("tripVisitId", data.visits[0].id);
+  }
+}
+
+docs {
+  Create a field-sales trip at the caller's active branch (**priority POST**).
+  Captures `tripId` (and `tripVisitId` from the first seeded visit).
+
+  Fields (✱ = required):
+
+  - `salespersonId` ✱ — UUID of an active staff `Person` in the tenant.
+    Validated in the service (400 `INVALID_SALESPERSON` otherwise).
+  - `leadId` (optional) — UUID of the lead this trip started from; validated for
+    the branch (400 `INVALID_TRIP_LEAD` otherwise).
+  - `tripDate` (optional) — ISO date string.
+  - `startingLocation` / `endingLocation` (optional, ≤ 255).
+  - `startingGps` / `endingGps` (optional, ≤ 120).
+  - `startingTime` / `endingTime` (optional, ≤ 8, e.g. `HH:mm`).
+  - `kmTravelled` (optional) — integer ≥ 0.
+  - `status` (optional) — `TripStatus`: `PLANNED` (default) | `IN_PROGRESS` |
+    `COMPLETED` | `CANCELLED`.
+  - `notes` (optional, ≤ 2000).
+  - `visits` (optional) — array of initial visits/waypoints; each item is a
+    `TripVisit` object (see Add Trip Visit for the fields). Created atomically
+    with the trip.
+
+  Response: `{ success, data: { id, ...trip, visits: [...] }, meta }`.
+
+  Tenant + active branch come from the JWT; do NOT send `tenantId` / `branchId`.
+  Errors: `INVALID_SALESPERSON` (400), `INVALID_TRIP_LEAD` (400),
+  `ACTIVE_BRANCH_REQUIRED` (400).
+}

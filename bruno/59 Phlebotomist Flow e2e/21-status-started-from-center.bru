@@ -1,0 +1,32 @@
+meta {
+  name: 21 Status → STARTED_FROM_CENTER
+  type: http
+  seq: 22
+}
+
+patch {
+  url: {{baseUrl}}/phlebotomist-collections/{{collectionId}}/status
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "status": "STARTED_FROM_CENTER",
+    "notes": "Phlebotomist left the collection center.",
+    "gpsLocation": "18.5204,73.8567"
+  }
+}
+
+docs {
+  **Step 21 — PATIENT_INFORMED → STARTED_FROM_CENTER.** Phlebotomist departs; GPS
+  captured on the history row.
+}

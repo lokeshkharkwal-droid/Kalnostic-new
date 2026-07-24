@@ -1,0 +1,31 @@
+meta {
+  name: 28 Status → COMPLETED
+  type: http
+  seq: 29
+}
+
+patch {
+  url: {{baseUrl}}/phlebotomist-collections/{{collectionId}}/status
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "status": "COMPLETED",
+    "notes": "Home-visit collection completed."
+  }
+}
+
+docs {
+  **Step 28 — ACCEPTED_BY_LAB → COMPLETED.** Terminal success state for the
+  workflow. The linked appointment is synced to COMPLETED (verified in step 30).
+}

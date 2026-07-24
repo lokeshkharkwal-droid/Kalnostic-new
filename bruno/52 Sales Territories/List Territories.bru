@@ -1,0 +1,37 @@
+meta {
+  name: List Territories
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/sales/territories?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: north
+  ~status: ACTIVE
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Paginated list of sales territories for the caller's tenant + active branch.
+  All query params optional:
+
+  - `page` / `limit` — offset pagination (defaults 1 / 20, limit capped at 100).
+  - `search` — case-insensitive match against territory `name` OR `code`.
+  - `status` — `ACTIVE` | `INACTIVE`.
+
+  Response: `{ success, data: [...], meta: { total, page, limit, totalPages,
+  timestamp } }`.
+
+  Tenant + active branch come from the JWT; do NOT send `tenantId` / `branchId`.
+  `400 ACTIVE_BRANCH_REQUIRED` if the caller has no active branch.
+}

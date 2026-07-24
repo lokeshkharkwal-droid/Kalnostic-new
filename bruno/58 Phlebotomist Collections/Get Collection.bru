@@ -1,0 +1,36 @@
+meta {
+  name: Get Collection
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/phlebotomist-collections/{{collectionId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("has status history", function () {
+    expect(res.getBody().data).to.have.property("statusHistory");
+  });
+}
+
+docs {
+  Fetch one collection fully composed (order + patient + phlebotomist + financial
+  rollups + barcode) **plus** its append-only status history (newest first) — the
+  Collection Overview modal / audit trail.
+
+  Each `statusHistory` row carries `changedBy` (the actor's Person id) **and**
+  `changedByName` (that person's resolved display name, or `null` when unresolvable)
+  so the audit trail can show a name instead of a UID.
+
+  `404 COLLECTION_NOT_FOUND` if missing / soft-deleted / other-tenant.
+}

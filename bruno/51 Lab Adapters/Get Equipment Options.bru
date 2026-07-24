@@ -1,0 +1,50 @@
+meta {
+  name: Get Equipment Options
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/equipment/options?search=
+  body: none
+  auth: bearer
+}
+
+params:query {
+  search:
+  ~page: 1
+  ~limit: 20
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  const list = Array.isArray(data) ? data : (data && data.data);
+  if (list && list.length && list[0].id) bru.setEnvVar("equipmentId", list[0].id);
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Lightweight `{ id, name, code }` options for the **Lab Adapter** form's Equipment
+  selector. This is a **business** route (global JwtAuthGuard) on the SiteAdmin-
+  owned Equipment module — equipment is platform-level and has no RLS, so a
+  business token can read the global catalogue.
+
+  **Query**
+  - `search` (optional) — case-insensitive match on the equipment `name`.
+  - `page` / `limit` (optional) — omit `page` for the full array; supply it for a
+    paginated `{ data, total, page, limit }` envelope.
+
+  **Related option source:** the adapter's **Lab Tests** are pulled from
+  `GET /branch-lab-tests/options` (see `36 Branch Lab Tests → Branch Lab Test
+  Options`) — the active branch's tests, resolved from the JWT profile. Neither
+  options endpoint is hardcoded on the frontend.
+}

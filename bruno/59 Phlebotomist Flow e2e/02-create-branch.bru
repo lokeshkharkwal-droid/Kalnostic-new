@@ -1,0 +1,70 @@
+meta {
+  name: 02 Create Branch (phlebotomist enabled)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/branches
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "name": "Phlebo Flow Diagnostic Center",
+    "branchType": "DIAGNOSTIC",
+    "status": "ACTIVE",
+    "addressLine": "42 MG Road",
+    "city": "Pune",
+    "state": "Maharashtra",
+    "pincode": "411001",
+    "phone": "+919822000001",
+    "email": "phleboflow@acme.test",
+    "openingTime": "08:00",
+    "closingTime": "20:00",
+    "dailyCapacity": 100,
+    "operationalDays": [
+      "MONDAY",
+      "TUESDAY",
+      "WEDNESDAY",
+      "THURSDAY",
+      "FRIDAY",
+      "SATURDAY",
+      "SUNDAY"
+    ],
+    "modules": [
+      { "moduleKey": "phlebotomist", "isEnabled": true },
+      { "moduleKey": "registration", "isEnabled": true },
+      { "moduleKey": "accession", "isEnabled": true }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.id) {
+    bru.setVar("branchId", data.id);
+    if (data.code) bru.setVar("branchCode", data.code);
+  }
+}
+
+docs {
+  **Step 2 — Create the branch and enable the phlebotomist module.**
+
+  A `DIAGNOSTIC` branch (that type offers the `phlebotomist`, `registration` and
+  `accession` modules — see `BRANCH_MODULES`). The `modules` array enables those
+  three at the branch in the same request (no separate `PUT /branches/:id/modules`
+  needed). `moduleKey` must be a known system module; `isEnabled` defaults to true.
+
+  `tenantId` comes from the JWT; `code` (e.g. `BR-00001`) is system-generated and
+  immutable — never send it. Captures **`branchId`** and **`branchCode`**.
+}

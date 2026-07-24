@@ -1,0 +1,65 @@
+meta {
+  name: Update Collection Status
+  type: http
+  seq: 3
+}
+
+patch {
+  url: {{baseUrl}}/phlebotomist-collections/{{collectionId}}/status
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "CONFIRMED",
+    "notes": "Confirmed with patient over phone",
+    "gpsLocation": "12.9716,77.5946"
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("status updated + history appended", function () {
+    const b = res.getBody().data;
+    expect(b.status).to.equal("CONFIRMED");
+    expect(b.statusHistory[0].status).to.equal("CONFIRMED");
+  });
+}
+
+docs {
+  Set a collection to a new `status`. Status changes are **unrestricted** — any
+  status → any status (there is no transition state machine; a previously-terminal
+  status like `CANCELLED` or `COMPLETED` can move anywhere). A history row is always
+  appended, and the change **cascades** in the same transaction:
+
+  - `SAMPLE_COLLECTED` → the order's items are marked collected and its accession
+    samples are collected via the accession state machine (guarded — only where
+    legal). `sampleCondition` (optional) is stored on the collection.
+  - `ACCEPTED_BY_LAB` → those samples are accepted (guarded).
+  - `CONFIRMED` / `SAMPLE_COLLECTED` / `COMPLETED` / `CANCELLED` → the linked
+    appointment status is synced; `CANCELLED` also releases the phlebotomist slot
+    and stores `notes` as the cancellation reason.
+
+  ## Body
+
+  - `status` — **required**: a `CollectionStatus`.
+  - `notes` — optional (≤2000); stored on the history row (+ cancel reason).
+  - `gpsLocation` — optional (≤255); stored on the history row.
+  - `attachmentUrl` — optional (≤1024); stored on the history row.
+  - `sampleCondition` — optional (≤255); stored on the collection when moving to
+    `SAMPLE_COLLECTED`.
+
+  `404 COLLECTION_NOT_FOUND` if the collection is missing / soft-deleted /
+  other-tenant.
+}

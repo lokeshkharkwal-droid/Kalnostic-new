@@ -958,6 +958,27 @@ CREATE POLICY prt_tenant_isolation ON pdf_report_templates
 CREATE UNIQUE INDEX IF NOT EXISTS prt_tenant_name_active_unique
   ON pdf_report_templates (tenant_id, name) WHERE deleted_at IS NULL;
 
+-- ── pdf_template_configs ──────────────────────────────────────────────────────
+-- Per-tenant (optionally per-branch) default-template-per-slot map. Never global,
+-- so the policy is a plain tenant isolation (no NULL-tenant clause).
+ALTER TABLE pdf_template_configs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pdf_template_configs FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS ptc_tenant_isolation ON pdf_template_configs;
+CREATE POLICY ptc_tenant_isolation ON pdf_template_configs
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- One active assignment per (tenant, branch, slot). Postgres treats NULLs as
+-- distinct, so branch-level and tenant-level (NULL branch) rows need separate
+-- partial unique indexes (mirrors the auth_roles pattern). Prisma can't express
+-- partial unique indexes, so they live here.
+CREATE UNIQUE INDEX IF NOT EXISTS ptc_tenant_branch_slot_active_unique
+  ON pdf_template_configs (tenant_id, branch_id, slot_key)
+  WHERE deleted_at IS NULL AND branch_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS ptc_tenant_slot_active_unique
+  ON pdf_template_configs (tenant_id, slot_key)
+  WHERE deleted_at IS NULL AND branch_id IS NULL;
+
 -- ── branch_lab_tests ──────────────────────────────────────────────────────────
 ALTER TABLE branch_lab_tests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE branch_lab_tests FORCE ROW LEVEL SECURITY;
@@ -1218,6 +1239,24 @@ CREATE POLICY appointment_status_history_tenant_isolation ON appointment_status_
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── Phlebotomist / Home Sample Collection ──────────────────────────────────────
+
+-- ── home_visit_collections ────────────────────────────────────────────────────
+ALTER TABLE home_visit_collections ENABLE ROW LEVEL SECURITY;
+ALTER TABLE home_visit_collections FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS home_visit_collections_tenant_isolation ON home_visit_collections;
+CREATE POLICY home_visit_collections_tenant_isolation ON home_visit_collections
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── home_visit_status_history ─────────────────────────────────────────────────
+ALTER TABLE home_visit_status_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE home_visit_status_history FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS home_visit_status_history_tenant_isolation ON home_visit_status_history;
+CREATE POLICY home_visit_status_history_tenant_isolation ON home_visit_status_history
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- ── Doctor Schedule ─────────────────────────────────────────────────────────────
 
 -- ── doctor_schedules ──────────────────────────────────────────────────────────
@@ -1404,6 +1443,46 @@ CREATE POLICY accession_settings_tenant_isolation ON accession_settings
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── lab_adapters ──────────────────────────────────────────────────────────────
+-- A tenant's instrument-integration bridge; references a global SITE_ADMIN
+-- equipment, assigned to N branches, maps branch lab tests.
+ALTER TABLE lab_adapters ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lab_adapters FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lab_adapters_tenant_isolation ON lab_adapters;
+CREATE POLICY lab_adapters_tenant_isolation ON lab_adapters
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- An adapter name is unique per tenant among ACTIVE rows.
+CREATE UNIQUE INDEX IF NOT EXISTS lab_adapter_name_active_unique
+  ON lab_adapters (tenant_id, name) WHERE deleted_at IS NULL;
+
+-- ── lab_adapter_branches ──────────────────────────────────────────────────────
+ALTER TABLE lab_adapter_branches ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lab_adapter_branches FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lab_adapter_branches_tenant_isolation ON lab_adapter_branches;
+CREATE POLICY lab_adapter_branches_tenant_isolation ON lab_adapter_branches
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- A branch is assigned to an adapter at most once among ACTIVE rows.
+CREATE UNIQUE INDEX IF NOT EXISTS lab_adapter_branch_active_unique
+  ON lab_adapter_branches (tenant_id, lab_adapter_id, branch_id)
+  WHERE deleted_at IS NULL;
+
+-- ── lab_adapter_tests ─────────────────────────────────────────────────────────
+ALTER TABLE lab_adapter_tests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lab_adapter_tests FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lab_adapter_tests_tenant_isolation ON lab_adapter_tests;
+CREATE POLICY lab_adapter_tests_tenant_isolation ON lab_adapter_tests
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- A branch lab test is mapped to an adapter at most once among ACTIVE rows.
+CREATE UNIQUE INDEX IF NOT EXISTS lab_adapter_test_active_unique
+  ON lab_adapter_tests (tenant_id, lab_adapter_id, branch_lab_test_id)
+  WHERE deleted_at IS NULL;
+
 -- Platform-level tables (tenants, persons, person_credentials, siteadmin_users,
 -- refresh_tokens, person_tenant_enrollments, test_groups, test_group_mappings,
 -- equipment, equipment_lab_tests, support_infos) are intentionally NOT covered —
@@ -1414,3 +1493,91 @@ CREATE POLICY accession_settings_tenant_isolation ON accession_settings
 -- encrypted (AES-256-GCM with a random IV → identical inputs yield different
 -- ciphertext), so a uniqueness index would be meaningless; the v2.0 spec requires
 -- format validation, not de-duplication, for these fields.
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- Sales & B2B module (tenant-scoped tables)
+-- ══════════════════════════════════════════════════════════════════════════════
+
+-- ── sales_territories ─────────────────────────────────────────────────────────
+ALTER TABLE sales_territories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sales_territories FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS sales_territories_tenant_isolation ON sales_territories;
+CREATE POLICY sales_territories_tenant_isolation ON sales_territories
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── leads ─────────────────────────────────────────────────────────────────────
+ALTER TABLE leads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE leads FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS leads_tenant_isolation ON leads;
+CREATE POLICY leads_tenant_isolation ON leads
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- Per-tenant unique lead code among ACTIVE rows (system-generated LD-YYYY-#####).
+CREATE UNIQUE INDEX IF NOT EXISTS leads_tenant_lead_code_active_unique
+  ON leads (tenant_id, lead_code) WHERE deleted_at IS NULL;
+
+-- ── lead_status_histories (immutable; no soft-delete) ─────────────────────────
+ALTER TABLE lead_status_histories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lead_status_histories FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lead_status_histories_tenant_isolation ON lead_status_histories;
+CREATE POLICY lead_status_histories_tenant_isolation ON lead_status_histories
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── lead_meetings ─────────────────────────────────────────────────────────────
+ALTER TABLE lead_meetings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lead_meetings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lead_meetings_tenant_isolation ON lead_meetings;
+CREATE POLICY lead_meetings_tenant_isolation ON lead_meetings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── follow_ups ────────────────────────────────────────────────────────────────
+ALTER TABLE follow_ups ENABLE ROW LEVEL SECURITY;
+ALTER TABLE follow_ups FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS follow_ups_tenant_isolation ON follow_ups;
+CREATE POLICY follow_ups_tenant_isolation ON follow_ups
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- Per-tenant unique follow-up code among ACTIVE rows (system-generated FU-#####).
+CREATE UNIQUE INDEX IF NOT EXISTS follow_ups_tenant_follow_up_code_active_unique
+  ON follow_ups (tenant_id, follow_up_code) WHERE deleted_at IS NULL;
+
+-- ── follow_up_status_histories (immutable; no soft-delete) ────────────────────
+ALTER TABLE follow_up_status_histories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE follow_up_status_histories FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS follow_up_status_histories_tenant_isolation ON follow_up_status_histories;
+CREATE POLICY follow_up_status_histories_tenant_isolation ON follow_up_status_histories
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── trips ─────────────────────────────────────────────────────────────────────
+ALTER TABLE trips ENABLE ROW LEVEL SECURITY;
+ALTER TABLE trips FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS trips_tenant_isolation ON trips;
+CREATE POLICY trips_tenant_isolation ON trips
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- Per-tenant unique trip code among ACTIVE rows (system-generated TRP-#####).
+CREATE UNIQUE INDEX IF NOT EXISTS trips_tenant_trip_code_active_unique
+  ON trips (tenant_id, trip_code) WHERE deleted_at IS NULL;
+
+-- ── trip_visits ───────────────────────────────────────────────────────────────
+ALTER TABLE trip_visits ENABLE ROW LEVEL SECURITY;
+ALTER TABLE trip_visits FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS trip_visits_tenant_isolation ON trip_visits;
+CREATE POLICY trip_visits_tenant_isolation ON trip_visits
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── sales_settings ────────────────────────────────────────────────────────────
+ALTER TABLE sales_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sales_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS sales_settings_tenant_isolation ON sales_settings;
+CREATE POLICY sales_settings_tenant_isolation ON sales_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());

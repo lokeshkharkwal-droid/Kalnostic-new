@@ -1,0 +1,35 @@
+meta {
+  name: 23 Status → SAMPLE_COLLECTED
+  type: http
+  seq: 24
+}
+
+patch {
+  url: {{baseUrl}}/phlebotomist-collections/{{collectionId}}/status
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "status": "SAMPLE_COLLECTED",
+    "notes": "2 vials drawn.",
+    "gpsLocation": "18.5314,73.8446",
+    "sampleCondition": "Good"
+  }
+}
+
+docs {
+  **Step 23 — REACHED_PATIENT_LOCATION → SAMPLE_COLLECTED.** The core collection
+  event. `sampleCondition` is recorded on the collection here. Because the order
+  now carries catalogue items (steps 10–17), this also marks the order items
+  `collectedAt` and moves their accession samples to COLLECTED.
+}

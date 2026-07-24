@@ -26,6 +26,7 @@ import { BranchLabTestModule } from './modules/branch-lab-test/branch-lab-test.m
 import { BranchLabPanelModule } from './modules/branch-lab-panel/branch-lab-panel.module';
 import { TestGroupModule } from './modules/test-group/test-group.module';
 import { EquipmentModule } from './modules/equipment/equipment.module';
+import { LabAdapterModule } from './modules/lab-adapter/lab-adapter.module';
 import { LocationModule } from './modules/location/location.module';
 import { OutsourceCenterModule } from './modules/outsource-center/outsource-center.module';
 import { ReferralPanelModule } from './modules/referral-panel/referral-panel.module';
@@ -57,6 +58,14 @@ import { AppointmentModule } from './modules/appointment/appointment.module';
 import { AccessionModule } from './modules/accession/accession.module';
 import { DoctorScheduleModule } from './modules/doctor-schedule/doctor-schedule.module';
 import { PhlebotomistScheduleModule } from './modules/phlebotomist-schedule/phlebotomist-schedule.module';
+import { PhlebotomistCollectionModule } from './modules/phlebotomist-collection/phlebotomist-collection.module';
+import { SalesTerritoryModule } from './modules/sales-territory/sales-territory.module';
+import { SalesTripModule } from './modules/sales-trip/sales-trip.module';
+import { SalesLeadModule } from './modules/sales-lead/sales-lead.module';
+import { SalesFollowUpModule } from './modules/sales-follow-up/sales-follow-up.module';
+import { SalesReportModule } from './modules/sales-report/sales-report.module';
+import { SalesDashboardModule } from './modules/sales-dashboard/sales-dashboard.module';
+import { SalesSettingsModule } from './modules/sales-settings/sales-settings.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 
 /**
@@ -103,6 +112,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     BranchLabPanelModule,
     TestGroupModule,
     EquipmentModule,
+    LabAdapterModule,
     LocationModule,
     OutsourceCenterModule,
     ReferralPanelModule,
@@ -134,6 +144,14 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     AccessionModule,
     DoctorScheduleModule,
     PhlebotomistScheduleModule,
+    PhlebotomistCollectionModule,
+    SalesTerritoryModule,
+    SalesTripModule,
+    SalesLeadModule,
+    SalesFollowUpModule,
+    SalesReportModule,
+    SalesDashboardModule,
+    SalesSettingsModule,
   ],
   providers: [
     // Global business authentication. SiteAdmin routes use @Public() + their

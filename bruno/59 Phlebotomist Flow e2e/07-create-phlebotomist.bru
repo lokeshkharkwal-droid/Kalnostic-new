@@ -1,0 +1,46 @@
+meta {
+  name: 07 Create Phlebotomist
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/users/manage/quick-staff
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "role": "phlebotomist",
+    "name": "Ravi Kumar",
+    "mobileNumber": "9812345777",
+    "email": "ravi.phlebo@acme.test"
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.id) bru.setVar("phlebotomistId", data.id);
+}
+
+docs {
+  **Step 7 — Create the field phlebotomist** (as the operator).
+
+  A phlebotomist is a **staff Person** with the `phlebotomist` role — quick-staff
+  creates the Person and auto-assigns them to the operator's **active branch**
+  with the role's default modules (`phlebotomist`, `registration`, `accession`,
+  all enabled at this branch). This is why the request runs under
+  `operatorToken`: quick-staff requires an active branch.
+
+  Captures **`phlebotomistId`** (the Person id) — used as
+  `diagnostics.phlebotomistId` on the order and as the schedule's `phlebotomistId`.
+}

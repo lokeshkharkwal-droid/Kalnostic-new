@@ -1,0 +1,43 @@
+meta {
+  name: List Trips
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/sales/trips?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: pune
+  ~dateFrom: 2026-07-01
+  ~dateTo: 2026-07-31
+  ~salespersonId: {{salespersonId}}
+  ~status: PLANNED
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Paginated list of trips for the caller's tenant + active branch. All query
+  params optional:
+
+  - `page` / `limit` — offset pagination (defaults 1 / 20, limit capped at 100).
+  - `search` — free-text over trip code / location / notes.
+  - `dateFrom` / `dateTo` — ISO date (yyyy-mm-dd) bounds on the trip date.
+  - `salespersonId` — UUID; filter by the assigned salesperson.
+  - `status` — `TripStatus` (`PLANNED` | `IN_PROGRESS` | `COMPLETED` |
+    `CANCELLED`).
+
+  Response: `{ success, data: [...], meta: { total, page, limit, totalPages,
+  timestamp } }`.
+
+  Tenant + active branch come from the JWT; do NOT send `tenantId` / `branchId`.
+  `400 ACTIVE_BRANCH_REQUIRED` if the caller has no active branch.
+}

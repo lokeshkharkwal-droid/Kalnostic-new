@@ -1,0 +1,24 @@
+meta {
+  name: Mark Lead Lost
+  type: http
+  seq: 10
+}
+
+patch {
+  url: {{baseUrl}}/sales/leads/{{leadId}}/lost
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Mark a lead `LOST` — status-only transition. Records a status-history entry.
+
+  No request body. Path param `id` ✱ — lead UUID (`leadId`).
+
+  Tenant + active branch come from the JWT; do NOT send `tenantId` / `branchId`.
+  Errors: `LEAD_NOT_FOUND` (404), `ACTIVE_BRANCH_REQUIRED` (400).
+}

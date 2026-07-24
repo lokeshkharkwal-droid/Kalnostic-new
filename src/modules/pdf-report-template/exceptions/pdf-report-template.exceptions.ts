@@ -37,6 +37,18 @@ export class InvalidPdfReportTemplateTypeException extends KaltrosException {
   }
 }
 
+/** 400 — a Configuration `slotKey` is not a known document slot. */
+export class InvalidPdfTemplateConfigSlotException extends KaltrosException {
+  constructor(slotKey: string) {
+    super(
+      'INVALID_PDF_TEMPLATE_CONFIG_SLOT',
+      'Unknown PDF template configuration slot',
+      { slotKey },
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+}
+
 /** 500 — the PDF could not be rendered from the template. */
 export class PdfGenerationFailedException extends KaltrosException {
   constructor(id: string, cause?: string) {

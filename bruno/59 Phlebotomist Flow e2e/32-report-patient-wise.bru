@@ -1,0 +1,22 @@
+meta {
+  name: 32 Report — Patient-wise
+  type: http
+  seq: 33
+}
+
+get {
+  url: {{baseUrl}}/phlebotomist-collections/reports/patient-wise
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+docs {
+  **Step 32 — Patient-wise report.** Paginated, enriched collection rows (patient,
+  order, charges, sample/collection counts). Accepts the same filters as the list
+  endpoint: `search`, `status`, `phlebotomistId`, `dateFrom`, `dateTo`, `page`,
+  `limit`, `branchId`.
+}

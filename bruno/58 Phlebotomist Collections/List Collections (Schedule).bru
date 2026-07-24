@@ -1,0 +1,71 @@
+meta {
+  name: List Collections (Schedule)
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/phlebotomist-collections?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: ORD-00001
+  ~status: SCHEDULED
+  ~priority: NORMAL
+  ~phlebotomistId: {{phlebotomistId}}
+  ~paymentStatus: NOT_PAID
+  ~referralPanelId: {{referralPanelId}}
+  ~referredById: {{referralDoctorId}}
+  ~collectionType: home_collection
+  ~dateFrom: 2026-01-01
+  ~dateTo: 2026-12-31
+  ~branchId: {{branchId}}
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.length && data[0].id) {
+    bru.setEnvVar("collectionId", data[0].id);
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("pagination meta is present", function () {
+    expect(res.getBody().meta).to.have.property("total");
+  });
+}
+
+docs {
+  Paginated list of home-visit collections for the Collection Schedule, scoped to
+  the active branch. Newest scheduled first. Each row is enriched with the order
+  (code/bill id/date), patient (name/mobile/UMID/address), assigned phlebotomist,
+  the linked appointment status, financial rollups (`grossAmount`,
+  `discountAmount`, `netAmount`, `paidAmount`, `balanceAmount`, `visitCharges`,
+  `sampleCollectionCharges` — all minor units), the sample barcode (first
+  generated sample), and item counts.
+
+  ## Filters (toggle the `~` to enable a query param)
+
+  - `search` — matches patient name/mobile/UMID, order code/bill id, or a sample
+    barcode (case-insensitive).
+  - `status` — a `CollectionStatus` (e.g. `SCHEDULED`, `SAMPLE_COLLECTED`).
+  - `priority` — `NORMAL` | `URGENT` | `HIGH`.
+  - `phlebotomistId` — assigned phlebotomist (a staff Person id).
+  - `paymentStatus` — `NOT_PAID` | `PARTIALLY_PAID` | `PAID`.
+  - `referralPanelId` — B2B referral panel id.
+  - `referredById` — referring doctor id (the order's `referredByDoctorId`).
+  - `collectionType` — accepted for forward-compat (only home collections today).
+  - `dateFrom` / `dateTo` — inclusive `scheduledCollectionAt` range (ISO date).
+  - `branchId` — branch override (defaults to the active branch from the JWT).
+}

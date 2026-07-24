@@ -1,0 +1,43 @@
+meta {
+  name: Update Trip Visit
+  type: http
+  seq: 9
+}
+
+patch {
+  url: {{baseUrl}}/sales/trips/{{tripId}}/visits/{{tripVisitId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "COMPLETED",
+    "arrivedAt": "2026-07-25T14:25:00.000Z",
+    "notes": "Met the procurement head; follow-up scheduled."
+  }
+}
+
+docs {
+  Update a visit / waypoint on a trip. Same field set as Add Trip Visit (all
+  optional): `sequence`, `leadId`, `label`, `gps`, `plannedAt`, `arrivedAt`,
+  `status` (`TripVisitStatus`), `notes`.
+
+  Path params:
+  - `id` ✱ — trip UUID (`tripId`).
+  - `visitId` ✱ — the visit UUID (`tripVisitId`).
+
+  Tenant / trip come from context; do NOT send `tenantId` / `branchId` /
+  `tripId`.
+
+  Errors: `TRIP_NOT_FOUND` (404), `TRIP_VISIT_NOT_FOUND` (404),
+  `INVALID_TRIP_LEAD` (400), `ACTIVE_BRANCH_REQUIRED` (400).
+}

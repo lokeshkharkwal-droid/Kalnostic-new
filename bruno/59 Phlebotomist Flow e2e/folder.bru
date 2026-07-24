@@ -1,0 +1,107 @@
+meta {
+  name: 59 Phlebotomist Flow e2e
+  seq: 65
+}
+
+script:pre-request {
+  // ---------------------------------------------------------------------------
+  // Phlebotomist Flow — folder-level setup (runs before every request in this
+  // folder). Seeds the base URL and the ONLY values a developer edits (once):
+  // the entry business-admin credentials + tenant slug. Everything else (tokens,
+  // ids) is captured automatically by each request's post-response script with
+  // bru.setVar(...). This folder relies exclusively on bru.setVar — it needs NO
+  // Bruno environment (if a Local environment IS selected, its baseUrl is kept).
+  // ---------------------------------------------------------------------------
+  
+  // API base — global prefix is /api/v1 (see src/main.ts).
+  if (!bru.getVar("baseUrl")) bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+  
+  // Entry point: an existing business-admin login for a seeded tenant.
+  // Edit these three to match your DB (prisma/seed.ts) if they differ.
+  if (!bru.getVar("tenantSlug"))      bru.setVar("tenantSlug", "acme-diagnostics");
+  if (!bru.getVar("adminIdentifier")) bru.setVar("adminIdentifier", "+919812345679");
+  if (!bru.getVar("adminPassword"))   bru.setVar("adminPassword", "Str0ng@Pass1");
+  
+  // Known password for the OPERATOR user this flow creates, so that logging in
+  // as that user later is fully automated (no manual copy).
+  if (!bru.getVar("operatorPassword")) bru.setVar("operatorPassword", "Str0ng@Pass1");
+}
+
+docs {
+  # Phlebotomist Flow — end-to-end, fully automated
+  
+  Walks the **entire** Phlebotomist (home-sample-collection) module from a
+  Business-Admin login through to a completed home visit. Run the requests **in
+  order** (01 → 26) — each captures the ids/tokens the next one needs via
+  `bru.setVar(...)`, so you never copy anything by hand.
+  
+  ## Self-contained (no environment needed)
+  This folder does not depend on the collection's `environments/`. `baseUrl` and
+  the entry credentials are seeded in this folder's `script:pre-request` using
+  `bru.setVar`, and every downstream value is captured at runtime. Just select
+  the folder and **Run Folder** (or `npx @usebruno/cli run "59 Phlebotomist Flow"
+  --sort` from the `bruno/` collection root). If a Local environment is selected,
+  its `baseUrl` is respected.
+  
+  ## The only thing you may need to edit
+  The entry business-admin credentials in the pre-request above
+  (`adminIdentifier` / `adminPassword` / `tenantSlug`) must match a real seeded
+  tenant admin in your database. Nothing else requires editing.
+  
+  ## Flow (matches the request numbers)
+  1. **01** Business-admin login → `businessAdminToken`.
+  2. **02** Create a DIAGNOSTIC branch with the **phlebotomist** module enabled.
+  3. **03** Create an OPERATOR staff user (receptionist) at that branch, known password.
+  4. **04** Enable the operator's modules (adds **phlebotomist**).
+  5. **05a/05b** Inspect the permission catalog, then grant the operator the
+     phlebotomist permissions.
+  6. **06** Log in as the operator → `operatorToken` (branch-scoped: its default
+     profile is the new branch, so branch-scoped endpoints work).
+  7. **07** As operator, create the field **phlebotomist** (staff Person, quick-staff).
+  8. **08** Create the phlebotomist's schedule — **required**: order creation
+     reserves a slot and fails without an ACTIVE schedule.
+  9. **09** Create a patient.
+  10. **Catalogue prerequisites (10–16)** — build what the order needs:
+      - **10** Resolve the branch's (auto-provisioned) master data.
+      - **11** Create a lab test inside it.
+      - **12** Create a lab panel inside it.
+      - **13** Import the lab test into the branch's list.
+      - **14** Import the lab panel into the branch's list.
+      - **15/16** Resolve the resulting `branchLabTestId` / `branchLabPanelId`.
+  11. **17** Create the home-visit diagnostic order (with the imported test + panel
+      as items) → also creates the `HomeVisitCollection` (status SCHEDULED) + an
+      Appointment.
+  12. **18** Fetch the created collection id (not returned by the order response).
+  13. **19–28** Advance the collection through its status state machine to COMPLETED.
+  14. **29** Read the collection detail + full status history.
+  15. **30** Read the appointment (its status is synced from the collection).
+  16. **31–33** Dashboard summary + patient-wise / phlebotomist-wise reports.
+  
+  ## Variables it sets
+  Tokens are named distinctly from the rest of the collection
+  (`businessAdminToken`, `operatorToken`) so this flow never disturbs the main
+  collection's `businessAccessToken`. The ids it captures (`branchId`,
+  `masterDataId`, `labTestId`, `labPanelId`, `branchLabTestId`, `branchLabPanelId`,
+  `orderId`, `orderCode`, `patientId`, `appointmentId`, `collectionId`,
+  `phlebotomistId`, `scheduleId`, …) are runtime vars set via `bru.setVar` — they
+  shadow during the run and do not modify any saved environment file.
+  
+  ## Re-running
+  This flow creates records with **unique** fields — the branch `name`, the
+  operator's `username` / `email` / `mobileNumber` (plus the phlebotomist's and
+  patient's mobiles), and the lab test/panel `testCode` / `panelCode` (unique per
+  master data). A clean run needs values not already taken: run against a fresh
+  DB, or bump those literals in requests 02, 03, 07, 09, 11 and 12 before
+  re-running.
+  
+  ## Notes
+  - A "phlebotomist" is a **staff Person** with the `phlebotomist` role — there is
+    no separate phlebotomist master table. `order.diagnostics.phlebotomistId` is a
+    Person id.
+  - Master data is **auto-provisioned per branch**; the branch lab-test/panel
+    import reads from that single mapped master data, so the flow creates the lab
+    test/panel inside it (step 10 resolves it) rather than POSTing a new one.
+  - The order carries real catalogue items (the imported test + panel), so
+    `SAMPLE_COLLECTED` genuinely marks the order items collected and moves their
+    accession samples to COLLECTED.
+}

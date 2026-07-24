@@ -1,0 +1,29 @@
+meta {
+  name: Dashboard Overview
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/sales/dashboard
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Composed Sales dashboard overview for the caller's tenant + active branch
+  (KPIs, pipeline funnel by `PipelineStage`, status breakdown, recent activity).
+  Read-only.
+
+  No body / query params.
+
+  Response: `{ success, data: { kpis: {...}, funnel: [...], ... },
+  meta: { timestamp } }`.
+
+  Tenant + active branch come from the JWT; do NOT send `tenantId` / `branchId`.
+  `400 ACTIVE_BRANCH_REQUIRED` if the caller has no active branch.
+}

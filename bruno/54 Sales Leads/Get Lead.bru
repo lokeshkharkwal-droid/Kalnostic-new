@@ -1,0 +1,27 @@
+meta {
+  name: Get Lead
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/sales/leads/{{leadId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Fetch one lead with its status history, meetings, and derived counts, scoped to
+  the caller's tenant + active branch.
+
+  Path param `id` ✱ — lead UUID (`leadId`).
+
+  Response: `{ success, data: { id, leadCode, ...allFields, history: [...],
+  meetings: [...], ... }, meta }`.
+
+  Errors: `LEAD_NOT_FOUND` (404), `ACTIVE_BRANCH_REQUIRED` (400).
+}

@@ -3,6 +3,7 @@ import { PrismaModule } from '../../prisma/prisma.module';
 import { AppointmentModule } from '../appointment/appointment.module';
 import { AccessionModule } from '../accession/accession.module';
 import { PhlebotomistScheduleModule } from '../phlebotomist-schedule/phlebotomist-schedule.module';
+import { PhlebotomistCollectionModule } from '../phlebotomist-collection/phlebotomist-collection.module';
 import { OrderController } from './order.controller';
 import { OrderService } from './order.service';
 
@@ -22,6 +23,7 @@ import { OrderService } from './order.service';
     AppointmentModule,
     AccessionModule,
     PhlebotomistScheduleModule,
+    PhlebotomistCollectionModule,
   ],
   controllers: [OrderController],
   providers: [OrderService],

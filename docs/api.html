@@ -168,6 +168,17 @@
   <a href="#doc-version">GET /documents/:id/versions/:versionId</a>
   <a href="#doc-update">PATCH /documents/:id</a>
   <a href="#doc-delete">DELETE /documents/:id</a>
+  <h3>Sales</h3>
+  <a href="#sales-territories">Territories</a>
+  <a href="#sales-trips">Trips</a>
+  <a href="#sales-leads">Leads</a>
+  <a href="#sales-follow-ups">Follow-ups</a>
+  <a href="#sales-reports">Reports &amp; dashboard</a>
+  <a href="#sales-settings">Settings</a>
+  <h3>Phlebotomist</h3>
+  <a href="#phleb-collections">Collection Schedule</a>
+  <a href="#phleb-collections-summary">Dashboard summary</a>
+  <a href="#phleb-collections-reports">Reports</a>
 </nav>
 <main>
 
@@ -1811,6 +1822,347 @@ per doctor + branch</b>. All times are 24h <code>HH:mm</code>; dates are ISO <co
   <code>branchId</code>/<code>search</code>, opt-in <code>page</code>/<code>limit</code>) delegates to the
   Doctors module; <code>branches</code> to the Branch module; <code>departments</code>/<code>specialities</code>
   are the tenant's active departments/categories.</p>
+</div>
+
+<h2 id="sales">Sales <span style="font-size:13px;color:var(--muted)">(field-sales CRM — leads, trips, follow-ups)</span></h2>
+<div class="note">The Sales module is a business-facing CRM for lab/diagnostic tie-ups. Every route is
+<b>business-authenticated</b> and tenant-scoped + <b>branch-level</b>: <code>tenantId</code> comes from the JWT and
+the active branch from the caller's profile (<code>@CurrentProfile()</code>). <b>Never send</b>
+<code>tenantId</code>/<code>branchId</code> — they come from context; a caller with no active branch gets
+<span class="pill">400 ACTIVE_BRANCH_REQUIRED</span>. Referenced ids (<code>salespersonId</code>, <code>leadId</code>,
+<code>tripId</code>, <code>territoryId</code>) <i>are</i> sent in bodies and validated against the tenant/branch.
+Writes are audited (<code>AuditModule.SALES_*</code>). <code>leadCode</code> (<code>LD-YYYY-#####</code>) is
+system-generated. Settings are the one <b>tenant-level</b> (no branch) resource.</div>
+
+<h3 id="sales-territories">Territories <span style="font-size:13px;color:var(--muted)">(Territory / Zone master)</span></h3>
+
+<div class="ep" id="sales-terr-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/sales/territories?page=1&amp;limit=20</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Paginated territories for the active branch. Optional <code>search</code> (name/code), <code>status</code>
+  (ACTIVE|INACTIVE). Pagination lifted into <code>meta</code>.</p>
+</div>
+<div class="ep" id="sales-terr-options">
+  <div><span class="m get">GET</span><span class="path">/api/v1/sales/territories/options</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Active <code>{ id, name }[]</code> for the Territory/Zone dropdown. Literal route, declared before <code>:id</code>.</p>
+</div>
+<div class="ep" id="sales-terr-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/sales/territories/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>One territory by id. <span class="pill">404 SALES_TERRITORY_NOT_FOUND</span>.</p>
+</div>
+<div class="ep" id="sales-terr-create">
+  <div><span class="m post">POST</span><span class="path">/api/v1/sales/territories</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Create a territory at the active branch. <code>name</code> ✱ (≤255, unique among active →
+  <span class="pill">409 SALES_TERRITORY_NAME_CONFLICT</span>), <code>code</code> (≤64), <code>isActive</code>.</p>
+  <pre>{ "name":"North Zone", "code":"NZ", "isActive":true }</pre>
+</div>
+<div class="ep" id="sales-terr-update">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/sales/territories/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Partial update (name/code/isActive). Errors: <span class="pill">404 SALES_TERRITORY_NOT_FOUND</span>,
+  <span class="pill">409 SALES_TERRITORY_NAME_CONFLICT</span>.</p>
+</div>
+<div class="ep" id="sales-terr-delete">
+  <div><span class="m delete">DELETE</span><span class="path">/api/v1/sales/territories/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Soft-delete (frees the name for reuse). <span class="pill">404 SALES_TERRITORY_NOT_FOUND</span>.</p>
+</div>
+
+<h3 id="sales-trips">Trips <span style="font-size:13px;color:var(--muted)">(field-sales trips &amp; roadmap)</span></h3>
+
+<div class="ep" id="sales-trip-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/sales/trips?page=1&amp;limit=20</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Paginated trips. Filters: <code>search</code> (code/location/notes), <code>dateFrom</code>/<code>dateTo</code>,
+  <code>salespersonId</code>, <code>status</code> (<code>TripStatus</code>).</p>
+</div>
+<div class="ep" id="sales-trip-create">
+  <div><span class="m post">POST</span><span class="path">/api/v1/sales/trips</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p><b>Priority endpoint.</b> Create a trip. <code>salespersonId</code> ✱ (active staff Person →
+  <span class="pill">400 INVALID_SALESPERSON</span>), optional <code>leadId</code>
+  (<span class="pill">400 INVALID_TRIP_LEAD</span>), start/end location/gps/time, <code>kmTravelled</code>,
+  <code>status</code>, <code>notes</code>, and optional initial <code>visits[]</code>.</p>
+  <pre>{ "salespersonId":"…", "leadId":"…", "tripDate":"2026-07-25",
+  "startingLocation":"HQ, Pune", "endingLocation":"City Hospital",
+  "kmTravelled":42, "status":"PLANNED", "notes":"…",
+  "visits":[{ "sequence":1, "leadId":"…", "label":"City Hospital",
+    "status":"PLANNED" }] }</pre>
+  <p class="lbl">Enums</p>
+  <p><code>TripStatus</code> PLANNED|IN_PROGRESS|COMPLETED|CANCELLED ·
+  <code>TripVisitStatus</code> PLANNED|COMPLETED|PENDING|CANCELLED.</p>
+</div>
+<div class="ep" id="sales-trip-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/sales/trips/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>One trip with visits + derived counts. <span class="pill">404 TRIP_NOT_FOUND</span>.</p>
+</div>
+<div class="ep" id="sales-trip-roadmap">
+  <div><span class="m get">GET</span><span class="path">/api/v1/sales/trips/:id/roadmap</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Roadmap: ordered visits + start/end waypoints + totals. <span class="pill">404 TRIP_NOT_FOUND</span>.</p>
+</div>
+<div class="ep" id="sales-trip-update">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/sales/trips/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Partial update of the trip's own fields (visits managed via visit routes). Errors:
+  <span class="pill">404 TRIP_NOT_FOUND</span>, <span class="pill">400 INVALID_SALESPERSON</span>.</p>
+</div>
+<div class="ep" id="sales-trip-status">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/sales/trips/:id/status</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Transition status. <code>status</code> ✱ (<code>TripStatus</code>). <span class="pill">404 TRIP_NOT_FOUND</span>.</p>
+</div>
+<div class="ep" id="sales-trip-delete">
+  <div><span class="m delete">DELETE</span><span class="path">/api/v1/sales/trips/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Soft-delete a trip. <span class="pill">404 TRIP_NOT_FOUND</span>.</p>
+</div>
+<div class="ep" id="sales-trip-addvisit">
+  <div><span class="m post">POST</span><span class="path">/api/v1/sales/trips/:id/visits</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Add a visit/waypoint: <code>sequence</code>, <code>leadId</code>, <code>label</code>, <code>gps</code>,
+  <code>plannedAt</code>/<code>arrivedAt</code>, <code>status</code> (<code>TripVisitStatus</code>), <code>notes</code>.
+  Errors: <span class="pill">404 TRIP_NOT_FOUND</span>, <span class="pill">400 INVALID_TRIP_LEAD</span>.</p>
+</div>
+<div class="ep" id="sales-trip-updatevisit">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/sales/trips/:id/visits/:visitId</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Update a visit. Errors: <span class="pill">404 TRIP_NOT_FOUND</span>,
+  <span class="pill">404 TRIP_VISIT_NOT_FOUND</span>, <span class="pill">400 INVALID_TRIP_LEAD</span>.</p>
+</div>
+
+<h3 id="sales-leads">Leads <span style="font-size:13px;color:var(--muted)">(business leads — 10-section form + lifecycle)</span></h3>
+
+<div class="ep" id="sales-lead-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/sales/leads?page=1&amp;limit=20</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Paginated leads mirroring the FE filter bar. Optional: <code>search</code>, <code>statusBucket</code>
+  (sidebar tab), <code>status</code>, <code>salespersonId</code>, <code>territoryId</code>, <code>source</code>,
+  <code>category</code>, <code>organizationType</code>, <code>priority</code>, <code>pipelineStage</code>,
+  <code>agreementStatus</code>, <code>proposalStatus</code>, <code>quotationStatus</code>, <code>billingType</code>,
+  <code>dateFrom</code>/<code>dateTo</code>.</p>
+</div>
+<div class="ep" id="sales-lead-options">
+  <div><span class="m get">GET</span><span class="path">/api/v1/sales/leads/options</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Dropdown lists for the create/edit form + filters (categories, org types, sources, billing types,
+  integrations, required docs, plus the enum-backed status/priority/stage/outcome lists). Literal route,
+  before <code>:id</code>.</p>
+</div>
+<div class="ep" id="sales-lead-create">
+  <div><span class="m post">POST</span><span class="path">/api/v1/sales/leads</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Create a lead (10-section A–J form). Required: <code>category</code>, <code>organizationName</code>,
+  <code>organizationType</code>, <code>primaryContactName</code>, <code>mobile</code>, <code>source</code>.
+  Runs duplicate detection and generates <code>leadCode</code> atomically.
+  <span class="pill">409 DUPLICATE_LEAD</span> on a match.</p>
+  <pre>{ "category":"Hospital Tie-up", "organizationName":"City Hospital",
+  "organizationType":"Hospital", "primaryContactName":"Dr. Meera Joshi",
+  "mobile":"+919820011223", "source":"Referral",
+  "assignedSalespersonId":"…", "territoryId":"…", "priority":"HIGH",
+  "pipelineStage":"PROSPECTING", "estimatedDealValue":500000, … }</pre>
+  <p class="lbl">Enums</p>
+  <p><code>LeadStatus</code> (NEW_LEAD…ACTIVE_CLIENT, LOST, ON_HOLD, …) ·
+  <code>LeadPriority</code> LOW|MEDIUM|HIGH|CRITICAL · <code>PipelineStage</code> PROSPECTING…CLOSED_LOST ·
+  <code>AgreementStatus</code> NOT_STARTED|IN_DISCUSSION|SENT|SIGNED|CANCELLED ·
+  <code>SalesDocumentStatus</code> NOT_STARTED|REQUIRED|SHARED|APPROVED|REJECTED ·
+  <code>MeetingType</code>, <code>MeetingOutcome</code> (see below).</p>
+</div>
+<div class="ep" id="sales-lead-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/sales/leads/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>One lead with history/meetings/counts. <span class="pill">404 LEAD_NOT_FOUND</span>.</p>
+</div>
+<div class="ep" id="sales-lead-audit">
+  <div><span class="m get">GET</span><span class="path">/api/v1/sales/leads/:id/audit</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Lead status/timeline history (newest first). <span class="pill">404 LEAD_NOT_FOUND</span>.</p>
+</div>
+<div class="ep" id="sales-lead-update">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/sales/leads/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Partial update (every create field, with the six required ones relaxed to optional).
+  <span class="pill">404 LEAD_NOT_FOUND</span>, <span class="pill">409 DUPLICATE_LEAD</span>.</p>
+</div>
+<div class="ep" id="sales-lead-status">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/sales/leads/:id/status</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Manual / "Immediate Action" transition (records history). <code>status</code> ✱ (<code>LeadStatus</code>),
+  optional <code>gps</code>/<code>remarks</code>. <code>CONFIRMED → STARTED</code> with an assigned salesperson
+  auto-creates a linked Trip. <span class="pill">404 LEAD_NOT_FOUND</span>.</p>
+</div>
+<div class="ep" id="sales-lead-meeting">
+  <div><span class="m post">POST</span><span class="path">/api/v1/sales/leads/:id/meeting-outcome</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Record a completed meeting's outcome (maps to the next status; writes a LeadMeeting + status-history row).
+  <code>outcome</code> ✱ (<code>MeetingOutcome</code>: FOLLOW_UP_REQUIRED, PROPOSAL_REQUIRED, PROPOSAL_SHARED,
+  QUOTATION_REQUIRED, QUOTATION_SHARED, NEGOTIATION, CONVERTED, NOT_INTERESTED, LOST, RESCHEDULED,
+  PENDING_*/NEED_* variants), plus summary/requirement/objections/competitor/nextAction/etc.
+  <span class="pill">404 LEAD_NOT_FOUND</span>.</p>
+</div>
+<div class="ep" id="sales-lead-convert">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/sales/leads/:id/convert</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Convert a lead (status → CONVERTED, status-only this phase; no body).
+  <span class="pill">404 LEAD_NOT_FOUND</span>.</p>
+</div>
+<div class="ep" id="sales-lead-lost">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/sales/leads/:id/lost</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Mark a lead LOST (status-only; no body). <span class="pill">404 LEAD_NOT_FOUND</span>.</p>
+</div>
+<div class="ep" id="sales-lead-docs">
+  <div><span class="m post">POST</span><span class="path">/api/v1/sales/leads/:id/documents</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Attach a document URL. <code>docType</code> ✱ (proposal|quotation|agreement), <code>url</code> ✱,
+  optional <code>status</code> (<code>SalesDocumentStatus</code>, defaults SHARED for proposal/quotation).
+  <span class="pill">404 LEAD_NOT_FOUND</span>.</p>
+</div>
+<div class="ep" id="sales-lead-delete">
+  <div><span class="m delete">DELETE</span><span class="path">/api/v1/sales/leads/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Soft-delete a lead. <span class="pill">404 LEAD_NOT_FOUND</span>.</p>
+</div>
+
+<h3 id="sales-follow-ups">Follow-ups <span style="font-size:13px;color:var(--muted)">(follow-up queue)</span></h3>
+
+<div class="ep" id="sales-fu-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/sales/follow-ups?page=1&amp;limit=20</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Paginated follow-ups. Filters: <code>search</code>, <code>dateFrom</code>/<code>dateTo</code> (due),
+  <code>salespersonId</code>, <code>priority</code>, <code>status</code> (<code>FollowUpStatus</code>),
+  <code>leadId</code>, <code>statusBucket</code> (queue tab; <code>status</code> wins when both given).</p>
+</div>
+<div class="ep" id="sales-fu-create">
+  <div><span class="m post">POST</span><span class="path">/api/v1/sales/follow-ups</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Create a follow-up. <code>leadId</code> ✱ (<span class="pill">400 INVALID_FOLLOW_UP_LEAD</span>),
+  <code>type</code> ✱ (<code>FollowUpType</code> PHONE_CALL|EMAIL|WHATSAPP|VISIT|ONLINE); optional
+  <code>tripId</code> (<span class="pill">400 INVALID_FOLLOW_UP_TRIP</span>), <code>priority</code>,
+  <code>dueAt</code>, requirement/lastDiscussion/nextAction, <code>assignedSalespersonId</code>, <code>status</code>.</p>
+</div>
+<div class="ep" id="sales-fu-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/sales/follow-ups/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>One follow-up with status history. <span class="pill">404 FOLLOW_UP_NOT_FOUND</span>.</p>
+</div>
+<div class="ep" id="sales-fu-update">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/sales/follow-ups/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Partial update (lead immutable). <span class="pill">404 FOLLOW_UP_NOT_FOUND</span>,
+  <span class="pill">400 INVALID_FOLLOW_UP_TRIP</span>.</p>
+</div>
+<div class="ep" id="sales-fu-status">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/sales/follow-ups/:id/status</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Transition status (+ history row). <code>status</code> ✱ (<code>FollowUpStatus</code>
+  SCHEDULED|PENDING|COMPLETED|CONVERTED|CANCELLED|RESCHEDULED|NO_RESPONSE), optional <code>remarks</code>.
+  <span class="pill">404 FOLLOW_UP_NOT_FOUND</span>.</p>
+</div>
+<div class="ep" id="sales-fu-delete">
+  <div><span class="m delete">DELETE</span><span class="path">/api/v1/sales/follow-ups/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Soft-delete a follow-up. <span class="pill">404 FOLLOW_UP_NOT_FOUND</span>.</p>
+</div>
+
+<h3 id="sales-reports">Reports &amp; dashboard <span style="font-size:13px;color:var(--muted)">(read-only)</span></h3>
+
+<div class="ep" id="sales-report-lead">
+  <div><span class="m get">GET</span><span class="path">/api/v1/sales/reports/lead-wise</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>One flat row per lead. Optional filters (shared): <code>dateFrom</code>/<code>dateTo</code> (on
+  <code>leadAt</code>), <code>salespersonId</code>, <code>territoryId</code>, <code>source</code>,
+  <code>category</code>, <code>search</code>.</p>
+</div>
+<div class="ep" id="sales-report-sp">
+  <div><span class="m get">GET</span><span class="path">/api/v1/sales/reports/salesperson-wise</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Per-salesperson aggregates. Same optional filters as lead-wise.</p>
+</div>
+<div class="ep" id="sales-dashboard">
+  <div><span class="m get">GET</span><span class="path">/api/v1/sales/dashboard</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Composed overview (KPIs, pipeline funnel, status breakdown, recent activity) for the active branch. No params.</p>
+</div>
+
+<h3 id="sales-settings">Settings <span style="font-size:13px;color:var(--muted)">(tenant-level — no branch scope)</span></h3>
+
+<div class="ep" id="sales-settings-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/sales/settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>The tenant's sales settings (a free-form JSON <code>config</code> blob; created lazily on first read).</p>
+</div>
+<div class="ep" id="sales-settings-update">
+  <div><span class="m put">PUT</span><span class="path">/api/v1/sales/settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Shallow-merge <code>config</code> ✱ (object) over the stored settings — send only the sections you change.
+  The duplicate-detection rules enforced by lead creation live inside it.</p>
+  <pre>{ "config": { "duplicateDetection": { "byMobile":true, "byEmail":true } } }</pre>
+</div>
+
+<h2 id="phleb-collections">Phlebotomist Collections <span style="font-size:13px;color:var(--muted)">(home sample collection — the Phlebotomist module)</span></h2>
+<div class="note">A <code>HomeVisitCollection</code> is created automatically when a confirmed order
+(<code>status = ORDER | APPOINTMENT</code>) is a home visit with an assigned phlebotomist, a collection time
+and address — it is the record the FE Collection Schedule works on. Tenant-scoped + branch-level.
+Status transitions are validated server-side and cascade to the order items, accession samples (via the
+accession state machine — guarded, never destructive) and the linked appointment. Amounts are minor units.</div>
+
+<div class="ep" id="phleb-collections-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/phlebotomist-collections</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Paginated Collection Schedule rows for the active branch (newest scheduled first), each enriched with the
+  order/patient/phlebotomist refs, financial rollups (<code>grossAmount</code>, <code>netAmount</code>,
+  <code>paidAmount</code>, <code>balanceAmount</code>, <code>visitCharges</code>,
+  <code>sampleCollectionCharges</code>), the sample barcode, and item counts. Filters:
+  <code>search</code> (patient name/mobile/UMID, order code/bill id, barcode), <code>status</code>,
+  <code>priority</code>, <code>phlebotomistId</code>, <code>paymentStatus</code>, <code>referralPanelId</code>,
+  <code>dateFrom</code>/<code>dateTo</code> (scheduledCollectionAt), <code>branchId</code>.</p>
+</div>
+<div class="ep" id="phleb-collections-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/phlebotomist-collections/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>One collection fully composed + its append-only status history (Collection Overview / audit trail).</p>
+</div>
+<div class="ep" id="phleb-collections-status">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/phlebotomist-collections/:id/status</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Advance status (validated against the collection state machine — <code>422 ILLEGAL_COLLECTION_TRANSITION</code>).
+  Appends a history row and cascades: <code>SAMPLE_COLLECTED</code> collects the order items + accession samples,
+  <code>ACCEPTED_BY_LAB</code> accepts them, and CONFIRMED/COMPLETED/CANCELLED drive the linked appointment
+  (CANCELLED also releases the phlebotomist slot).</p>
+  <pre>{ "status": "SAMPLE_COLLECTED", "notes": "...", "gpsLocation": "12.97,77.59", "sampleCondition": "Good" }</pre>
+</div>
+<div class="ep" id="phleb-collections-reschedule">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/phlebotomist-collections/:id/reschedule</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Reschedule to a new time (optionally reassign the phlebotomist): releases the old slot, reserves the new one
+  atomically, updates the order's diagnostics + appointment time, and moves the collection to
+  <code>RESCHEDULED</code>. Rolls back if the new slot can't be booked.</p>
+  <pre>{ "collectionAt": "2026-12-20T10:00:00.000Z", "phlebotomistId": "…", "reason": "…" }</pre>
+</div>
+<div class="ep" id="phleb-collections-summary">
+  <div><span class="m get">GET</span><span class="path">/api/v1/phlebotomist-collections/summary</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Dashboard aggregation: <code>total</code> + <code>byStatus</code> (every status, 0 default),
+  completed/pending/cancelled, <code>byPhlebotomist</code> rollups, <code>byDate</code> trend, and charge totals.
+  Filters: <code>dateFrom</code>/<code>dateTo</code>, <code>phlebotomistId</code>, <code>branchId</code>.
+  <code>totalKm</code>/<code>onTimePercentage</code> are <code>null</code> (no source yet — ships with Route Mapping).</p>
+</div>
+<div class="ep" id="phleb-collections-reports">
+  <div><span class="m get">GET</span><span class="path">/api/v1/phlebotomist-collections/reports/patient-wise</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Patient-wise report — the same enriched, paginated collection rows as the list (flattened into report columns
+  by the FE). Accepts the full schedule filter set.</p>
+</div>
+<div class="ep" id="phleb-collections-reports-phleb">
+  <div><span class="m get">GET</span><span class="path">/api/v1/phlebotomist-collections/reports/phlebotomist-wise</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Phlebotomist-wise report — per-phlebotomist assigned/completed/pending/cancelled counts + total charges
+  (KM/on-time deferred). Filters: <code>dateFrom</code>/<code>dateTo</code>, <code>phlebotomistId</code>, <code>branchId</code>.</p>
 </div>
 
 <p style="margin:40px 0 10px;color:var(--muted);font-size:13px">

@@ -1,0 +1,39 @@
+meta {
+  name: Report - Phlebotomist-wise
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/phlebotomist-collections/reports/phlebotomist-wise
+  body: none
+  auth: bearer
+}
+
+params:query {
+  ~dateFrom: 2026-01-01
+  ~dateTo: 2026-12-31
+  ~phlebotomistId: {{phlebotomistId}}
+  ~branchId: {{branchId}}
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns an array of rollups", function () {
+    expect(res.getBody().data).to.be.an("array");
+  });
+}
+
+docs {
+  Phlebotomist-wise report — per-phlebotomist rollups (sorted by `assigned`
+  desc): `{ phlebotomistId, phlebotomistName, assigned, completed, pending,
+  cancelled, totalCharges, totalKm, onTimePercentage }`. `totalKm` /
+  `onTimePercentage` are `null` (no backend source yet — ships with Route
+  Mapping). Honours `dateFrom` / `dateTo` / `phlebotomistId` / `branchId`.
+}

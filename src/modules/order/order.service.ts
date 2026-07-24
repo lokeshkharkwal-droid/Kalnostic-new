@@ -13,6 +13,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AppointmentService } from '../appointment/appointment.service';
 import { AccessionSampleService } from '../accession/accession-sample.service';
 import { SlotReservationService } from '../phlebotomist-schedule/slot-reservation.service';
+import { PhlebotomistCollectionService } from '../phlebotomist-collection/phlebotomist-collection.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
@@ -66,6 +67,7 @@ export class OrderService {
     private readonly appointmentService: AppointmentService,
     private readonly accessionSamples: AccessionSampleService,
     private readonly slotReservation: SlotReservationService,
+    private readonly homeVisitCollections: PhlebotomistCollectionService,
   ) {}
 
   /**
@@ -309,6 +311,16 @@ export class OrderService {
             order.id,
           );
         }
+        // Create the home-visit Collection Schedule record for a confirmed
+        // home-visit order (idempotent + internally guarded on isHomeVisit /
+        // phlebotomist / time / status).
+        await this.homeVisitCollections.createForOrderInTx(
+          tx,
+          tenantId,
+          branchId,
+          personId,
+          order.id,
+        );
         return order.id;
       });
     } catch (e) {
@@ -866,6 +878,16 @@ export class OrderService {
           id,
         );
       }
+      // Create the home-visit Collection Schedule record if this update confirms a
+      // home-visit order (e.g. DRAFT → ORDER/APPOINTMENT). Idempotent + guarded, so
+      // it is a no-op for an order that already has a collection or isn't a home visit.
+      await this.homeVisitCollections.createForOrderInTx(
+        tx,
+        tenantId,
+        branchId,
+        personId,
+        id,
+      );
     });
 
     return this.findById(id, tenantId);
@@ -1041,6 +1063,7 @@ export class OrderService {
         tx.orderOpd.updateMany({ where, data: { deletedAt: now } }),
         tx.orderRadiology.updateMany({ where, data: { deletedAt: now } }),
         tx.paymentDetails.updateMany({ where, data: { deletedAt: now } }),
+        tx.homeVisitCollection.updateMany({ where, data: { deletedAt: now } }),
       ]);
       if (reservation) {
         await this.slotReservation.releaseInTx(

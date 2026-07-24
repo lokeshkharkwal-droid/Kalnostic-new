@@ -1,0 +1,69 @@
+meta {
+  name: 54 Sales Leads
+  seq: 61
+}
+
+docs {
+  # Sales Leads
+
+  Business-**lead** endpoints — the core of the Sales module. A lead is
+  tenant-scoped + branch-level, carries a system-generated `leadCode`
+  (`LD-YYYY-#####`, per-tenant sequential), and is captured via a 10-section
+  (A–J) form. This folder covers list + all filters + status buckets, the
+  create/edit form, the lifecycle state machine, meeting outcomes, documents,
+  convert/lost, and the audit/timeline trail.
+
+  ## Scoping
+
+  All routes are **business-authenticated** (`Bearer {{businessAccessToken}}`).
+  Tenant comes from the JWT and branch from the active profile. **Do NOT send
+  `tenantId` / `branchId` / `leadCode`** — the first two come from context, the
+  code is system-generated. No active branch → `400 ACTIVE_BRANCH_REQUIRED`.
+
+  ## Run order
+
+  1. **Create Lead** → captures `leadId` (asserts an `LD-YYYY-#####` code).
+  2. **Lead Options** — dropdown lists for the FE.
+  3. **List Leads** — paginated; status-bucket tab + 13 filters + search.
+  4. **Get Lead** — one lead with history/meetings/counts.
+  5. **Get Lead Audit** — status/timeline history (newest first).
+  6. **Update Lead** — patch the 10-section form.
+  7. **Update Lead Status** — manual / "Immediate Action" transition. When
+     `CONFIRMED → STARTED` with an assigned salesperson, a linked Trip is created
+     automatically.
+  8. **Record Meeting Outcome** — maps the outcome to the next status.
+  9. **Convert Lead** / **Mark Lead Lost** — status-only transitions.
+  10. **Upload Lead Document** — attach proposal/quotation/agreement URL.
+  11. **Delete Lead** — soft-delete.
+
+  Writes are audited under `AuditModule.SALES_LEAD`.
+
+  ## Key enums
+
+  - `LeadStatus`: NEW_LEAD, SCHEDULED, CONFIRMED, STARTED, REACHED,
+    MEETING_IN_PROGRESS, MEETING_COMPLETED, PROPOSAL_SHARED, QUOTATION_SHARED,
+    NEGOTIATION, AGREEMENT_PENDING, CONVERTED, CLIENT_ONBOARDING, ACTIVE_CLIENT,
+    FOLLOW_UP_REQUIRED, RESCHEDULED, CANCELLED, NO_RESPONSE, NOT_INTERESTED,
+    LOST, ON_HOLD, DUPLICATE_LEAD.
+  - `LeadPriority`: LOW | MEDIUM | HIGH | CRITICAL.
+  - `PipelineStage`: PROSPECTING, QUALIFICATION, NEEDS_ANALYSIS,
+    PROPOSAL_QUOTATION, NEGOTIATION, AGREEMENT, CLOSED_WON, CLOSED_LOST.
+  - `AgreementStatus`: NOT_STARTED | IN_DISCUSSION | SENT | SIGNED | CANCELLED.
+  - `SalesDocumentStatus` (proposal/quotation): NOT_STARTED | REQUIRED | SHARED |
+    APPROVED | REJECTED.
+  - `MeetingType`: PHYSICAL_VISIT, ONLINE_MEETING, PHONE_CALL, DEMO,
+    PRESENTATION, QUOTATION_DISCUSSION, AGREEMENT_DISCUSSION,
+    TECHNICAL_DISCUSSION, FINANCE_DISCUSSION.
+  - `MeetingOutcome`: FOLLOW_UP_REQUIRED, PROPOSAL_REQUIRED, PROPOSAL_SHARED,
+    QUOTATION_REQUIRED, QUOTATION_SHARED, NEGOTIATION, CONVERTED, NOT_INTERESTED,
+    LOST, RESCHEDULED, PENDING_MANAGEMENT_APPROVAL, PENDING_TECHNICAL_DISCUSSION,
+    PENDING_FINANCE_DISCUSSION, NEED_PRODUCT_DEMO, NEED_RATE_APPROVAL,
+    NEED_AGREEMENT_REVIEW.
+
+  ## Error codes
+
+  - `LEAD_NOT_FOUND` (404).
+  - `DUPLICATE_LEAD` (409) — matching mobile/email/GST/org name per the tenant's
+    Sales-settings duplicate-detection rules.
+  - `ACTIVE_BRANCH_REQUIRED` (400).
+}

@@ -1,0 +1,42 @@
+meta {
+  name: Update Lead
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{baseUrl}}/sales/leads/{{leadId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "priority": "CRITICAL",
+    "estimatedDealValue": 750000,
+    "probabilityPercent": 60,
+    "pipelineStage": "QUALIFICATION",
+    "internalNotes": "Deal size revised up after the first meeting."
+  }
+}
+
+docs {
+  Partial update of a lead. Inherits every field from Create Lead and relaxes the
+  six create-required fields (`category`, `organizationName`, `organizationType`,
+  `primaryContactName`, `mobile`, `source`) to optional — send only what changes.
+  `leadCode` / tenant / branch remain immutable / context-only.
+
+  Path param `id` ✱ — lead UUID (`leadId`).
+
+  Tenant + active branch come from the JWT; do NOT send `tenantId` / `branchId` /
+  `leadCode`. Errors: `LEAD_NOT_FOUND` (404), `DUPLICATE_LEAD` (409),
+  `ACTIVE_BRANCH_REQUIRED` (400).
+}

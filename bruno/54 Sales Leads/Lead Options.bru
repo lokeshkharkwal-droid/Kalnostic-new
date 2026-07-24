@@ -1,0 +1,29 @@
+meta {
+  name: Lead Options
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/sales/leads/options
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Option lists for the Sales FE dropdowns (the create/edit form + filter bar).
+  Returns the open-ended lists (categories, organization types, sources, billing
+  types, integration options, required-document options, preferred contacts) plus
+  the enum-backed lists (statuses, priorities, pipeline stages, meeting types,
+  outcomes, agreement / document statuses).
+
+  Response: `{ success, data: { categories: [...], organizationTypes: [...],
+  sources: [...], ... }, meta }`.
+
+  Business-authenticated; this literal `options` route is declared before `:id`
+  so it matches first. No body / query.
+}

@@ -279,6 +279,12 @@ enum AuditModule {
   SITEADMIN // reserved; not written to in this phase (business audit only)
   LAB_TEST_SETTINGS
   ACCESSION
+  LAB_ADAPTER
+  SALES_LEAD
+  SALES_TRIP
+  SALES_FOLLOW_UP
+  SALES_TERRITORY
+  SALES_SETTINGS
 }
 
 /// Type of controlled document managed by the document module.
@@ -741,6 +747,9 @@ model Tenant {
   appointmentCounter     Int     @default(0) @map("appointment_counter") // per-tenant sequential appointment code (APT-00001)
   diagnosticBillCounter  Int     @default(0) @map("diagnostic_bill_counter") // per-tenant sequential diagnostic bill id (DIG-001)
   accessionCounter       Int     @default(0) @map("accession_counter") // per-tenant sequential accession number (ACC-00001)
+  leadCounter            Int     @default(0) @map("lead_counter") // per-tenant sequential sales lead code (LD-YYYY-00001)
+  tripCounter            Int     @default(0) @map("trip_counter") // per-tenant sequential sales trip code (TRP-00001)
+  followUpCounter        Int     @default(0) @map("follow_up_counter") // per-tenant sequential sales follow-up code (FU-00001)
   createdBy              String? @map("created_by") // SiteAdmin user id (creator)
   updatedBy              String? @map("updated_by") // SiteAdmin user id (last editor)
 
@@ -884,6 +893,9 @@ model Person {
   /// Phlebotomist-schedule back-relations (a phlebotomist is a staff Person).
   phlebotomistSchedules PhlebotomistSchedule[] @relation("PhlebotomistScheduleStaff")
   phlebotomistSlots     PhlebotomistSlot[]     @relation("PhlebotomistSlotStaff")
+
+  /// Home-visit collections assigned to this staff Person (the phlebotomist).
+  homeVisitCollections HomeVisitCollection[] @relation("HomeVisitCollectionPhlebotomist")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -1435,6 +1447,11 @@ model Template {
   tenantId String? @map("tenant_id") // null = SITE_ADMIN global master template (shared across tenants)
   branchId String? @map("branch_id") // null = tenant-level (business-admin)
 
+  /// When this row was cloned from a SITE_ADMIN global template, the source
+  /// template id — lets the tenant reuse an existing clone (idempotent import)
+  /// and lets the UI mark templates already imported. NULL for originals.
+  clonedFromId String? @map("cloned_from_id")
+
   // ── Core settings ──
   preference   MessagingChannel // delivery channel
   feature      String // business event key, validated against FEATURE_TYPES
@@ -1476,6 +1493,7 @@ model Template {
   @@index([branchId])
   @@index([preference])
   @@index([feature])
+  @@index([clonedFromId])
   @@index([deletedAt])
   @@map("templates")
 }
@@ -1494,6 +1512,11 @@ model PdfReportTemplate {
   id       String  @id @default(uuid())
   tenantId String? @map("tenant_id") // null = SITE_ADMIN global template (shared across tenants)
   branchId String? @map("branch_id") // null = tenant-wide
+
+  /// When this row was cloned from a SITE_ADMIN global template, the source
+  /// template id — enables idempotent import and lets the UI mark templates
+  /// already imported. NULL for originals.
+  clonedFromId String? @map("cloned_from_id")
 
   type     String // validated app-side against PDF_REPORT_TEMPLATE_TYPES
   name     String
@@ -1517,8 +1540,38 @@ model PdfReportTemplate {
   @@index([tenantId])
   @@index([branchId])
   @@index([type])
+  @@index([clonedFromId])
   @@index([deletedAt])
   @@map("pdf_report_templates")
+}
+
+/// A tenant's chosen DEFAULT PDF report template per document slot — the
+/// "Configuration" screen. `slot_key` is a `PDF_REPORT_TEMPLATE_TYPES` key
+/// (e.g. `lab_report`); `template_id` points (by id, validated in the service)
+/// at the tenant's `PdfReportTemplate` of that type used when printing that
+/// document. Tenant-scoped, branch-level (CLAUDE.md §4.6): `branch_id` NULL = a
+/// tenant-wide default (business-admin), set = a branch override (branch-admin).
+/// One active row per (tenant, branch, slot) — partial unique indexes in
+/// prisma/rls.sql (NULL branch handled separately). RLS policy in prisma/rls.sql.
+model PdfTemplateConfig {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id") // null = tenant-wide default
+
+  slotKey    String  @map("slot_key") // a PDF_REPORT_TEMPLATE_TYPES key
+  templateId String? @map("template_id") // chosen PdfReportTemplate id (null = unset)
+
+  createdBy String? @map("created_by")
+  updatedBy String? @map("updated_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([deletedAt])
+  @@map("pdf_template_configs")
 }
 
 /// A department within a tenant (business-wide; NOT branch-scoped — CLAUDE.md
@@ -2783,6 +2836,86 @@ model EquipmentLabTest {
   @@index([labTestId])
   @@index([deletedAt])
   @@map("equipment_lab_tests")
+}
+
+/// A tenant's instrument-integration bridge ("Lab Adapter"). Tenant-scoped,
+/// tenant-level (CLAUDE.md §4.6) — the adapter belongs to the business as a whole
+/// and is assigned to N branches via LabAdapterBranch. References a global
+/// SITE_ADMIN Equipment (`equipmentId`, a logical ref validated in the service)
+/// and maps the branch lab tests the instrument reports via LabAdapterTest.
+/// Carries a system-generated unique `token`. `name` is unique per tenant among
+/// active rows (partial unique index in prisma/rls.sql). RLS policy in prisma/rls.sql.
+model LabAdapter {
+  id          String  @id @default(uuid())
+  tenantId    String  @map("tenant_id")
+  name        String  @map("name")
+  token       String  @unique @map("token")
+  equipmentId String  @map("equipment_id") // logical ref → global SITE_ADMIN Equipment
+  isActive    Boolean @default(true) @map("is_active")
+
+  // Actor trail: the business user who created/last-updated the adapter.
+  createdBy String? @map("created_by")
+  updatedBy String? @map("updated_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  branches LabAdapterBranch[]
+  tests    LabAdapterTest[]
+
+  @@index([tenantId])
+  @@index([equipmentId])
+  @@index([deletedAt])
+  @@map("lab_adapters")
+}
+
+/// Junction: one row per (lab adapter, branch) assignment. `branchId` is a logical
+/// ref to a Branch of the same tenant (validated via BranchService). Tenant-scoped;
+/// an adapter is assigned to a branch at most once among active rows (partial
+/// unique index in prisma/rls.sql). RLS policy in prisma/rls.sql.
+model LabAdapterBranch {
+  id           String @id @default(uuid())
+  tenantId     String @map("tenant_id")
+  labAdapterId String @map("lab_adapter_id")
+  branchId     String @map("branch_id") // logical ref → Branch
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  labAdapter LabAdapter @relation(fields: [labAdapterId], references: [id])
+
+  @@index([tenantId])
+  @@index([labAdapterId])
+  @@index([branchId])
+  @@index([deletedAt])
+  @@map("lab_adapter_branches")
+}
+
+/// Junction: one row per (lab adapter, branch lab test) mapping — the tests the
+/// instrument reports. `branchLabTestId` is a logical ref to a BranchLabTest of
+/// the same tenant (validated in the service). Tenant-scoped; a branch lab test
+/// appears at most once per adapter among active rows (partial unique index in
+/// prisma/rls.sql). RLS policy in prisma/rls.sql.
+model LabAdapterTest {
+  id              String @id @default(uuid())
+  tenantId        String @map("tenant_id")
+  labAdapterId    String @map("lab_adapter_id")
+  branchLabTestId String @map("branch_lab_test_id") // logical ref → BranchLabTest
+  sortOrder       Int    @default(0) @map("sort_order")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  labAdapter LabAdapter @relation(fields: [labAdapterId], references: [id])
+
+  @@index([tenantId])
+  @@index([labAdapterId])
+  @@index([branchLabTestId])
+  @@index([deletedAt])
+  @@map("lab_adapter_tests")
 }
 
 /// An external reference lab a tenant sends samples to. Tenant-scoped,
@@ -4772,6 +4905,43 @@ enum AppointmentStatus {
   RESCHEDULED
 }
 
+/// Lifecycle status of a home-visit sample collection (the Phlebotomist module's
+/// Collection Schedule). Held as the CURRENT status on `HomeVisitCollection`;
+/// every change is appended to `HomeVisitStatusHistory`. `previousStatus` records
+/// the prior state (for undo/on-hold resume). The field phase (SCHEDULED …
+/// REACHED_PATIENT_LOCATION) is owned by this module; SAMPLE_COLLECTED and
+/// ACCEPTED_BY_LAB hand off to the accession sample state machine (collect/accept)
+/// so the two stay in sync without this module writing SampleStatus directly.
+enum CollectionStatus {
+  SCHEDULED
+  CONFIRMED
+  PATIENT_INFORMED
+  STARTED_FROM_CENTER
+  REACHED_PATIENT_LOCATION
+  SAMPLE_COLLECTED
+  COLLECTION_VERIFIED
+  IN_TRANSIT
+  RECEIVED_AT_LAB
+  ACCEPTED_BY_LAB
+  COMPLETED
+  RESCHEDULED
+  CANCELLED
+  ON_HOLD
+  PATIENT_NOT_AVAILABLE
+  SAMPLE_NOT_COLLECTED
+  PARTIAL_COLLECTION
+  SAMPLE_REJECTED
+  PAYMENT_PENDING
+}
+
+/// Visit priority shown on the Collection Schedule (mirrors the FE priority chip).
+/// Seeded from the order's urgent flag on creation; adjustable per collection.
+enum CollectionPriority {
+  NORMAL
+  URGENT
+  HIGH
+}
+
 /// The central order record a lab/clinic creates for a patient. Tenant-scoped
 /// (RLS) + branch-level (CLAUDE.md §4.5). Carries basic billing info plus up to
 /// three optional 1:1 service sections (diagnostics / OPD / radiology), a set of
@@ -4855,6 +5025,11 @@ model Order {
 
   // Accession samples generated for this order (one per required sample/tube).
   accessionSamples AccessionSample[]
+
+  // Home-visit sample-collection lifecycle (1:1) — created when a confirmed order
+  // is a home visit with an assigned phlebotomist. Drives the Phlebotomist module's
+  // Collection Schedule; the FK lives on `HomeVisitCollection`.
+  homeVisitCollection HomeVisitCollection?
 
   createdBy String?   @map("created_by")
   updatedBy String?   @map("updated_by")
@@ -5174,6 +5349,95 @@ model AppointmentStatusHistory {
   @@map("appointment_status_history")
 }
 
+// ── Phlebotomist / Home Sample Collection ──────────────────────────────────────
+
+/// A home sample-collection visit — the record the Phlebotomist module's
+/// Collection Schedule works on. Created (status SCHEDULED) when a confirmed order
+/// (ORDER/APPOINTMENT) is a home visit with an assigned phlebotomist, a collection
+/// time and address (mirrors the `homeVisitReservation` guard in OrderService).
+/// 1:1 with `Order`; the field-visit lifecycle lives here (deliberately NOT on
+/// `OrderDiagnostics`) so the collection status + history never disturb the
+/// diagnostics/accession rows. Transitions cascade to the linked `Appointment` and
+/// `AccessionSample`s (via their own services) so all three stay in sync.
+/// Tenant-scoped (RLS) + branch-level (CLAUDE.md §4.5/§4.7).
+model HomeVisitCollection {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  orderId String @unique @map("order_id")
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  phlebotomistId String? @map("phlebotomist_id")
+  phlebotomist   Person? @relation("HomeVisitCollectionPhlebotomist", fields: [phlebotomistId], references: [id])
+
+  status         CollectionStatus  @default(SCHEDULED)
+  previousStatus CollectionStatus? @map("previous_status")
+
+  /// Scheduled collection date/time (seeded from OrderDiagnostics
+  /// `collectionAt ?? appointmentAt`; updated on reschedule).
+  scheduledCollectionAt DateTime?          @map("scheduled_collection_at")
+  collectionAddress     String?            @map("collection_address")
+  geoLocation           String?            @map("geo_location")
+  priority              CollectionPriority @default(NORMAL)
+
+  /// Sample condition captured by the phlebotomist at collection (free text).
+  sampleConditionAtCollection String? @map("sample_condition_at_collection")
+  reasonForDelay              String? @map("reason_for_delay")
+  reasonForCancellation       String? @map("reason_for_cancellation")
+
+  /// Distance travelled for the visit (km). No backend source yet (Route Mapping,
+  /// deferred) — reserved so reports can surface it once available.
+  distanceKm Float? @map("distance_km")
+
+  statusHistory HomeVisitStatusHistory[]
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([phlebotomistId])
+  @@index([status])
+  @@index([scheduledCollectionAt])
+  @@index([deletedAt])
+  @@map("home_visit_collections")
+}
+
+/// Append-only history of home-visit collection status changes — one row per
+/// change, never mutated. Written alongside every `HomeVisitCollection.status`
+/// change (and the initial status on create) so the collection roadmap / audit
+/// trail is preserved. Tenant-scoped (RLS) + branch-level, mirroring its parent.
+model HomeVisitStatusHistory {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  collectionId String              @map("collection_id")
+  collection   HomeVisitCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+
+  status        CollectionStatus
+  fromStatus    CollectionStatus? @map("from_status")
+  notes         String?
+  attachmentUrl String?           @map("attachment_url")
+  gpsLocation   String?           @map("gps_location")
+  changedBy     String?           @map("changed_by") // person who made this change
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([collectionId])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@map("home_visit_status_history")
+}
+
 // ── Accession Module ────────────────────────────────────────────────────────────
 
 /// Lifecycle status of an accession sample/tube (PDF §A.5). Held as the CURRENT
@@ -5441,4 +5705,543 @@ model AccessionSetting {
   @@index([tenantId])
   @@index([branchId])
   @@map("accession_settings")
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Sales & B2B module
+// Business-lead lifecycle + trips + follow-ups + territory master + settings.
+// Tenant-scoped + branch-level (CLAUDE.md 4.6). Intra-module links (Lead-Trip-
+// FollowUp-TripVisit) are genuine FKs for full traceability; salesperson/owner/
+// actor are scalar person ids (validated against TenantStaffMembership - any staff
+// member qualifies in this phase). See Master/SALES-MODULE-PLAN.md.
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Granular lead lifecycle status (22 states). Drives the per-row "Immediate
+/// Action" state machine and the status-bucket filter tabs on the FE.
+enum LeadStatus {
+  NEW_LEAD
+  SCHEDULED
+  CONFIRMED
+  STARTED
+  REACHED
+  MEETING_IN_PROGRESS
+  MEETING_COMPLETED
+  PROPOSAL_SHARED
+  QUOTATION_SHARED
+  NEGOTIATION
+  AGREEMENT_PENDING
+  CONVERTED
+  CLIENT_ONBOARDING
+  ACTIVE_CLIENT
+  FOLLOW_UP_REQUIRED
+  RESCHEDULED
+  CANCELLED
+  NO_RESPONSE
+  NOT_INTERESTED
+  LOST
+  ON_HOLD
+  DUPLICATE_LEAD
+}
+
+/// Lead priority (also reused for follow-up priority).
+enum LeadPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+/// Sales pipeline funnel stage (drives the dashboard funnel).
+enum PipelineStage {
+  PROSPECTING
+  QUALIFICATION
+  NEEDS_ANALYSIS
+  PROPOSAL_QUOTATION
+  NEGOTIATION
+  AGREEMENT
+  CLOSED_WON
+  CLOSED_LOST
+}
+
+/// Type of a sales meeting / visit.
+enum MeetingType {
+  PHYSICAL_VISIT
+  ONLINE_MEETING
+  PHONE_CALL
+  DEMO
+  PRESENTATION
+  QUOTATION_DISCUSSION
+  AGREEMENT_DISCUSSION
+  TECHNICAL_DISCUSSION
+  FINANCE_DISCUSSION
+}
+
+/// Status of a proposal or quotation document on a lead.
+enum SalesDocumentStatus {
+  NOT_STARTED
+  REQUIRED
+  SHARED
+  APPROVED
+  REJECTED
+}
+
+/// Status of a lead's commercial agreement.
+enum AgreementStatus {
+  NOT_STARTED
+  IN_DISCUSSION
+  SENT
+  SIGNED
+  CANCELLED
+}
+
+/// Recorded outcome of a completed meeting (drives the next lead status).
+enum MeetingOutcome {
+  FOLLOW_UP_REQUIRED
+  PROPOSAL_REQUIRED
+  PROPOSAL_SHARED
+  QUOTATION_REQUIRED
+  QUOTATION_SHARED
+  NEGOTIATION
+  CONVERTED
+  NOT_INTERESTED
+  LOST
+  RESCHEDULED
+  PENDING_MANAGEMENT_APPROVAL
+  PENDING_TECHNICAL_DISCUSSION
+  PENDING_FINANCE_DISCUSSION
+  NEED_PRODUCT_DEMO
+  NEED_RATE_APPROVAL
+  NEED_AGREEMENT_REVIEW
+}
+
+/// Lifecycle state of a field-sales trip.
+enum TripStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+/// Status of a single waypoint/visit within a trip.
+enum TripVisitStatus {
+  PLANNED
+  COMPLETED
+  PENDING
+  CANCELLED
+}
+
+/// Channel of a follow-up activity.
+enum FollowUpType {
+  PHONE_CALL
+  EMAIL
+  WHATSAPP
+  VISIT
+  ONLINE
+}
+
+/// Lifecycle state of a follow-up in the queue.
+enum FollowUpStatus {
+  SCHEDULED
+  PENDING
+  COMPLETED
+  CONVERTED
+  CANCELLED
+  RESCHEDULED
+  NO_RESPONSE
+}
+
+/// Territory / zone master for the Sales module (tenant-scoped, branch-level).
+/// Powers the "Territory / Zone" dropdown + filter on leads. Modeled on
+/// ServiceZone.
+model SalesTerritory {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  name     String
+  code     String?
+  isActive Boolean @default(true) @map("is_active")
+
+  leads Lead[]
+
+  createdBy String? @map("created_by")
+  updatedBy String? @map("updated_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([isActive])
+  @@index([deletedAt])
+  @@map("sales_territories")
+}
+
+/// A business lead - the core Sales entity. Tenant-scoped + branch-level. Fields
+/// mirror the 10-section create form (A-J). `leadCode` is a per-tenant sequential
+/// code (LD-YYYY-#####). Salesperson/owner are scalar person ids validated in the
+/// service. Money fields are Decimal (interceptor serialises to number).
+model Lead {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  // A. Basic
+  leadCode              String          @map("lead_code")
+  leadAt                DateTime?       @map("lead_at")
+  leadOwnerId           String?         @map("lead_owner_id")
+  assignedSalespersonId String?         @map("assigned_salesperson_id")
+  department            String?
+  territoryId           String?         @map("territory_id")
+  territory             SalesTerritory? @relation(fields: [territoryId], references: [id])
+  priority              LeadPriority    @default(MEDIUM)
+  status                LeadStatus      @default(NEW_LEAD)
+  category              String
+  estimatedDealValue    Decimal         @default(0) @map("estimated_deal_value") @db.Decimal(14, 2)
+  expectedClosureDate   DateTime?       @map("expected_closure_date")
+  probabilityPercent    Int             @default(0) @map("probability_percent")
+  pipelineStage         PipelineStage   @default(PROSPECTING) @map("pipeline_stage")
+
+  // B. Organization
+  organizationName          String  @map("organization_name")
+  organizationType          String  @map("organization_type")
+  registrationNumber        String? @map("registration_number")
+  gstNumber                 String? @map("gst_number")
+  pan                       String?
+  website                   String?
+  organizationSize          String? @map("organization_size")
+  numberOfBranches          Int     @default(0) @map("number_of_branches")
+  annualPatientVolume       Int     @default(0) @map("annual_patient_volume")
+  monthlyReferralPotential  Int     @default(0) @map("monthly_referral_potential")
+  existingDiagnosticPartner String? @map("existing_diagnostic_partner")
+  competitorName            String? @map("competitor_name")
+
+  // C. Contact
+  primaryContactName String  @map("primary_contact_name")
+  designation        String?
+  contactDepartment  String? @map("contact_department")
+  mobile             String
+  alternateMobile    String? @map("alternate_mobile")
+  whatsapp           String?
+  landline           String?
+  email              String?
+  preferredContact   String? @map("preferred_contact")
+  isDecisionMaker    Boolean @default(false) @map("is_decision_maker")
+  isInfluencer       Boolean @default(false) @map("is_influencer")
+
+  // D. Address
+  country            String? @default("India")
+  state              String?
+  district           String?
+  city               String?
+  area               String?
+  addressLine        String? @map("address_line")
+  pincode            String?
+  landmark           String?
+  geoLocation        String? @map("geo_location")
+  distanceFromBranch Int     @default(0) @map("distance_from_branch")
+
+  // E. Source
+  source              String
+  sourcePersonName    String? @map("source_person_name")
+  sourceContactNumber String? @map("source_contact_number")
+  sourceRemarks       String? @map("source_remarks")
+
+  // F. Requirement
+  serviceInterestedIn     String?  @map("service_interested_in")
+  testMenuRequired        String?  @map("test_menu_required")
+  packageRequired         String?  @map("package_required")
+  expectedMonthlyVolume   Int      @default(0) @map("expected_monthly_volume")
+  expectedMonthlyRevenue  Decimal  @default(0) @map("expected_monthly_revenue") @db.Decimal(14, 2)
+  expectedDiscountPercent Int      @default(0) @map("expected_discount_percent")
+  isCreditRequired        Boolean  @default(false) @map("is_credit_required")
+  creditDaysRequired      Int      @default(0) @map("credit_days_required")
+  billingType             String?  @map("billing_type")
+  requiredIntegrations    String[] @map("required_integrations")
+  requiredDocuments       String[] @map("required_documents")
+
+  // G. Meeting planning (latest denormalised; history in LeadMeeting)
+  meetingType        MeetingType? @map("meeting_type")
+  meetingDate        DateTime?    @map("meeting_date")
+  meetingTime        String?      @map("meeting_time")
+  meetingLocation    String?      @map("meeting_location")
+  meetingAgenda      String?      @map("meeting_agenda")
+  expectedAttendees  String?      @map("expected_attendees")
+  isReminderRequired Boolean      @default(false) @map("is_reminder_required")
+  reminderAt         DateTime?    @map("reminder_at")
+
+  // H. Commercial
+  mrpValue                  Decimal @default(0) @map("mrp_value") @db.Decimal(14, 2)
+  offeredDiscountPercent    Int     @default(0) @map("offered_discount_percent")
+  isSpecialRateCardRequired Boolean @default(false) @map("is_special_rate_card_required")
+  isCommissionRequired      Boolean @default(false) @map("is_commission_required")
+  referralCommissionPercent Int     @default(0) @map("referral_commission_percent")
+  revenueSharePercent       Int     @default(0) @map("revenue_share_percent")
+  expectedMargin            Int     @default(0) @map("expected_margin")
+  paymentTerms              String? @map("payment_terms")
+  isSecurityDepositRequired Boolean @default(false) @map("is_security_deposit_required")
+  isAgreementRequired       Boolean @default(false) @map("is_agreement_required")
+  isTdsApplicable           Boolean @default(false) @map("is_tds_applicable")
+  isGstApplicable           Boolean @default(true) @map("is_gst_applicable")
+
+  // I. Compliance / Legal
+  isNdaRequired              Boolean         @default(false) @map("is_nda_required")
+  agreementStatus            AgreementStatus @default(NOT_STARTED) @map("agreement_status")
+  agreementStartDate         DateTime?       @map("agreement_start_date")
+  agreementEndDate           DateTime?       @map("agreement_end_date")
+  documentVerificationStatus String?         @map("document_verification_status")
+  licenseVerificationStatus  String?         @map("license_verification_status")
+  isNablRequired             Boolean         @default(false) @map("is_nabl_required")
+  dataPrivacyRequirement     String?         @map("data_privacy_requirement")
+  hasReportSharingConsent    Boolean         @default(false) @map("has_report_sharing_consent")
+  authorizedSignatoryName    String?         @map("authorized_signatory_name")
+  authorizedSignatoryContact String?         @map("authorized_signatory_contact")
+
+  // J. Notes & attachments (URL strings only)
+  internalNotes    String?  @map("internal_notes")
+  clientNotes      String?  @map("client_notes")
+  visitNotes       String?  @map("visit_notes")
+  objectionsRaised String?  @map("objections_raised")
+  proposalFileUrl  String?  @map("proposal_file_url")
+  quotationFileUrl String?  @map("quotation_file_url")
+  agreementFileUrl String?  @map("agreement_file_url")
+  attachments      String[]
+  otherDocuments   String[] @map("other_documents")
+
+  // Derived / status
+  nextFollowUpDate DateTime?           @map("next_follow_up_date")
+  proposalStatus   SalesDocumentStatus @default(NOT_STARTED) @map("proposal_status")
+  quotationStatus  SalesDocumentStatus @default(NOT_STARTED) @map("quotation_status")
+  convertedValue   Decimal             @default(0) @map("converted_value") @db.Decimal(14, 2)
+
+  // Relations (genuine intra-module FKs)
+  trips         Trip[]
+  followUps     FollowUp[]
+  meetings      LeadMeeting[]
+  statusHistory LeadStatusHistory[]
+  tripVisits    TripVisit[]
+
+  createdBy String? @map("created_by")
+  updatedBy String? @map("updated_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([status])
+  @@index([pipelineStage])
+  @@index([assignedSalespersonId])
+  @@index([territoryId])
+  @@index([deletedAt])
+  @@map("leads")
+}
+
+/// Immutable audit/timeline entry for a lead (status changes, meeting outcomes,
+/// document uploads, edits). Backs the Timeline + Audit Trail drawers.
+model LeadStatusHistory {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  leadId   String @map("lead_id")
+  lead     Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  action        String
+  fromStatus    LeadStatus? @map("from_status")
+  toStatus      LeadStatus? @map("to_status")
+  byPersonId    String?     @map("by_person_id")
+  gps           String?
+  remarks       String?
+  attachmentUrl String?     @map("attachment_url")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([leadId])
+  @@map("lead_status_histories")
+}
+
+/// A scheduled/completed meeting on a lead (history behind the denormalised
+/// meeting fields on Lead + the Meeting Outcome flow).
+model LeadMeeting {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+  leadId   String  @map("lead_id")
+  lead     Lead    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  type                    MeetingType?
+  scheduledAt             DateTime?       @map("scheduled_at")
+  location                String?
+  agenda                  String?
+  attendees               String?
+  outcome                 MeetingOutcome?
+  summary                 String?
+  requirement             String?
+  objections              String?
+  competitor              String?
+  expectedMonthlyBusiness Int?            @map("expected_monthly_business")
+  gps                     String?
+  attachmentUrl           String?         @map("attachment_url")
+  byPersonId              String?         @map("by_person_id")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([leadId])
+  @@index([deletedAt])
+  @@map("lead_meetings")
+}
+
+/// A follow-up activity on a lead (the Follow-Up queue). Belongs to a lead; may
+/// optionally reference the trip during which it was created.
+model FollowUp {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  followUpCode String @map("follow_up_code")
+
+  leadId String  @map("lead_id")
+  lead   Lead    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  tripId String? @map("trip_id")
+  trip   Trip?   @relation(fields: [tripId], references: [id])
+
+  type                  FollowUpType
+  priority              LeadPriority   @default(MEDIUM)
+  dueAt                 DateTime?      @map("due_at")
+  requirement           String?
+  lastDiscussion        String?        @map("last_discussion")
+  nextAction            String?        @map("next_action")
+  status                FollowUpStatus @default(SCHEDULED)
+  assignedSalespersonId String?        @map("assigned_salesperson_id")
+
+  statusHistory FollowUpStatusHistory[]
+
+  createdBy String? @map("created_by")
+  updatedBy String? @map("updated_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([leadId])
+  @@index([tripId])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("follow_ups")
+}
+
+/// Immutable status-change trail for a follow-up.
+model FollowUpStatusHistory {
+  id         String   @id @default(uuid())
+  tenantId   String   @map("tenant_id")
+  followUpId String   @map("follow_up_id")
+  followUp   FollowUp @relation(fields: [followUpId], references: [id], onDelete: Cascade)
+
+  action     String
+  fromStatus FollowUpStatus? @map("from_status")
+  toStatus   FollowUpStatus? @map("to_status")
+  byPersonId String?         @map("by_person_id")
+  remarks    String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([followUpId])
+  @@map("follow_up_status_histories")
+}
+
+/// A field-sales trip (visit route). Branch-level. May be linked to the lead it
+/// was started from (Lead -> many Trips). Visit counts are derived from TripVisit.
+model Trip {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  tripCode String @map("trip_code")
+
+  leadId String? @map("lead_id")
+  lead   Lead?   @relation(fields: [leadId], references: [id])
+
+  tripDate         DateTime?  @map("trip_date")
+  salespersonId    String?    @map("salesperson_id")
+  startingLocation String?    @map("starting_location")
+  startingGps      String?    @map("starting_gps")
+  startingTime     String?    @map("starting_time")
+  endingLocation   String?    @map("ending_location")
+  endingGps        String?    @map("ending_gps")
+  endingTime       String?    @map("ending_time")
+  kmTravelled      Int        @default(0) @map("km_travelled")
+  status           TripStatus @default(PLANNED)
+  notes            String?
+
+  visits    TripVisit[]
+  followUps FollowUp[]
+
+  createdBy String? @map("created_by")
+  updatedBy String? @map("updated_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([leadId])
+  @@index([salespersonId])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("trips")
+}
+
+/// A single waypoint/visit within a trip (the roadmap timeline). May optionally
+/// reference the lead being visited.
+model TripVisit {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  tripId   String @map("trip_id")
+  trip     Trip   @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  sequence  Int
+  leadId    String?         @map("lead_id")
+  lead      Lead?           @relation(fields: [leadId], references: [id])
+  label     String?
+  gps       String?
+  plannedAt DateTime?       @map("planned_at")
+  arrivedAt DateTime?       @map("arrived_at")
+  status    TripVisitStatus @default(PLANNED)
+  notes     String?
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([tripId])
+  @@index([leadId])
+  @@index([deletedAt])
+  @@map("trip_visits")
+}
+
+/// Sales module configuration - one row per tenant (tenant-level only, no branch
+/// override). Holds the 9-section settings object as JSON (module toggle, defaults,
+/// approval rules, GPS/KM, reminders, auto-assignment, duplicate detection,
+/// notifications, audit).
+model SalesSetting {
+  id       String @id @default(uuid())
+  tenantId String @unique @map("tenant_id")
+
+  config Json @default("{}")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("sales_settings")
 }

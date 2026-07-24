@@ -24,13 +24,17 @@ body:json {
       {
         "branchId": "{{branchId}}",
         "role": "receptionist",
-        "modules": ["registration", "sales"],
+        "modules": ["registration", "sales","phlebotomist"],
         "defaultModule": "registration",
         "defaultBranch": true,
         "status": "ACTIVE"
       }
     ]
   }
+}
+
+vars:pre-request {
+  orderUserId: 1ca38a08-58ef-4083-b225-e656ac581856
 }
 
 tests {
@@ -42,7 +46,7 @@ tests {
 docs {
   Step 16 — assign the order-capable user to the branch **with a role and
   modules** (`POST /users/manage/{{orderUserId}}/branches`). Admin token.
-
+  
   A branch assignment carries the role, so this single call fulfils both "assign
   to the branch" and "assign the appropriate role and modules":
   - `role: receptionist` — the front-desk role (baseline modules `sales` +
@@ -55,7 +59,7 @@ docs {
   - `defaultBranch: true` — makes this the user's default branch, so their login
     (step 18) lands branch-scoped with an `active_branch_id`.
   - `status: ACTIVE` — per-branch activation.
-
+  
   This **replaces** the user's full branch-assignment set (here just the one
   branch). Permissions are granted in step 17.
 }

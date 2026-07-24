@@ -1,0 +1,32 @@
+meta {
+  name: 19 Status → CONFIRMED
+  type: http
+  seq: 20
+}
+
+patch {
+  url: {{baseUrl}}/phlebotomist-collections/{{collectionId}}/status
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "status": "CONFIRMED",
+    "notes": "Visit confirmed with the patient."
+  }
+}
+
+docs {
+  **Step 19 — SCHEDULED → CONFIRMED.** The phlebotomist confirms the visit. The
+  linked appointment status is synced to CONFIRMED. Each transition is validated
+  against the collection state machine, so run 19–28 in order.
+}

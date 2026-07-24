@@ -1,0 +1,46 @@
+meta {
+  name: 55 Sales Follow-Ups
+  seq: 62
+}
+
+docs {
+  # Sales Follow-Ups
+
+  Sales **follow-up** queue. A follow-up is tenant-scoped + branch-level, hangs
+  off a lead (required), may reference the trip it was scheduled during, and has
+  a channel (`type`), a due date, a priority, an assignee, and a lifecycle
+  status recorded in a history log. Powers the Sales → Follow-ups queue.
+
+  ## Scoping
+
+  All routes are **business-authenticated** (`Bearer {{businessAccessToken}}`).
+  Tenant comes from the JWT and branch from the active profile. **Do NOT send
+  `tenantId` / `branchId`.** `leadId` / `tripId` / `assignedSalespersonId` in a
+  body ARE sent (validated against the tenant/branch). No active branch →
+  `400 ACTIVE_BRANCH_REQUIRED`.
+
+  ## Run order
+
+  1. **Create Follow-Up** → captures `followUpId` (requires an existing `leadId`).
+  2. **List Follow-Ups** — paginated; filters + `statusBucket` queue tabs.
+  3. **Get Follow-Up** — one with status history.
+  4. **Update Follow-Up** — patch own fields (lead is immutable).
+  5. **Update Follow-Up Status** — transition + history row.
+  6. **Delete Follow-Up** — soft-delete.
+
+  Writes are audited under `AuditModule.SALES_FOLLOW_UP`.
+
+  ## Enums
+
+  - `FollowUpType`: PHONE_CALL | EMAIL | WHATSAPP | VISIT | ONLINE.
+  - `FollowUpStatus`: SCHEDULED | PENDING | COMPLETED | CONVERTED | CANCELLED |
+    RESCHEDULED | NO_RESPONSE.
+  - `LeadPriority` (reused): LOW | MEDIUM | HIGH | CRITICAL.
+
+  ## Error codes
+
+  - `FOLLOW_UP_NOT_FOUND` (404).
+  - `INVALID_FOLLOW_UP_LEAD` (400) — referenced lead invalid for the branch.
+  - `INVALID_FOLLOW_UP_TRIP` (400) — referenced trip invalid for the branch.
+  - `ACTIVE_BRANCH_REQUIRED` (400).
+}

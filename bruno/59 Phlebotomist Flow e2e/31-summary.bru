@@ -1,0 +1,23 @@
+meta {
+  name: 31 Dashboard Summary
+  type: http
+  seq: 32
+}
+
+get {
+  url: {{baseUrl}}/phlebotomist-collections/summary
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+docs {
+  **Step 31 — Phlebotomist dashboard summary** for the active branch: totals,
+  counts `byStatus` (all statuses), completed / pending / cancelled, a
+  per-phlebotomist rollup (`byPhlebotomist`), a per-day trend (`byDate`), and
+  total visit / sample-collection charges. Optional query params:
+  `dateFrom`, `dateTo`, `phlebotomistId`, `branchId`.
+}

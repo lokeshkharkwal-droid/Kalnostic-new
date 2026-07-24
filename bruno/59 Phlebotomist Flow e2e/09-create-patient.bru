@@ -1,0 +1,46 @@
+meta {
+  name: 09 Create Patient
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/patients
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "firstName": "Anjali",
+    "lastName": "Deshmukh",
+    "gender": "FEMALE",
+    "mobile": "9800011122",
+    "addressLine1": "17 Senapati Bapat Road",
+    "city": "Pune",
+    "state": "Maharashtra",
+    "pincode": "411016"
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.id) bru.setVar("patientId", data.id);
+}
+
+docs {
+  **Step 9 — Create the patient** the order is for (as the operator).
+
+  Minimum required fields are `firstName` + `mobile`; the rest are optional. The
+  patient is a tenant-scoped Person; `tenantId`/`branchId` come from the JWT.
+
+  Captures **`patientId`** — used as `patientId` on the order.
+}

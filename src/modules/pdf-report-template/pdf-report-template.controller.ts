@@ -73,6 +73,34 @@ export class PdfReportTemplateController {
   }
 
   /**
+   * Browse active SITE_ADMIN global PDF report templates (read-only) so the
+   * tenant can pick one to import. Declared before `:id` so `global` isn't
+   * matched as an id.
+   */
+  @Get('global')
+  findGlobal(@Query() query: ListPdfReportTemplateQueryDto) {
+    return this.service.findAllGlobal(query.page ?? 1, query.limit ?? 20, {
+      search: query.search,
+      type: query.type,
+      status: query.status,
+    });
+  }
+
+  /**
+   * Clone a SITE_ADMIN global PDF report template into the caller's tenant.
+   * Idempotent — a template already imported returns the existing copy.
+   */
+  @Post('global/:id/clone')
+  @Audit({
+    module: AuditModule.PDF_REPORT_TEMPLATE,
+    action: AuditAction.CREATE,
+    description: 'Cloned a Site Admin PDF report template into the tenant',
+  })
+  clone(@CurrentTenant() tenantId: string, @Param('id') id: string) {
+    return this.service.cloneToTenant(id, tenantId);
+  }
+
+  /**
    * List the supported template type keys + labels for the frontend select.
    * Declared before `:id` so it isn't captured as an id.
    */
@@ -143,6 +171,46 @@ export class PdfReportTemplateController {
     @Res() res: Response,
   ): Promise<void> {
     const pdf = await this.service.generatePdf(id, tenantId, dto);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="report-${id}.pdf"`);
+    res.setHeader('Content-Length', pdf.length);
+    res.end(pdf);
+  }
+
+  /**
+   * Render this template's block document (`doc`) to preview HTML against sample
+   * data, for the Advance PDF editor's live iframe. Returns raw `text/html` (a
+   * library-specific response) so the `ResponseInterceptor` does not wrap it in
+   * the JSON envelope.
+   */
+  @Get(':id/preview-html')
+  async previewHtml(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const html = await this.service.renderDocHtml(id, tenantId);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  }
+
+  /**
+   * Render this template's block document (`doc`) to a PDF and stream it back.
+   * The block-designer counterpart of `generate` (which renders the classic
+   * HTML `meta` model).
+   */
+  @Post(':id/render')
+  @Audit({
+    module: AuditModule.PDF_REPORT_TEMPLATE,
+    action: AuditAction.OTHER,
+    description: 'Rendered a PDF from an Advance PDF report template',
+  })
+  async render(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const pdf = await this.service.renderDocPdf(id, tenantId);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="report-${id}.pdf"`);
     res.setHeader('Content-Length', pdf.length);

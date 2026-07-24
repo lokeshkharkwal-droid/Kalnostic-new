@@ -3,8 +3,10 @@ import { PrismaModule } from '../../prisma/prisma.module';
 import { BranchModule } from '../branch/branch.module';
 import { PdfModule } from '../pdf/pdf.module';
 import { PdfReportTemplateController } from './pdf-report-template.controller';
+import { PdfTemplateConfigController } from './pdf-template-config.controller';
 import { SiteAdminPdfReportTemplateController } from './siteadmin-pdf-report-template.controller';
 import { PdfReportTemplateService } from './pdf-report-template.service';
+import { PdfTemplateConfigService } from './pdf-template-config.service';
 import { TemplateRenderService } from './services/template-render.service';
 
 /**
@@ -16,10 +18,15 @@ import { TemplateRenderService } from './services/template-render.service';
 @Module({
   imports: [PrismaModule, PdfModule, BranchModule],
   controllers: [
+    PdfTemplateConfigController,
     PdfReportTemplateController,
     SiteAdminPdfReportTemplateController,
   ],
-  providers: [PdfReportTemplateService, TemplateRenderService],
+  providers: [
+    PdfReportTemplateService,
+    PdfTemplateConfigService,
+    TemplateRenderService,
+  ],
   exports: [PdfReportTemplateService],
 })
 export class PdfReportTemplateModule {}

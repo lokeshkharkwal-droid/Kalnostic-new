@@ -1,0 +1,40 @@
+meta {
+  name: Update Follow-Up Status
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/sales/follow-ups/{{followUpId}}/status
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "COMPLETED",
+    "remarks": "Spoke to the client; proposal accepted, moving to negotiation."
+  }
+}
+
+docs {
+  Transition a follow-up to a new lifecycle status (recorded in history).
+
+  Fields (✱ = required):
+  - `status` ✱ — `FollowUpStatus`: `SCHEDULED` | `PENDING` | `COMPLETED` |
+    `CONVERTED` | `CANCELLED` | `RESCHEDULED` | `NO_RESPONSE`.
+  - `remarks` (optional, ≤ 2000).
+
+  Path param `id` ✱ — follow-up UUID (`followUpId`).
+
+  Tenant + active branch come from the JWT; do NOT send `tenantId` / `branchId`.
+  Errors: `FOLLOW_UP_NOT_FOUND` (404), `ACTIVE_BRANCH_REQUIRED` (400).
+}

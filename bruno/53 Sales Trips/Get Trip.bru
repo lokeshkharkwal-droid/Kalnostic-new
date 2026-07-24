@@ -1,0 +1,26 @@
+meta {
+  name: Get Trip
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/sales/trips/{{tripId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Fetch one trip with its visits + derived counts, scoped to the caller's tenant
+  + active branch.
+
+  Path param `id` ✱ — trip UUID (`tripId`).
+
+  Response: `{ success, data: { id, ...trip, visits: [...] }, meta }`.
+
+  Errors: `TRIP_NOT_FOUND` (404), `ACTIVE_BRANCH_REQUIRED` (400).
+}

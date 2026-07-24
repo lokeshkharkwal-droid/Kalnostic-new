@@ -1,0 +1,26 @@
+meta {
+  name: Convert Lead
+  type: http
+  seq: 9
+}
+
+patch {
+  url: {{baseUrl}}/sales/leads/{{leadId}}/convert
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Convert a lead — moves the lead to the `CONVERTED` status (status-only for this
+  phase; no downstream client/order provisioning yet). Records a status-history
+  entry.
+
+  No request body. Path param `id` ✱ — lead UUID (`leadId`).
+
+  Tenant + active branch come from the JWT; do NOT send `tenantId` / `branchId`.
+  Errors: `LEAD_NOT_FOUND` (404), `ACTIVE_BRANCH_REQUIRED` (400).
+}

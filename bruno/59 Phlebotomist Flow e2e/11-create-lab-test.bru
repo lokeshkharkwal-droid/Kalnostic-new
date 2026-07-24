@@ -1,0 +1,53 @@
+meta {
+  name: 11 Create Lab Test
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/lab-tests
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "testName": "Complete Blood Count",
+    "testDisplayName": "CBC",
+    "testCode": "CBC-PF",
+    "processMethod": "SINGLE_STEP",
+    "samplePriorityType": "ROUTINE",
+    "priceMsrp": 500,
+    "priceMaximum": 500,
+    "priceMinimum": 300,
+    "isActive": true,
+    "samples": [
+      { "sampleType": "Blood", "containerType": "EDTA_TUBE_PURPLE_TOP", "isDefault": true }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.id) bru.setVar("labTestId", data.id);
+}
+
+docs {
+  **Prerequisite 2a — Create a lab test** inside the branch's master data.
+
+  Only `testName` + `testCode` are required; everything else (classification ids,
+  pricing, TAT, samples, result params) is optional. A single blood `sample` is
+  included so the branch option (step 15) surfaces a sample type. Price ordering
+  rule: `priceMinimum ≤ priceMaximum ≤ priceMsrp`.
+
+  Captures **`labTestId`** — imported into the branch in step 13 and referenced by
+  the panel in step 12.
+}

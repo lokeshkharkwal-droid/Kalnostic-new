@@ -1,0 +1,31 @@
+meta {
+  name: 27 Status → ACCEPTED_BY_LAB
+  type: http
+  seq: 28
+}
+
+patch {
+  url: {{baseUrl}}/phlebotomist-collections/{{collectionId}}/status
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "status": "ACCEPTED_BY_LAB",
+    "notes": "Lab accepted the samples."
+  }
+}
+
+docs {
+  **Step 27 — RECEIVED_AT_LAB → ACCEPTED_BY_LAB.** Lab accepts the samples; the
+  order's accession samples move to ACCEPTED.
+}

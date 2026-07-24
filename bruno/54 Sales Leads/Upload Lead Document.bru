@@ -1,0 +1,45 @@
+meta {
+  name: Upload Lead Document
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/sales/leads/{{leadId}}/documents
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "docType": "proposal",
+    "url": "https://files.example/proposal-city-hospital.pdf",
+    "status": "SHARED"
+  }
+}
+
+docs {
+  Attach a proposal / quotation / agreement document URL to a lead (URL strings
+  only — no upload pipeline this phase). Updates the matching file field and,
+  for proposal/quotation, the corresponding status.
+
+  Fields (✱ = required):
+  - `docType` ✱ — one of `proposal` | `quotation` | `agreement`.
+  - `url` ✱ — string ≤ 1000.
+  - `status` (optional) — `SalesDocumentStatus` (`NOT_STARTED` | `REQUIRED` |
+    `SHARED` | `APPROVED` | `REJECTED`); applies to proposal/quotation, defaults
+    to `SHARED`.
+
+  Path param `id` ✱ — lead UUID (`leadId`).
+
+  Tenant + active branch come from the JWT; do NOT send `tenantId` / `branchId`.
+  Errors: `LEAD_NOT_FOUND` (404), `ACTIVE_BRANCH_REQUIRED` (400).
+}

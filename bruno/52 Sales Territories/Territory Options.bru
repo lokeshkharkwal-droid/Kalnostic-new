@@ -1,0 +1,29 @@
+meta {
+  name: Territory Options
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/sales/territories/options
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Active `{ id, name }` options for the Territory / Zone dropdown on the Sales
+  Leads form + filter bar. Scoped to the caller's tenant + active branch; only
+  active (non-deleted, `isActive = true`) territories are returned.
+
+  Response: `{ success, data: [{ id, name }], meta: { timestamp } }`.
+
+  Tenant + active branch come from the JWT; do NOT send `tenantId` / `branchId`.
+  `400 ACTIVE_BRANCH_REQUIRED` if the caller has no active branch.
+
+  NOTE: this literal `options` route is declared before `:id`, so it matches
+  first.
+}

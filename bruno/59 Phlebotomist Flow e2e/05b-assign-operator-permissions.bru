@@ -1,0 +1,50 @@
+meta {
+  name: 05b Assign Operator Permissions
+  type: http
+  seq: 6
+}
+
+put {
+  url: {{baseUrl}}/users/manage/{{operatorUserId}}/branch-permissions
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "branchId": "{{branchId}}",
+    "items": [
+      { "moduleKey": "phlebotomist", "permissionKey": "phlebotomist:view", "allowed": true },
+      { "moduleKey": "phlebotomist", "permissionKey": "phlebotomist:write", "allowed": true },
+      { "moduleKey": "phlebotomist", "permissionKey": "phlebotomist:edit", "allowed": true },
+      { "moduleKey": "phlebotomist", "permissionKey": "phlebotomist:delete", "allowed": true },
+      { "moduleKey": "phlebotomist", "permissionKey": "phlebotomist:collect_sample", "allowed": true }
+    ]
+  }
+}
+
+docs {
+  **Step 5 — Grant the operator the phlebotomist permissions.**
+
+  Replaces the (user + branch) permission grants for the phlebotomist module so
+  the operator can view, create, edit, delete and collect-sample within it. Only
+  modules enabled for the branch are accepted, and each `permissionKey` must
+  belong to its `moduleKey`.
+
+  Verify afterwards (optional) with
+  `GET /users/manage/me/permissions?branchId={{branchId}}` while authenticated as
+  the operator — the phlebotomist module should be `moduleAllowed: true` with
+  these keys in `allowed`.
+
+  > Note: business routes are authenticated but do not yet enforce per-permission
+  > RBAC at the route level, so these grants describe intended access for the
+  > frontend / future guard; the operator token can already call the endpoints.
+}

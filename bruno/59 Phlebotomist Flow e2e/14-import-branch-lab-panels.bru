@@ -1,0 +1,36 @@
+meta {
+  name: 14 Import Lab Panels into Branch
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{baseUrl}}/branch-lab-panels/import
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "labPanelIds": ["{{labPanelId}}"]
+  }
+}
+
+docs {
+  **Prerequisite 3b — Import the lab panel into the active branch's list.**
+
+  Deep-copies the master-data lab panel into the branch's Lab Panel List; its
+  member tests are materialized into the branch's Lab Test List (an existing copy
+  of the same source test — imported in step 13 — is reused), so the branch panel
+  references branch-owned lab tests. Returns `{ copied, skipped }`.
+
+  The new `branchLabPanelId` is resolved in step 16.
+}

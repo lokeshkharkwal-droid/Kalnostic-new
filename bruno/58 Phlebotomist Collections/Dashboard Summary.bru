@@ -1,0 +1,52 @@
+meta {
+  name: Dashboard Summary
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/phlebotomist-collections/summary
+  body: none
+  auth: bearer
+}
+
+params:query {
+  ~dateFrom: 2026-01-01
+  ~dateTo: 2026-12-31
+  ~phlebotomistId: {{phlebotomistId}}
+  ~branchId: {{branchId}}
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("has status breakdown", function () {
+    expect(res.getBody().data).to.have.property("byStatus");
+    expect(res.getBody().data).to.have.property("byPhlebotomist");
+  });
+}
+
+docs {
+  Dashboard aggregation for the Phlebotomist module (scoped to the active branch,
+  honouring the same filters as the schedule):
+
+  - `total` + `byStatus` (a count per `CollectionStatus`, all present with 0
+    default) — the stat cards + status-distribution chart.
+  - `completed` / `pending` / `cancelled` rollups.
+  - `byPhlebotomist` — `{ phlebotomistId, phlebotomistName, assigned, completed,
+    pending, cancelled, totalCharges, totalKm, onTimePercentage }` — the
+    phlebotomist-wise chart + performance table. `totalKm` / `onTimePercentage`
+    are `null` (no backend source yet — ships with Route Mapping).
+  - `byDate` — `[{ date, count }]` ascending — the date-wise trend chart.
+  - `totalVisitCharges` / `totalSampleCollectionCharges` (minor units).
+
+  ## Filters
+
+  `dateFrom` / `dateTo` (inclusive `scheduledCollectionAt` range), `phlebotomistId`,
+  `branchId` (override).
+}

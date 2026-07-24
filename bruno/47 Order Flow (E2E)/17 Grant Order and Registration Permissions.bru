@@ -22,16 +22,73 @@ body:json {
   {
     "branchId": "{{branchId}}",
     "items": [
-      { "moduleKey": "registration", "permissionKey": "registration:view", "allowed": true },
-      { "moduleKey": "registration", "permissionKey": "registration:write", "allowed": true },
-      { "moduleKey": "registration", "permissionKey": "registration:edit", "allowed": true },
-      { "moduleKey": "registration", "permissionKey": "registration:delete", "allowed": true },
-      { "moduleKey": "sales", "permissionKey": "sales:view", "allowed": true },
-      { "moduleKey": "sales", "permissionKey": "sales:write", "allowed": true },
-      { "moduleKey": "sales", "permissionKey": "sales:edit", "allowed": true },
-      { "moduleKey": "sales", "permissionKey": "sales:delete", "allowed": true }
+      {
+        "moduleKey": "registration",
+        "permissionKey": "registration:view",
+        "allowed": true
+      },
+      {
+        "moduleKey": "registration",
+        "permissionKey": "registration:write",
+        "allowed": true
+      },
+      {
+        "moduleKey": "registration",
+        "permissionKey": "registration:edit",
+        "allowed": true
+      },
+      {
+        "moduleKey": "registration",
+        "permissionKey": "registration:delete",
+        "allowed": true
+      },
+      {
+        "moduleKey": "sales",
+        "permissionKey": "sales:view",
+        "allowed": true
+      },
+      {
+        "moduleKey": "sales",
+        "permissionKey": "sales:write",
+        "allowed": true
+      },
+      {
+        "moduleKey": "sales",
+        "permissionKey": "sales:edit",
+        "allowed": true
+      },
+      {
+        "moduleKey": "sales",
+        "permissionKey": "sales:delete",
+        "allowed": true
+      },
+      
+      {
+        "moduleKey": "phlebotomist",
+        "permissionKey": "phlebotomist:view",
+        "allowed": true
+      },
+      {
+        "moduleKey": "phlebotomist",
+        "permissionKey": "phlebotomist:write",
+        "allowed": true
+      },
+      {
+        "moduleKey": "phlebotomist",
+        "permissionKey": "phlebotomist:edit",
+        "allowed": true
+      },
+      {
+        "moduleKey": "phlebotomist",
+        "permissionKey": "phlebotomist:delete",
+        "allowed": true
+      }
     ]
   }
+}
+
+vars:pre-request {
+  orderUserId: 1ca38a08-58ef-4083-b225-e656ac581856
 }
 
 tests {
@@ -44,12 +101,12 @@ docs {
   Step 17 — grant the order-capable user **all permissions needed to create and
   manage orders** at the branch (`PUT /users/manage/{{orderUserId}}/branch-permissions`).
   Admin token.
-
+  
   Order and patient creation are exposed through the **Registration** module (and
   front-desk billing through **Sales**), so we grant the full CRUD set of both:
   `registration:view|write|edit|delete` and `sales:view|write|edit|delete`. Each
   item is `{ moduleKey, permissionKey, allowed }`; `allowed: true` grants it.
-
+  
   Notes:
   - The `permissionKey` format is `${moduleKey}:${action}`.
   - Only modules **enabled at the branch** (step 14) are accepted — grants for a

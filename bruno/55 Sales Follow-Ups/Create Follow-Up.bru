@@ -1,0 +1,63 @@
+meta {
+  name: Create Follow-Up
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/sales/follow-ups
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "leadId": "{{leadId}}",
+    "tripId": "{{tripId}}",
+    "type": "PHONE_CALL",
+    "priority": "HIGH",
+    "dueAt": "2026-07-30T10:00:00.000Z",
+    "requirement": "Confirm the rate card and share the revised proposal.",
+    "lastDiscussion": "Client wants faster TAT on specialised tests.",
+    "nextAction": "Send updated TAT sheet and call back.",
+    "assignedSalespersonId": "{{salespersonId}}",
+    "status": "SCHEDULED"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("followUpId", data.id);
+}
+
+docs {
+  Create a follow-up at the caller's active branch. Captures `followUpId`. The
+  follow-up hangs off a lead (required) and may reference the trip it was
+  scheduled during.
+
+  Fields (✱ = required):
+  - `leadId` ✱ — UUID of the lead (validated for the branch; 400
+    `INVALID_FOLLOW_UP_LEAD` otherwise).
+  - `type` ✱ — `FollowUpType`: `PHONE_CALL` | `EMAIL` | `WHATSAPP` | `VISIT` |
+    `ONLINE`.
+  - `tripId` (optional) — UUID (validated; 400 `INVALID_FOLLOW_UP_TRIP`).
+  - `priority` (optional) — `LeadPriority`.
+  - `dueAt` (optional) — ISO datetime string.
+  - `requirement` / `lastDiscussion` / `nextAction` (optional, ≤ 2000).
+  - `assignedSalespersonId` (optional) — UUID of a staff Person.
+  - `status` (optional) — `FollowUpStatus` (defaults per service).
+
+  Response: `{ success, data: { id, ... }, meta }`.
+
+  Tenant + active branch come from the JWT; do NOT send `tenantId` / `branchId`.
+  Errors: `INVALID_FOLLOW_UP_LEAD` (400), `INVALID_FOLLOW_UP_TRIP` (400),
+  `ACTIVE_BRANCH_REQUIRED` (400).
+}

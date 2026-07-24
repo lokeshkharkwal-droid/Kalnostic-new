@@ -1,0 +1,40 @@
+meta {
+  name: 10 Resolve Branch Master Data
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/master-data?branchId={{branchId}}&page=1&limit=1
+  body: none
+  auth: bearer
+}
+
+params:query {
+  branchId: {{branchId}}
+  page: 1
+  limit: 1
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.length && data[0].id) bru.setVar("masterDataId", data[0].id);
+}
+
+docs {
+  **Prerequisite 1 — Resolve the branch's master data.**
+
+  Every branch gets a **default master data auto-provisioned when it is created**
+  (step 02), so we don't POST a new one — we look it up. This matters: the branch
+  lab-test/panel **import** (steps 13–14) reads tests from the branch's single
+  mapped master data (`MasterDataService.findByBranch`). Creating an additional
+  master data would not be the one the import reads, so lab tests/panels are
+  created **inside this** master data.
+
+  Filters the tenant's master data by `branchId` and captures **`masterDataId`**
+  from the first (only) row.
+}

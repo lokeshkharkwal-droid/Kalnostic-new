@@ -1,0 +1,30 @@
+meta {
+  name: 25 Status → IN_TRANSIT
+  type: http
+  seq: 26
+}
+
+patch {
+  url: {{baseUrl}}/phlebotomist-collections/{{collectionId}}/status
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "status": "IN_TRANSIT",
+    "notes": "Samples en route to the lab."
+  }
+}
+
+docs {
+  **Step 25 — COLLECTION_VERIFIED → IN_TRANSIT.** Samples on the way to the lab.
+}

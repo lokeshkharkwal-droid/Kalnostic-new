@@ -1,0 +1,49 @@
+meta {
+  name: 53 Sales Trips
+  seq: 60
+}
+
+docs {
+  # Sales Trips
+
+  Field-sales **trip** endpoints. A trip is a tenant-scoped + branch-level record
+  run by a salesperson (any active staff `Person` in the tenant), optionally
+  started from a lead, carrying start/end waypoints, km travelled, a status, and
+  an ordered list of **visits** (roadmap timeline entries). Powers the
+  Sales → Trips section (list, overview, roadmap, status, visits) and the
+  **priority create-trip POST**.
+
+  ## Scoping
+
+  All routes are **business-authenticated** (`Bearer {{businessAccessToken}}`).
+  Tenant comes from the JWT and branch from the active profile. **Do NOT send
+  `tenantId` / `branchId`** — they come from context. `salespersonId` and
+  `leadId` in a body ARE sent (validated against the tenant/branch in the
+  service). No active branch → `400 ACTIVE_BRANCH_REQUIRED`.
+
+  ## Run order
+
+  1. **Create Trip** (priority) → captures `tripId`. Optionally seeds `visits[]`.
+  2. **List Trips** — paginated; filters `dateFrom`/`dateTo`/`salespersonId`/
+     `status`/`search`.
+  3. **Get Trip** — one trip with visits + derived counts.
+  4. **Get Trip Roadmap** — ordered visits + start/end waypoints + totals.
+  5. **Update Trip** — patch own fields.
+  6. **Update Trip Status** — PLANNED → IN_PROGRESS → COMPLETED / CANCELLED.
+  7. **Add Trip Visit** / **Update Trip Visit** — manage roadmap waypoints.
+  8. **Delete Trip** — soft-delete.
+
+  Writes are audited under `AuditModule.SALES_TRIP`.
+
+  ## Enums
+
+  - `TripStatus`: `PLANNED` | `IN_PROGRESS` | `COMPLETED` | `CANCELLED`.
+  - `TripVisitStatus`: `PLANNED` | `COMPLETED` | `PENDING` | `CANCELLED`.
+
+  ## Error codes
+
+  - `TRIP_NOT_FOUND` (404), `TRIP_VISIT_NOT_FOUND` (404).
+  - `INVALID_SALESPERSON` (400) — person is not an active staff member.
+  - `INVALID_TRIP_LEAD` (400) — referenced lead invalid for the branch.
+  - `ACTIVE_BRANCH_REQUIRED` (400).
+}

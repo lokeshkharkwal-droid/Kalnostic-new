@@ -361,6 +361,62 @@ export class TemplateService {
     });
   }
 
+  // ── Clone (SITE_ADMIN global template → tenant) ─────────────────────────────
+
+  /**
+   * Clone a SITE_ADMIN global template into the caller's scope (tenant + active
+   * branch). Idempotent: if this template was already cloned into the same
+   * scope, the existing copy is returned (no duplicate). Unlike `duplicate`,
+   * the clone keeps the source title (no " (Copy)" suffix), is forced to
+   * `level = BUSINESS`, and records `clonedFromId` so the UI can flag templates
+   * already imported. Runs inside `withTenant` — the templates RLS policy
+   * permits reading the NULL-tenant source while a tenant GUC is set.
+   * @param templateId the SITE_ADMIN global template to clone
+   * @param tenantId caller's tenant (from JWT)
+   * @param scopeBranchId active branch (branch-admin) or null (business-admin)
+   * @param actorId person id of the importer (optional audit trail)
+   * @returns the tenant template (existing clone or newly created)
+   * @throws TemplateNotFoundException if the source is not a live global template
+   */
+  async cloneToTenant(
+    templateId: string,
+    tenantId: string,
+    scopeBranchId: string | null,
+    actorId?: string,
+  ): Promise<Template> {
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const existing = await tx.template.findFirst({
+        where: {
+          tenantId,
+          branchId: scopeBranchId,
+          clonedFromId: templateId,
+          deletedAt: null,
+        },
+      });
+      if (existing) {
+        return existing;
+      }
+      const source = await tx.template.findFirst({
+        where: { id: templateId, tenantId: null, deletedAt: null },
+      });
+      if (!source) {
+        throw new TemplateNotFoundException(templateId);
+      }
+      return tx.template.create({
+        data: {
+          ...this.cloneData(source),
+          displayTitle: source.displayTitle,
+          tenantId,
+          branchId: scopeBranchId,
+          clonedFromId: templateId,
+          level: MessagingLevel.BUSINESS,
+          createdBy: actorId ?? null,
+          updatedBy: actorId ?? null,
+        },
+      });
+    });
+  }
+
   // ── Helpers ─────────────────────────────────────────────────────────────────
 
   /**

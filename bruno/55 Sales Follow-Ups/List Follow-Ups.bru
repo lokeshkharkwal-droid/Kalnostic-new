@@ -1,0 +1,50 @@
+meta {
+  name: List Follow-Ups
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/sales/follow-ups?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: city hospital
+  ~dateFrom: 2026-07-01
+  ~dateTo: 2026-07-31
+  ~salespersonId: {{salespersonId}}
+  ~priority: HIGH
+  ~status: SCHEDULED
+  ~leadId: {{leadId}}
+  ~statusBucket: scheduled
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Paginated list of follow-ups for the caller's tenant + active branch. All query
+  params optional:
+
+  - `page` / `limit` — offset pagination (defaults 1 / 20, limit capped at 100).
+  - `search` — free-text.
+  - `dateFrom` / `dateTo` — ISO date (yyyy-mm-dd) bounds on the due date.
+  - `salespersonId` / `leadId` — UUIDs.
+  - `priority` — `LeadPriority`.
+  - `status` — `FollowUpStatus`.
+  - `statusBucket` — queue-tab shortcut: one of `all`, `scheduled`, `pending`,
+    `completed`, `converted`, `cancelled`, `rescheduled`, `no-response`. Maps 1:1
+    to a status except `all`. When both `status` and `statusBucket` are sent,
+    `status` wins.
+
+  Response: `{ success, data: [...], meta: { total, page, limit, totalPages,
+  timestamp } }`.
+
+  Tenant + active branch come from the JWT; do NOT send `tenantId` / `branchId`.
+  `400 ACTIVE_BRANCH_REQUIRED` if the caller has no active branch.
+}

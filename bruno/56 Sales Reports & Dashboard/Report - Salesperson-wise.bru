@@ -1,0 +1,42 @@
+meta {
+  name: Report - Salesperson-wise
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/sales/reports/salesperson-wise
+  body: none
+  auth: bearer
+}
+
+params:query {
+  ~dateFrom: 2026-07-01
+  ~dateTo: 2026-07-31
+  ~salespersonId: {{salespersonId}}
+  ~territoryId: {{territoryId}}
+  ~source: Referral
+  ~category: Hospital Tie-up
+  ~search: meera
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Salesperson-wise report: per-salesperson aggregates (lead counts, conversion,
+  pipeline value, etc.) for the caller's tenant + active branch. Same optional
+  filters as the lead-wise report:
+
+  - `dateFrom` / `dateTo` — ISO date (yyyy-mm-dd) bounds applied to `leadAt`.
+  - `salespersonId` / `territoryId` — UUIDs.
+  - `source` / `category` — strings ≤ 255.
+  - `search` — free-text over lead code / organization / primary contact name.
+
+  Response: `{ success, data: [ { salespersonId, salespersonName, totalLeads,
+  converted, ... } ], meta: { timestamp } }`.
+
+  Tenant + active branch come from the JWT; do NOT send `tenantId` / `branchId`.
+  `400 ACTIVE_BRANCH_REQUIRED` if the caller has no active branch.
+}

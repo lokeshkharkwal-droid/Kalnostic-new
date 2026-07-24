@@ -1,0 +1,49 @@
+meta {
+  name: 01 Business Admin Login
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "identifier": "{{adminIdentifier}}",
+    "password": "{{adminPassword}}",
+    "tenantSlug": "{{tenantSlug}}"
+  }
+}
+
+vars:pre-request {
+  adminIdentifier: +919812345679
+  adminPassword: Wbaelm46
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.accessToken) {
+    bru.setVar("businessAdminToken", data.accessToken);
+    if (data.refreshToken) bru.setVar("businessRefreshToken", data.refreshToken);
+  }
+}
+
+docs {
+  **Step 1 — Business-admin login.** Public route (business `'jwt'` strategy).
+  
+  Body: `identifier` (phone → email → system_username precedence), `password`,
+  and `tenantSlug` (required for staff/tenant login). These come from the
+  collection pre-request; edit them there once if your seed differs.
+  
+  Captures **`businessAdminToken`** (15-min access token) — used for the
+  tenant-level setup steps 02–05. A business-admin token has
+  `active_branch_id: null`, so it can create the branch and the user, but the
+  branch-scoped work (steps 07+) uses the operator token from step 06 instead.
+}

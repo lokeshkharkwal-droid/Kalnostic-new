@@ -1,0 +1,84 @@
+meta {
+  name: 17 Create Home-Visit Order
+  type: http
+  seq: 18
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+script:pre-request {
+  // Compute a valid future collection time: tomorrow at 10:00 UTC. It falls
+  // inside the 08:00-18:00 schedule and on a 30-min slot boundary, and is in the
+  // future (SLOT_UNAVAILABLE guards against past times).
+  const now = new Date();
+  const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  const day = tomorrow.toISOString().slice(0, 10); // YYYY-MM-DD
+  bru.setVar("orderDate", now.toISOString().slice(0, 10));
+  bru.setVar("collectionAt", day + "T10:00:00.000Z");
+}
+
+body:json {
+  {
+    "orderDate": "{{orderDate}}",
+    "orderType": "CONSULTATION",
+    "billingType": "INDIVIDUAL",
+    "patientId": "{{patientId}}",
+    "status": "APPOINTMENT",
+    "items": [
+      { "branchLabTestId": "{{branchLabTestId}}" },
+      { "branchLabPanelId": "{{branchLabPanelId}}" }
+    ],
+    "diagnostics": {
+      "isHomeVisit": true,
+      "phlebotomistId": "{{phlebotomistId}}",
+      "collectionAt": "{{collectionAt}}",
+      "appointmentAt": "{{collectionAt}}",
+      "collectionAddress": "17 Senapati Bapat Road, Pune 411016",
+      "geoLocation": "18.5314,73.8446",
+      "sampleCollectionCharges": 100,
+      "visitCharges": 200
+    }
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data) {
+    if (data.id) bru.setVar("orderId", data.id);
+    if (data.orderCode) bru.setVar("orderCode", data.orderCode);
+    const apptId = data.appointmentId || (data.appointment && data.appointment.id);
+    if (apptId) bru.setVar("appointmentId", apptId);
+  }
+}
+
+docs {
+  **Step 17 — Create the home-visit diagnostic order** (as the operator).
+
+  Now that the catalogue is imported (steps 10–16), the order carries real
+  `items` — the branch lab test + branch lab panel. The `diagnostics` section with
+  `isHomeVisit: true` + `phlebotomistId` + `collectionAt` triggers the module: in
+  one transaction the order + items are created, accession samples are generated
+  (because `status: APPOINTMENT` with a diagnostics section), the phlebotomist
+  slot is reserved (needs step 08's schedule), an **Appointment** is created (which
+  also requires `appointmentAt` on the filled section), and a
+  **`HomeVisitCollection`** row is created with status `SCHEDULED`.
+
+  Each order item must set exactly one of `branchLabTestId` / `branchLabPanelId` /
+  `direct`. `collectionAt` is computed in the pre-request (tomorrow 10:00 UTC) so
+  it always lands on a bookable slot.
+
+  Captures **`orderId`**, **`orderCode`**, and **`appointmentId`**. The collection
+  id is not in this response — step 18 fetches it.
+}

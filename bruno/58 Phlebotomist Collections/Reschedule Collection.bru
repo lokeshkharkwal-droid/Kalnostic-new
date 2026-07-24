@@ -1,0 +1,59 @@
+meta {
+  name: Reschedule Collection
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/phlebotomist-collections/{{collectionId}}/reschedule
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "collectionAt": "2026-12-20T10:00:00.000Z",
+    "reason": "Patient requested a later slot"
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("moved to RESCHEDULED", function () {
+    expect(res.getBody().data.status).to.equal("RESCHEDULED");
+  });
+}
+
+docs {
+  Reschedule a collection to a new `collectionAt`, optionally reassigning the
+  phlebotomist. In one transaction the service releases the old phlebotomist slot,
+  reserves the new one (atomic capacity gate), updates the order's diagnostics
+  (`collectionAt` + `phlebotomistId`) and appointment time, moves the collection to
+  `RESCHEDULED`, and syncs the linked appointment.
+
+  ## Body
+
+  - `collectionAt` — **required**: new date/time (ISO-8601). Must map to a bookable
+    slot for the phlebotomist.
+  - `phlebotomistId` — optional: reassign to another staff Person (keeps the
+    current one when omitted).
+  - `reason` — optional (≤2000); stored on the history row.
+  - `attachmentUrl` — optional (≤1024).
+
+  Reschedule is allowed from **any** status, including `CANCELLED` (whose slot was
+  already released, so no double-release).
+
+  Errors: `404 COLLECTION_NOT_FOUND`; `409/422` slot errors (`SLOT_FULL`,
+  `DAILY_CAP_REACHED`, `SLOT_UNAVAILABLE`, `PHLEBOTOMIST_SCHEDULE_NOT_FOUND`) when
+  the new time can't be booked — the whole reschedule rolls back.
+}

@@ -1,0 +1,135 @@
+meta {
+  name: Create Lead
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/sales/leads
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "category": "Hospital Tie-up",
+    "organizationName": "City Hospital",
+    "organizationType": "Hospital",
+    "primaryContactName": "Dr. Meera Joshi",
+    "mobile": "+919820011223",
+    "source": "Referral",
+
+    "leadAt": "2026-07-21",
+    "assignedSalespersonId": "{{salespersonId}}",
+    "territoryId": "{{territoryId}}",
+    "priority": "HIGH",
+    "status": "NEW_LEAD",
+    "pipelineStage": "PROSPECTING",
+    "estimatedDealValue": 500000,
+    "expectedClosureDate": "2026-09-30",
+    "probabilityPercent": 40,
+
+    "gstNumber": "27ABCDE1234F1Z5",
+    "website": "https://cityhospital.example",
+    "annualPatientVolume": 120000,
+    "monthlyReferralPotential": 800,
+
+    "designation": "Procurement Head",
+    "email": "meera.joshi@cityhospital.example",
+    "isDecisionMaker": true,
+
+    "city": "Pune",
+    "state": "Maharashtra",
+    "pincode": "411038",
+
+    "sourcePersonName": "Dr. Rao",
+
+    "serviceInterestedIn": "Outsourced pathology + home collection",
+    "expectedMonthlyVolume": 900,
+    "isCreditRequired": true,
+    "creditDaysRequired": 30,
+    "billingType": "Credit",
+    "requiredIntegrations": ["API", "WhatsApp Reports"],
+    "requiredDocuments": ["Rate Card", "Agreement"],
+
+    "meetingType": "PHYSICAL_VISIT",
+    "meetingDate": "2026-07-25",
+    "meetingTime": "11:00",
+    "isReminderRequired": true,
+
+    "isAgreementRequired": true,
+    "agreementStatus": "NOT_STARTED",
+
+    "internalNotes": "High-value hospital tie-up; decision-maker engaged early."
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("leadId", data.id);
+}
+
+docs {
+  Create a business lead (the 10-section A–J form). Captures `leadId`. The
+  service runs the tenant's duplicate-detection check and generates `leadCode`
+  (`LD-YYYY-#####`) atomically.
+
+  **Required fields (✱):**
+  - `category` ✱ — string ≤ 120 (open-ended; see Lead Options `categories`).
+  - `organizationName` ✱ — string ≤ 255.
+  - `organizationType` ✱ — string ≤ 120 (open-ended).
+  - `primaryContactName` ✱ — string ≤ 255.
+  - `mobile` ✱ — string ≤ 20.
+  - `source` ✱ — string ≤ 120 (open-ended).
+
+  **Representative optional fields** (full A–J set supported):
+  - A. Basic: `leadAt`, `leadOwnerId` (UUID), `assignedSalespersonId` (UUID),
+    `department` (≤ 120), `territoryId` (UUID), `priority` (`LeadPriority`),
+    `status` (`LeadStatus`), `estimatedDealValue` (num ≥ 0),
+    `expectedClosureDate`, `probabilityPercent` (int ≥ 0),
+    `pipelineStage` (`PipelineStage`).
+  - B. Organization: `registrationNumber`, `gstNumber`, `pan`, `website`,
+    `organizationSize`, `numberOfBranches`, `annualPatientVolume`,
+    `monthlyReferralPotential`, `existingDiagnosticPartner`, `competitorName`.
+  - C. Contact: `designation`, `contactDepartment`, `alternateMobile`,
+    `whatsapp`, `landline`, `email`, `preferredContact`, `isDecisionMaker`,
+    `isInfluencer`.
+  - D. Address: `country`, `state`, `district`, `city`, `area`, `addressLine`,
+    `pincode`, `landmark`, `geoLocation`, `distanceFromBranch`.
+  - E. Source: `sourcePersonName`, `sourceContactNumber`, `sourceRemarks`.
+  - F. Requirement: `serviceInterestedIn`, `testMenuRequired`, `packageRequired`,
+    `expectedMonthlyVolume`, `expectedMonthlyRevenue`, `expectedDiscountPercent`,
+    `isCreditRequired`, `creditDaysRequired`, `billingType`,
+    `requiredIntegrations[]`, `requiredDocuments[]`.
+  - G. Meeting: `meetingType` (`MeetingType`), `meetingDate`, `meetingTime`,
+    `meetingLocation`, `meetingAgenda`, `expectedAttendees`, `isReminderRequired`,
+    `reminderAt`.
+  - H. Commercial: `mrpValue`, `offeredDiscountPercent`,
+    `isSpecialRateCardRequired`, `isCommissionRequired`,
+    `referralCommissionPercent`, `revenueSharePercent`, `expectedMargin`,
+    `paymentTerms`, `isSecurityDepositRequired`, `isAgreementRequired`,
+    `isTdsApplicable`, `isGstApplicable`.
+  - I. Compliance: `isNdaRequired`, `agreementStatus` (`AgreementStatus`),
+    `agreementStartDate`, `agreementEndDate`, `documentVerificationStatus`,
+    `licenseVerificationStatus`, `isNablRequired`, `dataPrivacyRequirement`,
+    `hasReportSharingConsent`, `authorizedSignatoryName`,
+    `authorizedSignatoryContact`.
+  - J. Notes / attachments: `internalNotes`, `clientNotes`, `visitNotes`,
+    `objectionsRaised`, `proposalFileUrl`, `quotationFileUrl`,
+    `agreementFileUrl`, `attachments[]`, `otherDocuments[]`.
+  - Derived/status: `nextFollowUpDate`, `proposalStatus`, `quotationStatus`
+    (both `SalesDocumentStatus`).
+
+  Response: `{ success, data: { id, leadCode, ... }, meta }`.
+
+  Tenant + active branch come from the JWT; do NOT send `tenantId` / `branchId` /
+  `leadCode`. Errors: `DUPLICATE_LEAD` (409), `ACTIVE_BRANCH_REQUIRED` (400).
+}

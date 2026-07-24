@@ -1,0 +1,35 @@
+meta {
+  name: Get Lab Adapter
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/lab-adapters/{{labAdapterId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("composed with equipment, branches, labTests", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("token");
+    expect(d.branches).to.be.an("array");
+    expect(d.labTests).to.be.an("array");
+  });
+}
+
+docs {
+  Fetch one **lab adapter** composed with its referenced `equipment`
+  (`{ id, name, code }`), assigned `branches` (`{ branchId, branchName }[]`), and
+  mapped `labTests` (`{ id, testName, testCode }[]`, in mapping order). Auth:
+  **business** token; tenant from the JWT. 404 `LAB_ADAPTER_NOT_FOUND` if missing,
+  soft-deleted, or belonging to another tenant.
+}

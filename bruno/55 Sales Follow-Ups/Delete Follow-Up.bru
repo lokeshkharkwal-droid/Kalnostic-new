@@ -1,0 +1,24 @@
+meta {
+  name: Delete Follow-Up
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{baseUrl}}/sales/follow-ups/{{followUpId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Soft-delete a follow-up (sets `deletedAt`; the row + history are preserved).
+
+  Path param `id` ✱ — follow-up UUID (`followUpId`).
+
+  Tenant + active branch come from the JWT; do NOT send `tenantId` / `branchId`.
+  Errors: `FOLLOW_UP_NOT_FOUND` (404), `ACTIVE_BRANCH_REQUIRED` (400).
+}

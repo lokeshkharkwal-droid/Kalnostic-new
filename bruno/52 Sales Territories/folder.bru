@@ -1,0 +1,40 @@
+meta {
+  name: 52 Sales Territories
+  seq: 59
+}
+
+docs {
+  # Sales Territories
+
+  Territory / Zone master for the **Sales** module. Tenant-scoped (RLS) +
+  branch-level: each territory belongs to the caller's tenant and its active
+  branch. Powers the "Territory / Zone" dropdown + filter on Business Leads and
+  the Sales reports.
+
+  ## Scoping
+
+  All routes are **business-authenticated** (`Bearer {{businessAccessToken}}`).
+  The tenant comes from the JWT (`tenant_id`) and the branch from the active
+  profile (`active_branch_id`). **Do NOT send `tenantId` / `branchId` in a body
+  or query** — they come from context and are rejected as unknown fields. A
+  caller with no active branch gets `400 ACTIVE_BRANCH_REQUIRED`.
+
+  ## Run order
+
+  1. **Create Territory** → captures `territoryId`.
+  2. **List Territories** — paginated; `search` (name/code); `status`.
+  3. **Territory Options** — active `{ id, name }` list for dropdowns.
+  4. **Get Territory** — one by id.
+  5. **Update Territory** — partial update.
+  6. **Delete Territory** — soft-delete.
+
+  Writes are audited under `AuditModule.SALES_TERRITORY`.
+
+  ## Error codes
+
+  - `SALES_TERRITORY_NOT_FOUND` (404) — id not in tenant/branch.
+  - `SALES_TERRITORY_NAME_CONFLICT` (409) — another active territory uses this
+    name at the branch.
+  - `INVALID_SALES_TERRITORIES` (400) — one or more territory ids invalid.
+  - `ACTIVE_BRANCH_REQUIRED` (400) — the JWT has no active branch.
+}

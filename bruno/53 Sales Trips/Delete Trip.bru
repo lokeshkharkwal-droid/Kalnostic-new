@@ -1,0 +1,24 @@
+meta {
+  name: Delete Trip
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/sales/trips/{{tripId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Soft-delete a trip (sets `deletedAt`; the row + its visits are preserved).
+
+  Path param `id` ✱ — trip UUID (`tripId`).
+
+  Tenant + active branch come from the JWT; do NOT send `tenantId` / `branchId`.
+  Errors: `TRIP_NOT_FOUND` (404), `ACTIVE_BRANCH_REQUIRED` (400).
+}

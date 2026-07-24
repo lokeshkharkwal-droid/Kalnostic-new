@@ -1,0 +1,26 @@
+meta {
+  name: Get Follow-Up
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/sales/follow-ups/{{followUpId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Fetch one follow-up with its status history, scoped to the caller's tenant +
+  active branch.
+
+  Path param `id` ✱ — follow-up UUID (`followUpId`).
+
+  Response: `{ success, data: { id, ..., history: [...] }, meta }`.
+
+  Errors: `FOLLOW_UP_NOT_FOUND` (404), `ACTIVE_BRANCH_REQUIRED` (400).
+}

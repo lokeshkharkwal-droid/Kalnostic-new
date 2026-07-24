@@ -1,0 +1,24 @@
+meta {
+  name: Get Sales Settings
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/sales/settings
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Fetch the tenant's sales settings. Created lazily on first read (returns the
+  default config if none exists yet).
+
+  No body / query params. Tenant comes from the JWT — no branch scope.
+
+  Response: `{ success, data: { config: { ...sections } }, meta }`.
+}

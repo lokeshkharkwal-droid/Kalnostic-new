@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { BranchModule } from '../branch/branch.module';
 import { TemplateController } from './template.controller';
+import { TemplateOptionsController } from './template-options.controller';
 import { SiteAdminTemplateController } from './siteadmin-template.controller';
 import { TemplateService } from './template.service';
 
@@ -18,7 +19,11 @@ import { TemplateService } from './template.service';
  */
 @Module({
   imports: [PrismaModule, BranchModule],
-  controllers: [TemplateController, SiteAdminTemplateController],
+  controllers: [
+    TemplateOptionsController,
+    TemplateController,
+    SiteAdminTemplateController,
+  ],
   providers: [TemplateService],
   exports: [TemplateService],
 })

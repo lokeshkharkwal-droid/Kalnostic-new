@@ -1,0 +1,56 @@
+meta {
+  name: 08 Create Phlebotomist Schedule
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/phlebotomist-schedules
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "phlebotomistId": "{{phlebotomistId}}",
+    "serviceType": "HOME_COLLECTION",
+    "status": "ACTIVE",
+    "startTime": "08:00",
+    "endTime": "18:00",
+    "intervalMinutes": 30,
+    "travelBufferMinutes": 15,
+    "maxVisitsPerDay": 16,
+    "slotCapacity": 4,
+    "recurrencePattern": "DAILY",
+    "horizonWeeks": 8
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.id) bru.setVar("scheduleId", data.id);
+}
+
+docs {
+  **Step 8 — Create the phlebotomist's schedule. REQUIRED before the order.**
+
+  Order creation reserves a home-visit slot inside its transaction. Without an
+  **ACTIVE** schedule covering the requested `collectionAt`, `POST /orders` fails
+  with `PHLEBOTOMIST_SCHEDULE_FOR_STAFF_NOT_FOUND` (or `SLOT_UNAVAILABLE` /
+  `SLOT_FULL` / `DAILY_CAP_REACHED`).
+
+  A `DAILY`, 08:00–18:00 schedule with 30-minute slots is generated for the next
+  `horizonWeeks` (8) — so tomorrow 10:00 (the order's `collectionAt`) lands on a
+  bookable slot. `recurrencePattern: DAILY` means `selectedDays` is not needed;
+  `zoneIds` (ServiceZone refs) are optional and omitted.
+
+  Captures **`scheduleId`**.
+}

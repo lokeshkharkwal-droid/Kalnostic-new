@@ -1,0 +1,96 @@
+meta {
+  name: Create Lab Adapter
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/lab-adapters
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Hematology Bridge 1",
+    "equipmentId": "{{equipmentId}}",
+    "branchIds": ["{{branchId}}"],
+    "labTestIds": ["{{branchLabTestId}}"],
+    "isActive": true
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("labAdapterId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("returns the adapter with token, equipment, branches, labTests", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("id");
+    expect(d).to.have.property("token");
+    expect(d.branches).to.be.an("array");
+    expect(d.labTests).to.be.an("array");
+  });
+}
+
+docs {
+  Create a **lab adapter** — a tenant's instrument-integration bridge that
+  references a global (SITE_ADMIN) **equipment**, is assigned to one or more of the
+  tenant's **branches**, and maps the **branch lab tests** the instrument reports.
+  Tenant-scoped, tenant-level. Auth: **business** token (global JwtAuthGuard).
+  Tenant comes from the JWT; a system-generated unique `token` is returned.
+  Captures `labAdapterId`.
+
+  **Body**
+  - `name` (required) — unique per tenant among active adapters → 409
+    `LAB_ADAPTER_NAME_CONFLICT` on a clash.
+  - `equipmentId` (required, uuid) — a global equipment from
+    `GET /equipment/options` (see *Get Equipment Options*). Must reference an
+    active equipment → 422 `LAB_ADAPTER_EQUIPMENT_NOT_FOUND` otherwise.
+  - `branchIds` (required, uuid[]) — the tenant's branch ids the adapter is
+    assigned to. Every id is verified to belong to the caller's tenant → 422
+    `LAB_ADAPTER_BRANCH_NOT_FOUND` otherwise. Do **not** send a `branchId` singular
+    — assignment is the array.
+  - `labTestIds` (optional, uuid[]) — branch-lab-test ids from
+    `GET /branch-lab-tests/options` (active branch). Every id must reference an
+    active branch lab test of the tenant → 422 `LAB_ADAPTER_LAB_TEST_NOT_FOUND`.
+  - `isActive` (optional, default true).
+
+  `token` is **system-generated** — never send it. `tenantId` comes from the JWT,
+  never the body.
+
+  **Sample response — 201**
+  ```json
+  {
+    "success": true,
+    "data": {
+      "id": "a1b2c3d4-…",
+      "tenantId": "1501e96e-…",
+      "name": "Hematology Bridge 1",
+      "token": "0f1e2d…64-hex…",
+      "equipmentId": "6d0e2f4a-…",
+      "isActive": true,
+      "createdAt": "2026-07-21T09:00:00.000Z",
+      "updatedAt": "2026-07-21T09:00:00.000Z",
+      "deletedAt": null,
+      "equipment": { "id": "6d0e2f4a-…", "name": "Sysmex XN-1000", "code": "sysmex-xn-1000" },
+      "branches": [ { "branchId": "a3eca72a-…", "branchName": "Main Branch" } ],
+      "labTests": [ { "id": "3f1a-…", "testName": "Complete Blood Count", "testCode": "CBC" } ]
+    },
+    "meta": { "timestamp": "2026-07-21T09:00:00.000Z" }
+  }
+  ```
+}

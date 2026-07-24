@@ -1,0 +1,25 @@
+meta {
+  name: 57 Sales Settings
+  seq: 64
+}
+
+docs {
+  # Sales Settings
+
+  **Tenant-level** sales settings — per-business, NOT branch-scoped. The settings
+  are stored as a free-form JSON `config` blob (the 9 configuration sections,
+  incl. duplicate-detection rules used by lead creation, live inside it).
+
+  ## Scoping
+
+  Both routes are **business-authenticated** (`Bearer {{businessAccessToken}}`).
+  Tenant comes from the JWT — there is no branch scope here. **Do NOT send
+  `tenantId`.**
+
+  ## Endpoints
+
+  1. **Get Sales Settings** (`GET /sales/settings`) — created lazily on first
+     read.
+  2. **Update Sales Settings** (`PUT /sales/settings`) — shallow-merge over the
+     stored config; audited under `AuditModule.SALES_SETTINGS`.
+}

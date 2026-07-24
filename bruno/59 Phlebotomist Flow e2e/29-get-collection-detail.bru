@@ -1,0 +1,23 @@
+meta {
+  name: 29 Get Collection Detail
+  type: http
+  seq: 30
+}
+
+get {
+  url: {{baseUrl}}/phlebotomist-collections/{{collectionId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+docs {
+  **Step 29 — Read the collection detail + full status history.**
+
+  Returns the collection (now `status: COMPLETED`) with its `statusHistory` array
+  — one row per transition (SCHEDULED → … → COMPLETED), each with `notes`,
+  `gpsLocation`, `sampleCondition` where set, and `changedBy`.
+}

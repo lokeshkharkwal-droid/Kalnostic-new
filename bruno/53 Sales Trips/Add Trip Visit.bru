@@ -1,0 +1,57 @@
+meta {
+  name: Add Trip Visit
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/sales/trips/{{tripId}}/visits
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "sequence": 2,
+    "leadId": "{{leadId}}",
+    "label": "District Diagnostics",
+    "gps": "18.5100,73.8200",
+    "plannedAt": "2026-07-25T14:00:00.000Z",
+    "arrivedAt": "2026-07-25T14:20:00.000Z",
+    "status": "COMPLETED",
+    "notes": "Discussed rate card."
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("tripVisitId", data.id);
+}
+
+docs {
+  Add a visit / waypoint (roadmap timeline entry) to a trip. Captures
+  `tripVisitId`.
+
+  Fields (all optional):
+  - `sequence` — integer ≥ 0; ordering within the roadmap.
+  - `leadId` — UUID of the lead being visited (validated against the branch).
+  - `label` (≤ 255), `gps` (≤ 120).
+  - `plannedAt` / `arrivedAt` — ISO datetime strings.
+  - `status` — `TripVisitStatus`: `PLANNED` | `COMPLETED` | `PENDING` |
+    `CANCELLED`.
+  - `notes` (≤ 2000).
+
+  Path param `id` ✱ — trip UUID (`tripId`). `tenantId` / `tripId` come from
+  context, never the body.
+
+  Errors: `TRIP_NOT_FOUND` (404), `INVALID_TRIP_LEAD` (400),
+  `ACTIVE_BRANCH_REQUIRED` (400).
+}

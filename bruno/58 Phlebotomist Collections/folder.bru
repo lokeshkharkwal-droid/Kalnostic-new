@@ -1,0 +1,56 @@
+meta {
+  name: 58 Phlebotomist Collections
+  seq: 58
+}
+
+docs {
+  # Phlebotomist Collections (Home Sample Collection)
+
+  The **Collection Schedule**, **dashboard** and **reports** behind the
+  Phlebotomist module. A `HomeVisitCollection` is a tenant-scoped + branch-level
+  record created automatically when a **confirmed** order (`status = ORDER` or
+  `APPOINTMENT`) is a **home visit** with an assigned phlebotomist, a collection
+  time and address (the same set of bookings that consume a phlebotomist slot).
+  It carries the field-visit **lifecycle** (`CollectionStatus`) and an append-only
+  status-history log.
+
+  > **Created from the order flow**, not by this module. Placing/confirming a
+  > home-visit order (`42 Orders` → Create Order with `diagnostics.isHomeVisit =
+  > true`, a `phlebotomistId`, `collectionAt` + `collectionAddress`) creates the
+  > collection (status `SCHEDULED`). This module then drives its lifecycle.
+
+  ## Status lifecycle (server-validated)
+
+  `SCHEDULED → CONFIRMED → PATIENT_INFORMED → STARTED_FROM_CENTER →
+  REACHED_PATIENT_LOCATION → SAMPLE_COLLECTED → COLLECTION_VERIFIED → IN_TRANSIT
+  → RECEIVED_AT_LAB → ACCEPTED_BY_LAB → COMPLETED`, plus the branches
+  `RESCHEDULED`, `CANCELLED`, `ON_HOLD`, `PATIENT_NOT_AVAILABLE`,
+  `SAMPLE_NOT_COLLECTED`, `PARTIAL_COLLECTION`, `SAMPLE_REJECTED`. Illegal jumps
+  are rejected (`422 ILLEGAL_COLLECTION_TRANSITION`).
+
+  ## Sync (kept consistent, non-destructively)
+
+  Transitions cascade to keep linked records in sync **without disturbing the
+  accession module**:
+  - `SAMPLE_COLLECTED` → marks the order's items collected **and** collects the
+    order's accession samples through the accession state machine (guarded — only
+    where the `collect` action is legal from the sample's current status).
+  - `ACCEPTED_BY_LAB` → accepts those samples (guarded).
+  - `CONFIRMED` / `SAMPLE_COLLECTED` / `COMPLETED` / `CANCELLED` → drive the
+    linked appointment status; `CANCELLED` also releases the phlebotomist slot.
+  - **Reschedule** releases the old slot and reserves the new one atomically.
+
+  ## Run order
+
+  1. **List Collections** — captures `collectionId` from the first row.
+  2. **Get Collection** — one collection + status history (Collection Overview).
+  3. **Update Collection Status** — advance status (validated + cascaded).
+  4. **Reschedule Collection** — new time / phlebotomist (re-reserves the slot).
+  5. **Dashboard Summary** — totals, per-status, per-phlebotomist, per-day.
+  6. **Report - Patient-wise** — enriched rows (same shape as the list).
+  7. **Report - Phlebotomist-wise** — per-phlebotomist rollups.
+
+  All routes are business-authenticated (`Bearer {{businessAccessToken}}`);
+  tenant comes from the JWT and the branch from the active profile. Writes are
+  audited under `AuditModule.PHLEBOTOMIST`. Amounts are minor units (paise).
+}

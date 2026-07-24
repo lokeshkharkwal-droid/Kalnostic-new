@@ -1,0 +1,31 @@
+meta {
+  name: 20 Status → PATIENT_INFORMED
+  type: http
+  seq: 21
+}
+
+patch {
+  url: {{baseUrl}}/phlebotomist-collections/{{collectionId}}/status
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "status": "PATIENT_INFORMED",
+    "notes": "Patient informed of the visit window."
+  }
+}
+
+docs {
+  **Step 20 — CONFIRMED → PATIENT_INFORMED.** Patient notified of the collection
+  slot.
+}

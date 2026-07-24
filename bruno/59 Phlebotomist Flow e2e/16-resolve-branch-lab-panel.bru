@@ -1,0 +1,34 @@
+meta {
+  name: 16 Resolve Branch Lab Panel (option)
+  type: http
+  seq: 17
+}
+
+get {
+  url: {{baseUrl}}/branch-lab-panels/options?search=Basic Health Panel&page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  search: Basic Health Panel
+  page: 1
+  limit: 10
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.length && data[0].id) bru.setVar("branchLabPanelId", data[0].id);
+}
+
+docs {
+  **Prerequisite 4b — Resolve the branch lab-panel id for the order.**
+
+  The Create-Order panel picker uses this option endpoint (active branch from the
+  JWT). `search` matches `panelName`. Captures **`branchLabPanelId`** from the
+  first match — used as an order item's `branchLabPanelId` in step 17.
+}

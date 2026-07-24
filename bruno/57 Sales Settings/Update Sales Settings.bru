@@ -1,0 +1,51 @@
+meta {
+  name: Update Sales Settings
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{baseUrl}}/sales/settings
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "config": {
+      "duplicateDetection": {
+        "byMobile": true,
+        "byEmail": true,
+        "byGst": true,
+        "byOrganizationName": false
+      },
+      "defaults": {
+        "priority": "MEDIUM",
+        "reminderLeadDays": 2
+      }
+    }
+  }
+}
+
+docs {
+  Update (shallow-merge) the tenant's sales settings.
+
+  Fields (✱ = required):
+  - `config` ✱ — an object; shallow-merged over the tenant's stored config, so
+    you may send only the sections you are changing. The 9 configuration sections
+    (including the duplicate-detection rules that lead creation enforces) live
+    inside this blob.
+
+  Tenant comes from the JWT — no branch scope. Do NOT send `tenantId`.
+
+  Response: `{ success, data: { config: { ...merged } }, meta }`. Audited under
+  `AuditModule.SALES_SETTINGS`.
+}

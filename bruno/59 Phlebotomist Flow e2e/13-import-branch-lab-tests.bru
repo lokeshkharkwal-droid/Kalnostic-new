@@ -1,0 +1,37 @@
+meta {
+  name: 13 Import Lab Tests into Branch
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/branch-lab-tests/import
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "labTestIds": ["{{labTestId}}"]
+  }
+}
+
+docs {
+  **Prerequisite 3a — Import the lab test into the active branch's list.**
+
+  Deep-copies the master-data lab test into the branch's Lab Test List as an
+  independent branch-owned snapshot (with a fresh id + `sourceLabTestId`
+  provenance). Tenant + active branch come from the operator's JWT — which is why
+  this runs under `operatorToken`. Returns `{ copied, skipped }` (re-importing an
+  already-present test is idempotently skipped).
+
+  The new `branchLabTestId` is not in this response — step 15 resolves it.
+}

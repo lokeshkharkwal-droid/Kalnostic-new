@@ -1,0 +1,68 @@
+meta {
+  name: 03 Create Operator User
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/users/manage
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "employeeName": "Priya Operator",
+    "username": "priya.operator",
+    "dateOfBirth": "1992-03-15",
+    "gender": "FEMALE",
+    "email": "priya.operator@acme.test",
+    "mobileNumber": "9812345601",
+    "password": "{{operatorPassword}}",
+    "roleKey": "receptionist",
+    "userType": "INTERNAL",
+    "status": "ACTIVE",
+    "branches": [
+      {
+        "branchId": "{{branchId}}",
+        "role": "receptionist",
+        "modules": ["registration"],
+        "defaultModule": "registration",
+        "defaultBranch": true,
+        "status": "ACTIVE"
+      }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data) {
+    if (data.person && data.person.id) bru.setVar("operatorUserId", data.person.id);
+    if (data.userCode) bru.setVar("operatorUserCode", data.userCode);
+    if (data.loginIdentifier) bru.setVar("operatorLoginIdentifier", data.loginIdentifier);
+  }
+}
+
+docs {
+  **Step 3 — Create the operator staff user** (the person who will run the
+  Phlebotomist desk: book collections, manage the field phlebotomist).
+
+  Role `receptionist` is branch-level and valid for a `DIAGNOSTIC` branch, so the
+  user gets a branch-level profile — which is what makes their login token
+  branch-scoped in step 06. Created here with just the `registration` module and a
+  **known password** (from the collection pre-request) so we can log in as them
+  later without copying a generated temp password.
+
+  `userType` is `INTERNAL` | `EXTERNAL`. Captures **`operatorUserId`**,
+  **`operatorUserCode`**, and **`operatorLoginIdentifier`** (the login id resolved
+  by the server — used verbatim in step 06).
+}

@@ -1,0 +1,44 @@
+meta {
+  name: Update Follow-Up
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/sales/follow-ups/{{followUpId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "priority": "CRITICAL",
+    "dueAt": "2026-08-01T09:00:00.000Z",
+    "nextAction": "Escalate to manager; client wants faster closure."
+  }
+}
+
+docs {
+  Partial update of a follow-up's own fields (all optional). `leadId` is
+  immutable — a follow-up cannot be re-parented. Status transitions with history
+  use the dedicated status endpoint.
+
+  Fields (all optional): `tripId` (UUID), `type` (`FollowUpType`), `priority`
+  (`LeadPriority`), `dueAt` (ISO datetime), `requirement` / `lastDiscussion` /
+  `nextAction` (≤ 2000), `assignedSalespersonId` (UUID), `status`
+  (`FollowUpStatus`).
+
+  Path param `id` ✱ — follow-up UUID (`followUpId`).
+
+  Tenant + active branch come from the JWT; do NOT send `tenantId` / `branchId`.
+  Errors: `FOLLOW_UP_NOT_FOUND` (404), `INVALID_FOLLOW_UP_TRIP` (400),
+  `ACTIVE_BRANCH_REQUIRED` (400).
+}

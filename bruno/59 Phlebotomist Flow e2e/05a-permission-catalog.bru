@@ -1,0 +1,26 @@
+meta {
+  name: 05a Permission Catalog (reference)
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/users/manage/permission-catalog
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+docs {
+  **Step 5a — Inspect the permission catalog** (reference / no captures).
+
+  Returns every module grouped with its fine-grained permission keys. Permission
+  keys are `moduleKey:action`. For the phlebotomist module the keys are:
+  `phlebotomist:view`, `phlebotomist:write`, `phlebotomist:edit`,
+  `phlebotomist:delete`, and the domain-specific `phlebotomist:collect_sample`.
+
+  These are the keys granted to the operator in step 05b.
+}

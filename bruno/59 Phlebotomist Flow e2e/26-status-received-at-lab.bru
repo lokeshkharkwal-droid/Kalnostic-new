@@ -1,0 +1,30 @@
+meta {
+  name: 26 Status → RECEIVED_AT_LAB
+  type: http
+  seq: 27
+}
+
+patch {
+  url: {{baseUrl}}/phlebotomist-collections/{{collectionId}}/status
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "status": "RECEIVED_AT_LAB",
+    "notes": "Samples received at the lab facility."
+  }
+}
+
+docs {
+  **Step 26 — IN_TRANSIT → RECEIVED_AT_LAB.** Lab acknowledges receipt.
+}

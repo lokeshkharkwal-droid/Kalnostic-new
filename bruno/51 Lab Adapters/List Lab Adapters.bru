@@ -1,0 +1,45 @@
+meta {
+  name: List Lab Adapters
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/lab-adapters?page=1&limit=20&search=
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  search:
+  ~status: ACTIVE
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("paginated rows carry token + counts", function () {
+    const body = res.getBody();
+    expect(body.data).to.be.an("array");
+    expect(body.meta).to.have.property("total");
+  });
+}
+
+docs {
+  List the tenant's **lab adapters** (paginated). Auth: **business** token; tenant
+  from the JWT. Each row: `{ id, name, token, isActive, equipmentName,
+  branchCount, labTestsCount }`.
+
+  **Query**
+  - `page` / `limit` — offset pagination (`limit` capped at 100). Pagination lands
+    in `meta` (`total`, `page`, `limit`, `totalPages`).
+  - `search` (optional) — case-insensitive match on the adapter `name`.
+  - `status` (optional) — `ACTIVE` | `INACTIVE`.
+}

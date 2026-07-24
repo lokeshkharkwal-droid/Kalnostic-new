@@ -1,0 +1,27 @@
+meta {
+  name: Get Lead Audit
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/sales/leads/{{leadId}}/audit
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Lead status / timeline history (newest first) — the `LeadStatusHistory` trail
+  for one lead, scoped to the caller's tenant + active branch.
+
+  Path param `id` ✱ — lead UUID (`leadId`).
+
+  Response: `{ success, data: [{ fromStatus, toStatus, remarks, gps, changedBy,
+  createdAt, ... }], meta }`.
+
+  Errors: `LEAD_NOT_FOUND` (404), `ACTIVE_BRANCH_REQUIRED` (400).
+}

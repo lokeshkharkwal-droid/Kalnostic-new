@@ -1,0 +1,21 @@
+meta {
+  name: 30 Get Appointment (synced)
+  type: http
+  seq: 31
+}
+
+get {
+  url: {{baseUrl}}/appointments/{{appointmentId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+docs {
+  **Step 30 — Read the appointment.** Created by the order in step 17; its status
+  is driven by the collection lifecycle, so after step 28 it reads `COMPLETED`.
+  The response includes the appointment's own `statusHistory`.
+}

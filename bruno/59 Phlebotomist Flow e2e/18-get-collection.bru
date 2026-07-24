@@ -1,0 +1,37 @@
+meta {
+  name: 18 Get Collection (by order)
+  type: http
+  seq: 19
+}
+
+get {
+  url: {{baseUrl}}/phlebotomist-collections?search={{orderCode}}
+  body: none
+  auth: bearer
+}
+
+params:query {
+  search: {{orderCode}}
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.length && data[0].id) {
+    bru.setVar("collectionId", data[0].id);
+  }
+}
+
+docs {
+  **Step 18 — Fetch the HomeVisitCollection created for the order.**
+
+  The order response does not include the collection, so we list collections
+  filtered by `search` (which matches `orderCode`/`billId`, plus patient
+  name/mobile/UMID and sample barcode). The first row is our collection.
+
+  Captures **`collectionId`** (`data[0].id`) — the subject of the status
+  transitions in steps 19–28. The row's `status` should be `SCHEDULED`.
+}
