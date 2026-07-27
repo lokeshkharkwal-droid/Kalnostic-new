@@ -1,0 +1,16 @@
+meta {
+  name: EC04 Processing Time From reached during working hours
+  seq: 5
+}
+
+script:pre-request {
+  if (!bru.getVar("baseUrl")) bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+}
+
+docs {
+  Scenario: the exact START moment.
+Expected: the clock starts exactly once and net minutes begin at 0 and grow.
+Status: VERIFIED live.
+
+  Run 00 Base Setup first (same session) so the shared vars are available.
+}

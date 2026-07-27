@@ -1,0 +1,31 @@
+meta {
+  name: Verify NABL In-flight TAT
+  type: http
+  seq: 26
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/tat
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+assert {
+  res.status: eq 200
+  res.body.data.isFinal: eq false
+}
+
+docs {
+  Read the report's TAT breakdown while still in-flight on a NABL branch. It is
+  served from the cron-maintained columns (not recomputed from acceptedAt):
+  `isFinal=false` until approve. Right after enabling NABL and before the first
+  cron tick, `tatStartAt`/`netMinutes` are null (computable=false) — the cron
+  fills them within a minute once the branch is open and the sample is inside its
+  processing window. (The live cron accrual is verified out-of-band by waiting one
+  tick and inspecting the LabReport row; the state-machine itself is covered by
+  the `nabl-tat-stopwatch.util.spec.ts` unit tests.)
+}

@@ -1,0 +1,20 @@
+meta {
+  name: 25 Technician - Submit
+  type: http
+  seq: 25
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/submit
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+docs {
+  **TAT 5 — Submit the report.** PENDING → VALIDATION_PENDING (results are sent
+  for validation). The TAT clock keeps running (it stops only at Approve).
+}

@@ -1,0 +1,33 @@
+meta {
+  name: 23 Accept Sample (TAT START)
+  type: http
+  seq: 23
+}
+
+post {
+  url: {{baseUrl}}/accession/samples/{{sampleId}}/accept
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "sampleCondition": "Good",
+    "notes": "Accepted for processing"
+  }
+}
+
+docs {
+  **TAT 3 — Accept the sample (⏱ TAT START).** COLLECTED → ACCEPTED. This stamps
+  `acceptedAt` — **the moment the Analytical-TAT clock starts** — and auto-creates
+  the Technician `LabReport` (status PENDING) for the order item. From here the
+  report is walked to Approved (which stops the clock).
+}

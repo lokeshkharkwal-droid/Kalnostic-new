@@ -1,0 +1,29 @@
+meta {
+  name: Cancel Order
+  type: http
+  seq: 3
+}
+
+patch {
+  url: {{baseUrl}}/orders/{{orderId}}/cancel
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "reason": "QA edge-case test"
+  }
+}
+
+docs {
+  MUTATES: cancels the Base order before processing starts.
+}

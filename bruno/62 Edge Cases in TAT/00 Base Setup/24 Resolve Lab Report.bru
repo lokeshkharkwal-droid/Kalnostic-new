@@ -1,0 +1,35 @@
+meta {
+  name: Resolve Lab Report
+  type: http
+  seq: 25
+}
+
+get {
+  url: {{baseUrl}}/lab-reports?branchLabTestId={{branchLabTestId}}&page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+assert {
+  res.status: eq 200
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.length && data[0].id) bru.setVar("labReportId", data[0].id);
+  // Publish the handoff vars to the ENVIRONMENT so the sibling EC## folders can
+  // read them (runtime vars do not always cross folders; env vars do).
+  ["operatorToken", "branchId", "branchLabTestId", "labReportId", "sampleId", "orderId"]
+    .forEach((k) => { const v = bru.getVar(k); if (v) bru.setEnvVar(k, v); });
+}
+
+docs {
+  Resolve the in-flight `LabReport` created when the sample was accepted (step 23),
+  then publish the shared handoff variables (operatorToken, branchId,
+  branchLabTestId, labReportId, sampleId, orderId) to the **environment** so every
+  EC## edge-case folder can reuse them.
+}

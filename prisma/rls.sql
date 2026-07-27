@@ -56,6 +56,14 @@ CREATE POLICY schedules_tenant_isolation ON schedules
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── branch_settings ───────────────────────────────────────────────────────────
+ALTER TABLE branch_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE branch_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS branch_settings_tenant_isolation ON branch_settings;
+CREATE POLICY branch_settings_tenant_isolation ON branch_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- ── auth_roles ──────────────────────────────────────────────────────────────────
 -- Tenant rows are custom roles isolated by tenant_id; system roles (tenant_id
 -- NULL) are seeded, shared, and readable by every tenant (writable only by a

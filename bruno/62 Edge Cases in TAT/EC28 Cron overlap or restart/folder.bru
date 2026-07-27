@@ -1,0 +1,16 @@
+meta {
+  name: EC28 Cron overlap or restart
+  seq: 29
+}
+
+script:pre-request {
+  if (!bru.getVar("baseUrl")) bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+}
+
+docs {
+  Scenario: a slow cron run, or a server restart.
+Expected: a new minute is skipped if the previous run is still going (no double count); after restart the clock continues sanely.
+Status: VERIFIED by unit test (overlap guard) + code review.
+
+  Run 00 Base Setup first (same session) so the shared vars are available.
+}

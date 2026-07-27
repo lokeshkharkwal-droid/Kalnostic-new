@@ -1,0 +1,19 @@
+meta {
+  name: Approve Report (final stop)
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/approve
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+docs {
+  Wait ~1 min for the clock to start, then approve. MUTATES.
+}

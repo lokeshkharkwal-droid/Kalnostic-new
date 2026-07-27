@@ -1,0 +1,35 @@
+meta {
+  name: Set Processing Window
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{baseUrl}}/branch-lab-tests/{{branchLabTestId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "processingTimeFrom": "09:00",
+    "processingTimeTo": "13:00",
+    "scheduleDays": ["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"]
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  First window 09:00-13:00.
+}

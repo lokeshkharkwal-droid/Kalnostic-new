@@ -1,0 +1,16 @@
+meta {
+  name: EC12 Multiple consecutive non-working days
+  seq: 13
+}
+
+script:pre-request {
+  if (!bru.getVar("baseUrl")) bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+}
+
+docs {
+  Scenario: several off days in a row.
+Expected: no minutes added on the off days; the clock resumes on the next scheduled day from the saved total.
+Status: VERIFIED by unit test.
+
+  Run 00 Base Setup first (same session) so the shared vars are available.
+}

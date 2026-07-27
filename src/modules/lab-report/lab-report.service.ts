@@ -17,7 +17,10 @@ import {
   PLAIN_NOTE_CATEGORIES,
 } from './dto/lab-report-note.dto';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
-import { GeneratePdfDto, SigningAuthorityDto } from '../pdf-report-template/dto/generate-pdf.dto';
+import {
+  GeneratePdfDto,
+  SigningAuthorityDto,
+} from '../pdf-report-template/dto/generate-pdf.dto';
 import {
   LAB_REPORT_ALLOWED_FROM,
   LAB_REPORT_DETAIL_INCLUDE,
@@ -49,6 +52,7 @@ import {
   patientAgeInDays,
   rangeAgeInDays,
 } from './utils/reference-range.util';
+import { TatService } from './tat.service';
 
 /**
  * Technician Reporting core module: worklist, Test Entry (result values), and
@@ -65,6 +69,7 @@ export class LabReportService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly pdfReportTemplateService: PdfReportTemplateService,
+    private readonly tatService: TatService,
   ) {}
 
   // ── Creation (triggered by Accession's sample-accept signal) ──────────────
@@ -93,11 +98,21 @@ export class LabReportService {
     acceptedBy?: string | null,
   ): Promise<void> {
     if (tx) {
-      await this.createReportForAcceptedItem(tx, tenantId, orderItemId, acceptedBy);
+      await this.createReportForAcceptedItem(
+        tx,
+        tenantId,
+        orderItemId,
+        acceptedBy,
+      );
       return;
     }
     await this.prisma.withTenant(tenantId, (innerTx) =>
-      this.createReportForAcceptedItem(innerTx, tenantId, orderItemId, acceptedBy),
+      this.createReportForAcceptedItem(
+        innerTx,
+        tenantId,
+        orderItemId,
+        acceptedBy,
+      ),
     );
   }
 
@@ -231,8 +246,16 @@ export class LabReportService {
     if (filters.search) {
       const search = filters.search;
       orderItem.OR = [
-        { branchLabTest: { is: { testName: { contains: search, mode: 'insensitive' } } } },
-        { branchLabPanel: { is: { panelName: { contains: search, mode: 'insensitive' } } } },
+        {
+          branchLabTest: {
+            is: { testName: { contains: search, mode: 'insensitive' } },
+          },
+        },
+        {
+          branchLabPanel: {
+            is: { panelName: { contains: search, mode: 'insensitive' } },
+          },
+        },
         {
           order: {
             is: {
@@ -293,6 +316,18 @@ export class LabReportService {
     worklistRows = await this.attachResultTypes(worklistRows);
     worklistRows = await this.attachSampleStatuses(tenantId, worklistRows);
 
+    // Analytical-TAT band per row (SRS §6.2/§8): frozen snapshot for approved
+    // reports, live compute for in-flight ones — batched over the whole page.
+    const tatByReport = await this.tatService.computeBandsForReports(
+      tenantId,
+      resolvedBranchId,
+      rows,
+    );
+    worklistRows = worklistRows.map((r) => ({
+      ...r,
+      tat: tatByReport.get(r.id) ?? null,
+    }));
+
     // `data` (not `rows`) — ResponseInterceptor.isPaginated() only lifts
     // total/page/limit into the envelope's `meta` block when the array field
     // is literally named `data` (every other paginated list endpoint in this
@@ -312,7 +347,11 @@ export class LabReportService {
     tenantId: string,
     rows: LabReportWorklistRow[],
   ): Promise<LabReportWorklistRow[]> {
-    const branchIds = [...new Set(rows.map((r) => r.branchId).filter((id): id is string => id !== null))];
+    const branchIds = [
+      ...new Set(
+        rows.map((r) => r.branchId).filter((id): id is string => id !== null),
+      ),
+    ];
     if (branchIds.length === 0) return rows;
 
     const branches = await this.prisma.branch.findMany({
@@ -323,9 +362,10 @@ export class LabReportService {
 
     return rows.map((row) => ({
       ...row,
-      branch: row.branchId && nameById.has(row.branchId)
-        ? { id: row.branchId, name: nameById.get(row.branchId)! }
-        : null,
+      branch:
+        row.branchId && nameById.has(row.branchId)
+          ? { id: row.branchId, name: nameById.get(row.branchId)! }
+          : null,
     }));
   }
 
@@ -341,7 +381,11 @@ export class LabReportService {
     rows: LabReportWorklistRow[],
   ): Promise<LabReportWorklistRow[]> {
     const departmentIds = [
-      ...new Set(rows.map((r) => r.departmentId).filter((id): id is string => id !== null)),
+      ...new Set(
+        rows
+          .map((r) => r.departmentId)
+          .filter((id): id is string => id !== null),
+      ),
     ];
     if (departmentIds.length === 0) return rows;
 
@@ -353,9 +397,10 @@ export class LabReportService {
 
     return rows.map((row) => ({
       ...row,
-      department: row.departmentId && nameById.has(row.departmentId)
-        ? { id: row.departmentId, name: nameById.get(row.departmentId)! }
-        : null,
+      department:
+        row.departmentId && nameById.has(row.departmentId)
+          ? { id: row.departmentId, name: nameById.get(row.departmentId)! }
+          : null,
     }));
   }
 
@@ -377,7 +422,9 @@ export class LabReportService {
     rows: LabReportWorklistRow[],
   ): Promise<LabReportWorklistRow[]> {
     const labTestIds = [
-      ...new Set(rows.map((r) => r.labTestId).filter((id): id is string => id !== null)),
+      ...new Set(
+        rows.map((r) => r.labTestId).filter((id): id is string => id !== null),
+      ),
     ];
     if (labTestIds.length === 0) return rows;
 
@@ -397,7 +444,9 @@ export class LabReportService {
       if (!row.test || row.test.kind !== 'TEST' || !row.labTestId) return row;
       const testParams = paramsByLabTest.get(row.labTestId);
       const resultType =
-        testParams && testParams.length === 1 ? testParams[0]!.resultType : null;
+        testParams && testParams.length === 1
+          ? testParams[0]!.resultType
+          : null;
       return { ...row, test: { ...row.test, resultType } };
     });
   }
@@ -428,12 +477,16 @@ export class LabReportService {
 
     const sampleTests = await this.prisma.accessionSampleTest.findMany({
       where: { orderItemId: { in: orderItemIds }, tenantId, deletedAt: null },
-      select: { orderItemId: true, sample: { select: { id: true, status: true } } },
+      select: {
+        orderItemId: true,
+        sample: { select: { id: true, status: true } },
+      },
     });
 
     const samplesByOrderItem = new Map<string, Map<string, SampleStatus>>();
     for (const { orderItemId, sample } of sampleTests) {
-      const bySampleId = samplesByOrderItem.get(orderItemId) ?? new Map<string, SampleStatus>();
+      const bySampleId =
+        samplesByOrderItem.get(orderItemId) ?? new Map<string, SampleStatus>();
       bySampleId.set(sample.id, sample.status);
       samplesByOrderItem.set(orderItemId, bySampleId);
     }
@@ -498,49 +551,55 @@ export class LabReportService {
   ): Promise<LabReportOptions> {
     const activeBranchId = this.requireBranch(branchId);
 
-    const [branches, referredByDoctors, referralPanels, departments, labTests, labPanels] =
-      await Promise.all([
-        this.prisma.branch.findMany({
-          where: { tenantId, deletedAt: null },
-          select: { id: true, name: true },
-          orderBy: { name: 'asc' },
-        }),
-        this.prisma.referralDoctor.findMany({
-          where: { tenantId, deletedAt: null },
-          select: { id: true, firstName: true, lastName: true },
-          orderBy: { firstName: 'asc' },
-        }),
-        this.prisma.referralPanel.findMany({
-          where: { tenantId, deletedAt: null },
-          select: { id: true, name: true },
-          orderBy: { name: 'asc' },
-        }),
-        this.prisma.department.findMany({
-          where: { tenantId, deletedAt: null },
-          select: { id: true, name: true },
-          orderBy: { name: 'asc' },
-        }),
-        this.prisma.branchLabTest.findMany({
-          where: {
-            tenantId,
-            branchId: activeBranchId,
-            isActive: true,
-            deletedAt: null,
-          },
-          select: { id: true, testName: true },
-          orderBy: { testName: 'asc' },
-        }),
-        this.prisma.branchLabPanel.findMany({
-          where: {
-            tenantId,
-            branchId: activeBranchId,
-            isActive: true,
-            deletedAt: null,
-          },
-          select: { id: true, panelName: true },
-          orderBy: { panelName: 'asc' },
-        }),
-      ]);
+    const [
+      branches,
+      referredByDoctors,
+      referralPanels,
+      departments,
+      labTests,
+      labPanels,
+    ] = await Promise.all([
+      this.prisma.branch.findMany({
+        where: { tenantId, deletedAt: null },
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      }),
+      this.prisma.referralDoctor.findMany({
+        where: { tenantId, deletedAt: null },
+        select: { id: true, firstName: true, lastName: true },
+        orderBy: { firstName: 'asc' },
+      }),
+      this.prisma.referralPanel.findMany({
+        where: { tenantId, deletedAt: null },
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      }),
+      this.prisma.department.findMany({
+        where: { tenantId, deletedAt: null },
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      }),
+      this.prisma.branchLabTest.findMany({
+        where: {
+          tenantId,
+          branchId: activeBranchId,
+          isActive: true,
+          deletedAt: null,
+        },
+        select: { id: true, testName: true },
+        orderBy: { testName: 'asc' },
+      }),
+      this.prisma.branchLabPanel.findMany({
+        where: {
+          tenantId,
+          branchId: activeBranchId,
+          isActive: true,
+          deletedAt: null,
+        },
+        select: { id: true, panelName: true },
+        orderBy: { panelName: 'asc' },
+      }),
+    ]);
 
     return {
       branches: branches.map((b) => ({ id: b.id, name: b.name })),
@@ -603,9 +662,13 @@ export class LabReportService {
   ): Promise<LabReportDetailApiResponse> {
     const report = await this.findById(id, tenantId, branchId);
 
-    let worklistRow = (await this.attachSampleStatuses(tenantId, [toWorklistRow(report)]))[0]!;
+    let worklistRow = (
+      await this.attachSampleStatuses(tenantId, [toWorklistRow(report)])
+    )[0]!;
     worklistRow = (await this.attachBranchNames(tenantId, [worklistRow]))[0]!;
-    worklistRow = (await this.attachDepartmentNames(tenantId, [worklistRow]))[0]!;
+    worklistRow = (
+      await this.attachDepartmentNames(tenantId, [worklistRow])
+    )[0]!;
     worklistRow = (await this.attachResultTypes([worklistRow]))[0]!;
 
     return {
@@ -692,11 +755,7 @@ export class LabReportService {
     return params;
   }
 
-  private async requireReport(
-    id: string,
-    tenantId: string,
-    branchId: string,
-  ) {
+  private async requireReport(id: string, tenantId: string, branchId: string) {
     const report = await this.prisma.labReport.findFirst({
       where: { id, tenantId, branchId, deletedAt: null },
     });
@@ -1000,18 +1059,28 @@ export class LabReportService {
     const report = await this.findById(id, tenantId, branchId);
     const order = report.orderItem.order;
     const patient = order.patient;
-    const testOrPanel = report.orderItem.branchLabTest ?? report.orderItem.branchLabPanel;
+    const testOrPanel =
+      report.orderItem.branchLabTest ?? report.orderItem.branchLabPanel;
 
     let signatories: SigningAuthorityDto[] = [];
     if (report.approvedBy) {
       const signatory = await this.prisma.person.findFirst({
         where: { id: report.approvedBy, deletedAt: null },
-        select: { firstName: true, middleName: true, lastName: true, designation: true },
+        select: {
+          firstName: true,
+          middleName: true,
+          lastName: true,
+          designation: true,
+        },
       });
       if (signatory) {
         signatories = [
           {
-            name: [signatory.firstName, signatory.middleName, signatory.lastName]
+            name: [
+              signatory.firstName,
+              signatory.middleName,
+              signatory.lastName,
+            ]
               .filter(Boolean)
               .join(' '),
             designation: signatory.designation ?? undefined,
@@ -1045,8 +1114,12 @@ export class LabReportService {
           : '',
         referral_panel: order.referralPanel?.name ?? '',
         test_name:
-          (testOrPanel && 'testName' in testOrPanel ? testOrPanel.testName : undefined) ??
-          (testOrPanel && 'panelName' in testOrPanel ? testOrPanel.panelName : undefined) ??
+          (testOrPanel && 'testName' in testOrPanel
+            ? testOrPanel.testName
+            : undefined) ??
+          (testOrPanel && 'panelName' in testOrPanel
+            ? testOrPanel.panelName
+            : undefined) ??
           report.orderItem.direct ??
           '',
         report_status: report.status,
@@ -1078,14 +1151,23 @@ export class LabReportService {
     const context = await this.buildPrintContext(id, tenantId, branchId);
     const resolvedTemplateId =
       templateId ?? (await this.resolvePrintTemplateId(tenantId));
-    return this.pdfReportTemplateService.generatePdf(resolvedTemplateId, tenantId, context);
+    return this.pdfReportTemplateService.generatePdf(
+      resolvedTemplateId,
+      tenantId,
+      context,
+    );
   }
 
   private async resolvePrintTemplateId(tenantId: string): Promise<string> {
-    const { data } = await this.pdfReportTemplateService.findAllForTenant(tenantId, 1, 10, {
-      type: 'lab_report',
-      status: 'ACTIVE',
-    });
+    const { data } = await this.pdfReportTemplateService.findAllForTenant(
+      tenantId,
+      1,
+      10,
+      {
+        type: 'lab_report',
+        status: 'ACTIVE',
+      },
+    );
     if (data.length === 0) throw new NoActivePrintTemplateException(tenantId);
     if (data.length > 1) {
       throw new AmbiguousPrintTemplateException(
@@ -1098,7 +1180,12 @@ export class LabReportService {
 
   // ── Save / Submit ──────────────────────────────────────────────────────────
 
-  async save(id: string, tenantId: string, branchId: string | null, actorId: string) {
+  async save(
+    id: string,
+    tenantId: string,
+    branchId: string | null,
+    actorId: string,
+  ) {
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.requireReport(id, tenantId, activeBranchId);
     this.assertTransition('save', report.status);
@@ -1181,7 +1268,13 @@ export class LabReportService {
       });
       if (notes) {
         await tx.labReportNote.create({
-          data: { tenantId, labReportId: id, category: 'TECH', body: notes, createdBy: actorId },
+          data: {
+            tenantId,
+            labReportId: id,
+            category: 'TECH',
+            body: notes,
+            createdBy: actorId,
+          },
         });
       }
       await this.recordHistory(
@@ -1312,13 +1405,47 @@ export class LabReportService {
     const report = await this.requireReport(id, tenantId, activeBranchId);
     this.assertTransition('approve', report.status);
 
+    // Freeze the Analytical-TAT snapshot at the approval instant, so analytics
+    // stay accurate even if the test's TAT config later changes (hybrid
+    // storage). Computed before the write so the tat* columns land in the same
+    // update as approvedAt.
+    //
+    // Two flows (see NablTatCronService): a report the NABL cron has been
+    // managing (`isNablTat`) is FINALIZED — its accumulated stopwatch is stopped
+    // and re-banded, leaving tatStartAt as the cron set it. Every other report
+    // (NABL branch that never started, or a non-NABL branch) uses the legacy
+    // accepted→approved snapshot unchanged.
+    const approvedAt = new Date();
+    const tatData: Prisma.LabReportUpdateInput = report.isNablTat
+      ? await this.tatService.buildNablFinalize(
+          id,
+          tenantId,
+          activeBranchId,
+          approvedAt,
+        )
+      : await (async () => {
+          const s = await this.tatService.buildApprovalSnapshot(
+            id,
+            tenantId,
+            activeBranchId,
+            approvedAt,
+          );
+          return {
+            tatStartAt: s.tatStartAt,
+            tatNetMinutes: s.tatNetMinutes,
+            tatMaxMinutes: s.tatMaxMinutes,
+            tatBand: s.tatBand,
+          };
+        })();
+
     return this.prisma.withTenant(tenantId, async (tx) => {
       const updated = await tx.labReport.update({
         where: { id },
         data: {
           status: LabReportStatus.APPROVED,
-          approvedAt: new Date(),
+          approvedAt,
           approvedBy: actorId,
+          ...tatData,
         },
       });
       await this.recordHistory(
@@ -1447,6 +1574,12 @@ export class LabReportService {
           approvedBy: null,
           publishedAt: null,
           publishedBy: null,
+          // Re-run reopens the TAT clock (agreed behaviour): drop the frozen
+          // snapshot so TAT recomputes live until the report is re-approved.
+          tatStartAt: null,
+          tatNetMinutes: null,
+          tatMaxMinutes: null,
+          tatBand: null,
         },
       });
       await this.recordHistory(
@@ -1489,7 +1622,13 @@ export class LabReportService {
       });
       if (notes) {
         await tx.labReportNote.create({
-          data: { tenantId, labReportId: id, category: 'LOCK', body: notes, createdBy: actorId },
+          data: {
+            tenantId,
+            labReportId: id,
+            category: 'LOCK',
+            body: notes,
+            createdBy: actorId,
+          },
         });
       }
       return updated;
@@ -1518,7 +1657,12 @@ export class LabReportService {
 
     return this.prisma.labReport.update({
       where: { id },
-      data: { isLocked: false, lockedAt: null, lockedBy: null, lockNotes: null },
+      data: {
+        isLocked: false,
+        lockedAt: null,
+        lockedBy: null,
+        lockNotes: null,
+      },
     });
   }
 
@@ -1585,7 +1729,9 @@ export class LabReportService {
       where: {
         tenantId,
         labReportId: id,
-        category: query.category ? query.category : { in: [...PLAIN_NOTE_CATEGORIES] },
+        category: query.category
+          ? query.category
+          : { in: [...PLAIN_NOTE_CATEGORIES] },
       },
       orderBy: { createdAt: 'desc' },
     });

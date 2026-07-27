@@ -1,0 +1,16 @@
+meta {
+  name: EC18 Multiple lab tests in one order
+  seq: 19
+}
+
+script:pre-request {
+  if (!bru.getVar("baseUrl")) bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+}
+
+docs {
+  Scenario: one order, two tests, different windows.
+Expected: each report has its OWN clock (one stopwatch per report).
+Status: VERIFIED by unit test.
+
+  Run 00 Base Setup first (same session) so the shared vars are available.
+}

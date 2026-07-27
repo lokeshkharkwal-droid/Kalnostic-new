@@ -59,6 +59,8 @@ body:json {
     ],
     "scheduleFrom": "08:00",
     "scheduleTo": "18:00",
+    "processingTimeFrom": "09:00",
+    "processingTimeTo": "17:00",
     "procTimeMinValue": 1,
     "procTimeMinUnit": "HOURS",
     "procTimeMaxValue": 2,
@@ -233,7 +235,9 @@ docs {
     `franchisePrice`, `emergencyPrice`, `commissionPrice`, `discountCapPct`,
     `isAllowPriceOverride`.
   - **TAT:** `tatMinValue`/`tatMinUnit`, `tatMaxValue`/`tatMaxUnit`,
-    `scheduleDays[]`, `scheduleFrom`/`scheduleTo`, `procTimeMinValue`/
+    `scheduleDays[]`, `scheduleFrom`/`scheduleTo`,
+    `processingTimeFrom`/`processingTimeTo` (the daily processing window that
+    drives the NABL cron-managed TAT stopwatch — start/pause bounds), `procTimeMinValue`/
     `procTimeMinUnit`, `procTimeMaxValue`/`procTimeMaxUnit`,
     `approvalTimeFrom`/`approvalTimeTo`.
   - **Flags:** `isAllowDiscounts`, `isPreferenceTest`, `isActive` (Active/Inactive).

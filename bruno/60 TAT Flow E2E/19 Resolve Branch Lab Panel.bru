@@ -1,0 +1,31 @@
+meta {
+  name: 19 Resolve Branch Lab Panel
+  type: http
+  seq: 19
+}
+
+get {
+  url: {{baseUrl}}/branch-lab-panels/options?search=TAT Basic Health Panel {{tatRunId}}&page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  search: TAT Basic Health Panel {{tatRunId}}
+  page: 1
+  limit: 10
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.length && data[0].id) bru.setVar("branchLabPanelId", data[0].id);
+}
+
+docs {
+  **Resolve the branch lab-panel id** for the order. `search` matches this run's
+  unique panel name. Captures **`branchLabPanelId`**.
+}

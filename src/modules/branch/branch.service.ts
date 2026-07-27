@@ -13,6 +13,7 @@ import { PaginatedResult } from '../../common/dto/response.dto';
 import { CreateBranchDto } from './dto/create-branch.dto';
 import { UpdateBranchDto } from './dto/update-branch.dto';
 import { BranchModuleItemDto } from './dto/set-branch-modules.dto';
+import { UpdateBranchSettingDto } from './dto/update-branch-setting.dto';
 import { SYSTEM_MODULES } from '../permissions/constants/system-modules.constant';
 import {
   BranchNameConflictException,
@@ -22,6 +23,12 @@ import {
   MainBranchNotSetException,
   NotACollectionCenterException,
 } from './exceptions/branch.exceptions';
+
+/** A branch's operational settings, as returned by the settings endpoints. */
+export interface BranchSettingView {
+  branchId: string;
+  isNablTatEnabled: boolean;
+}
 
 /** A sample-receiving branch mapped to a Collection Center. */
 export interface CollectionMappingView {
@@ -514,6 +521,70 @@ export class BranchService {
       this.upsertBranchModules(tx, tenantId, branchId, items),
     );
     return this.getBranchModules(tenantId, branchId);
+  }
+
+  // ── Branch settings ──────────────────────────────────────────────────────────
+
+  /**
+   * Read a branch's operational settings. A branch with no settings row yet
+   * reads as all-defaults (never persisted on read) so the endpoint is a pure
+   * GET; the row is materialized on the first {@link updateSettings}.
+   * @param tenantId tenant scope
+   * @param branchId branch (validated to belong to the tenant)
+   */
+  async getSettings(
+    tenantId: string,
+    branchId: string,
+  ): Promise<BranchSettingView> {
+    await this.findById(branchId, tenantId);
+    const row = await this.prisma.branchSetting.findFirst({
+      where: { tenantId, branchId, deletedAt: null },
+    });
+    return {
+      branchId,
+      isNablTatEnabled: row?.isNablTatEnabled ?? false,
+    };
+  }
+
+  /**
+   * Update a branch's operational settings (upsert — the settings row is
+   * created with defaults on first write). Only the supplied fields change.
+   * @param tenantId tenant scope
+   * @param branchId branch (validated to belong to the tenant)
+   * @param dto the settings to change
+   * @param actorId person making the change (audit trail)
+   * @returns the settings after the change
+   */
+  async updateSettings(
+    tenantId: string,
+    branchId: string,
+    dto: UpdateBranchSettingDto,
+    actorId?: string,
+  ): Promise<BranchSettingView> {
+    await this.findById(branchId, tenantId);
+    await this.prisma.withTenant(tenantId, (tx) =>
+      tx.branchSetting.upsert({
+        where: { branchId },
+        create: {
+          tenantId,
+          branchId,
+          ...(dto.isNablTatEnabled !== undefined && {
+            isNablTatEnabled: dto.isNablTatEnabled,
+          }),
+          createdBy: actorId ?? null,
+          updatedBy: actorId ?? null,
+          deletedAt: null,
+        },
+        update: {
+          ...(dto.isNablTatEnabled !== undefined && {
+            isNablTatEnabled: dto.isNablTatEnabled,
+          }),
+          updatedBy: actorId ?? null,
+          deletedAt: null,
+        },
+      }),
+    );
+    return this.getSettings(tenantId, branchId);
   }
 
   /**

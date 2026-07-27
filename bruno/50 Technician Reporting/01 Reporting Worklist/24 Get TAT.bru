@@ -1,0 +1,39 @@
+meta {
+  name: 24 Get TAT
+  type: http
+  seq: 24
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/tat
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Analytical-TAT breakdown (Turnaround Time.pdf §6.2) for one report: net
+  working time between the sample being **Accepted** (earliest linked sample's
+  `acceptedAt`) and the report being **Approved** (`approvedAt`, or "now" while
+  still in-flight), excluding shift breaks, closed hours and non-scheduled days.
+
+  Response:
+  `{ reportId, computable, reason, startAt, endAt, isFinal, netMinutes,
+     maxTatMinutes, band, timezone, scheduleId }`
+
+  - `band` ∈ WITHIN | WARNING | CRITICAL | BREACHED (null if no Max TAT
+    configured on the test/panel, or not computable).
+  - `computable=false` with `reason`:
+    - `NO_ACCEPTED_SAMPLE` — no linked sample has been accepted yet.
+    - `NO_ACTIVE_SCHEDULE` — the branch has no active operating schedule to
+      exclude non-working time against.
+  - Operating hours come from the branch's active `Schedule` (shifts + breaks);
+    working days are the test's `scheduleDays`. Times are read in the branch's
+    `timezone`. At approval the values are frozen onto `LabReport.tat*`
+    (hybrid storage); in-flight reports are computed live against "now".
+
+  404 `LAB_REPORT_NOT_FOUND` if missing/other-tenant/other-branch.
+}

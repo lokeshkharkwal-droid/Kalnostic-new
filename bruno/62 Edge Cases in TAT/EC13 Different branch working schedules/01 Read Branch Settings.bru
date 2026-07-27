@@ -1,0 +1,23 @@
+meta {
+  name: Read Branch Settings
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/branches/{{branchId}}/settings
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  To fully test, run 00 Base Setup a second time to make another branch with different operating hours, enable NABL there too, and compare. Each branch clock respects its own schedule.
+}

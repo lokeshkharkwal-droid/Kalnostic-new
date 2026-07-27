@@ -1,0 +1,47 @@
+meta {
+  name: 11 Create Phlebotomist Schedule
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/phlebotomist-schedules
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "phlebotomistId": "{{phlebotomistId}}",
+    "serviceType": "HOME_COLLECTION",
+    "status": "ACTIVE",
+    "startTime": "08:00",
+    "endTime": "18:00",
+    "intervalMinutes": 30,
+    "travelBufferMinutes": 15,
+    "maxVisitsPerDay": 16,
+    "slotCapacity": 4,
+    "recurrencePattern": "DAILY",
+    "horizonWeeks": 8
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.id) bru.setVar("phlebotomistScheduleId", data.id);
+}
+
+docs {
+  **Workflow 2 — Create the phlebotomist's schedule.** A DAILY 08:00–18:00
+  schedule with 30-minute slots for the next 8 weeks. Captures
+  **`phlebotomistScheduleId`**. (This flow's order is in-center, so it doesn't
+  reserve a home-visit slot — the schedule is created per the requested workflow.)
+}

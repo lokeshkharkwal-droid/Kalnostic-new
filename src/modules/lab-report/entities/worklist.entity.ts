@@ -1,4 +1,11 @@
-import { BillingType, Gender, LabReportStatus, PaymentStatus, Prisma, SampleStatus } from '@prisma/client';
+import {
+  BillingType,
+  Gender,
+  LabReportStatus,
+  PaymentStatus,
+  Prisma,
+  SampleStatus,
+} from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AGE_TYPE_SUFFIX, fullName } from './lab-report.entity';
 
@@ -14,7 +21,11 @@ export const WORKLIST_REPORT_INCLUDE = {
       orderItem: {
         include: {
           order: {
-            include: { patient: true, referredByDoctor: true, referralPanel: true },
+            include: {
+              patient: true,
+              referredByDoctor: true,
+              referralPanel: true,
+            },
           },
           branchLabTest: true,
           branchLabPanel: true,
@@ -119,7 +130,14 @@ export function toAssignedTo(
   assignedTo: ScheduledTestRow['assignedTo'],
 ): { id: string; name: string } | null {
   return assignedTo
-    ? { id: assignedTo.id, name: fullName([assignedTo.firstName, assignedTo.middleName, assignedTo.lastName]) }
+    ? {
+        id: assignedTo.id,
+        name: fullName([
+          assignedTo.firstName,
+          assignedTo.middleName,
+          assignedTo.lastName,
+        ]),
+      }
     : null;
 }
 
@@ -160,7 +178,11 @@ export function toWorklistReportContext(
     patient: patient
       ? {
           id: patient.id,
-          name: fullName([patient.firstName, patient.middleName, patient.lastName]),
+          name: fullName([
+            patient.firstName,
+            patient.middleName,
+            patient.lastName,
+          ]),
           age: patient.age,
           ageDisplay:
             patient.age != null
@@ -190,9 +212,17 @@ export function toWorklistReportContext(
     test: branchLabTest
       ? { id: branchLabTest.id, name: branchLabTest.testName, kind: 'TEST' }
       : branchLabPanel
-        ? { id: branchLabPanel.id, name: branchLabPanel.panelName, kind: 'PANEL' }
+        ? {
+            id: branchLabPanel.id,
+            name: branchLabPanel.panelName,
+            kind: 'PANEL',
+          }
         : labReport.orderItem?.direct
-          ? { id: labReport.orderItem.id, name: labReport.orderItem.direct, kind: 'DIRECT' }
+          ? {
+              id: labReport.orderItem.id,
+              name: labReport.orderItem.direct,
+              kind: 'DIRECT',
+            }
           : null,
   };
 }
@@ -205,12 +235,14 @@ export function toWorklistReportContext(
  * inject LabReportService) since all 5 share the same `WorklistReportContext`
  * shape and the same `branchId` resolution need.
  */
-export async function attachWorklistBranchNames<T extends WorklistReportContext>(
-  prisma: PrismaService,
-  tenantId: string,
-  rows: T[],
-): Promise<T[]> {
-  const branchIds = [...new Set(rows.map((r) => r.branchId).filter((id): id is string => id !== null))];
+export async function attachWorklistBranchNames<
+  T extends WorklistReportContext,
+>(prisma: PrismaService, tenantId: string, rows: T[]): Promise<T[]> {
+  const branchIds = [
+    ...new Set(
+      rows.map((r) => r.branchId).filter((id): id is string => id !== null),
+    ),
+  ];
   if (branchIds.length === 0) return rows;
 
   const branches = await prisma.branch.findMany({
@@ -221,9 +253,10 @@ export async function attachWorklistBranchNames<T extends WorklistReportContext>
 
   return rows.map((row) => ({
     ...row,
-    branch: row.branchId && nameById.has(row.branchId)
-      ? { id: row.branchId, name: nameById.get(row.branchId)! }
-      : null,
+    branch:
+      row.branchId && nameById.has(row.branchId)
+        ? { id: row.branchId, name: nameById.get(row.branchId)! }
+        : null,
   }));
 }
 
@@ -234,22 +267,24 @@ export async function attachWorklistBranchNames<T extends WorklistReportContext>
  * same dedup-by-(sampleId,status) rationale — an order item can be linked to
  * more than one Accession sample).
  */
-export async function attachWorklistSampleStatuses<T extends WorklistReportContext>(
-  prisma: PrismaService,
-  tenantId: string,
-  rows: T[],
-): Promise<T[]> {
+export async function attachWorklistSampleStatuses<
+  T extends WorklistReportContext,
+>(prisma: PrismaService, tenantId: string, rows: T[]): Promise<T[]> {
   const orderItemIds = [...new Set(rows.map((r) => r.orderItemId))];
   if (orderItemIds.length === 0) return rows;
 
   const sampleTests = await prisma.accessionSampleTest.findMany({
     where: { orderItemId: { in: orderItemIds }, tenantId, deletedAt: null },
-    select: { orderItemId: true, sample: { select: { id: true, status: true } } },
+    select: {
+      orderItemId: true,
+      sample: { select: { id: true, status: true } },
+    },
   });
 
   const samplesByOrderItem = new Map<string, Map<string, SampleStatus>>();
   for (const { orderItemId, sample } of sampleTests) {
-    const bySampleId = samplesByOrderItem.get(orderItemId) ?? new Map<string, SampleStatus>();
+    const bySampleId =
+      samplesByOrderItem.get(orderItemId) ?? new Map<string, SampleStatus>();
     bySampleId.set(sample.id, sample.status);
     samplesByOrderItem.set(orderItemId, bySampleId);
   }

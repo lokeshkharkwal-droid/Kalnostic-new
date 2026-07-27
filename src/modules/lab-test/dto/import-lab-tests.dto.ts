@@ -201,6 +201,16 @@ export class ImportLabTestRowDto {
   @IsOptional()
   scheduleTo?: string;
 
+  @IsString()
+  @Matches(HH_MM, { message: 'processingTimeFrom must be a 24h HH:mm time' })
+  @IsOptional()
+  processingTimeFrom?: string;
+
+  @IsString()
+  @Matches(HH_MM, { message: 'processingTimeTo must be a 24h HH:mm time' })
+  @IsOptional()
+  processingTimeTo?: string;
+
   @IsInt()
   @Min(0)
   @IsOptional()

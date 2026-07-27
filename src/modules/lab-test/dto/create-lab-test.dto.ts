@@ -201,6 +201,17 @@ export class CreateLabTestDto {
   @IsOptional()
   scheduleTo?: string;
 
+  // ── Processing window (drives the NABL cron-managed TAT stopwatch) ────────────
+  @IsString()
+  @Matches(HH_MM, { message: 'processingTimeFrom must be a 24h HH:mm time' })
+  @IsOptional()
+  processingTimeFrom?: string;
+
+  @IsString()
+  @Matches(HH_MM, { message: 'processingTimeTo must be a 24h HH:mm time' })
+  @IsOptional()
+  processingTimeTo?: string;
+
   // ── Processing time ───────────────────────────────────────────────────────────
   @IsInt()
   @Min(0)

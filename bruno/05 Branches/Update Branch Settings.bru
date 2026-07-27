@@ -1,0 +1,39 @@
+meta {
+  name: Update Branch Settings
+  type: http
+  seq: 15
+}
+
+put {
+  url: {{baseUrl}}/branches/{{branchId}}/settings
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "isNablTatEnabled": true
+  }
+}
+
+vars:pre-request {
+  branchId: 37e8cb33-9c10-4778-bc4c-20490e1c0f75
+}
+
+docs {
+  Update this branch's operational settings (upsert — the settings row is created
+  with defaults on first write; only supplied fields change).
+
+  Set `isNablTatEnabled: true` to have the 1-minute NABL cron manage this branch's
+  TAT (accrues only inside each test's [processingTimeFrom, processingTimeTo] window
+  on scheduleDays; final stop on report approve). Set it false to keep the legacy
+  accept-starts / approve-stops flow.
+}

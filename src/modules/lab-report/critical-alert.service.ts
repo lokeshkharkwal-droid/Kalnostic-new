@@ -45,7 +45,12 @@ export class CriticalAlertService {
   ) {
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.prisma.labReport.findFirst({
-      where: { id: labReportId, tenantId, branchId: activeBranchId, deletedAt: null },
+      where: {
+        id: labReportId,
+        tenantId,
+        branchId: activeBranchId,
+        deletedAt: null,
+      },
     });
     if (!report) throw new LabReportNotFoundException(labReportId);
 
@@ -84,7 +89,11 @@ export class CriticalAlertService {
     });
     let reports = rows.map((r) => toWorklistReportContext(r.labReport));
     reports = await attachWorklistBranchNames(this.prisma, tenantId, reports);
-    reports = await attachWorklistSampleStatuses(this.prisma, tenantId, reports);
+    reports = await attachWorklistSampleStatuses(
+      this.prisma,
+      tenantId,
+      reports,
+    );
 
     return rows.map(({ labReport: _labReport, ...alert }, i) => ({
       ...alert,

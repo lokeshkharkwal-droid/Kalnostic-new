@@ -1,4 +1,10 @@
-import { IsDateString, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsDateString,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
 
 /**
  * One material-usage row on a `LabReport` (LABORATORY.docx §5.9 Generate

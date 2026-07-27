@@ -1,0 +1,16 @@
+meta {
+  name: EC20 Report approved immediately after start
+  seq: 21
+}
+
+script:pre-request {
+  if (!bru.getVar("baseUrl")) bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+}
+
+docs {
+  Scenario: approve right after the clock starts.
+Expected: final net is very small (near 0); report Approved.
+Status: QA to verify. MUTATES.
+
+  Run 00 Base Setup first (same session) so the shared vars are available.
+}

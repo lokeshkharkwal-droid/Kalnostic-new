@@ -1,0 +1,16 @@
+meta {
+  name: EC19 Order cancelled before processing starts
+  seq: 20
+}
+
+script:pre-request {
+  if (!bru.getVar("baseUrl")) bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+}
+
+docs {
+  Scenario: cancel before the clock starts.
+Expected: no clock is started for the report.
+Status: QA to verify. MUTATES: cancels the order.
+
+  Run 00 Base Setup first (same session) so the shared vars are available.
+}

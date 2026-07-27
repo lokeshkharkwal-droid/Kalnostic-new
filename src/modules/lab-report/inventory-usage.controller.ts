@@ -1,7 +1,18 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+} from '@nestjs/common';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { InventoryUsageService } from './inventory-usage.service';
-import { CreateInventoryUsageDto, UpdateInventoryUsageDto } from './dto/inventory-usage.dto';
+import {
+  CreateInventoryUsageDto,
+  UpdateInventoryUsageDto,
+} from './dto/inventory-usage.dto';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
 import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
@@ -24,7 +35,11 @@ export class InventoryUsageController {
     @CurrentProfile() profile: ActiveProfile,
     @Param('labReportId') labReportId: string,
   ) {
-    return this.inventoryUsageService.findAll(labReportId, tenantId, profile.branchId);
+    return this.inventoryUsageService.findAll(
+      labReportId,
+      tenantId,
+      profile.branchId,
+    );
   }
 
   @Post()
@@ -39,7 +54,12 @@ export class InventoryUsageController {
     @Param('labReportId') labReportId: string,
     @Body() dto: CreateInventoryUsageDto,
   ) {
-    return this.inventoryUsageService.create(labReportId, tenantId, profile.branchId, dto);
+    return this.inventoryUsageService.create(
+      labReportId,
+      tenantId,
+      profile.branchId,
+      dto,
+    );
   }
 
   @Patch(':usageId')
@@ -76,6 +96,11 @@ export class InventoryUsageController {
     @Param('labReportId') labReportId: string,
     @Param('usageId') usageId: string,
   ) {
-    return this.inventoryUsageService.remove(labReportId, usageId, tenantId, profile.branchId);
+    return this.inventoryUsageService.remove(
+      labReportId,
+      usageId,
+      tenantId,
+      profile.branchId,
+    );
   }
 }

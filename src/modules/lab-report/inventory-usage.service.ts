@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CreateInventoryUsageDto, UpdateInventoryUsageDto } from './dto/inventory-usage.dto';
+import {
+  CreateInventoryUsageDto,
+  UpdateInventoryUsageDto,
+} from './dto/inventory-usage.dto';
 import {
   ActiveBranchRequiredException,
   LabReportNotFoundException,
@@ -34,7 +37,11 @@ export class InventoryUsageService {
     return report;
   }
 
-  async findAll(labReportId: string, tenantId: string, branchId: string | null) {
+  async findAll(
+    labReportId: string,
+    tenantId: string,
+    branchId: string | null,
+  ) {
     const activeBranchId = this.requireBranch(branchId);
     await this.requireReport(labReportId, tenantId, activeBranchId);
 
@@ -84,7 +91,8 @@ export class InventoryUsageService {
     const usage = await this.prisma.labReportInventoryUsage.findFirst({
       where: { id: usageId, labReportId, tenantId, deletedAt: null },
     });
-    if (!usage) throw new WorklistEntryNotFoundException('inventory_usage', usageId);
+    if (!usage)
+      throw new WorklistEntryNotFoundException('inventory_usage', usageId);
 
     return this.prisma.labReportInventoryUsage.update({
       where: { id: usageId },
@@ -115,7 +123,8 @@ export class InventoryUsageService {
     const usage = await this.prisma.labReportInventoryUsage.findFirst({
       where: { id: usageId, labReportId, tenantId, deletedAt: null },
     });
-    if (!usage) throw new WorklistEntryNotFoundException('inventory_usage', usageId);
+    if (!usage)
+      throw new WorklistEntryNotFoundException('inventory_usage', usageId);
 
     return this.prisma.labReportInventoryUsage.update({
       where: { id: usageId },

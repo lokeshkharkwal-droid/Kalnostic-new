@@ -1,0 +1,39 @@
+meta {
+  name: 10 Create Phlebotomist
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/users/manage/quick-staff
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "role": "phlebotomist",
+    "name": "Ravi Phlebotomist {{tatRunId}}",
+    "mobileNumber": "{{phleboMobile}}",
+    "email": "tat.phlebo.{{tatRunId}}@acme.test"
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.id) bru.setVar("phlebotomistId", data.id);
+}
+
+docs {
+  **Workflow 1 — Create a phlebotomist** (as the operator). A phlebotomist is a
+  staff Person with the `phlebotomist` role; quick-staff creates the Person and
+  auto-assigns them to the operator's active branch. Captures **`phlebotomistId`**.
+}

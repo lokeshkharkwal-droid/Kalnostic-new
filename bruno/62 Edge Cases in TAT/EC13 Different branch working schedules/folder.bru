@@ -1,0 +1,16 @@
+meta {
+  name: EC13 Different branch working schedules
+  seq: 14
+}
+
+script:pre-request {
+  if (!bru.getVar("baseUrl")) bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+}
+
+docs {
+  Scenario: two branches with different open hours, same test.
+Expected: each branch clock follows ITS OWN hours.
+Status: VERIFIED by unit test.
+
+  Run 00 Base Setup first (same session) so the shared vars are available.
+}

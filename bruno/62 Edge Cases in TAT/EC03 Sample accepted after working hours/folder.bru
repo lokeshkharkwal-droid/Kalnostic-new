@@ -1,0 +1,16 @@
+meta {
+  name: EC03 Sample accepted after working hours
+  seq: 4
+}
+
+script:pre-request {
+  if (!bru.getVar("baseUrl")) bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+}
+
+docs {
+  Scenario: NABL ON but the window already CLOSED earlier today.
+Expected: the clock does not start today; it starts the next scheduled day.
+Status: QA to verify (confirm via DB).
+
+  Run 00 Base Setup first (same session) so the shared vars are available.
+}

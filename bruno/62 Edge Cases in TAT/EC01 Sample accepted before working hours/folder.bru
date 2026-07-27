@@ -1,0 +1,16 @@
+meta {
+  name: EC01 Sample accepted before working hours
+  seq: 2
+}
+
+script:pre-request {
+  if (!bru.getVar("baseUrl")) bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+}
+
+docs {
+  Scenario: NABL ON but the window opens LATER than now.
+Expected: the cron does NOT start the clock yet. In the DB tat_start_at stays null and is_nabl_tat stays false until the From time is reached on an open day.
+Status: QA to verify (confirm via DB).
+
+  Run 00 Base Setup first (same session) so the shared vars are available.
+}

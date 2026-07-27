@@ -165,7 +165,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     SalesDashboardModule,
     SalesSettingsModule,
     PhlebotomistSettingsModule,
-    LabReportModule
+    LabReportModule,
   ],
   providers: [
     // Global business authentication. SiteAdmin routes use @Public() + their

@@ -1,0 +1,35 @@
+meta {
+  name: Set Processing Window
+  type: http
+  seq: 3
+}
+
+put {
+  url: {{baseUrl}}/branch-lab-tests/{{branchLabTestId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "processingTimeFrom": "10:00",
+    "processingTimeTo": "16:00",
+    "scheduleDays": ["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"]
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Now change it to 10:00-16:00.
+}

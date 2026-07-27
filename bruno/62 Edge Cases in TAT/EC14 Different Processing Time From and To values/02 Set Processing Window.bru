@@ -1,0 +1,35 @@
+meta {
+  name: Set Processing Window
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{baseUrl}}/branch-lab-tests/{{branchLabTestId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "processingTimeFrom": "14:00",
+    "processingTimeTo": "18:00",
+    "scheduleDays": ["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"]
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Set THIS test window to 14:00-18:00. Make another test 09:00-13:00 (via its own branch lab test) and compare start/pause times.
+}

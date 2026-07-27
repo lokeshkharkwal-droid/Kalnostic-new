@@ -1,0 +1,40 @@
+meta {
+  name: 30 TAT Summary (Analytics)
+  type: http
+  seq: 30
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/tat/summary
+  body: none
+  auth: bearer
+}
+
+params:query {
+  ~dateFrom: 2026-07-01T00:00:00.000Z
+  ~dateTo: 2026-12-31T23:59:59.999Z
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("summary has band breakdown + rates", function () {
+    const s = res.getBody().data;
+    expect(s).to.have.property("total");
+    expect(s).to.have.property("byBand");
+    expect(s).to.have.property("avgNetMinutes");
+    expect(s).to.have.property("breachRate");
+  });
+}
+
+docs {
+  **TAT 10 — Branch TAT analytics** over approved reports (SRS §9). Returns
+  `{ total, byBand: { WITHIN, WARNING, CRITICAL, BREACHED, UNKNOWN },
+  avgNetMinutes, breachRate }` for the active branch. Includes the report just
+  approved. Optional `dateFrom`/`dateTo` (toggle the `~`) bound `approvedAt`.
+}

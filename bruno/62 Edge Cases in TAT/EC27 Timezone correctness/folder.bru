@@ -1,0 +1,16 @@
+meta {
+  name: EC27 Timezone correctness
+  seq: 28
+}
+
+script:pre-request {
+  if (!bru.getVar("baseUrl")) bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+}
+
+docs {
+  Scenario: branch has a timezone (e.g. Asia/Kolkata).
+Expected: all window checks use branch LOCAL time.
+Status: VERIFIED by unit test.
+
+  Run 00 Base Setup first (same session) so the shared vars are available.
+}

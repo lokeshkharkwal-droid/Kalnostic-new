@@ -1,0 +1,16 @@
+meta {
+  name: EC06 Processing Time From on a non-working day
+  seq: 7
+}
+
+script:pre-request {
+  if (!bru.getVar("baseUrl")) bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+}
+
+docs {
+  Scenario: today is NOT in the test scheduleDays.
+Expected: the clock does not start today.
+Status: VERIFIED by unit test.
+
+  Run 00 Base Setup first (same session) so the shared vars are available.
+}

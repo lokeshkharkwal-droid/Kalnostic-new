@@ -1,0 +1,23 @@
+meta {
+  name: Read Branch Settings
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/branches/{{branchId}}/settings
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Set the branch timezone and a window; the start/pause happen at the branch local clock, not UTC.
+}
