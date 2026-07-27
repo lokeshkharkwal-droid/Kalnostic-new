@@ -1207,6 +1207,36 @@ CREATE POLICY patient_settings_tenant_isolation ON patient_settings
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── patient_categories ─────────────────────────────────────────────────────────
+ALTER TABLE patient_categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE patient_categories FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS patient_categories_tenant_isolation ON patient_categories;
+CREATE POLICY patient_categories_tenant_isolation ON patient_categories
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- Per-tenant unique category name among ACTIVE rows (a name freed by a
+-- soft-delete is reusable). Prisma can't express partial unique indexes, so it
+-- lives here.
+CREATE UNIQUE INDEX IF NOT EXISTS patient_categories_tenant_name_active_unique
+  ON patient_categories (tenant_id, name) WHERE deleted_at IS NULL;
+
+-- ── patient_category_lab_tests ────────────────────────────────────────────────
+ALTER TABLE patient_category_lab_tests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE patient_category_lab_tests FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS patient_category_lab_tests_tenant_isolation ON patient_category_lab_tests;
+CREATE POLICY patient_category_lab_tests_tenant_isolation ON patient_category_lab_tests
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── patient_category_lab_panels ───────────────────────────────────────────────
+ALTER TABLE patient_category_lab_panels ENABLE ROW LEVEL SECURITY;
+ALTER TABLE patient_category_lab_panels FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS patient_category_lab_panels_tenant_isolation ON patient_category_lab_panels;
+CREATE POLICY patient_category_lab_panels_tenant_isolation ON patient_category_lab_panels
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- ── console_settings ───────────────────────────────────────────────────────────
 ALTER TABLE console_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE console_settings FORCE ROW LEVEL SECURITY;

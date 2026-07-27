@@ -1,0 +1,39 @@
+meta {
+  name: Set Patient Category Active
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/patient-categories/{{patientCategoryId}}/active
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "isActive": false
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Activate/inactivate a patient category from the settings table's row switch.
+
+  409s with `CANNOT_DEACTIVATE_DEFAULT_CATEGORY` if `isActive: false` is sent
+  for the tenant's current default category — set another category as default
+  first.
+}

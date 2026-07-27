@@ -1,0 +1,44 @@
+meta {
+  name: Update Patient Category
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/patient-categories/{{patientCategoryId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "VIP",
+    "branchLabTestIds": ["{{branchLabTestId}}"],
+    "branchLabPanelIds": ["{{branchLabPanelId}}"],
+    "isActive": true
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Update a patient category. All fields are optional (partial patch); the same
+  validation as Create applies to any field that's supplied.
+
+  When `branchLabTestIds`/`branchLabPanelIds` is supplied it REPLACES the
+  whole Lab Test List / Lab Panel List for the caller's **active branch** —
+  omit either to leave that list unchanged. `isDefault: true` atomically
+  clears the tenant's previous default.
+}
