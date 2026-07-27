@@ -5,6 +5,7 @@ import { UpdateWorklistStatusDto } from './dto/update-worklist-status.dto';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
 import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
@@ -33,6 +34,7 @@ export class OutOfRangeController {
   updateStatus(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
     @Param('id') id: string,
     @Body() dto: UpdateWorklistStatusDto,
   ) {
@@ -40,6 +42,7 @@ export class OutOfRangeController {
       id,
       tenantId,
       profile.branchId,
+      personId,
       dto,
     );
   }

@@ -59,7 +59,7 @@ export class ReRunService {
       actorId,
     );
 
-    return this.prisma.reRunRequest.create({
+    const created = await this.prisma.reRunRequest.create({
       data: {
         tenantId,
         branchId: activeBranchId,
@@ -69,6 +69,16 @@ export class ReRunService {
         requestNotes: dto.notes,
       },
     });
+
+    await this.labReportService.recordWorklistHistory(
+      tenantId,
+      labReportId,
+      're_run_requested',
+      actorId,
+      dto.notes,
+    );
+
+    return created;
   }
 
   async findAll(tenantId: string, branchId: string | null) {
@@ -97,6 +107,7 @@ export class ReRunService {
     id: string,
     tenantId: string,
     branchId: string | null,
+    actorId: string,
     dto: UpdateActionWorklistStatusDto,
   ) {
     const activeBranchId = this.requireBranch(branchId);
@@ -105,12 +116,22 @@ export class ReRunService {
     });
     if (!entry) throw new WorklistEntryNotFoundException('re_run_request', id);
 
-    return this.prisma.reRunRequest.update({
+    const updated = await this.prisma.reRunRequest.update({
       where: { id },
       data: {
         status: dto.status,
         requestNotes: dto.notes ?? entry.requestNotes,
       },
     });
+
+    await this.labReportService.recordWorklistHistory(
+      tenantId,
+      entry.labReportId,
+      `re_run_status_${entry.status}_to_${dto.status}`.toLowerCase(),
+      actorId,
+      dto.notes,
+    );
+
+    return updated;
   }
 }

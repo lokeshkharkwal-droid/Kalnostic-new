@@ -35,9 +35,10 @@ export class ReRunController {
   updateStatus(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
     @Param('id') id: string,
     @Body() dto: UpdateActionWorklistStatusDto,
   ) {
-    return this.reRunService.updateStatus(id, tenantId, profile.branchId, dto);
+    return this.reRunService.updateStatus(id, tenantId, profile.branchId, personId, dto);
   }
 }

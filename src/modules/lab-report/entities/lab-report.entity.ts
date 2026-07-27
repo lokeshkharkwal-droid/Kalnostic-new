@@ -3,6 +3,8 @@ import {
   BillingType,
   Gender,
   LabReportStatus,
+  MultiStepProcessType,
+  MultiStepStage,
   Prisma,
   ResultType,
   SampleStatus,
@@ -213,6 +215,19 @@ export interface LabReportWorklistRow {
    * same (rare/defensive) condition as `sampleStatuses`.
    */
   sampleIds: string[];
+
+  /** Whether this test has been assigned to a multi-step process
+   * (LABORATORY.docx §5.7 — Histopathology/Bone Marrow/Cytology/IHC, tracked
+   * through Grossing→Sectioning→Staining→Reporting), and if so, which
+   * process and which stage it's currently at. Resolved by
+   * `LabReportService.attachMultiStepProcess` from `MultiStepTestProcess`
+   * (one row per report, `labReportId` unique) — a batched lookup, same
+   * shape as `attachSampleStatuses`. Null for a test never assigned to a
+   * multi-step process (the overwhelming majority — most tests are single-
+   * step). View-only: shows which process/stage a test is at in list views
+   * (e.g. Order Overview) without needing to open the report's own detail. */
+  multiStepProcessType: MultiStepProcessType | null;
+  multiStepStage: MultiStepStage | null;
 }
 
 export function fullName(parts: Array<string | null | undefined>): string {
@@ -298,6 +313,9 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
     orderItemId: row.orderItemId,
     sampleStatuses: [],
     sampleIds: [],
+
+    multiStepProcessType: null,
+    multiStepStage: null,
   };
 }
 

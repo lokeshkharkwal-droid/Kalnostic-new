@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { WorklistStatus, WorklistTrigger } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { LabReportService } from './lab-report.service';
 import { RaiseWorklistEntryDto } from './dto/raise-worklist-entry.dto';
 import { UpdateWorklistStatusDto } from './dto/update-worklist-status.dto';
 import {
@@ -29,7 +30,10 @@ import {
  */
 @Injectable()
 export class CriticalAlertService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly labReportService: LabReportService,
+  ) {}
 
   private requireBranch(branchId: string | null): string {
     if (!branchId) throw new ActiveBranchRequiredException();
@@ -72,6 +76,15 @@ export class CriticalAlertService {
         },
       });
       return alert;
+    }).then(async (alert) => {
+      await this.labReportService.recordWorklistHistory(
+        tenantId,
+        labReportId,
+        'critical_alert_raised',
+        actorId,
+        dto.notes,
+      );
+      return alert;
     });
   }
 
@@ -96,6 +109,7 @@ export class CriticalAlertService {
     id: string,
     tenantId: string,
     branchId: string | null,
+    actorId: string,
     dto: UpdateWorklistStatusDto,
   ) {
     const activeBranchId = this.requireBranch(branchId);
@@ -104,8 +118,8 @@ export class CriticalAlertService {
     });
     if (!entry) throw new WorklistEntryNotFoundException('critical_alert', id);
 
-    return this.prisma.$transaction(async (tx) => {
-      const updated = await tx.criticalAlert.update({
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const updatedEntry = await tx.criticalAlert.update({
         where: { id },
         data: { status: dto.status },
       });
@@ -120,7 +134,17 @@ export class CriticalAlertService {
           },
         });
       }
-      return updated;
+      return updatedEntry;
     });
+
+    await this.labReportService.recordWorklistHistory(
+      tenantId,
+      entry.labReportId,
+      `critical_alert_status_${entry.status}_to_${dto.status}`.toLowerCase(),
+      actorId,
+      dto.notes,
+    );
+
+    return updated;
   }
 }
