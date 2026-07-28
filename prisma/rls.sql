@@ -1167,22 +1167,6 @@ CREATE POLICY order_field_configs_tenant_isolation ON order_field_configs
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
--- ── radiologists ────────────────────────────────────────────────────────────────
-ALTER TABLE radiologists ENABLE ROW LEVEL SECURITY;
-ALTER TABLE radiologists FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS radiologists_tenant_isolation ON radiologists;
-CREATE POLICY radiologists_tenant_isolation ON radiologists
-  USING (tenant_id = current_tenant_id())
-  WITH CHECK (tenant_id = current_tenant_id());
-
--- ── phlebotomists ─────────────────────────────────────────────────────────────
-ALTER TABLE phlebotomists ENABLE ROW LEVEL SECURITY;
-ALTER TABLE phlebotomists FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS phlebotomists_tenant_isolation ON phlebotomists;
-CREATE POLICY phlebotomists_tenant_isolation ON phlebotomists
-  USING (tenant_id = current_tenant_id())
-  WITH CHECK (tenant_id = current_tenant_id());
-
 -- ── payment_details ─────────────────────────────────────────────────────────────
 ALTER TABLE payment_details ENABLE ROW LEVEL SECURITY;
 ALTER TABLE payment_details FORCE ROW LEVEL SECURITY;
