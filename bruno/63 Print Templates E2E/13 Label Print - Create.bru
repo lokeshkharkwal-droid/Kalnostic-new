@@ -1,0 +1,58 @@
+meta {
+  name: 13 Label Print - Create
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/pdf-report-templates
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "type": "order_label_print",
+    "name": "E2E Check — Label Print",
+    "isActive": true,
+    "meta": {
+      "orientation": "P",
+      "page_size": "A4",
+      "default_font": "helvetica",
+      "default_font_size": "10",
+      "margin_left": "8", "margin_right": "8", "margin_top": "8", "margin_bottom": "8",
+      "margin_header": "4", "margin_footer": "4",
+      "custom_css": "body{font-family:helvetica,sans-serif;font-size:10pt;color:#111} h2{color:#0ea5e9;margin:0 0 6px} table{width:100%;border-collapse:collapse;margin:4px 0} td,th{border:1px solid #cbd5e1;padding:4px 6px;text-align:left} .k{width:40%;color:#475569;font-weight:bold} .bar{font-family:monospace;font-size:14pt;letter-spacing:2px}",
+      "header_name": "Label Header",
+      "header_html": "<h2>Label Print — variable check</h2>",
+      "body_name": "Label Body",
+      "body_html": "<div class='bar'>{barcode}</div><table><tr><th class='k'>Variable</th><th>Resolved value</th></tr><tr><td class='k'>barcode</td><td>{barcode}</td></tr><tr><td class='k'>accession_no</td><td>{accession_no}</td></tr><tr><td class='k'>order_code</td><td>{order_code}</td></tr><tr><td class='k'>bill_id</td><td>{bill_id}</td></tr><tr><td class='k'>patient_name</td><td>{patient_name}</td></tr><tr><td class='k'>patient_age</td><td>{patient_age}</td></tr><tr><td class='k'>patient_gender</td><td>{patient_gender}</td></tr><tr><td class='k'>patient_um_id</td><td>{patient_um_id}</td></tr><tr><td class='k'>sample_type</td><td>{sample_type}</td></tr><tr><td class='k'>sample_group_label</td><td>{sample_group_label}</td></tr><tr><td class='k'>collected_at</td><td>{collected_at}</td></tr><tr><td class='k'>tests</td><td>{tests}</td></tr></table>",
+      "footer_name": "Label Footer",
+      "footer_html": "<div>— end of order_label_print —</div>"
+    }
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("orderLabelTemplateId", data.id);
+}
+
+docs {
+  Create the `order_label_print` (single barcode label) checklist template and
+  capture `orderLabelTemplateId`.
+
+  Variables from `AccessionSampleService.labelFields` (passed as `variables` for
+  a single label): `barcode`, `accession_no`, `order_code`, `bill_id`,
+  `patient_name`, `patient_age`, `patient_gender`, `patient_um_id`,
+  `sample_type`, `sample_group_label`, `collected_at`, `tests`. (`barcode` is the
+  raw text value — no barcode image is generated.)
+}

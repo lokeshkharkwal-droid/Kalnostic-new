@@ -1,0 +1,36 @@
+meta {
+  name: 03 Order Print - Print (real order)
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/orders/{{orderId}}/print
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "type": "order_print",
+    "templateId": "{{orderPrintTemplateId}}"
+  }
+}
+
+docs {
+  Production path: the backend loads order `{{orderId}}`, builds the context from
+  its real data (patient, referral, items) and renders the `order_print`
+  template. The checklist PDF should show the actual order's values.
+
+  Requires a real `{{orderId}}` with active items. Omitting `templateId` falls
+  back to the tenant's single active `order_print` template (throws if none or
+  if more than one exists).
+}

@@ -1,0 +1,49 @@
+meta {
+  name: Generate Global PDF (Preview)
+  type: http
+  seq: 19
+}
+
+post {
+  url: {{baseUrl}}/pdf-report-templates/global/{{globalPdfReportTemplateId}}/generate
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "variables": {
+      "hospital_name": "Apex Diagnostics",
+      "hospital_address": "12 Lab Street, Pune",
+      "patient_name": "Jane Doe"
+    },
+    "sections": {
+      "results": [
+        { "test_name": "Hemoglobin", "value": "13.5" },
+        { "test_name": "WBC", "value": "6.2" }
+      ]
+    },
+    "signatories": [
+      { "name": "Dr. A. Smith", "designation": "MD, Pathologist", "registrationNumber": "REG-123" }
+    ]
+  }
+}
+
+docs {
+  Render a SITE_ADMIN **global** (tenant-less) PDF report template to a PDF and
+  stream it back as `application/pdf` (a raw binary body — NOT the JSON
+  envelope). Powers the "Preview" button on the business Global Templates picker
+  so an operator can inspect a template before importing (cloning) it into their
+  tenant. Same render context as `Generate PDF`; the id resolves from the global
+  scope only (404 if it isn't a live global template).
+
+  In Bruno, use "Save Response → Save to file" to inspect the PDF.
+}

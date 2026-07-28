@@ -12,6 +12,9 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
 import { LabReportService } from '../lab-report/lab-report.service';
+import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
+import { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
+import { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
 import { BranchLabTestConfigSnapshot } from '../branch-lab-test/entities/branch-lab-test.entity';
 import {
   SampleAction,
@@ -47,6 +50,8 @@ import {
   AccessionNumberConflictException,
   AccessionSampleNotFoundException,
   InvalidSampleTransitionException,
+  NoActiveLabelTemplateException,
+  AmbiguousLabelTemplateException,
 } from './exceptions/accession.exceptions';
 
 /** A grouping bucket accumulated while generating samples for an order. */
@@ -90,6 +95,7 @@ export class AccessionSampleService {
     private readonly prisma: PrismaService,
     private readonly settings: AccessionSettingsService,
     private readonly labReportService: LabReportService,
+    private readonly pdfReportTemplateService: PdfReportTemplateService,
   ) {}
 
   // ── Sample generation (order → accession) ─────────────────────────────────
@@ -297,6 +303,132 @@ export class AccessionSampleService {
       throw new AccessionSampleNotFoundException(id);
     }
     return sample;
+  }
+
+  // ── Label print (template-driven barcode labels) ────────────────────────────
+  //
+  // Renders a user-authored classic template (Old Templates → Print, type
+  // `order_label_print` / `multiple_order_label_print`) against a sample's real
+  // data. Barcodes are rendered as text (the `barcode` value) — no server-side
+  // barcode image. Mirrors `LabReportService.print` / `OrderService.print`.
+
+  /**
+   * Render a single accession sample's barcode label to a PDF.
+   * @param sampleId the sample to label
+   * @param tenantId tenant scope (from JWT)
+   * @param templateId explicit `order_label_print` template (picker always sends one)
+   * @throws NoActiveLabelTemplateException / AmbiguousLabelTemplateException
+   */
+  async printLabel(
+    sampleId: string,
+    tenantId: string,
+    templateId?: string,
+  ): Promise<Buffer> {
+    const sample = await this.findById(sampleId, tenantId);
+    const context: GeneratePdfDto = { variables: this.labelFields(sample) };
+    const resolved =
+      templateId ??
+      (await this.resolveLabelTemplateId(tenantId, 'order_label_print'));
+    return this.pdfReportTemplateService.generatePdf(
+      resolved,
+      tenantId,
+      context,
+    );
+  }
+
+  /**
+   * Render many accession samples' barcode labels into one PDF, as a single
+   * `{{#each labels}}` section (one row per sample).
+   * @param ids the samples to label (order preserved)
+   * @param tenantId tenant scope (from JWT)
+   * @param templateId explicit `multiple_order_label_print` template
+   * @throws AccessionSampleNotFoundException if none of the ids resolve
+   * @throws NoActiveLabelTemplateException / AmbiguousLabelTemplateException
+   */
+  async printLabels(
+    ids: string[],
+    tenantId: string,
+    templateId?: string,
+  ): Promise<Buffer> {
+    const samples = await this.prisma.accessionSample.findMany({
+      where: { id: { in: ids }, tenantId, deletedAt: null },
+      include: SAMPLE_INCLUDE,
+    });
+    if (samples.length === 0) {
+      throw new AccessionSampleNotFoundException(ids.join(','));
+    }
+    // Preserve the caller's requested order.
+    const byId = new Map(samples.map((s) => [s.id, s]));
+    const ordered = ids
+      .map((id) => byId.get(id))
+      .filter((s): s is AccessionSampleWithRelations => !!s);
+    const context: GeneratePdfDto = {
+      sections: { labels: ordered.map((s) => this.labelFields(s)) },
+    };
+    const resolved =
+      templateId ??
+      (await this.resolveLabelTemplateId(
+        tenantId,
+        'multiple_order_label_print',
+      ));
+    return this.pdfReportTemplateService.generatePdf(
+      resolved,
+      tenantId,
+      context,
+    );
+  }
+
+  /** Flat label fields for one sample — used as `{variables}` (single) or a
+   * `labels` row (multiple). Barcode is the text value (no barcode image). */
+  private labelFields(
+    sample: AccessionSampleWithRelations,
+  ): Record<string, unknown> {
+    const p = sample.order.patient;
+    return {
+      barcode: sample.barcode ?? '',
+      accession_no: sample.accessionNo,
+      order_code: sample.order.orderCode,
+      bill_id: sample.order.billId ?? '',
+      patient_name: [p.firstName, p.middleName, p.lastName]
+        .filter(Boolean)
+        .join(' '),
+      patient_age: p.age ?? '',
+      patient_gender: p.gender ?? '',
+      patient_um_id: p.umId ?? '',
+      sample_type: sample.sampleType ?? '',
+      sample_group_label: sample.sampleGroupLabel ?? '',
+      collected_at: sample.collectedAt
+        ? sample.collectedAt.toISOString().slice(0, 10)
+        : '',
+      tests: sample.tests
+        .map((t) => t.testName)
+        .filter(Boolean)
+        .join(', '),
+    };
+  }
+
+  /** Resolve the tenant's single active label template when none was passed. */
+  private async resolveLabelTemplateId(
+    tenantId: string,
+    type: PdfReportTemplateType,
+  ): Promise<string> {
+    const { data } = await this.pdfReportTemplateService.findAllForTenant(
+      tenantId,
+      1,
+      10,
+      { type, status: 'ACTIVE' },
+    );
+    if (data.length === 0) {
+      throw new NoActiveLabelTemplateException(tenantId, type);
+    }
+    if (data.length > 1) {
+      throw new AmbiguousLabelTemplateException(
+        tenantId,
+        type,
+        data.map((t) => t.id),
+      );
+    }
+    return data[0]!.id;
   }
 
   /**

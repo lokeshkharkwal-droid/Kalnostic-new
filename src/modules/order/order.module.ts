@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
+import { PdfReportTemplateModule } from '../pdf-report-template/pdf-report-template.module';
 import { AppointmentModule } from '../appointment/appointment.module';
 import { AccessionModule } from '../accession/accession.module';
 import { PhlebotomistScheduleModule } from '../phlebotomist-schedule/phlebotomist-schedule.module';
@@ -23,6 +24,7 @@ import { OrderService } from './order.service';
 @Module({
   imports: [
     PrismaModule,
+    PdfReportTemplateModule,
     AppointmentModule,
     PhlebotomistScheduleModule,
     PhlebotomistCollectionModule,

@@ -7,12 +7,15 @@ import {
   Patch,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
 import { AuditAction, AuditModule } from '@prisma/client';
+import type { Response } from 'express';
 import { OrderService } from './order.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { ListOrdersDto } from './dto/list-orders.dto';
+import { PrintOrderDto } from './dto/print-order.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
 import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
@@ -59,6 +62,40 @@ export class OrderController {
   @Get(':id')
   findOne(@CurrentTenant() tenantId: string, @Param('id') id: string) {
     return this.orderService.findById(id, tenantId);
+  }
+
+  /**
+   * Render one of the order's documents (order slip / bill / TRF / quotation) to a
+   * PDF using the selected `PdfReportTemplate`, and stream it back
+   * (`application/pdf`). Uses a library-specific response so the
+   * `ResponseInterceptor` does not wrap the binary in the JSON envelope — mirrors
+   * `PdfReportTemplateController.generate` / `LabReportController.print`.
+   */
+  @Post(':id/print')
+  @Audit({
+    module: AuditModule.ORDER,
+    action: AuditAction.OTHER,
+    description: 'Printed an order document',
+  })
+  async print(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+    @Body() dto: PrintOrderDto,
+    @Res() res: Response,
+  ): Promise<void> {
+    const pdf = await this.orderService.print(
+      id,
+      tenantId,
+      dto.type,
+      dto.templateId,
+    );
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${dto.type}-${id}.pdf"`,
+    );
+    res.setHeader('Content-Length', pdf.length);
+    res.end(pdf);
   }
 
   /** Update an order (scalars, items replacement, section upserts). */

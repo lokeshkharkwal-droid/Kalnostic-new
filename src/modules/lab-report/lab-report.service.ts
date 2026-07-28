@@ -21,6 +21,7 @@ import {
   GeneratePdfDto,
   SigningAuthorityDto,
 } from '../pdf-report-template/dto/generate-pdf.dto';
+import { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
 import {
   LAB_REPORT_ALLOWED_FROM,
   LAB_REPORT_DETAIL_INCLUDE,
@@ -1147,10 +1148,11 @@ export class LabReportService {
     tenantId: string,
     branchId: string | null,
     templateId?: string,
+    type: 'lab_report' | 'lab_panel' = 'lab_report',
   ): Promise<Buffer> {
     const context = await this.buildPrintContext(id, tenantId, branchId);
     const resolvedTemplateId =
-      templateId ?? (await this.resolvePrintTemplateId(tenantId));
+      templateId ?? (await this.resolvePrintTemplateId(tenantId, type));
     return this.pdfReportTemplateService.generatePdf(
       resolvedTemplateId,
       tenantId,
@@ -1158,13 +1160,133 @@ export class LabReportService {
     );
   }
 
-  private async resolvePrintTemplateId(tenantId: string): Promise<string> {
+  /**
+   * Print all of an order's reports as one document (LABORATORY.docx "Print All").
+   * Aggregates every active report for the order into a single `{{#each reports}}`
+   * section (one row per test, with a joined result summary) and renders it with
+   * the tenant's `lab_all_report` template (or the caller's explicit `templateId`).
+   * @throws LabReportNotFoundException if the order has no reports
+   * @throws NoActivePrintTemplateException / AmbiguousPrintTemplateException
+   */
+  async printAllForOrder(
+    orderId: string,
+    tenantId: string,
+    branchId: string | null,
+    templateId?: string,
+  ): Promise<Buffer> {
+    const context = await this.buildAllReportsContext(
+      orderId,
+      tenantId,
+      branchId,
+    );
+    const resolvedTemplateId =
+      templateId ??
+      (await this.resolvePrintTemplateId(tenantId, 'lab_all_report'));
+    return this.pdfReportTemplateService.generatePdf(
+      resolvedTemplateId,
+      tenantId,
+      context,
+    );
+  }
+
+  /**
+   * Build the `lab_all_report` render context: order/patient header + one
+   * `reports` section row per active report in the order (test name, status, and
+   * a flat result summary — the render engine's `{{#each}}` supports only flat
+   * per-row fields), plus the de-duplicated approving signatories.
+   */
+  private async buildAllReportsContext(
+    orderId: string,
+    tenantId: string,
+    branchId: string | null,
+  ): Promise<GeneratePdfDto> {
+    const activeBranchId = this.requireBranch(branchId);
+    const reports = await this.prisma.labReport.findMany({
+      where: {
+        tenantId,
+        branchId: activeBranchId,
+        deletedAt: null,
+        orderItem: { orderId, deletedAt: null },
+      },
+      include: LAB_REPORT_DETAIL_INCLUDE,
+      orderBy: { createdAt: 'asc' },
+    });
+    if (reports.length === 0) throw new LabReportNotFoundException(orderId);
+
+    const order = reports[0]!.orderItem.order;
+    const patient = order.patient;
+
+    const approverIds = [
+      ...new Set(
+        reports.map((r) => r.approvedBy).filter((v): v is string => !!v),
+      ),
+    ];
+    const approvers = approverIds.length
+      ? await this.prisma.person.findMany({
+          where: { id: { in: approverIds }, deletedAt: null },
+          select: {
+            firstName: true,
+            middleName: true,
+            lastName: true,
+            designation: true,
+          },
+        })
+      : [];
+    const signatories: SigningAuthorityDto[] = approvers.map((s) => ({
+      name: [s.firstName, s.middleName, s.lastName].filter(Boolean).join(' '),
+      designation: s.designation ?? undefined,
+    }));
+
+    const reportRows = reports.map((r) => {
+      const testOrPanel =
+        r.orderItem.branchLabTest ?? r.orderItem.branchLabPanel;
+      const testName =
+        (testOrPanel && 'testName' in testOrPanel
+          ? testOrPanel.testName
+          : undefined) ??
+        (testOrPanel && 'panelName' in testOrPanel
+          ? testOrPanel.panelName
+          : undefined) ??
+        r.orderItem.direct ??
+        '';
+      const resultsSummary = r.resultValues
+        .map((v) => [v.observed1, v.unit].filter(Boolean).join(' ').trim())
+        .filter(Boolean)
+        .join(', ');
+      return {
+        test_name: testName,
+        report_status: r.status,
+        results_summary: resultsSummary,
+      };
+    });
+
+    return {
+      variables: {
+        order_code: order.orderCode,
+        order_date: order.orderDate.toISOString().slice(0, 10),
+        patient_name: [patient.firstName, patient.middleName, patient.lastName]
+          .filter(Boolean)
+          .join(' '),
+        patient_age: patient.age ?? '',
+        patient_gender: patient.gender ?? '',
+        patient_um_id: patient.umId ?? '',
+        report_count: reports.length,
+      },
+      sections: { reports: reportRows },
+      signatories,
+    };
+  }
+
+  private async resolvePrintTemplateId(
+    tenantId: string,
+    type: PdfReportTemplateType = 'lab_report',
+  ): Promise<string> {
     const { data } = await this.pdfReportTemplateService.findAllForTenant(
       tenantId,
       1,
       10,
       {
-        type: 'lab_report',
+        type,
         status: 'ACTIVE',
       },
     );

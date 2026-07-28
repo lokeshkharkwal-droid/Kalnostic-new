@@ -6,10 +6,13 @@ import {
   Patch,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
 import { AuditAction, AuditModule } from '@prisma/client';
+import type { Response } from 'express';
 import { AccessionSampleService } from './accession-sample.service';
 import { ListSamplesDto } from './dto/list-samples.dto';
+import { PrintLabelDto, PrintLabelsDto } from './dto/print-label.dto';
 import { SampleNoteDto } from './dto/sample-note.dto';
 import { CollectSampleDto } from './dto/collect-sample.dto';
 import { AcceptSampleDto } from './dto/accept-sample.dto';
@@ -68,6 +71,58 @@ export class AccessionController {
     @Query() query: ListSamplesDto,
   ) {
     return this.sampleService.findAll(tenantId, profile.branchId, query);
+  }
+
+  /**
+   * Print one sample's barcode label to a PDF, streamed back (`application/pdf`).
+   * Declared before the `:id/...` routes so `print-label` isn't captured as an id.
+   */
+  @Post('print-label')
+  @Audit({
+    module: AuditModule.ACCESSION,
+    action: AuditAction.OTHER,
+    description: 'Printed a sample label',
+  })
+  async printLabel(
+    @CurrentTenant() tenantId: string,
+    @Body() dto: PrintLabelDto,
+    @Res() res: Response,
+  ): Promise<void> {
+    const pdf = await this.sampleService.printLabel(
+      dto.sampleId,
+      tenantId,
+      dto.templateId,
+    );
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="label-${dto.sampleId}.pdf"`,
+    );
+    res.setHeader('Content-Length', pdf.length);
+    res.end(pdf);
+  }
+
+  /** Print many samples' barcode labels into one PDF, streamed back. */
+  @Post('print-labels')
+  @Audit({
+    module: AuditModule.ACCESSION,
+    action: AuditAction.OTHER,
+    description: 'Printed multiple sample labels',
+  })
+  async printLabels(
+    @CurrentTenant() tenantId: string,
+    @Body() dto: PrintLabelsDto,
+    @Res() res: Response,
+  ): Promise<void> {
+    const pdf = await this.sampleService.printLabels(
+      dto.ids,
+      tenantId,
+      dto.templateId,
+    );
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="labels.pdf"`);
+    res.setHeader('Content-Length', pdf.length);
+    res.end(pdf);
   }
 
   /** Summary counts for the status tabs (§A.5) + TAT bar (§A.4) + total. */

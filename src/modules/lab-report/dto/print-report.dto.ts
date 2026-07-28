@@ -1,12 +1,21 @@
-import { IsOptional, IsUUID } from 'class-validator';
+import { IsIn, IsOptional, IsUUID } from 'class-validator';
 
 /** Body for `POST /lab-reports/:id/print`. */
 export class PrintReportDto {
   /** Which `PdfReportTemplate` to render with. Omit to use the tenant's
-   * single active `lab_report`-type template (the common case — most
-   * tenants only ever have one). Required if a tenant has more than one
-   * active `lab_report` template and needs to pick a specific one. */
+   * single active template of `type` (the common case — most tenants only
+   * ever have one). Required if a tenant has more than one active template
+   * of that type and needs to pick a specific one. */
   @IsOptional()
   @IsUUID()
   templateId?: string;
+
+  /**
+   * Whether this is a single test report (`lab_report`, default) or a panel
+   * report (`lab_panel`). Only used to resolve the tenant's default template
+   * when no `templateId` is supplied; the same report record renders either way.
+   */
+  @IsOptional()
+  @IsIn(['lab_report', 'lab_panel'])
+  type?: 'lab_report' | 'lab_panel';
 }

@@ -1,0 +1,35 @@
+meta {
+  name: 17 Multiple Label Print - Generate (dummy)
+  type: http
+  seq: 17
+}
+
+post {
+  url: {{baseUrl}}/pdf-report-templates/{{multiLabelTemplateId}}/generate
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "sections": {
+      "labels": [
+        { "barcode": "SMP-DUMMY-000123", "accession_no": "ACC-DUMMY-000123", "order_code": "ORD-DUMMY-001", "bill_id": "DIG-DUMMY-001", "patient_name": "Jane DUMMY Doe", "patient_age": "34", "patient_gender": "FEMALE", "patient_um_id": "UM-DUMMY-9", "sample_type": "Serum", "sample_group_label": "Gold Top", "collected_at": "2026-07-27", "tests": "CBC, Lipid Profile" },
+        { "barcode": "SMP-DUMMY-000124", "accession_no": "ACC-DUMMY-000124", "order_code": "ORD-DUMMY-001", "bill_id": "DIG-DUMMY-001", "patient_name": "Jane DUMMY Doe", "patient_age": "34", "patient_gender": "FEMALE", "patient_um_id": "UM-DUMMY-9", "sample_type": "EDTA Whole Blood", "sample_group_label": "Purple Top", "collected_at": "2026-07-27", "tests": "CBC" }
+      ]
+    }
+  }
+}
+
+docs {
+  Deterministic substitution proof for `multiple_order_label_print`. Two label
+  rows should render with all fields resolved.
+}

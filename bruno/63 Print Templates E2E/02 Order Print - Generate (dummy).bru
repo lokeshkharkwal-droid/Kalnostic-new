@@ -1,0 +1,55 @@
+meta {
+  name: 02 Order Print - Generate (dummy)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/pdf-report-templates/{{orderPrintTemplateId}}/generate
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "variables": {
+      "order_code": "ORD-DUMMY-001",
+      "bill_id": "DIG-DUMMY-001",
+      "order_date": "2026-07-27",
+      "order_time": "10:45",
+      "status": "REGISTERED",
+      "branch_name": "Dummy Central Lab",
+      "item_count": 2,
+      "patient_name": "Jane DUMMY Doe",
+      "patient_age": "34",
+      "patient_gender": "FEMALE",
+      "patient_um_id": "UM-DUMMY-9",
+      "patient_mobile": "+91 90000 00000",
+      "patient_email": "jane.dummy@example.com",
+      "patient_blood_group": "O+",
+      "referred_by": "Dr. DUMMY Referrer",
+      "referral_panel": "DUMMY Panel Ltd"
+    },
+    "sections": {
+      "items": [
+        { "sr_no": 1, "name": "Complete Blood Count", "code": "CBC", "type": "Test", "price": 250, "discount": 25 },
+        { "sr_no": 2, "name": "Lipid Profile", "code": "LIPID", "type": "Panel", "price": 600, "discount": 0 }
+      ]
+    }
+  }
+}
+
+docs {
+  Deterministic substitution proof for `order_print` — no seed data needed. Every
+  scalar cell in the PDF should show its `*-DUMMY-*` value and both `items` rows
+  should render. Any cell still showing a literal `{token}` means that variable
+  name in the template body does not match the payload.
+}

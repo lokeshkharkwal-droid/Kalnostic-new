@@ -1,0 +1,50 @@
+meta {
+  name: Print All Order Reports
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/order/{{orderId}}/print-all
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "templateId": "{{pdfReportTemplateId}}"
+  }
+}
+
+docs {
+  Render ALL of an order's reports into one consolidated PDF (`lab_all_report`),
+  streamed back as `application/pdf`. Aggregates every active report for the order
+  into a single `{{#each reports}}` section (one row per test, with a joined result
+  summary), plus the de-duplicated approving signatories in the footer
+  (`<signing_authority_tag>`).
+
+  ## Body
+  - `templateId` (optional) — the `lab_all_report` template to render with. Omit to
+    fall back to the tenant's single active `lab_all_report` template.
+
+  ## Related
+  - `POST /lab-reports/:id/print` renders a SINGLE report. Its body now also
+    accepts an optional `type` (`lab_report` | `lab_panel`, default `lab_report`),
+    used only to resolve the default template when no `templateId` is given — the
+    same report record renders either way.
+
+  ## Errors
+  - 404 `LAB_REPORT_NOT_FOUND` — the order has no reports.
+  - 404 `NO_ACTIVE_PRINT_TEMPLATE` / 409 `AMBIGUOUS_PRINT_TEMPLATE` — template
+    resolution failed and no `templateId` was supplied.
+
+  In Bruno, use "Save Response → Save to file" to inspect the PDF.
+}

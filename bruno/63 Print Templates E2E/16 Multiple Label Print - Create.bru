@@ -1,0 +1,56 @@
+meta {
+  name: 16 Multiple Label Print - Create
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{baseUrl}}/pdf-report-templates
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "type": "multiple_order_label_print",
+    "name": "E2E Check — Multiple Label Print",
+    "isActive": true,
+    "meta": {
+      "orientation": "P",
+      "page_size": "A4",
+      "default_font": "helvetica",
+      "default_font_size": "10",
+      "margin_left": "8", "margin_right": "8", "margin_top": "8", "margin_bottom": "8",
+      "margin_header": "4", "margin_footer": "4",
+      "custom_css": "body{font-family:helvetica,sans-serif;font-size:9pt;color:#111} h2{color:#0ea5e9;margin:0 0 6px} table{width:100%;border-collapse:collapse;margin:4px 0} td,th{border:1px solid #cbd5e1;padding:3px 5px;text-align:left} th{background:#e0f2fe} .bar{font-family:monospace}",
+      "header_name": "Multi Label Header",
+      "header_html": "<h2>Multiple Label Print — variable check</h2><div>One row per label in sections.labels</div>",
+      "body_name": "Multi Label Body",
+      "body_html": "<table><tr><th>barcode</th><th>accession_no</th><th>order_code</th><th>bill_id</th><th>patient_name</th><th>patient_um_id</th><th>sample_type</th><th>sample_group_label</th><th>collected_at</th><th>tests</th></tr>{{#each labels}}<tr><td class='bar'>{barcode}</td><td>{accession_no}</td><td>{order_code}</td><td>{bill_id}</td><td>{patient_name}</td><td>{patient_um_id}</td><td>{sample_type}</td><td>{sample_group_label}</td><td>{collected_at}</td><td>{tests}</td></tr>{{/each}}</table>",
+      "footer_name": "Multi Label Footer",
+      "footer_html": "<div>— end of multiple_order_label_print —</div>"
+    }
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("multiLabelTemplateId", data.id);
+}
+
+docs {
+  Create the `multiple_order_label_print` checklist template and capture
+  `multiLabelTemplateId`. Unlike the single label, this type provides NO scalar
+  variables — everything is a row in `sections.labels[]` (one per sample), with
+  the same fields as `labelFields`: `barcode`, `accession_no`, `order_code`,
+  `bill_id`, `patient_name`, `patient_age`, `patient_gender`, `patient_um_id`,
+  `sample_type`, `sample_group_label`, `collected_at`, `tests`.
+}

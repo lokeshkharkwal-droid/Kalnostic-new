@@ -1,0 +1,34 @@
+meta {
+  name: 06 Lab Report - Print (real report)
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/print
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "type": "lab_report",
+    "templateId": "{{labReportTemplateId}}"
+  }
+}
+
+docs {
+  Production path: renders lab report `{{labReportId}}` (single test) with the
+  `lab_report` template. `type` only chooses the fallback template when
+  `templateId` is omitted; the same report record renders either way.
+
+  Requires a real `{{labReportId}}`. Seed one via the Technician Reporting flow.
+}

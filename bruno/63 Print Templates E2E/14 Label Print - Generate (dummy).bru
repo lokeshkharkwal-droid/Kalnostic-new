@@ -1,0 +1,43 @@
+meta {
+  name: 14 Label Print - Generate (dummy)
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/pdf-report-templates/{{orderLabelTemplateId}}/generate
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "variables": {
+      "barcode": "SMP-DUMMY-000123",
+      "accession_no": "ACC-DUMMY-000123",
+      "order_code": "ORD-DUMMY-001",
+      "bill_id": "DIG-DUMMY-001",
+      "patient_name": "Jane DUMMY Doe",
+      "patient_age": "34",
+      "patient_gender": "FEMALE",
+      "patient_um_id": "UM-DUMMY-9",
+      "sample_type": "Serum",
+      "sample_group_label": "Gold Top",
+      "collected_at": "2026-07-27",
+      "tests": "CBC, Lipid Profile"
+    }
+  }
+}
+
+docs {
+  Deterministic substitution proof for `order_label_print`. The barcode line and
+  all 12 fields show their dummy values.
+}

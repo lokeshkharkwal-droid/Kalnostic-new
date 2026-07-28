@@ -13,6 +13,7 @@ import {
   PROFILE_LABELS,
   PROFILE_REGISTRY,
 } from '../src/modules/permissions/constants/profile-registry.constant';
+import { seedPrintTemplates } from './seed-print-templates';
 
 const prisma = new PrismaClient();
 
@@ -256,6 +257,7 @@ async function main() {
   await seedSiteAdmin();
   await seedSystemRoles();
   await seedGlobalMessagingTemplates();
+  await seedPrintTemplates(prisma);
 }
 
 main()

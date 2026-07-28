@@ -1,0 +1,54 @@
+meta {
+  name: 26 Lab Quotation - Generate (dummy)
+  type: http
+  seq: 26
+}
+
+post {
+  url: {{baseUrl}}/pdf-report-templates/{{quotationTemplateId}}/generate
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "variables": {
+      "quote_id": "QTN-DUMMY-001",
+      "quote_date": "2026-07-27",
+      "valid_till": "2026-08-27",
+      "status": "SENT",
+      "branch_name": "Dummy Central Lab",
+      "gross_amount": 850,
+      "discount_amount": 25,
+      "net_amount": 825,
+      "patient_name": "Jane DUMMY Doe",
+      "patient_age": "34",
+      "patient_gender": "FEMALE",
+      "patient_um_id": "UM-DUMMY-9",
+      "patient_mobile": "+91 90000 00000",
+      "patient_email": "jane.dummy@example.com",
+      "patient_blood_group": "O+",
+      "referred_by": "Dr. DUMMY Referrer",
+      "referral_panel": "DUMMY Panel Ltd"
+    },
+    "sections": {
+      "items": [
+        { "sr_no": 1, "name": "Complete Blood Count", "code": "CBC", "type": "Test", "price": 250, "discount": 25 },
+        { "sr_no": 2, "name": "Lipid Profile", "code": "LIPID", "type": "Panel", "price": 600, "discount": 0 }
+      ]
+    }
+  }
+}
+
+docs {
+  Deterministic substitution proof for `lab_quotation_print`. All 17 scalar cells
+  resolve and both `items` rows render.
+}

@@ -227,6 +227,38 @@ export class OrderPersonNotFoundException extends KaltrosException {
   }
 }
 
+/**
+ * 404 — the tenant has no active PDF template of the requested print `type`
+ * (order_print / bill_print / trf_print / lab_quotation_print) to render with.
+ * The tenant must create/import one via the Old Templates → Print module (or the
+ * caller must pass an explicit `templateId`) before the document can be printed.
+ */
+export class NoActiveOrderPrintTemplateException extends KaltrosException {
+  constructor(tenantId: string, type: string) {
+    super(
+      'NO_ACTIVE_ORDER_PRINT_TEMPLATE',
+      'No active PDF template is configured for this document type',
+      { tenantId, type },
+      HttpStatus.NOT_FOUND,
+    );
+  }
+}
+
+/**
+ * 409 — more than one active PDF template of the requested print `type` exists
+ * and the caller did not specify which one to use via `templateId`.
+ */
+export class AmbiguousOrderPrintTemplateException extends KaltrosException {
+  constructor(tenantId: string, type: string, templateIds: string[]) {
+    super(
+      'AMBIGUOUS_ORDER_PRINT_TEMPLATE',
+      'Multiple active PDF templates exist for this document type — specify templateId',
+      { tenantId, type, templateIds },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
 /** 422 — an order item's chosen outsource center does not exist or is inactive. */
 export class OrderOutsourceCenterNotFoundException extends KaltrosException {
   constructor(outsourceCenterId: string) {

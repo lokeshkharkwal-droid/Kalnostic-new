@@ -40,8 +40,8 @@ body:json {
       "header_name": "Default Header",
       "header_html": "<div class='title'>{hospital_name}</div><div>{hospital_address}</div>{{image:logo}}",
       "body_name": "Default Body",
-      "body_html": "<h3>Patient: {patient_name}</h3><table><tr><th>Test</th><th>Result</th></tr>{{#each results}}<tr><td>{{this.test_name}}</td><td>{value}</td></tr>{{/each}}</table>",
-      "associate_body_image": "",
+      "body_html": "<h3>Patient: {patient_name}</h3><table><tbody id='order_test_section'><tr><th>Test</th><th>Result</th></tr>{{#each results}}<tr><td>{{this.test_name}}</td><td>{value}</td></tr>{{/each}}</tbody></table>",
+      "associate_body_image": "X-Ray Chest PA",
       "footer_name": "Default Footer",
       "footer_html": "<div>Authorised by:</div><signing_authority_tag></signing_authority_tag>",
       "body_layout": "Single Column",
@@ -89,6 +89,22 @@ docs {
   the JWT, never the body. `status` is expressed as the boolean `isActive` (the
   frontend maps 1/0 ⇄ true/false). All page + section settings live in `meta`
   (general/header/body/footer); omitted meta keys fall back to defaults.
+
+  General-section meta (kishan parity): `orientation`, `page_size`,
+  `default_font` / `default_font_size`, the four page margins
+  (`margin_left`/`margin_right`/`margin_top`/`margin_bottom`), the header/footer
+  edge margins (`margin_header` / `margin_footer`), `watermark_text`,
+  `template_version`, and `custom_css`.
+
+  Each section also carries a display title + HTML: `header_name`/`header_html`,
+  `body_name`/`body_html` (+ `associate_body_image`), `footer_name`/`footer_html`.
+
+  Body HTML repeating-section conventions (interpreted at generate time):
+  - Lab Panel → repeating block inside `<div id="panel_section">`.
+  - Lab Test → repeating rows inside `<tbody>`.
+  - Lab Bill Order → repeating rows inside `<tr id="order_test_section">`.
+  - Signing authority → wrap in `<signing_authority_tag>…</signing_authority_tag>`.
+  `associate_body_image` names the test whose image is embedded in the body.
 
   The `meta` blob also carries the frontend "Report Layout" fields: `body_layout`,
   `logo_position`, `report_refs` (image/pdf/group/icon setting ids), the structured

@@ -225,11 +225,42 @@ export class LabReportController {
       tenantId,
       profile.branchId,
       dto.templateId,
+      dto.type,
     );
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
       'Content-Disposition',
       `inline; filename="lab-report-${id}.pdf"`,
+    );
+    res.setHeader('Content-Length', pdf.length);
+    res.end(pdf);
+  }
+
+  /** Print ALL of an order's reports as one `lab_all_report` document. Streams the
+   * rendered PDF back directly (bypasses `ResponseInterceptor`). */
+  @Post('order/:orderId/print-all')
+  @Audit({
+    module: AuditModule.LAB_REPORT,
+    action: AuditAction.OTHER,
+    description: "Printed all of an order's reports",
+  })
+  async printAll(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('orderId') orderId: string,
+    @Body() dto: PrintReportDto,
+    @Res() res: Response,
+  ): Promise<void> {
+    const pdf = await this.labReportService.printAllForOrder(
+      orderId,
+      tenantId,
+      profile.branchId,
+      dto.templateId,
+    );
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="lab-all-report-${orderId}.pdf"`,
     );
     res.setHeader('Content-Length', pdf.length);
     res.end(pdf);
