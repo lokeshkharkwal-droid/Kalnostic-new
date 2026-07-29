@@ -158,16 +158,20 @@ export class PhlebotomistCollectionService {
     const limit = query.limit ?? 20;
     const where = this.buildListWhere(tenantId, activeBranchId, query);
 
-    const [rows, total] = await this.prisma.$transaction([
-      this.prisma.homeVisitCollection.findMany({
+    // withTenant (not array-form $transaction) so the RLS tenant GUC is set for
+    // both queries — array-form bypasses the per-op RLS extension and returns
+    // zero rows under enforced RLS (see PrismaService).
+    const [rows, total] = await this.prisma.withTenant(tenantId, async (tx) => {
+      const list = await tx.homeVisitCollection.findMany({
         where,
         include: COLLECTION_LIST_INCLUDE,
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { scheduledCollectionAt: 'desc' },
-      }),
-      this.prisma.homeVisitCollection.count({ where }),
-    ]);
+      });
+      const count = await tx.homeVisitCollection.count({ where });
+      return [list, count] as const;
+    });
     return paginated(rows.map(toCollectionListRow), total, page, limit);
   }
 

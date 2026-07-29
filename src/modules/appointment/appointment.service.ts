@@ -162,15 +162,19 @@ export class AppointmentService {
         ? { code: { contains: query.search, mode: 'insensitive' } }
         : {}),
     };
-    const [data, total] = await this.prisma.$transaction([
-      this.prisma.appointment.findMany({
+    // withTenant (not array-form $transaction) so the RLS tenant GUC is set for
+    // both queries — array-form bypasses the per-op RLS extension and returns
+    // zero rows under enforced RLS (see PrismaService).
+    const [data, total] = await this.prisma.withTenant(tenantId, async (tx) => {
+      const rows = await tx.appointment.findMany({
         where,
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.appointment.count({ where }),
-    ]);
+      });
+      const count = await tx.appointment.count({ where });
+      return [rows, count] as const;
+    });
     return paginated(data, total, page, limit);
   }
 
