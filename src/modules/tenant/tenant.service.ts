@@ -246,6 +246,13 @@ export class TenantService {
           },
         });
 
+        // This raw interactive transaction bypasses the RLS extension (only
+        // `withTenant`/per-op calls trigger it), so the GUC must be set
+        // explicitly here — `user_branch_profiles` enforces
+        // tenant_id = current_tenant_id() and the tenant didn't exist to scope
+        // to until `created` above.
+        await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${created.id}, true)`;
+
         await tx.userBranchProfile.create({
           data: {
             tenantId: created.id,
@@ -653,45 +660,54 @@ export class TenantService {
 
   /**
    * Get the tenant's business-admin account details + credential metadata.
+   *
+   * SiteAdmin requests carry no per-request tenant GUC, so the
+   * `user_branch_profiles` lookup (RLS-protected, `tenant_id =
+   * current_tenant_id()`) runs inside `runWithTenant(tenantId, …)` — same
+   * pattern as `getBranchesForTenant` (CLAUDE.md §4.7). Without it, the query
+   * silently returns zero rows instead of erroring, which is why this looked
+   * like "no admin exists" rather than a permissions problem.
    * @param tenantId tenant id
    * @returns admin info, or null if none exists
    */
   async getBusinessAdmin(tenantId: string): Promise<BusinessAdminInfo | null> {
-    const profile = await this.prisma.userBranchProfile.findFirst({
-      where: {
-        tenantId,
-        authRole: { key: 'business_admin' },
-        branchId: null,
-        isActive: true,
-        deletedAt: null,
-      },
-    });
-    if (!profile) {
-      return null;
-    }
+    return this.prisma.runWithTenant(tenantId, async () => {
+      const profile = await this.prisma.userBranchProfile.findFirst({
+        where: {
+          tenantId,
+          authRole: { key: 'business_admin' },
+          branchId: null,
+          isActive: true,
+          deletedAt: null,
+        },
+      });
+      if (!profile) {
+        return null;
+      }
 
-    const person = await this.prisma.person.findFirst({
-      where: { id: profile.personId, deletedAt: null },
-    });
-    if (!person) {
-      return null;
-    }
+      const person = await this.prisma.person.findFirst({
+        where: { id: profile.personId, deletedAt: null },
+      });
+      if (!person) {
+        return null;
+      }
 
-    const credentials = await this.prisma.personCredentials.findUnique({
-      where: { personId: person.id },
-    });
+      const credentials = await this.prisma.personCredentials.findUnique({
+        where: { personId: person.id },
+      });
 
-    return {
-      personId: person.id,
-      firstName: person.firstName,
-      lastName: person.lastName,
-      phone: person.phone,
-      email: person.email,
-      platformMrn: person.platformMrn,
-      isActive: person.isActive,
-      isTempPassword: credentials?.isTempPassword ?? true,
-      lastLoginAt: credentials?.lastLoginAt ?? null,
-    };
+      return {
+        personId: person.id,
+        firstName: person.firstName,
+        lastName: person.lastName,
+        phone: person.phone,
+        email: person.email,
+        platformMrn: person.platformMrn,
+        isActive: person.isActive,
+        isTempPassword: credentials?.isTempPassword ?? true,
+        lastLoginAt: credentials?.lastLoginAt ?? null,
+      };
+    });
   }
 
   /**
