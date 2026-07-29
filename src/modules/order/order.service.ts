@@ -14,6 +14,9 @@ import { AppointmentService } from '../appointment/appointment.service';
 import { AccessionSampleService } from '../accession/accession-sample.service';
 import { SlotReservationService } from '../phlebotomist-schedule/slot-reservation.service';
 import { PhlebotomistCollectionService } from '../phlebotomist-collection/phlebotomist-collection.service';
+import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
+import type { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
+import type { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
@@ -50,6 +53,8 @@ import {
   OrderPersonNotFoundException,
   OrderReferralDoctorNotFoundException,
   OrderReferralPanelNotFoundException,
+  NoActiveOrderPrintTemplateException,
+  AmbiguousOrderPrintTemplateException,
 } from './exceptions/order.exceptions';
 
 /**
@@ -70,6 +75,7 @@ export class OrderService {
     private readonly accessionSamples: AccessionSampleService,
     private readonly slotReservation: SlotReservationService,
     private readonly homeVisitCollections: PhlebotomistCollectionService,
+    private readonly pdfReportTemplateService: PdfReportTemplateService,
   ) {}
 
   /**
@@ -349,6 +355,114 @@ export class OrderService {
       throw new OrderNotFoundException(id);
     }
     return order;
+  }
+
+  // ── Print / Download Order ───────────────────────────────────────────────────
+
+  /**
+   * Print/Download an order document (order-console's "Print Order" action —
+   * PDF templates integration checklist item 1). Resolves the tenant's active
+   * template of `type` (or the caller's explicit `templateId`) and renders it
+   * with this order's real data via `PdfReportTemplateService.generatePdf`.
+   * Mirrors `LabReportService.print`'s exact shape (variables/sections built
+   * from the record's own data, one template, one render).
+   * @param type which `PdfReportTemplate` type to resolve against when
+   * `templateId` is omitted (`order_print`, `bill_print`, `trf_print`,
+   * `lab_quotation_print`, …). Ignored when `templateId` is given explicitly.
+   * @throws OrderNotFoundException if missing/soft-deleted/other tenant
+   * @throws NoActiveOrderPrintTemplateException if no active template exists
+   * @throws AmbiguousOrderPrintTemplateException if multiple exist and no
+   * `templateId` was given
+   */
+  async print(
+    id: string,
+    tenantId: string,
+    templateId?: string,
+    type: PdfReportTemplateType = 'order_print',
+  ): Promise<Buffer> {
+    const context = await this.buildPrintContext(id, tenantId);
+    const resolvedTemplateId =
+      templateId ?? (await this.resolvePrintTemplateId(tenantId, type));
+    return this.pdfReportTemplateService.generatePdf(
+      resolvedTemplateId,
+      tenantId,
+      context,
+    );
+  }
+
+  private async resolvePrintTemplateId(
+    tenantId: string,
+    type: PdfReportTemplateType,
+  ): Promise<string> {
+    const { data } = await this.pdfReportTemplateService.findAllForTenant(
+      tenantId,
+      1,
+      10,
+      { type, status: 'ACTIVE' },
+    );
+    if (data.length === 0) {
+      throw new NoActiveOrderPrintTemplateException(tenantId, type);
+    }
+    if (data.length > 1) {
+      throw new AmbiguousOrderPrintTemplateException(
+        tenantId,
+        type,
+        data.map((t) => t.id),
+      );
+    }
+    return data[0]!.id;
+  }
+
+  /** Builds the render context for Print/Download — order/patient/billing
+   * variables plus a `sections.items` row-set (one row per order item). */
+  private async buildPrintContext(
+    id: string,
+    tenantId: string,
+  ): Promise<GeneratePdfDto> {
+    const order = await this.findById(id, tenantId);
+    const patient = order.patient;
+    const payment = order.payments[0];
+
+    const items = order.items
+      .filter((i) => !i.deletedAt)
+      .map((i) => ({
+        test_name:
+          i.branchLabTest?.testName ??
+          i.branchLabPanel?.panelName ??
+          i.direct ??
+          '',
+        price: i.branchLabTest?.priceMsrp ?? i.branchLabPanel?.priceMsrp ?? '',
+      }));
+
+    return {
+      variables: {
+        order_code: order.orderCode,
+        order_date: order.orderDate.toISOString().slice(0, 10),
+        order_type: order.orderType,
+        billing_type: order.billingType,
+        order_status: order.status,
+        patient_name: [patient.firstName, patient.middleName, patient.lastName]
+          .filter(Boolean)
+          .join(' '),
+        patient_age: patient.age ?? '',
+        patient_gender: patient.gender ?? '',
+        patient_um_id: patient.umId ?? '',
+        patient_mobile: patient.mobile ?? '',
+        referred_by: order.referredByDoctor
+          ? [order.referredByDoctor.firstName, order.referredByDoctor.lastName]
+              .filter(Boolean)
+              .join(' ')
+          : '',
+        referral_panel: order.referralPanel?.name ?? '',
+        branch_name: order.branch?.name ?? '',
+        total_amount: payment?.totalAmount ?? '',
+        order_discount: payment?.orderDiscount ?? '',
+        net_amount: payment?.netAmount ?? '',
+        paid_amount: payment?.paidAmount ?? '',
+        remaining_balance: payment?.remainingBalance ?? '',
+      },
+      sections: { items },
+    };
   }
 
   /**

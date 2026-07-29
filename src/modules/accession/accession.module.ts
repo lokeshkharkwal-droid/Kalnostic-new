@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { BranchModule } from '../branch/branch.module';
 import { LabReportModule } from '../lab-report/lab-report.module';
+import { PdfReportTemplateModule } from '../pdf-report-template/pdf-report-template.module';
 import { AccessionController } from './accession.controller';
 import { SampleTransferController } from './sample-transfer.controller';
 import { AccessionSettingsController } from './accession-settings.controller';
@@ -28,7 +29,12 @@ import { AccessionReportService } from './accession-report.service';
  * `AccessionReportService` (Part F exception reports).
  */
 @Module({
-  imports: [PrismaModule, BranchModule, LabReportModule],
+  imports: [
+    PrismaModule,
+    BranchModule,
+    LabReportModule,
+    PdfReportTemplateModule,
+  ],
   controllers: [
     AccessionController,
     SampleTransferController,

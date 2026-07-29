@@ -192,3 +192,18 @@ export class AmbiguousPrintTemplateException extends KaltrosException {
     );
   }
 }
+
+/** 404 — Print All (order-console's "Lab All Report" action) found no lab
+ * reports for this order within the tenant/branch — either the order id is
+ * wrong, or none of its items have reached ACCEPTED yet (LabReport rows are
+ * only created at that point — see `LabReport`'s own doc comment). */
+export class OrderReportsNotFoundException extends KaltrosException {
+  constructor(orderId: string) {
+    super(
+      'ORDER_REPORTS_NOT_FOUND',
+      'No lab reports found for this order',
+      { orderId },
+      HttpStatus.NOT_FOUND,
+    );
+  }
+}

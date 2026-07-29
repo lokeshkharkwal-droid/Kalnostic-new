@@ -4,6 +4,7 @@ import { AppointmentModule } from '../appointment/appointment.module';
 import { AccessionModule } from '../accession/accession.module';
 import { PhlebotomistScheduleModule } from '../phlebotomist-schedule/phlebotomist-schedule.module';
 import { PhlebotomistCollectionModule } from '../phlebotomist-collection/phlebotomist-collection.module';
+import { PdfReportTemplateModule } from '../pdf-report-template/pdf-report-template.module';
 import { OrderController } from './order.controller';
 import { OrderService } from './order.service';
 
@@ -27,6 +28,7 @@ import { OrderService } from './order.service';
     PhlebotomistScheduleModule,
     PhlebotomistCollectionModule,
     AccessionModule,
+    PdfReportTemplateModule,
   ],
   controllers: [OrderController],
   providers: [OrderService],

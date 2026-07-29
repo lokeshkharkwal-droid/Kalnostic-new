@@ -6,9 +6,12 @@ import {
   Patch,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
 import { AuditAction, AuditModule } from '@prisma/client';
+import type { Response } from 'express';
 import { AccessionSampleService } from './accession-sample.service';
+import { PrintLabelDto, PrintLabelsDto } from './dto/print-label.dto';
 import { ListSamplesDto } from './dto/list-samples.dto';
 import { SampleNoteDto } from './dto/sample-note.dto';
 import { CollectSampleDto } from './dto/collect-sample.dto';
@@ -77,6 +80,50 @@ export class AccessionController {
     @CurrentProfile() profile: ActiveProfile,
   ) {
     return this.sampleService.summary(tenantId, profile.branchId);
+  }
+
+  // ── Print Label (in-house/referral/external-referral orders) — declared
+  // before `:id` routes, same convention as the bulk actions below ──────────
+
+  /** Print one sample's barcode label. Streams the rendered PDF directly. */
+  @Post('print-label')
+  @Audit(auditUpdate('Printed a sample label'))
+  async printLabel(
+    @CurrentTenant() tenantId: string,
+    @Body() dto: PrintLabelDto,
+    @Res() res: Response,
+  ): Promise<void> {
+    const pdf = await this.sampleService.printLabel(
+      dto.sampleId,
+      tenantId,
+      dto.templateId,
+    );
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="label-${dto.sampleId}.pdf"`,
+    );
+    res.setHeader('Content-Length', pdf.length);
+    res.end(pdf);
+  }
+
+  /** Print many samples' labels into one PDF. Streams the rendered PDF directly. */
+  @Post('print-labels')
+  @Audit(auditUpdate('Printed multiple sample labels'))
+  async printLabels(
+    @CurrentTenant() tenantId: string,
+    @Body() dto: PrintLabelsDto,
+    @Res() res: Response,
+  ): Promise<void> {
+    const pdf = await this.sampleService.printLabels(
+      dto.ids,
+      tenantId,
+      dto.templateId,
+    );
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="labels.pdf"');
+    res.setHeader('Content-Length', pdf.length);
+    res.end(pdf);
   }
 
   // ── Bulk actions (§A.11) — declared before `:id` routes ────────────────────

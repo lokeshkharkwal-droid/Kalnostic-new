@@ -101,3 +101,30 @@ export class TransferDestinationMissingException extends KaltrosException {
     );
   }
 }
+
+/** 404 — Print Label (in-house/referral/external-referral orders' "Label
+ * Print" action) has no active PDF template of the requested `type`
+ * (`order_label_print` or `multiple_order_label_print`) to render with. */
+export class NoActiveLabelTemplateException extends KaltrosException {
+  constructor(tenantId: string, type: string) {
+    super(
+      'NO_ACTIVE_PRINT_TEMPLATE',
+      `No active ${type} PDF template is configured for this tenant`,
+      { tenantId, type },
+      HttpStatus.NOT_FOUND,
+    );
+  }
+}
+
+/** 409 — more than one active template of the requested `type` exists and
+ * the caller did not specify which one to use. */
+export class AmbiguousLabelTemplateException extends KaltrosException {
+  constructor(tenantId: string, type: string, templateIds: string[]) {
+    super(
+      'AMBIGUOUS_PRINT_TEMPLATE',
+      `Multiple active ${type} PDF templates exist — specify templateId`,
+      { tenantId, type, templateIds },
+      HttpStatus.CONFLICT,
+    );
+  }
+}

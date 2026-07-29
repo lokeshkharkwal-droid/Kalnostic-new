@@ -1569,6 +1569,14 @@ CREATE POLICY phlebotomist_settings_tenant_isolation ON phlebotomist_settings
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── technician_settings ──────────────────────────────────────────────────────
+ALTER TABLE technician_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE technician_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS technician_settings_tenant_isolation ON technician_settings;
+CREATE POLICY technician_settings_tenant_isolation ON technician_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- Platform-level tables (tenants, persons, person_credentials, siteadmin_users,
 -- refresh_tokens, person_tenant_enrollments, test_groups, test_group_mappings,
 -- equipment, equipment_lab_tests, support_infos) are intentionally NOT covered —
