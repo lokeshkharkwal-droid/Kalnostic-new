@@ -2080,6 +2080,87 @@ per doctor + branch</b>. All times are 24h <code>HH:mm</code>; dates are ISO <co
   Audited under <code>AuditModule.BILLING_SETTINGS</code>.</p>
 </div>
 
+<h2>Registration Settings</h2>
+<div class="note">LIMS Settings doc "Registration Module" section — general toggles, quotation validity,
+charges &amp; deductions, cancellation &amp; refund, referral &amp; staff permissions, billing-menu
+overrides, and the appointment/patient-merge toggles. Unlike Billing/Console/Report/Patient Settings
+(tenant-only), this is <b>tenant-scoped AND branch-level</b> — one row per branch, branch taken from the
+caller's active profile (never the body). Field names follow <code>&lt;Heading&gt;_&lt;Setting&gt;</code>
+to mirror the source doc 1:1 (e.g. <code>ReferralAndStaffPermissions_AllowAddReferral</code>). ID-generation
+config (Order/Quotation/Appointment/Patient-UMID external ids) is a separate sibling resource at
+<code>/registration-settings/id-sequences</code> — see below.</div>
+
+<div class="ep" id="registration-settings-enums">
+  <div><span class="m get">GET</span><span class="path">/api/v1/registration-settings/enums</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Allowed values for the Registration settings enum fields: <code>defaultPaymentModes</code>
+  (<code>CASH</code>|<code>CREDIT</code>|<code>UPI</code>|<code>CARD</code>|<code>WALLET</code>|<code>BANK_TRANSFER</code>,
+  for <code>General_DefaultPaymentMode</code>) and <code>quotationValidityUnits</code>
+  (<code>HOURS</code>|<code>DAYS</code>|<code>MONTHS</code>|<code>YEARS</code>, for
+  <code>Quotation_QuotationValidityUnit</code>). Every other field is a plain boolean, integer, or decimal.</p>
+</div>
+
+<div class="ep" id="registration-settings-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/registration-settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>The active branch's Registration settings (tenant from JWT, branch from the caller's active profile) —
+  one row per branch, created with schema defaults on first access. Never 404s. ~50 fields grouped by
+  heading: <code>General_*</code>, <code>Quotation_*</code>, <code>ChargesAndDeductions_*</code>,
+  <code>CancellationAndRefund_*</code>, <code>ReferralAndStaffPermissions_*</code>, <code>BillingMenu_*</code>,
+  <code>Appointment_*</code>, <code>Patients_*</code>.</p>
+</div>
+
+<div class="ep" id="registration-settings-save">
+  <div><span class="m put">PUT</span><span class="path">/api/v1/registration-settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Upsert the active branch's Registration settings (partial patch — omitted fields keep their
+  previously-saved value, or the schema default on first save). Cross-field rules: every
+  <code>Minimum*Percent</code> must not exceed its paired <code>Maximum*Percent</code> (TDS, discount,
+  line-item discount — checked against the merged existing+incoming values) — otherwise
+  <span class="pill">422 VALIDATION_ERROR</span>; at most one of
+  <code>ChargesAndDeductions_AllowOrderDiscountOnly</code> / <code>AllowLineDiscountOnly</code> /
+  <code>AllowBothOrderAndLineDiscount</code> may be <code>true</code> — otherwise
+  <span class="pill">422 CONFLICTING_DISCOUNT_MODE</span>. Returns the saved row. Audited under
+  <code>AuditModule.REGISTRATION_SETTINGS</code>.</p>
+</div>
+
+<h3 id="registration-id-sequences">Registration Id Sequences <span style="font-size:13px;color:var(--muted)">(Order/Quotation/Appointment/Patient-UMID external-id generation)</span></h3>
+<div class="note">Reusable per-branch id-generation config — one <code>RegistrationIdSequence</code> row per
+<code>(tenantId, branchId, sequenceType)</code>. Mirrors the old system's AUTO_INCREMENT_OPTIONS
+<i>intent</i> (one configurable numbering scheme per id "purpose") but adds a true prefix/separator/suffix
+builder and fixes its unguarded read-then-write counter bug with a single serializable transaction. The
+<code>PATIENT</code> sequence type configures the <b>UMID</b> (the doc's "PATIENTS" section id config).
+Minting a real id (<code>generateNext()</code>, atomic counter increment + reset-cycle rollover) is not
+exposed over HTTP — it's called by the actual order/quotation/appointment/patient creation flows.</div>
+
+<div class="ep" id="registration-id-sequences-enums">
+  <div><span class="m get">GET</span><span class="path">/api/v1/registration-settings/id-sequences/enums</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Allowed values: <code>sequenceTypes</code> (<code>ORDER</code>|<code>QUOTATION</code>|<code>APPOINTMENT</code>|<code>PATIENT</code>),
+  <code>separators</code> (<code>NONE</code>|<code>HYPHEN</code>|<code>SLASH</code>|<code>UNDERSCORE</code>),
+  <code>resetCycles</code> (<code>NEVER</code>|<code>DAILY</code>|<code>MONTHLY</code>|<code>YEARLY</code>).</p>
+</div>
+
+<div class="ep" id="registration-id-sequences-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/registration-settings/id-sequences</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>All 4 sequence configs for the active branch, each auto-created with defaults
+  (<code>prefix: ""</code>, <code>suffix: ""</code>, <code>separator: "NONE"</code>,
+  <code>numberLength: 6</code>, <code>resetCycle: "NEVER"</code>, <code>currentNumber: 0</code>) on first
+  access. Never 404s. Each row includes a computed (not persisted) <code>preview</code> string — e.g.
+  <code>prefix: "ORD"</code>, <code>separator: "HYPHEN"</code>, <code>suffix: "AM"</code> →
+  <code>"ORD-000001-AM"</code>.</p>
+</div>
+
+<div class="ep" id="registration-id-sequences-save">
+  <div><span class="m put">PUT</span><span class="path">/api/v1/registration-settings/id-sequences/:sequenceType</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Save (partial patch) one sequence type's config: <code>prefix</code>/<code>suffix</code> (≤24 chars,
+  letters/digits only), <code>separator</code>, <code>numberLength</code> (4-10), <code>resetCycle</code>.
+  The running counter (<code>currentNumber</code>) is system-managed and never accepted here. Returns the
+  saved row with a recomputed <code>preview</code>. Audited under <code>AuditModule.REGISTRATION_SETTINGS</code>.</p>
+</div>
+
 <h2 id="sales">Sales <span style="font-size:13px;color:var(--muted)">(field-sales CRM — leads, trips, follow-ups)</span></h2>
 <div class="note">The Sales module is a business-facing CRM for lab/diagnostic tie-ups. Every route is
 <b>business-authenticated</b> and tenant-scoped + <b>branch-level</b>: <code>tenantId</code> comes from the JWT and

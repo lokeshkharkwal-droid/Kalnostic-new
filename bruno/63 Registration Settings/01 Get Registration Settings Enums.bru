@@ -1,0 +1,38 @@
+meta {
+  name: 01 Get Registration Settings Enums
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/registration-settings/enums
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the two enum arrays", function () {
+    const d = res.getBody().data;
+    expect(d.defaultPaymentModes).to.include.members(["CASH", "UPI", "CARD"]);
+    expect(d.quotationValidityUnits).to.include.members(["HOURS", "DAYS", "MONTHS", "YEARS"]);
+  });
+}
+
+docs {
+  Allowed values for the Registration settings enum fields:
+
+  - `defaultPaymentModes` — `CASH` | `CREDIT` | `UPI` | `CARD` | `WALLET` |
+    `BANK_TRANSFER` (for `General_DefaultPaymentMode`).
+  - `quotationValidityUnits` — `HOURS` | `DAYS` | `MONTHS` | `YEARS` (for
+    `Quotation_QuotationValidityUnit`).
+
+  Every other field is a plain boolean, integer, or decimal and isn't part of
+  this response.
+}
