@@ -2,6 +2,13 @@ packages:
   - '.'
 
 allowBuilds:
+  '@nestjs/core': set this to true or false
+  '@prisma/client': set this to true or false
+  '@prisma/engines': set this to true or false
   '@swc/core': false
+  bcrypt: set this to true or false
   esbuild: false
+  prisma: set this to true or false
+  puppeteer: set this to true or false
   sharp: false
+  unrs-resolver: set this to true or false

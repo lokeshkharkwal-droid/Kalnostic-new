@@ -331,16 +331,20 @@ export class SampleTransferService {
     if (Object.keys(order).length > 0) sample.order = { is: order };
     if (Object.keys(sample).length > 0) where.sample = { is: sample };
 
-    const [data, total] = await this.prisma.$transaction([
-      this.prisma.sampleTransfer.findMany({
+    // withTenant (not array-form $transaction) so the RLS tenant GUC is set for
+    // both queries — array-form bypasses the per-op RLS extension and returns
+    // zero rows under enforced RLS (see PrismaService).
+    const [data, total] = await this.prisma.withTenant(tenantId, async (tx) => {
+      const rows = await tx.sampleTransfer.findMany({
         where,
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { createdAt: 'desc' },
         include: TRANSFER_INCLUDE,
-      }),
-      this.prisma.sampleTransfer.count({ where }),
-    ]);
+      });
+      const count = await tx.sampleTransfer.count({ where });
+      return [rows, count] as const;
+    });
     return paginated(data, total, page, limit);
   }
 

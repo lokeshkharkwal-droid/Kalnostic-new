@@ -217,16 +217,20 @@ export class AccessionSampleService {
 
     const where = this.buildSampleWhere(tenantId, branchId, query, tat, nowMs);
 
-    const [data, total] = await this.prisma.$transaction([
-      this.prisma.accessionSample.findMany({
+    // withTenant (not array-form $transaction) so the RLS tenant GUC is set for
+    // both queries — array-form bypasses the per-op RLS extension and returns
+    // zero rows under enforced RLS (see PrismaService).
+    const [data, total] = await this.prisma.withTenant(tenantId, async (tx) => {
+      const rows = await tx.accessionSample.findMany({
         where,
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { createdAt: 'desc' },
         include: SAMPLE_LIST_INCLUDE,
-      }),
-      this.prisma.accessionSample.count({ where }),
-    ]);
+      });
+      const count = await tx.accessionSample.count({ where });
+      return [rows, count] as const;
+    });
     const items: AccessionSampleListItem[] = data.map((row) => ({
       ...row,
       tatStatus: deriveTatStatus(row.createdAt, row.status, tat, nowMs),

@@ -132,10 +132,15 @@ export class AuthService {
     // membership is INACTIVE cannot log in to that tenant, even though the
     // platform-level Person is still active (so they remain usable elsewhere).
     if (tenantId) {
-      const membership = await this.prisma.tenantStaffMembership.findFirst({
-        where: { tenantId, personId: person.id, deletedAt: null },
-        select: { status: true },
-      });
+      // tenant_staff_memberships is RLS-scoped; login has no request tenant
+      // context yet, so scope this read to the caller's tenant or the guard
+      // silently no-ops under enforced RLS (RLS_ENABLED=true + non-owner role).
+      const membership = await this.prisma.runWithTenant(tenantId, () =>
+        this.prisma.tenantStaffMembership.findFirst({
+          where: { tenantId, personId: person.id, deletedAt: null },
+          select: { status: true },
+        }),
+      );
       if (membership && membership.status === StaffStatus.INACTIVE) {
         throw new AccountInactiveException(person.id);
       }
@@ -292,8 +297,38 @@ export class AuthService {
   /**
    * Build the complete JWT payload, embedding all branch+profile assignments
    * for the switcher UI (CLAUDE.md §5.1).
+   *
+   * The payload is built from tenant-scoped tables (`user_branch_profiles`,
+   * `branches`), but token issuance (login/refresh) happens before a request
+   * tenant context exists. Under enforced RLS (`RLS_ENABLED=true` + a non-owner
+   * DB role, as on the server) those reads return zero rows unless
+   * `app.current_tenant_id` is set — which silently emptied `profiles[]` and
+   * `active_*` on the server while working locally (superuser bypasses RLS).
+   * Scope the reads to the caller's own tenant; cross-tenant bypass stays
+   * limited to SiteAdmin (CLAUDE.md §4.7).
    */
-  private async buildJwtPayload(
+  private buildJwtPayload(
+    personId: string,
+    tenantId: string,
+    activeBranchId: string | null,
+    activeProfile: string | null,
+  ): Promise<JwtPayload> {
+    return this.prisma.runWithTenant(tenantId, () =>
+      this.buildJwtPayloadScoped(
+        personId,
+        tenantId,
+        activeBranchId,
+        activeProfile,
+      ),
+    );
+  }
+
+  /**
+   * Assemble the JWT payload. Must run inside a tenant RLS context (see
+   * {@link buildJwtPayload}) so the `user_branch_profiles` / `branches` reads
+   * resolve their row-level policies.
+   */
+  private async buildJwtPayloadScoped(
     personId: string,
     tenantId: string,
     activeBranchId: string | null,

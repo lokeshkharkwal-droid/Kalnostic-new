@@ -87,8 +87,11 @@ export class AccessionReportService {
         },
       };
     }
-    const [data, total] = await this.prisma.$transaction([
-      this.prisma.accessionSample.findMany({
+    // withTenant (not array-form $transaction) so the RLS tenant GUC is set for
+    // both queries — array-form bypasses the per-op RLS extension and returns
+    // zero rows under enforced RLS (see PrismaService).
+    const [data, total] = await this.prisma.withTenant(tenantId, async (tx) => {
+      const rows = await tx.accessionSample.findMany({
         where,
         skip: (page - 1) * limit,
         take: limit,
@@ -101,9 +104,10 @@ export class AccessionReportService {
             take: 1,
           },
         },
-      }),
-      this.prisma.accessionSample.count({ where }),
-    ]);
+      });
+      const count = await tx.accessionSample.count({ where });
+      return [rows, count] as const;
+    });
     const rows: AccessionReportRow[] = data.map((row) => {
       const { statusHistory, ...rest } = row;
       return { ...rest, reason: statusHistory[0]?.reason ?? null };
