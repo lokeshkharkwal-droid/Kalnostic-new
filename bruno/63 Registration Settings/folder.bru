@@ -1,0 +1,38 @@
+meta {
+  name: 63 Registration Settings
+  seq: 63
+}
+
+docs {
+  # Registration Settings
+
+  Registration › Registration Settings — the LIMS Settings doc's "Registration
+  Module" section: general toggles, quotation validity, charges & deductions,
+  cancellation & refund, referral & staff permissions, billing-menu overrides,
+  and the appointment/patient-merge toggles. Tenant-scoped **and**
+  branch-level (RLS) — one row per branch, branch taken from the caller's
+  active profile (never the body):
+
+  - **GET `/enums`** — allowed values for `General_DefaultPaymentMode`
+    (`PaymentMode`) and `Quotation_QuotationValidityUnit`
+    (`RepeatIntervalUnit`).
+  - **GET** — the active branch's Registration settings row, auto-created with
+    Prisma defaults on first access (never 404s).
+  - **PUT** — upserts the active branch's Registration settings (a partial
+    patch — omitted fields keep their previously-saved value, or the schema
+    default on first save). Server-side rules: every `Minimum*Percent` must
+    not exceed its paired `Maximum*Percent` (TDS, discount, line-item
+    discount); at most one of `ChargesAndDeductions_AllowOrderDiscountOnly` /
+    `AllowLineDiscountOnly` / `AllowBothOrderAndLineDiscount` may be `true`.
+
+  Field names follow `<Heading>_<Setting>` (e.g.
+  `ReferralAndStaffPermissions_AllowAddReferral`) to mirror the source doc 1:1.
+
+  ID-generation config (Order/Quotation/Appointment/Patient-UMID external ids
+  — prefix/separator/suffix/number-length/reset-cycle + a live preview) is a
+  separate sibling resource — see "Registration Id Sequences" below.
+
+  All routes are business-authenticated (`Bearer {{businessAccessToken}}`);
+  tenant from the JWT, branch from the active profile. `PUT` is audited under
+  `AuditModule.REGISTRATION_SETTINGS`.
+}

@@ -1,0 +1,68 @@
+meta {
+  name: Create Patient Category
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/patient-categories
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "VIP",
+    "branchLabTestIds": ["{{branchLabTestId}}"],
+    "branchLabPanelIds": ["{{branchLabPanelId}}"],
+    "isActive": true,
+    "isDefault": false
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("patientCategoryId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("echoes the submitted name", function () {
+    expect(res.getBody().data.name).to.equal("VIP");
+  });
+  test("returns the mapped lab test/panel lists", function () {
+    const d = res.getBody().data;
+    expect(d.labTests).to.be.an("array").that.has.length.greaterThan(0);
+    expect(d.labPanels).to.be.an("array").that.has.length.greaterThan(0);
+  });
+}
+
+docs {
+  Create a patient category in the caller's tenant, mapping its Lab Test List
+  and Lab Panel List to the caller's **active branch** (from the JWT profile —
+  requires `businessAccessToken` to carry a non-null `active_branch_id`;
+  otherwise this 400s with `ACTIVE_BRANCH_REQUIRED`).
+
+  - `name` — required, 2-100 chars, unique per tenant among active categories
+    (`PATIENT_CATEGORY_NAME_CONFLICT` on collision).
+  - `branchLabTestIds` — required, non-empty array of `BranchLabTest` ids
+    (`GET /branch-lab-tests/options` for candidates). Each must be active in
+    the caller's tenant + active branch, or this 400s with
+    `INVALID_LAB_TEST_SELECTION`.
+  - `branchLabPanelIds` — required, non-empty array of `BranchLabPanel` ids
+    (`GET /branch-lab-panels/options` for candidates). Same validation via
+    `INVALID_LAB_PANEL_SELECTION`.
+  - `isActive` — optional, defaults to `true`.
+  - `isDefault` — optional, defaults to `false`. When `true`, the tenant's
+    previous default category (if any) is atomically unset.
+}

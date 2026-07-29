@@ -1912,6 +1912,73 @@ per doctor + branch</b>. All times are 24h <code>HH:mm</code>; dates are ISO <co
   <code>AuditModule.PATIENT_SETTINGS</code>.</p>
 </div>
 
+<h2>Patient Category</h2>
+
+<div class="ep" id="patient-category-create">
+  <div><span class="m post">POST</span><span class="path">/api/v1/patient-categories</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Create a patient category (pricing tier, e.g. "VIP", "Senior Citizen") in the caller's tenant,
+  mapping its Lab Test List / Lab Panel List to the caller's <strong>active branch</strong> (from the
+  JWT profile — errors <span class="pill">400 ACTIVE_BRANCH_REQUIRED</span> if none). Body:
+  <code>name</code> (2-100 chars, required, unique per tenant among active categories —
+  <span class="pill">409 PATIENT_CATEGORY_NAME_CONFLICT</span> on collision), <code>branchLabTestIds</code>
+  (required, non-empty array of active <code>BranchLabTest</code> ids in the active branch —
+  <span class="pill">400 INVALID_LAB_TEST_SELECTION</span> otherwise), <code>branchLabPanelIds</code>
+  (required, non-empty array of active <code>BranchLabPanel</code> ids —
+  <span class="pill">400 INVALID_LAB_PANEL_SELECTION</span> otherwise), <code>isActive</code>
+  (optional, default <code>true</code>), <code>isDefault</code> (optional, default <code>false</code> —
+  when <code>true</code>, the tenant's previous default category is atomically unset). Audited under
+  <code>AuditModule.PATIENT_CATEGORY</code>.</p>
+</div>
+
+<div class="ep" id="patient-category-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/patient-categories</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Paginated list of the tenant's patient categories (default <code>limit=10</code>, max 100), ordered
+  default-first then oldest-first, each with the active branch's mapped <code>labTests</code>/
+  <code>labPanels</code> (<code>{'{'} id, name {'}'}[]</code>). Lazily bootstraps a "General" category
+  (active, default) on the tenant's first call if none exists yet — this never returns an empty list.
+  Optional query filters: <code>search</code> (case-insensitive match on <code>name</code>),
+  <code>status</code> (<code>ACTIVE</code>|<code>INACTIVE</code>), plus <code>page</code>/<code>limit</code>.</p>
+</div>
+
+<div class="ep" id="patient-category-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/patient-categories/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Fetch one patient category with the active branch's mapped Lab Test List / Lab Panel List, for the
+  Edit popup. <span class="pill">404 PATIENT_CATEGORY_NOT_FOUND</span> if missing or in another tenant.</p>
+</div>
+
+<div class="ep" id="patient-category-update">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/patient-categories/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Update a patient category (partial patch — all fields optional, same validation as Create for any
+  field supplied). Supplying <code>branchLabTestIds</code>/<code>branchLabPanelIds</code> REPLACES the
+  whole Lab Test List / Lab Panel List for the caller's active branch; omit either to leave it unchanged.
+  <code>isDefault: true</code> atomically clears the tenant's previous default. Audited under
+  <code>AuditModule.PATIENT_CATEGORY</code>.</p>
+</div>
+
+<div class="ep" id="patient-category-set-active">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/patient-categories/:id/active</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Activate/inactivate a patient category from the settings table's row switch. Body:
+  <code>isActive</code> (boolean, required). <span class="pill">409 CANNOT_DEACTIVATE_DEFAULT_CATEGORY</span>
+  if <code>isActive: false</code> is sent for the tenant's current default — set another category as
+  default first. Audited under <code>AuditModule.PATIENT_CATEGORY</code>.</p>
+</div>
+
+<div class="ep" id="patient-category-set-default">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/patient-categories/:id/default</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Set this category as the tenant's default, atomically clearing the previous default (if any). No
+  body. <span class="pill">409 INACTIVE_CATEGORY_CANNOT_BE_DEFAULT</span> if the target category is
+  inactive. Audited under <code>AuditModule.PATIENT_CATEGORY</code>.</p>
+  <p>Categories cannot be deleted (no DELETE route) — only deactivated — to preserve historical order
+  pricing. Lab Test List / Lab Panel List dropdown data comes from the existing
+  <code>GET /branch-lab-tests/options</code> / <code>GET /branch-lab-panels/options</code> endpoints.</p>
+</div>
+
 <h2>Console Settings</h2>
 
 <div class="ep" id="console-settings-get">
@@ -2011,6 +2078,87 @@ per doctor + branch</b>. All times are 24h <code>HH:mm</code>; dates are ISO <co
   <code>counterDiscountMax</code> must not exceed <code>managerDiscountMax</code> (checked against the merged
   existing+incoming values) — otherwise <span class="pill">400 VALIDATION_ERROR</span>. Returns the saved row.
   Audited under <code>AuditModule.BILLING_SETTINGS</code>.</p>
+</div>
+
+<h2>Registration Settings</h2>
+<div class="note">LIMS Settings doc "Registration Module" section — general toggles, quotation validity,
+charges &amp; deductions, cancellation &amp; refund, referral &amp; staff permissions, billing-menu
+overrides, and the appointment/patient-merge toggles. Unlike Billing/Console/Report/Patient Settings
+(tenant-only), this is <b>tenant-scoped AND branch-level</b> — one row per branch, branch taken from the
+caller's active profile (never the body). Field names follow <code>&lt;Heading&gt;_&lt;Setting&gt;</code>
+to mirror the source doc 1:1 (e.g. <code>ReferralAndStaffPermissions_AllowAddReferral</code>). ID-generation
+config (Order/Quotation/Appointment/Patient-UMID external ids) is a separate sibling resource at
+<code>/registration-settings/id-sequences</code> — see below.</div>
+
+<div class="ep" id="registration-settings-enums">
+  <div><span class="m get">GET</span><span class="path">/api/v1/registration-settings/enums</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Allowed values for the Registration settings enum fields: <code>defaultPaymentModes</code>
+  (<code>CASH</code>|<code>CREDIT</code>|<code>UPI</code>|<code>CARD</code>|<code>WALLET</code>|<code>BANK_TRANSFER</code>,
+  for <code>General_DefaultPaymentMode</code>) and <code>quotationValidityUnits</code>
+  (<code>HOURS</code>|<code>DAYS</code>|<code>MONTHS</code>|<code>YEARS</code>, for
+  <code>Quotation_QuotationValidityUnit</code>). Every other field is a plain boolean, integer, or decimal.</p>
+</div>
+
+<div class="ep" id="registration-settings-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/registration-settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>The active branch's Registration settings (tenant from JWT, branch from the caller's active profile) —
+  one row per branch, created with schema defaults on first access. Never 404s. ~50 fields grouped by
+  heading: <code>General_*</code>, <code>Quotation_*</code>, <code>ChargesAndDeductions_*</code>,
+  <code>CancellationAndRefund_*</code>, <code>ReferralAndStaffPermissions_*</code>, <code>BillingMenu_*</code>,
+  <code>Appointment_*</code>, <code>Patients_*</code>.</p>
+</div>
+
+<div class="ep" id="registration-settings-save">
+  <div><span class="m put">PUT</span><span class="path">/api/v1/registration-settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Upsert the active branch's Registration settings (partial patch — omitted fields keep their
+  previously-saved value, or the schema default on first save). Cross-field rules: every
+  <code>Minimum*Percent</code> must not exceed its paired <code>Maximum*Percent</code> (TDS, discount,
+  line-item discount — checked against the merged existing+incoming values) — otherwise
+  <span class="pill">422 VALIDATION_ERROR</span>; at most one of
+  <code>ChargesAndDeductions_AllowOrderDiscountOnly</code> / <code>AllowLineDiscountOnly</code> /
+  <code>AllowBothOrderAndLineDiscount</code> may be <code>true</code> — otherwise
+  <span class="pill">422 CONFLICTING_DISCOUNT_MODE</span>. Returns the saved row. Audited under
+  <code>AuditModule.REGISTRATION_SETTINGS</code>.</p>
+</div>
+
+<h3 id="registration-id-sequences">Registration Id Sequences <span style="font-size:13px;color:var(--muted)">(Order/Quotation/Appointment/Patient-UMID external-id generation)</span></h3>
+<div class="note">Reusable per-branch id-generation config — one <code>RegistrationIdSequence</code> row per
+<code>(tenantId, branchId, sequenceType)</code>. Mirrors the old system's AUTO_INCREMENT_OPTIONS
+<i>intent</i> (one configurable numbering scheme per id "purpose") but adds a true prefix/separator/suffix
+builder and fixes its unguarded read-then-write counter bug with a single serializable transaction. The
+<code>PATIENT</code> sequence type configures the <b>UMID</b> (the doc's "PATIENTS" section id config).
+Minting a real id (<code>generateNext()</code>, atomic counter increment + reset-cycle rollover) is not
+exposed over HTTP — it's called by the actual order/quotation/appointment/patient creation flows.</div>
+
+<div class="ep" id="registration-id-sequences-enums">
+  <div><span class="m get">GET</span><span class="path">/api/v1/registration-settings/id-sequences/enums</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Allowed values: <code>sequenceTypes</code> (<code>ORDER</code>|<code>QUOTATION</code>|<code>APPOINTMENT</code>|<code>PATIENT</code>),
+  <code>separators</code> (<code>NONE</code>|<code>HYPHEN</code>|<code>SLASH</code>|<code>UNDERSCORE</code>),
+  <code>resetCycles</code> (<code>NEVER</code>|<code>DAILY</code>|<code>MONTHLY</code>|<code>YEARLY</code>).</p>
+</div>
+
+<div class="ep" id="registration-id-sequences-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/registration-settings/id-sequences</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>All 4 sequence configs for the active branch, each auto-created with defaults
+  (<code>prefix: ""</code>, <code>suffix: ""</code>, <code>separator: "NONE"</code>,
+  <code>numberLength: 6</code>, <code>resetCycle: "NEVER"</code>, <code>currentNumber: 0</code>) on first
+  access. Never 404s. Each row includes a computed (not persisted) <code>preview</code> string — e.g.
+  <code>prefix: "ORD"</code>, <code>separator: "HYPHEN"</code>, <code>suffix: "AM"</code> →
+  <code>"ORD-000001-AM"</code>.</p>
+</div>
+
+<div class="ep" id="registration-id-sequences-save">
+  <div><span class="m put">PUT</span><span class="path">/api/v1/registration-settings/id-sequences/:sequenceType</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Save (partial patch) one sequence type's config: <code>prefix</code>/<code>suffix</code> (≤24 chars,
+  letters/digits only), <code>separator</code>, <code>numberLength</code> (4-10), <code>resetCycle</code>.
+  The running counter (<code>currentNumber</code>) is system-managed and never accepted here. Returns the
+  saved row with a recomputed <code>preview</code>. Audited under <code>AuditModule.REGISTRATION_SETTINGS</code>.</p>
 </div>
 
 <h2 id="sales">Sales <span style="font-size:13px;color:var(--muted)">(field-sales CRM — leads, trips, follow-ups)</span></h2>

@@ -1,0 +1,37 @@
+meta {
+  name: 02 Get Registration Settings
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/registration-settings
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the settings row", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("General_DefaultPaymentMode");
+    expect(d).to.have.property("ReferralAndStaffPermissions_AllowAddReferral");
+    expect(d).to.have.property("branchId");
+  });
+}
+
+docs {
+  The active branch's Registration settings (tenant from the JWT, branch from
+  the caller's active profile — never a request param). Created with the
+  schema defaults on first access — this endpoint never 404s.
+
+  Requires the caller to have an active branch (a business_admin token with no
+  active branch will 404 via `BranchNotFoundException` — switch to a branch
+  profile first, see "04 Auth" › Switch Profile).
+}

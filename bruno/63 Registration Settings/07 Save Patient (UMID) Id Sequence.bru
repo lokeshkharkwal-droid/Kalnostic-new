@@ -1,0 +1,51 @@
+meta {
+  name: 07 Save Patient (UMID) Id Sequence
+  type: http
+  seq: 7
+}
+
+put {
+  url: {{baseUrl}}/registration-settings/id-sequences/PATIENT
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "prefix": "UMID",
+    "suffix": "",
+    "separator": "HYPHEN",
+    "numberLength": 6,
+    "resetCycle": "NEVER"
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("recomputes the preview from the new config", function () {
+    const d = res.getBody().data;
+    expect(d.sequenceType).to.equal("PATIENT");
+    expect(d.preview).to.equal("UMID-000001");
+  });
+}
+
+docs {
+  Save (partial patch) the `PATIENT` sequence config — this is the LIMS
+  Settings doc's "PATIENTS" section id config, i.e. the **UMID** number
+  generation preference (per the doc's reviewer comment: "we generate a
+  patient id — the IND number from backend, is this for UMID number?").
+  Same field shape and validation as the `ORDER` sequence (see "06 Save Order
+  Id Sequence") — `resetCycle: "NEVER"` is the recommended default here since
+  a periodically-resetting counter would produce duplicate UMIDs across
+  periods unless the consuming flow also embeds the period in the prefix.
+}

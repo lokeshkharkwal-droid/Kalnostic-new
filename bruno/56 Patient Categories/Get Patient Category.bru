@@ -1,0 +1,34 @@
+meta {
+  name: Get Patient Category
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/patient-categories/{{patientCategoryId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("has the mapped lists", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("labTests");
+    expect(d).to.have.property("labPanels");
+  });
+}
+
+docs {
+  Fetch one patient category, with the caller's active branch's mapped Lab
+  Test List / Lab Panel List — used to pre-fill the Edit popup.
+
+  404s with `PATIENT_CATEGORY_NOT_FOUND` if the id is missing or belongs to
+  another tenant.
+}
