@@ -1,0 +1,38 @@
+meta {
+  name: Enable NABL TAT
+  type: http
+  seq: 24
+}
+
+put {
+  url: {{baseUrl}}/branches/{{branchId}}/settings
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "isNablTatEnabled": true
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.data.isNablTatEnabled: eq true
+}
+
+docs {
+  Turn ON NABL TAT for this branch (upsert on the new `BranchSetting` row). From
+  now, the 1-minute `NablTatCronService` — not accept/approve — drives this
+  branch's TAT: it accrues only inside each test's [processingTimeFrom,
+  processingTimeTo] window (set to 00:00–23:59 on the lab test in step 14) on its
+  scheduleDays, and the final stop happens on approve.
+}

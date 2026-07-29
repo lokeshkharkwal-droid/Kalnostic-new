@@ -1,0 +1,23 @@
+meta {
+  name: Verify TAT
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/tat
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  After it starts, re-send over several minutes: tat_start_at stays the same value; net rises but start never resets.
+}

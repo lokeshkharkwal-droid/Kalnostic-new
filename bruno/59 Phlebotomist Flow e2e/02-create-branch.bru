@@ -42,9 +42,22 @@ body:json {
       "SUNDAY"
     ],
     "modules": [
-      { "moduleKey": "phlebotomist", "isEnabled": true },
-      { "moduleKey": "registration", "isEnabled": true },
-      { "moduleKey": "accession", "isEnabled": true }
+      {
+        "moduleKey": "phlebotomist",
+        "isEnabled": true
+      },
+      {
+        "moduleKey": "registration",
+        "isEnabled": true
+      },
+      {
+        "moduleKey": "accession",
+        "isEnabled": true
+      },
+      {
+        "moduleKey": "technician",
+        "isEnabled": true
+      }
     ]
   }
 }
@@ -59,12 +72,12 @@ script:post-response {
 
 docs {
   **Step 2 — Create the branch and enable the phlebotomist module.**
-
+  
   A `DIAGNOSTIC` branch (that type offers the `phlebotomist`, `registration` and
   `accession` modules — see `BRANCH_MODULES`). The `modules` array enables those
   three at the branch in the same request (no separate `PUT /branches/:id/modules`
   needed). `moduleKey` must be a known system module; `isEnabled` defaults to true.
-
+  
   `tenantId` comes from the JWT; `code` (e.g. `BR-00001`) is system-generated and
   immutable — never send it. Captures **`branchId`** and **`branchCode`**.
 }

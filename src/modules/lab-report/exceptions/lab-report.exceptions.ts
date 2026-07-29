@@ -4,7 +4,12 @@ import { KaltrosException } from '../../../common/exceptions/kaltros.exception';
 /** 404 — lab report not found within the tenant/branch. */
 export class LabReportNotFoundException extends KaltrosException {
   constructor(id: string) {
-    super('LAB_REPORT_NOT_FOUND', 'Lab report not found', { id }, HttpStatus.NOT_FOUND);
+    super(
+      'LAB_REPORT_NOT_FOUND',
+      'Lab report not found',
+      { id },
+      HttpStatus.NOT_FOUND,
+    );
   }
 }
 
@@ -122,7 +127,11 @@ export class MultiStepProcessNotFoundException extends KaltrosException {
  * time (LABORATORY.docx §5.7's own sequence — grossing → sectioning →
  * staining → reporting is a physical lab workflow, not an arbitrary label). */
 export class InvalidMultiStepTransitionException extends KaltrosException {
-  constructor(currentStage: string, requestedStage: string, expectedNextStage: string) {
+  constructor(
+    currentStage: string,
+    requestedStage: string,
+    expectedNextStage: string,
+  ) {
     super(
       'INVALID_MULTI_STEP_TRANSITION',
       `Cannot move from ${currentStage} to ${requestedStage} — the next stage must be ${expectedNextStage}`,

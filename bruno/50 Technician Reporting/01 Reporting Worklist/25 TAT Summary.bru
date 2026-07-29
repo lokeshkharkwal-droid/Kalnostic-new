@@ -1,0 +1,39 @@
+meta {
+  name: 25 TAT Summary
+  type: http
+  seq: 25
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/tat/summary
+  body: none
+  auth: bearer
+}
+
+params:query {
+  ~dateFrom: 2026-07-01T00:00:00.000Z
+  ~dateTo: 2026-07-31T23:59:59.999Z
+  ~branchId: {{branchId}}
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  TAT analytics (Turnaround Time.pdf §9) over **approved** reports, read from
+  the frozen `LabReport.tat*` snapshot columns (fast — no per-row recompute).
+
+  Query (all optional): `dateFrom`/`dateTo` bound `approvedAt` (ISO 8601);
+  `branchId` overrides the caller's active branch.
+
+  Response:
+  `{ total, byBand: { WITHIN, WARNING, CRITICAL, BREACHED, UNKNOWN },
+     avgNetMinutes, breachRate }`
+
+  - `UNKNOWN` = approved but not computable at approval (no active schedule /
+    no Max TAT configured).
+  - `avgNetMinutes` = mean net working minutes across approved reports (null if
+    none).
+  - `breachRate` = BREACHED / computable (0..1), null when no computable reports.
+}

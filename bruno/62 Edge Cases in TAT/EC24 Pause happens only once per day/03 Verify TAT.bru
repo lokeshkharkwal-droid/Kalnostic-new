@@ -1,0 +1,23 @@
+meta {
+  name: Verify TAT
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/tat
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  After the To time it pauses once. Re-send later the same day: net does not change until the next working day.
+}

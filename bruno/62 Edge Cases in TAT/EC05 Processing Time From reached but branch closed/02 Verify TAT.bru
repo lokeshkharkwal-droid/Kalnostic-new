@@ -1,0 +1,23 @@
+meta {
+  name: Verify TAT
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/tat
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  To try this, narrow the branch operating schedule so the branch is closed now, then observe: no accrual while closed. DB check: tat_net_minutes does not rise while closed.
+}

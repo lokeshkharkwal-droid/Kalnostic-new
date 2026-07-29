@@ -1,7 +1,17 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Res,
+} from '@nestjs/common';
 import { AuditAction, AuditModule } from '@prisma/client';
 import type { Response } from 'express';
 import { LabReportService } from './lab-report.service';
+import { TatService } from './tat.service';
 import { ReRunService } from './re-run.service';
 import { CriticalAlertService } from './critical-alert.service';
 import { OutOfRangeService } from './out-of-range.service';
@@ -9,11 +19,15 @@ import { DeltaCheckService } from './delta-check.service';
 import { ScheduledTestService } from './scheduled-test.service';
 import { MultiStepProcessService } from './multi-step-process.service';
 import { ListLabReportsDto } from './dto/list-lab-reports.dto';
+import { TatSummaryQueryDto } from './dto/tat-summary-query.dto';
 import { UpsertResultValuesDto } from './dto/upsert-result-values.dto';
 import { ReferenceRangeQueryDto } from './dto/reference-range-query.dto';
 import { TrendReportQueryDto } from './dto/trend-report-query.dto';
 import { PrintReportDto } from './dto/print-report.dto';
-import { CreateLabReportNoteDto, ListLabReportNotesDto } from './dto/lab-report-note.dto';
+import {
+  CreateLabReportNoteDto,
+  ListLabReportNotesDto,
+} from './dto/lab-report-note.dto';
 import { RaiseReRunDto } from './dto/re-run.dto';
 import { RaiseWorklistEntryDto } from './dto/raise-worklist-entry.dto';
 import { ScheduleTestDto } from './dto/schedule-test.dto';
@@ -41,6 +55,7 @@ import { Audit } from '../../common/decorators/audit.decorator';
 export class LabReportController {
   constructor(
     private readonly labReportService: LabReportService,
+    private readonly tatService: TatService,
     private readonly reRunService: ReRunService,
     private readonly criticalAlertService: CriticalAlertService,
     private readonly outOfRangeService: OutOfRangeService,
@@ -66,6 +81,20 @@ export class LabReportController {
     return this.labReportService.getOptions(tenantId, profile.branchId);
   }
 
+  /**
+   * TAT analytics summary (SRS §9): counts by band, average net working time
+   * and breach rate over approved reports in a period. Declared before `:id`
+   * routes so `tat` isn't captured as a report id.
+   */
+  @Get('tat/summary')
+  getTatSummary(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: TatSummaryQueryDto,
+  ) {
+    return this.tatService.summary(tenantId, profile.branchId, query);
+  }
+
   @Get()
   findAll(
     @CurrentTenant() tenantId: string,
@@ -82,6 +111,20 @@ export class LabReportController {
     @Param('id') id: string,
   ) {
     return this.labReportService.findByIdForApi(id, tenantId, profile.branchId);
+  }
+
+  /**
+   * Analytical-TAT breakdown for one report (SRS §6.2): net working time
+   * Accepted→Approved (or "now" while in-flight), excluding breaks/closed
+   * hours/non-scheduled days, with the resulting band vs the test's Max TAT.
+   */
+  @Get(':id/tat')
+  getTat(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+  ) {
+    return this.tatService.computeForReport(id, tenantId, profile.branchId);
   }
 
   @Get(':id/history')
@@ -101,7 +144,12 @@ export class LabReportController {
     @Param('id') id: string,
     @Query() query: ListLabReportNotesDto,
   ) {
-    return this.labReportService.findNotes(id, tenantId, profile.branchId, query);
+    return this.labReportService.findNotes(
+      id,
+      tenantId,
+      profile.branchId,
+      query,
+    );
   }
 
   @Post(':id/notes')
@@ -117,7 +165,13 @@ export class LabReportController {
     @Param('id') id: string,
     @Body() dto: CreateLabReportNoteDto,
   ) {
-    return this.labReportService.createNote(id, tenantId, profile.branchId, personId, dto);
+    return this.labReportService.createNote(
+      id,
+      tenantId,
+      profile.branchId,
+      personId,
+      dto,
+    );
   }
 
   @Get(':id/reference-range')
@@ -142,7 +196,12 @@ export class LabReportController {
     @Param('id') id: string,
     @Query() query: TrendReportQueryDto,
   ) {
-    return this.labReportService.findTrend(id, tenantId, profile.branchId, query);
+    return this.labReportService.findTrend(
+      id,
+      tenantId,
+      profile.branchId,
+      query,
+    );
   }
 
   /** Print/Download Report (LABORATORY.docx §6.10). Streams the rendered PDF
@@ -168,7 +227,10 @@ export class LabReportController {
       dto.templateId,
     );
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="lab-report-${id}.pdf"`);
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="lab-report-${id}.pdf"`,
+    );
     res.setHeader('Content-Length', pdf.length);
     res.end(pdf);
   }
@@ -222,7 +284,12 @@ export class LabReportController {
     @CurrentUser('person_id') personId: string,
     @Param('id') id: string,
   ) {
-    return this.labReportService.submit(id, tenantId, profile.branchId, personId);
+    return this.labReportService.submit(
+      id,
+      tenantId,
+      profile.branchId,
+      personId,
+    );
   }
 
   @Post(':id/validate')
@@ -413,7 +480,12 @@ export class LabReportController {
     @Param('id') id: string,
   ) {
     const canUnlock = false; // TODO: replace with real supervisor permission check
-    return this.labReportService.unlock(id, tenantId, profile.branchId, canUnlock);
+    return this.labReportService.unlock(
+      id,
+      tenantId,
+      profile.branchId,
+      canUnlock,
+    );
   }
 
   @Post(':id/update-status')
@@ -451,7 +523,13 @@ export class LabReportController {
     @Param('id') id: string,
     @Body() dto: RaiseReRunDto,
   ) {
-    return this.reRunService.raise(id, tenantId, profile.branchId, personId, dto);
+    return this.reRunService.raise(
+      id,
+      tenantId,
+      profile.branchId,
+      personId,
+      dto,
+    );
   }
 
   @Post(':id/critical-alert')
@@ -548,7 +626,11 @@ export class LabReportController {
     @CurrentProfile() profile: ActiveProfile,
     @Param('id') id: string,
   ) {
-    return this.multiStepProcessService.findByReport(id, tenantId, profile.branchId);
+    return this.multiStepProcessService.findByReport(
+      id,
+      tenantId,
+      profile.branchId,
+    );
   }
 
   @Post(':id/multi-step-process')

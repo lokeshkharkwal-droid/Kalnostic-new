@@ -1,0 +1,50 @@
+meta {
+  name: 08 Assign Operator Permissions
+  type: http
+  seq: 8
+}
+
+put {
+  url: {{baseUrl}}/users/manage/{{operatorUserId}}/branch-permissions
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "branchId": "{{branchId}}",
+    "items": [
+      { "moduleKey": "registration", "permissionKey": "registration:view", "allowed": true },
+      { "moduleKey": "registration", "permissionKey": "registration:write", "allowed": true },
+      { "moduleKey": "registration", "permissionKey": "registration:edit", "allowed": true },
+      { "moduleKey": "phlebotomist", "permissionKey": "phlebotomist:view", "allowed": true },
+      { "moduleKey": "phlebotomist", "permissionKey": "phlebotomist:write", "allowed": true },
+      { "moduleKey": "phlebotomist", "permissionKey": "phlebotomist:edit", "allowed": true },
+      { "moduleKey": "phlebotomist", "permissionKey": "phlebotomist:collect_sample", "allowed": true },
+      { "moduleKey": "accession", "permissionKey": "accession:view", "allowed": true },
+      { "moduleKey": "accession", "permissionKey": "accession:write", "allowed": true },
+      { "moduleKey": "accession", "permissionKey": "accession:edit", "allowed": true },
+      { "moduleKey": "lab_operations", "permissionKey": "lab_operations:view", "allowed": true },
+      { "moduleKey": "lab_operations", "permissionKey": "lab_operations:write", "allowed": true },
+      { "moduleKey": "lab_operations", "permissionKey": "lab_operations:edit", "allowed": true }
+    ]
+  }
+}
+
+docs {
+  **Step 4b — Grant the operator all permissions the flow uses** across
+  `registration`, `phlebotomist`, `accession` and `lab_operations`. Each
+  `permissionKey` is `moduleKey:action`; only branch-enabled modules are accepted.
+
+  > Business routes are authenticated but don't yet enforce per-permission RBAC at
+  > the route level, so these describe intended access for the frontend / future
+  > guard — the branch-scoped operator token can already call the endpoints.
+}

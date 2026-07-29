@@ -1,0 +1,23 @@
+meta {
+  name: Verify TAT
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/tat
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Wait past the To time, then re-send: tat_is_running flips to false and tat_end_at is set. Net stops rising.
+}

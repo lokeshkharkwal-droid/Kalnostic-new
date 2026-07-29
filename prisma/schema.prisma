@@ -265,6 +265,7 @@ enum AuditModule {
   TEMPLATE
   PDF_REPORT_TEMPLATE
   PATIENT
+  PATIENT_CATEGORY
   MEDICAL_HISTORY
   ORDER
   RADIOLOGIST
@@ -1159,6 +1160,10 @@ model Branch {
   closingTime     String?     @map("closing_time") // "HH:mm" (24h, branch-local)
   dailyCapacity   Int?        @map("daily_capacity") // max orders processable per day
   operationalDays DayOfWeek[] @map("operational_days")
+  // IANA timezone (e.g. "Asia/Kolkata") this branch's local clock runs in. Used
+  // by the TAT engine to read UTC timestamps (acceptedAt/approvedAt) against the
+  // branch-local shift/break windows. Null = fall back to the app default TZ.
+  timezone        String?     @map("timezone")
 
   // Compliance / misc
   gstNo     String? @map("gst_no")
@@ -1178,6 +1183,30 @@ model Branch {
   @@index([tenantId])
   @@index([deletedAt])
   @@map("branches")
+}
+
+/// Per-branch operational settings (tenant-scoped; one row per branch). Split
+/// out of the `Branch` row so the settings surface can grow without bloating
+/// the core branch record. Managed via `GET`/`PUT /branches/:id/settings`; a
+/// missing row is treated as all-defaults (get-or-create on first read/write).
+model BranchSetting {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @unique @map("branch_id")
+
+  // When true, this branch's TAT is driven by the NABL cron stopwatch
+  // (NablTatCronService) instead of the accept→approve flow. Default false =
+  // legacy behaviour (accept starts the clock, approve stops it).
+  isNablTatEnabled Boolean @default(false) @map("is_nabl_tat_enabled")
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@map("branch_settings")
 }
 
 /// A business-user role. System roles (tenant_id = NULL) are seeded from
@@ -2170,6 +2199,11 @@ model LabTest {
   scheduleFrom String?     @map("schedule_from")
   scheduleTo   String?     @map("schedule_to")
 
+  // Processing window (times stored as "HH:mm" strings). Copied into the branch
+  // snapshot (BranchLabTest) and drives the NABL cron-managed TAT stopwatch.
+  processingTimeFrom String? @map("processing_time_from")
+  processingTimeTo   String? @map("processing_time_to")
+
   // Processing time
   procTimeMinValue Int?     @map("proc_time_min_value")
   procTimeMinUnit  TatUnit? @map("proc_time_min_unit")
@@ -2579,6 +2613,12 @@ model BranchLabTest {
   scheduleFrom String?     @map("schedule_from")
   scheduleTo   String?     @map("schedule_to")
 
+  // Processing window (times stored as "HH:mm" strings). Drives the NABL
+  // cron-managed TAT stopwatch: it starts once branch-local now >= processingTimeFrom
+  // and pauses once now >= processingTimeTo, on the days in scheduleDays.
+  processingTimeFrom String? @map("processing_time_from")
+  processingTimeTo   String? @map("processing_time_to")
+
   // Processing time
   procTimeMinValue Int?     @map("proc_time_min_value")
   procTimeMinUnit  TatUnit? @map("proc_time_min_unit")
@@ -2625,6 +2665,9 @@ model BranchLabTest {
 
   // Order items that reference this branch lab test.
   orderItems OrderItem[]
+
+  // Patient Category "Lab Test List" selections that include this test.
+  patientCategoryMappings PatientCategoryLabTest[]
 
   createdBy String?   @map("created_by")
   updatedBy String?   @map("updated_by")
@@ -2715,6 +2758,9 @@ model BranchLabPanel {
 
   // Order items that reference this branch lab panel.
   orderItems OrderItem[]
+
+  // Patient Category "Lab Panel List" selections that include this panel.
+  patientCategoryMappings PatientCategoryLabPanel[]
 
   createdBy String?   @map("created_by")
   updatedBy String?   @map("updated_by")
@@ -4577,6 +4623,77 @@ model PatientSetting {
   @@map("patient_settings")
 }
 
+/// A patient pricing tier (e.g. "General", "VIP", "Senior Citizen") used to apply
+/// category-specific lab test/panel pricing. Tenant-scoped, tenant-level — the
+/// category identity (name/status/default) is shared across all of a tenant's
+/// branches; its Lab Test List / Lab Panel List selections are branch-scoped
+/// (see `PatientCategoryLabTest`/`PatientCategoryLabPanel`) since they point at
+/// branch-level `BranchLabTest`/`BranchLabPanel` rows. "General" is bootstrapped
+/// lazily as the tenant's default on first read (mirrors `PatientSetting`) rather
+/// than at tenant-provisioning time. Cannot be deleted — only deactivated — to
+/// preserve historical order pricing.
+model PatientCategoryDefinition {
+  id        String    @id @default(uuid())
+  tenantId  String    @map("tenant_id")
+  name      String
+  isActive  Boolean   @default(true) @map("is_active")
+  isDefault Boolean   @default(false) @map("is_default")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  labTestMappings  PatientCategoryLabTest[]
+  labPanelMappings PatientCategoryLabPanel[]
+
+  @@index([tenantId])
+  @@index([deletedAt])
+  @@map("patient_categories")
+}
+
+/// A branch-level lab test selected for a `PatientCategory`'s Lab Test List.
+/// Rebuilt wholesale (delete + recreate) for the active branch on every
+/// category update — the mapping itself carries no independent history.
+model PatientCategoryLabTest {
+  id                String   @id @default(uuid())
+  tenantId          String   @map("tenant_id")
+  branchId          String   @map("branch_id")
+  patientCategoryId String   @map("patient_category_id")
+  branchLabTestId   String   @map("branch_lab_test_id")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  patientCategory PatientCategoryDefinition @relation(fields: [patientCategoryId], references: [id])
+  branchLabTest   BranchLabTest   @relation(fields: [branchLabTestId], references: [id])
+
+  @@unique([patientCategoryId, branchLabTestId])
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([patientCategoryId])
+  @@index([branchLabTestId])
+  @@map("patient_category_lab_tests")
+}
+
+/// A branch-level lab panel selected for a `PatientCategory`'s Lab Panel List.
+/// Rebuilt wholesale (delete + recreate) for the active branch on every
+/// category update — the mapping itself carries no independent history.
+model PatientCategoryLabPanel {
+  id                String   @id @default(uuid())
+  tenantId          String   @map("tenant_id")
+  branchId          String   @map("branch_id")
+  patientCategoryId String   @map("patient_category_id")
+  branchLabPanelId  String   @map("branch_lab_panel_id")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  patientCategory PatientCategoryDefinition @relation(fields: [patientCategoryId], references: [id])
+  branchLabPanel  BranchLabPanel  @relation(fields: [branchLabPanelId], references: [id])
+
+  @@unique([patientCategoryId, branchLabPanelId])
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([patientCategoryId])
+  @@index([branchLabPanelId])
+  @@map("patient_category_lab_panels")
+}
+
 /// Tenant-level console settings for Registration — order workflow defaults,
 /// TAT thresholds, and sample-tracking behaviour. The row is created on first
 /// access so the frontend always receives a complete settings object.
@@ -5306,6 +5423,17 @@ model OrderItem {
 // `OrderService.collectItem`/`OrderItem.collectedAt` no longer trigger this —
 // that was an interim signal, superseded once Accession's FSM shipped.
 
+/// Analytical-TAT band for a report, computed by the TAT engine
+/// (`common/utils/tat-working-time.util`). Snapshotted onto `LabReport` at
+/// approval (hybrid storage); the live band for in-flight reports is derived on
+/// read, not stored.
+enum TatBand {
+  WITHIN
+  WARNING
+  CRITICAL
+  BREACHED
+}
+
 /// Lifecycle status of a Technician Reporting item (LABORATORY.docx §2.1). Two
 /// side-branches (ERROR_REPORTED, RESULT_REJECTED) rejoin the main flow via
 /// resubmit/edit rather than being terminal.
@@ -5356,6 +5484,30 @@ model LabReport {
   publishedAt DateTime? @map("published_at")
   publishedBy String?   @map("published_by")
 
+  // ── Analytical TAT snapshot (hybrid storage) ──────────────────────────────
+  // Frozen by TatService when the report is approved: the resolved start
+  // (earliest linked sample acceptedAt), net working minutes accrued
+  // accepted→approved, the configured Max TAT at that moment (minutes), and the
+  // resulting band. In-flight reports leave these null and derive the band live.
+  tatStartAt    DateTime? @map("tat_start_at")
+  tatNetMinutes Int?      @map("tat_net_minutes")
+  tatMaxMinutes Int?      @map("tat_max_minutes")
+  tatBand       TatBand?  @map("tat_band")
+
+  // ── NABL cron-managed TAT (only used when the branch's BranchSetting has
+  // isNablTatEnabled = true). The 1-minute NablTatCronService runs a stopwatch
+  // that only accrues inside each test's daily [processingTimeFrom, processingTimeTo]
+  // window on its scheduleDays, pausing at the window edge and resuming the next
+  // scheduled day. `isNablTat` flips true the first time the cron starts this
+  // report (so approve() finalizes the stopwatch instead of recomputing from
+  // acceptedAt). tatNetMinutes above is the live accumulator; tatStartAt the first
+  // start instant; tatEndAt the last pause / final-stop instant. Reports on
+  // non-NABL branches leave all of these at their defaults / null (legacy flow).
+  isNablTat     Boolean   @default(false) @map("is_nabl_tat")
+  tatIsRunning  Boolean   @default(false) @map("tat_is_running")
+  tatLastTickAt DateTime? @map("tat_last_tick_at")
+  tatEndAt      DateTime? @map("tat_end_at")
+
   isLocked  Boolean   @default(false) @map("is_locked")
   lockedAt  DateTime? @map("locked_at")
   lockedBy  String?   @map("locked_by")
@@ -5392,6 +5544,7 @@ model LabReport {
   @@index([status])
   @@index([labTestId])
   @@index([isOutsourced])
+  @@index([tatBand])
   @@index([deletedAt])
   @@map("lab_reports")
 }

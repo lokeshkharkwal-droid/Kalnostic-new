@@ -1,0 +1,23 @@
+meta {
+  name: Verify TAT
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/tat
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  With no processing window the cron skips this report (tat_start_at stays null, no error in logs). With no branch schedule/hours the branch is closed so nothing starts.
+}

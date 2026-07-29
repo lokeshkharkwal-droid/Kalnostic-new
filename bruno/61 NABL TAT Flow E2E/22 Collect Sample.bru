@@ -1,0 +1,32 @@
+meta {
+  name: 22 Collect Sample
+  type: http
+  seq: 22
+}
+
+post {
+  url: {{baseUrl}}/accession/samples/{{sampleId}}/collect
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "tubeType": "EDTA (Purple)",
+    "notes": "Collected at front desk"
+  }
+}
+
+docs {
+  **TAT 2 — Collect the sample** (NEW → COLLECTED). Accept (the next step, which
+  starts the TAT clock) is only allowed from COLLECTED. `collectedAt` defaults to
+  now. `tubeType` is stored as-is.
+}

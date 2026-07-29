@@ -1,0 +1,66 @@
+meta {
+  name: 28 Technician Report Listing (Verify TAT)
+  type: http
+  seq: 28
+}
+
+get {
+  url: {{baseUrl}}/lab-reports?branchLabTestId={{branchLabTestId}}&page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  branchLabTestId: {{branchLabTestId}}
+  page: 1
+  limit: 10
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+script:post-response {
+  const rows = res.body && res.body.success && res.body.data;
+  const row = rows && rows.length ? rows[0] : null;
+  if (row && row.tat) {
+    bru.setVar("tatBand", row.tat.band);
+    bru.setVar("tatNetMinutes", row.tat.netMinutes);
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("report is Approved", function () {
+    const rows = res.getBody().data;
+    expect(rows.length).to.be.greaterThan(0);
+    expect(rows[0].status).to.equal("APPROVED");
+  });
+  test("row carries a TAT figure", function () {
+    const tat = res.getBody().data[0].tat;
+    expect(tat).to.be.an("object");
+    // TAT Status (band) + TAT Time (netMinutes) are present on the row.
+    expect(tat).to.have.property("band");
+    expect(tat).to.have.property("netMinutes");
+    expect(tat).to.have.property("isFinal");
+  });
+}
+
+docs {
+  **TAT 8 — Retrieve the sample/report from the Technician Report listing.**
+
+  This is the technician worklist row for our test. Each row carries:
+
+  ```
+  tat: { band, netMinutes, isFinal, computable }
+  ```
+
+  - **TAT Status** = `tat.band` (WITHIN | WARNING | CRITICAL | BREACHED).
+  - **TAT Time** = `tat.netMinutes` (net working minutes).
+  - `isFinal: true` here (the report is Approved, so it's the frozen snapshot).
+
+  Captures `tatBand` + `tatNetMinutes`. The next request returns the full
+  breakdown for the same report.
+}

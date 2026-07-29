@@ -1,0 +1,54 @@
+meta {
+  name: 00 Base Setup
+  seq: 1
+}
+
+script:pre-request {
+  // ---------------------------------------------------------------------------
+  // TAT Flow E2E — folder-level setup (runs before every request in this folder).
+  // Seeds baseUrl + the ONLY values a developer edits (once): the entry
+  // business-admin credentials + tenant slug. Everything else (tokens, ids) is
+  // captured automatically by each request's post-response via bru.setVar(...).
+  //
+  // Just click "Next" through 01 → 28 (or Run Folder). No manual input required.
+  // A per-run unique id (tatRunId) is generated so unique fields (branch name,
+  // usernames, emails, mobiles, test/panel codes) don't collide on re-runs.
+  // ---------------------------------------------------------------------------
+
+  if (!bru.getVar("baseUrl")) bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+
+  // Entry point — the SEEDED platform SiteAdmin (prisma/seed.ts). This is the ONLY
+  // credential the flow assumes exists; the tenant + business admin are created
+  // at runtime (steps 01-02), so nothing else needs editing. Change these two
+  // only if your seeded SiteAdmin differs.
+  if (!bru.getVar("siteAdminEmail"))    bru.setVar("siteAdminEmail", "admin@kalnostics.com");
+  if (!bru.getVar("siteAdminPassword")) bru.setVar("siteAdminPassword", "SuperSecret1");
+
+  // Known password for the operator user this flow creates (so login is automated).
+  if (!bru.getVar("operatorPassword")) bru.setVar("operatorPassword", "Str0ng@Pass1");
+
+  // One-time per-run unique suffix + derived unique mobiles (10-digit, distinct
+  // by prefix). Guarded so it is computed once and reused for the whole run.
+  // (adminIdentifier / adminPassword / tenantSlug are NOT set here — they are
+  // captured from the tenant created in step 02.)
+  if (!bru.getVar("tatRunId")) {
+    const n = String(Date.now());
+    bru.setVar("tatRunId", n.slice(-6));
+    bru.setVar("adminBootstrapPhone", "+9195" + n.slice(-8));
+    bru.setVar("operatorMobile", "98" + n.slice(-8));
+    bru.setVar("phleboMobile",   "97" + n.slice(-8));
+    bru.setVar("patientMobile",  "96" + n.slice(-8));
+  }
+}
+
+docs {
+  Complete setup flow for the TAT edge cases. Run this folder FIRST (Run Folder),
+  in the same Bruno session, then open any EC## folder. It logs in, creates a
+  tenant + branch + operating schedule + operator + patient, a lab test (with a
+  processing window) + panel, imports them, places an order, and Collects +
+  Accepts the sample, then resolves the lab report. It leaves NABL TAT **OFF** so
+  each edge-case folder can switch it on/off and configure the window itself.
+
+  Shared variables seeded for the EC folders: operatorToken, branchId,
+  branchLabTestId, labReportId, sampleId, orderId (plus tenant/admin vars).
+}

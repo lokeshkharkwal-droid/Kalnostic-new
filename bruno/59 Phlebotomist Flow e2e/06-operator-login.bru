@@ -29,12 +29,12 @@ script:post-response {
 
 docs {
   **Step 6 — Log in as the operator.**
-
+  
   Uses `operatorLoginIdentifier` (captured in step 03) + the known
   `operatorPassword` + `tenantSlug`. Because the operator's default profile is a
   branch-level `receptionist` at the new branch, the resulting token carries
   `active_branch_id = branchId` — a **branch-scoped** token.
-
+  
   Captures **`operatorToken`**, used for every branch-scoped request from here on
   (create phlebotomist, schedule, patient, order, collection workflow). Those
   endpoints require an active branch and would 400 with the business-admin token.

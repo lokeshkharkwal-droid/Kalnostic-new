@@ -1,0 +1,16 @@
+meta {
+  name: EC15 Lab test updated after creation
+  seq: 16
+}
+
+script:pre-request {
+  if (!bru.getVar("baseUrl")) bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+}
+
+docs {
+  Scenario: change the window after creation.
+Expected: the cron uses the NEW window from the next minute (it reads config every tick).
+Status: QA to verify. MUTATES config.
+
+  Run 00 Base Setup first (same session) so the shared vars are available.
+}

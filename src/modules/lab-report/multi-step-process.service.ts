@@ -44,7 +44,10 @@ export class MultiStepProcessService {
     return branchId;
   }
 
-  private stageHistoryEntry(stage: MultiStepStage, actorId: string | null): StageHistoryEntry {
+  private stageHistoryEntry(
+    stage: MultiStepStage,
+    actorId: string | null,
+  ): StageHistoryEntry {
     return { stage, enteredAt: new Date().toISOString(), enteredBy: actorId };
   }
 
@@ -57,7 +60,12 @@ export class MultiStepProcessService {
   ) {
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.prisma.labReport.findFirst({
-      where: { id: labReportId, tenantId, branchId: activeBranchId, deletedAt: null },
+      where: {
+        id: labReportId,
+        tenantId,
+        branchId: activeBranchId,
+        deletedAt: null,
+      },
     });
     if (!report) throw new LabReportNotFoundException(labReportId);
 
@@ -107,10 +115,19 @@ export class MultiStepProcessService {
     });
   }
 
-  async findByReport(labReportId: string, tenantId: string, branchId: string | null) {
+  async findByReport(
+    labReportId: string,
+    tenantId: string,
+    branchId: string | null,
+  ) {
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.prisma.labReport.findFirst({
-      where: { id: labReportId, tenantId, branchId: activeBranchId, deletedAt: null },
+      where: {
+        id: labReportId,
+        tenantId,
+        branchId: activeBranchId,
+        deletedAt: null,
+      },
     });
     if (!report) throw new LabReportNotFoundException(labReportId);
 
@@ -130,7 +147,12 @@ export class MultiStepProcessService {
   ) {
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.prisma.labReport.findFirst({
-      where: { id: labReportId, tenantId, branchId: activeBranchId, deletedAt: null },
+      where: {
+        id: labReportId,
+        tenantId,
+        branchId: activeBranchId,
+        deletedAt: null,
+      },
     });
     if (!report) throw new LabReportNotFoundException(labReportId);
 
@@ -159,7 +181,10 @@ export class MultiStepProcessService {
         where: { labReportId },
         data: {
           currentStage: dto.stage,
-          stageHistory: [...existingHistory, historyEntry] as unknown as Prisma.InputJsonValue,
+          stageHistory: [
+            ...existingHistory,
+            historyEntry,
+          ] as unknown as Prisma.InputJsonValue,
         },
       });
 

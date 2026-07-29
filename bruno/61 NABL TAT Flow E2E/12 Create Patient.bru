@@ -1,0 +1,41 @@
+meta {
+  name: 12 Create Patient
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/patients
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "firstName": "Anjali",
+    "lastName": "Patient {{tatRunId}}",
+    "gender": "FEMALE",
+    "mobile": "{{patientMobile}}",
+    "addressLine1": "17 Senapati Bapat Road",
+    "city": "Pune",
+    "state": "Maharashtra",
+    "pincode": "411016"
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.id) bru.setVar("patientId", data.id);
+}
+
+docs {
+  **Workflow 3 — Create the patient** the order is for. Captures **`patientId`**.
+}

@@ -1,0 +1,31 @@
+meta {
+  name: 17 Import Lab Panel into Branch
+  type: http
+  seq: 17
+}
+
+post {
+  url: {{baseUrl}}/branch-lab-panels/import
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "labPanelIds": ["{{labPanelId}}"]
+  }
+}
+
+docs {
+  **Workflow 8 — Import the lab panel into the active branch's list.** Its member
+  tests are materialized into the branch (reusing the copy from step 14). The new
+  `branchLabPanelId` is resolved in step 17.
+}

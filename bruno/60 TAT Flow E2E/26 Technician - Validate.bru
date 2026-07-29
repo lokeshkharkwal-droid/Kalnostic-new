@@ -1,0 +1,30 @@
+meta {
+  name: 26 Technician - Validate
+  type: http
+  seq: 26
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/validate
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "notes": "Values reviewed — within expected limits."
+  }
+}
+
+docs {
+  **TAT 6 — Validate the report.** VALIDATION_PENDING → RESULT_DONE (this is the
+  "Validated" state). Approve is only allowed from here.
+}

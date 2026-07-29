@@ -1,0 +1,33 @@
+meta {
+  name: 24 Technician - Resolve Report
+  type: http
+  seq: 24
+}
+
+get {
+  url: {{baseUrl}}/lab-reports?branchLabTestId={{branchLabTestId}}&page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  branchLabTestId: {{branchLabTestId}}
+  page: 1
+  limit: 10
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.length && data[0].id) bru.setVar("labReportId", data[0].id);
+}
+
+docs {
+  **TAT 4 — Resolve the technician report** created when the sample was accepted.
+  Filtered to this run's branch lab test, so it's exactly our report. The list
+  rows already carry a live `tat` object; we walk the report to Approved first,
+  then read the final TAT in steps 26–27. Captures **`labReportId`**.
+}

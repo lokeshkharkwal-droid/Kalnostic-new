@@ -1,0 +1,44 @@
+meta {
+  name: List Patient Categories
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/patient-categories?page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 10
+  ~search: VIP
+  ~status: ACTIVE
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("includes the bootstrapped General category", function () {
+    const rows = res.getBody().data;
+    expect(rows.some((r) => r.name === "General")).to.be.true;
+  });
+}
+
+docs {
+  Paginated list of the caller's tenant patient categories (default `limit =
+  10`, capped at 100), ordered default-first then oldest-first. Each row
+  includes the active branch's mapped `labTests`/`labPanels` (`{ id, name }[]`).
+
+  Lazily bootstraps a `General` category (active, default) on the tenant's
+  first call if none exists yet — so this never returns an empty list.
+
+  Optional filters: `search` (case-insensitive match on `name`), `status`
+  (`ACTIVE` | `INACTIVE`).
+}

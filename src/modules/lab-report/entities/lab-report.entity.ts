@@ -8,7 +8,21 @@ import {
   Prisma,
   ResultType,
   SampleStatus,
+  TatBand,
 } from '@prisma/client';
+
+/**
+ * Compact Analytical-TAT figure attached to each worklist row (SRS §6.2/§8).
+ * `isFinal` reports are the frozen `LabReport.tat*` snapshot; in-flight rows are
+ * computed live against "now". `computable=false` when there's no accepted
+ * sample or no active branch schedule to measure against.
+ */
+export interface WorklistTat {
+  band: TatBand | null;
+  netMinutes: number | null;
+  isFinal: boolean;
+  computable: boolean;
+}
 
 /** Relations eager-loaded when fetching a report's full detail (Test Entry screen). */
 export const LAB_REPORT_DETAIL_INCLUDE = {
@@ -18,7 +32,9 @@ export const LAB_REPORT_DETAIL_INCLUDE = {
   multiStepProcess: true,
   orderItem: {
     include: {
-      order: { include: { patient: true, referredByDoctor: true, referralPanel: true } },
+      order: {
+        include: { patient: true, referredByDoctor: true, referralPanel: true },
+      },
       branchLabTest: true,
       branchLabPanel: true,
     },
@@ -86,7 +102,10 @@ export type LabReportDetailWithContent = LabReportDetail & {
  * See `LabReportService.findByIdForApi`'s doc comment for why this is
  * flattened rather than reusing `LabReportDetailWithContent` as-is. */
 export type LabReportDetailApiResponse = LabReportWorklistRow &
-  Pick<LabReportDetail, 'resultValues' | 'notes' | 'attachments' | 'multiStepProcess'> & {
+  Pick<
+    LabReportDetail,
+    'resultValues' | 'notes' | 'attachments' | 'multiStepProcess'
+  > & {
     contentSections: LabReportContentSections;
     resultParams: LabReportResultParam[];
   };
@@ -95,7 +114,9 @@ export type LabReportDetailApiResponse = LabReportWorklistRow &
 export const LAB_REPORT_LIST_INCLUDE = {
   orderItem: {
     include: {
-      order: { include: { patient: true, referredByDoctor: true, referralPanel: true } },
+      order: {
+        include: { patient: true, referredByDoctor: true, referralPanel: true },
+      },
       branchLabTest: true,
       branchLabPanel: true,
     },
@@ -207,6 +228,10 @@ export interface LabReportWorklistRow {
    */
   sampleStatuses: SampleStatus[];
 
+  /** Analytical-TAT figure for this row (SRS §6.2). Null until attached by
+   * `LabReportService.findAll` via `TatService.computeBandsForReports`. */
+  tat: WorklistTat | null;
+
   /** The `AccessionSample.id`(s) linked to this row, in the same order as
    * `sampleStatuses` (index-paired) — lets the frontend's Sample Overview
    * action call Accession's own, already-complete panel endpoint (`GET
@@ -257,7 +282,8 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
     branchId: row.branchId,
     branch: null,
 
-    departmentId: branchLabTest?.departmentId ?? branchLabPanel?.departmentId ?? null,
+    departmentId:
+      branchLabTest?.departmentId ?? branchLabPanel?.departmentId ?? null,
     department: null,
 
     labTestId: row.labTestId,
@@ -275,7 +301,11 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
     patient: patient
       ? {
           id: patient.id,
-          name: fullName([patient.firstName, patient.middleName, patient.lastName]),
+          name: fullName([
+            patient.firstName,
+            patient.middleName,
+            patient.lastName,
+          ]),
           age: patient.age,
           ageDisplay:
             patient.age != null
@@ -303,16 +333,32 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
       : null,
 
     test: branchLabTest
-      ? { id: branchLabTest.id, name: branchLabTest.testName, kind: 'TEST', resultType: null }
+      ? {
+          id: branchLabTest.id,
+          name: branchLabTest.testName,
+          kind: 'TEST',
+          resultType: null,
+        }
       : branchLabPanel
-        ? { id: branchLabPanel.id, name: branchLabPanel.panelName, kind: 'PANEL', resultType: null }
+        ? {
+            id: branchLabPanel.id,
+            name: branchLabPanel.panelName,
+            kind: 'PANEL',
+            resultType: null,
+          }
         : row.orderItem?.direct
-          ? { id: row.orderItem.id, name: row.orderItem.direct, kind: 'DIRECT', resultType: null }
+          ? {
+              id: row.orderItem.id,
+              name: row.orderItem.direct,
+              kind: 'DIRECT',
+              resultType: null,
+            }
           : null,
 
     orderItemId: row.orderItemId,
     sampleStatuses: [],
     sampleIds: [],
+    tat: null,
 
     multiStepProcessType: null,
     multiStepStage: null,

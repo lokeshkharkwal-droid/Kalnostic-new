@@ -1,0 +1,16 @@
+meta {
+  name: EC11 TAT resumes on the next working day
+  seq: 12
+}
+
+script:pre-request {
+  if (!bru.getVar("baseUrl")) bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+}
+
+docs {
+  Scenario: resume and CONTINUE (not restart) the next working day.
+Expected: tat_is_running goes true again and tat_net_minutes CONTINUES from the saved value (not 0). It keeps accumulating each working day until approve.
+Status: VERIFIED by unit test.
+
+  Run 00 Base Setup first (same session) so the shared vars are available.
+}

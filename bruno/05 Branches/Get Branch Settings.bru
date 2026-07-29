@@ -1,0 +1,30 @@
+meta {
+  name: Get Branch Settings
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{baseUrl}}/branches/{{branchId}}/settings
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchId: 37e8cb33-9c10-4778-bc4c-20490e1c0f75
+}
+
+docs {
+  Read this branch's operational settings (`{ branchId, isNablTatEnabled }`).
+  A branch with no settings row yet reads as all-defaults (isNablTatEnabled=false)
+  — the row is created on the first PUT.
+
+  `isNablTatEnabled` = true switches this branch's TAT from the accept→approve
+  flow to the NABL cron stopwatch (see the NablTatCronService): TAT only accrues
+  inside each test's daily processing window ([processingTimeFrom, processingTimeTo]
+  on scheduleDays), pausing/resuming automatically, finalized on report approve.
+}

@@ -1,0 +1,29 @@
+meta {
+  name: 56 Patient Categories
+  seq: 63
+}
+
+docs {
+  # Patient Categories
+
+  Registration › Patient Settings › Patient Category — patient pricing tiers
+  (e.g. "General", "VIP", "Senior Citizen"), each mapped to a Lab Test List /
+  Lab Panel List. Tenant-scoped, tenant-level (name/status/default are shared
+  across the tenant's branches); the Lab Test List / Lab Panel List selections
+  are scoped to the caller's active branch (from the JWT profile — requires a
+  business token with an active branch set), since they reference branch-level
+  `BranchLabTest`/`BranchLabPanel` rows.
+
+  - **"General"** is bootstrapped automatically (active + default) the first
+    time `GET /patient-categories` is called for a tenant — there is no
+    separate seed/setup request.
+  - Only one category can be the tenant's default at a time — setting a new
+    default automatically clears the previous one.
+  - Categories cannot be deleted (no DELETE route) — only deactivated — to
+    preserve historical order pricing. The default category cannot be
+    deactivated; an inactive category cannot be made default.
+
+  All routes are business-authenticated (`Bearer {{businessAccessToken}}`);
+  tenant comes from the JWT, active branch from the JWT profile. Writes are
+  audited under `AuditModule.PATIENT_CATEGORY`.
+}

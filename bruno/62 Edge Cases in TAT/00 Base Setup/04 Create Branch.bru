@@ -1,0 +1,59 @@
+meta {
+  name: 04 Create Branch
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/branches
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "name": "TAT Flow Center {{tatRunId}}",
+    "branchType": "DIAGNOSTIC",
+    "status": "ACTIVE",
+    "addressLine": "42 MG Road",
+    "city": "Pune",
+    "state": "Maharashtra",
+    "pincode": "411001",
+    "phone": "+919822000060",
+    "email": "tatflow.{{tatRunId}}@acme.test",
+    "openingTime": "00:00",
+    "closingTime": "23:59",
+    "dailyCapacity": 200,
+    "operationalDays": ["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"],
+    "modules": [
+      { "moduleKey": "registration", "isEnabled": true },
+      { "moduleKey": "accession", "isEnabled": true },
+      { "moduleKey": "lab_operations", "isEnabled": true },
+      { "moduleKey": "phlebotomist", "isEnabled": true }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.id) {
+    bru.setVar("branchId", data.id);
+    if (data.code) bru.setVar("branchCode", data.code);
+  }
+}
+
+docs {
+  **Step 2 — Create the branch with every module the TAT flow needs.**
+
+  A `DIAGNOSTIC` branch with `registration`, `accession`, `lab_operations`
+  (the Technician/Laboratory module) and `phlebotomist` enabled inline. `tenantId`
+  comes from the JWT; `code` is system-generated. Captures **`branchId`**.
+}

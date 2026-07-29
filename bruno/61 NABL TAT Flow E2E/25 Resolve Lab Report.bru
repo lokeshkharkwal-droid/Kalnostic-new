@@ -1,0 +1,29 @@
+meta {
+  name: Resolve Lab Report
+  type: http
+  seq: 25
+}
+
+get {
+  url: {{baseUrl}}/lab-reports?branchLabTestId={{branchLabTestId}}&page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+assert {
+  res.status: eq 200
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.length && data[0].id) bru.setVar("labReportId", data[0].id);
+}
+
+docs {
+  Resolve the in-flight `LabReport` created when the sample was accepted (step 23).
+  Captures **`labReportId`** so the next request can read its NABL TAT breakdown.
+}

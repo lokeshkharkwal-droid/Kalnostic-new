@@ -1,0 +1,16 @@
+meta {
+  name: EC26 Window wraps past midnight
+  seq: 27
+}
+
+script:pre-request {
+  if (!bru.getVar("baseUrl")) bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+}
+
+docs {
+  Scenario: window 22:00-06:00 (crosses midnight).
+Expected: 22:00 to 06:00 next day is one window; time counts correctly across midnight.
+Status: VERIFIED by unit test.
+
+  Run 00 Base Setup first (same session) so the shared vars are available.
+}

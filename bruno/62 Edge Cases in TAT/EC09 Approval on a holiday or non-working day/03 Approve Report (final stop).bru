@@ -1,0 +1,19 @@
+meta {
+  name: Approve Report (final stop)
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/approve
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+docs {
+  MUTATES: approves the report on a non-working day.
+}

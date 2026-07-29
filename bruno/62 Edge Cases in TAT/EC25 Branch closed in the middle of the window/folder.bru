@@ -1,0 +1,16 @@
+meta {
+  name: EC25 Branch closed in the middle of the window
+  seq: 26
+}
+
+script:pre-request {
+  if (!bru.getVar("baseUrl")) bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+}
+
+docs {
+  Scenario: the processing window is wider than the branch open hours.
+Expected: minutes are NOT added while the branch is closed; only the tick time moves.
+Status: VERIFIED by unit test.
+
+  Run 00 Base Setup first (same session) so the shared vars are available.
+}

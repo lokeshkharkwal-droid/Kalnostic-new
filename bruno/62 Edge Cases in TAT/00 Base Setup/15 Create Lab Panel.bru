@@ -1,0 +1,49 @@
+meta {
+  name: 15 Create Lab Panel
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/lab-panels
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "panelName": "TAT Basic Health Panel {{tatRunId}}",
+    "panelCode": "TATBHP-{{tatRunId}}",
+    "reportType": "COMBINED",
+    "turnaroundPriority": "ROUTINE",
+    "isActive": true,
+    "priceMsrp": 900,
+    "priceMaximum": 900,
+    "priceMinimum": 600,
+    "tatMinValue": 60,
+    "tatMinUnit": "MINUTES",
+    "tatMaxValue": 120,
+    "tatMaxUnit": "MINUTES",
+    "tests": [
+      { "labTestId": "{{labTestId}}", "sortOrder": 1, "isRemovable": true }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.id) bru.setVar("labPanelId", data.id);
+}
+
+docs {
+  **Workflow 6 — Create the lab panel** inside the same master data (contains the
+  lab test from step 12, with its own Max TAT). Captures **`labPanelId`**.
+}

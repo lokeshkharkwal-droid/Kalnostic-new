@@ -48,7 +48,12 @@ export class ReRunService {
   ) {
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.prisma.labReport.findFirst({
-      where: { id: labReportId, tenantId, branchId: activeBranchId, deletedAt: null },
+      where: {
+        id: labReportId,
+        tenantId,
+        branchId: activeBranchId,
+        deletedAt: null,
+      },
     });
     if (!report) throw new LabReportNotFoundException(labReportId);
 
@@ -90,7 +95,11 @@ export class ReRunService {
     });
     let reports = rows.map((r) => toWorklistReportContext(r.labReport));
     reports = await attachWorklistBranchNames(this.prisma, tenantId, reports);
-    reports = await attachWorklistSampleStatuses(this.prisma, tenantId, reports);
+    reports = await attachWorklistSampleStatuses(
+      this.prisma,
+      tenantId,
+      reports,
+    );
     const requestedByName = await resolveActorNames(
       this.prisma,
       rows.map((r) => r.requestedBy),
@@ -98,7 +107,8 @@ export class ReRunService {
 
     return rows.map(({ labReport: _labReport, ...reRun }, i) => ({
       ...reRun,
-      requestedByName: requestedByName.get(reRun.requestedBy) ?? reRun.requestedBy,
+      requestedByName:
+        requestedByName.get(reRun.requestedBy) ?? reRun.requestedBy,
       report: reports[i],
     }));
   }

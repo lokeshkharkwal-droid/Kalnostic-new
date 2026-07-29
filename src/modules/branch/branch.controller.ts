@@ -14,6 +14,7 @@ import { CreateBranchDto } from './dto/create-branch.dto';
 import { UpdateBranchDto } from './dto/update-branch.dto';
 import { SetMainBranchDto } from './dto/set-main-branch.dto';
 import { SetBranchModulesDto } from './dto/set-branch-modules.dto';
+import { UpdateBranchSettingDto } from './dto/update-branch-setting.dto';
 import { SetCollectionMappingsDto } from './dto/set-collection-mappings.dto';
 import { BranchQueryDto } from './dto/branch-query.dto';
 import { BranchOptionsQueryDto } from './dto/branch-options-query.dto';
@@ -180,6 +181,34 @@ export class BranchController {
     @Body() dto: SetBranchModulesDto,
   ) {
     return this.branchService.setBranchModules(tenantId, id, dto.modules);
+  }
+
+  /**
+   * Read this branch's operational settings (e.g. the NABL TAT flag). A branch
+   * with no settings row yet reads as all-defaults.
+   */
+  @Get(':id/settings')
+  getSettings(@CurrentTenant() tenantId: string, @Param('id') id: string) {
+    return this.branchService.getSettings(tenantId, id);
+  }
+
+  /**
+   * Update this branch's operational settings (upsert — creates the settings
+   * row with defaults on first write).
+   */
+  @Put(':id/settings')
+  @Audit({
+    module: AuditModule.BRANCH,
+    action: AuditAction.UPDATE,
+    description: 'Updated branch settings',
+  })
+  updateSettings(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+    @Param('id') id: string,
+    @Body() dto: UpdateBranchSettingDto,
+  ) {
+    return this.branchService.updateSettings(tenantId, id, dto, personId);
   }
 
   /**

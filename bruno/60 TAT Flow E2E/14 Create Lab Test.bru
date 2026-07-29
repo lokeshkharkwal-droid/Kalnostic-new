@@ -1,0 +1,62 @@
+meta {
+  name: 14 Create Lab Test
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/lab-tests
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "testName": "TAT Complete Blood Count {{tatRunId}}",
+    "testDisplayName": "CBC",
+    "testCode": "TATCBC-{{tatRunId}}",
+    "processMethod": "SINGLE_STEP",
+    "samplePriorityType": "ROUTINE",
+    "priceMsrp": 500,
+    "priceMaximum": 500,
+    "priceMinimum": 300,
+    "isActive": true,
+    "tatMinValue": 30,
+    "tatMinUnit": "MINUTES",
+    "tatMaxValue": 60,
+    "tatMaxUnit": "MINUTES",
+    "scheduleDays": ["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"],
+    "scheduleFrom": "00:00",
+    "scheduleTo": "23:59",
+    "procTimeMinValue": 10,
+    "procTimeMinUnit": "MINUTES",
+    "procTimeMaxValue": 30,
+    "procTimeMaxUnit": "MINUTES",
+    "samples": [
+      { "sampleType": "Blood", "containerType": "EDTA_TUBE_PURPLE_TOP", "isDefault": true }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.id) bru.setVar("labTestId", data.id);
+}
+
+docs {
+  **Workflow 5 — Create the lab test, WITH TAT configured.**
+
+  The `tatMax*` (60 minutes here) is what the TAT engine grades the report
+  against — without it, the breakdown's `band` is `null`. `scheduleDays` (all 7)
+  + `scheduleFrom/To` (00:00–23:59) mark the test as processed every day, so no
+  day is skipped. A blood `sample` is included so the order generates an accession
+  sample. Captures **`labTestId`**.
+}

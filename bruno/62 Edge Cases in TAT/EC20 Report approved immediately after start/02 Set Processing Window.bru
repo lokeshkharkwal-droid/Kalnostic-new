@@ -1,0 +1,43 @@
+meta {
+  name: Set Processing Window
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{baseUrl}}/branch-lab-tests/{{branchLabTestId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+script:pre-request {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const hhmm = (m) => { const d = new Date(now.getTime() + m * 60000); return pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()); };
+  bru.setVar('ecFrom', hhmm(-1));
+  bru.setVar('ecTo', hhmm(240));
+}
+
+body:json {
+  {
+    "processingTimeFrom": "{{ecFrom}}",
+    "processingTimeTo": "{{ecTo}}",
+    "scheduleDays": ["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"]
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Window opens now so the clock starts on the next tick.
+}

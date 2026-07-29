@@ -1,0 +1,36 @@
+meta {
+  name: 62 Edge Cases in TAT
+  seq: 68
+}
+
+script:pre-request {
+  if (!bru.getVar("baseUrl")) bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+}
+
+docs {
+  # Edge Cases in TAT (NABL feature)
+
+  Every edge case from Master/NABL-TAT-QA-TESTING.md as a runnable Bruno flow.
+
+  ## How to run
+  1. **Run Folder** on **00 Base Setup** first (in the same Bruno session). It
+     runs the complete API flow and seeds the shared variables (operatorToken,
+     branchId, branchLabTestId, labReportId, sampleId, orderId). It leaves NABL
+     TAT OFF.
+  2. Open an **EC## <case>** folder and Run/Send its requests in order. Each case
+     folder switches NABL on/off and sets the processing window for that case,
+     then verifies.
+
+  ## Mutating vs observing
+  Requests named Enable/Disable/Set Window/Approve/Cancel CHANGE data. After a
+  mutating case (Approve/Cancel), re-run 00 Base Setup before the next case so it
+  starts from a clean report/order. Verify (GET) requests are safe to repeat.
+
+  ## Timing
+  The NABL clock is driven by a 1-minute cron and the wall clock vs the window.
+  Cases that need the clock to actually start/pause/resume tell you to wait ~1
+  minute (or until the window edge / next day) and re-send, and to confirm the
+  lab_reports columns in the DB (is_nabl_tat, tat_is_running, tat_start_at,
+  tat_net_minutes, tat_end_at). The pure calculation logic behind every case is
+  also covered by unit tests (nabl-tat-stopwatch.util.spec.ts, branch-open.util.spec.ts).
+}

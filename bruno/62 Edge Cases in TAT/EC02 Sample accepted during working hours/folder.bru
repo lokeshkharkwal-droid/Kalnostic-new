@@ -1,0 +1,16 @@
+meta {
+  name: EC02 Sample accepted during working hours
+  seq: 3
+}
+
+script:pre-request {
+  if (!bru.getVar("baseUrl")) bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+}
+
+docs {
+  Scenario: NABL ON and now is INSIDE the window.
+Expected: the cron starts the clock within a minute.
+Status: VERIFIED live.
+
+  Run 00 Base Setup first (same session) so the shared vars are available.
+}

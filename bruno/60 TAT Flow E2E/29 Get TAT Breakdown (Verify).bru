@@ -1,0 +1,73 @@
+meta {
+  name: 29 Get TAT Breakdown (Verify)
+  type: http
+  seq: 29
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/tat
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  const tat = res.getBody().data;
+
+  test("TAT is computable and final", function () {
+    expect(tat.computable).to.equal(true);
+    expect(tat.reason).to.equal("OK");
+    expect(tat.isFinal).to.equal(true);
+  });
+
+  test("TAT Status (band) is present", function () {
+    // WITHIN on the happy path (accept→approve seconds apart, all-day schedule).
+    expect(tat.band).to.be.oneOf(["WITHIN", "WARNING", "CRITICAL", "BREACHED"]);
+  });
+
+  test("TAT Time + Max TAT are present", function () {
+    expect(tat).to.have.property("netMinutes");
+    expect(tat).to.have.property("maxTatMinutes");
+  });
+
+  test("TAT not breached on the happy path", function () {
+    // Flip expectation if you lowered Max TAT / spaced accept & approve apart.
+    expect(tat.band === "BREACHED").to.equal(false);
+  });
+}
+
+docs {
+  **TAT 9 — Full Analytical-TAT breakdown for the report** (the definitive
+  verification). Response:
+
+  ```
+  {
+    reportId, computable, reason, isFinal,
+    startAt,          // acceptedAt — TAT START
+    endAt,            // approvedAt — TAT STOP
+    netMinutes,       // ← TAT TIME (net working minutes)
+    maxTatMinutes,    // configured Max TAT (60 here)
+    band,             // ← TAT STATUS: WITHIN | WARNING | CRITICAL | BREACHED
+    timezone, scheduleId
+  }
+  ```
+
+  **How to read it**
+  - **Current TAT Status** → `band`.
+  - **Calculated TAT Time** → `netMinutes` (working minutes, excluding breaks /
+    closed hours / non-scheduled days).
+  - **TAT breached?** → `band === "BREACHED"` (equivalently `netMinutes >
+    maxTatMinutes`).
+
+  On this happy-path run the values are `band: "WITHIN"`, `netMinutes: 0`,
+  `maxTatMinutes: 60`, `isFinal: true` — i.e. **not breached**. To demonstrate a
+  breach, set the test's `tatMaxValue` very low (e.g. 0 in request 12) or leave a
+  longer real gap between Accept (21) and Approve (25) before re-running.
+}

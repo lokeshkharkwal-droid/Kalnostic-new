@@ -1,0 +1,22 @@
+meta {
+  name: 27 Technician - Approve (TAT STOP)
+  type: http
+  seq: 27
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/approve
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+docs {
+  **TAT 7 — Approve the report (⏱ TAT STOP).** RESULT_DONE → APPROVED. This stamps
+  `approvedAt` — **the moment the Analytical-TAT clock stops** — and freezes the
+  TAT snapshot (`tatStartAt` / `tatNetMinutes` / `tatMaxMinutes` / `tatBand`) onto
+  the report. Read it back in steps 26–27.
+}

@@ -1,0 +1,16 @@
+meta {
+  name: EC29 Multiple samples for one report
+  seq: 30
+}
+
+script:pre-request {
+  if (!bru.getVar("baseUrl")) bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+}
+
+docs {
+  Scenario: one test/report linked to two accepted samples.
+Expected: only ONE clock runs for the report (deduped per tick).
+Status: VERIFIED by unit test + code review.
+
+  Run 00 Base Setup first (same session) so the shared vars are available.
+}

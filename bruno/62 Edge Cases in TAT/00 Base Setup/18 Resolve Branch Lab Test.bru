@@ -1,0 +1,32 @@
+meta {
+  name: 18 Resolve Branch Lab Test
+  type: http
+  seq: 18
+}
+
+get {
+  url: {{baseUrl}}/branch-lab-tests/options?search=TAT Complete Blood Count {{tatRunId}}&page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  search: TAT Complete Blood Count {{tatRunId}}
+  page: 1
+  limit: 10
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.length && data[0].id) bru.setVar("branchLabTestId", data[0].id);
+}
+
+docs {
+  **Resolve the branch lab-test id** for the order (and for filtering the
+  technician report later). `search` matches this run's unique test name.
+  Captures **`branchLabTestId`**.
+}

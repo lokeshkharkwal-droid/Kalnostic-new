@@ -1,0 +1,16 @@
+meta {
+  name: EC22 Invalid or missing configuration
+  seq: 23
+}
+
+script:pre-request {
+  if (!bru.getVar("baseUrl")) bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+}
+
+docs {
+  Scenario A: the test has NO processing window. Scenario B: the branch has NO schedule and NO operational hours.
+Expected: A - the cron skips the report (no crash). B - branch treated as closed; the clock never starts.
+Status: VERIFIED by unit test.
+
+  Run 00 Base Setup first (same session) so the shared vars are available.
+}

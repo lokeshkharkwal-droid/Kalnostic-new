@@ -1,0 +1,16 @@
+meta {
+  name: EC05 Processing Time From reached but branch closed
+  seq: 6
+}
+
+script:pre-request {
+  if (!bru.getVar("baseUrl")) bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+}
+
+docs {
+  Scenario: the window is open but the BRANCH is closed right now (branch hours are narrower than the window).
+Expected: the clock does not start / does not accrue while the branch is closed.
+Status: VERIFIED by unit test.
+
+  Run 00 Base Setup first (same session) so the shared vars are available.
+}

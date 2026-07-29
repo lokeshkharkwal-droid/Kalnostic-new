@@ -70,7 +70,12 @@ export class DeltaCheckService {
   ) {
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.prisma.labReport.findFirst({
-      where: { id: labReportId, tenantId, branchId: activeBranchId, deletedAt: null },
+      where: {
+        id: labReportId,
+        tenantId,
+        branchId: activeBranchId,
+        deletedAt: null,
+      },
       include: { orderItem: { include: { order: true } } },
     });
     if (!report) throw new LabReportNotFoundException(labReportId);
@@ -130,7 +135,11 @@ export class DeltaCheckService {
     });
     let reports = rows.map((r) => toWorklistReportContext(r.labReport));
     reports = await attachWorklistBranchNames(this.prisma, tenantId, reports);
-    reports = await attachWorklistSampleStatuses(this.prisma, tenantId, reports);
+    reports = await attachWorklistSampleStatuses(
+      this.prisma,
+      tenantId,
+      reports,
+    );
 
     return rows.map(({ labReport: _labReport, ...delta }, i) => ({
       ...delta,

@@ -1,0 +1,23 @@
+meta {
+  name: Verify TAT
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/tat
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  The clock starts on the next tick. Wait up to ~1 minute for the cron, then re-send. In the DB confirm is_nabl_tat=true, tat_is_running=true, tat_start_at set, tat_net_minutes 0 then rising.
+}

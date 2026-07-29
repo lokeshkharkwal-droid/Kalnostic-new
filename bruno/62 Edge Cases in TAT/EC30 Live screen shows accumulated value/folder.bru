@@ -1,0 +1,16 @@
+meta {
+  name: EC30 Live screen shows accumulated value
+  seq: 31
+}
+
+script:pre-request {
+  if (!bru.getVar("baseUrl")) bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+}
+
+docs {
+  Scenario: reading TAT while the clock runs.
+Expected: the screen/API shows the cron's SAVED net + band, not a fresh recompute.
+Status: QA to verify (backend reads persisted columns).
+
+  Run 00 Base Setup first (same session) so the shared vars are available.
+}

@@ -1912,6 +1912,73 @@ per doctor + branch</b>. All times are 24h <code>HH:mm</code>; dates are ISO <co
   <code>AuditModule.PATIENT_SETTINGS</code>.</p>
 </div>
 
+<h2>Patient Category</h2>
+
+<div class="ep" id="patient-category-create">
+  <div><span class="m post">POST</span><span class="path">/api/v1/patient-categories</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Create a patient category (pricing tier, e.g. "VIP", "Senior Citizen") in the caller's tenant,
+  mapping its Lab Test List / Lab Panel List to the caller's <strong>active branch</strong> (from the
+  JWT profile — errors <span class="pill">400 ACTIVE_BRANCH_REQUIRED</span> if none). Body:
+  <code>name</code> (2-100 chars, required, unique per tenant among active categories —
+  <span class="pill">409 PATIENT_CATEGORY_NAME_CONFLICT</span> on collision), <code>branchLabTestIds</code>
+  (required, non-empty array of active <code>BranchLabTest</code> ids in the active branch —
+  <span class="pill">400 INVALID_LAB_TEST_SELECTION</span> otherwise), <code>branchLabPanelIds</code>
+  (required, non-empty array of active <code>BranchLabPanel</code> ids —
+  <span class="pill">400 INVALID_LAB_PANEL_SELECTION</span> otherwise), <code>isActive</code>
+  (optional, default <code>true</code>), <code>isDefault</code> (optional, default <code>false</code> —
+  when <code>true</code>, the tenant's previous default category is atomically unset). Audited under
+  <code>AuditModule.PATIENT_CATEGORY</code>.</p>
+</div>
+
+<div class="ep" id="patient-category-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/patient-categories</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Paginated list of the tenant's patient categories (default <code>limit=10</code>, max 100), ordered
+  default-first then oldest-first, each with the active branch's mapped <code>labTests</code>/
+  <code>labPanels</code> (<code>{'{'} id, name {'}'}[]</code>). Lazily bootstraps a "General" category
+  (active, default) on the tenant's first call if none exists yet — this never returns an empty list.
+  Optional query filters: <code>search</code> (case-insensitive match on <code>name</code>),
+  <code>status</code> (<code>ACTIVE</code>|<code>INACTIVE</code>), plus <code>page</code>/<code>limit</code>.</p>
+</div>
+
+<div class="ep" id="patient-category-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/patient-categories/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Fetch one patient category with the active branch's mapped Lab Test List / Lab Panel List, for the
+  Edit popup. <span class="pill">404 PATIENT_CATEGORY_NOT_FOUND</span> if missing or in another tenant.</p>
+</div>
+
+<div class="ep" id="patient-category-update">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/patient-categories/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Update a patient category (partial patch — all fields optional, same validation as Create for any
+  field supplied). Supplying <code>branchLabTestIds</code>/<code>branchLabPanelIds</code> REPLACES the
+  whole Lab Test List / Lab Panel List for the caller's active branch; omit either to leave it unchanged.
+  <code>isDefault: true</code> atomically clears the tenant's previous default. Audited under
+  <code>AuditModule.PATIENT_CATEGORY</code>.</p>
+</div>
+
+<div class="ep" id="patient-category-set-active">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/patient-categories/:id/active</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Activate/inactivate a patient category from the settings table's row switch. Body:
+  <code>isActive</code> (boolean, required). <span class="pill">409 CANNOT_DEACTIVATE_DEFAULT_CATEGORY</span>
+  if <code>isActive: false</code> is sent for the tenant's current default — set another category as
+  default first. Audited under <code>AuditModule.PATIENT_CATEGORY</code>.</p>
+</div>
+
+<div class="ep" id="patient-category-set-default">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/patient-categories/:id/default</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Set this category as the tenant's default, atomically clearing the previous default (if any). No
+  body. <span class="pill">409 INACTIVE_CATEGORY_CANNOT_BE_DEFAULT</span> if the target category is
+  inactive. Audited under <code>AuditModule.PATIENT_CATEGORY</code>.</p>
+  <p>Categories cannot be deleted (no DELETE route) — only deactivated — to preserve historical order
+  pricing. Lab Test List / Lab Panel List dropdown data comes from the existing
+  <code>GET /branch-lab-tests/options</code> / <code>GET /branch-lab-panels/options</code> endpoints.</p>
+</div>
+
 <h2>Console Settings</h2>
 
 <div class="ep" id="console-settings-get">

@@ -48,7 +48,12 @@ export class ScheduledTestService {
   ) {
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.prisma.labReport.findFirst({
-      where: { id: labReportId, tenantId, branchId: activeBranchId, deletedAt: null },
+      where: {
+        id: labReportId,
+        tenantId,
+        branchId: activeBranchId,
+        deletedAt: null,
+      },
     });
     if (!report) throw new LabReportNotFoundException(labReportId);
 
@@ -86,7 +91,11 @@ export class ScheduledTestService {
         });
       }
       const { labReport, assignedTo, ...rest } = scheduled;
-      return { ...rest, report: toWorklistReportContext(labReport), assignedTo: toAssignedTo(assignedTo) };
+      return {
+        ...rest,
+        report: toWorklistReportContext(labReport),
+        assignedTo: toAssignedTo(assignedTo),
+      };
     }).then(async (result) => {
       await this.labReportService.recordWorklistHistory(
         tenantId,
@@ -108,7 +117,11 @@ export class ScheduledTestService {
     });
     let reports = rows.map((r) => toWorklistReportContext(r.labReport));
     reports = await attachWorklistBranchNames(this.prisma, tenantId, reports);
-    reports = await attachWorklistSampleStatuses(this.prisma, tenantId, reports);
+    reports = await attachWorklistSampleStatuses(
+      this.prisma,
+      tenantId,
+      reports,
+    );
 
     return rows.map(({ labReport: _labReport, assignedTo, ...rest }, i) => ({
       ...rest,
@@ -161,7 +174,11 @@ export class ScheduledTestService {
         });
       }
       const { labReport, assignedTo, ...rest } = updated;
-      return { ...rest, report: toWorklistReportContext(labReport), assignedTo: toAssignedTo(assignedTo) };
+      return {
+        ...rest,
+        report: toWorklistReportContext(labReport),
+        assignedTo: toAssignedTo(assignedTo),
+      };
     });
 
     await this.labReportService.recordWorklistHistory(

@@ -1,0 +1,36 @@
+meta {
+  name: 07 Enable Operator Modules
+  type: http
+  seq: 7
+}
+
+patch {
+  url: {{baseUrl}}/users/manage/{{operatorUserId}}/branches/{{branchId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "modules": ["registration", "phlebotomist", "accession", "lab_operations"],
+    "defaultModule": "registration"
+  }
+}
+
+docs {
+  **Step 4a — Enable all modules the operator needs**: `registration`,
+  `phlebotomist`, `accession` and `lab_operations` (Technician/Laboratory).
+
+  Each module must be offered by the branch type and enabled at the branch (all
+  true from step 02). `defaultModule` stays `registration` (the `receptionist`
+  role template links `sales`/`registration`); the extra modules aren't restricted
+  to the template.
+}

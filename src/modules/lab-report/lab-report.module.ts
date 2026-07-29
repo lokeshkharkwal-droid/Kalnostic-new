@@ -17,6 +17,8 @@ import { ScheduledTestService } from './scheduled-test.service';
 import { InventoryUsageController } from './inventory-usage.controller';
 import { InventoryUsageService } from './inventory-usage.service';
 import { MultiStepProcessService } from './multi-step-process.service';
+import { TatService } from './tat.service';
+import { NablTatCronService } from './nabl-tat-cron.service';
 
 /**
  * Technician Reporting feature module (LABORATORY.docx). Exports
@@ -57,6 +59,8 @@ import { MultiStepProcessService } from './multi-step-process.service';
     ScheduledTestService,
     InventoryUsageService,
     MultiStepProcessService,
+    TatService,
+    NablTatCronService,
   ],
   exports: [LabReportService],
 })

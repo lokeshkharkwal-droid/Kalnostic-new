@@ -1,0 +1,16 @@
+meta {
+  name: EC24 Pause happens only once per day
+  seq: 25
+}
+
+script:pre-request {
+  if (!bru.getVar("baseUrl")) bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+}
+
+docs {
+  Scenario: duplicate-pause guard.
+Expected: once paused at To, no more minutes are added that day.
+Status: VERIFIED by unit test.
+
+  Run 00 Base Setup first (same session) so the shared vars are available.
+}

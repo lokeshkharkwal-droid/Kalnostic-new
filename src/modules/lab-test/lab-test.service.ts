@@ -588,6 +588,8 @@ export class LabTestService {
           tatMaxUnit: t.tatMaxUnit,
           scheduleFrom: t.scheduleFrom,
           scheduleTo: t.scheduleTo,
+          processingTimeFrom: t.processingTimeFrom,
+          processingTimeTo: t.processingTimeTo,
           procTimeMinValue: t.procTimeMinValue,
           procTimeMinUnit: t.procTimeMinUnit,
           procTimeMaxValue: t.procTimeMaxValue,

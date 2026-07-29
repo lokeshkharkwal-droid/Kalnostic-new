@@ -131,6 +131,8 @@ export interface LabTestTatRow {
   tatMaxUnit: TatUnit | null;
   scheduleFrom: string | null;
   scheduleTo: string | null;
+  processingTimeFrom: string | null;
+  processingTimeTo: string | null;
   procTimeMinValue: number | null;
   procTimeMinUnit: TatUnit | null;
   procTimeMaxValue: number | null;

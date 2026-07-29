@@ -1,0 +1,94 @@
+meta {
+  name: 60 TAT Flow E2E
+  seq: 66
+}
+
+script:pre-request {
+  // ---------------------------------------------------------------------------
+  // TAT Flow E2E — folder-level setup (runs before every request in this folder).
+  // Seeds baseUrl + the ONLY values a developer edits (once): the entry
+  // business-admin credentials + tenant slug. Everything else (tokens, ids) is
+  // captured automatically by each request's post-response via bru.setVar(...).
+  //
+  // Just click "Next" through 01 → 28 (or Run Folder). No manual input required.
+  // A per-run unique id (tatRunId) is generated so unique fields (branch name,
+  // usernames, emails, mobiles, test/panel codes) don't collide on re-runs.
+  // ---------------------------------------------------------------------------
+
+  if (!bru.getVar("baseUrl")) bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+
+  // Entry point — the SEEDED platform SiteAdmin (prisma/seed.ts). This is the ONLY
+  // credential the flow assumes exists; the tenant + business admin are created
+  // at runtime (steps 01-02), so nothing else needs editing. Change these two
+  // only if your seeded SiteAdmin differs.
+  if (!bru.getVar("siteAdminEmail"))    bru.setVar("siteAdminEmail", "admin@kalnostics.com");
+  if (!bru.getVar("siteAdminPassword")) bru.setVar("siteAdminPassword", "SuperSecret1");
+
+  // Known password for the operator user this flow creates (so login is automated).
+  if (!bru.getVar("operatorPassword")) bru.setVar("operatorPassword", "Str0ng@Pass1");
+
+  // One-time per-run unique suffix + derived unique mobiles (10-digit, distinct
+  // by prefix). Guarded so it is computed once and reused for the whole run.
+  // (adminIdentifier / adminPassword / tenantSlug are NOT set here — they are
+  // captured from the tenant created in step 02.)
+  if (!bru.getVar("tatRunId")) {
+    const n = String(Date.now());
+    bru.setVar("tatRunId", n.slice(-6));
+    bru.setVar("adminBootstrapPhone", "+9195" + n.slice(-8));
+    bru.setVar("operatorMobile", "98" + n.slice(-8));
+    bru.setVar("phleboMobile",   "97" + n.slice(-8));
+    bru.setVar("patientMobile",  "96" + n.slice(-8));
+  }
+}
+
+docs {
+  # TAT Flow E2E — fully automated, click-Next end-to-end
+
+  Proves the **Turnaround Time (TAT)** feature end-to-end: from a Business-Admin
+  login, through branch/user/catalogue setup, an order, the accession
+  **Accept** (TAT starts) and the technician **Approve** (TAT stops), to reading
+  the computed TAT back off the Technician Report listing + breakdown.
+
+  ## How to run
+  Select this folder and **Run Folder**, or click **Next** through requests
+  01 → 30 in order. Each request captures the ids/tokens the next one needs via
+  `bru.setVar(...)` — nothing is copied by hand. A `tatRunId` is generated once
+  per run so re-runs never collide on unique fields.
+
+  ## The only thing you may need to edit
+  Nothing, on a normal dev DB. The flow bootstraps itself from the **seeded
+  SiteAdmin** (`admin@kalnostics.com` / `SuperSecret1`) and creates its own
+  tenant + business admin at runtime. Edit `siteAdminEmail` / `siteAdminPassword`
+  in this pre-request only if your seeded SiteAdmin differs.
+
+  ## Flow
+  **Bootstrap:** 01 SiteAdmin login → 02 create tenant + business admin (captures
+  the new admin's phone + one-time temp password).
+
+  **Setup:** 03 business-admin login → 04 create branch (registration + accession
+  + lab_operations + phlebotomist enabled) → 05 create the branch **operating
+  schedule** (required so TAT can exclude non-working time) → 06 create operator
+  user → 07 enable operator modules → 08 grant permissions → 09 operator login
+  (branch-scoped token).
+
+  **Catalogue + order:** 10 phlebotomist → 11 phlebotomist schedule → 12 patient
+  → 13 resolve branch master data → 14 lab test (with **Max TAT** configured) →
+  15 lab panel → 16/17 import into branch → 18/19 resolve branch ids → 20 create
+  the (in-center) diagnostic order → generates an accession sample.
+
+  **TAT validation:** 21 list samples → 22 collect → **23 Accept (TAT START)** →
+  24 resolve technician report → 25 submit → 26 validate → **27 Approve (TAT
+  STOP)** → **28 Technician Report Listing** (shows `tat` per row) → **29 Get TAT
+  breakdown** (verify status / time / breach) → 30 TAT analytics summary.
+
+  ## What the final requests let you verify
+  - **26 Technician Report Listing** — each row carries
+    `tat: { band, netMinutes, isFinal, computable }`.
+  - **27 Get TAT breakdown** — `{ band, netMinutes, maxTatMinutes, isFinal,
+    startAt, endAt, reason }`. `band === "BREACHED"` means the TAT was breached;
+    `netMinutes` is the working TAT time; `band` is the TAT status.
+  - Because accept→approve happen seconds apart during the run and the operating
+    schedule is open all day, the band will be **WITHIN** with `netMinutes ≈ 0`
+    (not breached) — the happy path. To force other bands, lower the test's
+    Max TAT (request 12) or space the accept/approve apart.
+}

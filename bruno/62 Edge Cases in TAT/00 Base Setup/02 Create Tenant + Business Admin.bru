@@ -1,0 +1,65 @@
+meta {
+  name: 02 Create Tenant + Business Admin
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/tenants
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "name": "TAT Flow Business {{tatRunId}}",
+    "adminFirstName": "TAT",
+    "adminLastName": "Admin {{tatRunId}}",
+    "adminPhone": "{{adminBootstrapPhone}}",
+    "adminEmail": "tat.bizadmin.{{tatRunId}}@acme.test",
+    "email": "tat.contact.{{tatRunId}}@acme.test",
+    "shortName": "TATDx",
+    "mrnPrefix": "TA",
+    "settings": {
+      "timezone": "Asia/Kolkata",
+      "currency": "INR",
+      "date_format": "DD/MM/YYYY",
+      "language": "en"
+    }
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data) {
+    if (data.id) bru.setVar("tenantId", data.id);
+    if (data.slug) bru.setVar("tenantSlug", data.slug);
+    // The first business-admin login id + one-time temp password are returned on
+    // create — wire them straight into the Business Admin Login (step 03).
+    const phone = data.adminPhone || (data.admin && data.admin.phone);
+    const temp = data.tempPassword || (data.admin && data.admin.tempPassword);
+    if (phone) bru.setVar("adminIdentifier", phone);
+    if (temp) bru.setVar("adminPassword", temp);
+  }
+}
+
+docs {
+  **Bootstrap 2 — Create the tenant AND its first business admin** (as SiteAdmin).
+
+  Returns the tenant (`id`, `slug`) plus the business-admin's **one-time temp
+  password**. The post-response captures `tenantSlug` and sets `adminIdentifier`
+  (= the admin's phone) + `adminPassword` (= the temp password) — so step 03 logs
+  in as this brand-new admin with **no manual copy**. `adminPhone` / name / emails
+  are made unique per run via `tatRunId`.
+
+  > If a future backend build stops returning `tempPassword` on create, use
+  > SiteAdmin → **Reset Admin Password** to obtain one and set `adminPassword`.
+}

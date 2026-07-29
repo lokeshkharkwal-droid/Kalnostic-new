@@ -1,0 +1,16 @@
+meta {
+  name: EC17 NABL mode disabled (legacy accept-approve)
+  seq: 18
+}
+
+script:pre-request {
+  if (!bru.getVar("baseUrl")) bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+}
+
+docs {
+  Scenario: turn NABL OFF - old behaviour.
+Expected: TAT = working time from Accept to Approve; the cron never touches these reports. Full proof: run the 60 TAT Flow E2E (30/30 pass).
+Status: VERIFIED live.
+
+  Run 00 Base Setup first (same session) so the shared vars are available.
+}

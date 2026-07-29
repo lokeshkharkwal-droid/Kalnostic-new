@@ -1,0 +1,31 @@
+meta {
+  name: 16 Import Lab Test into Branch
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{baseUrl}}/branch-lab-tests/import
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "labTestIds": ["{{labTestId}}"]
+  }
+}
+
+docs {
+  **Workflow 7 — Import the lab test into the active branch's list.** Deep-copies
+  the master-data lab test (including its TAT config) into the branch as a
+  branch-owned snapshot. The new `branchLabTestId` is resolved in step 16.
+}

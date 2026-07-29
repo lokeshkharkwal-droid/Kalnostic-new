@@ -28,6 +28,8 @@ body:json {
     "priceMaximum": 1400,
     "priceMinimum": 1000,
     "isHideInOrderScreen": false,
+    "processingTimeFrom": "09:00",
+    "processingTimeTo": "17:00",
     "remarks": "Branch-specific pricing"
   }
 }
@@ -38,4 +40,10 @@ docs {
   here (managed via re-import/sync). Price ordering (min ≤ max ≤ msrp) is
   validated → 422 `VALIDATION_ERROR` on violation. Note: a later **sync**
   overwrites these edits.
+
+  **NABL TAT:** `processingTimeFrom` / `processingTimeTo` ("HH:mm") set this
+  branch test's daily processing window. When the branch has NABL TAT enabled
+  (`PUT /branches/:id/settings`), the 1-minute cron accrues TAT only inside this
+  window (on `scheduleDays`), pausing at `processingTimeTo` and resuming the next
+  scheduled day.
 }

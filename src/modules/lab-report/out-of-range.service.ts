@@ -43,7 +43,12 @@ export class OutOfRangeService {
   ) {
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.prisma.labReport.findFirst({
-      where: { id: labReportId, tenantId, branchId: activeBranchId, deletedAt: null },
+      where: {
+        id: labReportId,
+        tenantId,
+        branchId: activeBranchId,
+        deletedAt: null,
+      },
     });
     if (!report) throw new LabReportNotFoundException(labReportId);
 
@@ -91,7 +96,11 @@ export class OutOfRangeService {
     });
     let reports = rows.map((r) => toWorklistReportContext(r.labReport));
     reports = await attachWorklistBranchNames(this.prisma, tenantId, reports);
-    reports = await attachWorklistSampleStatuses(this.prisma, tenantId, reports);
+    reports = await attachWorklistSampleStatuses(
+      this.prisma,
+      tenantId,
+      reports,
+    );
 
     return rows.map(({ labReport: _labReport, ...flag }, i) => ({
       ...flag,
@@ -110,7 +119,8 @@ export class OutOfRangeService {
     const entry = await this.prisma.outOfRangeFlag.findFirst({
       where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
     });
-    if (!entry) throw new WorklistEntryNotFoundException('out_of_range_flag', id);
+    if (!entry)
+      throw new WorklistEntryNotFoundException('out_of_range_flag', id);
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const updatedEntry = await tx.outOfRangeFlag.update({

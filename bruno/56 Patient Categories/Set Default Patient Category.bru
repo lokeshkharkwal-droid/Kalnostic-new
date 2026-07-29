@@ -1,0 +1,32 @@
+meta {
+  name: Set Default Patient Category
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{baseUrl}}/patient-categories/{{patientCategoryId}}/default
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("isDefault is now true", function () {
+    expect(res.getBody().data.isDefault).to.equal(true);
+  });
+}
+
+docs {
+  Set this category as the tenant's default. Clears `isDefault` on the
+  tenant's current default (if any) in one transaction. No body.
+
+  409s with `INACTIVE_CATEGORY_CANNOT_BE_DEFAULT` if the target category is
+  inactive — activate it first.
+}
