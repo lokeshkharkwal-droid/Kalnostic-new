@@ -65,47 +65,49 @@ export class ScheduledTestService {
       );
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      const scheduled = await tx.scheduledTest.create({
-        data: {
-          tenantId,
-          branchId: activeBranchId,
-          labReportId,
-          status: ActionWorklistStatus.PENDING,
-          scheduledAt: new Date(dto.scheduledAt),
-          dispatchAt: dto.dispatchAt ? new Date(dto.dispatchAt) : undefined,
-          assignedToId: dto.assignedToId,
-          createdBy: actorId,
-        },
-        include: SCHEDULED_TEST_INCLUDE,
-      });
-      if (dto.notes) {
-        await tx.labReportNote.create({
+    return this.prisma
+      .$transaction(async (tx) => {
+        const scheduled = await tx.scheduledTest.create({
           data: {
             tenantId,
+            branchId: activeBranchId,
             labReportId,
-            category: 'SCHEDULE',
-            body: dto.notes,
+            status: ActionWorklistStatus.PENDING,
+            scheduledAt: new Date(dto.scheduledAt),
+            dispatchAt: dto.dispatchAt ? new Date(dto.dispatchAt) : undefined,
+            assignedToId: dto.assignedToId,
             createdBy: actorId,
           },
+          include: SCHEDULED_TEST_INCLUDE,
         });
-      }
-      const { labReport, assignedTo, ...rest } = scheduled;
-      return {
-        ...rest,
-        report: toWorklistReportContext(labReport),
-        assignedTo: toAssignedTo(assignedTo),
-      };
-    }).then(async (result) => {
-      await this.labReportService.recordWorklistHistory(
-        tenantId,
-        labReportId,
-        'scheduled_test_created',
-        actorId,
-        dto.notes,
-      );
-      return result;
-    });
+        if (dto.notes) {
+          await tx.labReportNote.create({
+            data: {
+              tenantId,
+              labReportId,
+              category: 'SCHEDULE',
+              body: dto.notes,
+              createdBy: actorId,
+            },
+          });
+        }
+        const { labReport, assignedTo, ...rest } = scheduled;
+        return {
+          ...rest,
+          report: toWorklistReportContext(labReport),
+          assignedTo: toAssignedTo(assignedTo),
+        };
+      })
+      .then(async (result) => {
+        await this.labReportService.recordWorklistHistory(
+          tenantId,
+          labReportId,
+          'scheduled_test_created',
+          actorId,
+          dto.notes,
+        );
+        return result;
+      });
   }
 
   async findAll(tenantId: string, branchId: string | null) {
