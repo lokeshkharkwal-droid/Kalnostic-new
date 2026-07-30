@@ -36,10 +36,13 @@ import {
   toWorklistRow,
 } from './entities/lab-report.entity';
 import { LabReportOptions } from './entities/lab-report-options.entity';
+import { resolveActorNames } from './entities/worklist.entity';
 import {
   ActiveBranchRequiredException,
   InvalidLabReportTransitionException,
   LabReportLockedException,
+  LabReportSampleMissingException,
+  LabReportResultsRequiredException,
   LabReportNotesRequiredException,
   LabReportNotFoundException,
   LabTestCatalogueMissingException,
@@ -246,6 +249,23 @@ export class LabReportService {
     // still apply as an AND alongside this, via Prisma's implicit top-level AND).
     if (filters.search) {
       const search = filters.search;
+      // Bug fix: a full-name search (e.g. "Hiroshi Tanaka") never matched
+      // anything, because firstName/lastName were only ever checked against
+      // the whole search string independently — neither field alone
+      // contains a two-word string. Splitting on whitespace and requiring
+      // every word to be found somewhere across first/middle/last name (in
+      // any order) fixes full-name search without changing single-word
+      // search behavior at all (a 1-word split is just the original check).
+      const searchWords = search.trim().split(/\s+/).filter(Boolean);
+      const patientNameMatchesEveryWord: Prisma.PatientWhereInput = {
+        AND: searchWords.map((word) => ({
+          OR: [
+            { firstName: { contains: word, mode: 'insensitive' as const } },
+            { middleName: { contains: word, mode: 'insensitive' as const } },
+            { lastName: { contains: word, mode: 'insensitive' as const } },
+          ],
+        })),
+      };
       orderItem.OR = [
         {
           branchLabTest: {
@@ -262,14 +282,7 @@ export class LabReportService {
             is: {
               OR: [
                 { orderCode: { contains: search, mode: 'insensitive' } },
-                {
-                  patient: {
-                    OR: [
-                      { firstName: { contains: search, mode: 'insensitive' } },
-                      { lastName: { contains: search, mode: 'insensitive' } },
-                    ],
-                  },
-                },
+                { patient: patientNameMatchesEveryWord },
                 {
                   referralPanel: {
                     is: { name: { contains: search, mode: 'insensitive' } },
@@ -328,6 +341,7 @@ export class LabReportService {
       ...r,
       tat: tatByReport.get(r.id) ?? null,
     }));
+    worklistRows = await this.attachMultiStepProcess(worklistRows);
 
     // `data` (not `rows`) — ResponseInterceptor.isPaginated() only lifts
     // total/page/limit into the envelope's `meta` block when the array field
@@ -503,6 +517,40 @@ export class LabReportService {
     });
   }
 
+  /**
+   * Resolves which tests (if any) are assigned to a multi-step process and
+   * which stage they're at (LABORATORY.docx §5.7), for list views like Order
+   * Overview that need this at a glance without opening each report's own
+   * detail. `MultiStepTestProcess.labReportId` is unique per report, so this
+   * is a direct one-query batched lookup — no per-sample fan-out like
+   * `attachSampleStatuses`, since a report has at most one multi-step
+   * process row. Null for the overwhelming majority of tests, which are
+   * never assigned to one.
+   */
+  private async attachMultiStepProcess(
+    rows: LabReportWorklistRow[],
+  ): Promise<LabReportWorklistRow[]> {
+    const reportIds = [...new Set(rows.map((r) => r.id))];
+    if (reportIds.length === 0) return rows;
+
+    const processes = await this.prisma.multiStepTestProcess.findMany({
+      where: { labReportId: { in: reportIds }, deletedAt: null },
+      select: { labReportId: true, processType: true, currentStage: true },
+    });
+    const byReportId = new Map(
+      processes.map((p) => [p.labReportId, p]),
+    );
+
+    return rows.map((row) => {
+      const process = byReportId.get(row.id);
+      return {
+        ...row,
+        multiStepProcessType: process?.processType ?? null,
+        multiStepStage: process?.currentStage ?? null,
+      };
+    });
+  }
+
   async getCounts(
     tenantId: string,
     branchId: string | null,
@@ -671,6 +719,7 @@ export class LabReportService {
       await this.attachDepartmentNames(tenantId, [worklistRow])
     )[0]!;
     worklistRow = (await this.attachResultTypes([worklistRow]))[0]!;
+    worklistRow = (await this.attachMultiStepProcess([worklistRow]))[0]!;
 
     return {
       ...worklistRow,
@@ -762,7 +811,47 @@ export class LabReportService {
     });
     if (!report) throw new LabReportNotFoundException(id);
     if (report.isLocked) throw new LabReportLockedException(id);
+
+    // Safety net (see LabReportSampleMissingException's own doc comment for
+    // why this should never fire for a genuine report, and what it guards
+    // against when it does).
+    const hasSample = await this.prisma.accessionSampleTest.findFirst({
+      where: { orderItemId: report.orderItemId, tenantId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!hasSample) throw new LabReportSampleMissingException(id);
+
     return report;
+  }
+
+  /**
+   * Shared by `save()` and `submit()` (LABORATORY.docx §2.2's transition
+   * matrix names both triggers "Technician enters results -> Save/Submit" —
+   * neither transition is meant to be reachable from a completely empty
+   * result grid). `upsertResultValues` itself allows every field to be
+   * blank (a `LabReportResultValue` row can exist with `resultParamId` only,
+   * e.g. right after Sync resolves a reference range but before an
+   * observed value is typed), so this is the one place that actually
+   * checks for a real entered value. Threshold is "at least one real
+   * value" across however many parameters the test has — not "every
+   * parameter filled in" — so genuine partial progress on a multi-parameter
+   * test across several Save clicks stays allowed.
+   */
+  private async requireAtLeastOneResultValue(
+    id: string,
+    tenantId: string,
+  ): Promise<void> {
+    const hasRealValue = await this.prisma.labReportResultValue.findFirst({
+      where: {
+        labReportId: id,
+        tenantId,
+        deletedAt: null,
+        observed1: { not: null },
+        NOT: { observed1: '' },
+      },
+      select: { id: true },
+    });
+    if (!hasRealValue) throw new LabReportResultsRequiredException(id);
   }
 
   private assertTransition(
@@ -800,6 +889,49 @@ export class LabReportService {
         actorId,
       },
     });
+  }
+
+  /**
+   * Public entry point for the 5 special worklist services (Re-Run, Critical
+   * Alert, Out of Range, Delta Check, Scheduled Test) to record their own
+   * raise/status-update actions into the same Audit Trail as the main report
+   * transitions — required by LABORATORY.docx §5.11 ("the complete history
+   * of the order/report — every action, status change...") and §8.1-8.5
+   * (each worklist explicitly lists "Audit Trail" as an available action).
+   *
+   * Each worklist has its own status vocabulary (`ActionWorklistStatus`,
+   * `WorklistStatus`, `DeltaCheckStatus`) distinct from `LabReportStatus`, so
+   * `fromStatus`/`toStatus` (strictly typed to `LabReportStatus` in the
+   * schema) can't literally hold those values — instead the worklist's own
+   * transition is folded into `action`/`notes` as free text, and
+   * `toStatus`/`fromStatus` are both set to the report's real current status
+   * (unchanged by this call), since no actual `LabReport` status change
+   * happened here.
+   */
+  async recordWorklistHistory(
+    tenantId: string,
+    labReportId: string,
+    action: string,
+    actorId: string,
+    notes?: string,
+  ): Promise<void> {
+    const report = await this.prisma.labReport.findFirst({
+      where: { id: labReportId, tenantId, deletedAt: null },
+      select: { status: true },
+    });
+    if (!report) return;
+    await this.prisma.withTenant(tenantId, (tx) =>
+      this.recordHistory(
+        tx,
+        tenantId,
+        labReportId,
+        report.status,
+        report.status,
+        action,
+        actorId,
+        notes,
+      ),
+    );
   }
 
   // ── Test Entry: result values + reference-range resolution ────────────────
@@ -847,6 +979,13 @@ export class LabReportService {
             source: ResultValueSource.MANUAL,
             enteredAt: new Date(),
             enteredBy: actorId,
+            // The upsert's `where` matches by the labReportId+resultParamId
+            // unique key regardless of deletedAt, so a slot that was ever
+            // soft-deleted (e.g. by a Re-Run reset) would otherwise be
+            // silently re-written while staying deletedAt-stamped — invisible
+            // to every read path (LAB_REPORT_DETAIL_INCLUDE filters
+            // deletedAt: null) even though the value was genuinely saved.
+            deletedAt: null,
           },
         });
       }
@@ -1312,6 +1451,17 @@ export class LabReportService {
     const report = await this.requireReport(id, tenantId, activeBranchId);
     this.assertTransition('save', report.status);
 
+    // Bug fix: originally left unguarded (Submit alone was guarded), on the
+    // assumption an empty Save was a legitimate "save partial progress"
+    // action. Re-checked LABORATORY.docx directly: §2.2's own transition
+    // matrix names the trigger "Technician enters results -> Save", and
+    // §4.6/the Saved status definition both tie Save to having "entered/
+    // edited results" — an empty grid was never actually meant to reach
+    // Saved either. Same "at least one real value" threshold as Submit
+    // (not "every parameter filled in") — still allows genuine partial
+    // progress across multiple Save clicks on a multi-parameter test.
+    await this.requireAtLeastOneResultValue(id, tenantId);
+
     return this.prisma.withTenant(tenantId, async (tx) => {
       const updated = await tx.labReport.update({
         where: { id },
@@ -1343,6 +1493,12 @@ export class LabReportService {
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.requireReport(id, tenantId, activeBranchId);
     this.assertTransition('submit', report.status);
+
+    // Bug fix: upsertResultValues allows every field to be blank, and
+    // nothing previously stopped a fully-empty result from being submitted
+    // for validation. Submit means "this is ready" — require at least one
+    // real value (same helper/threshold `save()` now also uses).
+    await this.requireAtLeastOneResultValue(id, tenantId);
 
     return this.prisma.withTenant(tenantId, async (tx) => {
       const updated = await tx.labReport.update({
@@ -1816,6 +1972,45 @@ export class LabReportService {
   // technician who opens the order. "Documents" (the 4th tab) is the
   // attachments feature, a separate, not-yet-built piece (no `/attachments`
   // endpoint exists anywhere in this module today) — not covered here.
+  //
+  // Bug fix: `LabReportNote.labReportId` ties every row to one specific test's
+  // report, but LABORATORY.docx §4.1/§4.2 frame these 3 tabs as living under
+  // the *order*-level header strip and being "visible to every technician who
+  // opens the order" — not scoped to whichever single test they happened to
+  // open. An order with multiple tests (multiple `LabReport`s) previously hid
+  // a note added on Test A's tab from Test B's identical tab, confirmed live.
+  // Fix: `createNote`/`findNotes` resolve the report's sibling `LabReport`s
+  // (same `orderId`, via `orderItem.orderId`) and read/write across all of
+  // them — the route/DTO contract (`POST/GET /lab-reports/:id/notes`) is
+  // unchanged, `:id` just now means "this order" rather than "this report."
+  // The other 9 `LabReportNoteCategory` values (Lock/Delta/Critical Alert/
+  // etc.) are untouched — those are genuinely per-test action side-effects,
+  // not this order-wide tab system, and keep their existing single-report
+  // scoping (see PLAIN_NOTE_CATEGORIES's own doc comment).
+
+  /** All `LabReport.id`s belonging to the same order as `id`, `id` included. */
+  private async siblingReportIds(
+    id: string,
+    tenantId: string,
+    branchId: string,
+  ): Promise<string[]> {
+    const report = await this.prisma.labReport.findFirst({
+      where: { id, tenantId, branchId, deletedAt: null },
+      select: { orderItem: { select: { orderId: true } } },
+    });
+    if (!report) throw new LabReportNotFoundException(id);
+
+    const siblings = await this.prisma.labReport.findMany({
+      where: {
+        tenantId,
+        branchId,
+        deletedAt: null,
+        orderItem: { orderId: report.orderItem.orderId },
+      },
+      select: { id: true },
+    });
+    return siblings.map((s) => s.id);
+  }
 
   async createNote(
     id: string,
@@ -1846,17 +2041,32 @@ export class LabReportService {
   ) {
     const activeBranchId = this.requireBranch(branchId);
     await this.requireReport(id, tenantId, activeBranchId);
+    const reportIds = await this.siblingReportIds(id, tenantId, activeBranchId);
 
-    return this.prisma.labReportNote.findMany({
+    const rows = await this.prisma.labReportNote.findMany({
       where: {
         tenantId,
-        labReportId: id,
+        labReportId: { in: reportIds },
         category: query.category
           ? query.category
           : { in: [...PLAIN_NOTE_CATEGORIES] },
       },
       orderBy: { createdAt: 'desc' },
     });
+
+    // Bug fix: `createdBy` is a logical Person.id (same unenforced-reference
+    // pattern as LabReportHistory.actorId, see enrichActorNames) — the
+    // Order/Sample/Tech Notes tabs were showing this raw UUID directly
+    // instead of a human name. Reuses the same resolve-and-fall-back-to-raw-id
+    // convention as `resolveActorNames` (Re-Run's "Re-Run By" column).
+    const nameById = await resolveActorNames(
+      this.prisma,
+      rows.map((r) => r.createdBy),
+    );
+    return rows.map((r) => ({
+      ...r,
+      createdByName: nameById.get(r.createdBy) ?? r.createdBy,
+    }));
   }
 
   // ── Audit trail ─────────────────────────────────────────────────────────────

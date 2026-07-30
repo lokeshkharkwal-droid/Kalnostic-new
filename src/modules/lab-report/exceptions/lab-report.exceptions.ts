@@ -58,6 +58,47 @@ export class LabReportLockedException extends KaltrosException {
   }
 }
 
+/**
+ * 409 — safety net, not reachable through the real app today. Every genuine
+ * `LabReport` is only ever created by `AccessionSampleService
+ * .ensureLabReportsForAcceptedSample`, which runs after the sample it's for
+ * has already been accepted — so a real report always has a linked
+ * `AccessionSampleTest` by construction. This guards the one case that
+ * invariant doesn't cover on its own: a report created some other way (a
+ * future bug, a data migration, direct DB access) with no sample behind it
+ * at all — without this, nothing would stop such a report from being
+ * silently pushed through the entire workflow to Published.
+ */
+export class LabReportSampleMissingException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'LAB_REPORT_SAMPLE_MISSING',
+      'This report has no linked sample and cannot be processed.',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
+ * 422 — thrown from both `save()` and `submit()` (see
+ * `requireAtLeastOneResultValue`'s own doc comment). `upsertResultValues`
+ * (`PATCH .../:id/results`) allows every field to be blank (e.g. a row can
+ * exist with only `resultParamId` set, right after Sync resolves a
+ * reference range but before a value is typed), so neither transition was
+ * otherwise stopped from reaching an empty grid.
+ */
+export class LabReportResultsRequiredException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'LAB_REPORT_RESULTS_REQUIRED',
+      'Enter at least one result value before saving or submitting.',
+      { id },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
 /** 403 — unlocking a report requires the supervisor unlock permission. */
 export class UnlockNotPermittedException extends KaltrosException {
   constructor() {

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ActionWorklistStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LabReportDirectoryService } from './lab-report-directory.service';
+import { LabReportService } from './lab-report.service';
 import { ScheduleTestDto } from './dto/schedule-test.dto';
 import { UpdateActionWorklistStatusDto } from './dto/update-worklist-status.dto';
 import {
@@ -30,6 +31,7 @@ export class ScheduledTestService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly directory: LabReportDirectoryService,
+    private readonly labReportService: LabReportService,
   ) {}
 
   private requireBranch(branchId: string | null): string {
@@ -63,38 +65,49 @@ export class ScheduledTestService {
       );
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      const scheduled = await tx.scheduledTest.create({
-        data: {
-          tenantId,
-          branchId: activeBranchId,
-          labReportId,
-          status: ActionWorklistStatus.PENDING,
-          scheduledAt: new Date(dto.scheduledAt),
-          dispatchAt: dto.dispatchAt ? new Date(dto.dispatchAt) : undefined,
-          assignedToId: dto.assignedToId,
-          createdBy: actorId,
-        },
-        include: SCHEDULED_TEST_INCLUDE,
-      });
-      if (dto.notes) {
-        await tx.labReportNote.create({
+    return this.prisma
+      .$transaction(async (tx) => {
+        const scheduled = await tx.scheduledTest.create({
           data: {
             tenantId,
+            branchId: activeBranchId,
             labReportId,
-            category: 'SCHEDULE',
-            body: dto.notes,
+            status: ActionWorklistStatus.PENDING,
+            scheduledAt: new Date(dto.scheduledAt),
+            dispatchAt: dto.dispatchAt ? new Date(dto.dispatchAt) : undefined,
+            assignedToId: dto.assignedToId,
             createdBy: actorId,
           },
+          include: SCHEDULED_TEST_INCLUDE,
         });
-      }
-      const { labReport, assignedTo, ...rest } = scheduled;
-      return {
-        ...rest,
-        report: toWorklistReportContext(labReport),
-        assignedTo: toAssignedTo(assignedTo),
-      };
-    });
+        if (dto.notes) {
+          await tx.labReportNote.create({
+            data: {
+              tenantId,
+              labReportId,
+              category: 'SCHEDULE',
+              body: dto.notes,
+              createdBy: actorId,
+            },
+          });
+        }
+        const { labReport, assignedTo, ...rest } = scheduled;
+        return {
+          ...rest,
+          report: toWorklistReportContext(labReport),
+          assignedTo: toAssignedTo(assignedTo),
+        };
+      })
+      .then(async (result) => {
+        await this.labReportService.recordWorklistHistory(
+          tenantId,
+          labReportId,
+          'scheduled_test_created',
+          actorId,
+          dto.notes,
+        );
+        return result;
+      });
   }
 
   async findAll(tenantId: string, branchId: string | null) {
@@ -124,6 +137,7 @@ export class ScheduledTestService {
     id: string,
     tenantId: string,
     branchId: string | null,
+    actorId: string,
     dto: ScheduleTestDto,
   ) {
     const activeBranchId = this.requireBranch(branchId);
@@ -140,7 +154,7 @@ export class ScheduledTestService {
       );
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.scheduledTest.update({
         where: { id },
         data: {
@@ -157,7 +171,7 @@ export class ScheduledTestService {
             labReportId: entry.labReportId,
             category: 'SCHEDULE',
             body: dto.notes,
-            createdBy: 'system',
+            createdBy: actorId,
           },
         });
       }
@@ -168,12 +182,23 @@ export class ScheduledTestService {
         assignedTo: toAssignedTo(assignedTo),
       };
     });
+
+    await this.labReportService.recordWorklistHistory(
+      tenantId,
+      entry.labReportId,
+      'scheduled_test_rescheduled',
+      actorId,
+      dto.notes,
+    );
+
+    return result;
   }
 
   async updateStatus(
     id: string,
     tenantId: string,
     branchId: string | null,
+    actorId: string,
     dto: UpdateActionWorklistStatusDto,
   ) {
     const activeBranchId = this.requireBranch(branchId);
@@ -182,8 +207,8 @@ export class ScheduledTestService {
     });
     if (!entry) throw new WorklistEntryNotFoundException('scheduled_test', id);
 
-    return this.prisma.$transaction(async (tx) => {
-      const updated = await tx.scheduledTest.update({
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const updatedEntry = await tx.scheduledTest.update({
         where: { id },
         data: { status: dto.status },
       });
@@ -194,11 +219,21 @@ export class ScheduledTestService {
             labReportId: entry.labReportId,
             category: 'SCHEDULE',
             body: dto.notes,
-            createdBy: 'system',
+            createdBy: actorId,
           },
         });
       }
-      return updated;
+      return updatedEntry;
     });
+
+    await this.labReportService.recordWorklistHistory(
+      tenantId,
+      entry.labReportId,
+      `scheduled_test_status_${entry.status}_to_${dto.status}`.toLowerCase(),
+      actorId,
+      dto.notes,
+    );
+
+    return updated;
   }
 }
