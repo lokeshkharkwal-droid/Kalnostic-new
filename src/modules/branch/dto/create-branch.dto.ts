@@ -59,6 +59,11 @@ export class CreateBranchDto {
   @IsString()
   @IsOptional()
   @MaxLength(120)
+  country?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(120)
   city?: string;
 
   @IsString()

@@ -14,15 +14,7 @@ CREATE TYPE "AccessionBarcodeSeparator" AS ENUM ('NONE', 'HYPHEN', 'SLASH', 'UND
 CREATE TYPE "AccessionBarcodeResetCycle" AS ENUM ('NEVER', 'DAILY', 'MONTHLY', 'YEARLY');
 
 -- AlterEnum
--- This migration adds more than one value to an enum.
--- With PostgreSQL versions 11 and earlier, this is not possible
--- in a single migration. This can be worked around by creating
--- multiple migrations, each migration adding only one value to
--- the enum.
-
-
-ALTER TYPE "AuditModule" ADD VALUE 'PATIENT_CATEGORY';
-ALTER TYPE "AuditModule" ADD VALUE 'REGISTRATION_SETTINGS';
+ALTER TYPE "AuditModule" ADD VALUE 'TECHNICIAN_SETTINGS';
 
 -- AlterTable
 ALTER TABLE "accession_settings" ADD COLUMN     "accession_allow_mapping_after_accept_external_referral" BOOLEAN NOT NULL DEFAULT true,

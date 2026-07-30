@@ -104,6 +104,40 @@ export class LabReportController {
     return this.labReportService.findAll(tenantId, profile.branchId, query);
   }
 
+  /**
+   * Print All (order-console's "Lab All Report" action). Declared before
+   * `:id` routes — same convention as `tat/summary` above — so `order` isn't
+   * captured as a report id. Streams the rendered PDF directly, matching
+   * `:id/print`'s own binary-response pattern.
+   */
+  @Post('order/:orderId/print-all')
+  @Audit({
+    module: AuditModule.LAB_REPORT,
+    action: AuditAction.OTHER,
+    description: 'Printed all reports for an order',
+  })
+  async printAll(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('orderId') orderId: string,
+    @Body() dto: PrintReportDto,
+    @Res() res: Response,
+  ): Promise<void> {
+    const pdf = await this.labReportService.printAllForOrder(
+      orderId,
+      tenantId,
+      profile.branchId,
+      dto.templateId,
+    );
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="order-${orderId}-all-reports.pdf"`,
+    );
+    res.setHeader('Content-Length', pdf.length);
+    res.end(pdf);
+  }
+
   @Get(':id')
   findOne(
     @CurrentTenant() tenantId: string,
@@ -231,36 +265,6 @@ export class LabReportController {
     res.setHeader(
       'Content-Disposition',
       `inline; filename="lab-report-${id}.pdf"`,
-    );
-    res.setHeader('Content-Length', pdf.length);
-    res.end(pdf);
-  }
-
-  /** Print ALL of an order's reports as one `lab_all_report` document. Streams the
-   * rendered PDF back directly (bypasses `ResponseInterceptor`). */
-  @Post('order/:orderId/print-all')
-  @Audit({
-    module: AuditModule.LAB_REPORT,
-    action: AuditAction.OTHER,
-    description: "Printed all of an order's reports",
-  })
-  async printAll(
-    @CurrentTenant() tenantId: string,
-    @CurrentProfile() profile: ActiveProfile,
-    @Param('orderId') orderId: string,
-    @Body() dto: PrintReportDto,
-    @Res() res: Response,
-  ): Promise<void> {
-    const pdf = await this.labReportService.printAllForOrder(
-      orderId,
-      tenantId,
-      profile.branchId,
-      dto.templateId,
-    );
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader(
-      'Content-Disposition',
-      `inline; filename="lab-all-report-${orderId}.pdf"`,
     );
     res.setHeader('Content-Length', pdf.length);
     res.end(pdf);
