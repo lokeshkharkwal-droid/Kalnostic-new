@@ -17,6 +17,8 @@ params:query {
   search: report
   ~feature: lab_order_report_published_inform_patient
   ~messageType: TRANSACTIONAL
+  ~messageTypeNot: MARKETING
+  ~clonedFromId: 00000000-0000-0000-0000-000000000000,11111111-1111-1111-1111-111111111111
   ~level: BUSINESS
   ~applicableBranchType: LAB
   ~isActive: true
@@ -47,6 +49,14 @@ docs {
   - `preference` — channel: `EMAIL` | `SMS` | `IAM` | `IAA` | `PBN` | `WHATSAPP` | `TEMPLATE`.
   - `feature` — one of the FEATURE_TYPES keys.
   - `messageType` — `OTP` | `TRANSACTIONAL` | `MARKETING`.
+  - `messageTypeNot` — exclude one message type (e.g. `MARKETING`); keeps every
+    other type **and** rows with no message type. Used by the SMS/Email/WhatsApp
+    "enable" tabs to hide bulk-marketing templates (which live on the Bulk tab).
+    Mutually exclusive with `messageType` per request.
+  - `clonedFromId` — comma-separated (or repeated) SITE_ADMIN global template
+    ids; returns only tenant clones of those globals. Lets the enable screen
+    resolve, in one bounded call, which globals on the current page are already
+    imported.
   - `level` — `ADMIN` | `BUSINESS`.
   - `applicableBranchType` — `LAB` | `CLINIC` | `HOSPITAL` | `BLOOD_BANK` | `RADIOLOGY`.
   - `isActive` / `isEnabled` / `isDefault` — `true` | `false` boolean filters.

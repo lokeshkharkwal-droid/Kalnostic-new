@@ -6,6 +6,7 @@ import {
 } from '@prisma/client';
 import { Transform, TransformFnParams } from 'class-transformer';
 import {
+  IsArray,
   IsBoolean,
   IsEnum,
   IsIn,
@@ -31,6 +32,23 @@ const toBool = ({ obj, key }: TransformFnParams): boolean | undefined => {
 };
 
 /**
+ * Coerce a repeated or comma-separated query param into a string array.
+ *
+ * Accepts `clonedFromId=a,b,c` (one param) or `clonedFromId=a&clonedFromId=b`
+ * (repeated) and normalises both to `['a','b','c']`, dropping blanks. Returns
+ * `undefined` when the param is absent so the filter stays optional.
+ */
+const toStringArray = ({
+  obj,
+  key,
+}: TransformFnParams): string[] | undefined => {
+  const raw = (obj as Record<string, string | string[] | undefined>)[key];
+  if (raw === undefined || raw === null) return undefined;
+  const parts = Array.isArray(raw) ? raw : raw.split(',');
+  return parts.map((s) => s.trim()).filter(Boolean);
+};
+
+/**
  * Query for `GET /templates` — pagination (from `PaginationQueryDto`) plus
  * filters on channel, feature, message type, level, applicable branch type, a
  * case-insensitive `displayTitle` search, and the three boolean flags. Scope
@@ -50,6 +68,27 @@ export class ListTemplateQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsEnum(MessageType)
   messageType?: MessageType;
+
+  /**
+   * Exclude a single message type (e.g. `MARKETING`), keeping every other type
+   * **and** rows with no message type. Lets the channel tabs (SMS/Email/
+   * WhatsApp) list non-marketing templates while the Bulk tab owns the
+   * MARKETING ones — mutually exclusive with `messageType` per request.
+   */
+  @IsOptional()
+  @IsEnum(MessageType)
+  messageTypeNot?: MessageType;
+
+  /**
+   * Restrict to templates cloned from these SITE_ADMIN global template ids.
+   * Used by the "enable" screen to resolve, in one bounded call, which of the
+   * globals on the current page the tenant has already imported.
+   */
+  @IsOptional()
+  @Transform(toStringArray)
+  @IsArray()
+  @IsString({ each: true })
+  clonedFromId?: string[];
 
   @IsOptional()
   @IsEnum(MessagingLevel)

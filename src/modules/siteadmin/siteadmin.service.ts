@@ -177,6 +177,8 @@ export class SiteAdminService {
       where.role = query.role;
     }
 
+    // `siteadmin_users` is platform-level (no tenant_id / RLS) — array-form safe.
+    // eslint-disable-next-line no-restricted-syntax -- platform table, not tenant-scoped
     const [data, total] = await this.prisma.$transaction([
       this.prisma.siteAdminUser.findMany({
         where,
