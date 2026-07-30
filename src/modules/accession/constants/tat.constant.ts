@@ -1,5 +1,4 @@
 import { Prisma, SampleStatus } from '@prisma/client';
-import { AccessionSettingsMap } from './accession-settings.default';
 
 /**
  * Turnaround-time band for a sample (PDF §A.4 TAT filter bar). Derived from the
@@ -7,6 +6,20 @@ import { AccessionSettingsMap } from './accession-settings.default';
  * samples (discarded/returned/cancelled) have no active TAT (`null`).
  */
 export type TatStatus = 'WITHIN' | 'WARNING' | 'CRITICAL' | 'BREACHED';
+
+/**
+ * Absolute elapsed-minute cutoffs (ascending: warning < critical < breached)
+ * used by `deriveTatStatus`/`tatCreatedAtRange`. Computed by
+ * `AccessionSampleService.tatThresholds()` from the branch's Accession Module
+ * Settings (`Accession_MaximumTimeToAcceptSampleMinutes` minus the
+ * `Accession_WarningThresholdMinutes`/`Accession_CriticalThresholdMinutes`
+ * "minutes remaining" countdown the LIMS Settings doc describes them as).
+ */
+export interface TatThresholds {
+  warningMinutes: number;
+  criticalMinutes: number;
+  breachedMinutes: number;
+}
 
 /** All TAT bands (for iterating the §A.4 bar). */
 export const TAT_STATUSES: readonly TatStatus[] = [
@@ -38,7 +51,7 @@ const TERMINAL_STATUSES: ReadonlySet<SampleStatus> = new Set(
 export function deriveTatStatus(
   createdAt: Date,
   status: SampleStatus,
-  tat: AccessionSettingsMap['tat'],
+  tat: TatThresholds,
   nowMs: number,
 ): TatStatus | null {
   if (TERMINAL_STATUSES.has(status)) return null;
@@ -60,7 +73,7 @@ export function deriveTatStatus(
  */
 export function tatCreatedAtRange(
   band: TatStatus,
-  tat: AccessionSettingsMap['tat'],
+  tat: TatThresholds,
   nowMs: number,
 ): Prisma.DateTimeFilter {
   // age >= T  ⇔  createdAt <= now - T ; age < T  ⇔  createdAt > now - T.

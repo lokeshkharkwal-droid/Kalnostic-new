@@ -1,0 +1,58 @@
+meta {
+  name: 06 Save Order Id Sequence
+  type: http
+  seq: 6
+}
+
+put {
+  url: {{baseUrl}}/registration-settings/id-sequences/ORDER
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "prefix": "ORD",
+    "suffix": "AM",
+    "separator": "HYPHEN",
+    "numberLength": 6,
+    "resetCycle": "MONTHLY"
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("recomputes the preview from the new config", function () {
+    const d = res.getBody().data;
+    expect(d.sequenceType).to.equal("ORDER");
+    expect(d.preview).to.equal("ORD-000001-AM");
+  });
+}
+
+docs {
+  Save (partial patch) the `ORDER` external-order-id sequence config for the
+  active branch. Same anatomy applies to `QUOTATION`, `APPOINTMENT`, and
+  `PATIENT` (UMID) — swap the path segment.
+
+  Fields (all optional):
+  - `prefix` (≤24 chars, letters/digits only), `suffix` (≤24 chars,
+    letters/digits only).
+  - `separator` (`NONE`|`HYPHEN`|`SLASH`|`UNDERSCORE`).
+  - `numberLength` (int 4-10 — the doc's "Dropdown 4-10").
+  - `resetCycle` (`NEVER`|`DAILY`|`MONTHLY`|`YEARLY`).
+
+  The running counter (`currentNumber`) is system-managed and never accepted
+  here — only `RegistrationIdSequenceService.generateNext()` (called by the
+  actual order-creation flow) advances it. Audited under
+  `AuditModule.REGISTRATION_SETTINGS`.
+}

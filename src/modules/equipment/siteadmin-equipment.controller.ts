@@ -18,6 +18,8 @@ import { RequireSiteAdminPermission } from '../siteadmin/decorators/require-site
 import { CurrentSiteAdmin } from '../siteadmin/decorators/current-siteadmin.decorator';
 import { SITE_ADMIN_PERM } from '../siteadmin/constants/siteadmin-permissions.constant';
 import { Public } from '../auth/decorators/public.decorator';
+import { AuditAction, AuditModule } from '@prisma/client';
+import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
  * SiteAdmin lab-equipment management (`/siteadmin/equipment`). An equipment is a
@@ -39,6 +41,11 @@ export class SiteAdminEquipmentController {
    * Create an equipment with its selected lab tests.
    */
   @Post()
+  @Audit({
+    module: AuditModule.EQUIPMENT,
+    action: AuditAction.CREATE,
+    description: 'Created lab equipment',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   create(
     @CurrentSiteAdmin('siteadmin_id') actorId: string,
@@ -70,6 +77,11 @@ export class SiteAdminEquipmentController {
    * Update an equipment (mapped lab tests replaced when `labTestIds` provided).
    */
   @Patch(':id')
+  @Audit({
+    module: AuditModule.EQUIPMENT,
+    action: AuditAction.UPDATE,
+    description: 'Updated lab equipment',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   update(
     @CurrentSiteAdmin('siteadmin_id') actorId: string,
@@ -83,6 +95,11 @@ export class SiteAdminEquipmentController {
    * Soft-delete an equipment (cascade soft-delete of all its lab-test mappings).
    */
   @Delete(':id')
+  @Audit({
+    module: AuditModule.EQUIPMENT,
+    action: AuditAction.DELETE,
+    description: 'Deleted lab equipment',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   remove(@Param('id') id: string) {
     return this.equipmentService.remove(id);

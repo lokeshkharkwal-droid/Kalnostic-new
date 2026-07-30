@@ -1855,6 +1855,8 @@ export class UsersService {
       ];
     }
 
+    // `persons` is platform-level (no tenant_id / RLS), so array-form is safe.
+    // eslint-disable-next-line no-restricted-syntax -- platform table, not tenant-scoped
     const [persons, total] = await this.prisma.$transaction([
       this.prisma.person.findMany({
         where,

@@ -17,6 +17,8 @@ import { SiteAdminPermissionGuard } from '../siteadmin/guards/siteadmin-permissi
 import { RequireSiteAdminPermission } from '../siteadmin/decorators/require-siteadmin-permission.decorator';
 import { SITE_ADMIN_PERM } from '../siteadmin/constants/siteadmin-permissions.constant';
 import { Public } from '../auth/decorators/public.decorator';
+import { AuditAction, AuditModule } from '@prisma/client';
+import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
  * SiteAdmin payment-rule management (`/siteadmin/payment-rules`). Payment rules
@@ -36,6 +38,11 @@ export class SiteAdminPaymentRulesController {
    * Create a payment rule.
    */
   @Post()
+  @Audit({
+    module: AuditModule.PAYMENT_RULE,
+    action: AuditAction.CREATE,
+    description: 'Created a payment rule',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.PAYMENT_RULES_WRITE)
   create(@Body() dto: CreatePaymentRuleDto) {
     return this.paymentRulesService.create(dto);
@@ -64,6 +71,11 @@ export class SiteAdminPaymentRulesController {
    * Update a payment rule (only supplied fields are changed).
    */
   @Patch(':id')
+  @Audit({
+    module: AuditModule.PAYMENT_RULE,
+    action: AuditAction.UPDATE,
+    description: 'Updated a payment rule',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.PAYMENT_RULES_WRITE)
   update(@Param('id') id: string, @Body() dto: UpdatePaymentRuleDto) {
     return this.paymentRulesService.update(id, dto);
@@ -73,6 +85,11 @@ export class SiteAdminPaymentRulesController {
    * Soft-delete a payment rule.
    */
   @Delete(':id')
+  @Audit({
+    module: AuditModule.PAYMENT_RULE,
+    action: AuditAction.DELETE,
+    description: 'Deleted a payment rule',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.PAYMENT_RULES_WRITE)
   remove(@Param('id') id: string) {
     return this.paymentRulesService.remove(id);

@@ -1,6 +1,13 @@
 -- Row-Level Security policies for tenant-scoped tables (CLAUDE.md §4.3).
 --
--- Apply AFTER the Prisma schema is migrated (e.g. `prisma migrate deploy`):
+-- SOURCE OF TRUTH for RLS. This file is (re)applied idempotently during local
+-- `prisma db push` development. For DEPLOYMENT it is also snapshotted into the
+-- `1_row_level_security` migration, so `prisma migrate deploy` applies it
+-- automatically after the schema baseline — a fresh server needs no separate
+-- step. When this file changes, add a NEW migration that re-runs the full,
+-- updated file (see prisma/migrations/README.md).
+--
+-- To apply it directly against an already-migrated database:
 --   psql "$DATABASE_URL" -f prisma/rls.sql
 --
 -- The application sets the current tenant per request via
@@ -1167,22 +1174,6 @@ CREATE POLICY order_field_configs_tenant_isolation ON order_field_configs
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
--- ── radiologists ────────────────────────────────────────────────────────────────
-ALTER TABLE radiologists ENABLE ROW LEVEL SECURITY;
-ALTER TABLE radiologists FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS radiologists_tenant_isolation ON radiologists;
-CREATE POLICY radiologists_tenant_isolation ON radiologists
-  USING (tenant_id = current_tenant_id())
-  WITH CHECK (tenant_id = current_tenant_id());
-
--- ── phlebotomists ─────────────────────────────────────────────────────────────
-ALTER TABLE phlebotomists ENABLE ROW LEVEL SECURITY;
-ALTER TABLE phlebotomists FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS phlebotomists_tenant_isolation ON phlebotomists;
-CREATE POLICY phlebotomists_tenant_isolation ON phlebotomists
-  USING (tenant_id = current_tenant_id())
-  WITH CHECK (tenant_id = current_tenant_id());
-
 -- ── payment_details ─────────────────────────────────────────────────────────────
 ALTER TABLE payment_details ENABLE ROW LEVEL SECURITY;
 ALTER TABLE payment_details FORCE ROW LEVEL SECURITY;
@@ -1566,6 +1557,22 @@ ALTER TABLE phlebotomist_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE phlebotomist_settings FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS phlebotomist_settings_tenant_isolation ON phlebotomist_settings;
 CREATE POLICY phlebotomist_settings_tenant_isolation ON phlebotomist_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── registration_settings ────────────────────────────────────────────────────
+ALTER TABLE registration_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE registration_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS registration_settings_tenant_isolation ON registration_settings;
+CREATE POLICY registration_settings_tenant_isolation ON registration_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── registration_id_sequences ───────────────────────────────────────────────
+ALTER TABLE registration_id_sequences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE registration_id_sequences FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS registration_id_sequences_tenant_isolation ON registration_id_sequences;
+CREATE POLICY registration_id_sequences_tenant_isolation ON registration_id_sequences
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 

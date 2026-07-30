@@ -101,6 +101,31 @@ export class PdfReportTemplateController {
   }
 
   /**
+   * Render a SITE_ADMIN global PDF report template to a PDF and stream it back
+   * (`application/pdf`), so the Global Templates picker can preview a template
+   * before importing it. Declared before `:id` so `global` isn't matched as an
+   * id. Mirrors `:id/generate` but resolves the template from the global
+   * (tenant-less) scope.
+   */
+  @Post('global/:id/generate')
+  @Audit({
+    module: AuditModule.PDF_REPORT_TEMPLATE,
+    action: AuditAction.OTHER,
+    description: 'Previewed a Site Admin PDF report template',
+  })
+  async generateGlobal(
+    @Param('id') id: string,
+    @Body() dto: GeneratePdfDto,
+    @Res() res: Response,
+  ): Promise<void> {
+    const pdf = await this.service.generateGlobalPdf(id, dto);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="report-${id}.pdf"`);
+    res.setHeader('Content-Length', pdf.length);
+    res.end(pdf);
+  }
+
+  /**
    * List the supported template type keys + labels for the frontend select.
    * Declared before `:id` so it isn't captured as an id.
    */

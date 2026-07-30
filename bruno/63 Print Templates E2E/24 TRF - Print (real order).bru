@@ -1,0 +1,34 @@
+meta {
+  name: 24 TRF - Print (real order)
+  type: http
+  seq: 24
+}
+
+post {
+  url: {{baseUrl}}/orders/{{orderId}}/print
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "type": "trf_print",
+    "templateId": "{{trfTemplateId}}"
+  }
+}
+
+docs {
+  Production path: renders the Test Requisition Form for order `{{orderId}}`.
+  `tests` lists the order's items with status `REQUESTED`; `clinical_notes` comes
+  from the order's notes.
+
+  Printed from the Billings screen in the app. Requires a real `{{orderId}}`.
+}

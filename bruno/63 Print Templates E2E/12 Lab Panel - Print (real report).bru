@@ -1,0 +1,32 @@
+meta {
+  name: 12 Lab Panel - Print (real report)
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/print
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "type": "lab_panel",
+    "templateId": "{{labPanelTemplateId}}"
+  }
+}
+
+docs {
+  Production path: renders report `{{labReportId}}` with the `lab_panel`
+  template. Same endpoint as Lab Report — `type: "lab_panel"` only affects
+  fallback template resolution when `templateId` is omitted.
+}

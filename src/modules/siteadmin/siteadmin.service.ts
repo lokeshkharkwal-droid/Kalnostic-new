@@ -2,9 +2,16 @@ import { Injectable, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import type { JwtSignOptions } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { Prisma, SiteAdminRole, SiteAdminUser } from '@prisma/client';
+import {
+  AuditAction,
+  AuditModule,
+  Prisma,
+  SiteAdminRole,
+  SiteAdminUser,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PasswordService } from '../security/password.service';
+import { AuditService } from '../audit/audit.service';
 import { SiteAdminJwtPayload } from './types/siteadmin-jwt.type';
 import { SiteAdminLoginDto } from './dto/siteadmin-login.dto';
 import { CreateSiteAdminDto } from './dto/create-siteadmin.dto';
@@ -31,6 +38,7 @@ export class SiteAdminService {
     private readonly passwordService: PasswordService,
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
+    private readonly auditService: AuditService,
   ) {
     this.tokenTtl = this.config.get<string>(
       'SITEADMIN_TOKEN_TTL',
@@ -103,6 +111,16 @@ export class SiteAdminService {
     this.logger.log(
       `SiteAdmin login: ${admin.email} (${admin.role}) from ${clientIp}`,
     );
+    // Login is @Public(), so the AuditInterceptor can't see the actor — record here.
+    this.auditService.recordSiteAdmin({
+      module: AuditModule.AUTH,
+      action: AuditAction.LOGIN,
+      description: `SiteAdmin logged in (${admin.email})`,
+      actorSiteadminId: admin.id,
+      actorEmail: admin.email,
+      actorRole: admin.role,
+      ipAddress: clientIp,
+    });
     return { accessToken };
   }
 
@@ -177,6 +195,8 @@ export class SiteAdminService {
       where.role = query.role;
     }
 
+    // `siteadmin_users` is platform-level (no tenant_id / RLS) — array-form safe.
+    // eslint-disable-next-line no-restricted-syntax -- platform table, not tenant-scoped
     const [data, total] = await this.prisma.$transaction([
       this.prisma.siteAdminUser.findMany({
         where,

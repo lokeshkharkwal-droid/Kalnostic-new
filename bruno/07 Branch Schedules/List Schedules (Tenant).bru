@@ -1,0 +1,44 @@
+meta {
+  name: List Schedules (Tenant)
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/schedules?page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 10
+  ~search: Morning
+  ~status: ACTIVE
+  ~branchId: 0b866440-7552-4589-a867-161f3db63420
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  businessAccessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwZXJzb25faWQiOiIyOTQ5N2I2NC0wNGUyLTQwZjktYTY2OS04NDBiZmNlOGU3ZDYiLCJ0ZW5hbnRfaWQiOiJhYjE2OTY1MC01Mzc1LTQwYmUtYTIxMi00ZGE0ZTJiMDE5NGQiLCJhY3RpdmVfYnJhbmNoX2lkIjpudWxsLCJhY3RpdmVfYnJhbmNoX3R5cGUiOm51bGwsImFjdGl2ZV9wcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwiaXNfcGF0aWVudF9jb250ZXh0IjpmYWxzZSwicHJvZmlsZXMiOlt7ImJyYW5jaF9pZCI6bnVsbCwiYnJhbmNoX25hbWUiOm51bGwsImJyYW5jaF90eXBlIjpudWxsLCJwcm9maWxlX2tleSI6ImJ1c2luZXNzX2FkbWluIiwicHJvZmlsZV9sYWJlbCI6IkJ1c2luZXNzIEFkbWluIiwiaXNfZGVmYXVsdCI6dHJ1ZX1dLCJpc19wYXRpZW50IjpmYWxzZSwicGxhdGZvcm1fbXJuIjoiS0FMLTIwMjYwNjA4LTM2OTBCRkQxIiwiaWF0IjoxNzgwOTI5MjU4LCJleHAiOjE3ODA5MzAxNTh9.3Ewemhs9iKWhkM-0Xn-s3je4jwUtpGkUDNyBZ6aHGZc
+}
+
+docs {
+  Tenant-wide paginated list of schedule plans across ALL branches in the
+  caller's tenant (tenant comes from the JWT). Powers the Business-Admin
+  "Schedule Plans" screen (list + branch filter). Ordered by `effectiveFrom`
+  descending. Each row is enriched with its `branch { id, name, code }` for
+  display (the Schedule model itself stores only `branchId`).
+
+  Unlike `GET /branches/:branchId/schedules`, the branch is NOT in the path —
+  it is an OPTIONAL query filter here.
+
+  Optional filters (disabled query params above — enable as needed):
+  - `search` — case-insensitive match against the schedule `planName`.
+    Whitespace-only values are ignored.
+  - `status` — lifecycle state. Allowed values: `ACTIVE`, `INACTIVE`, `DRAFT`.
+  - `branchId` — restrict results to a single branch (UUID).
+}

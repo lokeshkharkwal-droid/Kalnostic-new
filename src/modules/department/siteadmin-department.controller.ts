@@ -17,6 +17,8 @@ import { SiteAdminPermissionGuard } from '../siteadmin/guards/siteadmin-permissi
 import { RequireSiteAdminPermission } from '../siteadmin/decorators/require-siteadmin-permission.decorator';
 import { SITE_ADMIN_PERM } from '../siteadmin/constants/siteadmin-permissions.constant';
 import { Public } from '../auth/decorators/public.decorator';
+import { AuditAction, AuditModule } from '@prisma/client';
+import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
  * SiteAdmin global department **template** management (`/siteadmin/departments`).
@@ -38,6 +40,11 @@ export class SiteAdminDepartmentController {
    * Create a global template department.
    */
   @Post()
+  @Audit({
+    module: AuditModule.DEPARTMENT,
+    action: AuditAction.CREATE,
+    description: 'Created a template department',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   create(@Body() dto: CreateDepartmentTemplateDto) {
     return this.departmentService.createTemplate(dto);
@@ -73,6 +80,11 @@ export class SiteAdminDepartmentController {
    * Update a global template department (`code` is immutable).
    */
   @Patch(':id')
+  @Audit({
+    module: AuditModule.DEPARTMENT,
+    action: AuditAction.UPDATE,
+    description: 'Updated a template department',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   update(@Param('id') id: string, @Body() dto: UpdateDepartmentTemplateDto) {
     return this.departmentService.updateTemplate(id, dto);
@@ -82,6 +94,11 @@ export class SiteAdminDepartmentController {
    * Soft-delete a global template department.
    */
   @Delete(':id')
+  @Audit({
+    module: AuditModule.DEPARTMENT,
+    action: AuditAction.DELETE,
+    description: 'Deleted a template department',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   remove(@Param('id') id: string) {
     return this.departmentService.removeTemplate(id);

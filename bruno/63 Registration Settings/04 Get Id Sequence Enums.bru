@@ -1,0 +1,38 @@
+meta {
+  name: 04 Get Id Sequence Enums
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/registration-settings/id-sequences/enums
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the three enum arrays", function () {
+    const d = res.getBody().data;
+    expect(d.sequenceTypes).to.include.members(["ORDER", "QUOTATION", "APPOINTMENT", "PATIENT"]);
+    expect(d.separators).to.include.members(["NONE", "HYPHEN", "SLASH", "UNDERSCORE"]);
+    expect(d.resetCycles).to.include.members(["NEVER", "DAILY", "MONTHLY", "YEARLY"]);
+  });
+}
+
+docs {
+  Allowed values for the ID-sequence config fields:
+
+  - `sequenceTypes` — `ORDER` | `QUOTATION` | `APPOINTMENT` | `PATIENT`
+    (the `PATIENT` type configures the UMID — see the LIMS Settings doc's
+    "PATIENTS" section).
+  - `separators` — `NONE` | `HYPHEN` | `SLASH` | `UNDERSCORE` (rendered as
+    the doc's "None,-,/,_" dropdown).
+  - `resetCycles` — `NEVER` | `DAILY` | `MONTHLY` | `YEARLY`.
+}

@@ -18,6 +18,8 @@ import { RequireSiteAdminPermission } from '../siteadmin/decorators/require-site
 import { CurrentSiteAdmin } from '../siteadmin/decorators/current-siteadmin.decorator';
 import { SITE_ADMIN_PERM } from '../siteadmin/constants/siteadmin-permissions.constant';
 import { Public } from '../auth/decorators/public.decorator';
+import { AuditAction, AuditModule } from '@prisma/client';
+import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
  * SiteAdmin test-group management (`/siteadmin/test-groups`). A test group is a
@@ -37,6 +39,11 @@ export class SiteAdminTestGroupController {
    * Create a test group with its selected lab tests.
    */
   @Post()
+  @Audit({
+    module: AuditModule.TEST_GROUP,
+    action: AuditAction.CREATE,
+    description: 'Created a test group',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   create(
     @CurrentSiteAdmin('siteadmin_id') actorId: string,
@@ -68,6 +75,11 @@ export class SiteAdminTestGroupController {
    * Update a test group (mapped lab tests replaced when `labTestIds` provided).
    */
   @Patch(':id')
+  @Audit({
+    module: AuditModule.TEST_GROUP,
+    action: AuditAction.UPDATE,
+    description: 'Updated a test group',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   update(
     @CurrentSiteAdmin('siteadmin_id') actorId: string,
@@ -81,6 +93,11 @@ export class SiteAdminTestGroupController {
    * Soft-delete a test group (cascade soft-delete of all its lab-test mappings).
    */
   @Delete(':id')
+  @Audit({
+    module: AuditModule.TEST_GROUP,
+    action: AuditAction.DELETE,
+    description: 'Deleted a test group',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   remove(@Param('id') id: string) {
     return this.testGroupService.remove(id);

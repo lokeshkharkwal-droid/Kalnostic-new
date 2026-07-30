@@ -75,6 +75,7 @@ import { SalesDashboardModule } from './modules/sales-dashboard/sales-dashboard.
 import { SalesSettingsModule } from './modules/sales-settings/sales-settings.module';
 import { PhlebotomistSettingsModule } from './modules/phlebotomist-settings/phlebotomist-settings.module';
 import { LabReportModule } from './modules/lab-report/lab-report.module';
+import { RegistrationSettingsModule } from './modules/registration-settings/registration-settings.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 
 /**
@@ -170,6 +171,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     SalesSettingsModule,
     PhlebotomistSettingsModule,
     LabReportModule,
+    RegistrationSettingsModule,
   ],
   providers: [
     // Global business authentication. SiteAdmin routes use @Public() + their

@@ -1,0 +1,33 @@
+meta {
+  name: 15 Label Print - Print (real sample)
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{baseUrl}}/accession/samples/print-label
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "sampleId": "{{sampleId}}",
+    "templateId": "{{orderLabelTemplateId}}"
+  }
+}
+
+docs {
+  Production path: renders a single barcode label for accession sample
+  `{{sampleId}}` with the `order_label_print` template.
+
+  Requires a real `{{sampleId}}`. Seed one via the Accession flow.
+}

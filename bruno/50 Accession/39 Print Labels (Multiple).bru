@@ -1,0 +1,46 @@
+meta {
+  name: Print Labels (Multiple)
+  type: http
+  seq: 39
+}
+
+post {
+  url: {{baseUrl}}/accession/samples/print-labels
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "ids": ["{{sampleId}}"],
+    "templateId": "{{pdfReportTemplateId}}"
+  }
+}
+
+docs {
+  Render many accession samples' barcode labels into ONE PDF
+  (`multiple_order_label_print`), streamed back as `application/pdf`. Each sample
+  becomes a row in a single `{{#each labels}}` section (barcode text, patient,
+  order code, accession no, sample type, tests). The caller's `ids` order is
+  preserved; unknown ids are skipped.
+
+  ## Body
+  - `ids` (required, non-empty) — accession sample ids to label.
+  - `templateId` (optional) — the `multiple_order_label_print` template to render
+    with. Omit to fall back to the tenant's single active multi-label template.
+
+  ## Errors
+  - 404 `ACCESSION_SAMPLE_NOT_FOUND` — none of the `ids` resolve.
+  - 404 `NO_ACTIVE_LABEL_TEMPLATE` / 409 `AMBIGUOUS_LABEL_TEMPLATE` — template
+    resolution failed and no `templateId` supplied.
+
+  In Bruno, use "Save Response → Save to file" to inspect the PDF.
+}

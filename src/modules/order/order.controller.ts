@@ -64,14 +64,18 @@ export class OrderController {
     return this.orderService.findById(id, tenantId);
   }
 
-  /** Print/Download an order document. Streams the rendered PDF back
-   * directly, matching `LabReportController.print`'s own binary-response
-   * pattern (bypasses `ResponseInterceptor`'s JSON envelope). */
+  /**
+   * Render one of the order's documents (order slip / bill / TRF / quotation) to a
+   * PDF using the selected `PdfReportTemplate`, and stream it back
+   * (`application/pdf`). Uses a library-specific response so the
+   * `ResponseInterceptor` does not wrap the binary in the JSON envelope — mirrors
+   * `PdfReportTemplateController.generate` / `LabReportController.print`.
+   */
   @Post(':id/print')
   @Audit({
     module: AuditModule.ORDER,
     action: AuditAction.OTHER,
-    description: 'Printed/downloaded an order document',
+    description: 'Printed an order document',
   })
   async print(
     @CurrentTenant() tenantId: string,
@@ -82,11 +86,14 @@ export class OrderController {
     const pdf = await this.orderService.print(
       id,
       tenantId,
-      dto.templateId,
       dto.type,
+      dto.templateId,
     );
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="order-${id}.pdf"`);
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${dto.type}-${id}.pdf"`,
+    );
     res.setHeader('Content-Length', pdf.length);
     res.end(pdf);
   }

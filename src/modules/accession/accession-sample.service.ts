@@ -13,17 +13,17 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
 import { LabReportService } from '../lab-report/lab-report.service';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
-import type { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
 import type { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
+import type { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
 import { BranchLabTestConfigSnapshot } from '../branch-lab-test/entities/branch-lab-test.entity';
 import {
   SampleAction,
   nextSampleStatus,
 } from './constants/sample-transitions.constant';
-import { AccessionSettingsMap } from './constants/accession-settings.default';
 import {
   TERMINAL_SAMPLE_STATUSES,
   TatStatus,
+  TatThresholds,
   deriveTatStatus,
   tatCreatedAtRange,
 } from './constants/tat.constant';
@@ -228,16 +228,20 @@ export class AccessionSampleService {
 
     const where = this.buildSampleWhere(tenantId, branchId, query, tat, nowMs);
 
-    const [data, total] = await this.prisma.$transaction([
-      this.prisma.accessionSample.findMany({
+    // withTenant (not array-form $transaction) so the RLS tenant GUC is set for
+    // both queries — array-form bypasses the per-op RLS extension and returns
+    // zero rows under enforced RLS (see PrismaService).
+    const [data, total] = await this.prisma.withTenant(tenantId, async (tx) => {
+      const rows = await tx.accessionSample.findMany({
         where,
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { createdAt: 'desc' },
         include: SAMPLE_LIST_INCLUDE,
-      }),
-      this.prisma.accessionSample.count({ where }),
-    ]);
+      });
+      const count = await tx.accessionSample.count({ where });
+      return [rows, count] as const;
+    });
     const items: AccessionSampleListItem[] = data.map((row) => ({
       ...row,
       tatStatus: deriveTatStatus(row.createdAt, row.status, tat, nowMs),
@@ -1006,7 +1010,7 @@ export class AccessionSampleService {
     tenantId: string,
     branchId: string | null,
     query: ListSamplesDto,
-    tat: AccessionSettingsMap['tat'],
+    tat: TatThresholds,
     nowMs: number,
   ): Prisma.AccessionSampleWhereInput {
     const where: Prisma.AccessionSampleWhereInput = {
@@ -1118,14 +1122,33 @@ export class AccessionSampleService {
   }
 
   /**
-   * The active branch's TAT thresholds, resolved from its `AccessionSetting`
-   * (falling back to the module defaults when the branch has none).
+   * The active branch's TAT thresholds, resolved from its Accession Module
+   * Settings (falling back to the module defaults when the branch has none).
+   * The settings store `Accession_WarningThresholdMinutes`/
+   * `Accession_CriticalThresholdMinutes` as "minutes remaining before the
+   * maximum accept time" (per the LIMS Settings doc); `deriveTatStatus`/
+   * `tatCreatedAtRange` need ascending absolute elapsed-minute cutoffs, so
+   * they're converted here: `warningMinutes = max - warningRemaining`,
+   * `criticalMinutes = max - criticalRemaining`, `breachedMinutes = max`
+   * (a sample breaches automatically once the maximum accept time elapses).
    */
   private async tatThresholds(
     tenantId: string,
     branchId: string | null,
-  ): Promise<AccessionSettingsMap['tat']> {
-    return (await this.settings.resolve(tenantId, branchId)).tat;
+  ): Promise<TatThresholds> {
+    const settings = await this.settings.resolve(tenantId, branchId);
+    const max = settings.Accession_MaximumTimeToAcceptSampleMinutes;
+    return {
+      warningMinutes: Math.max(
+        0,
+        max - settings.Accession_WarningThresholdMinutes,
+      ),
+      criticalMinutes: Math.max(
+        0,
+        max - settings.Accession_CriticalThresholdMinutes,
+      ),
+      breachedMinutes: max,
+    };
   }
 
   /** System barcode for a sample: `ACC-00001` → `BAR-00001-A` (PDF §A.10.2). */

@@ -20,6 +20,8 @@ import { SiteAdminPermissionGuard } from '../siteadmin/guards/siteadmin-permissi
 import { RequireSiteAdminPermission } from '../siteadmin/decorators/require-siteadmin-permission.decorator';
 import { SITE_ADMIN_PERM } from '../siteadmin/constants/siteadmin-permissions.constant';
 import { Public } from '../auth/decorators/public.decorator';
+import { AuditAction, AuditModule } from '@prisma/client';
+import { Audit } from '../../common/decorators/audit.decorator';
 import {
   PDF_REPORT_TEMPLATE_TYPES,
   PDF_REPORT_TEMPLATE_TYPE_LABELS,
@@ -46,6 +48,11 @@ export class SiteAdminPdfReportTemplateController {
    * Create a global PDF report template.
    */
   @Post()
+  @Audit({
+    module: AuditModule.PDF_REPORT_TEMPLATE,
+    action: AuditAction.CREATE,
+    description: 'Created a global PDF report template',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   create(@Body() dto: CreatePdfReportTemplateDto) {
     return this.service.createGlobalTemplate(dto);
@@ -93,6 +100,11 @@ export class SiteAdminPdfReportTemplateController {
    * Update a global template.
    */
   @Patch(':id')
+  @Audit({
+    module: AuditModule.PDF_REPORT_TEMPLATE,
+    action: AuditAction.UPDATE,
+    description: 'Updated a global PDF report template',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   update(@Param('id') id: string, @Body() dto: UpdatePdfReportTemplateDto) {
     return this.service.updateGlobal(id, dto);
@@ -102,6 +114,11 @@ export class SiteAdminPdfReportTemplateController {
    * Soft-delete a global template.
    */
   @Delete(':id')
+  @Audit({
+    module: AuditModule.PDF_REPORT_TEMPLATE,
+    action: AuditAction.DELETE,
+    description: 'Deleted a global PDF report template',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   remove(@Param('id') id: string) {
     return this.service.removeGlobal(id);

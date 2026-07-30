@@ -1,0 +1,35 @@
+meta {
+  name: 21 Bill Print - Print (real order)
+  type: http
+  seq: 21
+}
+
+post {
+  url: {{baseUrl}}/orders/{{orderId}}/print
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "type": "bill_print",
+    "templateId": "{{billPrintTemplateId}}"
+  }
+}
+
+docs {
+  Production path: renders the patient bill for order `{{orderId}}` — amounts are
+  summed from the order's active payment ledger, `payments` lists each ledger
+  row.
+
+  Requires a real `{{orderId}}` (ideally one with recorded payments so the
+  amounts and `payments` section are populated).
+}

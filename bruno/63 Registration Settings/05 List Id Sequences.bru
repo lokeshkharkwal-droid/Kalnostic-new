@@ -1,0 +1,44 @@
+meta {
+  name: 05 List Id Sequences
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/registration-settings/id-sequences
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns all 4 sequence types with a preview", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.length(4);
+    const types = d.map((r) => r.sequenceType).sort();
+    expect(types).to.deep.equal(["APPOINTMENT", "ORDER", "PATIENT", "QUOTATION"]);
+    d.forEach((row) => expect(row).to.have.property("preview"));
+  });
+}
+
+docs {
+  All 4 Order/Quotation/Appointment/Patient-UMID id-sequence configs for the
+  active branch, each auto-created with defaults (`prefix: ""`, `suffix: ""`,
+  `separator: "NONE"`, `numberLength: 6`, `resetCycle: "NEVER"`,
+  `currentNumber: 0`) on first access — this endpoint never 404s.
+
+  Each row includes a computed (not persisted) `preview` string showing what
+  the *next* generated id would look like, e.g. with `prefix: "ORD"`,
+  `separator: "HYPHEN"`, `suffix: "AM"`, `numberLength: 6` →
+  `"ORD-000001-AM"` (matches the LIMS Settings doc's example previews).
+
+  Minting a real id (incrementing `currentNumber`) is not exposed here — it
+  happens as a side effect of the actual order/quotation/appointment/patient
+  creation flows via `RegistrationIdSequenceService.generateNext()`.
+}

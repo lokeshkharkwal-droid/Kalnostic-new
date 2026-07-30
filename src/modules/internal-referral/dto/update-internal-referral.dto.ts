@@ -68,10 +68,10 @@ export class UpdateInternalReferralDto {
   // fullName is never accepted from the client — it's always derived from
   // firstName/lastName in the service (see InternalReferralService.create/update).
 
-  @IsString()
+  /** FK into the tenant's Departments master (validated in the service). */
+  @IsUUID()
   @IsOptional()
-  @MaxLength(255)
-  department?: string;
+  departmentId?: string;
 
   @IsString()
   @IsOptional()

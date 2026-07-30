@@ -1,0 +1,51 @@
+meta {
+  name: 23 TRF - Generate (dummy)
+  type: http
+  seq: 23
+}
+
+post {
+  url: {{baseUrl}}/pdf-report-templates/{{trfTemplateId}}/generate
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "variables": {
+      "trf_ref": "TRF-DUMMY-001",
+      "order_code": "ORD-DUMMY-001",
+      "order_date": "2026-07-27",
+      "clinical_notes": "DUMMY clinical notes — fasting sample",
+      "branch_name": "Dummy Central Lab",
+      "patient_name": "Jane DUMMY Doe",
+      "patient_age": "34",
+      "patient_gender": "FEMALE",
+      "patient_um_id": "UM-DUMMY-9",
+      "patient_mobile": "+91 90000 00000",
+      "patient_email": "jane.dummy@example.com",
+      "patient_blood_group": "O+",
+      "referred_by": "Dr. DUMMY Referrer",
+      "referral_panel": "DUMMY Panel Ltd"
+    },
+    "sections": {
+      "tests": [
+        { "sr_no": 1, "name": "Complete Blood Count", "code": "CBC", "status": "REQUESTED" },
+        { "sr_no": 2, "name": "Lipid Profile", "code": "LIPID", "status": "REQUESTED" }
+      ]
+    }
+  }
+}
+
+docs {
+  Deterministic substitution proof for `trf_print`. All 14 scalar cells resolve
+  and both `tests` rows render.
+}

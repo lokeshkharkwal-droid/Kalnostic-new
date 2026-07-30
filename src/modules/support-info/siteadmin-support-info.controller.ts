@@ -18,6 +18,8 @@ import { RequireSiteAdminPermission } from '../siteadmin/decorators/require-site
 import { CurrentSiteAdmin } from '../siteadmin/decorators/current-siteadmin.decorator';
 import { SITE_ADMIN_PERM } from '../siteadmin/constants/siteadmin-permissions.constant';
 import { Public } from '../auth/decorators/public.decorator';
+import { AuditAction, AuditModule } from '@prisma/client';
+import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
  * SiteAdmin support-information management (`/siteadmin/support-info`). Records
@@ -39,6 +41,11 @@ export class SiteAdminSupportInfoController {
    * Create a support-information record.
    */
   @Post()
+  @Audit({
+    module: AuditModule.SUPPORT_INFO,
+    action: AuditAction.CREATE,
+    description: 'Created support info',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   create(
     @CurrentSiteAdmin('siteadmin_id') actorId: string,
@@ -70,6 +77,11 @@ export class SiteAdminSupportInfoController {
    * Update a support-information record.
    */
   @Patch(':id')
+  @Audit({
+    module: AuditModule.SUPPORT_INFO,
+    action: AuditAction.UPDATE,
+    description: 'Updated support info',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   update(
     @CurrentSiteAdmin('siteadmin_id') actorId: string,
@@ -83,6 +95,11 @@ export class SiteAdminSupportInfoController {
    * Soft-delete a support-information record.
    */
   @Delete(':id')
+  @Audit({
+    module: AuditModule.SUPPORT_INFO,
+    action: AuditAction.DELETE,
+    description: 'Deleted support info',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   remove(@Param('id') id: string) {
     return this.supportInfoService.remove(id);

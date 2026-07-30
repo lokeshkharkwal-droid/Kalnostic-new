@@ -10,12 +10,12 @@ import {
   SampleSource,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
+import { OrderPrintType } from './dto/print-order.dto';
 import { AppointmentService } from '../appointment/appointment.service';
 import { AccessionSampleService } from '../accession/accession-sample.service';
 import { SlotReservationService } from '../phlebotomist-schedule/slot-reservation.service';
 import { PhlebotomistCollectionService } from '../phlebotomist-collection/phlebotomist-collection.service';
-import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
-import type { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
 import type { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -357,30 +357,33 @@ export class OrderService {
     return order;
   }
 
-  // ── Print / Download Order ───────────────────────────────────────────────────
+  // ── Print (template-driven PDF) ─────────────────────────────────────────────
+  //
+  // Bridges an order's real data into the `GeneratePdfDto` shape
+  // `PdfReportTemplateService.generatePdf` already expects, so a user-authored
+  // classic template (Old Templates → Print) is rendered against the order. One
+  // endpoint (`POST /orders/:id/print`) serves the four order-scoped documents;
+  // the `type` selects the context builder. Mirrors `LabReportService.print`.
 
   /**
-   * Print/Download an order document (order-console's "Print Order" action —
-   * PDF templates integration checklist item 1). Resolves the tenant's active
-   * template of `type` (or the caller's explicit `templateId`) and renders it
-   * with this order's real data via `PdfReportTemplateService.generatePdf`.
-   * Mirrors `LabReportService.print`'s exact shape (variables/sections built
-   * from the record's own data, one template, one render).
-   * @param type which `PdfReportTemplate` type to resolve against when
-   * `templateId` is omitted (`order_print`, `bill_print`, `trf_print`,
-   * `lab_quotation_print`, …). Ignored when `templateId` is given explicitly.
-   * @throws OrderNotFoundException if missing/soft-deleted/other tenant
-   * @throws NoActiveOrderPrintTemplateException if no active template exists
-   * @throws AmbiguousOrderPrintTemplateException if multiple exist and no
-   * `templateId` was given
+   * Render one of an order's documents (order slip / bill / TRF / quotation) to a
+   * PDF using the selected (or the tenant's single active) template of that type.
+   * @param id order id
+   * @param tenantId tenant scope (from JWT)
+   * @param type which order document to render
+   * @param templateId explicit template to use (the picker always sends one)
+   * @returns the rendered PDF bytes
+   * @throws NoActiveOrderPrintTemplateException if no active template of `type` exists
+   * @throws AmbiguousOrderPrintTemplateException if several exist and no `templateId` was given
    */
   async print(
     id: string,
     tenantId: string,
+    type: OrderPrintType,
     templateId?: string,
-    type: PdfReportTemplateType = 'order_print',
   ): Promise<Buffer> {
-    const context = await this.buildPrintContext(id, tenantId);
+    const order = await this.findById(id, tenantId);
+    const context = this.buildPrintContext(order, type);
     const resolvedTemplateId =
       templateId ?? (await this.resolvePrintTemplateId(tenantId, type));
     return this.pdfReportTemplateService.generatePdf(
@@ -390,9 +393,14 @@ export class OrderService {
     );
   }
 
+  /**
+   * Resolve the tenant's single active template for a print `type` when the caller
+   * did not pass an explicit id.
+   * @throws NoActiveOrderPrintTemplateException / AmbiguousOrderPrintTemplateException
+   */
   private async resolvePrintTemplateId(
     tenantId: string,
-    type: PdfReportTemplateType,
+    type: OrderPrintType,
   ): Promise<string> {
     const { data } = await this.pdfReportTemplateService.findAllForTenant(
       tenantId,
@@ -413,55 +421,184 @@ export class OrderService {
     return data[0]!.id;
   }
 
-  /** Builds the render context for Print/Download — order/patient/billing
-   * variables plus a `sections.items` row-set (one row per order item). */
-  private async buildPrintContext(
-    id: string,
-    tenantId: string,
-  ): Promise<GeneratePdfDto> {
-    const order = await this.findById(id, tenantId);
-    const patient = order.patient;
-    const payment = order.payments[0];
+  /** Dispatch to the per-type render-context builder. */
+  private buildPrintContext(
+    order: OrderWithRelations,
+    type: OrderPrintType,
+  ): GeneratePdfDto {
+    switch (type) {
+      case 'order_print':
+        return this.buildOrderPrintContext(order);
+      case 'bill_print':
+        return this.buildBillContext(order);
+      case 'trf_print':
+        return this.buildTrfContext(order);
+      case 'lab_quotation_print':
+        return this.buildQuotationContext(order);
+    }
+  }
 
-    const items = order.items
-      .filter((i) => !i.deletedAt)
-      .map((i) => ({
-        test_name:
-          i.branchLabTest?.testName ??
-          i.branchLabPanel?.panelName ??
-          i.direct ??
-          '',
-        price: i.branchLabTest?.priceMsrp ?? i.branchLabPanel?.priceMsrp ?? '',
-      }));
+  /** Common patient `{variables}` shared by every order document. */
+  private patientVariables(order: OrderWithRelations): Record<string, unknown> {
+    const p = order.patient;
+    return {
+      patient_name: [p.firstName, p.middleName, p.lastName]
+        .filter(Boolean)
+        .join(' '),
+      patient_age: p.age ?? '',
+      patient_gender: p.gender ?? '',
+      patient_um_id: p.umId ?? '',
+      patient_mobile: p.mobile ?? '',
+      patient_email: p.email ?? '',
+      patient_blood_group: p.bloodGroup ?? '',
+    };
+  }
 
+  /** Common referral `{variables}` shared by every order document. */
+  private referralVariables(
+    order: OrderWithRelations,
+  ): Record<string, unknown> {
+    return {
+      referred_by: order.referredByDoctor
+        ? [order.referredByDoctor.firstName, order.referredByDoctor.lastName]
+            .filter(Boolean)
+            .join(' ')
+        : '',
+      referral_panel: order.referralPanel?.name ?? '',
+    };
+  }
+
+  /** One `sections.items` row per active order item (test / panel / direct). */
+  private itemRows(order: OrderWithRelations): Array<Record<string, unknown>> {
+    return order.items.map((it, i) => {
+      const test = it.branchLabTest;
+      const panel = it.branchLabPanel;
+      return {
+        sr_no: i + 1,
+        name: test?.testName ?? panel?.panelName ?? it.direct ?? '',
+        code: test?.testCode ?? panel?.panelCode ?? '',
+        type: test ? 'Test' : panel ? 'Panel' : 'Direct',
+        price: Number(test?.priceMsrp ?? panel?.priceMsrp ?? 0),
+        discount: it.discount ?? 0,
+      };
+    });
+  }
+
+  /** Summed bill totals across the active payment ledger (minor units). */
+  private billTotals(order: OrderWithRelations): {
+    gross: number;
+    discount: number;
+    net: number;
+    paid: number;
+    balance: number;
+  } {
+    const sum = (pick: (p: OrderWithRelations['payments'][number]) => number) =>
+      order.payments.reduce((acc, p) => acc + pick(p), 0);
+    const gross = sum((p) => p.totalAmount);
+    const discount = sum((p) => p.orderDiscount);
+    const net = sum((p) => p.netAmount);
+    const paid = sum((p) => p.paidAmount);
+    return { gross, discount, net, paid, balance: net - paid };
+  }
+
+  /** Format a DATE-only value as `YYYY-MM-DD` (empty when null). */
+  private dateOnly(value: Date | null | undefined): string {
+    return value ? value.toISOString().slice(0, 10) : '';
+  }
+
+  /** `order_print` — order slip: header, patient, referral, item list. */
+  private buildOrderPrintContext(order: OrderWithRelations): GeneratePdfDto {
     return {
       variables: {
         order_code: order.orderCode,
-        order_date: order.orderDate.toISOString().slice(0, 10),
-        order_type: order.orderType,
-        billing_type: order.billingType,
-        order_status: order.status,
-        patient_name: [patient.firstName, patient.middleName, patient.lastName]
-          .filter(Boolean)
-          .join(' '),
-        patient_age: patient.age ?? '',
-        patient_gender: patient.gender ?? '',
-        patient_um_id: patient.umId ?? '',
-        patient_mobile: patient.mobile ?? '',
-        referred_by: order.referredByDoctor
-          ? [order.referredByDoctor.firstName, order.referredByDoctor.lastName]
-              .filter(Boolean)
-              .join(' ')
-          : '',
-        referral_panel: order.referralPanel?.name ?? '',
+        bill_id: order.billId ?? '',
+        order_date: this.dateOnly(order.orderDate),
+        order_time: order.orderTime ?? '',
+        status: order.status,
         branch_name: order.branch?.name ?? '',
-        total_amount: payment?.totalAmount ?? '',
-        order_discount: payment?.orderDiscount ?? '',
-        net_amount: payment?.netAmount ?? '',
-        paid_amount: payment?.paidAmount ?? '',
-        remaining_balance: payment?.remainingBalance ?? '',
+        item_count: order.items.length,
+        ...this.patientVariables(order),
+        ...this.referralVariables(order),
       },
-      sections: { items },
+      sections: { items: this.itemRows(order) },
+    };
+  }
+
+  /** `bill_print` — patient bill: amounts + item list + payment history. */
+  private buildBillContext(order: OrderWithRelations): GeneratePdfDto {
+    const totals = this.billTotals(order);
+    return {
+      variables: {
+        bill_id: order.billId ?? order.orderCode,
+        order_code: order.orderCode,
+        order_date: this.dateOnly(order.orderDate),
+        status: order.status,
+        payment_status: order.paymentStatus,
+        branch_name: order.branch?.name ?? '',
+        gross_amount: totals.gross,
+        discount_amount: totals.discount,
+        net_amount: totals.net,
+        paid_amount: totals.paid,
+        balance_amount: totals.balance,
+        ...this.patientVariables(order),
+        ...this.referralVariables(order),
+      },
+      sections: {
+        items: this.itemRows(order),
+        payments: order.payments.map((pd) => ({
+          date: this.dateOnly(pd.paymentDate),
+          mode: pd.paymentMode,
+          reference: pd.reference ?? '',
+          amount: pd.paidAmount,
+        })),
+      },
+    };
+  }
+
+  /** `trf_print` — Test Requisition Form: requested tests + clinical notes. */
+  private buildTrfContext(order: OrderWithRelations): GeneratePdfDto {
+    return {
+      variables: {
+        trf_ref: order.billId ?? order.orderCode,
+        order_code: order.orderCode,
+        order_date: this.dateOnly(order.orderDate),
+        clinical_notes: order.orderNotes ?? '',
+        branch_name: order.branch?.name ?? '',
+        ...this.patientVariables(order),
+        ...this.referralVariables(order),
+      },
+      sections: {
+        tests: order.items.map((it, i) => {
+          const test = it.branchLabTest;
+          const panel = it.branchLabPanel;
+          return {
+            sr_no: i + 1,
+            name: test?.testName ?? panel?.panelName ?? it.direct ?? '',
+            code: test?.testCode ?? panel?.panelCode ?? '',
+            status: 'REQUESTED',
+          };
+        }),
+      },
+    };
+  }
+
+  /** `lab_quotation_print` — the quotation: items + totals + validity. */
+  private buildQuotationContext(order: OrderWithRelations): GeneratePdfDto {
+    const totals = this.billTotals(order);
+    return {
+      variables: {
+        quote_id: order.orderCode,
+        quote_date: this.dateOnly(order.orderDate),
+        valid_till: this.dateOnly(order.quotationValidTill),
+        status: order.quotationStatus ?? '',
+        branch_name: order.branch?.name ?? '',
+        gross_amount: totals.gross,
+        discount_amount: totals.discount,
+        net_amount: totals.net,
+        ...this.patientVariables(order),
+        ...this.referralVariables(order),
+      },
+      sections: { items: this.itemRows(order) },
     };
   }
 

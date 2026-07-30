@@ -1,0 +1,50 @@
+meta {
+  name: 08 Lab All Report - Generate (dummy)
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/pdf-report-templates/{{labAllReportTemplateId}}/generate
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "variables": {
+      "order_code": "ORD-DUMMY-001",
+      "order_date": "2026-07-27",
+      "patient_name": "Jane DUMMY Doe",
+      "patient_age": "34",
+      "patient_gender": "FEMALE",
+      "patient_um_id": "UM-DUMMY-9",
+      "report_count": 3
+    },
+    "sections": {
+      "reports": [
+        { "test_name": "Complete Blood Count", "report_status": "APPROVED", "results_summary": "13.5 g/dL, 6.2 10^3/uL" },
+        { "test_name": "Lipid Profile", "report_status": "APPROVED", "results_summary": "180 mg/dL" },
+        { "test_name": "Thyroid Panel", "report_status": "PENDING", "results_summary": "" }
+      ]
+    },
+    "signatories": [
+      { "name": "Dr. A. DUMMY", "designation": "MD, Pathologist" },
+      { "name": "Dr. B. DUMMY", "designation": "MD, Biochemistry" }
+    ]
+  }
+}
+
+docs {
+  Deterministic substitution proof for `lab_all_report`. Header shows
+  report_count = 3, three `reports` rows render, and the footer shows two
+  signatory blocks.
+}

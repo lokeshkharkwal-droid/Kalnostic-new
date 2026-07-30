@@ -25,6 +25,7 @@ export type BonusSlab = {
 export const INTERNAL_REFERRAL_DETAIL_INCLUDE = {
   labTests: { where: { deletedAt: null } },
   labPanels: { where: { deletedAt: null } },
+  department: { select: { id: true, name: true } },
 } satisfies Prisma.InternalReferralInclude;
 
 /** An internal referral with all relations loaded (raw, before enrichment). */
@@ -69,7 +70,8 @@ export const INTERNAL_REFERRAL_LIST_SELECT = {
   firstName: true,
   lastName: true,
   fullName: true,
-  department: true,
+  departmentId: true,
+  department: { select: { id: true, name: true } },
   designation: true,
   mobileNumber: true,
   email: true,

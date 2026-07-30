@@ -17,6 +17,8 @@ import { SiteAdminPermissionGuard } from '../siteadmin/guards/siteadmin-permissi
 import { RequireSiteAdminPermission } from '../siteadmin/decorators/require-siteadmin-permission.decorator';
 import { SITE_ADMIN_PERM } from '../siteadmin/constants/siteadmin-permissions.constant';
 import { Public } from '../auth/decorators/public.decorator';
+import { AuditAction, AuditModule } from '@prisma/client';
+import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
  * SiteAdmin area/locality management (`/siteadmin/locations/areas`). Global
@@ -32,6 +34,11 @@ export class SiteAdminAreaController {
 
   /** Create an area under a city (validates city + state + country consistency). */
   @Post()
+  @Audit({
+    module: AuditModule.LOCATION,
+    action: AuditAction.CREATE,
+    description: 'Created an area',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   create(@Body() dto: CreateAreaDto) {
     return this.areaService.create(dto);
@@ -59,6 +66,11 @@ export class SiteAdminAreaController {
 
   /** Update an area. */
   @Patch(':id')
+  @Audit({
+    module: AuditModule.LOCATION,
+    action: AuditAction.UPDATE,
+    description: 'Updated an area',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   update(@Param('id') id: string, @Body() dto: UpdateAreaDto) {
     return this.areaService.update(id, dto);
@@ -66,6 +78,11 @@ export class SiteAdminAreaController {
 
   /** Soft-delete an area (leaf node; no child check). */
   @Delete(':id')
+  @Audit({
+    module: AuditModule.LOCATION,
+    action: AuditAction.DELETE,
+    description: 'Deleted an area',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   remove(@Param('id') id: string) {
     return this.areaService.remove(id);

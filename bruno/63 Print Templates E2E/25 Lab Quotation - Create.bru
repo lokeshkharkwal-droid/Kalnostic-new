@@ -1,0 +1,58 @@
+meta {
+  name: 25 Lab Quotation - Create
+  type: http
+  seq: 25
+}
+
+post {
+  url: {{baseUrl}}/pdf-report-templates
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "type": "lab_quotation_print",
+    "name": "E2E Check — Lab Quotation",
+    "isActive": true,
+    "meta": {
+      "orientation": "P",
+      "page_size": "A4",
+      "default_font": "helvetica",
+      "default_font_size": "10",
+      "margin_left": "12", "margin_right": "12", "margin_top": "10", "margin_bottom": "10",
+      "margin_header": "5", "margin_footer": "5",
+      "custom_css": "body{font-family:helvetica,sans-serif;font-size:10pt;color:#111} h2{color:#0ea5e9;margin:0 0 6px} h3{margin:12px 0 4px;color:#334155} table{width:100%;border-collapse:collapse;margin:4px 0} td,th{border:1px solid #cbd5e1;padding:4px 6px;text-align:left;vertical-align:top} th{background:#f1f5f9} .k{width:38%;color:#475569;font-weight:bold} .sec th{background:#e0f2fe}",
+      "header_name": "Quotation Header",
+      "header_html": "<h2>Lab Quotation — variable check</h2><div>Quote: {quote_id} · Valid till: {valid_till}</div>",
+      "body_name": "Quotation Body",
+      "body_html": "<h3>Scalar variables</h3><table><tr><th class='k'>Variable</th><th>Resolved value</th></tr><tr><td class='k'>quote_id</td><td>{quote_id}</td></tr><tr><td class='k'>quote_date</td><td>{quote_date}</td></tr><tr><td class='k'>valid_till</td><td>{valid_till}</td></tr><tr><td class='k'>status</td><td>{status}</td></tr><tr><td class='k'>branch_name</td><td>{branch_name}</td></tr><tr><td class='k'>gross_amount</td><td>{gross_amount}</td></tr><tr><td class='k'>discount_amount</td><td>{discount_amount}</td></tr><tr><td class='k'>net_amount</td><td>{net_amount}</td></tr><tr><td class='k'>patient_name</td><td>{patient_name}</td></tr><tr><td class='k'>patient_age</td><td>{patient_age}</td></tr><tr><td class='k'>patient_gender</td><td>{patient_gender}</td></tr><tr><td class='k'>patient_um_id</td><td>{patient_um_id}</td></tr><tr><td class='k'>patient_mobile</td><td>{patient_mobile}</td></tr><tr><td class='k'>patient_email</td><td>{patient_email}</td></tr><tr><td class='k'>patient_blood_group</td><td>{patient_blood_group}</td></tr><tr><td class='k'>referred_by</td><td>{referred_by}</td></tr><tr><td class='k'>referral_panel</td><td>{referral_panel}</td></tr></table><h3>sections.items ({{#each items}})</h3><table class='sec'><tr><th>sr_no</th><th>name</th><th>code</th><th>type</th><th>price</th><th>discount</th></tr>{{#each items}}<tr><td>{sr_no}</td><td>{name}</td><td>{code}</td><td>{type}</td><td>{price}</td><td>{discount}</td></tr>{{/each}}</table>",
+      "footer_name": "Quotation Footer",
+      "footer_html": "<div>— end of lab_quotation_print —</div>"
+    }
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("quotationTemplateId", data.id);
+}
+
+docs {
+  Create the `lab_quotation_print` checklist template and capture
+  `quotationTemplateId`.
+
+  Variables from `OrderService.buildQuotationContext`: `quote_id`, `quote_date`,
+  `valid_till`, `status` (the quotation status), `branch_name`, `gross_amount`,
+  `discount_amount`, `net_amount`, the seven `patient_*` fields, `referred_by`,
+  `referral_panel`; `sections.items[] { sr_no, name, code, type, price,
+  discount }`.
+}

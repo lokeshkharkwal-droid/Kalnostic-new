@@ -1,0 +1,141 @@
+meta {
+  name: 03 Save Registration Settings
+  type: http
+  seq: 3
+}
+
+put {
+  url: {{baseUrl}}/registration-settings
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "General_AllowAddPatientPhoto": true,
+    "General_ViewMedicalHistory": true,
+    "General_ViewPastOrders": true,
+    "General_AllowEditingOrderDate": false,
+    "General_AllowEditingPaymentDate": false,
+    "General_DefaultPaymentMode": "CASH",
+
+    "Quotation_QuotationValidityValue": 7,
+    "Quotation_QuotationValidityUnit": "DAYS",
+    "Quotation_AllowDuplicationOfExpiredQuotation": false,
+
+    "ChargesAndDeductions_VisitChargesAmount": 200,
+    "ChargesAndDeductions_VisitChargesEditable": true,
+    "ChargesAndDeductions_SampleCollectionChargesAmount": 100,
+    "ChargesAndDeductions_SampleCollectionChargesEditable": true,
+    "ChargesAndDeductions_AllowWalletDeduction": true,
+    "ChargesAndDeductions_MaximumWalletDeductionPercent": 100,
+    "ChargesAndDeductions_AllowLoyaltyDeduction": true,
+    "ChargesAndDeductions_MaximumLoyaltyPointsEquivalentAmount": 500,
+    "ChargesAndDeductions_AllowClearPreviousDues": true,
+    "ChargesAndDeductions_AllowOrderWithoutClearingPreviousDues": false,
+    "ChargesAndDeductions_MinimumPreviousDuesToClear": 0,
+    "ChargesAndDeductions_AllowPartialBilling": true,
+    "ChargesAndDeductions_MinimumPercentOfNetAmountToProceed": 30,
+    "ChargesAndDeductions_TdsApplicable": false,
+    "ChargesAndDeductions_MinimumTdsPercent": 0,
+    "ChargesAndDeductions_MaximumTdsPercent": 10,
+    "ChargesAndDeductions_AllowDiscounts": true,
+    "ChargesAndDeductions_MinimumDiscountPercent": 0,
+    "ChargesAndDeductions_MaximumDiscountPercent": 20,
+    "ChargesAndDeductions_AllowLineItemDiscount": true,
+    "ChargesAndDeductions_MinimumLineItemDiscountPercent": 0,
+    "ChargesAndDeductions_MaximumLineItemDiscountPercent": 20,
+    "ChargesAndDeductions_AllowPartialBillingOfDiscountedOrder": true,
+    "ChargesAndDeductions_AllowOrderDiscountOnly": false,
+    "ChargesAndDeductions_AllowLineDiscountOnly": false,
+    "ChargesAndDeductions_AllowBothOrderAndLineDiscount": true,
+
+    "CancellationAndRefund_AllowOrderCancellation": true,
+    "CancellationAndRefund_AllowPartialCancellation": true,
+    "CancellationAndRefund_AllowRefund": true,
+    "CancellationAndRefund_AllowPartialRefund": true,
+    "CancellationAndRefund_CancellationChargesApplicable": true,
+    "CancellationAndRefund_CancellationChargesAmount": 50,
+    "CancellationAndRefund_RefundChargesApplicable": true,
+    "CancellationAndRefund_RefundChargesAmount": 25,
+
+    "ReferralAndStaffPermissions_AllowAddReferral": true,
+    "ReferralAndStaffPermissions_AllowAddReferralPanel": true,
+    "ReferralAndStaffPermissions_AllowAddInternalReferralUser": true,
+    "ReferralAndStaffPermissions_AllowAddExternalReferralUser": true,
+    "ReferralAndStaffPermissions_AllowAddDoctorName": true,
+    "ReferralAndStaffPermissions_AllowAddRadiologistName": true,
+    "ReferralAndStaffPermissions_AllowAddRadiologyTechnicianName": true,
+    "ReferralAndStaffPermissions_AllowAddPhlebotomistName": true,
+
+    "BillingMenu_AllowCollectionOfAmountByOtherUser": false,
+    "BillingMenu_AllowCancellationByOtherUser": false,
+    "BillingMenu_AllowBillCopyPrintForPaidBillingsOnly": true,
+    "BillingMenu_AllowOtherUserToEditQuotation": false,
+
+    "Appointment_AllowCheckInForPaidAppointmentsOnly": false,
+    "Appointment_AllowProgressOfUnpaidAndPartialPaidAppointments": false,
+
+    "Patients_AllowMergingTwoPatients": false
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("echoes back the saved values", function () {
+    const d = res.getBody().data;
+    expect(d.General_DefaultPaymentMode).to.equal("CASH");
+    expect(d.ChargesAndDeductions_AllowBothOrderAndLineDiscount).to.equal(true);
+  });
+}
+
+docs {
+  Upsert the active branch's Registration settings. Every field is optional (a
+  partial patch) — omitted fields keep their previously-saved value (or the
+  schema default on first save). The response is the full saved row. Audited
+  under `AuditModule.REGISTRATION_SETTINGS`.
+
+  Field groups (all `<Heading>_<Setting>` named, mirroring the LIMS Settings
+  doc 1:1):
+
+  - `General_*` — patient-photo/medical-history/past-orders visibility,
+    order/payment date editing, default payment mode (`PaymentMode` enum).
+  - `Quotation_*` — validity value + unit (`RepeatIntervalUnit`:
+    `HOURS`|`DAYS`|`MONTHS`|`YEARS`), duplication of expired quotations.
+    (Quotation *ID* config — prefix/separator/suffix/reset-cycle — is separate,
+    see "Registration Id Sequences".)
+  - `ChargesAndDeductions_*` — visit/sample-collection charges + editability,
+    wallet/loyalty deduction + caps, previous-dues rules, partial billing +
+    minimum-% threshold, TDS min/max %, order/line discount min/max %.
+    `AllowOrderDiscountOnly` / `AllowLineDiscountOnly` /
+    `AllowBothOrderAndLineDiscount` are **mutually exclusive** — at most one
+    may be `true`.
+  - `CancellationAndRefund_*` — order/partial cancellation, refund/partial
+    refund, cancellation/refund charges + applicability.
+  - `ReferralAndStaffPermissions_*` — add-referral/referral-panel/internal-
+    external-referral-user/doctor/radiologist/radiology-technician/
+    phlebotomist name permissions.
+  - `BillingMenu_*` — collection/cancellation by another user, paid-only bill
+    copy printing, other-user quotation editing.
+  - `Appointment_*` — check-in for paid appointments only, progress of unpaid/
+    partial-paid appointments. (Appointment *ID* config is separate.)
+  - `Patients_*` — merging two patients. (Patient/UMID *ID* config is
+    separate.)
+
+  Validation: `Minimum*Percent` must not exceed its paired `Maximum*Percent`
+  (TDS, discount, line-item discount — checked against the merged
+  existing+incoming values) → `422 VALIDATION_ERROR`. More than one of the
+  three discount-mode booleans set `true` → `422 CONFLICTING_DISCOUNT_MODE`.
+  `tenantId`/`branchId` come from the JWT/active profile — never send them in
+  the body (rejected as unknown fields).
+}

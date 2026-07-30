@@ -1,0 +1,53 @@
+meta {
+  name: Print Order Document
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/orders/{{orderId}}/print
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "type": "bill_print",
+    "templateId": "{{pdfReportTemplateId}}"
+  }
+}
+
+docs {
+  Render one of the order's documents to a PDF using the selected
+  `PdfReportTemplate`, streamed back as `application/pdf` (raw binary — NOT the
+  JSON envelope). The backend builds the render context from the order's real
+  data (patient, items, referral, payment ledger) and interpolates the template's
+  `{mustache}` placeholders + `{{#each}}` sections.
+
+  ## Body
+  - `type` (required) — which order document to render. One of:
+    - `order_print` — the order slip (header, patient, referral, item list).
+    - `bill_print` — the patient bill (amounts + item list + payment history).
+    - `trf_print` — the Test Requisition Form (requested tests + clinical notes).
+    - `lab_quotation_print` — the quotation (items + totals + validity).
+  - `templateId` (optional) — the `PdfReportTemplate` to render with. The frontend
+    picker always sends the selected id. Omit to fall back to the tenant's single
+    active template of `type`.
+
+  ## Errors
+  - 404 `ORDER_NOT_FOUND` — order missing / soft-deleted / other tenant.
+  - 404 `NO_ACTIVE_ORDER_PRINT_TEMPLATE` — no active template of `type` and no
+    explicit `templateId`.
+  - 409 `AMBIGUOUS_ORDER_PRINT_TEMPLATE` — several active templates of `type` and
+    no `templateId` supplied.
+
+  In Bruno, use "Save Response → Save to file" to inspect the PDF.
+}

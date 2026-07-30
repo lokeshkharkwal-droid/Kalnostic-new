@@ -1,0 +1,52 @@
+meta {
+  name: 63 Print Templates E2E
+  seq: 70
+}
+
+docs {
+  # Print Templates — end-to-end substitution check
+
+  Creates one **checklist-style** PDF template per print type used across the
+  app, then proves the `{placeholder}` engine replaces every variable — first
+  with controlled dummy data (`generate`), then against a real record (the
+  production print endpoints). Every response is a **binary PDF**; in Bruno use
+  the response panel's PDF preview (or *Save Response → Save to file*) to eyeball
+  each value.
+
+  ## Renderer syntax (custom engine — NOT Handlebars/Mustache)
+  - `{placeholder}`  — single value from `variables` (single brace; `{{x}}`
+    would render as `{value}`, so scalars are always single-brace).
+  - `{{#each key}}…{{/each}}` — one block per row in `sections[key]`; inside,
+    `{col}` (or `{{this.col}}`) resolves the row's fields.
+  - `{{image:ID}}` — `<img>` from `images[ID]`.
+  - `<signing_authority_tag>…</signing_authority_tag>` — footer block expanded
+    once per entry in `signatories` (`{name}`, `{designation}`,
+    `{registrationNumber}`, `{signatureImage}`).
+
+  ## Run order
+  1. **Business Auth → Login** (captures `businessAccessToken`).
+  2. For each type: run **Create** (captures `<type>TemplateId`), then
+     **Generate (dummy)**, then **Print (real)**.
+
+  ## Types & endpoints covered
+  | Type | Create → | Real print endpoint |
+  | ---- | -------- | ------------------- |
+  | order_print | `POST /pdf-report-templates` | `POST /orders/{{orderId}}/print` `{type:"order_print"}` |
+  | lab_report | `POST /pdf-report-templates` | `POST /lab-reports/{{labReportId}}/print` `{type:"lab_report"}` |
+  | lab_all_report | `POST /pdf-report-templates` | `POST /lab-reports/order/{{orderId}}/print-all` |
+  | lab_panel | `POST /pdf-report-templates` | `POST /lab-reports/{{labReportId}}/print` `{type:"lab_panel"}` |
+  | order_label_print | `POST /pdf-report-templates` | `POST /accession/samples/print-label` `{sampleId}` |
+  | multiple_order_label_print | `POST /pdf-report-templates` | `POST /accession/samples/print-labels` `{ids}` |
+  | bill_print | `POST /pdf-report-templates` | `POST /orders/{{orderId}}/print` `{type:"bill_print"}` |
+  | trf_print | `POST /pdf-report-templates` | `POST /orders/{{orderId}}/print` `{type:"trf_print"}` |
+  | lab_quotation_print | `POST /pdf-report-templates` | `POST /orders/{{orderId}}/print` `{type:"lab_quotation_print"}` |
+
+  ## Notes
+  - The real-print requests always pass an explicit `templateId`. If omitted, the
+    backend falls back to the tenant's *single* active template of that type and
+    throws `AmbiguousPrintTemplateException` when more than one exists — and these
+    Create requests add active templates, so pass the id.
+  - The real-print requests need existing records: `{{orderId}}` (with items /
+    payments / a matching status), `{{labReportId}}`, and `{{sampleId}}`. Seed
+    them via the Orders / Technician Reporting / Accession flows first.
+}

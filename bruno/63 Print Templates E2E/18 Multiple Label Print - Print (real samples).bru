@@ -1,0 +1,34 @@
+meta {
+  name: 18 Multiple Label Print - Print (real samples)
+  type: http
+  seq: 18
+}
+
+post {
+  url: {{baseUrl}}/accession/samples/print-labels
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "ids": ["{{sampleId}}"],
+    "templateId": "{{multiLabelTemplateId}}"
+  }
+}
+
+docs {
+  Production path: renders labels for the sample ids in `ids` as one
+  `sections.labels` document with the `multiple_order_label_print` template.
+
+  `ids` must be a non-empty array of real accession sample UUIDs (order is
+  preserved). Add more ids to verify multiple rows.
+}

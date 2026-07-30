@@ -75,6 +75,8 @@ export class TemplateController {
         preference: query.preference,
         feature: query.feature,
         messageType: query.messageType,
+        messageTypeNot: query.messageTypeNot,
+        clonedFromIds: query.clonedFromId,
         level: query.level,
         applicableBranchType: query.applicableBranchType,
         search: query.search,

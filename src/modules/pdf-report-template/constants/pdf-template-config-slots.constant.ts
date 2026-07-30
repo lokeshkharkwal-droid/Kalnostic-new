@@ -52,6 +52,7 @@ export const PDF_TEMPLATE_CONFIG_SLOT_GROUPS: PdfTemplateConfigSlotGroup[] = [
         label: 'Lab Order Without Bill PDF Template',
       },
       { key: 'bill_print', label: 'Lab Order Bill PDF Template' },
+      { key: 'trf_print', label: 'Test Requisition Form (TRF) PDF Template' },
       {
         key: 'referral_patient_bill_print',
         label: 'Lab Order Referral Patient Bill PDF Template',

@@ -17,6 +17,8 @@ import { SiteAdminPermissionGuard } from '../siteadmin/guards/siteadmin-permissi
 import { RequireSiteAdminPermission } from '../siteadmin/decorators/require-siteadmin-permission.decorator';
 import { SITE_ADMIN_PERM } from '../siteadmin/constants/siteadmin-permissions.constant';
 import { Public } from '../auth/decorators/public.decorator';
+import { AuditAction, AuditModule } from '@prisma/client';
+import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
  * SiteAdmin global category **template** management (`/siteadmin/categories`).
@@ -38,6 +40,11 @@ export class SiteAdminCategoryController {
    * Create a global template category.
    */
   @Post()
+  @Audit({
+    module: AuditModule.CATEGORY,
+    action: AuditAction.CREATE,
+    description: 'Created a template category',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   create(@Body() dto: CreateCategoryTemplateDto) {
     return this.categoryService.createTemplate(dto);
@@ -74,6 +81,11 @@ export class SiteAdminCategoryController {
    * Update a global template category (`code` is immutable).
    */
   @Patch(':id')
+  @Audit({
+    module: AuditModule.CATEGORY,
+    action: AuditAction.UPDATE,
+    description: 'Updated a template category',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   update(@Param('id') id: string, @Body() dto: UpdateCategoryTemplateDto) {
     return this.categoryService.updateTemplate(id, dto);
@@ -83,6 +95,11 @@ export class SiteAdminCategoryController {
    * Soft-delete a global template category.
    */
   @Delete(':id')
+  @Audit({
+    module: AuditModule.CATEGORY,
+    action: AuditAction.DELETE,
+    description: 'Deleted a template category',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   remove(@Param('id') id: string) {
     return this.categoryService.removeTemplate(id);

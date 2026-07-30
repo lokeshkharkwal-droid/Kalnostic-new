@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { WorklistStatus, WorklistTrigger } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { LabReportService } from './lab-report.service';
 import { RaiseWorklistEntryDto } from './dto/raise-worklist-entry.dto';
 import { UpdateWorklistStatusDto } from './dto/update-worklist-status.dto';
 import {
@@ -23,7 +24,10 @@ import {
  */
 @Injectable()
 export class OutOfRangeService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly labReportService: LabReportService,
+  ) {}
 
   private requireBranch(branchId: string | null): string {
     if (!branchId) throw new ActiveBranchRequiredException();
@@ -71,6 +75,15 @@ export class OutOfRangeService {
         },
       });
       return flag;
+    }).then(async (flag) => {
+      await this.labReportService.recordWorklistHistory(
+        tenantId,
+        labReportId,
+        'out_of_range_raised',
+        actorId,
+        dto.notes,
+      );
+      return flag;
     });
   }
 
@@ -99,6 +112,7 @@ export class OutOfRangeService {
     id: string,
     tenantId: string,
     branchId: string | null,
+    actorId: string,
     dto: UpdateWorklistStatusDto,
   ) {
     const activeBranchId = this.requireBranch(branchId);
@@ -108,8 +122,8 @@ export class OutOfRangeService {
     if (!entry)
       throw new WorklistEntryNotFoundException('out_of_range_flag', id);
 
-    return this.prisma.$transaction(async (tx) => {
-      const updated = await tx.outOfRangeFlag.update({
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const updatedEntry = await tx.outOfRangeFlag.update({
         where: { id },
         data: { status: dto.status },
       });
@@ -124,7 +138,17 @@ export class OutOfRangeService {
           },
         });
       }
-      return updated;
+      return updatedEntry;
     });
+
+    await this.labReportService.recordWorklistHistory(
+      tenantId,
+      entry.labReportId,
+      `out_of_range_status_${entry.status}_to_${dto.status}`.toLowerCase(),
+      actorId,
+      dto.notes,
+    );
+
+    return updated;
   }
 }

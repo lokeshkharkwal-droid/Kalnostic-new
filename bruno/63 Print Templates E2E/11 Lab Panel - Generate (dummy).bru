@@ -1,0 +1,54 @@
+meta {
+  name: 11 Lab Panel - Generate (dummy)
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/pdf-report-templates/{{labPanelTemplateId}}/generate
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "variables": {
+      "order_code": "ORD-DUMMY-001",
+      "order_date": "2026-07-27",
+      "patient_name": "Jane DUMMY Doe",
+      "patient_age": "34",
+      "patient_gender": "FEMALE",
+      "patient_um_id": "UM-DUMMY-9",
+      "referred_by": "Dr. DUMMY Referrer",
+      "referral_panel": "DUMMY Panel Ltd",
+      "test_name": "Lipid Profile (Panel)",
+      "report_status": "APPROVED",
+      "useful_for": "DUMMY clinical utility text",
+      "interpretation": "DUMMY interpretation text",
+      "limitations": "DUMMY limitations text",
+      "references": "DUMMY references text"
+    },
+    "sections": {
+      "results": [
+        { "observed1": "180", "observed2": "", "unit": "mg/dL", "methodology": "Enzymatic", "reference_display": "< 200" },
+        { "observed1": "45", "observed2": "", "unit": "mg/dL", "methodology": "Direct", "reference_display": "40 - 60" }
+      ]
+    },
+    "signatories": [
+      { "name": "Dr. B. DUMMY", "designation": "MD, Biochemistry" }
+    ]
+  }
+}
+
+docs {
+  Deterministic substitution proof for `lab_panel` (same context shape as
+  `lab_report`).
+}

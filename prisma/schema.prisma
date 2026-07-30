@@ -277,7 +277,14 @@ enum AuditModule {
   PHLEBOTOMIST_SCHEDULE
   SERVICE_ZONE
   AUTH
-  SITEADMIN // reserved; not written to in this phase (business audit only)
+  SITEADMIN // SiteAdmin sub-account management (create / activate / password)
+  EQUIPMENT // SiteAdmin lab-equipment catalogue
+  CONTACT_US // SiteAdmin contact-us submissions
+  SUPPORT_INFO // SiteAdmin support-info content
+  AUTH_ROLE // SiteAdmin global role catalogue
+  TEST_GROUP // SiteAdmin test-group catalogue
+  PAYMENT_RULE // SiteAdmin payment-rule catalogue
+  LOCATION // SiteAdmin location catalogue (country / state / city / area)
   LAB_TEST_SETTINGS
   BILLING_SETTINGS
   ACCESSION
@@ -299,6 +306,7 @@ enum AuditModule {
   SALES_FOLLOW_UP
   SALES_TERRITORY
   SALES_SETTINGS
+  REGISTRATION_SETTINGS
   TECHNICIAN_SETTINGS
 }
 
@@ -1670,6 +1678,9 @@ model Department {
   /// Referral doctors whose department links here.
   referralDoctors ReferralDoctor[]
 
+  /// Internal referrals whose department links here.
+  internalReferrals InternalReferral[]
+
   /// Controlled documents filed under this department.
   documents Document[]
 
@@ -2104,6 +2115,38 @@ model AuditLog {
   @@index([createdAt])
   @@index([deletedAt])
   @@map("audit_logs")
+}
+
+/// Audit trail for **SiteAdmin** actions. Platform-level (like `siteadmin_users`):
+/// no `tenantId`, no RLS policy — SiteAdmin acts above any single business. The
+/// actor is a `siteadmin_users` row (not a `persons` row), so email + role are
+/// denormalized here for display without a join. Written by the global
+/// `AuditInterceptor` (SiteAdmin branch) and by the SiteAdmin login path; read
+/// merged with `audit_logs` in the SiteAdmin cross-tenant audit view.
+model SiteAdminAuditLog {
+  id String @id @default(uuid())
+
+  module      AuditModule
+  action      AuditAction @default(OTHER)
+  description String // human-readable "what the SiteAdmin performed"
+
+  actorSiteadminId String        @map("actor_siteadmin_id") // the SiteAdmin user
+  actorEmail       String        @map("actor_email") // denormalized for display
+  actorRole        SiteAdminRole @map("actor_role") // role at the time of the action
+  ipAddress        String?       @map("ip_address") // caller IP
+
+  resourceId String? @map("resource_id") // optional id of the affected resource
+  metadata   Json? // optional extra structured detail
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([actorSiteadminId])
+  @@index([module])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@map("siteadmin_audit_logs")
 }
 
 /// A master-data container for a branch. Tenant-scoped + branch-level. A non-main
@@ -4195,7 +4238,10 @@ model InternalReferral {
   firstName    String    @map("first_name")
   lastName     String?   @map("last_name")
   fullName     String?   @map("full_name")
-  department   String?
+  // Department is a FK into the tenant's Departments master (validated in
+  // InternalReferralService); mirrors ReferralDoctor.departmentId.
+  departmentId String?   @map("department_id")
+  department   Department? @relation(fields: [departmentId], references: [id])
   designation  String?
   joiningDate  DateTime? @map("joining_date") @db.Date
   mobileNumber String?   @map("mobile_number")
@@ -4255,6 +4301,7 @@ model InternalReferral {
   @@index([tenantId])
   @@index([branchId])
   @@index([employeeId])
+  @@index([departmentId])
   @@index([referralPanelSettingsId])
   @@index([status])
   @@index([deletedAt])
@@ -4663,7 +4710,7 @@ model PatientCategoryLabTest {
   createdAt         DateTime @default(now()) @map("created_at")
 
   patientCategory PatientCategoryDefinition @relation(fields: [patientCategoryId], references: [id])
-  branchLabTest   BranchLabTest   @relation(fields: [branchLabTestId], references: [id])
+  branchLabTest   BranchLabTest             @relation(fields: [branchLabTestId], references: [id])
 
   @@unique([patientCategoryId, branchLabTestId])
   @@index([tenantId])
@@ -4685,7 +4732,7 @@ model PatientCategoryLabPanel {
   createdAt         DateTime @default(now()) @map("created_at")
 
   patientCategory PatientCategoryDefinition @relation(fields: [patientCategoryId], references: [id])
-  branchLabPanel  BranchLabPanel  @relation(fields: [branchLabPanelId], references: [id])
+  branchLabPanel  BranchLabPanel            @relation(fields: [branchLabPanelId], references: [id])
 
   @@unique([patientCategoryId, branchLabPanelId])
   @@index([tenantId])
@@ -4744,19 +4791,181 @@ model ReportSetting {
   pathologistRegNumber String @default("MCI/12345") @map("pathologist_reg_number")
   labInChargeName      String @default("Dr. Amit Patel") @map("lab_incharge_name")
 
-  isDigitalSignatureImagePrinted             Boolean @default(true) @map("is_digital_signature_image_printed")
+  isDigitalSignatureImagePrinted            Boolean @default(true) @map("is_digital_signature_image_printed")
   isAutoPublishAfterSecondValidationEnabled Boolean @default(true) @map("is_auto_publish_after_second_validation_enabled")
   isEmailPdfOnPublishEnabled                Boolean @default(true) @map("is_email_pdf_on_publish_enabled")
   isWhatsappLinkOnPublishEnabled            Boolean @default(true) @map("is_whatsapp_link_on_publish_enabled")
   isReferringDoctorNotifyEnabled            Boolean @default(false) @map("is_referring_doctor_notify_enabled")
-  pdfWatermark     String @default("None") @map("pdf_watermark")
-  reportFooterNote String @default("Reports correlate clinically.") @map("report_footer_note")
+  pdfWatermark                              String  @default("None") @map("pdf_watermark")
+  reportFooterNote                          String  @default("Reports correlate clinically.") @map("report_footer_note")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([tenantId])
   @@map("report_settings")
+}
+
+// ── Registration Settings (LIMS Settings doc "Registration Module") ──────────
+
+/// Numbering scheme this `RegistrationIdSequence` row configures.
+enum RegistrationIdSequenceType {
+  ORDER
+  QUOTATION
+  APPOINTMENT
+  PATIENT
+}
+
+/// Separator token placed between the prefix/number/suffix segments of a
+/// generated id. `NONE` = no separator character.
+enum RegistrationIdSeparator {
+  NONE
+  HYPHEN
+  SLASH
+  UNDERSCORE
+}
+
+/// How often a `RegistrationIdSequence`'s running counter resets to 1.
+enum RegistrationIdResetCycle {
+  NEVER
+  DAILY
+  MONTHLY
+  YEARLY
+}
+
+/// Per-branch Registration settings (LIMS Settings doc "Registration Module"
+/// section) — general toggles, quotation validity, charges & deductions,
+/// cancellation & refund, referral & staff permissions, billing-menu
+/// overrides, and the appointment/patient-merge toggles. ID-generation config
+/// (Order/Quotation/Appointment/Patient-UMID) lives separately in
+/// `RegistrationIdSequence`. One row per branch (`@@unique([tenantId,
+/// branchId])`), created on first access — mirrors `AppointmentSetting`'s
+/// scoping. Field names follow `<Heading>_<Setting>` to mirror the source doc
+/// 1:1. Tenant-scoped + branch-level. RLS policy in prisma/rls.sql.
+model RegistrationSetting {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  // ── General ──
+  General_AllowAddPatientPhoto    Boolean     @default(true) @map("general_allow_add_patient_photo")
+  General_ViewMedicalHistory      Boolean     @default(true) @map("general_view_medical_history")
+  General_ViewPastOrders          Boolean     @default(true) @map("general_view_past_orders")
+  General_AllowEditingOrderDate   Boolean     @default(false) @map("general_allow_editing_order_date")
+  General_AllowEditingPaymentDate Boolean     @default(false) @map("general_allow_editing_payment_date")
+  General_DefaultPaymentMode      PaymentMode @default(CASH) @map("general_default_payment_mode")
+
+  // ── Quotation (non-ID fields; ID config is in RegistrationIdSequence) ──
+  Quotation_QuotationValidityValue             Int                @default(7) @map("quotation_quotation_validity_value")
+  Quotation_QuotationValidityUnit              RepeatIntervalUnit @default(DAYS) @map("quotation_quotation_validity_unit")
+  Quotation_AllowDuplicationOfExpiredQuotation Boolean            @default(false) @map("quotation_allow_duplication_of_expired_quotation")
+
+  // ── Charges & Deductions ──
+  ChargesAndDeductions_VisitChargesAmount                    Decimal @default(0) @map("charges_and_deductions_visit_charges_amount") @db.Decimal(10, 2)
+  ChargesAndDeductions_VisitChargesEditable                  Boolean @default(true) @map("charges_and_deductions_visit_charges_editable")
+  ChargesAndDeductions_SampleCollectionChargesAmount         Decimal @default(0) @map("charges_and_deductions_sample_collection_charges_amount") @db.Decimal(10, 2)
+  ChargesAndDeductions_SampleCollectionChargesEditable       Boolean @default(true) @map("charges_and_deductions_sample_collection_charges_editable")
+  ChargesAndDeductions_AllowWalletDeduction                  Boolean @default(false) @map("charges_and_deductions_allow_wallet_deduction")
+  ChargesAndDeductions_MaximumWalletDeductionPercent         Int     @default(100) @map("charges_and_deductions_maximum_wallet_deduction_percent")
+  ChargesAndDeductions_AllowLoyaltyDeduction                 Boolean @default(false) @map("charges_and_deductions_allow_loyalty_deduction")
+  ChargesAndDeductions_MaximumLoyaltyPointsEquivalentAmount  Decimal @default(0) @map("charges_and_deductions_maximum_loyalty_points_equivalent_amount") @db.Decimal(10, 2)
+  ChargesAndDeductions_AllowClearPreviousDues                Boolean @default(false) @map("charges_and_deductions_allow_clear_previous_dues")
+  ChargesAndDeductions_AllowOrderWithoutClearingPreviousDues Boolean @default(false) @map("charges_and_deductions_allow_order_without_clearing_dues")
+  ChargesAndDeductions_MinimumPreviousDuesToClear            Decimal @default(0) @map("charges_and_deductions_minimum_previous_dues_to_clear") @db.Decimal(10, 2)
+  ChargesAndDeductions_AllowPartialBilling                   Boolean @default(false) @map("charges_and_deductions_allow_partial_billing")
+  ChargesAndDeductions_MinimumPercentOfNetAmountToProceed    Int     @default(0) @map("charges_and_deductions_minimum_percent_of_net_amount_to_proceed")
+  ChargesAndDeductions_TdsApplicable                         Boolean @default(false) @map("charges_and_deductions_tds_applicable")
+  ChargesAndDeductions_MinimumTdsPercent                     Int     @default(0) @map("charges_and_deductions_minimum_tds_percent")
+  ChargesAndDeductions_MaximumTdsPercent                     Int     @default(0) @map("charges_and_deductions_maximum_tds_percent")
+  ChargesAndDeductions_AllowDiscounts                        Boolean @default(false) @map("charges_and_deductions_allow_discounts")
+  ChargesAndDeductions_MinimumDiscountPercent                Int     @default(0) @map("charges_and_deductions_minimum_discount_percent")
+  ChargesAndDeductions_MaximumDiscountPercent                Int     @default(0) @map("charges_and_deductions_maximum_discount_percent")
+  ChargesAndDeductions_AllowLineItemDiscount                 Boolean @default(false) @map("charges_and_deductions_allow_line_item_discount")
+  ChargesAndDeductions_MinimumLineItemDiscountPercent        Int     @default(0) @map("charges_and_deductions_minimum_line_item_discount_percent")
+  ChargesAndDeductions_MaximumLineItemDiscountPercent        Int     @default(0) @map("charges_and_deductions_maximum_line_item_discount_percent")
+  ChargesAndDeductions_AllowPartialBillingOfDiscountedOrder  Boolean @default(false) @map("charges_and_deductions_allow_partial_billing_of_discounted")
+  // Mutually exclusive with each other (enforced in the service, see
+  // ConflictingDiscountModeException) — at most one may be true at a time.
+  ChargesAndDeductions_AllowOrderDiscountOnly                Boolean @default(false) @map("charges_and_deductions_allow_order_discount_only")
+  ChargesAndDeductions_AllowLineDiscountOnly                 Boolean @default(false) @map("charges_and_deductions_allow_line_discount_only")
+  ChargesAndDeductions_AllowBothOrderAndLineDiscount         Boolean @default(false) @map("charges_and_deductions_allow_both_order_and_line_discount")
+
+  // ── Cancellation & Refund ──
+  CancellationAndRefund_AllowOrderCancellation        Boolean @default(true) @map("cancellation_and_refund_allow_order_cancellation")
+  CancellationAndRefund_AllowPartialCancellation      Boolean @default(false) @map("cancellation_and_refund_allow_partial_cancellation")
+  CancellationAndRefund_AllowRefund                   Boolean @default(true) @map("cancellation_and_refund_allow_refund")
+  CancellationAndRefund_AllowPartialRefund            Boolean @default(false) @map("cancellation_and_refund_allow_partial_refund")
+  CancellationAndRefund_CancellationChargesApplicable Boolean @default(false) @map("cancellation_and_refund_cancellation_charges_applicable")
+  CancellationAndRefund_CancellationChargesAmount     Decimal @default(0) @map("cancellation_and_refund_cancellation_charges_amount") @db.Decimal(10, 2)
+  CancellationAndRefund_RefundChargesApplicable       Boolean @default(false) @map("cancellation_and_refund_refund_charges_applicable")
+  CancellationAndRefund_RefundChargesAmount           Decimal @default(0) @map("cancellation_and_refund_refund_charges_amount") @db.Decimal(10, 2)
+
+  // ── Referral & Staff Permissions ──
+  ReferralAndStaffPermissions_AllowAddReferral                Boolean @default(true) @map("referral_and_staff_permissions_allow_add_referral")
+  ReferralAndStaffPermissions_AllowAddReferralPanel           Boolean @default(true) @map("referral_and_staff_permissions_allow_add_referral_panel")
+  ReferralAndStaffPermissions_AllowAddInternalReferralUser    Boolean @default(true) @map("referral_and_staff_permissions_allow_add_internal_referral_user")
+  ReferralAndStaffPermissions_AllowAddExternalReferralUser    Boolean @default(true) @map("referral_and_staff_permissions_allow_add_external_referral_user")
+  ReferralAndStaffPermissions_AllowAddDoctorName              Boolean @default(true) @map("referral_and_staff_permissions_allow_add_doctor_name")
+  ReferralAndStaffPermissions_AllowAddRadiologistName         Boolean @default(true) @map("referral_and_staff_permissions_allow_add_radiologist_name")
+  ReferralAndStaffPermissions_AllowAddRadiologyTechnicianName Boolean @default(true) @map("referral_and_staff_permissions_allow_add_radiology_tech_name")
+  ReferralAndStaffPermissions_AllowAddPhlebotomistName        Boolean @default(true) @map("referral_and_staff_permissions_allow_add_phlebotomist_name")
+
+  // ── Billing Menu ──
+  BillingMenu_AllowCollectionOfAmountByOtherUser    Boolean @default(false) @map("billing_menu_allow_collection_of_amount_by_other_user")
+  BillingMenu_AllowCancellationByOtherUser          Boolean @default(false) @map("billing_menu_allow_cancellation_by_other_user")
+  BillingMenu_AllowBillCopyPrintForPaidBillingsOnly Boolean @default(true) @map("billing_menu_allow_bill_copy_print_for_paid_billings_only")
+  BillingMenu_AllowOtherUserToEditQuotation         Boolean @default(false) @map("billing_menu_allow_other_user_to_edit_quotation")
+
+  // ── Appointment (non-ID field; ID config is in RegistrationIdSequence) ──
+  Appointment_AllowCheckInForPaidAppointmentsOnly             Boolean @default(false) @map("appointment_allow_check_in_for_paid_appointments_only")
+  Appointment_AllowProgressOfUnpaidAndPartialPaidAppointments Boolean @default(false) @map("appointment_allow_progress_unpaid_and_partial_paid_appts")
+
+  // ── Patients / UMID (non-ID field; ID config is in RegistrationIdSequence) ──
+  Patients_AllowMergingTwoPatients Boolean @default(false) @map("patients_allow_merging_two_patients")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([tenantId, branchId])
+  @@index([tenantId])
+  @@index([branchId])
+  @@map("registration_settings")
+}
+
+/// Reusable per-branch ID-generation config for Registration (Order/Quotation/
+/// Appointment/Patient-UMID external ids) — mirrors the old system's
+/// AUTO_INCREMENT_OPTIONS *intent* (one configurable numbering scheme per id
+/// "purpose") but fixes its two real gaps: no true prefix/separator/suffix
+/// builder (the old system only offered fixed template strings) and no atomic
+/// counter increment (the old system did an unguarded read-then-write). One
+/// row per `(tenantId, branchId, sequenceType)`; `currentNumber` is only ever
+/// mutated by `RegistrationIdSequenceService.generateNext()` inside a
+/// serializable transaction. Tenant-scoped + branch-level. RLS policy in
+/// prisma/rls.sql.
+model RegistrationIdSequence {
+  id           String                     @id @default(uuid())
+  tenantId     String                     @map("tenant_id")
+  branchId     String                     @map("branch_id")
+  sequenceType RegistrationIdSequenceType @map("sequence_type")
+
+  prefix       String                   @default("") @db.VarChar(24)
+  suffix       String                   @default("") @db.VarChar(24)
+  separator    RegistrationIdSeparator  @default(NONE)
+  numberLength Int                      @default(6) @map("number_length")
+  resetCycle   RegistrationIdResetCycle @default(NEVER) @map("reset_cycle")
+
+  currentNumber Int       @default(0) @map("current_number")
+  lastResetAt   DateTime? @map("last_reset_at")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([tenantId, branchId, sequenceType])
+  @@index([tenantId])
+  @@index([branchId])
+  @@map("registration_id_sequences")
 }
 
 model LabImageSetting {
@@ -6550,19 +6759,71 @@ model SampleTransfer {
   @@map("sample_transfers")
 }
 
-/// Per-branch configurable accession dropdowns/thresholds (PDF §G). Mirrors
-/// `OrderFieldConfig`: one row per branch (`@@unique([tenantId, branchId])`),
-/// payload held as JSON (`AccessionSettingsMap`). Holds tube types, sample
-/// conditions, repeat/rejection reasons, discard methods, logistics types,
-/// notification templates and TAT thresholds. Read falls back to
-/// `DEFAULT_ACCESSION_SETTINGS` when a branch has no row yet. Tenant-scoped +
-/// branch-level. RLS policy in prisma/rls.sql.
+/// Separator token for `AccessionSetting.SampleBarcodeSettings_Separator`.
+/// Mirrors `RegistrationIdSeparator` — duplicated per-module rather than
+/// shared, matching this codebase's convention (see `BillingInvoiceResetCycle`
+/// vs `RegistrationIdResetCycle`).
+enum AccessionBarcodeSeparator {
+  NONE
+  HYPHEN
+  SLASH
+  UNDERSCORE
+}
+
+/// How often `AccessionSetting.SampleBarcodeSettings_CurrentNumber` resets to
+/// zero. Mirrors `RegistrationIdResetCycle`.
+enum AccessionBarcodeResetCycle {
+  NEVER
+  DAILY
+  MONTHLY
+  YEARLY
+}
+
+/// Per-branch Accession Module Settings (LIMS Settings Master — Accession
+/// Module). Mirrors `OrderFieldConfig`: one row per branch
+/// (`@@unique([tenantId, branchId])`). Master-data lists (tube types, sample
+/// conditions, repeat/error/hold reasons, discard methods, rejection reasons,
+/// logistics types) are held as JSON (`AccessionSettingsMap`, all keys named
+/// `MasterData_*`) since they're variable-length lists, not scalars. Sample
+/// Barcode Settings and Accession (TAT/acceptance-window/barcode-mapping)
+/// settings are typed columns named `SampleBarcodeSettings_*` /
+/// `Accession_*` per the project's `HeadingName_SettingName` field
+/// convention. Read falls back to `DEFAULT_ACCESSION_SETTINGS` (for the JSON
+/// keys) / column defaults (for typed columns) when a branch has no row yet.
+/// Tenant-scoped + branch-level. RLS policy in prisma/rls.sql.
 model AccessionSetting {
   id       String @id @default(uuid())
   tenantId String @map("tenant_id")
   branchId String @map("branch_id")
 
+  /// `MasterData_*` string[] lists — see `AccessionSettingsMap`.
   config Json @default("{}")
+
+  // ── Sample Barcode Settings ──
+  SampleBarcodeSettings_Prefix        String                     @default("") @map("sample_barcode_settings_prefix") @db.VarChar(24)
+  SampleBarcodeSettings_Suffix        String                     @default("") @map("sample_barcode_settings_suffix") @db.VarChar(24)
+  SampleBarcodeSettings_Separator     AccessionBarcodeSeparator  @default(NONE) @map("sample_barcode_settings_separator")
+  SampleBarcodeSettings_NumberLength  Int                        @default(6) @map("sample_barcode_settings_number_length")
+  SampleBarcodeSettings_ResetInterval AccessionBarcodeResetCycle @default(NEVER) @map("sample_barcode_settings_reset_interval")
+  /// System-managed running counter — never accepted from the client.
+  SampleBarcodeSettings_CurrentNumber Int                        @default(0) @map("sample_barcode_settings_current_number")
+  SampleBarcodeSettings_LastResetAt   DateTime?                  @map("sample_barcode_settings_last_reset_at")
+
+  // ── Accession (TAT / acceptance-window / barcode-mapping toggles) ──
+  Accession_MinimumTimeToAcceptSampleMinutes           Int @default(10) @map("accession_min_time_to_accept_sample_minutes")
+  Accession_MaximumTimeToAcceptSampleMinutes           Int @default(20) @map("accession_max_time_to_accept_sample_minutes")
+  Accession_WarningThresholdMinutes                    Int @default(10) @map("accession_warning_threshold_minutes")
+  Accession_CriticalThresholdMinutes                   Int @default(5) @map("accession_critical_threshold_minutes")
+  Accession_InternalReferralAcceptanceThresholdMinutes Int @default(60) @map("accession_internal_referral_acceptance_threshold_minutes")
+  Accession_ExternalReferralAcceptanceThresholdMinutes Int @default(60) @map("accession_external_referral_acceptance_threshold_minutes")
+
+  Accession_AllowSampleBarcodeMappingBeforeAcceptInhouseOrders          Boolean @default(true) @map("accession_allow_mapping_before_accept_inhouse")
+  Accession_AllowSampleBarcodeMappingBeforeAcceptInternalReferralOrders Boolean @default(true) @map("accession_allow_mapping_before_accept_internal_referral")
+  Accession_AllowSampleBarcodeMappingBeforeAcceptExternalReferralOrders Boolean @default(true) @map("accession_allow_mapping_before_accept_external_referral")
+  Accession_AllowSampleBarcodeMappingAfterAcceptInhouseOrders           Boolean @default(true) @map("accession_allow_mapping_after_accept_inhouse")
+  Accession_AllowSampleBarcodeMappingAfterAcceptInternalReferralOrders  Boolean @default(true) @map("accession_allow_mapping_after_accept_internal_referral")
+  Accession_AllowSampleBarcodeMappingAfterAcceptExternalReferralOrders  Boolean @default(true) @map("accession_allow_mapping_after_accept_external_referral")
+  Accession_AllowSampleBarcodeMappingForOutsourceOrders                 Boolean @default(true) @map("accession_allow_mapping_for_outsource")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")

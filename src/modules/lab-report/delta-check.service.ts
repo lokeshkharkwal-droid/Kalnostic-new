@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { DeltaCheckStatus, WorklistTrigger } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { LabReportService } from './lab-report.service';
 import { RaiseWorklistEntryDto } from './dto/raise-worklist-entry.dto';
 import { UpdateDeltaCheckStatusDto } from './dto/update-worklist-status.dto';
 import {
@@ -26,7 +27,10 @@ import {
  */
 @Injectable()
 export class DeltaCheckService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly labReportService: LabReportService,
+  ) {}
 
   private requireBranch(branchId: string | null): string {
     if (!branchId) throw new ActiveBranchRequiredException();
@@ -110,6 +114,15 @@ export class DeltaCheckService {
         },
       });
       return delta;
+    }).then(async (delta) => {
+      await this.labReportService.recordWorklistHistory(
+        tenantId,
+        labReportId,
+        'delta_check_raised',
+        actorId,
+        dto.notes,
+      );
+      return delta;
     });
   }
 
@@ -138,6 +151,7 @@ export class DeltaCheckService {
     id: string,
     tenantId: string,
     branchId: string | null,
+    actorId: string,
     dto: UpdateDeltaCheckStatusDto,
   ) {
     const activeBranchId = this.requireBranch(branchId);
@@ -146,8 +160,8 @@ export class DeltaCheckService {
     });
     if (!entry) throw new WorklistEntryNotFoundException('delta_check', id);
 
-    return this.prisma.$transaction(async (tx) => {
-      const updated = await tx.deltaCheck.update({
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const updatedEntry = await tx.deltaCheck.update({
         where: { id },
         data: { status: dto.status },
       });
@@ -162,7 +176,17 @@ export class DeltaCheckService {
           },
         });
       }
-      return updated;
+      return updatedEntry;
     });
+
+    await this.labReportService.recordWorklistHistory(
+      tenantId,
+      entry.labReportId,
+      `delta_check_status_${entry.status}_to_${dto.status}`.toLowerCase(),
+      actorId,
+      dto.notes,
+    );
+
+    return updated;
   }
 }

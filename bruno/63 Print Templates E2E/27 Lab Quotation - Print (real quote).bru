@@ -1,0 +1,32 @@
+meta {
+  name: 27 Lab Quotation - Print (real quote)
+  type: http
+  seq: 27
+}
+
+post {
+  url: {{baseUrl}}/orders/{{orderId}}/print
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "type": "lab_quotation_print",
+    "templateId": "{{quotationTemplateId}}"
+  }
+}
+
+docs {
+  Production path: renders the quotation for order `{{orderId}}`. `valid_till`
+  and `status` come from the order's quotation fields, so use an order that is a
+  quotation (created via the Quotations flow) for meaningful values.
+}

@@ -1,0 +1,33 @@
+meta {
+  name: 09 Lab All Report - Print (real order)
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/order/{{orderId}}/print-all
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "templateId": "{{labAllReportTemplateId}}"
+  }
+}
+
+docs {
+  Production path: aggregates every active report on order `{{orderId}}` into one
+  `reports` section and renders the `lab_all_report` template.
+
+  Requires an `{{orderId}}` that has at least one lab report (throws
+  `LabReportNotFoundException` otherwise).
+}

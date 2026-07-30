@@ -1,0 +1,54 @@
+meta {
+  name: 10 Lab Panel - Create
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/pdf-report-templates
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "type": "lab_panel",
+    "name": "E2E Check — Lab Panel",
+    "isActive": true,
+    "meta": {
+      "orientation": "P",
+      "page_size": "A4",
+      "default_font": "helvetica",
+      "default_font_size": "10",
+      "margin_left": "12", "margin_right": "12", "margin_top": "10", "margin_bottom": "10",
+      "margin_header": "5", "margin_footer": "5",
+      "custom_css": "body{font-family:helvetica,sans-serif;font-size:10pt;color:#111} h2{color:#0ea5e9;margin:0 0 6px} h3{margin:12px 0 4px;color:#334155} table{width:100%;border-collapse:collapse;margin:4px 0} td,th{border:1px solid #cbd5e1;padding:4px 6px;text-align:left;vertical-align:top} th{background:#f1f5f9} .k{width:38%;color:#475569;font-weight:bold} .sec th{background:#e0f2fe}",
+      "header_name": "Lab Panel Header",
+      "header_html": "<h2>Lab Panel — variable check</h2><div>Panel: {test_name} · Status: {report_status}</div>",
+      "body_name": "Lab Panel Body",
+      "body_html": "<h3>Scalar variables</h3><table><tr><th class='k'>Variable</th><th>Resolved value</th></tr><tr><td class='k'>order_code</td><td>{order_code}</td></tr><tr><td class='k'>order_date</td><td>{order_date}</td></tr><tr><td class='k'>patient_name</td><td>{patient_name}</td></tr><tr><td class='k'>patient_age</td><td>{patient_age}</td></tr><tr><td class='k'>patient_gender</td><td>{patient_gender}</td></tr><tr><td class='k'>patient_um_id</td><td>{patient_um_id}</td></tr><tr><td class='k'>referred_by</td><td>{referred_by}</td></tr><tr><td class='k'>referral_panel</td><td>{referral_panel}</td></tr><tr><td class='k'>test_name</td><td>{test_name}</td></tr><tr><td class='k'>report_status</td><td>{report_status}</td></tr><tr><td class='k'>useful_for</td><td>{useful_for}</td></tr><tr><td class='k'>interpretation</td><td>{interpretation}</td></tr><tr><td class='k'>limitations</td><td>{limitations}</td></tr><tr><td class='k'>references</td><td>{references}</td></tr></table><h3>sections.results ({{#each results}})</h3><table class='sec'><tr><th>observed1</th><th>observed2</th><th>unit</th><th>methodology</th><th>reference_display</th></tr>{{#each results}}<tr><td>{observed1}</td><td>{observed2}</td><td>{unit}</td><td>{methodology}</td><td>{reference_display}</td></tr>{{/each}}</table>",
+      "footer_name": "Lab Panel Footer",
+      "footer_html": "<div>Authorised by:</div><signing_authority_tag>{name} — {designation}</signing_authority_tag>"
+    }
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("labPanelTemplateId", data.id);
+}
+
+docs {
+  Create the `lab_panel` checklist template and capture `labPanelTemplateId`.
+  A panel report renders from the SAME `buildPrintContext` as a single test
+  (identical variables + `sections.results` + signatories) — `type` only picks
+  which template to fall back to when no `templateId` is passed.
+}

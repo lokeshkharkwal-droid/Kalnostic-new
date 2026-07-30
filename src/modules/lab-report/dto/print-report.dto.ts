@@ -10,10 +10,11 @@ export class PrintReportDto {
   @IsUUID()
   templateId?: string;
 
-  /** Whether this report's order item is a single test or a panel — resolves
-   * the tenant's default template against the matching `PdfReportTemplate`
-   * type (`lab_report` vs `lab_panel`) when `templateId` is omitted. Defaults
-   * to `lab_report`. */
+  /**
+   * Whether this is a single test report (`lab_report`, default) or a panel
+   * report (`lab_panel`). Only used to resolve the tenant's default template
+   * when no `templateId` is supplied; the same report record renders either way.
+   */
   @IsOptional()
   @IsIn(['lab_report', 'lab_panel'])
   type?: 'lab_report' | 'lab_panel';
