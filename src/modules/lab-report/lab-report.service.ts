@@ -17,11 +17,11 @@ import {
   PLAIN_NOTE_CATEGORIES,
 } from './dto/lab-report-note.dto';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
+import type { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
 import {
   GeneratePdfDto,
   SigningAuthorityDto,
 } from '../pdf-report-template/dto/generate-pdf.dto';
-import { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
 import {
   LAB_REPORT_ALLOWED_FROM,
   LAB_REPORT_DETAIL_INCLUDE,
@@ -36,16 +36,20 @@ import {
   toWorklistRow,
 } from './entities/lab-report.entity';
 import { LabReportOptions } from './entities/lab-report-options.entity';
+import { resolveActorNames } from './entities/worklist.entity';
 import {
   ActiveBranchRequiredException,
   InvalidLabReportTransitionException,
   LabReportLockedException,
+  LabReportSampleMissingException,
+  LabReportResultsRequiredException,
   LabReportNotesRequiredException,
   LabReportNotFoundException,
   LabTestCatalogueMissingException,
   UnlockNotPermittedException,
   NoActivePrintTemplateException,
   AmbiguousPrintTemplateException,
+  OrderReportsNotFoundException,
 } from './exceptions/lab-report.exceptions';
 import {
   computeTrendFlag,
@@ -246,6 +250,23 @@ export class LabReportService {
     // still apply as an AND alongside this, via Prisma's implicit top-level AND).
     if (filters.search) {
       const search = filters.search;
+      // Bug fix: a full-name search (e.g. "Hiroshi Tanaka") never matched
+      // anything, because firstName/lastName were only ever checked against
+      // the whole search string independently — neither field alone
+      // contains a two-word string. Splitting on whitespace and requiring
+      // every word to be found somewhere across first/middle/last name (in
+      // any order) fixes full-name search without changing single-word
+      // search behavior at all (a 1-word split is just the original check).
+      const searchWords = search.trim().split(/\s+/).filter(Boolean);
+      const patientNameMatchesEveryWord: Prisma.PatientWhereInput = {
+        AND: searchWords.map((word) => ({
+          OR: [
+            { firstName: { contains: word, mode: 'insensitive' as const } },
+            { middleName: { contains: word, mode: 'insensitive' as const } },
+            { lastName: { contains: word, mode: 'insensitive' as const } },
+          ],
+        })),
+      };
       orderItem.OR = [
         {
           branchLabTest: {
@@ -262,14 +283,7 @@ export class LabReportService {
             is: {
               OR: [
                 { orderCode: { contains: search, mode: 'insensitive' } },
-                {
-                  patient: {
-                    OR: [
-                      { firstName: { contains: search, mode: 'insensitive' } },
-                      { lastName: { contains: search, mode: 'insensitive' } },
-                    ],
-                  },
-                },
+                { patient: patientNameMatchesEveryWord },
                 {
                   referralPanel: {
                     is: { name: { contains: search, mode: 'insensitive' } },
@@ -328,6 +342,7 @@ export class LabReportService {
       ...r,
       tat: tatByReport.get(r.id) ?? null,
     }));
+    worklistRows = await this.attachMultiStepProcess(worklistRows);
 
     // `data` (not `rows`) — ResponseInterceptor.isPaginated() only lifts
     // total/page/limit into the envelope's `meta` block when the array field
@@ -503,6 +518,40 @@ export class LabReportService {
     });
   }
 
+  /**
+   * Resolves which tests (if any) are assigned to a multi-step process and
+   * which stage they're at (LABORATORY.docx §5.7), for list views like Order
+   * Overview that need this at a glance without opening each report's own
+   * detail. `MultiStepTestProcess.labReportId` is unique per report, so this
+   * is a direct one-query batched lookup — no per-sample fan-out like
+   * `attachSampleStatuses`, since a report has at most one multi-step
+   * process row. Null for the overwhelming majority of tests, which are
+   * never assigned to one.
+   */
+  private async attachMultiStepProcess(
+    rows: LabReportWorklistRow[],
+  ): Promise<LabReportWorklistRow[]> {
+    const reportIds = [...new Set(rows.map((r) => r.id))];
+    if (reportIds.length === 0) return rows;
+
+    const processes = await this.prisma.multiStepTestProcess.findMany({
+      where: { labReportId: { in: reportIds }, deletedAt: null },
+      select: { labReportId: true, processType: true, currentStage: true },
+    });
+    const byReportId = new Map(
+      processes.map((p) => [p.labReportId, p]),
+    );
+
+    return rows.map((row) => {
+      const process = byReportId.get(row.id);
+      return {
+        ...row,
+        multiStepProcessType: process?.processType ?? null,
+        multiStepStage: process?.currentStage ?? null,
+      };
+    });
+  }
+
   async getCounts(
     tenantId: string,
     branchId: string | null,
@@ -636,7 +685,7 @@ export class LabReportService {
 
     const [contentSections, resultParams] = await Promise.all([
       this.getContentSections(tenantId, report.labTestId),
-      this.getResultParams(report.labTestId),
+      this.getResultParams(report.labTestId, report.orderItem.branchLabPanelId),
     ]);
     return { ...report, contentSections, resultParams };
   }
@@ -671,6 +720,7 @@ export class LabReportService {
       await this.attachDepartmentNames(tenantId, [worklistRow])
     )[0]!;
     worklistRow = (await this.attachResultTypes([worklistRow]))[0]!;
+    worklistRow = (await this.attachMultiStepProcess([worklistRow]))[0]!;
 
     return {
       ...worklistRow,
@@ -735,12 +785,57 @@ export class LabReportService {
    * Prisma relation), same treatment as `getContentSections`. Empty array
    * when there's no linked LabTest (panel/direct/branch-only test).
    */
+  /**
+   * Resolve a report's result-parameter definitions. `LabReport.labTestId` is
+   * only set for a single-test report — a panel report leaves it null (per
+   * its own doc comment), so for a panel this instead walks
+   * `BranchLabPanel` -> its constituent `BranchLabPanelTest`s ->
+   * `BranchLabTest.sourceLabTestId` to collect every member test's params
+   * (concatenated in the panel's own test `sortOrder`, per test). Without
+   * this fallback, every panel report would show zero result parameters
+   * regardless of how much result data actually exists (the Report View
+   * modal and Print/Download are both driven by this list, not by
+   * `resultValues` directly).
+   */
   private async getResultParams(
     labTestId: string | null,
+    branchLabPanelId?: string | null,
   ): Promise<LabReportResultParam[]> {
-    if (!labTestId) return [];
+    if (labTestId) return this.fetchResultParams(labTestId);
+    if (!branchLabPanelId) return [];
 
-    const params = await this.prisma.labTestResultParam.findMany({
+    // `BranchLabPanelTest.branchLabTestId` is a raw FK (no Prisma relation
+    // field on the model) — resolve the member `BranchLabTest`s separately.
+    const panelTests = await this.prisma.branchLabPanelTest.findMany({
+      where: { branchLabPanelId, deletedAt: null },
+      select: { branchLabTestId: true },
+      orderBy: { sortOrder: 'asc' },
+    });
+    const branchLabTestIds = panelTests.map((t) => t.branchLabTestId);
+    if (branchLabTestIds.length === 0) return [];
+
+    const branchLabTests = await this.prisma.branchLabTest.findMany({
+      where: { id: { in: branchLabTestIds } },
+      select: { id: true, sourceLabTestId: true },
+    });
+    const sourceLabTestIdById = new Map(
+      branchLabTests.map((t) => [t.id, t.sourceLabTestId]),
+    );
+    const sourceLabTestIds = branchLabTestIds
+      .map((id) => sourceLabTestIdById.get(id))
+      .filter((id): id is string => id != null);
+    if (sourceLabTestIds.length === 0) return [];
+
+    const paramsByTest = await Promise.all(
+      sourceLabTestIds.map((id) => this.fetchResultParams(id)),
+    );
+    return paramsByTest.flat();
+  }
+
+  private async fetchResultParams(
+    labTestId: string,
+  ): Promise<LabReportResultParam[]> {
+    return this.prisma.labTestResultParam.findMany({
       where: { labTestId, deletedAt: null },
       select: {
         id: true,
@@ -753,7 +848,6 @@ export class LabReportService {
       },
       orderBy: { sortOrder: 'asc' },
     });
-    return params;
   }
 
   private async requireReport(id: string, tenantId: string, branchId: string) {
@@ -762,7 +856,47 @@ export class LabReportService {
     });
     if (!report) throw new LabReportNotFoundException(id);
     if (report.isLocked) throw new LabReportLockedException(id);
+
+    // Safety net (see LabReportSampleMissingException's own doc comment for
+    // why this should never fire for a genuine report, and what it guards
+    // against when it does).
+    const hasSample = await this.prisma.accessionSampleTest.findFirst({
+      where: { orderItemId: report.orderItemId, tenantId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!hasSample) throw new LabReportSampleMissingException(id);
+
     return report;
+  }
+
+  /**
+   * Shared by `save()` and `submit()` (LABORATORY.docx §2.2's transition
+   * matrix names both triggers "Technician enters results -> Save/Submit" —
+   * neither transition is meant to be reachable from a completely empty
+   * result grid). `upsertResultValues` itself allows every field to be
+   * blank (a `LabReportResultValue` row can exist with `resultParamId` only,
+   * e.g. right after Sync resolves a reference range but before an
+   * observed value is typed), so this is the one place that actually
+   * checks for a real entered value. Threshold is "at least one real
+   * value" across however many parameters the test has — not "every
+   * parameter filled in" — so genuine partial progress on a multi-parameter
+   * test across several Save clicks stays allowed.
+   */
+  private async requireAtLeastOneResultValue(
+    id: string,
+    tenantId: string,
+  ): Promise<void> {
+    const hasRealValue = await this.prisma.labReportResultValue.findFirst({
+      where: {
+        labReportId: id,
+        tenantId,
+        deletedAt: null,
+        observed1: { not: null },
+        NOT: { observed1: '' },
+      },
+      select: { id: true },
+    });
+    if (!hasRealValue) throw new LabReportResultsRequiredException(id);
   }
 
   private assertTransition(
@@ -800,6 +934,49 @@ export class LabReportService {
         actorId,
       },
     });
+  }
+
+  /**
+   * Public entry point for the 5 special worklist services (Re-Run, Critical
+   * Alert, Out of Range, Delta Check, Scheduled Test) to record their own
+   * raise/status-update actions into the same Audit Trail as the main report
+   * transitions — required by LABORATORY.docx §5.11 ("the complete history
+   * of the order/report — every action, status change...") and §8.1-8.5
+   * (each worklist explicitly lists "Audit Trail" as an available action).
+   *
+   * Each worklist has its own status vocabulary (`ActionWorklistStatus`,
+   * `WorklistStatus`, `DeltaCheckStatus`) distinct from `LabReportStatus`, so
+   * `fromStatus`/`toStatus` (strictly typed to `LabReportStatus` in the
+   * schema) can't literally hold those values — instead the worklist's own
+   * transition is folded into `action`/`notes` as free text, and
+   * `toStatus`/`fromStatus` are both set to the report's real current status
+   * (unchanged by this call), since no actual `LabReport` status change
+   * happened here.
+   */
+  async recordWorklistHistory(
+    tenantId: string,
+    labReportId: string,
+    action: string,
+    actorId: string,
+    notes?: string,
+  ): Promise<void> {
+    const report = await this.prisma.labReport.findFirst({
+      where: { id: labReportId, tenantId, deletedAt: null },
+      select: { status: true },
+    });
+    if (!report) return;
+    await this.prisma.withTenant(tenantId, (tx) =>
+      this.recordHistory(
+        tx,
+        tenantId,
+        labReportId,
+        report.status,
+        report.status,
+        action,
+        actorId,
+        notes,
+      ),
+    );
   }
 
   // ── Test Entry: result values + reference-range resolution ────────────────
@@ -847,6 +1024,13 @@ export class LabReportService {
             source: ResultValueSource.MANUAL,
             enteredAt: new Date(),
             enteredBy: actorId,
+            // The upsert's `where` matches by the labReportId+resultParamId
+            // unique key regardless of deletedAt, so a slot that was ever
+            // soft-deleted (e.g. by a Re-Run reset) would otherwise be
+            // silently re-written while staying deletedAt-stamped — invisible
+            // to every read path (LAB_REPORT_DETAIL_INCLUDE filters
+            // deletedAt: null) even though the value was genuinely saved.
+            deletedAt: null,
           },
         });
       }
@@ -1090,7 +1274,25 @@ export class LabReportService {
       }
     }
 
+    // `LabReportResultValue.resultParamId` is a raw FK (no Prisma relation
+    // field on the model) — batch-fetch the parameter names separately
+    // rather than one query per row.
+    const resultParamIds = [
+      ...new Set(report.resultValues.map((v) => v.resultParamId)),
+    ];
+    const resultParams =
+      resultParamIds.length === 0
+        ? []
+        : await this.prisma.labTestResultParam.findMany({
+            where: { id: { in: resultParamIds } },
+            select: { id: true, parameterName: true },
+          });
+    const paramNameById = new Map(
+      resultParams.map((p) => [p.id, p.parameterName]),
+    );
+
     const results = report.resultValues.map((v) => ({
+      parameter_name: paramNameById.get(v.resultParamId) ?? '',
       observed1: v.observed1 ?? '',
       observed2: v.observed2 ?? '',
       unit: v.unit ?? '',
@@ -1136,9 +1338,12 @@ export class LabReportService {
 
   /**
    * Print/Download a report (LABORATORY.docx §6.10's "Print / Download"
-   * action). Resolves the tenant's active `lab_report` template (or the
+   * action). Resolves the tenant's active template of `type` (or the
    * caller's explicit `templateId`) and renders it with this report's real
    * data via `PdfReportTemplateService.generatePdf`.
+   * @param type which `PdfReportTemplate` type to resolve against when
+   * `templateId` is omitted — `lab_report` (single test) or `lab_panel`.
+   * Ignored when `templateId` is given explicitly.
    * @throws NoActivePrintTemplateException if no active template exists
    * @throws AmbiguousPrintTemplateException if multiple exist and no
    * `templateId` was given
@@ -1158,123 +1363,6 @@ export class LabReportService {
       tenantId,
       context,
     );
-  }
-
-  /**
-   * Print all of an order's reports as one document (LABORATORY.docx "Print All").
-   * Aggregates every active report for the order into a single `{{#each reports}}`
-   * section (one row per test, with a joined result summary) and renders it with
-   * the tenant's `lab_all_report` template (or the caller's explicit `templateId`).
-   * @throws LabReportNotFoundException if the order has no reports
-   * @throws NoActivePrintTemplateException / AmbiguousPrintTemplateException
-   */
-  async printAllForOrder(
-    orderId: string,
-    tenantId: string,
-    branchId: string | null,
-    templateId?: string,
-  ): Promise<Buffer> {
-    const context = await this.buildAllReportsContext(
-      orderId,
-      tenantId,
-      branchId,
-    );
-    const resolvedTemplateId =
-      templateId ??
-      (await this.resolvePrintTemplateId(tenantId, 'lab_all_report'));
-    return this.pdfReportTemplateService.generatePdf(
-      resolvedTemplateId,
-      tenantId,
-      context,
-    );
-  }
-
-  /**
-   * Build the `lab_all_report` render context: order/patient header + one
-   * `reports` section row per active report in the order (test name, status, and
-   * a flat result summary — the render engine's `{{#each}}` supports only flat
-   * per-row fields), plus the de-duplicated approving signatories.
-   */
-  private async buildAllReportsContext(
-    orderId: string,
-    tenantId: string,
-    branchId: string | null,
-  ): Promise<GeneratePdfDto> {
-    const activeBranchId = this.requireBranch(branchId);
-    const reports = await this.prisma.labReport.findMany({
-      where: {
-        tenantId,
-        branchId: activeBranchId,
-        deletedAt: null,
-        orderItem: { orderId, deletedAt: null },
-      },
-      include: LAB_REPORT_DETAIL_INCLUDE,
-      orderBy: { createdAt: 'asc' },
-    });
-    if (reports.length === 0) throw new LabReportNotFoundException(orderId);
-
-    const order = reports[0]!.orderItem.order;
-    const patient = order.patient;
-
-    const approverIds = [
-      ...new Set(
-        reports.map((r) => r.approvedBy).filter((v): v is string => !!v),
-      ),
-    ];
-    const approvers = approverIds.length
-      ? await this.prisma.person.findMany({
-          where: { id: { in: approverIds }, deletedAt: null },
-          select: {
-            firstName: true,
-            middleName: true,
-            lastName: true,
-            designation: true,
-          },
-        })
-      : [];
-    const signatories: SigningAuthorityDto[] = approvers.map((s) => ({
-      name: [s.firstName, s.middleName, s.lastName].filter(Boolean).join(' '),
-      designation: s.designation ?? undefined,
-    }));
-
-    const reportRows = reports.map((r) => {
-      const testOrPanel =
-        r.orderItem.branchLabTest ?? r.orderItem.branchLabPanel;
-      const testName =
-        (testOrPanel && 'testName' in testOrPanel
-          ? testOrPanel.testName
-          : undefined) ??
-        (testOrPanel && 'panelName' in testOrPanel
-          ? testOrPanel.panelName
-          : undefined) ??
-        r.orderItem.direct ??
-        '';
-      const resultsSummary = r.resultValues
-        .map((v) => [v.observed1, v.unit].filter(Boolean).join(' ').trim())
-        .filter(Boolean)
-        .join(', ');
-      return {
-        test_name: testName,
-        report_status: r.status,
-        results_summary: resultsSummary,
-      };
-    });
-
-    return {
-      variables: {
-        order_code: order.orderCode,
-        order_date: order.orderDate.toISOString().slice(0, 10),
-        patient_name: [patient.firstName, patient.middleName, patient.lastName]
-          .filter(Boolean)
-          .join(' '),
-        patient_age: patient.age ?? '',
-        patient_gender: patient.gender ?? '',
-        patient_um_id: patient.umId ?? '',
-        report_count: reports.length,
-      },
-      sections: { reports: reportRows },
-      signatories,
-    };
   }
 
   private async resolvePrintTemplateId(
@@ -1300,6 +1388,92 @@ export class LabReportService {
     return data[0]!.id;
   }
 
+  /**
+   * Print All (order-console's "Lab All Report" action, PDF templates
+   * integration checklist item 3). Unlike {@link print} (one report, one
+   * template render), this renders ONE `lab_all_report`-type template ONCE,
+   * with every one of the order's reports' result rows flattened into a
+   * single `sections.results` row-set (each row carries its own `test_name`
+   * so the body table reads as one continuous report, test by test).
+   *
+   * Deliberately flat, not nested (`sections.reports[].results`):
+   * `TemplateRenderService.interpolateSections` only expands ONE level of
+   * `{{#each}}` — it has no per-row nested-loop support — so a template
+   * author cannot write "for each report, for each result" in one pass.
+   * Flattening avoids that limitation entirely rather than extending the
+   * shared renderer (which every other template type also depends on) for
+   * this one case.
+   * @throws OrderReportsNotFoundException if the order has no lab reports
+   * (wrong id, or no item has reached ACCEPTED yet)
+   * @throws NoActivePrintTemplateException if no active `lab_all_report`
+   * template exists
+   * @throws AmbiguousPrintTemplateException if multiple exist and no
+   * `templateId` was given
+   */
+  async printAllForOrder(
+    orderId: string,
+    tenantId: string,
+    branchId: string | null,
+    templateId?: string,
+  ): Promise<Buffer> {
+    const activeBranchId = this.requireBranch(branchId);
+    const reportRows = await this.prisma.labReport.findMany({
+      where: {
+        tenantId,
+        branchId: activeBranchId,
+        deletedAt: null,
+        orderItem: { orderId },
+      },
+      select: { id: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (reportRows.length === 0) {
+      throw new OrderReportsNotFoundException(orderId);
+    }
+
+    const contexts = await Promise.all(
+      reportRows.map((r) => this.buildPrintContext(r.id, tenantId, branchId)),
+    );
+    const first = contexts[0]!;
+    const combined: GeneratePdfDto = {
+      // Order/patient variables are identical across every report on the
+      // same order — the first context's is as good as any.
+      variables: first.variables,
+      signatories: first.signatories,
+      sections: {
+        results: contexts.flatMap((c) => {
+          const testName = c.variables?.test_name ?? '';
+          const rows = c.sections?.results ?? [];
+          // A report with no result rows yet still gets one row (test name
+          // visible, blanks for the observed value) so it isn't silently
+          // dropped from the consolidated report.
+          return rows.length > 0
+            ? rows.map((row) => ({ test_name: testName, ...row }))
+            : [
+                {
+                  test_name: testName,
+                  parameter_name: '',
+                  observed1: '',
+                  observed2: '',
+                  unit: '',
+                  methodology: '',
+                  reference_display: '',
+                },
+              ];
+        }),
+      },
+    };
+
+    const resolvedTemplateId =
+      templateId ??
+      (await this.resolvePrintTemplateId(tenantId, 'lab_all_report'));
+    return this.pdfReportTemplateService.generatePdf(
+      resolvedTemplateId,
+      tenantId,
+      combined,
+    );
+  }
+
   // ── Save / Submit ──────────────────────────────────────────────────────────
 
   async save(
@@ -1311,6 +1485,17 @@ export class LabReportService {
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.requireReport(id, tenantId, activeBranchId);
     this.assertTransition('save', report.status);
+
+    // Bug fix: originally left unguarded (Submit alone was guarded), on the
+    // assumption an empty Save was a legitimate "save partial progress"
+    // action. Re-checked LABORATORY.docx directly: §2.2's own transition
+    // matrix names the trigger "Technician enters results -> Save", and
+    // §4.6/the Saved status definition both tie Save to having "entered/
+    // edited results" — an empty grid was never actually meant to reach
+    // Saved either. Same "at least one real value" threshold as Submit
+    // (not "every parameter filled in") — still allows genuine partial
+    // progress across multiple Save clicks on a multi-parameter test.
+    await this.requireAtLeastOneResultValue(id, tenantId);
 
     return this.prisma.withTenant(tenantId, async (tx) => {
       const updated = await tx.labReport.update({
@@ -1343,6 +1528,12 @@ export class LabReportService {
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.requireReport(id, tenantId, activeBranchId);
     this.assertTransition('submit', report.status);
+
+    // Bug fix: upsertResultValues allows every field to be blank, and
+    // nothing previously stopped a fully-empty result from being submitted
+    // for validation. Submit means "this is ready" — require at least one
+    // real value (same helper/threshold `save()` now also uses).
+    await this.requireAtLeastOneResultValue(id, tenantId);
 
     return this.prisma.withTenant(tenantId, async (tx) => {
       const updated = await tx.labReport.update({
@@ -1816,6 +2007,45 @@ export class LabReportService {
   // technician who opens the order. "Documents" (the 4th tab) is the
   // attachments feature, a separate, not-yet-built piece (no `/attachments`
   // endpoint exists anywhere in this module today) — not covered here.
+  //
+  // Bug fix: `LabReportNote.labReportId` ties every row to one specific test's
+  // report, but LABORATORY.docx §4.1/§4.2 frame these 3 tabs as living under
+  // the *order*-level header strip and being "visible to every technician who
+  // opens the order" — not scoped to whichever single test they happened to
+  // open. An order with multiple tests (multiple `LabReport`s) previously hid
+  // a note added on Test A's tab from Test B's identical tab, confirmed live.
+  // Fix: `createNote`/`findNotes` resolve the report's sibling `LabReport`s
+  // (same `orderId`, via `orderItem.orderId`) and read/write across all of
+  // them — the route/DTO contract (`POST/GET /lab-reports/:id/notes`) is
+  // unchanged, `:id` just now means "this order" rather than "this report."
+  // The other 9 `LabReportNoteCategory` values (Lock/Delta/Critical Alert/
+  // etc.) are untouched — those are genuinely per-test action side-effects,
+  // not this order-wide tab system, and keep their existing single-report
+  // scoping (see PLAIN_NOTE_CATEGORIES's own doc comment).
+
+  /** All `LabReport.id`s belonging to the same order as `id`, `id` included. */
+  private async siblingReportIds(
+    id: string,
+    tenantId: string,
+    branchId: string,
+  ): Promise<string[]> {
+    const report = await this.prisma.labReport.findFirst({
+      where: { id, tenantId, branchId, deletedAt: null },
+      select: { orderItem: { select: { orderId: true } } },
+    });
+    if (!report) throw new LabReportNotFoundException(id);
+
+    const siblings = await this.prisma.labReport.findMany({
+      where: {
+        tenantId,
+        branchId,
+        deletedAt: null,
+        orderItem: { orderId: report.orderItem.orderId },
+      },
+      select: { id: true },
+    });
+    return siblings.map((s) => s.id);
+  }
 
   async createNote(
     id: string,
@@ -1846,17 +2076,32 @@ export class LabReportService {
   ) {
     const activeBranchId = this.requireBranch(branchId);
     await this.requireReport(id, tenantId, activeBranchId);
+    const reportIds = await this.siblingReportIds(id, tenantId, activeBranchId);
 
-    return this.prisma.labReportNote.findMany({
+    const rows = await this.prisma.labReportNote.findMany({
       where: {
         tenantId,
-        labReportId: id,
+        labReportId: { in: reportIds },
         category: query.category
           ? query.category
           : { in: [...PLAIN_NOTE_CATEGORIES] },
       },
       orderBy: { createdAt: 'desc' },
     });
+
+    // Bug fix: `createdBy` is a logical Person.id (same unenforced-reference
+    // pattern as LabReportHistory.actorId, see enrichActorNames) — the
+    // Order/Sample/Tech Notes tabs were showing this raw UUID directly
+    // instead of a human name. Reuses the same resolve-and-fall-back-to-raw-id
+    // convention as `resolveActorNames` (Re-Run's "Re-Run By" column).
+    const nameById = await resolveActorNames(
+      this.prisma,
+      rows.map((r) => r.createdBy),
+    );
+    return rows.map((r) => ({
+      ...r,
+      createdByName: nameById.get(r.createdBy) ?? r.createdBy,
+    }));
   }
 
   // ── Audit trail ─────────────────────────────────────────────────────────────
