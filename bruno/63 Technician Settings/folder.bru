@@ -1,0 +1,23 @@
+meta {
+  name: 63 Technician Settings
+  seq: 63
+}
+
+docs {
+  # Technician Settings
+
+  Technician › Laboratory settings — per-branch Analytical TAT alert
+  thresholds and Laboratory Permissions (worklist icon visibility + report
+  signing authority). Tenant-scoped (RLS) + branch-level, mirroring the
+  Appointment/Accession Settings pattern:
+
+  - **GET** returns the branch's settings (created with defaults on first
+    access — never 404s for a branch that hasn't saved yet).
+  - **PUT** upserts the active branch's settings (a partial patch — omitted
+    fields keep their previously-saved value, or the module default if never
+    saved).
+
+  Both routes are business-authenticated (`Bearer {{businessAccessToken}}`);
+  tenant + branch come from the JWT (active profile). Writes are audited
+  under `AuditModule.TECHNICIAN_SETTINGS`.
+}

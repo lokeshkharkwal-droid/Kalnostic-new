@@ -255,6 +255,7 @@ export class ReferralDoctorService {
       aadhaarNumber: dto.aadhaarNumber ?? null,
       panNumber: dto.panNumber ?? null,
       hospitalName: dto.hospitalName ?? null,
+      country: dto.country ?? null,
       city: dto.city ?? null,
       state: dto.state ?? null,
       pincode: dto.pincode ?? null,
@@ -827,6 +828,7 @@ export class ReferralDoctorService {
     if (dto.hospitalName !== undefined) {
       data.hospitalName = dto.hospitalName ?? null;
     }
+    if (dto.country !== undefined) data.country = dto.country ?? null;
     if (dto.city !== undefined) data.city = dto.city ?? null;
     if (dto.state !== undefined) data.state = dto.state ?? null;
     if (dto.pincode !== undefined) data.pincode = dto.pincode ?? null;

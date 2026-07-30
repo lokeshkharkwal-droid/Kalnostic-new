@@ -113,6 +113,7 @@ export class BranchService {
               ? new Date(dto.establishedDate)
               : null,
             addressLine: dto.addressLine ?? null,
+            country: dto.country ?? null,
             city: dto.city ?? null,
             state: dto.state ?? null,
             pincode: dto.pincode ?? null,
@@ -344,6 +345,7 @@ export class BranchService {
     }
     if (dto.addressLine !== undefined)
       data.addressLine = dto.addressLine ?? null;
+    if (dto.country !== undefined) data.country = dto.country ?? null;
     if (dto.city !== undefined) data.city = dto.city ?? null;
     if (dto.state !== undefined) data.state = dto.state ?? null;
     if (dto.pincode !== undefined) data.pincode = dto.pincode ?? null;

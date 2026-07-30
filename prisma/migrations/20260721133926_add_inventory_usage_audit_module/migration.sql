@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "AuditModule" ADD VALUE 'INVENTORY_USAGE';

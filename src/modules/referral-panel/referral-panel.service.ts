@@ -252,6 +252,7 @@ export class ReferralPanelService {
           // Address
           addressLine1: dto.addressLine1 ?? null,
           addressLine2: dto.addressLine2 ?? null,
+          country: dto.country ?? null,
           city: dto.city ?? null,
           state: dto.state ?? null,
           pincode: dto.pincode ?? null,
@@ -871,6 +872,7 @@ export class ReferralPanelService {
       data.addressLine1 = dto.addressLine1 ?? null;
     if (dto.addressLine2 !== undefined)
       data.addressLine2 = dto.addressLine2 ?? null;
+    if (dto.country !== undefined) data.country = dto.country ?? null;
     if (dto.city !== undefined) data.city = dto.city ?? null;
     if (dto.state !== undefined) data.state = dto.state ?? null;
     if (dto.pincode !== undefined) data.pincode = dto.pincode ?? null;

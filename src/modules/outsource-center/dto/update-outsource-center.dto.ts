@@ -37,6 +37,11 @@ export class UpdateOutsourceCenterDto {
 
   @IsString()
   @IsOptional()
+  @MaxLength(255)
+  country?: string;
+
+  @IsString()
+  @IsOptional()
   @MinLength(1)
   @MaxLength(255)
   city?: string;

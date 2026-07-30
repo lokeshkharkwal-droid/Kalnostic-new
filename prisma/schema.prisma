@@ -1152,6 +1152,7 @@ model Branch {
 
   // Location
   addressLine String? @map("address_line")
+  country     String?
   city        String?
   state       String?
   pincode     String?
@@ -3041,6 +3042,7 @@ model OutsourceCenter {
   name      String  @map("outsource_center_name")
   shortName String? @map("short_name")
   address   String?
+  country   String?
   city      String
   state     String?
   pincode   String?
@@ -3213,6 +3215,7 @@ model ReferralPanel {
   // ── Address details ──
   addressLine1 String? @map("address_line1")
   addressLine2 String? @map("address_line2")
+  country      String?
   city         String?
   state        String?
   pincode      String?
@@ -3914,6 +3917,7 @@ model ReferralDoctor {
 
   // Practice/location details (captured on quick-add; Branch Admin fills the rest)
   hospitalName String? @map("hospital_name")
+  country      String?
   city         String?
   state        String?
   pincode      String?
@@ -4109,6 +4113,7 @@ model ExternalReferral {
 
   // Address & identity
   address       String?
+  country       String?
   city          String?
   state         String?
   pinCode       String? @map("pin_code")

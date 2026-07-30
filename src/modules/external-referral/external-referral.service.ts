@@ -229,6 +229,7 @@ export class ExternalReferralService {
       email: dto.email ?? null,
       // Address & identity
       address: dto.address ?? null,
+      country: dto.country ?? null,
       city: dto.city ?? null,
       state: dto.state ?? null,
       pinCode: dto.pinCode ?? null,
@@ -791,6 +792,7 @@ export class ExternalReferralService {
     if (dto.branchId !== undefined) data.branchId = dto.branchId ?? null;
     // Address & identity
     if (dto.address !== undefined) data.address = dto.address ?? null;
+    if (dto.country !== undefined) data.country = dto.country ?? null;
     if (dto.city !== undefined) data.city = dto.city ?? null;
     if (dto.state !== undefined) data.state = dto.state ?? null;
     if (dto.pinCode !== undefined) data.pinCode = dto.pinCode ?? null;
