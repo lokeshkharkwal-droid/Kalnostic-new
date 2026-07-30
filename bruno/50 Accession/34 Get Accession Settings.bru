@@ -18,17 +18,47 @@ tests {
   test("200 OK", function () {
     expect(res.getStatus()).to.equal(200);
   });
-  test("returns the effective settings map", function () {
+  test("returns the effective Accession Module Settings", function () {
     const d = res.getBody().data;
-    expect(d).to.have.property("tubeTypes");
-    expect(d).to.have.property("tat");
+    expect(d).to.have.property("MasterData_TubeTypes");
+    expect(d).to.have.property("SampleBarcodeSettings_Preview");
+    expect(d).to.have.property("Accession_MaximumTimeToAcceptSampleMinutes");
   });
 }
 
 docs {
-  Effective accession settings for the active branch (§G) — the branch's saved
-  `AccessionSetting` **merged over** the module defaults. Contains `tubeTypes`,
-  `sampleConditions`, `repeatReasons`, `discardMethods`, `rejectionReasons`,
-  `logisticsTypes`, and `tat` thresholds (used to derive the §A.4 TAT bands + as
-  the FE's action-modal dropdown sources).
+  Effective Accession Module Settings for the active branch (LIMS Settings
+  Master — Accession Module) — the branch's saved `AccessionSetting` merged
+  over the module defaults. Every field follows the `HeadingName_SettingName`
+  convention:
+
+  **Master Data** (string[] lists, persisted as JSON; the sanctioned source
+  for the Sample/Transfer action-modal dropdowns):
+  `MasterData_TubeTypes`, `MasterData_SampleConditions`,
+  `MasterData_RepeatReasons`, `MasterData_ErrorReasons`,
+  `MasterData_HoldReasons`, `MasterData_DiscardMethods`,
+  `MasterData_RejectionReasons` (shared by Internal/External Referral &
+  Outsource reject flows), `MasterData_LogisticsTypes`.
+
+  **Sample Barcode Settings** (typed columns):
+  `SampleBarcodeSettings_Prefix`, `SampleBarcodeSettings_Suffix`,
+  `SampleBarcodeSettings_Separator` (`NONE`/`HYPHEN`/`SLASH`/`UNDERSCORE`),
+  `SampleBarcodeSettings_NumberLength` (4-10),
+  `SampleBarcodeSettings_ResetInterval` (`NEVER`/`DAILY`/`MONTHLY`/`YEARLY`),
+  `SampleBarcodeSettings_CurrentNumber` (system-managed, read-only),
+  `SampleBarcodeSettings_LastResetAt` (system-managed, read-only),
+  `SampleBarcodeSettings_Preview` (computed, read-only — e.g. "SBC-000001-AM").
+
+  **Accession** (TAT / acceptance-window / barcode-mapping toggles, typed
+  columns): `Accession_MinimumTimeToAcceptSampleMinutes`,
+  `Accession_MaximumTimeToAcceptSampleMinutes`,
+  `Accession_WarningThresholdMinutes` / `Accession_CriticalThresholdMinutes`
+  (minutes remaining before the maximum accept time — a sample breaches
+  automatically once the maximum elapses, so there is no separate "breach"
+  field), `Accession_InternalReferralAcceptanceThresholdMinutes`,
+  `Accession_ExternalReferralAcceptanceThresholdMinutes`, and 7 booleans:
+  `Accession_AllowSampleBarcodeMappingBeforeAcceptInhouseOrders`,
+  `..BeforeAcceptInternalReferralOrders`, `..BeforeAcceptExternalReferralOrders`,
+  `..AfterAcceptInhouseOrders`, `..AfterAcceptInternalReferralOrders`,
+  `..AfterAcceptExternalReferralOrders`, `Accession_AllowSampleBarcodeMappingForOutsourceOrders`.
 }

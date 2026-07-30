@@ -6712,19 +6712,71 @@ model SampleTransfer {
   @@map("sample_transfers")
 }
 
-/// Per-branch configurable accession dropdowns/thresholds (PDF §G). Mirrors
-/// `OrderFieldConfig`: one row per branch (`@@unique([tenantId, branchId])`),
-/// payload held as JSON (`AccessionSettingsMap`). Holds tube types, sample
-/// conditions, repeat/rejection reasons, discard methods, logistics types,
-/// notification templates and TAT thresholds. Read falls back to
-/// `DEFAULT_ACCESSION_SETTINGS` when a branch has no row yet. Tenant-scoped +
-/// branch-level. RLS policy in prisma/rls.sql.
+/// Separator token for `AccessionSetting.SampleBarcodeSettings_Separator`.
+/// Mirrors `RegistrationIdSeparator` — duplicated per-module rather than
+/// shared, matching this codebase's convention (see `BillingInvoiceResetCycle`
+/// vs `RegistrationIdResetCycle`).
+enum AccessionBarcodeSeparator {
+  NONE
+  HYPHEN
+  SLASH
+  UNDERSCORE
+}
+
+/// How often `AccessionSetting.SampleBarcodeSettings_CurrentNumber` resets to
+/// zero. Mirrors `RegistrationIdResetCycle`.
+enum AccessionBarcodeResetCycle {
+  NEVER
+  DAILY
+  MONTHLY
+  YEARLY
+}
+
+/// Per-branch Accession Module Settings (LIMS Settings Master — Accession
+/// Module). Mirrors `OrderFieldConfig`: one row per branch
+/// (`@@unique([tenantId, branchId])`). Master-data lists (tube types, sample
+/// conditions, repeat/error/hold reasons, discard methods, rejection reasons,
+/// logistics types) are held as JSON (`AccessionSettingsMap`, all keys named
+/// `MasterData_*`) since they're variable-length lists, not scalars. Sample
+/// Barcode Settings and Accession (TAT/acceptance-window/barcode-mapping)
+/// settings are typed columns named `SampleBarcodeSettings_*` /
+/// `Accession_*` per the project's `HeadingName_SettingName` field
+/// convention. Read falls back to `DEFAULT_ACCESSION_SETTINGS` (for the JSON
+/// keys) / column defaults (for typed columns) when a branch has no row yet.
+/// Tenant-scoped + branch-level. RLS policy in prisma/rls.sql.
 model AccessionSetting {
   id       String @id @default(uuid())
   tenantId String @map("tenant_id")
   branchId String @map("branch_id")
 
+  /// `MasterData_*` string[] lists — see `AccessionSettingsMap`.
   config Json @default("{}")
+
+  // ── Sample Barcode Settings ──
+  SampleBarcodeSettings_Prefix        String                     @default("") @map("sample_barcode_settings_prefix") @db.VarChar(24)
+  SampleBarcodeSettings_Suffix        String                     @default("") @map("sample_barcode_settings_suffix") @db.VarChar(24)
+  SampleBarcodeSettings_Separator     AccessionBarcodeSeparator  @default(NONE) @map("sample_barcode_settings_separator")
+  SampleBarcodeSettings_NumberLength  Int                        @default(6) @map("sample_barcode_settings_number_length")
+  SampleBarcodeSettings_ResetInterval AccessionBarcodeResetCycle @default(NEVER) @map("sample_barcode_settings_reset_interval")
+  /// System-managed running counter — never accepted from the client.
+  SampleBarcodeSettings_CurrentNumber Int                        @default(0) @map("sample_barcode_settings_current_number")
+  SampleBarcodeSettings_LastResetAt   DateTime?                  @map("sample_barcode_settings_last_reset_at")
+
+  // ── Accession (TAT / acceptance-window / barcode-mapping toggles) ──
+  Accession_MinimumTimeToAcceptSampleMinutes           Int @default(10) @map("accession_min_time_to_accept_sample_minutes")
+  Accession_MaximumTimeToAcceptSampleMinutes           Int @default(20) @map("accession_max_time_to_accept_sample_minutes")
+  Accession_WarningThresholdMinutes                    Int @default(10) @map("accession_warning_threshold_minutes")
+  Accession_CriticalThresholdMinutes                   Int @default(5) @map("accession_critical_threshold_minutes")
+  Accession_InternalReferralAcceptanceThresholdMinutes Int @default(60) @map("accession_internal_referral_acceptance_threshold_minutes")
+  Accession_ExternalReferralAcceptanceThresholdMinutes Int @default(60) @map("accession_external_referral_acceptance_threshold_minutes")
+
+  Accession_AllowSampleBarcodeMappingBeforeAcceptInhouseOrders          Boolean @default(true) @map("accession_allow_mapping_before_accept_inhouse")
+  Accession_AllowSampleBarcodeMappingBeforeAcceptInternalReferralOrders Boolean @default(true) @map("accession_allow_mapping_before_accept_internal_referral")
+  Accession_AllowSampleBarcodeMappingBeforeAcceptExternalReferralOrders Boolean @default(true) @map("accession_allow_mapping_before_accept_external_referral")
+  Accession_AllowSampleBarcodeMappingAfterAcceptInhouseOrders           Boolean @default(true) @map("accession_allow_mapping_after_accept_inhouse")
+  Accession_AllowSampleBarcodeMappingAfterAcceptInternalReferralOrders  Boolean @default(true) @map("accession_allow_mapping_after_accept_internal_referral")
+  Accession_AllowSampleBarcodeMappingAfterAcceptExternalReferralOrders  Boolean @default(true) @map("accession_allow_mapping_after_accept_external_referral")
+  Accession_AllowSampleBarcodeMappingForOutsourceOrders                 Boolean @default(true) @map("accession_allow_mapping_for_outsource")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
