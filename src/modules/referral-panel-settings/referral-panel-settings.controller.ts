@@ -15,6 +15,8 @@ import { UpdateReferralPanelSettingsDto } from './dto/update-referral-panel-sett
 import { ListReferralPanelSettingsDto } from './dto/list-referral-panel-settings.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
+import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
@@ -39,10 +41,16 @@ export class ReferralPanelSettingsController {
   })
   create(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @CurrentUser('person_id') personId: string,
     @Body() dto: CreateReferralPanelSettingsDto,
   ) {
-    return this.referralPanelSettingsService.create(tenantId, dto, personId);
+    return this.referralPanelSettingsService.create(
+      tenantId,
+      dto,
+      profile.branchId,
+      personId,
+    );
   }
 
   /**

@@ -17,6 +17,8 @@ import { SiteAdminPermissionGuard } from '../siteadmin/guards/siteadmin-permissi
 import { RequireSiteAdminPermission } from '../siteadmin/decorators/require-siteadmin-permission.decorator';
 import { SITE_ADMIN_PERM } from '../siteadmin/constants/siteadmin-permissions.constant';
 import { Public } from '../auth/decorators/public.decorator';
+import { AuditAction, AuditModule } from '@prisma/client';
+import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
  * SiteAdmin global **messaging template** management (`/siteadmin/templates`).
@@ -39,6 +41,11 @@ export class SiteAdminTemplateController {
    * Create a global template.
    */
   @Post()
+  @Audit({
+    module: AuditModule.TEMPLATE,
+    action: AuditAction.CREATE,
+    description: 'Created a global template',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   create(@Body() dto: CreateTemplateDto) {
     return this.templateService.createGlobal(dto);
@@ -81,6 +88,11 @@ export class SiteAdminTemplateController {
    * Update a global template.
    */
   @Patch(':id')
+  @Audit({
+    module: AuditModule.TEMPLATE,
+    action: AuditAction.UPDATE,
+    description: 'Updated a global template',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   update(@Param('id') id: string, @Body() dto: UpdateTemplateDto) {
     return this.templateService.updateGlobal(id, dto);
@@ -90,6 +102,11 @@ export class SiteAdminTemplateController {
    * Soft-delete a global template.
    */
   @Delete(':id')
+  @Audit({
+    module: AuditModule.TEMPLATE,
+    action: AuditAction.DELETE,
+    description: 'Deleted a global template',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   remove(@Param('id') id: string) {
     return this.templateService.removeGlobal(id);
@@ -99,6 +116,11 @@ export class SiteAdminTemplateController {
    * Duplicate a global template (copy with " (Copy)" appended to the title).
    */
   @Post(':id/duplicate')
+  @Audit({
+    module: AuditModule.TEMPLATE,
+    action: AuditAction.CREATE,
+    description: 'Duplicated a global template',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   duplicate(@Param('id') id: string) {
     return this.templateService.duplicateGlobal(id);

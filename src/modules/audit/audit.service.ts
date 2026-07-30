@@ -1,7 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { AuditAction, AuditLog, AuditModule, Prisma } from '@prisma/client';
+import {
+  AuditAction,
+  AuditLog,
+  AuditModule,
+  Prisma,
+  SiteAdminAuditLog as SiteAdminAuditLogRow,
+  SiteAdminRole,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { QueryAuditDto } from './dto/query-audit.dto';
@@ -9,13 +16,16 @@ import { SiteAdminQueryAuditDto } from './dto/siteadmin-query-audit.dto';
 import { AuditNotFoundException } from './exceptions/audit.exceptions';
 
 /**
- * An audit-log row enriched for the SiteAdmin cross-tenant view: the raw row
- * plus the actor's human name/username and the owning business name (the row
- * itself only stores `actorPersonId` + `tenantId`).
+ * A unified audit-log row for the SiteAdmin cross-tenant view. Merges two
+ * sources into one shape so the frontend renders a single list:
+ *  - `scope: 'TENANT'` — a business `audit_logs` row (has `tenantId`/`tenantName`).
+ *  - `scope: 'SITEADMIN'` — a platform-level `siteadmin_audit_logs` row
+ *    (`tenantId`/`tenantName` are null; the actor is a SiteAdmin, whose email is
+ *    carried in `actorName`/`actorUsername` and role in `actorRoleLabel`).
  */
-export interface SiteAdminAuditLog extends AuditLog {
-  actorName: string | null;
-  actorUsername: string | null;
+export interface SiteAdminAuditView extends Omit<TenantAuditLog, 'tenantId'> {
+  scope: 'TENANT' | 'SITEADMIN';
+  tenantId: string | null;
   tenantName: string | null;
 }
 
@@ -44,6 +54,24 @@ export interface AuditRecordInput {
   actorPersonId: string;
   actorRoleKey?: string | null;
   actorRoleLabel?: string | null;
+  ipAddress?: string | null;
+  resourceId?: string | null;
+  metadata?: Prisma.InputJsonValue;
+}
+
+/**
+ * Payload for recording a single **SiteAdmin** audit event. Built by the
+ * `AuditInterceptor` (SiteAdmin branch) from route metadata + the SiteAdmin JWT,
+ * or by the SiteAdmin login path. The actor is a `siteadmin_users` row, so email
+ * + role are denormalized onto the audit row for display.
+ */
+export interface SiteAdminAuditRecordInput {
+  module: AuditModule;
+  action?: AuditAction;
+  description: string;
+  actorSiteadminId: string;
+  actorEmail: string;
+  actorRole: SiteAdminRole;
   ipAddress?: string | null;
   resourceId?: string | null;
   metadata?: Prisma.InputJsonValue;
@@ -101,6 +129,38 @@ export class AuditService {
   }
 
   /**
+   * Record a **SiteAdmin** audit event. **Fire-and-forget** — never throws and
+   * never blocks the caller, exactly like {@link record}.
+   *
+   * Unlike the tenant path, `siteadmin_audit_logs` is platform-level with **no
+   * RLS**, so the insert does not run through `withTenant`.
+   *
+   * @param input the SiteAdmin event to record (actor comes from the SiteAdmin JWT)
+   */
+  recordSiteAdmin(input: SiteAdminAuditRecordInput): void {
+    void this.prisma.siteAdminAuditLog
+      .create({
+        data: {
+          module: input.module,
+          action: input.action ?? AuditAction.OTHER,
+          description: input.description,
+          actorSiteadminId: input.actorSiteadminId,
+          actorEmail: input.actorEmail,
+          actorRole: input.actorRole,
+          ipAddress: input.ipAddress ?? null,
+          resourceId: input.resourceId ?? null,
+          metadata: input.metadata ?? Prisma.JsonNull,
+        },
+      })
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.error(
+          `Failed to write SiteAdmin audit log (module=${input.module}, actor=${input.actorSiteadminId}): ${message}`,
+        );
+      });
+  }
+
+  /**
    * List audit logs for a tenant (offset pagination), newest first, with
    * optional filtering by module, action, actor, branch, and date range, plus
    * a free-text `search` over the actor and description.
@@ -151,27 +211,32 @@ export class AuditService {
   }
 
   /**
-   * SiteAdmin cross-tenant audit view: list audit logs across **all** businesses
-   * (or a single one when `tenantId` is given), newest first, with the same
-   * filters as the tenant view plus actor-name / business-name enrichment.
+   * SiteAdmin cross-tenant audit view: list audit logs newest first, merging two
+   * sources into one list — business `audit_logs` across **all** tenants (or a
+   * single one when `tenantId` is given) **and** platform-level SiteAdmin actions
+   * from `siteadmin_audit_logs`. Same filters as the tenant view.
    *
    * Tenant-scoped tables have RLS, so an unscoped read returns zero rows when
    * `RLS_ENABLED=true`. We therefore run each tenant's query inside
    * `runWithTenant` (the SiteAdmin cross-tenant read pattern — see
-   * `PrismaService.runWithTenant`). For the all-businesses case we take the top
-   * `page*limit` rows per tenant, merge, sort by `createdAt` desc, and slice — so
-   * the returned page is the correct global top-N. Actor and business lookups hit
-   * the platform-level `persons` / `person_credentials` / `tenants` tables, which
-   * have no RLS, so they run outside any tenant context.
+   * `PrismaService.runWithTenant`) and take the top `page*limit` rows per tenant.
+   * `siteadmin_audit_logs` is platform-level (no RLS) and is queried directly.
+   * Both sets are merged, sorted by `createdAt` desc, and sliced — so the returned
+   * page is the correct global top-N. Actor and business lookups hit the
+   * platform-level `persons` / `person_credentials` / `tenants` tables (no RLS).
+   *
+   * SiteAdmin rows have no tenant/branch/person, so they are excluded whenever the
+   * query narrows to a specific `tenantId`, `branchId`, or `actorPersonId`.
    *
    * @param query validated filters + pagination (+ optional `tenantId`)
    * @returns a paginated result the interceptor reshapes into `meta`
    */
   async findAllForSiteAdmin(
     query: SiteAdminQueryAuditDto,
-  ): Promise<PaginatedResult<SiteAdminAuditLog>> {
+  ): Promise<PaginatedResult<SiteAdminAuditView>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
+    const search = query.search?.trim();
 
     const where: Prisma.AuditLogWhereInput = { deletedAt: null };
     if (query.module !== undefined) where.module = query.module;
@@ -180,7 +245,6 @@ export class AuditService {
       where.actorPersonId = query.actorPersonId;
     }
     if (query.branchId !== undefined) where.branchId = query.branchId;
-    const search = query.search?.trim();
     if (search) {
       where.OR = [
         { description: { contains: search, mode: 'insensitive' } },
@@ -206,74 +270,183 @@ export class AuditService {
     });
     const tenantNameById = new Map(tenants.map((t) => [t.id, t.name]));
 
-    let rows: AuditLog[];
-    let total = 0;
-
+    // Single business — SiteAdmin (tenant-less) rows are out of scope; fast, exact
+    // offset pagination on that tenant's audit_logs alone.
     if (query.tenantId !== undefined) {
-      // Single business — fast, exact offset pagination.
       const scopedWhere: Prisma.AuditLogWhereInput = {
         ...where,
         tenantId: query.tenantId,
       };
-      [rows, total] = await this.prisma.runWithTenant(query.tenantId, () =>
-        Promise.all([
-          this.prisma.auditLog.findMany({
-            where: scopedWhere,
-            skip: (page - 1) * limit,
-            take: limit,
-            orderBy: { createdAt: 'desc' },
-          }),
-          this.prisma.auditLog.count({ where: scopedWhere }),
-        ]),
+      const [rows, total] = await this.prisma.runWithTenant(
+        query.tenantId,
+        () =>
+          Promise.all([
+            this.prisma.auditLog.findMany({
+              where: scopedWhere,
+              skip: (page - 1) * limit,
+              take: limit,
+              orderBy: { createdAt: 'desc' },
+            }),
+            this.prisma.auditLog.count({ where: scopedWhere }),
+          ]),
       );
-    } else {
-      // All businesses — gather the top `page*limit` per tenant, then merge.
-      const take = page * limit;
-      const collected: AuditLog[] = [];
-      for (const tenant of tenants) {
-        const scopedWhere: Prisma.AuditLogWhereInput = {
-          ...where,
-          tenantId: tenant.id,
-        };
-        const [tenantRows, tenantCount] = await this.prisma.runWithTenant(
-          tenant.id,
-          () =>
-            Promise.all([
-              this.prisma.auditLog.findMany({
-                where: scopedWhere,
-                take,
-                orderBy: { createdAt: 'desc' },
-              }),
-              this.prisma.auditLog.count({ where: scopedWhere }),
-            ]),
-        );
-        collected.push(...tenantRows);
-        total += tenantCount;
-      }
-      collected.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-      rows = collected.slice((page - 1) * limit, page * limit);
+      const data = await this.enrichForSiteAdmin(rows, tenantNameById);
+      return { data, total, page, limit };
     }
 
-    const data = await this.enrichForSiteAdmin(rows, tenantNameById);
+    // All businesses — gather the top `page*limit` tenant rows per tenant plus the
+    // top `page*limit` SiteAdmin rows, then merge, sort, and slice the page.
+    const take = page * limit;
+    let total = 0;
+
+    const tenantCollected: AuditLog[] = [];
+    for (const tenant of tenants) {
+      const scopedWhere: Prisma.AuditLogWhereInput = {
+        ...where,
+        tenantId: tenant.id,
+      };
+      const [tenantRows, tenantCount] = await this.prisma.runWithTenant(
+        tenant.id,
+        () =>
+          Promise.all([
+            this.prisma.auditLog.findMany({
+              where: scopedWhere,
+              take,
+              orderBy: { createdAt: 'desc' },
+            }),
+            this.prisma.auditLog.count({ where: scopedWhere }),
+          ]),
+      );
+      tenantCollected.push(...tenantRows);
+      total += tenantCount;
+    }
+
+    // SiteAdmin rows (platform-level, no RLS). Skipped when a branch/person filter
+    // is set, since SiteAdmin actions carry neither.
+    let siteAdminCollected: SiteAdminAuditLogRow[] = [];
+    if (query.branchId === undefined && query.actorPersonId === undefined) {
+      const siteAdminWhere: Prisma.SiteAdminAuditLogWhereInput = {
+        deletedAt: null,
+      };
+      if (query.module !== undefined) siteAdminWhere.module = query.module;
+      if (query.action !== undefined) siteAdminWhere.action = query.action;
+      if (search) {
+        siteAdminWhere.OR = [
+          { description: { contains: search, mode: 'insensitive' } },
+          { actorEmail: { contains: search, mode: 'insensitive' } },
+        ];
+      }
+      if (query.from !== undefined || query.to !== undefined) {
+        siteAdminWhere.createdAt = {
+          ...(query.from !== undefined ? { gte: new Date(query.from) } : {}),
+          ...(query.to !== undefined ? { lte: new Date(query.to) } : {}),
+        };
+      }
+      const [saRows, saCount] = await Promise.all([
+        this.prisma.siteAdminAuditLog.findMany({
+          where: siteAdminWhere,
+          take,
+          orderBy: { createdAt: 'desc' },
+        }),
+        this.prisma.siteAdminAuditLog.count({ where: siteAdminWhere }),
+      ]);
+      siteAdminCollected = saRows;
+      total += saCount;
+    }
+
+    // Merge both sources by recency, slice the page, then enrich only the page.
+    type Tagged =
+      | { scope: 'TENANT'; row: AuditLog }
+      | { scope: 'SITEADMIN'; row: SiteAdminAuditLogRow };
+    const merged: Tagged[] = [
+      ...tenantCollected.map((row): Tagged => ({ scope: 'TENANT', row })),
+      ...siteAdminCollected.map((row): Tagged => ({ scope: 'SITEADMIN', row })),
+    ];
+    merged.sort(
+      (a, b) => b.row.createdAt.getTime() - a.row.createdAt.getTime(),
+    );
+    const pageItems = merged.slice((page - 1) * limit, page * limit);
+
+    const tenantPageRows = pageItems
+      .filter(
+        (t): t is { scope: 'TENANT'; row: AuditLog } => t.scope === 'TENANT',
+      )
+      .map((t) => t.row);
+    const enrichedTenant = await this.enrichForSiteAdmin(
+      tenantPageRows,
+      tenantNameById,
+    );
+    const enrichedById = new Map(enrichedTenant.map((v) => [v.id, v]));
+
+    const data: SiteAdminAuditView[] = pageItems.map((t) =>
+      t.scope === 'TENANT'
+        ? (enrichedById.get(t.row.id) as SiteAdminAuditView)
+        : this.mapSiteAdminRow(t.row),
+    );
     return { data, total, page, limit };
   }
 
   /**
-   * Attach the actor's name/username and the business name to audit rows for the
-   * SiteAdmin view. `persons` / `person_credentials` are platform-level (no RLS),
-   * so these lookups run without a tenant context.
+   * Attach the actor's name/username and the business name to business audit rows
+   * for the SiteAdmin view, tagging them `scope: 'TENANT'`. `persons` /
+   * `person_credentials` are platform-level (no RLS), so these lookups run without
+   * a tenant context.
    * @param rows the page of audit rows to enrich
    * @param tenantNameById tenant id → business name (already resolved by caller)
    */
   private async enrichForSiteAdmin(
     rows: AuditLog[],
     tenantNameById: Map<string, string>,
-  ): Promise<SiteAdminAuditLog[]> {
+  ): Promise<SiteAdminAuditView[]> {
     const withActors = await this.enrichActorNames(rows);
     return withActors.map((r) => ({
       ...r,
+      scope: 'TENANT' as const,
       tenantName: tenantNameById.get(r.tenantId) ?? null,
     }));
+  }
+
+  /**
+   * Map a platform-level SiteAdmin audit row into the unified view. The actor is a
+   * SiteAdmin (not a person), so the denormalized email fills the name/username
+   * columns and the role fills the role label; tenant/branch/person are null.
+   * @param row a `siteadmin_audit_logs` row
+   */
+  private mapSiteAdminRow(row: SiteAdminAuditLogRow): SiteAdminAuditView {
+    return {
+      id: row.id,
+      scope: 'SITEADMIN',
+      tenantId: null,
+      branchId: null,
+      module: row.module,
+      action: row.action,
+      description: row.description,
+      actorPersonId: row.actorSiteadminId,
+      actorRoleKey: row.actorRole,
+      actorRoleLabel: this.humanizeRole(row.actorRole),
+      ipAddress: row.ipAddress,
+      resourceId: row.resourceId,
+      metadata: row.metadata,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      deletedAt: row.deletedAt,
+      actorName: row.actorEmail,
+      actorUsername: row.actorEmail,
+      tenantName: null,
+    };
+  }
+
+  /**
+   * Render a `SiteAdminRole` enum value as a human-readable label
+   * (e.g. `FULL_ADMIN` → `Full Admin`).
+   * @param role the SiteAdmin role
+   */
+  private humanizeRole(role: SiteAdminRole): string {
+    return role
+      .toLowerCase()
+      .split('_')
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ');
   }
 
   /**

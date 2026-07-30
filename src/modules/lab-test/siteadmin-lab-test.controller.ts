@@ -19,6 +19,8 @@ import { RequireSiteAdminPermission } from '../siteadmin/decorators/require-site
 import { CurrentSiteAdmin } from '../siteadmin/decorators/current-siteadmin.decorator';
 import { SITE_ADMIN_PERM } from '../siteadmin/constants/siteadmin-permissions.constant';
 import { Public } from '../auth/decorators/public.decorator';
+import { AuditAction, AuditModule } from '@prisma/client';
+import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
  * SiteAdmin global lab-test **template** management
@@ -41,6 +43,11 @@ export class SiteAdminLabTestController {
    * Create a global template lab test (with nested samples + result parameters).
    */
   @Post()
+  @Audit({
+    module: AuditModule.LAB_TEST,
+    action: AuditAction.CREATE,
+    description: 'Created a template lab test',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   create(
     @CurrentSiteAdmin('siteadmin_id') actorId: string,
@@ -88,6 +95,11 @@ export class SiteAdminLabTestController {
    * Update a global template lab test (children replaced when provided).
    */
   @Patch(':id')
+  @Audit({
+    module: AuditModule.LAB_TEST,
+    action: AuditAction.UPDATE,
+    description: 'Updated a template lab test',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   update(@Param('id') id: string, @Body() dto: UpdateLabTestDto) {
     return this.labTestService.updateTemplate(id, dto);
@@ -97,6 +109,11 @@ export class SiteAdminLabTestController {
    * Soft-delete a global template lab test (cascade soft-delete of its children).
    */
   @Delete(':id')
+  @Audit({
+    module: AuditModule.LAB_TEST,
+    action: AuditAction.DELETE,
+    description: 'Deleted a template lab test',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   remove(@Param('id') id: string) {
     return this.labTestService.removeTemplate(id);

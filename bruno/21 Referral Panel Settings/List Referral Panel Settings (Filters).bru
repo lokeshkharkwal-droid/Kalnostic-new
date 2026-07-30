@@ -5,7 +5,7 @@ meta {
 }
 
 get {
-  url: {{baseUrl}}/referral-panel-settings?page=1&limit=20&clientType=POSTPAID&status=ACTIVE&search=Standard
+  url: {{baseUrl}}/referral-panel-settings?page=1&limit=20&clientType=POSTPAID&status=ACTIVE&search=Standard&branchId=
   body: none
   auth: bearer
 }
@@ -16,6 +16,7 @@ params:query {
   clientType: POSTPAID
   status: ACTIVE
   search: Standard
+  branchId:
 }
 
 auth:bearer {
@@ -30,16 +31,19 @@ tests {
 
 docs {
   Paginated list of referral panel settings templates in the caller's tenant
-  (newest first). Scoped by tenant only.
+  (newest first). Always scoped by tenant; optionally narrowed to one branch.
 
   ## Filters
 
+  - `branchId` — exact-match branch filter. Branch Admin passes the active branch
+    id (from the JWT) to see only that branch's settings; tenant-level (`null`)
+    rows are excluded. Business Admin omits it to list every branch's settings.
   - `clientType` — `CASH` | `PREPAID` | `POSTPAID`.
   - `status` — `ACTIVE` | `INACTIVE`.
   - `search` — case-insensitive match against `settingName`. Whitespace-only
     values are ignored.
 
-  All three are optional and combine (AND). Omit them to list everything.
+  All four are optional and combine (AND). Omit them to list everything.
 
   ## Pagination
 

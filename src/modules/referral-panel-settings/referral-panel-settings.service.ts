@@ -34,6 +34,8 @@ export class ReferralPanelSettingsService {
    * default for the same `clientType` is cleared first (one default per client type).
    * @param tenantId owning tenant (from JWT)
    * @param dto validated payload (no `tenantId`/`branchId` — set from context)
+   * @param branchId active branch from the JWT (`null` for tenant-level callers
+   *   such as Business Admin); stamped on the row so Branch Admin listings scope to it
    * @param actorId person id of the creator (optional audit trail)
    * @returns the created settings template
    * @throws InvalidReferralPanelSettingsBonusException on a bonus invariant
@@ -42,6 +44,7 @@ export class ReferralPanelSettingsService {
   async create(
     tenantId: string,
     dto: CreateReferralPanelSettingsDto,
+    branchId: string | null,
     actorId?: string,
   ): Promise<ReferralPanelSettingsEntity> {
     this.assertBonus(dto.bonusType, dto.bonusPercentage, dto.bonusFixedAmount);
@@ -50,6 +53,7 @@ export class ReferralPanelSettingsService {
     const data: Prisma.ReferralPanelSettingsUncheckedCreateInput = {
       ...dto,
       tenantId,
+      branchId: branchId ?? null,
       isDefault,
       createdBy: actorId ?? null,
       updatedBy: actorId ?? null,
@@ -106,8 +110,9 @@ export class ReferralPanelSettingsService {
 
   /**
    * List active settings templates for a tenant (offset pagination). Optional
-   * `clientType` / `status` filters and a case-insensitive `search` on the setting
-   * name. Scoped by tenant only (not branch).
+   * `branchId` (exact match) / `clientType` / `status` filters and a case-insensitive
+   * `search` on the setting name. Always scoped by tenant; when `branchId` is passed
+   * only that branch's settings are returned (tenant-level `null` rows are excluded).
    * @param tenantId tenant scope
    * @param query pagination + optional filters
    */
@@ -121,6 +126,7 @@ export class ReferralPanelSettingsService {
       tenantId,
       deletedAt: null,
     };
+    if (query.branchId) where.branchId = query.branchId;
     if (query.clientType) where.clientType = query.clientType;
     if (query.status) where.status = query.status;
     if (query.search) {

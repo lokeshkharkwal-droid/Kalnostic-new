@@ -17,6 +17,8 @@ import { SiteAdminPermissionGuard } from '../siteadmin/guards/siteadmin-permissi
 import { RequireSiteAdminPermission } from '../siteadmin/decorators/require-siteadmin-permission.decorator';
 import { SITE_ADMIN_PERM } from '../siteadmin/constants/siteadmin-permissions.constant';
 import { Public } from '../auth/decorators/public.decorator';
+import { AuditAction, AuditModule } from '@prisma/client';
+import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
  * SiteAdmin city management (`/siteadmin/locations/cities`). Global reference
@@ -32,6 +34,11 @@ export class SiteAdminCityController {
 
   /** Create a city under a state (validates state + country consistency). */
   @Post()
+  @Audit({
+    module: AuditModule.LOCATION,
+    action: AuditAction.CREATE,
+    description: 'Created a city',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   create(@Body() dto: CreateCityDto) {
     return this.cityService.create(dto);
@@ -58,6 +65,11 @@ export class SiteAdminCityController {
 
   /** Update a city. */
   @Patch(':id')
+  @Audit({
+    module: AuditModule.LOCATION,
+    action: AuditAction.UPDATE,
+    description: 'Updated a city',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   update(@Param('id') id: string, @Body() dto: UpdateCityDto) {
     return this.cityService.update(id, dto);
@@ -65,6 +77,11 @@ export class SiteAdminCityController {
 
   /** Soft-delete a city (blocked while it still has active areas). */
   @Delete(':id')
+  @Audit({
+    module: AuditModule.LOCATION,
+    action: AuditAction.DELETE,
+    description: 'Deleted a city',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   remove(@Param('id') id: string) {
     return this.cityService.remove(id);

@@ -12,6 +12,8 @@ import { SiteAdminPermissionGuard } from '../siteadmin/guards/siteadmin-permissi
 import { RequireSiteAdminPermission } from '../siteadmin/decorators/require-siteadmin-permission.decorator';
 import { SITE_ADMIN_PERM } from '../siteadmin/constants/siteadmin-permissions.constant';
 import { Public } from '../auth/decorators/public.decorator';
+import { AuditAction, AuditModule } from '@prisma/client';
+import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
  * SiteAdmin contact-us inbox (`/siteadmin/contact-us`). Submissions are
@@ -52,6 +54,11 @@ export class SiteAdminContactUsController {
    * Soft-delete a contact submission.
    */
   @Delete(':id')
+  @Audit({
+    module: AuditModule.CONTACT_US,
+    action: AuditAction.DELETE,
+    description: 'Deleted a contact submission',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.BUSINESS_SUSPEND)
   remove(@Param('id') id: string) {
     return this.contactUsService.remove(id);
