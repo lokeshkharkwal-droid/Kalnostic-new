@@ -1,0 +1,58 @@
+meta {
+  name: 02 Save Technician Settings
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{baseUrl}}/technician-settings
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "tatWarningMinutes": 20,
+    "tatCriticalMinutes": 10,
+    "tatImminentMinutes": 5,
+    "isViewRerunIconEnabled": true,
+    "isViewCriticalAlertIconEnabled": true,
+    "isViewOutOfRangeIconEnabled": true,
+    "isViewDeltaCheckIconEnabled": true,
+    "isViewScheduledTestIconEnabled": true,
+    "authoritySignatures": 2,
+    "signatoryBasis": "category"
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("echoes back the saved values", function () {
+    const d = res.getBody().data;
+    expect(d.tatWarningMinutes).to.equal(20);
+    expect(d.authoritySignatures).to.equal(2);
+    expect(d.signatoryBasis).to.equal("category");
+  });
+}
+
+docs {
+  Upsert the active branch's technician settings. Every field is optional (a
+  partial patch) — omitted fields keep their previously-saved value (or the
+  module default if this branch has never saved). The response is the
+  effective settings row. Audited under `AuditModule.TECHNICIAN_SETTINGS`.
+
+  Validation: `tatWarningMinutes` / `tatCriticalMinutes` / `tatImminentMinutes`
+  0-999 and must satisfy Warning > Critical > Imminent (minutes remaining
+  before TAT Max); `authoritySignatures` 1-3; `signatoryBasis` must be one of
+  `department` | `category` | `subCategory`.
+}

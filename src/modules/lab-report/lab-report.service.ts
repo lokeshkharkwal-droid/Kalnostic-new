@@ -1128,7 +1128,7 @@ export class LabReportService {
           referenceRangeId: match.id,
           referenceDisplay:
             match.displayOfReferenceRange ??
-            `${match.lowerLimit ?? ''} - ${match.upperLimit ?? ''}`.trim(),
+            `${match.lowerLimit?.toString() ?? ''} - ${match.upperLimit?.toString() ?? ''}`.trim(),
         }
       : { referenceRangeId: null, referenceDisplay: null };
   }

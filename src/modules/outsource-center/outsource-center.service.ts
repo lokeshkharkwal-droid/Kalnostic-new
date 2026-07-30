@@ -387,6 +387,7 @@ export class OutsourceCenterService {
       name: dto.name,
       shortName: dto.shortName ?? null,
       address: dto.address ?? null,
+      country: dto.country ?? null,
       city: dto.city,
       state: dto.state ?? null,
       pincode: dto.pincode ?? null,
@@ -415,6 +416,7 @@ export class OutsourceCenterService {
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.shortName !== undefined) data.shortName = dto.shortName ?? null;
     if (dto.address !== undefined) data.address = dto.address ?? null;
+    if (dto.country !== undefined) data.country = dto.country ?? null;
     if (dto.city !== undefined) data.city = dto.city;
     if (dto.state !== undefined) data.state = dto.state ?? null;
     if (dto.pincode !== undefined) data.pincode = dto.pincode ?? null;

@@ -69,6 +69,7 @@ export const EXTERNAL_REFERRAL_LIST_SELECT = {
   referralCode: true,
   mobileNumber: true,
   email: true,
+  country: true,
   city: true,
   isCommissionApplicable: true,
   commissionType: true,

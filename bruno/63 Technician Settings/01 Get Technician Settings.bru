@@ -1,0 +1,47 @@
+meta {
+  name: 01 Get Technician Settings
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/technician-settings
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the technician settings", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("tatWarningMinutes");
+    expect(d).to.have.property("tatCriticalMinutes");
+    expect(d).to.have.property("tatImminentMinutes");
+    expect(d).to.have.property("authoritySignatures");
+    expect(d).to.have.property("signatoryBasis");
+  });
+}
+
+docs {
+  Technician settings for the active branch (created with defaults on first
+  access). Contains:
+
+  - **Analytical TAT:** `tatWarningMinutes` (default 15), `tatCriticalMinutes`
+    (default 10), `tatImminentMinutes` (default 5) — minutes remaining before
+    TAT Max. "Breached" is derived (automatic after TAT Maximum), not stored.
+  - **Laboratory Permissions:** `isViewRerunIconEnabled`,
+    `isViewCriticalAlertIconEnabled`, `isViewOutOfRangeIconEnabled`,
+    `isViewDeltaCheckIconEnabled`, `isViewScheduledTestIconEnabled` (worklist
+    icon visibility toggles, all default `true`); `authoritySignatures`
+    (1-3, default 1); `signatoryBasis` (`department` | `category` |
+    `subCategory`, default `department`).
+
+  A branch that has never saved settings gets the module defaults — this
+  endpoint never 404s.
+}

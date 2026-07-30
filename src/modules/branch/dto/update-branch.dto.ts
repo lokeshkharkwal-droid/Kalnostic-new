@@ -64,6 +64,11 @@ export class UpdateBranchDto {
   @IsString()
   @IsOptional()
   @MaxLength(120)
+  country?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(120)
   city?: string;
 
   @IsString()

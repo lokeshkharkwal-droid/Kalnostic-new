@@ -1,0 +1,73 @@
+meta {
+  name: 27 Print All Reports
+  type: http
+  seq: 27
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/order/{{orderId}}/print-all
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {}
+}
+
+tests {
+  test("200 or 201 with a PDF", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201]);
+    expect(res.getHeader("content-type")).to.include("application/pdf");
+  });
+}
+
+docs {
+  Print All (order-console's "Lab All Report" action). Renders ONE
+  `lab_all_report`-type template, flattening every one of the order's lab
+  reports' result rows into a single `sections.results` array so the body
+  reads as one continuous report, test by test. Streams the rendered PDF
+  directly (`Content-Type: application/pdf`).
+
+  Declared before the `:id` routes on the controller (same convention as
+  `tat/summary`), so `order` in the URL is never captured as a report id.
+
+  ## Body
+
+  - `templateId` — optional. Omit to use the tenant's single active
+    `lab_all_report` template. Required if more than one exists.
+  - No `type` field — this action's type is always `lab_all_report`.
+
+  ## Resolution & errors
+
+  - 404 `ORDER_REPORTS_NOT_FOUND` — the order has no `LabReport` rows at all
+    (wrong id, or no item has reached ACCEPTED yet).
+  - 404 `NO_ACTIVE_PRINT_TEMPLATE` — no active `lab_all_report` template
+    exists for the tenant.
+  - 409 `AMBIGUOUS_PRINT_TEMPLATE` — more than one active `lab_all_report`
+    template and no `templateId` given.
+
+  ## Render context
+
+  `variables` — taken from the FIRST report's context (order/patient data is
+  identical across every report on the same order, so this is safe): same
+  field set as `26 Print Report`'s `lab_report` variables.
+
+  `sections.results` — flattened across every report on the order. Each row
+  carries its own `test_name` (re-injected per row, on top of the single-print
+  row shape) plus `parameter_name`, `observed1`, `observed2`, `unit`,
+  `methodology`, `reference_display`. A report with zero result rows still
+  gets ONE placeholder row (`test_name` set, everything else `""`) so it isn't
+  silently dropped from the consolidated document — e.g. an order item whose
+  report was never entered.
+
+  `signatories` — taken from the first report's signatories only (same
+  conditional-empty-array rule as `26 Print Report`).
+}

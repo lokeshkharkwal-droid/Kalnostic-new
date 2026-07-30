@@ -97,6 +97,11 @@ export class CreateReferralDoctorDto {
   @IsString()
   @IsOptional()
   @MaxLength(255)
+  country?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(255)
   city?: string;
 
   @IsString()
