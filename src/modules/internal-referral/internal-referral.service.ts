@@ -11,6 +11,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { BranchService } from '../branch/branch.service';
+import { DepartmentService } from '../department/department.service';
 import { UsersService } from '../users/users.service';
 import { ReferralPanelSettingsService } from '../referral-panel-settings/referral-panel-settings.service';
 import { CreateInternalReferralDto } from './dto/create-internal-referral.dto';
@@ -75,6 +76,7 @@ export class InternalReferralService {
     private readonly usersService: UsersService,
     private readonly referralPanelSettingsService: ReferralPanelSettingsService,
     private readonly branchService: BranchService,
+    private readonly departmentService: DepartmentService,
   ) {}
 
   /**
@@ -196,6 +198,23 @@ export class InternalReferralService {
   }
 
   /**
+   * Validate that a referenced department belongs to the caller's tenant
+   * (mirrors ReferralDoctorService's classification validation). No-op when none
+   * is supplied.
+   * @param tenantId tenant scope
+   * @param departmentId the department id to validate (or undefined/null)
+   * @throws DepartmentNotFoundException if missing/other tenant
+   */
+  private async assertDepartmentRef(
+    tenantId: string,
+    departmentId?: string | null,
+  ): Promise<void> {
+    if (departmentId) {
+      await this.departmentService.findById(departmentId, tenantId);
+    }
+  }
+
+  /**
    * Register an internal referral with its assigned lab tests/panels in one
    * transaction. The optional `employeeId` is validated to be active staff of the
    * tenant; commission/incentive config is validated and normalised; assigned
@@ -214,6 +233,7 @@ export class InternalReferralService {
     await this.validateEmployee(tenantId, dto.employeeId);
     await this.assertSettingsRef(tenantId, dto.referralPanelSettingsId);
     await this.assertBranchRef(tenantId, dto.branchId);
+    await this.assertDepartmentRef(tenantId, dto.departmentId);
 
     const commissionEff: CommissionEffective = {
       isCommissionApplicable: dto.isCommissionApplicable ?? false,
@@ -242,7 +262,7 @@ export class InternalReferralService {
       firstName: dto.firstName,
       lastName: dto.lastName ?? null,
       fullName: this.computeFullName(dto.firstName, dto.lastName ?? null),
-      department: dto.department ?? null,
+      departmentId: dto.departmentId ?? null,
       designation: dto.designation ?? null,
       joiningDate: this.toDate(dto.joiningDate),
       mobileNumber: dto.mobileNumber ?? null,
@@ -471,6 +491,7 @@ export class InternalReferralService {
     }
     await this.assertSettingsRef(tenantId, dto.referralPanelSettingsId);
     await this.assertBranchRef(tenantId, dto.branchId);
+    await this.assertDepartmentRef(tenantId, dto.departmentId);
 
     const testIds = dto.labTestIds;
     const panelIds = dto.labPanelIds;
@@ -845,7 +866,11 @@ export class InternalReferralService {
     if (dto.branchId !== undefined) data.branchId = dto.branchId ?? null;
     if (dto.firstName !== undefined) data.firstName = dto.firstName;
     if (dto.lastName !== undefined) data.lastName = dto.lastName ?? null;
-    if (dto.department !== undefined) data.department = dto.department ?? null;
+    if (dto.departmentId !== undefined) {
+      data.department = dto.departmentId
+        ? { connect: { id: dto.departmentId } }
+        : { disconnect: true };
+    }
     if (dto.designation !== undefined) {
       data.designation = dto.designation ?? null;
     }

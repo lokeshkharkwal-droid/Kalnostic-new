@@ -1677,6 +1677,9 @@ model Department {
   /// Referral doctors whose department links here.
   referralDoctors ReferralDoctor[]
 
+  /// Internal referrals whose department links here.
+  internalReferrals InternalReferral[]
+
   /// Controlled documents filed under this department.
   documents Document[]
 
@@ -4234,7 +4237,10 @@ model InternalReferral {
   firstName    String    @map("first_name")
   lastName     String?   @map("last_name")
   fullName     String?   @map("full_name")
-  department   String?
+  // Department is a FK into the tenant's Departments master (validated in
+  // InternalReferralService); mirrors ReferralDoctor.departmentId.
+  departmentId String?   @map("department_id")
+  department   Department? @relation(fields: [departmentId], references: [id])
   designation  String?
   joiningDate  DateTime? @map("joining_date") @db.Date
   mobileNumber String?   @map("mobile_number")
@@ -4294,6 +4300,7 @@ model InternalReferral {
   @@index([tenantId])
   @@index([branchId])
   @@index([employeeId])
+  @@index([departmentId])
   @@index([referralPanelSettingsId])
   @@index([status])
   @@index([deletedAt])
@@ -4862,7 +4869,7 @@ model RegistrationSetting {
   ChargesAndDeductions_AllowLoyaltyDeduction                 Boolean @default(false) @map("charges_and_deductions_allow_loyalty_deduction")
   ChargesAndDeductions_MaximumLoyaltyPointsEquivalentAmount  Decimal @default(0) @map("charges_and_deductions_maximum_loyalty_points_equivalent_amount") @db.Decimal(10, 2)
   ChargesAndDeductions_AllowClearPreviousDues                Boolean @default(false) @map("charges_and_deductions_allow_clear_previous_dues")
-  ChargesAndDeductions_AllowOrderWithoutClearingPreviousDues Boolean @default(false) @map("charges_and_deductions_allow_order_without_clearing_previous_dues")
+  ChargesAndDeductions_AllowOrderWithoutClearingPreviousDues Boolean @default(false) @map("charges_and_deductions_allow_order_without_clearing_previous_du")
   ChargesAndDeductions_MinimumPreviousDuesToClear            Decimal @default(0) @map("charges_and_deductions_minimum_previous_dues_to_clear") @db.Decimal(10, 2)
   ChargesAndDeductions_AllowPartialBilling                   Boolean @default(false) @map("charges_and_deductions_allow_partial_billing")
   ChargesAndDeductions_MinimumPercentOfNetAmountToProceed    Int     @default(0) @map("charges_and_deductions_minimum_percent_of_net_amount_to_proceed")
@@ -4875,7 +4882,7 @@ model RegistrationSetting {
   ChargesAndDeductions_AllowLineItemDiscount                 Boolean @default(false) @map("charges_and_deductions_allow_line_item_discount")
   ChargesAndDeductions_MinimumLineItemDiscountPercent        Int     @default(0) @map("charges_and_deductions_minimum_line_item_discount_percent")
   ChargesAndDeductions_MaximumLineItemDiscountPercent        Int     @default(0) @map("charges_and_deductions_maximum_line_item_discount_percent")
-  ChargesAndDeductions_AllowPartialBillingOfDiscountedOrder  Boolean @default(false) @map("charges_and_deductions_allow_partial_billing_of_discounted_order")
+  ChargesAndDeductions_AllowPartialBillingOfDiscountedOrder  Boolean @default(false) @map("charges_and_deductions_allow_partial_billing_of_discounted_orde")
   // Mutually exclusive with each other (enforced in the service, see
   // ConflictingDiscountModeException) — at most one may be true at a time.
   ChargesAndDeductions_AllowOrderDiscountOnly                Boolean @default(false) @map("charges_and_deductions_allow_order_discount_only")
@@ -4899,7 +4906,7 @@ model RegistrationSetting {
   ReferralAndStaffPermissions_AllowAddExternalReferralUser    Boolean @default(true) @map("referral_and_staff_permissions_allow_add_external_referral_user")
   ReferralAndStaffPermissions_AllowAddDoctorName              Boolean @default(true) @map("referral_and_staff_permissions_allow_add_doctor_name")
   ReferralAndStaffPermissions_AllowAddRadiologistName         Boolean @default(true) @map("referral_and_staff_permissions_allow_add_radiologist_name")
-  ReferralAndStaffPermissions_AllowAddRadiologyTechnicianName Boolean @default(true) @map("referral_and_staff_permissions_allow_add_radiology_technician_name")
+  ReferralAndStaffPermissions_AllowAddRadiologyTechnicianName Boolean @default(true) @map("referral_and_staff_permissions_allow_add_radiology_technician_n")
   ReferralAndStaffPermissions_AllowAddPhlebotomistName        Boolean @default(true) @map("referral_and_staff_permissions_allow_add_phlebotomist_name")
 
   // ── Billing Menu ──
@@ -4910,7 +4917,7 @@ model RegistrationSetting {
 
   // ── Appointment (non-ID field; ID config is in RegistrationIdSequence) ──
   Appointment_AllowCheckInForPaidAppointmentsOnly             Boolean @default(false) @map("appointment_allow_check_in_for_paid_appointments_only")
-  Appointment_AllowProgressOfUnpaidAndPartialPaidAppointments Boolean @default(false) @map("appointment_allow_progress_of_unpaid_and_partial_paid_appointments")
+  Appointment_AllowProgressOfUnpaidAndPartialPaidAppointments Boolean @default(false) @map("appointment_allow_progress_of_unpaid_and_partial_paid_appointme")
 
   // ── Patients / UMID (non-ID field; ID config is in RegistrationIdSequence) ──
   Patients_AllowMergingTwoPatients Boolean @default(false) @map("patients_allow_merging_two_patients")

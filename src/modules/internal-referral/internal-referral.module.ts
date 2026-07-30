@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { BranchModule } from '../branch/branch.module';
+import { DepartmentModule } from '../department/department.module';
 import { UsersModule } from '../users/users.module';
 import { ReferralPanelSettingsModule } from '../referral-panel-settings/referral-panel-settings.module';
 import { InternalReferralController } from './internal-referral.controller';
@@ -21,6 +22,7 @@ import { InternalReferralService } from './internal-referral.service';
   imports: [
     PrismaModule,
     BranchModule,
+    DepartmentModule,
     UsersModule,
     ReferralPanelSettingsModule,
   ],

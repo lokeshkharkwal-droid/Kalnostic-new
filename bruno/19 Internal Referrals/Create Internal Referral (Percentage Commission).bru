@@ -88,6 +88,10 @@ docs {
   - `firstName` — REQUIRED (1-255). `lastName` — optional.
   - `fullName` — optional plain **string** (NOT a foreign key, NOT derived — it is
     stored exactly as sent; the frontend may compose it).
+  - `departmentId` — OPTIONAL UUID foreign key into the tenant's Departments
+    master (folder 08). Validated server-side when sent (404 `DEPARTMENT_NOT_FOUND`
+    otherwise); replaces the former free-text `department` string. The Get/List
+    responses echo it back as a resolved `department: { id, name }` object.
   - `designation` — optional string. `joiningDate` — optional ISO-8601 date.
   - `mobileNumber`, `email` — optional.
   - `employeeId` — OPTIONAL link to a Person (`users`). When supplied it must be an
