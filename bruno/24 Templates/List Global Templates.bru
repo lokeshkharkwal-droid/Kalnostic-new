@@ -15,6 +15,7 @@ params:query {
   limit: 20
   preference: SMS
   ~feature: lab_order_report_published_inform_patient
+  ~messageTypeNot: MARKETING
   ~search: report
 }
 
@@ -29,6 +30,8 @@ vars:pre-request {
 docs {
   Browse the SITE_ADMIN global (tenant-agnostic) messaging template catalogue so
   the business can pick one to import. Same filter set as `List Templates`
-  (`preference` / `feature` / `messageType` / `level` / `applicableBranchType` /
-  `search` / boolean flags). Read-only; pagination lands in `meta`.
+  (`preference` / `feature` / `messageType` / `messageTypeNot` / `level` /
+  `applicableBranchType` / `search` / boolean flags). The channel "enable" tabs
+  pass `messageTypeNot=MARKETING` so bulk-marketing templates only appear on the
+  Bulk tab. Read-only; pagination lands in `meta`.
 }

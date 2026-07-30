@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { BranchModule } from '../branch/branch.module';
 import { ScheduleController } from './schedule.controller';
+import { SchedulesTenantController } from './schedules-tenant.controller';
 import { ScheduleService } from './schedule.service';
 
 /**
@@ -11,7 +12,7 @@ import { ScheduleService } from './schedule.service';
  */
 @Module({
   imports: [PrismaModule, BranchModule],
-  controllers: [ScheduleController],
+  controllers: [ScheduleController, SchedulesTenantController],
   providers: [ScheduleService],
   exports: [ScheduleService],
 })

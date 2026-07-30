@@ -34,6 +34,7 @@ export class TemplateOptionsController {
         preference: query.preference,
         feature: query.feature,
         messageType: query.messageType,
+        messageTypeNot: query.messageTypeNot,
         level: query.level,
         applicableBranchType: query.applicableBranchType,
         search: query.search,

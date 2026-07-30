@@ -19,6 +19,10 @@ interface ListFilters {
   preference?: MessagingChannel;
   feature?: string;
   messageType?: MessageType;
+  /** Exclude one message type (e.g. MARKETING); keeps rows with no type. */
+  messageTypeNot?: MessageType;
+  /** Only templates cloned from one of these SITE_ADMIN global template ids. */
+  clonedFromIds?: string[];
   level?: MessagingLevel;
   applicableBranchType?: ApplicableBranchType;
   search?: string;
@@ -432,6 +436,14 @@ export class TemplateService {
     if (filters.preference) where.preference = filters.preference;
     if (filters.feature) where.feature = filters.feature;
     if (filters.messageType) where.messageType = filters.messageType;
+    // `not` on a nullable column also matches NULL rows in Prisma, so
+    // untyped templates are correctly kept in the non-marketing tabs.
+    if (filters.messageTypeNot) {
+      where.messageType = { not: filters.messageTypeNot };
+    }
+    if (filters.clonedFromIds?.length) {
+      where.clonedFromId = { in: filters.clonedFromIds };
+    }
     if (filters.level) where.level = filters.level;
     if (filters.applicableBranchType) {
       where.applicableBranchType = filters.applicableBranchType;

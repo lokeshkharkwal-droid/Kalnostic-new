@@ -144,6 +144,72 @@ export class ScheduleService {
   }
 
   /**
+   * List schedules across the whole tenant (offset pagination), optionally
+   * narrowed to a single branch. Each row is enriched with its branch's
+   * `{ id, name, code }` for display, since the Schedule model stores only a
+   * `branchId` scalar (no Prisma relation).
+   * @param tenantId tenant scope (from JWT)
+   * @param page 1-based page (default 1)
+   * @param limit page size (default 20)
+   * @param filters optional case-insensitive `search` (matches `planName`),
+   *   `status` (lifecycle state) and `branchId` (restrict to one branch) filters
+   */
+  async findAllForTenant(
+    tenantId: string,
+    page = 1,
+    limit = 20,
+    filters: {
+      search?: string;
+      status?: ScheduleStatus;
+      branchId?: string;
+    } = {},
+  ): Promise<
+    PaginatedResult<
+      Schedule & { branch: { id: string; name: string; code: string } | null }
+    >
+  > {
+    const where: Prisma.ScheduleWhereInput = {
+      tenantId,
+      deletedAt: null,
+    };
+    const search = filters.search?.trim();
+    if (search) {
+      where.planName = { contains: search, mode: 'insensitive' };
+    }
+    if (filters.status) {
+      where.status = filters.status;
+    }
+    if (filters.branchId) {
+      where.branchId = filters.branchId;
+    }
+    // Sequential (not array-`$transaction`) so each call flows through the RLS
+    // extension and carries the tenant GUC when RLS is enabled.
+    const rows = await this.prisma.schedule.findMany({
+      where,
+      skip: (page - 1) * limit,
+      take: limit,
+      orderBy: { effectiveFrom: 'desc' },
+    });
+    const total = await this.prisma.schedule.count({ where });
+
+    // Enrich with branch names in a single lookup (Schedule holds only branchId).
+    const branchIds = [...new Set(rows.map((r) => r.branchId))];
+    const branches = branchIds.length
+      ? await this.prisma.branch.findMany({
+          where: { id: { in: branchIds }, tenantId },
+          select: { id: true, name: true, code: true },
+        })
+      : [];
+    const branchById = new Map(branches.map((b) => [b.id, b]));
+    const data = rows.map((r) => ({
+      ...r,
+      branch: branchById.get(r.branchId) ?? null,
+    }));
+
+    return { data, total, page, limit };
+  }
+
+  /**
    * Update a schedule. Re-validates shifts (if changed) and re-checks date
    * overlap whenever the result would be an ACTIVE schedule.
    * @param id schedule id

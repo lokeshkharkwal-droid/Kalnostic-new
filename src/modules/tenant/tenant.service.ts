@@ -413,6 +413,8 @@ export class TenantService {
       where.subscriptionStatus = query.status;
     }
 
+    // `tenants` is platform-level (no tenant_id / RLS), so array-form is safe.
+    // eslint-disable-next-line no-restricted-syntax -- platform table, not tenant-scoped
     const [data, total] = await this.prisma.$transaction([
       this.prisma.tenant.findMany({
         where,
@@ -440,6 +442,8 @@ export class TenantService {
   }> {
     const base: Prisma.TenantWhereInput = { deletedAt: null };
 
+    // `tenants` is platform-level (no tenant_id / RLS), so array-form is safe.
+    // eslint-disable-next-line no-restricted-syntax -- platform table, not tenant-scoped
     const [total, active, trial, suspended] = await this.prisma.$transaction([
       this.prisma.tenant.count({ where: base }),
       this.prisma.tenant.count({
