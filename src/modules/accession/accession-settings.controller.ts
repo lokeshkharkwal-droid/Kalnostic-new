@@ -8,9 +8,11 @@ import type { ActiveProfile } from '../auth/decorators/current-profile.decorator
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
- * Accession settings endpoints (PDF §G). Business-authenticated; tenant from the
- * JWT, branch from the active profile. `GET` returns the effective settings
- * (defaults merged with any saved overrides); `PUT` upserts the active branch's
+ * Accession Module Settings endpoints (LIMS Settings Master — Accession
+ * Module: Master Data, Sample Barcode Settings, Accession TAT/acceptance
+ * settings). Business-authenticated; tenant from the JWT, branch from the
+ * active profile. `GET` returns the effective settings (defaults merged with
+ * any saved overrides); `PUT` saves a partial patch of the active branch's
  * settings. Falls back to module defaults when the branch has never saved.
  */
 @Controller('accession/settings')
