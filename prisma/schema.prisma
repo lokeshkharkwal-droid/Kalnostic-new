@@ -277,7 +277,14 @@ enum AuditModule {
   PHLEBOTOMIST_SCHEDULE
   SERVICE_ZONE
   AUTH
-  SITEADMIN // reserved; not written to in this phase (business audit only)
+  SITEADMIN // SiteAdmin sub-account management (create / activate / password)
+  EQUIPMENT // SiteAdmin lab-equipment catalogue
+  CONTACT_US // SiteAdmin contact-us submissions
+  SUPPORT_INFO // SiteAdmin support-info content
+  AUTH_ROLE // SiteAdmin global role catalogue
+  TEST_GROUP // SiteAdmin test-group catalogue
+  PAYMENT_RULE // SiteAdmin payment-rule catalogue
+  LOCATION // SiteAdmin location catalogue (country / state / city / area)
   LAB_TEST_SETTINGS
   BILLING_SETTINGS
   ACCESSION
@@ -2104,6 +2111,38 @@ model AuditLog {
   @@index([createdAt])
   @@index([deletedAt])
   @@map("audit_logs")
+}
+
+/// Audit trail for **SiteAdmin** actions. Platform-level (like `siteadmin_users`):
+/// no `tenantId`, no RLS policy — SiteAdmin acts above any single business. The
+/// actor is a `siteadmin_users` row (not a `persons` row), so email + role are
+/// denormalized here for display without a join. Written by the global
+/// `AuditInterceptor` (SiteAdmin branch) and by the SiteAdmin login path; read
+/// merged with `audit_logs` in the SiteAdmin cross-tenant audit view.
+model SiteAdminAuditLog {
+  id String @id @default(uuid())
+
+  module      AuditModule
+  action      AuditAction @default(OTHER)
+  description String // human-readable "what the SiteAdmin performed"
+
+  actorSiteadminId String        @map("actor_siteadmin_id") // the SiteAdmin user
+  actorEmail       String        @map("actor_email") // denormalized for display
+  actorRole        SiteAdminRole @map("actor_role") // role at the time of the action
+  ipAddress        String?       @map("ip_address") // caller IP
+
+  resourceId String? @map("resource_id") // optional id of the affected resource
+  metadata   Json? // optional extra structured detail
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([actorSiteadminId])
+  @@index([module])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@map("siteadmin_audit_logs")
 }
 
 /// A master-data container for a branch. Tenant-scoped + branch-level. A non-main

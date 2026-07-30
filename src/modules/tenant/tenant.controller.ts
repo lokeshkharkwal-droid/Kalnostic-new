@@ -9,7 +9,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { SubscriptionStatus } from '@prisma/client';
+import { AuditAction, AuditModule, SubscriptionStatus } from '@prisma/client';
 import { TenantService } from './tenant.service';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
@@ -22,6 +22,7 @@ import { RequireSiteAdminPermission } from '../siteadmin/decorators/require-site
 import { CurrentSiteAdmin } from '../siteadmin/decorators/current-siteadmin.decorator';
 import { SITE_ADMIN_PERM } from '../siteadmin/constants/siteadmin-permissions.constant';
 import { Public } from '../auth/decorators/public.decorator';
+import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
  * Tenant (business) management — operated by SiteAdmin only. Mounted under
@@ -40,6 +41,11 @@ export class TenantController {
    * Create a tenant + its first business-admin (returns a one-time temp password).
    */
   @Post()
+  @Audit({
+    module: AuditModule.TENANT,
+    action: AuditAction.CREATE,
+    description: 'Created a business',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.BUSINESS_CREATE)
   create(
     @CurrentSiteAdmin('siteadmin_id') siteAdminId: string,
@@ -91,6 +97,11 @@ export class TenantController {
    * Update a tenant's editable fields.
    */
   @Patch(':id')
+  @Audit({
+    module: AuditModule.TENANT,
+    action: AuditAction.UPDATE,
+    description: 'Updated a business',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.BUSINESS_CREATE)
   update(
     @CurrentSiteAdmin('siteadmin_id') siteAdminId: string,
@@ -104,6 +115,11 @@ export class TenantController {
    * Suspend a business — sets `subscriptionStatus` to `SUSPENDED`.
    */
   @Patch(':id/suspend')
+  @Audit({
+    module: AuditModule.TENANT,
+    action: AuditAction.UPDATE,
+    description: 'Suspended a business',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.BUSINESS_SUSPEND)
   suspend(
     @CurrentSiteAdmin('siteadmin_id') siteAdminId: string,
@@ -120,6 +136,11 @@ export class TenantController {
    * Reactivate a suspended business — sets `subscriptionStatus` to `ACTIVE`.
    */
   @Patch(':id/reactivate')
+  @Audit({
+    module: AuditModule.TENANT,
+    action: AuditAction.UPDATE,
+    description: 'Reactivated a business',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.BUSINESS_REACTIVATE)
   reactivate(
     @CurrentSiteAdmin('siteadmin_id') siteAdminId: string,
@@ -146,6 +167,11 @@ export class TenantController {
    * Update the tenant's Business Configuration (upsert; partial payload).
    */
   @Put(':id/configuration')
+  @Audit({
+    module: AuditModule.TENANT,
+    action: AuditAction.UPDATE,
+    description: 'Updated business configuration',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.BUSINESS_CREATE)
   updateConfiguration(
     @CurrentSiteAdmin('siteadmin_id') siteAdminId: string,
@@ -169,6 +195,11 @@ export class TenantController {
    * Update the tenant's Business Settings (upsert; partial payload).
    */
   @Put(':id/settings')
+  @Audit({
+    module: AuditModule.TENANT,
+    action: AuditAction.UPDATE,
+    description: 'Updated business settings',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.BUSINESS_CREATE)
   updateSettings(
     @CurrentSiteAdmin('siteadmin_id') siteAdminId: string,
@@ -191,6 +222,11 @@ export class TenantController {
    * Reset the business-admin password (returns a one-time temp password).
    */
   @Post(':id/admin/reset-password')
+  @Audit({
+    module: AuditModule.TENANT,
+    action: AuditAction.UPDATE,
+    description: 'Reset business admin password',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.BUSINESS_CREATE)
   resetAdminPassword(
     @CurrentSiteAdmin('siteadmin_id') siteAdminId: string,

@@ -16,6 +16,8 @@ import { SiteAdminPermissionGuard } from '../siteadmin/guards/siteadmin-permissi
 import { RequireSiteAdminPermission } from '../siteadmin/decorators/require-siteadmin-permission.decorator';
 import { SITE_ADMIN_PERM } from '../siteadmin/constants/siteadmin-permissions.constant';
 import { Public } from '../auth/decorators/public.decorator';
+import { AuditAction, AuditModule } from '@prisma/client';
+import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
  * SiteAdmin management of the **global** role catalogue (`/siteadmin/roles`) —
@@ -38,6 +40,11 @@ export class SiteAdminAuthRoleController {
    * Create a new global role (available to all tenants).
    */
   @Post()
+  @Audit({
+    module: AuditModule.AUTH_ROLE,
+    action: AuditAction.CREATE,
+    description: 'Created a global role',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   create(@Body() dto: CreateAuthRoleDto) {
     return this.authRoleService.createGlobal(dto);
@@ -73,6 +80,11 @@ export class SiteAdminAuthRoleController {
    * SiteAdmin-created global roles are fully editable.
    */
   @Patch(':id')
+  @Audit({
+    module: AuditModule.AUTH_ROLE,
+    action: AuditAction.UPDATE,
+    description: 'Updated a global role',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   update(@Param('id') id: string, @Body() dto: UpdateAuthRoleDto) {
     return this.authRoleService.updateGlobal(id, dto);

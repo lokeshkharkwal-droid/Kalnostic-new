@@ -4,6 +4,7 @@ import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { SecurityModule } from '../security/security.module';
+import { AuditModule } from '../audit/audit.module';
 import { SiteAdminService } from './siteadmin.service';
 import { SiteAdminAuthController } from './siteadmin-auth.controller';
 import { SiteAdminUsersController } from './siteadmin-users.controller';
@@ -17,6 +18,7 @@ import { SiteAdminJwtStrategy } from './strategies/siteadmin-jwt.strategy';
   imports: [
     PrismaModule,
     SecurityModule,
+    AuditModule,
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],

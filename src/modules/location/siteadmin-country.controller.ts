@@ -17,6 +17,8 @@ import { SiteAdminPermissionGuard } from '../siteadmin/guards/siteadmin-permissi
 import { RequireSiteAdminPermission } from '../siteadmin/decorators/require-siteadmin-permission.decorator';
 import { SITE_ADMIN_PERM } from '../siteadmin/constants/siteadmin-permissions.constant';
 import { Public } from '../auth/decorators/public.decorator';
+import { AuditAction, AuditModule } from '@prisma/client';
+import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
  * SiteAdmin country management (`/siteadmin/locations/countries`). Countries are
@@ -33,6 +35,11 @@ export class SiteAdminCountryController {
 
   /** Create a country. */
   @Post()
+  @Audit({
+    module: AuditModule.LOCATION,
+    action: AuditAction.CREATE,
+    description: 'Created a country',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   create(@Body() dto: CreateCountryDto) {
     return this.countryService.create(dto);
@@ -57,6 +64,11 @@ export class SiteAdminCountryController {
 
   /** Update a country. */
   @Patch(':id')
+  @Audit({
+    module: AuditModule.LOCATION,
+    action: AuditAction.UPDATE,
+    description: 'Updated a country',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   update(@Param('id') id: string, @Body() dto: UpdateCountryDto) {
     return this.countryService.update(id, dto);
@@ -64,6 +76,11 @@ export class SiteAdminCountryController {
 
   /** Soft-delete a country (blocked while it still has active states). */
   @Delete(':id')
+  @Audit({
+    module: AuditModule.LOCATION,
+    action: AuditAction.DELETE,
+    description: 'Deleted a country',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   remove(@Param('id') id: string) {
     return this.countryService.remove(id);

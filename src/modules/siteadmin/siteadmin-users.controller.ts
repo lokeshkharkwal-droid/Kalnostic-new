@@ -18,6 +18,8 @@ import { CurrentSiteAdmin } from './decorators/current-siteadmin.decorator';
 import { SITE_ADMIN_PERM } from './constants/siteadmin-permissions.constant';
 import type { SiteAdminJwtPayload } from './types/siteadmin-jwt.type';
 import { Public } from '../auth/decorators/public.decorator';
+import { AuditAction, AuditModule } from '@prisma/client';
+import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
  * SiteAdmin self/team management. Protected by `SiteAdminPermissionGuard`;
@@ -48,6 +50,11 @@ export class SiteAdminUsersController {
    * Create a SiteAdmin sub-account.
    */
   @Post('users')
+  @Audit({
+    module: AuditModule.SITEADMIN,
+    action: AuditAction.CREATE,
+    description: 'Created a SiteAdmin account',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.SITEADMIN_MANAGE)
   create(
     @CurrentSiteAdmin('siteadmin_id') actorId: string,
@@ -70,6 +77,11 @@ export class SiteAdminUsersController {
    * Change a SiteAdmin's password.
    */
   @Patch('users/:id/password')
+  @Audit({
+    module: AuditModule.SITEADMIN,
+    action: AuditAction.UPDATE,
+    description: 'Changed a SiteAdmin password',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.SITEADMIN_MANAGE)
   async changePassword(
     @CurrentSiteAdmin('siteadmin_id') actorId: string,
@@ -84,6 +96,11 @@ export class SiteAdminUsersController {
    * Deactivate a SiteAdmin account.
    */
   @Patch('users/:id/deactivate')
+  @Audit({
+    module: AuditModule.SITEADMIN,
+    action: AuditAction.UPDATE,
+    description: 'Deactivated a SiteAdmin account',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.SITEADMIN_MANAGE)
   async deactivate(
     @CurrentSiteAdmin('siteadmin_id') actorId: string,
@@ -97,6 +114,11 @@ export class SiteAdminUsersController {
    * Activate a SiteAdmin account.
    */
   @Patch('users/:id/activate')
+  @Audit({
+    module: AuditModule.SITEADMIN,
+    action: AuditAction.UPDATE,
+    description: 'Activated a SiteAdmin account',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.SITEADMIN_MANAGE)
   async activate(
     @CurrentSiteAdmin('siteadmin_id') actorId: string,

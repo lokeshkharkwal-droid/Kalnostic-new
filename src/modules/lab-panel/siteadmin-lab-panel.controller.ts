@@ -17,6 +17,8 @@ import { SiteAdminPermissionGuard } from '../siteadmin/guards/siteadmin-permissi
 import { RequireSiteAdminPermission } from '../siteadmin/decorators/require-siteadmin-permission.decorator';
 import { SITE_ADMIN_PERM } from '../siteadmin/constants/siteadmin-permissions.constant';
 import { Public } from '../auth/decorators/public.decorator';
+import { AuditAction, AuditModule } from '@prisma/client';
+import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
  * SiteAdmin global lab-panel **template** management
@@ -39,6 +41,11 @@ export class SiteAdminLabPanelController {
    * Create a global template lab panel (with its included template tests).
    */
   @Post()
+  @Audit({
+    module: AuditModule.LAB_PANEL,
+    action: AuditAction.CREATE,
+    description: 'Created a template lab panel',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   create(@Body() dto: CreateLabPanelDto) {
     return this.labPanelService.createTemplate(dto);
@@ -66,6 +73,11 @@ export class SiteAdminLabPanelController {
    * Update a global template lab panel (included tests replaced when provided).
    */
   @Patch(':id')
+  @Audit({
+    module: AuditModule.LAB_PANEL,
+    action: AuditAction.UPDATE,
+    description: 'Updated a template lab panel',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   update(@Param('id') id: string, @Body() dto: UpdateLabPanelDto) {
     return this.labPanelService.updateTemplate(id, dto);
@@ -75,6 +87,11 @@ export class SiteAdminLabPanelController {
    * Soft-delete a global template lab panel (cascade soft-delete of its tests).
    */
   @Delete(':id')
+  @Audit({
+    module: AuditModule.LAB_PANEL,
+    action: AuditAction.DELETE,
+    description: 'Deleted a template lab panel',
+  })
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   remove(@Param('id') id: string) {
     return this.labPanelService.removeTemplate(id);

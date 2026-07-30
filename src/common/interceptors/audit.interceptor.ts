@@ -10,12 +10,15 @@ import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
 import { AuditService } from '../../modules/audit/audit.service';
 import { AuthenticatedRequest } from '../../modules/auth/types/jwt-payload.type';
+import { SiteAdminJwtPayload } from '../../modules/siteadmin/types/siteadmin-jwt.type';
 import { AUDIT_META_KEY, AuditMeta } from '../decorators/audit.decorator';
 import { extractClientIp } from '../utils/client-ip.util';
 
-/** The fields we read off the request after business authentication. */
+/** The fields we read off the request after authentication (business or SiteAdmin). */
 interface MaybeAuthedRequest {
   user?: AuthenticatedRequest['user'];
+  /** Set by `SiteAdminPermissionGuard` on SiteAdmin routes. */
+  siteadmin?: SiteAdminJwtPayload;
   body?: unknown;
 }
 
@@ -52,6 +55,32 @@ export class AuditInterceptor implements NestInterceptor {
     const request = context
       .switchToHttp()
       .getRequest<AuthenticatedRequest & MaybeAuthedRequest>();
+
+    // SiteAdmin routes: the guard puts the SiteAdmin payload on `request.siteadmin`.
+    // Record to the platform-level SiteAdmin audit trail (no tenant).
+    const siteadmin = request.siteadmin;
+    if (siteadmin?.siteadmin_id) {
+      const saIp = extractClientIp(request);
+      return next.handle().pipe(
+        tap({
+          next: () => {
+            this.auditService.recordSiteAdmin({
+              module: meta.module,
+              action: meta.action,
+              description: meta.description,
+              actorSiteadminId: siteadmin.siteadmin_id,
+              actorEmail: siteadmin.email,
+              actorRole: siteadmin.role,
+              ipAddress: saIp,
+              metadata: meta.captureBody
+                ? (request.body as Prisma.InputJsonValue)
+                : undefined,
+            });
+          },
+        }),
+      );
+    }
+
     const user = request.user;
     if (!user?.tenant_id) {
       return next.handle();
