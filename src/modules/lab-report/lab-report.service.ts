@@ -17,11 +17,11 @@ import {
   PLAIN_NOTE_CATEGORIES,
 } from './dto/lab-report-note.dto';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
+import type { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
 import {
   GeneratePdfDto,
   SigningAuthorityDto,
 } from '../pdf-report-template/dto/generate-pdf.dto';
-import { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
 import {
   LAB_REPORT_ALLOWED_FROM,
   LAB_REPORT_DETAIL_INCLUDE,
@@ -49,6 +49,7 @@ import {
   UnlockNotPermittedException,
   NoActivePrintTemplateException,
   AmbiguousPrintTemplateException,
+  OrderReportsNotFoundException,
 } from './exceptions/lab-report.exceptions';
 import {
   computeTrendFlag,
@@ -684,7 +685,7 @@ export class LabReportService {
 
     const [contentSections, resultParams] = await Promise.all([
       this.getContentSections(tenantId, report.labTestId),
-      this.getResultParams(report.labTestId),
+      this.getResultParams(report.labTestId, report.orderItem.branchLabPanelId),
     ]);
     return { ...report, contentSections, resultParams };
   }
@@ -784,12 +785,57 @@ export class LabReportService {
    * Prisma relation), same treatment as `getContentSections`. Empty array
    * when there's no linked LabTest (panel/direct/branch-only test).
    */
+  /**
+   * Resolve a report's result-parameter definitions. `LabReport.labTestId` is
+   * only set for a single-test report — a panel report leaves it null (per
+   * its own doc comment), so for a panel this instead walks
+   * `BranchLabPanel` -> its constituent `BranchLabPanelTest`s ->
+   * `BranchLabTest.sourceLabTestId` to collect every member test's params
+   * (concatenated in the panel's own test `sortOrder`, per test). Without
+   * this fallback, every panel report would show zero result parameters
+   * regardless of how much result data actually exists (the Report View
+   * modal and Print/Download are both driven by this list, not by
+   * `resultValues` directly).
+   */
   private async getResultParams(
     labTestId: string | null,
+    branchLabPanelId?: string | null,
   ): Promise<LabReportResultParam[]> {
-    if (!labTestId) return [];
+    if (labTestId) return this.fetchResultParams(labTestId);
+    if (!branchLabPanelId) return [];
 
-    const params = await this.prisma.labTestResultParam.findMany({
+    // `BranchLabPanelTest.branchLabTestId` is a raw FK (no Prisma relation
+    // field on the model) — resolve the member `BranchLabTest`s separately.
+    const panelTests = await this.prisma.branchLabPanelTest.findMany({
+      where: { branchLabPanelId, deletedAt: null },
+      select: { branchLabTestId: true },
+      orderBy: { sortOrder: 'asc' },
+    });
+    const branchLabTestIds = panelTests.map((t) => t.branchLabTestId);
+    if (branchLabTestIds.length === 0) return [];
+
+    const branchLabTests = await this.prisma.branchLabTest.findMany({
+      where: { id: { in: branchLabTestIds } },
+      select: { id: true, sourceLabTestId: true },
+    });
+    const sourceLabTestIdById = new Map(
+      branchLabTests.map((t) => [t.id, t.sourceLabTestId]),
+    );
+    const sourceLabTestIds = branchLabTestIds
+      .map((id) => sourceLabTestIdById.get(id))
+      .filter((id): id is string => id != null);
+    if (sourceLabTestIds.length === 0) return [];
+
+    const paramsByTest = await Promise.all(
+      sourceLabTestIds.map((id) => this.fetchResultParams(id)),
+    );
+    return paramsByTest.flat();
+  }
+
+  private async fetchResultParams(
+    labTestId: string,
+  ): Promise<LabReportResultParam[]> {
+    return this.prisma.labTestResultParam.findMany({
       where: { labTestId, deletedAt: null },
       select: {
         id: true,
@@ -802,7 +848,6 @@ export class LabReportService {
       },
       orderBy: { sortOrder: 'asc' },
     });
-    return params;
   }
 
   private async requireReport(id: string, tenantId: string, branchId: string) {
@@ -1229,7 +1274,25 @@ export class LabReportService {
       }
     }
 
+    // `LabReportResultValue.resultParamId` is a raw FK (no Prisma relation
+    // field on the model) — batch-fetch the parameter names separately
+    // rather than one query per row.
+    const resultParamIds = [
+      ...new Set(report.resultValues.map((v) => v.resultParamId)),
+    ];
+    const resultParams =
+      resultParamIds.length === 0
+        ? []
+        : await this.prisma.labTestResultParam.findMany({
+            where: { id: { in: resultParamIds } },
+            select: { id: true, parameterName: true },
+          });
+    const paramNameById = new Map(
+      resultParams.map((p) => [p.id, p.parameterName]),
+    );
+
     const results = report.resultValues.map((v) => ({
+      parameter_name: paramNameById.get(v.resultParamId) ?? '',
       observed1: v.observed1 ?? '',
       observed2: v.observed2 ?? '',
       unit: v.unit ?? '',
@@ -1275,9 +1338,12 @@ export class LabReportService {
 
   /**
    * Print/Download a report (LABORATORY.docx §6.10's "Print / Download"
-   * action). Resolves the tenant's active `lab_report` template (or the
+   * action). Resolves the tenant's active template of `type` (or the
    * caller's explicit `templateId`) and renders it with this report's real
    * data via `PdfReportTemplateService.generatePdf`.
+   * @param type which `PdfReportTemplate` type to resolve against when
+   * `templateId` is omitted — `lab_report` (single test) or `lab_panel`.
+   * Ignored when `templateId` is given explicitly.
    * @throws NoActivePrintTemplateException if no active template exists
    * @throws AmbiguousPrintTemplateException if multiple exist and no
    * `templateId` was given
@@ -1297,123 +1363,6 @@ export class LabReportService {
       tenantId,
       context,
     );
-  }
-
-  /**
-   * Print all of an order's reports as one document (LABORATORY.docx "Print All").
-   * Aggregates every active report for the order into a single `{{#each reports}}`
-   * section (one row per test, with a joined result summary) and renders it with
-   * the tenant's `lab_all_report` template (or the caller's explicit `templateId`).
-   * @throws LabReportNotFoundException if the order has no reports
-   * @throws NoActivePrintTemplateException / AmbiguousPrintTemplateException
-   */
-  async printAllForOrder(
-    orderId: string,
-    tenantId: string,
-    branchId: string | null,
-    templateId?: string,
-  ): Promise<Buffer> {
-    const context = await this.buildAllReportsContext(
-      orderId,
-      tenantId,
-      branchId,
-    );
-    const resolvedTemplateId =
-      templateId ??
-      (await this.resolvePrintTemplateId(tenantId, 'lab_all_report'));
-    return this.pdfReportTemplateService.generatePdf(
-      resolvedTemplateId,
-      tenantId,
-      context,
-    );
-  }
-
-  /**
-   * Build the `lab_all_report` render context: order/patient header + one
-   * `reports` section row per active report in the order (test name, status, and
-   * a flat result summary — the render engine's `{{#each}}` supports only flat
-   * per-row fields), plus the de-duplicated approving signatories.
-   */
-  private async buildAllReportsContext(
-    orderId: string,
-    tenantId: string,
-    branchId: string | null,
-  ): Promise<GeneratePdfDto> {
-    const activeBranchId = this.requireBranch(branchId);
-    const reports = await this.prisma.labReport.findMany({
-      where: {
-        tenantId,
-        branchId: activeBranchId,
-        deletedAt: null,
-        orderItem: { orderId, deletedAt: null },
-      },
-      include: LAB_REPORT_DETAIL_INCLUDE,
-      orderBy: { createdAt: 'asc' },
-    });
-    if (reports.length === 0) throw new LabReportNotFoundException(orderId);
-
-    const order = reports[0]!.orderItem.order;
-    const patient = order.patient;
-
-    const approverIds = [
-      ...new Set(
-        reports.map((r) => r.approvedBy).filter((v): v is string => !!v),
-      ),
-    ];
-    const approvers = approverIds.length
-      ? await this.prisma.person.findMany({
-          where: { id: { in: approverIds }, deletedAt: null },
-          select: {
-            firstName: true,
-            middleName: true,
-            lastName: true,
-            designation: true,
-          },
-        })
-      : [];
-    const signatories: SigningAuthorityDto[] = approvers.map((s) => ({
-      name: [s.firstName, s.middleName, s.lastName].filter(Boolean).join(' '),
-      designation: s.designation ?? undefined,
-    }));
-
-    const reportRows = reports.map((r) => {
-      const testOrPanel =
-        r.orderItem.branchLabTest ?? r.orderItem.branchLabPanel;
-      const testName =
-        (testOrPanel && 'testName' in testOrPanel
-          ? testOrPanel.testName
-          : undefined) ??
-        (testOrPanel && 'panelName' in testOrPanel
-          ? testOrPanel.panelName
-          : undefined) ??
-        r.orderItem.direct ??
-        '';
-      const resultsSummary = r.resultValues
-        .map((v) => [v.observed1, v.unit].filter(Boolean).join(' ').trim())
-        .filter(Boolean)
-        .join(', ');
-      return {
-        test_name: testName,
-        report_status: r.status,
-        results_summary: resultsSummary,
-      };
-    });
-
-    return {
-      variables: {
-        order_code: order.orderCode,
-        order_date: order.orderDate.toISOString().slice(0, 10),
-        patient_name: [patient.firstName, patient.middleName, patient.lastName]
-          .filter(Boolean)
-          .join(' '),
-        patient_age: patient.age ?? '',
-        patient_gender: patient.gender ?? '',
-        patient_um_id: patient.umId ?? '',
-        report_count: reports.length,
-      },
-      sections: { reports: reportRows },
-      signatories,
-    };
   }
 
   private async resolvePrintTemplateId(
@@ -1437,6 +1386,92 @@ export class LabReportService {
       );
     }
     return data[0]!.id;
+  }
+
+  /**
+   * Print All (order-console's "Lab All Report" action, PDF templates
+   * integration checklist item 3). Unlike {@link print} (one report, one
+   * template render), this renders ONE `lab_all_report`-type template ONCE,
+   * with every one of the order's reports' result rows flattened into a
+   * single `sections.results` row-set (each row carries its own `test_name`
+   * so the body table reads as one continuous report, test by test).
+   *
+   * Deliberately flat, not nested (`sections.reports[].results`):
+   * `TemplateRenderService.interpolateSections` only expands ONE level of
+   * `{{#each}}` — it has no per-row nested-loop support — so a template
+   * author cannot write "for each report, for each result" in one pass.
+   * Flattening avoids that limitation entirely rather than extending the
+   * shared renderer (which every other template type also depends on) for
+   * this one case.
+   * @throws OrderReportsNotFoundException if the order has no lab reports
+   * (wrong id, or no item has reached ACCEPTED yet)
+   * @throws NoActivePrintTemplateException if no active `lab_all_report`
+   * template exists
+   * @throws AmbiguousPrintTemplateException if multiple exist and no
+   * `templateId` was given
+   */
+  async printAllForOrder(
+    orderId: string,
+    tenantId: string,
+    branchId: string | null,
+    templateId?: string,
+  ): Promise<Buffer> {
+    const activeBranchId = this.requireBranch(branchId);
+    const reportRows = await this.prisma.labReport.findMany({
+      where: {
+        tenantId,
+        branchId: activeBranchId,
+        deletedAt: null,
+        orderItem: { orderId },
+      },
+      select: { id: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (reportRows.length === 0) {
+      throw new OrderReportsNotFoundException(orderId);
+    }
+
+    const contexts = await Promise.all(
+      reportRows.map((r) => this.buildPrintContext(r.id, tenantId, branchId)),
+    );
+    const first = contexts[0]!;
+    const combined: GeneratePdfDto = {
+      // Order/patient variables are identical across every report on the
+      // same order — the first context's is as good as any.
+      variables: first.variables,
+      signatories: first.signatories,
+      sections: {
+        results: contexts.flatMap((c) => {
+          const testName = c.variables?.test_name ?? '';
+          const rows = c.sections?.results ?? [];
+          // A report with no result rows yet still gets one row (test name
+          // visible, blanks for the observed value) so it isn't silently
+          // dropped from the consolidated report.
+          return rows.length > 0
+            ? rows.map((row) => ({ test_name: testName, ...row }))
+            : [
+                {
+                  test_name: testName,
+                  parameter_name: '',
+                  observed1: '',
+                  observed2: '',
+                  unit: '',
+                  methodology: '',
+                  reference_display: '',
+                },
+              ];
+        }),
+      },
+    };
+
+    const resolvedTemplateId =
+      templateId ??
+      (await this.resolvePrintTemplateId(tenantId, 'lab_all_report'));
+    return this.pdfReportTemplateService.generatePdf(
+      resolvedTemplateId,
+      tenantId,
+      combined,
+    );
   }
 
   // ── Save / Submit ──────────────────────────────────────────────────────────
