@@ -20,10 +20,10 @@ import {
   SampleAction,
   nextSampleStatus,
 } from './constants/sample-transitions.constant';
-import { AccessionSettingsMap } from './constants/accession-settings.default';
 import {
   TERMINAL_SAMPLE_STATUSES,
   TatStatus,
+  TatThresholds,
   deriveTatStatus,
   tatCreatedAtRange,
 } from './constants/tat.constant';
@@ -1001,7 +1001,7 @@ export class AccessionSampleService {
     tenantId: string,
     branchId: string | null,
     query: ListSamplesDto,
-    tat: AccessionSettingsMap['tat'],
+    tat: TatThresholds,
     nowMs: number,
   ): Prisma.AccessionSampleWhereInput {
     const where: Prisma.AccessionSampleWhereInput = {
@@ -1113,14 +1113,33 @@ export class AccessionSampleService {
   }
 
   /**
-   * The active branch's TAT thresholds, resolved from its `AccessionSetting`
-   * (falling back to the module defaults when the branch has none).
+   * The active branch's TAT thresholds, resolved from its Accession Module
+   * Settings (falling back to the module defaults when the branch has none).
+   * The settings store `Accession_WarningThresholdMinutes`/
+   * `Accession_CriticalThresholdMinutes` as "minutes remaining before the
+   * maximum accept time" (per the LIMS Settings doc); `deriveTatStatus`/
+   * `tatCreatedAtRange` need ascending absolute elapsed-minute cutoffs, so
+   * they're converted here: `warningMinutes = max - warningRemaining`,
+   * `criticalMinutes = max - criticalRemaining`, `breachedMinutes = max`
+   * (a sample breaches automatically once the maximum accept time elapses).
    */
   private async tatThresholds(
     tenantId: string,
     branchId: string | null,
-  ): Promise<AccessionSettingsMap['tat']> {
-    return (await this.settings.resolve(tenantId, branchId)).tat;
+  ): Promise<TatThresholds> {
+    const settings = await this.settings.resolve(tenantId, branchId);
+    const max = settings.Accession_MaximumTimeToAcceptSampleMinutes;
+    return {
+      warningMinutes: Math.max(
+        0,
+        max - settings.Accession_WarningThresholdMinutes,
+      ),
+      criticalMinutes: Math.max(
+        0,
+        max - settings.Accession_CriticalThresholdMinutes,
+      ),
+      breachedMinutes: max,
+    };
   }
 
   /** System barcode for a sample: `ACC-00001` → `BAR-00001-A` (PDF §A.10.2). */

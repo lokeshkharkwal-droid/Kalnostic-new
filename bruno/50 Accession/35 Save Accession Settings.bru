@@ -20,13 +20,32 @@ auth:bearer {
 
 body:json {
   {
-    "tubeTypes": ["EDTA (Purple)", "SST (Yellow)", "Fluoride Oxalate (Grey)"],
-    "sampleConditions": ["Good", "Hemolyzed", "Clotted"],
-    "repeatReasons": ["QC Failure", "Insufficient Volume"],
-    "discardMethods": ["Biohazard Bag", "Incineration"],
-    "rejectionReasons": ["Damaged in Transit", "Wrong Sample Type"],
-    "logisticsTypes": ["Courier", "Lab Vehicle"],
-    "tat": { "warningMinutes": 240, "criticalMinutes": 480, "breachedMinutes": 720 }
+    "MasterData_TubeTypes": ["EDTA (Purple)", "SST (Yellow)", "Fluoride Oxalate (Grey)"],
+    "MasterData_SampleConditions": ["Satisfactory", "Hemolyzed", "Clotted"],
+    "MasterData_RepeatReasons": ["QC Failure", "Insufficient Volume"],
+    "MasterData_ErrorReasons": ["Pre-Analytical", "Analytical"],
+    "MasterData_HoldReasons": ["Awaiting Payment", "QC Pending"],
+    "MasterData_DiscardMethods": ["Biohazard Bag", "Incineration"],
+    "MasterData_RejectionReasons": ["Damaged in Transit", "Wrong Sample Type"],
+    "MasterData_LogisticsTypes": ["Courier", "Lab Vehicle"],
+    "SampleBarcodeSettings_Prefix": "SBC",
+    "SampleBarcodeSettings_Suffix": "AM",
+    "SampleBarcodeSettings_Separator": "HYPHEN",
+    "SampleBarcodeSettings_NumberLength": 6,
+    "SampleBarcodeSettings_ResetInterval": "NEVER",
+    "Accession_MinimumTimeToAcceptSampleMinutes": 10,
+    "Accession_MaximumTimeToAcceptSampleMinutes": 20,
+    "Accession_WarningThresholdMinutes": 10,
+    "Accession_CriticalThresholdMinutes": 5,
+    "Accession_InternalReferralAcceptanceThresholdMinutes": 60,
+    "Accession_ExternalReferralAcceptanceThresholdMinutes": 60,
+    "Accession_AllowSampleBarcodeMappingBeforeAcceptInhouseOrders": true,
+    "Accession_AllowSampleBarcodeMappingBeforeAcceptInternalReferralOrders": true,
+    "Accession_AllowSampleBarcodeMappingBeforeAcceptExternalReferralOrders": true,
+    "Accession_AllowSampleBarcodeMappingAfterAcceptInhouseOrders": true,
+    "Accession_AllowSampleBarcodeMappingAfterAcceptInternalReferralOrders": true,
+    "Accession_AllowSampleBarcodeMappingAfterAcceptExternalReferralOrders": true,
+    "Accession_AllowSampleBarcodeMappingForOutsourceOrders": true
   }
 }
 
@@ -34,11 +53,37 @@ tests {
   test("200 OK", function () {
     expect(res.getStatus()).to.equal(200);
   });
+  test("preview reflects the saved barcode config", function () {
+    const d = res.getBody().data;
+    expect(d.SampleBarcodeSettings_Preview).to.equal("SBC-000001-AM");
+  });
 }
 
 docs {
-  Upsert the active branch's accession settings (§G). Every field is optional (a
-  partial patch); omitted lists fall back to the module defaults at read time. The
-  response is the effective (merged) settings map. Audited under
+  Save (partial patch) the active branch's Accession Module Settings. Every
+  field is optional. Master-data lists (`MasterData_*`) are merged with the
+  branch's previously-saved lists — an omitted list keeps its last-saved
+  value, it does not revert to the module default. Typed columns
+  (`SampleBarcodeSettings_*`, `Accession_*`) are patched individually; an
+  omitted one keeps its current stored value.
+
+  Do **not** send `SampleBarcodeSettings_CurrentNumber` or
+  `SampleBarcodeSettings_LastResetAt` — both are system-managed and rejected
+  as unknown fields.
+
+  Validation (beyond the DTO's per-field checks): `SampleBarcodeSettings_Prefix`/
+  `_Suffix` are letters/digits only (max 24 chars);
+  `SampleBarcodeSettings_NumberLength` is 4-10;
+  `Accession_MinimumTimeToAcceptSampleMinutes` must be <=
+  `Accession_MaximumTimeToAcceptSampleMinutes`;
+  `Accession_CriticalThresholdMinutes` must be <=
+  `Accession_WarningThresholdMinutes`, which must in turn be <=
+  `Accession_MaximumTimeToAcceptSampleMinutes` — all three enforced with a
+  `422 VALIDATION_ERROR` (not just per-field class-validator decorators, since
+  a partial patch can't validate across fields on its own).
+
+  The response is the effective (merged) settings, including the computed,
+  read-only `SampleBarcodeSettings_Preview` (e.g. "SBC-000001-AM", built from
+  `SampleBarcodeSettings_CurrentNumber + 1`). Audited under
   `AuditModule.ACCESSION`.
 }
