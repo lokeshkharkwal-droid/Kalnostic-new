@@ -62,6 +62,7 @@ import { ReportSettingsModule } from './modules/report-settings/report-settings.
 import { AppointmentModule } from './modules/appointment/appointment.module';
 import { AccessionModule } from './modules/accession/accession.module';
 import { AppointmentSettingsModule } from './modules/appointment-settings/appointment-settings.module';
+import { TechnicianSettingsModule } from './modules/technician-settings/technician-settings.module';
 import { DoctorScheduleModule } from './modules/doctor-schedule/doctor-schedule.module';
 import { PhlebotomistScheduleModule } from './modules/phlebotomist-schedule/phlebotomist-schedule.module';
 import { PhlebotomistCollectionModule } from './modules/phlebotomist-collection/phlebotomist-collection.module';
@@ -156,6 +157,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     ReportSettingsModule,
     AppointmentModule,
     AppointmentSettingsModule,
+    TechnicianSettingsModule,
     AccessionModule,
     DoctorScheduleModule,
     PhlebotomistScheduleModule,

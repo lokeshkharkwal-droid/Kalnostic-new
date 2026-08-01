@@ -11,8 +11,8 @@ import {
 import { AuditAction, AuditModule } from '@prisma/client';
 import type { Response } from 'express';
 import { AccessionSampleService } from './accession-sample.service';
-import { ListSamplesDto } from './dto/list-samples.dto';
 import { PrintLabelDto, PrintLabelsDto } from './dto/print-label.dto';
+import { ListSamplesDto } from './dto/list-samples.dto';
 import { SampleNoteDto } from './dto/sample-note.dto';
 import { CollectSampleDto } from './dto/collect-sample.dto';
 import { AcceptSampleDto } from './dto/accept-sample.dto';
@@ -73,16 +73,21 @@ export class AccessionController {
     return this.sampleService.findAll(tenantId, profile.branchId, query);
   }
 
-  /**
-   * Print one sample's barcode label to a PDF, streamed back (`application/pdf`).
-   * Declared before the `:id/...` routes so `print-label` isn't captured as an id.
-   */
+  /** Summary counts for the status tabs (§A.5) + TAT bar (§A.4) + total. */
+  @Get('summary')
+  summary(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+  ) {
+    return this.sampleService.summary(tenantId, profile.branchId);
+  }
+
+  // ── Print Label (in-house/referral/external-referral orders) — declared
+  // before `:id` routes, same convention as the bulk actions below ──────────
+
+  /** Print one sample's barcode label. Streams the rendered PDF directly. */
   @Post('print-label')
-  @Audit({
-    module: AuditModule.ACCESSION,
-    action: AuditAction.OTHER,
-    description: 'Printed a sample label',
-  })
+  @Audit(auditUpdate('Printed a sample label'))
   async printLabel(
     @CurrentTenant() tenantId: string,
     @Body() dto: PrintLabelDto,
@@ -102,13 +107,9 @@ export class AccessionController {
     res.end(pdf);
   }
 
-  /** Print many samples' barcode labels into one PDF, streamed back. */
+  /** Print many samples' labels into one PDF. Streams the rendered PDF directly. */
   @Post('print-labels')
-  @Audit({
-    module: AuditModule.ACCESSION,
-    action: AuditAction.OTHER,
-    description: 'Printed multiple sample labels',
-  })
+  @Audit(auditUpdate('Printed multiple sample labels'))
   async printLabels(
     @CurrentTenant() tenantId: string,
     @Body() dto: PrintLabelsDto,
@@ -120,18 +121,9 @@ export class AccessionController {
       dto.templateId,
     );
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="labels.pdf"`);
+    res.setHeader('Content-Disposition', 'inline; filename="labels.pdf"');
     res.setHeader('Content-Length', pdf.length);
     res.end(pdf);
-  }
-
-  /** Summary counts for the status tabs (§A.5) + TAT bar (§A.4) + total. */
-  @Get('summary')
-  summary(
-    @CurrentTenant() tenantId: string,
-    @CurrentProfile() profile: ActiveProfile,
-  ) {
-    return this.sampleService.summary(tenantId, profile.branchId);
   }
 
   // ── Bulk actions (§A.11) — declared before `:id` routes ────────────────────

@@ -13,8 +13,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
 import { LabReportService } from '../lab-report/lab-report.service';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
-import { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
-import { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
+import type { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
+import type { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
 import { BranchLabTestConfigSnapshot } from '../branch-lab-test/entities/branch-lab-test.entity';
 import {
   SampleAction,
@@ -103,8 +103,11 @@ export class AccessionSampleService {
   /**
    * Generate the accession samples for an order inside an existing (already
    * tenant-scoped) transaction. Groups the order's items by their required
-   * sample (container + sample type, from `BranchLabTest.configSnapshot.samples`)
-   * and creates one `AccessionSample` (status `NEW`) per group, each linked to the
+   * sample (container + sample type). A single-test item's requirement comes
+   * from its own `BranchLabTest.configSnapshot.samples`; a panel item has no
+   * `branchLabTest` of its own, so its requirement is the union of its
+   * constituent tests' `configSnapshot.samples` (see `samplesOfPanel`). Creates
+   * one `AccessionSample` (status `NEW`) per group, each linked to the
    * contributing order items via `AccessionSampleTest` and seeded with an initial
    * `AccessionStatusHistory` row. Idempotent per order: skips generation if the
    * order already has samples.
@@ -128,14 +131,22 @@ export class AccessionSampleService {
 
     const items = await tx.orderItem.findMany({
       where: { orderId, tenantId, deletedAt: null },
-      include: { branchLabTest: true },
+      include: { branchLabTest: true, branchLabPanel: true },
     });
     if (items.length === 0) return;
 
     const groups = new Map<string, SampleGroup>();
     for (const item of items) {
-      const testName = item.branchLabTest?.testName ?? item.direct ?? null;
-      const samples = this.samplesOf(item.branchLabTest?.configSnapshot);
+      const testName =
+        item.branchLabTest?.testName ??
+        item.branchLabPanel?.panelName ??
+        item.direct ??
+        null;
+      const samples = item.branchLabTest
+        ? this.samplesOf(item.branchLabTest.configSnapshot)
+        : item.branchLabPanel
+          ? await this.samplesOfPanel(tx, tenantId, item.branchLabPanel.id)
+          : [];
       if (samples.length === 0) {
         this.addToGroup(groups, null, null, item.id, testName);
         continue;
@@ -309,109 +320,88 @@ export class AccessionSampleService {
     return sample;
   }
 
-  // ── Label print (template-driven barcode labels) ────────────────────────────
-  //
-  // Renders a user-authored classic template (Old Templates → Print, type
-  // `order_label_print` / `multiple_order_label_print`) against a sample's real
-  // data. Barcodes are rendered as text (the `barcode` value) — no server-side
-  // barcode image. Mirrors `LabReportService.print` / `OrderService.print`.
+  /**
+   * Return a sample's status-history log (newest first), tenant-scoped
+   * (Sample History panel — PDF §A.10.5).
+   * @param id sample id
+   * @param tenantId tenant scope
+   * @throws AccessionSampleNotFoundException if the sample is missing
+   */
+  async findHistory(
+    id: string,
+    tenantId: string,
+  ): Promise<AccessionStatusHistory[]> {
+    await this.findById(id, tenantId);
+    return this.prisma.accessionStatusHistory.findMany({
+      where: { sampleId: id, tenantId, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  // ── Print Label (in-house/referral/external-referral orders) ───────────────
 
   /**
-   * Render a single accession sample's barcode label to a PDF.
-   * @param sampleId the sample to label
-   * @param tenantId tenant scope (from JWT)
-   * @param templateId explicit `order_label_print` template (picker always sends one)
-   * @throws NoActiveLabelTemplateException / AmbiguousLabelTemplateException
+   * Print one sample's barcode label ("Label Print" checklist item).
+   * Resolves the tenant's active `order_label_print` template (or the
+   * caller's explicit `templateId`) and renders it with this sample's real
+   * data via `PdfReportTemplateService.generatePdf`.
+   * @throws AccessionSampleNotFoundException if missing/soft-deleted
+   * @throws NoActiveLabelTemplateException if no active template exists
+   * @throws AmbiguousLabelTemplateException if multiple exist and no
+   * `templateId` was given
    */
   async printLabel(
-    sampleId: string,
+    id: string,
     tenantId: string,
     templateId?: string,
   ): Promise<Buffer> {
-    const sample = await this.findById(sampleId, tenantId);
-    const context: GeneratePdfDto = { variables: this.labelFields(sample) };
-    const resolved =
+    const sample = await this.findById(id, tenantId);
+    const context = this.buildLabelContext(sample);
+    const resolvedTemplateId =
       templateId ??
       (await this.resolveLabelTemplateId(tenantId, 'order_label_print'));
     return this.pdfReportTemplateService.generatePdf(
-      resolved,
+      resolvedTemplateId,
       tenantId,
       context,
     );
   }
 
   /**
-   * Render many accession samples' barcode labels into one PDF, as a single
-   * `{{#each labels}}` section (one row per sample).
-   * @param ids the samples to label (order preserved)
-   * @param tenantId tenant scope (from JWT)
-   * @param templateId explicit `multiple_order_label_print` template
-   * @throws AccessionSampleNotFoundException if none of the ids resolve
-   * @throws NoActiveLabelTemplateException / AmbiguousLabelTemplateException
+   * Print many samples' labels into one PDF ("Multiple Label Print" checklist
+   * item). Renders ONE `multiple_order_label_print`-type template ONCE, with
+   * every sample folded into a single repeating `sections.labels` row-set —
+   * same flattened-section approach as `LabReportService.printAllForOrder`
+   * (the renderer only expands one level of `{{#each}}`).
+   * @throws AccessionSampleNotFoundException if any sample id is missing
+   * @throws NoActiveLabelTemplateException if no active template exists
+   * @throws AmbiguousLabelTemplateException if multiple exist and no
+   * `templateId` was given
    */
   async printLabels(
     ids: string[],
     tenantId: string,
     templateId?: string,
   ): Promise<Buffer> {
-    const samples = await this.prisma.accessionSample.findMany({
-      where: { id: { in: ids }, tenantId, deletedAt: null },
-      include: SAMPLE_INCLUDE,
-    });
-    if (samples.length === 0) {
-      throw new AccessionSampleNotFoundException(ids.join(','));
-    }
-    // Preserve the caller's requested order.
-    const byId = new Map(samples.map((s) => [s.id, s]));
-    const ordered = ids
-      .map((id) => byId.get(id))
-      .filter((s): s is AccessionSampleWithRelations => !!s);
-    const context: GeneratePdfDto = {
-      sections: { labels: ordered.map((s) => this.labelFields(s)) },
-    };
-    const resolved =
+    const samples = await Promise.all(
+      ids.map((id) => this.findById(id, tenantId)),
+    );
+    const labels = samples.map((s) => this.buildLabelVariables(s));
+    const combined: GeneratePdfDto = { sections: { labels } };
+
+    const resolvedTemplateId =
       templateId ??
       (await this.resolveLabelTemplateId(
         tenantId,
         'multiple_order_label_print',
       ));
     return this.pdfReportTemplateService.generatePdf(
-      resolved,
+      resolvedTemplateId,
       tenantId,
-      context,
+      combined,
     );
   }
 
-  /** Flat label fields for one sample — used as `{variables}` (single) or a
-   * `labels` row (multiple). Barcode is the text value (no barcode image). */
-  private labelFields(
-    sample: AccessionSampleWithRelations,
-  ): Record<string, unknown> {
-    const p = sample.order.patient;
-    return {
-      barcode: sample.barcode ?? '',
-      accession_no: sample.accessionNo,
-      order_code: sample.order.orderCode,
-      bill_id: sample.order.billId ?? '',
-      patient_name: [p.firstName, p.middleName, p.lastName]
-        .filter(Boolean)
-        .join(' '),
-      patient_age: p.age ?? '',
-      patient_gender: p.gender ?? '',
-      patient_um_id: p.umId ?? '',
-      sample_type: sample.sampleType ?? '',
-      sample_group_label: sample.sampleGroupLabel ?? '',
-      collected_at: sample.collectedAt
-        ? sample.collectedAt.toISOString().slice(0, 10)
-        : '',
-      tests: sample.tests
-        .map((t) => t.testName)
-        .filter(Boolean)
-        .join(', '),
-    };
-  }
-
-  /** Resolve the tenant's single active label template when none was passed. */
   private async resolveLabelTemplateId(
     tenantId: string,
     type: PdfReportTemplateType,
@@ -435,22 +425,41 @@ export class AccessionSampleService {
     return data[0]!.id;
   }
 
-  /**
-   * Return a sample's status-history log (newest first), tenant-scoped
-   * (Sample History panel — PDF §A.10.5).
-   * @param id sample id
-   * @param tenantId tenant scope
-   * @throws AccessionSampleNotFoundException if the sample is missing
-   */
-  async findHistory(
-    id: string,
-    tenantId: string,
-  ): Promise<AccessionStatusHistory[]> {
-    await this.findById(id, tenantId);
-    return this.prisma.accessionStatusHistory.findMany({
-      where: { sampleId: id, tenantId, deletedAt: null },
-      orderBy: { createdAt: 'desc' },
-    });
+  /** Flat `{variable}` values for one sample's label. */
+  private buildLabelVariables(
+    sample: AccessionSampleWithRelations,
+  ): Record<string, unknown> {
+    const patient = sample.order?.patient;
+    return {
+      accession_no: sample.accessionNo,
+      barcode: sample.barcode ?? '',
+      patient_name: patient
+        ? [patient.firstName, patient.middleName, patient.lastName]
+            .filter(Boolean)
+            .join(' ')
+        : '',
+      patient_age: patient?.age ?? '',
+      patient_gender: patient?.gender ?? '',
+      patient_um_id: patient?.umId ?? '',
+      order_code: sample.order?.orderCode ?? '',
+      test_names: sample.tests
+        .map((t) => t.testName)
+        .filter(Boolean)
+        .join(', '),
+      sample_type: sample.sampleType ?? '',
+      container_type: sample.containerType ?? '',
+      priority: sample.priority,
+      collected_at: sample.collectedAt
+        ? sample.collectedAt.toISOString().slice(0, 10)
+        : '',
+    };
+  }
+
+  /** Render context for a single-sample label print. */
+  private buildLabelContext(
+    sample: AccessionSampleWithRelations,
+  ): GeneratePdfDto {
+    return { variables: this.buildLabelVariables(sample) };
   }
 
   // ── State-machine actions (PDF §A.9/§A.10) ─────────────────────────────────
@@ -1154,6 +1163,50 @@ export class AccessionSampleService {
     }
     const samples = (snapshot as Partial<BranchLabTestConfigSnapshot>).samples;
     return Array.isArray(samples) ? samples : [];
+  }
+
+  /**
+   * Sample/container requirements for a panel — the union of its constituent
+   * tests' `configSnapshot.samples` (deduped by sample+container type, since
+   * a multi-test panel commonly has several tests sharing the same tube).
+   * A panel order item has no `branchLabTest` of its own (it's the panel's
+   * own row, not one test), so `generateForOrderInTx` couldn't previously see
+   * any sample requirement here at all — accession samples for panels always
+   * got `sampleType`/`containerType: null` even though the underlying tests'
+   * snapshots have this data (same `BranchLabTest` rows a standalone order of
+   * the same test would use).
+   */
+  private async samplesOfPanel(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    branchLabPanelId: string,
+  ): Promise<LabTestSample[]> {
+    // `BranchLabPanelTest.branchLabTestId` is a logical ref (no Prisma relation
+    // — see the model's doc comment), so the linked tests are fetched separately.
+    const panelTests = await tx.branchLabPanelTest.findMany({
+      where: { tenantId, branchLabPanelId, deletedAt: null },
+      select: { branchLabTestId: true },
+    });
+    if (panelTests.length === 0) return [];
+    const tests = await tx.branchLabTest.findMany({
+      where: {
+        id: { in: panelTests.map((pt) => pt.branchLabTestId) },
+        tenantId,
+        deletedAt: null,
+      },
+      select: { configSnapshot: true },
+    });
+    const seen = new Set<string>();
+    const samples: LabTestSample[] = [];
+    for (const test of tests) {
+      for (const s of this.samplesOf(test.configSnapshot)) {
+        const key = `${s.containerType ?? ''}|${s.sampleType ?? ''}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        samples.push(s);
+      }
+    }
+    return samples;
   }
 
   /** Add an order item to its sample group (keyed by container + sample type). */
