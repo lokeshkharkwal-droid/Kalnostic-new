@@ -16,7 +16,12 @@ auth:bearer {
 
 docs {
   The **built-in** staff role catalogue (the seeded system roles, minus
-  `patient`) as `{ key, label }` — a lightweight source for a role dropdown.
+  `patient`) as `{ key, label, modules }` — a lightweight source for a role
+  dropdown. `modules` is the list of module keys the role is allowed to access
+  (from the backend `role-module-access.config.ts`), so the "Assigned Branches
+  and Modules" screen can offer only the modules valid for the selected role. An
+  **empty** `modules` array means the role has no module restriction (any
+  branch-enabled module is allowed).
 
   This lists system roles only. For the full role set — system roles **plus** the
   tenant's own custom roles, with ids/status/branch types — use `GET /roles`

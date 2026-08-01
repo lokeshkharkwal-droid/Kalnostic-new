@@ -140,7 +140,7 @@ export const ORDER_LIST_INCLUDE = {
   referralPanel: { select: { id: true, name: true, code: true } },
   internalReferral: { select: { id: true, fullName: true } },
   externalReferral: { select: { id: true, name: true } },
-  appointment: { select: { id: true, status: true } },
+  appointment: { select: { id: true, status: true, code: true } },
   items: {
     where: { deletedAt: null },
     select: {

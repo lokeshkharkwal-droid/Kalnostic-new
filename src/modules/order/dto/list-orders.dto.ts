@@ -71,6 +71,18 @@ export class ListOrdersDto extends PaginationQueryDto {
   quotationStatus?: QuotationStatus;
 
   /**
+   * `true` scopes the list to quotation-origin records (any non-null
+   * `quotationStatus`), regardless of the order's top-level `status`. This keeps
+   * converted quotes — which become `status = ORDER` with
+   * `quotationStatus = CONVERTED` — visible on the Quotations screen. A specific
+   * `quotationStatus` filter, when supplied, takes precedence over this flag.
+   */
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  isQuotation?: boolean;
+
+  /**
    * Payment status filter, matched against the order's stored `paymentStatus`
    * (`NOT_PAID` | `PARTIALLY_PAID` | `PAID`), which is derived from the payment
    * ledger and kept in sync on every payment write.
@@ -140,6 +152,20 @@ export class ListOrdersDto extends PaginationQueryDto {
   @IsOptional()
   @IsDateString()
   dateTo?: string;
+
+  /**
+   * Inclusive lower bound on `appointmentAt` (ISO-8601 date). Used by the
+   * Appointments screen so its date filter matches the appointment date shown in
+   * the list, not the order-creation date.
+   */
+  @IsOptional()
+  @IsDateString()
+  appointmentDateFrom?: string;
+
+  /** Inclusive upper bound on `appointmentAt` (ISO-8601 date; whole day covered). */
+  @IsOptional()
+  @IsDateString()
+  appointmentDateTo?: string;
 
   /**
    * Scope to orders carrying a given section. The order console tabs use this

@@ -1,5 +1,6 @@
 import { ProfileKey } from './profile-registry.constant';
 import { PERMISSION_MODULES } from './system-modules.constant';
+import { ROLE_MODULE_ACCESS } from './role-module-access.config';
 
 /**
  * Module-grouped, fine-grained permission catalogue (User Management v2.0).
@@ -240,37 +241,14 @@ export function modulePermissionKeys(moduleKey: string): string[] {
  * set is every permission key of these modules; per-(user+branch) rows in
  * `user_branch_permissions` then override individual keys. Baselines remain
  * fully editable (per the spec) — this only seeds the initial grant.
+ *
+ * The mapping itself lives in the dedicated **role→module access config**
+ * (`role-module-access.config.ts`) so it can be edited without touching this
+ * permission-generation code; it is re-exported here for backwards compatibility
+ * with existing importers.
  */
-export const ROLE_DEFAULT_MODULES: Record<ProfileKey, string[]> = {
-  // The two admin roles map 1:1 to their console module, whose permission set is
-  // the full API resource catalogue (see ADMIN_CONSOLE_MODULE_KEYS) — so both
-  // roles' baselines expand to every API resource permission.
-  business_admin: ['business_admin'],
-  branch_admin: ['branch_admin'],
-  administrator: SYSTEM_MODULES_ALL(),
-  patient: [],
-  doctor: [],
-  consultant_doctor: [],
-  reporting_doctor: [],
-  lab_technician: ['accession', 'lab_operations'],
-  junior_lab_technician: ['accession', 'lab_operations'],
-  senior_lab_technician: ['accession', 'lab_operations'],
-  receptionist: ['sales', 'registration'],
-  phlebotomist: ['phlebotomist', 'accession'],
-  marketing_executive: ['sales'],
-  marketing_manager: ['sales', 'finance'],
-  inventory_manager: ['inventory'],
-  chemist: [],
-  chemist_assistant: [],
-  finance_manager: ['finance', 'sales'],
-  finance_assistant: ['finance'],
-  logistics_executive: ['inventory', 'accession'],
-  opd_assistant: [],
-  radiologist: ['radiology'],
-  radiology_assistant: [],
-  nursing_staff: [],
-  nursing_incharge: [],
-};
+export const ROLE_DEFAULT_MODULES: Record<ProfileKey, string[]> =
+  ROLE_MODULE_ACCESS;
 
 /** Expand a list of module keys into all their permission keys (catalogue order). */
 function expandModulePermissions(moduleKeys: string[]): string[] {
@@ -311,25 +289,4 @@ export function roleBaselinePermissions(roleKey: string): Set<string> {
 /** The modules linked to a role template (may be empty = not linked to a module). */
 export function roleTemplateModules(roleKey: string): string[] {
   return ROLE_TEMPLATES[roleKey as ProfileKey]?.modules ?? [];
-}
-
-/**
- * All permission-bearing **operational / feature-area** module keys (i.e. every
- * module except the two admin consoles). Used for the all-access `administrator`
- * baseline, so it automatically picks up newly-permissioned feature areas such as
- * `registration` and `lab_operations`. Kept as a helper to avoid importing the
- * SYSTEM_MODULES array eagerly above.
- */
-function SYSTEM_MODULES_ALL(): string[] {
-  return [
-    'accession',
-    'inventory',
-    'sales',
-    'finance',
-    'phlebotomist',
-    'assistant',
-    'operation',
-    'registration',
-    'lab_operations',
-  ];
 }

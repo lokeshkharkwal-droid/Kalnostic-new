@@ -30,7 +30,6 @@ import {
 import { AuthRoleService } from '../auth-role/auth-role.service';
 import {
   MODULE_PERMISSION_CATALOG,
-  roleBaselinePermissions,
   roleTemplateModules,
 } from '../permissions/constants/module-permissions.constant';
 import {
@@ -1394,10 +1393,14 @@ export class UsersService {
     const targetRoleKey = newRole?.key ?? existing.authRole?.key ?? '';
 
     // Validate the module access. When `modules` is supplied it replaces the
-    // set (validated against the branch type + enablement); otherwise the
+    // set (validated against the branch type + enablement, and each module must
+    // be linked to the role template when the template links any); otherwise the
     // existing set stands. The default module must be one of the effective set.
     if (dto.modules !== undefined && dto.modules.length > 0) {
       await this.assertModulesValidForBranch(tenantId, branch, dto.modules);
+      for (const moduleKey of dto.modules) {
+        this.assertModuleInRoleTemplate(targetRoleKey, moduleKey);
+      }
     }
     const effectiveModules = dto.modules ?? existing.enabledModules;
     if (dto.defaultModule !== undefined && dto.defaultModule !== null) {
@@ -1515,10 +1518,54 @@ export class UsersService {
   }
 
   /**
+   * The modules a user can actually access at a branch, and the permission keys
+   * those modules grant (the effective baseline).
+   *
+   * The user's explicitly-assigned modules (`UserBranchProfile.enabledModules` —
+   * the checkboxes ticked on the "Assigned Branches and Modules" screen) are the
+   * source of truth for access. When a profile has **no** modules assigned
+   * (legacy rows, or a tenant-level profile like `business_admin` seeded without
+   * a module list) we fall back to the role template's default modules so
+   * existing behaviour is preserved. This is why a role with an empty
+   * role→module config (e.g. `doctor`) still works: access follows the per-user
+   * module selection, not the (empty) role baseline.
+   *
+   * @param roleKey the role held at the branch
+   * @param assignedModules `UserBranchProfile.enabledModules` for the profile
+   * @returns the effective module-key set and the permission keys they grant
+   */
+  private resolveEffectiveModules(
+    roleKey: string,
+    assignedModules: string[],
+  ): { moduleKeys: Set<string>; permissions: Set<string> } {
+    const moduleKeys = new Set(
+      assignedModules.length > 0
+        ? assignedModules
+        : roleTemplateModules(roleKey),
+    );
+    const permissions = new Set<string>();
+    for (const entry of MODULE_PERMISSION_CATALOG) {
+      if (moduleKeys.has(entry.moduleKey)) {
+        permissions.add(entry.permissionKey);
+      }
+    }
+    return { moduleKeys, permissions };
+  }
+
+  /** The module a permission key belongs to (null if unknown). */
+  private moduleOfPermission(permissionKey: string): string | null {
+    return (
+      MODULE_PERMISSION_CATALOG.find((e) => e.permissionKey === permissionKey)
+        ?.moduleKey ?? null
+    );
+  }
+
+  /**
    * Resolve the module-grouped permissions for a (user + branch). The baseline is
-   * the role assigned at **that branch** (UserBranchProfile.profileKey). Only
-   * modules enabled for the branch are returned; effective `allowed` =
-   * override ?? the role baseline.
+   * the set of modules **assigned to the user** at that branch (falling back to
+   * the role template when none are assigned — see {@link resolveEffectiveModules}).
+   * Only modules enabled for the branch are returned; effective `allowed` =
+   * override ?? the baseline.
    */
   async getBranchPermissions(
     tenantId: string,
@@ -1541,7 +1588,10 @@ export class UsersService {
     if (enabledModules.size === 0) {
       return [];
     }
-    const baseline = roleBaselinePermissions(profile.authRole?.key ?? '');
+    const { permissions: baseline } = this.resolveEffectiveModules(
+      profile.authRole?.key ?? '',
+      profile.enabledModules,
+    );
     const overrides = await this.prisma.userBranchPermission.findMany({
       where: { tenantId, personId, branchId, deletedAt: null },
     });
@@ -1631,23 +1681,45 @@ export class UsersService {
       ? this.roleView(activeProfile?.authRole ?? null)
       : null;
 
-    // No role at this branch → empty baseline + overrides, so every permission
+    // Effective access is driven by the modules ASSIGNED to the user at this
+    // branch (UserBranchProfile.enabledModules), gated by what the branch itself
+    // enables. This is why a role with an empty role→module config (e.g. doctor)
+    // still works: the per-user module selection — not the (empty) role baseline
+    // — grants access. `user_branch_permissions` then fine-tunes individual keys.
+    //
+    // No role at this branch → empty baseline + gate, so every permission
     // resolves to false (all-false catalog), while branchModules still reflects
     // the branch's enabled modules.
     let baseline = new Set<string>();
     let overrideMap = new Map<string, boolean>();
+    let permGate = new Set<string>();
     if (roleKey) {
-      baseline = roleBaselinePermissions(roleKey);
+      const effective = this.resolveEffectiveModules(
+        roleKey,
+        activeProfile?.enabledModules ?? [],
+      );
+      baseline = effective.permissions;
       const overrides = await this.prisma.userBranchPermission.findMany({
         where: { tenantId, personId, branchId, deletedAt: null },
       });
       overrideMap = new Map(overrides.map((o) => [o.permissionKey, o.allowed]));
+      // Gate = branch-enabled ∩ (assigned modules ∪ modules with an allow
+      // override) — so an explicit permission grant still surfaces its module,
+      // and modules the branch doesn't enable are always denied.
+      const gateModules = new Set(effective.moduleKeys);
+      for (const [permissionKey, allowed] of overrideMap) {
+        if (allowed) {
+          const mk = this.moduleOfPermission(permissionKey);
+          if (mk) gateModules.add(mk);
+        }
+      }
+      permGate = new Set([...gateModules].filter((k) => moduleFilter.has(k)));
     }
 
     const grouped = this.groupResolvedPermissions(
       baseline,
       overrideMap,
-      moduleFilter,
+      permGate,
     );
     return {
       role,
@@ -2185,10 +2257,14 @@ export class UsersService {
       // tenant (findById throws if it doesn't) per the never-trust-client-branchId rule.
       const branch = await this.branchService.findById(it.branchId, tenantId);
 
-      // Validate the user's module access for this branch (type + enablement).
+      // Validate the user's module access for this branch (type + enablement),
+      // and that each module is linked to the role template (when it links any).
       const modules = it.modules ?? [];
       if (modules.length > 0) {
         await this.assertModulesValidForBranch(tenantId, branch, modules);
+        for (const moduleKey of modules) {
+          this.assertModuleInRoleTemplate(role.key, moduleKey);
+        }
       }
 
       // The default (landing) module must be one of the enabled modules and
