@@ -28,6 +28,7 @@ import {
 } from '../permissions/constants/profile-registry.constant';
 import { SYSTEM_MODULES } from '../permissions/constants/system-modules.constant';
 import { PERMISSION_CATALOG_BY_MODULE } from '../permissions/constants/module-permissions.constant';
+import { allowedModulesForRole } from '../permissions/constants/role-module-access.config';
 import { ALLOWED_PHOTO_MIME_TYPES } from '../../common/constants/validation-patterns.constant';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -103,12 +104,19 @@ export class UserManagementController {
     return this.usersService.listProfilePermissions(tenantId);
   }
 
-  /** The predefined role catalogue (for dropdowns). */
+  /**
+   * The predefined role catalogue (for dropdowns). Each role also carries the
+   * module keys it is allowed to access (from `role-module-access.config.ts`) so
+   * the "Assigned Branches and Modules" screen can offer only the modules valid
+   * for the selected role. An **empty** `modules` array means the role has no
+   * module restriction (any branch-enabled module is allowed).
+   */
   @Get('roles')
   roles() {
     return STAFF_ROLE_KEYS.map((key) => ({
       key,
       label: PROFILE_LABELS[key],
+      modules: allowedModulesForRole(key),
     }));
   }
 

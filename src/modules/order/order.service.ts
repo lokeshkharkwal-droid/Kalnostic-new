@@ -662,6 +662,12 @@ export class OrderService {
     }
 
     if (query.status) where.status = query.status;
+    // Scope to quotation-origin records (any non-null quotationStatus) so
+    // converted quotes (now status = ORDER) stay on the Quotations screen. A
+    // specific quotationStatus filter below overrides this broader scope.
+    if (query.isQuotation && !query.quotationStatus) {
+      where.quotationStatus = { not: null };
+    }
     if (query.paymentStatus) where.paymentStatus = query.paymentStatus;
     if (query.appointmentStatus) {
       where.appointment = { is: { status: query.appointmentStatus } };
@@ -692,6 +698,19 @@ export class OrderService {
       where.orderDate = {};
       if (query.dateFrom) where.orderDate.gte = new Date(query.dateFrom);
       if (query.dateTo) where.orderDate.lte = new Date(query.dateTo);
+    }
+    // Appointment-date range (filters `appointmentAt`, which carries a time, so
+    // the upper bound is stretched to the end of that day to stay inclusive).
+    if (query.appointmentDateFrom || query.appointmentDateTo) {
+      where.appointmentAt = {};
+      if (query.appointmentDateFrom) {
+        where.appointmentAt.gte = new Date(query.appointmentDateFrom);
+      }
+      if (query.appointmentDateTo) {
+        const end = new Date(query.appointmentDateTo);
+        end.setUTCHours(23, 59, 59, 999);
+        where.appointmentAt.lte = end;
+      }
     }
 
     // Section scope + diagnostics-only flags collapse into one relation filter
