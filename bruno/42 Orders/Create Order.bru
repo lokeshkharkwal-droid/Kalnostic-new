@@ -257,4 +257,8 @@ docs {
   `PARTIALLY_PAID` | `PAID`) is derived from these (summed `paidAmount` vs
   `netAmount`) and recomputed whenever the ledger is replaced (create, and
   `PATCH /orders/:id` when `payments` is supplied).
+
+  Overpayment is rejected: if the summed `paidAmount` exceeds the summed
+  `netAmount`, the order is rejected with 422 `PAYMENT_OVERPAYMENT` and rolled
+  back (same rule as `POST /payments`). See "Create Order - Overpayment (422)".
 }

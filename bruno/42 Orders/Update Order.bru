@@ -74,7 +74,9 @@ docs {
   rows (summed `paidAmount` vs `netAmount`); omit `payments` to leave the ledger
   and status untouched. One row per payment method (split → multiple rows), each
   with its own `paidAmount`/`paymentMode`/`reference`; order-level billing lives on
-  the first row. `patientId` is not editable.
+  the first row. Overpayment is rejected — a supplied ledger whose summed
+  `paidAmount` exceeds the summed `netAmount` is refused with 422
+  `PAYMENT_OVERPAYMENT` and the patch rolls back. `patientId` is not editable.
 
   ## Finalization validation (draft → live)
 

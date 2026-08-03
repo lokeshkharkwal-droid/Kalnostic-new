@@ -59,6 +59,10 @@ import {
   NoActiveOrderPrintTemplateException,
   AmbiguousOrderPrintTemplateException,
 } from './exceptions/order.exceptions';
+// Reused so an inline order-payment overpayment raises the SAME
+// `PAYMENT_OVERPAYMENT` error the standalone `POST /payments` guard does. This
+// imports an exception class (not a service), so rule #3 is not violated.
+import { PaymentOverpaymentException } from '../payment-details/exceptions/payment-details.exceptions';
 
 /**
  * Order Management — the orchestrator. Tenant-scoped (RLS) + branch-level
@@ -188,6 +192,12 @@ export class OrderService {
       (s, p) => s + (p.paidAmount ?? 0),
       0,
     );
+    // The total paid can never exceed the amount owed (`netAmount`, which the
+    // caller sets to the payable). Blocks overpayment across every workflow
+    // (ORDER / APPOINTMENT / QUOTE / DRAFT) since all route through create().
+    if (payPaid > payNet) {
+      throw new PaymentOverpaymentException(payNet, payPaid);
+    }
     const paymentStatus = derivePaymentStatus(payNet, payPaid);
 
     let createdId: string;
@@ -1023,6 +1033,11 @@ export class OrderService {
       (s, p) => s + (p.paidAmount ?? 0),
       0,
     );
+    // Same overpayment guard as create, but only when the ledger is part of
+    // this patch (an update without `payments` leaves the stored totals alone).
+    if (dto.payments !== undefined && payPaid > payNet) {
+      throw new PaymentOverpaymentException(payNet, payPaid);
+    }
     const paymentStatus = derivePaymentStatus(payNet, payPaid);
 
     await this.prisma.withTenant(tenantId, async (tx) => {
