@@ -3,6 +3,7 @@ import { PrismaModule } from '../../prisma/prisma.module';
 import { PatientController } from './patient.controller';
 import { MedicalHistoryController } from './medical-history.controller';
 import { FamilyMemberController } from './family-member.controller';
+import { PatientDocumentController } from './patient-document.controller';
 import { PatientService } from './patient.service';
 
 /**
@@ -16,6 +17,7 @@ import { PatientService } from './patient.service';
     PatientController,
     MedicalHistoryController,
     FamilyMemberController,
+    PatientDocumentController,
   ],
   providers: [PatientService],
   exports: [PatientService],

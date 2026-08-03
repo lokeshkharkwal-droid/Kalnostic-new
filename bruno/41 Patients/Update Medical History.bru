@@ -20,15 +20,31 @@ auth:bearer {
 
 body:json {
   {
-    "hasFever": false,
-    "hasVitaminSupplements": true,
-    "otherMedications": "Metformin 500mg",
-    "remarks": "Fever resolved on follow-up"
+    "remarks": "Fever resolved on follow-up",
+    "richHistory": {
+      "noFlags": {
+        "medical": false, "surgical": false, "allergy": true,
+        "smoking": true, "alcohol": true, "habits": true, "social": true
+      },
+      "entries": {
+        "medical": [
+          { "condition": "Diabetes", "since": "2018", "management": "Medical Management", "medicine": "Metformin 500mg" }
+        ],
+        "surgical": [
+          { "surgery": "Appendectomy", "year": "2015", "hospital": "City Hospital", "complications": "None" }
+        ],
+        "allergy": [], "smoking": [], "alcohol": [], "habits": [], "social": []
+      },
+      "symptoms": ["Cough"],
+      "currentMedications": "Metformin 500mg"
+    }
   }
 }
 
 docs {
   Update a medical-history record for the patient. Every field is optional — send
-  only what changes; same field list as **Add Medical History**. 404
-  `MEDICAL_HISTORY_NOT_FOUND` if missing/not owned by this patient/tenant.
+  only what changes; same field list as **Add Medical History**, including the
+  rich `richHistory` object (the UI's source of truth; the flat columns are
+  re-derived from it on write). 404 `MEDICAL_HISTORY_NOT_FOUND` if missing/not
+  owned by this patient/tenant.
 }

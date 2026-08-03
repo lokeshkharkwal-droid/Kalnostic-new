@@ -5181,6 +5181,9 @@ model Patient {
   // One-to-many: a patient can have multiple medical-history records.
   medicalHistories MedicalHistory[]
 
+  // One-to-many: uploaded documents & signed consent forms (URL references).
+  patientDocuments PatientDocument[]
+
   // Orders placed for this patient.
   orders Order[]
 
@@ -5287,6 +5290,14 @@ model MedicalHistory {
   surgicalHistory String? @map("surgical_history")
   remarks         String?
 
+  /// Rich, display-oriented medical history (7 categories with free-form
+  /// per-entry fields, symptoms checklist, and current medications) shared by
+  /// the Registration Create and Patient Details pages. The flat booleans above
+  /// are derived from this on write and kept only for backward compatibility;
+  /// `richHistory` is the source of truth for display. Stored as JSON (like
+  /// `Schedule.shifts`) rather than child tables because it is never queried.
+  richHistory Json? @map("rich_history")
+
   createdBy String? @map("created_by")
   updatedBy String? @map("updated_by")
 
@@ -5299,6 +5310,48 @@ model MedicalHistory {
   @@index([branchId])
   @@index([deletedAt])
   @@map("medical_histories")
+}
+
+/// Category of a patient document: a general uploaded document (ID proof,
+/// insurance, prescription, …) or a signed consent form. Discriminates the two
+/// Patient-Details tabs that share one storage model.
+enum PatientDocumentCategory {
+  DOCUMENT
+  CONSENT
+}
+
+/// A patient document / consent form (one-to-many). Tenant-scoped (RLS) and
+/// branch-level. Stores only a `documentUrl` reference (e.g. an AWS S3 link) —
+/// the file bytes live in external object storage, never in the database. The
+/// `category` flag splits the Documents and Consent tabs; `type` is the
+/// free-text sub-type shown in each tab's dropdown (Aadhaar / IPD Consent / …).
+model PatientDocument {
+  id        String  @id @default(uuid())
+  tenantId  String  @map("tenant_id")
+  branchId  String? @map("branch_id")
+  patientId String  @map("patient_id")
+
+  patient Patient @relation(fields: [patientId], references: [id])
+
+  category     PatientDocumentCategory
+  name         String
+  type         String
+  documentDate DateTime @map("document_date")
+  documentUrl  String   @map("document_url")
+
+  createdBy String? @map("created_by")
+  updatedBy String? @map("updated_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([patientId])
+  @@index([branchId])
+  @@index([category])
+  @@index([deletedAt])
+  @@map("patient_documents")
 }
 
 // ── Order Management ────────────────────────────────────────────────────────────

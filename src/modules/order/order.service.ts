@@ -34,6 +34,9 @@ import {
 } from './entities/order.entity';
 import {
   AppointmentSectionRequiredException,
+  OrderRequiresItemsException,
+  OrderHomeVisitPhlebotomistRequiredException,
+  OrderHomeVisitSlotRequiredException,
   InvalidOrderItemException,
   OrderItemNotFoundException,
   OrderBranchLabPanelNotFoundException,
@@ -158,6 +161,19 @@ export class OrderService {
       await this.assertRadiology(tenantId, dto.radiology);
     }
     this.assertAppointmentSection(dto.status, dto);
+    this.assertFinalizedOrder({
+      status: dto.status,
+      itemCount: dto.items?.length ?? 0,
+      diagnostics: dto.diagnostics
+        ? {
+            isHomeVisit: dto.diagnostics.isHomeVisit ?? false,
+            phlebotomistId: dto.diagnostics.phlebotomistId ?? null,
+            collectionAt: dto.diagnostics.collectionAt
+              ? new Date(dto.diagnostics.collectionAt)
+              : null,
+          }
+        : null,
+    });
 
     // When saving as APPOINTMENT, the order's appointment date/type are derived
     // from whichever service section is scheduled (Diagnostic / OPD / Radiology).
@@ -938,6 +954,32 @@ export class OrderService {
     });
     const branchId = existing?.branchId ?? null;
     const effectiveStatus = dto.status ?? existing?.status;
+
+    // Full new-order field parity for finalization (e.g. draft → ORDER): validate
+    // the EFFECTIVE order — the incoming patch merged over the persisted draft —
+    // so a bare `{ status: "ORDER" }` still checks the draft's real items and
+    // diagnostics. `items`/`diagnostics` fall back to what's already stored when
+    // this patch omits them.
+    const effectiveItemCount =
+      dto.items !== undefined
+        ? dto.items.length
+        : await this.prisma.orderItem.count({
+            where: { orderId: id, tenantId, deletedAt: null },
+          });
+    const effectiveDiagnostics = dto.diagnostics
+      ? {
+          isHomeVisit: dto.diagnostics.isHomeVisit ?? false,
+          phlebotomistId: dto.diagnostics.phlebotomistId ?? null,
+          collectionAt: dto.diagnostics.collectionAt
+            ? new Date(dto.diagnostics.collectionAt)
+            : null,
+        }
+      : (existing?.diagnostics ?? null);
+    this.assertFinalizedOrder({
+      status: effectiveStatus,
+      itemCount: effectiveItemCount,
+      diagnostics: effectiveDiagnostics,
+    });
 
     // Home-visit slot reservation: the booking as it stands now vs. after this
     // patch. A cancelled appointment already released its slot, so it counts as no
@@ -1740,6 +1782,46 @@ export class OrderService {
       Boolean(dto.radiology?.appointmentAt);
     if (!hasScheduledSection) {
       throw new AppointmentSectionRequiredException();
+    }
+  }
+
+  /**
+   * Enforce everything a live (non-draft) order requires. Shared by new-order
+   * creation and draft finalization so both perform identical checks. Operates
+   * on the EFFECTIVE order — the incoming patch merged over the persisted draft
+   * — so a draft can never be finalized while incomplete. A no-op for `DRAFT` /
+   * `CANCELLED`, keeping drafts freely saveable.
+   * @throws OrderRequiresItemsException / OrderHomeVisitPhlebotomistRequiredException /
+   *         OrderHomeVisitSlotRequiredException
+   */
+  private assertFinalizedOrder(input: {
+    status: OrderStatus | undefined;
+    itemCount: number;
+    diagnostics?: {
+      isHomeVisit: boolean;
+      phlebotomistId: string | null;
+      collectionAt: Date | null;
+    } | null;
+  }): void {
+    const { status } = input;
+    if (
+      status !== OrderStatus.ORDER &&
+      status !== OrderStatus.QUOTE &&
+      status !== OrderStatus.APPOINTMENT
+    ) {
+      return;
+    }
+    if (input.itemCount < 1) {
+      throw new OrderRequiresItemsException();
+    }
+    const d = input.diagnostics;
+    if (d?.isHomeVisit) {
+      if (!d.phlebotomistId) {
+        throw new OrderHomeVisitPhlebotomistRequiredException();
+      }
+      if (!d.collectionAt) {
+        throw new OrderHomeVisitSlotRequiredException();
+      }
     }
   }
 

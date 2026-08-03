@@ -1,0 +1,27 @@
+meta {
+  name: Delete Patient Document
+  type: http
+  seq: 19
+}
+
+delete {
+  url: {{baseUrl}}/patients/{{patientId}}/documents/{{patientDocumentId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Soft-delete a document / consent record (sets `deletedAt`; the row is preserved
+  but excluded from all reads). 404 `PATIENT_DOCUMENT_NOT_FOUND` if already gone
+  or owned by another tenant/patient.
+}
