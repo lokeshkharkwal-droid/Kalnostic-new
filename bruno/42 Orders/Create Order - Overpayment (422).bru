@@ -1,0 +1,65 @@
+meta {
+  name: Create Order - Overpayment (422)
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "ORDER",
+    "orderDate": "2026-07-09",
+    "orderType": "WALK_IN",
+    "billingType": "CASH_CLIENT",
+    "patientId": "{{patientId}}",
+    "items": [
+      {
+        "branchLabTestId": "{{branchLabTestId}}"
+      }
+    ],
+    "payments": [
+      {
+        "totalAmount": 1000,
+        "netAmount": 1000,
+        "payableAmount": 1000,
+        "paidAmount": 2000,
+        "paymentMode": "CASH"
+      }
+    ]
+  }
+}
+
+tests {
+  test("422 Unprocessable Entity", function () {
+    expect(res.getStatus()).to.equal(422);
+  });
+  test("rejects paying more than the amount owed", function () {
+    expect(res.getBody().error.code).to.equal("PAYMENT_OVERPAYMENT");
+  });
+}
+
+docs {
+  The total `paidAmount` summed across the `payments[]` ledger can never exceed
+  the summed `netAmount` (which the frontend sets to the payable). Here a single
+  row pays 2000 against a 1000 net, so the server rejects it with 422
+  `PAYMENT_OVERPAYMENT` and the whole order rolls back — nothing is created.
+
+  This is the same rule (and error code) the standalone `POST /payments` guard
+  enforces, and it applies to every create/update workflow (`ORDER`, `QUOTE`,
+  `APPOINTMENT`, `DRAFT`) because they all route through `OrderService.create` /
+  `update`. On `PATCH /orders/:id` the guard runs only when a `payments` ledger
+  is supplied.
+}
