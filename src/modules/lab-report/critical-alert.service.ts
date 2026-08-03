@@ -58,39 +58,41 @@ export class CriticalAlertService {
     });
     if (!report) throw new LabReportNotFoundException(labReportId);
 
-    return this.prisma.$transaction(async (tx) => {
-      const alert = await tx.criticalAlert.create({
-        data: {
+    return this.prisma
+      .$transaction(async (tx) => {
+        const alert = await tx.criticalAlert.create({
+          data: {
+            tenantId,
+            branchId: activeBranchId,
+            labReportId,
+            status: WorklistStatus.NEW,
+            trigger: WorklistTrigger.MANUAL,
+            reportStatusAtTrigger: report.status,
+            resultParamId: dto.resultParamId,
+            createdBy: actorId,
+          },
+        });
+        await tx.labReportNote.create({
+          data: {
+            tenantId,
+            labReportId,
+            category: 'CRITICAL_ALERT',
+            body: dto.notes,
+            createdBy: actorId,
+          },
+        });
+        return alert;
+      })
+      .then(async (alert) => {
+        await this.labReportService.recordWorklistHistory(
           tenantId,
-          branchId: activeBranchId,
           labReportId,
-          status: WorklistStatus.NEW,
-          trigger: WorklistTrigger.MANUAL,
-          reportStatusAtTrigger: report.status,
-          resultParamId: dto.resultParamId,
-          createdBy: actorId,
-        },
+          'critical_alert_raised',
+          actorId,
+          dto.notes,
+        );
+        return alert;
       });
-      await tx.labReportNote.create({
-        data: {
-          tenantId,
-          labReportId,
-          category: 'CRITICAL_ALERT',
-          body: dto.notes,
-          createdBy: actorId,
-        },
-      });
-      return alert;
-    }).then(async (alert) => {
-      await this.labReportService.recordWorklistHistory(
-        tenantId,
-        labReportId,
-        'critical_alert_raised',
-        actorId,
-        dto.notes,
-      );
-      return alert;
-    });
   }
 
   async findAll(tenantId: string, branchId: string | null) {

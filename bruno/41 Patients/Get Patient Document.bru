@@ -1,0 +1,22 @@
+meta {
+  name: Get Patient Document
+  type: http
+  seq: 17
+}
+
+get {
+  url: {{baseUrl}}/patients/{{patientId}}/documents/{{patientDocumentId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Fetch one document / consent record for the patient (scoped to the caller's
+  tenant). 404 `PATIENT_DOCUMENT_NOT_FOUND` if missing, soft-deleted, or owned by
+  another tenant/patient. Uses `patientDocumentId` captured by **Add Patient
+  Document**.
+}

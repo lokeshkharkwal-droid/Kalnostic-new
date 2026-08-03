@@ -50,7 +50,33 @@ body:json {
     "hasFoodAllergy": true,
     "hasDrugAllergy": false,
     "surgicalHistory": "Appendectomy (2015)",
-    "remarks": "Follow-up visit"
+    "remarks": "Follow-up visit",
+    "richHistory": {
+      "noFlags": {
+        "medical": false, "surgical": false, "allergy": false,
+        "smoking": false, "alcohol": true, "habits": true, "social": true
+      },
+      "entries": {
+        "medical": [
+          { "condition": "Diabetes", "since": "2018", "management": "Medical Management", "medicine": "Metformin 500mg" },
+          { "condition": "Hypertension", "since": "2020", "management": "Lifestyle Modification", "medicine": "Amlodipine 5mg" }
+        ],
+        "surgical": [
+          { "surgery": "Appendectomy", "year": "2015", "hospital": "City Hospital", "complications": "None" }
+        ],
+        "allergy": [
+          { "type": "Food Allergy", "allergen": "Peanuts", "reaction": "Hives", "severity": "Moderate" }
+        ],
+        "smoking": [
+          { "status": "Former", "packs": "1", "years": "8", "quitDate": "2019" }
+        ],
+        "alcohol": [],
+        "habits": [],
+        "social": []
+      },
+      "symptoms": ["Cough", "Fever", "Headache", "Fatigue", "Body Pains"],
+      "currentMedications": "Metformin 500mg, Amlodipine 5mg"
+    }
   }
 }
 
@@ -85,7 +111,27 @@ docs {
     `hasBloodThinners`, `hasVitaminSupplements`, plus `otherMedications` (string).
   - Allergies: `hasLatexAllergy`, `hasFoodAllergy`, `hasDrugAllergy`.
   - Additional: `surgicalHistory` (string), `remarks` (string).
-  
+
+  ## `richHistory` (object, optional) — source of truth for the UI
+
+  The rich, display-oriented history shared verbatim by the **Registration
+  Create** and **Patient Details** pages so both render identical data. Stored
+  as JSON. Shape:
+
+  - `noFlags`: `{ [category]: boolean }` — per-category "no history" flags.
+    Categories: `medical`, `surgical`, `allergy`, `smoking`, `alcohol`,
+    `habits`, `social`.
+  - `entries`: `{ [category]: Array<{ [field]: string }> }` — free-form per-entry
+    field maps; the field keys differ by category (e.g. `medical`:
+    `condition/since/management/medicine`; `allergy`:
+    `type/allergen/reaction/severity`; `smoking`: `status/packs/years/quitDate`).
+  - `symptoms`: `string[]` — selected symptom labels.
+  - `currentMedications`: `string`.
+
+  When `richHistory` is sent, the flat boolean/symptom columns above are
+  **derived from it server-side** (best-effort substring matching) and kept only
+  for backward compatibility — `richHistory` is authoritative for display.
+
   `tenantId`/`branchId`/`patientId` are never accepted in the body. 404
   `PATIENT_NOT_FOUND` if the patient is missing/other tenant.
 }

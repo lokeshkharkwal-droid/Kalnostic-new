@@ -38,6 +38,12 @@ export class ReRunController {
     @Param('id') id: string,
     @Body() dto: UpdateActionWorklistStatusDto,
   ) {
-    return this.reRunService.updateStatus(id, tenantId, profile.branchId, personId, dto);
+    return this.reRunService.updateStatus(
+      id,
+      tenantId,
+      profile.branchId,
+      personId,
+      dto,
+    );
   }
 }

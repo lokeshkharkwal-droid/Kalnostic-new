@@ -1,0 +1,58 @@
+meta {
+  name: Add Patient Document
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{baseUrl}}/patients/{{patientId}}/documents
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "category": "DOCUMENT",
+    "name": "Aadhaar Card",
+    "type": "Aadhaar",
+    "documentDate": "2026-08-03",
+    "documentUrl": "https://kalnostics-docs.s3.ap-south-1.amazonaws.com/aadhaar.pdf"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("patientDocumentId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  Add a patient document or consent form (one-to-many). The record inherits the
+  patient's registration `branchId`. Captures `patientDocumentId`.
+
+  ## Fields
+  - `category` (required) — `DOCUMENT` (Documents tab) or `CONSENT` (Consent tab).
+  - `name` (required) — display name (e.g. "Aadhaar Card", "Pre-op consent").
+  - `type` (required) — free-text sub-type shown in the tab dropdown
+    (e.g. "Aadhaar", "IPD Consent").
+  - `documentDate` (required) — ISO date (upload / signed date).
+  - `documentUrl` (required) — URL of the stored file (e.g. an AWS S3 link).
+    **Only the URL is persisted — the file itself is never uploaded or stored.**
+    Must be a syntactically valid URL (400 otherwise).
+
+  `tenantId`/`branchId`/`patientId` are never accepted in the body. 404
+  `PATIENT_NOT_FOUND` if the patient is missing / belongs to another tenant.
+}

@@ -1106,6 +1106,14 @@ CREATE POLICY patient_family_links_tenant_isolation ON patient_family_links
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── patient_documents ─────────────────────────────────────────────────────────
+ALTER TABLE patient_documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE patient_documents FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS patient_documents_tenant_isolation ON patient_documents;
+CREATE POLICY patient_documents_tenant_isolation ON patient_documents
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- ── Order Management ────────────────────────────────────────────────────────────
 
 -- ── orders ──────────────────────────────────────────────────────────────────────

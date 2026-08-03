@@ -23,4 +23,8 @@ docs {
   List the patient's active medical-history records (most recent first), scoped
   to the caller's tenant. Captures `medicalHistoryId` from the first item. 404
   `PATIENT_NOT_FOUND` if the patient is missing/other tenant.
+
+  Each record includes the rich `richHistory` object (the UI's source of truth —
+  see **Add Medical History**) alongside the flat summary columns. The frontend
+  (Registration Create + Patient Details) reads `data[0].richHistory`.
 }
