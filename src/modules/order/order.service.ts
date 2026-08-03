@@ -1213,10 +1213,21 @@ export class OrderService {
    * Mark an order item's sample as collected. Idempotent — if the item is
    * already collected the original `collectedAt`/`collectedBy` are preserved.
    * Both the order and the item are validated against the caller's tenant first.
+   *
+   * Beyond the order-item `collectedAt` flag, this also drives the real accession
+   * sample lifecycle: the item's linked `AccessionSample`(s) still in a
+   * collectable status are transitioned to `COLLECTED` (with a barcode when
+   * `opts.print` is set), and — because a sample is one physical tube shared by
+   * several tests — every sibling order item on a transitioned sample is stamped
+   * collected too (`AccessionSampleService.collectForOrderItemInTx`). Both writes
+   * share one `withTenant` transaction so they commit atomically under the same
+   * RLS tenant context. Safe no-op when the order has no samples yet (e.g. a
+   * DRAFT / non-diagnostic order): only `collectedAt` is set.
    * @param orderId order the item belongs to
    * @param itemId order item id
    * @param tenantId tenant scope (from JWT)
    * @param actorId acting person id (recorded as `collectedBy`), may be null
+   * @param opts `print` also assigns a barcode to the collected sample(s)
    * @returns the fully-composed order after the update
    * @throws OrderNotFoundException / OrderItemNotFoundException
    */
@@ -1225,6 +1236,7 @@ export class OrderService {
     itemId: string,
     tenantId: string,
     actorId: string | null,
+    opts: { print?: boolean } = {},
   ): Promise<OrderWithRelations> {
     await this.findById(orderId, tenantId);
     const item = await this.prisma.orderItem.findFirst({
@@ -1234,27 +1246,24 @@ export class OrderService {
     if (!item) {
       throw new OrderItemNotFoundException(orderId, itemId);
     }
-    if (!item.collectedAt) {
-      await this.prisma.withTenant(tenantId, async (tx) => {
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      // Guard only the order-item stamp; the accession bridge runs regardless
+      // (its own status filter is idempotent), otherwise a sample shared with an
+      // already-collected sibling would be left stuck at NEW.
+      if (!item.collectedAt) {
         await tx.orderItem.update({
           where: { id: itemId },
           data: { collectedAt: new Date(), collectedBy: actorId },
         });
-      });
-      // Technician Reporting's LabReport is no longer created from here.
-      // Accession's own sample lifecycle now exists — LabReport creation is
-      // triggered by AccessionSampleService when a sample reaches ACCEPTED
-      // (see AccessionSampleService.ensureLabReportsForAcceptedSample), which
-      // is the real "sample accepted" signal, not this order-item-level
-      // collectedAt flag. collectedAt/collectedBy are kept as-is — they are
-      // NOT read anywhere in the lab-report module (no such filter exists on
-      // ListLabReportsDto; that was a stale claim in an earlier version of
-      // this comment). Their real remaining uses are in THIS module: this
-      // order's own PENDING/PARTIAL/COLLECTED rollup (`findAll`, filtering by
-      // collectedAt null/not-null across an order's items) and a fallback
-      // actor id for a report's first Audit Trail entry
-      // (LabReportService.createReportForAcceptedItem).
-    }
+      }
+      await this.accessionSamples.collectForOrderItemInTx(
+        tx,
+        tenantId,
+        actorId,
+        itemId,
+        { print: !!opts.print },
+      );
+    });
     return this.findById(orderId, tenantId);
   }
 

@@ -53,6 +53,14 @@ export interface PatientWriteContext {
 }
 
 /**
+ * A patient document / consent record enriched with the owning patient's
+ * display name, so the UI can show a human-readable name instead of the UUID.
+ */
+export type PatientDocumentWithPatientName = PatientDocument & {
+  patientName: string;
+};
+
+/**
  * Patient management. Tenant-scoped: every query carries `tenantId` (defence in
  * depth on top of RLS — CLAUDE.md §4.3) and filters soft-deleted rows. Patients
  * are branch-level (`branchId` records the registration branch) but remain
@@ -542,9 +550,9 @@ export class PatientService {
     patientId: string,
     dto: CreatePatientDocumentDto,
     actorId?: string,
-  ): Promise<PatientDocument> {
+  ): Promise<PatientDocumentWithPatientName> {
     const patient = await this.ensurePatient(patientId, tenantId);
-    return this.prisma.patientDocument.create({
+    const created = await this.prisma.patientDocument.create({
       data: {
         category: dto.category,
         name: dto.name,
@@ -558,6 +566,7 @@ export class PatientService {
         updatedBy: actorId ?? null,
       },
     });
+    return this.withPatientName(created, patient);
   }
 
   /**
@@ -572,12 +581,13 @@ export class PatientService {
     tenantId: string,
     patientId: string,
     category?: PatientDocumentCategory,
-  ): Promise<PatientDocument[]> {
-    await this.ensurePatient(patientId, tenantId);
-    return this.prisma.patientDocument.findMany({
+  ): Promise<PatientDocumentWithPatientName[]> {
+    const patient = await this.ensurePatient(patientId, tenantId);
+    const records = await this.prisma.patientDocument.findMany({
       where: { patientId, tenantId, deletedAt: null, category },
       orderBy: { documentDate: 'desc' },
     });
+    return records.map((record) => this.withPatientName(record, patient));
   }
 
   /**
@@ -591,14 +601,16 @@ export class PatientService {
     id: string,
     tenantId: string,
     patientId: string,
-  ): Promise<PatientDocument> {
+  ): Promise<PatientDocumentWithPatientName> {
     const record = await this.prisma.patientDocument.findFirst({
       where: { id, patientId, tenantId, deletedAt: null },
+      include: { patient: true },
     });
     if (!record) {
       throw new PatientDocumentNotFoundException(id);
     }
-    return record;
+    const { patient, ...document } = record;
+    return this.withPatientName(document, patient);
   }
 
   /**
@@ -616,9 +628,13 @@ export class PatientService {
     patientId: string,
     dto: UpdatePatientDocumentDto,
     actorId?: string,
-  ): Promise<PatientDocument> {
-    await this.findPatientDocumentById(id, tenantId, patientId);
-    return this.prisma.patientDocument.update({
+  ): Promise<PatientDocumentWithPatientName> {
+    const existing = await this.findPatientDocumentById(
+      id,
+      tenantId,
+      patientId,
+    );
+    const updated = await this.prisma.patientDocument.update({
       where: { id },
       data: {
         category: dto.category,
@@ -629,6 +645,7 @@ export class PatientService {
         updatedBy: actorId ?? null,
       },
     });
+    return { ...updated, patientName: existing.patientName };
   }
 
   /**
@@ -761,6 +778,47 @@ export class PatientService {
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
+
+  /**
+   * Build a patient's human-readable display name from its identity fields
+   * (salutation → first → middle → last), collapsing whitespace. Mirrors the
+   * frontend's name assembly so the two never disagree.
+   * @param patient the patient's identity fields
+   * @returns the trimmed display name (may be empty if only blanks are set)
+   */
+  private buildPatientName(
+    patient: Pick<
+      Patient,
+      'salutation' | 'firstName' | 'middleName' | 'lastName'
+    >,
+  ): string {
+    return [
+      patient.salutation,
+      patient.firstName,
+      patient.middleName,
+      patient.lastName,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  /**
+   * Enrich a raw document record with the owning patient's display name.
+   * @param document the persisted document / consent record
+   * @param patient the owning patient (for the name)
+   * @returns the document with a `patientName` field appended
+   */
+  private withPatientName(
+    document: PatientDocument,
+    patient: Pick<
+      Patient,
+      'salutation' | 'firstName' | 'middleName' | 'lastName'
+    >,
+  ): PatientDocumentWithPatientName {
+    return { ...document, patientName: this.buildPatientName(patient) };
+  }
 
   /**
    * Assert a patient exists (active) in the tenant and return it. Used to guard

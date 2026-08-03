@@ -16,6 +16,7 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { ListOrdersDto } from './dto/list-orders.dto';
 import { PrintOrderDto } from './dto/print-order.dto';
+import { CollectOrderItemDto } from './dto/collect-order-item.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
 import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
@@ -114,7 +115,11 @@ export class OrderController {
     return this.orderService.update(id, tenantId, personId, dto);
   }
 
-  /** Mark one order item's sample as collected (idempotent). */
+  /**
+   * Mark one order item's sample as collected (idempotent). Also transitions the
+   * item's linked accession sample(s) to COLLECTED and stamps sibling tube-mates;
+   * `?print=true` additionally assigns a barcode ("Collect & Print").
+   */
   @Patch(':id/items/:itemId/collect')
   @Audit({
     module: AuditModule.ORDER,
@@ -126,8 +131,11 @@ export class OrderController {
     @CurrentUser('person_id') personId: string,
     @Param('id') id: string,
     @Param('itemId') itemId: string,
+    @Query() query: CollectOrderItemDto,
   ) {
-    return this.orderService.collectItem(id, itemId, tenantId, personId);
+    return this.orderService.collectItem(id, itemId, tenantId, personId, {
+      print: query.print,
+    });
   }
 
   /** Cancel an order (sets status = CANCELLED). No refund handling this phase. */

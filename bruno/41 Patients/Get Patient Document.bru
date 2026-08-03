@@ -19,4 +19,8 @@ docs {
   tenant). 404 `PATIENT_DOCUMENT_NOT_FOUND` if missing, soft-deleted, or owned by
   another tenant/patient. Uses `patientDocumentId` captured by **Add Patient
   Document**.
+
+  The record includes the owning patient's `patientName` (salutation → first →
+  middle → last) alongside `patientId`. Add and Update Patient Document return
+  the same enriched shape.
 }
