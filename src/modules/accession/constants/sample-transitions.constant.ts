@@ -112,6 +112,16 @@ export const SAMPLE_TRANSITIONS: Readonly<
 };
 
 /**
+ * The statuses a sample can be `collect`ed from (`NEW`/`HOLD`/`REPEAT` per §A.9),
+ * derived from the transition matrix so the two never drift. Used to guard the
+ * order→accession collect bridge (`collectForOrderItemInTx`) so an already-collected
+ * sample is skipped rather than throwing `InvalidSampleTransitionException`.
+ */
+export const COLLECTABLE_SAMPLE_STATUSES: readonly SampleStatus[] = Object.keys(
+  SAMPLE_TRANSITIONS.collect,
+) as SampleStatus[];
+
+/**
  * Resolve the target status for an action from a given current status, or `null`
  * when the action is not legal from that status (per §A.9).
  * @param action the action being applied

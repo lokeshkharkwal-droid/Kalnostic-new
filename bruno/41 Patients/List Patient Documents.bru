@@ -24,4 +24,7 @@ docs {
   Optional `category` query param narrows to a single tab: `DOCUMENT` or
   `CONSENT`. Omit it to return both. The Patient-Details Documents tab passes
   `DOCUMENT`; the Consent tab passes `CONSENT`.
+
+  Each record includes the owning patient's `patientName` (salutation → first →
+  middle → last) so the UI can show a human-readable name instead of the UUID.
 }
