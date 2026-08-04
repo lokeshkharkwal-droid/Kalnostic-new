@@ -5,6 +5,7 @@ import {
   LabReportStatus,
   MultiStepProcessType,
   MultiStepStage,
+  PaymentStatus,
   Prisma,
   ResultType,
   SampleStatus,
@@ -179,6 +180,7 @@ export interface LabReportWorklistRow {
     orderDate: Date;
     orderTime: string | null;
     billingType: BillingType;
+    paymentStatus: PaymentStatus;
   } | null;
 
   patient: {
@@ -295,6 +297,7 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
           orderDate: order.orderDate,
           orderTime: order.orderTime,
           billingType: order.billingType,
+          paymentStatus: order.paymentStatus,
         }
       : null,
 

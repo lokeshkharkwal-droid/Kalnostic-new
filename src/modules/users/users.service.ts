@@ -89,6 +89,18 @@ const RADIOLOGIST_ROLE_KEYS: string[] = ['radiologist'];
  */
 const PHLEBOTOMIST_ROLE_KEYS: string[] = ['phlebotomist'];
 
+/**
+ * Profile/role keys (AuthRole.key) that identify a **lab technician** for the
+ * Technician Reporting "Schedule/Reschedule Test" Assign To picker
+ * (LABORATORY.docx §5.6). Same role-key set `LabReportDirectoryService.
+ * assertActiveTechnician` validates a `ScheduledTest.assignedToId` against.
+ */
+const LAB_TECHNICIAN_ROLE_KEYS: string[] = [
+  'lab_technician',
+  'junior_lab_technician',
+  'senior_lab_technician',
+];
+
 /** A validated, normalised branch assignment (internal to UsersService). */
 interface PreparedAssignment {
   branchId: string;
@@ -384,6 +396,33 @@ export class UsersService {
       tenantId,
       branchId,
       PHLEBOTOMIST_ROLE_KEYS,
+      filters,
+    );
+  }
+
+  /**
+   * Lightweight `{ id, name }` options — the active branch's lab technicians,
+   * optionally filtered by a name `search`. Backs the Technician Reporting
+   * "Schedule/Reschedule Test" Assign To picker (LABORATORY.docx §5.6), which
+   * had no options source at all before this — the returned `id` is a
+   * `personId`, directly usable as `ScheduleTestDto.assignedToId`.
+   * @param tenantId tenant scope (from JWT)
+   * @param branchId active branch (from JWT profile)
+   * @param filters optional search + offset pagination
+   * @returns full `{ id, name }[]` when `page` is omitted, else a paginated envelope
+   */
+  async findLabTechnicianOptions(
+    tenantId: string,
+    branchId: string,
+    filters: { search?: string; page?: number; limit?: number } = {},
+  ): Promise<
+    | Array<{ id: string; name: string }>
+    | PaginatedResult<{ id: string; name: string }>
+  > {
+    return this.findStaffOptionsByRole(
+      tenantId,
+      branchId,
+      LAB_TECHNICIAN_ROLE_KEYS,
       filters,
     );
   }
