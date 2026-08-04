@@ -538,9 +538,7 @@ export class LabReportService {
       where: { labReportId: { in: reportIds }, deletedAt: null },
       select: { labReportId: true, processType: true, currentStage: true },
     });
-    const byReportId = new Map(
-      processes.map((p) => [p.labReportId, p]),
-    );
+    const byReportId = new Map(processes.map((p) => [p.labReportId, p]));
 
     return rows.map((row) => {
       const process = byReportId.get(row.id);

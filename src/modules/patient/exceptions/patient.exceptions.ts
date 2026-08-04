@@ -48,3 +48,15 @@ export class FamilyLinkNotFoundException extends KaltrosException {
     );
   }
 }
+
+/** 404 — patient document / consent record not found for the given patient/tenant. */
+export class PatientDocumentNotFoundException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'PATIENT_DOCUMENT_NOT_FOUND',
+      'Patient document not found',
+      { id },
+      HttpStatus.NOT_FOUND,
+    );
+  }
+}

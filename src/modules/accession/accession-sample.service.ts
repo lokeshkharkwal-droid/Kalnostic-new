@@ -19,6 +19,7 @@ import { BranchLabTestConfigSnapshot } from '../branch-lab-test/entities/branch-
 import {
   SampleAction,
   nextSampleStatus,
+  COLLECTABLE_SAMPLE_STATUSES,
 } from './constants/sample-transitions.constant';
 import {
   TERMINAL_SAMPLE_STATUSES,
@@ -202,6 +203,95 @@ export class AccessionSampleService {
           },
         },
       });
+    }
+  }
+
+  /**
+   * Collect the accession sample(s) carrying a given order item, inside an
+   * existing (already tenant-scoped) transaction — the bridge that lets the
+   * Order Overview "Collect / Collect & Print" action drive the real sample
+   * lifecycle (not just `OrderItem.collectedAt`). For each sample serving the
+   * item that is still in a collectable status (`NEW`/`HOLD`/`REPEAT`), applies
+   * the §A.9 `collect` transition → `COLLECTED` (stamping `collectedAt`/
+   * `collectedBy`/`tubeType`, and a barcode when `print` is set, exactly like
+   * `collect`/`collectAndPrint`) and appends a history row. Because a sample is
+   * one physical tube shared by several tests, all sibling order items on a
+   * transitioned sample are stamped collected too (a tube is drawn once).
+   * Idempotent: samples already past `NEW`/`HOLD`/`REPEAT` are skipped, so a
+   * repeat click is a no-op. Safe no-op when the order has no samples yet (e.g.
+   * a DRAFT / non-diagnostic order): nothing to transition.
+   * @param tx active Prisma transaction client (already tenant-scoped)
+   * @param tenantId tenant scope
+   * @param personId acting person id (recorded as `collectedBy`/`changedBy`)
+   * @param orderItemId the order item whose sample(s) to collect
+   * @param opts `print` also assigns a barcode when the sample lacks one
+   */
+  async collectForOrderItemInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    personId: string | null,
+    orderItemId: string,
+    opts: { print: boolean },
+  ): Promise<void> {
+    const samples = await tx.accessionSample.findMany({
+      where: {
+        tenantId,
+        deletedAt: null,
+        tests: { some: { orderItemId, tenantId, deletedAt: null } },
+      },
+      select: { id: true, status: true },
+    });
+    const collectable = samples.filter((s) =>
+      COLLECTABLE_SAMPLE_STATUSES.includes(s.status),
+    );
+    if (collectable.length === 0) return;
+
+    const now = new Date();
+    for (const s of collectable) {
+      await this.transitionInTx(
+        tx,
+        tenantId,
+        personId,
+        s.id,
+        'collect',
+        (sample) => ({
+          data: {
+            collectedAt: now,
+            collectedBy: personId,
+            tubeType:
+              sample.tubeType ??
+              sample.containerType ??
+              sample.sampleType ??
+              undefined,
+            ...(opts.print
+              ? {
+                  barcode:
+                    sample.barcode ?? this.deriveBarcode(sample.accessionNo),
+                }
+              : {}),
+          },
+        }),
+      );
+
+      // A tube is drawn once → every test it carries is collected together.
+      // Stamp all sibling order items on this sample (preserve already-set
+      // timestamps via `collectedAt: null`).
+      const siblings = await tx.accessionSampleTest.findMany({
+        where: { sampleId: s.id, tenantId, deletedAt: null },
+        select: { orderItemId: true },
+      });
+      const siblingIds = siblings.map((t) => t.orderItemId);
+      if (siblingIds.length > 0) {
+        await tx.orderItem.updateMany({
+          where: {
+            id: { in: siblingIds },
+            tenantId,
+            deletedAt: null,
+            collectedAt: null,
+          },
+          data: { collectedAt: now, collectedBy: personId },
+        });
+      }
     }
   }
 

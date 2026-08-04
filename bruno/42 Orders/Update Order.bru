@@ -74,7 +74,27 @@ docs {
   rows (summed `paidAmount` vs `netAmount`); omit `payments` to leave the ledger
   and status untouched. One row per payment method (split → multiple rows), each
   with its own `paidAmount`/`paymentMode`/`reference`; order-level billing lives on
-  the first row. `patientId` is not editable.
+  the first row. Overpayment is rejected — a supplied ledger whose summed
+  `paidAmount` exceeds the summed `netAmount` is refused with 422
+  `PAYMENT_OVERPAYMENT` and the patch rolls back. `patientId` is not editable.
+
+  ## Finalization validation (draft → live)
+
+  Whenever this patch lands the order in a LIVE status (`ORDER` / `QUOTE` /
+  `APPOINTMENT`) — e.g. finalizing a draft with `{ "status": "ORDER" }` — the
+  server enforces the same required-field checks as Create Order, evaluated on the
+  EFFECTIVE order (this patch merged over the persisted draft). So a bare status
+  flip still validates the draft's stored items/diagnostics. Rejections (the whole
+  update rolls back, the draft is left unchanged):
+  - 422 `ORDER_REQUIRES_ITEMS` — the order has no items (neither in this patch nor
+    already persisted).
+  - 422 `ORDER_HOME_VISIT_PHLEBOTOMIST_REQUIRED` — home-visit diagnostics with no
+    phlebotomist.
+  - 422 `ORDER_HOME_VISIT_SLOT_REQUIRED` — home-visit diagnostics with no
+    collection date/time.
+  - 422 `APPOINTMENT_SECTION_REQUIRED` — status `APPOINTMENT` with no scheduled
+    section.
+  Saving as `DRAFT` skips all of these, so incomplete drafts remain saveable.
 
   ## Home-visit slot reservation on edit
 

@@ -34,6 +34,9 @@ import {
 } from './entities/order.entity';
 import {
   AppointmentSectionRequiredException,
+  OrderRequiresItemsException,
+  OrderHomeVisitPhlebotomistRequiredException,
+  OrderHomeVisitSlotRequiredException,
   InvalidOrderItemException,
   OrderItemNotFoundException,
   OrderBranchLabPanelNotFoundException,
@@ -56,6 +59,10 @@ import {
   NoActiveOrderPrintTemplateException,
   AmbiguousOrderPrintTemplateException,
 } from './exceptions/order.exceptions';
+// Reused so an inline order-payment overpayment raises the SAME
+// `PAYMENT_OVERPAYMENT` error the standalone `POST /payments` guard does. This
+// imports an exception class (not a service), so rule #3 is not violated.
+import { PaymentOverpaymentException } from '../payment-details/exceptions/payment-details.exceptions';
 
 /**
  * Order Management — the orchestrator. Tenant-scoped (RLS) + branch-level
@@ -158,6 +165,19 @@ export class OrderService {
       await this.assertRadiology(tenantId, dto.radiology);
     }
     this.assertAppointmentSection(dto.status, dto);
+    this.assertFinalizedOrder({
+      status: dto.status,
+      itemCount: dto.items?.length ?? 0,
+      diagnostics: dto.diagnostics
+        ? {
+            isHomeVisit: dto.diagnostics.isHomeVisit ?? false,
+            phlebotomistId: dto.diagnostics.phlebotomistId ?? null,
+            collectionAt: dto.diagnostics.collectionAt
+              ? new Date(dto.diagnostics.collectionAt)
+              : null,
+          }
+        : null,
+    });
 
     // When saving as APPOINTMENT, the order's appointment date/type are derived
     // from whichever service section is scheduled (Diagnostic / OPD / Radiology).
@@ -172,6 +192,12 @@ export class OrderService {
       (s, p) => s + (p.paidAmount ?? 0),
       0,
     );
+    // The total paid can never exceed the amount owed (`netAmount`, which the
+    // caller sets to the payable). Blocks overpayment across every workflow
+    // (ORDER / APPOINTMENT / QUOTE / DRAFT) since all route through create().
+    if (payPaid > payNet) {
+      throw new PaymentOverpaymentException(payNet, payPaid);
+    }
     const paymentStatus = derivePaymentStatus(payNet, payPaid);
 
     let createdId: string;
@@ -939,6 +965,32 @@ export class OrderService {
     const branchId = existing?.branchId ?? null;
     const effectiveStatus = dto.status ?? existing?.status;
 
+    // Full new-order field parity for finalization (e.g. draft → ORDER): validate
+    // the EFFECTIVE order — the incoming patch merged over the persisted draft —
+    // so a bare `{ status: "ORDER" }` still checks the draft's real items and
+    // diagnostics. `items`/`diagnostics` fall back to what's already stored when
+    // this patch omits them.
+    const effectiveItemCount =
+      dto.items !== undefined
+        ? dto.items.length
+        : await this.prisma.orderItem.count({
+            where: { orderId: id, tenantId, deletedAt: null },
+          });
+    const effectiveDiagnostics = dto.diagnostics
+      ? {
+          isHomeVisit: dto.diagnostics.isHomeVisit ?? false,
+          phlebotomistId: dto.diagnostics.phlebotomistId ?? null,
+          collectionAt: dto.diagnostics.collectionAt
+            ? new Date(dto.diagnostics.collectionAt)
+            : null,
+        }
+      : (existing?.diagnostics ?? null);
+    this.assertFinalizedOrder({
+      status: effectiveStatus,
+      itemCount: effectiveItemCount,
+      diagnostics: effectiveDiagnostics,
+    });
+
     // Home-visit slot reservation: the booking as it stands now vs. after this
     // patch. A cancelled appointment already released its slot, so it counts as no
     // current reservation. The diagnostics section is unchanged when the patch
@@ -981,6 +1033,11 @@ export class OrderService {
       (s, p) => s + (p.paidAmount ?? 0),
       0,
     );
+    // Same overpayment guard as create, but only when the ledger is part of
+    // this patch (an update without `payments` leaves the stored totals alone).
+    if (dto.payments !== undefined && payPaid > payNet) {
+      throw new PaymentOverpaymentException(payNet, payPaid);
+    }
     const paymentStatus = derivePaymentStatus(payNet, payPaid);
 
     await this.prisma.withTenant(tenantId, async (tx) => {
@@ -1171,10 +1228,21 @@ export class OrderService {
    * Mark an order item's sample as collected. Idempotent — if the item is
    * already collected the original `collectedAt`/`collectedBy` are preserved.
    * Both the order and the item are validated against the caller's tenant first.
+   *
+   * Beyond the order-item `collectedAt` flag, this also drives the real accession
+   * sample lifecycle: the item's linked `AccessionSample`(s) still in a
+   * collectable status are transitioned to `COLLECTED` (with a barcode when
+   * `opts.print` is set), and — because a sample is one physical tube shared by
+   * several tests — every sibling order item on a transitioned sample is stamped
+   * collected too (`AccessionSampleService.collectForOrderItemInTx`). Both writes
+   * share one `withTenant` transaction so they commit atomically under the same
+   * RLS tenant context. Safe no-op when the order has no samples yet (e.g. a
+   * DRAFT / non-diagnostic order): only `collectedAt` is set.
    * @param orderId order the item belongs to
    * @param itemId order item id
    * @param tenantId tenant scope (from JWT)
    * @param actorId acting person id (recorded as `collectedBy`), may be null
+   * @param opts `print` also assigns a barcode to the collected sample(s)
    * @returns the fully-composed order after the update
    * @throws OrderNotFoundException / OrderItemNotFoundException
    */
@@ -1183,6 +1251,7 @@ export class OrderService {
     itemId: string,
     tenantId: string,
     actorId: string | null,
+    opts: { print?: boolean } = {},
   ): Promise<OrderWithRelations> {
     await this.findById(orderId, tenantId);
     const item = await this.prisma.orderItem.findFirst({
@@ -1192,27 +1261,24 @@ export class OrderService {
     if (!item) {
       throw new OrderItemNotFoundException(orderId, itemId);
     }
-    if (!item.collectedAt) {
-      await this.prisma.withTenant(tenantId, async (tx) => {
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      // Guard only the order-item stamp; the accession bridge runs regardless
+      // (its own status filter is idempotent), otherwise a sample shared with an
+      // already-collected sibling would be left stuck at NEW.
+      if (!item.collectedAt) {
         await tx.orderItem.update({
           where: { id: itemId },
           data: { collectedAt: new Date(), collectedBy: actorId },
         });
-      });
-      // Technician Reporting's LabReport is no longer created from here.
-      // Accession's own sample lifecycle now exists — LabReport creation is
-      // triggered by AccessionSampleService when a sample reaches ACCEPTED
-      // (see AccessionSampleService.ensureLabReportsForAcceptedSample), which
-      // is the real "sample accepted" signal, not this order-item-level
-      // collectedAt flag. collectedAt/collectedBy are kept as-is — they are
-      // NOT read anywhere in the lab-report module (no such filter exists on
-      // ListLabReportsDto; that was a stale claim in an earlier version of
-      // this comment). Their real remaining uses are in THIS module: this
-      // order's own PENDING/PARTIAL/COLLECTED rollup (`findAll`, filtering by
-      // collectedAt null/not-null across an order's items) and a fallback
-      // actor id for a report's first Audit Trail entry
-      // (LabReportService.createReportForAcceptedItem).
-    }
+      }
+      await this.accessionSamples.collectForOrderItemInTx(
+        tx,
+        tenantId,
+        actorId,
+        itemId,
+        { print: !!opts.print },
+      );
+    });
     return this.findById(orderId, tenantId);
   }
 
@@ -1740,6 +1806,46 @@ export class OrderService {
       Boolean(dto.radiology?.appointmentAt);
     if (!hasScheduledSection) {
       throw new AppointmentSectionRequiredException();
+    }
+  }
+
+  /**
+   * Enforce everything a live (non-draft) order requires. Shared by new-order
+   * creation and draft finalization so both perform identical checks. Operates
+   * on the EFFECTIVE order — the incoming patch merged over the persisted draft
+   * — so a draft can never be finalized while incomplete. A no-op for `DRAFT` /
+   * `CANCELLED`, keeping drafts freely saveable.
+   * @throws OrderRequiresItemsException / OrderHomeVisitPhlebotomistRequiredException /
+   *         OrderHomeVisitSlotRequiredException
+   */
+  private assertFinalizedOrder(input: {
+    status: OrderStatus | undefined;
+    itemCount: number;
+    diagnostics?: {
+      isHomeVisit: boolean;
+      phlebotomistId: string | null;
+      collectionAt: Date | null;
+    } | null;
+  }): void {
+    const { status } = input;
+    if (
+      status !== OrderStatus.ORDER &&
+      status !== OrderStatus.QUOTE &&
+      status !== OrderStatus.APPOINTMENT
+    ) {
+      return;
+    }
+    if (input.itemCount < 1) {
+      throw new OrderRequiresItemsException();
+    }
+    const d = input.diagnostics;
+    if (d?.isHomeVisit) {
+      if (!d.phlebotomistId) {
+        throw new OrderHomeVisitPhlebotomistRequiredException();
+      }
+      if (!d.collectionAt) {
+        throw new OrderHomeVisitSlotRequiredException();
+      }
     }
   }
 

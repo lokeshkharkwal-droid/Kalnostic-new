@@ -52,39 +52,41 @@ export class OutOfRangeService {
     });
     if (!report) throw new LabReportNotFoundException(labReportId);
 
-    return this.prisma.$transaction(async (tx) => {
-      const flag = await tx.outOfRangeFlag.create({
-        data: {
+    return this.prisma
+      .$transaction(async (tx) => {
+        const flag = await tx.outOfRangeFlag.create({
+          data: {
+            tenantId,
+            branchId: activeBranchId,
+            labReportId,
+            status: WorklistStatus.NEW,
+            trigger: WorklistTrigger.MANUAL,
+            reportStatusAtTrigger: report.status,
+            resultParamId: dto.resultParamId,
+            createdBy: actorId,
+          },
+        });
+        await tx.labReportNote.create({
+          data: {
+            tenantId,
+            labReportId,
+            category: 'OUT_OF_RANGE',
+            body: dto.notes,
+            createdBy: actorId,
+          },
+        });
+        return flag;
+      })
+      .then(async (flag) => {
+        await this.labReportService.recordWorklistHistory(
           tenantId,
-          branchId: activeBranchId,
           labReportId,
-          status: WorklistStatus.NEW,
-          trigger: WorklistTrigger.MANUAL,
-          reportStatusAtTrigger: report.status,
-          resultParamId: dto.resultParamId,
-          createdBy: actorId,
-        },
+          'out_of_range_raised',
+          actorId,
+          dto.notes,
+        );
+        return flag;
       });
-      await tx.labReportNote.create({
-        data: {
-          tenantId,
-          labReportId,
-          category: 'OUT_OF_RANGE',
-          body: dto.notes,
-          createdBy: actorId,
-        },
-      });
-      return flag;
-    }).then(async (flag) => {
-      await this.labReportService.recordWorklistHistory(
-        tenantId,
-        labReportId,
-        'out_of_range_raised',
-        actorId,
-        dto.notes,
-      );
-      return flag;
-    });
   }
 
   async findAll(tenantId: string, branchId: string | null) {

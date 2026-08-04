@@ -187,6 +187,52 @@ export class AppointmentSectionRequiredException extends KaltrosException {
   }
 }
 
+/**
+ * 422 — the order is being created as, or a draft is being finalized to, a live
+ * status (`ORDER` / `QUOTE` / `APPOINTMENT`) but carries no items. A live order
+ * must reference at least one lab test, panel, or direct entry.
+ */
+export class OrderRequiresItemsException extends KaltrosException {
+  constructor() {
+    super(
+      'ORDER_REQUIRES_ITEMS',
+      'Add at least one lab test, panel or item before finalizing the order',
+      {},
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — a home-visit diagnostics order is being finalized without a
+ * phlebotomist assigned.
+ */
+export class OrderHomeVisitPhlebotomistRequiredException extends KaltrosException {
+  constructor() {
+    super(
+      'ORDER_HOME_VISIT_PHLEBOTOMIST_REQUIRED',
+      'Select a phlebotomist for the home visit',
+      {},
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — a home-visit diagnostics order is being finalized without a collection
+ * date and time slot.
+ */
+export class OrderHomeVisitSlotRequiredException extends KaltrosException {
+  constructor() {
+    super(
+      'ORDER_HOME_VISIT_SLOT_REQUIRED',
+      'Select an available collection date and time for the home visit',
+      {},
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
 /** 409 — the order is already cancelled, so it can't be cancelled again. */
 export class OrderAlreadyCancelledException extends KaltrosException {
   constructor(id: string) {

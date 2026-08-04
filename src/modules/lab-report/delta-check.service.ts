@@ -91,39 +91,41 @@ export class DeltaCheckService {
       previousResultValueId = previous?.id;
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      const delta = await tx.deltaCheck.create({
-        data: {
+    return this.prisma
+      .$transaction(async (tx) => {
+        const delta = await tx.deltaCheck.create({
+          data: {
+            tenantId,
+            branchId: activeBranchId,
+            labReportId,
+            status: DeltaCheckStatus.NEW,
+            trigger: WorklistTrigger.MANUAL,
+            resultParamId: dto.resultParamId,
+            previousResultValueId,
+            createdBy: actorId,
+          },
+        });
+        await tx.labReportNote.create({
+          data: {
+            tenantId,
+            labReportId,
+            category: 'DELTA',
+            body: dto.notes,
+            createdBy: actorId,
+          },
+        });
+        return delta;
+      })
+      .then(async (delta) => {
+        await this.labReportService.recordWorklistHistory(
           tenantId,
-          branchId: activeBranchId,
           labReportId,
-          status: DeltaCheckStatus.NEW,
-          trigger: WorklistTrigger.MANUAL,
-          resultParamId: dto.resultParamId,
-          previousResultValueId,
-          createdBy: actorId,
-        },
+          'delta_check_raised',
+          actorId,
+          dto.notes,
+        );
+        return delta;
       });
-      await tx.labReportNote.create({
-        data: {
-          tenantId,
-          labReportId,
-          category: 'DELTA',
-          body: dto.notes,
-          createdBy: actorId,
-        },
-      });
-      return delta;
-    }).then(async (delta) => {
-      await this.labReportService.recordWorklistHistory(
-        tenantId,
-        labReportId,
-        'delta_check_raised',
-        actorId,
-        dto.notes,
-      );
-      return delta;
-    });
   }
 
   async findAll(tenantId: string, branchId: string | null) {

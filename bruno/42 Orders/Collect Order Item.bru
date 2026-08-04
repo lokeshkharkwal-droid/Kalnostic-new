@@ -5,9 +5,13 @@ meta {
 }
 
 patch {
-  url: {{baseUrl}}/orders/{{orderId}}/items/{{orderItemId}}/collect
+  url: {{baseUrl}}/orders/{{orderId}}/items/{{orderItemId}}/collect?print=false
   body: none
   auth: bearer
+}
+
+params:query {
+  ~print: false
 }
 
 auth:bearer {
@@ -18,12 +22,31 @@ tests {
   test("200 OK", function () {
     expect(res.getStatus()).to.equal(200);
   });
+  test("item is collected", function () {
+    const item = res.getBody().data.items.find((i) => i.id === bru.getEnvVar("orderItemId"));
+    expect(item.collectedAt).to.be.a("string");
+  });
 }
 
 docs {
   Mark one order item's sample as collected. Sets `collectedAt` (now) and
   `collectedBy` (the caller's person id) on the item and returns the refreshed,
-  fully-composed order. Idempotent: calling it again keeps the original
-  `collectedAt`. 404 `ORDER_NOT_FOUND` if the order is missing/other-tenant;
+  fully-composed order.
+
+  Beyond the order-item flag, this drives the real accession sample lifecycle:
+  the item's linked `AccessionSample`(s) still in a collectable status
+  (NEW / HOLD / REPEAT) are transitioned to COLLECTED (an `AccessionStatusHistory`
+  row is appended), and because a sample is one physical tube shared by several
+  tests, every sibling order item on a transitioned sample is stamped collected
+  too. Both writes share one tenant-scoped transaction.
+
+  Query param `?print=true` ("Collect & Print") additionally assigns a barcode to
+  the collected sample(s) that lack one (`BAR-#####-A`). Omit or `false` for a
+  plain collect.
+
+  Idempotent: a repeat call keeps the original `collectedAt`, and samples already
+  past NEW/HOLD/REPEAT are skipped (no `INVALID_SAMPLE_TRANSITION`). Safe no-op
+  when the order has no samples yet (e.g. a DRAFT / non-diagnostic order): only
+  `collectedAt` is set. 404 `ORDER_NOT_FOUND` if the order is missing/other-tenant;
   404 `ORDER_ITEM_NOT_FOUND` if the item does not belong to that order.
 }

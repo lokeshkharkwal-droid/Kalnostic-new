@@ -1,0 +1,50 @@
+meta {
+  name: Finalize Draft - Missing Items (422)
+  type: http
+  seq: 9
+}
+
+patch {
+  url: {{baseUrl}}/orders/{{orderId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "ORDER",
+    "items": []
+  }
+}
+
+tests {
+  test("422 Unprocessable Entity", function () {
+    expect(res.getStatus()).to.equal(422);
+  });
+  test("rejects finalizing an item-less order", function () {
+    expect(res.getBody().error.code).to.equal("ORDER_REQUIRES_ITEMS");
+  });
+}
+
+docs {
+  Finalizing a draft to a LIVE status (`ORDER`/`QUOTE`/`APPOINTMENT`) runs the same
+  required-field validation as Create Order, on the EFFECTIVE order (this patch
+  merged over the persisted draft). Here `items: []` leaves the order with no
+  catalogue entries, so the server rejects it with 422 `ORDER_REQUIRES_ITEMS` and
+  the status flip rolls back — the draft is left unchanged. Omitting `items`
+  entirely would instead validate the draft's already-persisted items.
+
+  A real draft with no items behaves the same via the FE "Finalize as Order"
+  action, which sends `PATCH /orders/:id { status: "ORDER" }`. Home-visit drafts
+  missing a phlebotomist or slot are rejected with
+  `ORDER_HOME_VISIT_PHLEBOTOMIST_REQUIRED` / `ORDER_HOME_VISIT_SLOT_REQUIRED`.
+  See "Update Order" docs for the full list.
+}

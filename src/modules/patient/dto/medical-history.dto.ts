@@ -1,4 +1,45 @@
-import { IsBoolean, IsOptional, IsString, MaxLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsArray,
+  IsBoolean,
+  IsObject,
+  IsOptional,
+  IsString,
+  MaxLength,
+  ValidateNested,
+} from 'class-validator';
+
+/**
+ * Rich, display-oriented medical history persisted in the `richHistory` JSON
+ * column and shared verbatim by the Registration Create and Patient Details
+ * pages (so both render identical data). The top-level shape is validated;
+ * `noFlags` and `entries` are kept as opaque objects on purpose — their inner
+ * per-category free-form fields (since-year, packs/day, severity, occupation…)
+ * differ by category and are the frontend's contract, not the backend's.
+ */
+export class RichMedicalHistoryDto {
+  /** Per-category "no history / not applicable" flags, keyed by category. */
+  @IsObject()
+  @IsOptional()
+  noFlags?: Record<string, boolean>;
+
+  /** Per-category arrays of free-form entry field-maps, keyed by category. */
+  @IsObject()
+  @IsOptional()
+  entries?: Record<string, Array<Record<string, string>>>;
+
+  /** Selected symptom labels (checklist). */
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  symptoms?: string[];
+
+  /** Free-text current medications. */
+  @IsString()
+  @IsOptional()
+  @MaxLength(2000)
+  currentMedications?: string;
+}
 
 /**
  * A medical-history record for a patient. Used both as the body of
@@ -141,4 +182,11 @@ export class MedicalHistoryDto {
   @IsOptional()
   @MaxLength(2000)
   remarks?: string;
+
+  // ── Rich, display-oriented history (source of truth for the UI) ──
+  @IsObject()
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => RichMedicalHistoryDto)
+  richHistory?: RichMedicalHistoryDto;
 }

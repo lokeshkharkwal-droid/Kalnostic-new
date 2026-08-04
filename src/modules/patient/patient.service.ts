@@ -1,12 +1,24 @@
 import { Injectable } from '@nestjs/common';
-import { Gender, MedicalHistory, Patient, Prisma } from '@prisma/client';
+import {
+  Gender,
+  MedicalHistory,
+  Patient,
+  PatientDocument,
+  PatientDocumentCategory,
+  Prisma,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { CreatePatientDto } from './dto/create-patient.dto';
 import { UpdatePatientDto } from './dto/update-patient.dto';
-import { MedicalHistoryDto } from './dto/medical-history.dto';
+import {
+  MedicalHistoryDto,
+  RichMedicalHistoryDto,
+} from './dto/medical-history.dto';
 import { UpdateMedicalHistoryDto } from './dto/update-medical-history.dto';
 import { CreateFamilyMemberDto } from './dto/create-family-member.dto';
+import { CreatePatientDocumentDto } from './dto/create-patient-document.dto';
+import { UpdatePatientDocumentDto } from './dto/update-patient-document.dto';
 import {
   FamilyMemberResult,
   FamilyMemberSummary,
@@ -16,6 +28,7 @@ import {
 import {
   FamilyLinkNotFoundException,
   MedicalHistoryNotFoundException,
+  PatientDocumentNotFoundException,
   PatientMobileConflictException,
   PatientNotFoundException,
 } from './exceptions/patient.exceptions';
@@ -38,6 +51,14 @@ export interface PatientWriteContext {
   branchId: string | null;
   actorId?: string;
 }
+
+/**
+ * A patient document / consent record enriched with the owning patient's
+ * display name, so the UI can show a human-readable name instead of the UUID.
+ */
+export type PatientDocumentWithPatientName = PatientDocument & {
+  patientName: string;
+};
 
 /**
  * Patient management. Tenant-scoped: every query carries `tenantId` (defence in
@@ -82,7 +103,7 @@ export class PatientService {
         if (medicalHistories && medicalHistories.length > 0) {
           await tx.medicalHistory.createMany({
             data: medicalHistories.map((h) => ({
-              ...h,
+              ...this.buildMedicalWriteData(h),
               tenantId,
               branchId: ctx.branchId,
               patientId: patient.id,
@@ -350,7 +371,7 @@ export class PatientService {
     const patient = await this.ensurePatient(patientId, tenantId);
     return this.prisma.medicalHistory.create({
       data: {
-        ...dto,
+        ...this.buildMedicalWriteData(dto),
         tenantId,
         branchId: patient.branchId,
         patientId,
@@ -358,6 +379,77 @@ export class PatientService {
         updatedBy: actorId ?? null,
       },
     });
+  }
+
+  /**
+   * Normalise a medical-history DTO into Prisma write data: cast `richHistory`
+   * to a JSON input value and, when it is present, derive the flat
+   * boolean/symptom summary columns from it (see {@link deriveFlatFlags}) so any
+   * legacy consumer of the flat fields stays in sync. `richHistory` is the
+   * source of truth for display; the flat columns are a compatibility layer.
+   * @param dto the (partial) medical-history payload
+   * @returns Prisma write data without tenant/branch/patient/actor context
+   */
+  private buildMedicalWriteData(dto: MedicalHistoryDto) {
+    const { richHistory, ...flat } = dto;
+    if (richHistory === undefined) {
+      return flat;
+    }
+    return {
+      ...flat,
+      ...this.deriveFlatFlags(richHistory),
+      richHistory: richHistory as unknown as Prisma.InputJsonValue,
+    };
+  }
+
+  /**
+   * Derive the flat boolean/symptom summary columns from the rich history so the
+   * legacy flat fields remain a faithful (best-effort) summary. Condition,
+   * allergy and smoking/alcohol matches are fuzzy (substring) because the rich
+   * UI offers more options than the flat booleans capture; unmatched rich
+   * entries simply live only in `richHistory`.
+   * @param rich the rich, display-oriented history
+   * @returns a partial of the flat boolean columns
+   */
+  private deriveFlatFlags(rich: RichMedicalHistoryDto) {
+    const entries = rich.entries ?? {};
+    const values = (cat: string, field: string): string[] =>
+      (entries[cat] ?? []).map((e) => (e[field] ?? '').toLowerCase());
+    const conditions = values('medical', 'condition');
+    const allergies = values('allergy', 'type');
+    const smoking = values('smoking', 'status');
+    const alcohol = values('alcohol', 'status');
+    const symptoms = new Set(rich.symptoms ?? []);
+    return {
+      hasDiabetes: conditions.some((c) => c.includes('diabet')),
+      hasHypertension: conditions.some((c) => c.includes('hypertension')),
+      hasCardiacDisease: conditions.some(
+        (c) => c.includes('heart') || c.includes('cardiac'),
+      ),
+      hasThyroidDisease: conditions.some((c) => c.includes('thyroid')),
+      hasKidneyDisease: conditions.some(
+        (c) => c.includes('kidney') || c.includes('ckd'),
+      ),
+      hasLatexAllergy: allergies.some((a) => a.includes('latex')),
+      hasFoodAllergy: allergies.some((a) => a.includes('food')),
+      hasDrugAllergy: allergies.some((a) => a.includes('drug')),
+      isCurrentSmoker: smoking.some((s) => s.includes('current')),
+      isFormerSmoker: smoking.some((s) => s.includes('former')),
+      isCurrentAlcoholic: alcohol.some((s) => s.includes('current')),
+      isFormerAlcoholic: alcohol.some((s) => s.includes('former')),
+      hasCough: symptoms.has('Cough'),
+      hasFever: symptoms.has('Fever'),
+      hasShortnessOfBreath: symptoms.has('Shortness of Breath'),
+      hasChestPain: symptoms.has('Chest Pain'),
+      hasAbdominalPain: symptoms.has('Abdominal Pain'),
+      hasHeadache: symptoms.has('Headache'),
+      hasVomiting: symptoms.has('Vomiting'),
+      hasDiarrhea: symptoms.has('Diarrhea'),
+      hasFatigue: symptoms.has('Fatigue'),
+      hasWeightLoss: symptoms.has('Weight Loss'),
+      hasBodyPains: symptoms.has('Body Pains'),
+      hasDizziness: symptoms.has('Dizziness'),
+    };
   }
 
   /**
@@ -417,7 +509,7 @@ export class PatientService {
     await this.findMedicalHistoryById(id, tenantId, patientId);
     return this.prisma.medicalHistory.update({
       where: { id },
-      data: { ...dto, updatedBy: actorId ?? null },
+      data: { ...this.buildMedicalWriteData(dto), updatedBy: actorId ?? null },
     });
   }
 
@@ -435,6 +527,141 @@ export class PatientService {
   ): Promise<MedicalHistory> {
     await this.findMedicalHistoryById(id, tenantId, patientId);
     return this.prisma.medicalHistory.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
+  }
+
+  // ── Documents & consent ───────────────────────────────────────────────────────
+
+  /**
+   * Add a document / consent record to a patient. Only the `documentUrl` (e.g.
+   * an AWS S3 link) is stored — never the file bytes. The record inherits the
+   * patient's registration branch; tenant/patient come from the request context.
+   * @param tenantId tenant scope (from the JWT)
+   * @param patientId owning patient
+   * @param dto validated payload
+   * @param actorId acting person id (from the JWT)
+   * @returns the created PatientDocument record
+   * @throws PatientNotFoundException if the patient doesn't belong to the tenant
+   */
+  async addPatientDocument(
+    tenantId: string,
+    patientId: string,
+    dto: CreatePatientDocumentDto,
+    actorId?: string,
+  ): Promise<PatientDocumentWithPatientName> {
+    const patient = await this.ensurePatient(patientId, tenantId);
+    const created = await this.prisma.patientDocument.create({
+      data: {
+        category: dto.category,
+        name: dto.name,
+        type: dto.type,
+        documentDate: new Date(dto.documentDate),
+        documentUrl: dto.documentUrl,
+        tenantId,
+        branchId: patient.branchId,
+        patientId,
+        createdBy: actorId ?? null,
+        updatedBy: actorId ?? null,
+      },
+    });
+    return this.withPatientName(created, patient);
+  }
+
+  /**
+   * List a patient's active document / consent records (most recent first),
+   * optionally filtered to a single category.
+   * @param tenantId tenant scope
+   * @param patientId owning patient
+   * @param category optional category filter (DOCUMENT / CONSENT)
+   * @throws PatientNotFoundException if the patient is missing
+   */
+  async findPatientDocuments(
+    tenantId: string,
+    patientId: string,
+    category?: PatientDocumentCategory,
+  ): Promise<PatientDocumentWithPatientName[]> {
+    const patient = await this.ensurePatient(patientId, tenantId);
+    const records = await this.prisma.patientDocument.findMany({
+      where: { patientId, tenantId, deletedAt: null, category },
+      orderBy: { documentDate: 'desc' },
+    });
+    return records.map((record) => this.withPatientName(record, patient));
+  }
+
+  /**
+   * Fetch one active document / consent record for a patient.
+   * @param id document id
+   * @param tenantId tenant scope
+   * @param patientId owning patient
+   * @throws PatientDocumentNotFoundException if missing
+   */
+  async findPatientDocumentById(
+    id: string,
+    tenantId: string,
+    patientId: string,
+  ): Promise<PatientDocumentWithPatientName> {
+    const record = await this.prisma.patientDocument.findFirst({
+      where: { id, patientId, tenantId, deletedAt: null },
+      include: { patient: true },
+    });
+    if (!record) {
+      throw new PatientDocumentNotFoundException(id);
+    }
+    const { patient, ...document } = record;
+    return this.withPatientName(document, patient);
+  }
+
+  /**
+   * Update a patient's document / consent record. Only provided fields change.
+   * @param id document id
+   * @param tenantId tenant scope
+   * @param patientId owning patient
+   * @param dto validated partial payload
+   * @param actorId acting person id (from the JWT)
+   * @throws PatientDocumentNotFoundException if missing
+   */
+  async updatePatientDocument(
+    id: string,
+    tenantId: string,
+    patientId: string,
+    dto: UpdatePatientDocumentDto,
+    actorId?: string,
+  ): Promise<PatientDocumentWithPatientName> {
+    const existing = await this.findPatientDocumentById(
+      id,
+      tenantId,
+      patientId,
+    );
+    const updated = await this.prisma.patientDocument.update({
+      where: { id },
+      data: {
+        category: dto.category,
+        name: dto.name,
+        type: dto.type,
+        documentDate: dto.documentDate ? new Date(dto.documentDate) : undefined,
+        documentUrl: dto.documentUrl,
+        updatedBy: actorId ?? null,
+      },
+    });
+    return { ...updated, patientName: existing.patientName };
+  }
+
+  /**
+   * Soft-delete a patient's document / consent record.
+   * @param id document id
+   * @param tenantId tenant scope
+   * @param patientId owning patient
+   * @throws PatientDocumentNotFoundException if missing
+   */
+  async removePatientDocument(
+    id: string,
+    tenantId: string,
+    patientId: string,
+  ): Promise<PatientDocument> {
+    await this.findPatientDocumentById(id, tenantId, patientId);
+    return this.prisma.patientDocument.update({
       where: { id },
       data: { deletedAt: new Date() },
     });
@@ -551,6 +778,47 @@ export class PatientService {
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
+
+  /**
+   * Build a patient's human-readable display name from its identity fields
+   * (salutation → first → middle → last), collapsing whitespace. Mirrors the
+   * frontend's name assembly so the two never disagree.
+   * @param patient the patient's identity fields
+   * @returns the trimmed display name (may be empty if only blanks are set)
+   */
+  private buildPatientName(
+    patient: Pick<
+      Patient,
+      'salutation' | 'firstName' | 'middleName' | 'lastName'
+    >,
+  ): string {
+    return [
+      patient.salutation,
+      patient.firstName,
+      patient.middleName,
+      patient.lastName,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  /**
+   * Enrich a raw document record with the owning patient's display name.
+   * @param document the persisted document / consent record
+   * @param patient the owning patient (for the name)
+   * @returns the document with a `patientName` field appended
+   */
+  private withPatientName(
+    document: PatientDocument,
+    patient: Pick<
+      Patient,
+      'salutation' | 'firstName' | 'middleName' | 'lastName'
+    >,
+  ): PatientDocumentWithPatientName {
+    return { ...document, patientName: this.buildPatientName(patient) };
+  }
 
   /**
    * Assert a patient exists (active) in the tenant and return it. Used to guard
