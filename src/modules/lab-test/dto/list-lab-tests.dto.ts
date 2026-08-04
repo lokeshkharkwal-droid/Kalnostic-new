@@ -1,6 +1,23 @@
-import { IsEnum, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsEnum,
+  IsIn,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+} from 'class-validator';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
+import { ToBoolean } from '../../../common/decorators/to-boolean.decorator';
 import { LabTestListView } from '../entities/lab-test.entity';
+
+/** Sortable columns exposed by the template-browse listing. */
+export const LAB_TEST_SORT_FIELDS = [
+  'testName',
+  'testCode',
+  'priceMsrp',
+  'createdAt',
+] as const;
+export type LabTestSortField = (typeof LAB_TEST_SORT_FIELDS)[number];
 
 /**
  * Query parameters for the lab-test listing endpoint
@@ -47,4 +64,31 @@ export class ListLabTestsDto extends PaginationQueryDto {
   @IsOptional()
   @IsIn(['ACTIVE', 'INACTIVE'])
   status?: 'ACTIVE' | 'INACTIVE';
+
+  /** Sort column (template-browse listing). Defaults to `createdAt` desc. */
+  @IsOptional()
+  @IsIn(LAB_TEST_SORT_FIELDS)
+  sortBy?: LabTestSortField;
+
+  /** Sort direction; defaults to `desc`. */
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sortOrder?: 'asc' | 'desc';
+
+  /**
+   * Template-browse only: the target master data to compare against. When set,
+   * each template row is annotated with `isImported` (an active tenant test in
+   * this master data already has `clonedFromId = template.id`).
+   */
+  @IsOptional()
+  @IsUUID()
+  masterDataId?: string;
+
+  /**
+   * Template-browse only: when true (and `masterDataId` is set), templates
+   * already imported into that master data are excluded from the results.
+   */
+  @IsOptional()
+  @ToBoolean()
+  notImportedOnly?: boolean;
 }

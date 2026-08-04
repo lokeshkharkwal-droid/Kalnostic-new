@@ -30,16 +30,21 @@ import {
   ImportLabTestsDto,
 } from './dto/import-lab-tests.dto';
 import {
+  ImportableTemplateRow,
+  LabTestImportResult,
   LabTestListRow,
   LabTestListView,
   LabTestRefRangeRow,
   LabTestRefValueRow,
   LabTestResultsParamRow,
   LabTestSampleRow,
+  LabTestSyncResult,
   LabTestVersionEntry,
   LabTestWithChildren,
   ReflexTestRef,
 } from './entities/lab-test.entity';
+import { ImportLabTestTemplatesDto } from './dto/import-lab-test-templates.dto';
+import { SyncLabTestTemplatesDto } from './dto/sync-lab-test-templates.dto';
 import {
   LabTestCodeConflictException,
   LabTestImportValidationException,
@@ -73,6 +78,9 @@ const META_KEYS = [
   'labTestId',
   'paramId',
   'source',
+  'clonedFromId',
+  'templateSyncedAt',
+  'sourceMasterLabTestId',
   'createdAt',
   'updatedAt',
   'deletedAt',
@@ -1171,6 +1179,116 @@ export class LabTestService {
   }
 
   /**
+   * Sync (update-or-create) all active lab tests from a Tenant Master Data into a
+   * Branch Master Data, keyed on `sourceMasterLabTestId` (falling back to
+   * `testCode` to adopt a legacy branch row and avoid a unique collision). A
+   * matched branch test is FULLY overwritten from the tenant test (scalars +
+   * hard-deleted/rebuilt children, version bumped); an unmatched one is cloned.
+   * Runs inside the caller's transaction. Returns a `tenantTestId → branchTestId`
+   * map (so panels can remap membership) plus counts. Branch tests whose tenant
+   * source no longer exists are left untouched (no orphan deletion).
+   * @param tx caller's transaction client (already in `withTenant`)
+   * @param params tenant + branch scope and both master-data ids
+   */
+  async syncTestsIntoBranch(
+    tx: Prisma.TransactionClient,
+    params: {
+      tenantId: string;
+      branchId: string;
+      tenantMasterDataId: string;
+      branchMasterDataId: string;
+      actorId: string | null;
+    },
+  ): Promise<{
+    testIdMap: Map<string, string>;
+    created: number;
+    updated: number;
+  }> {
+    const {
+      tenantId,
+      branchId,
+      tenantMasterDataId,
+      branchMasterDataId,
+      actorId,
+    } = params;
+    const sourceTests = await tx.labTest.findMany({
+      where: { masterDataId: tenantMasterDataId, tenantId, deletedAt: null },
+    });
+    const branchTests = await tx.labTest.findMany({
+      where: { masterDataId: branchMasterDataId, tenantId, deletedAt: null },
+    });
+    const bySource = new Map<string, LabTest>();
+    const byCode = new Map<string, LabTest>();
+    for (const t of branchTests) {
+      if (t.sourceMasterLabTestId) bySource.set(t.sourceMasterLabTestId, t);
+      byCode.set(t.testCode, t);
+    }
+
+    const testIdMap = new Map<string, string>();
+    let created = 0;
+    let updated = 0;
+    for (const src of sourceTests) {
+      const target = bySource.get(src.id) ?? byCode.get(src.testCode);
+      if (target) {
+        const history = this.readVersionHistory(target.versionHistory);
+        const today = new Date().toISOString().slice(0, 10);
+        const open = history.find((e) => e.effectiveTo === null);
+        if (open) open.effectiveTo = this.previousDay(today);
+        const nextVersion =
+          history.reduce((max, e) => Math.max(max, e.version), 0) + 1;
+        history.push({
+          version: nextVersion,
+          effectiveFrom: today,
+          effectiveTo: null,
+          modifiedBy: actorId,
+          approvedBy: null,
+        });
+        // Full overwrite: tenant test scalars win; identity/scope preserved.
+        await tx.labTest.update({
+          where: { id: target.id },
+          data: {
+            ...this.stripMeta(src),
+            sourceMasterLabTestId: src.id,
+            versionHistory: history as unknown as Prisma.InputJsonValue,
+          },
+        });
+        // Rebuild children: hard-delete then recopy from the tenant test.
+        await tx.labTestReferenceRange.deleteMany({
+          where: { labTestId: target.id, tenantId },
+        });
+        await tx.labTestReferenceValue.deleteMany({
+          where: { labTestId: target.id, tenantId },
+        });
+        await tx.labTestResultParam.deleteMany({
+          where: { labTestId: target.id, tenantId },
+        });
+        await tx.labTestSample.deleteMany({
+          where: { labTestId: target.id, tenantId },
+        });
+        await this.copyTestChildren(tx, src.id, src.tenantId, {
+          tenantId,
+          branchId,
+          labTestId: target.id,
+        });
+        testIdMap.set(src.id, target.id);
+        updated += 1;
+      } else {
+        const cloned = await this.clonePersistTest(tx, src, {
+          tenantId,
+          branchId,
+          masterDataId: branchMasterDataId,
+          source: DataSource.TENANT,
+          actorId,
+          sourceMasterLabTestId: src.id,
+        });
+        testIdMap.set(src.id, cloned.id);
+        created += 1;
+      }
+    }
+    return { testIdMap, created, updated };
+  }
+
+  /**
    * Deep-copy one (already-loaded) lab test plus its samples, result params and
    * each param's reference ranges/values into a NEW test with fresh ids, the
    * given scope (`tenantId`/`branchId`/`masterDataId`/`source`) and a fresh
@@ -1189,10 +1307,15 @@ export class LabTestService {
       masterDataId: string | null;
       source: DataSource;
       actorId: string | null;
+      /** Set on a Tenant→Branch MD sync to link the branch copy to its source. */
+      sourceMasterLabTestId?: string | null;
     },
   ): Promise<LabTest> {
     const { tenantId, branchId, masterDataId, source, actorId } = target;
     const srcTenantId = src.tenantId;
+    // Track provenance only when adopting a SITE_ADMIN template into a tenant;
+    // a tenant→tenant clone (e.g. between master datas) keeps `clonedFromId` NULL.
+    const clonedFromId = src.source === DataSource.SITE_ADMIN ? src.id : null;
     const newTest = await tx.labTest.create({
       data: {
         ...this.stripMeta(src),
@@ -1200,14 +1323,42 @@ export class LabTestService {
         branchId,
         masterDataId,
         source,
+        clonedFromId,
+        sourceMasterLabTestId: target.sourceMasterLabTestId ?? null,
         versionHistory: [
           this.seedVersion(actorId),
         ] as unknown as Prisma.InputJsonValue,
       } as Prisma.LabTestUncheckedCreateInput,
     });
 
+    await this.copyTestChildren(tx, src.id, srcTenantId, {
+      tenantId,
+      branchId,
+      labTestId: newTest.id,
+    });
+    return newTest;
+  }
+
+  /**
+   * Copy a lab test's children (samples, result params, and each param's
+   * reference ranges/values) from `srcTestId` onto `target.labTestId`, re-scoping
+   * them to `target.tenantId`/`branchId` and stripping meta keys. Shared by the
+   * clone engine and by `syncTemplates` (which first hard-deletes the existing
+   * children). Assumes the caller runs inside the correct tenant transaction.
+   */
+  private async copyTestChildren(
+    tx: Prisma.TransactionClient,
+    srcTestId: string,
+    srcTenantId: string | null,
+    target: {
+      tenantId: string | null;
+      branchId: string | null;
+      labTestId: string;
+    },
+  ): Promise<void> {
+    const { tenantId, branchId, labTestId } = target;
     const samples = await tx.labTestSample.findMany({
-      where: { labTestId: src.id, tenantId: srcTenantId, deletedAt: null },
+      where: { labTestId: srcTestId, tenantId: srcTenantId, deletedAt: null },
     });
     if (samples.length) {
       await tx.labTestSample.createMany({
@@ -1215,13 +1366,13 @@ export class LabTestService {
           ...this.stripMeta(s),
           tenantId,
           branchId,
-          labTestId: newTest.id,
+          labTestId,
         })),
       });
     }
 
     const params = await tx.labTestResultParam.findMany({
-      where: { labTestId: src.id, tenantId: srcTenantId, deletedAt: null },
+      where: { labTestId: srcTestId, tenantId: srcTenantId, deletedAt: null },
     });
     for (const param of params) {
       const newParam = await tx.labTestResultParam.create({
@@ -1229,7 +1380,7 @@ export class LabTestService {
           ...this.stripMeta(param),
           tenantId,
           branchId,
-          labTestId: newTest.id,
+          labTestId,
         } as Prisma.LabTestResultParamUncheckedCreateInput,
       });
       const ranges = await tx.labTestReferenceRange.findMany({
@@ -1241,7 +1392,7 @@ export class LabTestService {
             ...this.stripMeta(r),
             tenantId,
             branchId,
-            labTestId: newTest.id,
+            labTestId,
             paramId: newParam.id,
           })),
         });
@@ -1255,13 +1406,12 @@ export class LabTestService {
             ...this.stripMeta(v),
             tenantId,
             branchId,
-            labTestId: newTest.id,
+            labTestId,
             paramId: newParam.id,
           })) as Prisma.LabTestReferenceValueCreateManyInput[],
         });
       }
     }
-    return newTest;
   }
 
   // ── Site Admin global templates ─────────────────────────────────────────────────
@@ -1335,7 +1485,8 @@ export class LabTestService {
    */
   async findAllTemplates(
     query: ListLabTestsDto = {},
-  ): Promise<PaginatedResult<LabTestListRow>> {
+    tenantId?: string,
+  ): Promise<PaginatedResult<ImportableTemplateRow>> {
     const view = query.view ?? LabTestListView.DEFAULT;
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
@@ -1353,16 +1504,48 @@ export class LabTestService {
     if (query.status) {
       where.isActive = query.status === 'ACTIVE';
     }
+
+    // Import annotation: which templates the tenant has already imported into the
+    // target master data (tracked by `clonedFromId`). Requires both a tenant and
+    // a `masterDataId`; validates ownership so a foreign id can't leak scope.
+    let importedTemplateIds = new Set<string>();
+    if (tenantId && query.masterDataId) {
+      await this.masterDataService.findById(query.masterDataId, tenantId);
+      const imported = await this.prisma.labTest.findMany({
+        where: {
+          tenantId,
+          masterDataId: query.masterDataId,
+          clonedFromId: { not: null },
+          deletedAt: null,
+        },
+        select: { clonedFromId: true },
+      });
+      importedTemplateIds = new Set(
+        imported
+          .map((r) => r.clonedFromId)
+          .filter((id): id is string => id !== null),
+      );
+      if (query.notImportedOnly && importedTemplateIds.size) {
+        where.id = { notIn: [...importedTemplateIds] };
+      }
+    }
+
+    const sortBy = query.sortBy ?? 'createdAt';
+    const sortOrder = query.sortOrder ?? 'desc';
     const [tests, total] = await Promise.all([
       this.prisma.labTest.findMany({
         where,
         skip: (page - 1) * limit,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { [sortBy]: sortOrder },
       }),
       this.prisma.labTest.count({ where }),
     ]);
-    const data = await this.projectListRows(view, null, tests);
+    const rows = await this.projectListRows(view, null, tests);
+    const data: ImportableTemplateRow[] = rows.map((row) => ({
+      ...row,
+      isImported: importedTemplateIds.has(row.id),
+    }));
     return { data, total, page, limit };
   }
 
@@ -1516,6 +1699,217 @@ export class LabTestService {
   }
 
   /**
+   * Bulk-import SITE_ADMIN template lab tests into a tenant's master data. Each
+   * template is imported in its own transaction so one failure never aborts the
+   * batch: templates already imported into this master data (tracked by
+   * `clonedFromId`) are skipped, missing/deleted templates and name/code
+   * conflicts are reported as failures.
+   * @param tenantId tenant scope (from the JWT)
+   * @param actorId person recorded on the seed version (or null)
+   * @param dto target master data + SITE_ADMIN template ids
+   * @returns an `{ imported, skipped, failed }` summary
+   * @throws MasterDataNotFoundException if the master data is missing/other tenant
+   */
+  async importTemplates(
+    tenantId: string,
+    actorId: string | null,
+    dto: ImportLabTestTemplatesDto,
+  ): Promise<LabTestImportResult> {
+    const masterData = await this.masterDataService.findById(
+      dto.masterDataId,
+      tenantId,
+    );
+    const templates = await this.prisma.labTest.findMany({
+      where: {
+        id: { in: dto.templateIds },
+        source: DataSource.SITE_ADMIN,
+        deletedAt: null,
+      },
+    });
+    const templateById = new Map(templates.map((t) => [t.id, t]));
+    const already = await this.prisma.labTest.findMany({
+      where: {
+        tenantId,
+        masterDataId: dto.masterDataId,
+        clonedFromId: { in: dto.templateIds },
+        deletedAt: null,
+      },
+      select: { clonedFromId: true },
+    });
+    const alreadyImported = new Set(
+      already
+        .map((r) => r.clonedFromId)
+        .filter((id): id is string => id !== null),
+    );
+
+    const result: LabTestImportResult = {
+      imported: [],
+      skipped: [],
+      failed: [],
+    };
+    for (const templateId of dto.templateIds) {
+      const template = templateById.get(templateId);
+      if (!template) {
+        result.failed.push({
+          templateId,
+          reason: 'Template not found or no longer available',
+        });
+        continue;
+      }
+      if (alreadyImported.has(templateId)) {
+        result.skipped.push({
+          templateId,
+          testName: template.testName,
+          reason: 'Already imported into this master data',
+        });
+        continue;
+      }
+      try {
+        const newId = await this.prisma.withTenant(tenantId, async (tx) => {
+          const created = await this.clonePersistTest(tx, template, {
+            tenantId,
+            branchId: masterData.branchId,
+            masterDataId: dto.masterDataId,
+            source: DataSource.TENANT,
+            actorId,
+          });
+          return created.id;
+        });
+        result.imported.push({
+          templateId,
+          labTestId: newId,
+          testName: template.testName,
+        });
+      } catch (e) {
+        result.failed.push({
+          templateId,
+          testName: template.testName,
+          reason: this.conflictReason(e, template.testName, template.testCode),
+        });
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Re-pull previously-imported lab tests from their SITE_ADMIN templates. Full
+   * overwrite: the tenant copy's scalars are replaced from the template and its
+   * children (samples, params, reference ranges/values) are hard-deleted and
+   * recreated (avoids unique-code `P2002` from soft-deleted rows). Identity
+   * (`id`/`tenantId`/`branchId`/`masterDataId`/`source`/`clonedFromId`) is
+   * preserved, `versionHistory` is bumped, and `templateSyncedAt` is stamped.
+   * Hand-created tests (`clonedFromId = null`) are never touched. Each test is
+   * synced in its own transaction so one failure never aborts the batch.
+   * @param tenantId tenant scope (from the JWT)
+   * @param actorId person recorded on the bumped version (or null)
+   * @param dto master data + optional subset of tenant lab-test ids
+   * @returns a `{ synced, skipped, failed }` summary
+   * @throws MasterDataNotFoundException if the master data is missing/other tenant
+   */
+  async syncTemplates(
+    tenantId: string,
+    actorId: string | null,
+    dto: SyncLabTestTemplatesDto,
+  ): Promise<LabTestSyncResult> {
+    await this.masterDataService.findById(dto.masterDataId, tenantId);
+    const where: Prisma.LabTestWhereInput = {
+      tenantId,
+      masterDataId: dto.masterDataId,
+      clonedFromId: { not: null },
+      deletedAt: null,
+    };
+    if (dto.labTestIds?.length) {
+      where.id = { in: dto.labTestIds };
+    }
+    const tests = await this.prisma.labTest.findMany({ where });
+
+    const result: LabTestSyncResult = { synced: [], skipped: [], failed: [] };
+    for (const test of tests) {
+      const templateId = test.clonedFromId;
+      if (!templateId) {
+        continue;
+      }
+      const template = await this.prisma.labTest.findFirst({
+        where: {
+          id: templateId,
+          source: DataSource.SITE_ADMIN,
+          deletedAt: null,
+        },
+      });
+      if (!template) {
+        result.skipped.push({
+          labTestId: test.id,
+          testName: test.testName,
+          templateId,
+          reason: 'Source template removed',
+        });
+        continue;
+      }
+      try {
+        await this.prisma.withTenant(tenantId, async (tx) => {
+          const history = this.readVersionHistory(test.versionHistory);
+          const today = new Date().toISOString().slice(0, 10);
+          const open = history.find((e) => e.effectiveTo === null);
+          if (open) {
+            open.effectiveTo = this.previousDay(today);
+          }
+          const nextVersion =
+            history.reduce((max, e) => Math.max(max, e.version), 0) + 1;
+          history.push({
+            version: nextVersion,
+            effectiveFrom: today,
+            effectiveTo: null,
+            modifiedBy: actorId,
+            approvedBy: null,
+          });
+          // Full overwrite of scalars from the template; identity + provenance
+          // are preserved via `stripMeta` (it drops id/tenant/branch/masterData/
+          // source/clonedFromId/templateSyncedAt/versionHistory).
+          await tx.labTest.update({
+            where: { id: test.id },
+            data: {
+              ...this.stripMeta(template),
+              templateSyncedAt: new Date(),
+              versionHistory: history as unknown as Prisma.InputJsonValue,
+            },
+          });
+          // Rebuild children: hard-delete then recreate from the template.
+          await tx.labTestReferenceRange.deleteMany({
+            where: { labTestId: test.id, tenantId },
+          });
+          await tx.labTestReferenceValue.deleteMany({
+            where: { labTestId: test.id, tenantId },
+          });
+          await tx.labTestResultParam.deleteMany({
+            where: { labTestId: test.id, tenantId },
+          });
+          await tx.labTestSample.deleteMany({
+            where: { labTestId: test.id, tenantId },
+          });
+          await this.copyTestChildren(tx, template.id, template.tenantId, {
+            tenantId,
+            branchId: test.branchId,
+            labTestId: test.id,
+          });
+        });
+        result.synced.push({
+          labTestId: test.id,
+          testName: template.testName,
+          templateId,
+        });
+      } catch (e) {
+        result.failed.push({
+          labTestId: test.id,
+          testName: test.testName,
+          templateId,
+          reason: this.conflictReason(e, template.testName, template.testCode),
+        });
+      }
+    }
+    return result;
+  }
+
+  /**
    * Clone a SITE_ADMIN template lab test into a tenant within an EXISTING
    * transaction — used by `LabPanelService` when adopting a template panel, so
    * the panel and its cloned tests share one all-or-nothing transaction. Returns
@@ -1528,7 +1922,7 @@ export class LabTestService {
   async cloneTemplateTestWithinTx(
     tx: Prisma.TransactionClient,
     templateId: string,
-    target: { tenantId: string; branchId: string; masterDataId: string },
+    target: { tenantId: string; branchId: string | null; masterDataId: string },
   ): Promise<LabTest> {
     const template = await tx.labTest.findFirst({
       where: { id: templateId, source: DataSource.SITE_ADMIN, deletedAt: null },
@@ -2156,5 +2550,36 @@ export class LabTestService {
       throw new LabTestCodeConflictException(testCode);
     }
     throw new LabTestNameConflictException(testName);
+  }
+
+  /**
+   * Human-readable reason for a per-row import/sync failure. Maps a Prisma
+   * unique-constraint violation (P2002) to a friendly message; falls back to a
+   * generic message for anything else (the row is recorded as failed, not thrown).
+   */
+  private conflictReason(
+    e: unknown,
+    testName: string,
+    testCode: string,
+  ): string {
+    if (
+      e instanceof Prisma.PrismaClientKnownRequestError &&
+      e.code === 'P2002'
+    ) {
+      const rawTarget = (e.meta as { target?: unknown } | undefined)?.target;
+      const target = Array.isArray(rawTarget)
+        ? rawTarget.join(',')
+        : typeof rawTarget === 'string'
+          ? rawTarget
+          : '';
+      if (target.includes('parameter_code')) {
+        return 'A result parameter code already exists in this master data';
+      }
+      if (target.includes('test_code')) {
+        return `Test code "${testCode}" already exists in this master data`;
+      }
+      return `Test name "${testName}" already exists in this master data`;
+    }
+    return 'Unexpected error while importing this test';
   }
 }

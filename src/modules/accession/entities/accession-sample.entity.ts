@@ -20,9 +20,24 @@ export const SAMPLE_LIST_INCLUDE = {
   },
 } satisfies Prisma.AccessionSampleInclude;
 
-/** Full relations for a single accession sample (Sample Overview — PDF §A.10.4). */
+/**
+ * Full relations for a single accession sample (Sample Overview — PDF §A.10.4).
+ * `tests` additionally reaches its order item's `branchLabTest`/`branchLabPanel`
+ * so `findById` can resolve each test's department (the classification lives as a
+ * logical `departmentId` ref — no Prisma relation — so the name is resolved
+ * separately and attached as `department` / sample-level `departmentLabel`).
+ */
 export const SAMPLE_INCLUDE = {
-  tests: true,
+  tests: {
+    include: {
+      orderItem: {
+        select: {
+          branchLabTest: { select: { departmentId: true } },
+          branchLabPanel: { select: { departmentId: true } },
+        },
+      },
+    },
+  },
   statusHistory: { orderBy: { createdAt: 'desc' } },
   transfers: { orderBy: { createdAt: 'desc' } },
   order: {
@@ -46,6 +61,19 @@ export type AccessionSampleListRow = Prisma.AccessionSampleGetPayload<{
 export type AccessionSampleWithRelations = Prisma.AccessionSampleGetPayload<{
   include: typeof SAMPLE_INCLUDE;
 }>;
+
+/**
+ * A single accession sample enriched with resolved department names (Sample
+ * Overview drawer). `departmentLabel` is the distinct set of the tests'
+ * departments joined with ", " (null when none resolve); each test also carries
+ * its own `department` name.
+ */
+export type AccessionSampleDetail = Omit<AccessionSampleWithRelations, 'tests'> & {
+  departmentLabel: string | null;
+  tests: (AccessionSampleWithRelations['tests'][number] & {
+    department: string | null;
+  })[];
+};
 
 /** A list row enriched with its derived TAT band (§A.4 — not stored). */
 export type AccessionSampleListItem = AccessionSampleListRow & {

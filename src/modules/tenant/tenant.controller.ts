@@ -12,6 +12,7 @@ import {
 import { AuditAction, AuditModule, SubscriptionStatus } from '@prisma/client';
 import { TenantService } from './tenant.service';
 import { CreateTenantDto } from './dto/create-tenant.dto';
+import { SetAdminPasswordDto } from './dto/set-admin-password.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
 import { UpdateTenantConfigurationDto } from './dto/update-tenant-configuration.dto';
 import { UpdateTenantSettingsDto } from './dto/update-tenant-settings.dto';
@@ -38,7 +39,8 @@ export class TenantController {
   constructor(private readonly tenantService: TenantService) {}
 
   /**
-   * Create a tenant + its first business-admin (returns a one-time temp password).
+   * Create a tenant + its first business-admin. The admin's login password is
+   * chosen by SiteAdmin in the request, so nothing sensitive is returned.
    */
   @Post()
   @Audit({
@@ -233,5 +235,27 @@ export class TenantController {
     @Param('id') id: string,
   ) {
     return this.tenantService.resetBusinessAdminPassword(id, siteAdminId);
+  }
+
+  /**
+   * Set the business-admin password to a SiteAdmin-chosen value (non-temp).
+   */
+  @Put(':id/admin/password')
+  @Audit({
+    module: AuditModule.TENANT,
+    action: AuditAction.UPDATE,
+    description: 'Set business admin password',
+  })
+  @RequireSiteAdminPermission(SITE_ADMIN_PERM.BUSINESS_CREATE)
+  setAdminPassword(
+    @CurrentSiteAdmin('siteadmin_id') siteAdminId: string,
+    @Param('id') id: string,
+    @Body() dto: SetAdminPasswordDto,
+  ) {
+    return this.tenantService.setBusinessAdminPassword(
+      id,
+      dto.adminPassword,
+      siteAdminId,
+    );
   }
 }

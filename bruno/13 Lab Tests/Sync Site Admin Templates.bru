@@ -1,0 +1,46 @@
+meta {
+  name: Sync Site Admin Templates
+  type: http
+  seq: 19
+}
+
+post {
+  url: {{baseUrl}}/lab-tests/sync
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "masterDataId": "{{masterDataId}}"
+  }
+}
+
+docs {
+  Re-pull previously-imported lab tests from their SITE_ADMIN templates. Business
+  JWT. Body: `masterDataId` (required) + optional `labTestIds` (subset; omit to
+  sync every imported test in the master data).
+
+  **Full overwrite:** each tenant copy's scalars are replaced from its template
+  and its children (samples, params, reference ranges/values) are hard-deleted
+  and recreated. Identity + provenance (`id`, `tenantId`, `branchId`,
+  `masterDataId`, `source`, `clonedFromId`) are preserved, `versionHistory` is
+  bumped, and `templateSyncedAt` is stamped. Hand-created tests
+  (`clonedFromId = null`) are never touched. Each test syncs in its own
+  transaction. Returns:
+
+  `{ "synced":  [{labTestId,testName,templateId}],
+     "skipped": [{labTestId,testName,templateId,reason}],  // e.g. template removed
+     "failed":  [{labTestId,testName,templateId,reason}] }`
+
+  - `masterDataId` must belong to the caller's tenant → else 404
+    `MASTER_DATA_NOT_FOUND`.
+}

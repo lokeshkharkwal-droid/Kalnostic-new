@@ -5,8 +5,10 @@ import {
   IsString,
   IsUUID,
   MaxLength,
+  ValidateNested,
 } from 'class-validator';
-import { TenantSettings } from '../entities/tenant.entity';
+import { Type } from 'class-transformer';
+import { UpdateTenantLocaleDto } from './tenant-settings.dto';
 
 /**
  * Editable tenant fields. Slug is immutable (advertised subdomain) and admin
@@ -80,9 +82,12 @@ export class UpdateTenantDto {
   @MaxLength(2048)
   photoUrl?: string;
 
+  /** Partial locale settings; supplied timezone/currency are still validated. */
   @IsObject()
   @IsOptional()
-  settings?: Partial<TenantSettings>;
+  @ValidateNested()
+  @Type(() => UpdateTenantLocaleDto)
+  settings?: UpdateTenantLocaleDto;
 
   @IsString()
   @IsOptional()

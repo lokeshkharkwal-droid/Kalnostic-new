@@ -58,6 +58,7 @@ import {
   PersonPhoneTakenException,
   ProfileInvalidForBranchException,
   ProfileNotFoundException,
+  CannotDeactivatePrimaryAdminException,
   StaffMembershipNotFoundException,
   UnderageUserException,
   UsernameTakenException,
@@ -143,6 +144,8 @@ export interface UserListRow {
   defaultBranch: string | null;
   defaultModule: string | null;
   status: StaffStatus;
+  /** True for the tenant's default admin — the FE disables its deactivate control. */
+  isPrimaryAdmin: boolean;
 }
 
 /** A row in the Permissions screen (one per user + branch; status always Active). */
@@ -985,6 +988,12 @@ export class UsersService {
     this.assertCanEdit(person, tenantId, updatedBy);
     const membership = await this.getMembership(tenantId, personId);
 
+    // The primary business admin can never be deactivated — guard the edit-form
+    // status path too, not just the dedicated deactivate endpoint.
+    if (dto.status === StaffStatus.INACTIVE && membership.isPrimaryAdmin) {
+      throw new CannotDeactivatePrimaryAdminException(personId, tenantId);
+    }
+
     if (dto.dateOfBirth !== undefined) {
       this.assertAdult(dto.dateOfBirth);
     }
@@ -1203,6 +1212,7 @@ export class UsersService {
           ? moduleLabel(defaultProfile.defaultModuleId)
           : null,
         status: m.status,
+        isPrimaryAdmin: m.isPrimaryAdmin,
       };
     });
 
@@ -1489,12 +1499,21 @@ export class UsersService {
   /**
    * Global deactivate: set the tenant-global membership status to INACTIVE,
    * blocking login tenant-wide. Branch statuses and all records are preserved.
+   *
+   * The tenant's default (primary) business admin can never be deactivated —
+   * doing so would lock the business out of its own account.
+   *
+   * @throws CannotDeactivatePrimaryAdminException if the target is the primary admin
    */
   async deactivateUser(
     tenantId: string,
     personId: string,
     actorId: string,
   ): Promise<TenantStaffMembership> {
+    const membership = await this.getMembership(tenantId, personId);
+    if (membership.isPrimaryAdmin) {
+      throw new CannotDeactivatePrimaryAdminException(personId, tenantId);
+    }
     return this.setMembershipStatus(
       tenantId,
       personId,

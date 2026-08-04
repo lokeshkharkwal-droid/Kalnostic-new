@@ -1,0 +1,23 @@
+meta {
+  name: Get Branch Master Data
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/master-data/branch
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Resolve (get-or-create) the ACTIVE branch's **Branch Master Data**. The branch
+  comes from the JWT (`active_branch_id`), so this requires a branch-scoped token
+  (e.g. a branch_admin profile) — 400 for a tenant-level role with no active
+  branch. This is what the branch-admin Master Data page shows and what the
+  branch Lab Test / Lab Panel lists import from.
+}

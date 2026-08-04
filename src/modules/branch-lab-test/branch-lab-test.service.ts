@@ -48,6 +48,11 @@ const BRANCH_TEST_DROP_KEYS = [
   'branchId',
   'masterDataId',
   'source',
+  // Master Data provenance columns that don't exist on BranchLabTest — must be
+  // dropped or Prisma rejects them as unknown args on create/update.
+  'clonedFromId',
+  'templateSyncedAt',
+  'sourceMasterLabTestId',
   'versionHistory',
   'createdAt',
   'updatedAt',

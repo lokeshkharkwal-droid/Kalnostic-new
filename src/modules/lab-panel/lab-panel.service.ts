@@ -38,6 +38,7 @@ const PANEL_META_KEYS = [
   'branchId',
   'masterDataId',
   'source',
+  'sourceMasterLabPanelId',
   'createdAt',
   'updatedAt',
   'deletedAt',
@@ -729,6 +730,156 @@ export class LabPanelService {
       throw e;
     }
     return this.findById(masterDataId, newId, tenantId);
+  }
+
+  /**
+   * Orchestrate the **Tenant Master Data → Branch Master Data** sync ("Import
+   * Master Data"). Resolves both master datas (get-or-create), then in ONE
+   * transaction: (1) syncs lab tests via `LabTestService.syncTestsIntoBranch`
+   * (update-or-create, full overwrite) building a `tenantTestId → branchTestId`
+   * map, and (2) syncs panels + their membership remapped through that map. All
+   * or nothing. Hand-created branch data cannot exist (branch admins can't
+   * create), so no dedup beyond the provenance/code keys is needed.
+   * @param tenantId tenant scope
+   * @param branchId the target branch (from the JWT)
+   * @param actorId person recorded on version bumps (or null)
+   */
+  async syncTenantToBranch(
+    tenantId: string,
+    branchId: string,
+    actorId: string | null,
+  ): Promise<{
+    tests: { created: number; updated: number };
+    panels: { created: number; updated: number };
+  }> {
+    const tenantMd =
+      await this.masterDataService.getOrCreateTenantMasterData(tenantId);
+    const branchMd = await this.masterDataService.getOrCreateBranchMasterData(
+      tenantId,
+      branchId,
+    );
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const t = await this.labTestService.syncTestsIntoBranch(tx, {
+        tenantId,
+        branchId,
+        tenantMasterDataId: tenantMd.id,
+        branchMasterDataId: branchMd.id,
+        actorId,
+      });
+      const p = await this.syncPanelsIntoBranch(
+        tx,
+        {
+          tenantId,
+          branchId,
+          tenantMasterDataId: tenantMd.id,
+          branchMasterDataId: branchMd.id,
+        },
+        t.testIdMap,
+      );
+      return {
+        tests: { created: t.created, updated: t.updated },
+        panels: { created: p.created, updated: p.updated },
+      };
+    });
+  }
+
+  /**
+   * Sync (update-or-create) all active panels from a Tenant Master Data into a
+   * Branch Master Data, keyed on `sourceMasterLabPanelId` (falling back to
+   * `panelCode`). A matched branch panel is fully overwritten and its membership
+   * rebuilt; an unmatched one is created. Panel membership `labTestId`s are
+   * remapped through `testIdMap` (built by the test sync) to the branch test
+   * copies; members with no mapping are dropped. Runs inside the caller's tx.
+   */
+  private async syncPanelsIntoBranch(
+    tx: Prisma.TransactionClient,
+    params: {
+      tenantId: string;
+      branchId: string;
+      tenantMasterDataId: string;
+      branchMasterDataId: string;
+    },
+    testIdMap: Map<string, string>,
+  ): Promise<{ created: number; updated: number }> {
+    const { tenantId, branchId, tenantMasterDataId, branchMasterDataId } =
+      params;
+    const sourcePanels = await tx.labPanel.findMany({
+      where: { masterDataId: tenantMasterDataId, tenantId, deletedAt: null },
+    });
+    const branchPanels = await tx.labPanel.findMany({
+      where: { masterDataId: branchMasterDataId, tenantId, deletedAt: null },
+    });
+    const bySource = new Map<string, LabPanel>();
+    const byCode = new Map<string, LabPanel>();
+    for (const p of branchPanels) {
+      if (p.sourceMasterLabPanelId) bySource.set(p.sourceMasterLabPanelId, p);
+      byCode.set(p.panelCode, p);
+    }
+
+    let created = 0;
+    let updated = 0;
+    for (const src of sourcePanels) {
+      const members = await tx.labPanelTest.findMany({
+        where: { labPanelId: src.id, tenantId, deletedAt: null },
+        orderBy: { sortOrder: 'asc' },
+      });
+      const joinRows = members
+        .map((m) => ({
+          labTestId: testIdMap.get(m.labTestId),
+          sortOrder: m.sortOrder,
+          isRemovable: m.isRemovable,
+        }))
+        .filter(
+          (
+            r,
+          ): r is {
+            labTestId: string;
+            sortOrder: number;
+            isRemovable: boolean;
+          } => Boolean(r.labTestId),
+        );
+
+      const target = bySource.get(src.id) ?? byCode.get(src.panelCode);
+      let panelId: string;
+      if (target) {
+        await tx.labPanel.update({
+          where: { id: target.id },
+          data: {
+            ...this.stripMeta(src),
+            sourceMasterLabPanelId: src.id,
+          },
+        });
+        await tx.labPanelTest.deleteMany({
+          where: { labPanelId: target.id, tenantId },
+        });
+        panelId = target.id;
+        updated += 1;
+      } else {
+        const panel = await tx.labPanel.create({
+          data: {
+            ...this.stripMeta(src),
+            tenantId,
+            branchId,
+            masterDataId: branchMasterDataId,
+            source: DataSource.TENANT,
+            sourceMasterLabPanelId: src.id,
+          } as Prisma.LabPanelUncheckedCreateInput,
+        });
+        panelId = panel.id;
+        created += 1;
+      }
+      if (joinRows.length) {
+        await tx.labPanelTest.createMany({
+          data: joinRows.map((r) => ({
+            ...r,
+            tenantId,
+            branchId,
+            labPanelId: panelId,
+          })),
+        });
+      }
+    }
+    return { created, updated };
   }
 
   /**

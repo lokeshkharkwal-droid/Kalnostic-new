@@ -345,8 +345,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS master_data_branch_name_active_unique
 
 -- A branch maps to exactly ONE active master data (1:1). Enforced among ACTIVE
 -- rows only, so a branch whose master data is soft-deleted can be re-provisioned.
+-- NULL branch_id (the tenant-level "Tenant Master Data") is excluded by Postgres
+-- from this uniqueness, so tenant-level rows are not constrained here.
 CREATE UNIQUE INDEX IF NOT EXISTS master_data_branch_active_unique
   ON master_data (branch_id) WHERE deleted_at IS NULL;
+
+-- Exactly ONE active tenant-level "Tenant Master Data" (branch_id IS NULL) per
+-- tenant. Sits above the per-branch master datas; auto-created on first access.
+CREATE UNIQUE INDEX IF NOT EXISTS master_data_tenant_singleton_active_unique
+  ON master_data (tenant_id) WHERE branch_id IS NULL AND deleted_at IS NULL;
 
 -- ── lab_test ────────────────────────────────────────────────────────────────────
 ALTER TABLE lab_test ENABLE ROW LEVEL SECURITY;
@@ -1128,6 +1135,15 @@ CREATE POLICY orders_tenant_isolation ON orders
 -- is reusable). `order_code` is system-generated (ORD-00001…) & immutable.
 CREATE UNIQUE INDEX IF NOT EXISTS orders_tenant_code_active_unique
   ON orders (tenant_id, order_code) WHERE deleted_at IS NULL;
+
+-- ── order_notes ───────────────────────────────────────────────────────────────
+-- Append-only Order Overview notes (Order / Sample / Tech tabs).
+ALTER TABLE order_notes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE order_notes FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS order_notes_tenant_isolation ON order_notes;
+CREATE POLICY order_notes_tenant_isolation ON order_notes
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
 
 -- ── order_items ───────────────────────────────────────────────────────────────
 ALTER TABLE order_items ENABLE ROW LEVEL SECURITY;

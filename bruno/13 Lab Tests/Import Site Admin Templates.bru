@@ -1,0 +1,46 @@
+meta {
+  name: Import Site Admin Templates
+  type: http
+  seq: 18
+}
+
+post {
+  url: {{baseUrl}}/lab-tests/import
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "masterDataId": "{{masterDataId}}",
+    "templateIds": ["{{siteAdminLabTestId}}"]
+  }
+}
+
+docs {
+  Bulk-import SITE_ADMIN lab-test templates into the caller's master data.
+  Business JWT. `tenantId`/`branchId` come from the JWT + the target master data;
+  the body carries only `masterDataId` and `templateIds` (1..500, unique).
+
+  Each template is imported in its own transaction (one failure never aborts the
+  batch) and deep-copied like Clone (samples, result params, reference
+  ranges/values → fresh UUIDs, `source = "TENANT"`, `clonedFromId = template.id`,
+  fresh `versionHistory` v1). Returns a summary:
+
+  `{ "imported": [{templateId,labTestId,testName}],
+     "skipped":  [{templateId,testName,reason}],   // already imported here
+     "failed":   [{templateId,testName,reason}] }`  // e.g. name/code conflict
+
+  - `masterDataId` must belong to the caller's tenant → else 404
+    `MASTER_DATA_NOT_FOUND`.
+  - Templates already imported into this master data (`clonedFromId`) are skipped
+    (idempotent re-import).
+}
