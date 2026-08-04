@@ -68,7 +68,10 @@ export type AccessionSampleWithRelations = Prisma.AccessionSampleGetPayload<{
  * departments joined with ", " (null when none resolve); each test also carries
  * its own `department` name.
  */
-export type AccessionSampleDetail = Omit<AccessionSampleWithRelations, 'tests'> & {
+export type AccessionSampleDetail = Omit<
+  AccessionSampleWithRelations,
+  'tests'
+> & {
   departmentLabel: string | null;
   tests: (AccessionSampleWithRelations['tests'][number] & {
     department: string | null;

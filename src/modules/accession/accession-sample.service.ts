@@ -397,10 +397,7 @@ export class AccessionSampleService {
    * @param tenantId tenant scope
    * @throws AccessionSampleNotFoundException if missing/soft-deleted/other tenant
    */
-  async findById(
-    id: string,
-    tenantId: string,
-  ): Promise<AccessionSampleDetail> {
+  async findById(id: string, tenantId: string): Promise<AccessionSampleDetail> {
     const sample = await this.prisma.accessionSample.findFirst({
       where: { id, tenantId, deletedAt: null },
       include: SAMPLE_INCLUDE,
@@ -435,7 +432,9 @@ export class AccessionSampleService {
       deptIdByTest.set(t.id, deptId);
     }
 
-    const deptIds = [...new Set([...deptIdByTest.values()].filter((v): v is string => !!v))];
+    const deptIds = [
+      ...new Set([...deptIdByTest.values()].filter((v): v is string => !!v)),
+    ];
     const nameById = new Map<string, string>();
     if (deptIds.length > 0) {
       const depts = await this.prisma.withTenant(tenantId, (tx) =>
@@ -449,9 +448,16 @@ export class AccessionSampleService {
 
     const tests = sample.tests.map((t) => {
       const deptId = deptIdByTest.get(t.id) ?? null;
-      return { ...t, department: deptId ? (nameById.get(deptId) ?? null) : null };
+      return {
+        ...t,
+        department: deptId ? (nameById.get(deptId) ?? null) : null,
+      };
     });
-    const distinct = [...new Set(tests.map((t) => t.department).filter((v): v is string => !!v))];
+    const distinct = [
+      ...new Set(
+        tests.map((t) => t.department).filter((v): v is string => !!v),
+      ),
+    ];
 
     return {
       ...sample,
