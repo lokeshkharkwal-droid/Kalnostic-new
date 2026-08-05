@@ -1,0 +1,33 @@
+meta {
+  name: Get Tenant Locale
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/tenant/locale
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Returns the caller tenant's locale so the business frontend can convert UTC
+  timestamps into business-local time and format money with the configured
+  currency. Protected by the business JWT (any authenticated business user);
+  scoped to the caller's own tenant from the token — no id in the path.
+
+  Response `data`:
+  - `timezone` — IANA time zone (e.g. `Asia/Kolkata`). Always one of the
+    supported zones; an unsupported stored value falls back to the platform
+    default `Asia/Kolkata`.
+  - `currency` — ISO 4217 code (e.g. `INR`).
+  - `dateFormat` — display date format (e.g. `DD/MM/YYYY`).
+  - `language` — UI language (e.g. `en`).
+
+  Storage is unchanged: all timestamps remain UTC in the DB; this endpoint only
+  supplies the zone/currency used at display time.
+}

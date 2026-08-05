@@ -24,8 +24,9 @@ body:json {
     "adminFirstName": "Alice",
     "adminMiddleName": "M",
     "adminLastName": "Admin",
-    "adminPhone": "+919812345675",
+    "adminPhone": "9812345675",
     "adminEmail": "alice.admin5@acme.test",
+    "adminPassword": "Passw0rd",
     "email": "contact@acme.test",
     "phone": "+919800000000",
     "shortName": "AcmeDx",
@@ -61,22 +62,30 @@ script:post-response {
   if (data) {
     if (data.id) bru.setEnvVar("tenantId", data.id);
     if (data.slug) bru.setEnvVar("tenantSlug", data.slug);
-    // The first business-admin + one-time temp password are returned on create.
+    // The admin's login phone is returned; the password is the one supplied in
+    // the request (no temp password is generated), so capture it from the body.
     const phone = data.adminPhone || (data.admin && data.admin.phone);
-    const temp = data.tempPassword || (data.admin && data.admin.tempPassword);
     if (phone) bru.setEnvVar("adminPhone", phone);
-    if (temp) bru.setEnvVar("adminTempPassword", temp);
+    const body = req.getBody && req.getBody();
+    if (body && body.adminPassword) bru.setEnvVar("adminPassword", body.adminPassword);
   }
 }
 
 docs {
   Create a tenant (business) **and** its first business-admin user. Requires
   `business:create` (operations_admin and above).
-  
-  Returns the tenant plus a **one-time temp password** for the business-admin.
-  The script captures `tenantId`, `tenantSlug`, `adminPhone`, and
-  `adminTempPassword` — used by **Business Auth → Login**.
-  
+
+  The first admin is registered as a full tenant staff member (a
+  `TenantStaffMembership` with `userCode` `USR-00001`, flagged `isPrimaryAdmin`),
+  so they appear in — and can be managed from — the business **Users** list
+  (assign branches/modules/permissions). This primary admin can never be
+  deactivated.
+
+  The business-admin's login **password is chosen in the request** (`adminPassword`)
+  and stored as a non-temp password, so nothing sensitive is returned. The script
+  captures `tenantId`, `tenantSlug`, `adminPhone`, and echoes `adminPassword` from
+  the request body — used by **Business Auth → Login**.
+
   Fields:
   - `name` (required) — business name.
   - `slug` (optional) — lowercase alphanumeric + hyphens, not at start/end
@@ -85,8 +94,11 @@ docs {
   - `adminFirstName` (required) — first business-admin's first name.
   - `adminMiddleName` (optional) — admin's middle name.
   - `adminLastName` (optional) — admin's last name.
-  - `adminPhone` (required) — admin's globally-unique login identifier.
+  - `adminPhone` (required) — admin's globally-unique login identifier; a plain
+    **10-digit** mobile number (no `+91`/country code).
   - `adminEmail` (optional) — admin's email (globally unique if set).
+  - `adminPassword` (**required**) — the admin's login password. Policy: min 8
+    chars, ≥1 uppercase, ≥1 digit.
   - `email` (optional) — tenant contact email.
   - `phone` (optional) — tenant contact phone.
   - `shortName` (optional) — business abbreviation.
@@ -100,13 +112,14 @@ docs {
   - `address` (optional) — free-form JSON object (legacy; structured fields above
     are preferred).
   - `mrnPrefix` (optional) — patient MRN prefix (e.g. "AC" -> "AC-00001").
-  - `settings` (optional) — partial `TenantSettings` JSON; any omitted keys
-    fall back to platform defaults (timezone `Asia/Kolkata`, currency `INR`,
-    date_format `DD/MM/YYYY`, language `en`). Keys:
-    `timezone`, `currency`, `date_format`, `language`, `logo_url` (optional),
-    `primary_color` (optional), `secondary_color` (optional),
-    `app_name` (optional).
-
-  > If the captured temp password is empty, open the create response and copy
-  > the temp password field into the `adminTempPassword` env var manually.
+  - `settings` (**required**) — locale JSON. `timezone` and `currency` are
+    **required** and validated against the supported shortlists (an unsupported
+    value is rejected with 400). `date_format` / `language` are optional and
+    fall back to platform defaults (`DD/MM/YYYY`, `en`). Supported `timezone`
+    values include `UTC`, `Asia/Kolkata`, `Asia/Dubai`, `Europe/London`,
+    `America/New_York`, `America/Los_Angeles`, `Australia/Sydney` (see
+    `SUPPORTED_TIMEZONES`); supported `currency` values include `INR`, `USD`,
+    `GBP`, `EUR`, `AED`, `SGD`, `AUD` (see `SUPPORTED_CURRENCIES`). Keys:
+    `timezone` (required), `currency` (required), `date_format`, `language`,
+    `logo_url`, `primary_color`, `secondary_color`, `app_name`.
 }

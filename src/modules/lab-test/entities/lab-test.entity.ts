@@ -286,3 +286,46 @@ export type LabTestListRow =
   | LabTestNotesRow
   | LabTestVersionControlRow
   | LabTestOverviewRow;
+
+/**
+ * A SITE_ADMIN template row for the tenant's import picker: any listing view row
+ * plus `isImported` — true when the tenant already imported this template into
+ * the target master data (see `LabTestService.findAllTemplates`).
+ */
+export type ImportableTemplateRow = LabTestListRow & { isImported: boolean };
+
+/** Per-template outcome of a bulk import/sync operation. */
+export interface LabTestImportOutcome {
+  /** The SITE_ADMIN template id acted on. */
+  templateId: string;
+  /** The resulting tenant lab-test id (present on success). */
+  labTestId?: string;
+  testName?: string;
+  /** Reason for a skip/failure (absent on success). */
+  reason?: string;
+}
+
+/** Summary returned by `POST /lab-tests/import`. */
+export interface LabTestImportResult {
+  imported: LabTestImportOutcome[];
+  skipped: LabTestImportOutcome[];
+  failed: LabTestImportOutcome[];
+}
+
+/** Per-test outcome of a bulk sync operation. */
+export interface LabTestSyncOutcome {
+  /** The tenant lab-test id acted on. */
+  labTestId: string;
+  testName?: string;
+  /** The SITE_ADMIN template it was synced from. */
+  templateId?: string;
+  /** Reason for a skip/failure (absent on success). */
+  reason?: string;
+}
+
+/** Summary returned by `POST /lab-tests/sync`. */
+export interface LabTestSyncResult {
+  synced: LabTestSyncOutcome[];
+  skipped: LabTestSyncOutcome[];
+  failed: LabTestSyncOutcome[];
+}

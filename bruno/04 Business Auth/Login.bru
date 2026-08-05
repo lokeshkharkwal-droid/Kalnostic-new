@@ -17,14 +17,14 @@ headers {
 body:json {
   {
     "identifier": "{{adminPhone}}",
-    "password": "{{adminTempPassword}}",
+    "password": "{{adminPassword}}",
     "tenantSlug": "{{tenantSlug}}"
   }
 }
 
 vars:pre-request {
   adminPhone: anita.sharma2022@acme.test
-  adminTempPassword: Str0ng@Pass1
+  adminPassword: Str0ng@Pass1
   tenantSlug: acme-diagnostics
 }
 
@@ -49,7 +49,7 @@ docs {
   Returns access (15m) + refresh (30d) tokens. Captures `businessAccessToken`
   and `businessRefreshToken`.
   
-  Defaults here use the tenant admin phone + temp password captured by
-  **Create Tenant**. On first login the temp password may need changing via
-  **Change Password**.
+  Defaults here use the tenant admin phone + password captured by
+  **Create Tenant** (the password is chosen by SiteAdmin on create, so it is a
+  normal non-temp password).
 }

@@ -50,6 +50,9 @@ const BRANCH_PANEL_DROP_KEYS = [
   'branchId',
   'masterDataId',
   'source',
+  // Master Data provenance column that doesn't exist on BranchLabPanel — must be
+  // dropped or Prisma rejects it as an unknown arg on create/update.
+  'sourceMasterLabPanelId',
   'createdAt',
   'updatedAt',
   'deletedAt',

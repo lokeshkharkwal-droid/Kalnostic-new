@@ -1,0 +1,27 @@
+meta {
+  name: Get Tenant Master Data
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/master-data/tenant
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("tenantMasterDataId", data.id);
+}
+
+docs {
+  Resolve (get-or-create) the tenant-level **Tenant Master Data** singleton — the
+  single business-admin catalogue with `branch_id = NULL`, always named "Tenant
+  Master Data". Site Admin lab-test imports target this record. One per tenant
+  (partial-unique index). Captures `tenantMasterDataId`.
+}

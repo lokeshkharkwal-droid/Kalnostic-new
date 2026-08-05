@@ -1338,6 +1338,11 @@ model TenantStaffMembership {
   authRole   AuthRole?   @relation(fields: [authRoleId], references: [id])
   status     StaffStatus @default(ACTIVE) // tenant-global account status
 
+  // True only for the default Business Admin auto-created with the tenant.
+  // This membership can never be deactivated (guards against locking the
+  // business out of its own account); see UsersService.deactivateUser.
+  isPrimaryAdmin Boolean @default(false) @map("is_primary_admin")
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -2157,9 +2162,11 @@ model SiteAdminAuditLog {
 /// deleted. Name is unique per branch among active rows (partial unique index in
 /// prisma/rls.sql). RLS policy in prisma/rls.sql.
 model MasterData {
-  id          String  @id @default(uuid())
-  tenantId    String  @map("tenant_id")
-  branchId    String  @map("branch_id")
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  // NULL for the tenant-level "Tenant Master Data" singleton (one per tenant);
+  // set for per-branch "Branch Master Data" (1:1 with a branch).
+  branchId    String? @map("branch_id")
   name        String
   description String?
 
@@ -2191,6 +2198,19 @@ model LabTest {
 
   // Origin: TENANT (default, tenant-scoped) or SITE_ADMIN (global template).
   source DataSource @default(TENANT)
+
+  // Provenance for Site Admin imports. `clonedFromId` points to the SITE_ADMIN
+  // template LabTest this tenant row was imported from (NULL = hand-created);
+  // it drives duplicate-prevention on import and re-pull on sync.
+  // `templateSyncedAt` records the last successful sync from that template.
+  clonedFromId     String?   @map("cloned_from_id")
+  templateSyncedAt DateTime? @map("template_synced_at")
+
+  // Provenance for the Tenant→Branch master-data sync. On a Branch Master Data
+  // test, points to the Tenant Master Data LabTest it was synced from (NULL for
+  // Tenant-MD tests and hand-created rows). Distinct from `clonedFromId`
+  // (SITE_ADMIN origin) so the two sync layers never collide.
+  sourceMasterLabTestId String? @map("source_master_lab_test_id")
 
   // Identity
   testName        String  @map("test_name")
@@ -2306,6 +2326,8 @@ model LabTest {
   @@index([mandatorySubcatId])
   @@index([isActive])
   @@index([source])
+  @@index([clonedFromId])
+  @@index([sourceMasterLabTestId])
   @@index([deletedAt])
   @@map("lab_test")
 }
@@ -2494,6 +2516,11 @@ model LabPanel {
   // Origin: TENANT (default, tenant-scoped) or SITE_ADMIN (global template).
   source DataSource @default(TENANT)
 
+  // Provenance for the Tenant→Branch master-data sync. On a Branch Master Data
+  // panel, points to the Tenant Master Data LabPanel it was synced from (NULL for
+  // Tenant-MD panels and hand-created rows).
+  sourceMasterLabPanelId String? @map("source_master_lab_panel_id")
+
   // Identity
   bannerImage String? @map("banner_image")
   panelName   String  @map("panel_name")
@@ -2558,6 +2585,7 @@ model LabPanel {
   @@index([categoryId])
   @@index([isActive])
   @@index([source])
+  @@index([sourceMasterLabPanelId])
   @@index([deletedAt])
   @@map("lab_panels")
 }
@@ -5582,6 +5610,10 @@ model Order {
   // Accession samples generated for this order (one per required sample/tube).
   accessionSamples AccessionSample[]
 
+  // Append-only note history surfaced on the Order Overview page's
+  // Order / Sample / Tech tabs (one row per note, never overwritten).
+  notes OrderNote[]
+
   // Home-visit sample-collection lifecycle (1:1) — created when a confirmed order
   // is a home visit with an assigned phlebotomist. Drives the Phlebotomist module's
   // Collection Schedule; the FK lives on `HomeVisitCollection`.
@@ -5607,6 +5639,39 @@ model Order {
   @@index([billId])
   @@index([deletedAt])
   @@map("orders")
+}
+
+/// Which Order Overview note tab a note belongs to. ORDER / SAMPLE / TECH mirror
+/// the three plain note tabs on the Order Overview page — parallel to
+/// `LabReportNoteCategory`'s ORDER/SAMPLE/TECH, but keyed to the order (not a
+/// lab report) so notes can be added from the moment the order is created.
+enum OrderNoteCategory {
+  ORDER
+  SAMPLE
+  TECH
+}
+
+/// Append-only note attached to an order (Order Overview → Order / Sample / Tech
+/// tabs). One row per note — notes are never overwritten, giving a full history
+/// with author + timestamp. `createdBy` is a logical `Person.id` (same unenforced
+/// -reference convention as `LabReportNote.createdBy`).
+model OrderNote {
+  id       String            @id @default(uuid())
+  tenantId String            @map("tenant_id")
+  branchId String?           @map("branch_id")
+  orderId  String            @map("order_id")
+  order    Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  category OrderNoteCategory
+  body     String
+
+  createdBy String   @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([orderId])
+  @@index([category])
+  @@map("order_notes")
 }
 
 /// Junction linking an order to its selected catalogue entries, so one order can

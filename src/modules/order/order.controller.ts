@@ -15,6 +15,8 @@ import { OrderService } from './order.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { ListOrdersDto } from './dto/list-orders.dto';
+import { CreateOrderNoteDto } from './dto/create-order-note.dto';
+import { ListOrderNotesDto } from './dto/list-order-notes.dto';
 import { PrintOrderDto } from './dto/print-order.dto';
 import { CollectOrderItemDto } from './dto/collect-order-item.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
@@ -63,6 +65,43 @@ export class OrderController {
   @Get(':id')
   findOne(@CurrentTenant() tenantId: string, @Param('id') id: string) {
     return this.orderService.findById(id, tenantId);
+  }
+
+  /**
+   * List an order's notes (Order Overview → Order / Sample / Tech tabs),
+   * newest-first. Omit `category` for all three; the SAMPLE stream also merges
+   * the order's read-only accession sample notes.
+   */
+  @Get(':id/notes')
+  findNotes(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+    @Query() query: ListOrderNotesDto,
+  ) {
+    return this.orderService.findNotes(id, tenantId, query);
+  }
+
+  /** Add a note to an order (append-only — never overwrites existing notes). */
+  @Post(':id/notes')
+  @Audit({
+    module: AuditModule.ORDER,
+    action: AuditAction.CREATE,
+    description: 'Added an order/sample/tech note',
+  })
+  createNote(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Param('id') id: string,
+    @Body() dto: CreateOrderNoteDto,
+  ) {
+    return this.orderService.createNote(
+      id,
+      tenantId,
+      profile.branchId,
+      personId,
+      dto,
+    );
   }
 
   /**

@@ -21,6 +21,9 @@ import { PaginatedResult } from '../../common/dto/response.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { ListOrdersDto } from './dto/list-orders.dto';
+import { CreateOrderNoteDto } from './dto/create-order-note.dto';
+import type { OrderNoteCategoryValue } from './dto/create-order-note.dto';
+import { ListOrderNotesDto } from './dto/list-order-notes.dto';
 import { OrderItemDto } from './dto/order-item.dto';
 import { OrderDiagnosticsDto } from './dto/order-diagnostics.dto';
 import { OrderOpdDto } from './dto/order-opd.dto';
@@ -74,6 +77,24 @@ import { PaymentOverpaymentException } from '../payment-details/exceptions/payme
  * radiologist/phlebotomist references are staff `Person`s (validated as active
  * persons). Reads always filter `{ tenantId, deletedAt: null }`.
  */
+/**
+ * One row in an Order Overview note stream. Unifies order-store notes
+ * (`source: 'ORDER'`, editable-in-future) and the read-only accession sample
+ * notes merged into the SAMPLE tab (`source: 'ACCESSION'`), so the frontend
+ * renders one chronological history per tab regardless of origin.
+ */
+export interface OrderNoteView {
+  id: string;
+  category: OrderNoteCategoryValue;
+  body: string;
+  createdByName: string | null;
+  createdAt: Date;
+  source: 'ORDER' | 'ACCESSION';
+  readonly: boolean;
+  /** Only set for accession-sourced SAMPLE notes (e.g. 'collect', 'accept'). */
+  action?: string;
+}
+
 @Injectable()
 export class OrderService {
   constructor(
@@ -268,6 +289,21 @@ export class OrderService {
             externalReferralId: dto.externalReferralId ?? null,
           },
         });
+        // Seed the create-form's single `orderNotes` string as the first entry
+        // of the Order Notes history so the Order Overview tab shows it alongside
+        // any notes added later (append-only — see OrderNote / createNote).
+        if (dto.orderNotes && personId) {
+          await tx.orderNote.create({
+            data: {
+              tenantId,
+              branchId,
+              orderId: order.id,
+              category: 'ORDER',
+              body: dto.orderNotes,
+              createdBy: personId,
+            },
+          });
+        }
         if (dto.items?.length) {
           await tx.orderItem.createMany({
             data: dto.items.map((i) => ({
@@ -381,6 +417,185 @@ export class OrderService {
       throw new OrderNotFoundException(id);
     }
     return order;
+  }
+
+  // ── Order Overview notes (Order / Sample / Tech tabs) ───────────────────────
+  //
+  // Append-only note history keyed to the order. Mirrors the lab-report notes
+  // feature (LABORATORY.docx §4.2) but attached to the order, so notes can be
+  // added from the Order Overview page the moment an order is created. The
+  // SAMPLE stream additionally merges the order's accession sample notes
+  // (read-only) so the two histories connect.
+
+  /**
+   * Add a note to an order (Order Overview → Order / Sample / Tech tab). Creates
+   * one append-only `OrderNote` row — existing notes are never overwritten.
+   * @param id order id
+   * @param tenantId tenant scope (from JWT)
+   * @param branchId active branch (from the active profile), stored on the note
+   * @param actorId author `Person.id` (from JWT)
+   * @param dto category + body
+   * @returns the created note in the unified `OrderNoteView` shape
+   * @throws OrderNotFoundException if the order is missing/soft-deleted/other tenant
+   */
+  async createNote(
+    id: string,
+    tenantId: string,
+    branchId: string | null,
+    actorId: string,
+    dto: CreateOrderNoteDto,
+  ): Promise<OrderNoteView> {
+    await this.assertOrderExists(id, tenantId);
+    const note = await this.prisma.orderNote.create({
+      data: {
+        tenantId,
+        branchId,
+        orderId: id,
+        category: dto.category,
+        body: dto.body,
+        createdBy: actorId,
+      },
+    });
+    const nameById = await this.resolveActorNames([note.createdBy]);
+    return {
+      id: note.id,
+      category: note.category,
+      body: note.body,
+      createdByName: nameById.get(note.createdBy) ?? note.createdBy,
+      createdAt: note.createdAt,
+      source: 'ORDER',
+      readonly: false,
+    };
+  }
+
+  /**
+   * List an order's notes, newest-first. Without `category`, returns all three
+   * tabs' notes together. For the SAMPLE stream (requested explicitly or as part
+   * of the unfiltered set) the order's accession sample notes are merged in
+   * read-only, so the Order Overview Sample tab shows the complete sample history.
+   * @param id order id
+   * @param tenantId tenant scope (from JWT)
+   * @param query optional category filter
+   * @returns notes in the unified `OrderNoteView` shape, `createdAt` descending
+   * @throws OrderNotFoundException if the order is missing/soft-deleted/other tenant
+   */
+  async findNotes(
+    id: string,
+    tenantId: string,
+    query: ListOrderNotesDto,
+  ): Promise<OrderNoteView[]> {
+    await this.assertOrderExists(id, tenantId);
+    const rows = await this.prisma.orderNote.findMany({
+      where: {
+        orderId: id,
+        tenantId,
+        ...(query.category ? { category: query.category } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    const nameById = await this.resolveActorNames(rows.map((r) => r.createdBy));
+    const notes: OrderNoteView[] = rows.map((r) => ({
+      id: r.id,
+      category: r.category,
+      body: r.body,
+      createdByName: nameById.get(r.createdBy) ?? r.createdBy,
+      createdAt: r.createdAt,
+      source: 'ORDER',
+      readonly: false,
+    }));
+
+    if (!query.category || query.category === 'SAMPLE') {
+      notes.push(...(await this.loadAccessionSampleNotes(id, tenantId)));
+    }
+
+    notes.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    return notes;
+  }
+
+  /**
+   * Loads the read-only accession sample notes for an order — every
+   * `AccessionStatusHistory` row (with a note) across the order's samples, mapped
+   * into the SAMPLE `OrderNoteView` shape. These come from the accession page's
+   * Collect Sample / status-update actions (CLAUDE.md §4 accession flow).
+   */
+  private async loadAccessionSampleNotes(
+    orderId: string,
+    tenantId: string,
+  ): Promise<OrderNoteView[]> {
+    const samples = await this.prisma.accessionSample.findMany({
+      where: { orderId, tenantId, deletedAt: null },
+      select: { id: true },
+    });
+    if (samples.length === 0) return [];
+
+    const history = await this.prisma.accessionStatusHistory.findMany({
+      where: {
+        tenantId,
+        sampleId: { in: samples.map((s) => s.id) },
+        notes: { not: null },
+        deletedAt: null,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (history.length === 0) return [];
+
+    const nameById = await this.resolveActorNames(
+      history.map((h) => h.changedBy),
+    );
+    return history.map((h) => ({
+      id: h.id,
+      category: 'SAMPLE' as const,
+      body: h.notes as string,
+      createdByName: h.changedBy
+        ? (nameById.get(h.changedBy) ?? h.changedBy)
+        : null,
+      createdAt: h.createdAt,
+      source: 'ACCESSION' as const,
+      readonly: true,
+      action: h.action,
+    }));
+  }
+
+  /**
+   * Lightweight existence guard for note reads/writes — asserts the order belongs
+   * to the caller's tenant and is active, without loading its full graph.
+   * @throws OrderNotFoundException if missing/soft-deleted/other tenant
+   */
+  private async assertOrderExists(id: string, tenantId: string): Promise<void> {
+    const order = await this.prisma.order.findFirst({
+      where: { id, tenantId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!order) {
+      throw new OrderNotFoundException(id);
+    }
+  }
+
+  /**
+   * Resolves logical `Person.id` actor references (an OrderNote's `createdBy`, an
+   * accession history's `changedBy`) to display names, one batched lookup —
+   * same unenforced-reference convention as the lab-report notes, falling back to
+   * the raw id when a person can't be resolved.
+   */
+  private async resolveActorNames(
+    actorIds: Array<string | null | undefined>,
+  ): Promise<Map<string, string>> {
+    const ids = [...new Set(actorIds.filter((x): x is string => Boolean(x)))];
+    const nameById = new Map<string, string>();
+    if (ids.length === 0) return nameById;
+
+    const persons = await this.prisma.person.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, firstName: true, middleName: true, lastName: true },
+    });
+    for (const p of persons) {
+      const name = [p.firstName, p.middleName, p.lastName]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+      nameById.set(p.id, name || p.id);
+    }
+    return nameById;
   }
 
   // ── Print (template-driven PDF) ─────────────────────────────────────────────

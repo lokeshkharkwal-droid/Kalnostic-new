@@ -195,6 +195,18 @@ export class StaffMembershipNotFoundException extends KaltrosException {
   }
 }
 
+/** 403 — the tenant's default (primary) business admin cannot be deactivated. */
+export class CannotDeactivatePrimaryAdminException extends KaltrosException {
+  constructor(personId: string, tenantId: string) {
+    super(
+      'CANNOT_DEACTIVATE_PRIMARY_ADMIN',
+      'The primary business admin cannot be deactivated',
+      { personId, tenantId },
+      HttpStatus.FORBIDDEN,
+    );
+  }
+}
+
 /** 422 — attempt to change an immutable field (username, email, user code). */
 export class ImmutableFieldException extends KaltrosException {
   constructor(field: string) {

@@ -19,4 +19,9 @@ docs {
   blocking login to this tenant. Branch statuses and all records are preserved
   (no hard delete). Cross-tenant safe: the same person stays usable at other
   tenants.
+
+  The tenant's default (primary) business admin — auto-created with the tenant
+  and flagged `isPrimaryAdmin` — can never be deactivated. Attempting to do so
+  (here, or via a status=INACTIVE on Update User) returns
+  403 `CANNOT_DEACTIVATE_PRIMARY_ADMIN`.
 }

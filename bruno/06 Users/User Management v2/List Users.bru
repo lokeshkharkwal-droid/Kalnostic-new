@@ -29,9 +29,11 @@ auth:bearer {
 docs {
   Paginated staff list. Each row: `userCode`, `employeeName`, `username`,
   `email`, `mobile`, `role`, `assignedBranches` (names only — back-compat),
-  `branches`, `defaultBranch`, `defaultModule`, `status`. Since roles are
-  per-branch, `role` shows the membership's primary role, falling back to the
-  default branch's role.
+  `branches`, `defaultBranch`, `defaultModule`, `status`, `isPrimaryAdmin`.
+  Since roles are per-branch, `role` shows the membership's primary role,
+  falling back to the default branch's role. `isPrimaryAdmin` is `true` for the
+  tenant's default admin (auto-created with the tenant); the UI disables its
+  deactivate control since that user can never be deactivated.
 
   `branches[]` gives the full per-assignment detail:
   `{ branchId, branchName, roleKey, roleLabel, branchStatus, isDefault, moduleId,

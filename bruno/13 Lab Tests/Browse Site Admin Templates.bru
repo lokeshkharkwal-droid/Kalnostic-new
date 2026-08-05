@@ -5,7 +5,7 @@ meta {
 }
 
 get {
-  url: {{baseUrl}}/lab-tests/templates?page=1&limit=20&search=
+  url: {{baseUrl}}/lab-tests/templates?page=1&limit=20&search=&sortBy=testName&sortOrder=asc&masterDataId={{masterDataId}}&notImportedOnly=false
   body: none
   auth: bearer
 }
@@ -14,6 +14,10 @@ params:query {
   page: 1
   limit: 20
   search:
+  sortBy: testName
+  sortOrder: asc
+  masterDataId: {{masterDataId}}
+  notImportedOnly: false
 }
 
 auth:bearer {
@@ -22,10 +26,18 @@ auth:bearer {
 
 docs {
   Browse SITE_ADMIN global lab-test templates (read-only) so a business can pick
-  one to clone. Business JWT (no per-route RBAC yet). Returns only
-  `source = SITE_ADMIN` rows — never tenant data. Query: `page` / `limit`,
-  `search` (testName/testCode), `status` (`ACTIVE` | `INACTIVE`).
+  one to import. Business JWT (no per-route RBAC yet). Returns only
+  `source = SITE_ADMIN` rows — never tenant data.
 
-  Declared before the `:id` routes so `templates` isn't matched as an id. Clone a
-  chosen template with "Clone Site Admin Template".
+  Query:
+  - `page` / `limit`, `search` (testName/testCode), `status` (`ACTIVE` | `INACTIVE`).
+  - `sortBy` (`testName` | `testCode` | `priceMsrp` | `createdAt`) + `sortOrder`
+    (`asc` | `desc`); defaults to `createdAt desc`.
+  - `masterDataId` (optional, must belong to the caller's tenant): annotates each
+    row with `isImported` (an active tenant test in that master data already has
+    `clonedFromId = template.id`).
+  - `notImportedOnly=true` (with `masterDataId`): hides already-imported templates.
+
+  Declared before the `:id` routes so `templates` isn't matched as an id. Import
+  chosen templates in bulk with "Import Site Admin Templates".
 }
