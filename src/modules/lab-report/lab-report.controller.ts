@@ -22,6 +22,7 @@ import { ListLabReportsDto } from './dto/list-lab-reports.dto';
 import { TatSummaryQueryDto } from './dto/tat-summary-query.dto';
 import { UpsertResultValuesDto } from './dto/upsert-result-values.dto';
 import { ReferenceRangeQueryDto } from './dto/reference-range-query.dto';
+import { ReferenceRangeMethodsQueryDto } from './dto/reference-range-methods-query.dto';
 import { TrendReportQueryDto } from './dto/trend-report-query.dto';
 import { PrintReportDto } from './dto/print-report.dto';
 import {
@@ -205,6 +206,21 @@ export class LabReportController {
       profile.branchId,
       personId,
       dto,
+    );
+  }
+
+  @Get(':id/reference-range/methods')
+  listMethodsForParam(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+    @Query() query: ReferenceRangeMethodsQueryDto,
+  ) {
+    return this.labReportService.listMethodsForParam(
+      id,
+      tenantId,
+      profile.branchId,
+      query,
     );
   }
 
