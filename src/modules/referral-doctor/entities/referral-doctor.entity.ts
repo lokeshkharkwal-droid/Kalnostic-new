@@ -119,7 +119,7 @@ export type ReferralDoctorListRow = Prisma.ReferralDoctorGetPayload<{
 export interface ReferralDoctorListItem {
   id: string;
   fullName: string;
-  mobileNumber: string;
+  mobileNumber: string | null;
   email: string | null;
   department: ClassificationRef | null;
   specialty: ClassificationRef | null;

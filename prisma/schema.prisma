@@ -3939,7 +3939,7 @@ model ReferralDoctor {
   lastName      String?   @map("last_name")
   gender        Gender    @default(MALE)
   dateOfBirth   DateTime? @map("date_of_birth") @db.Date
-  mobileNumber  String    @map("mobile_number")
+  mobileNumber  String?   @map("mobile_number")
   email         String?
   aadhaarNumber String?   @map("aadhaar_number")
   panNumber     String?   @map("pan_number")

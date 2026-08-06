@@ -250,7 +250,7 @@ export class ReferralDoctorService {
       lastName: dto.lastName ?? null,
       gender: dto.gender ?? undefined,
       dateOfBirth: this.toDate(dto.dateOfBirth),
-      mobileNumber: dto.mobileNumber,
+      mobileNumber: dto.mobileNumber ?? null,
       email: dto.email ?? null,
       aadhaarNumber: dto.aadhaarNumber ?? null,
       panNumber: dto.panNumber ?? null,
