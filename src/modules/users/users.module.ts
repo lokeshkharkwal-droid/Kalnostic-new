@@ -8,6 +8,7 @@ import { SiteAdminRegisteredUsersController } from './siteadmin-registered-users
 import { RadiologyTechnicianOptionsController } from './radiology-technician-options.controller';
 import { RadiologistOptionsController } from './radiologist-options.controller';
 import { PhlebotomistOptionsController } from './phlebotomist-options.controller';
+import { LabTechnicianOptionsController } from './lab-technician-options.controller';
 import { BranchUserOptionsController } from './branch-user-options.controller';
 import { UsersService } from './users.service';
 
@@ -25,6 +26,7 @@ import { UsersService } from './users.service';
     RadiologyTechnicianOptionsController,
     RadiologistOptionsController,
     PhlebotomistOptionsController,
+    LabTechnicianOptionsController,
     BranchUserOptionsController,
   ],
   providers: [UsersService],
