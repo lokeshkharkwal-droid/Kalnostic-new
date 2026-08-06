@@ -14,9 +14,14 @@ export interface BranchLabTestConfigSnapshot {
   resultParams: LabTestResultParamWithRefs[];
 }
 
-/** Result of an import: how many source tests were copied vs skipped (already present). */
+/**
+ * Result of an import into the Walk-in list: how many source tests were newly
+ * copied, how many existing rows were updated (re-snapshotted), and how many
+ * source ids were skipped (not in the branch's master data).
+ */
 export interface BranchLabTestImportResult {
   copied: number;
+  updated: number;
   skipped: number;
 }
 

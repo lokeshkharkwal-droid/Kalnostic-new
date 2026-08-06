@@ -1018,8 +1018,11 @@ DROP INDEX IF EXISTS branch_lab_test_code_active_unique;
 -- Variant model: rows sharing a `source_lab_test_id` form a group (one imported
 -- original + its duplicates). Exactly ONE active row per group may be the default
 -- (used for order creation). Prisma can't express partial unique indexes.
+-- Default-per-source is scoped PER LIST: each pricing list owns its own copy of a
+-- source test (each `is_default` within its list), so `list_id` is part of the key.
+DROP INDEX IF EXISTS branch_lab_test_default_per_source_unique;
 CREATE UNIQUE INDEX IF NOT EXISTS branch_lab_test_default_per_source_unique
-  ON branch_lab_tests (tenant_id, branch_id, source_lab_test_id)
+  ON branch_lab_tests (tenant_id, branch_id, list_id, source_lab_test_id)
   WHERE is_default AND deleted_at IS NULL;
 
 -- Price-ordering CHECK constraints, mirroring lab_test (defence in depth).
@@ -1046,8 +1049,10 @@ CREATE POLICY branch_lab_panels_tenant_isolation ON branch_lab_panels
 DROP INDEX IF EXISTS branch_lab_panel_name_active_unique;
 DROP INDEX IF EXISTS branch_lab_panel_code_active_unique;
 
+-- Default-per-source is scoped PER LIST (see branch_lab_tests note above).
+DROP INDEX IF EXISTS branch_lab_panel_default_per_source_unique;
 CREATE UNIQUE INDEX IF NOT EXISTS branch_lab_panel_default_per_source_unique
-  ON branch_lab_panels (tenant_id, branch_id, source_lab_panel_id)
+  ON branch_lab_panels (tenant_id, branch_id, list_id, source_lab_panel_id)
   WHERE is_default AND deleted_at IS NULL;
 
 -- Price-ordering CHECK constraints, mirroring lab_panels (defence in depth).
@@ -1073,6 +1078,42 @@ CREATE POLICY branch_lab_panel_tests_tenant_isolation ON branch_lab_panel_tests
 CREATE UNIQUE INDEX IF NOT EXISTS branch_lab_panel_test_active_unique
   ON branch_lab_panel_tests (tenant_id, branch_lab_panel_id, branch_lab_test_id)
   WHERE deleted_at IS NULL;
+
+-- ── branch_lab_test_lists ─────────────────────────────────────────────────────
+ALTER TABLE branch_lab_test_lists ENABLE ROW LEVEL SECURITY;
+ALTER TABLE branch_lab_test_lists FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS branch_lab_test_lists_tenant_isolation ON branch_lab_test_lists;
+CREATE POLICY branch_lab_test_lists_tenant_isolation ON branch_lab_test_lists
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- List name unique per branch, and at most ONE default (Walk-in) list per branch,
+-- among ACTIVE rows (Prisma can't express partial unique indexes).
+CREATE UNIQUE INDEX IF NOT EXISTS branch_lab_test_list_name_active_unique
+  ON branch_lab_test_lists (tenant_id, branch_id, name) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS branch_lab_test_list_default_active_unique
+  ON branch_lab_test_lists (tenant_id, branch_id) WHERE is_default AND deleted_at IS NULL;
+
+-- ── branch_lab_panel_lists ────────────────────────────────────────────────────
+ALTER TABLE branch_lab_panel_lists ENABLE ROW LEVEL SECURITY;
+ALTER TABLE branch_lab_panel_lists FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS branch_lab_panel_lists_tenant_isolation ON branch_lab_panel_lists;
+CREATE POLICY branch_lab_panel_lists_tenant_isolation ON branch_lab_panel_lists
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+CREATE UNIQUE INDEX IF NOT EXISTS branch_lab_panel_list_name_active_unique
+  ON branch_lab_panel_lists (tenant_id, branch_id, name) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS branch_lab_panel_list_default_active_unique
+  ON branch_lab_panel_lists (tenant_id, branch_id) WHERE is_default AND deleted_at IS NULL;
+
+-- ── referral_list_assignments ─────────────────────────────────────────────────
+ALTER TABLE referral_list_assignments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE referral_list_assignments FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS rla_tenant_isolation ON referral_list_assignments;
+CREATE POLICY rla_tenant_isolation ON referral_list_assignments
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
 
 -- ── support_infos (platform-level, NO RLS — like siteadmin_users) ───────────────
 -- SiteAdmin-authored help/support content shared across all tenants; it sits

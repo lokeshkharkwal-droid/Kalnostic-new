@@ -14,6 +14,9 @@ import { CreateInternalReferralDto } from './dto/create-internal-referral.dto';
 import { UpdateInternalReferralDto } from './dto/update-internal-referral.dto';
 import { ListInternalReferralsDto } from './dto/list-internal-referrals.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
+import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
+import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
@@ -37,9 +40,16 @@ export class InternalReferralController {
   })
   create(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
     @Body() dto: CreateInternalReferralDto,
   ) {
-    return this.internalReferralService.create(tenantId, dto);
+    return this.internalReferralService.create(
+      tenantId,
+      profile.branchId,
+      personId,
+      dto,
+    );
   }
 
   /**
@@ -58,8 +68,16 @@ export class InternalReferralController {
    * Fetch one internal referral by id (full record incl. assigned lab tests/panels).
    */
   @Get(':id')
-  findOne(@CurrentTenant() tenantId: string, @Param('id') id: string) {
-    return this.internalReferralService.findById(id, tenantId);
+  findOne(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+  ) {
+    return this.internalReferralService.findById(
+      id,
+      tenantId,
+      profile.branchId,
+    );
   }
 
   /**
@@ -73,10 +91,18 @@ export class InternalReferralController {
   })
   update(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
     @Param('id') id: string,
     @Body() dto: UpdateInternalReferralDto,
   ) {
-    return this.internalReferralService.update(id, tenantId, dto);
+    return this.internalReferralService.update(
+      id,
+      tenantId,
+      profile.branchId,
+      personId,
+      dto,
+    );
   }
 
   /**

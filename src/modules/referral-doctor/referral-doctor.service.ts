@@ -6,6 +6,7 @@ import {
   Prisma,
   ReferralDoctorStatus,
   ReferralPaymentMode,
+  ReferralType,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
@@ -13,6 +14,7 @@ import { BranchService } from '../branch/branch.service';
 import { CategoryService } from '../category/category.service';
 import { DepartmentService } from '../department/department.service';
 import { SubCategoryService } from '../sub-category/sub-category.service';
+import { ReferralListAssignmentService } from '../referral-list/referral-list-assignment.service';
 import { ReferralPanelSettingsService } from '../referral-panel-settings/referral-panel-settings.service';
 import { CreateReferralDoctorDto } from './dto/create-referral-doctor.dto';
 import { UpdateReferralDoctorDto } from './dto/update-referral-doctor.dto';
@@ -21,7 +23,6 @@ import { ReferralDoctorQualificationDto } from './dto/referral-doctor-qualificat
 import { ReferralDoctorExperienceDto } from './dto/referral-doctor-experience.dto';
 import {
   BonusSlab,
-  ClassificationRef,
   CommissionSlab,
   REFERRAL_DOCTOR_DETAIL_INCLUDE,
   REFERRAL_DOCTOR_LIST_SELECT,
@@ -32,16 +33,8 @@ import {
 } from './entities/referral-doctor.entity';
 import {
   InvalidCommissionConfigException,
-  InvalidLabPanelRefException,
-  InvalidLabTestRefException,
   ReferralDoctorNotFoundException,
 } from './exceptions/referral-doctor.exceptions';
-
-/** Assigned lab test/panel references for one referral doctor, keyed by doctor id. */
-interface LabLists {
-  labTestList: ClassificationRef[];
-  labPanelList: ClassificationRef[];
-}
 
 /** The effective commission settings used for validation + normalisation. */
 interface CommissionEffective {
@@ -72,11 +65,13 @@ interface CommissionColumns {
  * soft-deleted rows. Classification ids (`departmentId`/`categoryId`/
  * `subCategoryId`) are validated against the caller's tenant via the injected
  * Department/Category/SubCategory services (CLAUDE.md rule #3 — never import
- * another service's file directly). Qualifications, experiences, and assigned lab
- * tests/panels are managed via the parent (replace-on-update). Commission/incentive
- * config is validated against the effective (merged, on update) state and the
- * stored data is normalised so dependent fields are nulled out when they don't
- * apply. `fullName`/`age`/per-experience `duration` are derived here, not stored.
+ * another service's file directly). Qualifications and experiences are managed via
+ * the parent (replace-on-update); the assigned Lab Test / Lab Panel List is a
+ * per-branch `ReferralListAssignment` managed via `ReferralListAssignmentService`.
+ * Commission/incentive config is validated against the effective (merged, on update)
+ * state and the stored data is normalised so dependent fields are nulled out when
+ * they don't apply. `fullName`/`age`/per-experience `duration` are derived here, not
+ * stored.
  */
 @Injectable()
 export class ReferralDoctorService {
@@ -87,6 +82,7 @@ export class ReferralDoctorService {
     private readonly subCategoryService: SubCategoryService,
     private readonly referralPanelSettingsService: ReferralPanelSettingsService,
     private readonly branchService: BranchService,
+    private readonly listAssignmentService: ReferralListAssignmentService,
   ) {}
 
   /**
@@ -197,22 +193,25 @@ export class ReferralDoctorService {
   }
 
   /**
-   * Register a referral doctor with its qualifications, experiences, and assigned
-   * lab tests/panels in one transaction. Classification links (if supplied) are
-   * validated to be active rows of the same tenant; commission/incentive config is
-   * validated and normalised; assigned `labTestId`/`labPanelId`s are validated to
-   * be active items in the tenant.
+   * Register a referral doctor with its qualifications and experiences in one
+   * transaction. Classification links (if supplied) are validated to be active rows
+   * of the same tenant; commission/incentive config is validated and normalised.
+   * When an active branch is supplied, the chosen per-branch Lab Test / Lab Panel
+   * List is attached via `ReferralListAssignmentService`.
    * @param tenantId owning tenant (from the JWT, never the body)
+   * @param branchId active branch from the JWT (null → no list assignment written)
+   * @param actorId person id recorded as created-by on the list assignment (or null)
    * @param dto validated payload
    * @returns the created referral doctor with its children and derived fields
    * @throws DepartmentNotFoundException / CategoryNotFoundException /
    *   SubCategoryNotFoundException if a supplied classification id isn't an active
    *   row of this tenant
    * @throws InvalidCommissionConfigException on a commission/incentive invariant
-   * @throws InvalidLabTestRefException / InvalidLabPanelRefException on a bad ref
    */
   async create(
     tenantId: string,
+    branchId: string | null,
+    actorId: string | null,
     dto: CreateReferralDoctorDto,
   ): Promise<ReferralDoctorDetail> {
     await this.validateClassification(
@@ -237,10 +236,6 @@ export class ReferralDoctorService {
     const incentive = dto.isIncentiveBonusApplicable ?? false;
     const bonusSlabs: BonusSlab[] = dto.bonusSlabs ?? [];
     this.assertBonus(incentive, bonusSlabs);
-
-    const testIds = dto.labTestIds ?? [];
-    const panelIds = dto.labPanelIds ?? [];
-    await this.assertLabRefs(tenantId, testIds, panelIds);
 
     const data: Prisma.ReferralDoctorUncheckedCreateInput = {
       tenantId,
@@ -295,10 +290,22 @@ export class ReferralDoctorService {
 
     const createdId = await this.prisma.withTenant(tenantId, async (tx) => {
       const doctor = await tx.referralDoctor.create({ data });
-      await this.writeLabRefs(tx, tenantId, doctor.id, testIds, panelIds);
       return doctor.id;
     });
-    return this.findById(createdId, tenantId);
+    if (branchId) {
+      await this.listAssignmentService.upsert(
+        tenantId,
+        branchId,
+        actorId,
+        ReferralType.DOCTOR,
+        createdId,
+        {
+          branchLabTestListId: dto.branchLabTestListId,
+          branchLabPanelListId: dto.branchLabPanelListId,
+        },
+      );
+    }
+    return this.findById(createdId, tenantId, branchId);
   }
 
   /**
@@ -351,17 +358,8 @@ export class ReferralDoctorService {
       }),
       this.prisma.referralDoctor.count({ where }),
     ]);
-    const labLists = await this.resolveLabLists(
-      tenantId,
-      rows.map((r) => r.id),
-    );
     return {
-      data: rows.map((r) =>
-        this.toListItem(
-          r,
-          labLists.get(r.id) ?? { labTestList: [], labPanelList: [] },
-        ),
-      ),
+      data: rows.map((r) => this.toListItem(r)),
       total,
       page,
       limit,
@@ -370,14 +368,19 @@ export class ReferralDoctorService {
 
   /**
    * Fetch one active referral doctor scoped to its tenant, with all active
-   * qualifications, experiences, and assigned lab tests/panels (each enriched with
-   * the referenced test/panel name + code), plus the derived `fullName`, `age`, and
-   * per-experience `duration`.
+   * qualifications and experiences, plus the derived `fullName`, `age`, and
+   * per-experience `duration`. When a branch context is supplied, the active
+   * branch's Lab Test / Lab Panel List assignment is prefilled onto the result.
    * @param id referral doctor id
    * @param tenantId tenant scope
+   * @param branchId active branch (from JWT); when set, the list assignment is loaded
    * @throws ReferralDoctorNotFoundException if missing or soft-deleted
    */
-  async findById(id: string, tenantId: string): Promise<ReferralDoctorDetail> {
+  async findById(
+    id: string,
+    tenantId: string,
+    branchId?: string | null,
+  ): Promise<ReferralDoctorDetail> {
     const doctor = await this.prisma.referralDoctor.findFirst({
       where: { id, tenantId, deletedAt: null },
       include: REFERRAL_DOCTOR_DETAIL_INCLUDE,
@@ -385,28 +388,32 @@ export class ReferralDoctorService {
     if (!doctor) {
       throw new ReferralDoctorNotFoundException(id);
     }
-    return this.toDetail(tenantId, doctor);
+    return this.toDetail(tenantId, branchId ?? null, doctor);
   }
 
   /**
    * Update a referral doctor. Only supplied fields change. When a classification id
    * is supplied it is re-validated against the tenant. Commission/incentive config
    * is re-validated and normalised against the merged (existing + patch) state when
-   * any related field is present. When `qualifications`/`experiences`/`labTestIds`/
-   * `labPanelIds` is supplied, that whole set is REPLACED (existing active rows
-   * soft-deleted, the new set created); omit to leave it unchanged. All in one
-   * transaction.
+   * any related field is present. When `qualifications`/`experiences` is supplied,
+   * that whole set is REPLACED (existing active rows soft-deleted, the new set
+   * created); omit to leave it unchanged. When an active branch is supplied and
+   * either `branchLabTestListId`/`branchLabPanelListId` is present, the per-branch
+   * Lab Test / Lab Panel List assignment is re-applied. All in one transaction.
    * @param id referral doctor id
    * @param tenantId tenant scope
+   * @param branchId active branch from the JWT (null → no list assignment written)
+   * @param actorId person id recorded as updated-by on the list assignment (or null)
    * @param dto partial update
    * @throws ReferralDoctorNotFoundException if missing/soft-deleted
    * @throws DepartmentNotFoundException / CategoryNotFoundException /
-   *   SubCategoryNotFoundException / InvalidCommissionConfigException /
-   *   InvalidLabTestRefException / InvalidLabPanelRefException
+   *   SubCategoryNotFoundException / InvalidCommissionConfigException
    */
   async update(
     id: string,
     tenantId: string,
+    branchId: string | null,
+    actorId: string | null,
     dto: UpdateReferralDoctorDto,
   ): Promise<ReferralDoctorDetail> {
     const existing = await this.findById(id, tenantId);
@@ -418,12 +425,6 @@ export class ReferralDoctorService {
     );
     await this.assertSettingsRef(tenantId, dto.referralPanelSettingsId);
     await this.assertBranchRef(tenantId, dto.branchId);
-
-    const testIds = dto.labTestIds;
-    const panelIds = dto.labPanelIds;
-    if (testIds !== undefined || panelIds !== undefined) {
-      await this.assertLabRefs(tenantId, testIds ?? [], panelIds ?? []);
-    }
 
     let data: Prisma.ReferralDoctorUpdateInput = this.toScalarUpdateData(dto);
 
@@ -506,27 +507,32 @@ export class ReferralDoctorService {
       }
 
       await tx.referralDoctor.update({ where: { id }, data });
-
-      if (testIds !== undefined) {
-        await tx.referralDoctorLabTest.updateMany({
-          where: { referralDoctorId: id, tenantId, deletedAt: null },
-          data: { deletedAt: now },
-        });
-      }
-      if (panelIds !== undefined) {
-        await tx.referralDoctorLabPanel.updateMany({
-          where: { referralDoctorId: id, tenantId, deletedAt: null },
-          data: { deletedAt: now },
-        });
-      }
-      await this.writeLabRefs(tx, tenantId, id, testIds ?? [], panelIds ?? []);
     });
-    return this.findById(id, tenantId);
+
+    if (
+      branchId &&
+      (dto.branchLabTestListId !== undefined ||
+        dto.branchLabPanelListId !== undefined)
+    ) {
+      await this.listAssignmentService.upsert(
+        tenantId,
+        branchId,
+        actorId,
+        ReferralType.DOCTOR,
+        id,
+        {
+          branchLabTestListId: dto.branchLabTestListId,
+          branchLabPanelListId: dto.branchLabPanelListId,
+        },
+      );
+    }
+    return this.findById(id, tenantId, branchId);
   }
 
   /**
-   * Soft-delete a referral doctor and cascade soft-delete its active
-   * qualifications, experiences, and assigned lab tests/panels in one transaction.
+   * Soft-delete a referral doctor and cascade soft-delete its active qualifications
+   * and experiences in one transaction. The per-branch list assignment is left as-is
+   * (it resolves against the referral only while the referral is active).
    * @param id referral doctor id
    * @param tenantId tenant scope
    * @throws ReferralDoctorNotFoundException if missing/soft-deleted
@@ -544,14 +550,6 @@ export class ReferralDoctorService {
         where: scope,
         data: { deletedAt: now },
       });
-      await tx.referralDoctorLabTest.updateMany({
-        where: scope,
-        data: { deletedAt: now },
-      });
-      await tx.referralDoctorLabPanel.updateMany({
-        where: scope,
-        data: { deletedAt: now },
-      });
       await tx.referralDoctor.update({
         where: { id },
         data: { deletedAt: now },
@@ -563,7 +561,11 @@ export class ReferralDoctorService {
       include: REFERRAL_DOCTOR_DETAIL_INCLUDE,
     });
     // `removed` is guaranteed present (we just updated it); narrow for the type.
-    return this.toDetail(tenantId, removed as ReferralDoctorWithRelations);
+    return this.toDetail(
+      tenantId,
+      null,
+      removed as ReferralDoctorWithRelations,
+    );
   }
 
   // ── Validation helpers ──────────────────────────────────────────────────────
@@ -590,56 +592,6 @@ export class ReferralDoctorService {
     }
     if (subCategoryId) {
       await this.subCategoryService.findById(subCategoryId, tenantId);
-    }
-  }
-
-  /**
-   * Validate the assigned lab-test/panel references: every id must be an active,
-   * non-deleted lab test/panel in the caller's tenant. Ids are assumed deduplicated
-   * by the DTO (`@ArrayUnique`).
-   * @param tenantId tenant scope
-   * @param testIds assigned lab-test ids
-   * @param panelIds assigned lab-panel ids
-   * @throws InvalidLabTestRefException / InvalidLabPanelRefException
-   */
-  private async assertLabRefs(
-    tenantId: string,
-    testIds: string[],
-    panelIds: string[],
-  ): Promise<void> {
-    if (testIds.length) {
-      const found = await this.prisma.labTest.findMany({
-        where: {
-          id: { in: testIds },
-          tenantId,
-          isActive: true,
-          deletedAt: null,
-        },
-        select: { id: true },
-      });
-      if (found.length !== testIds.length) {
-        const ok = new Set(found.map((t) => t.id));
-        throw new InvalidLabTestRefException(
-          testIds.filter((id) => !ok.has(id)),
-        );
-      }
-    }
-    if (panelIds.length) {
-      const found = await this.prisma.labPanel.findMany({
-        where: {
-          id: { in: panelIds },
-          tenantId,
-          isActive: true,
-          deletedAt: null,
-        },
-        select: { id: true },
-      });
-      if (found.length !== panelIds.length) {
-        const ok = new Set(found.map((p) => p.id));
-        throw new InvalidLabPanelRefException(
-          panelIds.filter((id) => !ok.has(id)),
-        );
-      }
     }
   }
 
@@ -766,42 +718,6 @@ export class ReferralDoctorService {
   // ── Persistence helpers ─────────────────────────────────────────────────────
 
   /**
-   * Persist a referral doctor's assigned lab tests and lab panels. Assumes the ids
-   * were already validated by `assertLabRefs` (no-op for empty lists).
-   * @param tx active transaction client
-   * @param tenantId tenant scope
-   * @param referralDoctorId owning referral doctor
-   * @param testIds assigned lab-test ids
-   * @param panelIds assigned lab-panel ids
-   */
-  private async writeLabRefs(
-    tx: Prisma.TransactionClient,
-    tenantId: string,
-    referralDoctorId: string,
-    testIds: string[],
-    panelIds: string[],
-  ): Promise<void> {
-    if (testIds.length) {
-      await tx.referralDoctorLabTest.createMany({
-        data: testIds.map((labTestId) => ({
-          tenantId,
-          referralDoctorId,
-          labTestId,
-        })),
-      });
-    }
-    if (panelIds.length) {
-      await tx.referralDoctorLabPanel.createMany({
-        data: panelIds.map((labPanelId) => ({
-          tenantId,
-          referralDoctorId,
-          labPanelId,
-        })),
-      });
-    }
-  }
-
-  /**
    * Build the scalar update payload (personal/professional/payment/attachment/status
    * fields) from an update DTO. Only fields present on the DTO are written;
    * commission/incentive and child-list fields are handled separately.
@@ -920,35 +836,26 @@ export class ReferralDoctorService {
   // ── Response shaping & derived fields ───────────────────────────────────────
 
   /**
-   * Compose the GET-single response: enrich assigned lab tests/panels with their
-   * resolved name/code and add the derived `fullName`, `age`, and per-experience
-   * `duration`.
-   * @param tenantId tenant scope (for resolving lab test/panel names)
+   * Compose the GET-single response: add the derived `fullName`, `age`, and
+   * per-experience `duration`, and attach the active branch's Lab Test / Lab Panel
+   * List assignment (both null when no branch context or no assignment).
+   * @param tenantId tenant scope
+   * @param branchId active branch (from JWT) or null
    * @param doctor the loaded referral doctor with relations
    */
   private async toDetail(
     tenantId: string,
+    branchId: string | null,
     doctor: ReferralDoctorWithRelations,
   ): Promise<ReferralDoctorDetail> {
-    const testIds = [...new Set(doctor.labTests.map((t) => t.labTestId))];
-    const panelIds = [...new Set(doctor.labPanels.map((p) => p.labPanelId))];
-
-    const [tests, panels] = await Promise.all([
-      testIds.length
-        ? this.prisma.labTest.findMany({
-            where: { tenantId, id: { in: testIds } },
-            select: { id: true, testName: true, testCode: true },
-          })
-        : Promise.resolve([]),
-      panelIds.length
-        ? this.prisma.labPanel.findMany({
-            where: { tenantId, id: { in: panelIds } },
-            select: { id: true, panelName: true, panelCode: true },
-          })
-        : Promise.resolve([]),
-    ]);
-    const testMap = new Map(tests.map((t) => [t.id, t]));
-    const panelMap = new Map(panels.map((p) => [p.id, p]));
+    const assignment = branchId
+      ? await this.listAssignmentService.getAssignment(
+          tenantId,
+          branchId,
+          ReferralType.DOCTOR,
+          doctor.id,
+        )
+      : null;
 
     return {
       ...doctor,
@@ -962,30 +869,17 @@ export class ReferralDoctorService {
         ...e,
         duration: this.computeDuration(e.fromDate, e.toDate),
       })),
-      labTests: doctor.labTests.map((t) => ({
-        ...t,
-        testName: testMap.get(t.labTestId)?.testName ?? null,
-        testCode: testMap.get(t.labTestId)?.testCode ?? null,
-      })),
-      labPanels: doctor.labPanels.map((p) => ({
-        ...p,
-        panelName: panelMap.get(p.labPanelId)?.panelName ?? null,
-        panelCode: panelMap.get(p.labPanelId)?.panelCode ?? null,
-      })),
+      branchLabTestListId: assignment?.branchLabTestListId ?? null,
+      branchLabPanelListId: assignment?.branchLabPanelListId ?? null,
     };
   }
 
   /**
    * Reshape a selected list row into the listing response (composed `fullName`,
-   * `specialty` ← category, `superSpecialty` ← sub-category) and attach the
-   * resolved assigned lab test/panel references.
+   * `specialty` ← category, `superSpecialty` ← sub-category).
    * @param row a row from `REFERRAL_DOCTOR_LIST_SELECT`
-   * @param labLists the doctor's assigned lab test/panel references
    */
-  private toListItem(
-    row: ReferralDoctorListRow,
-    labLists: LabLists,
-  ): ReferralDoctorListItem {
+  private toListItem(row: ReferralDoctorListRow): ReferralDoctorListItem {
     return {
       id: row.id,
       fullName: this.computeFullName(
@@ -1002,85 +896,8 @@ export class ReferralDoctorService {
       commissionType: row.commissionType,
       tds: row.tds,
       paymentCycle: row.paymentCycle,
-      labTestList: labLists.labTestList,
-      labPanelList: labLists.labPanelList,
       status: row.status,
     };
-  }
-
-  /**
-   * Resolve the assigned lab test/panel references for a page of referral doctors,
-   * keyed by doctor id, each shaped as `[{ id, name }]`. Uses a bounded number of
-   * queries regardless of page size: one per join table plus one per lab model
-   * (no N+1). Names of since-deleted lab tests/panels are omitted.
-   * @param tenantId tenant scope
-   * @param doctorIds the doctor ids on the current page
-   */
-  private async resolveLabLists(
-    tenantId: string,
-    doctorIds: string[],
-  ): Promise<Map<string, LabLists>> {
-    const result = new Map<string, LabLists>();
-    for (const id of doctorIds) {
-      result.set(id, { labTestList: [], labPanelList: [] });
-    }
-    if (doctorIds.length === 0) {
-      return result;
-    }
-
-    const [testLinks, panelLinks] = await Promise.all([
-      this.prisma.referralDoctorLabTest.findMany({
-        where: {
-          referralDoctorId: { in: doctorIds },
-          tenantId,
-          deletedAt: null,
-        },
-        select: { referralDoctorId: true, labTestId: true },
-      }),
-      this.prisma.referralDoctorLabPanel.findMany({
-        where: {
-          referralDoctorId: { in: doctorIds },
-          tenantId,
-          deletedAt: null,
-        },
-        select: { referralDoctorId: true, labPanelId: true },
-      }),
-    ]);
-
-    const testIds = [...new Set(testLinks.map((l) => l.labTestId))];
-    const panelIds = [...new Set(panelLinks.map((l) => l.labPanelId))];
-    const [tests, panels] = await Promise.all([
-      testIds.length
-        ? this.prisma.labTest.findMany({
-            where: { tenantId, id: { in: testIds } },
-            select: { id: true, testName: true },
-          })
-        : Promise.resolve([]),
-      panelIds.length
-        ? this.prisma.labPanel.findMany({
-            where: { tenantId, id: { in: panelIds } },
-            select: { id: true, panelName: true },
-          })
-        : Promise.resolve([]),
-    ]);
-    const testName = new Map(tests.map((t) => [t.id, t.testName]));
-    const panelName = new Map(panels.map((p) => [p.id, p.panelName]));
-
-    for (const link of testLinks) {
-      const name = testName.get(link.labTestId);
-      const entry = result.get(link.referralDoctorId);
-      if (name !== undefined && entry) {
-        entry.labTestList.push({ id: link.labTestId, name });
-      }
-    }
-    for (const link of panelLinks) {
-      const name = panelName.get(link.labPanelId);
-      const entry = result.get(link.referralDoctorId);
-      if (name !== undefined && entry) {
-        entry.labPanelList.push({ id: link.labPanelId, name });
-      }
-    }
-    return result;
   }
 
   /** Compose a full name from the name parts (empty parts dropped). */

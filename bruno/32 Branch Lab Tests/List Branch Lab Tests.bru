@@ -15,6 +15,7 @@ params:query {
   limit: 20
   ~search: Vitamin
   ~status: ACTIVE
+  ~listId: 00000000-0000-0000-0000-000000000000
 }
 
 auth:bearer {
@@ -23,6 +24,8 @@ auth:bearer {
 
 docs {
   List the active branch's Lab Test List (paginated). Optional `search`
-  (case-insensitive on testName/testCode) and `status` (ACTIVE | INACTIVE).
+  (case-insensitive on testName/testCode), `status` (ACTIVE | INACTIVE), and
+  `listId` (which pricing-list tab; omitted = the branch's default Walk-in list).
+  Each row carries a `listPrice` (the effective selling price for its list).
   Scoped to the JWT tenant + active branch; soft-deleted rows are excluded.
 }

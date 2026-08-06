@@ -14,6 +14,9 @@ import { CreateReferralDoctorDto } from './dto/create-referral-doctor.dto';
 import { UpdateReferralDoctorDto } from './dto/update-referral-doctor.dto';
 import { ListReferralDoctorsDto } from './dto/list-referral-doctors.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
+import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
+import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
@@ -35,9 +38,16 @@ export class ReferralDoctorController {
   })
   create(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
     @Body() dto: CreateReferralDoctorDto,
   ) {
-    return this.referralDoctorService.create(tenantId, dto);
+    return this.referralDoctorService.create(
+      tenantId,
+      profile.branchId,
+      personId,
+      dto,
+    );
   }
 
   /**
@@ -57,8 +67,12 @@ export class ReferralDoctorController {
    * Fetch one referral doctor by id (full record incl. children + derived fields).
    */
   @Get(':id')
-  findOne(@CurrentTenant() tenantId: string, @Param('id') id: string) {
-    return this.referralDoctorService.findById(id, tenantId);
+  findOne(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+  ) {
+    return this.referralDoctorService.findById(id, tenantId, profile.branchId);
   }
 
   /**
@@ -72,10 +86,18 @@ export class ReferralDoctorController {
   })
   update(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
     @Param('id') id: string,
     @Body() dto: UpdateReferralDoctorDto,
   ) {
-    return this.referralDoctorService.update(id, tenantId, dto);
+    return this.referralDoctorService.update(
+      id,
+      tenantId,
+      profile.branchId,
+      personId,
+      dto,
+    );
   }
 
   /**

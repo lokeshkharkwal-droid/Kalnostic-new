@@ -51,6 +51,32 @@ export class OrderController {
     return this.orderService.create(tenantId, profile.branchId, personId, dto);
   }
 
+  /**
+   * Duplicate an expired quotation into a fresh DRAFT quote dated today (same
+   * patient / items / pricing / referrals). Gated server-side by the branch's
+   * `Quotation_AllowDuplicationOfExpiredQuotation` setting and only allowed when
+   * the source quote is currently expired.
+   */
+  @Post(':id/duplicate')
+  @Audit({
+    module: AuditModule.ORDER,
+    action: AuditAction.CREATE,
+    description: 'Duplicated an expired quotation',
+  })
+  duplicate(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Param('id') id: string,
+  ) {
+    return this.orderService.duplicateQuotation(
+      tenantId,
+      profile.branchId,
+      personId,
+      id,
+    );
+  }
+
   /** List orders (paginated, with search + filters). Scoped to the active branch. */
   @Get()
   findAll(

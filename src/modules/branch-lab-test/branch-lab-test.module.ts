@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { MasterDataModule } from '../master-data/master-data.module';
 import { LabTestModule } from '../lab-test/lab-test.module';
+import { BranchLabTestListModule } from '../branch-lab-test-list/branch-lab-test-list.module';
 import { BranchLabTestController } from './branch-lab-test.controller';
 import { BranchLabTestOptionsController } from './branch-lab-test-options.controller';
 import { BranchLabTestService } from './branch-lab-test.service';
@@ -15,7 +16,12 @@ import { BranchLabTestService } from './branch-lab-test.service';
  * semantics.
  */
 @Module({
-  imports: [PrismaModule, MasterDataModule, LabTestModule],
+  imports: [
+    PrismaModule,
+    MasterDataModule,
+    LabTestModule,
+    BranchLabTestListModule,
+  ],
   controllers: [BranchLabTestOptionsController, BranchLabTestController],
   providers: [BranchLabTestService],
   exports: [BranchLabTestService],

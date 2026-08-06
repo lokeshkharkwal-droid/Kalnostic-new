@@ -1,0 +1,48 @@
+meta {
+  name: Duplicate Expired Quotation
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{baseUrl}}/orders/{{orderId}}/duplicate
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("new quote is a DRAFT quotation dated today", function () {
+    const d = res.getBody().data;
+    expect(d.status).to.equal("QUOTE");
+    expect(d.quotationStatus).to.equal("DRAFT");
+    expect(d.orderDate.slice(0, 10)).to.equal(new Date().toISOString().slice(0, 10));
+    expect(d.id).to.not.equal("{{orderId}}");
+  });
+}
+
+docs {
+  Duplicate an **expired** quotation into a brand-new DRAFT quote. The new quote
+  copies the source's patient, items (with per-line discounts), referrals,
+  billing sub-form and order-level totals (as an unpaid ledger row), and is dated
+  **today** — so a fresh validity window is computed at runtime from the current
+  Registration Settings.
+
+  Enforced server-side, independently of the UI:
+  - The source must have originated as a quotation, else 422 `ORDER_NOT_A_QUOTATION`.
+  - The source must be **currently expired** (runtime-computed from the branch's
+    current `Quotation_QuotationValidityValue` + `Quotation_QuotationValidityUnit`),
+    else 422 `QUOTATION_NOT_EXPIRED`.
+  - The branch's `Quotation_AllowDuplicationOfExpiredQuotation` setting must be
+    enabled, else 403 `QUOTATION_DUPLICATION_NOT_ALLOWED`.
+
+  Related: quotation expiry is never persisted — `GET /orders?isQuotation=true`
+  computes `effectiveQuotationStatus` + `computedQuotationExpiryAt` at runtime
+  from the order date + the current validity window.
+}

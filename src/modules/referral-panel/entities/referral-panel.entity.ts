@@ -1,8 +1,4 @@
-import {
-  ReferralPanel,
-  ReferralPanelLabPanel,
-  ReferralPanelLabTest,
-} from '@prisma/client';
+import { ReferralPanel } from '@prisma/client';
 
 /**
  * One slab-based commission row as stored in `ReferralPanel.commissionSlabs`
@@ -23,43 +19,20 @@ export type BonusSlab = {
 };
 
 /**
- * An assigned lab test on a referral panel. `testName`/`testCode` are resolved
- * inline by `findById`; optional because `create`/`update` may return the row
- * without them.
- */
-export type ReferralPanelLabTestEntity = ReferralPanelLabTest & {
-  testName?: string | null;
-  testCode?: string | null;
-};
-
-/** An assigned lab panel on a referral panel, enriched by `findById`. */
-export type ReferralPanelLabPanelEntity = ReferralPanelLabPanel & {
-  panelName?: string | null;
-  panelCode?: string | null;
-};
-
-/**
- * Domain/response shape for a referral panel, optionally with its loaded assigned
- * lab tests and lab panels. (The Prisma model is the DB source of truth;
- * `commissionSlabs`/`bonusSlabs` are JSON columns holding `CommissionSlab[]` /
- * `BonusSlab[]`.)
+ * Domain/response shape for a referral panel. (The Prisma model is the DB source
+ * of truth; `commissionSlabs`/`bonusSlabs` are JSON columns holding
+ * `CommissionSlab[]` / `BonusSlab[]`.) The `branchLabTestListId` /
+ * `branchLabPanelListId` are attached from the active branch's
+ * `ReferralListAssignment` (not columns on the panel row) — null when no list is
+ * assigned or no branch context was supplied.
  */
 export type ReferralPanelEntity = ReferralPanel & {
-  labTests?: ReferralPanelLabTestEntity[];
-  labPanels?: ReferralPanelLabPanelEntity[];
+  branchLabTestListId?: string | null;
+  branchLabPanelListId?: string | null;
 };
-
-/** A reference to an assigned lab test/panel (id + resolved name). */
-export interface LabRef {
-  id: string;
-  name: string;
-}
 
 /**
- * The list endpoint response: the full panel row plus the assigned lab test/panel
- * references (`[{ id, name }]`), resolved by the service.
+ * The list endpoint response shape for a referral panel: the plain panel row (the
+ * per-branch list assignment is prefilled only on the single-item GET).
  */
-export type ReferralPanelListItem = ReferralPanel & {
-  labTestList: LabRef[];
-  labPanelList: LabRef[];
-};
+export type ReferralPanelListItem = ReferralPanel;

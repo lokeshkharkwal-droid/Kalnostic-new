@@ -1,0 +1,33 @@
+meta {
+  name: Rename Lab Test List
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/branch-lab-test-lists/:id
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 00000000-0000-0000-0000-000000000000
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "B2B Corporate (2026)"
+  }
+}
+
+docs {
+  Rename a list. `name` is unique per branch among active lists (409 on clash).
+}

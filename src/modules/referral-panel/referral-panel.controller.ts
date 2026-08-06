@@ -14,6 +14,9 @@ import { CreateReferralPanelDto } from './dto/create-referral-panel.dto';
 import { UpdateReferralPanelDto } from './dto/update-referral-panel.dto';
 import { ListReferralPanelsDto } from './dto/list-referral-panels.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
+import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
+import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
@@ -35,9 +38,16 @@ export class ReferralPanelController {
   })
   create(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
     @Body() dto: CreateReferralPanelDto,
   ) {
-    return this.referralPanelService.create(tenantId, dto);
+    return this.referralPanelService.create(
+      tenantId,
+      profile.branchId,
+      personId,
+      dto,
+    );
   }
 
   /**
@@ -56,8 +66,12 @@ export class ReferralPanelController {
    * Fetch one referral panel by id (with assigned lab tests/panels).
    */
   @Get(':id')
-  findOne(@CurrentTenant() tenantId: string, @Param('id') id: string) {
-    return this.referralPanelService.findById(id, tenantId);
+  findOne(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+  ) {
+    return this.referralPanelService.findById(id, tenantId, profile.branchId);
   }
 
   /**
@@ -71,10 +85,18 @@ export class ReferralPanelController {
   })
   update(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
     @Param('id') id: string,
     @Body() dto: UpdateReferralPanelDto,
   ) {
-    return this.referralPanelService.update(id, tenantId, dto);
+    return this.referralPanelService.update(
+      id,
+      tenantId,
+      profile.branchId,
+      personId,
+      dto,
+    );
   }
 
   /**

@@ -122,6 +122,19 @@ export class CreateOrderDto {
   @IsUUID()
   externalReferralId?: string;
 
+  /**
+   * Pricing lists resolved for this order (from the referral priority, or the
+   * default Walk-in list). The items' `branchLabTestId`/`branchLabPanelId` belong
+   * to these lists; item unit prices are snapshotted from their `listPrice`.
+   */
+  @IsOptional()
+  @IsUUID()
+  branchLabTestListId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  branchLabPanelListId?: string;
+
   /** Selected catalogue entries (branch lab tests / panels / direct entries). */
   @IsOptional()
   @IsArray()
