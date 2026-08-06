@@ -2606,6 +2606,13 @@ model LabPanelTest {
   sortOrder   Int     @default(0) @map("sort_order")
   isRemovable Boolean @default(true) @map("is_removable")
 
+  /// This test's discount within the panel (0-100), as configured on the
+  /// panel's own "Tests in Panel" screen — NULL when no discount was set.
+  /// Must not exceed the referenced LabTest's own discountCapPct (enforced
+  /// in LabPanelService, not by a DB constraint, since the cap lives on a
+  /// different table).
+  discountPercent Int? @map("discount_percent")
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -2863,6 +2870,11 @@ model BranchLabPanelTest {
 
   sortOrder   Int     @default(0) @map("sort_order")
   isRemovable Boolean @default(true) @map("is_removable")
+
+  /// This test's discount within the branch panel (0-100), mirroring
+  /// LabPanelTest.discountPercent. Must not exceed the referenced
+  /// BranchLabTest's own discountCapPct (enforced in BranchLabPanelService).
+  discountPercent Int? @map("discount_percent")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -5430,6 +5442,12 @@ enum BillingType {
   TPA
 }
 
+/// How an OrderItem's discount was entered — see OrderItem.discountMode.
+enum DiscountMode {
+  PERCENT
+  AMOUNT
+}
+
 /// Where the diagnostic sample comes from.
 enum SampleSource {
   IN_HOUSE
@@ -5699,8 +5717,21 @@ model OrderItem {
 
   /// Per-line discount in minor units (0 = none). Captured at order/quotation
   /// time so item-level discounts round-trip on edit; the order-level aggregate
-  /// still lives on PaymentDetails.orderDiscount for list rollups.
+  /// still lives on PaymentDetails.orderDiscount for list rollups. Always the
+  /// computed amount regardless of how the discount was entered — see
+  /// discountMode/discountValue for the original input.
   discount Int @default(0) @map("discount")
+
+  /// How the technician entered this line's discount — a percentage of the
+  /// line's price, or a direct amount. NULL for rows created before this field
+  /// existed (unknown origin; `discount` above is still valid, just not
+  /// re-editable in its original unit).
+  discountMode DiscountMode? @map("discount_mode")
+
+  /// The raw number the technician typed, in whichever unit `discountMode`
+  /// says (0-100 for PERCENT, minor units for AMOUNT) — lets the discount
+  /// input round-trip on edit instead of only recovering the computed amount.
+  discountValue Int? @map("discount_value")
 
   /// Sample collection tracking. `collectedAt` NULL = not collected yet; once set
   /// the sample is considered collected (`collectedBy` records the acting person).
