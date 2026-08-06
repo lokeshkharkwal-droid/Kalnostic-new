@@ -26,11 +26,14 @@ export class CreateCategoryTemplateDto {
   @MaxLength(255)
   name: string;
 
+  // Optional; if provided must be 2-6 chars starting with an uppercase letter.
   @IsString()
-  @Matches(/^[A-Z0-9]{2,6}$/, {
-    message: 'shortName must be 2-6 uppercase letters or digits (A-Z, 0-9)',
+  @IsOptional()
+  @Matches(/^[A-Z][a-zA-Z0-9]{1,5}$/, {
+    message:
+      'shortName must be 2-6 characters starting with an uppercase letter (A-Z)',
   })
-  shortName: string;
+  shortName?: string;
 
   @IsString()
   @IsOptional()
