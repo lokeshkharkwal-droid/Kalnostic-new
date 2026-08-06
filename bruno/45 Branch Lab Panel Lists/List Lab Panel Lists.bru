@@ -1,0 +1,20 @@
+meta {
+  name: List Lab Panel Lists
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/branch-lab-panel-lists
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  List all of the active branch's **Lab Panel Lists** (the tabs). Mirror of
+  `/branch-lab-test-lists`. The default Walk-in list is returned first.
+}

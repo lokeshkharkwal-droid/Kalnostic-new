@@ -108,6 +108,15 @@ export class UpdateOrderDto {
   @IsUUID()
   externalReferralId?: string;
 
+  /** Pricing lists resolved for this order (§B5); items snapshot their listPrice. */
+  @IsOptional()
+  @IsUUID()
+  branchLabTestListId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  branchLabPanelListId?: string;
+
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })

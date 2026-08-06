@@ -25,6 +25,8 @@ docs {
 
   The `membership` carries the primary role as `authRoleId` (FK) plus the derived
   `roleKey` (its stable key) — the legacy `role_key` column was replaced by the FK.
+  It also carries `isPrimaryAdmin` (`true` for the tenant's default admin, which
+  can never be deactivated; the Edit form locks its Status field to Active).
 
   Each `branches[]` entry carries its **own role** and modules:
   `{ id, branchId, branchName, roleKey, roleLabel, branchStatus, isDefault,

@@ -44,6 +44,7 @@ import {
   SAMPLE_INCLUDE,
   SAMPLE_LIST_INCLUDE,
   AccessionSampleListItem,
+  AccessionSampleDetail,
   AccessionSampleWithRelations,
   AccessionSummary,
 } from './entities/accession-sample.entity';
@@ -396,10 +397,7 @@ export class AccessionSampleService {
    * @param tenantId tenant scope
    * @throws AccessionSampleNotFoundException if missing/soft-deleted/other tenant
    */
-  async findById(
-    id: string,
-    tenantId: string,
-  ): Promise<AccessionSampleWithRelations> {
+  async findById(id: string, tenantId: string): Promise<AccessionSampleDetail> {
     const sample = await this.prisma.accessionSample.findFirst({
       where: { id, tenantId, deletedAt: null },
       include: SAMPLE_INCLUDE,
@@ -407,7 +405,65 @@ export class AccessionSampleService {
     if (!sample) {
       throw new AccessionSampleNotFoundException(id);
     }
-    return sample;
+    return this.withDepartments(sample, tenantId);
+  }
+
+  /**
+   * Enrich a composed sample with resolved department names. The classification
+   * lives on `BranchLabTest`/`BranchLabPanel` as a logical `departmentId` (no
+   * Prisma relation), so we collect the ids off each test's order item and
+   * resolve their names in one tenant-scoped `Department` query. Each test gets a
+   * `department` name; the sample gets a `departmentLabel` = distinct names
+   * joined with ", " (null when none resolve).
+   * @param sample the composed sample (SAMPLE_INCLUDE payload)
+   * @param tenantId tenant scope for the Department lookup (RLS-guarded)
+   * @returns the sample enriched with `departmentLabel` + per-test `department`
+   */
+  private async withDepartments(
+    sample: AccessionSampleWithRelations,
+    tenantId: string,
+  ): Promise<AccessionSampleDetail> {
+    const deptIdByTest = new Map<string, string | null>();
+    for (const t of sample.tests) {
+      const deptId =
+        t.orderItem?.branchLabTest?.departmentId ??
+        t.orderItem?.branchLabPanel?.departmentId ??
+        null;
+      deptIdByTest.set(t.id, deptId);
+    }
+
+    const deptIds = [
+      ...new Set([...deptIdByTest.values()].filter((v): v is string => !!v)),
+    ];
+    const nameById = new Map<string, string>();
+    if (deptIds.length > 0) {
+      const depts = await this.prisma.withTenant(tenantId, (tx) =>
+        tx.department.findMany({
+          where: { id: { in: deptIds }, tenantId, deletedAt: null },
+          select: { id: true, name: true },
+        }),
+      );
+      depts.forEach((d) => nameById.set(d.id, d.name));
+    }
+
+    const tests = sample.tests.map((t) => {
+      const deptId = deptIdByTest.get(t.id) ?? null;
+      return {
+        ...t,
+        department: deptId ? (nameById.get(deptId) ?? null) : null,
+      };
+    });
+    const distinct = [
+      ...new Set(
+        tests.map((t) => t.department).filter((v): v is string => !!v),
+      ),
+    ];
+
+    return {
+      ...sample,
+      tests,
+      departmentLabel: distinct.length > 0 ? distinct.join(', ') : null,
+    };
   }
 
   /**

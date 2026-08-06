@@ -1,0 +1,20 @@
+meta {
+  name: List Lab Panel List Options
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/branch-lab-panel-lists/options
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Lightweight `{ id, name, isDefault }[]` options for the referral/registration
+  list selectors — never individual panels (Phase 7).
+}

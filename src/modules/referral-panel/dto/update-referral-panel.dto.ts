@@ -1,7 +1,6 @@
 import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
-  ArrayUnique,
   IsArray,
   IsBoolean,
   IsEmail,
@@ -33,8 +32,9 @@ import { BonusSlabDto } from './bonus-slab.dto';
  * PartialType per SKILL.md §4). `code` is immutable and never accepted. Each field
  * is type-validated when present; the cross-field commission/bonus invariants are
  * enforced authoritatively in `ReferralPanelService` against the merged (existing +
- * patch) state. `labTestIds`/`labPanelIds` are replace-all when present (omit to
- * leave the assigned set unchanged) and left untouched when absent.
+ * patch) state. The optional `branchLabTestListId`/`branchLabPanelListId` re-attach
+ * the per-branch Lab Test / Lab Panel List (omit both to leave the assignment
+ * unchanged; send them null to clear it).
  */
 export class UpdateReferralPanelDto {
   // ── Basic details ──
@@ -313,16 +313,12 @@ export class UpdateReferralPanelDto {
   @MaxLength(2000)
   remarks?: string;
 
-  // ── Lab lists (replace-all when present) ──
-  @IsArray()
+  // ── Lab lists (per-branch Lab Test List / Lab Panel List assignment) ──
   @IsOptional()
-  @IsUUID('all', { each: true })
-  @ArrayUnique()
-  labTestIds?: string[];
+  @IsUUID()
+  branchLabTestListId?: string;
 
-  @IsArray()
   @IsOptional()
-  @IsUUID('all', { each: true })
-  @ArrayUnique()
-  labPanelIds?: string[];
+  @IsUUID()
+  branchLabPanelListId?: string;
 }

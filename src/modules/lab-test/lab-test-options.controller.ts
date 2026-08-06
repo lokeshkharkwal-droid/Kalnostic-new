@@ -4,7 +4,10 @@ import { LabTestService } from './lab-test.service';
 import { LabTestOptionsQueryDto } from './dto/lab-test-options-query.dto';
 import { ListLabTestsDto } from './dto/list-lab-tests.dto';
 import { CloneLabTestTemplateDto } from './dto/clone-lab-test-template.dto';
+import { ImportLabTestTemplatesDto } from './dto/import-lab-test-templates.dto';
+import { SyncLabTestTemplatesDto } from './dto/sync-lab-test-templates.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
@@ -40,10 +43,15 @@ export class LabTestOptionsController {
   /**
    * Browse SITE_ADMIN global template lab tests (read-only) so the tenant can pick
    * one to clone. Declared before `:id` routes so `templates` isn't matched as an id.
+   * When `masterDataId` is supplied, each row is annotated with `isImported` (and
+   * `notImportedOnly=true` hides templates already imported into that master data).
    */
   @Get('templates')
-  findTemplates(@Query() query: ListLabTestsDto) {
-    return this.labTestService.findAllTemplates(query);
+  findTemplates(
+    @CurrentTenant() tenantId: string,
+    @Query() query: ListLabTestsDto,
+  ) {
+    return this.labTestService.findAllTemplates(query, tenantId);
   }
 
   /**
@@ -71,5 +79,46 @@ export class LabTestOptionsController {
     @Body() dto: CloneLabTestTemplateDto,
   ) {
     return this.labTestService.cloneToTenant(id, tenantId, dto.masterDataId);
+  }
+
+  /**
+   * Bulk-import SITE_ADMIN template lab tests into the tenant's master data.
+   * `tenantId` comes from the JWT, `branchId` from the target master data. Each
+   * template is imported independently: already-imported templates are skipped
+   * and name/code conflicts are reported, so one bad row never aborts the rest.
+   * Returns an `{ imported, skipped, failed }` summary.
+   */
+  @Post('import')
+  @Audit({
+    module: AuditModule.LAB_TEST,
+    action: AuditAction.CREATE,
+    description: 'Imported Site Admin lab-test templates into the tenant',
+  })
+  import(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+    @Body() dto: ImportLabTestTemplatesDto,
+  ) {
+    return this.labTestService.importTemplates(tenantId, personId, dto);
+  }
+
+  /**
+   * Re-pull previously-imported lab tests from their SITE_ADMIN templates
+   * (full overwrite of the tenant copy; hand-created tests are untouched). When
+   * `labTestIds` is omitted, every imported test in the master data is synced.
+   * Returns a `{ synced, skipped, failed }` summary.
+   */
+  @Post('sync')
+  @Audit({
+    module: AuditModule.LAB_TEST,
+    action: AuditAction.UPDATE,
+    description: 'Synced imported lab tests from Site Admin',
+  })
+  sync(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+    @Body() dto: SyncLabTestTemplatesDto,
+  ) {
+    return this.labTestService.syncTemplates(tenantId, personId, dto);
   }
 }

@@ -5,6 +5,7 @@ import { PaginatedResult } from '../../common/dto/response.dto';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
 import { MasterDataService } from '../master-data/master-data.service';
 import { LabTestService } from '../lab-test/lab-test.service';
+import { BranchLabTestListService } from '../branch-lab-test-list/branch-lab-test-list.service';
 import { LabTestWithChildren } from '../lab-test/entities/lab-test.entity';
 import { LabTestNotFoundException } from '../lab-test/exceptions/lab-test.exceptions';
 import { ImportBranchLabTestsDto } from './dto/import-branch-lab-tests.dto';
@@ -35,6 +36,8 @@ interface ImportTarget {
   tenantId: string;
   branchId: string;
   sourceMasterDataId: string;
+  /** The pricing list the copy belongs to (each list owns its rows). */
+  listId: string;
   actorId: string | null;
 }
 
@@ -48,6 +51,11 @@ const BRANCH_TEST_DROP_KEYS = [
   'branchId',
   'masterDataId',
   'source',
+  // Master Data provenance columns that don't exist on BranchLabTest — must be
+  // dropped or Prisma rejects them as unknown args on create/update.
+  'clonedFromId',
+  'templateSyncedAt',
+  'sourceMasterLabTestId',
   'versionHistory',
   'createdAt',
   'updatedAt',
@@ -72,6 +80,7 @@ export class BranchLabTestService {
     private readonly prisma: PrismaService,
     private readonly masterDataService: MasterDataService,
     private readonly labTestService: LabTestService,
+    private readonly listService: BranchLabTestListService,
   ) {}
 
   /**
@@ -99,6 +108,13 @@ export class BranchLabTestService {
       branchId,
       tenantId,
     );
+    // Import always lands in the branch's default (Walk-in) list — created here on
+    // the very first import (Phase 1).
+    const walkIn = await this.listService.getOrCreateDefaultList(
+      tenantId,
+      branchId,
+      actorId,
+    );
     const validSources = await this.prisma.labTest.findMany({
       where: {
         id: { in: dto.labTestIds },
@@ -109,47 +125,64 @@ export class BranchLabTestService {
       select: { id: true },
     });
     const validIds = validSources.map((s) => s.id);
-    // A source is already imported if its variant group (sourceLabTestId) has any
-    // active row — regardless of duplicates/renames.
+    // Existing Walk-in rows for these sources are UPDATED (re-snapshot); new ones
+    // are ADDED — never duplicated (Phase 1: update existing / add new / no dup).
     const existing = await this.prisma.branchLabTest.findMany({
       where: {
         tenantId,
         branchId,
+        listId: walkIn.id,
         deletedAt: null,
         sourceLabTestId: { in: validIds },
       },
-      select: { sourceLabTestId: true },
+      select: { id: true, sourceLabTestId: true },
     });
-    const importedSources = new Set(existing.map((t) => t.sourceLabTestId));
+    const existingBySource = new Map(
+      existing.map((t) => [t.sourceLabTestId, t.id] as const),
+    );
 
     const toCreate: Prisma.BranchLabTestUncheckedCreateInput[] = [];
-    let skipped = dto.labTestIds.length - validIds.length;
+    const toUpdate: {
+      id: string;
+      data: Prisma.BranchLabTestUncheckedUpdateInput;
+    }[] = [];
+    const skipped = dto.labTestIds.length - validIds.length;
     for (const id of validIds) {
-      if (importedSources.has(id)) {
-        skipped += 1;
-        continue;
-      }
-      importedSources.add(id);
       const source = await this.labTestService.findById(
         masterData.id,
         id,
         tenantId,
       );
-      toCreate.push(
-        this.buildImportData(source, {
-          tenantId,
-          branchId,
-          sourceMasterDataId: masterData.id,
-          actorId,
-        }),
-      );
+      const existingId = existingBySource.get(id);
+      if (existingId) {
+        toUpdate.push({
+          id: existingId,
+          data: this.buildSyncData(source, actorId),
+        });
+      } else {
+        toCreate.push(
+          this.buildImportData(source, {
+            tenantId,
+            branchId,
+            sourceMasterDataId: masterData.id,
+            listId: walkIn.id,
+            actorId,
+          }),
+        );
+      }
     }
 
-    if (toCreate.length) {
+    if (toCreate.length || toUpdate.length) {
       try {
         await this.prisma.withTenant(tenantId, async (tx) => {
           for (const data of toCreate) {
             await tx.branchLabTest.create({ data });
+          }
+          for (const u of toUpdate) {
+            await tx.branchLabTest.update({
+              where: { id: u.id },
+              data: u.data,
+            });
           }
         });
       } catch (e) {
@@ -157,7 +190,7 @@ export class BranchLabTestService {
         throw e;
       }
     }
-    return { copied: toCreate.length, skipped };
+    return { copied: toCreate.length, updated: toUpdate.length, skipped };
   }
 
   /**
@@ -184,9 +217,17 @@ export class BranchLabTestService {
       branchId,
       tenantId,
     );
+    // Sync only refreshes the default (Walk-in) list — the one connected to Master
+    // Data. Non-default pricing lists are managed independently of master data.
+    const walkIn = await this.listService.getOrCreateDefaultList(
+      tenantId,
+      branchId,
+      actorId,
+    );
     const where: Prisma.BranchLabTestWhereInput = {
       tenantId,
       branchId,
+      listId: walkIn.id,
       deletedAt: null,
       // Only imported originals are re-snapshotted; user duplicates keep their
       // independent edits (agreed sync contract).
@@ -267,6 +308,9 @@ export class BranchLabTestService {
       branchId,
       deletedAt: null,
     };
+    // Scope to a specific pricing list (a tab). Omitted = the branch's Walk-in list.
+    where.listId =
+      query.listId ?? (await this.resolveListId(tenantId, branchId));
     const term = query.search?.trim();
     if (term) {
       where.OR = [
@@ -305,7 +349,12 @@ export class BranchLabTestService {
   async findOptions(
     tenantId: string,
     branchId: string,
-    filters: { search?: string; page?: number; limit?: number } = {},
+    filters: {
+      search?: string;
+      page?: number;
+      limit?: number;
+      listId?: string;
+    } = {},
   ): Promise<
     Array<BranchLabTestOption> | PaginatedResult<BranchLabTestOption>
   > {
@@ -315,6 +364,8 @@ export class BranchLabTestService {
       deletedAt: null,
       isActive: true,
       isDefault: true,
+      // Scope to the resolved pricing list (Create-Order) — omitted = Walk-in.
+      listId: filters.listId ?? (await this.resolveListId(tenantId, branchId)),
     };
     const term = filters.search?.trim();
     if (term) {
@@ -324,14 +375,14 @@ export class BranchLabTestService {
     const select = {
       id: true,
       testName: true,
-      priceMsrp: true,
+      listPrice: true,
       configSnapshot: true,
     } as const;
     const orderBy = { testName: 'asc' } as const;
     const toOption = (r: {
       id: string;
       testName: string;
-      priceMsrp: number;
+      listPrice: number;
       configSnapshot: Prisma.JsonValue;
     }): BranchLabTestOption => {
       const sample = (
@@ -340,7 +391,7 @@ export class BranchLabTestService {
       return {
         id: r.id,
         name: r.testName,
-        price: r.priceMsrp,
+        price: r.listPrice,
         sampleType: sample?.sampleType ?? null,
         isFasting: sample?.isFastingRequired ?? false,
       };
@@ -543,6 +594,9 @@ export class BranchLabTestService {
       branchId: target.branchId,
       sourceLabTestId: source.id,
       sourceMasterDataId: target.sourceMasterDataId,
+      listId: target.listId,
+      // Walk-in default list: the sellable list price starts at MSRP.
+      listPrice: (scalars.priceMsrp as number) ?? 0,
       configSnapshot,
       createdBy: target.actorId,
       updatedBy: target.actorId,
@@ -581,9 +635,27 @@ export class BranchLabTestService {
     const { scalars, configSnapshot } = this.extractScalars(source);
     return {
       ...scalars,
+      // Walk-in list price tracks MSRP on re-snapshot (agreed overwrite contract).
+      listPrice: (scalars.priceMsrp as number) ?? 0,
       configSnapshot,
       updatedBy: actorId,
     };
+  }
+
+  /**
+   * Resolve the branch's default (Walk-in) list id for an unscoped read. Returns a
+   * non-matching sentinel when the branch has never imported (so reads are empty
+   * rather than mixing lists). Does not create the list (reads must not write).
+   */
+  private async resolveListId(
+    tenantId: string,
+    branchId: string,
+  ): Promise<string> {
+    const list = await this.prisma.branchLabTestList.findFirst({
+      where: { tenantId, branchId, isDefault: true, deletedAt: null },
+      select: { id: true },
+    });
+    return list?.id ?? '__no_list__';
   }
 
   /**

@@ -21,6 +21,9 @@ interface BranchCreatedEvent {
   branchName: string;
 }
 
+/** Fixed name of the tenant-level Tenant Master Data singleton. */
+export const TENANT_MASTER_DATA_NAME = 'Tenant Master Data';
+
 /**
  * Master-data management. Tenant-scoped + branch-level (CLAUDE.md §4.6). Every
  * query carries `tenantId` (defence in depth on top of RLS, §4.3) and filters
@@ -174,6 +177,73 @@ export class MasterDataService {
   }
 
   /**
+   * Resolve (creating on first access) the tenant-level **Tenant Master Data**
+   * singleton — the one master data with no branch (`branchId = NULL`), always
+   * named "Tenant Master Data". This is the destination for Site Admin imports
+   * and the source for the Tenant→Branch sync. Enforced unique per tenant by the
+   * partial index `master_data_tenant_singleton_active_unique`.
+   * @param tenantId tenant scope
+   */
+  async getOrCreateTenantMasterData(tenantId: string): Promise<MasterData> {
+    const existing = await this.prisma.masterData.findFirst({
+      where: { tenantId, branchId: null, deletedAt: null },
+    });
+    if (existing) {
+      return existing;
+    }
+    try {
+      return await this.prisma.masterData.create({
+        data: {
+          tenantId,
+          branchId: null,
+          name: TENANT_MASTER_DATA_NAME,
+          description: null,
+        },
+      });
+    } catch (e) {
+      // A concurrent request may have created it first — re-read and return.
+      if (this.isUniqueViolation(e)) {
+        const created = await this.prisma.masterData.findFirst({
+          where: { tenantId, branchId: null, deletedAt: null },
+        });
+        if (created) {
+          return created;
+        }
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Resolve (creating on first access) a branch's single **Branch Master Data**.
+   * Reuses `findByBranch`, falling back to auto-provisioning so a branch that
+   * predates auto-creation still gets one. Validates the branch belongs to the
+   * tenant first (§4.7).
+   * @param tenantId tenant scope
+   * @param branchId the branch whose master data to resolve
+   */
+  async getOrCreateBranchMasterData(
+    tenantId: string,
+    branchId: string,
+  ): Promise<MasterData> {
+    const branch = await this.branchService.findById(branchId, tenantId);
+    const existing = await this.prisma.masterData.findFirst({
+      where: { branchId, tenantId, deletedAt: null },
+    });
+    if (existing) {
+      return existing;
+    }
+    const created = await this.createDefaultForBranch(
+      tenantId,
+      branchId,
+      branch.name,
+    );
+    // `createDefaultForBranch` returns null only if one already existed (race);
+    // re-resolve in that case.
+    return created ?? this.findByBranch(branchId, tenantId);
+  }
+
+  /**
    * Import source: the active lab tests of the master data mapped to `branchId`.
    * Resolves the branch's master data (1:1), then returns its lab tests paginated
    * so the frontend can present them for selection. Read-only — the actual import
@@ -271,7 +341,14 @@ export class MasterDataService {
     limit = 20,
     filters: { search?: string; branchId?: string } = {},
   ): Promise<PaginatedResult<MasterData>> {
-    const where: Prisma.MasterDataWhereInput = { tenantId, deletedAt: null };
+    // Only per-branch master datas — the tenant-level Tenant Master Data
+    // (branchId NULL) is fetched via its dedicated `getOrCreateTenantMasterData`
+    // endpoint, so it never appears in the branch list / pricing-tab consumers.
+    const where: Prisma.MasterDataWhereInput = {
+      tenantId,
+      branchId: { not: null },
+      deletedAt: null,
+    };
     const search = filters.search?.trim();
     if (search) {
       where.name = { contains: search, mode: 'insensitive' };
@@ -331,7 +408,10 @@ export class MasterDataService {
    */
   async remove(id: string, tenantId: string): Promise<MasterData> {
     const masterData = await this.findById(id, tenantId);
-    if (await this.isMainBranch(tenantId, masterData.branchId)) {
+    if (
+      masterData.branchId &&
+      (await this.isMainBranch(tenantId, masterData.branchId))
+    ) {
       throw new CannotDeleteMainBranchMasterDataException(id);
     }
     const now = new Date();

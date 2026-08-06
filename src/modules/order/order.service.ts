@@ -7,6 +7,7 @@ import {
   OrderStatus,
   Prisma,
   QuotationStatus,
+  RepeatIntervalUnit,
   SampleSource,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -16,12 +17,19 @@ import { AppointmentService } from '../appointment/appointment.service';
 import { AccessionSampleService } from '../accession/accession-sample.service';
 import { SlotReservationService } from '../phlebotomist-schedule/slot-reservation.service';
 import { PhlebotomistCollectionService } from '../phlebotomist-collection/phlebotomist-collection.service';
+import { RegistrationSettingsService } from '../registration-settings/registration-settings.service';
 import type { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
 import { PaginatedResult } from '../../common/dto/response.dto';
+import { addInterval, subtractInterval } from '../../common/utils';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { ListOrdersDto } from './dto/list-orders.dto';
+import { CreateOrderNoteDto } from './dto/create-order-note.dto';
+import type { OrderNoteCategoryValue } from './dto/create-order-note.dto';
+import { ListOrderNotesDto } from './dto/list-order-notes.dto';
 import { OrderItemDto } from './dto/order-item.dto';
+import { OrderPaymentDto } from './dto/order-payment.dto';
+import { BillingDetailsDto } from './dto/billing-details.dto';
 import { OrderDiagnosticsDto } from './dto/order-diagnostics.dto';
 import { OrderOpdDto } from './dto/order-opd.dto';
 import { OrderRadiologyDto } from './dto/order-radiology.dto';
@@ -58,6 +66,9 @@ import {
   OrderReferralPanelNotFoundException,
   NoActiveOrderPrintTemplateException,
   AmbiguousOrderPrintTemplateException,
+  NotAQuotationException,
+  QuotationNotExpiredException,
+  QuotationDuplicationNotAllowedException,
 } from './exceptions/order.exceptions';
 // Reused so an inline order-payment overpayment raises the SAME
 // `PAYMENT_OVERPAYMENT` error the standalone `POST /payments` guard does. This
@@ -74,6 +85,24 @@ import { PaymentOverpaymentException } from '../payment-details/exceptions/payme
  * radiologist/phlebotomist references are staff `Person`s (validated as active
  * persons). Reads always filter `{ tenantId, deletedAt: null }`.
  */
+/**
+ * One row in an Order Overview note stream. Unifies order-store notes
+ * (`source: 'ORDER'`, editable-in-future) and the read-only accession sample
+ * notes merged into the SAMPLE tab (`source: 'ACCESSION'`), so the frontend
+ * renders one chronological history per tab regardless of origin.
+ */
+export interface OrderNoteView {
+  id: string;
+  category: OrderNoteCategoryValue;
+  body: string;
+  createdByName: string | null;
+  createdAt: Date;
+  source: 'ORDER' | 'ACCESSION';
+  readonly: boolean;
+  /** Only set for accession-sourced SAMPLE notes (e.g. 'collect', 'accept'). */
+  action?: string;
+}
+
 @Injectable()
 export class OrderService {
   constructor(
@@ -83,6 +112,7 @@ export class OrderService {
     private readonly slotReservation: SlotReservationService,
     private readonly homeVisitCollections: PhlebotomistCollectionService,
     private readonly pdfReportTemplateService: PdfReportTemplateService,
+    private readonly registrationSettingsService: RegistrationSettingsService,
   ) {}
 
   /**
@@ -200,6 +230,14 @@ export class OrderService {
     }
     const paymentStatus = derivePaymentStatus(payNet, payPaid);
 
+    // Snapshot each item's list unit price from its branch lab test/panel row so
+    // the order's prices are stable even if the list is later re-priced (§B5).
+    const itemPrices = await this.loadItemUnitPrices(
+      tenantId,
+      branchId,
+      dto.items ?? [],
+    );
+
     let createdId: string;
     try {
       createdId = await this.prisma.withTenant(tenantId, async (tx) => {
@@ -266,8 +304,25 @@ export class OrderService {
             b2bClient: dto.b2bClient ?? null,
             internalReferralId: dto.internalReferralId ?? null,
             externalReferralId: dto.externalReferralId ?? null,
+            branchLabTestListId: dto.branchLabTestListId ?? null,
+            branchLabPanelListId: dto.branchLabPanelListId ?? null,
           },
         });
+        // Seed the create-form's single `orderNotes` string as the first entry
+        // of the Order Notes history so the Order Overview tab shows it alongside
+        // any notes added later (append-only — see OrderNote / createNote).
+        if (dto.orderNotes && personId) {
+          await tx.orderNote.create({
+            data: {
+              tenantId,
+              branchId,
+              orderId: order.id,
+              category: 'ORDER',
+              body: dto.orderNotes,
+              createdBy: personId,
+            },
+          });
+        }
         if (dto.items?.length) {
           await tx.orderItem.createMany({
             data: dto.items.map((i) => ({
@@ -277,6 +332,9 @@ export class OrderService {
               branchLabTestId: i.branchLabTestId ?? null,
               branchLabPanelId: i.branchLabPanelId ?? null,
               direct: i.direct ?? null,
+              unitPrice:
+                itemPrices.get(i.branchLabTestId ?? i.branchLabPanelId ?? '') ??
+                0,
               discount: i.discount ?? 0,
               outsourceCenterId: i.outsourceCenterId ?? null,
             })),
@@ -366,6 +424,176 @@ export class OrderService {
   }
 
   /**
+   * Duplicate an EXPIRED quotation into a fresh DRAFT quote dated today, reusing
+   * the source's patient, items (with per-line discounts), referrals, billing
+   * sub-form and order-level totals. The new quote gets today's order date, so a
+   * fresh validity window is computed at runtime from the current settings.
+   *
+   * Enforced server-side (independently of the UI): the source must have
+   * originated as a quotation, must currently be expired (runtime-computed from
+   * the branch's current validity window), and the branch's
+   * `Quotation_AllowDuplicationOfExpiredQuotation` setting must be enabled.
+   *
+   * @param tenantId tenant scope (from the JWT).
+   * @param branchId active branch (from the JWT profile) — scopes the settings
+   *   read and the new quote.
+   * @param personId the acting user (createdBy/updatedBy on the new quote).
+   * @param id the source quotation's order id.
+   * @returns the newly-created quotation, fully composed.
+   * @throws OrderNotFoundException when the source order does not exist.
+   * @throws NotAQuotationException when the source did not originate as a quote.
+   * @throws QuotationNotExpiredException when the source is still within validity.
+   * @throws QuotationDuplicationNotAllowedException when the setting is disabled.
+   */
+  async duplicateQuotation(
+    tenantId: string,
+    branchId: string | null,
+    personId: string | null,
+    id: string,
+  ): Promise<OrderWithRelations> {
+    const source = await this.findById(id, tenantId);
+
+    // Must have originated as a quotation (any non-null quotationStatus).
+    if (source.quotationStatus == null) {
+      throw new NotAQuotationException(id);
+    }
+
+    // Runtime expiry + gate against the branch's CURRENT settings.
+    const settings = await this.registrationSettingsService.getForBranch(
+      tenantId,
+      branchId ?? source.branchId ?? '',
+    );
+    const anchor = source.orderDate ?? source.createdAt;
+    const expiryAt = addInterval(
+      anchor,
+      settings.Quotation_QuotationValidityValue,
+      settings.Quotation_QuotationValidityUnit,
+    );
+    if (expiryAt >= new Date()) {
+      throw new QuotationNotExpiredException(id);
+    }
+    if (!settings.Quotation_AllowDuplicationOfExpiredQuotation) {
+      throw new QuotationDuplicationNotAllowedException(id);
+    }
+
+    // Rebuild a create payload from the source. Order date = today (its fresh
+    // validity is then computed at runtime); status QUOTE / quotationStatus DRAFT.
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const items: OrderItemDto[] = source.items.map((i) => ({
+      branchLabTestId: i.branchLabTestId ?? undefined,
+      branchLabPanelId: i.branchLabPanelId ?? undefined,
+      direct: i.direct ?? undefined,
+      discount: i.discount,
+      outsourceCenterId: i.outsourceCenterId ?? undefined,
+    }));
+    // Carry the source's order-level totals onto a single fresh (unpaid) ledger row.
+    const src0 = source.payments[0];
+    const payments: OrderPaymentDto[] = src0
+      ? [
+          {
+            totalAmount: src0.totalAmount ?? 0,
+            orderDiscount: src0.orderDiscount ?? 0,
+            netAmount: src0.netAmount ?? 0,
+            payableAmount: src0.payableAmount ?? src0.netAmount ?? 0,
+            paidAmount: 0,
+          },
+        ]
+      : [];
+
+    const dto: CreateOrderDto = {
+      status: OrderStatus.QUOTE,
+      quotationStatus: QuotationStatus.DRAFT,
+      orderDate: todayIso,
+      orderType: source.orderType,
+      billingType: source.billingType,
+      isUrgentBill: source.isUrgentBill,
+      isBillGenerated: source.isBillGenerated,
+      patientId: source.patientId,
+      ...(source.orderNotes ? { orderNotes: source.orderNotes } : {}),
+      ...(source.billingDetails
+        ? {
+            billingDetails:
+              source.billingDetails as unknown as BillingDetailsDto,
+          }
+        : {}),
+      ...(source.referredByDoctorId
+        ? { referredByDoctorId: source.referredByDoctorId }
+        : {}),
+      ...(source.referralPanelId
+        ? { referralPanelId: source.referralPanelId }
+        : {}),
+      ...(source.b2bClient ? { b2bClient: source.b2bClient } : {}),
+      ...(source.internalReferralId
+        ? { internalReferralId: source.internalReferralId }
+        : {}),
+      ...(source.externalReferralId
+        ? { externalReferralId: source.externalReferralId }
+        : {}),
+      ...(source.branchLabTestListId
+        ? { branchLabTestListId: source.branchLabTestListId }
+        : {}),
+      ...(source.branchLabPanelListId
+        ? { branchLabPanelListId: source.branchLabPanelListId }
+        : {}),
+      ...(items.length ? { items } : {}),
+      ...(payments.length ? { payments } : {}),
+    };
+
+    return this.create(tenantId, branchId, personId, dto);
+  }
+
+  /**
+   * Load the list unit price (`listPrice`) for each item's branch lab test/panel,
+   * keyed by that row id, so order items can snapshot a stable `unitPrice`. Direct
+   * (free-text) items and unknown ids resolve to 0. Branch-scoped.
+   * @param tenantId tenant scope
+   * @param branchId active branch (null → no prices resolved)
+   * @param items the order items to price
+   */
+  private async loadItemUnitPrices(
+    tenantId: string,
+    branchId: string | null,
+    items: Array<{ branchLabTestId?: string; branchLabPanelId?: string }>,
+  ): Promise<Map<string, number>> {
+    const prices = new Map<string, number>();
+    if (!branchId || !items.length) {
+      return prices;
+    }
+    const testIds = items
+      .map((i) => i.branchLabTestId)
+      .filter((v): v is string => Boolean(v));
+    const panelIds = items
+      .map((i) => i.branchLabPanelId)
+      .filter((v): v is string => Boolean(v));
+    const [tests, panels] = await Promise.all([
+      testIds.length
+        ? this.prisma.branchLabTest.findMany({
+            where: { id: { in: testIds }, tenantId, branchId, deletedAt: null },
+            select: { id: true, listPrice: true },
+          })
+        : Promise.resolve([]),
+      panelIds.length
+        ? this.prisma.branchLabPanel.findMany({
+            where: {
+              id: { in: panelIds },
+              tenantId,
+              branchId,
+              deletedAt: null,
+            },
+            select: { id: true, listPrice: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    for (const t of tests) {
+      prices.set(t.id, t.listPrice);
+    }
+    for (const p of panels) {
+      prices.set(p.id, p.listPrice);
+    }
+    return prices;
+  }
+
+  /**
    * Fetch one order fully composed (patient, items, sections, payments), scoped
    * to the caller's tenant.
    * @param id order id
@@ -381,6 +609,185 @@ export class OrderService {
       throw new OrderNotFoundException(id);
     }
     return order;
+  }
+
+  // ── Order Overview notes (Order / Sample / Tech tabs) ───────────────────────
+  //
+  // Append-only note history keyed to the order. Mirrors the lab-report notes
+  // feature (LABORATORY.docx §4.2) but attached to the order, so notes can be
+  // added from the Order Overview page the moment an order is created. The
+  // SAMPLE stream additionally merges the order's accession sample notes
+  // (read-only) so the two histories connect.
+
+  /**
+   * Add a note to an order (Order Overview → Order / Sample / Tech tab). Creates
+   * one append-only `OrderNote` row — existing notes are never overwritten.
+   * @param id order id
+   * @param tenantId tenant scope (from JWT)
+   * @param branchId active branch (from the active profile), stored on the note
+   * @param actorId author `Person.id` (from JWT)
+   * @param dto category + body
+   * @returns the created note in the unified `OrderNoteView` shape
+   * @throws OrderNotFoundException if the order is missing/soft-deleted/other tenant
+   */
+  async createNote(
+    id: string,
+    tenantId: string,
+    branchId: string | null,
+    actorId: string,
+    dto: CreateOrderNoteDto,
+  ): Promise<OrderNoteView> {
+    await this.assertOrderExists(id, tenantId);
+    const note = await this.prisma.orderNote.create({
+      data: {
+        tenantId,
+        branchId,
+        orderId: id,
+        category: dto.category,
+        body: dto.body,
+        createdBy: actorId,
+      },
+    });
+    const nameById = await this.resolveActorNames([note.createdBy]);
+    return {
+      id: note.id,
+      category: note.category,
+      body: note.body,
+      createdByName: nameById.get(note.createdBy) ?? note.createdBy,
+      createdAt: note.createdAt,
+      source: 'ORDER',
+      readonly: false,
+    };
+  }
+
+  /**
+   * List an order's notes, newest-first. Without `category`, returns all three
+   * tabs' notes together. For the SAMPLE stream (requested explicitly or as part
+   * of the unfiltered set) the order's accession sample notes are merged in
+   * read-only, so the Order Overview Sample tab shows the complete sample history.
+   * @param id order id
+   * @param tenantId tenant scope (from JWT)
+   * @param query optional category filter
+   * @returns notes in the unified `OrderNoteView` shape, `createdAt` descending
+   * @throws OrderNotFoundException if the order is missing/soft-deleted/other tenant
+   */
+  async findNotes(
+    id: string,
+    tenantId: string,
+    query: ListOrderNotesDto,
+  ): Promise<OrderNoteView[]> {
+    await this.assertOrderExists(id, tenantId);
+    const rows = await this.prisma.orderNote.findMany({
+      where: {
+        orderId: id,
+        tenantId,
+        ...(query.category ? { category: query.category } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    const nameById = await this.resolveActorNames(rows.map((r) => r.createdBy));
+    const notes: OrderNoteView[] = rows.map((r) => ({
+      id: r.id,
+      category: r.category,
+      body: r.body,
+      createdByName: nameById.get(r.createdBy) ?? r.createdBy,
+      createdAt: r.createdAt,
+      source: 'ORDER',
+      readonly: false,
+    }));
+
+    if (!query.category || query.category === 'SAMPLE') {
+      notes.push(...(await this.loadAccessionSampleNotes(id, tenantId)));
+    }
+
+    notes.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    return notes;
+  }
+
+  /**
+   * Loads the read-only accession sample notes for an order — every
+   * `AccessionStatusHistory` row (with a note) across the order's samples, mapped
+   * into the SAMPLE `OrderNoteView` shape. These come from the accession page's
+   * Collect Sample / status-update actions (CLAUDE.md §4 accession flow).
+   */
+  private async loadAccessionSampleNotes(
+    orderId: string,
+    tenantId: string,
+  ): Promise<OrderNoteView[]> {
+    const samples = await this.prisma.accessionSample.findMany({
+      where: { orderId, tenantId, deletedAt: null },
+      select: { id: true },
+    });
+    if (samples.length === 0) return [];
+
+    const history = await this.prisma.accessionStatusHistory.findMany({
+      where: {
+        tenantId,
+        sampleId: { in: samples.map((s) => s.id) },
+        notes: { not: null },
+        deletedAt: null,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (history.length === 0) return [];
+
+    const nameById = await this.resolveActorNames(
+      history.map((h) => h.changedBy),
+    );
+    return history.map((h) => ({
+      id: h.id,
+      category: 'SAMPLE' as const,
+      body: h.notes as string,
+      createdByName: h.changedBy
+        ? (nameById.get(h.changedBy) ?? h.changedBy)
+        : null,
+      createdAt: h.createdAt,
+      source: 'ACCESSION' as const,
+      readonly: true,
+      action: h.action,
+    }));
+  }
+
+  /**
+   * Lightweight existence guard for note reads/writes — asserts the order belongs
+   * to the caller's tenant and is active, without loading its full graph.
+   * @throws OrderNotFoundException if missing/soft-deleted/other tenant
+   */
+  private async assertOrderExists(id: string, tenantId: string): Promise<void> {
+    const order = await this.prisma.order.findFirst({
+      where: { id, tenantId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!order) {
+      throw new OrderNotFoundException(id);
+    }
+  }
+
+  /**
+   * Resolves logical `Person.id` actor references (an OrderNote's `createdBy`, an
+   * accession history's `changedBy`) to display names, one batched lookup —
+   * same unenforced-reference convention as the lab-report notes, falling back to
+   * the raw id when a person can't be resolved.
+   */
+  private async resolveActorNames(
+    actorIds: Array<string | null | undefined>,
+  ): Promise<Map<string, string>> {
+    const ids = [...new Set(actorIds.filter((x): x is string => Boolean(x)))];
+    const nameById = new Map<string, string>();
+    if (ids.length === 0) return nameById;
+
+    const persons = await this.prisma.person.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, firstName: true, middleName: true, lastName: true },
+    });
+    for (const p of persons) {
+      const name = [p.firstName, p.middleName, p.lastName]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+      nameById.set(p.id, name || p.id);
+    }
+    return nameById;
   }
 
   // ── Print (template-driven PDF) ─────────────────────────────────────────────
@@ -834,34 +1241,60 @@ export class OrderService {
       where.patient = { is: patientWhere };
     }
 
-    // Quotation status filter (EXPIRED derived from quotationValidTill).
+    // ── Quotation expiry: computed at RUNTIME from the CURRENT branch settings
+    // + each quote's order date (no cron, no persisted "expired" flag). We read
+    // the branch's validity (value + unit) once and derive a single cutoff
+    // instant: a DRAFT quote is EXPIRED once its order date is older than
+    // (now − validity). Scoped to the Quotations screen (`isQuotation`); other
+    // order listings keep the raw stored status (`quotationExpiryCutoff` stays
+    // null). Degrades gracefully to "nothing expired" when no branch is
+    // resolvable (e.g. a tenant-level profile). ──
     const now = new Date();
+    let quotationValidityValue: number | null = null;
+    let quotationValidityUnit: RepeatIntervalUnit | null = null;
+    let quotationExpiryCutoff: Date | null = null;
+    if (query.isQuotation && branchId) {
+      const settings = await this.registrationSettingsService.getForBranch(
+        tenantId,
+        branchId,
+      );
+      quotationValidityValue = settings.Quotation_QuotationValidityValue;
+      quotationValidityUnit = settings.Quotation_QuotationValidityUnit;
+      quotationExpiryCutoff = subtractInterval(
+        now,
+        quotationValidityValue,
+        quotationValidityUnit,
+      );
+    }
+
     if (query.quotationStatus) {
       switch (query.quotationStatus) {
         case QuotationStatus.CONVERTED:
           where.quotationStatus = QuotationStatus.CONVERTED;
           break;
         case QuotationStatus.EXPIRED:
-          // Stored EXPIRED, or an open DRAFT whose validity has passed.
+          // A DRAFT quote whose order date has passed the current validity
+          // window (or a legacy row already stored as EXPIRED).
           and.push({
             OR: [
               { quotationStatus: QuotationStatus.EXPIRED },
-              {
-                quotationStatus: QuotationStatus.DRAFT,
-                quotationValidTill: { lt: now },
-              },
+              ...(quotationExpiryCutoff
+                ? [
+                    {
+                      quotationStatus: QuotationStatus.DRAFT,
+                      orderDate: { lt: quotationExpiryCutoff },
+                    },
+                  ]
+                : []),
             ],
           });
           break;
         case QuotationStatus.DRAFT:
-          // DRAFT that has NOT expired (no validity, or validity still in future).
+          // DRAFT that is still within its validity window.
           where.quotationStatus = QuotationStatus.DRAFT;
-          and.push({
-            OR: [
-              { quotationValidTill: null },
-              { quotationValidTill: { gte: now } },
-            ],
-          });
+          if (quotationExpiryCutoff) {
+            and.push({ orderDate: { gte: quotationExpiryCutoff } });
+          }
           break;
       }
     }
@@ -892,10 +1325,24 @@ export class OrderService {
       const netAmount = r.payments.reduce((s, p) => s + p.netAmount, 0);
       const paidAmount = r.payments.reduce((s, p) => s + p.paidAmount, 0);
       const count = counts.get(r.id);
+      // Runtime expiry (Quotations screen only): anchor on the order date, or
+      // the quote's createdAt when no order date is set. `computedQuotationExpiryAt`
+      // is the absolute expiry the FE renders as "valid till"; a DRAFT quote is
+      // EXPIRED once its anchor predates the cutoff. Null cutoff (non-quotation
+      // listing / no branch) leaves the raw stored status untouched.
+      const quoteAnchor = r.orderDate ?? r.createdAt;
+      const computedQuotationExpiryAt =
+        quotationValidityValue != null && quotationValidityUnit != null
+          ? addInterval(
+              quoteAnchor,
+              quotationValidityValue,
+              quotationValidityUnit,
+            )
+          : null;
       const effectiveQuotationStatus =
+        quotationExpiryCutoff != null &&
         r.quotationStatus === QuotationStatus.DRAFT &&
-        r.quotationValidTill != null &&
-        r.quotationValidTill < now
+        quoteAnchor < quotationExpiryCutoff
           ? QuotationStatus.EXPIRED
           : r.quotationStatus;
       return {
@@ -907,6 +1354,7 @@ export class OrderService {
         netAmount,
         paidAmount,
         effectiveQuotationStatus,
+        computedQuotationExpiryAt,
       };
     });
     return { data, total, page, limit };
@@ -1096,6 +1544,8 @@ export class OrderService {
           b2bClient: dto.b2bClient,
           internalReferralId: dto.internalReferralId,
           externalReferralId: dto.externalReferralId,
+          branchLabTestListId: dto.branchLabTestListId,
+          branchLabPanelListId: dto.branchLabPanelListId,
         },
       });
 
@@ -1105,6 +1555,11 @@ export class OrderService {
           data: { deletedAt: now },
         });
         if (dto.items.length) {
+          const itemPrices = await this.loadItemUnitPrices(
+            tenantId,
+            branchId,
+            dto.items,
+          );
           await tx.orderItem.createMany({
             data: dto.items.map((i) => ({
               tenantId,
@@ -1113,6 +1568,9 @@ export class OrderService {
               branchLabTestId: i.branchLabTestId ?? null,
               branchLabPanelId: i.branchLabPanelId ?? null,
               direct: i.direct ?? null,
+              unitPrice:
+                itemPrices.get(i.branchLabTestId ?? i.branchLabPanelId ?? '') ??
+                0,
               discount: i.discount ?? 0,
               outsourceCenterId: i.outsourceCenterId ?? null,
             })),

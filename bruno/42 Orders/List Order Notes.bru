@@ -1,0 +1,43 @@
+meta {
+  name: List Order Notes
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/orders/{{orderId}}/notes
+  body: none
+  auth: bearer
+}
+
+params:query {
+  ~category: SAMPLE
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  List an order's notes for the Order Overview page's Order / Sample / Tech tabs,
+  newest-first (`createdAt` descending). Each row:
+  `{ id, category, body, createdByName, createdAt, source, readonly }`.
+
+  - `category` — `ORDER` | `SAMPLE` | `TECH`.
+  - `source` — `ORDER` for notes added on the Order Overview page, `ACCESSION`
+    for the read-only accession sample notes merged into the SAMPLE stream.
+  - `readonly` — `true` for accession-sourced rows (edit them on the accession
+    page, not here). Accession rows also carry an `action` (e.g. `collect`).
+  - `createdByName` — the author's resolved name, falling back to the raw
+    `Person.id` when the person can't be resolved (`null` only for accession
+    rows with no recorded actor).
+
+  Query params:
+  - `category` (optional) — one of `ORDER` | `SAMPLE` | `TECH`. Omit to return
+    all three tabs together. When omitted, or when `category=SAMPLE`, the SAMPLE
+    stream additionally merges the order's accession sample notes (from Collect
+    Sample / status-update actions) so the complete sample history is shown.
+
+  404 `ORDER_NOT_FOUND` if the order is missing, soft-deleted, or owned by
+  another tenant.
+}

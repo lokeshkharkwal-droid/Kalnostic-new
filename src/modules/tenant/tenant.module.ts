@@ -5,6 +5,7 @@ import { AuthRoleModule } from '../auth-role/auth-role.module';
 import { BranchModule } from '../branch/branch.module';
 import { LocationModule } from '../location/location.module';
 import { TenantController } from './tenant.controller';
+import { TenantLocaleController } from './tenant-locale.controller';
 import { TenantService } from './tenant.service';
 
 /**
@@ -22,7 +23,7 @@ import { TenantService } from './tenant.service';
     BranchModule,
     LocationModule,
   ],
-  controllers: [TenantController],
+  controllers: [TenantController, TenantLocaleController],
   providers: [TenantService],
   exports: [TenantService],
 })

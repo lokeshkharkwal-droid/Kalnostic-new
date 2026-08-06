@@ -1,14 +1,18 @@
 import {
   IsEmail,
   IsNotEmpty,
+  IsNotEmptyObject,
   IsObject,
   IsOptional,
   IsString,
   IsUUID,
   Matches,
   MaxLength,
+  MinLength,
+  ValidateNested,
 } from 'class-validator';
-import { TenantSettings } from '../entities/tenant.entity';
+import { Type } from 'class-transformer';
+import { TenantSettingsDto } from './tenant-settings.dto';
 
 /**
  * Payload to create a tenant (business) + its first business-admin user.
@@ -36,15 +40,37 @@ export class CreateTenantDto {
   @MaxLength(100)
   adminLastName?: string;
 
-  /** Phone is the admin's login identifier — must be globally unique. */
+  /**
+   * Phone is the admin's login identifier — must be globally unique. Stored as
+   * a plain 10-digit national number (no country code); the country code is
+   * kept only on the business contact `phone` below.
+   */
   @IsString()
   @IsNotEmpty()
-  @MaxLength(30)
+  @Matches(/^\d{10}$/, {
+    message: 'adminPhone must be a 10-digit mobile number',
+  })
   adminPhone: string;
 
   @IsEmail()
   @IsOptional()
   adminEmail?: string;
+
+  /**
+   * The business admin's login password, chosen by SiteAdmin. Policy: min 8
+   * chars, ≥1 uppercase, ≥1 digit (§5.3). Stored bcrypt-hashed; not a temp
+   * password (the admin need not change it on first login).
+   */
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(8, { message: 'adminPassword must be at least 8 characters long' })
+  @Matches(/[A-Z]/, {
+    message: 'adminPassword must contain at least one uppercase letter',
+  })
+  @Matches(/[0-9]/, {
+    message: 'adminPassword must contain at least one number',
+  })
+  adminPassword: string;
 
   /**
    * Subdomain slug ({slug}.kalnostics.com). Lowercase alphanumeric + hyphens.
@@ -118,9 +144,15 @@ export class CreateTenantDto {
   @MaxLength(2048)
   photoUrl?: string;
 
+  /**
+   * Locale settings (time zone + currency are required; date_format/language
+   * defaulted by the service). Validated against the supported shortlists.
+   */
   @IsObject()
-  @IsOptional()
-  settings?: Partial<TenantSettings>;
+  @IsNotEmptyObject()
+  @ValidateNested()
+  @Type(() => TenantSettingsDto)
+  settings: TenantSettingsDto;
 
   /** MRN prefix for this business's patients (e.g. "CD" → "CD-00001"). */
   @IsString()

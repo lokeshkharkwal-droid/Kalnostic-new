@@ -338,9 +338,20 @@ Prisma cannot express `UNIQUE ... WHERE deleted_at IS NULL`. Declare these in
 `branches_tenant_code_active_unique`). A soft-deleted row must not block a new
 active one from reusing a name/code.
 
-### Migrations (Windows / this repo)
+### Migrations — MANDATORY on every schema change
 
-- Dev uses **`prisma db push`** — `prisma migrate dev` is blocked here (drift).
+> **Whenever you change the database schema, you MUST create a corresponding
+> migration.** A schema edit without a migration is incomplete — the migration is
+> what applies the change consistently across **every** environment (other devs,
+> staging, production) and prevents deployment/server drift. **Never modify an
+> existing migration** — it has already been applied elsewhere; always create a
+> **new** migration for each schema change.
+
+- `prisma db push` is fine for quick **local** prototyping, but the change is not
+  done until a **new, committed migration** exists alongside the `schema.prisma`
+  edit. `prisma migrate dev` is blocked here (drift) — generate the migration the
+  way this repo's migration history does (see the squashed `0_init` +
+  `1_row_level_security` baseline in `prisma/migrations/`) and commit it.
 - **Stop running node processes before `prisma generate`** (Windows DLL lock).
 - After schema changes, re-apply `prisma/rls.sql` (see §7 gotcha).
 
@@ -670,8 +681,10 @@ scaffolds the module for you.)
    delete, timestamps, boolean prefixes, indexes (`tenantId`/`branchId`/
    `deletedAt`). If tenant-scoped, add its **RLS policy** (and any partial unique
    index) to `prisma/rls.sql` in the same change.
-3. **Sync the DB** — `pnpm prisma db push` + `pnpm prisma generate` (stop node
-   first on Windows); re-apply `rls.sql`.
+3. **Sync the DB & create a migration** — apply the change (`pnpm prisma db push`
+   for local iteration + `pnpm prisma generate`, stop node first on Windows;
+   re-apply `rls.sql`), then **create a new migration** for the schema change and
+   commit it. **Never edit an existing migration** (§6).
 4. **Scaffold the module** — `module/controller/service/dto/entities/exceptions`;
    `imports: [PrismaModule, ...deps]`, `providers: [Service]`, `exports: [Service]`.
 5. **DTOs** (§3) — create/update/list-query with class-validator only.
@@ -698,6 +711,8 @@ The non-negotiables, each linking to its section:
 - **Tenant & branch come from context (JWT), never the body**; every read filters
   `{ tenantId, deletedAt: null }` (+ `branchId`) (§7).
 - **Soft delete** via `deletedAt`; never hard-delete business data (§6, §7).
+- **Every schema change ships with a new migration** — never modify an existing
+  one (§6).
 - **Throw typed `KaltrosException`s**, never `new Error()` in a request path (§4).
 - **Return raw data** — the interceptor builds the `{ success, data, meta }`
   envelope (§5).

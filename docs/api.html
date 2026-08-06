@@ -81,6 +81,7 @@
   <a href="#auth-changepw">POST /auth/change-password</a>
   <a href="#auth-logout">POST /auth/logout</a>
   <a href="#auth-me">GET /auth/me</a>
+  <a href="#tenant-locale">GET /tenant/locale</a>
   <h3>Branches</h3>
   <a href="#branch-create">POST /branches</a>
   <a href="#branch-list">GET /branches</a>
@@ -423,6 +424,7 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>POST /auth/change-password</td><td>Business JWT</td><td>self</td></tr>
   <tr><td>POST /auth/logout</td><td>Business JWT</td><td>self</td></tr>
   <tr><td>GET /auth/me</td><td>Business JWT</td><td>self</td></tr>
+  <tr><td>GET /tenant/locale</td><td>Business JWT</td><td>own tenant</td></tr>
   <tr><td>POST /branches</td><td>Business JWT</td><td>intended <code>staff:manage</code></td></tr>
   <tr><td>GET /branches</td><td>Business JWT</td><td>intended <code>staff:read</code></td></tr>
   <tr><td>GET /branches/:id</td><td>Business JWT</td><td>intended <code>staff:read</code></td></tr>
@@ -470,6 +472,9 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>GET /siteadmin/lab-panels/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global template)</td></tr>
   <tr><td>PATCH /siteadmin/lab-panels/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template)</td></tr>
   <tr><td>DELETE /siteadmin/lab-panels/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template)</td></tr>
+  <tr><td>GET /master-data/tenant</td><td>Business JWT</td><td>get-or-create the tenant-level Tenant Master Data singleton (branchId NULL)</td></tr>
+  <tr><td>GET /master-data/branch</td><td>Business JWT</td><td>get-or-create the active branch's Branch Master Data (branch from JWT)</td></tr>
+  <tr><td>POST /master-data/branch/import-from-tenant</td><td>Business JWT</td><td>sync Tenant Master Data → active Branch Master Data (full overwrite, tests + panels)</td></tr>
   <tr><td>POST /master-data/:masterDataId/lab-tests</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
   <tr><td>GET /master-data/:masterDataId/lab-tests</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
   <tr><td>GET /master-data/:masterDataId/lab-tests/listing</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
@@ -483,6 +488,8 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>GET /lab-tests/templates</td><td>Business JWT</td><td>browse Site Admin templates (read-only)</td></tr>
   <tr><td>GET /lab-tests/templates/:id</td><td>Business JWT</td><td>browse Site Admin template (read-only)</td></tr>
   <tr><td>POST /lab-tests/:id/clone</td><td>Business JWT</td><td>clone a Site Admin template into the tenant (body: masterDataId)</td></tr>
+  <tr><td>POST /lab-tests/import</td><td>Business JWT</td><td>bulk-import Site Admin templates into a master data (body: masterDataId, templateIds[])</td></tr>
+  <tr><td>POST /lab-tests/sync</td><td>Business JWT</td><td>re-pull previously-imported tests from Site Admin (full overwrite; body: masterDataId, labTestIds?)</td></tr>
   <tr><td>POST /master-data/:masterDataId/lab-panels</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
   <tr><td>GET /master-data/:masterDataId/lab-panels</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
   <tr><td>GET /master-data/:masterDataId/lab-panels/listing</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
@@ -493,24 +500,37 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>GET /lab-panels/templates</td><td>Business JWT</td><td>browse Site Admin templates (read-only)</td></tr>
   <tr><td>GET /lab-panels/templates/:id</td><td>Business JWT</td><td>browse Site Admin template (read-only)</td></tr>
   <tr><td>POST /lab-panels/:id/clone</td><td>Business JWT</td><td>clone a Site Admin template into the tenant (clones its tests too; body: masterDataId)</td></tr>
-  <tr><td>POST /branch-lab-tests/import</td><td>Business JWT</td><td>materialize selected master-data tests into the active branch's Lab Test List (tenant+branch from JWT)</td></tr>
+  <tr><td>POST /branch-lab-tests/import</td><td>Business JWT</td><td>materialize selected master-data tests into the branch's default <b>Walk-in</b> Lab Test List (auto-created; re-import updates existing / adds new → {copied,updated,skipped})</td></tr>
   <tr><td>POST /branch-lab-tests/sync</td><td>Business JWT</td><td>re-snapshot imported originals from master data (duplicates untouched; all or selected ids)</td></tr>
   <tr><td>POST /branch-lab-tests/:id/duplicate</td><td>Business JWT</td><td>create an independent variant in the same group (non-default duplicate)</td></tr>
   <tr><td>PATCH /branch-lab-tests/:id/default</td><td>Business JWT</td><td>mark this row the variant group's default (used for order creation)</td></tr>
-  <tr><td>GET /branch-lab-tests</td><td>Business JWT</td><td>list the active branch's Lab Test List (search + status)</td></tr>
+  <tr><td>GET /branch-lab-tests</td><td>Business JWT</td><td>list a pricing-list tab's rows (search + status + <code>listId</code>; each row carries <code>listPrice</code>; omitted listId = Walk-in)</td></tr>
   <tr><td>GET /branch-lab-tests/:id</td><td>Business JWT</td><td>get one branch lab test (with configSnapshot)</td></tr>
   <tr><td>PUT /branch-lab-tests/:id</td><td>Business JWT</td><td>edit branch-tunable fields (pricing/flags/TAT/notes/active)</td></tr>
   <tr><td>PATCH /branch-lab-tests/:id/active</td><td>Business JWT</td><td>enable/disable a branch lab test</td></tr>
   <tr><td>DELETE /branch-lab-tests/:id</td><td>Business JWT</td><td>soft-delete a branch lab test</td></tr>
-  <tr><td>POST /branch-lab-panels/import</td><td>Business JWT</td><td>materialize selected master-data panels (and their member tests) into the active branch's Lab Panel List</td></tr>
+  <tr><td>POST /branch-lab-panels/import</td><td>Business JWT</td><td>materialize selected master-data panels (+ member tests) into the branch's default <b>Walk-in</b> Lab Panel List (re-import updates existing / adds new → {copied,updated,skipped})</td></tr>
   <tr><td>POST /branch-lab-panels/sync</td><td>Business JWT</td><td>re-snapshot imported originals from master data (rebuild members; duplicates untouched)</td></tr>
   <tr><td>POST /branch-lab-panels/:id/duplicate</td><td>Business JWT</td><td>create an independent panel variant (copies member tests; non-default)</td></tr>
   <tr><td>PATCH /branch-lab-panels/:id/default</td><td>Business JWT</td><td>mark this row the variant group's default (used for order creation)</td></tr>
-  <tr><td>GET /branch-lab-panels</td><td>Business JWT</td><td>list the active branch's Lab Panel List (search + status)</td></tr>
+  <tr><td>GET /branch-lab-panels</td><td>Business JWT</td><td>list a pricing-list tab's rows (search + status + <code>listId</code>; each row carries <code>listPrice</code>; omitted listId = Walk-in)</td></tr>
   <tr><td>GET /branch-lab-panels/:id</td><td>Business JWT</td><td>get one branch lab panel (with member tests)</td></tr>
   <tr><td>PUT /branch-lab-panels/:id</td><td>Business JWT</td><td>edit branch-tunable fields (pricing/applicability/flags/TAT/active)</td></tr>
   <tr><td>PATCH /branch-lab-panels/:id/active</td><td>Business JWT</td><td>enable/disable a branch lab panel</td></tr>
   <tr><td>DELETE /branch-lab-panels/:id</td><td>Business JWT</td><td>soft-delete a branch lab panel</td></tr>
+  <tr><td>GET /branch-lab-test-lists</td><td>Business JWT</td><td>list the branch's Lab Test Lists (pricing-list tabs; default Walk-in first)</td></tr>
+  <tr><td>GET /branch-lab-test-lists/options</td><td>Business JWT</td><td>{id,name,isDefault}[] for the referral/registration list selectors</td></tr>
+  <tr><td>POST /branch-lab-test-lists</td><td>Business JWT</td><td>create a list seeded from Walk-in (copyPriceFrom + priceType PERCENTAGE/CUSTOMIZED + copyPercentage)</td></tr>
+  <tr><td>POST /branch-lab-test-lists/:id/clone</td><td>Business JWT</td><td>deep-copy a list (rows + prices) into a new independent list</td></tr>
+  <tr><td>PATCH /branch-lab-test-lists/:id</td><td>Business JWT</td><td>rename a list (unique per branch)</td></tr>
+  <tr><td>DELETE /branch-lab-test-lists/:id</td><td>Business JWT</td><td>soft-delete a list + its rows (blocked for the default Walk-in list)</td></tr>
+  <tr><td>GET /branch-lab-panel-lists</td><td>Business JWT</td><td>list the branch's Lab Panel Lists (mirror of Lab Test Lists)</td></tr>
+  <tr><td>GET /branch-lab-panel-lists/options</td><td>Business JWT</td><td>{id,name,isDefault}[] for the list selectors</td></tr>
+  <tr><td>POST /branch-lab-panel-lists</td><td>Business JWT</td><td>create a panel list seeded from Walk-in (with member tests)</td></tr>
+  <tr><td>POST /branch-lab-panel-lists/:id/clone</td><td>Business JWT</td><td>deep-copy a panel list into a new independent list</td></tr>
+  <tr><td>PATCH /branch-lab-panel-lists/:id</td><td>Business JWT</td><td>rename a panel list</td></tr>
+  <tr><td>DELETE /branch-lab-panel-lists/:id</td><td>Business JWT</td><td>soft-delete a panel list + rows/members (blocked for default Walk-in)</td></tr>
+  <tr><td>GET /referral-lists/resolve</td><td>Business JWT</td><td>resolve an order's pricing lists from referrals (priority PANEL→DOCTOR→INTERNAL→EXTERNAL→Walk-in)</td></tr>
   <tr><td>POST /siteadmin/departments</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template, code SA-Dep-{n})</td></tr>
   <tr><td>GET /siteadmin/departments</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global templates)</td></tr>
   <tr><td>GET /siteadmin/departments/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global template)</td></tr>
@@ -840,6 +860,20 @@ coherent example: SiteAdmin <i>owner@kalnostics.com</i> created tenant <b>City D
 }, "meta": { "timestamp": "…" } }</pre>
 </div>
 
+<div class="ep" id="tenant-locale">
+  <div><span class="m get">GET</span><span class="path">/api/v1/tenant/locale</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Return the caller tenant's locale so the frontend can convert UTC timestamps
+  into business-local time and format money with the configured currency. Scoped
+  to the caller's own tenant from the token. Storage stays UTC — this only drives
+  display. An unsupported stored time zone falls back to <code>Asia/Kolkata</code>.</p>
+  <p class="lbl">200 response</p>
+  <pre>{ "success": true, "data": {
+  "timezone": "Asia/Kolkata", "currency": "INR",
+  "dateFormat": "DD/MM/YYYY", "language": "en"
+}, "meta": { "timestamp": "…" } }</pre>
+</div>
+
 <!-- ───────────────────────── BRANCHES ───────────────────────── -->
 <h2>Branches</h2>
 <p>All branch routes require a business JWT; the tenant is taken from the token.</p>
@@ -1108,6 +1142,10 @@ coherent example: SiteAdmin <i>owner@kalnostics.com</i> created tenant <b>City D
   <div class="tags"><span class="tag sa">SiteAdmin JWT</span><span class="tag">perm: business:create</span></div>
   <p>Create a tenant (business) and its first <code>business_admin</code> user, atomically. Returns a one-time temp password for the admin.</p>
   <p class="lbl">Request body (CreateTenantDto)</p>
+  <p><code>settings</code> is <b>required</b>: <code>timezone</code> and
+  <code>currency</code> are required and validated against the supported
+  shortlists (unsupported values → 400); <code>date_format</code>/<code>language</code>
+  are optional (defaulted).</p>
   <pre>{ "name":"City Diagnostics Pvt Ltd", "slug":"city-dx",
   "adminFirstName":"Dilip", "adminLastName":"Kumar",
   "adminPhone":"+919876543210", "adminEmail":"dilip@citydx.com",

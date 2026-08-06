@@ -327,3 +327,41 @@ export class AmbiguousOrderPrintTemplateException extends KaltrosException {
     );
   }
 }
+
+/** 422 — the order being duplicated did not originate as a quotation. */
+export class NotAQuotationException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'ORDER_NOT_A_QUOTATION',
+      'Only quotations can be duplicated',
+      { id },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/** 422 — the quotation is still within its validity window (only expired
+ * quotations may be duplicated). */
+export class QuotationNotExpiredException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'QUOTATION_NOT_EXPIRED',
+      'Only expired quotations can be duplicated',
+      { id },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/** 403 — the branch's Registration setting forbids duplicating expired
+ * quotations. */
+export class QuotationDuplicationNotAllowedException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'QUOTATION_DUPLICATION_NOT_ALLOWED',
+      'Duplicating expired quotations is disabled for this branch',
+      { id },
+      HttpStatus.FORBIDDEN,
+    );
+  }
+}

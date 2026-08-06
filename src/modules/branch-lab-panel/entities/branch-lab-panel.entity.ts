@@ -8,9 +8,14 @@ export type BranchLabPanelWithTests = BranchLabPanel & {
   tests: BranchLabPanelTest[];
 };
 
-/** Result of an import: how many source panels were copied vs skipped (already present). */
+/**
+ * Result of an import into the Walk-in list: how many source panels were newly
+ * copied, how many existing rows were updated (re-snapshotted), and how many
+ * source ids were skipped (not in the branch's master data).
+ */
 export interface BranchLabPanelImportResult {
   copied: number;
+  updated: number;
   skipped: number;
 }
 

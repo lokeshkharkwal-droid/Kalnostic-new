@@ -451,6 +451,7 @@ enum TatUnit {
 enum RepeatIntervalUnit {
   HOURS
   DAYS
+  WEEKS
   MONTHS
   YEARS
 }
@@ -1338,6 +1339,11 @@ model TenantStaffMembership {
   authRole   AuthRole?   @relation(fields: [authRoleId], references: [id])
   status     StaffStatus @default(ACTIVE) // tenant-global account status
 
+  // True only for the default Business Admin auto-created with the tenant.
+  // This membership can never be deactivated (guards against locking the
+  // business out of its own account); see UsersService.deactivateUser.
+  isPrimaryAdmin Boolean @default(false) @map("is_primary_admin")
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -2162,7 +2168,9 @@ model SiteAdminAuditLog {
 model MasterData {
   id          String  @id @default(uuid())
   tenantId    String  @map("tenant_id")
-  branchId    String  @map("branch_id")
+  // NULL for the tenant-level "Tenant Master Data" singleton (one per tenant);
+  // set for per-branch "Branch Master Data" (1:1 with a branch).
+  branchId    String? @map("branch_id")
   name        String
   description String?
 
@@ -2194,6 +2202,19 @@ model LabTest {
 
   // Origin: TENANT (default, tenant-scoped) or SITE_ADMIN (global template).
   source DataSource @default(TENANT)
+
+  // Provenance for Site Admin imports. `clonedFromId` points to the SITE_ADMIN
+  // template LabTest this tenant row was imported from (NULL = hand-created);
+  // it drives duplicate-prevention on import and re-pull on sync.
+  // `templateSyncedAt` records the last successful sync from that template.
+  clonedFromId     String?   @map("cloned_from_id")
+  templateSyncedAt DateTime? @map("template_synced_at")
+
+  // Provenance for the Tenant→Branch master-data sync. On a Branch Master Data
+  // test, points to the Tenant Master Data LabTest it was synced from (NULL for
+  // Tenant-MD tests and hand-created rows). Distinct from `clonedFromId`
+  // (SITE_ADMIN origin) so the two sync layers never collide.
+  sourceMasterLabTestId String? @map("source_master_lab_test_id")
 
   // Identity
   testName        String  @map("test_name")
@@ -2309,6 +2330,8 @@ model LabTest {
   @@index([mandatorySubcatId])
   @@index([isActive])
   @@index([source])
+  @@index([clonedFromId])
+  @@index([sourceMasterLabTestId])
   @@index([deletedAt])
   @@map("lab_test")
 }
@@ -2497,6 +2520,11 @@ model LabPanel {
   // Origin: TENANT (default, tenant-scoped) or SITE_ADMIN (global template).
   source DataSource @default(TENANT)
 
+  // Provenance for the Tenant→Branch master-data sync. On a Branch Master Data
+  // panel, points to the Tenant Master Data LabPanel it was synced from (NULL for
+  // Tenant-MD panels and hand-created rows).
+  sourceMasterLabPanelId String? @map("source_master_lab_panel_id")
+
   // Identity
   bannerImage String? @map("banner_image")
   panelName   String  @map("panel_name")
@@ -2561,6 +2589,7 @@ model LabPanel {
   @@index([categoryId])
   @@index([isActive])
   @@index([source])
+  @@index([sourceMasterLabPanelId])
   @@index([deletedAt])
   @@map("lab_panels")
 }
@@ -2613,6 +2642,11 @@ model BranchLabTest {
   sourceLabTestId    String? @map("source_lab_test_id")
   sourceMasterDataId String? @map("source_master_data_id")
 
+  // Pricing list this row belongs to (each list owns full copies of its rows).
+  // Nullable only for safety; new imports/clones always set it.
+  listId String?            @map("list_id")
+  list   BranchLabTestList? @relation(fields: [listId], references: [id])
+
   // Identity
   testName        String  @map("test_name")
   testDisplayName String? @map("test_display_name")
@@ -2649,6 +2683,10 @@ model BranchLabTest {
   discountCapPct       Int     @default(0) @map("discount_cap_pct")
   isAllowPriceOverride Boolean @default(false) @map("is_allow_price_override")
   isAllowDiscounts     Boolean @default(true) @map("is_allow_discounts")
+
+  // Effective selling price for this list (minor units). Seeded on import
+  // (= priceMsrp) and on New-List creation (source column × % or copied as-is).
+  listPrice Int @default(0) @map("list_price")
 
   // TAT
   tatMinValue Int?     @map("tat_min_value")
@@ -2726,6 +2764,7 @@ model BranchLabTest {
   @@index([tenantId])
   @@index([branchId])
   @@index([sourceLabTestId])
+  @@index([listId])
   @@index([isActive])
   @@index([isDefault])
   @@index([deletedAt])
@@ -2748,6 +2787,10 @@ model BranchLabPanel {
   // Provenance (logical refs; no relation — the snapshot is independent).
   sourceLabPanelId   String? @map("source_lab_panel_id")
   sourceMasterDataId String? @map("source_master_data_id")
+
+  // Pricing list this row belongs to (each list owns full copies of its rows).
+  listId String?             @map("list_id")
+  list   BranchLabPanelList? @relation(fields: [listId], references: [id])
 
   // Identity
   bannerImage String? @map("banner_image")
@@ -2784,6 +2827,10 @@ model BranchLabPanel {
   // (doc §9.2). NULL = not set yet (shown as "—"), distinct from an actual ₹0.
   commissionPrice Int? @map("commission_price")
 
+  // Effective selling price for this list (minor units). Seeded on import
+  // (= priceMsrp) and on New-List creation (source column × % or copied as-is).
+  listPrice Int @default(0) @map("list_price")
+
   // TAT (defaults to HOURS per the panel spec)
   tatMinValue Int?     @map("tat_min_value")
   tatMinUnit  TatUnit? @default(HOURS) @map("tat_min_unit")
@@ -2819,10 +2866,125 @@ model BranchLabPanel {
   @@index([tenantId])
   @@index([branchId])
   @@index([sourceLabPanelId])
+  @@index([listId])
   @@index([isActive])
   @@index([isDefault])
   @@index([deletedAt])
   @@map("branch_lab_panels")
+}
+
+/// A branch's named pricing **Lab Test List** (Walk-in, B2B Corporate, …). Each
+/// list *owns* its `BranchLabTest` rows (full copies); the branch's single
+/// `isDefault` list is "Walk-in", auto-created on the first Master-Data import.
+/// Tenant-scoped + branch-level. `name` is unique per branch among active rows
+/// (enforced in-service, soft-delete-aware). `copyPriceFrom`/`priceType`/
+/// `copyPercentage` record how a non-default list's `listPrice`s were seeded.
+model BranchLabTestList {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  name      String
+  isDefault Boolean @default(false) @map("is_default")
+
+  priceType      ListPriceType    @default(CUSTOMIZED) @map("price_type")
+  copyPriceFrom  ListPriceSource? @map("copy_price_from")
+  copyPercentage Int?             @map("copy_percentage")
+
+  // The list's owned test rows.
+  tests BranchLabTest[]
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([deletedAt])
+  @@map("branch_lab_test_lists")
+}
+
+/// A branch's named pricing **Lab Panel List** — mirror of `BranchLabTestList`
+/// for panels. Owns its `BranchLabPanel` rows; the branch's single `isDefault`
+/// list is "Walk-in", auto-created on the first Master-Data import.
+model BranchLabPanelList {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  name      String
+  isDefault Boolean @default(false) @map("is_default")
+
+  priceType      ListPriceType    @default(CUSTOMIZED) @map("price_type")
+  copyPriceFrom  ListPriceSource? @map("copy_price_from")
+  copyPercentage Int?             @map("copy_percentage")
+
+  // The list's owned panel rows.
+  panels BranchLabPanel[]
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([deletedAt])
+  @@map("branch_lab_panel_lists")
+}
+
+/// Per-branch mapping of a (tenant-level) referral to the branch's pricing lists.
+/// A referral registry is shared across the tenant, but each branch chooses which
+/// Lab Test / Lab Panel List applies to that referral. Order creation resolves the
+/// active branch's assignment by priority (PANEL → DOCTOR → INTERNAL → EXTERNAL)
+/// and falls back to the branch's default Walk-in list when none matches.
+model ReferralListAssignment {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  referralType ReferralType @map("referral_type")
+  referralId   String       @map("referral_id")
+
+  branchLabTestListId  String? @map("branch_lab_test_list_id")
+  branchLabPanelListId String? @map("branch_lab_panel_list_id")
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([referralType, referralId, branchId])
+  @@index([tenantId])
+  @@index([branchId])
+  @@map("referral_list_assignments")
+}
+
+/// How a non-default pricing list derives its per-row `listPrice`.
+enum ListPriceType {
+  PERCENTAGE
+  CUSTOMIZED
+}
+
+/// The catalogue price column a pricing list copies from when seeding `listPrice`.
+enum ListPriceSource {
+  MSRP
+  MAXIMUM
+  MINIMUM
+  ORIGINAL
+  FRANCHISE
+}
+
+/// The kind of referral a `ReferralListAssignment` maps to its branch lists.
+enum ReferralType {
+  PANEL
+  DOCTOR
+  INTERNAL
+  EXTERNAL
 }
 
 /// A test included in a branch's Lab Panel List entry. `branchLabTestId` points at
@@ -3272,9 +3434,6 @@ model ReferralPanel {
   fileUrl  String? @map("file_url")
   remarks  String?
 
-  labTests  ReferralPanelLabTest[]
-  labPanels ReferralPanelLabPanel[]
-
   /// Orders billed to this referral (B2B) panel.
   orders Order[]
 
@@ -3287,55 +3446,6 @@ model ReferralPanel {
   @@index([referralPanelSettingsId])
   @@index([deletedAt])
   @@map("referral_panels")
-}
-
-/// A lab test assigned to a referral panel (the "lab test list" — one row per
-/// assigned test). `labTestId` is a logical ref to a LabTest in the tenant (no Prisma
-/// relation, mirroring OutsourceCenterBranchTest.labTestId); validated in
-/// ReferralPanelService to be an active test in the tenant. One active row per
-/// (panel, test) (partial unique index in prisma/rls.sql). RLS policy in
-/// prisma/rls.sql.
-model ReferralPanelLabTest {
-  id              String @id @default(uuid())
-  tenantId        String @map("tenant_id")
-  referralPanelId String @map("referral_panel_id")
-  labTestId       String @map("lab_test_id")
-
-  referralPanel ReferralPanel @relation(fields: [referralPanelId], references: [id])
-
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  deletedAt DateTime? @map("deleted_at")
-
-  @@index([tenantId])
-  @@index([referralPanelId])
-  @@index([labTestId])
-  @@index([deletedAt])
-  @@map("referral_panel_lab_tests")
-}
-
-/// A lab panel assigned to a referral panel (the "lab panel list" — one row per
-/// assigned panel). `labPanelId` is a logical ref to a LabPanel in the tenant (no
-/// Prisma relation); validated in ReferralPanelService to be an active panel in the
-/// tenant. One active row per (panel, lab-panel) (partial unique index in
-/// prisma/rls.sql). RLS policy in prisma/rls.sql.
-model ReferralPanelLabPanel {
-  id              String @id @default(uuid())
-  tenantId        String @map("tenant_id")
-  referralPanelId String @map("referral_panel_id")
-  labPanelId      String @map("lab_panel_id")
-
-  referralPanel ReferralPanel @relation(fields: [referralPanelId], references: [id])
-
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  deletedAt DateTime? @map("deleted_at")
-
-  @@index([tenantId])
-  @@index([referralPanelId])
-  @@index([labPanelId])
-  @@index([deletedAt])
-  @@map("referral_panel_lab_panels")
 }
 
 /// A doctor in a tenant's registry — either a REPORTING doctor (signs/reports on
@@ -3976,8 +4086,6 @@ model ReferralDoctor {
   // Children (managed via the parent in ReferralDoctorService)
   qualifications ReferralDoctorQualification[]
   experiences    ReferralDoctorExperience[]
-  labTests       ReferralDoctorLabTest[]
-  labPanels      ReferralDoctorLabPanel[]
 
   /// Orders that name this doctor as the referring doctor.
   orders Order[]
@@ -4048,54 +4156,6 @@ model ReferralDoctorExperience {
   @@map("referral_doctor_experience")
 }
 
-/// A lab test assigned to a referral doctor (the "lab test list" — one row per
-/// assigned test). `labTestId` is a logical ref to a LabTest in the tenant (no
-/// Prisma relation, mirroring ReferralPanelLabTest); validated in
-/// ReferralDoctorService to be an active test in the tenant. One active row per
-/// (referral doctor, test) (partial unique index in prisma/rls.sql).
-model ReferralDoctorLabTest {
-  id               String @id @default(uuid())
-  tenantId         String @map("tenant_id")
-  referralDoctorId String @map("referral_doctor_id")
-  labTestId        String @map("lab_test_id")
-
-  referralDoctor ReferralDoctor @relation(fields: [referralDoctorId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  deletedAt DateTime? @map("deleted_at")
-
-  @@index([tenantId])
-  @@index([referralDoctorId])
-  @@index([labTestId])
-  @@index([deletedAt])
-  @@map("referral_doctor_lab_tests")
-}
-
-/// A lab panel assigned to a referral doctor (the "lab panel list" — one row per
-/// assigned panel). `labPanelId` is a logical ref to a LabPanel in the tenant (no
-/// Prisma relation); validated in ReferralDoctorService to be an active panel in
-/// the tenant. One active row per (referral doctor, lab-panel) (partial unique
-/// index in prisma/rls.sql).
-model ReferralDoctorLabPanel {
-  id               String @id @default(uuid())
-  tenantId         String @map("tenant_id")
-  referralDoctorId String @map("referral_doctor_id")
-  labPanelId       String @map("lab_panel_id")
-
-  referralDoctor ReferralDoctor @relation(fields: [referralDoctorId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  deletedAt DateTime? @map("deleted_at")
-
-  @@index([tenantId])
-  @@index([referralDoctorId])
-  @@index([labPanelId])
-  @@index([deletedAt])
-  @@map("referral_doctor_lab_panels")
-}
-
 /// A business's registry of external referral partners (people/organisations that
 /// refer work to the lab). Tenant-scoped, tenant-level (CLAUDE.md §4.6) — the
 /// registry belongs to the business as a whole, not a branch. Commission/incentive
@@ -4161,10 +4221,6 @@ model ExternalReferral {
   fileUrl  String? @map("file_url")
   remarks  String?
 
-  // Children (managed via the parent in ExternalReferralService)
-  labTests  ExternalReferralLabTest[]
-  labPanels ExternalReferralLabPanel[]
-
   // Orders that name this external referral (back-relation).
   orders Order[]
 
@@ -4178,54 +4234,6 @@ model ExternalReferral {
   @@index([status])
   @@index([deletedAt])
   @@map("external_referrals")
-}
-
-/// A lab test assigned to an external referral (the "lab test list" — one row per
-/// assigned test). `labTestId` is a logical ref to a LabTest in the tenant (no Prisma
-/// relation, mirroring ReferralDoctorLabTest); validated in ExternalReferralService
-/// to be an active test in the tenant. One active row per (external referral, test)
-/// (partial unique index in prisma/rls.sql).
-model ExternalReferralLabTest {
-  id                 String @id @default(uuid())
-  tenantId           String @map("tenant_id")
-  externalReferralId String @map("external_referral_id")
-  labTestId          String @map("lab_test_id")
-
-  externalReferral ExternalReferral @relation(fields: [externalReferralId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  deletedAt DateTime? @map("deleted_at")
-
-  @@index([tenantId])
-  @@index([externalReferralId])
-  @@index([labTestId])
-  @@index([deletedAt])
-  @@map("external_referral_lab_tests")
-}
-
-/// A lab panel assigned to an external referral (the "lab panel list" — one row per
-/// assigned panel). `labPanelId` is a logical ref to a LabPanel in the tenant (no
-/// Prisma relation); validated in ExternalReferralService to be an active panel in
-/// the tenant. One active row per (external referral, lab-panel) (partial unique index
-/// in prisma/rls.sql).
-model ExternalReferralLabPanel {
-  id                 String @id @default(uuid())
-  tenantId           String @map("tenant_id")
-  externalReferralId String @map("external_referral_id")
-  labPanelId         String @map("lab_panel_id")
-
-  externalReferral ExternalReferral @relation(fields: [externalReferralId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  deletedAt DateTime? @map("deleted_at")
-
-  @@index([tenantId])
-  @@index([externalReferralId])
-  @@index([labPanelId])
-  @@index([deletedAt])
-  @@map("external_referral_lab_panels")
 }
 
 /// An internal referral: an employee of the business who refers lab work and may
@@ -4242,17 +4250,17 @@ model InternalReferral {
   branchId String? @map("branch_id")
 
   // Employee details (employeeId = optional logical ref to persons.id)
-  employeeId   String?   @map("employee_id")
-  firstName    String    @map("first_name")
-  lastName     String?   @map("last_name")
-  fullName     String?   @map("full_name")
+  employeeId   String?     @map("employee_id")
+  firstName    String      @map("first_name")
+  lastName     String?     @map("last_name")
+  fullName     String?     @map("full_name")
   // Department is a FK into the tenant's Departments master (validated in
   // InternalReferralService); mirrors ReferralDoctor.departmentId.
-  departmentId String?   @map("department_id")
+  departmentId String?     @map("department_id")
   department   Department? @relation(fields: [departmentId], references: [id])
   designation  String?
-  joiningDate  DateTime? @map("joining_date") @db.Date
-  mobileNumber String?   @map("mobile_number")
+  joiningDate  DateTime?   @map("joining_date") @db.Date
+  mobileNumber String?     @map("mobile_number")
   email        String?
 
   // Location details (captured on quick-add; Branch Admin fills the rest)
@@ -4295,10 +4303,6 @@ model InternalReferral {
   // Status
   status InternalReferralStatus @default(ACTIVE)
 
-  // Children (managed via the parent in InternalReferralService)
-  labTests  InternalReferralLabTest[]
-  labPanels InternalReferralLabPanel[]
-
   // Orders that name this internal referral (back-relation).
   orders Order[]
 
@@ -4314,54 +4318,6 @@ model InternalReferral {
   @@index([status])
   @@index([deletedAt])
   @@map("internal_referrals")
-}
-
-/// A lab test assigned to an internal referral (the "lab test list" — one row per
-/// assigned test). `labTestId` is a logical ref to a LabTest in the tenant (no Prisma
-/// relation, mirroring ExternalReferralLabTest); validated in InternalReferralService
-/// to be an active test in the tenant. One active row per (internal referral, test)
-/// (partial unique index in prisma/rls.sql).
-model InternalReferralLabTest {
-  id                 String @id @default(uuid())
-  tenantId           String @map("tenant_id")
-  internalReferralId String @map("internal_referral_id")
-  labTestId          String @map("lab_test_id")
-
-  internalReferral InternalReferral @relation(fields: [internalReferralId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  deletedAt DateTime? @map("deleted_at")
-
-  @@index([tenantId])
-  @@index([internalReferralId])
-  @@index([labTestId])
-  @@index([deletedAt])
-  @@map("internal_referral_lab_tests")
-}
-
-/// A lab panel assigned to an internal referral (the "lab panel list" — one row per
-/// assigned panel). `labPanelId` is a logical ref to a LabPanel in the tenant (no
-/// Prisma relation); validated in InternalReferralService to be an active panel in
-/// the tenant. One active row per (internal referral, lab-panel) (partial unique index
-/// in prisma/rls.sql).
-model InternalReferralLabPanel {
-  id                 String @id @default(uuid())
-  tenantId           String @map("tenant_id")
-  internalReferralId String @map("internal_referral_id")
-  labPanelId         String @map("lab_panel_id")
-
-  internalReferral InternalReferral @relation(fields: [internalReferralId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  deletedAt DateTime? @map("deleted_at")
-
-  @@index([tenantId])
-  @@index([internalReferralId])
-  @@index([labPanelId])
-  @@index([deletedAt])
-  @@map("internal_referral_lab_panels")
 }
 
 // ── Machine Management enums ─────────────────────────────────────────────────────
@@ -5339,8 +5295,8 @@ model PatientDocument {
   category     PatientDocumentCategory
   name         String
   type         String
-  documentDate DateTime @map("document_date")
-  documentUrl  String   @map("document_url")
+  documentDate DateTime                @map("document_date")
+  documentUrl  String                  @map("document_url")
 
   createdBy String? @map("created_by")
   updatedBy String? @map("updated_by")
@@ -5575,6 +5531,11 @@ model Order {
   externalReferralId String?           @map("external_referral_id")
   externalReferral   ExternalReferral? @relation(fields: [externalReferralId], references: [id])
 
+  // Pricing lists resolved for this order (from the referral priority, or the
+  // default Walk-in list). Logical refs — the chosen list drives item prices.
+  branchLabTestListId  String? @map("branch_lab_test_list_id")
+  branchLabPanelListId String? @map("branch_lab_panel_list_id")
+
   // Sections & children
   items       OrderItem[]
   diagnostics OrderDiagnostics?
@@ -5584,6 +5545,10 @@ model Order {
 
   // Accession samples generated for this order (one per required sample/tube).
   accessionSamples AccessionSample[]
+
+  // Append-only note history surfaced on the Order Overview page's
+  // Order / Sample / Tech tabs (one row per note, never overwritten).
+  notes OrderNote[]
 
   // Home-visit sample-collection lifecycle (1:1) — created when a confirmed order
   // is a home visit with an assigned phlebotomist. Drives the Phlebotomist module's
@@ -5612,6 +5577,39 @@ model Order {
   @@map("orders")
 }
 
+/// Which Order Overview note tab a note belongs to. ORDER / SAMPLE / TECH mirror
+/// the three plain note tabs on the Order Overview page — parallel to
+/// `LabReportNoteCategory`'s ORDER/SAMPLE/TECH, but keyed to the order (not a
+/// lab report) so notes can be added from the moment the order is created.
+enum OrderNoteCategory {
+  ORDER
+  SAMPLE
+  TECH
+}
+
+/// Append-only note attached to an order (Order Overview → Order / Sample / Tech
+/// tabs). One row per note — notes are never overwritten, giving a full history
+/// with author + timestamp. `createdBy` is a logical `Person.id` (same unenforced
+/// -reference convention as `LabReportNote.createdBy`).
+model OrderNote {
+  id       String            @id @default(uuid())
+  tenantId String            @map("tenant_id")
+  branchId String?           @map("branch_id")
+  orderId  String            @map("order_id")
+  order    Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  category OrderNoteCategory
+  body     String
+
+  createdBy String   @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([orderId])
+  @@index([category])
+  @@map("order_notes")
+}
+
 /// Junction linking an order to its selected catalogue entries, so one order can
 /// hold any combination of multiple branch lab tests and panels. Exactly one of
 /// `branchLabTestId` / `branchLabPanelId` / `direct` is set per row (a catalogue
@@ -5634,6 +5632,11 @@ model OrderItem {
   /// Free-text catalogue entry passed directly from the frontend (mutually
   /// exclusive with the test/panel refs).
   direct String?
+
+  /// Snapshot of the resolved list unit price (minor units) at order/quotation
+  /// time, copied from the chosen list's `BranchLabTest`/`BranchLabPanel`
+  /// `listPrice`. Stable even if the list is later re-priced.
+  unitPrice Int @default(0) @map("unit_price")
 
   /// Per-line discount in minor units (0 = none). Captured at order/quotation
   /// time so item-level discounts round-trip on edit; the order-level aggregate

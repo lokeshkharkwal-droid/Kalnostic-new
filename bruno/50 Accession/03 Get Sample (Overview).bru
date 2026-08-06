@@ -24,11 +24,20 @@ tests {
     expect(d).to.have.property("statusHistory");
     expect(d).to.have.property("transfers");
   });
+  test("includes resolved department names", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("departmentLabel");
+    if (d.tests.length > 0) expect(d.tests[0]).to.have.property("department");
+  });
 }
 
 docs {
   Fetch one sample fully composed for the Sample Overview panel (§A.10.4): its
-  `tests` (with snapshot test names), `statusHistory` (newest first), `transfers`,
-  and the linked `order` (patient / referral). 404 `ACCESSION_SAMPLE_NOT_FOUND`
-  if missing / soft-deleted / other tenant.
+  `tests` (with snapshot test names + each test's resolved `department` name),
+  `statusHistory` (newest first), `transfers`, and the linked `order` (patient /
+  referral). A sample-level `departmentLabel` carries the distinct department
+  names joined with ", " (null when none resolve) — the classification lives on
+  `BranchLabTest`/`BranchLabPanel` as a logical `departmentId` (no relation), so
+  names are resolved from the tenant's `Department` table. 404
+  `ACCESSION_SAMPLE_NOT_FOUND` if missing / soft-deleted / other tenant.
 }

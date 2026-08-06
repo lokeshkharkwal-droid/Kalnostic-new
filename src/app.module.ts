@@ -24,6 +24,9 @@ import { LabTestModule } from './modules/lab-test/lab-test.module';
 import { LabPanelModule } from './modules/lab-panel/lab-panel.module';
 import { BranchLabTestModule } from './modules/branch-lab-test/branch-lab-test.module';
 import { BranchLabPanelModule } from './modules/branch-lab-panel/branch-lab-panel.module';
+import { BranchLabTestListModule } from './modules/branch-lab-test-list/branch-lab-test-list.module';
+import { BranchLabPanelListModule } from './modules/branch-lab-panel-list/branch-lab-panel-list.module';
+import { ReferralListModule } from './modules/referral-list/referral-list.module';
 import { TestGroupModule } from './modules/test-group/test-group.module';
 import { EquipmentModule } from './modules/equipment/equipment.module';
 import { LabAdapterModule } from './modules/lab-adapter/lab-adapter.module';
@@ -120,6 +123,9 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     LabPanelModule,
     BranchLabTestModule,
     BranchLabPanelModule,
+    BranchLabTestListModule,
+    BranchLabPanelListModule,
+    ReferralListModule,
     TestGroupModule,
     EquipmentModule,
     LabAdapterModule,

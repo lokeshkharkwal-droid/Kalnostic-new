@@ -1,10 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
   Prisma,
+  StaffStatus,
   SubscriptionStatus,
   Tenant,
   TenantConfiguration,
   TenantSetting,
+  UserType,
 } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -16,7 +18,10 @@ import { StateService } from '../location/state.service';
 import { CityService } from '../location/city.service';
 import { AreaService } from '../location/area.service';
 import { LocationHierarchyMismatchException } from '../location/exceptions/location.exceptions';
-import { InternalException } from '../../common/exceptions/kaltros.exception';
+import {
+  InternalException,
+  ValidationException,
+} from '../../common/exceptions/kaltros.exception';
 import {
   PersonEmailTakenException,
   PersonPhoneTakenException,
@@ -28,6 +33,7 @@ import { UpdateTenantSettingsDto } from './dto/update-tenant-settings.dto';
 import { ListTenantsQueryDto } from './dto/list-tenants-query.dto';
 import { BranchQueryDto } from '../branch/dto/branch-query.dto';
 import { TenantSettings } from './entities/tenant.entity';
+import { SUPPORTED_TIMEZONES } from './dto/tenant-settings.dto';
 import {
   TenantCustomDomainTakenException,
   TenantNotFoundException,
@@ -139,17 +145,18 @@ export class TenantService {
    * Create a tenant and its first `business_admin` user atomically.
    *
    * Steps: validate slug + admin phone/email uniqueness, then in one
-   * transaction create the tenant, the admin person, their credentials (temp
-   * password), and a tenant-level `business_admin` profile (branch_id = NULL).
-   * Returns the temp password once so SiteAdmin can share it.
+   * transaction create the tenant, the admin person, their credentials (using
+   * the SiteAdmin-supplied password), and a tenant-level `business_admin`
+   * profile (branch_id = NULL). The password is chosen by SiteAdmin, so it is
+   * not returned — the caller already knows it.
    *
-   * @param dto tenant + admin data
+   * @param dto tenant + admin data (incl. the admin's login password)
    * @param createdBy SiteAdmin user id
    */
   async create(
     dto: CreateTenantDto,
     createdBy: string,
-  ): Promise<{ tenant: Tenant; adminPhone: string; tempPassword: string }> {
+  ): Promise<{ tenant: Tenant; adminPhone: string }> {
     let slug: string;
     if (dto.slug) {
       const slugTaken = await this.prisma.tenant.findFirst({
@@ -188,8 +195,15 @@ export class TenantService {
       ...DEFAULT_SETTINGS,
       ...(dto.settings ?? {}),
     };
-    const tempPassword = this.passwordService.generateTempPassword();
-    const passwordHash = await this.passwordService.hash(tempPassword);
+    // Defence in depth — the DTO already enforces the policy at the pipe, but
+    // re-check here so the invariant holds regardless of the entry point.
+    const passwordError = this.passwordService.validate(dto.adminPassword);
+    if (passwordError) {
+      throw new ValidationException(passwordError, {
+        adminPassword: passwordError,
+      });
+    }
+    const passwordHash = await this.passwordService.hash(dto.adminPassword);
     const platformMrn = this.generatePlatformMrn();
     // The seeded global `business_admin` system role the initial admin receives.
     const businessAdminRole =
@@ -242,7 +256,7 @@ export class TenantService {
             phone: dto.adminPhone,
             email: dto.adminEmail ?? null,
             passwordHash,
-            isTempPassword: true,
+            isTempPassword: false,
           },
         });
 
@@ -265,13 +279,35 @@ export class TenantService {
           },
         });
 
+        // Register the admin as a tenant staff member so they appear in — and
+        // can be managed from — the business Users list (mirrors
+        // UsersService.createUser). `isPrimaryAdmin` marks this as the default
+        // admin, which can never be deactivated.
+        const counted = await tx.tenant.update({
+          where: { id: created.id },
+          data: { staffCounter: { increment: 1 } },
+          select: { staffCounter: true },
+        });
+        const userCode = `USR-${String(counted.staffCounter).padStart(5, '0')}`;
+        await tx.tenantStaffMembership.create({
+          data: {
+            tenantId: created.id,
+            personId: admin.id,
+            userCode,
+            userType: UserType.INTERNAL,
+            authRoleId: businessAdminRole.id,
+            status: StaffStatus.ACTIVE,
+            isPrimaryAdmin: true,
+          },
+        });
+
         return created;
       });
 
       this.logger.log(
         `Tenant created: ${tenant.id} (${tenant.slug}) by SiteAdmin ${createdBy}`,
       );
-      return { tenant, adminPhone: dto.adminPhone, tempPassword };
+      return { tenant, adminPhone: dto.adminPhone };
     } catch (error) {
       this.logger.error(
         `Failed to create tenant with slug '${slug}'`,
@@ -293,6 +329,42 @@ export class TenantService {
       throw new TenantNotFoundException(id);
     }
     return tenant;
+  }
+
+  /**
+   * Resolve the caller tenant's locale (time zone + currency) for the business
+   * frontend to convert UTC timestamps for display. Stored `settings` are merged
+   * over `DEFAULT_SETTINGS`, so a legacy tenant without settings still gets a
+   * usable value. An unsupported stored time zone is logged and falls back to the
+   * platform default (§7 fallback) rather than being returned to the client.
+   * @param tenantId caller's tenant (from the business JWT)
+   * @returns `{ timezone, currency, dateFormat, language }`
+   * @throws TenantNotFoundException if the tenant is missing/soft-deleted
+   */
+  async getLocale(tenantId: string): Promise<{
+    timezone: string;
+    currency: string;
+    dateFormat: string;
+    language: string;
+  }> {
+    const tenant = await this.findById(tenantId);
+    const stored =
+      (tenant.settings as unknown as Partial<TenantSettings>) ?? {};
+    const merged: TenantSettings = { ...DEFAULT_SETTINGS, ...stored };
+
+    if (!(SUPPORTED_TIMEZONES as readonly string[]).includes(merged.timezone)) {
+      this.logger.warn(
+        `Tenant ${tenantId} has unsupported timezone '${merged.timezone}', falling back to ${DEFAULT_SETTINGS.timezone}`,
+      );
+      merged.timezone = DEFAULT_SETTINGS.timezone;
+    }
+
+    return {
+      timezone: merged.timezone,
+      currency: merged.currency,
+      dateFormat: merged.date_format,
+      language: merged.language,
+    };
   }
 
   /**
@@ -747,6 +819,51 @@ export class TenantService {
       `Business admin password reset for tenant ${tenantId} by SiteAdmin ${requestedBy}`,
     );
     return { adminPhone: admin.phone ?? '', tempPassword };
+  }
+
+  /**
+   * Set the business admin's password to a SiteAdmin-chosen value. Unlike
+   * {@link resetBusinessAdminPassword}, the password is supplied (not
+   * generated) and flagged as non-temp so the admin isn't forced to change it.
+   * @param tenantId tenant id
+   * @param password the new plain-text password (policy-checked)
+   * @param requestedBy SiteAdmin actor
+   */
+  async setBusinessAdminPassword(
+    tenantId: string,
+    password: string,
+    requestedBy: string,
+  ): Promise<{ adminPhone: string }> {
+    const admin = await this.getBusinessAdmin(tenantId);
+    if (!admin) {
+      throw new InternalException('tenant-set-password-no-admin', {
+        tenantId,
+      });
+    }
+
+    // Defence in depth — the DTO enforces the policy at the pipe, re-check here.
+    const passwordError = this.passwordService.validate(password);
+    if (passwordError) {
+      throw new ValidationException(passwordError, {
+        adminPassword: passwordError,
+      });
+    }
+    const passwordHash = await this.passwordService.hash(password);
+
+    await this.prisma.personCredentials.update({
+      where: { personId: admin.personId },
+      data: {
+        passwordHash,
+        isTempPassword: false,
+        failedAttempts: 0,
+        lockedUntil: null,
+      },
+    });
+
+    this.logger.log(
+      `Business admin password set for tenant ${tenantId} by SiteAdmin ${requestedBy}`,
+    );
+    return { adminPhone: admin.phone ?? '' };
   }
 
   /**

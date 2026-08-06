@@ -1,0 +1,35 @@
+meta {
+  name: Clone Lab Test List
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/branch-lab-test-lists/:id/clone
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 00000000-0000-0000-0000-000000000000
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Franchise Pricing"
+  }
+}
+
+docs {
+  Deep-copy an existing list (and all its test rows, preserving each row's
+  `listPrice` and variant flags) into a new independent list. Editing the clone
+  never affects the original.
+}

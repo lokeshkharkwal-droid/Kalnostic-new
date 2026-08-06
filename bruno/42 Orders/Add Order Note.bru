@@ -1,0 +1,65 @@
+meta {
+  name: Add Order Note
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/orders/{{orderId}}/notes
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "category": "ORDER",
+    "body": "Patient advised to fast 8h before the next visit."
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("orderNoteId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("returns the created note", function () {
+    expect(res.getBody().data.body).to.be.a("string");
+    expect(res.getBody().data.source).to.equal("ORDER");
+  });
+}
+
+docs {
+  Add a note to an order for the Order Overview page's Order / Sample / Tech tabs.
+  Append-only — every call creates a new note; existing notes are never
+  overwritten. Returns the created note in the same shape as `List Order Notes`
+  (`{ id, category, body, createdByName, createdAt, source: "ORDER", readonly:
+  false }`).
+
+  Body:
+  - `category` (required) — `ORDER` | `SAMPLE` | `TECH` (which tab the note
+    belongs to).
+  - `body` (required) — the note text, 1–2048 chars.
+
+  Do NOT send `tenantId` / `branchId` / `createdBy` — the tenant and active
+  branch come from the JWT, and the author is the authenticated person. The write
+  is audited (AuditModule.ORDER / CREATE).
+
+  Notes added on the SAMPLE tab are stored against the order; the accession
+  sample notes shown alongside them (from Collect Sample / status updates) are a
+  read-only merge and are added on the accession page instead.
+
+  404 `ORDER_NOT_FOUND` if the order is missing, soft-deleted, or owned by
+  another tenant.
+}

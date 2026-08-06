@@ -1,0 +1,29 @@
+meta {
+  name: Import Master Data from Tenant
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/master-data/branch/import-from-tenant
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  The branch-admin "Import Master Data" action: sync the tenant's **Tenant Master
+  Data → the active branch's Branch Master Data** (full overwrite of tests +
+  panels). Requires a branch-scoped token (`active_branch_id` from the JWT) — 400
+  otherwise.
+
+  Update-or-create keyed on provenance (`sourceMasterLabTestId` /
+  `sourceMasterLabPanelId`, falling back to test/panel code): existing branch rows
+  are fully overwritten from the tenant catalogue, missing ones are created, no
+  duplicates. Panel membership is remapped to the branch test copies. Runs as one
+  transaction. Hand-created branch rows can't exist (branch admins can't create).
+  Returns `{ tests: { created, updated }, panels: { created, updated } }`.
+}

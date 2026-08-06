@@ -18,7 +18,8 @@ export interface PriceCalculation {
 /**
  * Pricing — computes the payable amount for a Create-Order form as the user
  * changes tests/panels/charges. Deliberately simple and extensible: the total is
- * the sum of the selected branch lab tests' + panels' list prices (`priceMsrp`),
+ * the sum of the selected branch lab tests' + panels' list prices (`listPrice`,
+ * resolved from the order's chosen pricing list),
  * and the payable subtracts the order discount (the summed per-line diagnostic
  * discounts) then adds the sample-collection + visiting charges. Tenant-scoped
  * (RLS) + branch-level; the tenant + branch come from the request context (CLAUDE.md §4.7).
@@ -52,7 +53,7 @@ export class PricingService {
               branchId,
               deletedAt: null,
             },
-            select: { priceMsrp: true },
+            select: { listPrice: true },
           })
         : Promise.resolve([]),
       panelIds.length
@@ -63,13 +64,13 @@ export class PricingService {
               branchId,
               deletedAt: null,
             },
-            select: { priceMsrp: true },
+            select: { listPrice: true },
           })
         : Promise.resolve([]),
     ]);
 
-    const sum = (rows: Array<{ priceMsrp: number }>): number =>
-      rows.reduce((acc, r) => acc + r.priceMsrp, 0);
+    const sum = (rows: Array<{ listPrice: number }>): number =>
+      rows.reduce((acc, r) => acc + r.listPrice, 0);
 
     const totalAmount = sum(tests) + sum(panels);
     // The form sends the summed per-line diagnostic discounts; never let it

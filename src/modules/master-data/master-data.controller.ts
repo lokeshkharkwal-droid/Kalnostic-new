@@ -12,7 +12,9 @@ import { AuditAction, AuditModule } from '@prisma/client';
 import { MasterDataService } from './master-data.service';
 import { CreateMasterDataDto } from './dto/create-master-data.dto';
 import { UpdateMasterDataDto } from './dto/update-master-data.dto';
+import { BadRequestException } from '@nestjs/common';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ListMasterDataQueryDto } from './dto/list-master-data-query.dto';
 import { ImportFromMasterDataQueryDto } from './dto/import-from-master-data-query.dto';
 import { Audit } from '../../common/decorators/audit.decorator';
@@ -93,6 +95,35 @@ export class MasterDataController {
       query.page ?? 1,
       query.limit ?? 20,
       query.search,
+    );
+  }
+
+  /**
+   * Resolve (get-or-create) the tenant-level **Tenant Master Data** singleton —
+   * the business-admin catalogue that Site Admin imports target. Declared before
+   * `:id` so `tenant` isn't captured as an id.
+   */
+  @Get('tenant')
+  getTenant(@CurrentTenant() tenantId: string) {
+    return this.masterDataService.getOrCreateTenantMasterData(tenantId);
+  }
+
+  /**
+   * Resolve (get-or-create) the active branch's **Branch Master Data**. The
+   * branch comes from the JWT (`active_branch_id`) — 400 for a tenant-level role
+   * with no active branch. Declared before `:id`.
+   */
+  @Get('branch')
+  getBranch(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('active_branch_id') branchId: string | null,
+  ) {
+    if (!branchId) {
+      throw new BadRequestException('No active branch in the current context');
+    }
+    return this.masterDataService.getOrCreateBranchMasterData(
+      tenantId,
+      branchId,
     );
   }
 

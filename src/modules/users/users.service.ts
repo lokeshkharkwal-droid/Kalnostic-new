@@ -58,6 +58,7 @@ import {
   PersonPhoneTakenException,
   ProfileInvalidForBranchException,
   ProfileNotFoundException,
+  CannotDeactivatePrimaryAdminException,
   StaffMembershipNotFoundException,
   UnderageUserException,
   UsernameTakenException,
@@ -88,6 +89,18 @@ const RADIOLOGIST_ROLE_KEYS: string[] = ['radiologist'];
  * table was deprecated).
  */
 const PHLEBOTOMIST_ROLE_KEYS: string[] = ['phlebotomist'];
+
+/**
+ * Profile/role keys (AuthRole.key) that identify a **lab technician** for the
+ * Technician Reporting "Schedule/Reschedule Test" Assign To picker
+ * (LABORATORY.docx §5.6). Same role-key set `LabReportDirectoryService.
+ * assertActiveTechnician` validates a `ScheduledTest.assignedToId` against.
+ */
+const LAB_TECHNICIAN_ROLE_KEYS: string[] = [
+  'lab_technician',
+  'junior_lab_technician',
+  'senior_lab_technician',
+];
 
 /** A validated, normalised branch assignment (internal to UsersService). */
 interface PreparedAssignment {
@@ -143,6 +156,8 @@ export interface UserListRow {
   defaultBranch: string | null;
   defaultModule: string | null;
   status: StaffStatus;
+  /** True for the tenant's default admin — the FE disables its deactivate control. */
+  isPrimaryAdmin: boolean;
 }
 
 /** A row in the Permissions screen (one per user + branch; status always Active). */
@@ -384,6 +399,33 @@ export class UsersService {
       tenantId,
       branchId,
       PHLEBOTOMIST_ROLE_KEYS,
+      filters,
+    );
+  }
+
+  /**
+   * Lightweight `{ id, name }` options — the active branch's lab technicians,
+   * optionally filtered by a name `search`. Backs the Technician Reporting
+   * "Schedule/Reschedule Test" Assign To picker (LABORATORY.docx §5.6), which
+   * had no options source at all before this — the returned `id` is a
+   * `personId`, directly usable as `ScheduleTestDto.assignedToId`.
+   * @param tenantId tenant scope (from JWT)
+   * @param branchId active branch (from JWT profile)
+   * @param filters optional search + offset pagination
+   * @returns full `{ id, name }[]` when `page` is omitted, else a paginated envelope
+   */
+  async findLabTechnicianOptions(
+    tenantId: string,
+    branchId: string,
+    filters: { search?: string; page?: number; limit?: number } = {},
+  ): Promise<
+    | Array<{ id: string; name: string }>
+    | PaginatedResult<{ id: string; name: string }>
+  > {
+    return this.findStaffOptionsByRole(
+      tenantId,
+      branchId,
+      LAB_TECHNICIAN_ROLE_KEYS,
       filters,
     );
   }
@@ -985,6 +1027,12 @@ export class UsersService {
     this.assertCanEdit(person, tenantId, updatedBy);
     const membership = await this.getMembership(tenantId, personId);
 
+    // The primary business admin can never be deactivated — guard the edit-form
+    // status path too, not just the dedicated deactivate endpoint.
+    if (dto.status === StaffStatus.INACTIVE && membership.isPrimaryAdmin) {
+      throw new CannotDeactivatePrimaryAdminException(personId, tenantId);
+    }
+
     if (dto.dateOfBirth !== undefined) {
       this.assertAdult(dto.dateOfBirth);
     }
@@ -1203,6 +1251,7 @@ export class UsersService {
           ? moduleLabel(defaultProfile.defaultModuleId)
           : null,
         status: m.status,
+        isPrimaryAdmin: m.isPrimaryAdmin,
       };
     });
 
@@ -1489,12 +1538,21 @@ export class UsersService {
   /**
    * Global deactivate: set the tenant-global membership status to INACTIVE,
    * blocking login tenant-wide. Branch statuses and all records are preserved.
+   *
+   * The tenant's default (primary) business admin can never be deactivated —
+   * doing so would lock the business out of its own account.
+   *
+   * @throws CannotDeactivatePrimaryAdminException if the target is the primary admin
    */
   async deactivateUser(
     tenantId: string,
     personId: string,
     actorId: string,
   ): Promise<TenantStaffMembership> {
+    const membership = await this.getMembership(tenantId, personId);
+    if (membership.isPrimaryAdmin) {
+      throw new CannotDeactivatePrimaryAdminException(personId, tenantId);
+    }
     return this.setMembershipStatus(
       tenantId,
       personId,

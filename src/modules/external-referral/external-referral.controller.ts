@@ -14,6 +14,9 @@ import { CreateExternalReferralDto } from './dto/create-external-referral.dto';
 import { UpdateExternalReferralDto } from './dto/update-external-referral.dto';
 import { ListExternalReferralsDto } from './dto/list-external-referrals.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
+import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
+import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
@@ -37,9 +40,16 @@ export class ExternalReferralController {
   })
   create(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
     @Body() dto: CreateExternalReferralDto,
   ) {
-    return this.externalReferralService.create(tenantId, dto);
+    return this.externalReferralService.create(
+      tenantId,
+      profile.branchId,
+      personId,
+      dto,
+    );
   }
 
   /**
@@ -58,8 +68,16 @@ export class ExternalReferralController {
    * Fetch one external referral by id (full record incl. assigned lab tests/panels).
    */
   @Get(':id')
-  findOne(@CurrentTenant() tenantId: string, @Param('id') id: string) {
-    return this.externalReferralService.findById(id, tenantId);
+  findOne(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+  ) {
+    return this.externalReferralService.findById(
+      id,
+      tenantId,
+      profile.branchId,
+    );
   }
 
   /**
@@ -73,10 +91,18 @@ export class ExternalReferralController {
   })
   update(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
     @Param('id') id: string,
     @Body() dto: UpdateExternalReferralDto,
   ) {
-    return this.externalReferralService.update(id, tenantId, dto);
+    return this.externalReferralService.update(
+      id,
+      tenantId,
+      profile.branchId,
+      personId,
+      dto,
+    );
   }
 
   /**

@@ -5,6 +5,7 @@ import { LabTestModule } from '../lab-test/lab-test.module';
 import { LabPanelController } from './lab-panel.controller';
 import { LabPanelOptionsController } from './lab-panel-options.controller';
 import { SiteAdminLabPanelController } from './siteadmin-lab-panel.controller';
+import { MasterDataSyncController } from './master-data-sync.controller';
 import { LabPanelService } from './lab-panel.service';
 
 /**
@@ -23,6 +24,7 @@ import { LabPanelService } from './lab-panel.service';
     LabPanelController,
     LabPanelOptionsController,
     SiteAdminLabPanelController,
+    MasterDataSyncController,
   ],
   providers: [LabPanelService],
   exports: [LabPanelService],

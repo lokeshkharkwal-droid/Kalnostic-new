@@ -1,4 +1,8 @@
-import { ExternalReferralStatus, Prisma } from '@prisma/client';
+import {
+  ExternalReferral,
+  ExternalReferralStatus,
+  Prisma,
+} from '@prisma/client';
 
 /**
  * One slab-based commission row as stored in `ExternalReferral.commissionSlabs`
@@ -19,43 +23,14 @@ export type BonusSlab = {
 };
 
 /**
- * Relations eager-loaded by the GET-single endpoint: all active assigned lab
- * tests/panels.
+ * The GET-single response shape: the external referral plus the active branch's Lab
+ * Test / Lab Panel List assignment (`branchLabTestListId`/`branchLabPanelListId`),
+ * both null when there is no branch context or no assignment. The assigned lists are
+ * a per-branch `ReferralListAssignment`, attached by the service.
  */
-export const EXTERNAL_REFERRAL_DETAIL_INCLUDE = {
-  labTests: { where: { deletedAt: null } },
-  labPanels: { where: { deletedAt: null } },
-} satisfies Prisma.ExternalReferralInclude;
-
-/** An external referral with all relations loaded (raw, before enrichment). */
-export type ExternalReferralWithRelations = Prisma.ExternalReferralGetPayload<{
-  include: typeof EXTERNAL_REFERRAL_DETAIL_INCLUDE;
-}>;
-
-/** An assigned lab test enriched with its resolved name/code (null if deleted). */
-export type ExternalReferralLabTestView =
-  ExternalReferralWithRelations['labTests'][number] & {
-    testName: string | null;
-    testCode: string | null;
-  };
-
-/** An assigned lab panel enriched with its resolved name/code (null if deleted). */
-export type ExternalReferralLabPanelView =
-  ExternalReferralWithRelations['labPanels'][number] & {
-    panelName: string | null;
-    panelCode: string | null;
-  };
-
-/**
- * The GET-single response shape: the external referral with its assigned lab
- * tests/panels enriched with their resolved name/code.
- */
-export type ExternalReferralDetail = Omit<
-  ExternalReferralWithRelations,
-  'labTests' | 'labPanels'
-> & {
-  labTests: ExternalReferralLabTestView[];
-  labPanels: ExternalReferralLabPanelView[];
+export type ExternalReferralDetail = ExternalReferral & {
+  branchLabTestListId?: string | null;
+  branchLabPanelListId?: string | null;
 };
 
 /**
@@ -78,25 +53,13 @@ export const EXTERNAL_REFERRAL_LIST_SELECT = {
   status: true,
 } satisfies Prisma.ExternalReferralSelect;
 
-/** A reference to an assigned lab test/panel (id + resolved name). */
-export interface LabRef {
-  id: string;
-  name: string;
-}
-
 /** The raw row shape returned by `EXTERNAL_REFERRAL_LIST_SELECT`. */
 export type ExternalReferralListRow = Prisma.ExternalReferralGetPayload<{
   select: typeof EXTERNAL_REFERRAL_LIST_SELECT;
 }>;
 
-/**
- * The list endpoint response: the selected columns plus the assigned lab
- * test/panel references (`[{ id, name }]`), resolved by the service.
- */
-export type ExternalReferralListItem = ExternalReferralListRow & {
-  labTestList: LabRef[];
-  labPanelList: LabRef[];
-};
+/** The list endpoint response: the selected columns for one external referral. */
+export type ExternalReferralListItem = ExternalReferralListRow;
 
 /** Re-export for convenience at call sites. */
 export type { ExternalReferralStatus };

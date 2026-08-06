@@ -36,6 +36,10 @@ docs {
   primary `roleKey`, and global `status`. `username`, `email`, and `userCode` are
   **immutable** — they are not accepted (the global validation pipe rejects unknown
   properties), so do not send them.
+
+  Setting `status: "INACTIVE"` on the tenant's default (primary) business admin is
+  rejected with 403 `CANNOT_DEACTIVATE_PRIMARY_ADMIN` — that user can never be
+  deactivated (same rule as the Deactivate User endpoint).
   
   Role model (v2.0 + AuthRole): `roleKey` here is only the membership's
   primary/default role — it is **NOT** propagated to branch assignments. It may be

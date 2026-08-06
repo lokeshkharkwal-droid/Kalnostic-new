@@ -1,0 +1,20 @@
+meta {
+  name: List Lab Test List Options
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/branch-lab-test-lists/options
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Lightweight `{ id, name, isDefault }[]` options for the referral/registration
+  list selectors — never individual tests (Phase 7).
+}

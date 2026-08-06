@@ -10,6 +10,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ListLabReportsDto } from './dto/list-lab-reports.dto';
 import { UpsertResultValuesDto } from './dto/upsert-result-values.dto';
 import { ReferenceRangeQueryDto } from './dto/reference-range-query.dto';
+import { ReferenceRangeMethodsQueryDto } from './dto/reference-range-methods-query.dto';
 import { TrendReportQueryDto } from './dto/trend-report-query.dto';
 import {
   CreateLabReportNoteDto,
@@ -1042,6 +1043,56 @@ export class LabReportService {
     // dormant/harmless — fixed anyway so a future consumer doesn't inherit
     // the same silent-blank-fields bug.
     return this.findByIdForApi(id, tenantId, activeBranchId);
+  }
+
+  /**
+   * The distinct methodologies actually configured for a parameter — i.e. every
+   * `LabTestReferenceRange`/`LabTestReferenceValue.method` value on record for it,
+   * plus the parameter's own default `method` if set. Backs the Methodology
+   * dropdown on the Test Entry screen so its options come from what Admin
+   * configured rather than a fixed guess, and so a technician's selection is
+   * guaranteed to match a real reference-range row for `resolveReferenceRange`.
+   */
+  async listMethodsForParam(
+    id: string,
+    tenantId: string,
+    branchId: string | null,
+    query: ReferenceRangeMethodsQueryDto,
+  ): Promise<{ methods: string[] }> {
+    const activeBranchId = this.requireBranch(branchId);
+    const report = await this.prisma.labReport.findFirst({
+      where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
+    });
+    if (!report) throw new LabReportNotFoundException(id);
+    if (!report.labTestId) throw new LabTestCatalogueMissingException(id);
+
+    const param = await this.prisma.labTestResultParam.findFirst({
+      where: {
+        id: query.resultParamId,
+        labTestId: report.labTestId,
+        deletedAt: null,
+      },
+    });
+    if (!param) throw new LabTestCatalogueMissingException(id);
+
+    const methods = new Set<string>();
+    if (param.method) methods.add(param.method);
+
+    if (param.resultType === 'QUALITATIVE') {
+      const values = await this.prisma.labTestReferenceValue.findMany({
+        where: { paramId: param.id, deletedAt: null, method: { not: null } },
+        select: { method: true },
+      });
+      for (const v of values) if (v.method) methods.add(v.method);
+    } else {
+      const ranges = await this.prisma.labTestReferenceRange.findMany({
+        where: { paramId: param.id, deletedAt: null, method: { not: null } },
+        select: { method: true },
+      });
+      for (const r of ranges) if (r.method) methods.add(r.method);
+    }
+
+    return { methods: [...methods] };
   }
 
   /**
