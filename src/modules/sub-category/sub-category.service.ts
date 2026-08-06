@@ -122,7 +122,7 @@ export class SubCategoryService {
           data: {
             tenantId,
             name: dto.name,
-            shortName: dto.shortName,
+            shortName: dto.shortName ?? null,
             description: dto.description ?? null,
             code,
             isActive: dto.isActive ?? true,
@@ -138,7 +138,7 @@ export class SubCategoryService {
         });
       });
     } catch (e) {
-      this.rethrowUniqueViolation(e, dto.name, dto.shortName);
+      this.rethrowUniqueViolation(e, dto.name, dto.shortName ?? '');
       throw e;
     }
   }
@@ -282,7 +282,7 @@ export class SubCategoryService {
       return await this.prisma.withTenant(tenantId, async (tx) => {
         const data: Prisma.SubCategoryUpdateInput = {};
         if (dto.name !== undefined) data.name = dto.name;
-        if (dto.shortName !== undefined) data.shortName = dto.shortName;
+        if (dto.shortName !== undefined) data.shortName = dto.shortName ?? null;
         if (dto.description !== undefined) {
           data.description = dto.description ?? null;
         }
@@ -390,7 +390,7 @@ export class SubCategoryService {
             tenantId: null,
             source: DataSource.SITE_ADMIN,
             name: dto.name,
-            shortName: dto.shortName,
+            shortName: dto.shortName ?? null,
             description: dto.description ?? null,
             code,
             isActive: dto.isActive ?? true,
@@ -404,7 +404,7 @@ export class SubCategoryService {
       });
       return this.findTemplateById(id);
     } catch (e) {
-      this.rethrowUniqueViolation(e, dto.name, dto.shortName);
+      this.rethrowUniqueViolation(e, dto.name, dto.shortName ?? '');
       throw e;
     }
   }
@@ -524,7 +524,7 @@ export class SubCategoryService {
     }
     const data: Prisma.SubCategoryUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
-    if (dto.shortName !== undefined) data.shortName = dto.shortName;
+    if (dto.shortName !== undefined) data.shortName = dto.shortName ?? null;
     if (dto.description !== undefined)
       data.description = dto.description ?? null;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;

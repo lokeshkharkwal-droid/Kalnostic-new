@@ -1654,10 +1654,11 @@ model Department {
   /// hand-created tenant rows and for templates themselves.
   clonedFromId String? @map("cloned_from_id")
 
-  /// User-set short prefix for space-constrained dropdowns (2-6 chars, uppercase
-  /// A-Z/0-9). Mandatory and editable. Unique per tenant among active rows
+  /// User-set short prefix for space-constrained dropdowns (2-6 chars; if set,
+  /// must start with an uppercase letter A-Z, remaining chars may be any case
+  /// letter/digit). Optional and editable. Unique per tenant among active rows
   /// (partial unique index in prisma/rls.sql).
-  shortName String @map("short_name")
+  shortName String? @map("short_name")
 
   isActive Boolean @default(true) @map("is_active")
 
@@ -1767,11 +1768,12 @@ model Category {
   /// hand-created tenant rows and for templates themselves.
   clonedFromId String? @map("cloned_from_id")
 
-  /// User-set short prefix for space-constrained dropdowns (2-6 chars, uppercase
-  /// A-Z/0-9). Mandatory and editable. Unique within the parent department among
-  /// active rows; INDEPENDENT categories are unique per tenant (partial unique
-  /// indexes in prisma/rls.sql).
-  shortName String @map("short_name")
+  /// User-set short prefix for space-constrained dropdowns (2-6 chars; if set,
+  /// must start with an uppercase letter A-Z, remaining chars may be any case
+  /// letter/digit). Optional and editable. Unique within the parent department
+  /// among active rows; INDEPENDENT categories are unique per tenant (partial
+  /// unique indexes in prisma/rls.sql).
+  shortName String? @map("short_name")
 
   isActive     Boolean      @default(true) @map("is_active")
   categoryType CategoryType @map("category_type")
@@ -1998,12 +2000,13 @@ model SubCategory {
   /// hand-created tenant rows and for templates themselves.
   clonedFromId String? @map("cloned_from_id")
 
-  /// User-set short prefix for space-constrained dropdowns (2-6 chars, uppercase
-  /// A-Z/0-9). Mandatory and editable. Unique within the parent category
+  /// User-set short prefix for space-constrained dropdowns (2-6 chars; if set,
+  /// must start with an uppercase letter A-Z, remaining chars may be any case
+  /// letter/digit). Optional and editable. Unique within the parent category
   /// (UNDER_CATEGORY) or parent department (UNDER_DEPARTMENT) among active rows;
   /// INDEPENDENT sub-categories are unique per tenant (partial unique indexes in
   /// prisma/rls.sql).
-  shortName String @map("short_name")
+  shortName String? @map("short_name")
 
   isActive        Boolean         @default(true) @map("is_active")
   subCategoryType SubCategoryType @map("sub_category_type")
