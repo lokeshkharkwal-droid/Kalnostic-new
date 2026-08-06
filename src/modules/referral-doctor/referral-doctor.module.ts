@@ -4,6 +4,7 @@ import { BranchModule } from '../branch/branch.module';
 import { CategoryModule } from '../category/category.module';
 import { DepartmentModule } from '../department/department.module';
 import { SubCategoryModule } from '../sub-category/sub-category.module';
+import { ReferralListModule } from '../referral-list/referral-list.module';
 import { ReferralPanelSettingsModule } from '../referral-panel-settings/referral-panel-settings.module';
 import { ReferralDoctorController } from './referral-doctor.controller';
 import { ReferralDoctorOptionsController } from './referral-doctor-options.controller';
@@ -25,6 +26,7 @@ import { ReferralDoctorService } from './referral-doctor.service';
     DepartmentModule,
     CategoryModule,
     SubCategoryModule,
+    ReferralListModule,
     ReferralPanelSettingsModule,
   ],
   controllers: [ReferralDoctorOptionsController, ReferralDoctorController],

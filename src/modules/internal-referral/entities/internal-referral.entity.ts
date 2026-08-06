@@ -19,12 +19,11 @@ export type BonusSlab = {
 };
 
 /**
- * Relations eager-loaded by the GET-single endpoint: all active assigned lab
- * tests/panels.
+ * Relations eager-loaded by the GET-single endpoint: the linked department (id +
+ * name). The assigned Lab Test / Lab Panel List is a per-branch
+ * `ReferralListAssignment`, attached separately by the service.
  */
 export const INTERNAL_REFERRAL_DETAIL_INCLUDE = {
-  labTests: { where: { deletedAt: null } },
-  labPanels: { where: { deletedAt: null } },
   department: { select: { id: true, name: true } },
 } satisfies Prisma.InternalReferralInclude;
 
@@ -33,30 +32,14 @@ export type InternalReferralWithRelations = Prisma.InternalReferralGetPayload<{
   include: typeof INTERNAL_REFERRAL_DETAIL_INCLUDE;
 }>;
 
-/** An assigned lab test enriched with its resolved name/code (null if deleted). */
-export type InternalReferralLabTestView =
-  InternalReferralWithRelations['labTests'][number] & {
-    testName: string | null;
-    testCode: string | null;
-  };
-
-/** An assigned lab panel enriched with its resolved name/code (null if deleted). */
-export type InternalReferralLabPanelView =
-  InternalReferralWithRelations['labPanels'][number] & {
-    panelName: string | null;
-    panelCode: string | null;
-  };
-
 /**
- * The GET-single response shape: the internal referral with its assigned lab
- * tests/panels enriched with their resolved name/code.
+ * The GET-single response shape: the internal referral plus the active branch's Lab
+ * Test / Lab Panel List assignment (`branchLabTestListId`/`branchLabPanelListId`),
+ * both null when there is no branch context or no assignment.
  */
-export type InternalReferralDetail = Omit<
-  InternalReferralWithRelations,
-  'labTests' | 'labPanels'
-> & {
-  labTests: InternalReferralLabTestView[];
-  labPanels: InternalReferralLabPanelView[];
+export type InternalReferralDetail = InternalReferralWithRelations & {
+  branchLabTestListId?: string | null;
+  branchLabPanelListId?: string | null;
 };
 
 /**
@@ -83,25 +66,13 @@ export const INTERNAL_REFERRAL_LIST_SELECT = {
   status: true,
 } satisfies Prisma.InternalReferralSelect;
 
-/** A reference to an assigned lab test/panel (id + resolved name). */
-export interface InternalReferralLabRef {
-  id: string;
-  name: string;
-}
-
 /** The raw row shape returned by `INTERNAL_REFERRAL_LIST_SELECT`. */
 export type InternalReferralListRow = Prisma.InternalReferralGetPayload<{
   select: typeof INTERNAL_REFERRAL_LIST_SELECT;
 }>;
 
-/**
- * The list endpoint response: the selected columns plus the assigned lab
- * test/panel references (`[{ id, name }]`), resolved by the service.
- */
-export type InternalReferralListItem = InternalReferralListRow & {
-  labTestList: InternalReferralLabRef[];
-  labPanelList: InternalReferralLabRef[];
-};
+/** The list endpoint response: the selected columns for one internal referral. */
+export type InternalReferralListItem = InternalReferralListRow;
 
 /** Re-export for convenience at call sites. */
 export type { InternalReferralStatus };

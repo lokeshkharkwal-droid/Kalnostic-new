@@ -1,0 +1,34 @@
+meta {
+  name: Create Lab Panel List
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/branch-lab-panel-lists
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "B2B Corporate",
+    "copyPriceFrom": "MSRP",
+    "priceType": "CUSTOMIZED"
+  }
+}
+
+docs {
+  Create a new (non-default) Lab Panel List, seeded from the default (Walk-in)
+  list's panels (with their member tests). `listPrice` computed from
+  `copyPriceFrom` per `priceType` (PERCENTAGE needs `copyPercentage` 0–100;
+  CUSTOMIZED copies the source column as-is).
+}

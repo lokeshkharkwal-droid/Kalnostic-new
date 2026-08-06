@@ -1,4 +1,4 @@
-import { IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 
 /**
@@ -17,4 +17,9 @@ export class BranchLabTestOptionsQueryDto extends PaginationQueryDto {
   @IsString()
   @MaxLength(255)
   search?: string;
+
+  /** Which pricing list to load options from. Omitted = the branch's Walk-in list. */
+  @IsOptional()
+  @IsUUID()
+  listId?: string;
 }

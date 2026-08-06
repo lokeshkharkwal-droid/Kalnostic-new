@@ -1,0 +1,45 @@
+meta {
+  name: Create Lab Test List
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/branch-lab-test-lists
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "B2B Corporate",
+    "copyPriceFrom": "MAXIMUM",
+    "priceType": "PERCENTAGE",
+    "copyPercentage": 20
+  }
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  Create a new (non-default) Lab Test List. Seeded by cloning the default
+  (Walk-in) list's tests; each row's `listPrice` is computed from `copyPriceFrom`
+  per `priceType`:
+  - PERCENTAGE → source column × `copyPercentage` ÷ 100 (percentage required, 0–100)
+  - CUSTOMIZED → source column copied as-is (percentage ignored)
+
+  `copyPriceFrom` ∈ MSRP | MAXIMUM | MINIMUM | ORIGINAL | FRANCHISE.
+  `name` is unique per branch among active lists (409 on clash).
+}

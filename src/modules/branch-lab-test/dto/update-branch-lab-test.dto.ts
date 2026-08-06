@@ -43,6 +43,12 @@ export class UpdateBranchLabTestDto {
   isEnableCms?: boolean;
 
   // Pricing
+  /** The effective selling price for this list (minor units). */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  listPrice?: number;
+
   @IsOptional()
   @IsInt()
   @Min(0)

@@ -21,7 +21,7 @@ tests {
   test("returns the two enum arrays", function () {
     const d = res.getBody().data;
     expect(d.defaultPaymentModes).to.include.members(["CASH", "UPI", "CARD"]);
-    expect(d.quotationValidityUnits).to.include.members(["HOURS", "DAYS", "MONTHS", "YEARS"]);
+    expect(d.quotationValidityUnits).to.include.members(["DAYS", "WEEKS", "MONTHS", "YEARS"]);
   });
 }
 
@@ -30,8 +30,9 @@ docs {
 
   - `defaultPaymentModes` — `CASH` | `CREDIT` | `UPI` | `CARD` | `WALLET` |
     `BANK_TRANSFER` (for `General_DefaultPaymentMode`).
-  - `quotationValidityUnits` — `HOURS` | `DAYS` | `MONTHS` | `YEARS` (for
-    `Quotation_QuotationValidityUnit`).
+  - `quotationValidityUnits` — `HOURS` | `DAYS` | `WEEKS` | `MONTHS` | `YEARS`
+    (for `Quotation_QuotationValidityUnit`). The quotation UI offers only
+    `DAYS`/`WEEKS`/`MONTHS`/`YEARS`; `HOURS` remains for lab-test settings.
 
   Every other field is a plain boolean, integer, or decimal and isn't part of
   this response.

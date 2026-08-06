@@ -50,6 +50,10 @@ body:json {
   }
 }
 
+vars:pre-request {
+  orderId: 70f7fd0c-e902-4832-aa2c-841398df5d2d
+}
+
 tests {
   test("200 OK", function () {
     expect(res.getStatus()).to.equal(200);
@@ -77,9 +81,9 @@ docs {
   the first row. Overpayment is rejected — a supplied ledger whose summed
   `paidAmount` exceeds the summed `netAmount` is refused with 422
   `PAYMENT_OVERPAYMENT` and the patch rolls back. `patientId` is not editable.
-
+  
   ## Finalization validation (draft → live)
-
+  
   Whenever this patch lands the order in a LIVE status (`ORDER` / `QUOTE` /
   `APPOINTMENT`) — e.g. finalizing a draft with `{ "status": "ORDER" }` — the
   server enforces the same required-field checks as Create Order, evaluated on the
@@ -95,9 +99,9 @@ docs {
   - 422 `APPOINTMENT_SECTION_REQUIRED` — status `APPOINTMENT` with no scheduled
     section.
   Saving as `DRAFT` skips all of these, so incomplete drafts remain saveable.
-
+  
   ## Home-visit slot reservation on edit
-
+  
   The phlebotomist slot reservation is re-pointed when the booking changes
   (reschedule, phlebotomist swap, home-visit toggle, or a status flip into/out of
   `APPOINTMENT`): the old opening is released and the new one reserved atomically
