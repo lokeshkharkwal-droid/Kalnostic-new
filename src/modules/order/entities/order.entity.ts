@@ -215,4 +215,10 @@ export type OrderListRow = Prisma.OrderGetPayload<{
   /** Sum of `paidAmount` across the active payment ledger. */
   paidAmount: number;
   effectiveQuotationStatus: QuotationStatus | null;
+  /**
+   * Runtime-computed quotation expiry (Quotations screen only): the order date
+   * (or `createdAt`) plus the branch's current validity window. Null on
+   * non-quotation listings or when no branch/settings are resolvable.
+   */
+  computedQuotationExpiryAt: Date | null;
 };

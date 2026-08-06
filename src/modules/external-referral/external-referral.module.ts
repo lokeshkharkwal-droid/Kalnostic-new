@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { BranchModule } from '../branch/branch.module';
+import { ReferralListModule } from '../referral-list/referral-list.module';
 import { ReferralPanelSettingsModule } from '../referral-panel-settings/referral-panel-settings.module';
 import { ExternalReferralController } from './external-referral.controller';
 import { ExternalReferralOptionsController } from './external-referral-options.controller';
@@ -16,7 +17,12 @@ import { ExternalReferralService } from './external-referral.service';
  * rule #3). Exports `ExternalReferralService` for future modules.
  */
 @Module({
-  imports: [PrismaModule, BranchModule, ReferralPanelSettingsModule],
+  imports: [
+    PrismaModule,
+    BranchModule,
+    ReferralListModule,
+    ReferralPanelSettingsModule,
+  ],
   controllers: [ExternalReferralOptionsController, ExternalReferralController],
   providers: [ExternalReferralService],
   exports: [ExternalReferralService],

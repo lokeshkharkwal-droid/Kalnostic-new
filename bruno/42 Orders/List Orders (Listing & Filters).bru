@@ -52,8 +52,12 @@ docs {
   ref (with age/gender), the referral refs (doctor/panel/internal/external names),
   the payment rollups (`grossAmount`/`discountAmount`/`netAmount`/`paidAmount`), the
   active-item count (`itemCount`), the collected-item count (`collectedItemCount`)
-  and the `effectiveQuotationStatus` (stored `quotationStatus` upgraded to `EXPIRED`
-  when `quotationValidTill` has passed). Each row also carries the section refs —
+  and the `effectiveQuotationStatus`. On the Quotations screen (`isQuotation=true`)
+  the quotation expiry is computed **at runtime** from the order date + the branch's
+  current Registration Settings validity window (no persisted "Expired" flag): a
+  DRAFT quote whose order date is older than the window is reported as `EXPIRED`, and
+  each row carries the computed `computedQuotationExpiryAt` (null on non-quotation
+  listings — prefer it over the legacy stored `quotationValidTill`). Each row also carries the section refs —
   `items` (with test/panel names), and the `diagnostics` / `opd` / `radiology`
   sections with their display refs — plus the linked `appointment` (`{ id, status }`,
   for orders saved as APPOINTMENT), so the order-console and appointments lists render
@@ -77,9 +81,10 @@ docs {
     stored `paymentStatus` (derived from the payment ledger — summed `paidAmount`
     vs `netAmount` — and recomputed on every payment write). The appointments list
     payment filter sends this.
-  - `quotationStatus` — `DRAFT` | `CONVERTED` | `EXPIRED`. `EXPIRED` is derived
-    at query time (an open `DRAFT` whose `quotationValidTill` has passed counts as
-    expired and is excluded from `DRAFT`).
+  - `quotationStatus` — `DRAFT` | `CONVERTED` | `EXPIRED`. On the Quotations
+    screen (`isQuotation=true`) `EXPIRED` is derived at query time from the
+    branch's current validity window: an open `DRAFT` whose `orderDate` is older
+    than (now − validity) counts as expired and is excluded from `DRAFT`.
   - `orderType` — `WALK_IN` | `APP` | `WEBSITE`.
   - `billingType` — `CASH_CLIENT` | `INSURANCE` | `CORPORATE` |
     `GOVERNMENT_SCHEME` | `TPA`.

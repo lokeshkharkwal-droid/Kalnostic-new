@@ -1,7 +1,6 @@
 import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
-  ArrayUnique,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -34,9 +33,10 @@ import { BonusSlabDto } from './bonus-slab.dto';
  * Body for updating an internal referral. All fields are optional (explicit, not
  * PartialType per SKILL.md §4). Each field is type-validated when present; the
  * cross-field commission/bonus invariants are enforced authoritatively in
- * `InternalReferralService` against the merged (existing + patch) state.
- * `labTestIds`/`labPanelIds` are replace-all when present (omit to leave that set
- * unchanged).
+ * `InternalReferralService` against the merged (existing + patch) state. The
+ * optional `branchLabTestListId`/`branchLabPanelListId` re-attach the per-branch
+ * Lab Test / Lab Panel List (omit both to leave the assignment unchanged; send them
+ * null to clear it).
  */
 export class UpdateInternalReferralDto {
   // ── Employee details ──
@@ -108,18 +108,14 @@ export class UpdateInternalReferralDto {
   @MaxLength(20)
   pincode?: string;
 
-  // ── Lab lists (replace-all when present) ──
-  @IsArray()
+  // ── Lab lists (per-branch Lab Test List / Lab Panel List assignment) ──
   @IsOptional()
-  @IsUUID('all', { each: true })
-  @ArrayUnique()
-  labTestIds?: string[];
+  @IsUUID()
+  branchLabTestListId?: string;
 
-  @IsArray()
   @IsOptional()
-  @IsUUID('all', { each: true })
-  @ArrayUnique()
-  labPanelIds?: string[];
+  @IsUUID()
+  branchLabPanelListId?: string;
 
   // ── Commission & TDS (cross-field rules enforced in the service) ──
   @IsBoolean()

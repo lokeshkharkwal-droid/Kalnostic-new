@@ -24,12 +24,15 @@ export class CreateDepartmentTemplateDto {
   name: string;
 
   // User-set short prefix, globally unique among active templates (validated in
-  // the service / DB). The regex bounds the length (2-6), so no Min/MaxLength.
+  // the service / DB). Optional; if provided must be 2-6 chars starting with an
+  // uppercase letter.
   @IsString()
-  @Matches(/^[A-Z0-9]{2,6}$/, {
-    message: 'shortName must be 2-6 uppercase letters or digits (A-Z, 0-9)',
+  @IsOptional()
+  @Matches(/^[A-Z][a-zA-Z0-9]{1,5}$/, {
+    message:
+      'shortName must be 2-6 characters starting with an uppercase letter (A-Z)',
   })
-  shortName: string;
+  shortName?: string;
 
   @IsString()
   @IsOptional()

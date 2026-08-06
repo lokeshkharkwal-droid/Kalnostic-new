@@ -111,7 +111,11 @@ docs {
   - `General_*` — patient-photo/medical-history/past-orders visibility,
     order/payment date editing, default payment mode (`PaymentMode` enum).
   - `Quotation_*` — validity value + unit (`RepeatIntervalUnit`:
-    `HOURS`|`DAYS`|`MONTHS`|`YEARS`), duplication of expired quotations.
+    `DAYS`|`WEEKS`|`MONTHS`|`YEARS`; `HOURS` still accepted but not offered in
+    the quotation UI). These drive the **runtime** quotation-expiry computation
+    (order date + validity window; see `GET /orders?isQuotation=true`) and, with
+    `Quotation_AllowDuplicationOfExpiredQuotation`, whether an expired quote can
+    be duplicated (`POST /orders/:id/duplicate`).
     (Quotation *ID* config — prefix/separator/suffix/reset-cycle — is separate,
     see "Registration Id Sequences".)
   - `ChargesAndDeductions_*` — visit/sample-collection charges + editability,

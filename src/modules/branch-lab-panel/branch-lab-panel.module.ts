@@ -4,6 +4,8 @@ import { MasterDataModule } from '../master-data/master-data.module';
 import { LabPanelModule } from '../lab-panel/lab-panel.module';
 import { LabTestModule } from '../lab-test/lab-test.module';
 import { BranchLabTestModule } from '../branch-lab-test/branch-lab-test.module';
+import { BranchLabTestListModule } from '../branch-lab-test-list/branch-lab-test-list.module';
+import { BranchLabPanelListModule } from '../branch-lab-panel-list/branch-lab-panel-list.module';
 import { BranchLabPanelController } from './branch-lab-panel.controller';
 import { BranchLabPanelOptionsController } from './branch-lab-panel-options.controller';
 import { BranchLabPanelService } from './branch-lab-panel.service';
@@ -23,6 +25,8 @@ import { BranchLabPanelService } from './branch-lab-panel.service';
     LabPanelModule,
     LabTestModule,
     BranchLabTestModule,
+    BranchLabTestListModule,
+    BranchLabPanelListModule,
   ],
   controllers: [BranchLabPanelOptionsController, BranchLabPanelController],
   providers: [BranchLabPanelService],

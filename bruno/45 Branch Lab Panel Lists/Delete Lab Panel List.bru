@@ -1,0 +1,24 @@
+meta {
+  name: Delete Lab Panel List
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{baseUrl}}/branch-lab-panel-lists/:id
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 00000000-0000-0000-0000-000000000000
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Soft-delete a panel list and its panel rows + member tests. The default Walk-in
+  list cannot be deleted (400 `DEFAULT_LAB_PANEL_LIST_NOT_DELETABLE`).
+}

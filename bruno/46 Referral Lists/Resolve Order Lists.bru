@@ -1,0 +1,33 @@
+meta {
+  name: Resolve Order Lists
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/referral-lists/resolve?referralPanelId=00000000-0000-0000-0000-000000000000
+  body: none
+  auth: bearer
+}
+
+params:query {
+  referralPanelId: 00000000-0000-0000-0000-000000000000
+  ~referredByDoctorId: 00000000-0000-0000-0000-000000000000
+  ~internalReferralId: 00000000-0000-0000-0000-000000000000
+  ~externalReferralId: 00000000-0000-0000-0000-000000000000
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Resolve the pricing lists a Create-Order should use from the selected referrals.
+  Walks the priority PANEL → DOCTOR → INTERNAL → EXTERNAL; the first referral with
+  an active branch assignment wins, and any unset list falls back to the branch's
+  default Walk-in list — as does the whole result when no referral matches.
+
+  Returns `{ branchLabTestListId, branchLabPanelListId, source }` where `source` is
+  the matched referral type or `DEFAULT`. List ids are null only when the branch
+  has never imported (no default list yet).
+}

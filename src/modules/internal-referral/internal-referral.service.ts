@@ -7,12 +7,14 @@ import {
   PaymentCycle,
   Prisma,
   ReferralPaymentMode,
+  ReferralType,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { BranchService } from '../branch/branch.service';
 import { DepartmentService } from '../department/department.service';
 import { UsersService } from '../users/users.service';
+import { ReferralListAssignmentService } from '../referral-list/referral-list-assignment.service';
 import { ReferralPanelSettingsService } from '../referral-panel-settings/referral-panel-settings.service';
 import { CreateInternalReferralDto } from './dto/create-internal-referral.dto';
 import { UpdateInternalReferralDto } from './dto/update-internal-referral.dto';
@@ -23,7 +25,6 @@ import {
   INTERNAL_REFERRAL_DETAIL_INCLUDE,
   INTERNAL_REFERRAL_LIST_SELECT,
   InternalReferralDetail,
-  InternalReferralLabRef,
   InternalReferralListItem,
   InternalReferralWithRelations,
 } from './entities/internal-referral.entity';
@@ -31,8 +32,6 @@ import {
   InternalReferralNotFoundException,
   InvalidCommissionConfigException,
   InvalidEmployeeRefException,
-  InvalidLabPanelRefException,
-  InvalidLabTestRefException,
 } from './exceptions/internal-referral.exceptions';
 
 /** The effective commission settings used for validation + normalisation. */
@@ -63,11 +62,11 @@ interface CommissionColumns {
  * whole, not a branch. Every query carries `tenantId` (defence in depth on top of
  * RLS, §4.3) and filters soft-deleted rows. An optional `employeeId` is validated via
  * the injected `UsersService` to be an active staff member of the caller's tenant
- * (CLAUDE.md rule #3 — never import another service's file directly). Assigned lab
- * tests/panels are managed via the parent (replace-on-update) and validated to be
- * active items in the tenant. Commission/incentive config is validated against the
- * effective (merged, on update) state and the stored data is normalised so dependent
- * fields are nulled out when they don't apply.
+ * (CLAUDE.md rule #3 — never import another service's file directly). The assigned
+ * Lab Test / Lab Panel List is a per-branch `ReferralListAssignment` managed via
+ * `ReferralListAssignmentService`. Commission/incentive config is validated against
+ * the effective (merged, on update) state and the stored data is normalised so
+ * dependent fields are nulled out when they don't apply.
  */
 @Injectable()
 export class InternalReferralService {
@@ -77,6 +76,7 @@ export class InternalReferralService {
     private readonly referralPanelSettingsService: ReferralPanelSettingsService,
     private readonly branchService: BranchService,
     private readonly departmentService: DepartmentService,
+    private readonly listAssignmentService: ReferralListAssignmentService,
   ) {}
 
   /**
@@ -215,19 +215,23 @@ export class InternalReferralService {
   }
 
   /**
-   * Register an internal referral with its assigned lab tests/panels in one
-   * transaction. The optional `employeeId` is validated to be active staff of the
-   * tenant; commission/incentive config is validated and normalised; assigned
-   * `labTestId`/`labPanelId`s are validated to be active items in the tenant.
+   * Register an internal referral in one transaction. The optional `employeeId` is
+   * validated to be active staff of the tenant; commission/incentive config is
+   * validated and normalised. When an active branch is supplied, the chosen
+   * per-branch Lab Test / Lab Panel List is attached via
+   * `ReferralListAssignmentService`.
    * @param tenantId owning tenant (from the JWT, never the body)
+   * @param branchId active branch from the JWT (null → no list assignment written)
+   * @param actorId person id recorded as created-by on the list assignment (or null)
    * @param dto validated payload
-   * @returns the created internal referral with its assigned lab tests/panels
+   * @returns the created internal referral with the resolved list assignment
    * @throws InvalidEmployeeRefException if `employeeId` isn't active staff of the tenant
    * @throws InvalidCommissionConfigException on a commission/incentive invariant
-   * @throws InvalidLabTestRefException / InvalidLabPanelRefException on a bad ref
    */
   async create(
     tenantId: string,
+    branchId: string | null,
+    actorId: string | null,
     dto: CreateInternalReferralDto,
   ): Promise<InternalReferralDetail> {
     await this.validateEmployee(tenantId, dto.employeeId);
@@ -248,10 +252,6 @@ export class InternalReferralService {
     const incentive = dto.isIncentiveBonusApplicable ?? false;
     const bonusSlabs: BonusSlab[] = dto.bonusSlabs ?? [];
     this.assertBonus(incentive, bonusSlabs);
-
-    const testIds = dto.labTestIds ?? [];
-    const panelIds = dto.labPanelIds ?? [];
-    await this.assertLabRefs(tenantId, testIds, panelIds);
 
     const data: Prisma.InternalReferralUncheckedCreateInput = {
       tenantId,
@@ -291,10 +291,22 @@ export class InternalReferralService {
 
     const createdId = await this.prisma.withTenant(tenantId, async (tx) => {
       const referral = await tx.internalReferral.create({ data });
-      await this.writeLabRefs(tx, tenantId, referral.id, testIds, panelIds);
       return referral.id;
     });
-    return this.findById(createdId, tenantId);
+    if (branchId) {
+      await this.listAssignmentService.upsert(
+        tenantId,
+        branchId,
+        actorId,
+        ReferralType.INTERNAL,
+        createdId,
+        {
+          branchLabTestListId: dto.branchLabTestListId,
+          branchLabPanelListId: dto.branchLabPanelListId,
+        },
+      );
+    }
+    return this.findById(createdId, tenantId, branchId);
   }
 
   /**
@@ -344,117 +356,23 @@ export class InternalReferralService {
       }),
       this.prisma.internalReferral.count({ where }),
     ]);
-    const labLists = await this.resolveLabLists(
-      tenantId,
-      rows.map((r) => r.id),
-    );
-    const data: InternalReferralListItem[] = rows.map((r) => ({
-      ...r,
-      ...(labLists.get(r.id) ?? { labTestList: [], labPanelList: [] }),
-    }));
+    const data: InternalReferralListItem[] = rows;
     return { data, total, page, limit };
   }
 
   /**
-   * Resolve the assigned lab test/panel references for a page of internal
-   * referrals, keyed by referral id, each shaped as `[{ id, name }]`. Uses a
-   * bounded number of queries regardless of page size: one per join table plus
-   * one per lab model (no N+1). Names of since-deleted lab tests/panels are
-   * omitted. Mirrors `ExternalReferralService.resolveLabLists`.
-   * @param tenantId tenant scope
-   * @param referralIds the internal referral ids on the current page
-   */
-  private async resolveLabLists(
-    tenantId: string,
-    referralIds: string[],
-  ): Promise<
-    Map<
-      string,
-      {
-        labTestList: InternalReferralLabRef[];
-        labPanelList: InternalReferralLabRef[];
-      }
-    >
-  > {
-    const result = new Map<
-      string,
-      {
-        labTestList: InternalReferralLabRef[];
-        labPanelList: InternalReferralLabRef[];
-      }
-    >();
-    for (const id of referralIds) {
-      result.set(id, { labTestList: [], labPanelList: [] });
-    }
-    if (referralIds.length === 0) {
-      return result;
-    }
-
-    const [testLinks, panelLinks] = await Promise.all([
-      this.prisma.internalReferralLabTest.findMany({
-        where: {
-          internalReferralId: { in: referralIds },
-          tenantId,
-          deletedAt: null,
-        },
-        select: { internalReferralId: true, labTestId: true },
-      }),
-      this.prisma.internalReferralLabPanel.findMany({
-        where: {
-          internalReferralId: { in: referralIds },
-          tenantId,
-          deletedAt: null,
-        },
-        select: { internalReferralId: true, labPanelId: true },
-      }),
-    ]);
-
-    const testIds = [...new Set(testLinks.map((l) => l.labTestId))];
-    const panelIds = [...new Set(panelLinks.map((l) => l.labPanelId))];
-    const [tests, panels] = await Promise.all([
-      testIds.length
-        ? this.prisma.labTest.findMany({
-            where: { tenantId, id: { in: testIds } },
-            select: { id: true, testName: true },
-          })
-        : Promise.resolve([]),
-      panelIds.length
-        ? this.prisma.labPanel.findMany({
-            where: { tenantId, id: { in: panelIds } },
-            select: { id: true, panelName: true },
-          })
-        : Promise.resolve([]),
-    ]);
-    const testName = new Map(tests.map((t) => [t.id, t.testName]));
-    const panelName = new Map(panels.map((p) => [p.id, p.panelName]));
-
-    for (const link of testLinks) {
-      const name = testName.get(link.labTestId);
-      const entry = result.get(link.internalReferralId);
-      if (name !== undefined && entry) {
-        entry.labTestList.push({ id: link.labTestId, name });
-      }
-    }
-    for (const link of panelLinks) {
-      const name = panelName.get(link.labPanelId);
-      const entry = result.get(link.internalReferralId);
-      if (name !== undefined && entry) {
-        entry.labPanelList.push({ id: link.labPanelId, name });
-      }
-    }
-    return result;
-  }
-
-  /**
-   * Fetch one active internal referral scoped to its tenant, with all active assigned
-   * lab tests/panels (each enriched with the referenced test/panel name + code).
+   * Fetch one active internal referral scoped to its tenant. When a branch context
+   * is supplied, the active branch's Lab Test / Lab Panel List assignment is
+   * prefilled onto the result (both null when no branch context or no assignment).
    * @param id internal referral id
    * @param tenantId tenant scope
+   * @param branchId active branch (from JWT); when set, the list assignment is loaded
    * @throws InternalReferralNotFoundException if missing or soft-deleted
    */
   async findById(
     id: string,
     tenantId: string,
+    branchId?: string | null,
   ): Promise<InternalReferralDetail> {
     const referral = await this.prisma.internalReferral.findFirst({
       where: { id, tenantId, deletedAt: null },
@@ -463,26 +381,29 @@ export class InternalReferralService {
     if (!referral) {
       throw new InternalReferralNotFoundException(id);
     }
-    return this.toDetail(tenantId, referral);
+    return this.toDetail(tenantId, branchId ?? null, referral);
   }
 
   /**
    * Update an internal referral. Only supplied fields change. When `employeeId` is
    * supplied it is re-validated against the tenant. Commission/incentive config is
    * re-validated and normalised against the merged (existing + patch) state when any
-   * related field is present. When `labTestIds`/`labPanelIds` is supplied, that whole
-   * set is REPLACED (existing active rows soft-deleted, the new set created); omit to
-   * leave it unchanged. All in one transaction.
+   * related field is present. When an active branch is supplied and either
+   * `branchLabTestListId`/`branchLabPanelListId` is present, the per-branch Lab Test
+   * / Lab Panel List assignment is re-applied. All in one transaction.
    * @param id internal referral id
    * @param tenantId tenant scope
+   * @param branchId active branch from the JWT (null → no list assignment written)
+   * @param actorId person id recorded as updated-by on the list assignment (or null)
    * @param dto partial update
    * @throws InternalReferralNotFoundException if missing/soft-deleted
-   * @throws InvalidEmployeeRefException / InvalidCommissionConfigException /
-   *   InvalidLabTestRefException / InvalidLabPanelRefException
+   * @throws InvalidEmployeeRefException / InvalidCommissionConfigException
    */
   async update(
     id: string,
     tenantId: string,
+    branchId: string | null,
+    actorId: string | null,
     dto: UpdateInternalReferralDto,
   ): Promise<InternalReferralDetail> {
     const existing = await this.findById(id, tenantId);
@@ -492,12 +413,6 @@ export class InternalReferralService {
     await this.assertSettingsRef(tenantId, dto.referralPanelSettingsId);
     await this.assertBranchRef(tenantId, dto.branchId);
     await this.assertDepartmentRef(tenantId, dto.departmentId);
-
-    const testIds = dto.labTestIds;
-    const panelIds = dto.labPanelIds;
-    if (testIds !== undefined || panelIds !== undefined) {
-      await this.assertLabRefs(tenantId, testIds ?? [], panelIds ?? []);
-    }
 
     let data: Prisma.InternalReferralUpdateInput = this.toScalarUpdateData(dto);
 
@@ -564,30 +479,33 @@ export class InternalReferralService {
       data.tds = tdsApplicable ? (dto.tds ?? existing.tds ?? null) : null;
     }
 
-    const now = new Date();
     await this.prisma.withTenant(tenantId, async (tx) => {
       await tx.internalReferral.update({ where: { id }, data });
-
-      if (testIds !== undefined) {
-        await tx.internalReferralLabTest.updateMany({
-          where: { internalReferralId: id, tenantId, deletedAt: null },
-          data: { deletedAt: now },
-        });
-      }
-      if (panelIds !== undefined) {
-        await tx.internalReferralLabPanel.updateMany({
-          where: { internalReferralId: id, tenantId, deletedAt: null },
-          data: { deletedAt: now },
-        });
-      }
-      await this.writeLabRefs(tx, tenantId, id, testIds ?? [], panelIds ?? []);
     });
-    return this.findById(id, tenantId);
+
+    if (
+      branchId &&
+      (dto.branchLabTestListId !== undefined ||
+        dto.branchLabPanelListId !== undefined)
+    ) {
+      await this.listAssignmentService.upsert(
+        tenantId,
+        branchId,
+        actorId,
+        ReferralType.INTERNAL,
+        id,
+        {
+          branchLabTestListId: dto.branchLabTestListId,
+          branchLabPanelListId: dto.branchLabPanelListId,
+        },
+      );
+    }
+    return this.findById(id, tenantId, branchId);
   }
 
   /**
-   * Soft-delete an internal referral and cascade soft-delete its active assigned lab
-   * tests/panels in one transaction.
+   * Soft-delete an internal referral. The per-branch list assignment is left as-is
+   * (it resolves against the referral only while the referral is active).
    * @param id internal referral id
    * @param tenantId tenant scope
    * @throws InternalReferralNotFoundException if missing/soft-deleted
@@ -595,16 +513,7 @@ export class InternalReferralService {
   async remove(id: string, tenantId: string): Promise<InternalReferralDetail> {
     await this.findById(id, tenantId);
     const now = new Date();
-    const scope = { internalReferralId: id, tenantId, deletedAt: null };
     await this.prisma.withTenant(tenantId, async (tx) => {
-      await tx.internalReferralLabTest.updateMany({
-        where: scope,
-        data: { deletedAt: now },
-      });
-      await tx.internalReferralLabPanel.updateMany({
-        where: scope,
-        data: { deletedAt: now },
-      });
       await tx.internalReferral.update({
         where: { id },
         data: { deletedAt: now },
@@ -616,7 +525,11 @@ export class InternalReferralService {
       include: INTERNAL_REFERRAL_DETAIL_INCLUDE,
     });
     // `removed` is guaranteed present (we just updated it); narrow for the type.
-    return this.toDetail(tenantId, removed as InternalReferralWithRelations);
+    return this.toDetail(
+      tenantId,
+      null,
+      removed as InternalReferralWithRelations,
+    );
   }
 
   // ── Validation helpers ──────────────────────────────────────────────────────
@@ -640,56 +553,6 @@ export class InternalReferralService {
     );
     if (!isStaff) {
       throw new InvalidEmployeeRefException(employeeId);
-    }
-  }
-
-  /**
-   * Validate the assigned lab-test/panel references: every id must be an active,
-   * non-deleted lab test/panel in the caller's tenant. Ids are assumed deduplicated
-   * by the DTO (`@ArrayUnique`).
-   * @param tenantId tenant scope
-   * @param testIds assigned lab-test ids
-   * @param panelIds assigned lab-panel ids
-   * @throws InvalidLabTestRefException / InvalidLabPanelRefException
-   */
-  private async assertLabRefs(
-    tenantId: string,
-    testIds: string[],
-    panelIds: string[],
-  ): Promise<void> {
-    if (testIds.length) {
-      const found = await this.prisma.labTest.findMany({
-        where: {
-          id: { in: testIds },
-          tenantId,
-          isActive: true,
-          deletedAt: null,
-        },
-        select: { id: true },
-      });
-      if (found.length !== testIds.length) {
-        const ok = new Set(found.map((t) => t.id));
-        throw new InvalidLabTestRefException(
-          testIds.filter((id) => !ok.has(id)),
-        );
-      }
-    }
-    if (panelIds.length) {
-      const found = await this.prisma.labPanel.findMany({
-        where: {
-          id: { in: panelIds },
-          tenantId,
-          isActive: true,
-          deletedAt: null,
-        },
-        select: { id: true },
-      });
-      if (found.length !== panelIds.length) {
-        const ok = new Set(found.map((p) => p.id));
-        throw new InvalidLabPanelRefException(
-          panelIds.filter((id) => !ok.has(id)),
-        );
-      }
     }
   }
 
@@ -816,42 +679,6 @@ export class InternalReferralService {
   // ── Persistence helpers ─────────────────────────────────────────────────────
 
   /**
-   * Persist an internal referral's assigned lab tests and lab panels. Assumes the ids
-   * were already validated by `assertLabRefs` (no-op for empty lists).
-   * @param tx active transaction client
-   * @param tenantId tenant scope
-   * @param internalReferralId owning internal referral
-   * @param testIds assigned lab-test ids
-   * @param panelIds assigned lab-panel ids
-   */
-  private async writeLabRefs(
-    tx: Prisma.TransactionClient,
-    tenantId: string,
-    internalReferralId: string,
-    testIds: string[],
-    panelIds: string[],
-  ): Promise<void> {
-    if (testIds.length) {
-      await tx.internalReferralLabTest.createMany({
-        data: testIds.map((labTestId) => ({
-          tenantId,
-          internalReferralId,
-          labTestId,
-        })),
-      });
-    }
-    if (panelIds.length) {
-      await tx.internalReferralLabPanel.createMany({
-        data: panelIds.map((labPanelId) => ({
-          tenantId,
-          internalReferralId,
-          labPanelId,
-        })),
-      });
-    }
-  }
-
-  /**
    * Build the scalar update payload (employee/payroll/payment/attachment/status
    * fields) from an update DTO. Only fields present on the DTO are written;
    * commission/incentive and lab-list fields are handled separately.
@@ -918,47 +745,30 @@ export class InternalReferralService {
   // ── Response shaping ────────────────────────────────────────────────────────
 
   /**
-   * Compose the GET-single response: enrich assigned lab tests/panels with their
-   * resolved name/code (null when the referenced test/panel was deleted).
-   * @param tenantId tenant scope (for resolving lab test/panel names)
+   * Compose the GET-single response: attach the active branch's Lab Test / Lab Panel
+   * List assignment (both null when there is no branch context or no assignment).
+   * @param tenantId tenant scope
+   * @param branchId active branch (from JWT) or null
    * @param referral the loaded internal referral with relations
    */
   private async toDetail(
     tenantId: string,
+    branchId: string | null,
     referral: InternalReferralWithRelations,
   ): Promise<InternalReferralDetail> {
-    const testIds = [...new Set(referral.labTests.map((t) => t.labTestId))];
-    const panelIds = [...new Set(referral.labPanels.map((p) => p.labPanelId))];
-
-    const [tests, panels] = await Promise.all([
-      testIds.length
-        ? this.prisma.labTest.findMany({
-            where: { tenantId, id: { in: testIds } },
-            select: { id: true, testName: true, testCode: true },
-          })
-        : Promise.resolve([]),
-      panelIds.length
-        ? this.prisma.labPanel.findMany({
-            where: { tenantId, id: { in: panelIds } },
-            select: { id: true, panelName: true, panelCode: true },
-          })
-        : Promise.resolve([]),
-    ]);
-    const testMap = new Map(tests.map((t) => [t.id, t]));
-    const panelMap = new Map(panels.map((p) => [p.id, p]));
+    const assignment = branchId
+      ? await this.listAssignmentService.getAssignment(
+          tenantId,
+          branchId,
+          ReferralType.INTERNAL,
+          referral.id,
+        )
+      : null;
 
     return {
       ...referral,
-      labTests: referral.labTests.map((t) => ({
-        ...t,
-        testName: testMap.get(t.labTestId)?.testName ?? null,
-        testCode: testMap.get(t.labTestId)?.testCode ?? null,
-      })),
-      labPanels: referral.labPanels.map((p) => ({
-        ...p,
-        panelName: panelMap.get(p.labPanelId)?.panelName ?? null,
-        panelCode: panelMap.get(p.labPanelId)?.panelCode ?? null,
-      })),
+      branchLabTestListId: assignment?.branchLabTestListId ?? null,
+      branchLabPanelListId: assignment?.branchLabPanelListId ?? null,
     };
   }
 

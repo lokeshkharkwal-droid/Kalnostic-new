@@ -1,7 +1,6 @@
 import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
-  ArrayUnique,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -40,8 +39,9 @@ import { ReferralDoctorExperienceDto } from './referral-doctor-experience.dto';
  * are validated against the caller's tenant in `ReferralDoctorService`.
  * Commission/bonus configuration is conditional: the `@ValidateIf` rules below are
  * mirrored by the authoritative cross-field checks in the service (which also
- * normalises the stored data). `labTestIds`/`labPanelIds` reference active lab
- * tests/panels in the tenant (validated in the service).
+ * normalises the stored data). The optional
+ * `branchLabTestListId`/`branchLabPanelListId` attach a per-branch Lab Test / Lab
+ * Panel List to this referral (via `ReferralListAssignmentService`).
  */
 export class CreateReferralDoctorDto {
   // ── Personal details ──
@@ -165,18 +165,14 @@ export class CreateReferralDoctorDto {
   @Type(() => ReferralDoctorExperienceDto)
   experiences?: ReferralDoctorExperienceDto[];
 
-  // ── Lab lists (assigned tests/panels; multi-select, optional) ──
-  @IsArray()
+  // ── Lab lists (per-branch Lab Test List / Lab Panel List assignment) ──
   @IsOptional()
-  @IsUUID('all', { each: true })
-  @ArrayUnique()
-  labTestIds?: string[];
+  @IsUUID()
+  branchLabTestListId?: string;
 
-  @IsArray()
   @IsOptional()
-  @IsUUID('all', { each: true })
-  @ArrayUnique()
-  labPanelIds?: string[];
+  @IsUUID()
+  branchLabPanelListId?: string;
 
   // ── Commission & TDS ──
   @IsBoolean()

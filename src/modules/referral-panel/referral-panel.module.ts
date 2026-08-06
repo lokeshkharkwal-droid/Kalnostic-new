@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { BranchModule } from '../branch/branch.module';
+import { ReferralListModule } from '../referral-list/referral-list.module';
 import { ReferralPanelSettingsModule } from '../referral-panel-settings/referral-panel-settings.module';
 import { ReferralPanelController } from './referral-panel.controller';
 import { ReferralPanelOptionsController } from './referral-panel-options.controller';
@@ -15,7 +16,12 @@ import { ReferralPanelService } from './referral-panel.service';
  * modules (e.g. order/commission settlement).
  */
 @Module({
-  imports: [PrismaModule, BranchModule, ReferralPanelSettingsModule],
+  imports: [
+    PrismaModule,
+    BranchModule,
+    ReferralListModule,
+    ReferralPanelSettingsModule,
+  ],
   controllers: [ReferralPanelOptionsController, ReferralPanelController],
   providers: [ReferralPanelService],
   exports: [ReferralPanelService],

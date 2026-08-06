@@ -40,7 +40,12 @@ export class BranchLabTestOptionsController {
     return this.branchLabTestService.findOptions(
       tenantId,
       this.requireBranch(profile),
-      { search: query.search, page: query.page, limit: query.limit },
+      {
+        search: query.search,
+        page: query.page,
+        limit: query.limit,
+        listId: query.listId,
+      },
     );
   }
 }

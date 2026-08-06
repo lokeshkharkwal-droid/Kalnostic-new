@@ -24,16 +24,14 @@ export type BonusSlab = {
 };
 
 /**
- * Relations eager-loaded by the GET-single endpoint: all active qualifications,
- * experiences, and assigned lab tests/panels, plus the linked
- * department/category/sub-category (id + name only). Ordered deterministically by
- * creation time.
+ * Relations eager-loaded by the GET-single endpoint: all active qualifications and
+ * experiences, plus the linked department/category/sub-category (id + name only).
+ * Ordered deterministically by creation time. The assigned Lab Test / Lab Panel
+ * List is a per-branch `ReferralListAssignment`, attached separately by the service.
  */
 export const REFERRAL_DOCTOR_DETAIL_INCLUDE = {
   qualifications: { where: { deletedAt: null }, orderBy: { createdAt: 'asc' } },
   experiences: { where: { deletedAt: null }, orderBy: { createdAt: 'asc' } },
-  labTests: { where: { deletedAt: null } },
-  labPanels: { where: { deletedAt: null } },
   department: { select: { id: true, name: true } },
   category: { select: { id: true, name: true } },
   subCategory: { select: { id: true, name: true } },
@@ -50,34 +48,22 @@ export type ReferralDoctorExperienceView =
     duration: string | null;
   };
 
-/** An assigned lab test enriched with its resolved name/code (null if deleted). */
-export type ReferralDoctorLabTestView =
-  ReferralDoctorWithRelations['labTests'][number] & {
-    testName: string | null;
-    testCode: string | null;
-  };
-
-/** An assigned lab panel enriched with its resolved name/code (null if deleted). */
-export type ReferralDoctorLabPanelView =
-  ReferralDoctorWithRelations['labPanels'][number] & {
-    panelName: string | null;
-    panelCode: string | null;
-  };
-
 /**
  * The GET-single response shape: the referral doctor with its children plus the
  * derived, read-only fields — `fullName` (first/middle/last joined), `age` (whole
- * years from `dateOfBirth`), and per-experience `duration`.
+ * years from `dateOfBirth`), and per-experience `duration`. The
+ * `branchLabTestListId`/`branchLabPanelListId` are attached from the active
+ * branch's `ReferralListAssignment` (null when no branch context or no assignment).
  */
 export type ReferralDoctorDetail = Omit<
   ReferralDoctorWithRelations,
-  'experiences' | 'labTests' | 'labPanels'
+  'experiences'
 > & {
   fullName: string;
   age: number | null;
   experiences: ReferralDoctorExperienceView[];
-  labTests: ReferralDoctorLabTestView[];
-  labPanels: ReferralDoctorLabPanelView[];
+  branchLabTestListId?: string | null;
+  branchLabPanelListId?: string | null;
 };
 
 /** A reference to a linked department/category/sub-category (id + name). */
@@ -128,7 +114,5 @@ export interface ReferralDoctorListItem {
   commissionType: CommissionType | null;
   tds: number | null;
   paymentCycle: PaymentCycle;
-  labTestList: ClassificationRef[];
-  labPanelList: ClassificationRef[];
   status: ReferralDoctorStatus;
 }
