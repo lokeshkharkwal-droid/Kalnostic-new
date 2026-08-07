@@ -23,7 +23,7 @@ body:json {
 
 script:post-response {
   const data = res.getBody() && res.getBody().data;
-  if (data && data.accessToken) bru.setEnvVar("siteAdminToken", data.accessToken);
+  if (data && data.accessToken) bru.setVar("siteAdminToken", data.accessToken);
 }
 
 docs {

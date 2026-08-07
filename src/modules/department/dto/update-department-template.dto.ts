@@ -23,12 +23,15 @@ export class UpdateDepartmentTemplateDto {
   @MaxLength(255)
   name?: string;
 
+  // Nullable so the client can explicitly clear a previously-set short name
+  // (omitting the field entirely means "leave unchanged").
   @IsString()
   @IsOptional()
-  @Matches(/^[A-Z0-9]{2,6}$/, {
-    message: 'shortName must be 2-6 uppercase letters or digits (A-Z, 0-9)',
+  @Matches(/^[A-Z][a-zA-Z0-9]{1,5}$/, {
+    message:
+      'shortName must be 2-6 characters starting with an uppercase letter (A-Z)',
   })
-  shortName?: string;
+  shortName?: string | null;
 
   @IsString()
   @IsOptional()

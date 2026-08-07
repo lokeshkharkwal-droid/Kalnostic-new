@@ -69,9 +69,10 @@ export class CreateReferralDoctorDto {
   dateOfBirth?: string;
 
   @IsString()
+  @IsOptional()
   @MinLength(1)
   @MaxLength(20)
-  mobileNumber: string;
+  mobileNumber?: string;
 
   @IsEmail()
   @IsOptional()
