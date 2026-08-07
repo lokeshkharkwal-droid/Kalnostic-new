@@ -695,6 +695,7 @@ export class LabPanelService {
           labTestId: string;
           sortOrder: number;
           isRemovable: boolean;
+          discountPercent: number | null;
         }[] = [];
         for (const t of templateTests) {
           let newTestId = clonedTestIds.get(t.labTestId);
@@ -711,6 +712,7 @@ export class LabPanelService {
             labTestId: newTestId,
             sortOrder: t.sortOrder,
             isRemovable: t.isRemovable,
+            discountPercent: t.discountPercent,
           });
         }
         if (joinRows.length) {
@@ -920,12 +922,22 @@ export class LabPanelService {
         source: DataSource.SITE_ADMIN,
         deletedAt: null,
       },
-      select: { id: true },
+      select: { id: true, discountCapPct: true },
     });
     if (found.length !== unique.size) {
       const foundIds = new Set(found.map((t) => t.id));
       const missing = [...unique].filter((id) => !foundIds.has(id));
       throw new LabPanelTestNotFoundException(missing);
+    }
+    const capById = new Map(found.map((t) => [t.id, t.discountCapPct]));
+    for (const test of tests) {
+      if (test.discountPercent == null) continue;
+      const cap = capById.get(test.labTestId) ?? 0;
+      if (test.discountPercent > cap) {
+        throw new ValidationException(
+          `discountPercent (${test.discountPercent}) exceeds this test's discount cap (${cap})`,
+        );
+      }
     }
   }
 
@@ -1004,8 +1016,11 @@ export class LabPanelService {
 
   /**
    * Validate that every `labTestId` references an active lab test in the same
-   * master data, and that there are no duplicates within the panel.
-   * @throws ValidationException on duplicate test references
+   * master data, that there are no duplicates within the panel, and that each
+   * test's `discountPercent` (if set) doesn't exceed that test's own
+   * `discountCapPct`.
+   * @throws ValidationException on duplicate test references or a discount
+   *   exceeding its test's cap
    * @throws LabPanelTestNotFoundException on missing/foreign test references
    */
   private async assertTestRefs(
@@ -1028,12 +1043,22 @@ export class LabPanelService {
         tenantId,
         deletedAt: null,
       },
-      select: { id: true },
+      select: { id: true, discountCapPct: true },
     });
     if (found.length !== unique.size) {
       const foundIds = new Set(found.map((t) => t.id));
       const missing = [...unique].filter((id) => !foundIds.has(id));
       throw new LabPanelTestNotFoundException(missing);
+    }
+    const capById = new Map(found.map((t) => [t.id, t.discountCapPct]));
+    for (const test of tests) {
+      if (test.discountPercent == null) continue;
+      const cap = capById.get(test.labTestId) ?? 0;
+      if (test.discountPercent > cap) {
+        throw new ValidationException(
+          `discountPercent (${test.discountPercent}) exceeds this test's discount cap (${cap})`,
+        );
+      }
     }
   }
 
