@@ -3,6 +3,15 @@ import { BranchLabPanel, BranchLabPanelTest } from '@prisma/client';
 /** Domain/response shape for a branch lab panel (Prisma model is the DB source of truth). */
 export type BranchLabPanelEntity = BranchLabPanel;
 
+/**
+ * A `findAll()` list row, denormalised with a human-readable sample summary
+ * aggregated across the panel's member tests (panels have no `configSnapshot`
+ * of their own — samples live on each member `BranchLabTest`).
+ */
+export interface BranchLabPanelListRow extends BranchLabPanel {
+  sampleSummary: string | null;
+}
+
 /** A branch lab panel composed with its included branch-test rows (get-one shape). */
 export type BranchLabPanelWithTests = BranchLabPanel & {
   tests: BranchLabPanelTest[];

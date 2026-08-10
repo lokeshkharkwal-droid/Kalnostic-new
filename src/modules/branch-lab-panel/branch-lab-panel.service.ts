@@ -22,9 +22,11 @@ import {
 } from './exceptions/branch-lab-panel.exceptions';
 import {
   BranchLabPanelImportResult,
+  BranchLabPanelListRow,
   BranchLabPanelSyncResult,
   BranchLabPanelWithTests,
 } from './entities/branch-lab-panel.entity';
+import { BranchLabTestConfigSnapshot } from '../branch-lab-test/entities/branch-lab-test.entity';
 
 /** A Create-Order lab-panel option row (Diagnostic Items table). */
 export interface BranchLabPanelOption {
@@ -393,7 +395,7 @@ export class BranchLabPanelService {
     tenantId: string,
     branchId: string,
     query: ListBranchLabPanelsQueryDto,
-  ): Promise<PaginatedResult<BranchLabPanel>> {
+  ): Promise<PaginatedResult<BranchLabPanelListRow>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const where: Prisma.BranchLabPanelWhereInput = {
@@ -423,7 +425,65 @@ export class BranchLabPanelService {
       }),
       this.prisma.branchLabPanel.count({ where }),
     ]);
-    return { data, total, page, limit };
+    const sampleSummaries = await this.resolveSampleSummaries(
+      data.map((p) => p.id),
+    );
+    const enriched: BranchLabPanelListRow[] = data.map((p) => ({
+      ...p,
+      sampleSummary: sampleSummaries.get(p.id) ?? null,
+    }));
+    return { data: enriched, total, page, limit };
+  }
+
+  /**
+   * Aggregate each panel's member-test sample types into one comma-joined
+   * summary string, keyed by `branchLabPanelId`. Panels have no
+   * `configSnapshot` of their own — samples live on each member `BranchLabTest`.
+   */
+  private async resolveSampleSummaries(
+    panelIds: string[],
+  ): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+    if (panelIds.length === 0) {
+      return map;
+    }
+    const memberRows = await this.prisma.branchLabPanelTest.findMany({
+      where: { branchLabPanelId: { in: panelIds }, deletedAt: null },
+      select: { branchLabPanelId: true, branchLabTestId: true },
+    });
+    const testIds = [...new Set(memberRows.map((r) => r.branchLabTestId))];
+    if (testIds.length === 0) {
+      return map;
+    }
+    const tests = await this.prisma.branchLabTest.findMany({
+      where: { id: { in: testIds } },
+      select: { id: true, configSnapshot: true },
+    });
+    const sampleTypesByTestId = new Map<string, string[]>();
+    for (const t of tests) {
+      const samples =
+        (t.configSnapshot as unknown as BranchLabTestConfigSnapshot)
+          ?.samples ?? [];
+      sampleTypesByTestId.set(
+        t.id,
+        samples.map((s) => s.sampleType).filter((x): x is string => Boolean(x)),
+      );
+    }
+    const sampleTypesByPanelId = new Map<string, Set<string>>();
+    for (const r of memberRows) {
+      const set =
+        sampleTypesByPanelId.get(r.branchLabPanelId) ?? new Set<string>();
+      for (const st of sampleTypesByTestId.get(r.branchLabTestId) ?? []) {
+        set.add(st);
+      }
+      sampleTypesByPanelId.set(r.branchLabPanelId, set);
+    }
+    for (const [panelId, set] of sampleTypesByPanelId) {
+      if (set.size > 0) {
+        map.set(panelId, [...set].join(', '));
+      }
+    }
+    return map;
   }
 
   /**
