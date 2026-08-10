@@ -498,8 +498,7 @@ export class DoctorsService {
   /**
    * Reshape a selected list row into the listing response: composed `name`,
    * `specialization` (category name), `superSpecialization` (sub-category name),
-   * and `contact` (phone). Fees are not part of the listing projection (fetch the
-   * detail endpoint for a doctor's charges).
+   * and `contact` (phone).
    * @param row a row from `DOCTOR_LIST_SELECT`
    */
   private toListItem(row: DoctorListRow): DoctorListItem {
@@ -515,6 +514,8 @@ export class DoctorsService {
       email: row.email,
       status: row.status,
       isReportSignatory: row.isReportSignatory,
+      consultationFee: row.consultationFee,
+      followUpFee: row.followUpFee,
     };
   }
 

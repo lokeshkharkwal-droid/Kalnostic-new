@@ -257,6 +257,31 @@ export interface LabReportWorklistRow {
   multiStepStage: MultiStepStage | null;
 }
 
+/** One resolved candidate for the Approve modal's Signatory Authority
+ * dropdowns (`GET /lab-reports/:id/signatory-candidates`). `slot` is this
+ * candidate's position after sorting the department's `isSignatory` mappings
+ * by priority (ascending) and capping at 3 — not the raw `priority` number
+ * itself, which is included separately for display/debugging. `resolvable`
+ * is false when the underlying Person/Doctor record could not be found
+ * (soft-deleted after being mapped) — such a candidate is still included
+ * (not silently dropped, which would shift a later slot into its place) but
+ * the frontend should render it disabled, and `approve()` rejects selecting
+ * it. */
+export interface LabReportSignatoryCandidate {
+  slot: 1 | 2 | 3;
+  priority: number;
+  personId: string;
+  type: 'USER' | 'CONSULTANT_DOCTOR' | 'REPORTING_DOCTOR';
+  displayName: string;
+  designation: string | null;
+  resolvable: boolean;
+}
+
+export interface LabReportSignatoryCandidatesResponse {
+  departmentId: string | null;
+  candidates: LabReportSignatoryCandidate[];
+}
+
 export function fullName(parts: Array<string | null | undefined>): string {
   return parts.filter((p): p is string => Boolean(p && p.trim())).join(' ');
 }

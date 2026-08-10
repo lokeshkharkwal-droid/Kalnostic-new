@@ -248,3 +248,20 @@ export class OrderReportsNotFoundException extends KaltrosException {
     );
   }
 }
+
+/** 422 — Approve was called with a `signatoryAuthority*Id` that does not match
+ * any currently-valid signatory candidate for this report's department/branch
+ * (see `LabReportService.getSignatoryCandidates`). Re-validated server-side at
+ * approve time rather than trusting whatever the client fetched when the
+ * modal opened, since the department's Person Mapping config could have
+ * changed in between. */
+export class InvalidSignatoryAuthorityException extends KaltrosException {
+  constructor(personId: string) {
+    super(
+      'INVALID_SIGNATORY_AUTHORITY',
+      'The selected signatory authority is not valid for this report',
+      { personId },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}

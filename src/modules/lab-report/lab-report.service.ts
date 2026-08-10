@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import {
   LabReportHistory,
   LabReportStatus,
+  PersonMappingType,
   Prisma,
   ResultValueSource,
   SampleStatus,
@@ -19,6 +20,9 @@ import {
 } from './dto/lab-report-note.dto';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
 import type { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
+import { TechnicianSettingsService } from '../technician-settings/technician-settings.service';
+import { LabTestService } from '../lab-test/lab-test.service';
+import { UpdateContentSectionsDto } from './dto/update-content-sections.dto';
 import {
   GeneratePdfDto,
   SigningAuthorityDto,
@@ -31,16 +35,21 @@ import {
   LabReportDetailApiResponse,
   LabReportDetailWithContent,
   LabReportResultParam,
+  LabReportSignatoryCandidate,
+  LabReportSignatoryCandidatesResponse,
   LabReportStatusCounts,
   LabReportTransitionAction,
   LabReportWorklistRow,
+  fullName,
   toWorklistRow,
 } from './entities/lab-report.entity';
 import { LabReportOptions } from './entities/lab-report-options.entity';
 import { resolveActorNames } from './entities/worklist.entity';
+import { ApproveReportDto } from './dto/approve-report.dto';
 import {
   ActiveBranchRequiredException,
   InvalidLabReportTransitionException,
+  InvalidSignatoryAuthorityException,
   LabReportLockedException,
   LabReportSampleMissingException,
   LabReportResultsRequiredException,
@@ -76,6 +85,8 @@ export class LabReportService {
     private readonly prisma: PrismaService,
     private readonly pdfReportTemplateService: PdfReportTemplateService,
     private readonly tatService: TatService,
+    private readonly technicianSettingsService: TechnicianSettingsService,
+    private readonly labTestService: LabTestService,
   ) {}
 
   // ── Creation (triggered by Accession's sample-accept signal) ──────────────
@@ -419,6 +430,201 @@ export class LabReportService {
           ? { id: row.departmentId, name: nameById.get(row.departmentId)! }
           : null,
     }));
+  }
+
+  /**
+   * Resolves this report's department/category/sub-category the same way
+   * `toWorklistRow` resolves department
+   * (`branchLabTest?.departmentId ?? branchLabPanel?.departmentId ?? null`),
+   * generalized to all three classification axes, without needing the
+   * report's full detail payload — used by `getSignatoryCandidatesInternal`.
+   * `BranchLabPanel` has no `subCategoryId` column at all (only `LabTest`/
+   * `BranchLabTest` classify that granularly), so a panel-based report's
+   * `subCategoryId` is always null — a report on a panel item simply has no
+   * sub-category-basis signatories, regardless of configuration.
+   */
+  private async resolveReportClassificationIds(
+    id: string,
+    tenantId: string,
+    branchId: string,
+  ): Promise<{
+    departmentId: string | null;
+    categoryId: string | null;
+    subCategoryId: string | null;
+    report: { branchId: string | null };
+  }> {
+    const report = await this.prisma.labReport.findFirst({
+      where: { id, tenantId, branchId, deletedAt: null },
+      select: {
+        branchId: true,
+        orderItem: {
+          select: {
+            branchLabTest: { select: { departmentId: true, categoryId: true, subCategoryId: true } },
+            branchLabPanel: { select: { departmentId: true, categoryId: true } },
+          },
+        },
+      },
+    });
+    if (!report) throw new LabReportNotFoundException(id);
+    return {
+      departmentId:
+        report.orderItem.branchLabTest?.departmentId ??
+        report.orderItem.branchLabPanel?.departmentId ??
+        null,
+      categoryId:
+        report.orderItem.branchLabTest?.categoryId ??
+        report.orderItem.branchLabPanel?.categoryId ??
+        null,
+      subCategoryId: report.orderItem.branchLabTest?.subCategoryId ?? null,
+      report: { branchId: report.branchId },
+    };
+  }
+
+  /**
+   * Resolves the up-to-3 signatory candidates for a report's Approve modal
+   * (LABORATORY.docx "Signatory Authority Selection - Approval Pop-up
+   * Logic"). Which classification axis governs the lookup — Department,
+   * Category, or Sub-Category — is driven by the branch's
+   * `TechnicianSetting.signatoryBasis` ("Signatory Depends Based On" in
+   * Technician Settings → Laboratory Permissions); this resolves the report's
+   * id for that axis (via `resolveReportClassificationIds`) and queries the
+   * matching person-mapping table (`DepartmentPersonMapping` /
+   * `CategoryPersonMapping` / `SubCategoryPersonMapping` — field-for-field
+   * identical for this purpose: `personId`, `type`, `branchId`,
+   * `isSignatory`, `priority`), filtered to `isSignatory: true`, scoped to
+   * this report's branch or tenant-wide (`branchId: null`), excluding
+   * `EXTERNAL_REFERRAL` (a referral source signing a lab report doesn't fit
+   * clinical sign-off practice), sorted by `priority` ascending and capped at
+   * 3. When two mappings tie on the same priority, a branch-specific row
+   * wins over a tenant-wide one; if still tied, the earliest-created row
+   * wins (the `createdAt asc` secondary order below). Each candidate's
+   * display name is resolved from `Person` (type USER) or `Doctor` (type
+   * CONSULTANT_DOCTOR/REPORTING_DOCTOR) — a soft-deleted underlying record
+   * leaves the candidate in the list with `resolvable: false` rather than
+   * silently dropping it (dropping would shift a later slot into its place
+   * without explanation).
+   *
+   * Shared by `GET /lab-reports/:id/signatory-candidates` (frontend fetch
+   * when the Approve modal opens) and `approve()`'s own re-validation of
+   * whatever the client actually submits.
+   */
+  private async getSignatoryCandidatesInternal(
+    id: string,
+    tenantId: string,
+    branchId: string,
+  ): Promise<LabReportSignatoryCandidatesResponse> {
+    const [{ departmentId, categoryId, subCategoryId, report }, settings] =
+      await Promise.all([
+        this.resolveReportClassificationIds(id, tenantId, branchId),
+        this.technicianSettingsService.getForBranch(tenantId, branchId),
+      ]);
+
+    const basis = settings.signatoryBasis;
+    const classificationId =
+      basis === 'category' ? categoryId
+      : basis === 'subCategory' ? subCategoryId
+      : departmentId;
+    // Report the axis actually used back to the caller as `departmentId` for
+    // backward compatibility with the response shape — callers only ever
+    // used this field to know "is there a governing classification at all",
+    // never specifically the department id.
+    if (!classificationId) return { departmentId: null, candidates: [] };
+
+    const mappingWhere = {
+      tenantId,
+      isSignatory: true,
+      deletedAt: null,
+      type: { in: ['USER', 'CONSULTANT_DOCTOR', 'REPORTING_DOCTOR'] as PersonMappingType[] },
+      OR: [{ branchId: report.branchId }, { branchId: null }],
+    };
+    const mappings =
+      basis === 'category'
+        ? await this.prisma.categoryPersonMapping.findMany({
+            where: { ...mappingWhere, categoryId: classificationId },
+            orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
+          })
+        : basis === 'subCategory'
+          ? await this.prisma.subCategoryPersonMapping.findMany({
+              where: { ...mappingWhere, subCategoryId: classificationId },
+              orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
+            })
+          : await this.prisma.departmentPersonMapping.findMany({
+              where: { ...mappingWhere, departmentId: classificationId },
+              orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
+            });
+
+    // One winner per priority number: prefer branch-specific over tenant-wide;
+    // `createdAt asc` above already breaks any remaining tie deterministically.
+    const byPriority = new Map<number, (typeof mappings)[number]>();
+    for (const m of mappings) {
+      const existing = byPriority.get(m.priority);
+      if (!existing || (existing.branchId === null && m.branchId !== null)) {
+        byPriority.set(m.priority, m);
+      }
+    }
+    const winners = [...byPriority.values()]
+      .sort((a, b) => a.priority - b.priority)
+      .slice(0, 3);
+
+    const userIds = winners
+      .filter((m) => m.type === 'USER')
+      .map((m) => m.personId);
+    const doctorIds = winners
+      .filter((m) => m.type === 'CONSULTANT_DOCTOR' || m.type === 'REPORTING_DOCTOR')
+      .map((m) => m.personId);
+
+    const [persons, doctors] = await Promise.all([
+      userIds.length
+        ? this.prisma.person.findMany({
+            where: { id: { in: userIds }, deletedAt: null },
+            select: { id: true, firstName: true, middleName: true, lastName: true, designation: true },
+          })
+        : Promise.resolve([]),
+      doctorIds.length
+        ? this.prisma.doctor.findMany({
+            where: { id: { in: doctorIds }, tenantId, deletedAt: null },
+            select: { id: true, firstName: true, lastName: true, signatoryDesignation: true, registrationCouncil: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    const personById = new Map(persons.map((p) => [p.id, p]));
+    const doctorById = new Map(doctors.map((d) => [d.id, d]));
+
+    const candidates: LabReportSignatoryCandidate[] = winners.map((m, index) => {
+      if (m.type === 'USER') {
+        const p = personById.get(m.personId);
+        return {
+          slot: (index + 1) as 1 | 2 | 3,
+          priority: m.priority,
+          personId: m.personId,
+          type: 'USER',
+          displayName: p ? fullName([p.firstName, p.middleName, p.lastName]) : '(Unavailable)',
+          designation: p?.designation ?? null,
+          resolvable: Boolean(p),
+        };
+      }
+      const d = doctorById.get(m.personId);
+      return {
+        slot: (index + 1) as 1 | 2 | 3,
+        priority: m.priority,
+        personId: m.personId,
+        type: m.type as 'CONSULTANT_DOCTOR' | 'REPORTING_DOCTOR',
+        displayName: d ? fullName([d.firstName, d.lastName]) : '(Unavailable)',
+        designation: d?.signatoryDesignation ?? d?.registrationCouncil ?? null,
+        resolvable: Boolean(d),
+      };
+    });
+
+    return { departmentId: classificationId, candidates };
+  }
+
+  async getSignatoryCandidates(
+    id: string,
+    tenantId: string,
+    branchId: string | null,
+  ): Promise<LabReportSignatoryCandidatesResponse> {
+    const activeBranchId = this.requireBranch(branchId);
+    return this.getSignatoryCandidatesInternal(id, tenantId, activeBranchId);
   }
 
   /**
@@ -773,6 +979,59 @@ export class LabReportService {
       limitations: labTest.limitations,
       references: labTest.references,
     };
+  }
+
+  /**
+   * Persists a technician's edit to "Useful For"/"Interpretation" — gated
+   * per-field by the branch's `TechnicianSetting.isUsefulForEditable`/
+   * `isInterpretationEditable` (both default false; LABORATORY.docx §4.5
+   * describes these as normally read-only, Admin-configured content). Writes
+   * straight through to the underlying master `LabTest` record (the same one
+   * `getContentSections` reads from) via `LabTestService.update` — this is a
+   * shared-record edit, not a per-report override: it affects every other
+   * order that uses this same test, by design (confirmed with the user).
+   * Silently no-ops a field that's present in the DTO but whose setting is
+   * off, rather than rejecting the whole request — lets the frontend send
+   * both fields unconditionally without needing to know which one is
+   * currently allowed.
+   */
+  async updateContentSections(
+    id: string,
+    tenantId: string,
+    branchId: string | null,
+    dto: UpdateContentSectionsDto,
+  ): Promise<LabReportContentSections> {
+    const activeBranchId = this.requireBranch(branchId);
+    const report = await this.requireReport(id, tenantId, activeBranchId);
+    if (!report.labTestId) {
+      return { usefulFor: null, interpretation: null, limitations: null, references: null };
+    }
+
+    const settings = await this.technicianSettingsService.getForBranch(tenantId, activeBranchId);
+    const patch: { usefulFor?: string; interpretationOfResults?: string } = {};
+    if (settings.isUsefulForEditable && dto.usefulFor !== undefined) {
+      patch.usefulFor = dto.usefulFor;
+    }
+    if (settings.isInterpretationEditable && dto.interpretation !== undefined) {
+      patch.interpretationOfResults = dto.interpretation;
+    }
+
+    if (Object.keys(patch).length > 0) {
+      const labTest = await this.prisma.labTest.findFirst({
+        where: { id: report.labTestId, deletedAt: null },
+        select: { masterDataId: true },
+      });
+      if (labTest?.masterDataId) {
+        await this.labTestService.update(
+          labTest.masterDataId,
+          report.labTestId,
+          tenantId,
+          patch,
+        );
+      }
+    }
+
+    return this.getContentSections(tenantId, report.labTestId);
   }
 
   /**
@@ -1270,6 +1529,85 @@ export class LabReportService {
   // ── Print / Download Report ─────────────────────────────────────────────────
 
   /**
+   * Resolves this report's stored `signatoryAuthority1/2/3Id`+`Type` columns
+   * (LABORATORY.docx "Final Report Signature Order" — Priority 1 → 2 → 3,
+   * only the selected/configured slots appear, no empty placeholder for a
+   * skipped one) into the PDF template's `SigningAuthorityDto[]` shape. Same
+   * USER→Person / CONSULTANT_DOCTOR|REPORTING_DOCTOR→Doctor resolution as
+   * `getSignatoryCandidatesInternal`, but reading the report's own frozen
+   * columns rather than live `DepartmentPersonMapping` candidates — this is
+   * deliberately a snapshot read: what actually got chosen and stored at
+   * Approve time, not what the department/category/sub-category's mapping
+   * says today. A slot whose underlying Person/Doctor was since soft-deleted
+   * is simply omitted from the printed signature block (unlike the Approve
+   * modal's candidate list, which flags it `resolvable: false` instead —
+   * there's no "disabled" concept on a finished PDF, so silently dropping is
+   * the closest equivalent to that same "don't fabricate a signature" rule).
+   */
+  private async resolveStoredSignatories(
+    report: Pick<
+      LabReportDetailWithContent,
+      | 'signatoryAuthority1Id' | 'signatoryAuthority1Type'
+      | 'signatoryAuthority2Id' | 'signatoryAuthority2Type'
+      | 'signatoryAuthority3Id' | 'signatoryAuthority3Type'
+    >,
+    tenantId: string,
+  ): Promise<SigningAuthorityDto[]> {
+    const slots = [
+      { id: report.signatoryAuthority1Id, type: report.signatoryAuthority1Type },
+      { id: report.signatoryAuthority2Id, type: report.signatoryAuthority2Type },
+      { id: report.signatoryAuthority3Id, type: report.signatoryAuthority3Type },
+    ].filter(
+      (s): s is { id: string; type: PersonMappingType } => Boolean(s.id && s.type),
+    );
+    if (slots.length === 0) return [];
+
+    const userIds = slots.filter((s) => s.type === 'USER').map((s) => s.id);
+    const doctorIds = slots
+      .filter((s) => s.type === 'CONSULTANT_DOCTOR' || s.type === 'REPORTING_DOCTOR')
+      .map((s) => s.id);
+
+    const [persons, doctors] = await Promise.all([
+      userIds.length
+        ? this.prisma.person.findMany({
+            where: { id: { in: userIds }, deletedAt: null },
+            select: { id: true, firstName: true, middleName: true, lastName: true, designation: true },
+          })
+        : Promise.resolve([]),
+      doctorIds.length
+        ? this.prisma.doctor.findMany({
+            where: { id: { in: doctorIds }, tenantId, deletedAt: null },
+            select: { id: true, firstName: true, lastName: true, signatoryDesignation: true, registrationCouncil: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    const personById = new Map(persons.map((p) => [p.id, p]));
+    const doctorById = new Map(doctors.map((d) => [d.id, d]));
+
+    const signatories: SigningAuthorityDto[] = [];
+    for (const slot of slots) {
+      if (slot.type === 'USER') {
+        const p = personById.get(slot.id);
+        if (p) {
+          signatories.push({
+            name: fullName([p.firstName, p.middleName, p.lastName]),
+            designation: p.designation ?? undefined,
+          });
+        }
+      } else {
+        const d = doctorById.get(slot.id);
+        if (d) {
+          signatories.push({
+            name: fullName([d.firstName, d.lastName]),
+            designation: d.signatoryDesignation ?? d.registrationCouncil ?? undefined,
+          });
+        }
+      }
+    }
+    return signatories;
+  }
+
+  /**
    * Builds the render context for Print/Download (LABORATORY.docx §5, §6 —
    * appears on 7 of the 9 report statuses). Bridges `LabReport`'s real data
    * into the shape `PdfReportTemplateService.generatePdf` already expects
@@ -1296,32 +1634,7 @@ export class LabReportService {
     const testOrPanel =
       report.orderItem.branchLabTest ?? report.orderItem.branchLabPanel;
 
-    let signatories: SigningAuthorityDto[] = [];
-    if (report.approvedBy) {
-      const signatory = await this.prisma.person.findFirst({
-        where: { id: report.approvedBy, deletedAt: null },
-        select: {
-          firstName: true,
-          middleName: true,
-          lastName: true,
-          designation: true,
-        },
-      });
-      if (signatory) {
-        signatories = [
-          {
-            name: [
-              signatory.firstName,
-              signatory.middleName,
-              signatory.lastName,
-            ]
-              .filter(Boolean)
-              .join(' '),
-            designation: signatory.designation ?? undefined,
-          },
-        ];
-      }
-    }
+    const signatories = await this.resolveStoredSignatories(report, tenantId);
 
     // `LabReportResultValue.resultParamId` is a raw FK (no Prisma relation
     // field on the model) — batch-fetch the parameter names separately
@@ -1757,15 +2070,87 @@ export class LabReportService {
 
   // ── Approve / Publish / Error Reported ─────────────────────────────────────
 
+  /**
+   * Validates the DTO's `signatoryAuthority*Id` fields against a freshly
+   * re-fetched candidate list (never trusts whatever the client fetched when
+   * the Approve modal opened — the department's Person Mapping config could
+   * have changed since). Returns the 3 signatory id/type column pairs to
+   * write, or throws `InvalidSignatoryAuthorityException` if a submitted id
+   * doesn't match any current candidate. Slot 1 is only mandatory when at
+   * least one candidate actually exists for this department — a
+   * misconfigured/empty department must not block approval entirely.
+   */
+  private async resolveSignatoryColumns(
+    id: string,
+    tenantId: string,
+    branchId: string,
+    dto: ApproveReportDto,
+  ): Promise<{
+    signatoryAuthority1Id: string | null;
+    signatoryAuthority1Type: 'USER' | 'CONSULTANT_DOCTOR' | 'REPORTING_DOCTOR' | null;
+    signatoryAuthority2Id: string | null;
+    signatoryAuthority2Type: 'USER' | 'CONSULTANT_DOCTOR' | 'REPORTING_DOCTOR' | null;
+    signatoryAuthority3Id: string | null;
+    signatoryAuthority3Type: 'USER' | 'CONSULTANT_DOCTOR' | 'REPORTING_DOCTOR' | null;
+  }> {
+    const { candidates } = await this.getSignatoryCandidatesInternal(
+      id,
+      tenantId,
+      branchId,
+    );
+    const byPersonId = new Map(candidates.map((c) => [c.personId, c]));
+
+    const resolveSlot = (
+      personId: string | undefined,
+      required: boolean,
+    ): { id: string | null; type: 'USER' | 'CONSULTANT_DOCTOR' | 'REPORTING_DOCTOR' | null } => {
+      if (!personId) {
+        if (required) throw new InvalidSignatoryAuthorityException('(missing)');
+        return { id: null, type: null };
+      }
+      const candidate = byPersonId.get(personId);
+      if (!candidate || !candidate.resolvable) {
+        throw new InvalidSignatoryAuthorityException(personId);
+      }
+      return { id: candidate.personId, type: candidate.type };
+    };
+
+    // Slot 1 is mandatory only when the department actually has ≥1 candidate;
+    // an empty/misconfigured department must not block approval.
+    const slot1 = resolveSlot(
+      dto.signatoryAuthority1Id,
+      candidates.length > 0,
+    );
+    const slot2 = resolveSlot(dto.signatoryAuthority2Id, false);
+    const slot3 = resolveSlot(dto.signatoryAuthority3Id, false);
+
+    return {
+      signatoryAuthority1Id: slot1.id,
+      signatoryAuthority1Type: slot1.type,
+      signatoryAuthority2Id: slot2.id,
+      signatoryAuthority2Type: slot2.type,
+      signatoryAuthority3Id: slot3.id,
+      signatoryAuthority3Type: slot3.type,
+    };
+  }
+
   async approve(
     id: string,
     tenantId: string,
     branchId: string | null,
     actorId: string,
+    dto: ApproveReportDto = {},
   ) {
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.requireReport(id, tenantId, activeBranchId);
     this.assertTransition('approve', report.status);
+
+    const signatoryColumns = await this.resolveSignatoryColumns(
+      id,
+      tenantId,
+      activeBranchId,
+      dto,
+    );
 
     // Freeze the Analytical-TAT snapshot at the approval instant, so analytics
     // stay accurate even if the test's TAT config later changes (hybrid
@@ -1808,8 +2193,20 @@ export class LabReportService {
           approvedAt,
           approvedBy: actorId,
           ...tatData,
+          ...signatoryColumns,
         },
       });
+      if (dto.notes) {
+        await tx.labReportNote.create({
+          data: {
+            tenantId,
+            labReportId: id,
+            category: 'TECH',
+            body: dto.notes,
+            createdBy: actorId,
+          },
+        });
+      }
       await this.recordHistory(
         tx,
         tenantId,
@@ -1818,6 +2215,7 @@ export class LabReportService {
         LabReportStatus.APPROVED,
         'approve',
         actorId,
+        dto.notes,
       );
       return updated;
     });
