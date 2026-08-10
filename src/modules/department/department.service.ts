@@ -95,7 +95,7 @@ export class DepartmentService {
           data: {
             tenantId,
             name: dto.name,
-            shortName: dto.shortName,
+            shortName: dto.shortName ?? null,
             description: dto.description ?? null,
             code,
             isActive: dto.isActive ?? true,
@@ -108,7 +108,7 @@ export class DepartmentService {
         });
       });
     } catch (e) {
-      this.rethrowUniqueViolation(e, dto.name, dto.shortName);
+      this.rethrowUniqueViolation(e, dto.name, dto.shortName ?? '');
       throw e;
     }
   }
@@ -209,7 +209,7 @@ export class DepartmentService {
       return await this.prisma.withTenant(tenantId, async (tx) => {
         const data: Prisma.DepartmentUpdateInput = {};
         if (dto.name !== undefined) data.name = dto.name;
-        if (dto.shortName !== undefined) data.shortName = dto.shortName;
+        if (dto.shortName !== undefined) data.shortName = dto.shortName ?? null;
         if (dto.description !== undefined) {
           data.description = dto.description ?? null;
         }
@@ -296,7 +296,7 @@ export class DepartmentService {
             tenantId: null,
             source: DataSource.SITE_ADMIN,
             name: dto.name,
-            shortName: dto.shortName,
+            shortName: dto.shortName ?? null,
             description: dto.description ?? null,
             code,
             isActive: dto.isActive ?? true,
@@ -307,7 +307,7 @@ export class DepartmentService {
       });
       return this.findTemplateById(id);
     } catch (e) {
-      this.rethrowUniqueViolation(e, dto.name, dto.shortName);
+      this.rethrowUniqueViolation(e, dto.name, dto.shortName ?? '');
       throw e;
     }
   }
@@ -392,7 +392,7 @@ export class DepartmentService {
     await this.findTemplateById(id);
     const data: Prisma.DepartmentUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
-    if (dto.shortName !== undefined) data.shortName = dto.shortName;
+    if (dto.shortName !== undefined) data.shortName = dto.shortName ?? null;
     if (dto.description !== undefined)
       data.description = dto.description ?? null;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;

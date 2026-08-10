@@ -23,13 +23,15 @@ export class CreateSubCategoryDto {
   name: string;
 
   // User-set dropdown prefix, unique within the parent category/department (or
-  // per tenant for INDEPENDENT) — validated in SubCategoryService. The regex
-  // bounds the length (2-6), so no separate Min/MaxLength is needed.
+  // per tenant for INDEPENDENT) — validated in SubCategoryService. Optional; if
+  // provided must be 2-6 chars starting with an uppercase letter.
   @IsString()
-  @Matches(/^[A-Z0-9]{2,6}$/, {
-    message: 'shortName must be 2-6 uppercase letters or digits (A-Z, 0-9)',
+  @IsOptional()
+  @Matches(/^[A-Z][a-zA-Z0-9]{1,5}$/, {
+    message:
+      'shortName must be 2-6 characters starting with an uppercase letter (A-Z)',
   })
-  shortName: string;
+  shortName?: string;
 
   @IsString()
   @IsOptional()

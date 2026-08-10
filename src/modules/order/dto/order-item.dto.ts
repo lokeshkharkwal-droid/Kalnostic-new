@@ -1,11 +1,14 @@
 import {
+  IsEnum,
   IsInt,
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   MaxLength,
   Min,
 } from 'class-validator';
+import { DiscountMode } from '@prisma/client';
 
 /**
  * One catalogue entry on an order. Exactly one of `branchLabTestId` /
@@ -39,6 +42,28 @@ export class OrderItemDto {
   @IsInt()
   @Min(0)
   discount?: number;
+
+  /**
+   * How `discountValue` below is expressed — a percentage of this line's
+   * price, or a direct amount. Required alongside `discountValue` if either is
+   * sent (validated together in `OrderService`, since a value's valid range
+   * depends on which mode it's in).
+   */
+  @IsOptional()
+  @IsEnum(DiscountMode)
+  discountMode?: DiscountMode;
+
+  /**
+   * The raw number the technician typed for the discount — 0-100 when
+   * `discountMode` is PERCENT, or minor units when AMOUNT. Kept separate from
+   * `discount` (the computed amount) so the input can round-trip on edit
+   * instead of only recovering the resulting amount.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100_000_00) // generous ceiling for AMOUNT mode; PERCENT's 0-100 bound is enforced in OrderService alongside the mode check
+  discountValue?: number;
 
   /**
    * The outsource center this line is sent to, chosen per-row. Omitted/undefined

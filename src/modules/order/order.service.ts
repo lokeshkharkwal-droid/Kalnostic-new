@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import {
   AppointmentStatus,
   AppointmentType,
+  DiscountMode,
   DoctorType,
   ExternalIdFormat,
   ExternalIdPurpose,
@@ -424,6 +425,8 @@ export class OrderService {
                 itemPrices.get(i.branchLabTestId ?? i.branchLabPanelId ?? '') ??
                 0,
               discount: i.discount ?? 0,
+              discountMode: i.discountMode ?? null,
+              discountValue: i.discountValue ?? null,
               outsourceCenterId: i.outsourceCenterId ?? null,
             })),
           });
@@ -2049,6 +2052,8 @@ export class OrderService {
                 itemPrices.get(i.branchLabTestId ?? i.branchLabPanelId ?? '') ??
                 0,
               discount: i.discount ?? 0,
+              discountMode: i.discountMode ?? null,
+              discountValue: i.discountValue ?? null,
               outsourceCenterId: i.outsourceCenterId ?? null,
             })),
           });
@@ -2438,6 +2443,27 @@ export class OrderService {
       }
       if (item.branchLabTestId) testIds.push(item.branchLabTestId);
       if (item.branchLabPanelId) panelIds.push(item.branchLabPanelId);
+
+      // discountMode/discountValue are a pair — either both present (a
+      // technician actively chose a mode and typed a number) or both absent
+      // (no discount, or a legacy caller only sending the computed `discount`
+      // amount). A PERCENT value is additionally capped at 100 here, since the
+      // DTO's own @Max is a generous ceiling shared with AMOUNT mode.
+      const hasMode = item.discountMode !== undefined;
+      const hasValue = item.discountValue !== undefined;
+      if (hasMode !== hasValue) {
+        throw new InvalidOrderItemException(
+          'discountMode and discountValue must both be provided together, or both omitted',
+        );
+      }
+      if (
+        item.discountMode === DiscountMode.PERCENT &&
+        (item.discountValue ?? 0) > 100
+      ) {
+        throw new InvalidOrderItemException(
+          'discountValue cannot exceed 100 when discountMode is PERCENT',
+        );
+      }
     }
     await Promise.all([
       this.assertBranchLabTests(tenantId, testIds),
