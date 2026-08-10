@@ -16,10 +16,12 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 
 const AADHAAR = /^\d{12}$/;
@@ -154,6 +156,15 @@ export class UpdatePatientDto {
   @IsEnum(PatientCategory)
   @IsOptional()
   patientCategory?: PatientCategory;
+
+  /**
+   * Registration Settings PT Category id (`PtCategory`). Validated against the
+   * caller's active branch. `null` clears it.
+   */
+  @IsOptional()
+  @ValidateIf((_o, value) => value !== null)
+  @IsUUID('4')
+  ptCategoryId?: string | null;
 
   @IsEnum(MaritalStatus)
   @IsOptional()

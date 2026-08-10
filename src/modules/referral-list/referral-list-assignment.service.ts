@@ -1,18 +1,24 @@
 import { Injectable } from '@nestjs/common';
 import { ReferralListAssignment, ReferralType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PtCategoryService } from '../pt-category/pt-category.service';
 import { ResolveListsQueryDto } from './dto/resolve-lists-query.dto';
 import {
   ReferralListSelection,
   ResolvedLists,
 } from './entities/referral-list.entity';
 
-/** A referral's (type, id) plus the priority order used when resolving lists. */
+/** The branch's default (Walk-in) pricing list ids. */
+type DefaultListIds = { testListId: string | null; panelListId: string | null };
+
+/**
+ * Referral (type, id) steps checked AFTER the B2B panel and PT category, in
+ * priority order: referred-by doctor → internal → external.
+ */
 const RESOLVE_ORDER: Array<{
   type: ReferralType;
   key: keyof ResolveListsQueryDto;
 }> = [
-  { type: 'PANEL', key: 'referralPanelId' },
   { type: 'DOCTOR', key: 'referredByDoctorId' },
   { type: 'INTERNAL', key: 'internalReferralId' },
   { type: 'EXTERNAL', key: 'externalReferralId' },
@@ -28,7 +34,10 @@ const RESOLVE_ORDER: Array<{
  */
 @Injectable()
 export class ReferralListAssignmentService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly ptCategoryService: PtCategoryService,
+  ) {}
 
   /**
    * Create or update the active branch's list assignment for a referral. Passing
@@ -101,14 +110,16 @@ export class ReferralListAssignmentService {
   }
 
   /**
-   * Resolve the pricing lists for an order. Walks the referral priority
-   * (PANEL → DOCTOR → INTERNAL → EXTERNAL); the first referral with an active
-   * assignment wins. Each unset list on the winning assignment falls back to the
-   * branch's default Walk-in list, as does the whole result when no referral
-   * matches.
+   * Resolve the pricing lists for an order. Walks the priority chain — B2B panel
+   * → PT category → referred-by doctor → internal → external — and the first
+   * applicable configuration wins. The PT category (slot 2) resolves to its
+   * mapped Lab Test / Lab Panel's own pricing lists; the referral steps use the
+   * branch's `ReferralListAssignment`. Each unset list on the winning result
+   * falls back to the branch's default Walk-in list, as does the whole result
+   * when nothing matches.
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT)
-   * @param query the selected referral ids
+   * @param query the selected referral / PT category ids
    */
   async resolve(
     tenantId: string,
@@ -117,28 +128,50 @@ export class ReferralListAssignmentService {
   ): Promise<ResolvedLists> {
     const defaults = await this.getDefaultListIds(tenantId, branchId);
 
-    for (const { type, key } of RESOLVE_ORDER) {
-      const referralId = query[key];
-      if (!referralId) {
-        continue;
-      }
-      const assignment = await this.getAssignment(
+    // 1. Referral Panel (B2B) — highest priority.
+    const panel = await this.resolveReferralAssignment(
+      tenantId,
+      branchId,
+      'PANEL',
+      query.referralPanelId,
+      defaults,
+    );
+    if (panel) {
+      return panel;
+    }
+
+    // 2. PT (Patient) Category — its mapped items' pricing lists.
+    if (query.ptCategoryId) {
+      const listIds = await this.ptCategoryService.getResolvedListIds(
         tenantId,
         branchId,
-        type,
-        referralId,
+        query.ptCategoryId,
       );
       if (
-        assignment &&
-        (assignment.branchLabTestListId || assignment.branchLabPanelListId)
+        listIds &&
+        (listIds.branchLabTestListId || listIds.branchLabPanelListId)
       ) {
         return {
           branchLabTestListId:
-            assignment.branchLabTestListId ?? defaults.testListId,
+            listIds.branchLabTestListId ?? defaults.testListId,
           branchLabPanelListId:
-            assignment.branchLabPanelListId ?? defaults.panelListId,
-          source: type,
+            listIds.branchLabPanelListId ?? defaults.panelListId,
+          source: 'PT_CATEGORY',
         };
+      }
+    }
+
+    // 3-5. Referred-by doctor → internal → external.
+    for (const { type, key } of RESOLVE_ORDER) {
+      const resolved = await this.resolveReferralAssignment(
+        tenantId,
+        branchId,
+        type,
+        query[key],
+        defaults,
+      );
+      if (resolved) {
+        return resolved;
       }
     }
 
@@ -149,11 +182,47 @@ export class ReferralListAssignmentService {
     };
   }
 
+  /**
+   * Resolve a single referral's list assignment to a `ResolvedLists`, or null
+   * when there's no referral id or no active assignment with a list. Each unset
+   * list falls back to the branch default.
+   */
+  private async resolveReferralAssignment(
+    tenantId: string,
+    branchId: string,
+    type: ReferralType,
+    referralId: string | undefined,
+    defaults: DefaultListIds,
+  ): Promise<ResolvedLists | null> {
+    if (!referralId) {
+      return null;
+    }
+    const assignment = await this.getAssignment(
+      tenantId,
+      branchId,
+      type,
+      referralId,
+    );
+    if (
+      assignment &&
+      (assignment.branchLabTestListId || assignment.branchLabPanelListId)
+    ) {
+      return {
+        branchLabTestListId:
+          assignment.branchLabTestListId ?? defaults.testListId,
+        branchLabPanelListId:
+          assignment.branchLabPanelListId ?? defaults.panelListId,
+        source: type,
+      };
+    }
+    return null;
+  }
+
   /** Read the branch's default (Walk-in) list ids (null if not imported yet). */
   private async getDefaultListIds(
     tenantId: string,
     branchId: string,
-  ): Promise<{ testListId: string | null; panelListId: string | null }> {
+  ): Promise<DefaultListIds> {
     const [testList, panelList] = await Promise.all([
       this.prisma.branchLabTestList.findFirst({
         where: { tenantId, branchId, isDefault: true, deletedAt: null },

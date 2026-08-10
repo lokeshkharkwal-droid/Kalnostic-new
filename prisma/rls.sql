@@ -1641,6 +1641,14 @@ CREATE POLICY registration_id_sequences_tenant_isolation ON registration_id_sequ
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── external_id_counters ─────────────────────────────────────────────────────
+ALTER TABLE external_id_counters ENABLE ROW LEVEL SECURITY;
+ALTER TABLE external_id_counters FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS external_id_counters_tenant_isolation ON external_id_counters;
+CREATE POLICY external_id_counters_tenant_isolation ON external_id_counters
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- ── technician_settings ──────────────────────────────────────────────────────
 ALTER TABLE technician_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE technician_settings FORCE ROW LEVEL SECURITY;
@@ -1747,3 +1755,19 @@ DROP POLICY IF EXISTS sales_settings_tenant_isolation ON sales_settings;
 CREATE POLICY sales_settings_tenant_isolation ON sales_settings
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── pt_categories ─────────────────────────────────────────────────────────────
+ALTER TABLE pt_categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pt_categories FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS pt_categories_tenant_isolation ON pt_categories;
+CREATE POLICY pt_categories_tenant_isolation ON pt_categories
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- Category name unique per branch among ACTIVE rows (soft-delete-aware).
+CREATE UNIQUE INDEX IF NOT EXISTS pt_categories_branch_name_active_unique
+  ON pt_categories (tenant_id, branch_id, category_name) WHERE deleted_at IS NULL;
+
+-- At most one default PT category per branch among ACTIVE rows.
+CREATE UNIQUE INDEX IF NOT EXISTS pt_categories_branch_default_active_unique
+  ON pt_categories (tenant_id, branch_id) WHERE is_default AND deleted_at IS NULL;

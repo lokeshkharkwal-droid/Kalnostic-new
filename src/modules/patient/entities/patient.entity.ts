@@ -11,9 +11,21 @@ export type PatientEntity = Patient;
 /** Domain/response shape for a medical-history record. */
 export type MedicalHistoryEntity = MedicalHistory;
 
-/** A patient together with its active (non-deleted) medical-history records. */
+/** The mapped PT Category (id + name + owning branch) embedded on a patient. */
+export interface PatientPtCategory {
+  id: string;
+  categoryName: string;
+  branchId: string;
+}
+
+/**
+ * A patient together with its active (non-deleted) medical-history records and
+ * its (optional) mapped PT Category — the latter lets the Create Order / Create
+ * Patient forms pre-select the category and check it belongs to the active branch.
+ */
 export type PatientWithHistory = Patient & {
   medicalHistories: MedicalHistory[];
+  ptCategory?: PatientPtCategory | null;
 };
 
 /**

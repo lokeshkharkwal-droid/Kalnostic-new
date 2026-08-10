@@ -9,6 +9,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
+import { PtCategoryService } from '../pt-category/pt-category.service';
 import { CreatePatientDto } from './dto/create-patient.dto';
 import { UpdatePatientDto } from './dto/update-patient.dto';
 import {
@@ -68,7 +69,36 @@ export type PatientDocumentWithPatientName = PatientDocument & {
  */
 @Injectable()
 export class PatientService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly ptCategoryService: PtCategoryService,
+  ) {}
+
+  /**
+   * Include the patient's mapped PT Category (id + name + owning branch) so the
+   * Create Order / Create Patient forms can pre-select it and confirm it belongs
+   * to the active branch.
+   */
+  private static readonly PT_CATEGORY_INCLUDE = {
+    ptCategory: { select: { id: true, categoryName: true, branchId: true } },
+  } as const;
+
+  /**
+   * Validate that a PT category id belongs to the caller's active branch (throws
+   * if not). Skipped when no id is given, or when there's no active branch to
+   * scope against (defence in depth — the FK already guarantees tenant validity).
+   * @throws PtCategoryNotFoundException if the id isn't an active category in the branch
+   */
+  private async validatePtCategory(
+    tenantId: string,
+    branchId: string | null,
+    ptCategoryId?: string | null,
+  ): Promise<void> {
+    if (!ptCategoryId || !branchId) {
+      return;
+    }
+    await this.ptCategoryService.findById(ptCategoryId, tenantId, branchId);
+  }
 
   /**
    * Create a patient in the caller's tenant, optionally with one or more medical
@@ -87,6 +117,7 @@ export class PatientService {
     ctx: PatientWriteContext,
   ): Promise<PatientWithHistory> {
     const { medicalHistories, dateOfBirth, ...patientFields } = dto;
+    await this.validatePtCategory(tenantId, ctx.branchId, dto.ptCategoryId);
     try {
       return await this.prisma.withTenant(tenantId, async (tx) => {
         const patient = await tx.patient.create({
@@ -98,6 +129,7 @@ export class PatientService {
             createdBy: ctx.actorId ?? null,
             updatedBy: ctx.actorId ?? null,
           },
+          include: PatientService.PT_CATEGORY_INCLUDE,
         });
 
         if (medicalHistories && medicalHistories.length > 0) {
@@ -284,6 +316,7 @@ export class PatientService {
           where: { deletedAt: null },
           orderBy: { createdAt: 'desc' },
         },
+        ...PatientService.PT_CATEGORY_INCLUDE,
       },
     });
     if (!patient) {
@@ -298,18 +331,21 @@ export class PatientService {
    * @param id patient id
    * @param tenantId tenant scope
    * @param dto validated partial patient payload
-   * @param actorId acting person id (from the JWT)
+   * @param ctx registration branch (for PT-category scoping) + acting person
    * @throws PatientNotFoundException if missing
    * @throws PatientMobileConflictException on a duplicate active mobile
+   * @throws PtCategoryNotFoundException if `ptCategoryId` isn't valid for the branch
    */
   async update(
     id: string,
     tenantId: string,
     dto: UpdatePatientDto,
-    actorId?: string,
+    ctx: PatientWriteContext = { branchId: null },
   ): Promise<Patient> {
     await this.ensurePatient(id, tenantId);
+    await this.validatePtCategory(tenantId, ctx.branchId, dto.ptCategoryId);
     const { dateOfBirth, ...rest } = dto;
+    const actorId = ctx.actorId;
     try {
       return await this.prisma.patient.update({
         where: { id },

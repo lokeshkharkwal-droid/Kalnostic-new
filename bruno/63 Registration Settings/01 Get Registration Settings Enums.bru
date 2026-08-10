@@ -18,10 +18,11 @@ tests {
   test("200 OK", function () {
     expect(res.getStatus()).to.equal(200);
   });
-  test("returns the two enum arrays", function () {
+  test("returns the enum arrays", function () {
     const d = res.getBody().data;
     expect(d.defaultPaymentModes).to.include.members(["CASH", "UPI", "CARD"]);
     expect(d.quotationValidityUnits).to.include.members(["DAYS", "WEEKS", "MONTHS", "YEARS"]);
+    expect(d.externalIdFormats).to.include.members(["NONE", "BRANCH_YMD_DAILY"]);
   });
 }
 
@@ -33,6 +34,9 @@ docs {
   - `quotationValidityUnits` — `HOURS` | `DAYS` | `WEEKS` | `MONTHS` | `YEARS`
     (for `Quotation_QuotationValidityUnit`). The quotation UI offers only
     `DAYS`/`WEEKS`/`MONTHS`/`YEARS`; `HOURS` remains for lab-test settings.
+  - `externalIdFormats` — `NONE` | `YMD_DAILY` | `BRANCH_YMD_DAILY` |
+    `YMD_COMPACT_DAILY` | `YM_MONTHLY` | `BRANCH_YM_MONTHLY` | `Y_YEARLY` |
+    `BRANCH_Y_YEARLY` (for the Order/Quote external-id format fields).
 
   Every other field is a plain boolean, integer, or decimal and isn't part of
   this response.

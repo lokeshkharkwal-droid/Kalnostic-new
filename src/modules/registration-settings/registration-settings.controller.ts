@@ -1,11 +1,19 @@
-import { Body, Controller, Get, Put } from '@nestjs/common';
-import { AuditAction, AuditModule } from '@prisma/client';
+import {
+  Body,
+  Controller,
+  Get,
+  ParseEnumPipe,
+  Put,
+  Query,
+} from '@nestjs/common';
+import { AuditAction, AuditModule, ExternalIdPurpose } from '@prisma/client';
 import { Audit } from '../../common/decorators/audit.decorator';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
 import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
 import { RegistrationSettingsService } from './registration-settings.service';
 import { SaveRegistrationSettingsDto } from './dto/save-registration-settings.dto';
+import { ExternalIdService } from './external-id.service';
 
 /**
  * Registration settings endpoints (LIMS Settings doc "Registration Module").
@@ -18,12 +26,33 @@ import { SaveRegistrationSettingsDto } from './dto/save-registration-settings.dt
 export class RegistrationSettingsController {
   constructor(
     private readonly registrationSettingsService: RegistrationSettingsService,
+    private readonly externalIdService: ExternalIdService,
   ) {}
 
   /** Select/list enum values for the frontend controls. */
   @Get('enums')
   getEnums() {
     return this.registrationSettingsService.getEnums();
+  }
+
+  /**
+   * Peek the next external Order/Quote id the active branch would generate
+   * from its configured format — used by the create form to show a disabled
+   * preview. Returns `{ format, value: null }` when the format is NONE
+   * (operator enters the id manually). Does not bump the counter.
+   */
+  @Get('external-id/preview')
+  previewExternalId(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query('purpose', new ParseEnumPipe(ExternalIdPurpose))
+    purpose: ExternalIdPurpose,
+  ) {
+    return this.externalIdService.previewNext(
+      tenantId,
+      profile.branchId ?? '',
+      purpose,
+    );
   }
 
   /** Effective Registration settings for the active branch. */

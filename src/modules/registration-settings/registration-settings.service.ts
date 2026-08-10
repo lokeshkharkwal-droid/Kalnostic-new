@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  ExternalIdFormat,
   PaymentMode,
   RegistrationSetting,
   RepeatIntervalUnit,
@@ -13,6 +14,7 @@ import { ConflictingDiscountModeException } from './exceptions/registration-sett
 export interface RegistrationSettingsEnums {
   defaultPaymentModes: PaymentMode[];
   quotationValidityUnits: RepeatIntervalUnit[];
+  externalIdFormats: ExternalIdFormat[];
 }
 
 /**
@@ -82,6 +84,7 @@ export class RegistrationSettingsService {
     return {
       defaultPaymentModes: Object.values(PaymentMode),
       quotationValidityUnits: Object.values(RepeatIntervalUnit),
+      externalIdFormats: Object.values(ExternalIdFormat),
     };
   }
 

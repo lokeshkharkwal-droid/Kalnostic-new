@@ -11,10 +11,12 @@ import {
   IsBoolean,
   IsDateString,
   IsEnum,
+  IsInt,
   IsOptional,
   IsString,
   IsUUID,
   MaxLength,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import { OrderItemDto } from './order-item.dto';
@@ -46,6 +48,17 @@ export class UpdateOrderDto {
   @IsOptional()
   @IsDateString()
   quotationValidTill?: string;
+
+  /**
+   * User-facing external Order/Quote id. Only editable when the branch's
+   * configured external-id format is NONE (manual entry); must stay unique
+   * within the branch. Ignored when a format is configured (the id is
+   * auto-generated and immutable once set).
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  externalOrderId?: string;
 
   @IsOptional()
   @IsDateString()
@@ -145,4 +158,14 @@ export class UpdateOrderDto {
   @ValidateNested({ each: true })
   @Type(() => OrderPaymentDto)
   payments?: OrderPaymentDto[];
+
+  /**
+   * Amount collected toward the patient's outstanding previous dues on this
+   * order (transient — used to enforce the branch's Previous-Dues rules when a
+   * draft is finalized to `status = ORDER`; not persisted).
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  previousDuesCleared?: number;
 }

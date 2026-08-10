@@ -21,6 +21,7 @@ auth:bearer {
 body:json {
   {
     "name": "Kothrud Collection Center",
+    "shortName": "KOTH",
     "branchType": "COLLECTION_CENTER",
     "status": "ACTIVE",
     "establishedDate": "2024-01-15",
@@ -75,6 +76,9 @@ docs {
   Fields (✱ = required):
 
   - `name` ✱ — 2-255 chars; unique among active branches in the tenant (409 otherwise).
+  - `shortName` ✱ — 1-5 chars. Operator-set abbreviation used as the branch prefix
+    when generating external order/quote ids (see Registration Settings external-id
+    formats). Editable (unlike `code`).
   - `branchType` ✱ — one of: `DIAGNOSTIC`, `RADIOLOGY`, `OPD`, `IPD`, `PHARMACY`,
     `INVENTORY`, `BLOOD_BANK`, `FRANCHISE`, `COMBINED`, `ASSISTANT`, `ACCESSION`,
     `TECHNICIAN`, `COLLECTION_CENTER`.

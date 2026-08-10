@@ -1,0 +1,72 @@
+meta {
+  name: Create PT Category
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/pt-categories
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "categoryName": "Corporate",
+    "branchLabTestListId": "{{branchLabTestListId}}",
+    "branchLabPanelListId": "{{branchLabPanelListId}}",
+    "isActive": true,
+    "isDefault": false
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("ptCategoryId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("echoes the submitted name", function () {
+    expect(res.getBody().data.categoryName).to.equal("Corporate");
+  });
+  test("returns the mapped lab test/panel lists", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("branchLabTestList");
+    expect(d).to.have.property("branchLabPanelList");
+  });
+}
+
+docs {
+  Create a PT category on the caller's **active branch** (from the JWT profile;
+  400s with `ACTIVE_BRANCH_REQUIRED` if the token carries no active branch). A PT
+  category maps to a **Lab Test List** + **Lab Panel List** (like referrals do),
+  not individual tests/panels.
+
+  - `categoryName` — required, 2-100 chars, unique per branch among active
+    categories (`PT_CATEGORY_NAME_CONFLICT` on collision).
+  - `branchLabTestListId` — optional, a `BranchLabTestList` id
+    (`GET /branch-lab-test-lists/options` for candidates). Must exist in the
+    caller's branch or 400s with `INVALID_PT_CATEGORY_LAB_TEST_LIST`.
+  - `branchLabPanelListId` — optional, a `BranchLabPanelList` id
+    (`GET /branch-lab-panel-lists/options`). Same validation via
+    `INVALID_PT_CATEGORY_LAB_PANEL_LIST`.
+  - **At least one** of `branchLabTestListId` / `branchLabPanelListId` is
+    required, else 400 `PT_CATEGORY_MAPPING_REQUIRED`.
+  - `isActive` — optional, defaults to `true`.
+  - `isDefault` — optional, defaults to `false`. When `true`, the branch's
+    previous default (if any) is atomically unset.
+
+  Do NOT send `tenantId` / `branchId` — they come from context and are rejected
+  as unknown fields.
+}

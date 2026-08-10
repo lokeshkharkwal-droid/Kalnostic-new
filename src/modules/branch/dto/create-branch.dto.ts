@@ -30,6 +30,13 @@ export class CreateBranchDto {
   @IsEnum(BranchType)
   branchType: BranchType;
 
+  // Mandatory operator-set abbreviation (≤5 chars). Used as the branch prefix
+  // when generating external order/quote ids (Registration Settings formats).
+  @IsString()
+  @MinLength(1)
+  @MaxLength(5)
+  shortName: string;
+
   // NOTE: `code` is NOT accepted from the client — it is system-generated
   // (per-tenant sequential, e.g. "BR-00001") and immutable. See BranchService.
 

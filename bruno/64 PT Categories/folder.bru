@@ -1,0 +1,42 @@
+meta {
+  name: 64 PT Categories
+  seq: 64
+}
+
+docs {
+  # PT (Patient) Categories
+
+  Registration › Registration Settings › **PT Category** — a per-branch pricing
+  category that maps to a **Lab Test List** + **Lab Panel List**
+  (`BranchLabTestList` / `BranchLabPanelList`), identical to how referrals map to
+  lists. Unlike Patient Categories (tenant-level, multi-mapping), a PT category is
+  **tenant-scoped + branch-level**: it belongs to the caller's active branch
+  (from the JWT profile — requires a business token with an active branch set,
+  else `ACTIVE_BRANCH_REQUIRED`).
+
+  - A **"General"** default (unmapped, active) is auto-created **per branch** on
+    branch creation (`branch.created` event) — no separate seed request. Being
+    unmapped, GENERAL never participates in pricing (it's a default selection
+    only) and is pre-selected on the Create-Order page.
+  - At least one of `branchLabTestListId` / `branchLabPanelListId` is required on
+    create (`PT_CATEGORY_MAPPING_REQUIRED`); the ids must exist in the caller's
+    branch (`INVALID_PT_CATEGORY_LAB_TEST_LIST` / `..._LAB_PANEL_LIST`).
+  - `categoryName` is unique per branch among active rows
+    (`PT_CATEGORY_NAME_CONFLICT`).
+  - Only one category can be the branch's default at a time — setting a new
+    default clears the previous one. `GET /pt-categories/default` returns it.
+  - Categories cannot be deleted (no DELETE route) — only deactivated — to
+    preserve historical order pricing. Inactive categories are excluded from the
+    Create-Order options feed.
+
+  **Pricing integration.** During Create Order, `GET /referral-lists/resolve`
+  accepts `ptCategoryId` and folds it into the pricing chain at priority slot 2:
+  **B2B Panel → PT Category → Referred-by Doctor → Internal → External →
+  Walk-in**. A selected PT category resolves to its mapped Lab Test List / Lab
+  Panel List directly; an unmapped category (e.g. GENERAL) is skipped and the
+  resolver falls through to the next priority.
+
+  All routes are business-authenticated (`Bearer {{businessAccessToken}}`);
+  tenant comes from the JWT, active branch from the JWT profile. Writes are
+  audited under `AuditModule.PT_CATEGORY`.
+}
