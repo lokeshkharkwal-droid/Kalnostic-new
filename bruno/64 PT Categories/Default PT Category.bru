@@ -1,0 +1,29 @@
+meta {
+  name: Default PT Category
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/pt-categories/default
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Return the active branch's **default** PT category as `{ id, categoryName }`, or
+  `null` if the branch has none. The Create-Order page calls this on load to
+  pre-select the default category (initially the auto-created "General"). Because
+  GENERAL is unmapped, pre-selecting it does not affect pricing — the resolver
+  skips it and falls through to the selected referral (or Walk-in).
+}

@@ -365,3 +365,214 @@ export class QuotationDuplicationNotAllowedException extends KaltrosException {
     );
   }
 }
+
+/**
+ * 422 — the patient has outstanding previous dues that must be cleared before a
+ * new order can be created (the branch's `Allow Order Without Clearing Previous
+ * Dues` is off and the amount cleared on this order is below the required
+ * minimum). `required` is `min(outstanding, MinimumPreviousDuesToClear)`.
+ */
+export class PreviousDuesNotClearedException extends KaltrosException {
+  constructor(outstanding: number, required: number, cleared: number) {
+    super(
+      'PREVIOUS_DUES_NOT_CLEARED',
+      `The patient has outstanding previous dues. Clear at least ${required} before creating a new order`,
+      { outstanding, required, cleared },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — the amount being cleared toward previous dues exceeds the patient's
+ * actual outstanding balance (you can't clear more dues than are owed).
+ */
+export class PreviousDuesOverpaymentException extends KaltrosException {
+  constructor(outstanding: number, cleared: number) {
+    super(
+      'PREVIOUS_DUES_OVERPAYMENT',
+      `The entered amount cannot exceed the patient's total outstanding dues (${outstanding})`,
+      { outstanding, cleared },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — the branch does not allow partial billing, so the full net amount must
+ * be collected before the order can be completed.
+ */
+export class FullPaymentRequiredException extends KaltrosException {
+  constructor(netAmount: number, paidAmount: number) {
+    super(
+      'FULL_PAYMENT_REQUIRED',
+      'Partial billing is disabled for this branch — collect the full net amount before completing the order',
+      { netAmount, paidAmount },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — partial billing is allowed but the amount paid is below the branch's
+ * configured minimum percentage of the net amount required to proceed.
+ */
+export class PartialPaymentBelowMinimumException extends KaltrosException {
+  constructor(
+    netAmount: number,
+    paidAmount: number,
+    minimumPercent: number,
+    minimumRequired: number,
+  ) {
+    super(
+      'PARTIAL_PAYMENT_BELOW_MINIMUM',
+      `At least ${minimumPercent}% of the net amount (${minimumRequired}) must be collected before the order can be completed`,
+      { netAmount, paidAmount, minimumPercent, minimumRequired },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — the branch's external order/quote id format is NONE (manual entry) but
+ * no `externalOrderId` was supplied for a finalized order/quotation.
+ */
+export class ExternalOrderIdRequiredException extends KaltrosException {
+  constructor(isQuote: boolean) {
+    super(
+      'EXTERNAL_ORDER_ID_REQUIRED',
+      isQuote ? 'A Quote ID is required' : 'An Order ID is required',
+      { isQuote },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/** 409 — another active order in this branch already uses this external id. */
+export class DuplicateExternalOrderIdException extends KaltrosException {
+  constructor(externalOrderId: string) {
+    super(
+      'DUPLICATE_EXTERNAL_ORDER_ID',
+      'This ID is already in use in this branch',
+      { externalOrderId },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
+ * 422 — an order-level discount was applied but the branch's Registration
+ * settings do not allow it (either `Allow Discounts` is off, or the active
+ * discount mode is Line-Discount-Only). Enforced only when finalizing an
+ * `ORDER` (Registration Settings → Charges & Deductions → TDS & Discounts).
+ */
+export class OrderDiscountNotAllowedException extends KaltrosException {
+  constructor() {
+    super(
+      'ORDER_DISCOUNT_NOT_ALLOWED',
+      'Order-level discounts are not enabled for this branch',
+      {},
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — the order-level discount percentage falls outside the branch's
+ * configured `[Minimum, Maximum] Discount %` range (computed against the items
+ * subtotal). `actualPercent` is the effective percentage the applied amount
+ * represents.
+ */
+export class OrderDiscountOutOfRangeException extends KaltrosException {
+  constructor(minPercent: number, maxPercent: number, actualPercent: number) {
+    super(
+      'ORDER_DISCOUNT_OUT_OF_RANGE',
+      `The order discount must be between ${minPercent}% and ${maxPercent}% of the order amount`,
+      { minPercent, maxPercent, actualPercent },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — a per-line (item) discount was applied but the branch's Registration
+ * settings do not allow line-item discounts (either `Allow Line Item Discount`
+ * is off, or the active discount mode is Order-Discount-Only).
+ */
+export class LineItemDiscountNotAllowedException extends KaltrosException {
+  constructor() {
+    super(
+      'LINE_ITEM_DISCOUNT_NOT_ALLOWED',
+      'Line-item discounts are not enabled for this branch',
+      {},
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — a per-line (item) discount percentage falls outside the branch's
+ * configured `[Minimum, Maximum] Line Item Discount %` range (computed against
+ * that item's price). `itemRef` identifies the offending line.
+ */
+export class LineItemDiscountOutOfRangeException extends KaltrosException {
+  constructor(
+    minPercent: number,
+    maxPercent: number,
+    actualPercent: number,
+    itemRef: string,
+  ) {
+    super(
+      'LINE_ITEM_DISCOUNT_OUT_OF_RANGE',
+      `Each line-item discount must be between ${minPercent}% and ${maxPercent}% of the item's price`,
+      { minPercent, maxPercent, actualPercent, itemRef },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — a TDS deduction was supplied but the branch's Registration settings
+ * have `TDS Applicable` turned off.
+ */
+export class TdsNotApplicableException extends KaltrosException {
+  constructor() {
+    super(
+      'TDS_NOT_APPLICABLE',
+      'TDS is not applicable for this branch',
+      {},
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — the TDS deduction percentage falls outside the branch's configured
+ * `[Minimum, Maximum] TDS %` range (computed against the net amount).
+ */
+export class TdsOutOfRangeException extends KaltrosException {
+  constructor(minPercent: number, maxPercent: number, actualPercent: number) {
+    super(
+      'TDS_OUT_OF_RANGE',
+      `TDS must be between ${minPercent}% and ${maxPercent}% of the net amount`,
+      { minPercent, maxPercent, actualPercent },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — the order carries a discount and, although partial billing is allowed
+ * for the branch, `Allow Partial Billing of Discounted Order` is off — so a
+ * discounted order must be paid in full.
+ */
+export class PartialBillingNotAllowedForDiscountedOrderException extends KaltrosException {
+  constructor(netAmount: number, paidAmount: number) {
+    super(
+      'PARTIAL_BILLING_NOT_ALLOWED_FOR_DISCOUNTED_ORDER',
+      'This order has a discount applied — partial billing of discounted orders is disabled for this branch, so the full net amount must be collected',
+      { netAmount, paidAmount },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}

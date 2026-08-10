@@ -1,0 +1,42 @@
+meta {
+  name: List PT Categories
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/pt-categories?page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 10
+  ~search: Corporate
+  ~status: ACTIVE
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("paginated envelope", function () {
+    expect(res.getBody().data).to.be.an("array");
+    expect(res.getBody().meta).to.have.property("totalPages");
+  });
+}
+
+docs {
+  List the active branch's PT categories (offset pagination), each with its
+  mapped Lab Test / Lab Panel resolved to `{ id, name }` (or null when unmapped).
+  Ordered default-first, then oldest-first.
+
+  - `page` (default 1), `limit` (default 10, max 100).
+  - `search` — optional, case-insensitive match on `categoryName`.
+  - `status` — optional `ACTIVE` | `INACTIVE`.
+}

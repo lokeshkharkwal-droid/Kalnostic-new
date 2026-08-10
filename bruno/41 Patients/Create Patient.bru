@@ -45,6 +45,7 @@ body:json {
     "hasPrivilegeCard": true,
     "privilegeNumber": "PRIV-00123",
     "patientCategory": "GENERAL",
+    "ptCategoryId": "{{ptCategoryId}}",
     "maritalStatus": "SINGLE",
     "status": "CREATED",
     "isActive": true,
@@ -106,9 +107,16 @@ docs {
     `guardianRelationship` (`SELF`/`SPOUSE`/`SON`/`DAUGHTER`/`FATHER`/`MOTHER`/
     `BROTHER`/`SISTER`/`GUARDIAN`/`FRIEND`/`OTHER`), `ageType`
     (`YEARS`/`MONTHS`/`DAYS`), `patientCategory`
-    (`GENERAL`/`VIP`/`SENIOR_CITIZEN`/`PEDIATRIC`/`EMPLOYEE`), `maritalStatus`
+    (`GENERAL`/`VIP`/`SENIOR_CITIZEN`/`PEDIATRIC`/`EMPLOYEE` — legacy privilege
+    tier, retained for existing data), `maritalStatus`
     (`SINGLE`/`MARRIED`/`DIVORCED`/`WIDOWED`/`SEPARATED`/`OTHER`), `status`
     (`DRAFT`/`CREATED`).
+  - `ptCategoryId` — OPTIONAL. A Registration Settings **PT Category** id
+    (`GET /pt-categories/options`). Validated against the caller's **active
+    branch** — an id from another branch (or an unknown id) → 404
+    `PT_CATEGORY_NOT_FOUND`. Send `null` to clear. `GET /patients/:id` returns the
+    resolved `ptCategory { id, categoryName, branchId }` so the UI can pre-select
+    it (only when its `branchId` matches the active branch).
   - `dateOfBirth` — ISO date string (`YYYY-MM-DD`).
   - `aadhaarNumber` — exactly 12 digits; `panNumber` — `ABCDE1234F` format
     (uppercase). `email`/`alternateEmail`/`guardianEmail` must be valid emails.

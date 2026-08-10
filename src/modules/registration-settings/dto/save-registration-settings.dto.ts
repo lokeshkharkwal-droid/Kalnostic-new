@@ -1,4 +1,8 @@
-import { PaymentMode, RepeatIntervalUnit } from '@prisma/client';
+import {
+  ExternalIdFormat,
+  PaymentMode,
+  RepeatIntervalUnit,
+} from '@prisma/client';
 import {
   IsBoolean,
   IsEnum,
@@ -25,12 +29,21 @@ export class SaveRegistrationSettingsDto {
   @IsOptional() @IsBoolean() General_AllowEditingPaymentDate?: boolean;
   @IsOptional() @IsEnum(PaymentMode) General_DefaultPaymentMode?: PaymentMode;
 
+  // ── Order ID Configuration ──
+  @IsOptional()
+  @IsEnum(ExternalIdFormat)
+  OrderIdConfiguration_AutoIncrementExternalOrderIdFormat?: ExternalIdFormat;
+
   // ── Quotation (non-ID fields) ──
   @IsOptional()
   @IsInt()
   @Min(1)
   @Max(3650)
   Quotation_QuotationValidityValue?: number;
+
+  @IsOptional()
+  @IsEnum(ExternalIdFormat)
+  Quotation_AutoIncrementExternalQuoteIdFormat?: ExternalIdFormat;
 
   @IsOptional()
   @IsEnum(RepeatIntervalUnit)

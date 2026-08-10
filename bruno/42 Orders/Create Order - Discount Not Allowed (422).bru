@@ -1,0 +1,79 @@
+meta {
+  name: Create Order - Discount Not Allowed (422)
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "ORDER",
+    "orderDate": "2026-07-09",
+    "orderType": "WALK_IN",
+    "billingType": "CASH_CLIENT",
+    "patientId": "{{patientId}}",
+    "items": [
+      {
+        "branchLabTestId": "{{branchLabTestId}}"
+      }
+    ],
+    "payments": [
+      {
+        "totalAmount": 1000,
+        "orderDiscount": 100,
+        "netAmount": 900,
+        "payableAmount": 900,
+        "paidAmount": 900,
+        "paymentMode": "CASH"
+      }
+    ]
+  }
+}
+
+tests {
+  test("422 Unprocessable Entity", function () {
+    expect(res.getStatus()).to.equal(422);
+  });
+  test("rejects an order discount when discounts are disabled for the branch", function () {
+    expect(res.getBody().error.code).to.equal("ORDER_DISCOUNT_NOT_ALLOWED");
+  });
+}
+
+docs {
+  The branch's Registration Settings (Charges & Deductions → TDS & Discounts)
+  drive discount/TDS enforcement on a finalized `ORDER` (DRAFT / QUOTE /
+  APPOINTMENT are exempt). By default a fresh branch has `Allow Discounts` off,
+  so any order-level discount is rejected with 422 `ORDER_DISCOUNT_NOT_ALLOWED`.
+
+  The server computes every percentage from the authoritative snapshotted item
+  prices — never from a client-supplied net — so the rules hold even if the UI
+  is bypassed. Related error codes (same 422 envelope):
+
+  - `ORDER_DISCOUNT_NOT_ALLOWED` / `ORDER_DISCOUNT_OUT_OF_RANGE` — order-level
+    discount disabled, or its % of the items subtotal is outside
+    `[Minimum, Maximum] Discount %`.
+  - `LINE_ITEM_DISCOUNT_NOT_ALLOWED` / `LINE_ITEM_DISCOUNT_OUT_OF_RANGE` — a
+    per-line discount is disabled, or its % of that item's price is outside
+    `[Minimum, Maximum] Line Item Discount %`.
+  - `TDS_NOT_APPLICABLE` / `TDS_OUT_OF_RANGE` — TDS supplied while not
+    applicable, or its % of the net amount is outside `[Minimum, Maximum] TDS %`.
+  - `PARTIAL_BILLING_NOT_ALLOWED_FOR_DISCOUNTED_ORDER` — the order carries a
+    discount and, although partial billing is enabled, `Allow Partial Billing of
+    Discounted Order` is off, so the full net must be collected.
+
+  To see an in-range discount succeed, first enable the relevant flags and
+  min/max via `PUT /registration-settings`.
+}

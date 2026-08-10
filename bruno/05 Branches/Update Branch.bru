@@ -21,6 +21,7 @@ auth:bearer {
 body:json {
   
   {
+    "shortName": "KOTH",
     "modules": [
       { "moduleKey": "accession", "isEnabled": true },
       { "moduleKey": "inventory", "isEnabled": true },
@@ -36,6 +37,9 @@ vars:pre-request {
 
 docs {
   Update a branch (scoped to the caller's tenant). All fields optional.
+
+  `shortName` (optional, 1-5 chars) — editable branch abbreviation used as the
+  prefix for `BRANCH_*` external order/quote id formats. `code` remains immutable.
 
   Optional `modules`: enable/disable system modules in the same request (only
   the keys you send are touched — omit a key to leave it unchanged). Each

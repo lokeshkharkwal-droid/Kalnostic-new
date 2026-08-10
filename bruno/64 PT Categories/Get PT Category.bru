@@ -1,0 +1,27 @@
+meta {
+  name: Get PT Category
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/pt-categories/{{ptCategoryId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Fetch one PT category by id (scoped to the caller's tenant + active branch),
+  with its mapped Lab Test / Lab Panel — for the View/Edit popup. 404
+  `PT_CATEGORY_NOT_FOUND` if missing or soft-deleted.
+}

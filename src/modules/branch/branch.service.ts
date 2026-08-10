@@ -108,6 +108,7 @@ export class BranchService {
             name: dto.name,
             branchType: dto.branchType,
             code,
+            shortName: dto.shortName,
             status: dto.status ?? BranchStatus.ACTIVE,
             establishedDate: dto.establishedDate
               ? new Date(dto.establishedDate)
@@ -336,6 +337,7 @@ export class BranchService {
     const data: Prisma.BranchUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.branchType !== undefined) data.branchType = dto.branchType;
+    if (dto.shortName !== undefined) data.shortName = dto.shortName;
     // `code` is immutable and system-generated — never updated here.
     if (dto.status !== undefined) data.status = dto.status;
     if (dto.establishedDate !== undefined) {

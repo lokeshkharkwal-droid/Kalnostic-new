@@ -27,9 +27,12 @@ body:json {
     "General_AllowEditingPaymentDate": false,
     "General_DefaultPaymentMode": "CASH",
 
+    "OrderIdConfiguration_AutoIncrementExternalOrderIdFormat": "BRANCH_YMD_DAILY",
+
     "Quotation_QuotationValidityValue": 7,
     "Quotation_QuotationValidityUnit": "DAYS",
     "Quotation_AllowDuplicationOfExpiredQuotation": false,
+    "Quotation_AutoIncrementExternalQuoteIdFormat": "Y_YEARLY",
 
     "ChargesAndDeductions_VisitChargesAmount": 200,
     "ChargesAndDeductions_VisitChargesEditable": true,
@@ -110,6 +113,17 @@ docs {
 
   - `General_*` — patient-photo/medical-history/past-orders visibility,
     order/payment date editing, default payment mode (`PaymentMode` enum).
+  - `OrderIdConfiguration_AutoIncrementExternalOrderIdFormat` — the legacy-style
+    external **order** id auto-increment format (`ExternalIdFormat` enum: `NONE`,
+    `YMD_DAILY`, `BRANCH_YMD_DAILY`, `YMD_COMPACT_DAILY`, `YM_MONTHLY`,
+    `BRANCH_YM_MONTHLY`, `Y_YEARLY`, `BRANCH_Y_YEARLY`). `NONE` = operator enters
+    the Order ID manually on the order form (required, unique per branch);
+    otherwise the id is auto-generated at order creation. `BRANCH_*` variants
+    prefix the id with the branch `shortName`. Preview the next value via
+    `GET /registration-settings/external-id/preview?purpose=ORDER`.
+  - `Quotation_AutoIncrementExternalQuoteIdFormat` — same `ExternalIdFormat`
+    option set, applied independently to **quotations** (its own per-branch
+    counter). Preview via `.../preview?purpose=QUOTATION`.
   - `Quotation_*` — validity value + unit (`RepeatIntervalUnit`:
     `DAYS`|`WEEKS`|`MONTHS`|`YEARS`; `HOURS` still accepted but not offered in
     the quotation UI). These drive the **runtime** quotation-expiry computation
