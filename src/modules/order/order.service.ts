@@ -80,11 +80,31 @@ import {
   PartialPaymentBelowMinimumException,
   ExternalOrderIdRequiredException,
   DuplicateExternalOrderIdException,
+  OrderDiscountNotAllowedException,
+  OrderDiscountOutOfRangeException,
+  LineItemDiscountNotAllowedException,
+  LineItemDiscountOutOfRangeException,
+  TdsNotApplicableException,
+  TdsOutOfRangeException,
+  PartialBillingNotAllowedForDiscountedOrderException,
 } from './exceptions/order.exceptions';
+import type { RegistrationSetting } from '@prisma/client';
 // Reused so an inline order-payment overpayment raises the SAME
 // `PAYMENT_OVERPAYMENT` error the standalone `POST /payments` guard does. This
 // imports an exception class (not a service), so rule #3 is not violated.
 import { PaymentOverpaymentException } from '../payment-details/exceptions/payment-details.exceptions';
+
+/**
+ * The minimal payment shape the discount/TDS + partial-billing validators read —
+ * satisfied by both an inline `OrderPaymentDto` and a Prisma `paymentDetails`
+ * select of the same fields.
+ */
+type DiscountTdsPaymentRow = {
+  netAmount?: number | null;
+  paidAmount?: number | null;
+  orderDiscount?: number | null;
+  tdsDeduction?: number | null;
+};
 
 /**
  * Order Management — the orchestrator. Tenant-scoped (RLS) + branch-level
@@ -242,6 +262,30 @@ export class OrderService {
     }
     const paymentStatus = derivePaymentStatus(payNet, payPaid);
 
+    // Snapshot each item's list unit price from its branch lab test/panel row so
+    // the order's prices are stable even if the list is later re-priced (§B5).
+    // Loaded before the billing rules so the discount/TDS checks (and the
+    // partial-billing-of-discounted rule) can compute amounts from the
+    // authoritative server-side prices rather than trusting the client.
+    const itemPrices = await this.loadItemUnitPrices(
+      tenantId,
+      branchId,
+      dto.items ?? [],
+    );
+
+    // Fetch the branch's Registration settings once (only when finalizing a real
+    // order at a branch) and share it across every rule below.
+    const needsBillingRules =
+      dto.status === OrderStatus.ORDER && Boolean(branchId);
+    const settings =
+      needsBillingRules && branchId
+        ? await this.registrationSettingsService.getForBranch(
+            tenantId,
+            branchId,
+          )
+        : null;
+    const hasDiscount = this.orderHasDiscount(dto.items ?? [], dto.payments);
+
     // Enforce the branch's Previous-Dues + Partial-Billing rules (Registration
     // Settings → Charges & Deductions). Only bites when finalizing a real order
     // (`status = ORDER`) at a branch; DRAFT/QUOTE/APPOINTMENT are exempt.
@@ -252,15 +296,20 @@ export class OrderService {
       patientId: dto.patientId,
       payments: dto.payments,
       previousDuesCleared: dto.previousDuesCleared ?? 0,
+      settings,
+      hasDiscount,
     });
 
-    // Snapshot each item's list unit price from its branch lab test/panel row so
-    // the order's prices are stable even if the list is later re-priced (§B5).
-    const itemPrices = await this.loadItemUnitPrices(
-      tenantId,
+    // Enforce the branch's TDS & Discount rules (allow-flags, discount mode,
+    // and min/max percentages) against the server-side item prices.
+    this.assertDiscountAndTdsRules({
+      status: dto.status,
       branchId,
-      dto.items ?? [],
-    );
+      settings,
+      items: dto.items ?? [],
+      payments: dto.payments,
+      itemPrices,
+    });
 
     // Resolve the branch's external Order/Quote id configuration (Registration
     // Settings). A quote (status QUOTE) uses the QUOTATION format + its own
@@ -790,6 +839,12 @@ export class OrderService {
       | undefined;
     previousDuesCleared: number;
     excludeOrderId?: string;
+    /** Pre-fetched branch settings — supplied by the caller to avoid a second
+     *  fetch (falls back to loading them when omitted). */
+    settings?: RegistrationSetting | null;
+    /** Whether the order carries any discount (order-level or per-line) — gates
+     *  the "Allow Partial Billing of Discounted Order" rule. */
+    hasDiscount?: boolean;
   }): Promise<void> {
     const {
       tenantId,
@@ -799,13 +854,13 @@ export class OrderService {
       payments,
       previousDuesCleared,
       excludeOrderId,
+      hasDiscount = false,
     } = params;
     if (status !== OrderStatus.ORDER || !branchId) return;
 
-    const settings = await this.registrationSettingsService.getForBranch(
-      tenantId,
-      branchId,
-    );
+    const settings =
+      params.settings ??
+      (await this.registrationSettingsService.getForBranch(tenantId, branchId));
 
     // ── Previous-dues gate ──
     // Compute the outstanding balance whenever it could matter — either the
@@ -854,6 +909,18 @@ export class OrderService {
         if (paid < net) {
           throw new FullPaymentRequiredException(net, paid);
         }
+      } else if (
+        hasDiscount &&
+        !settings.ChargesAndDeductions_AllowPartialBillingOfDiscountedOrder
+      ) {
+        // Partial billing is on, but not for discounted orders — a discounted
+        // order must still be paid in full.
+        if (paid < net) {
+          throw new PartialBillingNotAllowedForDiscountedOrderException(
+            net,
+            paid,
+          );
+        }
       } else {
         const minPercent =
           settings.ChargesAndDeductions_MinimumPercentOfNetAmountToProceed;
@@ -866,6 +933,155 @@ export class OrderService {
             minRequired,
           );
         }
+      }
+    }
+  }
+
+  /**
+   * Whether an order carries any discount — an order-level discount (on the
+   * first payment row) or any per-line item discount. Used to gate the
+   * "Allow Partial Billing of Discounted Order" rule.
+   */
+  private orderHasDiscount(
+    items: OrderItemDto[],
+    payments: DiscountTdsPaymentRow[] | undefined,
+  ): boolean {
+    const lineDiscount = items.reduce((s, i) => s + (i.discount ?? 0), 0);
+    const orderDiscount = payments?.[0]?.orderDiscount ?? 0;
+    return lineDiscount > 0 || orderDiscount > 0;
+  }
+
+  /**
+   * Enforce the branch's **TDS & Discount** rules (Registration Settings →
+   * Charges & Deductions) when finalizing a real order (`status = ORDER`) at a
+   * branch. Everything is computed from the server-side `itemPrices` (never a
+   * client-supplied net), mirroring the frontend gating so the API is secure
+   * even if the UI is bypassed. DRAFT/QUOTE/APPOINTMENT are exempt.
+   *
+   * - **Order discount** (first payment row's `orderDiscount`): rejected when
+   *   order-level discounts are disabled (Allow Discounts off, or the active
+   *   discount mode is Line-only); otherwise its effective percentage of the
+   *   items subtotal must fall within `[Minimum, Maximum] Discount %`.
+   * - **Line-item discount** (per item): rejected when line discounts are
+   *   disabled; otherwise each item's effective percentage of its price must
+   *   fall within `[Minimum, Maximum] Line Item Discount %`.
+   * - **TDS** (first payment row's `tdsDeduction`): rejected when TDS is not
+   *   applicable; otherwise its effective percentage of the net amount must
+   *   fall within `[Minimum, Maximum] TDS %`.
+   *
+   * A percentage bound applies only when a discount/TDS is actually applied
+   * (amount > 0); a zero value is always allowed.
+   *
+   * @throws OrderDiscountNotAllowedException / OrderDiscountOutOfRangeException
+   * @throws LineItemDiscountNotAllowedException / LineItemDiscountOutOfRangeException
+   * @throws TdsNotApplicableException / TdsOutOfRangeException
+   */
+  private assertDiscountAndTdsRules(params: {
+    status: OrderStatus | undefined;
+    branchId: string | null;
+    settings: RegistrationSetting | null;
+    items: OrderItemDto[];
+    payments: DiscountTdsPaymentRow[] | undefined;
+    itemPrices: Map<string, number>;
+  }): void {
+    const { status, branchId, settings, items, payments, itemPrices } = params;
+    if (status !== OrderStatus.ORDER || !branchId || !settings) return;
+
+    // Small tolerance so a legitimately at-the-boundary percentage isn't
+    // rejected by floating-point noise (e.g. 20.0000001% for a 20% max).
+    const EPS = 0.01;
+
+    // Resolve capabilities from the settings (mirror of the frontend logic).
+    const anyModeSet =
+      settings.ChargesAndDeductions_AllowOrderDiscountOnly ||
+      settings.ChargesAndDeductions_AllowLineDiscountOnly ||
+      settings.ChargesAndDeductions_AllowBothOrderAndLineDiscount;
+    const orderModeOk =
+      settings.ChargesAndDeductions_AllowBothOrderAndLineDiscount ||
+      settings.ChargesAndDeductions_AllowOrderDiscountOnly ||
+      !anyModeSet;
+    const lineModeOk =
+      settings.ChargesAndDeductions_AllowBothOrderAndLineDiscount ||
+      settings.ChargesAndDeductions_AllowLineDiscountOnly ||
+      !anyModeSet;
+    const orderDiscountEnabled =
+      settings.ChargesAndDeductions_AllowDiscounts && orderModeOk;
+    const lineDiscountEnabled =
+      settings.ChargesAndDeductions_AllowLineItemDiscount && lineModeOk;
+
+    // ── Line-item discounts (also accumulates the items subtotal + line total
+    //    used by the order-discount / TDS bases below). ──
+    const minLine = settings.ChargesAndDeductions_MinimumLineItemDiscountPercent;
+    const maxLine = settings.ChargesAndDeductions_MaximumLineItemDiscountPercent;
+    let itemsGross = 0;
+    let lineDiscountTotal = 0;
+    for (const item of items) {
+      const key = item.branchLabTestId ?? item.branchLabPanelId ?? '';
+      const price = itemPrices.get(key) ?? 0;
+      itemsGross += price;
+      const discount = item.discount ?? 0;
+      lineDiscountTotal += discount;
+      if (discount <= 0) continue;
+      if (!lineDiscountEnabled) throw new LineItemDiscountNotAllowedException();
+      // Effective percentage: use the typed PERCENT value directly, else derive
+      // it from the amount and the line's price. A discount on a zero-price
+      // (e.g. direct) line with an AMOUNT mode can't be expressed as a %, so the
+      // range check is skipped (the allow-flag above still applies).
+      let pct: number | null = null;
+      if (
+        item.discountMode === DiscountMode.PERCENT &&
+        item.discountValue != null
+      ) {
+        pct = item.discountValue;
+      } else if (price > 0) {
+        pct = (discount / price) * 100;
+      }
+      if (pct != null && (pct < minLine - EPS || pct > maxLine + EPS)) {
+        throw new LineItemDiscountOutOfRangeException(
+          minLine,
+          maxLine,
+          Math.round(pct * 100) / 100,
+          key || item.direct || 'item',
+        );
+      }
+    }
+
+    // ── Order-level discount (first payment row) ──
+    const orderDiscount = payments?.[0]?.orderDiscount ?? 0;
+    if (orderDiscount > 0) {
+      if (!orderDiscountEnabled) throw new OrderDiscountNotAllowedException();
+      const minOrder = settings.ChargesAndDeductions_MinimumDiscountPercent;
+      const maxOrder = settings.ChargesAndDeductions_MaximumDiscountPercent;
+      // No positive base to compute a percentage against ⇒ a discount can't be
+      // valid.
+      if (itemsGross <= 0) throw new OrderDiscountNotAllowedException();
+      const pct = (orderDiscount / itemsGross) * 100;
+      if (pct < minOrder - EPS || pct > maxOrder + EPS) {
+        throw new OrderDiscountOutOfRangeException(
+          minOrder,
+          maxOrder,
+          Math.round(pct * 100) / 100,
+        );
+      }
+    }
+
+    // ── TDS (first payment row), computed against the net amount ──
+    const tds = payments?.[0]?.tdsDeduction ?? 0;
+    if (tds > 0) {
+      if (!settings.ChargesAndDeductions_TdsApplicable) {
+        throw new TdsNotApplicableException();
+      }
+      const minTds = settings.ChargesAndDeductions_MinimumTdsPercent;
+      const maxTds = settings.ChargesAndDeductions_MaximumTdsPercent;
+      const net = Math.max(itemsGross - lineDiscountTotal - orderDiscount, 0);
+      if (net <= 0) throw new TdsOutOfRangeException(minTds, maxTds, 0);
+      const pct = (tds / net) * 100;
+      if (pct < minTds - EPS || pct > maxTds + EPS) {
+        throw new TdsOutOfRangeException(
+          minTds,
+          maxTds,
+          Math.round(pct * 100) / 100,
+        );
       }
     }
   }
@@ -1868,17 +2084,67 @@ export class OrderService {
     }
     const paymentStatus = derivePaymentStatus(payNet, payPaid);
 
-    // Enforce the branch's Previous-Dues + Partial-Billing rules when a draft is
-    // finalized (or an order re-saved) to `status = ORDER`. Uses the incoming
-    // ledger when this patch replaces it, otherwise the order's stored ledger.
-    if (effectiveStatus === OrderStatus.ORDER) {
+    // Enforce the branch's Previous-Dues + Partial-Billing + TDS/Discount rules
+    // when a draft is finalized (or an order re-saved) to `status = ORDER`. Uses
+    // the incoming ledger/items when this patch replaces them, otherwise the
+    // order's stored rows — so the checks run against the order's effective state.
+    if (effectiveStatus === OrderStatus.ORDER && branchId) {
       const effectivePayments =
         dto.payments !== undefined
           ? dto.payments
           : await this.prisma.paymentDetails.findMany({
               where: { orderId: id, tenantId, deletedAt: null },
-              select: { netAmount: true, paidAmount: true },
+              select: {
+                netAmount: true,
+                paidAmount: true,
+                orderDiscount: true,
+                tdsDeduction: true,
+              },
             });
+
+      // Effective items + their unit prices: the incoming items (re-priced from
+      // the branch catalogue) when the patch replaces them, else the stored rows
+      // (whose `unitPrice` was already snapshotted at create/last save).
+      let effectiveItems: OrderItemDto[];
+      let itemPrices: Map<string, number>;
+      if (dto.items !== undefined) {
+        effectiveItems = dto.items;
+        itemPrices = await this.loadItemUnitPrices(tenantId, branchId, dto.items);
+      } else {
+        const stored = await this.prisma.orderItem.findMany({
+          where: { orderId: id, tenantId, deletedAt: null },
+          select: {
+            branchLabTestId: true,
+            branchLabPanelId: true,
+            direct: true,
+            unitPrice: true,
+            discount: true,
+            discountMode: true,
+            discountValue: true,
+          },
+        });
+        effectiveItems = stored.map((s) => ({
+          branchLabTestId: s.branchLabTestId ?? undefined,
+          branchLabPanelId: s.branchLabPanelId ?? undefined,
+          direct: s.direct ?? undefined,
+          discount: s.discount,
+          discountMode: s.discountMode ?? undefined,
+          discountValue: s.discountValue ?? undefined,
+        }));
+        itemPrices = new Map(
+          stored.map((s) => [
+            s.branchLabTestId ?? s.branchLabPanelId ?? '',
+            s.unitPrice,
+          ]),
+        );
+      }
+
+      const hasDiscount = this.orderHasDiscount(effectiveItems, effectivePayments);
+      const settings = await this.registrationSettingsService.getForBranch(
+        tenantId,
+        branchId,
+      );
+
       if (existing?.patientId) {
         await this.assertBillingRules({
           tenantId,
@@ -1888,8 +2154,19 @@ export class OrderService {
           payments: effectivePayments,
           previousDuesCleared: dto.previousDuesCleared ?? 0,
           excludeOrderId: id,
+          settings,
+          hasDiscount,
         });
       }
+
+      this.assertDiscountAndTdsRules({
+        status: OrderStatus.ORDER,
+        branchId,
+        settings,
+        items: effectiveItems,
+        payments: effectivePayments,
+        itemPrices,
+      });
     }
 
     // External Order/Quote id on update: only editable when the branch's format

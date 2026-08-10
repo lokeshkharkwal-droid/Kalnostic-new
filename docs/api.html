@@ -2243,6 +2243,20 @@ config (Order/Quotation/Appointment/Patient-UMID external ids) is a separate sib
   <code>AuditModule.REGISTRATION_SETTINGS</code>.</p>
 </div>
 
+<div class="note"><b>Enforced on order creation.</b> The <code>ChargesAndDeductions_*</code>
+TDS &amp; discount settings are applied server-side when finalizing an order
+(<code>POST /orders</code> / <code>PATCH /orders/:id</code> with <code>status = ORDER</code>;
+DRAFT / QUOTE / APPOINTMENT are exempt). Percentages are computed from the authoritative
+snapshotted item prices — never a client-supplied net — so the rules hold even if the UI is
+bypassed. Order-level discount is validated against the items subtotal, per-line discount against
+each item's price, and TDS against the net amount. Violations return <span class="pill">422</span>
+with <code>ORDER_DISCOUNT_NOT_ALLOWED</code> / <code>ORDER_DISCOUNT_OUT_OF_RANGE</code> /
+<code>LINE_ITEM_DISCOUNT_NOT_ALLOWED</code> / <code>LINE_ITEM_DISCOUNT_OUT_OF_RANGE</code> /
+<code>TDS_NOT_APPLICABLE</code> / <code>TDS_OUT_OF_RANGE</code>. When a discounted order is paid
+partially while <code>AllowPartialBillingOfDiscountedOrder</code> is off (but
+<code>AllowPartialBilling</code> is on), it is rejected with
+<code>PARTIAL_BILLING_NOT_ALLOWED_FOR_DISCOUNTED_ORDER</code>.</div>
+
 <h3 id="registration-id-sequences">Registration Id Sequences <span style="font-size:13px;color:var(--muted)">(Order/Quotation/Appointment/Patient-UMID external-id generation)</span></h3>
 <div class="note">Reusable per-branch id-generation config — one <code>RegistrationIdSequence</code> row per
 <code>(tenantId, branchId, sequenceType)</code>. Mirrors the old system's AUTO_INCREMENT_OPTIONS

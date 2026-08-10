@@ -459,3 +459,120 @@ export class DuplicateExternalOrderIdException extends KaltrosException {
     );
   }
 }
+
+/**
+ * 422 — an order-level discount was applied but the branch's Registration
+ * settings do not allow it (either `Allow Discounts` is off, or the active
+ * discount mode is Line-Discount-Only). Enforced only when finalizing an
+ * `ORDER` (Registration Settings → Charges & Deductions → TDS & Discounts).
+ */
+export class OrderDiscountNotAllowedException extends KaltrosException {
+  constructor() {
+    super(
+      'ORDER_DISCOUNT_NOT_ALLOWED',
+      'Order-level discounts are not enabled for this branch',
+      {},
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — the order-level discount percentage falls outside the branch's
+ * configured `[Minimum, Maximum] Discount %` range (computed against the items
+ * subtotal). `actualPercent` is the effective percentage the applied amount
+ * represents.
+ */
+export class OrderDiscountOutOfRangeException extends KaltrosException {
+  constructor(minPercent: number, maxPercent: number, actualPercent: number) {
+    super(
+      'ORDER_DISCOUNT_OUT_OF_RANGE',
+      `The order discount must be between ${minPercent}% and ${maxPercent}% of the order amount`,
+      { minPercent, maxPercent, actualPercent },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — a per-line (item) discount was applied but the branch's Registration
+ * settings do not allow line-item discounts (either `Allow Line Item Discount`
+ * is off, or the active discount mode is Order-Discount-Only).
+ */
+export class LineItemDiscountNotAllowedException extends KaltrosException {
+  constructor() {
+    super(
+      'LINE_ITEM_DISCOUNT_NOT_ALLOWED',
+      'Line-item discounts are not enabled for this branch',
+      {},
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — a per-line (item) discount percentage falls outside the branch's
+ * configured `[Minimum, Maximum] Line Item Discount %` range (computed against
+ * that item's price). `itemRef` identifies the offending line.
+ */
+export class LineItemDiscountOutOfRangeException extends KaltrosException {
+  constructor(
+    minPercent: number,
+    maxPercent: number,
+    actualPercent: number,
+    itemRef: string,
+  ) {
+    super(
+      'LINE_ITEM_DISCOUNT_OUT_OF_RANGE',
+      `Each line-item discount must be between ${minPercent}% and ${maxPercent}% of the item's price`,
+      { minPercent, maxPercent, actualPercent, itemRef },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — a TDS deduction was supplied but the branch's Registration settings
+ * have `TDS Applicable` turned off.
+ */
+export class TdsNotApplicableException extends KaltrosException {
+  constructor() {
+    super(
+      'TDS_NOT_APPLICABLE',
+      'TDS is not applicable for this branch',
+      {},
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — the TDS deduction percentage falls outside the branch's configured
+ * `[Minimum, Maximum] TDS %` range (computed against the net amount).
+ */
+export class TdsOutOfRangeException extends KaltrosException {
+  constructor(minPercent: number, maxPercent: number, actualPercent: number) {
+    super(
+      'TDS_OUT_OF_RANGE',
+      `TDS must be between ${minPercent}% and ${maxPercent}% of the net amount`,
+      { minPercent, maxPercent, actualPercent },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — the order carries a discount and, although partial billing is allowed
+ * for the branch, `Allow Partial Billing of Discounted Order` is off — so a
+ * discounted order must be paid in full.
+ */
+export class PartialBillingNotAllowedForDiscountedOrderException extends KaltrosException {
+  constructor(netAmount: number, paidAmount: number) {
+    super(
+      'PARTIAL_BILLING_NOT_ALLOWED_FOR_DISCOUNTED_ORDER',
+      'This order has a discount applied — partial billing of discounted orders is disabled for this branch, so the full net amount must be collected',
+      { netAmount, paidAmount },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
