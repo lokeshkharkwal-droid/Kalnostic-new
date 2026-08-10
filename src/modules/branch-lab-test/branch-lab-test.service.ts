@@ -19,6 +19,7 @@ import {
 import {
   BranchLabTestConfigSnapshot,
   BranchLabTestImportResult,
+  BranchLabTestListRow,
   BranchLabTestSyncResult,
 } from './entities/branch-lab-test.entity';
 
@@ -300,7 +301,7 @@ export class BranchLabTestService {
     tenantId: string,
     branchId: string,
     query: ListBranchLabTestsQueryDto,
-  ): Promise<PaginatedResult<BranchLabTest>> {
+  ): Promise<PaginatedResult<BranchLabTestListRow>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const where: Prisma.BranchLabTestWhereInput = {
@@ -330,7 +331,64 @@ export class BranchLabTestService {
       }),
       this.prisma.branchLabTest.count({ where }),
     ]);
-    return { data, total, page, limit };
+    const [deptNames, catNames, subCatNames] = await Promise.all([
+      this.resolveNames(
+        'department',
+        tenantId,
+        data.map((t) => t.departmentId),
+      ),
+      this.resolveNames('category', tenantId, data.map((t) => t.categoryId)),
+      this.resolveNames(
+        'subCategory',
+        tenantId,
+        data.map((t) => t.subCategoryId),
+      ),
+    ]);
+    const enriched: BranchLabTestListRow[] = data.map((t) => ({
+      ...t,
+      departmentName: this.nameOf(deptNames, t.departmentId),
+      categoryName: this.nameOf(catNames, t.categoryId),
+      subCategoryName: this.nameOf(subCatNames, t.subCategoryId),
+      sampleSummary:
+        (t.configSnapshot as unknown as BranchLabTestConfigSnapshot)?.samples
+          ?.map((s) => s.sampleType)
+          .filter(Boolean)
+          .join(', ') || null,
+    }));
+    return { data: enriched, total, page, limit };
+  }
+
+  /**
+   * Resolve a set of classification ids to a `id → name` map (tenant-scoped).
+   * Used to denormalise department/category/sub-category names into list rows.
+   */
+  private async resolveNames(
+    model: 'department' | 'category' | 'subCategory',
+    tenantId: string,
+    idsRaw: (string | null)[],
+  ): Promise<Map<string, string>> {
+    const ids = [...new Set(idsRaw.filter((x): x is string => Boolean(x)))];
+    const map = new Map<string, string>();
+    if (ids.length === 0) {
+      return map;
+    }
+    const where = { id: { in: ids }, tenantId };
+    const select = { id: true, name: true };
+    const rows =
+      model === 'department'
+        ? await this.prisma.department.findMany({ where, select })
+        : model === 'category'
+          ? await this.prisma.category.findMany({ where, select })
+          : await this.prisma.subCategory.findMany({ where, select });
+    for (const r of rows) {
+      map.set(r.id, r.name);
+    }
+    return map;
+  }
+
+  /** Look up a resolved name by (possibly null) id. */
+  private nameOf(map: Map<string, string>, id: string | null): string | null {
+    return id ? (map.get(id) ?? null) : null;
   }
 
   /**

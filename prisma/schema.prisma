@@ -5928,6 +5928,23 @@ model LabReport {
   publishedAt DateTime? @map("published_at")
   publishedBy String?   @map("published_by")
 
+  /// The 1-3 signatories selected for this report's Approve action, resolved
+  /// from the report's department's DepartmentPersonMapping candidates
+  /// (isSignatory=true, ordered by priority) at approval time. Each slot's
+  /// `...Type` mirrors PersonMappingType so a later read knows which table to
+  /// resolve `...Id` against (`persons` for USER, `doctors` for
+  /// CONSULTANT_DOCTOR/REPORTING_DOCTOR) without re-deriving the department
+  /// chain. This is an intentional snapshot, not a live reference: editing the
+  /// master DepartmentPersonMapping config afterward must never change what an
+  /// already-approved report recorded. No FK — same no-FK-on-personId
+  /// convention as DepartmentPersonMapping itself (app-code validated only).
+  signatoryAuthority1Id   String?             @map("signatory_authority_1_id")
+  signatoryAuthority1Type PersonMappingType?  @map("signatory_authority_1_type")
+  signatoryAuthority2Id   String?             @map("signatory_authority_2_id")
+  signatoryAuthority2Type PersonMappingType?  @map("signatory_authority_2_type")
+  signatoryAuthority3Id   String?             @map("signatory_authority_3_id")
+  signatoryAuthority3Type PersonMappingType?  @map("signatory_authority_3_type")
+
   // ── Analytical TAT snapshot (hybrid storage) ──────────────────────────────
   // Frozen by TatService when the report is approved: the resolved start
   // (earliest linked sample acceptedAt), net working minutes accrued
@@ -7140,6 +7157,14 @@ model TechnicianSetting {
 
   authoritySignatures Int    @default(1) @map("authority_signatures")
   signatoryBasis      String @default("department") @map("signatory_basis")
+
+  /// Whether the Test Entry screen's "Useful For" / "Interpretation" content
+  /// sections are technician-editable, independent of each other. Both
+  /// default false (matches the pre-existing hardcoded behavior: only
+  /// "Remarks" was ever editable, these two — along with Limitations/
+  /// References, which stay permanently read-only — were not).
+  isUsefulForEditable      Boolean @default(false) @map("is_useful_for_editable")
+  isInterpretationEditable Boolean @default(false) @map("is_interpretation_editable")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")

@@ -16,4 +16,8 @@ export type OutsourceCenterEntity = OutsourceCenter & {
   contacts?: OutsourceCenterContact[];
   labTestName?: string | null;
   labPanelName?: string | null;
+  /** The center's DIRECTOR-role contact, denormalised for the list table. */
+  directorName?: string | null;
+  directorEmail?: string | null;
+  directorMobile?: string | null;
 };

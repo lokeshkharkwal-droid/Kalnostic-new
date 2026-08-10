@@ -5,6 +5,18 @@ import { LabTestResultParamWithRefs } from '../../lab-test/entities/lab-test.ent
 export type BranchLabTestEntity = BranchLabTest;
 
 /**
+ * A `findAll()` list row, denormalised with names for its classification ids
+ * and a human-readable sample summary — both computed at read time so the
+ * Lab Test List table doesn't need extra round-trips to render them.
+ */
+export interface BranchLabTestListRow extends BranchLabTest {
+  departmentName: string | null;
+  categoryName: string | null;
+  subCategoryName: string | null;
+  sampleSummary: string | null;
+}
+
+/**
  * The point-in-time clinical snapshot stored in `BranchLabTest.configSnapshot`:
  * the source Master Data test's samples and result parameters (each with its
  * reference ranges/values), copied verbatim at import/sync time.
