@@ -17,6 +17,7 @@ import { UpdateOrderDto } from './dto/update-order.dto';
 import { ListOrdersDto } from './dto/list-orders.dto';
 import { CreateOrderNoteDto } from './dto/create-order-note.dto';
 import { ListOrderNotesDto } from './dto/list-order-notes.dto';
+import { PatientDuesQueryDto } from './dto/patient-dues.dto';
 import { PrintOrderDto } from './dto/print-order.dto';
 import { CollectOrderItemDto } from './dto/collect-order-item.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
@@ -85,6 +86,20 @@ export class OrderController {
     @Query() query: ListOrdersDto,
   ) {
     return this.orderService.findAll(tenantId, profile.branchId, query);
+  }
+
+  /**
+   * A patient's outstanding previous dues **business-wide** (all branches in the
+   * tenant), summed across their active, non-cancelled orders. Used by the Create
+   * Order screen to display + pre-validate the Previous-Dues rules. Declared
+   * before `:id` so the static path isn't captured by the param route.
+   */
+  @Get('patient-dues')
+  patientDues(
+    @CurrentTenant() tenantId: string,
+    @Query() query: PatientDuesQueryDto,
+  ) {
+    return this.orderService.getPatientDues(tenantId, query.patientId);
   }
 
   /** Fetch one order fully composed. */

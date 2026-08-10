@@ -35,6 +35,7 @@ body:json {
     },
     "quotationStatus": "DRAFT",
     "quotationValidTill": "2026-07-23",
+    "externalOrderId": "MANUAL-0001",
     "patientId": "{{patientId}}",
     "appointmentAt": "2026-07-10T09:30:00.000Z",
     "referredByDoctorId": "{{referralDoctorId}}",
@@ -150,6 +151,15 @@ docs {
   - `patientId` — required; validated to be an active patient in the tenant (422
     `ORDER_PATIENT_NOT_FOUND` otherwise). `appointmentAt` — ISO date-time.
   - `orderCode` is system-generated (`ORD-00001`…) — never sent in the body.
+  - `externalOrderId` — user-facing external Order/Quote id. Honoured **only** when
+    the branch's configured external-id format (Registration Settings → Order ID
+    Configuration / Quotation, per `status`) is `NONE`: then it is **required** on a
+    finalized `ORDER`/`QUOTE` (422 `EXTERNAL_ORDER_ID_REQUIRED` if missing) and must
+    be unique among the branch's active orders (409 `DUPLICATE_EXTERNAL_ORDER_ID`).
+    When a format is configured the id is auto-generated server-side at creation
+    (from the branch's per-branch daily/monthly/yearly counter + `Branch.shortName`
+    for `BRANCH_*` formats) and any value sent here is ignored. Preview via
+    `GET /registration-settings/external-id/preview`.
   - `billId` is system-generated for **diagnostic** orders (`DIG-001`…, from
     `Tenant.diagnosticBillCounter`) when a `diagnostics` section is present; it is
     stored permanently and returned in the response. Non-diagnostic orders have a
@@ -261,4 +271,32 @@ docs {
   Overpayment is rejected: if the summed `paidAmount` exceeds the summed
   `netAmount`, the order is rejected with 422 `PAYMENT_OVERPAYMENT` and rolled
   back (same rule as `POST /payments`). See "Create Order - Overpayment (422)".
+
+  ## Previous Dues & Partial Billing rules (only when `status = ORDER`)
+
+  When an order is **finalized** (`status = ORDER`) at a branch, the branch's
+  Registration Settings → Charges & Reductions rules are enforced server-side
+  (DRAFT / QUOTE / APPOINTMENT are exempt). See `GET /orders/patient-dues` for the
+  outstanding-dues computation.
+
+  - `previousDuesCleared` (optional, integer minor units) — the amount collected
+    on this order toward the patient's outstanding **previous dues**.
+  - **Previous dues:** if the patient has outstanding dues and the branch does
+    NOT allow ordering without clearing dues
+    (`ChargesAndDeductions_AllowOrderWithoutClearingPreviousDues = false`),
+    `previousDuesCleared` must be ≥ `min(outstanding, MinimumPreviousDuesToClear)`
+    — else 422 `PREVIOUS_DUES_NOT_CLEARED`. It may never exceed the outstanding
+    balance — else 422 `PREVIOUS_DUES_OVERPAYMENT`.
+  - **Cross-order settlement (oldest-first):** when the order becomes `ORDER`,
+    `previousDuesCleared` is applied across the patient's outstanding orders from
+    the oldest `orderDate` first — a settlement `PaymentDetails` row (a pure
+    payment referencing this order's code) is written against each and their
+    `paymentStatus` is recomputed, all in the same transaction. The patient's
+    outstanding therefore drops immediately (re-check via `GET /orders/patient-dues`).
+    Also runs on the DRAFT/QUOTE/APPOINTMENT → ORDER transition in
+    `PATCH /orders/:id` (once — never on re-saving an already-ORDER order).
+  - **Partial billing:** when `ChargesAndDeductions_AllowPartialBilling = false`
+    the full `netAmount` must be collected (422 `FULL_PAYMENT_REQUIRED` otherwise);
+    when true, at least `MinimumPercentOfNetAmountToProceed`% of the net must be
+    collected (422 `PARTIAL_PAYMENT_BELOW_MINIMUM` otherwise).
 }

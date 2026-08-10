@@ -1,0 +1,50 @@
+meta {
+  name: Update PT Category
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/pt-categories/{{ptCategoryId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "categoryName": "Corporate Premium",
+    "branchLabTestListId": "{{branchLabTestListId}}",
+    "branchLabPanelListId": null,
+    "isDefault": true
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Partial update. Only supplied fields change.
+
+  - `categoryName` — optional, 2-100 chars, unique per branch.
+  - `branchLabTestListId` / `branchLabPanelListId` — optional. Send a UUID to
+    (re)map to a pricing List, or `null` to clear that mapping; omit to leave
+    unchanged. At least one mapping must remain after the merge, else 400
+    `PT_CATEGORY_MAPPING_REQUIRED`. Ids are validated against the active branch.
+  - `isActive` — optional.
+  - `isDefault` — optional. When `true`, the branch's previous default is unset.
+
+  The auto-created **"General"** default cannot be edited → 403
+  `CANNOT_MODIFY_GENERAL_PT_CATEGORY` (it is a fixed, unmapped fallback; the UI's
+  Edit button is disabled for it).
+}

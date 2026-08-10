@@ -18,10 +18,12 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { MedicalHistoryDto } from './medical-history.dto';
@@ -157,6 +159,15 @@ export class CreatePatientDto {
   @IsEnum(PatientCategory)
   @IsOptional()
   patientCategory?: PatientCategory;
+
+  /**
+   * Registration Settings PT Category id (`PtCategory`) for this patient.
+   * Validated against the caller's active branch. `null` clears it.
+   */
+  @IsOptional()
+  @ValidateIf((_o, value) => value !== null)
+  @IsUUID('4')
+  ptCategoryId?: string | null;
 
   @IsEnum(MaritalStatus)
   @IsOptional()

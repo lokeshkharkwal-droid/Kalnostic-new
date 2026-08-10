@@ -530,7 +530,7 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>POST /branch-lab-panel-lists/:id/clone</td><td>Business JWT</td><td>deep-copy a panel list into a new independent list</td></tr>
   <tr><td>PATCH /branch-lab-panel-lists/:id</td><td>Business JWT</td><td>rename a panel list</td></tr>
   <tr><td>DELETE /branch-lab-panel-lists/:id</td><td>Business JWT</td><td>soft-delete a panel list + rows/members (blocked for default Walk-in)</td></tr>
-  <tr><td>GET /referral-lists/resolve</td><td>Business JWT</td><td>resolve an order's pricing lists from referrals (priority PANEL→DOCTOR→INTERNAL→EXTERNAL→Walk-in)</td></tr>
+  <tr><td>GET /referral-lists/resolve</td><td>Business JWT</td><td>resolve an order's pricing lists from referrals + PT category (priority PANEL→PT_CATEGORY→DOCTOR→INTERNAL→EXTERNAL→Walk-in)</td></tr>
   <tr><td>POST /siteadmin/departments</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template, code SA-Dep-{n})</td></tr>
   <tr><td>GET /siteadmin/departments</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global templates)</td></tr>
   <tr><td>GET /siteadmin/departments/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global template)</td></tr>
@@ -2015,6 +2015,87 @@ per doctor + branch</b>. All times are 24h <code>HH:mm</code>; dates are ISO <co
   <p>Categories cannot be deleted (no DELETE route) — only deactivated — to preserve historical order
   pricing. Lab Test List / Lab Panel List dropdown data comes from the existing
   <code>GET /branch-lab-tests/options</code> / <code>GET /branch-lab-panels/options</code> endpoints.</p>
+</div>
+
+<h2>PT Category</h2>
+
+<p>Registration Settings › <strong>PT Category</strong> — a <em>per-branch</em> pricing category mapped to a
+<strong>Lab Test List</strong> + <strong>Lab Panel List</strong> (<code>BranchLabTestList</code> /
+<code>BranchLabPanelList</code>), identical to how referrals map to lists. Distinct from Patient Category
+(tenant-level, multi-mapping): a PT category is tenant-scoped + <strong>branch-level</strong> and drives
+order pricing. A "General" default (unmapped, active) is auto-created <em>per branch</em> on branch creation
+and pre-selected during registration; being unmapped it never affects pricing. Order creation folds a
+selected PT category into the pricing chain at priority slot 2 — <strong>B2B Panel → PT Category → Doctor →
+Internal → External → Walk-in</strong> (see <code>GET /referral-lists/resolve</code>). Writes audited under
+<code>AuditModule.PT_CATEGORY</code>.</p>
+
+<div class="ep" id="pt-category-create">
+  <div><span class="m post">POST</span><span class="path">/api/v1/pt-categories</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Create a PT category on the caller's <strong>active branch</strong> (from the JWT profile — errors
+  <span class="pill">400 ACTIVE_BRANCH_REQUIRED</span> if none). Body: <code>categoryName</code> (2-100
+  chars, required, unique per branch among active — <span class="pill">409 PT_CATEGORY_NAME_CONFLICT</span>),
+  <code>branchLabTestListId</code> (optional, a <code>BranchLabTestList</code> id in the branch —
+  <span class="pill">400 INVALID_PT_CATEGORY_LAB_TEST_LIST</span> otherwise), <code>branchLabPanelListId</code>
+  (optional, a <code>BranchLabPanelList</code> id —
+  <span class="pill">400 INVALID_PT_CATEGORY_LAB_PANEL_LIST</span>), <code>isActive</code> (optional, default
+  <code>true</code>), <code>isDefault</code> (optional, default <code>false</code> — when <code>true</code>,
+  the branch's previous default is atomically unset). At least one of
+  <code>branchLabTestListId</code>/<code>branchLabPanelListId</code> is required —
+  <span class="pill">400 PT_CATEGORY_MAPPING_REQUIRED</span> otherwise.</p>
+</div>
+
+<div class="ep" id="pt-category-options">
+  <div><span class="m get">GET</span><span class="path">/api/v1/pt-categories/options</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Paginated <code>{'{'} id, name {'}'}</code> options for the active branch — the Create-Order PT
+  Category dropdown feed. Returns only <strong>active</strong> categories. Query: <code>search</code>
+  (case-insensitive on <code>categoryName</code>), <code>page</code>/<code>limit</code>.</p>
+</div>
+
+<div class="ep" id="pt-category-default">
+  <div><span class="m get">GET</span><span class="path">/api/v1/pt-categories/default</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>The active branch's <strong>default</strong> PT category as <code>{'{'} id, categoryName {'}'}</code>,
+  or <code>null</code> if none. Used by the Create-Order page to pre-select the default (initially the
+  auto-created "General"). Since GENERAL is unmapped, pre-selecting it doesn't affect pricing.</p>
+</div>
+
+<div class="ep" id="pt-category-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/pt-categories</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Paginated list of the active branch's PT categories (default <code>limit=10</code>, max 100), ordered
+  default-first then oldest-first, each with its mapped
+  <code>branchLabTestList</code>/<code>branchLabPanelList</code> (<code>{'{'} id, name {'}'}</code> or null).
+  Optional filters: <code>search</code> (on <code>categoryName</code>), <code>status</code>
+  (<code>ACTIVE</code>|<code>INACTIVE</code>), plus <code>page</code>/<code>limit</code>.</p>
+</div>
+
+<div class="ep" id="pt-category-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/pt-categories/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Fetch one PT category with its mapped Lab Test List / Lab Panel List, for the View/Edit popup.
+  <span class="pill">404 PT_CATEGORY_NOT_FOUND</span> if missing or in another tenant/branch.</p>
+</div>
+
+<div class="ep" id="pt-category-update">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/pt-categories/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Partial update (all fields optional). A mapping field sent as <code>null</code> clears it; omitted
+  leaves it unchanged; at least one mapping must remain after the merge
+  (<span class="pill">400 PT_CATEGORY_MAPPING_REQUIRED</span>). <code>isDefault: true</code> atomically
+  clears the branch's previous default. The auto-created <strong>"General"</strong> default cannot be
+  edited → <span class="pill">403 CANNOT_MODIFY_GENERAL_PT_CATEGORY</span>. Audited under
+  <code>AuditModule.PT_CATEGORY</code>.</p>
+</div>
+
+<div class="ep" id="pt-category-set-active">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/pt-categories/:id/active</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Activate/inactivate a PT category from the settings table's row switch. Body: <code>isActive</code>
+  (boolean, required). Inactive categories are excluded from
+  <code>GET /pt-categories/options</code>. No DELETE route — categories are only deactivated. Audited under
+  <code>AuditModule.PT_CATEGORY</code>.</p>
 </div>
 
 <h2>Console Settings</h2>

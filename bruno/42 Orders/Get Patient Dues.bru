@@ -1,0 +1,33 @@
+meta {
+  name: Get Patient Dues
+  type: http
+  seq: 16
+}
+
+get {
+  url: {{baseUrl}}/orders/patient-dues?patientId={{patientId}}
+  body: none
+  auth: bearer
+}
+
+params:query {
+  patientId: {{patientId}}
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Returns the patient's outstanding **previous dues** **business-wide** (every
+  branch in the tenant) — `{ outstanding }`, the summed positive
+  `netAmount − paidAmount` balance across their active, non-cancelled orders
+  (`ORDER`/`APPOINTMENT`). Used by the Create Order screen (/registration/create)
+  as the "Clear Previous Dues" maximum and to pre-validate the branch's
+  Previous-Dues rules (Registration Settings → Charges & Reductions).
+
+  Tenant-wide (NOT branch-scoped) so the value equals the patient's true total
+  dues to the business — the same figure the cap, the previous-dues gate, the
+  overpayment guard, and the oldest-first settlement all use. The tenant comes
+  from the JWT. 422 `ORDER_PATIENT_NOT_FOUND` if the patient is not in the tenant.
+}

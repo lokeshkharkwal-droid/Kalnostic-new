@@ -266,6 +266,7 @@ enum AuditModule {
   PDF_REPORT_TEMPLATE
   PATIENT
   PATIENT_CATEGORY
+  PT_CATEGORY
   MEDICAL_HISTORY
   ORDER
   RADIOLOGIST
@@ -1148,6 +1149,10 @@ model Branch {
   // derived from Tenant.branchCounter. Unique per tenant among active rows
   // (partial unique index in prisma/rls.sql); never client-supplied.
   code       String
+  // Mandatory operator-set abbreviation (≤5 chars), used as the branch prefix
+  // when generating external order/quote ids (see RegistrationSetting external
+  // id formats). Editable, unlike `code`.
+  shortName  String     @map("short_name")
 
   status          BranchStatus @default(ACTIVE)
   establishedDate DateTime?    @map("established_date")
@@ -2891,6 +2896,9 @@ model BranchLabTestList {
   // The list's owned test rows.
   tests BranchLabTest[]
 
+  // PT Categories (Registration Settings) whose Lab Test List points here.
+  ptCategories PtCategory[]
+
   createdBy String?   @map("created_by")
   updatedBy String?   @map("updated_by")
   createdAt DateTime  @default(now()) @map("created_at")
@@ -2920,6 +2928,9 @@ model BranchLabPanelList {
 
   // The list's owned panel rows.
   panels BranchLabPanel[]
+
+  // PT Categories (Registration Settings) whose Lab Panel List points here.
+  ptCategories PtCategory[]
 
   createdBy String?   @map("created_by")
   updatedBy String?   @map("updated_by")
@@ -4703,6 +4714,54 @@ model PatientCategoryLabPanel {
   @@map("patient_category_lab_panels")
 }
 
+/// A PT (Patient) Category configured on the Registration Settings page. A
+/// per-branch pricing configuration that maps to a **Lab Test List** and/or a
+/// **Lab Panel List** — identical to how referrals (panel/doctor/internal/
+/// external) map to lists via `ReferralListAssignment`. Order creation resolves a
+/// selected category to these list ids directly (priority slot 2, after the B2B
+/// panel). Tenant-scoped + branch-level: unlike `PatientCategoryDefinition`
+/// (tenant-level, multi-mapping), a PT Category belongs to one branch, so a
+/// "General" default is auto-created per branch on branch creation. Exactly one
+/// active default per branch and category-name uniqueness per branch are enforced
+/// by partial unique indexes in prisma/rls.sql. Categories are soft-deleted, never
+/// hard-deleted, to preserve historical order pricing. The list ids are both
+/// nullable so the auto-created "General" default can exist unmapped (and is thus
+/// skipped in pricing); user-created categories require at least one (enforced in
+/// the DTO/service).
+model PtCategory {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  categoryName String @map("category_name")
+
+  // At most one mapped Lab Test List and one mapped Lab Panel List (per branch).
+  branchLabTestListId  String? @map("branch_lab_test_list_id")
+  branchLabPanelListId String? @map("branch_lab_panel_list_id")
+
+  branchLabTestList  BranchLabTestList?  @relation(fields: [branchLabTestListId], references: [id])
+  branchLabPanelList BranchLabPanelList? @relation(fields: [branchLabPanelListId], references: [id])
+
+  // Patients whose default PT Category points here.
+  patients Patient[]
+
+  isDefault Boolean @default(false) @map("is_default")
+  isActive  Boolean @default(true) @map("is_active")
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([branchLabTestListId])
+  @@index([branchLabPanelListId])
+  @@index([deletedAt])
+  @@map("pt_categories")
+}
+
 /// Tenant-level console settings for Registration — order workflow defaults,
 /// TAT thresholds, and sample-tracking behaviour. The row is created on first
 /// access so the frontend always receives a complete settings object.
@@ -4794,6 +4853,37 @@ enum RegistrationIdResetCycle {
   YEARLY
 }
 
+/// Legacy-style external-id auto-increment format for orders/quotations
+/// (ports Kishan's `auto_increment_lab_external_orderid`, RP-code variants
+/// excluded). `NONE` = no auto-generation (operator types the id manually).
+/// BRANCH_* variants prefix the id with `Branch.shortName`. See
+/// ExternalIdService for the formatter + example outputs.
+enum ExternalIdFormat {
+  NONE // manual entry
+  YMD_DAILY // 2026/04/19/0001
+  BRANCH_YMD_DAILY // ABC/2026/04/19/0001
+  YMD_COMPACT_DAILY // 202604190001
+  YM_MONTHLY // 2026/04/0001
+  BRANCH_YM_MONTHLY // ABC/2026/04/0001
+  Y_YEARLY // 2026/0001
+  BRANCH_Y_YEARLY // ABC/2026/0001
+}
+
+/// Which id an `ExternalIdCounter` row counts — orders vs quotations get
+/// independent running sequences per branch.
+enum ExternalIdPurpose {
+  ORDER
+  QUOTATION
+}
+
+/// Reset granularity of an `ExternalIdCounter` (derived from the chosen
+/// `ExternalIdFormat`).
+enum ExternalIdCounterType {
+  DAILY
+  MONTHLY
+  YEARLY
+}
+
 /// Per-branch Registration settings (LIMS Settings doc "Registration Module"
 /// section) — general toggles, quotation validity, charges & deductions,
 /// cancellation & refund, referral & staff permissions, billing-menu
@@ -4816,10 +4906,18 @@ model RegistrationSetting {
   General_AllowEditingPaymentDate Boolean     @default(false) @map("general_allow_editing_payment_date")
   General_DefaultPaymentMode      PaymentMode @default(CASH) @map("general_default_payment_mode")
 
+  // ── Order ID Configuration ──
+  // Legacy-style external order-id auto-increment format (Kishan's "Auto
+  // Increment Lab Order External Order ID"). NONE = operator types the id.
+  OrderIdConfiguration_AutoIncrementExternalOrderIdFormat ExternalIdFormat @default(NONE) @map("order_id_config_auto_increment_ext_order_id_format")
+
   // ── Quotation (non-ID fields; ID config is in RegistrationIdSequence) ──
   Quotation_QuotationValidityValue             Int                @default(7) @map("quotation_quotation_validity_value")
   Quotation_QuotationValidityUnit              RepeatIntervalUnit @default(DAYS) @map("quotation_quotation_validity_unit")
   Quotation_AllowDuplicationOfExpiredQuotation Boolean            @default(false) @map("quotation_allow_duplication_of_expired_quotation")
+  // Independent external quote-id auto-increment format (same option set as the
+  // order id above). NONE = operator types the id.
+  Quotation_AutoIncrementExternalQuoteIdFormat ExternalIdFormat   @default(NONE) @map("quotation_auto_increment_ext_quote_id_format")
 
   // ── Charges & Deductions ──
   ChargesAndDeductions_VisitChargesAmount                    Decimal @default(0) @map("charges_and_deductions_visit_charges_amount") @db.Decimal(10, 2)
@@ -4927,6 +5025,32 @@ model RegistrationIdSequence {
   @@index([tenantId])
   @@index([branchId])
   @@map("registration_id_sequences")
+}
+
+/// Per-branch running counter for the legacy-style external order/quote id
+/// (mirrors Kishan's `branch_order_counter`). One row per `(tenantId, branchId,
+/// purpose, counterType)`; `counter` is bumped atomically inside the order-
+/// create transaction and reset to 1 when the period (day/month/year) rolls
+/// over relative to `lastResetAt`. Tenant-scoped + branch-level. RLS policy in
+/// prisma/rls.sql.
+model ExternalIdCounter {
+  id          String                @id @default(uuid())
+  tenantId    String                @map("tenant_id")
+  branchId    String                @map("branch_id")
+  purpose     ExternalIdPurpose
+  counterType ExternalIdCounterType @map("counter_type")
+
+  counter     Int      @default(0)
+  lastResetAt DateTime @map("last_reset_at")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([tenantId, branchId, purpose, counterType])
+  @@index([tenantId])
+  @@index([branchId])
+  @@map("external_id_counters")
 }
 
 model LabImageSetting {
@@ -5111,8 +5235,16 @@ model Patient {
   // ── Privilege / category ──
   hasPrivilegeCard Boolean          @default(false) @map("has_privilege_card")
   privilegeNumber  String?          @map("privilege_number")
+  // Legacy static privilege tier (General/VIP/…), retained for existing data;
+  // superseded in the UI by the branch-level PT Category below.
   patientCategory  PatientCategory? @map("patient_category")
   maritalStatus    MaritalStatus?   @map("marital_status")
+
+  // Registration Settings PT Category (branch-level pricing category). Validated
+  // against the patient's registration/active branch on write; used to
+  // pre-select the category during order creation.
+  ptCategoryId String?     @map("pt_category_id")
+  ptCategory   PtCategory? @relation(fields: [ptCategoryId], references: [id])
 
   // ── Identity documents ──
   umId           String? @map("um_id")
@@ -5157,6 +5289,7 @@ model Patient {
   @@index([tenantId])
   @@index([branchId])
   @@index([isActive])
+  @@index([ptCategoryId])
   @@index([deletedAt])
   @@map("patients")
 }
@@ -5472,6 +5605,11 @@ model Order {
   // Per-tenant sequential bill id for a diagnostic order (DIG-001…), generated
   // from Tenant.diagnosticBillCounter at creation. Null for non-diagnostic orders.
   billId          String?     @map("bill_id")
+  // Optional user-facing external id. Auto-formatted from the branch's configured
+  // external-id format (RegistrationSetting) at creation, or typed by the operator
+  // when the format is NONE. Unique per branch among active rows (enforced in the
+  // service). Quotes (status QUOTE) reuse this column with their own format/counter.
+  externalOrderId String?     @map("external_order_id")
   status          OrderStatus @default(DRAFT)
   orderDate       DateTime    @map("order_date") @db.Date
   orderType       OrderType   @map("order_type")
@@ -5570,6 +5708,7 @@ model Order {
   @@index([appointmentId])
   @@index([paymentStatus])
   @@index([billId])
+  @@index([branchId, externalOrderId])
   @@index([deletedAt])
   @@map("orders")
 }

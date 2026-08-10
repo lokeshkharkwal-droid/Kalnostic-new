@@ -23,6 +23,7 @@ body:json {
     "city": "Mysuru",
     "bloodGroup": "A_POS",
     "patientCategory": "VIP",
+    "ptCategoryId": "{{ptCategoryId}}",
     "maritalStatus": "MARRIED",
     "status": "CREATED",
     "isActive": false,
@@ -34,8 +35,9 @@ docs {
   Update a patient's details (scoped to the caller's tenant). Every field is
   optional — send only what changes; same field rules as **Create Patient**.
   This includes `status` (`DRAFT`/`CREATED`) — e.g. promote a `DRAFT` patient to
-  `CREATED`. Medical-history records are managed via their own nested endpoints,
-  NOT here.
+  `CREATED`, and `ptCategoryId` (a Registration Settings PT Category, validated
+  against the active branch; `null` clears it). Medical-history records are
+  managed via their own nested endpoints, NOT here.
   
   `tenantId`/`branchId` are never accepted. A duplicate active `mobile` in the
   tenant → 409 `PATIENT_MOBILE_CONFLICT`. 404 `PATIENT_NOT_FOUND` if

@@ -1,0 +1,36 @@
+meta {
+  name: PT Category Options
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/pt-categories/options?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: Corp
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns {id,name} options", function () {
+    expect(res.getBody().data).to.be.an("array");
+  });
+}
+
+docs {
+  Paginated `{ id, name }` options for the active branch — the Create-Order PT
+  Category dropdown feed. Returns only **active** categories. Supports optional
+  case-insensitive `search` on `categoryName`.
+}

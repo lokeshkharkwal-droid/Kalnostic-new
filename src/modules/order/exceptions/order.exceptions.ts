@@ -365,3 +365,97 @@ export class QuotationDuplicationNotAllowedException extends KaltrosException {
     );
   }
 }
+
+/**
+ * 422 — the patient has outstanding previous dues that must be cleared before a
+ * new order can be created (the branch's `Allow Order Without Clearing Previous
+ * Dues` is off and the amount cleared on this order is below the required
+ * minimum). `required` is `min(outstanding, MinimumPreviousDuesToClear)`.
+ */
+export class PreviousDuesNotClearedException extends KaltrosException {
+  constructor(outstanding: number, required: number, cleared: number) {
+    super(
+      'PREVIOUS_DUES_NOT_CLEARED',
+      `The patient has outstanding previous dues. Clear at least ${required} before creating a new order`,
+      { outstanding, required, cleared },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — the amount being cleared toward previous dues exceeds the patient's
+ * actual outstanding balance (you can't clear more dues than are owed).
+ */
+export class PreviousDuesOverpaymentException extends KaltrosException {
+  constructor(outstanding: number, cleared: number) {
+    super(
+      'PREVIOUS_DUES_OVERPAYMENT',
+      `The entered amount cannot exceed the patient's total outstanding dues (${outstanding})`,
+      { outstanding, cleared },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — the branch does not allow partial billing, so the full net amount must
+ * be collected before the order can be completed.
+ */
+export class FullPaymentRequiredException extends KaltrosException {
+  constructor(netAmount: number, paidAmount: number) {
+    super(
+      'FULL_PAYMENT_REQUIRED',
+      'Partial billing is disabled for this branch — collect the full net amount before completing the order',
+      { netAmount, paidAmount },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — partial billing is allowed but the amount paid is below the branch's
+ * configured minimum percentage of the net amount required to proceed.
+ */
+export class PartialPaymentBelowMinimumException extends KaltrosException {
+  constructor(
+    netAmount: number,
+    paidAmount: number,
+    minimumPercent: number,
+    minimumRequired: number,
+  ) {
+    super(
+      'PARTIAL_PAYMENT_BELOW_MINIMUM',
+      `At least ${minimumPercent}% of the net amount (${minimumRequired}) must be collected before the order can be completed`,
+      { netAmount, paidAmount, minimumPercent, minimumRequired },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — the branch's external order/quote id format is NONE (manual entry) but
+ * no `externalOrderId` was supplied for a finalized order/quotation.
+ */
+export class ExternalOrderIdRequiredException extends KaltrosException {
+  constructor(isQuote: boolean) {
+    super(
+      'EXTERNAL_ORDER_ID_REQUIRED',
+      isQuote ? 'A Quote ID is required' : 'An Order ID is required',
+      { isQuote },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/** 409 — another active order in this branch already uses this external id. */
+export class DuplicateExternalOrderIdException extends KaltrosException {
+  constructor(externalOrderId: string) {
+    super(
+      'DUPLICATE_EXTERNAL_ORDER_ID',
+      'This ID is already in use in this branch',
+      { externalOrderId },
+      HttpStatus.CONFLICT,
+    );
+  }
+}

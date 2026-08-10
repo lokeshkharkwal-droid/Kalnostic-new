@@ -1,0 +1,49 @@
+meta {
+  name: 08 Preview External Id
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/registration-settings/external-id/preview?purpose=ORDER
+  body: none
+  auth: bearer
+}
+
+params:query {
+  purpose: ORDER
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the configured format + preview value", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("format");
+    expect(d).to.have.property("value");
+  });
+}
+
+docs {
+  Peek the next external **Order** or **Quote** id the active branch would
+  generate from its configured `ExternalIdFormat` (Registration Settings →
+  Order ID Configuration / Quotation). Does NOT bump the counter — the create
+  form uses it to show a disabled preview before submit.
+
+  Query param:
+  - `purpose` ✱ — `ORDER` | `QUOTATION`.
+
+  Response `data`:
+  - `format` — the branch's configured `ExternalIdFormat` for that purpose.
+  - `value` — the formatted next id (full 4-digit year, 4-digit sequence;
+    `BRANCH_*` variants prefixed with the branch `shortName`), or `null` when
+    the format is `NONE` (the operator enters the id manually on the order/quote
+    form, where it is required and unique per branch).
+
+  Tenant + active branch come from the JWT/active profile.
+}

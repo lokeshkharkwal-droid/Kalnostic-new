@@ -5,6 +5,7 @@ import { RegistrationSettingsController } from './registration-settings.controll
 import { RegistrationSettingsService } from './registration-settings.service';
 import { RegistrationIdSequenceController } from './registration-id-sequence.controller';
 import { RegistrationIdSequenceService } from './registration-id-sequence.service';
+import { ExternalIdService } from './external-id.service';
 
 @Module({
   imports: [PrismaModule, BranchModule],
@@ -12,7 +13,15 @@ import { RegistrationIdSequenceService } from './registration-id-sequence.servic
     RegistrationSettingsController,
     RegistrationIdSequenceController,
   ],
-  providers: [RegistrationSettingsService, RegistrationIdSequenceService],
-  exports: [RegistrationSettingsService, RegistrationIdSequenceService],
+  providers: [
+    RegistrationSettingsService,
+    RegistrationIdSequenceService,
+    ExternalIdService,
+  ],
+  exports: [
+    RegistrationSettingsService,
+    RegistrationIdSequenceService,
+    ExternalIdService,
+  ],
 })
 export class RegistrationSettingsModule {}
