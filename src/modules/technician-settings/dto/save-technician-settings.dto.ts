@@ -59,4 +59,12 @@ export class SaveTechnicianSettingsDto {
   @IsOptional()
   @IsIn(SIGNATORY_BASES)
   signatoryBasis?: (typeof SIGNATORY_BASES)[number];
+
+  @IsOptional()
+  @IsBoolean()
+  isUsefulForEditable?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isInterpretationEditable?: boolean;
 }
