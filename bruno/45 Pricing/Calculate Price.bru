@@ -55,7 +55,10 @@ docs {
 
   - `totalAmount` = sum of the selected branch lab tests' + panels' list prices
     (`priceMsrp`). Unknown/deleted/other-branch ids are simply not summed.
-  - `orderDiscount` is echoed from the body, clamped to `≤ totalAmount`.
+  - `orderDiscount` is echoed from the body, clamped to `≤ totalAmount`. A
+    fractional value (e.g. from percentage math on the client) is accepted and
+    **rounded to a whole minor unit**, matching how the discount is stored when
+    the order is created.
   - `payableAmount` = `totalAmount - orderDiscount + sampleCollectionCharges + visitingCharges`.
 
   Tenant + active branch come from the JWT (never the body). Drives the form's
