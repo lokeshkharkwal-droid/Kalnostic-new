@@ -5542,6 +5542,15 @@ enum PaymentMode {
   BANK_TRANSFER
 }
 
+/// Discriminates a payment-ledger entry: an inbound PAYMENT (money collected)
+/// or an outbound REFUND (money returned to the patient). REFUND rows carry the
+/// returned amount in `refundAmount` (with `paidAmount = 0`) so the existing
+/// paid-amount sums and the overpayment guard stay unaffected.
+enum PaymentEntryType {
+  PAYMENT
+  REFUND
+}
+
 /// B2B client billing type on an order.
 enum B2bClientType {
   CASH
@@ -5652,6 +5661,11 @@ model Order {
   // so the orders/appointments lists can filter + paginate by payment status
   // server-side (a summed comparison Prisma can't express in a `where`).
   paymentStatus PaymentStatus @default(NOT_PAID) @map("payment_status")
+
+  // Fee (minor units) retained by the lab when the order is cancelled (0 = none).
+  // Deducted from the order's effective paid amount; caps the refundable amount
+  // on a cancel-with-refund (max refundable = paid − cancellationCharge).
+  cancellationCharge Int @default(0) @map("cancellation_charge")
 
   // Quotation lifecycle (only meaningful when status = QUOTE). EXPIRED is also
   // derived at query time from quotationValidTill.
@@ -6600,6 +6614,15 @@ model PaymentDetails {
   paymentDate            DateTime?   @map("payment_date")
   reference              String?     @map("reference")
   notes                  String?
+
+  /// Ledger entry kind. PAYMENT (default) = money collected (`paidAmount`).
+  /// REFUND = money returned to the patient (`refundAmount`, `paidAmount` stays 0).
+  entryType              PaymentEntryType @default(PAYMENT) @map("entry_type")
+  /// For REFUND rows: amount returned to the patient (minor units). 0 on PAYMENT rows.
+  refundAmount           Int              @default(0) @map("refund_amount")
+  /// For REFUND rows created via a standalone "Refund Without Cancellation":
+  /// fee retained by the lab out of the refund (minor units). 0 otherwise.
+  refundCharge           Int              @default(0) @map("refund_charge")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")

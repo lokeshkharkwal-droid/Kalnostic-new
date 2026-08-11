@@ -16,6 +16,27 @@ export function derivePaymentStatus(net: number, paid: number): PaymentStatus {
 }
 
 /**
+ * The order's **effective paid** amount (minor units) — the money the lab has
+ * legitimately retained after any cancellation charge and refunds:
+ * `paidSum − cancellationCharge − refundSum − refundChargeSum`. Floored at 0.
+ * This is the value the billing list shows as "Paid" and the base
+ * {@link derivePaymentStatus} runs against so a cancelled/refunded order's
+ * status reflects reality.
+ * @param p summed `paidAmount` across PAYMENT rows
+ * @param cancellationCharge the order's retained cancellation fee
+ * @param refundSum summed `refundAmount` across REFUND rows (returned to patient)
+ * @param refundChargeSum summed `refundCharge` across REFUND rows (retained fee)
+ */
+export function computeEffectivePaid(
+  p: number,
+  cancellationCharge: number,
+  refundSum: number,
+  refundChargeSum: number,
+): number {
+  return Math.max(0, p - cancellationCharge - refundSum - refundChargeSum);
+}
+
+/**
  * Prisma `include` for a fully-composed order read: patient ref, the referral
  * refs (referral doctor / panel and internal / external referral records),
  * catalogue items (active only, with their resolved test/panel — `direct` items
@@ -193,6 +214,9 @@ export const ORDER_LIST_INCLUDE = {
       orderDiscount: true,
       netAmount: true,
       paidAmount: true,
+      entryType: true,
+      refundAmount: true,
+      refundCharge: true,
     },
   },
 } satisfies Prisma.OrderInclude;
@@ -212,8 +236,16 @@ export type OrderListRow = Prisma.OrderGetPayload<{
   grossAmount: number;
   discountAmount: number;
   netAmount: number;
-  /** Sum of `paidAmount` across the active payment ledger. */
+  /**
+   * Gross sum of `paidAmount` across the active payment ledger (money collected;
+   * unaffected by cancellation charges/refunds — those are reported separately so
+   * every existing consumer keeps its meaning).
+   */
   paidAmount: number;
+  /** Sum of `refundAmount` across REFUND rows — money returned to the patient. */
+  refundedAmount: number;
+  /** Sum of `refundCharge` across REFUND rows — fee retained on standalone refunds. */
+  refundChargeTotal: number;
   effectiveQuotationStatus: QuotationStatus | null;
   /**
    * Runtime-computed quotation expiry (Quotations screen only): the order date
