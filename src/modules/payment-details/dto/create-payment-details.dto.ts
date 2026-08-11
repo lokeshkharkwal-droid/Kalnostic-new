@@ -4,12 +4,15 @@ import {
   IsDateString,
   IsEnum,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
   MaxLength,
   Min,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { roundMinorUnits } from '../../../common/utils';
 
 /**
  * Create a payment record against an order. `orderId` is validated to belong to
@@ -26,10 +29,19 @@ export class CreatePaymentDetailsDto {
   @Min(0)
   totalAmount?: number;
 
+  /** Order-level discount in minor units; a float is rounded to a whole minor unit. */
   @IsOptional()
-  @IsInt()
+  @Transform(roundMinorUnits)
+  @IsNumber()
   @Min(0)
   orderDiscount?: number;
+
+  /** Total discount applied to the order (item-level + order-level) in minor units; a float is rounded to a whole minor unit. */
+  @IsOptional()
+  @Transform(roundMinorUnits)
+  @IsNumber()
+  @Min(0)
+  netDiscount?: number;
 
   @IsOptional()
   @IsInt()

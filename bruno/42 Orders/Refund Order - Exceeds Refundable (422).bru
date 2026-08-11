@@ -1,0 +1,39 @@
+meta {
+  name: Refund Order - Exceeds Refundable (422)
+  type: http
+  seq: 18
+}
+
+post {
+  url: {{baseUrl}}/orders/{{orderId}}/refund
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "amount": 99999999,
+    "paymentMode": "CASH"
+  }
+}
+
+tests {
+  test("422 Unprocessable Entity", function () {
+    expect(res.getStatus()).to.equal(422);
+  });
+  test("error code is REFUND_EXCEEDS_REFUNDABLE or NOTHING_TO_REFUND", function () {
+    expect(["REFUND_EXCEEDS_REFUNDABLE", "NOTHING_TO_REFUND"]).to.include(
+      res.getBody().error.code,
+    );
+  });
+}
+
+docs {
+  Attempts to refund far more than the order's refundable balance. The server
+  rejects it with 422 `REFUND_EXCEEDS_REFUNDABLE` (or `NOTHING_TO_REFUND` when the
+  order has no refundable balance left), proving the max-refundable guard.
+}

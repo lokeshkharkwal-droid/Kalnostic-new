@@ -2,7 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { OrderStatus, PaymentDetails, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
-import { derivePaymentStatus } from '../order/entities/order.entity';
+import {
+  derivePaymentStatus,
+  computeEffectivePaid,
+} from '../order/entities/order.entity';
 import { CreatePaymentDetailsDto } from './dto/create-payment-details.dto';
 import { UpdatePaymentDetailsDto } from './dto/update-payment-details.dto';
 import { ListPaymentDetailsDto } from './dto/list-payment-details.dto';
@@ -159,9 +162,10 @@ export class PaymentDetailsService {
 
   /**
    * Recompute and persist the parent order's derived `paymentStatus` from its
-   * active payment ledger (summed `netAmount`/`paidAmount`). Called inside every
-   * payment write so the stored status the orders/appointments lists filter by
-   * stays in sync.
+   * active payment ledger. Derived off the order's **effective** paid amount
+   * (`paid − cancellationCharge − refunds − refund charges`) so a cancelled or
+   * refunded order's status reflects reality. Called inside every payment write so
+   * the stored status the orders/appointments lists filter by stays in sync.
    * @param tx active tenant-scoped transaction client
    * @param tenantId tenant scope
    * @param orderId the order whose ledger changed
@@ -171,15 +175,31 @@ export class PaymentDetailsService {
     tenantId: string,
     orderId: string,
   ): Promise<void> {
-    const agg = await tx.paymentDetails.aggregate({
-      where: { orderId, tenantId, deletedAt: null },
-      _sum: { netAmount: true, paidAmount: true },
-    });
+    const [agg, order] = await Promise.all([
+      tx.paymentDetails.aggregate({
+        where: { orderId, tenantId, deletedAt: null },
+        _sum: {
+          netAmount: true,
+          paidAmount: true,
+          refundAmount: true,
+          refundCharge: true,
+        },
+      }),
+      tx.order.findFirst({
+        where: { id: orderId, tenantId },
+        select: { cancellationCharge: true },
+      }),
+    ]);
     const net = agg._sum.netAmount ?? 0;
-    const paid = agg._sum.paidAmount ?? 0;
+    const effectivePaid = computeEffectivePaid(
+      agg._sum.paidAmount ?? 0,
+      order?.cancellationCharge ?? 0,
+      agg._sum.refundAmount ?? 0,
+      agg._sum.refundCharge ?? 0,
+    );
     await tx.order.update({
       where: { id: orderId },
-      data: { paymentStatus: derivePaymentStatus(net, paid) },
+      data: { paymentStatus: derivePaymentStatus(net, effectivePaid) },
     });
   }
 }

@@ -1,0 +1,57 @@
+meta {
+  name: Refund Order
+  type: http
+  seq: 17
+}
+
+post {
+  url: {{baseUrl}}/orders/{{orderId}}/refund
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "amount": 5000,
+    "paymentMode": "CASH"
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Refund part of an order's paid amount **without** cancelling it (the standalone
+  "Refund Without Cancellation" action). Writes a REFUND row to the payment ledger
+  and recomputes `paymentStatus` off the new effective paid amount. Works on active
+  **and** already-cancelled orders (use it to top up a partial refund made at
+  cancellation time).
+
+  Body:
+  - `amount` (minor units, required, ≥1) — returned to the patient.
+  - `refundCharge` (minor units, default 0) — fee the lab retains out of the refund.
+  - `paymentMode` (required) — `CASH | CREDIT | UPI | CARD | WALLET | BANK_TRANSFER`.
+  - `reference?`, `paymentDate?` (ISO) — optional.
+
+  `amount + refundCharge` is capped at the order's current **refundable balance**
+  (`paid − cancellationCharge − refunds already made`):
+  - exceeds it ⇒ 422 `REFUND_EXCEEDS_REFUNDABLE`
+  - nothing left to refund ⇒ 422 `NOTHING_TO_REFUND`
+
+  Gated by the branch's Registration Settings → Cancellation & Refund:
+  - `AllowRefund` off ⇒ 422 `REFUND_NOT_ALLOWED`.
+  - `RefundChargesApplicable` off ⇒ any `refundCharge` in the body is ignored
+    (forced to 0); on ⇒ used, or defaults to the configured `RefundChargesAmount`.
+  - `AllowPartialRefund` off ⇒ `amount` must equal the full refundable-to-patient
+    (`refundable − refundCharge`), else 422 `PARTIAL_REFUND_NOT_ALLOWED`.
+
+  The refunded total surfaces in the billing list's `refundedAmount`
+  ("Refund Provided" column).
+}

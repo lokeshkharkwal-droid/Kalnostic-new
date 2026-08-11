@@ -245,6 +245,99 @@ export class OrderAlreadyCancelledException extends KaltrosException {
   }
 }
 
+/**
+ * 422 — the cancellation charge exceeds the amount actually paid on the order
+ * (you can't retain more than was collected).
+ */
+export class CancellationChargeExceedsPaidException extends KaltrosException {
+  constructor(paidAmount: number, cancellationCharge: number) {
+    super(
+      'CANCELLATION_CHARGE_EXCEEDS_PAID',
+      'The cancellation charge cannot exceed the amount paid on this order',
+      { paidAmount, cancellationCharge },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — the requested refund (plus any refund charge) exceeds the maximum
+ * refundable amount for the order (paid − cancellation charge − refunds already
+ * made). Guards both cancel-with-refund and standalone refunds.
+ */
+export class RefundExceedsRefundableException extends KaltrosException {
+  constructor(refundable: number, attempted: number) {
+    super(
+      'REFUND_EXCEEDS_REFUNDABLE',
+      'The refund amount exceeds the refundable balance for this order',
+      { refundable, attempted },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — a refund was requested but the order has nothing left to refund (its
+ * effective paid amount is already 0).
+ */
+export class NothingToRefundException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'NOTHING_TO_REFUND',
+      'This order has no refundable balance',
+      { id },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — order cancellation is disabled for the branch (Registration Settings →
+ * Cancellation & Refund → Allow Order Cancellation is off).
+ */
+export class OrderCancellationNotAllowedException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'ORDER_CANCELLATION_NOT_ALLOWED',
+      'Order cancellation is disabled for this branch',
+      { id },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — refunds are disabled for the branch (Registration Settings →
+ * Cancellation & Refund → Allow Refund is off). Blocks both standalone refunds
+ * and the refund leg of a cancel-with-refund.
+ */
+export class RefundNotAllowedException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'REFUND_NOT_ALLOWED',
+      'Refunds are disabled for this branch',
+      { id },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — partial refunds are disabled for the branch (Registration Settings →
+ * Cancellation & Refund → Allow Partial Refund is off), so the full refundable
+ * amount must be refunded. `requiredAmount` is the exact amount expected.
+ */
+export class PartialRefundNotAllowedException extends KaltrosException {
+  constructor(requiredAmount: number, attempted: number) {
+    super(
+      'PARTIAL_REFUND_NOT_ALLOWED',
+      'Partial refunds are disabled for this branch — refund the full refundable amount',
+      { requiredAmount, attempted },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
 /** 404 — the order item does not exist on this order within the tenant. */
 export class OrderItemNotFoundException extends KaltrosException {
   constructor(orderId: string, itemId: string) {

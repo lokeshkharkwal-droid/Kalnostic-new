@@ -8,6 +8,7 @@ import {
   ExternalIdPurpose,
   Order,
   OrderStatus,
+  PaymentEntryType,
   PaymentMode,
   Prisma,
   QuotationStatus,
@@ -34,6 +35,8 @@ import type { OrderNoteCategoryValue } from './dto/create-order-note.dto';
 import { ListOrderNotesDto } from './dto/list-order-notes.dto';
 import { OrderItemDto } from './dto/order-item.dto';
 import { OrderPaymentDto } from './dto/order-payment.dto';
+import { CancelOrderDto } from './dto/cancel-order.dto';
+import { RefundOrderDto } from './dto/refund-order.dto';
 import { BillingDetailsDto } from './dto/billing-details.dto';
 import { OrderDiagnosticsDto } from './dto/order-diagnostics.dto';
 import { OrderOpdDto } from './dto/order-opd.dto';
@@ -44,6 +47,7 @@ import {
   OrderListRow,
   OrderWithRelations,
   derivePaymentStatus,
+  computeEffectivePaid,
 } from './entities/order.entity';
 import {
   AppointmentSectionRequiredException,
@@ -61,6 +65,12 @@ import {
   OrderDiagnosticPanelNotFoundException,
   OrderExternalReferralNotFoundException,
   OrderAlreadyCancelledException,
+  CancellationChargeExceedsPaidException,
+  RefundExceedsRefundableException,
+  NothingToRefundException,
+  OrderCancellationNotAllowedException,
+  RefundNotAllowedException,
+  PartialRefundNotAllowedException,
   OrderInternalReferralNotFoundException,
   OrderNotFoundException,
   OrderOutsourceCenterNotEligibleException,
@@ -1917,6 +1927,11 @@ export class OrderService {
       );
       const netAmount = r.payments.reduce((s, p) => s + p.netAmount, 0);
       const paidAmount = r.payments.reduce((s, p) => s + p.paidAmount, 0);
+      const refundedAmount = r.payments.reduce((s, p) => s + p.refundAmount, 0);
+      const refundChargeTotal = r.payments.reduce(
+        (s, p) => s + p.refundCharge,
+        0,
+      );
       const count = counts.get(r.id);
       // Runtime expiry (Quotations screen only): anchor on the order date, or
       // the quote's createdAt when no order date is set. `computedQuotationExpiryAt`
@@ -1946,6 +1961,8 @@ export class OrderService {
         discountAmount,
         netAmount,
         paidAmount,
+        refundedAmount,
+        refundChargeTotal,
         effectiveQuotationStatus,
         computedQuotationExpiryAt,
       };
@@ -2522,25 +2539,58 @@ export class OrderService {
   }
 
   /**
-   * Cancel an order — set `status = CANCELLED` (terminal). Allowed regardless of
-   * payments already collected; no refund handling this phase. The order (and its
-   * payment ledger) are preserved, unlike `remove`.
+   * Cancel an order — set `status = CANCELLED` (terminal). Optionally retains a
+   * `cancellationCharge` (deducted from the order's effective paid amount) and,
+   * when `dto.refund` is present, refunds part of the paid amount back to the
+   * patient (a REFUND ledger row). The refund is capped at the refundable balance
+   * (`paid − cancellationCharge − refunds already made`). The order and its full
+   * payment ledger are preserved (unlike `remove`); `paymentStatus` is recomputed
+   * off the new effective paid amount.
    * @param id order id
    * @param tenantId tenant scope
    * @param actorId acting person id (recorded as `updatedBy`), may be null
+   * @param dto cancellation charge + optional refund leg
    * @returns the fully-composed order after cancellation
    * @throws OrderNotFoundException if missing/soft-deleted/other tenant
    * @throws OrderAlreadyCancelledException if already cancelled
+   * @throws CancellationChargeExceedsPaidException if the charge exceeds paid
+   * @throws RefundExceedsRefundableException if the refund exceeds the refundable balance
    */
   async cancel(
     id: string,
     tenantId: string,
     actorId: string | null,
+    dto: CancelOrderDto,
   ): Promise<OrderWithRelations> {
     const existing = await this.findById(id, tenantId);
     if (existing.status === OrderStatus.CANCELLED) {
       throw new OrderAlreadyCancelledException(id);
     }
+    // Branch Registration Settings gate the whole flow (UI + API). Null when the
+    // order has no branch — then we stay permissive and trust the request body.
+    const settings = existing.branchId
+      ? await this.registrationSettingsService.getForBranch(
+          tenantId,
+          existing.branchId,
+        )
+      : null;
+    if (settings && !settings.CancellationAndRefund_AllowOrderCancellation) {
+      throw new OrderCancellationNotAllowedException(id);
+    }
+    // Effective cancellation charge: when the setting is off, force 0 (any body
+    // value is ignored); when on, use the supplied value or default to the
+    // configured amount. No settings (no branch) → trust the body as before.
+    const cancellationCharge = settings
+      ? settings.CancellationAndRefund_CancellationChargesApplicable
+        ? Math.round(
+            Number(
+              dto.cancellationCharge ??
+                settings.CancellationAndRefund_CancellationChargesAmount ??
+                0,
+            ),
+          )
+        : 0
+      : (dto.cancellationCharge ?? 0);
     // Booking context for releasing the phlebotomist slot + cancelling the linked
     // appointment lifecycle record.
     const booking = await this.prisma.order.findFirst({
@@ -2572,10 +2622,96 @@ export class OrderService {
             booking?.diagnostics,
           );
     await this.prisma.withTenant(tenantId, async (tx) => {
+      // Ledger sums drive the charge/refund guards + the paymentStatus recompute.
+      const agg = await tx.paymentDetails.aggregate({
+        where: { orderId: id, tenantId, deletedAt: null },
+        _sum: {
+          netAmount: true,
+          paidAmount: true,
+          refundAmount: true,
+          refundCharge: true,
+        },
+      });
+      const netSum = agg._sum.netAmount ?? 0;
+      const paidSum = agg._sum.paidAmount ?? 0;
+      const refundSum = agg._sum.refundAmount ?? 0;
+      const refundChargeSum = agg._sum.refundCharge ?? 0;
+
+      if (cancellationCharge > paidSum) {
+        throw new CancellationChargeExceedsPaidException(
+          paidSum,
+          cancellationCharge,
+        );
+      }
+
       await tx.order.update({
         where: { id },
-        data: { status: OrderStatus.CANCELLED, updatedBy: actorId },
+        data: {
+          status: OrderStatus.CANCELLED,
+          cancellationCharge,
+          updatedBy: actorId,
+        },
       });
+
+      // Optional refund leg: bounded by the post-charge refundable balance.
+      let newRefundSum = refundSum;
+      if (dto.refund) {
+        if (settings && !settings.CancellationAndRefund_AllowRefund) {
+          throw new RefundNotAllowedException(id);
+        }
+        const refundable = computeEffectivePaid(
+          paidSum,
+          cancellationCharge,
+          refundSum,
+          refundChargeSum,
+        );
+        // Partial refunds off → the full refundable amount must be refunded.
+        if (
+          settings &&
+          !settings.CancellationAndRefund_AllowPartialRefund &&
+          dto.refund.amount !== refundable
+        ) {
+          throw new PartialRefundNotAllowedException(
+            refundable,
+            dto.refund.amount,
+          );
+        }
+        if (dto.refund.amount > refundable) {
+          throw new RefundExceedsRefundableException(
+            refundable,
+            dto.refund.amount,
+          );
+        }
+        await tx.paymentDetails.create({
+          data: {
+            tenantId,
+            branchId: existing.branchId,
+            orderId: id,
+            entryType: PaymentEntryType.REFUND,
+            refundAmount: dto.refund.amount,
+            paidAmount: 0,
+            paymentMode: dto.refund.paymentMode,
+            reference: dto.refund.reference ?? null,
+            paymentDate: dto.refund.paymentDate
+              ? new Date(dto.refund.paymentDate)
+              : new Date(),
+          },
+        });
+        newRefundSum += dto.refund.amount;
+      }
+
+      // Recompute paymentStatus off the effective (retained) paid amount.
+      const effectivePaid = computeEffectivePaid(
+        paidSum,
+        cancellationCharge,
+        newRefundSum,
+        refundChargeSum,
+      );
+      await tx.order.update({
+        where: { id },
+        data: { paymentStatus: derivePaymentStatus(netSum, effectivePaid) },
+      });
+
       // Cancel the linked appointment too (+ history) so a cancelled order no
       // longer occupies a phlebotomist slot.
       if (
@@ -2607,6 +2743,129 @@ export class OrderService {
           reservation.at,
         );
       }
+    });
+    return this.findById(id, tenantId);
+  }
+
+  /**
+   * Refund part of an order's paid amount **without** cancelling it (the standalone
+   * "Refund Without Cancellation" action). Writes a REFUND ledger row and recomputes
+   * `paymentStatus` off the new effective paid amount. Supports partial/multiple
+   * refunds and also tops up refunds on an already-cancelled order. The refund plus
+   * any `refundCharge` is capped at the order's current refundable balance
+   * (`paid − cancellationCharge − refunds already made`).
+   * @param id order id
+   * @param tenantId tenant scope
+   * @param actorId acting person id (recorded as `updatedBy`), may be null
+   * @param dto refund amount + mode (+ optional retained refund charge)
+   * @returns the fully-composed order after the refund
+   * @throws OrderNotFoundException if missing/soft-deleted/other tenant
+   * @throws NothingToRefundException if the order has no refundable balance
+   * @throws RefundExceedsRefundableException if the refund exceeds the refundable balance
+   */
+  async refund(
+    id: string,
+    tenantId: string,
+    actorId: string | null,
+    dto: RefundOrderDto,
+  ): Promise<OrderWithRelations> {
+    const existing = await this.findById(id, tenantId);
+    // Branch settings gate the flow. Null when the order has no branch → permissive.
+    const settings = existing.branchId
+      ? await this.registrationSettingsService.getForBranch(
+          tenantId,
+          existing.branchId,
+        )
+      : null;
+    if (settings && !settings.CancellationAndRefund_AllowRefund) {
+      throw new RefundNotAllowedException(id);
+    }
+    // Effective refund charge: off → force 0; on → supplied value or configured
+    // default. No settings (no branch) → trust the body as before.
+    const refundCharge = settings
+      ? settings.CancellationAndRefund_RefundChargesApplicable
+        ? Math.round(
+            Number(
+              dto.refundCharge ??
+                settings.CancellationAndRefund_RefundChargesAmount ??
+                0,
+            ),
+          )
+        : 0
+      : (dto.refundCharge ?? 0);
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      const agg = await tx.paymentDetails.aggregate({
+        where: { orderId: id, tenantId, deletedAt: null },
+        _sum: {
+          netAmount: true,
+          paidAmount: true,
+          refundAmount: true,
+          refundCharge: true,
+        },
+      });
+      const netSum = agg._sum.netAmount ?? 0;
+      const paidSum = agg._sum.paidAmount ?? 0;
+      const refundSum = agg._sum.refundAmount ?? 0;
+      const refundChargeSum = agg._sum.refundCharge ?? 0;
+
+      // Refundable = current effective paid (respects any cancellation charge and
+      // prior refunds).
+      const refundable = computeEffectivePaid(
+        paidSum,
+        existing.cancellationCharge,
+        refundSum,
+        refundChargeSum,
+      );
+      if (refundable <= 0) {
+        throw new NothingToRefundException(id);
+      }
+      // Partial refunds off → the full refundable-to-patient amount
+      // (refundable − refund charge) must be refunded in one go.
+      if (
+        settings &&
+        !settings.CancellationAndRefund_AllowPartialRefund &&
+        dto.amount !== refundable - refundCharge
+      ) {
+        throw new PartialRefundNotAllowedException(
+          refundable - refundCharge,
+          dto.amount,
+        );
+      }
+      if (dto.amount + refundCharge > refundable) {
+        throw new RefundExceedsRefundableException(
+          refundable,
+          dto.amount + refundCharge,
+        );
+      }
+
+      await tx.paymentDetails.create({
+        data: {
+          tenantId,
+          branchId: existing.branchId,
+          orderId: id,
+          entryType: PaymentEntryType.REFUND,
+          refundAmount: dto.amount,
+          refundCharge,
+          paidAmount: 0,
+          paymentMode: dto.paymentMode,
+          reference: dto.reference ?? null,
+          paymentDate: dto.paymentDate ? new Date(dto.paymentDate) : new Date(),
+        },
+      });
+
+      const effectivePaid = computeEffectivePaid(
+        paidSum,
+        existing.cancellationCharge,
+        refundSum + dto.amount,
+        refundChargeSum + refundCharge,
+      );
+      await tx.order.update({
+        where: { id },
+        data: {
+          paymentStatus: derivePaymentStatus(netSum, effectivePaid),
+          updatedBy: actorId,
+        },
+      });
     });
     return this.findById(id, tenantId);
   }

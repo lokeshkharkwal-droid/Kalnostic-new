@@ -4,11 +4,14 @@ import {
   IsDateString,
   IsEnum,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   MaxLength,
   Min,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { roundMinorUnits } from '../../../common/utils';
 
 /**
  * Partial update for a payment record. All fields optional (explicit, per
@@ -20,10 +23,19 @@ export class UpdatePaymentDetailsDto {
   @Min(0)
   totalAmount?: number;
 
+  /** Order-level discount in minor units; a float is rounded to a whole minor unit. */
   @IsOptional()
-  @IsInt()
+  @Transform(roundMinorUnits)
+  @IsNumber()
   @Min(0)
   orderDiscount?: number;
+
+  /** Total discount applied to the order (item-level + order-level) in minor units; a float is rounded to a whole minor unit. */
+  @IsOptional()
+  @Transform(roundMinorUnits)
+  @IsNumber()
+  @Min(0)
+  netDiscount?: number;
 
   @IsOptional()
   @IsInt()
