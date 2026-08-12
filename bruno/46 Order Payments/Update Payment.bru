@@ -36,4 +36,9 @@ tests {
 docs {
   Update a payment record (scoped to the caller's tenant). All fields optional.
   `orderId` is not editable after creation.
+
+  Guarded like Create Payment: 403 `PAYMENT_COLLECTION_BY_OTHER_USER_NOT_ALLOWED`
+  when the caller is not the parent order's creator and the branch setting
+  `BillingMenu_AllowCollectionOfAmountByOtherUser` is off (acting user = JWT
+  `person_id`; legacy orders with no `createdBy` stay permissive).
 }

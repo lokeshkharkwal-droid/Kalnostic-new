@@ -48,6 +48,11 @@ docs {
     explicit `templateId`.
   - 409 `AMBIGUOUS_ORDER_PRINT_TEMPLATE` — several active templates of `type` and
     no `templateId` supplied.
+  - 409 `BILL_COPY_PRINT_NOT_ALLOWED_FOR_UNPAID` — `type: "bill_print"` while the
+    branch Registration Setting
+    `BillingMenu_AllowBillCopyPrintForPaidBillingsOnly` is on and the order is not
+    fully paid (net − effective-paid > 0). Only `bill_print` is gated; `trf_print`,
+    `order_print`, and `lab_quotation_print` are always printable.
 
   In Bruno, use "Save Response → Save to file" to inspect the PDF.
 }

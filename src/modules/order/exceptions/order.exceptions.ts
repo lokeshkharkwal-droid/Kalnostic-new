@@ -669,3 +669,51 @@ export class PartialBillingNotAllowedForDiscountedOrderException extends Kaltros
     );
   }
 }
+
+/**
+ * 403 — the current user is not the order's creator and the branch's
+ * `BillingMenu_AllowCancellationByOtherUser` setting is off, so they may not
+ * cancel an order created by another user.
+ */
+export class OrderCancellationByOtherUserNotAllowedException extends KaltrosException {
+  constructor(id: string, createdBy: string, actorId: string | null) {
+    super(
+      'ORDER_CANCELLATION_BY_OTHER_USER_NOT_ALLOWED',
+      'You are not allowed to cancel an order created by another user',
+      { id, createdBy, actorId },
+      HttpStatus.FORBIDDEN,
+    );
+  }
+}
+
+/**
+ * 403 — the current user is not the quotation's creator and the branch's
+ * `BillingMenu_AllowOtherUserToEditQuotation` setting is off, so they may not
+ * edit a quotation created by another user.
+ */
+export class QuotationEditByOtherUserNotAllowedException extends KaltrosException {
+  constructor(id: string, createdBy: string, actorId: string | null) {
+    super(
+      'QUOTATION_EDIT_BY_OTHER_USER_NOT_ALLOWED',
+      'You are not allowed to edit a quotation created by another user',
+      { id, createdBy, actorId },
+      HttpStatus.FORBIDDEN,
+    );
+  }
+}
+
+/**
+ * 409 — a bill copy was requested for an order that is not fully paid, while the
+ * branch's `BillingMenu_AllowBillCopyPrintForPaidBillingsOnly` setting restricts
+ * bill printing to settled orders.
+ */
+export class BillCopyPrintNotAllowedForUnpaidException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'BILL_COPY_PRINT_NOT_ALLOWED_FOR_UNPAID',
+      'A bill copy can only be printed once the order is fully paid',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}

@@ -63,6 +63,12 @@ docs {
   - `AllowPartialRefund` off ⇒ `refund.amount` must equal the full refundable
     (`paid − cancellationCharge`), else 422 `PARTIAL_REFUND_NOT_ALLOWED`.
 
+  Also gated by the branch's Registration Settings → Billing Menu:
+  - `AllowCancellationByOtherUser` off ⇒ a caller who is **not** the order's
+    creator gets 403 `ORDER_CANCELLATION_BY_OTHER_USER_NOT_ALLOWED`. The acting
+    user is the JWT `person_id`; the creator is `Order.createdBy`. Legacy orders
+    with no `createdBy` stay cancellable by anyone.
+
   Cancelling an already-cancelled order returns 409 `ORDER_ALREADY_CANCELLED`.
   Once cancelled, `POST /payments` for the order is rejected with 422
   `PAYMENT_ORDER_CANCELLED` (further refunds still go through `POST /orders/:id/refund`).
