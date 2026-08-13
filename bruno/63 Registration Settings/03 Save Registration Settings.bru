@@ -86,8 +86,10 @@ body:json {
 
     "Appointment_AllowCheckInForPaidAppointmentsOnly": false,
     "Appointment_AllowProgressOfUnpaidAndPartialPaidAppointments": false,
+    "Appointment_AutoIncrementExternalAppointmentIdFormat": "YMD_DAILY",
 
-    "Patients_AllowMergingTwoPatients": false
+    "Patients_AllowMergingTwoPatients": false,
+    "Patients_AutoIncrementExternalPatientIdFormat": "YMD_DAILY"
   }
 }
 
@@ -145,10 +147,21 @@ docs {
     phlebotomist name permissions.
   - `BillingMenu_*` — collection/cancellation by another user, paid-only bill
     copy printing, other-user quotation editing.
-  - `Appointment_*` — check-in for paid appointments only, progress of unpaid/
-    partial-paid appointments. (Appointment *ID* config is separate.)
-  - `Patients_*` — merging two patients. (Patient/UMID *ID* config is
-    separate.)
+  - `Appointment_AllowCheckInForPaidAppointmentsOnly` /
+    `Appointment_AllowProgressOfUnpaidAndPartialPaidAppointments` — **mutually
+    exclusive**: enabling one auto-disables the other (the saved row never has
+    both `true`). "Check-in for paid only" blocks creating an APPOINTMENT-status
+    order whose bill isn't fully paid (`422 APPOINTMENT_PAYMENT_REQUIRED`);
+    "allow progress of unpaid/partial" (or neither) permits it.
+  - `Appointment_AutoIncrementExternalAppointmentIdFormat` — same
+    `ExternalIdFormat` option set, applied to the external **appointment** id
+    (auto id prefixed with a fixed `APT`; `NONE` = no external id). Preview via
+    `.../preview?purpose=APPOINTMENT`.
+  - `Patients_AllowMergingTwoPatients` — merging two patients.
+  - `Patients_AutoIncrementExternalPatientIdFormat` — same `ExternalIdFormat`
+    option set, applied to the patient **UMID** (auto id prefixed with a fixed
+    `PAT`, globally unique; `NONE` = operator types the UMID manually, required).
+    Preview via `.../preview?purpose=PATIENT`.
 
   Validation: `Minimum*Percent` must not exceed its paired `Maximum*Percent`
   (TDS, discount, line-item discount — checked against the merged

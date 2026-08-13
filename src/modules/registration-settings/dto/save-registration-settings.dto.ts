@@ -257,7 +257,7 @@ export class SaveRegistrationSettingsDto {
   @IsBoolean()
   BillingMenu_AllowOtherUserToEditQuotation?: boolean;
 
-  // ── Appointment (non-ID field) ──
+  // ── Appointment ──
   @IsOptional()
   @IsBoolean()
   Appointment_AllowCheckInForPaidAppointmentsOnly?: boolean;
@@ -266,6 +266,14 @@ export class SaveRegistrationSettingsDto {
   @IsBoolean()
   Appointment_AllowProgressOfUnpaidAndPartialPaidAppointments?: boolean;
 
-  // ── Patients / UMID (non-ID field) ──
+  @IsOptional()
+  @IsEnum(ExternalIdFormat)
+  Appointment_AutoIncrementExternalAppointmentIdFormat?: ExternalIdFormat;
+
+  // ── Patients / UMID ──
   @IsOptional() @IsBoolean() Patients_AllowMergingTwoPatients?: boolean;
+
+  @IsOptional()
+  @IsEnum(ExternalIdFormat)
+  Patients_AutoIncrementExternalPatientIdFormat?: ExternalIdFormat;
 }

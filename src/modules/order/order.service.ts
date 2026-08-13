@@ -10,6 +10,7 @@ import {
   OrderStatus,
   PaymentEntryType,
   PaymentMode,
+  PaymentStatus,
   Prisma,
   QuotationStatus,
   RepeatIntervalUnit,
@@ -82,6 +83,7 @@ import {
   NoActiveOrderPrintTemplateException,
   AmbiguousOrderPrintTemplateException,
   NotAQuotationException,
+  SourceQuotationInvalidException,
   QuotationNotExpiredException,
   QuotationDuplicationNotAllowedException,
   PreviousDuesNotClearedException,
@@ -97,12 +99,19 @@ import {
   TdsNotApplicableException,
   TdsOutOfRangeException,
   PartialBillingNotAllowedForDiscountedOrderException,
+  OrderCancellationByOtherUserNotAllowedException,
+  QuotationEditByOtherUserNotAllowedException,
+  BillCopyPrintNotAllowedForUnpaidException,
+  AppointmentPaymentRequiredException,
 } from './exceptions/order.exceptions';
 import type { RegistrationSetting } from '@prisma/client';
 // Reused so an inline order-payment overpayment raises the SAME
-// `PAYMENT_OVERPAYMENT` error the standalone `POST /payments` guard does. This
-// imports an exception class (not a service), so rule #3 is not violated.
-import { PaymentOverpaymentException } from '../payment-details/exceptions/payment-details.exceptions';
+// `PAYMENT_OVERPAYMENT` error the standalone `POST /payments` guard does. These
+// import exception classes (not services), so rule #3 is not violated.
+import {
+  PaymentOverpaymentException,
+  PaymentCollectionByOtherUserNotAllowedException,
+} from '../payment-details/exceptions/payment-details.exceptions';
 
 /**
  * The minimal payment shape the discount/TDS + partial-billing validators read —
@@ -321,6 +330,26 @@ export class OrderService {
       itemPrices,
     });
 
+    // Appointment check-in payment gating (Registration Settings → Appointment).
+    // The two flags are mutually exclusive (enforced on save): "check-in for
+    // paid only" blocks an unpaid/partial appointment; "allow progress of
+    // unpaid/partial" (or neither) permits it. Only bites when creating an
+    // APPOINTMENT-status order at a branch.
+    if (dto.status === OrderStatus.APPOINTMENT && branchId) {
+      const apptSettings =
+        settings ??
+        (await this.registrationSettingsService.getForBranch(
+          tenantId,
+          branchId,
+        ));
+      if (
+        apptSettings.Appointment_AllowCheckInForPaidAppointmentsOnly &&
+        paymentStatus !== PaymentStatus.PAID
+      ) {
+        throw new AppointmentPaymentRequiredException(payNet, payPaid);
+      }
+    }
+
     // Resolve the branch's external Order/Quote id configuration (Registration
     // Settings). A quote (status QUOTE) uses the QUOTATION format + its own
     // counter; everything else uses the ORDER format. When the format is NONE
@@ -444,6 +473,12 @@ export class OrderService {
             quotationValidTill: dto.quotationValidTill
               ? new Date(dto.quotationValidTill)
               : null,
+            // Link back to the source quote when this order is a conversion
+            // (only kept for real conversions — see the CONVERTED flip below).
+            sourceQuotationId:
+              dto.sourceQuotationId && dto.status !== OrderStatus.QUOTE
+                ? dto.sourceQuotationId
+                : null,
             patientId: dto.patientId,
             appointmentAt,
             appointmentType,
@@ -456,6 +491,33 @@ export class OrderService {
             branchLabPanelListId: dto.branchLabPanelListId ?? null,
           },
         });
+        // Quotation → order conversion: when this order was created from a quote
+        // and is a real conversion (any status other than QUOTE), flip the source
+        // quote to CONVERTED in the SAME transaction. Any failure above rolls this
+        // back too, so a failed create never marks a quote converted. The quote
+        // keeps status = QUOTE (so it stays on the Quotations screen) — only its
+        // quotationStatus changes.
+        if (dto.sourceQuotationId && dto.status !== OrderStatus.QUOTE) {
+          const sourceQuote = await tx.order.findFirst({
+            where: {
+              id: dto.sourceQuotationId,
+              tenantId,
+              deletedAt: null,
+              quotationStatus: { not: null },
+            },
+            select: { id: true },
+          });
+          if (!sourceQuote) {
+            throw new SourceQuotationInvalidException(dto.sourceQuotationId);
+          }
+          await tx.order.update({
+            where: { id: sourceQuote.id },
+            data: {
+              quotationStatus: QuotationStatus.CONVERTED,
+              updatedBy: personId,
+            },
+          });
+        }
         // Seed the create-form's single `orderNotes` string as the first entry
         // of the Order Notes history so the Order Overview tab shows it alongside
         // any notes added later (append-only — see OrderNote / createNote).
@@ -1021,8 +1083,10 @@ export class OrderService {
 
     // ── Line-item discounts (also accumulates the items subtotal + line total
     //    used by the order-discount / TDS bases below). ──
-    const minLine = settings.ChargesAndDeductions_MinimumLineItemDiscountPercent;
-    const maxLine = settings.ChargesAndDeductions_MaximumLineItemDiscountPercent;
+    const minLine =
+      settings.ChargesAndDeductions_MinimumLineItemDiscountPercent;
+    const maxLine =
+      settings.ChargesAndDeductions_MaximumLineItemDiscountPercent;
     let itemsGross = 0;
     let lineDiscountTotal = 0;
     for (const item of items) {
@@ -1419,6 +1483,27 @@ export class OrderService {
     templateId?: string,
   ): Promise<Buffer> {
     const order = await this.findById(id, tenantId);
+    // Bill copies may be restricted to fully-paid orders (branch setting). Net −
+    // effective-paid ≤ 0 means the balance is settled. Only guards `bill_print`;
+    // TRF / order slip / quotation are unaffected. No branch → no settings → allow.
+    if (type === 'bill_print' && order.branchId) {
+      const settings = await this.registrationSettingsService.getForBranch(
+        tenantId,
+        order.branchId,
+      );
+      if (settings.BillingMenu_AllowBillCopyPrintForPaidBillingsOnly) {
+        const net = order.payments.reduce((s, p) => s + p.netAmount, 0);
+        const effectivePaid = computeEffectivePaid(
+          order.payments.reduce((s, p) => s + p.paidAmount, 0),
+          order.cancellationCharge,
+          order.payments.reduce((s, p) => s + p.refundAmount, 0),
+          order.payments.reduce((s, p) => s + p.refundCharge, 0),
+        );
+        if (net - effectivePaid > 0) {
+          throw new BillCopyPrintNotAllowedForUnpaidException(id);
+        }
+      }
+    }
     const context = this.buildPrintContext(order, type);
     const resolvedTemplateId =
       templateId ?? (await this.resolvePrintTemplateId(tenantId, type));
@@ -1953,6 +2038,9 @@ export class OrderService {
         quoteAnchor < quotationExpiryCutoff
           ? QuotationStatus.EXPIRED
           : r.quotationStatus;
+      // The order this quote was converted into (most recent), if any — surfaces
+      // the "View Order" link on a CONVERTED quotation row.
+      const converted = r.convertedOrder[0] ?? null;
       return {
         ...r,
         itemCount: count?.total ?? 0,
@@ -1965,6 +2053,9 @@ export class OrderService {
         refundChargeTotal,
         effectiveQuotationStatus,
         computedQuotationExpiryAt,
+        convertedOrderId: converted?.id ?? null,
+        convertedOrderCode:
+          converted?.externalOrderId ?? converted?.orderCode ?? null,
       };
     });
     return { data, total, page, limit };
@@ -2011,6 +2102,7 @@ export class OrderService {
         patientId: true,
         orderCode: true,
         externalOrderId: true,
+        createdBy: true,
         appointmentId: true,
         appointment: { select: { status: true } },
         diagnostics: {
@@ -2025,6 +2117,36 @@ export class OrderService {
     });
     const branchId = existing?.branchId ?? null;
     const effectiveStatus = dto.status ?? existing?.status;
+
+    // Billing-menu permission gates (branch Registration Settings, keyed on the
+    // record's original creator). Loaded once; only consulted when the order has
+    // a branch, a known creator, and the actor differs from that creator.
+    const billingSettings =
+      branchId &&
+      existing?.createdBy &&
+      existing.createdBy !== personId &&
+      (existing.status === OrderStatus.QUOTE ||
+        effectiveStatus === OrderStatus.QUOTE ||
+        dto.payments !== undefined)
+        ? await this.registrationSettingsService.getForBranch(
+            tenantId,
+            branchId,
+          )
+        : null;
+    // Quotation edit by another user (both the stored and the target status may be
+    // QUOTE — either being a quote means quotation-edit rules apply).
+    if (
+      billingSettings &&
+      (existing?.status === OrderStatus.QUOTE ||
+        effectiveStatus === OrderStatus.QUOTE) &&
+      !billingSettings.BillingMenu_AllowOtherUserToEditQuotation
+    ) {
+      throw new QuotationEditByOtherUserNotAllowedException(
+        id,
+        existing!.createdBy!,
+        personId,
+      );
+    }
 
     // Full new-order field parity for finalization (e.g. draft → ORDER): validate
     // the EFFECTIVE order — the incoming patch merged over the persisted draft —
@@ -2101,6 +2223,27 @@ export class OrderService {
     }
     const paymentStatus = derivePaymentStatus(payNet, payPaid);
 
+    // Collection by another user: when this patch replaces the ledger and the
+    // collected total actually changes, a non-creator needs the branch setting on.
+    // An unchanged ledger (a non-payment edit that re-sends the stored rows) is
+    // allowed. `billingSettings` is only non-null for a non-creator actor.
+    if (billingSettings && dto.payments !== undefined) {
+      const storedPaid = await this.prisma.paymentDetails.aggregate({
+        where: { orderId: id, tenantId, deletedAt: null },
+        _sum: { paidAmount: true },
+      });
+      if (
+        payPaid !== (storedPaid._sum.paidAmount ?? 0) &&
+        !billingSettings.BillingMenu_AllowCollectionOfAmountByOtherUser
+      ) {
+        throw new PaymentCollectionByOtherUserNotAllowedException(
+          id,
+          existing!.createdBy!,
+          personId,
+        );
+      }
+    }
+
     // Enforce the branch's Previous-Dues + Partial-Billing + TDS/Discount rules
     // when a draft is finalized (or an order re-saved) to `status = ORDER`. Uses
     // the incoming ledger/items when this patch replaces them, otherwise the
@@ -2126,7 +2269,11 @@ export class OrderService {
       let itemPrices: Map<string, number>;
       if (dto.items !== undefined) {
         effectiveItems = dto.items;
-        itemPrices = await this.loadItemUnitPrices(tenantId, branchId, dto.items);
+        itemPrices = await this.loadItemUnitPrices(
+          tenantId,
+          branchId,
+          dto.items,
+        );
       } else {
         const stored = await this.prisma.orderItem.findMany({
           where: { orderId: id, tenantId, deletedAt: null },
@@ -2156,7 +2303,10 @@ export class OrderService {
         );
       }
 
-      const hasDiscount = this.orderHasDiscount(effectiveItems, effectivePayments);
+      const hasDiscount = this.orderHasDiscount(
+        effectiveItems,
+        effectivePayments,
+      );
       const settings = await this.registrationSettingsService.getForBranch(
         tenantId,
         branchId,
@@ -2576,6 +2726,20 @@ export class OrderService {
       : null;
     if (settings && !settings.CancellationAndRefund_AllowOrderCancellation) {
       throw new OrderCancellationNotAllowedException(id);
+    }
+    // Cancellation by another user: a non-creator needs the branch setting on.
+    // Legacy orders with no creator, and orders with no branch, stay permissive.
+    if (
+      settings &&
+      existing.createdBy &&
+      existing.createdBy !== actorId &&
+      !settings.BillingMenu_AllowCancellationByOtherUser
+    ) {
+      throw new OrderCancellationByOtherUserNotAllowedException(
+        id,
+        existing.createdBy,
+        actorId,
+      );
     }
     // Effective cancellation charge: when the setting is off, force 0 (any body
     // value is ignored); when on, use the supplied value or default to the

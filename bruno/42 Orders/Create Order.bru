@@ -177,6 +177,15 @@ docs {
     `DRAFT` when the order is created with `status = QUOTE` and none is supplied.
   - `quotationValidTill` — ISO-8601 date. Used to derive `EXPIRED` at listing
     time (an open `DRAFT` past this date lists as `EXPIRED`).
+  - `sourceQuotationId` — set only in the **Convert to Order** flow: the id of the
+    source `QUOTE` order this one was converted from. When present **and** the new
+    order is finalized (any `status` other than `QUOTE`), the source quote is
+    validated (must exist in the tenant and be a quotation — else 422
+    `SOURCE_QUOTATION_INVALID`) and its `quotationStatus` is flipped to `CONVERTED`
+    **in the same transaction** — so a failed create never marks a quote converted.
+    Ignored on a plain quote save (`status = QUOTE`). The response's list rows
+    expose the reverse link on the converted quote via `convertedOrderId` /
+    `convertedOrderCode`. See "Convert Quotation to Order".
 
   ## Referral & B2B (all optional)
 

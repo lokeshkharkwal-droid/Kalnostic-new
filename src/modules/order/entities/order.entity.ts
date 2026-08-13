@@ -127,6 +127,13 @@ export const ORDER_INCLUDE = {
     },
   },
   payments: { where: { deletedAt: null }, orderBy: { createdAt: 'asc' } },
+  // The order(s) this quote was converted into — used to surface "View Order"
+  // on a CONVERTED quotation. Empty for ordinary (non-quote) orders.
+  convertedOrder: {
+    where: { deletedAt: null },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, orderCode: true, externalOrderId: true },
+  },
 } satisfies Prisma.OrderInclude;
 
 /** A fully-composed order (the get-one / create / update response shape). */
@@ -219,6 +226,13 @@ export const ORDER_LIST_INCLUDE = {
       refundCharge: true,
     },
   },
+  // The order(s) this quote was converted into — used to surface "View Order"
+  // on a CONVERTED quotation. Empty for ordinary (non-quote) orders.
+  convertedOrder: {
+    where: { deletedAt: null },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, orderCode: true, externalOrderId: true },
+  },
 } satisfies Prisma.OrderInclude;
 
 /**
@@ -253,4 +267,12 @@ export type OrderListRow = Prisma.OrderGetPayload<{
    * non-quotation listings or when no branch/settings are resolvable.
    */
   computedQuotationExpiryAt: Date | null;
+  /**
+   * The order this quote was converted into (most recent active one), or null.
+   * `convertedOrderCode` prefers the user-facing external id, falling back to the
+   * internal order code — used to surface the "View Order" link on a CONVERTED
+   * quotation row.
+   */
+  convertedOrderId: string | null;
+  convertedOrderCode: string | null;
 };

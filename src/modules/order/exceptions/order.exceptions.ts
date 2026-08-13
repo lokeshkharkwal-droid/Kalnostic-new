@@ -433,6 +433,23 @@ export class NotAQuotationException extends KaltrosException {
   }
 }
 
+/**
+ * 422 — the order is being created as a conversion of a source quotation
+ * (`sourceQuotationId` supplied) but that referenced order does not exist in the
+ * caller's tenant, or did not originate as a quotation. Rolls back the whole
+ * create so the source is never mismarked.
+ */
+export class SourceQuotationInvalidException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'SOURCE_QUOTATION_INVALID',
+      'The source quotation does not exist in this tenant or is not a quotation',
+      { id },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
 /** 422 — the quotation is still within its validity window (only expired
  * quotations may be duplicated). */
 export class QuotationNotExpiredException extends KaltrosException {
@@ -500,6 +517,22 @@ export class FullPaymentRequiredException extends KaltrosException {
     super(
       'FULL_PAYMENT_REQUIRED',
       'Partial billing is disabled for this branch — collect the full net amount before completing the order',
+      { netAmount, paidAmount },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — the branch only allows check-in for fully-paid appointments
+ * (Registration Settings → Appointment → "Allow Check-in for Paid Appointments
+ * Only"), but this appointment's bill is unpaid / partially paid.
+ */
+export class AppointmentPaymentRequiredException extends KaltrosException {
+  constructor(netAmount: number, paidAmount: number) {
+    super(
+      'APPOINTMENT_PAYMENT_REQUIRED',
+      'This branch only allows check-in for fully-paid appointments — collect the full amount first',
       { netAmount, paidAmount },
       HttpStatus.UNPROCESSABLE_ENTITY,
     );
@@ -666,6 +699,54 @@ export class PartialBillingNotAllowedForDiscountedOrderException extends Kaltros
       'This order has a discount applied — partial billing of discounted orders is disabled for this branch, so the full net amount must be collected',
       { netAmount, paidAmount },
       HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 403 — the current user is not the order's creator and the branch's
+ * `BillingMenu_AllowCancellationByOtherUser` setting is off, so they may not
+ * cancel an order created by another user.
+ */
+export class OrderCancellationByOtherUserNotAllowedException extends KaltrosException {
+  constructor(id: string, createdBy: string, actorId: string | null) {
+    super(
+      'ORDER_CANCELLATION_BY_OTHER_USER_NOT_ALLOWED',
+      'You are not allowed to cancel an order created by another user',
+      { id, createdBy, actorId },
+      HttpStatus.FORBIDDEN,
+    );
+  }
+}
+
+/**
+ * 403 — the current user is not the quotation's creator and the branch's
+ * `BillingMenu_AllowOtherUserToEditQuotation` setting is off, so they may not
+ * edit a quotation created by another user.
+ */
+export class QuotationEditByOtherUserNotAllowedException extends KaltrosException {
+  constructor(id: string, createdBy: string, actorId: string | null) {
+    super(
+      'QUOTATION_EDIT_BY_OTHER_USER_NOT_ALLOWED',
+      'You are not allowed to edit a quotation created by another user',
+      { id, createdBy, actorId },
+      HttpStatus.FORBIDDEN,
+    );
+  }
+}
+
+/**
+ * 409 — a bill copy was requested for an order that is not fully paid, while the
+ * branch's `BillingMenu_AllowBillCopyPrintForPaidBillingsOnly` setting restricts
+ * bill printing to settled orders.
+ */
+export class BillCopyPrintNotAllowedForUnpaidException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'BILL_COPY_PRINT_NOT_ALLOWED_FOR_UNPAID',
+      'A bill copy can only be printed once the order is fully paid',
+      { id },
+      HttpStatus.CONFLICT,
     );
   }
 }

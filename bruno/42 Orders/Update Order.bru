@@ -81,7 +81,19 @@ docs {
   the first row. Overpayment is rejected — a supplied ledger whose summed
   `paidAmount` exceeds the summed `netAmount` is refused with 422
   `PAYMENT_OVERPAYMENT` and the patch rolls back. `patientId` is not editable.
-  
+
+  ## Billing Menu creator-scoped guards (by other user)
+
+  Enforced from the branch Registration Settings against `Order.createdBy` vs the
+  JWT `person_id` (legacy orders with no `createdBy` stay permissive):
+  - `BillingMenu_AllowOtherUserToEditQuotation` off ⇒ editing a QUOTE (stored or
+    target status) by a non-creator is refused with 403
+    `QUOTATION_EDIT_BY_OTHER_USER_NOT_ALLOWED`.
+  - `BillingMenu_AllowCollectionOfAmountByOtherUser` off ⇒ a non-creator supplying
+    `payments` whose summed `paidAmount` differs from the stored ledger's is
+    refused with 403 `PAYMENT_COLLECTION_BY_OTHER_USER_NOT_ALLOWED`. An unchanged
+    ledger (or omitting `payments`) is allowed, so non-payment edits still work.
+
   ## Finalization validation (draft → live)
   
   Whenever this patch lands the order in a LIVE status (`ORDER` / `QUOTE` /
