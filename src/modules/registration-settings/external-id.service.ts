@@ -18,6 +18,18 @@ export interface ExternalIdParts {
   sequence: number;
 }
 
+/**
+ * Fixed, non-configurable entity prefix prepended to every AUTO-generated
+ * external id (never applied to manual/NONE entries). The operator cannot change
+ * these from the settings UI.
+ */
+export const EXTERNAL_ID_PREFIX: Record<ExternalIdPurpose, string> = {
+  [ExternalIdPurpose.ORDER]: 'ORD',
+  [ExternalIdPurpose.QUOTATION]: 'QUO',
+  [ExternalIdPurpose.APPOINTMENT]: 'APT',
+  [ExternalIdPurpose.PATIENT]: 'PAT',
+};
+
 /** The next external id a branch would mint for a purpose (peek, no bump). */
 export interface ExternalIdPreview {
   format: ExternalIdFormat;
@@ -116,13 +128,18 @@ export function formatExternalId(
 }
 
 /**
- * Generates the legacy-style external order/quote id for a branch from its
- * configured `ExternalIdFormat` (Registration Settings), backed by a per-branch
- * running counter (`ExternalIdCounter`) that resets daily/monthly/yearly.
- * Orders and quotations keep independent counters (see `ExternalIdPurpose`).
- * `generateInTx` runs inside the caller's order-create transaction so the bump
- * commits atomically with the order; `previewNext` peeks without bumping so the
- * frontend can show a disabled preview before submit.
+ * Generates the legacy-style external id for a branch from its configured
+ * `ExternalIdFormat` (Registration Settings), backed by a per-branch running
+ * counter (`ExternalIdCounter`) that resets daily/monthly/yearly. Orders,
+ * quotations, appointments and patients (UMID) keep independent counters (see
+ * `ExternalIdPurpose`) and each auto-generated id carries its fixed entity
+ * prefix (`EXTERNAL_ID_PREFIX`: ORD/QUO/APT/PAT). `generateInTx` runs inside the
+ * caller's create transaction so the bump commits atomically with the record;
+ * `generateCommitted` bumps in its own transaction (used by the globally-unique
+ * patient UMID path so a failed insert + retry always advances the counter);
+ * `previewNext` peeks without bumping so the frontend can show a disabled
+ * preview before submit. The prefix is applied only to AUTO ids — NONE (manual
+ * entry) returns null and is stored as the operator typed it, un-prefixed.
  */
 @Injectable()
 export class ExternalIdService {
@@ -132,7 +149,10 @@ export class ExternalIdService {
     private readonly registrationSettingsService: RegistrationSettingsService,
   ) {}
 
-  /** The branch's configured format for a purpose (ORDER vs QUOTATION). */
+  /**
+   * The branch's configured format for a purpose (each of ORDER / QUOTATION /
+   * APPOINTMENT / PATIENT has its own dropdown in Registration Settings).
+   */
   async getConfiguredFormat(
     tenantId: string,
     branchId: string,
@@ -142,16 +162,25 @@ export class ExternalIdService {
       tenantId,
       branchId,
     );
-    return purpose === ExternalIdPurpose.QUOTATION
-      ? settings.Quotation_AutoIncrementExternalQuoteIdFormat
-      : settings.OrderIdConfiguration_AutoIncrementExternalOrderIdFormat;
+    switch (purpose) {
+      case ExternalIdPurpose.QUOTATION:
+        return settings.Quotation_AutoIncrementExternalQuoteIdFormat;
+      case ExternalIdPurpose.APPOINTMENT:
+        return settings.Appointment_AutoIncrementExternalAppointmentIdFormat;
+      case ExternalIdPurpose.PATIENT:
+        return settings.Patients_AutoIncrementExternalPatientIdFormat;
+      case ExternalIdPurpose.ORDER:
+      default:
+        return settings.OrderIdConfiguration_AutoIncrementExternalOrderIdFormat;
+    }
   }
 
   /**
    * Atomically bump the branch's counter for `(purpose, format)` and return the
-   * formatted id. MUST be called inside a transaction (`tx`) — typically the
-   * order-create transaction. Returns null when `format` is NONE (manual entry).
-   * @param shortName the branch's short name (BRANCH_* prefix)
+   * prefixed formatted id (e.g. `ORD2026/04/19/0001`). MUST be called inside a
+   * transaction (`tx`) — typically the create transaction. Returns null when
+   * `format` is NONE (manual entry — no prefix applied).
+   * @param shortName the branch's short name (BRANCH_* formats)
    */
   async generateInTx(
     tx: Prisma.TransactionClient,
@@ -201,7 +230,65 @@ export class ExternalIdService {
       });
     }
 
-    return formatExternalId(format, { now, shortName, sequence });
+    return this.withPrefix(
+      purpose,
+      formatExternalId(format, { now, shortName, sequence }),
+    );
+  }
+
+  /**
+   * Like `generateInTx` but bumps the counter in its OWN committed transaction
+   * (not the caller's), so the allocated number survives even if the caller's
+   * subsequent insert is rolled back. Used by the globally-unique patient UMID
+   * path: on a unique-index collision the caller retries and, because this bump
+   * already committed, the next attempt draws a fresh (higher) sequence —
+   * guaranteeing forward progress. A burned number on collision is acceptable.
+   * Returns null when `format` is NONE.
+   */
+  async generateCommitted(
+    tenantId: string,
+    branchId: string,
+    purpose: ExternalIdPurpose,
+    format: ExternalIdFormat,
+    shortName: string,
+  ): Promise<string | null> {
+    if (!counterTypeForFormat(format)) return null; // NONE → manual entry
+    return this.prisma.withTenant(tenantId, (tx) =>
+      this.generateInTx(tx, tenantId, branchId, purpose, format, shortName),
+    );
+  }
+
+  /**
+   * Resolve the branch's configured format + short name and mint a committed,
+   * prefixed id in its own transaction. Returns `{ format, value }` — `value` is
+   * null when the branch's format is NONE (manual entry). Used by the
+   * globally-unique patient UMID path, which retries this on collision.
+   * @throws BranchNotFoundException if the branch is missing/other tenant
+   */
+  async generateCommittedForBranch(
+    tenantId: string,
+    branchId: string,
+    purpose: ExternalIdPurpose,
+  ): Promise<ExternalIdPreview> {
+    const format = await this.getConfiguredFormat(tenantId, branchId, purpose);
+    if (!counterTypeForFormat(format)) return { format, value: null };
+    const branch = await this.branchService.findById(branchId, tenantId);
+    const value = await this.generateCommitted(
+      tenantId,
+      branchId,
+      purpose,
+      format,
+      branch.shortName,
+    );
+    return { format, value };
+  }
+
+  /** Prepend the fixed entity prefix to an auto id; pass through null (NONE). */
+  private withPrefix(
+    purpose: ExternalIdPurpose,
+    formatted: string | null,
+  ): string | null {
+    return formatted === null ? null : EXTERNAL_ID_PREFIX[purpose] + formatted;
   }
 
   /**
@@ -237,11 +324,14 @@ export class ExternalIdService {
         : existing.counter + 1;
     return {
       format,
-      value: formatExternalId(format, {
-        now,
-        shortName: branch.shortName,
-        sequence: nextSequence,
-      }),
+      value: this.withPrefix(
+        purpose,
+        formatExternalId(format, {
+          now,
+          shortName: branch.shortName,
+          sequence: nextSequence,
+        }),
+      ),
     };
   }
 }

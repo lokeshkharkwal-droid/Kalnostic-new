@@ -1138,6 +1138,13 @@ CREATE POLICY patients_tenant_isolation ON patients
 CREATE UNIQUE INDEX IF NOT EXISTS patients_tenant_mobile_active_unique
   ON patients (tenant_id, mobile) WHERE deleted_at IS NULL;
 
+-- Globally-unique patient UMID across the WHOLE db (all tenants/branches), among
+-- ACTIVE rows only. Backs the "PAT" + auto-increment UMID (and manual entries).
+-- Prisma can't express partial unique indexes, so it lives here. NOTE: build
+-- fails if pre-existing active patients share a um_id — dedupe first.
+CREATE UNIQUE INDEX IF NOT EXISTS patients_um_id_global_unique
+  ON patients (um_id) WHERE um_id IS NOT NULL AND deleted_at IS NULL;
+
 -- ── medical_histories ───────────────────────────────────────────────────────────
 ALTER TABLE medical_histories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE medical_histories FORCE ROW LEVEL SECURITY;

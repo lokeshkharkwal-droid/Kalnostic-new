@@ -68,15 +68,44 @@ export class RegistrationSettingsService {
       where: { tenantId_branchId: { tenantId, branchId } },
     });
 
-    const effective = { ...(existing ?? {}), ...dto };
+    const patch = this.applyAppointmentPaymentExclusivity(dto);
+    const effective = { ...(existing ?? {}), ...patch };
     this.validateThresholdRanges(effective);
     this.validateDiscountModeExclusivity(effective);
 
     return this.prisma.registrationSetting.upsert({
       where: { tenantId_branchId: { tenantId, branchId } },
-      create: { tenantId, branchId, ...dto },
-      update: { ...dto },
+      create: { tenantId, branchId, ...patch },
+      update: { ...patch },
     });
+  }
+
+  /**
+   * `Appointment_AllowCheckInForPaidAppointmentsOnly` and
+   * `Appointment_AllowProgressOfUnpaidAndPartialPaidAppointments` are mutually
+   * exclusive per the spec — enabling one **auto-disables** the other so the
+   * saved row is always a valid combination. Returns a patch with the
+   * counterpart forced `false`; check-in-for-paid takes precedence if a single
+   * request sets both true.
+   */
+  private applyAppointmentPaymentExclusivity(
+    dto: SaveRegistrationSettingsDto,
+  ): SaveRegistrationSettingsDto {
+    if (dto.Appointment_AllowCheckInForPaidAppointmentsOnly === true) {
+      return {
+        ...dto,
+        Appointment_AllowProgressOfUnpaidAndPartialPaidAppointments: false,
+      };
+    }
+    if (
+      dto.Appointment_AllowProgressOfUnpaidAndPartialPaidAppointments === true
+    ) {
+      return {
+        ...dto,
+        Appointment_AllowCheckInForPaidAppointmentsOnly: false,
+      };
+    }
+    return dto;
   }
 
   /** Enum values exposed for frontend select controls. */

@@ -3,10 +3,13 @@ import {
   Appointment,
   AppointmentStatus,
   AppointmentStatusHistory,
+  ExternalIdFormat,
+  ExternalIdPurpose,
   Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SlotReservationService } from '../phlebotomist-schedule/slot-reservation.service';
+import { ExternalIdService } from '../registration-settings/external-id.service';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
 import { UpdateAppointmentStatusDto } from './dto/update-appointment-status.dto';
@@ -33,6 +36,7 @@ export class AppointmentService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly slotReservation: SlotReservationService,
+    private readonly externalIdService: ExternalIdService,
   ) {}
 
   /**
@@ -113,11 +117,17 @@ export class AppointmentService {
       select: { appointmentCounter: true },
     });
     const code = `APT-${String(tenant.appointmentCounter).padStart(5, '0')}`;
+    const externalAppointmentId = await this.generateExternalAppointmentId(
+      tx,
+      tenantId,
+      branchId,
+    );
     const appointment = await tx.appointment.create({
       data: {
         tenantId,
         branchId,
         code,
+        externalAppointmentId,
         appointmentType: dto.appointmentType,
         status,
         createdBy: personId,
@@ -134,6 +144,41 @@ export class AppointmentService {
       },
     });
     return appointment.id;
+  }
+
+  /**
+   * Mint the external appointment id ("APT" + configured auto-increment format)
+   * inside the current transaction, atomically with the appointment. Reads the
+   * branch's `Appointment` format straight from the settings row (no upsert, so
+   * it stays inside `tx`); returns null when there is no branch or the format is
+   * NONE.
+   */
+  private async generateExternalAppointmentId(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    branchId: string | null,
+  ): Promise<string | null> {
+    if (!branchId) return null;
+    const settings = await tx.registrationSetting.findUnique({
+      where: { tenantId_branchId: { tenantId, branchId } },
+      select: { Appointment_AutoIncrementExternalAppointmentIdFormat: true },
+    });
+    const format =
+      settings?.Appointment_AutoIncrementExternalAppointmentIdFormat ??
+      ExternalIdFormat.NONE;
+    if (format === ExternalIdFormat.NONE) return null;
+    const branch = await tx.branch.findUnique({
+      where: { id: branchId },
+      select: { shortName: true },
+    });
+    return this.externalIdService.generateInTx(
+      tx,
+      tenantId,
+      branchId,
+      ExternalIdPurpose.APPOINTMENT,
+      format,
+      branch?.shortName ?? '',
+    );
   }
 
   /**

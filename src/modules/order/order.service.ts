@@ -10,6 +10,7 @@ import {
   OrderStatus,
   PaymentEntryType,
   PaymentMode,
+  PaymentStatus,
   Prisma,
   QuotationStatus,
   RepeatIntervalUnit,
@@ -82,6 +83,7 @@ import {
   NoActiveOrderPrintTemplateException,
   AmbiguousOrderPrintTemplateException,
   NotAQuotationException,
+  SourceQuotationInvalidException,
   QuotationNotExpiredException,
   QuotationDuplicationNotAllowedException,
   PreviousDuesNotClearedException,
@@ -100,6 +102,7 @@ import {
   OrderCancellationByOtherUserNotAllowedException,
   QuotationEditByOtherUserNotAllowedException,
   BillCopyPrintNotAllowedForUnpaidException,
+  AppointmentPaymentRequiredException,
 } from './exceptions/order.exceptions';
 import type { RegistrationSetting } from '@prisma/client';
 // Reused so an inline order-payment overpayment raises the SAME
@@ -327,6 +330,26 @@ export class OrderService {
       itemPrices,
     });
 
+    // Appointment check-in payment gating (Registration Settings → Appointment).
+    // The two flags are mutually exclusive (enforced on save): "check-in for
+    // paid only" blocks an unpaid/partial appointment; "allow progress of
+    // unpaid/partial" (or neither) permits it. Only bites when creating an
+    // APPOINTMENT-status order at a branch.
+    if (dto.status === OrderStatus.APPOINTMENT && branchId) {
+      const apptSettings =
+        settings ??
+        (await this.registrationSettingsService.getForBranch(
+          tenantId,
+          branchId,
+        ));
+      if (
+        apptSettings.Appointment_AllowCheckInForPaidAppointmentsOnly &&
+        paymentStatus !== PaymentStatus.PAID
+      ) {
+        throw new AppointmentPaymentRequiredException(payNet, payPaid);
+      }
+    }
+
     // Resolve the branch's external Order/Quote id configuration (Registration
     // Settings). A quote (status QUOTE) uses the QUOTATION format + its own
     // counter; everything else uses the ORDER format. When the format is NONE
@@ -450,6 +473,12 @@ export class OrderService {
             quotationValidTill: dto.quotationValidTill
               ? new Date(dto.quotationValidTill)
               : null,
+            // Link back to the source quote when this order is a conversion
+            // (only kept for real conversions — see the CONVERTED flip below).
+            sourceQuotationId:
+              dto.sourceQuotationId && dto.status !== OrderStatus.QUOTE
+                ? dto.sourceQuotationId
+                : null,
             patientId: dto.patientId,
             appointmentAt,
             appointmentType,
@@ -462,6 +491,33 @@ export class OrderService {
             branchLabPanelListId: dto.branchLabPanelListId ?? null,
           },
         });
+        // Quotation → order conversion: when this order was created from a quote
+        // and is a real conversion (any status other than QUOTE), flip the source
+        // quote to CONVERTED in the SAME transaction. Any failure above rolls this
+        // back too, so a failed create never marks a quote converted. The quote
+        // keeps status = QUOTE (so it stays on the Quotations screen) — only its
+        // quotationStatus changes.
+        if (dto.sourceQuotationId && dto.status !== OrderStatus.QUOTE) {
+          const sourceQuote = await tx.order.findFirst({
+            where: {
+              id: dto.sourceQuotationId,
+              tenantId,
+              deletedAt: null,
+              quotationStatus: { not: null },
+            },
+            select: { id: true },
+          });
+          if (!sourceQuote) {
+            throw new SourceQuotationInvalidException(dto.sourceQuotationId);
+          }
+          await tx.order.update({
+            where: { id: sourceQuote.id },
+            data: {
+              quotationStatus: QuotationStatus.CONVERTED,
+              updatedBy: personId,
+            },
+          });
+        }
         // Seed the create-form's single `orderNotes` string as the first entry
         // of the Order Notes history so the Order Overview tab shows it alongside
         // any notes added later (append-only — see OrderNote / createNote).
@@ -1982,6 +2038,9 @@ export class OrderService {
         quoteAnchor < quotationExpiryCutoff
           ? QuotationStatus.EXPIRED
           : r.quotationStatus;
+      // The order this quote was converted into (most recent), if any — surfaces
+      // the "View Order" link on a CONVERTED quotation row.
+      const converted = r.convertedOrder[0] ?? null;
       return {
         ...r,
         itemCount: count?.total ?? 0,
@@ -1994,6 +2053,9 @@ export class OrderService {
         refundChargeTotal,
         effectiveQuotationStatus,
         computedQuotationExpiryAt,
+        convertedOrderId: converted?.id ?? null,
+        convertedOrderCode:
+          converted?.externalOrderId ?? converted?.orderCode ?? null,
       };
     });
     return { data, total, page, limit };

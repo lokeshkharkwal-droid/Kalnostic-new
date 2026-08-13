@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
+  ExternalIdFormat,
+  ExternalIdPurpose,
   Gender,
   MedicalHistory,
   Patient,
@@ -10,6 +12,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { PtCategoryService } from '../pt-category/pt-category.service';
+import { ExternalIdService } from '../registration-settings/external-id.service';
 import { CreatePatientDto } from './dto/create-patient.dto';
 import { UpdatePatientDto } from './dto/update-patient.dto';
 import {
@@ -32,7 +35,13 @@ import {
   PatientDocumentNotFoundException,
   PatientMobileConflictException,
   PatientNotFoundException,
+  PatientUmIdConflictException,
+  PatientUmIdRequiredException,
+  UmIdGenerationConflictException,
 } from './exceptions/patient.exceptions';
+
+/** Max attempts to allocate a unique UMID before giving up (collision retry). */
+const MAX_UMID_ATTEMPTS = 5;
 
 /**
  * Prisma `select` for the lightweight member summary embedded in family
@@ -72,6 +81,7 @@ export class PatientService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ptCategoryService: PtCategoryService,
+    private readonly externalIdService: ExternalIdService,
   ) {}
 
   /**
@@ -104,59 +114,119 @@ export class PatientService {
    * Create a patient in the caller's tenant, optionally with one or more medical
    * -history records created atomically in the same transaction. `tenantId` and
    * the registration `branchId` come from the request context, never the body.
+   * The patient's UMID follows the branch's `Patients` auto-increment format
+   * (Registration Settings): when a format is set it is auto-generated as
+   * `PAT`+format (globally unique, with collision auto-retry); when the format is
+   * NONE — or there is no active branch — the operator must supply a `umId`
+   * manually and it is stored as-is. UMID is required either way.
    * @param tenantId tenant scope (from the JWT)
    * @param dto validated patient payload (+ optional `medicalHistories`)
    * @param ctx registration branch + acting person from the JWT
    * @returns the created patient with its (newly created) medical histories
    * @throws PatientMobileConflictException if the mobile is already used by an
    *   active patient in this tenant
+   * @throws PatientUmIdRequiredException if a manual UMID is required but absent
+   * @throws PatientUmIdConflictException if a manual UMID is already in use
+   * @throws UmIdGenerationConflictException if a unique UMID can't be allocated
    */
   async create(
     tenantId: string,
     dto: CreatePatientDto,
     ctx: PatientWriteContext,
   ): Promise<PatientWithHistory> {
-    const { medicalHistories, dateOfBirth, ...patientFields } = dto;
     await this.validatePtCategory(tenantId, ctx.branchId, dto.ptCategoryId);
-    try {
-      return await this.prisma.withTenant(tenantId, async (tx) => {
-        const patient = await tx.patient.create({
-          data: {
-            ...patientFields,
-            dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
+    const manualUmId = dto.umId?.trim() || null;
+
+    // Resolve the branch's configured patient-id format. No branch → manual.
+    const format = ctx.branchId
+      ? await this.externalIdService.getConfiguredFormat(
+          tenantId,
+          ctx.branchId,
+          ExternalIdPurpose.PATIENT,
+        )
+      : ExternalIdFormat.NONE;
+
+    // Manual (NONE) — UMID is required and stored exactly as entered.
+    if (format === ExternalIdFormat.NONE) {
+      if (!manualUmId) {
+        throw new PatientUmIdRequiredException();
+      }
+      try {
+        return await this.createPatientRow(tenantId, dto, ctx, manualUmId);
+      } catch (e) {
+        this.rethrowPatientWriteConflict(e, dto.mobile, manualUmId);
+      }
+    }
+
+    // Auto (PAT+format) — allocate a committed, globally-unique UMID and retry
+    // on collision, drawing a fresh sequence each attempt (see ExternalIdService).
+    const branchId = ctx.branchId!;
+    for (let attempt = 0; attempt < MAX_UMID_ATTEMPTS; attempt++) {
+      const { value } = await this.externalIdService.generateCommittedForBranch(
+        tenantId,
+        branchId,
+        ExternalIdPurpose.PATIENT,
+      );
+      try {
+        return await this.createPatientRow(tenantId, dto, ctx, value);
+      } catch (e) {
+        if (this.isUmIdConflict(e)) {
+          continue; // collision → next allocated number
+        }
+        if (this.isMobileConflict(e)) {
+          throw new PatientMobileConflictException(dto.mobile);
+        }
+        throw e;
+      }
+    }
+    throw new UmIdGenerationConflictException(MAX_UMID_ATTEMPTS);
+  }
+
+  /**
+   * Insert a patient (+ optional medical histories) with the resolved UMID, in
+   * one `withTenant` transaction. Throws raw Prisma errors — the caller maps
+   * unique-violation P2002s to typed conflicts (mobile vs UMID).
+   */
+  private async createPatientRow(
+    tenantId: string,
+    dto: CreatePatientDto,
+    ctx: PatientWriteContext,
+    umId: string | null,
+  ): Promise<PatientWithHistory> {
+    const { medicalHistories, dateOfBirth, ...patientFields } = dto;
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const patient = await tx.patient.create({
+        data: {
+          ...patientFields,
+          umId,
+          dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
+          tenantId,
+          branchId: ctx.branchId,
+          createdBy: ctx.actorId ?? null,
+          updatedBy: ctx.actorId ?? null,
+        },
+        include: PatientService.PT_CATEGORY_INCLUDE,
+      });
+
+      if (medicalHistories && medicalHistories.length > 0) {
+        await tx.medicalHistory.createMany({
+          data: medicalHistories.map((h) => ({
+            ...this.buildMedicalWriteData(h),
             tenantId,
             branchId: ctx.branchId,
+            patientId: patient.id,
             createdBy: ctx.actorId ?? null,
             updatedBy: ctx.actorId ?? null,
-          },
-          include: PatientService.PT_CATEGORY_INCLUDE,
+          })),
         });
-
-        if (medicalHistories && medicalHistories.length > 0) {
-          await tx.medicalHistory.createMany({
-            data: medicalHistories.map((h) => ({
-              ...this.buildMedicalWriteData(h),
-              tenantId,
-              branchId: ctx.branchId,
-              patientId: patient.id,
-              createdBy: ctx.actorId ?? null,
-              updatedBy: ctx.actorId ?? null,
-            })),
-          });
-        }
-
-        const histories = await tx.medicalHistory.findMany({
-          where: { patientId: patient.id, deletedAt: null },
-          orderBy: { createdAt: 'desc' },
-        });
-        return { ...patient, medicalHistories: histories };
-      });
-    } catch (e) {
-      if (this.isUniqueViolation(e)) {
-        throw new PatientMobileConflictException(dto.mobile);
       }
-      throw e;
-    }
+
+      const histories = await tx.medicalHistory.findMany({
+        where: { patientId: patient.id, deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+      });
+      return { ...patient, medicalHistories: histories };
+    });
   }
 
   /**
@@ -358,10 +428,7 @@ export class PatientService {
         },
       });
     } catch (e) {
-      if (this.isUniqueViolation(e)) {
-        throw new PatientMobileConflictException(dto.mobile ?? '');
-      }
-      throw e;
+      this.rethrowPatientWriteConflict(e, dto.mobile ?? '', dto.umId ?? null);
     }
   }
 
@@ -755,10 +822,7 @@ export class PatientService {
         return { link, member };
       });
     } catch (e) {
-      if (this.isUniqueViolation(e)) {
-        throw new PatientMobileConflictException(dto.mobile);
-      }
-      throw e;
+      this.rethrowPatientWriteConflict(e, dto.mobile, dto.umId ?? null);
     }
   }
 
@@ -877,5 +941,43 @@ export class PatientService {
     return (
       e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002'
     );
+  }
+
+  /** Whether a P2002's `meta.target` names an index/column containing `needle`. */
+  private violationTargets(e: unknown, needle: string): boolean {
+    if (!this.isUniqueViolation(e)) return false;
+    const target = e.meta?.target;
+    if (Array.isArray(target)) {
+      return target.some((t) => typeof t === 'string' && t.includes(needle));
+    }
+    return typeof target === 'string' && target.includes(needle);
+  }
+
+  /** True when a P2002 comes from the globally-unique patient UMID index. */
+  private isUmIdConflict(e: unknown): boolean {
+    return this.violationTargets(e, 'um_id');
+  }
+
+  /** True when a P2002 comes from the per-tenant active-mobile unique index. */
+  private isMobileConflict(e: unknown): boolean {
+    return this.violationTargets(e, 'mobile');
+  }
+
+  /**
+   * Map a patient write's unique-violation (P2002) to a typed conflict — UMID vs
+   * mobile — or rethrow anything else unchanged. Never returns.
+   */
+  private rethrowPatientWriteConflict(
+    e: unknown,
+    mobile: string,
+    umId: string | null,
+  ): never {
+    if (this.isUmIdConflict(e)) {
+      throw new PatientUmIdConflictException(umId ?? '');
+    }
+    if (this.isMobileConflict(e)) {
+      throw new PatientMobileConflictException(mobile);
+    }
+    throw e;
   }
 }

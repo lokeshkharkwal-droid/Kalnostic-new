@@ -1,0 +1,90 @@
+meta {
+  name: Convert Quotation to Order
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "ORDER",
+    "orderDate": "2026-07-09",
+    "orderType": "WALK_IN",
+    "billingType": "CASH_CLIENT",
+    "patientId": "{{patientId}}",
+    "sourceQuotationId": "{{quotationId}}",
+    "items": [
+      {
+        "branchLabTestId": "{{branchLabTestId}}"
+      }
+    ],
+    "payments": [
+      {
+        "totalAmount": 500,
+        "netAmount": 500,
+        "payableAmount": 500,
+        "paidAmount": 500,
+        "paymentMode": "CASH"
+      }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("orderId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("new order links back to the source quotation", function () {
+    expect(res.getBody().data.status).to.equal("ORDER");
+    expect(res.getBody().data.sourceQuotationId).to.equal(bru.getEnvVar("quotationId"));
+  });
+}
+
+docs {
+  Convert a quotation into a real order — the backend behaviour behind the
+  Quotations screen's "Convert to Order" action. This is an ordinary
+  `POST /orders` that additionally carries `sourceQuotationId` (the id of the
+  source `QUOTE` order). Set `{{quotationId}}` to a DRAFT quotation created
+  earlier (e.g. via "Create Order" with `status = QUOTE`).
+
+  What the `sourceQuotationId` link does:
+
+  - When present **and** the new order is finalized (any `status` other than
+    `QUOTE` — i.e. `ORDER`, `DRAFT`, or `APPOINTMENT`), the source quote is
+    validated (must exist in the tenant and be a quotation — else 422
+    `SOURCE_QUOTATION_INVALID`) and its `quotationStatus` is flipped to
+    `CONVERTED` **inside the same transaction** that creates the order. So if the
+    create fails for any reason (billing rules, overpayment, slot full, …) the
+    quote is **not** marked converted — it is all-or-nothing.
+  - The source quote keeps `status = QUOTE` (only its `quotationStatus` changes),
+    so it stays visible on the Quotations screen (`GET /orders?isQuotation=true`)
+    now flagged `CONVERTED`.
+  - Ignored on a plain quote save (`status = QUOTE`) — that path is the
+    Create/Update Quote and "Save and Close" flows, which never convert.
+
+  Reverse link: quote list rows (`GET /orders?isQuotation=true`) expose the order
+  a quote was converted into via `convertedOrderId` / `convertedOrderCode`
+  (the latter prefers the user-facing external id, else the order code), driving
+  the "View Order" action on a converted quotation.
+
+  See "Create Order" for the full body reference (all other fields behave
+  identically).
+}

@@ -53,6 +53,17 @@ export class CreateOrderDto {
   quotationValidTill?: string;
 
   /**
+   * Source quotation this order was converted from — FK to a QUOTE order in the
+   * caller's tenant. When present and this order is finalized (any status other
+   * than QUOTE), the service links back to it and flips that quote's
+   * `quotationStatus` to CONVERTED in the same transaction. Ignored on a plain
+   * quote save (`status = QUOTE`).
+   */
+  @IsOptional()
+  @IsUUID()
+  sourceQuotationId?: string;
+
+  /**
    * User-facing external Order/Quote id. Only honoured when the branch's
    * configured external-id format is NONE (manual entry) — then it is required
    * on a finalized ORDER/QUOTE and must be unique within the branch. When a

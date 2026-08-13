@@ -4884,11 +4884,15 @@ enum ExternalIdFormat {
   BRANCH_Y_YEARLY // ABC/2026/0001
 }
 
-/// Which id an `ExternalIdCounter` row counts — orders vs quotations get
-/// independent running sequences per branch.
+/// Which id an `ExternalIdCounter` row counts — orders, quotations,
+/// appointments and patients (UMID) each get independent running sequences per
+/// branch. Every generated id also carries a fixed, non-configurable entity
+/// prefix (ORD/QUO/APT/PAT) applied in `ExternalIdService`.
 enum ExternalIdPurpose {
   ORDER
   QUOTATION
+  APPOINTMENT
+  PATIENT
 }
 
 /// Reset granularity of an `ExternalIdCounter` (derived from the chosen
@@ -4990,12 +4994,19 @@ model RegistrationSetting {
   BillingMenu_AllowBillCopyPrintForPaidBillingsOnly Boolean @default(true) @map("billing_menu_allow_bill_copy_print_for_paid_billings_only")
   BillingMenu_AllowOtherUserToEditQuotation         Boolean @default(false) @map("billing_menu_allow_other_user_to_edit_quotation")
 
-  // ── Appointment (non-ID field; ID config is in RegistrationIdSequence) ──
+  // ── Appointment ──
   Appointment_AllowCheckInForPaidAppointmentsOnly             Boolean @default(false) @map("appointment_allow_check_in_for_paid_appointments_only")
   Appointment_AllowProgressOfUnpaidAndPartialPaidAppointments Boolean @default(false) @map("appointment_allow_progress_unpaid_and_partial_paid_appts")
+  // External appointment-id auto-increment format (same option set as the order
+  // id; generated id is prefixed with a fixed "APT"). NONE = no external id.
+  Appointment_AutoIncrementExternalAppointmentIdFormat        ExternalIdFormat @default(NONE) @map("appointment_auto_increment_ext_appt_id_format")
 
-  // ── Patients / UMID (non-ID field; ID config is in RegistrationIdSequence) ──
+  // ── Patients / UMID ──
   Patients_AllowMergingTwoPatients Boolean @default(false) @map("patients_allow_merging_two_patients")
+  // External patient-id (UMID) auto-increment format (same option set as the
+  // order id; generated id is prefixed with a fixed "PAT"). NONE = operator
+  // types the UMID manually (required).
+  Patients_AutoIncrementExternalPatientIdFormat ExternalIdFormat @default(NONE) @map("patients_auto_increment_ext_patient_id_format")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -5262,6 +5273,10 @@ model Patient {
   ptCategory   PtCategory? @relation(fields: [ptCategoryId], references: [id])
 
   // ── Identity documents ──
+  // UMID — "PAT" + configured auto-increment format (or a manually-entered value
+  // when the patient format is NONE). Globally unique across the whole DB via a
+  // partial unique index (`WHERE um_id IS NOT NULL AND deleted_at IS NULL`)
+  // declared in the migration — Prisma `@unique` can't express the filter.
   umId           String? @map("um_id")
   aadhaarNumber  String? @map("aadhaar_number")
   panNumber      String? @map("pan_number")
@@ -5672,6 +5687,15 @@ model Order {
   quotationStatus    QuotationStatus? @map("quotation_status")
   quotationValidTill DateTime?        @map("quotation_valid_till") @db.Date
 
+  // Quotation → order conversion link. When a quote (status QUOTE) is converted
+  // via the Create Order form, the new order carries `sourceQuotationId` pointing
+  // back at the originating quote, and that quote's `quotationStatus` is flipped
+  // to CONVERTED (in the same transaction). `convertedOrder` is the reverse side
+  // — the order(s) a quote was converted into (used to surface "View Order").
+  sourceQuotationId String? @map("source_quotation_id")
+  sourceQuotation   Order?  @relation("QuotationConversion", fields: [sourceQuotationId], references: [id])
+  convertedOrder    Order[] @relation("QuotationConversion")
+
   // Patient (required) + appointment. `appointmentType` is server-derived when an
   // order is saved with status = APPOINTMENT (see OrderService) from whichever
   // service section is present (DIAGNOSTIC / OPD / RADIOLOGY).
@@ -5741,6 +5765,7 @@ model Order {
   @@index([internalReferralId])
   @@index([externalReferralId])
   @@index([appointmentId])
+  @@index([sourceQuotationId])
   @@index([paymentStatus])
   @@index([billId])
   @@index([branchId, externalOrderId])
@@ -6653,6 +6678,10 @@ model Appointment {
   branchId String? @map("branch_id")
 
   code            String            @map("code")
+  /// User-facing external appointment id ("APT" + configured auto-increment
+  /// format from Registration Settings). Null when the branch's appointment
+  /// format is NONE. Distinct from the internal sequential `code` (APT-00001).
+  externalAppointmentId String?     @map("external_appointment_id")
   appointmentType AppointmentType   @map("appointment_type")
   status          AppointmentStatus @default(NEW)
 

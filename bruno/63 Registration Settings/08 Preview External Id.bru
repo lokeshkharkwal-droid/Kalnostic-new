@@ -30,20 +30,21 @@ tests {
 }
 
 docs {
-  Peek the next external **Order** or **Quote** id the active branch would
-  generate from its configured `ExternalIdFormat` (Registration Settings →
-  Order ID Configuration / Quotation). Does NOT bump the counter — the create
-  form uses it to show a disabled preview before submit.
+  Peek the next external id the active branch would generate for an entity from
+  its configured `ExternalIdFormat` (Registration Settings). Does NOT bump the
+  counter — the create form / settings page uses it to show a disabled preview
+  before submit.
 
   Query param:
-  - `purpose` ✱ — `ORDER` | `QUOTATION`.
+  - `purpose` ✱ — `ORDER` | `QUOTATION` | `APPOINTMENT` | `PATIENT`.
 
   Response `data`:
   - `format` — the branch's configured `ExternalIdFormat` for that purpose.
-  - `value` — the formatted next id (full 4-digit year, 4-digit sequence;
-    `BRANCH_*` variants prefixed with the branch `shortName`), or `null` when
-    the format is `NONE` (the operator enters the id manually on the order/quote
-    form, where it is required and unique per branch).
+  - `value` — the formatted next id **including its fixed entity prefix**
+    (`ORD` / `QUO` / `APT` / `PAT`), e.g. `ORD2026/04/19/0001`. Full 4-digit
+    year, 4-digit sequence; `BRANCH_*` variants also embed the branch
+    `shortName`. `null` when the format is `NONE` (manual entry — the operator
+    types the id, un-prefixed; required for orders/quotes and patient UMID).
 
   Tenant + active branch come from the JWT/active profile.
 }

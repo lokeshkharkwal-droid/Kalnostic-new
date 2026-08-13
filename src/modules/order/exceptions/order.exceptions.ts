@@ -433,6 +433,23 @@ export class NotAQuotationException extends KaltrosException {
   }
 }
 
+/**
+ * 422 — the order is being created as a conversion of a source quotation
+ * (`sourceQuotationId` supplied) but that referenced order does not exist in the
+ * caller's tenant, or did not originate as a quotation. Rolls back the whole
+ * create so the source is never mismarked.
+ */
+export class SourceQuotationInvalidException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'SOURCE_QUOTATION_INVALID',
+      'The source quotation does not exist in this tenant or is not a quotation',
+      { id },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
 /** 422 — the quotation is still within its validity window (only expired
  * quotations may be duplicated). */
 export class QuotationNotExpiredException extends KaltrosException {
@@ -500,6 +517,22 @@ export class FullPaymentRequiredException extends KaltrosException {
     super(
       'FULL_PAYMENT_REQUIRED',
       'Partial billing is disabled for this branch — collect the full net amount before completing the order',
+      { netAmount, paidAmount },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — the branch only allows check-in for fully-paid appointments
+ * (Registration Settings → Appointment → "Allow Check-in for Paid Appointments
+ * Only"), but this appointment's bill is unpaid / partially paid.
+ */
+export class AppointmentPaymentRequiredException extends KaltrosException {
+  constructor(netAmount: number, paidAmount: number) {
+    super(
+      'APPOINTMENT_PAYMENT_REQUIRED',
+      'This branch only allows check-in for fully-paid appointments — collect the full amount first',
       { netAmount, paidAmount },
       HttpStatus.UNPROCESSABLE_ENTITY,
     );
