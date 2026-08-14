@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { OutsourceCenter, Prisma } from '@prisma/client';
+import { OutsourceCenter, OutsourceCenterContact, Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import { extname, join } from 'path';
@@ -147,20 +147,18 @@ export class OutsourceCenterService {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const filters = { search: query.search, status: query.status };
-    const includeContacts =
-      (query.view ?? OutsourceCenterListView.DEFAULT) ===
-      OutsourceCenterListView.CONTACTS;
 
     const where = this.buildListWhere(tenantId, filters);
     const [rows, total] = await Promise.all([
+      // Contacts are always loaded (not just for `view=CONTACTS`) — the list
+      // table's Director/Email/Mobile columns are derived from the DIRECTOR
+      // contact row, so every list response needs it regardless of `view`.
       this.prisma.outsourceCenter.findMany({
         where,
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { createdAt: 'desc' },
-        ...(includeContacts
-          ? { include: { contacts: { where: { deletedAt: null } } } }
-          : {}),
+        include: { contacts: { where: { deletedAt: null } } },
       }),
       this.prisma.outsourceCenter.count({ where }),
     ]);
@@ -424,11 +422,21 @@ export class OutsourceCenterService {
    * @param tenantId tenant scope
    * @param centers the centers to enrich (any include shape)
    */
-  private async attachNames<T extends OutsourceCenter>(
+  private async attachNames<
+    T extends OutsourceCenter & { contacts?: OutsourceCenterContact[] },
+  >(
     tenantId: string,
     centers: T[],
   ): Promise<
-    Array<T & { labTestName: string | null; labPanelName: string | null }>
+    Array<
+      T & {
+        labTestName: string | null;
+        labPanelName: string | null;
+        directorName: string | null;
+        directorEmail: string | null;
+        directorMobile: string | null;
+      }
+    >
   > {
     const testIds = [
       ...new Set(
@@ -458,11 +466,21 @@ export class OutsourceCenterService {
     const testMap = new Map(tests.map((t) => [t.id, t.testName]));
     const panelMap = new Map(panels.map((p) => [p.id, p.panelName]));
 
-    return centers.map((c) => ({
-      ...c,
-      labTestName: c.labTestId ? (testMap.get(c.labTestId) ?? null) : null,
-      labPanelName: c.labPanelId ? (panelMap.get(c.labPanelId) ?? null) : null,
-    }));
+    return centers.map((c) => {
+      const director = c.contacts?.find(
+        (ct) => ct.role === 'DIRECTOR' && !ct.deletedAt,
+      );
+      return {
+        ...c,
+        labTestName: c.labTestId ? (testMap.get(c.labTestId) ?? null) : null,
+        labPanelName: c.labPanelId
+          ? (panelMap.get(c.labPanelId) ?? null)
+          : null,
+        directorName: director?.name ?? null,
+        directorEmail: director?.email ?? null,
+        directorMobile: director?.mobile ?? null,
+      };
+    });
   }
 
   /**

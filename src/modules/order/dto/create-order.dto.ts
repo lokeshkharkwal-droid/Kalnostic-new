@@ -11,10 +11,12 @@ import {
   IsBoolean,
   IsDateString,
   IsEnum,
+  IsInt,
   IsOptional,
   IsString,
   IsUUID,
   MaxLength,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import { OrderItemDto } from './order-item.dto';
@@ -49,6 +51,29 @@ export class CreateOrderDto {
   @IsOptional()
   @IsDateString()
   quotationValidTill?: string;
+
+  /**
+   * Source quotation this order was converted from — FK to a QUOTE order in the
+   * caller's tenant. When present and this order is finalized (any status other
+   * than QUOTE), the service links back to it and flips that quote's
+   * `quotationStatus` to CONVERTED in the same transaction. Ignored on a plain
+   * quote save (`status = QUOTE`).
+   */
+  @IsOptional()
+  @IsUUID()
+  sourceQuotationId?: string;
+
+  /**
+   * User-facing external Order/Quote id. Only honoured when the branch's
+   * configured external-id format is NONE (manual entry) — then it is required
+   * on a finalized ORDER/QUOTE and must be unique within the branch. When a
+   * format is configured, the value is auto-generated server-side and any
+   * supplied value here is ignored.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  externalOrderId?: string;
 
   /** Order date (ISO-8601 date). */
   @IsDateString()
@@ -166,4 +191,15 @@ export class CreateOrderDto {
   @ValidateNested({ each: true })
   @Type(() => OrderPaymentDto)
   payments?: OrderPaymentDto[];
+
+  /**
+   * Amount (same integer units as the payment ledger) collected on this order
+   * toward the patient's outstanding **previous dues**. Transient — used only to
+   * enforce the branch's Previous-Dues rules (§Charges & Deductions) when the
+   * order is finalized (`status = ORDER`); it is not persisted on the order.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  previousDuesCleared?: number;
 }

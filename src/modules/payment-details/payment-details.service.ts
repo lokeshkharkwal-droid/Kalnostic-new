@@ -2,11 +2,16 @@ import { Injectable } from '@nestjs/common';
 import { OrderStatus, PaymentDetails, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
-import { derivePaymentStatus } from '../order/entities/order.entity';
+import {
+  derivePaymentStatus,
+  computeEffectivePaid,
+} from '../order/entities/order.entity';
+import { RegistrationSettingsService } from '../registration-settings/registration-settings.service';
 import { CreatePaymentDetailsDto } from './dto/create-payment-details.dto';
 import { UpdatePaymentDetailsDto } from './dto/update-payment-details.dto';
 import { ListPaymentDetailsDto } from './dto/list-payment-details.dto';
 import {
+  PaymentCollectionByOtherUserNotAllowedException,
   PaymentDetailsNotFoundException,
   PaymentOrderCancelledException,
   PaymentOrderNotFoundException,
@@ -21,25 +26,88 @@ import {
  */
 @Injectable()
 export class PaymentDetailsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly registrationSettingsService: RegistrationSettingsService,
+  ) {}
+
+  /**
+   * Enforce the branch's `BillingMenu_AllowCollectionOfAmountByOtherUser` gate:
+   * a user other than the order's creator may only collect/modify payments when
+   * the setting is on. Legacy orders with no `createdBy` stay permissive. Orders
+   * with no branch have no settings to consult, so they stay permissive too.
+   * @throws PaymentCollectionByOtherUserNotAllowedException when barred
+   */
+  private async assertCanCollect(
+    tenantId: string,
+    order: { id: string; branchId: string | null; createdBy: string | null },
+    actorId: string | null,
+  ): Promise<void> {
+    if (!order.createdBy || order.createdBy === actorId || !order.branchId) {
+      return;
+    }
+    const settings = await this.registrationSettingsService.getForBranch(
+      tenantId,
+      order.branchId,
+    );
+    if (!settings.BillingMenu_AllowCollectionOfAmountByOtherUser) {
+      throw new PaymentCollectionByOtherUserNotAllowedException(
+        order.id,
+        order.createdBy,
+        actorId,
+      );
+    }
+  }
+
+  /**
+   * Load the parent order and run {@link assertCanCollect}. Used by
+   * `update`/`remove`, which start from a payment row rather than an order.
+   * @throws PaymentOrderNotFoundException if the order no longer resolves
+   * @throws PaymentCollectionByOtherUserNotAllowedException when barred
+   */
+  private async assertCanCollectForOrder(
+    tenantId: string,
+    orderId: string,
+    actorId: string | null,
+  ): Promise<void> {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, tenantId, deletedAt: null },
+      select: { id: true, branchId: true, createdBy: true },
+    });
+    if (!order) {
+      throw new PaymentOrderNotFoundException(orderId);
+    }
+    await this.assertCanCollect(tenantId, order, actorId);
+  }
 
   /**
    * Create a payment against an order. Validates the order belongs to the
    * caller's tenant and inherits its `branchId`.
    * @param tenantId tenant scope
+   * @param personId the acting user's `Person.id` (from JWT) — checked against
+   *   the order's creator for the collection-by-other-user gate
    * @param dto validated payload (incl. `orderId`)
    * @returns the created payment record
    * @throws PaymentOrderNotFoundException if the order doesn't resolve
    * @throws PaymentOrderCancelledException if the order is cancelled
+   * @throws PaymentCollectionByOtherUserNotAllowedException if a non-creator is
+   *   barred by the branch setting
    * @throws PaymentOverpaymentException if `paidAmount` exceeds the pending balance
    */
   async create(
     tenantId: string,
+    personId: string | null,
     dto: CreatePaymentDetailsDto,
   ): Promise<PaymentDetails> {
     const order = await this.prisma.order.findFirst({
       where: { id: dto.orderId, tenantId, deletedAt: null },
-      select: { id: true, branchId: true, status: true },
+      select: {
+        id: true,
+        branchId: true,
+        status: true,
+        createdBy: true,
+        cancellationCharge: true,
+      },
     });
     if (!order) {
       throw new PaymentOrderNotFoundException(dto.orderId);
@@ -47,14 +115,32 @@ export class PaymentDetailsService {
     if (order.status === OrderStatus.CANCELLED) {
       throw new PaymentOrderCancelledException(dto.orderId);
     }
+    await this.assertCanCollect(tenantId, order, personId);
     const { paymentDate, ...rest } = dto;
     return this.prisma.withTenant(tenantId, async (tx) => {
-      // Overpayment guard: never let the summed paid exceed the summed net.
+      // Overpayment guard: never let the collected amount exceed the pending
+      // balance. Pending is derived off the order's EFFECTIVE paid amount
+      // (`paid − cancellationCharge − refunds − refund charges`) — the same
+      // figure the billing UI and stored `paymentStatus` use — so a refund
+      // (which returns money and re-opens balance) raises the acceptable amount
+      // instead of being ignored. Using raw summed paid here would reject a
+      // legitimate re-payment of refunded money.
       const agg = await tx.paymentDetails.aggregate({
         where: { orderId: dto.orderId, tenantId, deletedAt: null },
-        _sum: { netAmount: true, paidAmount: true },
+        _sum: {
+          netAmount: true,
+          paidAmount: true,
+          refundAmount: true,
+          refundCharge: true,
+        },
       });
-      const pending = (agg._sum.netAmount ?? 0) - (agg._sum.paidAmount ?? 0);
+      const effectivePaid = computeEffectivePaid(
+        agg._sum.paidAmount ?? 0,
+        order.cancellationCharge,
+        agg._sum.refundAmount ?? 0,
+        agg._sum.refundCharge ?? 0,
+      );
+      const pending = (agg._sum.netAmount ?? 0) - effectivePaid;
       const attempted = dto.paidAmount ?? 0;
       if (attempted > pending) {
         throw new PaymentOverpaymentException(pending, attempted);
@@ -119,14 +205,19 @@ export class PaymentDetailsService {
 
   /**
    * Update a payment record (partial).
+   * @param personId acting user (checked against the order's creator)
    * @throws PaymentDetailsNotFoundException if missing/soft-deleted/other tenant
+   * @throws PaymentCollectionByOtherUserNotAllowedException if a non-creator is
+   *   barred by the branch setting
    */
   async update(
     id: string,
     tenantId: string,
+    personId: string | null,
     dto: UpdatePaymentDetailsDto,
   ): Promise<PaymentDetails> {
     const existing = await this.findById(id, tenantId);
+    await this.assertCanCollectForOrder(tenantId, existing.orderId, personId);
     const { paymentDate, ...rest } = dto;
     return this.prisma.withTenant(tenantId, async (tx) => {
       const row = await tx.paymentDetails.update({
@@ -143,10 +234,18 @@ export class PaymentDetailsService {
 
   /**
    * Soft-delete a payment record (sets `deletedAt`).
+   * @param personId acting user (checked against the order's creator)
    * @throws PaymentDetailsNotFoundException if missing/soft-deleted/other tenant
+   * @throws PaymentCollectionByOtherUserNotAllowedException if a non-creator is
+   *   barred by the branch setting
    */
-  async remove(id: string, tenantId: string): Promise<PaymentDetails> {
+  async remove(
+    id: string,
+    tenantId: string,
+    personId: string | null,
+  ): Promise<PaymentDetails> {
     const existing = await this.findById(id, tenantId);
+    await this.assertCanCollectForOrder(tenantId, existing.orderId, personId);
     return this.prisma.withTenant(tenantId, async (tx) => {
       const row = await tx.paymentDetails.update({
         where: { id },
@@ -159,9 +258,10 @@ export class PaymentDetailsService {
 
   /**
    * Recompute and persist the parent order's derived `paymentStatus` from its
-   * active payment ledger (summed `netAmount`/`paidAmount`). Called inside every
-   * payment write so the stored status the orders/appointments lists filter by
-   * stays in sync.
+   * active payment ledger. Derived off the order's **effective** paid amount
+   * (`paid − cancellationCharge − refunds − refund charges`) so a cancelled or
+   * refunded order's status reflects reality. Called inside every payment write so
+   * the stored status the orders/appointments lists filter by stays in sync.
    * @param tx active tenant-scoped transaction client
    * @param tenantId tenant scope
    * @param orderId the order whose ledger changed
@@ -171,15 +271,31 @@ export class PaymentDetailsService {
     tenantId: string,
     orderId: string,
   ): Promise<void> {
-    const agg = await tx.paymentDetails.aggregate({
-      where: { orderId, tenantId, deletedAt: null },
-      _sum: { netAmount: true, paidAmount: true },
-    });
+    const [agg, order] = await Promise.all([
+      tx.paymentDetails.aggregate({
+        where: { orderId, tenantId, deletedAt: null },
+        _sum: {
+          netAmount: true,
+          paidAmount: true,
+          refundAmount: true,
+          refundCharge: true,
+        },
+      }),
+      tx.order.findFirst({
+        where: { id: orderId, tenantId },
+        select: { cancellationCharge: true },
+      }),
+    ]);
     const net = agg._sum.netAmount ?? 0;
-    const paid = agg._sum.paidAmount ?? 0;
+    const effectivePaid = computeEffectivePaid(
+      agg._sum.paidAmount ?? 0,
+      order?.cancellationCharge ?? 0,
+      agg._sum.refundAmount ?? 0,
+      agg._sum.refundCharge ?? 0,
+    );
     await tx.order.update({
       where: { id: orderId },
-      data: { paymentStatus: derivePaymentStatus(net, paid) },
+      data: { paymentStatus: derivePaymentStatus(net, effectivePaid) },
     });
   }
 }

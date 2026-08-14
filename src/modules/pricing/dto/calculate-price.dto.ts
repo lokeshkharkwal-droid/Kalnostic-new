@@ -2,10 +2,13 @@ import {
   ArrayUnique,
   IsArray,
   IsInt,
+  IsNumber,
   IsOptional,
   IsUUID,
   Min,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { roundMinorUnits } from '../../../common/utils';
 
 /**
  * Body for the Create-Order price preview (`POST /pricing/calculate`). Amounts
@@ -38,7 +41,13 @@ export class CalculatePriceDto {
   @IsOptional()
   sampleCollectionCharges?: number;
 
-  @IsInt()
+  /**
+   * Summed per-line diagnostic discounts (minor units). Accepts a float (e.g.
+   * from percentage math) and is rounded to a whole minor unit, matching how the
+   * discount is stored when the order is created.
+   */
+  @Transform(roundMinorUnits)
+  @IsNumber()
   @Min(0)
   @IsOptional()
   orderDiscount?: number;

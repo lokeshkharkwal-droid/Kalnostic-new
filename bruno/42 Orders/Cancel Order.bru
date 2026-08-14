@@ -6,12 +6,18 @@ meta {
 
 patch {
   url: {{baseUrl}}/orders/{{orderId}}/cancel
-  body: none
+  body: json
   auth: bearer
 }
 
 auth:bearer {
   token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "cancellationCharge": 5000
+  }
 }
 
 tests {
@@ -25,14 +31,47 @@ tests {
 
 docs {
   Cancel an order — sets `status = CANCELLED` (a terminal state). Scoped to the
-  caller's tenant. Allowed regardless of any payments already collected; there is
-  **no refund handling this phase**. Unlike `DELETE /orders/:id` (soft delete), the
-  order and its payment ledger are preserved and it still appears in the billing
-  list, shown as Cancelled.
+  caller's tenant. Unlike `DELETE /orders/:id` (soft delete), the order and its
+  payment ledger are preserved and it still appears in the billing list, shown as
+  Cancelled.
+
+  Body (all optional — an empty body `{}` cancels with a 0 charge and no refund):
+  - `cancellationCharge` (minor units, default 0) — fee the lab retains. Deducted
+    from the order's **effective paid** amount and caps the refundable amount. Must
+    not exceed the amount paid, else 422 `CANCELLATION_CHARGE_EXCEEDS_PAID`.
+  - `refund` — present ⇒ **cancel with refund**. `{ amount, paymentMode,
+    reference?, paymentDate? }`. `amount` is returned to the patient and is capped
+    at `paid − cancellationCharge` (the max refundable), else 422
+    `REFUND_EXCEEDS_REFUNDABLE`. Writes a REFUND row to the payment ledger.
+
+  Effective Paid = `paid − cancellationCharge − refunds − refund charges` (floored
+  at 0); this is what the billing list shows as "Paid", and `paymentStatus` is
+  recomputed off it. The refunded total surfaces in the list's `refundedAmount`
+  ("Refund Provided" column).
+
+  Example bodies:
+  - Cancel without refund (₹50 charge): `{ "cancellationCharge": 5000 }`
+  - Cancel with refund (₹20 charge, refund ₹80 in cash):
+    `{ "cancellationCharge": 2000, "refund": { "amount": 8000, "paymentMode": "CASH" } }`
+
+  Gated by the branch's Registration Settings → Cancellation & Refund:
+  - `AllowOrderCancellation` off ⇒ 422 `ORDER_CANCELLATION_NOT_ALLOWED`.
+  - `CancellationChargesApplicable` off ⇒ any `cancellationCharge` in the body is
+    ignored (forced to 0); on ⇒ the value is used, or defaults to the configured
+    `CancellationChargesAmount` when omitted.
+  - `AllowRefund` off ⇒ a `refund` leg is rejected with 422 `REFUND_NOT_ALLOWED`.
+  - `AllowPartialRefund` off ⇒ `refund.amount` must equal the full refundable
+    (`paid − cancellationCharge`), else 422 `PARTIAL_REFUND_NOT_ALLOWED`.
+
+  Also gated by the branch's Registration Settings → Billing Menu:
+  - `AllowCancellationByOtherUser` off ⇒ a caller who is **not** the order's
+    creator gets 403 `ORDER_CANCELLATION_BY_OTHER_USER_NOT_ALLOWED`. The acting
+    user is the JWT `person_id`; the creator is `Order.createdBy`. Legacy orders
+    with no `createdBy` stay cancellable by anyone.
 
   Cancelling an already-cancelled order returns 409 `ORDER_ALREADY_CANCELLED`.
   Once cancelled, `POST /payments` for the order is rejected with 422
-  `PAYMENT_ORDER_CANCELLED`.
+  `PAYMENT_ORDER_CANCELLED` (further refunds still go through `POST /orders/:id/refund`).
 
   When the cancelled order was a home-visit appointment, its linked `Appointment`
   is cancelled too and the phlebotomist slot it held is **released** (the persisted

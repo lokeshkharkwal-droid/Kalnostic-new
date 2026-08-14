@@ -2,9 +2,15 @@ import { Injectable } from '@nestjs/common';
 import {
   AppointmentStatus,
   AppointmentType,
+  DiscountMode,
   DoctorType,
+  ExternalIdFormat,
+  ExternalIdPurpose,
   Order,
   OrderStatus,
+  PaymentEntryType,
+  PaymentMode,
+  PaymentStatus,
   Prisma,
   QuotationStatus,
   RepeatIntervalUnit,
@@ -18,6 +24,7 @@ import { AccessionSampleService } from '../accession/accession-sample.service';
 import { SlotReservationService } from '../phlebotomist-schedule/slot-reservation.service';
 import { PhlebotomistCollectionService } from '../phlebotomist-collection/phlebotomist-collection.service';
 import { RegistrationSettingsService } from '../registration-settings/registration-settings.service';
+import { ExternalIdService } from '../registration-settings/external-id.service';
 import type { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { addInterval, subtractInterval } from '../../common/utils';
@@ -29,6 +36,8 @@ import type { OrderNoteCategoryValue } from './dto/create-order-note.dto';
 import { ListOrderNotesDto } from './dto/list-order-notes.dto';
 import { OrderItemDto } from './dto/order-item.dto';
 import { OrderPaymentDto } from './dto/order-payment.dto';
+import { CancelOrderDto } from './dto/cancel-order.dto';
+import { RefundOrderDto } from './dto/refund-order.dto';
 import { BillingDetailsDto } from './dto/billing-details.dto';
 import { OrderDiagnosticsDto } from './dto/order-diagnostics.dto';
 import { OrderOpdDto } from './dto/order-opd.dto';
@@ -39,6 +48,7 @@ import {
   OrderListRow,
   OrderWithRelations,
   derivePaymentStatus,
+  computeEffectivePaid,
 } from './entities/order.entity';
 import {
   AppointmentSectionRequiredException,
@@ -56,6 +66,12 @@ import {
   OrderDiagnosticPanelNotFoundException,
   OrderExternalReferralNotFoundException,
   OrderAlreadyCancelledException,
+  CancellationChargeExceedsPaidException,
+  RefundExceedsRefundableException,
+  NothingToRefundException,
+  OrderCancellationNotAllowedException,
+  RefundNotAllowedException,
+  PartialRefundNotAllowedException,
   OrderInternalReferralNotFoundException,
   OrderNotFoundException,
   OrderOutsourceCenterNotEligibleException,
@@ -67,13 +83,47 @@ import {
   NoActiveOrderPrintTemplateException,
   AmbiguousOrderPrintTemplateException,
   NotAQuotationException,
+  SourceQuotationInvalidException,
   QuotationNotExpiredException,
   QuotationDuplicationNotAllowedException,
+  PreviousDuesNotClearedException,
+  PreviousDuesOverpaymentException,
+  FullPaymentRequiredException,
+  PartialPaymentBelowMinimumException,
+  ExternalOrderIdRequiredException,
+  DuplicateExternalOrderIdException,
+  OrderDiscountNotAllowedException,
+  OrderDiscountOutOfRangeException,
+  LineItemDiscountNotAllowedException,
+  LineItemDiscountOutOfRangeException,
+  TdsNotApplicableException,
+  TdsOutOfRangeException,
+  PartialBillingNotAllowedForDiscountedOrderException,
+  OrderCancellationByOtherUserNotAllowedException,
+  QuotationEditByOtherUserNotAllowedException,
+  BillCopyPrintNotAllowedForUnpaidException,
+  AppointmentPaymentRequiredException,
 } from './exceptions/order.exceptions';
+import type { RegistrationSetting } from '@prisma/client';
 // Reused so an inline order-payment overpayment raises the SAME
-// `PAYMENT_OVERPAYMENT` error the standalone `POST /payments` guard does. This
-// imports an exception class (not a service), so rule #3 is not violated.
-import { PaymentOverpaymentException } from '../payment-details/exceptions/payment-details.exceptions';
+// `PAYMENT_OVERPAYMENT` error the standalone `POST /payments` guard does. These
+// import exception classes (not services), so rule #3 is not violated.
+import {
+  PaymentOverpaymentException,
+  PaymentCollectionByOtherUserNotAllowedException,
+} from '../payment-details/exceptions/payment-details.exceptions';
+
+/**
+ * The minimal payment shape the discount/TDS + partial-billing validators read —
+ * satisfied by both an inline `OrderPaymentDto` and a Prisma `paymentDetails`
+ * select of the same fields.
+ */
+type DiscountTdsPaymentRow = {
+  netAmount?: number | null;
+  paidAmount?: number | null;
+  orderDiscount?: number | null;
+  tdsDeduction?: number | null;
+};
 
 /**
  * Order Management — the orchestrator. Tenant-scoped (RLS) + branch-level
@@ -113,6 +163,7 @@ export class OrderService {
     private readonly homeVisitCollections: PhlebotomistCollectionService,
     private readonly pdfReportTemplateService: PdfReportTemplateService,
     private readonly registrationSettingsService: RegistrationSettingsService,
+    private readonly externalIdService: ExternalIdService,
   ) {}
 
   /**
@@ -232,11 +283,104 @@ export class OrderService {
 
     // Snapshot each item's list unit price from its branch lab test/panel row so
     // the order's prices are stable even if the list is later re-priced (§B5).
+    // Loaded before the billing rules so the discount/TDS checks (and the
+    // partial-billing-of-discounted rule) can compute amounts from the
+    // authoritative server-side prices rather than trusting the client.
     const itemPrices = await this.loadItemUnitPrices(
       tenantId,
       branchId,
       dto.items ?? [],
     );
+
+    // Fetch the branch's Registration settings once (only when finalizing a real
+    // order at a branch) and share it across every rule below.
+    const needsBillingRules =
+      dto.status === OrderStatus.ORDER && Boolean(branchId);
+    const settings =
+      needsBillingRules && branchId
+        ? await this.registrationSettingsService.getForBranch(
+            tenantId,
+            branchId,
+          )
+        : null;
+    const hasDiscount = this.orderHasDiscount(dto.items ?? [], dto.payments);
+
+    // Enforce the branch's Previous-Dues + Partial-Billing rules (Registration
+    // Settings → Charges & Deductions). Only bites when finalizing a real order
+    // (`status = ORDER`) at a branch; DRAFT/QUOTE/APPOINTMENT are exempt.
+    await this.assertBillingRules({
+      tenantId,
+      branchId,
+      status: dto.status,
+      patientId: dto.patientId,
+      payments: dto.payments,
+      previousDuesCleared: dto.previousDuesCleared ?? 0,
+      settings,
+      hasDiscount,
+    });
+
+    // Enforce the branch's TDS & Discount rules (allow-flags, discount mode,
+    // and min/max percentages) against the server-side item prices.
+    this.assertDiscountAndTdsRules({
+      status: dto.status,
+      branchId,
+      settings,
+      items: dto.items ?? [],
+      payments: dto.payments,
+      itemPrices,
+    });
+
+    // Appointment check-in payment gating (Registration Settings → Appointment).
+    // The two flags are mutually exclusive (enforced on save): "check-in for
+    // paid only" blocks an unpaid/partial appointment; "allow progress of
+    // unpaid/partial" (or neither) permits it. Only bites when creating an
+    // APPOINTMENT-status order at a branch.
+    if (dto.status === OrderStatus.APPOINTMENT && branchId) {
+      const apptSettings =
+        settings ??
+        (await this.registrationSettingsService.getForBranch(
+          tenantId,
+          branchId,
+        ));
+      if (
+        apptSettings.Appointment_AllowCheckInForPaidAppointmentsOnly &&
+        paymentStatus !== PaymentStatus.PAID
+      ) {
+        throw new AppointmentPaymentRequiredException(payNet, payPaid);
+      }
+    }
+
+    // Resolve the branch's external Order/Quote id configuration (Registration
+    // Settings). A quote (status QUOTE) uses the QUOTATION format + its own
+    // counter; everything else uses the ORDER format. When the format is NONE
+    // the operator must type the id manually (required on a finalized
+    // ORDER/QUOTE, unique per branch); otherwise it is auto-generated inside the
+    // transaction below. Only meaningful when the order is branch-scoped.
+    const isQuote = dto.status === OrderStatus.QUOTE;
+    const externalIdPurpose = isQuote
+      ? ExternalIdPurpose.QUOTATION
+      : ExternalIdPurpose.ORDER;
+    const externalIdFormat = branchId
+      ? await this.externalIdService.getConfiguredFormat(
+          tenantId,
+          branchId,
+          externalIdPurpose,
+        )
+      : ExternalIdFormat.NONE;
+    const externalIdIsManual = externalIdFormat === ExternalIdFormat.NONE;
+    const manualExternalId = dto.externalOrderId?.trim() || null;
+    // Manual id is mandatory on a finalized order/quotation (DRAFT/APPOINTMENT
+    // exempt — mirrors assertBillingRules).
+    const requiresManualExternalId =
+      dto.status === OrderStatus.ORDER || dto.status === OrderStatus.QUOTE;
+    if (
+      branchId &&
+      externalIdIsManual &&
+      requiresManualExternalId &&
+      !manualExternalId
+    ) {
+      throw new ExternalOrderIdRequiredException(isQuote);
+    }
 
     let createdId: string;
     try {
@@ -258,6 +402,38 @@ export class OrderService {
         const billId = isDiagnosticBill
           ? `DIG-${String(tenant.diagnosticBillCounter).padStart(3, '0')}`
           : null;
+        // Resolve the external Order/Quote id: auto-generate from the branch's
+        // configured format (bumping its per-branch counter atomically here), or
+        // take the operator's manual value (NONE) after a per-branch uniqueness
+        // check. Null when there is no branch or a DRAFT with no manual value.
+        let externalOrderId: string | null = null;
+        if (branchId) {
+          if (externalIdIsManual) {
+            externalOrderId = manualExternalId;
+            if (externalOrderId) {
+              const dup = await tx.order.findFirst({
+                where: { branchId, externalOrderId, deletedAt: null },
+                select: { id: true },
+              });
+              if (dup) {
+                throw new DuplicateExternalOrderIdException(externalOrderId);
+              }
+            }
+          } else {
+            const branchRow = await tx.branch.findUnique({
+              where: { id: branchId },
+              select: { shortName: true },
+            });
+            externalOrderId = await this.externalIdService.generateInTx(
+              tx,
+              tenantId,
+              branchId,
+              externalIdPurpose,
+              externalIdFormat,
+              branchRow?.shortName ?? '',
+            );
+          }
+        }
         // For an APPOINTMENT order, create the linked lifecycle appointment
         // (initial status NEW) in the same transaction and attach it via FK.
         const appointmentId =
@@ -276,6 +452,7 @@ export class OrderService {
             branchId,
             orderCode,
             billId,
+            externalOrderId,
             appointmentId,
             paymentStatus,
             createdBy: personId,
@@ -296,6 +473,12 @@ export class OrderService {
             quotationValidTill: dto.quotationValidTill
               ? new Date(dto.quotationValidTill)
               : null,
+            // Link back to the source quote when this order is a conversion
+            // (only kept for real conversions — see the CONVERTED flip below).
+            sourceQuotationId:
+              dto.sourceQuotationId && dto.status !== OrderStatus.QUOTE
+                ? dto.sourceQuotationId
+                : null,
             patientId: dto.patientId,
             appointmentAt,
             appointmentType,
@@ -308,6 +491,33 @@ export class OrderService {
             branchLabPanelListId: dto.branchLabPanelListId ?? null,
           },
         });
+        // Quotation → order conversion: when this order was created from a quote
+        // and is a real conversion (any status other than QUOTE), flip the source
+        // quote to CONVERTED in the SAME transaction. Any failure above rolls this
+        // back too, so a failed create never marks a quote converted. The quote
+        // keeps status = QUOTE (so it stays on the Quotations screen) — only its
+        // quotationStatus changes.
+        if (dto.sourceQuotationId && dto.status !== OrderStatus.QUOTE) {
+          const sourceQuote = await tx.order.findFirst({
+            where: {
+              id: dto.sourceQuotationId,
+              tenantId,
+              deletedAt: null,
+              quotationStatus: { not: null },
+            },
+            select: { id: true },
+          });
+          if (!sourceQuote) {
+            throw new SourceQuotationInvalidException(dto.sourceQuotationId);
+          }
+          await tx.order.update({
+            where: { id: sourceQuote.id },
+            data: {
+              quotationStatus: QuotationStatus.CONVERTED,
+              updatedBy: personId,
+            },
+          });
+        }
         // Seed the create-form's single `orderNotes` string as the first entry
         // of the Order Notes history so the Order Overview tab shows it alongside
         // any notes added later (append-only — see OrderNote / createNote).
@@ -336,6 +546,8 @@ export class OrderService {
                 itemPrices.get(i.branchLabTestId ?? i.branchLabPanelId ?? '') ??
                 0,
               discount: i.discount ?? 0,
+              discountMode: i.discountMode ?? null,
+              discountValue: i.discountValue ?? null,
               outsourceCenterId: i.outsourceCenterId ?? null,
             })),
           });
@@ -375,6 +587,25 @@ export class OrderService {
               paymentDate: p.paymentDate ? new Date(p.paymentDate) : null,
             })),
           });
+        }
+        // Cross-order settlement: an order created directly as ORDER is entering
+        // the ORDER state now, so apply any amount collected toward previous dues
+        // across the patient's outstanding orders (oldest first) in this same tx.
+        if (
+          dto.status === OrderStatus.ORDER &&
+          branchId &&
+          (dto.previousDuesCleared ?? 0) > 0
+        ) {
+          await this.settlePreviousDuesInTx(
+            tx,
+            tenantId,
+            dto.patientId,
+            dto.previousDuesCleared ?? 0,
+            order.id,
+            orderCode,
+            this.settlementPaymentMode(dto.payments),
+            new Date(dto.orderDate),
+          );
         }
         // Reserve the phlebotomist slot for a home-visit appointment (atomic
         // capacity gate). Throws SlotFull/DailyCapReached/SlotUnavailable/
@@ -591,6 +822,442 @@ export class OrderService {
       prices.set(p.id, p.listPrice);
     }
     return prices;
+  }
+
+  /**
+   * Sum a patient's outstanding previous dues — the positive
+   * `netAmount − paidAmount` balance across their active, non-cancelled orders
+   * (`ORDER`/`APPOINTMENT`), **business-wide** (every branch in the tenant).
+   * Overpaid orders never offset others (each order is floored at 0). Tenant-wide
+   * (not branch-scoped) so the figure matches the patient's true total dues to the
+   * business — the Create Order "Clear Previous Dues" cap, the previous-dues gate,
+   * the overpayment guard, and the oldest-first settlement all share it.
+   * @param tenantId tenant scope (RLS also isolates to this tenant)
+   * @param patientId the patient to total
+   * @param excludeOrderId an order to exclude (e.g. the one being finalized)
+   */
+  private async getPatientOutstanding(
+    tenantId: string,
+    patientId: string,
+    excludeOrderId?: string,
+  ): Promise<number> {
+    const orders = await this.prisma.order.findMany({
+      where: {
+        tenantId,
+        patientId,
+        deletedAt: null,
+        status: { in: [OrderStatus.ORDER, OrderStatus.APPOINTMENT] },
+        ...(excludeOrderId ? { id: { not: excludeOrderId } } : {}),
+      },
+      select: {
+        payments: {
+          where: { deletedAt: null },
+          select: { netAmount: true, paidAmount: true },
+        },
+      },
+    });
+    let outstanding = 0;
+    for (const o of orders) {
+      const net = o.payments.reduce((s, p) => s + p.netAmount, 0);
+      const paid = o.payments.reduce((s, p) => s + p.paidAmount, 0);
+      outstanding += Math.max(net - paid, 0);
+    }
+    return outstanding;
+  }
+
+  /**
+   * Public read for the Create Order screen: a patient's **business-wide**
+   * outstanding previous dues (all branches in the tenant), so the UI can display
+   * them and pre-validate the Previous-Dues rules before submitting.
+   * @param tenantId tenant scope (from JWT)
+   * @param patientId the patient to total
+   * @returns `{ outstanding }` in the same integer units as the payment ledger
+   * @throws OrderPatientNotFoundException if the patient is not in the tenant
+   */
+  async getPatientDues(
+    tenantId: string,
+    patientId: string,
+  ): Promise<{ outstanding: number }> {
+    await this.assertPatient(tenantId, patientId);
+    const outstanding = await this.getPatientOutstanding(tenantId, patientId);
+    return { outstanding };
+  }
+
+  /**
+   * Enforce the branch's **Previous Dues & Partial Billing** rules (Registration
+   * Settings → Charges & Deductions) when an order is finalized. A no-op unless
+   * `status = ORDER` and a branch is in context.
+   *
+   * Previous dues: when the patient still owes money and the branch does NOT
+   * allow ordering without clearing dues, at least
+   * `min(outstanding, MinimumPreviousDuesToClear)` must be cleared on this order.
+   *
+   * Partial billing: when partial billing is disabled the full `netAmount` must
+   * be collected; when enabled, at least `MinimumPercentOfNetAmountToProceed`%
+   * of the net must be collected.
+   *
+   * @throws PreviousDuesNotClearedException if the dues gate is not satisfied
+   * @throws FullPaymentRequiredException if full payment is required but missing
+   * @throws PartialPaymentBelowMinimumException if the paid amount is below the
+   *   configured minimum percentage of the net amount
+   */
+  private async assertBillingRules(params: {
+    tenantId: string;
+    branchId: string | null;
+    status: OrderStatus | undefined;
+    patientId: string;
+    payments:
+      | Array<{ netAmount?: number | null; paidAmount?: number | null }>
+      | undefined;
+    previousDuesCleared: number;
+    excludeOrderId?: string;
+    /** Pre-fetched branch settings — supplied by the caller to avoid a second
+     *  fetch (falls back to loading them when omitted). */
+    settings?: RegistrationSetting | null;
+    /** Whether the order carries any discount (order-level or per-line) — gates
+     *  the "Allow Partial Billing of Discounted Order" rule. */
+    hasDiscount?: boolean;
+  }): Promise<void> {
+    const {
+      tenantId,
+      branchId,
+      status,
+      patientId,
+      payments,
+      previousDuesCleared,
+      excludeOrderId,
+      hasDiscount = false,
+    } = params;
+    if (status !== OrderStatus.ORDER || !branchId) return;
+
+    const settings =
+      params.settings ??
+      (await this.registrationSettingsService.getForBranch(tenantId, branchId));
+
+    // ── Previous-dues gate ──
+    // Compute the outstanding balance whenever it could matter — either the
+    // branch enforces clearing, or the caller is clearing something (which we
+    // must bound against what's actually owed).
+    const duesGateActive =
+      !settings.ChargesAndDeductions_AllowOrderWithoutClearingPreviousDues;
+    if (duesGateActive || previousDuesCleared > 0) {
+      const outstanding = await this.getPatientOutstanding(
+        tenantId,
+        patientId,
+        excludeOrderId,
+      );
+      // Can't clear more dues than are owed (settlement is capped at the balance).
+      if (previousDuesCleared > outstanding) {
+        throw new PreviousDuesOverpaymentException(
+          outstanding,
+          previousDuesCleared,
+        );
+      }
+      if (duesGateActive && outstanding > 0) {
+        const minToClear = Number(
+          settings.ChargesAndDeductions_MinimumPreviousDuesToClear,
+        );
+        // Toggle OFF ⇒ the full outstanding must be cleared by default; a
+        // positive configured minimum relaxes it to just that amount (capped at
+        // what's owed). A minimum of 0 means "no explicit minimum" — not "clear
+        // nothing" — so it falls back to full clearance.
+        const required =
+          minToClear > 0 ? Math.min(outstanding, minToClear) : outstanding;
+        if (previousDuesCleared < required) {
+          throw new PreviousDuesNotClearedException(
+            outstanding,
+            required,
+            previousDuesCleared,
+          );
+        }
+      }
+    }
+
+    // ── Partial-billing gate ──
+    const net = (payments ?? []).reduce((s, p) => s + (p.netAmount ?? 0), 0);
+    const paid = (payments ?? []).reduce((s, p) => s + (p.paidAmount ?? 0), 0);
+    if (net > 0) {
+      if (!settings.ChargesAndDeductions_AllowPartialBilling) {
+        if (paid < net) {
+          throw new FullPaymentRequiredException(net, paid);
+        }
+      } else if (
+        hasDiscount &&
+        !settings.ChargesAndDeductions_AllowPartialBillingOfDiscountedOrder
+      ) {
+        // Partial billing is on, but not for discounted orders — a discounted
+        // order must still be paid in full.
+        if (paid < net) {
+          throw new PartialBillingNotAllowedForDiscountedOrderException(
+            net,
+            paid,
+          );
+        }
+      } else {
+        const minPercent =
+          settings.ChargesAndDeductions_MinimumPercentOfNetAmountToProceed;
+        const minRequired = Math.ceil((net * minPercent) / 100);
+        if (paid < minRequired) {
+          throw new PartialPaymentBelowMinimumException(
+            net,
+            paid,
+            minPercent,
+            minRequired,
+          );
+        }
+      }
+    }
+  }
+
+  /**
+   * Whether an order carries any discount — an order-level discount (on the
+   * first payment row) or any per-line item discount. Used to gate the
+   * "Allow Partial Billing of Discounted Order" rule.
+   */
+  private orderHasDiscount(
+    items: OrderItemDto[],
+    payments: DiscountTdsPaymentRow[] | undefined,
+  ): boolean {
+    const lineDiscount = items.reduce((s, i) => s + (i.discount ?? 0), 0);
+    const orderDiscount = payments?.[0]?.orderDiscount ?? 0;
+    return lineDiscount > 0 || orderDiscount > 0;
+  }
+
+  /**
+   * Enforce the branch's **TDS & Discount** rules (Registration Settings →
+   * Charges & Deductions) when finalizing a real order (`status = ORDER`) at a
+   * branch. Everything is computed from the server-side `itemPrices` (never a
+   * client-supplied net), mirroring the frontend gating so the API is secure
+   * even if the UI is bypassed. DRAFT/QUOTE/APPOINTMENT are exempt.
+   *
+   * - **Order discount** (first payment row's `orderDiscount`): rejected when
+   *   order-level discounts are disabled (Allow Discounts off, or the active
+   *   discount mode is Line-only); otherwise its effective percentage of the
+   *   items subtotal must fall within `[Minimum, Maximum] Discount %`.
+   * - **Line-item discount** (per item): rejected when line discounts are
+   *   disabled; otherwise each item's effective percentage of its price must
+   *   fall within `[Minimum, Maximum] Line Item Discount %`.
+   * - **TDS** (first payment row's `tdsDeduction`): rejected when TDS is not
+   *   applicable; otherwise its effective percentage of the net amount must
+   *   fall within `[Minimum, Maximum] TDS %`.
+   *
+   * A percentage bound applies only when a discount/TDS is actually applied
+   * (amount > 0); a zero value is always allowed.
+   *
+   * @throws OrderDiscountNotAllowedException / OrderDiscountOutOfRangeException
+   * @throws LineItemDiscountNotAllowedException / LineItemDiscountOutOfRangeException
+   * @throws TdsNotApplicableException / TdsOutOfRangeException
+   */
+  private assertDiscountAndTdsRules(params: {
+    status: OrderStatus | undefined;
+    branchId: string | null;
+    settings: RegistrationSetting | null;
+    items: OrderItemDto[];
+    payments: DiscountTdsPaymentRow[] | undefined;
+    itemPrices: Map<string, number>;
+  }): void {
+    const { status, branchId, settings, items, payments, itemPrices } = params;
+    if (status !== OrderStatus.ORDER || !branchId || !settings) return;
+
+    // Small tolerance so a legitimately at-the-boundary percentage isn't
+    // rejected by floating-point noise (e.g. 20.0000001% for a 20% max).
+    const EPS = 0.01;
+
+    // Resolve capabilities from the settings (mirror of the frontend logic).
+    const anyModeSet =
+      settings.ChargesAndDeductions_AllowOrderDiscountOnly ||
+      settings.ChargesAndDeductions_AllowLineDiscountOnly ||
+      settings.ChargesAndDeductions_AllowBothOrderAndLineDiscount;
+    const orderModeOk =
+      settings.ChargesAndDeductions_AllowBothOrderAndLineDiscount ||
+      settings.ChargesAndDeductions_AllowOrderDiscountOnly ||
+      !anyModeSet;
+    const lineModeOk =
+      settings.ChargesAndDeductions_AllowBothOrderAndLineDiscount ||
+      settings.ChargesAndDeductions_AllowLineDiscountOnly ||
+      !anyModeSet;
+    const orderDiscountEnabled =
+      settings.ChargesAndDeductions_AllowDiscounts && orderModeOk;
+    const lineDiscountEnabled =
+      settings.ChargesAndDeductions_AllowLineItemDiscount && lineModeOk;
+
+    // ── Line-item discounts (also accumulates the items subtotal + line total
+    //    used by the order-discount / TDS bases below). ──
+    const minLine =
+      settings.ChargesAndDeductions_MinimumLineItemDiscountPercent;
+    const maxLine =
+      settings.ChargesAndDeductions_MaximumLineItemDiscountPercent;
+    let itemsGross = 0;
+    let lineDiscountTotal = 0;
+    for (const item of items) {
+      const key = item.branchLabTestId ?? item.branchLabPanelId ?? '';
+      const price = itemPrices.get(key) ?? 0;
+      itemsGross += price;
+      const discount = item.discount ?? 0;
+      lineDiscountTotal += discount;
+      if (discount <= 0) continue;
+      if (!lineDiscountEnabled) throw new LineItemDiscountNotAllowedException();
+      // Effective percentage: use the typed PERCENT value directly, else derive
+      // it from the amount and the line's price. A discount on a zero-price
+      // (e.g. direct) line with an AMOUNT mode can't be expressed as a %, so the
+      // range check is skipped (the allow-flag above still applies).
+      let pct: number | null = null;
+      if (
+        item.discountMode === DiscountMode.PERCENT &&
+        item.discountValue != null
+      ) {
+        pct = item.discountValue;
+      } else if (price > 0) {
+        pct = (discount / price) * 100;
+      }
+      if (pct != null && (pct < minLine - EPS || pct > maxLine + EPS)) {
+        throw new LineItemDiscountOutOfRangeException(
+          minLine,
+          maxLine,
+          Math.round(pct * 100) / 100,
+          key || item.direct || 'item',
+        );
+      }
+    }
+
+    // ── Order-level discount (first payment row) ──
+    const orderDiscount = payments?.[0]?.orderDiscount ?? 0;
+    if (orderDiscount > 0) {
+      if (!orderDiscountEnabled) throw new OrderDiscountNotAllowedException();
+      const minOrder = settings.ChargesAndDeductions_MinimumDiscountPercent;
+      const maxOrder = settings.ChargesAndDeductions_MaximumDiscountPercent;
+      // No positive base to compute a percentage against ⇒ a discount can't be
+      // valid.
+      if (itemsGross <= 0) throw new OrderDiscountNotAllowedException();
+      const pct = (orderDiscount / itemsGross) * 100;
+      if (pct < minOrder - EPS || pct > maxOrder + EPS) {
+        throw new OrderDiscountOutOfRangeException(
+          minOrder,
+          maxOrder,
+          Math.round(pct * 100) / 100,
+        );
+      }
+    }
+
+    // ── TDS (first payment row), computed against the net amount ──
+    const tds = payments?.[0]?.tdsDeduction ?? 0;
+    if (tds > 0) {
+      if (!settings.ChargesAndDeductions_TdsApplicable) {
+        throw new TdsNotApplicableException();
+      }
+      const minTds = settings.ChargesAndDeductions_MinimumTdsPercent;
+      const maxTds = settings.ChargesAndDeductions_MaximumTdsPercent;
+      const net = Math.max(itemsGross - lineDiscountTotal - orderDiscount, 0);
+      if (net <= 0) throw new TdsOutOfRangeException(minTds, maxTds, 0);
+      const pct = (tds / net) * 100;
+      if (pct < minTds - EPS || pct > maxTds + EPS) {
+        throw new TdsOutOfRangeException(
+          minTds,
+          maxTds,
+          Math.round(pct * 100) / 100,
+        );
+      }
+    }
+  }
+
+  /**
+   * Apply an amount collected toward a patient's **previous dues** across their
+   * outstanding orders, **oldest first**, inside the given transaction. For each
+   * order with a positive balance (from oldest `orderDate`, then `createdAt`), a
+   * settlement `PaymentDetails` row is written (a pure payment: `paidAmount =
+   * applied`, no net) referencing the new order, and the settled order's
+   * `paymentStatus` is recomputed — so the patient's outstanding drops
+   * immediately. Runs in the same transaction as the new order so settlement and
+   * the order commit (or roll back) together.
+   *
+   * The caller has already validated (`assertBillingRules`) that `amount` never
+   * exceeds the outstanding balance, so any tiny rounding remainder is a no-op.
+   *
+   * Settlement is **business-wide** (all branches in the tenant): the cleared
+   * amount pays down the patient's oldest outstanding orders wherever they were
+   * placed. Each settlement row is tagged with the settled order's own branch.
+   *
+   * @param tx active transaction client
+   * @param tenantId tenant scope
+   * @param patientId the patient whose dues are being settled
+   * @param amount amount to apply (same integer units as the ledger)
+   * @param newOrderId the order driving the settlement (excluded from allocation)
+   * @param newOrderCode the new order's code, recorded as the settlement reference
+   * @param paymentMode mode the dues were collected under (the new order's mode)
+   * @param paymentDate when the dues were collected
+   */
+  private async settlePreviousDuesInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    patientId: string,
+    amount: number,
+    newOrderId: string,
+    newOrderCode: string,
+    paymentMode: PaymentMode,
+    paymentDate: Date,
+  ): Promise<void> {
+    if (amount <= 0) return;
+    const orders = await tx.order.findMany({
+      where: {
+        tenantId,
+        patientId,
+        deletedAt: null,
+        id: { not: newOrderId },
+        status: { in: [OrderStatus.ORDER, OrderStatus.APPOINTMENT] },
+      },
+      orderBy: [{ orderDate: 'asc' }, { createdAt: 'asc' }],
+      select: {
+        id: true,
+        branchId: true,
+        payments: {
+          where: { deletedAt: null },
+          select: { netAmount: true, paidAmount: true },
+        },
+      },
+    });
+
+    let remaining = amount;
+    for (const o of orders) {
+      if (remaining <= 0) break;
+      const net = o.payments.reduce((s, p) => s + p.netAmount, 0);
+      const paid = o.payments.reduce((s, p) => s + p.paidAmount, 0);
+      const balance = net - paid;
+      if (balance <= 0) continue;
+      const applied = Math.min(balance, remaining);
+      await tx.paymentDetails.create({
+        data: {
+          tenantId,
+          // Tag the settlement row with the SETTLED order's own branch, not the
+          // new order's — the payment belongs to that order at that location.
+          branchId: o.branchId,
+          orderId: o.id,
+          paidAmount: applied,
+          remainingBalance: Math.max(balance - applied, 0),
+          hasClearedPreviousDues: true,
+          paymentMode,
+          paymentDate,
+          reference: newOrderCode,
+          notes: `Previous dues settled via order ${newOrderCode}`,
+        },
+      });
+      await tx.order.update({
+        where: { id: o.id },
+        data: { paymentStatus: derivePaymentStatus(net, paid + applied) },
+      });
+      remaining -= applied;
+    }
+  }
+
+  /**
+   * The payment mode a previous-dues settlement should be recorded under —
+   * the new order's primary (first) payment mode, defaulting to CASH.
+   */
+  private settlementPaymentMode(
+    payments: OrderPaymentDto[] | undefined,
+  ): PaymentMode {
+    return (
+      payments?.find((p) => p.paymentMode)?.paymentMode ?? PaymentMode.CASH
+    );
   }
 
   /**
@@ -816,6 +1483,27 @@ export class OrderService {
     templateId?: string,
   ): Promise<Buffer> {
     const order = await this.findById(id, tenantId);
+    // Bill copies may be restricted to fully-paid orders (branch setting). Net −
+    // effective-paid ≤ 0 means the balance is settled. Only guards `bill_print`;
+    // TRF / order slip / quotation are unaffected. No branch → no settings → allow.
+    if (type === 'bill_print' && order.branchId) {
+      const settings = await this.registrationSettingsService.getForBranch(
+        tenantId,
+        order.branchId,
+      );
+      if (settings.BillingMenu_AllowBillCopyPrintForPaidBillingsOnly) {
+        const net = order.payments.reduce((s, p) => s + p.netAmount, 0);
+        const effectivePaid = computeEffectivePaid(
+          order.payments.reduce((s, p) => s + p.paidAmount, 0),
+          order.cancellationCharge,
+          order.payments.reduce((s, p) => s + p.refundAmount, 0),
+          order.payments.reduce((s, p) => s + p.refundCharge, 0),
+        );
+        if (net - effectivePaid > 0) {
+          throw new BillCopyPrintNotAllowedForUnpaidException(id);
+        }
+      }
+    }
     const context = this.buildPrintContext(order, type);
     const resolvedTemplateId =
       templateId ?? (await this.resolvePrintTemplateId(tenantId, type));
@@ -1324,6 +2012,11 @@ export class OrderService {
       );
       const netAmount = r.payments.reduce((s, p) => s + p.netAmount, 0);
       const paidAmount = r.payments.reduce((s, p) => s + p.paidAmount, 0);
+      const refundedAmount = r.payments.reduce((s, p) => s + p.refundAmount, 0);
+      const refundChargeTotal = r.payments.reduce(
+        (s, p) => s + p.refundCharge,
+        0,
+      );
       const count = counts.get(r.id);
       // Runtime expiry (Quotations screen only): anchor on the order date, or
       // the quote's createdAt when no order date is set. `computedQuotationExpiryAt`
@@ -1345,6 +2038,9 @@ export class OrderService {
         quoteAnchor < quotationExpiryCutoff
           ? QuotationStatus.EXPIRED
           : r.quotationStatus;
+      // The order this quote was converted into (most recent), if any — surfaces
+      // the "View Order" link on a CONVERTED quotation row.
+      const converted = r.convertedOrder[0] ?? null;
       return {
         ...r,
         itemCount: count?.total ?? 0,
@@ -1353,8 +2049,13 @@ export class OrderService {
         discountAmount,
         netAmount,
         paidAmount,
+        refundedAmount,
+        refundChargeTotal,
         effectiveQuotationStatus,
         computedQuotationExpiryAt,
+        convertedOrderId: converted?.id ?? null,
+        convertedOrderCode:
+          converted?.externalOrderId ?? converted?.orderCode ?? null,
       };
     });
     return { data, total, page, limit };
@@ -1398,6 +2099,10 @@ export class OrderService {
       select: {
         branchId: true,
         status: true,
+        patientId: true,
+        orderCode: true,
+        externalOrderId: true,
+        createdBy: true,
         appointmentId: true,
         appointment: { select: { status: true } },
         diagnostics: {
@@ -1412,6 +2117,36 @@ export class OrderService {
     });
     const branchId = existing?.branchId ?? null;
     const effectiveStatus = dto.status ?? existing?.status;
+
+    // Billing-menu permission gates (branch Registration Settings, keyed on the
+    // record's original creator). Loaded once; only consulted when the order has
+    // a branch, a known creator, and the actor differs from that creator.
+    const billingSettings =
+      branchId &&
+      existing?.createdBy &&
+      existing.createdBy !== personId &&
+      (existing.status === OrderStatus.QUOTE ||
+        effectiveStatus === OrderStatus.QUOTE ||
+        dto.payments !== undefined)
+        ? await this.registrationSettingsService.getForBranch(
+            tenantId,
+            branchId,
+          )
+        : null;
+    // Quotation edit by another user (both the stored and the target status may be
+    // QUOTE — either being a quote means quotation-edit rules apply).
+    if (
+      billingSettings &&
+      (existing?.status === OrderStatus.QUOTE ||
+        effectiveStatus === OrderStatus.QUOTE) &&
+      !billingSettings.BillingMenu_AllowOtherUserToEditQuotation
+    ) {
+      throw new QuotationEditByOtherUserNotAllowedException(
+        id,
+        existing!.createdBy!,
+        personId,
+      );
+    }
 
     // Full new-order field parity for finalization (e.g. draft → ORDER): validate
     // the EFFECTIVE order — the incoming patch merged over the persisted draft —
@@ -1488,7 +2223,195 @@ export class OrderService {
     }
     const paymentStatus = derivePaymentStatus(payNet, payPaid);
 
+    // Collection by another user: when this patch replaces the ledger and the
+    // collected total actually changes, a non-creator needs the branch setting on.
+    // An unchanged ledger (a non-payment edit that re-sends the stored rows) is
+    // allowed. `billingSettings` is only non-null for a non-creator actor.
+    if (billingSettings && dto.payments !== undefined) {
+      const storedPaid = await this.prisma.paymentDetails.aggregate({
+        where: { orderId: id, tenantId, deletedAt: null },
+        _sum: { paidAmount: true },
+      });
+      if (
+        payPaid !== (storedPaid._sum.paidAmount ?? 0) &&
+        !billingSettings.BillingMenu_AllowCollectionOfAmountByOtherUser
+      ) {
+        throw new PaymentCollectionByOtherUserNotAllowedException(
+          id,
+          existing!.createdBy!,
+          personId,
+        );
+      }
+    }
+
+    // Enforce the branch's Previous-Dues + Partial-Billing + TDS/Discount rules
+    // when a draft is finalized (or an order re-saved) to `status = ORDER`. Uses
+    // the incoming ledger/items when this patch replaces them, otherwise the
+    // order's stored rows — so the checks run against the order's effective state.
+    if (effectiveStatus === OrderStatus.ORDER && branchId) {
+      const effectivePayments =
+        dto.payments !== undefined
+          ? dto.payments
+          : await this.prisma.paymentDetails.findMany({
+              where: { orderId: id, tenantId, deletedAt: null },
+              select: {
+                netAmount: true,
+                paidAmount: true,
+                orderDiscount: true,
+                tdsDeduction: true,
+              },
+            });
+
+      // Effective items + their unit prices: the incoming items (re-priced from
+      // the branch catalogue) when the patch replaces them, else the stored rows
+      // (whose `unitPrice` was already snapshotted at create/last save).
+      let effectiveItems: OrderItemDto[];
+      let itemPrices: Map<string, number>;
+      if (dto.items !== undefined) {
+        effectiveItems = dto.items;
+        itemPrices = await this.loadItemUnitPrices(
+          tenantId,
+          branchId,
+          dto.items,
+        );
+      } else {
+        const stored = await this.prisma.orderItem.findMany({
+          where: { orderId: id, tenantId, deletedAt: null },
+          select: {
+            branchLabTestId: true,
+            branchLabPanelId: true,
+            direct: true,
+            unitPrice: true,
+            discount: true,
+            discountMode: true,
+            discountValue: true,
+          },
+        });
+        effectiveItems = stored.map((s) => ({
+          branchLabTestId: s.branchLabTestId ?? undefined,
+          branchLabPanelId: s.branchLabPanelId ?? undefined,
+          direct: s.direct ?? undefined,
+          discount: s.discount,
+          discountMode: s.discountMode ?? undefined,
+          discountValue: s.discountValue ?? undefined,
+        }));
+        itemPrices = new Map(
+          stored.map((s) => [
+            s.branchLabTestId ?? s.branchLabPanelId ?? '',
+            s.unitPrice,
+          ]),
+        );
+      }
+
+      const hasDiscount = this.orderHasDiscount(
+        effectiveItems,
+        effectivePayments,
+      );
+      const settings = await this.registrationSettingsService.getForBranch(
+        tenantId,
+        branchId,
+      );
+
+      if (existing?.patientId) {
+        await this.assertBillingRules({
+          tenantId,
+          branchId,
+          status: OrderStatus.ORDER,
+          patientId: existing.patientId,
+          payments: effectivePayments,
+          previousDuesCleared: dto.previousDuesCleared ?? 0,
+          excludeOrderId: id,
+          settings,
+          hasDiscount,
+        });
+      }
+
+      this.assertDiscountAndTdsRules({
+        status: OrderStatus.ORDER,
+        branchId,
+        settings,
+        items: effectiveItems,
+        payments: effectivePayments,
+        itemPrices,
+      });
+    }
+
+    // External Order/Quote id on update: only editable when the branch's format
+    // is NONE (manual entry). When a format is configured the id is
+    // auto-generated once (on create, or here when finalizing an order that
+    // never got one) and is otherwise immutable. Purpose follows the effective
+    // status (a quote uses the QUOTATION format + counter).
+    const isQuoteUpd = effectiveStatus === OrderStatus.QUOTE;
+    const externalIdPurposeUpd = isQuoteUpd
+      ? ExternalIdPurpose.QUOTATION
+      : ExternalIdPurpose.ORDER;
+    const externalIdFormatUpd = branchId
+      ? await this.externalIdService.getConfiguredFormat(
+          tenantId,
+          branchId,
+          externalIdPurposeUpd,
+        )
+      : ExternalIdFormat.NONE;
+    const externalIdIsManualUpd = externalIdFormatUpd === ExternalIdFormat.NONE;
+    // Manual value supplied in this patch (undefined = not touched).
+    const manualExternalIdUpd =
+      dto.externalOrderId !== undefined
+        ? dto.externalOrderId.trim() || null
+        : undefined;
+    if (branchId && externalIdIsManualUpd) {
+      const effectiveExternalId =
+        manualExternalIdUpd !== undefined
+          ? manualExternalIdUpd
+          : (existing?.externalOrderId ?? null);
+      if (
+        (effectiveStatus === OrderStatus.ORDER ||
+          effectiveStatus === OrderStatus.QUOTE) &&
+        !effectiveExternalId
+      ) {
+        throw new ExternalOrderIdRequiredException(isQuoteUpd);
+      }
+    }
+
     await this.prisma.withTenant(tenantId, async (tx) => {
+      // Resolve the external-id value to persist (undefined = leave untouched).
+      let externalOrderIdUpdate: string | null | undefined;
+      if (branchId) {
+        if (externalIdIsManualUpd) {
+          externalOrderIdUpdate = manualExternalIdUpd;
+          if (externalOrderIdUpdate) {
+            const dup = await tx.order.findFirst({
+              where: {
+                branchId,
+                externalOrderId: externalOrderIdUpdate,
+                deletedAt: null,
+                id: { not: id },
+              },
+              select: { id: true },
+            });
+            if (dup) {
+              throw new DuplicateExternalOrderIdException(
+                externalOrderIdUpdate,
+              );
+            }
+          }
+        } else if (!existing?.externalOrderId) {
+          // Configured format but the order never got an id (e.g. created as a
+          // DRAFT before a format was set) — mint one now, atomically.
+          const branchRow = await tx.branch.findUnique({
+            where: { id: branchId },
+            select: { shortName: true },
+          });
+          externalOrderIdUpdate = await this.externalIdService.generateInTx(
+            tx,
+            tenantId,
+            branchId,
+            externalIdPurposeUpd,
+            externalIdFormatUpd,
+            branchRow?.shortName ?? '',
+          );
+        }
+      }
+
       // Flipping an existing order to APPOINTMENT without a linked lifecycle
       // record yet — create + link one (initial status NEW) in the same tx.
       const appointmentId =
@@ -1510,6 +2433,7 @@ export class OrderService {
           status: dto.status,
           updatedBy: personId,
           appointmentId,
+          externalOrderId: externalOrderIdUpdate,
           // Recompute only when the payment ledger is part of this patch;
           // leave the stored status untouched otherwise.
           paymentStatus: dto.payments !== undefined ? paymentStatus : undefined,
@@ -1572,6 +2496,8 @@ export class OrderService {
                 itemPrices.get(i.branchLabTestId ?? i.branchLabPanelId ?? '') ??
                 0,
               discount: i.discount ?? 0,
+              discountMode: i.discountMode ?? null,
+              discountValue: i.discountValue ?? null,
               outsourceCenterId: i.outsourceCenterId ?? null,
             })),
           });
@@ -1677,6 +2603,28 @@ export class OrderService {
         personId,
         id,
       );
+
+      // Cross-order settlement — applied only on the TRANSITION into ORDER (e.g.
+      // a draft finalized to ORDER), never on re-saving an already-ORDER order,
+      // so the cleared amount is settled exactly once.
+      if (
+        existing?.status !== OrderStatus.ORDER &&
+        effectiveStatus === OrderStatus.ORDER &&
+        branchId &&
+        existing?.patientId &&
+        (dto.previousDuesCleared ?? 0) > 0
+      ) {
+        await this.settlePreviousDuesInTx(
+          tx,
+          tenantId,
+          existing.patientId,
+          dto.previousDuesCleared ?? 0,
+          id,
+          existing.orderCode,
+          this.settlementPaymentMode(dto.payments),
+          dto.orderDate ? new Date(dto.orderDate) : new Date(),
+        );
+      }
     });
 
     return this.findById(id, tenantId);
@@ -1741,25 +2689,72 @@ export class OrderService {
   }
 
   /**
-   * Cancel an order — set `status = CANCELLED` (terminal). Allowed regardless of
-   * payments already collected; no refund handling this phase. The order (and its
-   * payment ledger) are preserved, unlike `remove`.
+   * Cancel an order — set `status = CANCELLED` (terminal). Optionally retains a
+   * `cancellationCharge` (deducted from the order's effective paid amount) and,
+   * when `dto.refund` is present, refunds part of the paid amount back to the
+   * patient (a REFUND ledger row). The refund is capped at the refundable balance
+   * (`paid − cancellationCharge − refunds already made`). The order and its full
+   * payment ledger are preserved (unlike `remove`); `paymentStatus` is recomputed
+   * off the new effective paid amount.
    * @param id order id
    * @param tenantId tenant scope
    * @param actorId acting person id (recorded as `updatedBy`), may be null
+   * @param dto cancellation charge + optional refund leg
    * @returns the fully-composed order after cancellation
    * @throws OrderNotFoundException if missing/soft-deleted/other tenant
    * @throws OrderAlreadyCancelledException if already cancelled
+   * @throws CancellationChargeExceedsPaidException if the charge exceeds paid
+   * @throws RefundExceedsRefundableException if the refund exceeds the refundable balance
    */
   async cancel(
     id: string,
     tenantId: string,
     actorId: string | null,
+    dto: CancelOrderDto,
   ): Promise<OrderWithRelations> {
     const existing = await this.findById(id, tenantId);
     if (existing.status === OrderStatus.CANCELLED) {
       throw new OrderAlreadyCancelledException(id);
     }
+    // Branch Registration Settings gate the whole flow (UI + API). Null when the
+    // order has no branch — then we stay permissive and trust the request body.
+    const settings = existing.branchId
+      ? await this.registrationSettingsService.getForBranch(
+          tenantId,
+          existing.branchId,
+        )
+      : null;
+    if (settings && !settings.CancellationAndRefund_AllowOrderCancellation) {
+      throw new OrderCancellationNotAllowedException(id);
+    }
+    // Cancellation by another user: a non-creator needs the branch setting on.
+    // Legacy orders with no creator, and orders with no branch, stay permissive.
+    if (
+      settings &&
+      existing.createdBy &&
+      existing.createdBy !== actorId &&
+      !settings.BillingMenu_AllowCancellationByOtherUser
+    ) {
+      throw new OrderCancellationByOtherUserNotAllowedException(
+        id,
+        existing.createdBy,
+        actorId,
+      );
+    }
+    // Effective cancellation charge: when the setting is off, force 0 (any body
+    // value is ignored); when on, use the supplied value or default to the
+    // configured amount. No settings (no branch) → trust the body as before.
+    const cancellationCharge = settings
+      ? settings.CancellationAndRefund_CancellationChargesApplicable
+        ? Math.round(
+            Number(
+              dto.cancellationCharge ??
+                settings.CancellationAndRefund_CancellationChargesAmount ??
+                0,
+            ),
+          )
+        : 0
+      : (dto.cancellationCharge ?? 0);
     // Booking context for releasing the phlebotomist slot + cancelling the linked
     // appointment lifecycle record.
     const booking = await this.prisma.order.findFirst({
@@ -1791,10 +2786,96 @@ export class OrderService {
             booking?.diagnostics,
           );
     await this.prisma.withTenant(tenantId, async (tx) => {
+      // Ledger sums drive the charge/refund guards + the paymentStatus recompute.
+      const agg = await tx.paymentDetails.aggregate({
+        where: { orderId: id, tenantId, deletedAt: null },
+        _sum: {
+          netAmount: true,
+          paidAmount: true,
+          refundAmount: true,
+          refundCharge: true,
+        },
+      });
+      const netSum = agg._sum.netAmount ?? 0;
+      const paidSum = agg._sum.paidAmount ?? 0;
+      const refundSum = agg._sum.refundAmount ?? 0;
+      const refundChargeSum = agg._sum.refundCharge ?? 0;
+
+      if (cancellationCharge > paidSum) {
+        throw new CancellationChargeExceedsPaidException(
+          paidSum,
+          cancellationCharge,
+        );
+      }
+
       await tx.order.update({
         where: { id },
-        data: { status: OrderStatus.CANCELLED, updatedBy: actorId },
+        data: {
+          status: OrderStatus.CANCELLED,
+          cancellationCharge,
+          updatedBy: actorId,
+        },
       });
+
+      // Optional refund leg: bounded by the post-charge refundable balance.
+      let newRefundSum = refundSum;
+      if (dto.refund) {
+        if (settings && !settings.CancellationAndRefund_AllowRefund) {
+          throw new RefundNotAllowedException(id);
+        }
+        const refundable = computeEffectivePaid(
+          paidSum,
+          cancellationCharge,
+          refundSum,
+          refundChargeSum,
+        );
+        // Partial refunds off → the full refundable amount must be refunded.
+        if (
+          settings &&
+          !settings.CancellationAndRefund_AllowPartialRefund &&
+          dto.refund.amount !== refundable
+        ) {
+          throw new PartialRefundNotAllowedException(
+            refundable,
+            dto.refund.amount,
+          );
+        }
+        if (dto.refund.amount > refundable) {
+          throw new RefundExceedsRefundableException(
+            refundable,
+            dto.refund.amount,
+          );
+        }
+        await tx.paymentDetails.create({
+          data: {
+            tenantId,
+            branchId: existing.branchId,
+            orderId: id,
+            entryType: PaymentEntryType.REFUND,
+            refundAmount: dto.refund.amount,
+            paidAmount: 0,
+            paymentMode: dto.refund.paymentMode,
+            reference: dto.refund.reference ?? null,
+            paymentDate: dto.refund.paymentDate
+              ? new Date(dto.refund.paymentDate)
+              : new Date(),
+          },
+        });
+        newRefundSum += dto.refund.amount;
+      }
+
+      // Recompute paymentStatus off the effective (retained) paid amount.
+      const effectivePaid = computeEffectivePaid(
+        paidSum,
+        cancellationCharge,
+        newRefundSum,
+        refundChargeSum,
+      );
+      await tx.order.update({
+        where: { id },
+        data: { paymentStatus: derivePaymentStatus(netSum, effectivePaid) },
+      });
+
       // Cancel the linked appointment too (+ history) so a cancelled order no
       // longer occupies a phlebotomist slot.
       if (
@@ -1826,6 +2907,129 @@ export class OrderService {
           reservation.at,
         );
       }
+    });
+    return this.findById(id, tenantId);
+  }
+
+  /**
+   * Refund part of an order's paid amount **without** cancelling it (the standalone
+   * "Refund Without Cancellation" action). Writes a REFUND ledger row and recomputes
+   * `paymentStatus` off the new effective paid amount. Supports partial/multiple
+   * refunds and also tops up refunds on an already-cancelled order. The refund plus
+   * any `refundCharge` is capped at the order's current refundable balance
+   * (`paid − cancellationCharge − refunds already made`).
+   * @param id order id
+   * @param tenantId tenant scope
+   * @param actorId acting person id (recorded as `updatedBy`), may be null
+   * @param dto refund amount + mode (+ optional retained refund charge)
+   * @returns the fully-composed order after the refund
+   * @throws OrderNotFoundException if missing/soft-deleted/other tenant
+   * @throws NothingToRefundException if the order has no refundable balance
+   * @throws RefundExceedsRefundableException if the refund exceeds the refundable balance
+   */
+  async refund(
+    id: string,
+    tenantId: string,
+    actorId: string | null,
+    dto: RefundOrderDto,
+  ): Promise<OrderWithRelations> {
+    const existing = await this.findById(id, tenantId);
+    // Branch settings gate the flow. Null when the order has no branch → permissive.
+    const settings = existing.branchId
+      ? await this.registrationSettingsService.getForBranch(
+          tenantId,
+          existing.branchId,
+        )
+      : null;
+    if (settings && !settings.CancellationAndRefund_AllowRefund) {
+      throw new RefundNotAllowedException(id);
+    }
+    // Effective refund charge: off → force 0; on → supplied value or configured
+    // default. No settings (no branch) → trust the body as before.
+    const refundCharge = settings
+      ? settings.CancellationAndRefund_RefundChargesApplicable
+        ? Math.round(
+            Number(
+              dto.refundCharge ??
+                settings.CancellationAndRefund_RefundChargesAmount ??
+                0,
+            ),
+          )
+        : 0
+      : (dto.refundCharge ?? 0);
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      const agg = await tx.paymentDetails.aggregate({
+        where: { orderId: id, tenantId, deletedAt: null },
+        _sum: {
+          netAmount: true,
+          paidAmount: true,
+          refundAmount: true,
+          refundCharge: true,
+        },
+      });
+      const netSum = agg._sum.netAmount ?? 0;
+      const paidSum = agg._sum.paidAmount ?? 0;
+      const refundSum = agg._sum.refundAmount ?? 0;
+      const refundChargeSum = agg._sum.refundCharge ?? 0;
+
+      // Refundable = current effective paid (respects any cancellation charge and
+      // prior refunds).
+      const refundable = computeEffectivePaid(
+        paidSum,
+        existing.cancellationCharge,
+        refundSum,
+        refundChargeSum,
+      );
+      if (refundable <= 0) {
+        throw new NothingToRefundException(id);
+      }
+      // Partial refunds off → the full refundable-to-patient amount
+      // (refundable − refund charge) must be refunded in one go.
+      if (
+        settings &&
+        !settings.CancellationAndRefund_AllowPartialRefund &&
+        dto.amount !== refundable - refundCharge
+      ) {
+        throw new PartialRefundNotAllowedException(
+          refundable - refundCharge,
+          dto.amount,
+        );
+      }
+      if (dto.amount + refundCharge > refundable) {
+        throw new RefundExceedsRefundableException(
+          refundable,
+          dto.amount + refundCharge,
+        );
+      }
+
+      await tx.paymentDetails.create({
+        data: {
+          tenantId,
+          branchId: existing.branchId,
+          orderId: id,
+          entryType: PaymentEntryType.REFUND,
+          refundAmount: dto.amount,
+          refundCharge,
+          paidAmount: 0,
+          paymentMode: dto.paymentMode,
+          reference: dto.reference ?? null,
+          paymentDate: dto.paymentDate ? new Date(dto.paymentDate) : new Date(),
+        },
+      });
+
+      const effectivePaid = computeEffectivePaid(
+        paidSum,
+        existing.cancellationCharge,
+        refundSum + dto.amount,
+        refundChargeSum + refundCharge,
+      );
+      await tx.order.update({
+        where: { id },
+        data: {
+          paymentStatus: derivePaymentStatus(netSum, effectivePaid),
+          updatedBy: actorId,
+        },
+      });
     });
     return this.findById(id, tenantId);
   }
@@ -1939,6 +3143,27 @@ export class OrderService {
       }
       if (item.branchLabTestId) testIds.push(item.branchLabTestId);
       if (item.branchLabPanelId) panelIds.push(item.branchLabPanelId);
+
+      // discountMode/discountValue are a pair — either both present (a
+      // technician actively chose a mode and typed a number) or both absent
+      // (no discount, or a legacy caller only sending the computed `discount`
+      // amount). A PERCENT value is additionally capped at 100 here, since the
+      // DTO's own @Max is a generous ceiling shared with AMOUNT mode.
+      const hasMode = item.discountMode !== undefined;
+      const hasValue = item.discountValue !== undefined;
+      if (hasMode !== hasValue) {
+        throw new InvalidOrderItemException(
+          'discountMode and discountValue must both be provided together, or both omitted',
+        );
+      }
+      if (
+        item.discountMode === DiscountMode.PERCENT &&
+        (item.discountValue ?? 0) > 100
+      ) {
+        throw new InvalidOrderItemException(
+          'discountValue cannot exceed 100 when discountMode is PERCENT',
+        );
+      }
     }
     await Promise.all([
       this.assertBranchLabTests(tenantId, testIds),

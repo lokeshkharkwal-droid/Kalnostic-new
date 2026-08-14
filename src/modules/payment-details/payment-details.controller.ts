@@ -14,6 +14,7 @@ import { CreatePaymentDetailsDto } from './dto/create-payment-details.dto';
 import { UpdatePaymentDetailsDto } from './dto/update-payment-details.dto';
 import { ListPaymentDetailsDto } from './dto/list-payment-details.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
@@ -34,9 +35,10 @@ export class PaymentDetailsController {
   })
   create(
     @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
     @Body() dto: CreatePaymentDetailsDto,
   ) {
-    return this.paymentDetailsService.create(tenantId, dto);
+    return this.paymentDetailsService.create(tenantId, personId, dto);
   }
 
   /** List payments (paginated, optionally filtered by `orderId`). */
@@ -63,10 +65,11 @@ export class PaymentDetailsController {
   })
   update(
     @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
     @Param('id') id: string,
     @Body() dto: UpdatePaymentDetailsDto,
   ) {
-    return this.paymentDetailsService.update(id, tenantId, dto);
+    return this.paymentDetailsService.update(id, tenantId, personId, dto);
   }
 
   /** Soft-delete a payment record. */
@@ -76,7 +79,11 @@ export class PaymentDetailsController {
     action: AuditAction.DELETE,
     description: 'Deleted a payment',
   })
-  remove(@CurrentTenant() tenantId: string, @Param('id') id: string) {
-    return this.paymentDetailsService.remove(id, tenantId);
+  remove(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+    @Param('id') id: string,
+  ) {
+    return this.paymentDetailsService.remove(id, tenantId, personId);
   }
 }

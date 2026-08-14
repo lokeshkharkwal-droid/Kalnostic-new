@@ -33,6 +33,14 @@ export class UpdateBranchDto {
   @IsOptional()
   branchType?: BranchType;
 
+  // Editable operator-set abbreviation (≤5 chars); branch prefix for external
+  // order/quote ids. Unlike `code`, this is editable.
+  @IsString()
+  @IsOptional()
+  @MinLength(1)
+  @MaxLength(5)
+  shortName?: string;
+
   // Sample-receiving branches for a Collection Center. When provided, the
   // service replaces the branch's whole mapping set (equivalent to
   // `PUT /branches/:id/collection-mappings`); only valid for `COLLECTION_CENTER`

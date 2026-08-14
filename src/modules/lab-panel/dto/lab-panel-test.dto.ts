@@ -1,4 +1,11 @@
-import { IsBoolean, IsInt, IsOptional, IsUUID, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsInt,
+  IsOptional,
+  IsUUID,
+  Max,
+  Min,
+} from 'class-validator';
 
 /**
  * One test included in a lab panel. `labTestId` references an active LabTest in
@@ -17,4 +24,15 @@ export class LabPanelTestDto {
   @IsBoolean()
   @IsOptional()
   isRemovable?: boolean;
+
+  /**
+   * This test's discount within the panel (0-100). Must not exceed the
+   * referenced LabTest's own `discountCapPct` — checked in `LabPanelService`
+   * against the live master-data value, not just this DTO's own 0-100 bound.
+   */
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  @IsOptional()
+  discountPercent?: number;
 }

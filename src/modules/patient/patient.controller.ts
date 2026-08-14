@@ -108,11 +108,15 @@ export class PatientController {
   })
   update(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @CurrentUser('person_id') personId: string,
     @Param('id') id: string,
     @Body() dto: UpdatePatientDto,
   ) {
-    return this.patientService.update(id, tenantId, dto, personId);
+    return this.patientService.update(id, tenantId, dto, {
+      branchId: profile.branchId,
+      actorId: personId,
+    });
   }
 
   /** Soft-delete a patient (and its medical-history records). */

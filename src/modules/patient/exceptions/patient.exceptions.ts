@@ -25,6 +25,45 @@ export class PatientMobileConflictException extends KaltrosException {
   }
 }
 
+/** 400 — a UMID is required (the branch's patient id format is NONE / manual). */
+export class PatientUmIdRequiredException extends KaltrosException {
+  constructor() {
+    super(
+      'PATIENT_UMID_REQUIRED',
+      'A UMID is required for this patient',
+      {},
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+}
+
+/** 409 — another patient already uses this UMID (globally-unique). */
+export class PatientUmIdConflictException extends KaltrosException {
+  constructor(umId: string) {
+    super(
+      'PATIENT_UMID_CONFLICT',
+      'A patient with this UMID already exists',
+      { umId },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
+ * 409 — could not allocate a unique UMID after several attempts (persistent
+ * collisions on the auto-increment sequence). Retryable.
+ */
+export class UmIdGenerationConflictException extends KaltrosException {
+  constructor(attempts: number) {
+    super(
+      'UMID_GENERATION_CONFLICT',
+      'Could not generate a unique UMID, please retry',
+      { attempts },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
 /** 404 — medical-history record not found for the given patient/tenant. */
 export class MedicalHistoryNotFoundException extends KaltrosException {
   constructor(id: string) {

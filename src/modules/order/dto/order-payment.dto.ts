@@ -4,11 +4,14 @@ import {
   IsDateString,
   IsEnum,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   MaxLength,
   Min,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { roundMinorUnits } from '../../../common/utils';
 
 /**
  * A payment/ledger entry submitted inline with an order. All amounts are integer
@@ -22,10 +25,28 @@ export class OrderPaymentDto {
   @Min(0)
   totalAmount?: number;
 
+  /**
+   * Order-level discount in minor units. Accepts a float (e.g. from percentage
+   * math) and is rounded to a whole minor unit before persisting.
+   */
   @IsOptional()
-  @IsInt()
+  @Transform(roundMinorUnits)
+  @IsNumber()
   @Min(0)
   orderDiscount?: number;
+
+  /**
+   * Total discount applied across the order (every per-line item discount plus
+   * the order-level `orderDiscount`), in minor units. A runtime rollup the
+   * frontend computes as `totalAmount - netAmount`; a fractional value is
+   * rounded to a whole minor unit. Stored on the first payment row for bill
+   * display/reporting — kept separate from `orderDiscount`.
+   */
+  @IsOptional()
+  @Transform(roundMinorUnits)
+  @IsNumber()
+  @Min(0)
+  netDiscount?: number;
 
   @IsOptional()
   @IsInt()

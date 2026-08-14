@@ -53,6 +53,8 @@ export const DOCTOR_LIST_SELECT = {
   email: true,
   status: true,
   isReportSignatory: true,
+  consultationFee: true,
+  followUpFee: true,
   department: { select: { id: true, name: true } },
   category: { select: { id: true, name: true } },
   subCategory: { select: { id: true, name: true } },
@@ -86,4 +88,7 @@ export interface DoctorListItem {
   email: string | null;
   status: DoctorStatus;
   isReportSignatory: boolean;
+  /** `Decimal` columns — serialise as strings over JSON (see `DoctorDetail`'s fees). */
+  consultationFee: Prisma.Decimal;
+  followUpFee: Prisma.Decimal;
 }

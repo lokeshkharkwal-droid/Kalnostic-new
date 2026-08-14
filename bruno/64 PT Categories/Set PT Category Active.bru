@@ -1,0 +1,37 @@
+meta {
+  name: Set PT Category Active
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/pt-categories/{{ptCategoryId}}/active
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "isActive": false
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Activate/inactivate a PT category from the settings table row switch. Inactive
+  categories are excluded from `GET /pt-categories/options` (the Create-Order
+  dropdown feed). 404 `PT_CATEGORY_NOT_FOUND` if missing/soft-deleted.
+}

@@ -40,6 +40,8 @@ import {
   ActionNotesDto,
   RequiredActionNotesDto,
 } from './dto/notes-attachments.dto';
+import { ApproveReportDto } from './dto/approve-report.dto';
+import { UpdateContentSectionsDto } from './dto/update-content-sections.dto';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
 import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
@@ -308,6 +310,33 @@ export class LabReportController {
     );
   }
 
+  /**
+   * Update "Useful For"/"Interpretation" — gated per-field by
+   * `TechnicianSetting.isUsefulForEditable`/`isInterpretationEditable`
+   * (both default false). Writes through to the report's underlying master
+   * `LabTest` record; "Limitations"/"References" are not accepted here and
+   * stay permanently read-only.
+   */
+  @Patch(':id/content-sections')
+  @Audit({
+    module: AuditModule.LAB_REPORT,
+    action: AuditAction.UPDATE,
+    description: 'Updated a lab report\'s content sections',
+  })
+  updateContentSections(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+    @Body() dto: UpdateContentSectionsDto,
+  ) {
+    return this.labReportService.updateContentSections(
+      id,
+      tenantId,
+      profile.branchId,
+      dto,
+    );
+  }
+
   @Post(':id/save')
   @Audit({
     module: AuditModule.LAB_REPORT,
@@ -427,6 +456,19 @@ export class LabReportController {
     );
   }
 
+  @Get(':id/signatory-candidates')
+  getSignatoryCandidates(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+  ) {
+    return this.labReportService.getSignatoryCandidates(
+      id,
+      tenantId,
+      profile.branchId,
+    );
+  }
+
   @Post(':id/approve')
   @Audit({
     module: AuditModule.LAB_REPORT,
@@ -438,12 +480,14 @@ export class LabReportController {
     @CurrentProfile() profile: ActiveProfile,
     @CurrentUser('person_id') personId: string,
     @Param('id') id: string,
+    @Body() dto: ApproveReportDto,
   ) {
     return this.labReportService.approve(
       id,
       tenantId,
       profile.branchId,
       personId,
+      dto,
     );
   }
 

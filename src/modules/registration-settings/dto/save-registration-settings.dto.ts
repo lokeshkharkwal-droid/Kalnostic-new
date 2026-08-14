@@ -1,4 +1,8 @@
-import { PaymentMode, RepeatIntervalUnit } from '@prisma/client';
+import {
+  ExternalIdFormat,
+  PaymentMode,
+  RepeatIntervalUnit,
+} from '@prisma/client';
 import {
   IsBoolean,
   IsEnum,
@@ -25,12 +29,21 @@ export class SaveRegistrationSettingsDto {
   @IsOptional() @IsBoolean() General_AllowEditingPaymentDate?: boolean;
   @IsOptional() @IsEnum(PaymentMode) General_DefaultPaymentMode?: PaymentMode;
 
+  // ── Order ID Configuration ──
+  @IsOptional()
+  @IsEnum(ExternalIdFormat)
+  OrderIdConfiguration_AutoIncrementExternalOrderIdFormat?: ExternalIdFormat;
+
   // ── Quotation (non-ID fields) ──
   @IsOptional()
   @IsInt()
   @Min(1)
   @Max(3650)
   Quotation_QuotationValidityValue?: number;
+
+  @IsOptional()
+  @IsEnum(ExternalIdFormat)
+  Quotation_AutoIncrementExternalQuoteIdFormat?: ExternalIdFormat;
 
   @IsOptional()
   @IsEnum(RepeatIntervalUnit)
@@ -244,7 +257,7 @@ export class SaveRegistrationSettingsDto {
   @IsBoolean()
   BillingMenu_AllowOtherUserToEditQuotation?: boolean;
 
-  // ── Appointment (non-ID field) ──
+  // ── Appointment ──
   @IsOptional()
   @IsBoolean()
   Appointment_AllowCheckInForPaidAppointmentsOnly?: boolean;
@@ -253,6 +266,14 @@ export class SaveRegistrationSettingsDto {
   @IsBoolean()
   Appointment_AllowProgressOfUnpaidAndPartialPaidAppointments?: boolean;
 
-  // ── Patients / UMID (non-ID field) ──
+  @IsOptional()
+  @IsEnum(ExternalIdFormat)
+  Appointment_AutoIncrementExternalAppointmentIdFormat?: ExternalIdFormat;
+
+  // ── Patients / UMID ──
   @IsOptional() @IsBoolean() Patients_AllowMergingTwoPatients?: boolean;
+
+  @IsOptional()
+  @IsEnum(ExternalIdFormat)
+  Patients_AutoIncrementExternalPatientIdFormat?: ExternalIdFormat;
 }

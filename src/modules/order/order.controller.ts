@@ -17,6 +17,9 @@ import { UpdateOrderDto } from './dto/update-order.dto';
 import { ListOrdersDto } from './dto/list-orders.dto';
 import { CreateOrderNoteDto } from './dto/create-order-note.dto';
 import { ListOrderNotesDto } from './dto/list-order-notes.dto';
+import { CancelOrderDto } from './dto/cancel-order.dto';
+import { RefundOrderDto } from './dto/refund-order.dto';
+import { PatientDuesQueryDto } from './dto/patient-dues.dto';
 import { PrintOrderDto } from './dto/print-order.dto';
 import { CollectOrderItemDto } from './dto/collect-order-item.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
@@ -85,6 +88,20 @@ export class OrderController {
     @Query() query: ListOrdersDto,
   ) {
     return this.orderService.findAll(tenantId, profile.branchId, query);
+  }
+
+  /**
+   * A patient's outstanding previous dues **business-wide** (all branches in the
+   * tenant), summed across their active, non-cancelled orders. Used by the Create
+   * Order screen to display + pre-validate the Previous-Dues rules. Declared
+   * before `:id` so the static path isn't captured by the param route.
+   */
+  @Get('patient-dues')
+  patientDues(
+    @CurrentTenant() tenantId: string,
+    @Query() query: PatientDuesQueryDto,
+  ) {
+    return this.orderService.getPatientDues(tenantId, query.patientId);
   }
 
   /** Fetch one order fully composed. */
@@ -203,7 +220,11 @@ export class OrderController {
     });
   }
 
-  /** Cancel an order (sets status = CANCELLED). No refund handling this phase. */
+  /**
+   * Cancel an order (sets status = CANCELLED). Optionally deducts a cancellation
+   * charge and refunds part of the paid amount (cancel-with-refund). Body is
+   * optional — an empty body cancels with a 0 charge and no refund.
+   */
   @Patch(':id/cancel')
   @Audit({
     module: AuditModule.ORDER,
@@ -214,8 +235,29 @@ export class OrderController {
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
     @Param('id') id: string,
+    @Body() dto: CancelOrderDto,
   ) {
-    return this.orderService.cancel(id, tenantId, personId);
+    return this.orderService.cancel(id, tenantId, personId, dto);
+  }
+
+  /**
+   * Refund part of an order's paid amount without cancelling it ("Refund Without
+   * Cancellation"). Supports partial/multiple refunds; also tops up refunds on an
+   * already-cancelled order. Capped at the order's current refundable balance.
+   */
+  @Post(':id/refund')
+  @Audit({
+    module: AuditModule.ORDER,
+    action: AuditAction.UPDATE,
+    description: 'Refunded an order',
+  })
+  refund(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+    @Param('id') id: string,
+    @Body() dto: RefundOrderDto,
+  ) {
+    return this.orderService.refund(id, tenantId, personId, dto);
   }
 
   /** Soft-delete an order (cascade soft-deletes items, sections, payments). */
