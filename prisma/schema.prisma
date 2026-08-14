@@ -3255,6 +3255,7 @@ model OutsourceCenter {
 
   contacts   OutsourceCenterContact[]
   orderItems OrderItem[]
+  documents  OutsourceCenterDocument[]
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -3291,6 +3292,36 @@ model OutsourceCenterContact {
   @@index([outsourceCenterId])
   @@index([deletedAt])
   @@map("outsource_center_contacts")
+}
+
+/// A document/file attached to an outsource center (e.g. contract, NABL
+/// certificate). Tenant-scoped, tenant-level (inherits the center's tier —
+/// CLAUDE.md §4.6). Real bytes are written to disk under
+/// `UPLOAD_DIR/outsource-center-documents/`; `filePath` is the relative path
+/// and is internal only — never returned to the client (used only to stream
+/// the file back via the download endpoint). RLS policy in prisma/rls.sql.
+model OutsourceCenterDocument {
+  id                String @id @default(uuid())
+  tenantId          String @map("tenant_id")
+  outsourceCenterId String @map("outsource_center_id")
+
+  outsourceCenter OutsourceCenter @relation(fields: [outsourceCenterId], references: [id])
+
+  fileName String @map("file_name")
+  filePath String @map("file_path")
+  mimeType String @map("mime_type")
+  fileSize Int    @map("file_size")
+
+  createdBy String? @map("created_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([outsourceCenterId])
+  @@index([deletedAt])
+  @@map("outsource_center_documents")
 }
 
 /// An external referring panel (clinic/hospital/lab) that sends business to the

@@ -30,6 +30,11 @@ export const configuration = () => ({
       process.env.MAX_UPLOAD_BYTES ?? `${2 * 1024 * 1024}`,
       10,
     ),
+    // Max outsource-center document size in bytes.
+    maxDocumentBytes: parseInt(
+      process.env.MAX_DOCUMENT_UPLOAD_BYTES ?? `${10 * 1024 * 1024}`,
+      10,
+    ),
   },
 });
 

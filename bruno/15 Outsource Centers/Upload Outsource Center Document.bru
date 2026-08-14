@@ -1,0 +1,43 @@
+meta {
+  name: Upload Outsource Center Document
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/outsource-centers/{{outsourceCenterId}}/documents
+  body: multipartForm
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:multipart-form {
+  document: @file(C:\path\to\document.pdf)
+  name: NABL Certificate
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("outsourceCenterDocumentId", data.id);
+}
+
+docs {
+  Upload a document for an outsource center. Form field name is **`document`**;
+  optional **`name`** overrides the displayed filename (defaults to the
+  uploaded file's original name).
+
+  Accepted types: PDF, JPG/JPEG, PNG, DOC, DOCX, XLS, XLSX. Max **10 MB**,
+  otherwise 422 `INVALID_OUTSOURCE_CENTER_DOCUMENT`. 404
+  `OUTSOURCE_CENTER_NOT_FOUND` if `outsourceCenterId` doesn't exist/isn't in
+  this tenant.
+
+  The file bytes are written to disk (`UPLOAD_DIR/outsource-center-documents/`);
+  only metadata (`id`, `fileName`, `mimeType`, `fileSize`, `createdAt`) is
+  returned — fetch the bytes via *Download Outsource Center Document*.
+
+  Edit the `@file(...)` path to a real file on your machine before sending.
+  Run *Create Outsource Center* first so `{{outsourceCenterId}}` is set.
+}

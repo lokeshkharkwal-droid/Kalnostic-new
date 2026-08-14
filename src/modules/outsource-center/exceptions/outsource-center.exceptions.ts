@@ -66,3 +66,30 @@ export class InvalidLabPanelException extends KaltrosException {
     );
   }
 }
+
+/** 404 — outsource center document not found within the tenant/center. */
+export class OutsourceCenterDocumentNotFoundException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'OUTSOURCE_CENTER_DOCUMENT_NOT_FOUND',
+      'Document not found',
+      { id },
+      HttpStatus.NOT_FOUND,
+    );
+  }
+}
+
+/**
+ * 422 — invalid uploaded document (unsupported type, too large, or missing).
+ * Mirrors InvalidProfilePhotoException's status.
+ */
+export class InvalidOutsourceCenterDocumentException extends KaltrosException {
+  constructor(reason: string) {
+    super(
+      'INVALID_OUTSOURCE_CENTER_DOCUMENT',
+      reason,
+      { reason },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
