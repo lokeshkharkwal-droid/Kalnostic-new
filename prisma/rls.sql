@@ -612,6 +612,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS occ_center_role_active_unique
   ON outsource_center_contacts (tenant_id, outsource_center_id, role)
   WHERE deleted_at IS NULL;
 
+-- ── outsource_center_documents ────────────────────────────────────────────────
+ALTER TABLE outsource_center_documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE outsource_center_documents FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS outsource_center_documents_tenant_isolation ON outsource_center_documents;
+CREATE POLICY outsource_center_documents_tenant_isolation ON outsource_center_documents
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- ── referral_panels ───────────────────────────────────────────────────────────
 ALTER TABLE referral_panels ENABLE ROW LEVEL SECURITY;
 ALTER TABLE referral_panels FORCE ROW LEVEL SECURITY;

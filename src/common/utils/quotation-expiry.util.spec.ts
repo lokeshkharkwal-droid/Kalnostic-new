@@ -2,7 +2,8 @@ import { RepeatIntervalUnit } from '@prisma/client';
 import { addInterval, subtractInterval } from './quotation-expiry.util';
 
 /** All instants are UTC (order dates are stored @db.Date = midnight UTC). */
-const utc = (y: number, m: number, d: number): Date => new Date(Date.UTC(y, m - 1, d));
+const utc = (y: number, m: number, d: number): Date =>
+  new Date(Date.UTC(y, m - 1, d));
 
 describe('quotation-expiry util', () => {
   describe('addInterval', () => {
@@ -19,9 +20,9 @@ describe('quotation-expiry util', () => {
     });
 
     it('adds months', () => {
-      expect(addInterval(utc(2026, 8, 1), 3, RepeatIntervalUnit.MONTHS)).toEqual(
-        utc(2026, 11, 1),
-      );
+      expect(
+        addInterval(utc(2026, 8, 1), 3, RepeatIntervalUnit.MONTHS),
+      ).toEqual(utc(2026, 11, 1));
     });
 
     it('adds years', () => {

@@ -1,0 +1,27 @@
+meta {
+  name: Download Outsource Center Document
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/outsource-centers/{{outsourceCenterId}}/documents/{{outsourceCenterDocumentId}}/download
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Stream a document's raw bytes back with its original filename and mimetype
+  (`Content-Type`/`Content-Disposition: attachment`). This is a raw binary
+  response, not the `{success,data,meta}` JSON envelope.
+
+  404 `OUTSOURCE_CENTER_DOCUMENT_NOT_FOUND` if the document doesn't
+  exist/isn't in this tenant/center, or has been soft-deleted.
+
+  Run *Upload Outsource Center Document* first so
+  `{{outsourceCenterDocumentId}}` is set.
+}

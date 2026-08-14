@@ -1,0 +1,27 @@
+meta {
+  name: Delete Outsource Center Document
+  type: http
+  seq: 9
+}
+
+delete {
+  url: {{baseUrl}}/outsource-centers/{{outsourceCenterId}}/documents/{{outsourceCenterDocumentId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Soft-delete a document (sets `deletedAt`). The on-disk file is left in
+  place — this API never hard-deletes business data. Scoped to the caller's
+  tenant.
+
+  404 `OUTSOURCE_CENTER_DOCUMENT_NOT_FOUND` if the document doesn't
+  exist/isn't in this tenant/center, or was already deleted.
+
+  Run this after *List*/*Download* — once deleted, the document disappears
+  from the list and download returns 404.
+}
