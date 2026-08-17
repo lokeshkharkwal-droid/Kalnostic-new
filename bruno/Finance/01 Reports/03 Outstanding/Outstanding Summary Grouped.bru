@@ -1,0 +1,44 @@
+meta {
+  name: Outstanding Summary Grouped
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/orders/outstanding-summary/grouped?statuses=ORDER,APPOINTMENT,CANCELLED&groupBy=outsource
+  body: none
+  auth: bearer
+}
+
+params:query {
+  statuses: ORDER,APPOINTMENT,CANCELLED
+  groupBy: outsource
+  ~dateFrom: 2026-07-01
+  ~dateTo: 2026-07-31
+  ~branchId: {{branchId}}
+  ~search: john
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Grouped Outstanding aggregate powering the dimension panels — the due>0 view of
+  `/orders/billing-summary/grouped` (same shared grouping layer with
+  `report:'outstanding'`). `groupBy` = the SAME set as Billing (b2b / ref-by /
+  internal-referral / external-referral / int-ref-user / ext-ref-user / lab-test /
+  lab-panel / department / category / subcategory) **plus `outsource`**.
+
+  - `outsource` groups by the **outsource center** (`OutsourceCenter.name`) of the
+    order's accession `SampleTransfer` (`kind=OUTSOURCE`) — the /accession/outsource
+    dataset, re-sourced like internal/external referral (each order attributed to
+    its primary transfer's center).
+  - `internal-referral` / `external-referral` group by accession-transfer
+    destination; `int-ref-user` / `ext-ref-user` by the order's referral user;
+    `lab-test` / `lab-panel` by test/panel code; `department` / `category` /
+    `subcategory` by classification (branch scalar ?? master catalogue).
+
+  Every row is order-level money over the due>0 dataset, so `Σ grouped` reconciles
+  with `/orders/outstanding-summary` and `/orders/outstanding-records`.
+}

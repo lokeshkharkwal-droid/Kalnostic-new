@@ -321,7 +321,7 @@ export class LabReportController {
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
-    description: 'Updated a lab report\'s content sections',
+    description: "Updated a lab report's content sections",
   })
   updateContentSections(
     @CurrentTenant() tenantId: string,

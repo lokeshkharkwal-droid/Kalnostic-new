@@ -1,0 +1,31 @@
+meta {
+  name: Collection Summary By User
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/orders/collection-summary/by-user?statuses=ORDER,APPOINTMENT,CANCELLED
+  body: none
+  auth: bearer
+}
+
+params:query {
+  statuses: ORDER,APPOINTMENT,CANCELLED
+  ~dateFrom: 2026-07-01
+  ~dateTo: 2026-07-31
+  ~branchId: {{branchId}}
+  ~paymentMode: UPI
+  ~search: john
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  User-wise Collection aggregate (grouped by order creator, `Order.createdBy`) — the
+  same totals + payment-mode breakdown as `/orders/collection-summary`, one row per
+  user. Realization scope (only orders that collected money); `Σ rows` reconciles
+  with the `dimension=userwise` cards.
+}

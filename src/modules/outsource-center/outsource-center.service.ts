@@ -1,5 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { OutsourceCenter, OutsourceCenterContact, Prisma } from '@prisma/client';
+import {
+  OutsourceCenter,
+  OutsourceCenterContact,
+  Prisma,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { CreateOutsourceCenterDto } from './dto/create-outsource-center.dto';

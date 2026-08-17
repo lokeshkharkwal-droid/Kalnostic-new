@@ -1,0 +1,61 @@
+meta {
+  name: Create Order - No Bill (Completed)
+  type: http
+  seq: 19
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "ORDER",
+    "orderDate": "2026-07-09",
+    "orderType": "WALK_IN",
+    "billingType": "CASH_CLIENT",
+    "isBillGenerated": false,
+    "patientId": "{{patientId}}",
+    "items": [
+      { "branchLabTestId": "{{branchLabTestId}}" }
+    ]
+  }
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("marked completed — paymentStatus PAID", function () {
+    expect(res.getBody().data.paymentStatus).to.equal("PAID");
+  });
+  test("no bill generated", function () {
+    expect(res.getBody().data.isBillGenerated).to.equal(false);
+  });
+}
+
+docs {
+  Create an order with **Generate Bill = No** (`isBillGenerated: false`) and no
+  `payments`. The order is finalized (`status = ORDER`) but records **nothing
+  owed**: its stored ledger is zeroed (`payableAmount`/`netAmount`/`paidAmount` = 0,
+  only `totalAmount` = gross is kept), so it creates **no due**, and its
+  `paymentStatus` is forced to **`PAID`** (completed/settled).
+
+  Because there is no bill, the branch's Previous-Dues / Partial-Billing / TDS &
+  Discount rules are **skipped** — so this succeeds even for a patient who has
+  outstanding dues at a branch that otherwise enforces clearing them. Verify with
+  `GET /orders/patient-dues` (this order adds 0 to the patient's outstanding).
+
+  Sending a `payments[]` row with a positive `paidAmount` alongside
+  `isBillGenerated: false` is rejected with 422 `PAYMENT_WITHOUT_BILL_GENERATED`.
+}

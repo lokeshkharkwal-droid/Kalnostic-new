@@ -1,4 +1,9 @@
-import { PaymentStatus, Prisma, QuotationStatus } from '@prisma/client';
+import {
+  PaymentStatus,
+  Prisma,
+  QuotationStatus,
+  RefundStatus,
+} from '@prisma/client';
 
 /**
  * Derive an order's {@link PaymentStatus} from its payment ledger totals — the
@@ -34,6 +39,37 @@ export function computeEffectivePaid(
   refundChargeSum: number,
 ): number {
   return Math.max(0, p - cancellationCharge - refundSum - refundChargeSum);
+}
+
+/**
+ * Derive an order's {@link RefundStatus} from its payment ledger totals. `NONE`
+ * when nothing has been refunded; otherwise `FULLY_REFUNDED` once the retained
+ * (effective) paid amount has been fully returned, else `PARTIALLY_REFUNDED`.
+ * Reuses {@link computeEffectivePaid} so it stays in lock-step with the stored
+ * `paymentStatus` — this is what lets the UI fold the refund state into the
+ * single Status label (a fully-paid-then-refunded order reads "Refunded", not
+ * "Not Paid"). Recomputed wherever a refund ledger row is written.
+ * @param paidSum summed `paidAmount` across PAYMENT rows
+ * @param cancellationCharge the order's retained cancellation fee
+ * @param refundSum summed `refundAmount` across REFUND rows (returned to patient)
+ * @param refundChargeSum summed `refundCharge` across REFUND rows (retained fee)
+ */
+export function deriveRefundStatus(
+  paidSum: number,
+  cancellationCharge: number,
+  refundSum: number,
+  refundChargeSum: number,
+): RefundStatus {
+  if (refundSum <= 0) return RefundStatus.NONE;
+  const effectivePaid = computeEffectivePaid(
+    paidSum,
+    cancellationCharge,
+    refundSum,
+    refundChargeSum,
+  );
+  return effectivePaid <= 0
+    ? RefundStatus.FULLY_REFUNDED
+    : RefundStatus.PARTIALLY_REFUNDED;
 }
 
 /**
@@ -142,6 +178,58 @@ export type OrderWithRelations = Prisma.OrderGetPayload<{
 }>;
 
 /**
+ * Aggregated Billing/Collection metrics (whole rupees) for the Finance → Reports
+ * summary cards. `due` is the sum of each order's floored `net − paid`. The
+ * payment-mode fields break `paid` down by mode (Collection mapping: `CASH`→cash,
+ * `UPI`→upi, `BANK_TRANSFER`→bankTransfer, `CARD`→debitCard, `CREDIT`→creditCard;
+ * WALLET excluded) — for a collection report `paid === cash + upi + bankTransfer
+ * + debitCard + creditCard`.
+ */
+export interface BillingSummary {
+  gross: number;
+  discount: number;
+  net: number;
+  paid: number;
+  due: number;
+  tds: number;
+  cash: number;
+  upi: number;
+  bankTransfer: number;
+  debitCard: number;
+  creditCard: number;
+  /** Σ of REFUND ledger rows' refund amount (Refund report). */
+  refundAmount: number;
+  /** Σ of the orders' cancellation charges (Cancel report). */
+  cancelAmount: number;
+}
+
+/**
+ * One user-wise Billing aggregate row — the same totals as {@link BillingSummary}
+ * grouped by the order's creator (`Order.createdBy`), plus the order count and
+ * the resolved display name. `userId` is `''` for the (single) bucket of orders
+ * with no recorded creator.
+ */
+export interface BillingSummaryByUserRow extends BillingSummary {
+  userId: string;
+  userName: string;
+  orderCount: number;
+}
+
+/**
+ * One row of a **grouped** Billing summary (`b2b` / `ref-by` / `lab-test` /
+ * `lab-panel`). `id`/`name` identify the group (referral panel, referring doctor,
+ * lab test, or lab panel). For the order-level dimensions (`b2b`, `ref-by`) every
+ * money field is meaningful; for the item-level dimensions (`lab-test`,
+ * `lab-panel`) only `gross`/`discount`/`net`/`orderCount` are — `paid`/`due`/`tds`
+ * are order-level and returned as 0 (the UI disables those columns there).
+ */
+export interface BillingGroupRow extends BillingSummary {
+  id: string;
+  name: string;
+  orderCount: number;
+}
+
+/**
  * `include` for listing rows: patient ref (with age/gender for display), the
  * referral refs (name only), the active payment ledger (amount fields only) so
  * the row can carry gross/discount/net rollups, plus the section refs (items with
@@ -164,6 +252,7 @@ export const ORDER_LIST_INCLUDE = {
       umId: true,
     },
   },
+  branch: { select: { id: true, name: true, code: true } },
   referredByDoctor: { select: { id: true, firstName: true, lastName: true } },
   referralPanel: { select: { id: true, name: true, code: true } },
   internalReferral: { select: { id: true, fullName: true } },
@@ -221,6 +310,8 @@ export const ORDER_LIST_INCLUDE = {
       orderDiscount: true,
       netAmount: true,
       paidAmount: true,
+      tdsDeduction: true,
+      paymentMode: true,
       entryType: true,
       refundAmount: true,
       refundCharge: true,
@@ -234,6 +325,78 @@ export const ORDER_LIST_INCLUDE = {
     select: { id: true, orderCode: true, externalOrderId: true },
   },
 } satisfies Prisma.OrderInclude;
+
+/**
+ * `include` for the Finance → Billing endpoints: the order-list display refs PLUS
+ * each item's `unitPrice` / `discount` / test / panel ids, so the shared
+ * financial-allocation layer can split order-level money across the test/panel
+ * lines (see `OrderService.allocateOrderLines`).
+ */
+export const BILLING_ORDER_INCLUDE = {
+  ...ORDER_LIST_INCLUDE,
+  items: {
+    where: { deletedAt: null },
+    select: {
+      id: true,
+      direct: true,
+      unitPrice: true,
+      discount: true,
+      branchLabTestId: true,
+      branchLabPanelId: true,
+      branchLabTest: {
+        select: {
+          id: true,
+          testName: true,
+          testCode: true,
+          sourceLabTestId: true,
+          departmentId: true,
+          categoryId: true,
+          subCategoryId: true,
+        },
+      },
+      branchLabPanel: {
+        select: {
+          id: true,
+          panelName: true,
+          panelCode: true,
+          sourceLabPanelId: true,
+          departmentId: true,
+          categoryId: true,
+        },
+      },
+    },
+  },
+} satisfies Prisma.OrderInclude;
+
+/** A billing order with item prices + payments, ready for allocation. */
+export type BillingOrder = Prisma.OrderGetPayload<{
+  include: typeof BILLING_ORDER_INCLUDE;
+}>;
+
+/**
+ * One detailed-records row for a Billing dimension: the order's display refs plus
+ * the money figures **for that dimension** — order-level for `all`/`userwise`/
+ * `b2b`/`ref-by`, and the sum of the order's allocated test/panel lines for
+ * `lab-test`/`lab-panel`. Field names mirror {@link OrderListRow} so the frontend
+ * mapper is shared.
+ */
+export type BillingRecordRow = BillingOrder & {
+  grossAmount: number;
+  discountAmount: number;
+  netAmount: number;
+  tdsAmount: number;
+  dueAmount: number;
+  paidAmount: number;
+  /** Collection payment-mode breakdown of the row's paid (whole rupees). */
+  cash: number;
+  upi: number;
+  bankTransfer: number;
+  debitCard: number;
+  creditCard: number;
+  /** Refund total (Refund report) + cancellation charge (Cancel report). */
+  refundAmount: number;
+  cancelAmount: number;
+};
 
 /**
  * One order row for the listing endpoint: the order + refs + item count, plus
@@ -250,6 +413,10 @@ export type OrderListRow = Prisma.OrderGetPayload<{
   grossAmount: number;
   discountAmount: number;
   netAmount: number;
+  /** Sum of `tdsDeduction` across the active payment ledger (TDS withheld). */
+  tdsAmount: number;
+  /** Outstanding balance for the row: `netAmount − paidAmount`, floored at 0. */
+  dueAmount: number;
   /**
    * Gross sum of `paidAmount` across the active payment ledger (money collected;
    * unaffected by cancellation charges/refunds — those are reported separately so

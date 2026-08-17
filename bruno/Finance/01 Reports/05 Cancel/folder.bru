@@ -1,0 +1,24 @@
+meta {
+  name: 05 Cancel
+  seq: 5
+}
+
+docs {
+  # Finance → Reports → Cancel
+
+  The Cancel report (`/finance/reports/cancel`) — **cancelled** orders
+  (`Order.status = CANCELLED`, from /registration/billing → Cancel Order
+  [with/without refund]). Reuses the SAME dimension/allocation layer as Billing with
+  `report:'cancel'`, plus a **`cancelAmount`** figure (= `Order.cancellationCharge`).
+  So for a given tab + filters: **Σ records = cards = Σ summary**.
+
+  1. **Detailed records** — `GET /orders/cancel-records?dimension=…` (adds
+     Cancellation Charge + Refund columns on the frontend).
+  2. **Metric cards** — `GET /orders/cancel-summary?dimension=…` (adds `cancelAmount`).
+  3. **User-wise panel** — `GET /orders/cancel-summary/by-user`.
+  4. **Grouped panels** — `GET /orders/cancel-summary/grouped?groupBy=…`.
+
+  Scope = `status=CANCELLED` (enforced regardless of the `statuses` filter). A
+  cancel-with-refund order also appears in the Refund report. `dimension` / `groupBy`
+  = the SAME set as Billing (incl. `outsource`). Same shared filters as Billing.
+}

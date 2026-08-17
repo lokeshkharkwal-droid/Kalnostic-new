@@ -1,0 +1,24 @@
+meta {
+  name: 03 Outstanding
+  seq: 3
+}
+
+docs {
+  # Finance → Reports → Outstanding
+
+  The Outstanding report (`/finance/reports/outstanding`) — orders with a **due
+  balance > ₹0** (fully-paid, due=0 orders never appear). Reuses the SAME
+  dimension/allocation layer as Billing with `report:'outstanding'` — the single
+  scoped dataset is additionally filtered in-app to `due > 0` (`due = net − paid`,
+  paid incl. wallet, same money model as Billing). So for a given tab + filters:
+  **Σ detailed records = metric cards = Σ summary**.
+
+  1. **Detailed records** — `GET /orders/outstanding-records?dimension=…`.
+  2. **Metric cards** — `GET /orders/outstanding-summary?dimension=…`.
+  3. **User-wise panel** — `GET /orders/outstanding-summary/by-user`.
+  4. **Grouped panels** — `GET /orders/outstanding-summary/grouped?groupBy=…`.
+
+  `dimension` / `groupBy` are the SAME set as Billing, plus **`outsource`** (orders
+  sent to an external lab via an accession `SampleTransfer` of `kind=OUTSOURCE`,
+  grouped by outsource center). Same shared filters as Billing.
+}

@@ -15,6 +15,8 @@ import { OrderService } from './order.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { ListOrdersDto } from './dto/list-orders.dto';
+import { BillingGroupedQueryDto } from './dto/billing-grouped-query.dto';
+import { BillingQueryDto } from './dto/billing-query.dto';
 import { CreateOrderNoteDto } from './dto/create-order-note.dto';
 import { ListOrderNotesDto } from './dto/list-order-notes.dto';
 import { CancelOrderDto } from './dto/cancel-order.dto';
@@ -102,6 +104,358 @@ export class OrderController {
     @Query() query: PatientDuesQueryDto,
   ) {
     return this.orderService.getPatientDues(tenantId, query.patientId);
+  }
+
+  /**
+   * Aggregated Billing metric-card totals (gross/discount/net/paid/due/tds) for
+   * the active branch, scoped to the active `dimension` (tab) so the cards, the
+   * grouped summary and the detailed records all describe the same dataset.
+   * Declared before `:id` so the static path isn't captured by the param route.
+   */
+  @Get('billing-summary')
+  billingSummary(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: BillingQueryDto,
+  ) {
+    return this.orderService.billingSummary(
+      tenantId,
+      profile.branchId,
+      'billing',
+      query.dimension ?? 'all',
+      query,
+    );
+  }
+
+  /**
+   * Paginated detailed Billing records for the active branch, scoped to the
+   * active `dimension` (tab) and carrying the dimension's per-order money (the
+   * order's allocated test/panel lines for `lab-test`/`lab-panel`). Reconciles
+   * with `billing-summary` for the same filters. Declared before `:id`.
+   */
+  @Get('billing-records')
+  billingRecords(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: BillingQueryDto,
+  ) {
+    return this.orderService.billingRecords(
+      tenantId,
+      profile.branchId,
+      'billing',
+      query.dimension ?? 'all',
+      query,
+    );
+  }
+
+  /**
+   * User-wise Billing aggregate (grouped by the order's creator) for the active
+   * branch — the Finance → Reports → Billing "User-wise" panel. Declared before
+   * `:id` so the static path isn't captured by the param route.
+   */
+  @Get('billing-summary/by-user')
+  billingSummaryByUser(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: ListOrdersDto,
+  ) {
+    return this.orderService.billingSummaryByUser(
+      tenantId,
+      profile.branchId,
+      'billing',
+      query,
+    );
+  }
+
+  /**
+   * Grouped Billing aggregate for the active branch — powers the Finance →
+   * Reports → Billing dimension panels (`groupBy` = `b2b` | `ref-by` |
+   * `lab-test` | `lab-panel`). Declared before `:id` so the static path isn't
+   * captured by the param route.
+   */
+  @Get('billing-summary/grouped')
+  billingSummaryGrouped(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: BillingGroupedQueryDto,
+  ) {
+    return this.orderService.billingSummaryGrouped(
+      tenantId,
+      profile.branchId,
+      'billing',
+      query.groupBy,
+      query,
+    );
+  }
+
+  // ── Finance → Reports → Collection (realization view + payment-mode breakup) ──
+  // Reuses the shared billing dimension/allocation layer with `report:'collection'`
+  // (dataset scoped to orders with a collected payment; `paid` = the five physical
+  // receipt modes, WALLET excluded). Declared before `:id`.
+
+  /** Collection metric-card totals (incl. the payment-mode breakdown). */
+  @Get('collection-summary')
+  collectionSummary(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: BillingQueryDto,
+  ) {
+    return this.orderService.billingSummary(
+      tenantId,
+      profile.branchId,
+      'collection',
+      query.dimension ?? 'all',
+      query,
+    );
+  }
+
+  /** Paginated detailed Collection records (per-row payment-mode breakdown). */
+  @Get('collection-records')
+  collectionRecords(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: BillingQueryDto,
+  ) {
+    return this.orderService.billingRecords(
+      tenantId,
+      profile.branchId,
+      'collection',
+      query.dimension ?? 'all',
+      query,
+    );
+  }
+
+  /** User-wise Collection aggregate (grouped by order creator). */
+  @Get('collection-summary/by-user')
+  collectionSummaryByUser(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: ListOrdersDto,
+  ) {
+    return this.orderService.billingSummaryByUser(
+      tenantId,
+      profile.branchId,
+      'collection',
+      query,
+    );
+  }
+
+  /** Grouped Collection aggregate for the dimension panels. */
+  @Get('collection-summary/grouped')
+  collectionSummaryGrouped(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: BillingGroupedQueryDto,
+  ) {
+    return this.orderService.billingSummaryGrouped(
+      tenantId,
+      profile.branchId,
+      'collection',
+      query.groupBy,
+      query,
+    );
+  }
+
+  // ── Finance → Reports → Outstanding (orders with a due balance > 0) ──
+  // Reuses the shared billing dimension/allocation layer with `report:'outstanding'`
+  // (dataset filtered to orders whose `due` = net − paid is > 0; `paid` includes
+  // wallet, same as billing). Declared before `:id`.
+
+  /** Outstanding metric-card totals (only orders that still owe money). */
+  @Get('outstanding-summary')
+  outstandingSummary(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: BillingQueryDto,
+  ) {
+    return this.orderService.billingSummary(
+      tenantId,
+      profile.branchId,
+      'outstanding',
+      query.dimension ?? 'all',
+      query,
+    );
+  }
+
+  /** Paginated detailed Outstanding records (every row has due > 0). */
+  @Get('outstanding-records')
+  outstandingRecords(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: BillingQueryDto,
+  ) {
+    return this.orderService.billingRecords(
+      tenantId,
+      profile.branchId,
+      'outstanding',
+      query.dimension ?? 'all',
+      query,
+    );
+  }
+
+  /** User-wise Outstanding aggregate (grouped by order creator). */
+  @Get('outstanding-summary/by-user')
+  outstandingSummaryByUser(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: ListOrdersDto,
+  ) {
+    return this.orderService.billingSummaryByUser(
+      tenantId,
+      profile.branchId,
+      'outstanding',
+      query,
+    );
+  }
+
+  /** Grouped Outstanding aggregate for the dimension panels. */
+  @Get('outstanding-summary/grouped')
+  outstandingSummaryGrouped(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: BillingGroupedQueryDto,
+  ) {
+    return this.orderService.billingSummaryGrouped(
+      tenantId,
+      profile.branchId,
+      'outstanding',
+      query.groupBy,
+      query,
+    );
+  }
+
+  // ── Finance → Reports → Refund (orders with a REFUND ledger entry) ──
+  // Reuses the shared billing layer with `report:'refund'`; the summary/records
+  // carry the `refundAmount` figure (Σ of REFUND rows). Declared before `:id`.
+
+  /** Refund metric-card totals (incl. `refundAmount`). */
+  @Get('refund-summary')
+  refundSummary(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: BillingQueryDto,
+  ) {
+    return this.orderService.billingSummary(
+      tenantId,
+      profile.branchId,
+      'refund',
+      query.dimension ?? 'all',
+      query,
+    );
+  }
+
+  /** Paginated detailed Refund records (every row has a refund). */
+  @Get('refund-records')
+  refundRecords(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: BillingQueryDto,
+  ) {
+    return this.orderService.billingRecords(
+      tenantId,
+      profile.branchId,
+      'refund',
+      query.dimension ?? 'all',
+      query,
+    );
+  }
+
+  /** User-wise Refund aggregate (grouped by order creator). */
+  @Get('refund-summary/by-user')
+  refundSummaryByUser(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: ListOrdersDto,
+  ) {
+    return this.orderService.billingSummaryByUser(
+      tenantId,
+      profile.branchId,
+      'refund',
+      query,
+    );
+  }
+
+  /** Grouped Refund aggregate for the dimension panels. */
+  @Get('refund-summary/grouped')
+  refundSummaryGrouped(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: BillingGroupedQueryDto,
+  ) {
+    return this.orderService.billingSummaryGrouped(
+      tenantId,
+      profile.branchId,
+      'refund',
+      query.groupBy,
+      query,
+    );
+  }
+
+  // ── Finance → Reports → Cancel (CANCELLED orders) ──
+  // Reuses the shared billing layer with `report:'cancel'`; the summary/records
+  // carry the `cancelAmount` figure (= Order.cancellationCharge). Before `:id`.
+
+  /** Cancel metric-card totals (incl. `cancelAmount`). */
+  @Get('cancel-summary')
+  cancelSummary(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: BillingQueryDto,
+  ) {
+    return this.orderService.billingSummary(
+      tenantId,
+      profile.branchId,
+      'cancel',
+      query.dimension ?? 'all',
+      query,
+    );
+  }
+
+  /** Paginated detailed Cancel records (every row is CANCELLED). */
+  @Get('cancel-records')
+  cancelRecords(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: BillingQueryDto,
+  ) {
+    return this.orderService.billingRecords(
+      tenantId,
+      profile.branchId,
+      'cancel',
+      query.dimension ?? 'all',
+      query,
+    );
+  }
+
+  /** User-wise Cancel aggregate (grouped by order creator). */
+  @Get('cancel-summary/by-user')
+  cancelSummaryByUser(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: ListOrdersDto,
+  ) {
+    return this.orderService.billingSummaryByUser(
+      tenantId,
+      profile.branchId,
+      'cancel',
+      query,
+    );
+  }
+
+  /** Grouped Cancel aggregate for the dimension panels. */
+  @Get('cancel-summary/grouped')
+  cancelSummaryGrouped(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: BillingGroupedQueryDto,
+  ) {
+    return this.orderService.billingSummaryGrouped(
+      tenantId,
+      profile.branchId,
+      'cancel',
+      query.groupBy,
+      query,
+    );
   }
 
   /** Fetch one order fully composed. */

@@ -1,0 +1,36 @@
+meta {
+  name: Cancel Records (Detailed)
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/orders/cancel-records?statuses=CANCELLED&dimension=all&page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  statuses: CANCELLED
+  dimension: all
+  page: 1
+  limit: 20
+  ~dateFrom: 2026-07-01
+  ~dateTo: 2026-07-31
+  ~branchId: {{branchId}}
+  ~paymentMode: CASH
+  ~search: john
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Paginated detailed Cancel records for the active tab (`dimension` — same set as
+  Billing, incl. `outsource`). Only CANCELLED orders; every row carries `cancelAmount`
+  (= the order's cancellation charge) + `refundAmount` (for cancel-with-refund), plus
+  the standard money fields. For the item-level dimensions each row's figures are the
+  sum of that order's allocated matching lines (cancel/refund allocated proportionally
+  by net). `Σ records === cancel-summary` for the same filters.
+}

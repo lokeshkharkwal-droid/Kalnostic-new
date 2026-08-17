@@ -1,0 +1,30 @@
+meta {
+  name: Outstanding Summary By User
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/orders/outstanding-summary/by-user?statuses=ORDER,APPOINTMENT,CANCELLED
+  body: none
+  auth: bearer
+}
+
+params:query {
+  statuses: ORDER,APPOINTMENT,CANCELLED
+  ~dateFrom: 2026-07-01
+  ~dateTo: 2026-07-31
+  ~branchId: {{branchId}}
+  ~search: john
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  User-wise Outstanding aggregate — the same due>0 dataset as
+  `/orders/outstanding-summary`, grouped by the order's creator (`Order.createdBy`).
+  One row per user: `{ userId, userName, orderCount, gross, discount, net, paid,
+  due, tds }`. Σ rows reconciles with the `all`/`userwise` cards.
+}

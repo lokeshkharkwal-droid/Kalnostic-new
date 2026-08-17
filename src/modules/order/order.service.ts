@@ -7,6 +7,7 @@ import {
   ExternalIdFormat,
   ExternalIdPurpose,
   Order,
+  OrderDateType,
   OrderStatus,
   PaymentEntryType,
   PaymentMode,
@@ -15,6 +16,7 @@ import {
   QuotationStatus,
   RepeatIntervalUnit,
   SampleSource,
+  TransferKind,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
@@ -47,9 +49,89 @@ import {
   ORDER_LIST_INCLUDE,
   OrderListRow,
   OrderWithRelations,
+  BILLING_ORDER_INCLUDE,
+  BillingOrder,
+  BillingRecordRow,
+  BillingSummary,
+  BillingSummaryByUserRow,
+  BillingGroupRow,
   derivePaymentStatus,
   computeEffectivePaid,
+  deriveRefundStatus,
 } from './entities/order.entity';
+import { BillingGroupBy } from './dto/billing-grouped-query.dto';
+import { BillingDimension } from './dto/billing-query.dto';
+
+/**
+ * Which Finance report is being served. `billing` = invoiced view (`paid` is the
+ * full ledger paid). `collection` = realization view (`paid` is physical receipts
+ * only — the five payment modes, excluding WALLET — and the dataset is scoped to
+ * orders with a collected payment). The payment-mode breakdown is returned for
+ * both; only Collection displays it.
+ */
+type BillingReport =
+  | 'billing'
+  | 'collection'
+  | 'outstanding'
+  | 'refund'
+  | 'cancel';
+
+/**
+ * Order-level (or line-level) money figures, whole rupees. The payment-mode
+ * fields bucket collected `paidAmount` by mode (Collection mapping:
+ * `CASH`→cash, `UPI`→upi, `BANK_TRANSFER`→bankTransfer, `CARD`→debitCard,
+ * `CREDIT`→creditCard; `WALLET` is excluded from the five). For a `collection`
+ * report `paid === cash + upi + bankTransfer + debitCard + creditCard`.
+ */
+interface BillingFigures {
+  gross: number;
+  discount: number;
+  net: number;
+  paid: number;
+  due: number;
+  tds: number;
+  cash: number;
+  upi: number;
+  bankTransfer: number;
+  debitCard: number;
+  creditCard: number;
+  /** Σ of REFUND ledger rows' `refundAmount` (powers the Refund report). */
+  refundAmount: number;
+  /** The order's `cancellationCharge` (powers the Cancel report). */
+  cancelAmount: number;
+}
+
+/** One order line with its allocated share of the order-level money. */
+interface AllocatedBillingLine extends BillingFigures {
+  branchLabTestId: string | null;
+  branchLabPanelId: string | null;
+  testName: string | null;
+  panelName: string | null;
+  /** Stable per-test / per-panel identity (dedupes copies across pricing lists). */
+  testCode: string | null;
+  panelCode: string | null;
+  /** Master catalogue ids — used to fall back to the master classification. */
+  sourceLabTestId: string | null;
+  sourceLabPanelId: string | null;
+  /** Classification as stored on the BRANCH row (often null; master is the fallback). */
+  departmentId: string | null;
+  categoryId: string | null;
+  subCategoryId: string | null;
+}
+
+/**
+ * Master-catalogue classification, keyed by a source `LabTest`/`LabPanel` id — used
+ * to fall back when the BRANCH test/panel row carries no department/category/
+ * sub-category (the mapping lives on the master catalogue).
+ */
+type ClassificationFallback = Map<
+  string,
+  {
+    departmentId: string | null;
+    categoryId: string | null;
+    subCategoryId: string | null;
+  }
+>;
 import {
   AppointmentSectionRequiredException,
   OrderRequiresItemsException,
@@ -103,6 +185,7 @@ import {
   QuotationEditByOtherUserNotAllowedException,
   BillCopyPrintNotAllowedForUnpaidException,
   AppointmentPaymentRequiredException,
+  PaymentWithoutBillGeneratedException,
 } from './exceptions/order.exceptions';
 import type { RegistrationSetting } from '@prisma/client';
 // Reused so an inline order-payment overpayment raises the SAME
@@ -279,7 +362,20 @@ export class OrderService {
     if (payPaid > payNet) {
       throw new PaymentOverpaymentException(payNet, payPaid);
     }
-    const paymentStatus = derivePaymentStatus(payNet, payPaid);
+    // Generate Bill = No: the order records no money (the FE also disables the
+    // whole Payment Details section). Reject any positive paid amount as defence
+    // in depth.
+    if (dto.isBillGenerated === false && payPaid > 0) {
+      throw new PaymentWithoutBillGeneratedException(payPaid);
+    }
+    // Generate Bill = No ⇒ the order is "completed" with nothing owed: its ledger
+    // is zeroed (payable/net/paid = 0 → no dues) and its payment status is forced
+    // to PAID (settled). The billing rules + previous-dues settlement below are all
+    // skipped for it.
+    const billNotGenerated = dto.isBillGenerated === false;
+    const paymentStatus = billNotGenerated
+      ? PaymentStatus.PAID
+      : derivePaymentStatus(payNet, payPaid);
 
     // Snapshot each item's list unit price from its branch lab test/panel row so
     // the order's prices are stable even if the list is later re-priced (§B5).
@@ -307,28 +403,32 @@ export class OrderService {
 
     // Enforce the branch's Previous-Dues + Partial-Billing rules (Registration
     // Settings → Charges & Deductions). Only bites when finalizing a real order
-    // (`status = ORDER`) at a branch; DRAFT/QUOTE/APPOINTMENT are exempt.
-    await this.assertBillingRules({
-      tenantId,
-      branchId,
-      status: dto.status,
-      patientId: dto.patientId,
-      payments: dto.payments,
-      previousDuesCleared: dto.previousDuesCleared ?? 0,
-      settings,
-      hasDiscount,
-    });
+    // (`status = ORDER`) at a branch; DRAFT/QUOTE/APPOINTMENT are exempt. Also
+    // skipped entirely when no bill is generated — there is nothing to bill, so
+    // the previous-dues / partial-billing / discount gates must not block it.
+    if (!billNotGenerated) {
+      await this.assertBillingRules({
+        tenantId,
+        branchId,
+        status: dto.status,
+        patientId: dto.patientId,
+        payments: dto.payments,
+        previousDuesCleared: dto.previousDuesCleared ?? 0,
+        settings,
+        hasDiscount,
+      });
 
-    // Enforce the branch's TDS & Discount rules (allow-flags, discount mode,
-    // and min/max percentages) against the server-side item prices.
-    this.assertDiscountAndTdsRules({
-      status: dto.status,
-      branchId,
-      settings,
-      items: dto.items ?? [],
-      payments: dto.payments,
-      itemPrices,
-    });
+      // Enforce the branch's TDS & Discount rules (allow-flags, discount mode,
+      // and min/max percentages) against the server-side item prices.
+      this.assertDiscountAndTdsRules({
+        status: dto.status,
+        branchId,
+        settings,
+        items: dto.items ?? [],
+        payments: dto.payments,
+        itemPrices,
+      });
+    }
 
     // Appointment check-in payment gating (Registration Settings → Appointment).
     // The two flags are mutually exclusive (enforced on save): "check-in for
@@ -459,6 +559,7 @@ export class OrderService {
             updatedBy: personId,
             status: dto.status ?? OrderStatus.DRAFT,
             orderDate: new Date(dto.orderDate),
+            orderDateType: this.classifyOrderDate(dto.orderDate),
             orderType: dto.orderType,
             billingType: dto.billingType,
             isUrgentBill: dto.isUrgentBill ?? false,
@@ -584,6 +685,20 @@ export class OrderService {
               branchId,
               orderId: order.id,
               ...p,
+              // Generate Bill = No ⇒ zero every money field except the gross
+              // `totalAmount` (kept for visibility): payable/net/paid = 0 so the
+              // order carries no due and reads as settled.
+              ...(billNotGenerated
+                ? {
+                    orderDiscount: 0,
+                    netDiscount: 0,
+                    netAmount: 0,
+                    payableAmount: 0,
+                    paidAmount: 0,
+                    remainingBalance: 0,
+                    tdsDeduction: 0,
+                  }
+                : {}),
               paymentDate: p.paymentDate ? new Date(p.paymentDate) : null,
             })),
           });
@@ -591,9 +706,11 @@ export class OrderService {
         // Cross-order settlement: an order created directly as ORDER is entering
         // the ORDER state now, so apply any amount collected toward previous dues
         // across the patient's outstanding orders (oldest first) in this same tx.
+        // Skipped when no bill is generated (nothing is collected).
         if (
           dto.status === OrderStatus.ORDER &&
           branchId &&
+          !billNotGenerated &&
           (dto.previousDuesCleared ?? 0) > 0
         ) {
           await this.settlePreviousDuesInTx(
@@ -1627,6 +1744,23 @@ export class OrderService {
     return value ? value.toISOString().slice(0, 10) : '';
   }
 
+  /**
+   * Classify an order's date relative to server "today" (both compared as
+   * DATE-only, matching the `orderDate @db.Date` column). Used to stamp
+   * `Order.orderDateType` on create and whenever the order date changes:
+   * `BACKTRACKED` when the order is dated in the past, `ADVANCE_DATED` when dated
+   * in the future, `CURRENT` when it is today.
+   * @param orderDate the order date as an ISO-8601 date string (`YYYY-MM-DD…`)
+   * @returns the {@link OrderDateType} classification
+   */
+  private classifyOrderDate(orderDate: string): OrderDateType {
+    const orderDay = new Date(orderDate).toISOString().slice(0, 10);
+    const today = new Date().toISOString().slice(0, 10);
+    if (orderDay < today) return OrderDateType.BACKTRACKED;
+    if (orderDay > today) return OrderDateType.ADVANCE_DATED;
+    return OrderDateType.CURRENT;
+  }
+
   /** `order_print` — order slip: header, patient, referral, item list. */
   private buildOrderPrintContext(order: OrderWithRelations): GeneratePdfDto {
     return {
@@ -1738,14 +1872,29 @@ export class OrderService {
    * @param activeBranchId active branch (from JWT profile; may be null)
    * @param query search + filters + pagination
    */
-  async findAll(
+  /**
+   * Build the Prisma `where` for an order listing/aggregation from the shared
+   * {@link ListOrdersDto} filter set. Extracted from {@link findAll} so the
+   * detailed list, the Billing metric-card summary, and the user-wise summary
+   * all filter identically (the cards must match the table). Also returns the
+   * runtime quotation-validity context {@link findAll} needs to compute per-row
+   * expiry (inert for non-quotation callers such as Billing).
+   * @param query the filter DTO
+   * @param tenantId tenant scope (from JWT)
+   * @param activeBranchId active branch (from the JWT profile); `query.branchId` wins
+   * @returns the composed `where` plus the quotation validity value/unit/cutoff
+   */
+  private async buildOrderWhere(
+    query: ListOrdersDto,
     tenantId: string,
     activeBranchId: string | null,
-    query: ListOrdersDto,
-  ): Promise<PaginatedResult<OrderListRow>> {
-    const page = query.page ?? 1;
-    const limit = query.limit ?? 20;
-
+    opts?: { classificationCoarse?: boolean },
+  ): Promise<{
+    where: Prisma.OrderWhereInput;
+    quotationValidityValue: number | null;
+    quotationValidityUnit: RepeatIntervalUnit | null;
+    quotationExpiryCutoff: Date | null;
+  }> {
     const where: Prisma.OrderWhereInput = { tenantId, deletedAt: null };
     // Extra clauses are pushed here so independent filters compose (never
     // clobber each other by re-assigning `where.AND`).
@@ -1782,7 +1931,12 @@ export class OrderService {
       ];
     }
 
-    if (query.status) where.status = query.status;
+    // Multi-status filter (Billing scope) wins over the single-status filter.
+    if (query.statuses?.length) {
+      where.status = { in: query.statuses };
+    } else if (query.status) {
+      where.status = query.status;
+    }
     // Scope to quotation-origin records (any non-null quotationStatus) so
     // converted quotes (now status = ORDER) stay on the Quotations screen. A
     // specific quotationStatus filter below overrides this broader scope.
@@ -1790,12 +1944,26 @@ export class OrderService {
       where.quotationStatus = { not: null };
     }
     if (query.paymentStatus) where.paymentStatus = query.paymentStatus;
+    // Payment-mode filter: the order has a collected payment (PAYMENT entry) via
+    // this mode. Pushed to `and[]` so it composes with other payment filters.
+    if (query.paymentMode) {
+      and.push({
+        payments: {
+          some: {
+            deletedAt: null,
+            entryType: PaymentEntryType.PAYMENT,
+            paymentMode: query.paymentMode,
+          },
+        },
+      });
+    }
     if (query.appointmentStatus) {
       where.appointment = { is: { status: query.appointmentStatus } };
     }
     if (query.orderType) where.orderType = query.orderType;
     if (query.billingType) where.billingType = query.billingType;
     if (query.patientId) where.patientId = query.patientId;
+    if (query.userId) where.createdBy = query.userId;
     if (query.referredByDoctorId) {
       where.referredByDoctorId = query.referredByDoctorId;
     }
@@ -1814,6 +1982,7 @@ export class OrderService {
     if (query.isBillGenerated !== undefined) {
       where.isBillGenerated = query.isBillGenerated;
     }
+    if (query.orderDateType) where.orderDateType = query.orderDateType;
     if (query.isUrgent !== undefined) where.isUrgentBill = query.isUrgent;
     if (query.dateFrom || query.dateTo) {
       where.orderDate = {};
@@ -1856,18 +2025,98 @@ export class OrderService {
     // Item-relation filters (department / test / panel / sample status) are
     // pushed as separate AND clauses so several can co-exist without a single
     // `items` key overwriting the others.
+    // Classification filters (department / category / sub-category). The exact id
+    // frequently lives on the MASTER catalogue, not the branch copy, so a precise
+    // Prisma match on the branch scalar alone would silently drop master-
+    // classified orders. The billing/report path passes `classificationCoarse`:
+    // the DB clause is relaxed to "has a classifiable line" (a superset) and the
+    // exact, master-aware match is re-applied in-app in `loadBillingOrders`, so a
+    // filtered report still reconciles (cards = Σ records = Σ groups). Other
+    // callers (the order list) keep the precise branch-scalar match.
+    const classificationCoarse = opts?.classificationCoarse ?? false;
     if (query.departmentId) {
-      and.push({
-        items: {
-          some: {
-            deletedAt: null,
-            OR: [
-              { branchLabTest: { is: { departmentId: query.departmentId } } },
-              { branchLabPanel: { is: { departmentId: query.departmentId } } },
-            ],
-          },
-        },
-      });
+      and.push(
+        classificationCoarse
+          ? {
+              items: {
+                some: {
+                  deletedAt: null,
+                  OR: [
+                    { branchLabTestId: { not: null } },
+                    { branchLabPanelId: { not: null } },
+                  ],
+                },
+              },
+            }
+          : {
+              items: {
+                some: {
+                  deletedAt: null,
+                  OR: [
+                    {
+                      branchLabTest: {
+                        is: { departmentId: query.departmentId },
+                      },
+                    },
+                    {
+                      branchLabPanel: {
+                        is: { departmentId: query.departmentId },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+      );
+    }
+    if (query.categoryId) {
+      and.push(
+        classificationCoarse
+          ? {
+              items: {
+                some: {
+                  deletedAt: null,
+                  OR: [
+                    { branchLabTestId: { not: null } },
+                    { branchLabPanelId: { not: null } },
+                  ],
+                },
+              },
+            }
+          : {
+              items: {
+                some: {
+                  deletedAt: null,
+                  OR: [
+                    { branchLabTest: { is: { categoryId: query.categoryId } } },
+                    {
+                      branchLabPanel: { is: { categoryId: query.categoryId } },
+                    },
+                  ],
+                },
+              },
+            },
+      );
+    }
+    if (query.subCategoryId) {
+      // Only lab tests carry a sub-category (panels do not), so this matches on
+      // the test relation alone (coarse: any test line).
+      and.push(
+        classificationCoarse
+          ? {
+              items: {
+                some: { deletedAt: null, branchLabTestId: { not: null } },
+              },
+            }
+          : {
+              items: {
+                some: {
+                  deletedAt: null,
+                  branchLabTest: { is: { subCategoryId: query.subCategoryId } },
+                },
+              },
+            },
+      );
     }
     if (query.branchLabTestId) {
       and.push({
@@ -1989,6 +2238,38 @@ export class OrderService {
 
     if (and.length) where.AND = and;
 
+    return {
+      where,
+      quotationValidityValue,
+      quotationValidityUnit,
+      quotationExpiryCutoff,
+    };
+  }
+
+  /**
+   * List orders (paginated) with the payment rollups every billing/quotation
+   * column needs. Filters are built by {@link buildOrderWhere}; the row map adds
+   * the per-order money totals (gross, discount, net, paid, tds, due, refunds)
+   * and the runtime quotation expiry.
+   * @param tenantId tenant scope (from JWT)
+   * @param activeBranchId active branch (from the JWT profile)
+   * @param query filters + pagination
+   * @returns a paginated page of {@link OrderListRow}
+   */
+  async findAll(
+    tenantId: string,
+    activeBranchId: string | null,
+    query: ListOrdersDto,
+  ): Promise<PaginatedResult<OrderListRow>> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const {
+      where,
+      quotationValidityValue,
+      quotationValidityUnit,
+      quotationExpiryCutoff,
+    } = await this.buildOrderWhere(query, tenantId, activeBranchId);
+
     const [rows, total] = await Promise.all([
       this.prisma.order.findMany({
         where,
@@ -2012,6 +2293,8 @@ export class OrderService {
       );
       const netAmount = r.payments.reduce((s, p) => s + p.netAmount, 0);
       const paidAmount = r.payments.reduce((s, p) => s + p.paidAmount, 0);
+      const tdsAmount = r.payments.reduce((s, p) => s + p.tdsDeduction, 0);
+      const dueAmount = Math.max(0, netAmount - paidAmount);
       const refundedAmount = r.payments.reduce((s, p) => s + p.refundAmount, 0);
       const refundChargeTotal = r.payments.reduce(
         (s, p) => s + p.refundCharge,
@@ -2048,17 +2331,1241 @@ export class OrderService {
         grossAmount,
         discountAmount,
         netAmount,
+        tdsAmount,
+        dueAmount,
         paidAmount,
         refundedAmount,
         refundChargeTotal,
         effectiveQuotationStatus,
         computedQuotationExpiryAt,
         convertedOrderId: converted?.id ?? null,
-        convertedOrderCode:
-          converted?.externalOrderId ?? converted?.orderCode ?? null,
+        // The converted order's order code (searchable in the Order Console) —
+        // used to pre-search the order when "View Order" opens the console.
+        convertedOrderCode: converted?.orderCode ?? null,
       };
     });
     return { data, total, page, limit };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  //  Finance → Billing: one shared filtering + financial-allocation layer.
+  //
+  //  Active filters → buildOrderWhere → applyDimensionScope → loadBillingOrders →
+  //  per-order/per-line allocation → { detailed records, grouped summary, cards }.
+  //  Every Billing consumer (records / summary / grouped) runs through here, so
+  //  the metric cards, the summary and the detailed records always describe the
+  //  same dataset and reconcile exactly for a given tab + filters.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Distribute an integer `amount` across `weights` proportionally, exactly
+   * (Σ result === amount when `sumW > 0`) using the largest-remainder method.
+   */
+  private allocateProportional(
+    amount: number,
+    weights: number[],
+    sumW: number,
+  ): number[] {
+    const out = new Array<number>(weights.length).fill(0);
+    if (weights.length === 0 || amount === 0 || sumW <= 0) return out;
+    const raw = weights.map((w) => (amount * w) / sumW);
+    const floors = raw.map((x) => Math.floor(x));
+    let rem = amount - floors.reduce((s, x) => s + x, 0);
+    const byFrac = raw
+      .map((x, i) => ({ i, frac: x - Math.floor(x) }))
+      .sort((a, b) => b.frac - a.frac);
+    for (const { i } of byFrac) {
+      if (rem <= 0) break;
+      floors[i] = (floors[i] ?? 0) + 1;
+      rem--;
+    }
+    return floors;
+  }
+
+  /**
+   * Fill `amount` into the lines by ASCENDING `applicable` value, capping each
+   * line at its applicable amount (the Billing payment-allocation rule: the
+   * cheapest test/panel is settled first). Σ result === min(amount, Σapplicable).
+   */
+  private fillAscending(amount: number, applicable: number[]): number[] {
+    const out = new Array<number>(applicable.length).fill(0);
+    let rem = amount;
+    const order = applicable
+      .map((v, i) => ({ i, v }))
+      .sort((a, b) => a.v - b.v);
+    for (const { i, v } of order) {
+      if (rem <= 0) break;
+      const take = Math.min(v, rem);
+      out[i] = take;
+      rem -= take;
+    }
+    return out;
+  }
+
+  /** Sum an order's active payment ledger into the order-level money figures. */
+  /** An all-zero {@link BillingFigures}. */
+  private zeroFigures(): BillingFigures {
+    return {
+      gross: 0,
+      discount: 0,
+      net: 0,
+      paid: 0,
+      due: 0,
+      tds: 0,
+      cash: 0,
+      upi: 0,
+      bankTransfer: 0,
+      debitCard: 0,
+      creditCard: 0,
+      refundAmount: 0,
+      cancelAmount: 0,
+    };
+  }
+
+  /** Add every field of `f` into `acc` (mutates `acc`). */
+  private addFigures(acc: BillingFigures, f: BillingFigures): void {
+    acc.gross += f.gross;
+    acc.discount += f.discount;
+    acc.net += f.net;
+    acc.paid += f.paid;
+    acc.due += f.due;
+    acc.tds += f.tds;
+    acc.cash += f.cash;
+    acc.upi += f.upi;
+    acc.bankTransfer += f.bankTransfer;
+    acc.debitCard += f.debitCard;
+    acc.creditCard += f.creditCard;
+    acc.refundAmount += f.refundAmount;
+    acc.cancelAmount += f.cancelAmount;
+  }
+
+  /**
+   * Order-level money figures, with `paidAmount` bucketed by payment mode. For a
+   * `collection` report `paid` is the sum of the five physical receipt modes
+   * (WALLET excluded); for `billing` it stays the full ledger paid.
+   */
+  private orderLevelFigures(
+    order: BillingOrder,
+    report: BillingReport,
+  ): BillingFigures {
+    let gross = 0;
+    let discount = 0;
+    let net = 0;
+    let tds = 0;
+    let cash = 0;
+    let upi = 0;
+    let bankTransfer = 0;
+    let debitCard = 0;
+    let creditCard = 0;
+    let wallet = 0;
+    let refundAmount = 0;
+    for (const p of order.payments) {
+      gross += p.totalAmount;
+      discount += p.orderDiscount;
+      net += p.netAmount;
+      tds += p.tdsDeduction;
+      // REFUND rows carry `refundAmount` (0 on PAYMENT rows) — Σ = total refunded.
+      refundAmount += p.refundAmount;
+      const a = p.paidAmount;
+      switch (p.paymentMode) {
+        case PaymentMode.CASH:
+          cash += a;
+          break;
+        case PaymentMode.UPI:
+          upi += a;
+          break;
+        case PaymentMode.BANK_TRANSFER:
+          bankTransfer += a;
+          break;
+        case PaymentMode.CARD:
+          debitCard += a; // CARD → Debit Card
+          break;
+        case PaymentMode.CREDIT:
+          creditCard += a; // CREDIT → Credit Card
+          break;
+        case PaymentMode.WALLET:
+          wallet += a;
+          break;
+      }
+    }
+    // The "Discount" figure = order-level discount + every per-line-item
+    // discount. Line discounts are already folded into `netAmount`
+    // (net = totalAmount − Σ itemDiscount − orderDiscount), so surfacing them
+    // here keeps `gross − discount === net` and stops genuinely-discounted
+    // orders from showing a ₹0 discount.
+    for (const it of order.items) discount += it.discount;
+    const receipts = cash + upi + bankTransfer + debitCard + creditCard;
+    const paid = report === 'collection' ? receipts : receipts + wallet;
+    // Gross is DERIVED as net + discount (not raw Σ totalAmount): the ledger
+    // guarantees net = totalAmount − discount, so for valid data this equals
+    // Σ totalAmount, while keeping `gross ≥ net` and `gross − discount === net`
+    // and matching the per-line gross allocation (item-dimension tabs = the "all"
+    // tab). Guards against inconsistent ledgers where netAmount > totalAmount.
+    gross = net + discount;
+    return {
+      gross,
+      discount,
+      net,
+      paid,
+      due: Math.max(0, net - paid),
+      tds,
+      cash,
+      upi,
+      bankTransfer,
+      debitCard,
+      creditCard,
+      refundAmount,
+      // The cancellation charge retained on the order (Cancel report).
+      cancelAmount: order.cancellationCharge ?? 0,
+    };
+  }
+
+  /**
+   * Allocate the order-level money across its line items so the per-line sums
+   * reconcile with the order totals exactly:
+   * - `gross` per line = `unitPrice` (Σ = totalAmount).
+   * - `discount` per line = its proportional share of the order-level discount
+   *   (weighted by the line's post-item-discount value; Σ = orderDiscount).
+   * - `net` per line = `(unitPrice − itemDiscount) − discountShare`
+   *   (Σ = totalAmount − Σ itemDiscount − orderDiscount = netAmount).
+   * - `paid` per line = filled by ASCENDING net (cheapest line settled first),
+   *   capped at the line's net (Σ paid = paidAmount).
+   * - `tds` per line = its proportional share of the order TDS, weighted by net
+   *   (TDS is a % of net, so it spreads evenly; Σ tds = tdsDeduction).
+   * - `due` per line = `net − paid` (Σ = order due).
+   */
+  private allocateOrderLines(
+    order: BillingOrder,
+    report: BillingReport,
+    classMap?: ClassificationFallback,
+  ): AllocatedBillingLine[] {
+    const fig = this.orderLevelFigures(order, report);
+    // Only the ORDER-LEVEL discount is shared proportionally across lines; each
+    // line's own item discount is added back per-line below. (`fig.discount`
+    // already bundles order + every item discount, so using it here would
+    // double-count the item discounts.)
+    const orderDiscount = order.payments.reduce(
+      (s, p) => s + p.orderDiscount,
+      0,
+    );
+    const netTotal = fig.net;
+    const paidTotal = fig.paid;
+    const tdsTotal = fig.tds;
+    const items = order.items;
+    const base = items.map((it) => Math.max(0, it.unitPrice - it.discount));
+    const sumBase = base.reduce((s, x) => s + x, 0);
+    const discShare = this.allocateProportional(orderDiscount, base, sumBase);
+    const net = items.map((_, k) =>
+      Math.max(0, (base[k] ?? 0) - (discShare[k] ?? 0)),
+    );
+    // If the ledger's netAmount disagrees with (Σ base − orderDiscount) — e.g.
+    // visiting charges — nudge the largest line so Σ net === netAmount exactly.
+    const netDrift = netTotal - net.reduce((s, x) => s + x, 0);
+    if (netDrift !== 0 && net.length > 0) {
+      let big = 0;
+      for (let k = 1; k < net.length; k++) {
+        if ((net[k] ?? 0) > (net[big] ?? 0)) big = k;
+      }
+      net[big] = Math.max(0, (net[big] ?? 0) + netDrift);
+    }
+    const paid = this.fillAscending(paidTotal, net);
+    const sumNet = net.reduce((s, x) => s + x, 0);
+    const tds = this.allocateProportional(tdsTotal, net, sumNet);
+    // Refund + cancellation-charge are order-level events; spread them across the
+    // lines proportionally by net (like TDS) so item-dimension tabs reconcile.
+    const refund = this.allocateProportional(fig.refundAmount, net, sumNet);
+    const cancel = this.allocateProportional(fig.cancelAmount, net, sumNet);
+    // Split EACH line's paid across the payment modes, proportional to the order's
+    // mode mix, so `Σ modes === the line's paid` exactly — reconciles for every
+    // dimension, including when the paid was capped at net.
+    const modeWeights = [
+      fig.cash,
+      fig.upi,
+      fig.bankTransfer,
+      fig.debitCard,
+      fig.creditCard,
+    ];
+    const modeTotal = modeWeights.reduce((s, x) => s + x, 0);
+    const cash: number[] = [];
+    const upi: number[] = [];
+    const bankTransfer: number[] = [];
+    const debitCard: number[] = [];
+    const creditCard: number[] = [];
+    for (let k = 0; k < items.length; k++) {
+      const split = this.allocateProportional(
+        paid[k] ?? 0,
+        modeWeights,
+        modeTotal,
+      );
+      cash[k] = split[0] ?? 0;
+      upi[k] = split[1] ?? 0;
+      bankTransfer[k] = split[2] ?? 0;
+      debitCard[k] = split[3] ?? 0;
+      creditCard[k] = split[4] ?? 0;
+    }
+    return items.map((it, k) => {
+      // Classification: prefer the branch scalar, fall back to the MASTER
+      // catalogue (mapping usually lives there, not on the branch copy).
+      const srcId =
+        it.branchLabTest?.sourceLabTestId ??
+        it.branchLabPanel?.sourceLabPanelId ??
+        null;
+      const master = srcId ? classMap?.get(srcId) : undefined;
+      return {
+        branchLabTestId: it.branchLabTestId,
+        branchLabPanelId: it.branchLabPanelId,
+        testName: it.branchLabTest?.testName ?? null,
+        panelName: it.branchLabPanel?.panelName ?? null,
+        testCode: it.branchLabTest?.testCode ?? null,
+        panelCode: it.branchLabPanel?.panelCode ?? null,
+        sourceLabTestId: it.branchLabTest?.sourceLabTestId ?? null,
+        sourceLabPanelId: it.branchLabPanel?.sourceLabPanelId ?? null,
+        departmentId:
+          it.branchLabTest?.departmentId ??
+          it.branchLabPanel?.departmentId ??
+          master?.departmentId ??
+          null,
+        categoryId:
+          it.branchLabTest?.categoryId ??
+          it.branchLabPanel?.categoryId ??
+          master?.categoryId ??
+          null,
+        subCategoryId:
+          it.branchLabTest?.subCategoryId ?? master?.subCategoryId ?? null,
+        // Gross is DERIVED as net + discount (not raw unitPrice): `net` is
+        // reconciled to the ledger netAmount via the netDrift nudge, so any
+        // order-level amount not represented by a line unitPrice (e.g. visiting
+        // charges) is absorbed here too. Keeps `gross ≥ net` per line and
+        // `Σ gross = netAmount + Σdiscount = totalAmount`. For an ordinary line
+        // this equals unitPrice, so nothing changes for the common case.
+        gross: (net[k] ?? 0) + it.discount + (discShare[k] ?? 0),
+        // Full line discount = its own item discount + its share of the
+        // order-level discount (Σ over lines = Σ itemDiscount + orderDiscount),
+        // so gross − discount === net per line and the item-dimension discount
+        // totals match the order-level Discount figure.
+        discount: it.discount + (discShare[k] ?? 0),
+        net: net[k] ?? 0,
+        paid: paid[k] ?? 0,
+        due: (net[k] ?? 0) - (paid[k] ?? 0),
+        tds: tds[k] ?? 0,
+        cash: cash[k] ?? 0,
+        upi: upi[k] ?? 0,
+        bankTransfer: bankTransfer[k] ?? 0,
+        debitCard: debitCard[k] ?? 0,
+        creditCard: creditCard[k] ?? 0,
+        refundAmount: refund[k] ?? 0,
+        cancelAmount: cancel[k] ?? 0,
+      };
+    });
+  }
+
+  /** Sum a set of allocated lines into money figures. */
+  private sumLineFigures(lines: AllocatedBillingLine[]): BillingFigures {
+    const f = this.zeroFigures();
+    for (const l of lines) this.addFigures(f, l);
+    return f;
+  }
+
+  /**
+   * The classification dimensions whose group id lives on the master catalogue
+   * when the branch row's own scalar is null — so they need the
+   * {@link buildClassificationFallback} lookup.
+   */
+  private needsClassificationFallback(dimension: BillingDimension): boolean {
+    return (
+      dimension === 'department' ||
+      dimension === 'category' ||
+      dimension === 'subcategory'
+    );
+  }
+
+  /** The item-level dimensions (money is allocated to matching lines). */
+  private isItemDimension(dimension: BillingDimension): boolean {
+    return (
+      dimension === 'lab-test' ||
+      dimension === 'lab-panel' ||
+      dimension === 'department' ||
+      dimension === 'category' ||
+      dimension === 'subcategory'
+    );
+  }
+
+  /** Whether an allocated line belongs to an item-level dimension. */
+  private lineMatchesDimension(
+    line: AllocatedBillingLine,
+    dimension: BillingDimension,
+  ): boolean {
+    switch (dimension) {
+      case 'lab-test':
+        return !!line.branchLabTestId;
+      case 'lab-panel':
+        return !!line.branchLabPanelId;
+      case 'department':
+        return !!line.departmentId;
+      case 'category':
+        return !!line.categoryId;
+      case 'subcategory':
+        return !!line.subCategoryId;
+      default:
+        return false;
+    }
+  }
+
+  /** The group id an allocated line contributes to, for an item-level dimension. */
+  private lineGroupId(
+    line: AllocatedBillingLine,
+    dimension: BillingDimension,
+  ): string | null {
+    switch (dimension) {
+      case 'lab-test':
+        // Group by the stable test code so the same test across pricing lists
+        // aggregates into one row (not one row per BranchLabTest id).
+        return line.testCode ?? line.branchLabTestId;
+      case 'lab-panel':
+        return line.panelCode ?? line.branchLabPanelId;
+      case 'department':
+        return line.departmentId;
+      case 'category':
+        return line.categoryId;
+      case 'subcategory':
+        return line.subCategoryId;
+      default:
+        return null;
+    }
+  }
+
+  /** The line's own group name (test/panel); classification names resolve by id. */
+  private lineGroupName(
+    line: AllocatedBillingLine,
+    dimension: BillingDimension,
+  ): string | null {
+    if (dimension === 'lab-test') return line.testName;
+    if (dimension === 'lab-panel') return line.panelName;
+    return null;
+  }
+
+  /** Batch-resolve department / category / sub-category display names by id. */
+  private async resolveClassificationNames(
+    dimension: 'department' | 'category' | 'subcategory',
+    ids: string[],
+  ): Promise<Map<string, string>> {
+    const unique = [...new Set(ids)];
+    const map = new Map<string, string>();
+    if (!unique.length) return map;
+    const where = { id: { in: unique } };
+    const select = { id: true, name: true };
+    const rows =
+      dimension === 'department'
+        ? await this.prisma.department.findMany({ where, select })
+        : dimension === 'category'
+          ? await this.prisma.category.findMany({ where, select })
+          : await this.prisma.subCategory.findMany({ where, select });
+    for (const r of rows) map.set(r.id, r.name);
+    return map;
+  }
+
+  /**
+   * The money figures an order contributes to a dimension: order-level for the
+   * whole-order dimensions (`all`/`userwise`/`b2b`/`ref-by`/`internal-referral`/
+   * `external-referral`/`discount`); for the item-level dimensions (`lab-test`/
+   * `lab-panel`/`department`/`category`/`subcategory`) the sum of that order's
+   * allocated matching lines (so the order's other value is excluded and the
+   * dimension reconciles with its own cards).
+   */
+  private dimensionFiguresForOrder(
+    order: BillingOrder,
+    dimension: BillingDimension,
+    report: BillingReport,
+    classMap?: ClassificationFallback,
+  ): BillingFigures {
+    if (this.isItemDimension(dimension)) {
+      const lines = this.allocateOrderLines(order, report, classMap).filter(
+        (l) => this.lineMatchesDimension(l, dimension),
+      );
+      return this.sumLineFigures(lines);
+    }
+    return this.orderLevelFigures(order, report);
+  }
+
+  /**
+   * Build the master-classification fallback for a set of orders: batch-loads
+   * the `LabTest` / `LabPanel` department/category/sub-category for every source
+   * id referenced by the orders' branch items, keyed by that source id. Empty
+   * when no item carries a source id. Used so the department/category/
+   * sub-category dimensions can classify branch rows whose own scalars are null
+   * (the mapping lives on the master catalogue).
+   */
+  private async buildClassificationFallback(
+    orders: BillingOrder[],
+  ): Promise<ClassificationFallback> {
+    const testIds = new Set<string>();
+    const panelIds = new Set<string>();
+    for (const o of orders) {
+      for (const it of o.items) {
+        const t = it.branchLabTest?.sourceLabTestId;
+        if (t) testIds.add(t);
+        const p = it.branchLabPanel?.sourceLabPanelId;
+        if (p) panelIds.add(p);
+      }
+    }
+    const map: ClassificationFallback = new Map();
+    if (!testIds.size && !panelIds.size) return map;
+    const [tests, panels] = await Promise.all([
+      testIds.size
+        ? this.prisma.labTest.findMany({
+            where: { id: { in: [...testIds] } },
+            select: {
+              id: true,
+              departmentId: true,
+              categoryId: true,
+              subCategoryId: true,
+            },
+          })
+        : Promise.resolve([]),
+      panelIds.size
+        ? this.prisma.labPanel.findMany({
+            where: { id: { in: [...panelIds] } },
+            select: { id: true, departmentId: true, categoryId: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    for (const t of tests) {
+      map.set(t.id, {
+        departmentId: t.departmentId,
+        categoryId: t.categoryId,
+        subCategoryId: t.subCategoryId,
+      });
+    }
+    for (const p of panels) {
+      // Panels carry no sub-category on the master catalogue.
+      map.set(p.id, {
+        departmentId: p.departmentId,
+        categoryId: p.categoryId,
+        subCategoryId: null,
+      });
+    }
+    return map;
+  }
+
+  /** Narrow the base `where` to the orders a dimension covers. */
+  private applyDimensionScope(
+    where: Prisma.OrderWhereInput,
+    dimension: BillingDimension,
+  ): Prisma.OrderWhereInput {
+    const and = (extra: Prisma.OrderWhereInput): Prisma.OrderWhereInput => ({
+      AND: [where, extra],
+    });
+    // An order has a catalogue line that can carry this classification. The id
+    // itself is resolved at group time (branch scalar OR the master-catalogue
+    // fallback — see buildClassificationFallback), so the scope only checks that
+    // a classifiable line exists; lines that resolve to no classification are
+    // dropped when the figures/groups are built, keeping cards === Σ groups.
+    const hasClassifiableLine = (
+      field: 'departmentId' | 'categoryId' | 'subCategoryId',
+    ): Prisma.OrderWhereInput =>
+      and({
+        items: {
+          some: {
+            deletedAt: null,
+            OR: [
+              { branchLabTestId: { not: null } },
+              // Panels have no sub-category, so only tests qualify for it.
+              ...(field === 'subCategoryId'
+                ? []
+                : [{ branchLabPanelId: { not: null } }]),
+            ],
+          },
+        },
+      });
+    switch (dimension) {
+      case 'b2b':
+        return and({ referralPanelId: { not: null } });
+      case 'ref-by':
+        return and({ referredByDoctorId: { not: null } });
+      case 'internal-referral':
+        // Re-sourced to accession transfers: orders whose sample was sent to
+        // another branch (INTERNAL SampleTransfer), not the order's referral FK.
+        return and({
+          accessionSamples: {
+            some: {
+              deletedAt: null,
+              transfers: {
+                some: { deletedAt: null, kind: TransferKind.INTERNAL },
+              },
+            },
+          },
+        });
+      case 'external-referral':
+        // Orders whose sample was sent to an external partner (EXTERNAL transfer).
+        return and({
+          accessionSamples: {
+            some: {
+              deletedAt: null,
+              transfers: {
+                some: { deletedAt: null, kind: TransferKind.EXTERNAL },
+              },
+            },
+          },
+        });
+      case 'lab-test':
+        return and({
+          items: { some: { deletedAt: null, branchLabTestId: { not: null } } },
+        });
+      case 'lab-panel':
+        return and({
+          items: { some: { deletedAt: null, branchLabPanelId: { not: null } } },
+        });
+      case 'department':
+        return hasClassifiableLine('departmentId');
+      case 'category':
+        return hasClassifiableLine('categoryId');
+      case 'subcategory':
+        return hasClassifiableLine('subCategoryId');
+      case 'discount':
+        // A discount was applied — order-level OR any line-level.
+        return and({
+          OR: [
+            {
+              payments: { some: { deletedAt: null, orderDiscount: { gt: 0 } } },
+            },
+            { items: { some: { deletedAt: null, discount: { gt: 0 } } } },
+          ],
+        });
+      case 'int-ref-user':
+        // Orders naming an internal referral user (order's Referral Details).
+        return and({ internalReferralId: { not: null } });
+      case 'ext-ref-user':
+        // Orders naming an external referral user (order's Referral Details).
+        return and({ externalReferralId: { not: null } });
+      case 'outsource':
+        // Orders sent to an external lab via an accession OUTSOURCE transfer
+        // (the /accession/outsource view), NOT the diagnostics sample source.
+        return and({
+          accessionSamples: {
+            some: {
+              deletedAt: null,
+              transfers: {
+                some: { deletedAt: null, kind: TransferKind.OUTSOURCE },
+              },
+            },
+          },
+        });
+      case 'back-dated':
+        return and({ orderDateType: OrderDateType.BACKTRACKED });
+      case 'advance-dated':
+        return and({ orderDateType: OrderDateType.ADVANCE_DATED });
+      case 'home-collection':
+        // Home-visit orders (the booking lives on the diagnostics section).
+        return and({ diagnostics: { is: { isHomeVisit: true } } });
+      // Whole-dataset dimensions carry no extra scope beyond the base `where`.
+      case 'all':
+      case 'userwise':
+        return where;
+      default: {
+        // Exhaustive guard: an unrecognized dimension must NEVER silently fall
+        // through to the unscoped `where` (that would leak a branch-wide set into
+        // a financial report). The `never` assignment makes adding a new
+        // BillingDimension a compile error until it is handled here.
+        const unhandled: never = dimension;
+        throw new Error(`Unhandled billing dimension: ${String(unhandled)}`);
+      }
+    }
+  }
+
+  /**
+   * The single scoped dataset for a report + dimension + filters — the source
+   * both the summary/cards and the detailed records consume (newest-first). A
+   * `collection` report additionally scopes to orders with a collected payment;
+   * an `outstanding` report keeps only orders whose due balance is > 0; a
+   * `refund` report keeps only orders with a REFUND ledger entry; a `cancel`
+   * report keeps only CANCELLED orders.
+   */
+  private async loadBillingOrders(
+    tenantId: string,
+    activeBranchId: string | null,
+    dimension: BillingDimension,
+    query: ListOrdersDto,
+    report: BillingReport,
+  ): Promise<BillingOrder[]> {
+    const { where } = await this.buildOrderWhere(
+      query,
+      tenantId,
+      activeBranchId,
+      // Classification (dept/cat/subcat) filters are relaxed to a coarse "has a
+      // classifiable line" clause here and matched exactly (master-aware) in-app
+      // below, so a filtered report reconciles even when the mapping lives on the
+      // master catalogue rather than the branch copy.
+      { classificationCoarse: true },
+    );
+    let scoped = this.applyDimensionScope(where, dimension);
+    if (report === 'collection') {
+      // Realization view: only orders that actually collected money.
+      scoped = {
+        AND: [
+          scoped,
+          {
+            payments: {
+              some: {
+                deletedAt: null,
+                entryType: PaymentEntryType.PAYMENT,
+                paidAmount: { gt: 0 },
+              },
+            },
+          },
+        ],
+      };
+    }
+    if (report === 'refund') {
+      // Refund view: only orders with a refund ledger entry.
+      scoped = {
+        AND: [
+          scoped,
+          {
+            payments: {
+              some: {
+                deletedAt: null,
+                entryType: PaymentEntryType.REFUND,
+              },
+            },
+          },
+        ],
+      };
+    }
+    if (report === 'cancel') {
+      // Cancel view: only cancelled orders (enforced regardless of `statuses`).
+      scoped = { AND: [scoped, { status: OrderStatus.CANCELLED }] };
+    }
+    let orders = await this.prisma.order.findMany({
+      where: scoped,
+      include: BILLING_ORDER_INCLUDE,
+      orderBy: { createdAt: 'desc' },
+    });
+    if (report === 'outstanding') {
+      // Outstanding view: only orders that still owe money. `due` is a derived
+      // figure (net − paid, paid incl. wallet), so it's gated in-app — this is
+      // the single dataset feeding cards/records/grouped, so they all reconcile.
+      orders = orders.filter(
+        (o) => this.orderLevelFigures(o, 'outstanding').due > 0,
+      );
+    }
+    if (report === 'collection') {
+      // Realization view: WALLET is excluded from collection `paid`
+      // (orderLevelFigures), but the DB scope above admits any PAYMENT row —
+      // including wallet-mode ones. An order paid ONLY via wallet therefore nets
+      // to `paid = 0` here; drop it in-app (mirrors the outstanding gate) so the
+      // detail list never shows unrelated ₹0 rows and records/cards/count all
+      // reconcile off this single dataset.
+      orders = orders.filter(
+        (o) => this.orderLevelFigures(o, 'collection').paid > 0,
+      );
+    }
+    // A master-classification fallback is needed when the active dimension is a
+    // classification dimension OR when a classification FILTER (dept/cat/subcat)
+    // is set — because in either case a line's group/match id may live on the
+    // master catalogue, not the branch copy.
+    const classFilterActive = !!(
+      query.departmentId ||
+      query.categoryId ||
+      query.subCategoryId
+    );
+    const classMap =
+      this.needsClassificationFallback(dimension) || classFilterActive
+        ? await this.buildClassificationFallback(orders)
+        : undefined;
+
+    if (classFilterActive) {
+      // Exact classification FILTER: the DB pre-filter only guaranteed "has a
+      // classifiable line" (buildOrderWhere `classificationCoarse`), because the
+      // mapping often lives on the master catalogue, which a Prisma `where` can't
+      // express. Keep an order only if one of its allocated lines resolves
+      // (branch scalar OR master fallback) to EVERY set classification filter, so
+      // the filtered report reconciles: cards = Σ records = Σ groups.
+      orders = orders.filter((o) =>
+        this.allocateOrderLines(o, report, classMap).some(
+          (l) =>
+            (!query.departmentId || l.departmentId === query.departmentId) &&
+            (!query.categoryId || l.categoryId === query.categoryId) &&
+            (!query.subCategoryId || l.subCategoryId === query.subCategoryId),
+        ),
+      );
+    }
+
+    if (this.isItemDimension(dimension)) {
+      // Item dimensions (lab-test / lab-panel / department / category /
+      // subcategory) must scope to orders that ACTUALLY carry a line matching the
+      // dimension — the DB scope only guarantees "has a catalogue line", and a
+      // classification often lives on the master (resolved via classMap), which a
+      // Prisma `where` can't express. Filtering here (the single dataset feeding
+      // records/cards/grouped) means the detail lists only relevant orders, cards
+      // = Σ records, and each group's orderCount = unique orders with a matching
+      // line — no unrelated ₹0 orders.
+      orders = orders.filter((o) =>
+        this.allocateOrderLines(o, report, classMap).some((l) =>
+          this.lineMatchesDimension(l, dimension),
+        ),
+      );
+    }
+    return orders;
+  }
+
+  /**
+   * Paginated detailed records for a Billing dimension.
+   *
+   * - **Order-level dimensions** (`all`/`userwise`/`b2b`/`ref-by`/referral/
+   *   `discount`/date/home-collection) → **one row per order**, money = the order's
+   *   order-level figures.
+   * - **Item-level dimensions** (`lab-test`/`lab-panel`/`department`/`category`/
+   *   `subcategory`) → **one row per matching test/panel line**, so the detail shows
+   *   only the specific test/panel that belongs to the active tab (a test in 2
+   *   orders → 2 rows; on department/category/subcategory the other, unmapped tests
+   *   in the same order are excluded). Each row carries just that line's item + its
+   *   allocated money, so `Σ rows === cards`.
+   *
+   * Field names mirror the order-list row so the frontend mapper is shared.
+   * @param tenantId tenant scope (from JWT)
+   * @param activeBranchId active branch (from the JWT profile)
+   * @param dimension the active Billing tab
+   * @param query filters + pagination
+   */
+  async billingRecords(
+    tenantId: string,
+    activeBranchId: string | null,
+    report: BillingReport,
+    dimension: BillingDimension,
+    query: ListOrdersDto,
+  ): Promise<PaginatedResult<BillingRecordRow>> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const orders = await this.loadBillingOrders(
+      tenantId,
+      activeBranchId,
+      dimension,
+      query,
+      report,
+    );
+
+    if (this.isItemDimension(dimension)) {
+      // One row per matching allocated line. `allocateOrderLines` preserves the
+      // order of `order.items`, so line k ↔ items[k] — each row carries just that
+      // line's raw item (so the FE shows the specific test/panel name) and the
+      // line's allocated figures.
+      const classMap = this.needsClassificationFallback(dimension)
+        ? await this.buildClassificationFallback(orders)
+        : undefined;
+      const rows: BillingRecordRow[] = [];
+      for (const o of orders) {
+        const allocated = this.allocateOrderLines(o, report, classMap);
+        for (let k = 0; k < allocated.length; k++) {
+          const l = allocated[k]!;
+          if (!this.lineMatchesDimension(l, dimension)) continue;
+          const item = o.items[k];
+          rows.push({
+            ...o,
+            items: item ? [item] : [],
+            grossAmount: l.gross,
+            discountAmount: l.discount,
+            netAmount: l.net,
+            tdsAmount: l.tds,
+            dueAmount: l.due,
+            paidAmount: l.paid,
+            cash: l.cash,
+            upi: l.upi,
+            bankTransfer: l.bankTransfer,
+            debitCard: l.debitCard,
+            creditCard: l.creditCard,
+            refundAmount: l.refundAmount,
+            cancelAmount: l.cancelAmount,
+          });
+        }
+      }
+      const total = rows.length;
+      const data = rows.slice((page - 1) * limit, page * limit);
+      return { data, total, page, limit };
+    }
+
+    // Order-level dimensions: one row per order.
+    const total = orders.length;
+    const data = orders.slice((page - 1) * limit, page * limit).map((o) => {
+      const f = this.dimensionFiguresForOrder(o, dimension, report);
+      return {
+        ...o,
+        grossAmount: f.gross,
+        discountAmount: f.discount,
+        netAmount: f.net,
+        tdsAmount: f.tds,
+        dueAmount: f.due,
+        paidAmount: f.paid,
+        cash: f.cash,
+        upi: f.upi,
+        bankTransfer: f.bankTransfer,
+        debitCard: f.debitCard,
+        creditCard: f.creditCard,
+        refundAmount: f.refundAmount,
+        cancelAmount: f.cancelAmount,
+      };
+    });
+    return { data, total, page, limit };
+  }
+
+  /**
+   * Aggregate metric-card totals for a Billing dimension — summed over the SAME
+   * scoped dataset {@link billingRecords} paginates, using the SAME per-order
+   * figures, so `Σ detailed records === cards` for any tab + filters.
+   * @param tenantId tenant scope (from JWT)
+   * @param activeBranchId active branch (from the JWT profile)
+   * @param dimension the active Billing tab (defaults to `all`)
+   * @param query the Billing filter set (same DTO as the list)
+   * @returns gross/discount/net/paid/due/tds totals (minor units)
+   */
+  async billingSummary(
+    tenantId: string,
+    activeBranchId: string | null,
+    report: BillingReport,
+    dimension: BillingDimension,
+    query: ListOrdersDto,
+  ): Promise<BillingSummary> {
+    const orders = await this.loadBillingOrders(
+      tenantId,
+      activeBranchId,
+      dimension,
+      query,
+      report,
+    );
+    const classMap = this.needsClassificationFallback(dimension)
+      ? await this.buildClassificationFallback(orders)
+      : undefined;
+    const summary = this.zeroFigures();
+    for (const o of orders) {
+      this.addFigures(
+        summary,
+        this.dimensionFiguresForOrder(o, dimension, report, classMap),
+      );
+    }
+    return summary;
+  }
+
+  /**
+   * User-wise Billing aggregate for the Finance → Reports "User-wise" panel:
+   * the same totals as {@link billingSummary} grouped by the order's creator
+   * (`Order.createdBy`). Reuses {@link buildOrderWhere} for identical filtering,
+   * resolves creator display names in one batched lookup, and returns one row per
+   * user (orders with no recorded creator collapse into a single `''` bucket).
+   * @param tenantId tenant scope (from JWT)
+   * @param activeBranchId active branch (from the JWT profile)
+   * @param query the Billing filter set (same DTO as the list)
+   * @returns one aggregate row per creating user
+   */
+  async billingSummaryByUser(
+    tenantId: string,
+    activeBranchId: string | null,
+    report: BillingReport,
+    query: ListOrdersDto,
+  ): Promise<BillingSummaryByUserRow[]> {
+    // User-wise = the whole scoped dataset (no dimension scope) grouped by creator.
+    const orders = await this.loadBillingOrders(
+      tenantId,
+      activeBranchId,
+      'userwise',
+      query,
+      report,
+    );
+
+    type Acc = Omit<BillingSummaryByUserRow, 'userId' | 'userName'>;
+    const byUser = new Map<string, Acc>();
+    const ensure = (id: string): Acc => {
+      let acc = byUser.get(id);
+      if (!acc) {
+        acc = { orderCount: 0, ...this.zeroFigures() };
+        byUser.set(id, acc);
+      }
+      return acc;
+    };
+
+    for (const o of orders) {
+      const acc = ensure(o.createdBy ?? '');
+      acc.orderCount += 1;
+      this.addFigures(acc, this.orderLevelFigures(o, report));
+    }
+
+    const names = await this.resolveActorNames([...byUser.keys()]);
+    return [...byUser.entries()].map(([userId, acc]) => ({
+      userId,
+      userName: userId ? (names.get(userId) ?? userId) : 'Unknown',
+      ...acc,
+    }));
+  }
+
+  /**
+   * Grouped Billing summary for the Finance → Reports → Billing dimension panels.
+   * Uses the SAME scoped dataset as {@link billingSummary}`(groupBy)`, so the group
+   * rows always sum back to that tab's cards. Two families:
+   *
+   * - **Order-level** (`b2b` / `ref-by` / `internal-referral` /
+   *   `external-referral`) — groups whole orders by the referral panel / doctor /
+   *   internal / external referral; every money field is order-level. Orders
+   *   without that referral are excluded.
+   * - **Item-level** (`lab-test` / `lab-panel` / `department` / `category` /
+   *   `subcategory`) — groups each order's **allocated** lines (see
+   *   {@link allocateOrderLines}) by test / panel / classification, so
+   *   gross/discount/net **and** paid/due/tds are all populated. Classification
+   *   display names are resolved by id in one batched lookup.
+   *
+   * @param tenantId tenant scope (from JWT)
+   * @param activeBranchId active branch (from the JWT profile)
+   * @param groupBy the dimension to group by
+   * @param query the Billing filter set (same DTO as the list)
+   * @returns one aggregate row per group
+   */
+  async billingSummaryGrouped(
+    tenantId: string,
+    activeBranchId: string | null,
+    report: BillingReport,
+    groupBy: BillingGroupBy,
+    query: ListOrdersDto,
+  ): Promise<BillingGroupRow[]> {
+    // Same scoped dataset as billingSummary(groupBy) — so grouped rows sum back
+    // to the cards for that tab.
+    const orders = await this.loadBillingOrders(
+      tenantId,
+      activeBranchId,
+      groupBy,
+      query,
+      report,
+    );
+
+    const byGroup = new Map<
+      string,
+      BillingGroupRow & { orders: Set<string> }
+    >();
+    const ensure = (id: string, name: string) => {
+      let row = byGroup.get(id);
+      if (!row) {
+        row = {
+          id,
+          name,
+          orderCount: 0,
+          ...this.zeroFigures(),
+          orders: new Set<string>(),
+        };
+        byGroup.set(id, row);
+      }
+      return row;
+    };
+    const add = (row: BillingGroupRow, f: BillingFigures) =>
+      this.addFigures(row, f);
+
+    // Internal / external referral (by accession-transfer destination) and
+    // outsource (by outsource center) group a re-sourced accession-transfer
+    // dataset, not the order's own FK — handled apart.
+    if (
+      groupBy === 'internal-referral' ||
+      groupBy === 'external-referral' ||
+      groupBy === 'outsource'
+    ) {
+      return this.billingSummaryGroupedByReferralTransfer(
+        tenantId,
+        orders,
+        groupBy,
+        report,
+      );
+    }
+
+    if (this.isItemDimension(groupBy)) {
+      // Item-level dimensions (lab-test / lab-panel / department / category /
+      // subcategory): group each order's ALLOCATED lines, so paid/due/tds carry
+      // the same allocation the detailed records show.
+      const classMap = this.needsClassificationFallback(groupBy)
+        ? await this.buildClassificationFallback(orders)
+        : undefined;
+      for (const o of orders) {
+        for (const l of this.allocateOrderLines(o, report, classMap)) {
+          const id = this.lineGroupId(l, groupBy);
+          if (!id) continue;
+          // Classification names are resolved by id below; test/panel names are
+          // already on the line.
+          const row = ensure(id, this.lineGroupName(l, groupBy) ?? id);
+          row.orders.add(o.id);
+          add(row, l);
+        }
+      }
+      if (
+        groupBy === 'department' ||
+        groupBy === 'category' ||
+        groupBy === 'subcategory'
+      ) {
+        const names = await this.resolveClassificationNames(groupBy, [
+          ...byGroup.keys(),
+        ]);
+        for (const [id, row] of byGroup) row.name = names.get(id) ?? id;
+      }
+    } else {
+      // Order-level dimensions: group whole orders by referral panel / doctor.
+      // (internal-/external-referral are handled by the transfer branch above.)
+      for (const o of orders) {
+        let id: string | null = null;
+        let name = '';
+        switch (groupBy) {
+          case 'b2b':
+            id = o.referralPanelId;
+            name = o.referralPanel?.name ?? '';
+            break;
+          case 'ref-by':
+            id = o.referredByDoctorId;
+            name = [o.referredByDoctor?.firstName, o.referredByDoctor?.lastName]
+              .filter(Boolean)
+              .join(' ')
+              .trim();
+            break;
+          case 'int-ref-user':
+            id = o.internalReferralId;
+            name = o.internalReferral?.fullName ?? '';
+            break;
+          case 'ext-ref-user':
+            id = o.externalReferralId;
+            name = o.externalReferral?.name ?? '';
+            break;
+        }
+        if (!id) continue;
+        const row = ensure(id, name || id);
+        row.orders.add(o.id);
+        add(row, this.orderLevelFigures(o, report));
+      }
+    }
+
+    return [...byGroup.values()].map(({ orders, ...r }) => ({
+      ...r,
+      orderCount: orders.size,
+    }));
+  }
+
+  /**
+   * Grouped Billing/Collection summary for the Internal / External Referral and
+   * Outsource tabs, re-sourced to accession transfers (not the order's referral
+   * FK): each scoped order (one that has an INTERNAL/EXTERNAL/OUTSOURCE
+   * {@link SampleTransfer}) is attributed **order-level** to a single
+   * destination — an internal transfer's destination branch, an external
+   * transfer's partner, or an outsource transfer's outsource center. Money is
+   * order-level (same model as the other order-level tabs), so within this tab
+   * `cards = Σ records = Σ grouped`. Orders with several transfers are attributed
+   * to their **primary** (oldest) transfer's destination.
+   * @param tenantId tenant scope (defence-in-depth on the transfer query)
+   * @param orders the already dimension-scoped orders (from {@link loadBillingOrders})
+   * @param groupBy `internal-referral` | `external-referral` | `outsource`
+   * @param report billing | collection | outstanding (drives the money model)
+   */
+  private async billingSummaryGroupedByReferralTransfer(
+    tenantId: string,
+    orders: BillingOrder[],
+    groupBy: 'internal-referral' | 'external-referral' | 'outsource',
+    report: BillingReport,
+  ): Promise<BillingGroupRow[]> {
+    const kind =
+      groupBy === 'internal-referral'
+        ? TransferKind.INTERNAL
+        : groupBy === 'external-referral'
+          ? TransferKind.EXTERNAL
+          : TransferKind.OUTSOURCE;
+    const orderIds = orders.map((o) => o.id);
+    if (!orderIds.length) return [];
+
+    // Transfers for the scoped orders, oldest-first so each order resolves to its
+    // primary (first) transfer's destination.
+    const transfers = await this.prisma.sampleTransfer.findMany({
+      where: {
+        tenantId,
+        deletedAt: null,
+        kind,
+        sample: { deletedAt: null, orderId: { in: orderIds } },
+      },
+      select: {
+        destinationBranchId: true,
+        externalPartnerRef: true,
+        externalPartnerName: true,
+        outsourceCenterId: true,
+        sample: { select: { orderId: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    // One destination per order (its primary transfer).
+    const destByOrder = new Map<string, { id: string; name: string }>();
+    for (const t of transfers) {
+      const orderId = t.sample.orderId;
+      if (destByOrder.has(orderId)) continue;
+      let id: string | null;
+      let name: string;
+      if (kind === TransferKind.INTERNAL) {
+        id = t.destinationBranchId;
+        name = ''; // resolved from Branch below
+      } else if (kind === TransferKind.OUTSOURCE) {
+        id = t.outsourceCenterId;
+        name = ''; // resolved from OutsourceCenter below
+      } else {
+        id = t.externalPartnerRef ?? t.externalPartnerName;
+        name = t.externalPartnerName ?? t.externalPartnerRef ?? '';
+      }
+      if (!id) continue;
+      destByOrder.set(orderId, { id, name });
+    }
+
+    // Resolve internal destination branch display names in one batched lookup.
+    if (kind === TransferKind.INTERNAL) {
+      const branchIds = [
+        ...new Set([...destByOrder.values()].map((d) => d.id)),
+      ];
+      if (branchIds.length) {
+        const branches = await this.prisma.branch.findMany({
+          where: { id: { in: branchIds } },
+          select: { id: true, name: true },
+        });
+        const nameById = new Map(branches.map((b) => [b.id, b.name]));
+        for (const d of destByOrder.values())
+          d.name = nameById.get(d.id) ?? d.id;
+      }
+    }
+
+    // Resolve outsource-center display names in one batched lookup.
+    if (kind === TransferKind.OUTSOURCE) {
+      const centerIds = [
+        ...new Set([...destByOrder.values()].map((d) => d.id)),
+      ];
+      if (centerIds.length) {
+        const centers = await this.prisma.outsourceCenter.findMany({
+          where: { id: { in: centerIds } },
+          select: { id: true, name: true },
+        });
+        const nameById = new Map(centers.map((c) => [c.id, c.name]));
+        for (const d of destByOrder.values())
+          d.name = nameById.get(d.id) ?? d.id;
+      }
+    }
+
+    const byGroup = new Map<
+      string,
+      BillingGroupRow & { orders: Set<string> }
+    >();
+    for (const o of orders) {
+      const dest = destByOrder.get(o.id);
+      if (!dest) continue;
+      let row = byGroup.get(dest.id);
+      if (!row) {
+        row = {
+          id: dest.id,
+          name: dest.name || dest.id,
+          orderCount: 0,
+          ...this.zeroFigures(),
+          orders: new Set<string>(),
+        };
+        byGroup.set(dest.id, row);
+      }
+      row.orders.add(o.id);
+      this.addFigures(row, this.orderLevelFigures(o, report));
+    }
+
+    return [...byGroup.values()].map(({ orders, ...r }) => ({
+      ...r,
+      orderCount: orders.size,
+    }));
   }
 
   /**
@@ -2102,6 +3609,7 @@ export class OrderService {
         patientId: true,
         orderCode: true,
         externalOrderId: true,
+        isBillGenerated: true,
         createdBy: true,
         appointmentId: true,
         appointment: { select: { status: true } },
@@ -2221,7 +3729,19 @@ export class OrderService {
     if (dto.payments !== undefined && payPaid > payNet) {
       throw new PaymentOverpaymentException(payNet, payPaid);
     }
-    const paymentStatus = derivePaymentStatus(payNet, payPaid);
+    // Generate Bill = No (either set by this patch or already stored): the order
+    // may not carry a positive paid amount. Only bites when the ledger is part of
+    // this patch — a non-payment edit leaves the stored totals untouched.
+    const effectiveBillGenerated =
+      dto.isBillGenerated ?? existing?.isBillGenerated ?? false;
+    if (dto.payments !== undefined && !effectiveBillGenerated && payPaid > 0) {
+      throw new PaymentWithoutBillGeneratedException(payPaid);
+    }
+    // Generate Bill = No ⇒ the order is settled with nothing owed: force PAID and
+    // zero the persisted ledger below (mirrors create()).
+    const paymentStatus = !effectiveBillGenerated
+      ? PaymentStatus.PAID
+      : derivePaymentStatus(payNet, payPaid);
 
     // Collection by another user: when this patch replaces the ledger and the
     // collected total actually changes, a non-creator needs the branch setting on.
@@ -2248,7 +3768,13 @@ export class OrderService {
     // when a draft is finalized (or an order re-saved) to `status = ORDER`. Uses
     // the incoming ledger/items when this patch replaces them, otherwise the
     // order's stored rows — so the checks run against the order's effective state.
-    if (effectiveStatus === OrderStatus.ORDER && branchId) {
+    // Skipped when no bill is generated — there is nothing to bill, so the
+    // previous-dues / partial-billing / discount gates must not block the order.
+    if (
+      effectiveStatus === OrderStatus.ORDER &&
+      branchId &&
+      effectiveBillGenerated
+    ) {
       const effectivePayments =
         dto.payments !== undefined
           ? dto.payments
@@ -2438,6 +3964,11 @@ export class OrderService {
           // leave the stored status untouched otherwise.
           paymentStatus: dto.payments !== undefined ? paymentStatus : undefined,
           orderDate: dto.orderDate ? new Date(dto.orderDate) : undefined,
+          // Re-classify (BACKTRACKED / ADVANCE_DATED / CURRENT) whenever the order
+          // date changes; leave the stored value untouched otherwise.
+          orderDateType: dto.orderDate
+            ? this.classifyOrderDate(dto.orderDate)
+            : undefined,
           orderType: dto.orderType,
           billingType: dto.billingType,
           isUrgentBill: dto.isUrgentBill,
@@ -2549,6 +4080,20 @@ export class OrderService {
               branchId,
               orderId: id,
               ...p,
+              // Generate Bill = No ⇒ zero every money field except gross
+              // `totalAmount` so the order carries no due and reads as settled
+              // (mirrors create()).
+              ...(!effectiveBillGenerated
+                ? {
+                    orderDiscount: 0,
+                    netDiscount: 0,
+                    netAmount: 0,
+                    payableAmount: 0,
+                    paidAmount: 0,
+                    remainingBalance: 0,
+                    tdsDeduction: 0,
+                  }
+                : {}),
               paymentDate: p.paymentDate ? new Date(p.paymentDate) : null,
             })),
           });
@@ -2612,6 +4157,7 @@ export class OrderService {
         effectiveStatus === OrderStatus.ORDER &&
         branchId &&
         existing?.patientId &&
+        effectiveBillGenerated &&
         (dto.previousDuesCleared ?? 0) > 0
       ) {
         await this.settlePreviousDuesInTx(
@@ -2864,7 +4410,9 @@ export class OrderService {
         newRefundSum += dto.refund.amount;
       }
 
-      // Recompute paymentStatus off the effective (retained) paid amount.
+      // Recompute paymentStatus off the effective (retained) paid amount, and
+      // the refund state alongside it so a paid-then-refunded order folds to
+      // "Refunded" rather than reading "Not Paid".
       const effectivePaid = computeEffectivePaid(
         paidSum,
         cancellationCharge,
@@ -2873,7 +4421,15 @@ export class OrderService {
       );
       await tx.order.update({
         where: { id },
-        data: { paymentStatus: derivePaymentStatus(netSum, effectivePaid) },
+        data: {
+          paymentStatus: derivePaymentStatus(netSum, effectivePaid),
+          refundStatus: deriveRefundStatus(
+            paidSum,
+            cancellationCharge,
+            newRefundSum,
+            refundChargeSum,
+          ),
+        },
       });
 
       // Cancel the linked appointment too (+ history) so a cancelled order no
@@ -3017,16 +4573,26 @@ export class OrderService {
         },
       });
 
+      const newRefundSum = refundSum + dto.amount;
+      const newRefundChargeSum = refundChargeSum + refundCharge;
       const effectivePaid = computeEffectivePaid(
         paidSum,
         existing.cancellationCharge,
-        refundSum + dto.amount,
-        refundChargeSum + refundCharge,
+        newRefundSum,
+        newRefundChargeSum,
       );
       await tx.order.update({
         where: { id },
         data: {
           paymentStatus: derivePaymentStatus(netSum, effectivePaid),
+          // Fold the refund state into the order so the billing/refund lists
+          // read "Refunded" / "Partially Refunded" rather than "Not Paid".
+          refundStatus: deriveRefundStatus(
+            paidSum,
+            existing.cancellationCharge,
+            newRefundSum,
+            newRefundChargeSum,
+          ),
           updatedBy: actorId,
         },
       });

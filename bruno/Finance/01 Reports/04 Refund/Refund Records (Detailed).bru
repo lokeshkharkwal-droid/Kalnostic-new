@@ -1,0 +1,40 @@
+meta {
+  name: Refund Records (Detailed)
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/orders/refund-records?statuses=ORDER,APPOINTMENT,CANCELLED&dimension=all&page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  statuses: ORDER,APPOINTMENT,CANCELLED
+  dimension: all
+  page: 1
+  limit: 20
+  ~dateFrom: 2026-07-01
+  ~dateTo: 2026-07-31
+  ~branchId: {{branchId}}
+  ~paymentMode: CASH
+  ~search: john
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Paginated detailed Refund records for the active tab (`dimension` — same set as
+  Billing, incl. `outsource`). Only orders with a REFUND entry; every row carries
+  `refundAmount` (Σ of the order's refunds) + `cancelAmount`, plus the standard money
+  fields. Each row also carries the order's `refundStatus`
+  (`NONE | PARTIALLY_REFUNDED | FULLY_REFUNDED`), which the report folds into the
+  Status column ("Refunded" / "Partially Refunded") instead of the misleading
+  "Not Paid" a fully-refunded order's `paymentStatus` would otherwise show. For the
+  item-level dimensions each row's figures are the sum of that order's
+  allocated matching lines (refund allocated proportionally by net).
+  `Σ records === refund-summary` for the same filters.
+}

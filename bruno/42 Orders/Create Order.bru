@@ -25,7 +25,7 @@ body:json {
     "orderType": "WALK_IN",
     "billingType": "CASH_CLIENT",
     "isUrgentBill": false,
-    "isBillGenerated": false,
+    "isBillGenerated": true,
     "orderNotes": "Fasting sample; collect in the morning",
     "orderTime": "09:30",
     "billingDetails": {
@@ -167,6 +167,21 @@ docs {
     null `billId`. It is searchable via the orders/billing `search` param.
   - `orderTime` — optional time-of-day (`"HH:mm"`), stored separately from the
     DATE-only `orderDate` so the form's Order Time round-trips on edit.
+  - `isBillGenerated` — Generate Bill (defaults `false`). When `false` the order is
+    **completed with nothing owed**: its stored ledger is zeroed
+    (`netAmount`/`payableAmount`/`paidAmount`/`remainingBalance`/`tdsDeduction` = 0,
+    only `totalAmount` = gross is kept for visibility), so it carries **no due**, and
+    `paymentStatus` is forced to **`PAID`** (settled). Any `payments[]` row with a
+    positive `paidAmount` is rejected with 422 `PAYMENT_WITHOUT_BILL_GENERATED` and
+    the order rolled back. The Previous-Dues / Partial-Billing / TDS & Discount rules
+    below are **skipped** for a no-bill order, and no cross-order dues settlement
+    runs. The frontend also disables the entire Payment Details section. The order
+    total and details are still stored/visible.
+  - `orderDateType` — **read-only, server-derived** classification of `orderDate`
+    vs. the day the order is created (server "today"): `BACKTRACKED` when dated in
+    the past, `ADVANCE_DATED` when dated in the future, `CURRENT` when today.
+    Returned on the order and filterable on the orders list — used by reports.
+    Recomputed on `PATCH /orders/:id` whenever `orderDate` changes.
   - `billingDetails` — optional billing-type-specific sub-form (insurance /
     corporate / govt-scheme / TPA free-text fields), stored as-is and returned
     verbatim so the whole billing sub-section round-trips on edit.
