@@ -21,7 +21,9 @@ import {
 describe('OrderService — TDS & Discount rules', () => {
   // Instantiate with no-op deps: the validators under test read only their args.
   const service = new OrderService(
-    ...(Array(8).fill(undefined) as never[]),
+    ...(Array(8).fill(undefined) as unknown as ConstructorParameters<
+      typeof OrderService
+    >),
   );
 
   /** Build a full-ish settings row with sensible discount/TDS defaults. */
@@ -165,14 +167,14 @@ describe('OrderService — TDS & Discount rules', () => {
     });
 
     it('rejects an order discount above the maximum percentage', () => {
-      expect(() =>
-        run({ payments: [{ orderDiscount: 300 }] }), // 30% of 1000, max 20
+      expect(
+        () => run({ payments: [{ orderDiscount: 300 }] }), // 30% of 1000, max 20
       ).toThrow(OrderDiscountOutOfRangeException);
     });
 
     it('accepts an in-range order discount', () => {
-      expect(() =>
-        run({ payments: [{ orderDiscount: 100 }] }), // 10% of 1000
+      expect(
+        () => run({ payments: [{ orderDiscount: 100 }] }), // 10% of 1000
       ).not.toThrow();
     });
   });

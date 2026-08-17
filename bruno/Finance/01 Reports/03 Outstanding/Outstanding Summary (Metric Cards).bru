@@ -1,0 +1,39 @@
+meta {
+  name: Outstanding Summary (Metric Cards)
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/orders/outstanding-summary?statuses=ORDER,APPOINTMENT,CANCELLED&dimension=all
+  body: none
+  auth: bearer
+}
+
+params:query {
+  statuses: ORDER,APPOINTMENT,CANCELLED
+  dimension: all
+  ~dateFrom: 2026-07-01
+  ~dateTo: 2026-07-31
+  ~branchId: {{branchId}}
+  ~paymentMode: CASH
+  ~search: john
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Aggregate metric-card totals for the Finance → Reports → Outstanding page —
+  only orders whose **due balance is > 0** (`due = net − paid`, paid incl. wallet).
+  Scoped to the active tab via `dimension` (same set as Billing — all / userwise /
+  b2b / ref-by / internal-referral / external-referral / int-ref-user / ext-ref-user /
+  outsource / lab-test / lab-panel / department / category / subcategory / discount /
+  back-dated / advance-dated / home-collection). Returns
+  `{ gross, discount, net, paid, due, tds }` (whole rupees).
+
+  Uses the SAME `report:'outstanding'` scoped dataset as `/orders/outstanding-records`
+  and `/orders/outstanding-summary/grouped`, so the cards always equal Σ detailed
+  records = Σ grouped summary. Branch defaults to the caller's active branch.
+}

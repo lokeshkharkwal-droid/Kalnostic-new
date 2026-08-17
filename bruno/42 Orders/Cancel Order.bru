@@ -45,8 +45,9 @@ docs {
     `REFUND_EXCEEDS_REFUNDABLE`. Writes a REFUND row to the payment ledger.
 
   Effective Paid = `paid − cancellationCharge − refunds − refund charges` (floored
-  at 0); this is what the billing list shows as "Paid", and `paymentStatus` is
-  recomputed off it. The refunded total surfaces in the list's `refundedAmount`
+  at 0); this is what the billing list shows as "Paid", and `paymentStatus` +
+  `refundStatus` (`NONE | PARTIALLY_REFUNDED | FULLY_REFUNDED`) are recomputed off
+  it. The refunded total surfaces in the list's `refundedAmount`
   ("Refund Provided" column).
 
   Example bodies:

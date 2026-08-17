@@ -1,11 +1,14 @@
 import {
   AppointmentStatus,
   BillingType,
+  OrderDateType,
   OrderStatus,
   OrderType,
+  PaymentMode,
   PaymentStatus,
   QuotationStatus,
 } from '@prisma/client';
+import { Transform, TransformFnParams } from 'class-transformer';
 import {
   IsBoolean,
   IsDateString,
@@ -58,6 +61,25 @@ export class ListOrdersDto extends PaginationQueryDto {
   status?: OrderStatus;
 
   /**
+   * Multi-status filter (comma-separated in the query string, e.g.
+   * `ORDER,APPOINTMENT,CANCELLED`). When present it takes precedence over the
+   * single `status`. The Billing reports use it to scope to real bills (every
+   * status except DRAFT/QUOTE) so the metric cards match the detailed list.
+   */
+  @IsOptional()
+  @Transform(({ value }: TransformFnParams): OrderStatus[] | undefined => {
+    if (typeof value === 'string') {
+      return value
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean) as OrderStatus[];
+    }
+    return value as OrderStatus[] | undefined;
+  })
+  @IsEnum(OrderStatus, { each: true })
+  statuses?: OrderStatus[];
+
+  /**
    * Lifecycle status of the linked appointment (the appointments list filter).
    * Matches the `Appointment.status` on orders saved with `status = APPOINTMENT`.
    */
@@ -90,6 +112,16 @@ export class ListOrdersDto extends PaginationQueryDto {
   @IsOptional()
   @IsEnum(PaymentStatus)
   paymentStatus?: PaymentStatus;
+
+  /**
+   * Payment-mode filter — matches orders with a collected payment
+   * (`entryType = PAYMENT`) made via this mode (`CASH` | `CARD` | `UPI` |
+   * `WALLET` | `CREDIT` | `BANK_TRANSFER`). Powers the Billing report's Payment
+   * Mode filter, using the mode selected when the order was created.
+   */
+  @IsOptional()
+  @IsEnum(PaymentMode)
+  paymentMode?: PaymentMode;
 
   /** Referring doctor filter (FK). */
   @IsOptional()
@@ -133,6 +165,14 @@ export class ListOrdersDto extends PaginationQueryDto {
   @IsUUID()
   patientId?: string;
 
+  /**
+   * Filters by the order's creator (`Order.createdBy`, a `Person.id`). The
+   * Billing "User" filter and the user-wise summary group on this field.
+   */
+  @IsOptional()
+  @IsUUID()
+  userId?: string;
+
   @IsOptional()
   @IsUUID()
   branchId?: string;
@@ -142,6 +182,15 @@ export class ListOrdersDto extends PaginationQueryDto {
   @ToBoolean()
   @IsBoolean()
   isBillGenerated?: boolean;
+
+  /**
+   * Order-date classification filter (`CURRENT` | `BACKTRACKED` |
+   * `ADVANCE_DATED`), matched against the order's stored `orderDateType`. Lets
+   * the reports scope to back-dated / advance-dated orders.
+   */
+  @IsOptional()
+  @IsEnum(OrderDateType)
+  orderDateType?: OrderDateType;
 
   /** Inclusive lower bound on `orderDate` (ISO-8601 date). */
   @IsOptional()
@@ -182,6 +231,22 @@ export class ListOrdersDto extends PaginationQueryDto {
   @IsOptional()
   @IsUUID()
   departmentId?: string;
+
+  /**
+   * Category filter — matches orders with an item whose test/panel carries this
+   * (logical) `categoryId`.
+   */
+  @IsOptional()
+  @IsUUID()
+  categoryId?: string;
+
+  /**
+   * Sub-category filter — matches orders with an item whose lab test carries this
+   * (logical) `subCategoryId`. (Only lab tests carry a sub-category; panels do not.)
+   */
+  @IsOptional()
+  @IsUUID()
+  subCategoryId?: string;
 
   /** Lab-test filter — matches orders with an item for this branch lab test. */
   @IsOptional()

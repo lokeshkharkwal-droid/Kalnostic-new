@@ -1,0 +1,34 @@
+meta {
+  name: Cancel Summary Grouped
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/orders/cancel-summary/grouped?statuses=CANCELLED&groupBy=lab-test
+  body: none
+  auth: bearer
+}
+
+params:query {
+  statuses: CANCELLED
+  groupBy: lab-test
+  ~dateFrom: 2026-07-01
+  ~dateTo: 2026-07-31
+  ~branchId: {{branchId}}
+  ~search: john
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Grouped Cancel aggregate powering the dimension panels — the cancelled-orders view
+  of `/orders/billing-summary/grouped` (same shared grouping layer with
+  `report:'cancel'`). `groupBy` = the SAME set as Billing (b2b / ref-by /
+  internal-referral / external-referral / int-ref-user / ext-ref-user / outsource /
+  lab-test / lab-panel / department / category / subcategory). Every row is over the
+  CANCELLED dataset, so `Σ grouped` reconciles with `/orders/cancel-summary` and
+  `/orders/cancel-records`.
+}

@@ -41,7 +41,12 @@ import { NablTatCronService } from './nabl-tat-cron.service';
  * supplies the missing bridge via `LabReportService.print`/`buildPrintContext`.
  */
 @Module({
-  imports: [PrismaModule, PdfReportTemplateModule, TechnicianSettingsModule, LabTestModule],
+  imports: [
+    PrismaModule,
+    PdfReportTemplateModule,
+    TechnicianSettingsModule,
+    LabTestModule,
+  ],
   controllers: [
     LabReportController,
     ReRunController,

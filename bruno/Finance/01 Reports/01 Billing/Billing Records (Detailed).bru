@@ -1,0 +1,73 @@
+meta {
+  name: Billing Records (Detailed)
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/orders/billing-records?statuses=ORDER,APPOINTMENT,CANCELLED&dimension=all&page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  statuses: ORDER,APPOINTMENT,CANCELLED
+  dimension: all
+  page: 1
+  limit: 20
+  ~branchId: {{branchId}}
+  ~dateFrom: 2026-07-01
+  ~dateTo: 2026-07-31
+  ~userId: {{personId}}
+  ~referralPanelId: {{referralPanelId}}
+  ~referredByDoctorId: {{referralDoctorId}}
+  ~departmentId: {{departmentId}}
+  ~categoryId: {{categoryId}}
+  ~subCategoryId: {{subCategoryId}}
+  ~branchLabTestId: {{branchLabTestId}}
+  ~branchLabPanelId: {{branchLabPanelId}}
+  ~paymentMode: CASH
+  ~search: john
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Paginated **detailed records** for the Finance → Reports → Billing table, scoped
+  to the active tab via `dimension` (`all` | `userwise` | `b2b` | `ref-by` |
+  `internal-referral` | `external-referral` | `int-ref-user` | `ext-ref-user` |
+  `outsource` | `lab-test` | `lab-panel` | `department` | `category` | `subcategory` |
+  `discount` | `back-dated` | `advance-dated` | `home-collection`). Each row carries
+  the order's display refs plus its money for that dimension:
+
+  - `all` / `userwise` — every billing order; order-level money.
+  - `b2b` / `ref-by` / `internal-referral` / `external-referral` — only orders with
+    that referral set; order-level money. (`internal-referral`/`external-referral`
+    are re-sourced to accession-transfer destination — see the grouped endpoint.)
+  - `int-ref-user` / `ext-ref-user` — only orders naming an internal / external
+    referral user in Referral Details (`internalReferralId` / `externalReferralId`);
+    order-level money, grouped by that user.
+  - `back-dated` / `advance-dated` — only orders whose `orderDateType` is
+    BACKTRACKED / ADVANCE_DATED; `home-collection` — only home-visit orders
+    (`diagnostics.isHomeVisit`). Order-level money.
+  - `discount` — only orders where a discount (order- or line-level) was applied;
+    the `discountAmount` now includes BOTH the order-level discount and every
+    per-line-item discount (so no scoped row shows a ₹0 discount).
+  - `lab-test` / `lab-panel` / `department` / `category` / `subcategory` — only
+    orders with a matching line; each row's `grossAmount`/`discountAmount`/
+    `netAmount`/`tdsAmount`/`dueAmount`/`paidAmount` are the sum of that order's
+    **allocated** matching lines.
+
+  Payment allocation (for `lab-test`/`lab-panel`): the order-level money is split
+  across its lines — gross = line unit price; the order discount is shared
+  proportionally by net; **paid fills the cheapest line first** (ascending net,
+  capped at each line's net); **TDS is shared proportionally by net**; due = net −
+  paid. So `Σ records === billing-summary === billing-summary/grouped` for the same
+  `dimension` + filters.
+
+  Shares the exact filter set with `/orders/billing-summary`. Branch defaults to
+  the caller's active branch. Field names mirror `GET /orders` so the frontend
+  mapper is shared.
+}

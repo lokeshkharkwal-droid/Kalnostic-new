@@ -574,6 +574,23 @@ export class ExternalOrderIdRequiredException extends KaltrosException {
   }
 }
 
+/**
+ * 422 — a payment was collected while "Generate Bill" is No (`isBillGenerated =
+ * false`). With no bill generated the order cannot take money, so the paid
+ * amount must be 0. Defence in depth — the frontend also disables the Payment
+ * Method section in this case.
+ */
+export class PaymentWithoutBillGeneratedException extends KaltrosException {
+  constructor(paidAmount: number) {
+    super(
+      'PAYMENT_WITHOUT_BILL_GENERATED',
+      'Payment cannot be collected while Generate Bill is set to No',
+      { paidAmount },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
 /** 409 — another active order in this branch already uses this external id. */
 export class DuplicateExternalOrderIdException extends KaltrosException {
   constructor(externalOrderId: string) {

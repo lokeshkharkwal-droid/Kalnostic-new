@@ -1,0 +1,87 @@
+meta {
+  name: Billing Summary Grouped
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/orders/billing-summary/grouped?statuses=ORDER,APPOINTMENT,CANCELLED&groupBy=b2b
+  body: none
+  auth: bearer
+}
+
+params:query {
+  statuses: ORDER,APPOINTMENT,CANCELLED
+  groupBy: b2b
+  ~dateFrom: 2026-07-01
+  ~dateTo: 2026-07-31
+  ~branchId: {{branchId}}
+  ~referralPanelId: {{referralPanelId}}
+  ~departmentId: {{departmentId}}
+  ~categoryId: {{categoryId}}
+  ~subCategoryId: {{subCategoryId}}
+  ~branchLabTestId: {{branchLabTestId}}
+  ~branchLabPanelId: {{branchLabPanelId}}
+  ~paymentMode: CASH
+  ~search: john
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Grouped Billing aggregate powering the Finance → Reports → Billing dimension
+  panels. `groupBy` selects the dimension:
+
+  Order-level (group whole orders):
+  - **`b2b`** — by referral panel (B2B partner).
+  - **`ref-by`** — by referring doctor.
+  - **`internal-referral`** — by the **accession-transfer destination branch**. The
+    dataset is re-sourced to orders whose sample was sent to another branch (an
+    INTERNAL `SampleTransfer`), NOT the order's `internalReferralId`; money is
+    order-level, each order attributed to its primary (oldest) transfer's
+    destination branch.
+  - **`external-referral`** — by the **external partner** of an EXTERNAL
+    `SampleTransfer` (partner ref/name), same transfer-sourced model.
+  - **`int-ref-user`** / **`ext-ref-user`** — by the internal / external referral
+    **user** named in the order's Referral Details (`internalReferralId` →
+    `InternalReferral.fullName`, `externalReferralId` → `ExternalReferral.name`).
+    Distinct from `internal-referral`/`external-referral` (which now group by
+    accession-transfer destination).
+  - **`outsource`** — by the **outsource center** (`OutsourceCenter.name`) of the
+    order's accession `SampleTransfer` (`kind=OUTSOURCE`), re-sourced like the
+    referral transfers (each order → its primary transfer's center).
+
+  Item-level (group the order's ALLOCATED lines; classification names resolved by id):
+  - **`lab-test`** / **`lab-panel`** — by the stable **test/panel code**, so the same
+    test/panel copied across pricing lists aggregates into ONE row (not one row per
+    BranchLabTest/BranchLabPanel id). Panels group only panel lines; tests only test
+    lines.
+  - **`department`** / **`category`** / **`subcategory`** — by the line's test/panel
+    classification, resolved as **branch scalar ?? master catalogue** (LabTest /
+    LabPanel via `sourceLabTestId` / `sourceLabPanelId`), so lines whose branch copy
+    is unclassified still classify from the master. Both tests and panels contribute;
+    no individual test/panel rows. Panels have no sub-category, so `subcategory`
+    matches tests only. A line with no classification anywhere is excluded.
+
+  Returns an array — one row per group:
+
+  ```json
+  [
+    { "id": "…", "name": "Acme Labs", "orderCount": 8,
+      "gross": 0, "discount": 0, "net": 0, "paid": 0, "due": 0, "tds": 0 }
+  ]
+  ```
+
+  Reconciles with `/orders/billing-records` and `/orders/billing-summary` for the
+  same dimension + filters (Σ groups = Σ records = cards). For `b2b` / `ref-by` /
+  `internal-referral` / `external-referral` the money is order-level (orders without
+  that referral / transfer are excluded). For
+  `lab-test` / `lab-panel` the money is the **allocated** test/panel-line money:
+  gross = line unit price, order discount shared proportionally by net, paid fills
+  the cheapest line first (ascending net, capped at each line's net), TDS shared
+  proportionally by net, due = net − paid — so paid/due/tds are populated (not 0).
+  `orderCount` = distinct orders. Amounts are integer minor units. Branch defaults
+  to the active branch.
+}

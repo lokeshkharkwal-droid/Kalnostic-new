@@ -1,0 +1,47 @@
+meta {
+  name: Collection Summary (Metric Cards)
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/orders/collection-summary?statuses=ORDER,APPOINTMENT,CANCELLED&dimension=all
+  body: none
+  auth: bearer
+}
+
+params:query {
+  statuses: ORDER,APPOINTMENT,CANCELLED
+  dimension: all
+  ~dateFrom: 2026-07-01
+  ~dateTo: 2026-07-31
+  ~branchId: {{branchId}}
+  ~userId: {{personId}}
+  ~referralPanelId: {{referralPanelId}}
+  ~departmentId: {{departmentId}}
+  ~paymentMode: UPI
+  ~search: john
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Aggregate metric-card totals for the Finance → Reports → Collection page, scoped
+  to the active tab via `dimension` (all / userwise / b2b / ref-by /
+  internal-referral / external-referral / int-ref-user / ext-ref-user / outsource /
+  lab-test / lab-panel / department / category / subcategory / discount / back-dated /
+  advance-dated / home-collection — same set as Billing). Returns the standard
+  totals **plus the payment-mode breakdown**:
+
+  ```json
+  { "gross": 0, "discount": 0, "net": 0, "paid": 0, "due": 0, "tds": 0,
+    "cash": 0, "upi": 0, "bankTransfer": 0, "debitCard": 0, "creditCard": 0 }
+  ```
+
+  Realization scope: only orders that collected money. `paid = cash + upi +
+  bankTransfer + debitCard + creditCard` (WALLET excluded). Same scope + allocation
+  as `/orders/collection-records` and `/orders/collection-summary/grouped`, so the
+  cards always equal Σ records = Σ summary. Whole rupees; branch from the JWT.
+}

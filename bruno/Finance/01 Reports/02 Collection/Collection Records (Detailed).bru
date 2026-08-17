@@ -1,0 +1,39 @@
+meta {
+  name: Collection Records (Detailed)
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/orders/collection-records?statuses=ORDER,APPOINTMENT,CANCELLED&dimension=all&page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  statuses: ORDER,APPOINTMENT,CANCELLED
+  dimension: all
+  page: 1
+  limit: 20
+  ~branchId: {{branchId}}
+  ~dateFrom: 2026-07-01
+  ~dateTo: 2026-07-31
+  ~paymentMode: UPI
+  ~search: john
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Paginated detailed Collection records for the active tab (`dimension` — same set
+  as Billing, incl. `int-ref-user` / `ext-ref-user` / `outsource` / `discount` /
+  `back-dated` / `advance-dated` / `home-collection`). Only orders that collected money. Each row
+  carries the standard money fields plus the per-row payment-mode breakdown
+  (`cash` / `upi` / `bankTransfer` / `debitCard` / `creditCard`), where
+  `paid = cash + upi + bankTransfer + debitCard + creditCard`. `discountAmount`
+  includes both order-level and per-line-item discounts. For the item-level
+  dimensions each row's figures are the sum of that order's allocated matching
+  lines. `Σ records === collection-summary` for the same filters.
+}

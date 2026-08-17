@@ -1,0 +1,41 @@
+meta {
+  name: Refund Summary (Metric Cards)
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/orders/refund-summary?statuses=ORDER,APPOINTMENT,CANCELLED&dimension=all
+  body: none
+  auth: bearer
+}
+
+params:query {
+  statuses: ORDER,APPOINTMENT,CANCELLED
+  dimension: all
+  ~dateFrom: 2026-07-01
+  ~dateTo: 2026-07-31
+  ~branchId: {{branchId}}
+  ~paymentMode: CASH
+  ~search: john
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Aggregate metric-card totals for the Finance → Reports → Refund page — only orders
+  with a refund (a REFUND `PaymentDetails` entry). Scoped to the active tab via
+  `dimension` (same set as Billing, incl. `outsource`). Returns the standard totals
+  **plus `refundAmount`** (Σ of the REFUND rows' `refundAmount`) and `cancelAmount`:
+
+  ```json
+  { "gross": 0, "discount": 0, "net": 0, "paid": 0, "due": 0, "tds": 0,
+    "refundAmount": 0, "cancelAmount": 0 }
+  ```
+
+  Same `report:'refund'` scoped dataset as `/orders/refund-records` and
+  `/orders/refund-summary/grouped`, so cards = Σ records = Σ grouped. Branch defaults
+  to the caller's active branch.
+}

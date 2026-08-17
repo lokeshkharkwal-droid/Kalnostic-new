@@ -3255,6 +3255,7 @@ model OutsourceCenter {
 
   contacts   OutsourceCenterContact[]
   orderItems OrderItem[]
+  documents  OutsourceCenterDocument[]
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -3291,6 +3292,36 @@ model OutsourceCenterContact {
   @@index([outsourceCenterId])
   @@index([deletedAt])
   @@map("outsource_center_contacts")
+}
+
+/// A document/file attached to an outsource center (e.g. contract, NABL
+/// certificate). Tenant-scoped, tenant-level (inherits the center's tier —
+/// CLAUDE.md §4.6). Real bytes are written to disk under
+/// `UPLOAD_DIR/outsource-center-documents/`; `filePath` is the relative path
+/// and is internal only — never returned to the client (used only to stream
+/// the file back via the download endpoint). RLS policy in prisma/rls.sql.
+model OutsourceCenterDocument {
+  id                String @id @default(uuid())
+  tenantId          String @map("tenant_id")
+  outsourceCenterId String @map("outsource_center_id")
+
+  outsourceCenter OutsourceCenter @relation(fields: [outsourceCenterId], references: [id])
+
+  fileName String @map("file_name")
+  filePath String @map("file_path")
+  mimeType String @map("mime_type")
+  fileSize Int    @map("file_size")
+
+  createdBy String? @map("created_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([outsourceCenterId])
+  @@index([deletedAt])
+  @@map("outsource_center_documents")
 }
 
 /// An external referring panel (clinic/hospital/lab) that sends business to the
@@ -5502,6 +5533,19 @@ enum OrderType {
   WEBSITE
 }
 
+/// Classification of an order by its `orderDate` relative to the day it was
+/// created/saved (server "today"). Stored on `Order` so downstream reports can
+/// distinguish orders dated in the past, today, or the future without
+/// recomputing.
+/// - `CURRENT`       — order date is today (a normal order).
+/// - `BACKTRACKED`   — order date is before today (dated in the past).
+/// - `ADVANCE_DATED` — order date is after today (dated in the future).
+enum OrderDateType {
+  CURRENT
+  BACKTRACKED
+  ADVANCE_DATED
+}
+
 /// Derived payment status of an order, computed from its payment ledger
 /// (sum of `paidAmount` vs `netAmount` across active PaymentDetails rows).
 /// Stored on `Order` so the orders/appointments lists can filter + paginate by
@@ -5510,6 +5554,17 @@ enum PaymentStatus {
   NOT_PAID
   PARTIALLY_PAID
   PAID
+}
+
+/// Stored on `Order` so a refunded order's Status folds in the refund state
+/// (a fully-paid-then-refunded order would otherwise read NOT_PAID). Recomputed
+/// alongside `paymentStatus` whenever the refund ledger changes. `NONE` = no
+/// refund; `FULLY_REFUNDED` once the retained (effective) paid amount is fully
+/// returned; `PARTIALLY_REFUNDED` when some but not all is returned.
+enum RefundStatus {
+  NONE
+  PARTIALLY_REFUNDED
+  FULLY_REFUNDED
 }
 
 /// How the order is billed.
@@ -5661,6 +5716,11 @@ model Order {
   billingType     BillingType @map("billing_type")
   isUrgentBill    Boolean     @default(false) @map("is_urgent_bill")
   isBillGenerated Boolean     @default(false) @map("is_bill_generated")
+  // Classification of `orderDate` vs. the day the order was created/last saved:
+  // CURRENT (today), BACKTRACKED (past), or ADVANCE_DATED (future). Derived
+  // server-side in OrderService on create + whenever `orderDate` changes, and
+  // surfaced in reports.
+  orderDateType   OrderDateType @default(CURRENT) @map("order_date_type")
   orderNotes      String?     @map("order_notes")
 
   // Order time-of-day ("HH:mm"), captured separately from the DATE-only
@@ -5676,6 +5736,11 @@ model Order {
   // so the orders/appointments lists can filter + paginate by payment status
   // server-side (a summed comparison Prisma can't express in a `where`).
   paymentStatus PaymentStatus @default(NOT_PAID) @map("payment_status")
+
+  // Derived from the refund ledger (recomputed alongside paymentStatus whenever a
+  // refund is issued). Lets the billing/refund lists show "Refunded" / "Partially
+  // Refunded" instead of a misleading "Not Paid" once a paid order is refunded.
+  refundStatus RefundStatus @default(NONE) @map("refund_status")
 
   // Fee (minor units) retained by the lab when the order is cancelled (0 = none).
   // Deducted from the order's effective paid amount; caps the refundable amount

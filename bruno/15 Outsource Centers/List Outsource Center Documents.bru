@@ -1,0 +1,24 @@
+meta {
+  name: List Outsource Center Documents
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/outsource-centers/{{outsourceCenterId}}/documents
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  List an outsource center's non-deleted documents, newest first. Returns a
+  plain array (not paginated — a bounded per-center sub-collection, mirroring
+  *List Patient Documents*). Scoped to the caller's tenant.
+
+  404 `OUTSOURCE_CENTER_NOT_FOUND` if `outsourceCenterId` doesn't exist/isn't
+  in this tenant.
+}

@@ -462,8 +462,8 @@ export class BranchLabPanelService {
     const sampleTypesByTestId = new Map<string, string[]>();
     for (const t of tests) {
       const samples =
-        (t.configSnapshot as unknown as BranchLabTestConfigSnapshot)
-          ?.samples ?? [];
+        (t.configSnapshot as unknown as BranchLabTestConfigSnapshot)?.samples ??
+        [];
       sampleTypesByTestId.set(
         t.id,
         samples.map((s) => s.sampleType).filter((x): x is string => Boolean(x)),

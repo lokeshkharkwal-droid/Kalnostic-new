@@ -337,7 +337,11 @@ export class BranchLabTestService {
         tenantId,
         data.map((t) => t.departmentId),
       ),
-      this.resolveNames('category', tenantId, data.map((t) => t.categoryId)),
+      this.resolveNames(
+        'category',
+        tenantId,
+        data.map((t) => t.categoryId),
+      ),
       this.resolveNames(
         'subCategory',
         tenantId,
