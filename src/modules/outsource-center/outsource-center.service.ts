@@ -1,23 +1,36 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   OutsourceCenter,
   OutsourceCenterContact,
   Prisma,
 } from '@prisma/client';
+import { randomUUID } from 'crypto';
+import { mkdir, readFile, writeFile } from 'fs/promises';
+import { extname, join } from 'path';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { CreateOutsourceCenterDto } from './dto/create-outsource-center.dto';
 import { UpdateOutsourceCenterDto } from './dto/update-outsource-center.dto';
 import { OutsourceCenterContactDto } from './dto/outsource-center-contact.dto';
 import { ListOutsourceCentersDto } from './dto/list-outsource-centers.dto';
-import { OutsourceCenterEntity } from './entities/outsource-center.entity';
+import { CreateOutsourceCenterDocumentDto } from './dto/create-outsource-center-document.dto';
+import {
+  OutsourceCenterEntity,
+  OutsourceCenterListView,
+} from './entities/outsource-center.entity';
+import { OutsourceCenterDocumentEntity } from './entities/outsource-center-document.entity';
 import {
   DuplicateContactRoleException,
   InvalidLabPanelException,
   InvalidLabTestException,
+  OutsourceCenterDocumentNotFoundException,
   OutsourceCenterNameConflictException,
   OutsourceCenterNotFoundException,
 } from './exceptions/outsource-center.exceptions';
+
+/** Subfolder of UPLOAD_DIR where outsource-center documents are written. */
+const DOCUMENTS_SUBDIR = 'outsource-center-documents';
 
 /**
  * Outsource-center management. Tenant-scoped, tenant-level (CLAUDE.md §4.6): every
@@ -34,7 +47,10 @@ export class OutsourceCenterService {
     contacts: { where: { deletedAt: null } },
   } satisfies Prisma.OutsourceCenterInclude;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {}
 
   /**
    * Create an outsource center with its contacts in one transaction. The `code` is
@@ -265,6 +281,142 @@ export class OutsourceCenterService {
         data: { deletedAt: now },
       });
     });
+  }
+
+  /**
+   * Upload a document for an outsource center. Validates the parent center exists
+   * in the tenant, writes the multer buffer to disk under
+   * `UPLOAD_DIR/outsource-center-documents/`, and records the DB row inside a
+   * tenant-scoped transaction.
+   * @param outsourceCenterId parent center id
+   * @param tenantId tenant scope
+   * @param file the uploaded file (validated type/size by the controller's
+   *   multer interceptor)
+   * @param dto optional display-name override
+   * @param actorId the uploading user's person id
+   * @returns the safe document entity (never includes the on-disk file path)
+   * @throws OutsourceCenterNotFoundException if the center doesn't exist/isn't
+   *   in this tenant
+   */
+  async addDocument(
+    outsourceCenterId: string,
+    tenantId: string,
+    file: Express.Multer.File,
+    dto: CreateOutsourceCenterDocumentDto,
+    actorId: string,
+  ): Promise<OutsourceCenterDocumentEntity> {
+    await this.findById(outsourceCenterId, tenantId);
+
+    const uploadDir = this.config.get<string>('UPLOAD_DIR', './uploads');
+    const dir = join(uploadDir, DOCUMENTS_SUBDIR);
+    await mkdir(dir, { recursive: true });
+    const ext = extname(file.originalname);
+    const storedName = `${randomUUID()}${ext}`;
+    await writeFile(join(dir, storedName), file.buffer);
+
+    const created = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.outsourceCenterDocument.create({
+        data: {
+          tenantId,
+          outsourceCenterId,
+          fileName: dto.name?.trim() || file.originalname,
+          filePath: join(DOCUMENTS_SUBDIR, storedName),
+          mimeType: file.mimetype,
+          fileSize: file.size,
+          createdBy: actorId,
+        },
+      }),
+    );
+    return this.toDocumentEntity(created);
+  }
+
+  /**
+   * List a center's non-deleted documents, newest first. Not paginated — a
+   * bounded per-center sub-collection, mirroring `PatientDocument`.
+   * @param outsourceCenterId parent center id
+   * @param tenantId tenant scope
+   * @throws OutsourceCenterNotFoundException if the center doesn't exist/isn't
+   *   in this tenant
+   */
+  async findDocuments(
+    outsourceCenterId: string,
+    tenantId: string,
+  ): Promise<OutsourceCenterDocumentEntity[]> {
+    await this.findById(outsourceCenterId, tenantId);
+    const rows = await this.prisma.outsourceCenterDocument.findMany({
+      where: { outsourceCenterId, tenantId, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+    });
+    return rows.map((r) => this.toDocumentEntity(r));
+  }
+
+  /**
+   * Read a document's bytes off disk for the download endpoint. Scoped to the
+   * given tenant and parent center.
+   * @param documentId document id
+   * @param outsourceCenterId parent center id
+   * @param tenantId tenant scope
+   * @throws OutsourceCenterDocumentNotFoundException if missing/soft-deleted or
+   *   not owned by this center/tenant
+   */
+  async readDocumentFile(
+    documentId: string,
+    outsourceCenterId: string,
+    tenantId: string,
+  ): Promise<{ buffer: Buffer; fileName: string; mimeType: string }> {
+    const doc = await this.prisma.outsourceCenterDocument.findFirst({
+      where: { id: documentId, outsourceCenterId, tenantId, deletedAt: null },
+    });
+    if (!doc) {
+      throw new OutsourceCenterDocumentNotFoundException(documentId);
+    }
+    const uploadDir = this.config.get<string>('UPLOAD_DIR', './uploads');
+    const buffer = await readFile(join(uploadDir, doc.filePath));
+    return { buffer, fileName: doc.fileName, mimeType: doc.mimeType };
+  }
+
+  /**
+   * Soft-delete a document row. The on-disk file is left in place — this repo
+   * never hard-deletes business data (no archive tier).
+   * @param documentId document id
+   * @param outsourceCenterId parent center id
+   * @param tenantId tenant scope
+   * @throws OutsourceCenterDocumentNotFoundException if missing/soft-deleted or
+   *   not owned by this center/tenant
+   */
+  async removeDocument(
+    documentId: string,
+    outsourceCenterId: string,
+    tenantId: string,
+  ): Promise<OutsourceCenterDocumentEntity> {
+    const doc = await this.prisma.outsourceCenterDocument.findFirst({
+      where: { id: documentId, outsourceCenterId, tenantId, deletedAt: null },
+    });
+    if (!doc) {
+      throw new OutsourceCenterDocumentNotFoundException(documentId);
+    }
+    const updated = await this.prisma.outsourceCenterDocument.update({
+      where: { id: documentId },
+      data: { deletedAt: new Date() },
+    });
+    return this.toDocumentEntity(updated);
+  }
+
+  /** Maps a Prisma `OutsourceCenterDocument` row to its safe response shape. */
+  private toDocumentEntity(row: {
+    id: string;
+    fileName: string;
+    mimeType: string;
+    fileSize: number;
+    createdAt: Date;
+  }): OutsourceCenterDocumentEntity {
+    return {
+      id: row.id,
+      fileName: row.fileName,
+      mimeType: row.mimeType,
+      fileSize: row.fileSize,
+      createdAt: row.createdAt,
+    };
   }
 
   /**

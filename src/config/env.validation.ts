@@ -30,6 +30,11 @@ export const envValidationSchema = Joi.object({
     .integer()
     .min(1)
     .default(2 * 1024 * 1024),
+  // Max outsource-center document size in bytes (default 10 MB).
+  MAX_DOCUMENT_UPLOAD_BYTES: Joi.number()
+    .integer()
+    .min(1)
+    .default(10 * 1024 * 1024),
   // When true, PrismaService sets app.current_tenant_id per request so Postgres
   // RLS (prisma/rls.sql) enforces tenant isolation. Requires a non-owner DB role
   // and rls.sql applied. Default false — isolation then relies on where-clauses.

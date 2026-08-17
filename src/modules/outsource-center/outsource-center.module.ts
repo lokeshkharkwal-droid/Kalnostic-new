@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { OutsourceCenterController } from './outsource-center.controller';
+import { OutsourceCenterDocumentController } from './outsource-center-document.controller';
 import { OutsourceCenterService } from './outsource-center.service';
 
 /**
@@ -9,7 +10,7 @@ import { OutsourceCenterService } from './outsource-center.service';
  */
 @Module({
   imports: [PrismaModule],
-  controllers: [OutsourceCenterController],
+  controllers: [OutsourceCenterController, OutsourceCenterDocumentController],
   providers: [OutsourceCenterService],
   exports: [OutsourceCenterService],
 })
