@@ -1,0 +1,36 @@
+meta {
+  name: List Invoices
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/invoices?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: INV-
+  ~invoiceType: B2B
+  ~paymentStatus: PENDING
+  ~dueStatus: OVERDUE
+  ~partyId: {{referralPanelId}}
+  ~dateFrom: 2026-08-01
+  ~dateTo: 2026-08-31
+  ~branchId: {{branchId}}
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Paginated invoice list, scoped to the caller's tenant + active branch, newest
+  first. Optional filters: `search` (invoice no / party name / party mobile),
+  `invoiceType`, `paymentStatus` (PENDING/PARTIAL/COMPLETED/CANCELLED), `dueStatus`
+  (ON_TIME/OVERDUE), `partyId`, `dateFrom`/`dateTo` (on invoice date), `branchId`.
+  Each row includes a `_count.sourceOrders`.
+}

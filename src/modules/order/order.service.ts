@@ -2521,6 +2521,64 @@ export class OrderService {
   }
 
   /**
+   * Resolve, for a set of orders, each order's current outstanding `due` and its
+   * four referral-party FKs — the single sanctioned reuse point for the Invoice
+   * module (CLAUDE.md rule #3: injected via DI, never a direct file import). Uses
+   * the SAME `orderLevelFigures(o, 'outstanding')` the Outstanding report uses, so
+   * invoicing stays reconciled with that report by construction.
+   *
+   * Runs inside the caller's tenant transaction (`tx`) so the reads share the RLS
+   * GUC set by `withTenant`.
+   *
+   * @param tx active tenant-scoped transaction client (from `withTenant`)
+   * @param tenantId tenant scope (defence in depth on top of RLS)
+   * @param orderIds the source order ids to resolve
+   * @returns a map keyed by order id → `{ due, party FKs }`; ids that don't resolve
+   *   to an active order in the tenant are simply absent from the map
+   */
+  async getOutstandingInfoForOrders(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    orderIds: string[],
+  ): Promise<
+    Map<
+      string,
+      {
+        due: number;
+        referralPanelId: string | null;
+        referredByDoctorId: string | null;
+        internalReferralId: string | null;
+        externalReferralId: string | null;
+      }
+    >
+  > {
+    const orders = await tx.order.findMany({
+      where: { id: { in: orderIds }, tenantId, deletedAt: null },
+      include: BILLING_ORDER_INCLUDE,
+    });
+    const result = new Map<
+      string,
+      {
+        due: number;
+        referralPanelId: string | null;
+        referredByDoctorId: string | null;
+        internalReferralId: string | null;
+        externalReferralId: string | null;
+      }
+    >();
+    for (const o of orders) {
+      result.set(o.id, {
+        due: this.orderLevelFigures(o, 'outstanding').due,
+        referralPanelId: o.referralPanelId,
+        referredByDoctorId: o.referredByDoctorId,
+        internalReferralId: o.internalReferralId,
+        externalReferralId: o.externalReferralId,
+      });
+    }
+    return result;
+  }
+
+  /**
    * Allocate the order-level money across its line items so the per-line sums
    * reconcile with the order totals exactly:
    * - `gross` per line = `unitPrice` (Σ = totalAmount).

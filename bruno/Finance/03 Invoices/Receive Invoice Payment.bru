@@ -1,0 +1,40 @@
+meta {
+  name: Receive Invoice Payment
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/invoices/{{invoiceId}}/receive-payment
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "paymentFor": "INVOICE",
+    "amount": 5000,
+    "paymentMode": "BANK_TRANSFER",
+    "reference": "UTR-2026-0001",
+    "attachmentUrl": "https://example.com/receipts/utr-2026-0001.pdf",
+    "notes": "First instalment"
+  }
+}
+
+docs {
+  Record one receipt against the invoice, toward the INVOICE or the TDS balance.
+  `amount` (whole rupees) must be positive and within the matching outstanding
+  balance, else `INVOICE_PAYMENT_EXCEEDS_OUTSTANDING` (422). Invoice and TDS
+  receipts are posted as SEPARATE calls (post a second call with
+  `"paymentFor": "TDS"`). Updates paid/outstanding and recomputes status — the
+  invoice becomes COMPLETED once its net (INVOICE) balance is fully received.
+  `INVOICE_ALREADY_CANCELLED` (409) if the invoice was cancelled.
+}

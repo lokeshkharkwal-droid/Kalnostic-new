@@ -253,10 +253,14 @@ export const ORDER_LIST_INCLUDE = {
     },
   },
   branch: { select: { id: true, name: true, code: true } },
-  referredByDoctor: { select: { id: true, firstName: true, lastName: true } },
-  referralPanel: { select: { id: true, name: true, code: true } },
-  internalReferral: { select: { id: true, fullName: true } },
-  externalReferral: { select: { id: true, name: true } },
+  referredByDoctor: {
+    select: { id: true, firstName: true, lastName: true, mobileNumber: true },
+  },
+  referralPanel: {
+    select: { id: true, name: true, code: true, directorMobile: true },
+  },
+  internalReferral: { select: { id: true, fullName: true, mobileNumber: true } },
+  externalReferral: { select: { id: true, name: true, mobileNumber: true } },
   appointment: { select: { id: true, status: true, code: true } },
   items: {
     where: { deletedAt: null },
