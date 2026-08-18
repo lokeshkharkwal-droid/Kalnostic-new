@@ -34,6 +34,12 @@ docs {
   ## Body
   - `templateId` (optional) — the `lab_all_report` template to render with. Omit to
     fall back to the tenant's single active `lab_all_report` template.
+  - `orderItemIds` (optional) — array of `OrderItem` UUIDs. When given (non-empty),
+    only the reports belonging to these order items are included in the
+    consolidated PDF instead of every report on the order. Used by the Order
+    Overview modal's multi-select "Download Report" / "Print All Report" bulk
+    actions, which must only act on the technician's selected rows. Omit for the
+    unfiltered whole-order render (unchanged default behaviour).
 
   ## Related
   - `POST /lab-reports/:id/print` renders a SINGLE report. Its body now also
@@ -42,7 +48,8 @@ docs {
     same report record renders either way.
 
   ## Errors
-  - 404 `LAB_REPORT_NOT_FOUND` — the order has no reports.
+  - 404 `LAB_REPORT_NOT_FOUND` — the order (or the selected `orderItemIds`) has no
+    reports.
   - 404 `NO_ACTIVE_PRINT_TEMPLATE` / 409 `AMBIGUOUS_PRINT_TEMPLATE` — template
     resolution failed and no `templateId` was supplied.
 

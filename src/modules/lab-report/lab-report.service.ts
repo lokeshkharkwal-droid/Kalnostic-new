@@ -1765,8 +1765,11 @@ export class LabReportService {
    * Flattening avoids that limitation entirely rather than extending the
    * shared renderer (which every other template type also depends on) for
    * this one case.
-   * @throws OrderReportsNotFoundException if the order has no lab reports
-   * (wrong id, or no item has reached ACCEPTED yet)
+   * @param orderItemIds when given (non-empty), restricts the consolidated
+   * PDF to only these order items' reports instead of every report on the
+   * order — used by the Order Overview modal's multi-select bulk actions.
+   * @throws OrderReportsNotFoundException if the order (or the selected
+   * items) has no lab reports (wrong id, or no item has reached ACCEPTED yet)
    * @throws NoActivePrintTemplateException if no active `lab_all_report`
    * template exists
    * @throws AmbiguousPrintTemplateException if multiple exist and no
@@ -1777,6 +1780,7 @@ export class LabReportService {
     tenantId: string,
     branchId: string | null,
     templateId?: string,
+    orderItemIds?: string[],
   ): Promise<Buffer> {
     const activeBranchId = this.requireBranch(branchId);
     const reportRows = await this.prisma.labReport.findMany({
@@ -1785,6 +1789,9 @@ export class LabReportService {
         branchId: activeBranchId,
         deletedAt: null,
         orderItem: { orderId },
+        ...(orderItemIds && orderItemIds.length > 0
+          ? { orderItemId: { in: orderItemIds } }
+          : {}),
       },
       select: { id: true },
       orderBy: { createdAt: 'asc' },
