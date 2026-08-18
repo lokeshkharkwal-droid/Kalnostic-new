@@ -7,10 +7,12 @@ import { AccessionController } from './accession.controller';
 import { SampleTransferController } from './sample-transfer.controller';
 import { AccessionSettingsController } from './accession-settings.controller';
 import { AccessionReportController } from './accession-report.controller';
+import { AccessionDashboardController } from './accession-dashboard.controller';
 import { AccessionSampleService } from './accession-sample.service';
 import { SampleTransferService } from './sample-transfer.service';
 import { AccessionSettingsService } from './accession-settings.service';
 import { AccessionReportService } from './accession-report.service';
+import { AccessionDashboardService } from './accession-dashboard.service';
 
 /**
  * Accession module — the sample-lifecycle hub (post-order). Tenant-scoped +
@@ -40,12 +42,14 @@ import { AccessionReportService } from './accession-report.service';
     SampleTransferController,
     AccessionSettingsController,
     AccessionReportController,
+    AccessionDashboardController,
   ],
   providers: [
     AccessionSampleService,
     SampleTransferService,
     AccessionSettingsService,
     AccessionReportService,
+    AccessionDashboardService,
   ],
   exports: [AccessionSampleService],
 })

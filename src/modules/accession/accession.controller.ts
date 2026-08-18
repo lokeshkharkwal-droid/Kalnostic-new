@@ -292,8 +292,12 @@ export class AccessionController {
 
   /** Fetch a sample's status-change history (§A.10.5, newest first). */
   @Get(':id/history')
-  findHistory(@CurrentTenant() tenantId: string, @Param('id') id: string) {
-    return this.sampleService.findHistory(id, tenantId);
+  findHistory(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+  ) {
+    return this.sampleService.findHistory(id, tenantId, profile.branchId);
   }
 
   // ── Single-sample actions (§A.10) ──────────────────────────────────────────

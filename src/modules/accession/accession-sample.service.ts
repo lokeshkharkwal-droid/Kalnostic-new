@@ -56,6 +56,12 @@ import {
   AmbiguousLabelTemplateException,
 } from './exceptions/accession.exceptions';
 
+/** Resolved display fields attached to a history row for the Audit Trail UI. */
+export interface AccessionHistoryActor {
+  actorName: string | null;
+  actorRole: string | null;
+}
+
 /** A grouping bucket accumulated while generating samples for an order. */
 interface SampleGroup {
   sampleType: string | null;
@@ -468,7 +474,15 @@ export class AccessionSampleService {
 
   /**
    * Return a sample's status-history log (newest first), tenant-scoped
-   * (Sample History panel — PDF §A.10.5).
+   * (Sample History / Audit Trail panel — PDF §A.10.5). Only rows where the
+   * sample's status actually moved from one real status to another are
+   * returned (`fromStatus` non-null and different from `toStatus`) — the
+   * system-written `generate` row (sample created from the order, `fromStatus
+   * = null`, no prior status to move FROM) and no-status-change actions
+   * (`assign-barcode`, `update` notes, both written with `fromStatus ===
+   * toStatus`) are real audit facts kept in the table, but aren't lifecycle
+   * movement, so a sample still sitting at NEW with nothing done to it yet
+   * correctly has an empty trail.
    * @param id sample id
    * @param tenantId tenant scope
    * @throws AccessionSampleNotFoundException if the sample is missing
@@ -476,12 +490,74 @@ export class AccessionSampleService {
   async findHistory(
     id: string,
     tenantId: string,
-  ): Promise<AccessionStatusHistory[]> {
+    branchId: string | null,
+  ): Promise<Array<AccessionStatusHistory & AccessionHistoryActor>> {
     await this.findById(id, tenantId);
-    return this.prisma.accessionStatusHistory.findMany({
+    const rows = await this.prisma.accessionStatusHistory.findMany({
       where: { sampleId: id, tenantId, deletedAt: null },
       orderBy: { createdAt: 'desc' },
     });
+    const movements = rows.filter(
+      (r) => r.fromStatus !== null && r.fromStatus !== r.toStatus,
+    );
+    return this.enrichHistoryActors(movements, tenantId, branchId);
+  }
+
+  /**
+   * Attach each `changedBy` actor's human name and current role label to
+   * history rows. `changedBy` is a logical reference to `Person.id` (no
+   * Prisma relation — same deliberate pattern as `LabReportHistory.actorId`:
+   * an audit trail must survive independent of the referenced person). The
+   * role shown is the person's CURRENT role at this branch (via
+   * `UserBranchProfile` → `AuthRole`, the same join `LabReportDirectoryService`
+   * uses to validate technician roles) — not a snapshot of the role held at
+   * the time of the action, since that isn't captured anywhere in this
+   * codebase today. Falls back to `null` for either field rather than
+   * guessing, e.g. if the person has no active profile at this branch anymore.
+   */
+  private async enrichHistoryActors(
+    rows: AccessionStatusHistory[],
+    tenantId: string,
+    branchId: string | null,
+  ): Promise<Array<AccessionStatusHistory & AccessionHistoryActor>> {
+    const actorIds = [
+      ...new Set(rows.map((r) => r.changedBy).filter((id): id is string => Boolean(id))),
+    ];
+    if (actorIds.length === 0) {
+      return rows.map((r) => ({ ...r, actorName: null, actorRole: null }));
+    }
+
+    const [persons, profiles] = await Promise.all([
+      this.prisma.person.findMany({
+        where: { id: { in: actorIds } },
+        select: { id: true, firstName: true, middleName: true, lastName: true },
+      }),
+      branchId
+        ? this.prisma.userBranchProfile.findMany({
+            where: {
+              tenantId,
+              branchId,
+              personId: { in: actorIds },
+              deletedAt: null,
+            },
+            select: { personId: true, authRole: { select: { name: true } } },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const nameById = new Map(
+      persons.map((p) => [
+        p.id,
+        [p.firstName, p.middleName, p.lastName].filter(Boolean).join(' '),
+      ]),
+    );
+    const roleById = new Map(profiles.map((p) => [p.personId, p.authRole.name]));
+
+    return rows.map((r) => ({
+      ...r,
+      actorName: r.changedBy ? (nameById.get(r.changedBy) ?? null) : null,
+      actorRole: r.changedBy ? (roleById.get(r.changedBy) ?? null) : null,
+    }));
   }
 
   // ── Print Label (in-house/referral/external-referral orders) ───────────────

@@ -78,8 +78,11 @@ export class BranchController {
    * Lightweight branch picker (id + name only) for selectors. Optional
    * `branchType` (include) / `excludeBranchType` (exclude) filters — e.g.
    * `?excludeBranchType=COLLECTION_CENTER` lists valid sample-receiving branches.
-   * Optional `search` (name/code). Pagination is opt-in: omit `page` to get the
-   * full array; pass `page` (+ optional `limit`) for a paginated envelope.
+   * Optional `search` (name/code). Optional `moduleKey` restricts to branches
+   * where that module is enabled (e.g. `?moduleKey=registration` for the
+   * Registration dashboard's Business Admin branch selector). Pagination is
+   * opt-in: omit `page` to get the full array; pass `page` (+ optional
+   * `limit`) for a paginated envelope.
    */
   @Get('options')
   findOptions(
@@ -90,6 +93,7 @@ export class BranchController {
       branchType: query.branchType,
       excludeBranchType: query.excludeBranchType,
       search: query.search,
+      moduleKey: query.moduleKey,
       page: query.page,
       limit: query.limit,
     });
