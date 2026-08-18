@@ -8,7 +8,7 @@ import {
   Min,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
-import { roundMinorUnits } from '../../../common/utils';
+import { roundToTwoDecimalPlacesTransform } from '../../../common/utils';
 
 /**
  * Body for the Create-Order price preview (`POST /pricing/calculate`). Amounts
@@ -42,12 +42,13 @@ export class CalculatePriceDto {
   sampleCollectionCharges?: number;
 
   /**
-   * Summed per-line diagnostic discounts (minor units). Accepts a float (e.g.
-   * from percentage math) and is rounded to a whole minor unit, matching how the
+   * Summed per-line diagnostic discounts (rupees, up to 2 decimal places).
+   * Accepts a value with more precision than currency allows (e.g. from
+   * percentage math) and rounds it to the nearest paisa, matching how the
    * discount is stored when the order is created.
    */
-  @Transform(roundMinorUnits)
-  @IsNumber()
+  @Transform(roundToTwoDecimalPlacesTransform)
+  @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @IsOptional()
   orderDiscount?: number;

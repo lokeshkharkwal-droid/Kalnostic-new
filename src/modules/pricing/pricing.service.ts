@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CalculatePriceDto } from './dto/calculate-price.dto';
+import { roundToTwoDecimalPlaces } from '../../common/utils';
 
 /**
  * The Create-Order price preview (all integer minor units). `payableAmount` is
@@ -75,12 +76,16 @@ export class PricingService {
     const totalAmount = sum(tests) + sum(panels);
     // The form sends the summed per-line diagnostic discounts; never let it
     // exceed the items total (which would make the payable negative).
-    const orderDiscount = Math.min(dto.orderDiscount ?? 0, totalAmount);
+    const orderDiscount = roundToTwoDecimalPlaces(
+      Math.min(dto.orderDiscount ?? 0, totalAmount),
+    );
     const sampleCollectionCharges = dto.sampleCollectionCharges ?? 0;
     const visitingCharges = dto.visitingCharges ?? 0;
-    const payableAmount = Math.max(
-      totalAmount - orderDiscount + sampleCollectionCharges + visitingCharges,
-      0,
+    const payableAmount = roundToTwoDecimalPlaces(
+      Math.max(
+        totalAmount - orderDiscount + sampleCollectionCharges + visitingCharges,
+        0,
+      ),
     );
 
     return {

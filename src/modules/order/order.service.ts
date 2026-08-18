@@ -29,7 +29,12 @@ import { RegistrationSettingsService } from '../registration-settings/registrati
 import { ExternalIdService } from '../registration-settings/external-id.service';
 import type { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
 import { PaginatedResult } from '../../common/dto/response.dto';
-import { addInterval, subtractInterval } from '../../common/utils';
+import {
+  addInterval,
+  subtractInterval,
+  toNum,
+  roundToTwoDecimalPlaces,
+} from '../../common/utils';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { ListOrdersDto } from './dto/list-orders.dto';
@@ -348,13 +353,11 @@ export class OrderService {
     const { appointmentAt, appointmentType } = this.resolveAppointment(dto);
 
     // Derive the stored payment status from the inline payment ledger (if any).
-    const payNet = (dto.payments ?? []).reduce(
-      (s, p) => s + (p.netAmount ?? 0),
-      0,
+    const payNet = roundToTwoDecimalPlaces(
+      (dto.payments ?? []).reduce((s, p) => s + (p.netAmount ?? 0), 0),
     );
-    const payPaid = (dto.payments ?? []).reduce(
-      (s, p) => s + (p.paidAmount ?? 0),
-      0,
+    const payPaid = roundToTwoDecimalPlaces(
+      (dto.payments ?? []).reduce((s, p) => s + (p.paidAmount ?? 0), 0),
     );
     // The total paid can never exceed the amount owed (`netAmount`, which the
     // caller sets to the payable). Blocks overpayment across every workflow
@@ -831,7 +834,7 @@ export class OrderService {
       branchLabTestId: i.branchLabTestId ?? undefined,
       branchLabPanelId: i.branchLabPanelId ?? undefined,
       direct: i.direct ?? undefined,
-      discount: i.discount,
+      discount: toNum(i.discount),
       outsourceCenterId: i.outsourceCenterId ?? undefined,
     }));
     // Carry the source's order-level totals onto a single fresh (unpaid) ledger row.
@@ -839,10 +842,13 @@ export class OrderService {
     const payments: OrderPaymentDto[] = src0
       ? [
           {
-            totalAmount: src0.totalAmount ?? 0,
-            orderDiscount: src0.orderDiscount ?? 0,
-            netAmount: src0.netAmount ?? 0,
-            payableAmount: src0.payableAmount ?? src0.netAmount ?? 0,
+            totalAmount: toNum(src0.totalAmount),
+            orderDiscount: toNum(src0.orderDiscount),
+            netAmount: toNum(src0.netAmount),
+            payableAmount:
+              src0.payableAmount != null
+                ? toNum(src0.payableAmount)
+                : toNum(src0.netAmount),
             paidAmount: 0,
           },
         ]
@@ -975,11 +981,11 @@ export class OrderService {
     });
     let outstanding = 0;
     for (const o of orders) {
-      const net = o.payments.reduce((s, p) => s + p.netAmount, 0);
-      const paid = o.payments.reduce((s, p) => s + p.paidAmount, 0);
+      const net = o.payments.reduce((s, p) => s + toNum(p.netAmount), 0);
+      const paid = o.payments.reduce((s, p) => s + toNum(p.paidAmount), 0);
       outstanding += Math.max(net - paid, 0);
     }
-    return outstanding;
+    return roundToTwoDecimalPlaces(outstanding);
   }
 
   /**
@@ -1336,8 +1342,8 @@ export class OrderService {
     let remaining = amount;
     for (const o of orders) {
       if (remaining <= 0) break;
-      const net = o.payments.reduce((s, p) => s + p.netAmount, 0);
-      const paid = o.payments.reduce((s, p) => s + p.paidAmount, 0);
+      const net = o.payments.reduce((s, p) => s + toNum(p.netAmount), 0);
+      const paid = o.payments.reduce((s, p) => s + toNum(p.paidAmount), 0);
       const balance = net - paid;
       if (balance <= 0) continue;
       const applied = Math.min(balance, remaining);
@@ -1609,12 +1615,12 @@ export class OrderService {
         order.branchId,
       );
       if (settings.BillingMenu_AllowBillCopyPrintForPaidBillingsOnly) {
-        const net = order.payments.reduce((s, p) => s + p.netAmount, 0);
+        const net = order.payments.reduce((s, p) => s + toNum(p.netAmount), 0);
         const effectivePaid = computeEffectivePaid(
-          order.payments.reduce((s, p) => s + p.paidAmount, 0),
-          order.cancellationCharge,
-          order.payments.reduce((s, p) => s + p.refundAmount, 0),
-          order.payments.reduce((s, p) => s + p.refundCharge, 0),
+          order.payments.reduce((s, p) => s + toNum(p.paidAmount), 0),
+          toNum(order.cancellationCharge),
+          order.payments.reduce((s, p) => s + toNum(p.refundAmount), 0),
+          order.payments.reduce((s, p) => s + toNum(p.refundCharge), 0),
         );
         if (net - effectivePaid > 0) {
           throw new BillCopyPrintNotAllowedForUnpaidException(id);
@@ -1719,7 +1725,7 @@ export class OrderService {
         code: test?.testCode ?? panel?.panelCode ?? '',
         type: test ? 'Test' : panel ? 'Panel' : 'Direct',
         price: Number(test?.priceMsrp ?? panel?.priceMsrp ?? 0),
-        discount: it.discount ?? 0,
+        discount: toNum(it.discount),
       };
     });
   }
@@ -1732,8 +1738,9 @@ export class OrderService {
     paid: number;
     balance: number;
   } {
-    const sum = (pick: (p: OrderWithRelations['payments'][number]) => number) =>
-      order.payments.reduce((acc, p) => acc + pick(p), 0);
+    const sum = (
+      pick: (p: OrderWithRelations['payments'][number]) => Prisma.Decimal,
+    ) => order.payments.reduce((acc, p) => acc + toNum(pick(p)), 0);
     const gross = sum((p) => p.totalAmount);
     const discount = sum((p) => p.orderDiscount);
     const net = sum((p) => p.netAmount);
@@ -2318,18 +2325,30 @@ export class OrderService {
       rows.map((r) => r.id),
     );
     const data: OrderListRow[] = rows.map((r) => {
-      const grossAmount = r.payments.reduce((s, p) => s + p.totalAmount, 0);
-      const discountAmount = r.payments.reduce(
-        (s, p) => s + p.orderDiscount,
+      const grossAmount = r.payments.reduce(
+        (s, p) => s + toNum(p.totalAmount),
         0,
       );
-      const netAmount = r.payments.reduce((s, p) => s + p.netAmount, 0);
-      const paidAmount = r.payments.reduce((s, p) => s + p.paidAmount, 0);
-      const tdsAmount = r.payments.reduce((s, p) => s + p.tdsDeduction, 0);
+      const discountAmount = r.payments.reduce(
+        (s, p) => s + toNum(p.orderDiscount),
+        0,
+      );
+      const netAmount = r.payments.reduce((s, p) => s + toNum(p.netAmount), 0);
+      const paidAmount = r.payments.reduce(
+        (s, p) => s + toNum(p.paidAmount),
+        0,
+      );
+      const tdsAmount = r.payments.reduce(
+        (s, p) => s + toNum(p.tdsDeduction),
+        0,
+      );
       const dueAmount = Math.max(0, netAmount - paidAmount);
-      const refundedAmount = r.payments.reduce((s, p) => s + p.refundAmount, 0);
+      const refundedAmount = r.payments.reduce(
+        (s, p) => s + toNum(p.refundAmount),
+        0,
+      );
       const refundChargeTotal = r.payments.reduce(
-        (s, p) => s + p.refundCharge,
+        (s, p) => s + toNum(p.refundCharge),
         0,
       );
       const count = counts.get(r.id);
@@ -2400,9 +2419,15 @@ export class OrderService {
   ): number[] {
     const out = new Array<number>(weights.length).fill(0);
     if (weights.length === 0 || amount === 0 || sumW <= 0) return out;
-    const raw = weights.map((w) => (amount * w) / sumW);
+    // The largest-remainder method below only reconciles exactly (Σ === amount)
+    // over INTEGER units — so it runs in whole paise (amount's smallest unit)
+    // rather than rupees, which may carry a fraction. Converting back to
+    // rupees at the end keeps Σ result === amount to the paisa even when
+    // `amount` is a decimal (e.g. ₹133.33 split across weighted lines).
+    const amountPaise = Math.round(amount * 100);
+    const raw = weights.map((w) => (amountPaise * w) / sumW);
     const floors = raw.map((x) => Math.floor(x));
-    let rem = amount - floors.reduce((s, x) => s + x, 0);
+    let rem = amountPaise - floors.reduce((s, x) => s + x, 0);
     const byFrac = raw
       .map((x, i) => ({ i, frac: x - Math.floor(x) }))
       .sort((a, b) => b.frac - a.frac);
@@ -2411,7 +2436,7 @@ export class OrderService {
       floors[i] = (floors[i] ?? 0) + 1;
       rem--;
     }
-    return floors;
+    return floors.map((paise) => roundToTwoDecimalPlaces(paise / 100));
   }
 
   /**
@@ -2429,7 +2454,7 @@ export class OrderService {
       if (rem <= 0) break;
       const take = Math.min(v, rem);
       out[i] = take;
-      rem -= take;
+      rem = roundToTwoDecimalPlaces(rem - take);
     }
     return out;
   }
@@ -2492,13 +2517,13 @@ export class OrderService {
     let wallet = 0;
     let refundAmount = 0;
     for (const p of order.payments) {
-      gross += p.totalAmount;
-      discount += p.orderDiscount;
-      net += p.netAmount;
-      tds += p.tdsDeduction;
+      gross += toNum(p.totalAmount);
+      discount += toNum(p.orderDiscount);
+      net += toNum(p.netAmount);
+      tds += toNum(p.tdsDeduction);
       // REFUND rows carry `refundAmount` (0 on PAYMENT rows) — Σ = total refunded.
-      refundAmount += p.refundAmount;
-      const a = p.paidAmount;
+      refundAmount += toNum(p.refundAmount);
+      const a = toNum(p.paidAmount);
       switch (p.paymentMode) {
         case PaymentMode.CASH:
           cash += a;
@@ -2525,7 +2550,7 @@ export class OrderService {
     // (net = totalAmount − Σ itemDiscount − orderDiscount), so surfacing them
     // here keeps `gross − discount === net` and stops genuinely-discounted
     // orders from showing a ₹0 discount.
-    for (const it of order.items) discount += it.discount;
+    for (const it of order.items) discount += toNum(it.discount);
     const receipts = cash + upi + bankTransfer + debitCard + creditCard;
     const paid = report === 'collection' ? receipts : receipts + wallet;
     // Gross is DERIVED as net + discount (not raw Σ totalAmount): the ledger
@@ -2535,20 +2560,20 @@ export class OrderService {
     // tab). Guards against inconsistent ledgers where netAmount > totalAmount.
     gross = net + discount;
     return {
-      gross,
-      discount,
-      net,
-      paid,
-      due: Math.max(0, net - paid),
-      tds,
-      cash,
-      upi,
-      bankTransfer,
-      debitCard,
-      creditCard,
-      refundAmount,
+      gross: roundToTwoDecimalPlaces(gross),
+      discount: roundToTwoDecimalPlaces(discount),
+      net: roundToTwoDecimalPlaces(net),
+      paid: roundToTwoDecimalPlaces(paid),
+      due: roundToTwoDecimalPlaces(Math.max(0, net - paid)),
+      tds: roundToTwoDecimalPlaces(tds),
+      cash: roundToTwoDecimalPlaces(cash),
+      upi: roundToTwoDecimalPlaces(upi),
+      bankTransfer: roundToTwoDecimalPlaces(bankTransfer),
+      debitCard: roundToTwoDecimalPlaces(debitCard),
+      creditCard: roundToTwoDecimalPlaces(creditCard),
+      refundAmount: roundToTwoDecimalPlaces(refundAmount),
       // The cancellation charge retained on the order (Cancel report).
-      cancelAmount: order.cancellationCharge ?? 0,
+      cancelAmount: toNum(order.cancellationCharge),
     };
   }
 
@@ -2635,22 +2660,28 @@ export class OrderService {
     // already bundles order + every item discount, so using it here would
     // double-count the item discounts.)
     const orderDiscount = order.payments.reduce(
-      (s, p) => s + p.orderDiscount,
+      (s, p) => s + toNum(p.orderDiscount),
       0,
     );
     const netTotal = fig.net;
     const paidTotal = fig.paid;
     const tdsTotal = fig.tds;
     const items = order.items;
-    const base = items.map((it) => Math.max(0, it.unitPrice - it.discount));
+    const base = items.map((it) =>
+      Math.max(0, it.unitPrice - toNum(it.discount)),
+    );
     const sumBase = base.reduce((s, x) => s + x, 0);
     const discShare = this.allocateProportional(orderDiscount, base, sumBase);
     const net = items.map((_, k) =>
-      Math.max(0, (base[k] ?? 0) - (discShare[k] ?? 0)),
+      roundToTwoDecimalPlaces(
+        Math.max(0, (base[k] ?? 0) - (discShare[k] ?? 0)),
+      ),
     );
     // If the ledger's netAmount disagrees with (Σ base − orderDiscount) — e.g.
     // visiting charges — nudge the largest line so Σ net === netAmount exactly.
-    const netDrift = netTotal - net.reduce((s, x) => s + x, 0);
+    const netDrift = roundToTwoDecimalPlaces(
+      netTotal - net.reduce((s, x) => s + x, 0),
+    );
     if (netDrift !== 0 && net.length > 0) {
       let big = 0;
       for (let k = 1; k < net.length; k++) {
@@ -2728,12 +2759,16 @@ export class OrderService {
         // charges) is absorbed here too. Keeps `gross ≥ net` per line and
         // `Σ gross = netAmount + Σdiscount = totalAmount`. For an ordinary line
         // this equals unitPrice, so nothing changes for the common case.
-        gross: (net[k] ?? 0) + it.discount + (discShare[k] ?? 0),
+        gross: roundToTwoDecimalPlaces(
+          (net[k] ?? 0) + toNum(it.discount) + (discShare[k] ?? 0),
+        ),
         // Full line discount = its own item discount + its share of the
         // order-level discount (Σ over lines = Σ itemDiscount + orderDiscount),
         // so gross − discount === net per line and the item-dimension discount
         // totals match the order-level Discount figure.
-        discount: it.discount + (discShare[k] ?? 0),
+        discount: roundToTwoDecimalPlaces(
+          toNum(it.discount) + (discShare[k] ?? 0),
+        ),
         net: net[k] ?? 0,
         paid: paid[k] ?? 0,
         due: (net[k] ?? 0) - (paid[k] ?? 0),
@@ -3806,13 +3841,11 @@ export class OrderService {
 
     // When the payment ledger is being replaced, recompute the stored payment
     // status from the incoming rows (same derivation as create).
-    const payNet = (dto.payments ?? []).reduce(
-      (s, p) => s + (p.netAmount ?? 0),
-      0,
+    const payNet = roundToTwoDecimalPlaces(
+      (dto.payments ?? []).reduce((s, p) => s + (p.netAmount ?? 0), 0),
     );
-    const payPaid = (dto.payments ?? []).reduce(
-      (s, p) => s + (p.paidAmount ?? 0),
-      0,
+    const payPaid = roundToTwoDecimalPlaces(
+      (dto.payments ?? []).reduce((s, p) => s + (p.paidAmount ?? 0), 0),
     );
     // Same overpayment guard as create, but only when the ledger is part of
     // this patch (an update without `payments` leaves the stored totals alone).
@@ -3843,7 +3876,8 @@ export class OrderService {
         _sum: { paidAmount: true },
       });
       if (
-        payPaid !== (storedPaid._sum.paidAmount ?? 0) &&
+        payPaid !==
+          roundToTwoDecimalPlaces(toNum(storedPaid._sum.paidAmount)) &&
         !billingSettings.BillingMenu_AllowCollectionOfAmountByOtherUser
       ) {
         throw new PaymentCollectionByOtherUserNotAllowedException(
@@ -3865,18 +3899,25 @@ export class OrderService {
       branchId &&
       effectiveBillGenerated
     ) {
-      const effectivePayments =
+      const effectivePayments: DiscountTdsPaymentRow[] =
         dto.payments !== undefined
           ? dto.payments
-          : await this.prisma.paymentDetails.findMany({
-              where: { orderId: id, tenantId, deletedAt: null },
-              select: {
-                netAmount: true,
-                paidAmount: true,
-                orderDiscount: true,
-                tdsDeduction: true,
-              },
-            });
+          : (
+              await this.prisma.paymentDetails.findMany({
+                where: { orderId: id, tenantId, deletedAt: null },
+                select: {
+                  netAmount: true,
+                  paidAmount: true,
+                  orderDiscount: true,
+                  tdsDeduction: true,
+                },
+              })
+            ).map((p) => ({
+              netAmount: toNum(p.netAmount),
+              paidAmount: toNum(p.paidAmount),
+              orderDiscount: toNum(p.orderDiscount),
+              tdsDeduction: toNum(p.tdsDeduction),
+            }));
 
       // Effective items + their unit prices: the incoming items (re-priced from
       // the branch catalogue) when the patch replaces them, else the stored rows
@@ -3907,7 +3948,7 @@ export class OrderService {
           branchLabTestId: s.branchLabTestId ?? undefined,
           branchLabPanelId: s.branchLabPanelId ?? undefined,
           direct: s.direct ?? undefined,
-          discount: s.discount,
+          discount: toNum(s.discount),
           discountMode: s.discountMode ?? undefined,
           discountValue: s.discountValue ?? undefined,
         }));
@@ -4382,7 +4423,7 @@ export class OrderService {
     // configured amount. No settings (no branch) → trust the body as before.
     const cancellationCharge = settings
       ? settings.CancellationAndRefund_CancellationChargesApplicable
-        ? Math.round(
+        ? roundToTwoDecimalPlaces(
             Number(
               dto.cancellationCharge ??
                 settings.CancellationAndRefund_CancellationChargesAmount ??
@@ -4432,10 +4473,10 @@ export class OrderService {
           refundCharge: true,
         },
       });
-      const netSum = agg._sum.netAmount ?? 0;
-      const paidSum = agg._sum.paidAmount ?? 0;
-      const refundSum = agg._sum.refundAmount ?? 0;
-      const refundChargeSum = agg._sum.refundCharge ?? 0;
+      const netSum = toNum(agg._sum.netAmount);
+      const paidSum = toNum(agg._sum.paidAmount);
+      const refundSum = toNum(agg._sum.refundAmount);
+      const refundChargeSum = toNum(agg._sum.refundCharge);
 
       if (cancellationCharge > paidSum) {
         throw new CancellationChargeExceedsPaidException(
@@ -4594,7 +4635,7 @@ export class OrderService {
     // default. No settings (no branch) → trust the body as before.
     const refundCharge = settings
       ? settings.CancellationAndRefund_RefundChargesApplicable
-        ? Math.round(
+        ? roundToTwoDecimalPlaces(
             Number(
               dto.refundCharge ??
                 settings.CancellationAndRefund_RefundChargesAmount ??
@@ -4613,16 +4654,16 @@ export class OrderService {
           refundCharge: true,
         },
       });
-      const netSum = agg._sum.netAmount ?? 0;
-      const paidSum = agg._sum.paidAmount ?? 0;
-      const refundSum = agg._sum.refundAmount ?? 0;
-      const refundChargeSum = agg._sum.refundCharge ?? 0;
+      const netSum = toNum(agg._sum.netAmount);
+      const paidSum = toNum(agg._sum.paidAmount);
+      const refundSum = toNum(agg._sum.refundAmount);
+      const refundChargeSum = toNum(agg._sum.refundCharge);
 
       // Refundable = current effective paid (respects any cancellation charge and
       // prior refunds).
       const refundable = computeEffectivePaid(
         paidSum,
-        existing.cancellationCharge,
+        toNum(existing.cancellationCharge),
         refundSum,
         refundChargeSum,
       );
@@ -4667,7 +4708,7 @@ export class OrderService {
       const newRefundChargeSum = refundChargeSum + refundCharge;
       const effectivePaid = computeEffectivePaid(
         paidSum,
-        existing.cancellationCharge,
+        toNum(existing.cancellationCharge),
         newRefundSum,
         newRefundChargeSum,
       );
@@ -4679,7 +4720,7 @@ export class OrderService {
           // read "Refunded" / "Partially Refunded" rather than "Not Paid".
           refundStatus: deriveRefundStatus(
             paidSum,
-            existing.cancellationCharge,
+            toNum(existing.cancellationCharge),
             newRefundSum,
             newRefundChargeSum,
           ),
