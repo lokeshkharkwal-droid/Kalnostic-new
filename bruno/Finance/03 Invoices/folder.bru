@@ -1,0 +1,33 @@
+meta {
+  name: 03 Invoices
+  seq: 3
+}
+
+docs {
+  # Finance → Invoices
+
+  Invoice list + lifecycle (`/finance/invoices`; All / Pending / Partial /
+  Completed / Overdue / Cancelled). **Backend-wired** via the `invoice` module.
+
+  Invoices are created ONLY from selected outstanding order records (see
+  **01 Reports/03 Outstanding**). The create endpoint takes a `partyType` (one of
+  the four invoiceable panels — B2B / Referred By / Internal Referral User /
+  External Referral User) plus `sourceOrderIds`; the server re-derives the gross
+  amount and party from those orders (never trusting body amounts), enforces
+  same-party, rejects already-invoiced orders, and derives TDS/net. Completion rule
+  is "Invoice Amount Only": an invoice is Completed once its net amount is fully
+  received (outstanding TDS is tracked separately).
+
+  Endpoints (all under `/invoices`):
+  - `POST /invoices` — create from source orders
+  - `GET /invoices` — list (filters + pagination)
+  - `GET /invoices/summary` — the seven summary-card totals
+  - `GET /invoices/:id` — one invoice + source orders + payments
+  - `GET /invoices/:id/payments` — payment history
+  - `POST /invoices/:id/receive-payment` — record an INVOICE or TDS receipt
+  - `POST /invoices/:id/cancel` — cancel with a reason (blocked once paid)
+
+  Run **Business Auth → Login** first so `businessAccessToken` is populated, and set
+  `invoiceId` (from a create response) + `orderId` (an outstanding order of one
+  party) as collection/environment vars.
+}

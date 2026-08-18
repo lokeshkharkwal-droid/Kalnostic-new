@@ -1,0 +1,31 @@
+meta {
+  name: 01 Billing
+  seq: 1
+}
+
+docs {
+  # Finance → Reports → Billing
+
+  The Billing report (`/finance/reports/billing`), "All" + "User-wise" panels.
+
+  All data sources share ONE scope + financial-allocation layer keyed on the active
+  tab (`dimension`), so for a given tab + filters: **Σ detailed records = metric
+  cards = Σ summary**.
+
+  1. **Detailed records** — `GET /orders/billing-records?dimension=…` (this folder).
+  2. **Metric cards** — `GET /orders/billing-summary?dimension=…` (this folder).
+  3. **User-wise panel** — `GET /orders/billing-summary/by-user` (this folder).
+  4. **B2B / Ref. By / Lab Test / Lab Panel panels** —
+     `GET /orders/billing-summary/grouped?groupBy=…` (this folder).
+
+  `dimension` scopes the dataset per tab (e.g. `b2b` → only B2B orders). For
+  `lab-test` / `lab-panel` the order-level money is allocated across the test/panel
+  lines: gross = line unit price, order discount shared proportionally by net, paid
+  fills the cheapest line first (ascending net, capped at each line's net), TDS
+  shared proportionally by net, due = net − paid.
+
+  Shared filters: `statuses`, `branchId`, `dateFrom`/`dateTo`, `userId`,
+  `referralPanelId`, `referredByDoctorId`, `externalReferralId`,
+  `internalReferralId`, `departmentId`, `categoryId`, `subCategoryId`,
+  `branchLabTestId`, `branchLabPanelId`, `paymentMode`, `search`.
+}

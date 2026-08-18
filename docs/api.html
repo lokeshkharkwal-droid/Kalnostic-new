@@ -585,6 +585,13 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>GET /siteadmin/contact-us</td><td>SiteAdmin · business:read</td><td>list contact submissions (paginated; search over name/mobileNumber/email, from/to createdAt range; returns id/name/organization/mobileNumber/email/message/createdOn)</td></tr>
   <tr><td>GET /siteadmin/contact-us/:id</td><td>SiteAdmin · business:read</td><td>get one contact submission (full record)</td></tr>
   <tr><td>DELETE /siteadmin/contact-us/:id</td><td>SiteAdmin · business:suspend</td><td>soft-delete a contact submission</td></tr>
+  <tr><td>POST /invoices</td><td>Business JWT</td><td>intended <code>billing:manage</code> — create an invoice from selected outstanding order records (server re-derives gross/party from <code>sourceOrderIds</code>; same-party + no-double-invoice enforced)</td></tr>
+  <tr><td>GET /invoices</td><td>Business JWT</td><td>intended <code>billing:read</code> — list invoices (branch-scoped; filters: search/invoiceType/paymentStatus/dueStatus/partyId/date range)</td></tr>
+  <tr><td>GET /invoices/summary</td><td>Business JWT</td><td>intended <code>billing:read</code> — the seven summary-card totals over the filtered set</td></tr>
+  <tr><td>GET /invoices/:id</td><td>Business JWT</td><td>intended <code>billing:read</code> — one invoice + source orders + payment history</td></tr>
+  <tr><td>GET /invoices/:id/payments</td><td>Business JWT</td><td>intended <code>billing:read</code> — invoice payment history</td></tr>
+  <tr><td>POST /invoices/:id/receive-payment</td><td>Business JWT</td><td>intended <code>billing:manage</code> — record an INVOICE or TDS receipt (separate rows per for/mode/ref; capped at outstanding)</td></tr>
+  <tr><td>POST /invoices/:id/cancel</td><td>Business JWT</td><td>intended <code>billing:manage</code> — cancel with a mandatory reason (blocked once payments exist; number never reused)</td></tr>
 </table>
 
 <h2 id="data-model">Data model — models &amp; tiers</h2>

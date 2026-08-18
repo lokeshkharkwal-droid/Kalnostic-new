@@ -1,0 +1,33 @@
+meta {
+  name: Cancel Invoice
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/invoices/{{invoiceId}}/cancel
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "cancelReason": "Raised in error - duplicate invoice"
+  }
+}
+
+docs {
+  Cancel an invoice with a mandatory `cancelReason`. Blocked with
+  `INVOICE_CANCEL_BLOCKED_HAS_PAYMENTS` (409) if any payment was recorded. The
+  invoice stays historically visible (not deleted) so its number is never reused;
+  its source-order links are released so those orders can be invoiced again.
+  `INVOICE_ALREADY_CANCELLED` (409) if already cancelled.
+}

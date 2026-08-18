@@ -18,12 +18,15 @@ params:query {
   ~patientName: john
   ~patientMobile: 98765
   ~status: ORDER
+  ~statuses: ORDER,APPOINTMENT,CANCELLED
   ~appointmentStatus: NEW
   ~paymentStatus: PAID
+  ~paymentMode: CASH
   ~quotationStatus: DRAFT
   ~orderType: WALK_IN
   ~billingType: CASH_CLIENT
   ~patientId: {{patientId}}
+  ~userId: {{personId}}
   ~referredByDoctorId: {{referralDoctorId}}
   ~referralPanelId: {{referralPanelId}}
   ~isB2b: true
@@ -31,10 +34,13 @@ params:query {
   ~externalReferralId: {{externalReferralId}}
   ~branchId: {{branchId}}
   ~isBillGenerated: false
+  ~orderDateType: BACKTRACKED
   ~dateFrom: 2026-07-01
   ~dateTo: 2026-07-31
   ~section: DIAGNOSTICS
   ~departmentId: {{departmentId}}
+  ~categoryId: {{categoryId}}
+  ~subCategoryId: {{subCategoryId}}
   ~branchLabTestId: {{branchLabTestId}}
   ~branchLabPanelId: {{branchLabPanelId}}
   ~sampleStatus: PENDING
@@ -50,7 +56,12 @@ auth:bearer {
 docs {
   Paginated list of orders in the caller's tenant. Each row carries the patient
   ref (with age/gender), the referral refs (doctor/panel/internal/external names),
-  the payment rollups (`grossAmount`/`discountAmount`/`netAmount`/`paidAmount`), the
+  the payment rollups (`grossAmount`/`discountAmount`/`netAmount`/`tdsAmount`/
+  `dueAmount`/`paidAmount`, where `dueAmount = max(0, net − paid)` and `tdsAmount`
+  is the summed TDS withheld), the refund rollups (`refundedAmount` /
+  `refundChargeTotal`) and the order's `refundStatus`
+  (`NONE | PARTIALLY_REFUNDED | FULLY_REFUNDED`, so a refunded order's Status folds
+  to "Refunded" rather than "Not Paid"), the
   active-item count (`itemCount`), the collected-item count (`collectedItemCount`)
   and the `effectiveQuotationStatus`. On the Quotations screen (`isQuotation=true`)
   the quotation expiry is computed **at runtime** from the order date + the branch's
@@ -81,10 +92,19 @@ docs {
     stored `paymentStatus` (derived from the payment ledger — summed `paidAmount`
     vs `netAmount` — and recomputed on every payment write). The appointments list
     payment filter sends this.
+  - `paymentMode` — `CASH` | `CARD` | `UPI` | `WALLET` | `CREDIT` | `BANK_TRANSFER`.
+    Matches orders with a collected payment (`entryType = PAYMENT`) made via this
+    mode; powers the Billing report's Payment Mode filter.
   - `quotationStatus` — `DRAFT` | `CONVERTED` | `EXPIRED`. On the Quotations
     screen (`isQuotation=true`) `EXPIRED` is derived at query time from the
     branch's current validity window: an open `DRAFT` whose `orderDate` is older
     than (now − validity) counts as expired and is excluded from `DRAFT`.
+  - `statuses` — comma-separated multi-status filter (e.g. `ORDER,APPOINTMENT,CANCELLED`);
+    takes precedence over the single `status`. The Finance → Billing reports send it to
+    scope to real bills (every status except `DRAFT`/`QUOTE`) so the metric cards match
+    this list.
+  - `userId` — the order's creator (`Order.createdBy`, a `Person.id`). Powers the
+    Billing "User" filter and the user-wise summary grouping.
   - `orderType` — `WALK_IN` | `APP` | `WEBSITE`.
   - `billingType` — `CASH_CLIENT` | `INSURANCE` | `CORPORATE` |
     `GOVERNMENT_SCHEME` | `TPA`.
@@ -97,11 +117,20 @@ docs {
     (`referralPanelId` not null); `false` → only orders with no referral panel.
     Powers the order-console B2B (Yes/No) filter.
   - `isBillGenerated` — `true` | `false`.
+  - `orderDateType` — `CURRENT` | `BACKTRACKED` | `ADVANCE_DATED`. Matches the
+    order's stored `orderDateType` (server-derived from `orderDate` vs. its
+    creation day): back-dated orders are `BACKTRACKED`, future-dated ones are
+    `ADVANCE_DATED`, and same-day ones are `CURRENT`. Lets reports scope to
+    back-/advance-dated orders.
   - `dateFrom` / `dateTo` — inclusive ISO-8601 date bounds on `orderDate`.
   - `section` — `DIAGNOSTICS` | `OPD` | `RADIOLOGY`; keeps only orders that carry
     that section (the order-console Diagnostics tab sends `DIAGNOSTICS`).
   - `departmentId` — matches orders with an item whose test/panel carries this
     (logical) department id.
+  - `categoryId` — matches orders with an item whose test/panel carries this
+    (logical) category id.
+  - `subCategoryId` — matches orders with a lab test carrying this (logical)
+    sub-category id (panels have no sub-category).
   - `branchLabTestId` / `branchLabPanelId` — matches orders containing that item.
   - `sampleStatus` — `PENDING` (no items collected) | `PARTIAL` (some collected) |
     `COLLECTED` (all collected), derived from each item's `collectedAt`.

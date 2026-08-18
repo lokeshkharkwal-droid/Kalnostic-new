@@ -1,0 +1,27 @@
+meta {
+  name: 02 Collection
+  seq: 2
+}
+
+docs {
+  # Finance → Reports → Collection
+
+  The realization view (`/finance/reports/collection`) — money actually received,
+  broken down by payment mode. Reuses the Billing dimension + financial-allocation
+  layer with `report:'collection'`: the dataset is scoped to orders with a
+  collected payment, and `paid` is the sum of the five physical receipt modes.
+
+  Data sources (all over the SAME scoped dataset, so `Σ records = cards = Σ summary`
+  and `Cash + UPI + Bank Transfer + Debit Card + Credit Card = Paid`):
+
+  1. **Metric cards** — `GET /orders/collection-summary?dimension=…` (incl. mode totals).
+  2. **Detailed records** — `GET /orders/collection-records?dimension=…` (per-row mode breakdown).
+  3. **User-wise** — `GET /orders/collection-summary/by-user`.
+  4. **B2B / Ref. By / Int/Ext Referral / Lab Test / Lab Panel / Dept / Category /
+     Subcategory** — `GET /orders/collection-summary/grouped?groupBy=…`.
+
+  Payment-mode mapping (product decision): backend `CASH`→Cash, `UPI`→UPI,
+  `BANK_TRANSFER`→Bank Transfer, **`CARD`→Debit Card**, **`CREDIT`→Credit Card**.
+  `WALLET` is excluded from `paid` (kept but disabled in the UI). For the item-level
+  dimensions each order's paid + modes are allocated to its test/panel lines.
+}

@@ -1,0 +1,31 @@
+meta {
+  name: Finance
+  seq: 50
+}
+
+docs {
+  # Finance module
+
+  API docs for the business **Finance** module (`kaltros-fe` `/finance/*`),
+  organised to mirror the finance sidebar. Each subfolder maps to a sidebar
+  feature:
+
+  - **01 Reports** — Billing / Collection / Outstanding / Refund / Cancel report screens.
+  - **02 Billings** — the billing list (OPD / Diagnostics / Radiology / IPD / Pharmacy).
+  - **03 Invoices** — invoice list + lifecycle.
+  - **04 Payments** — payment list by mode.
+  - **05 Settlements** — B2B settlements.
+  - **06 Customer Programs** — Wallet / Privilege Cards / Loyalty Points.
+  - **07 Financial Settings** — wallet / privilege / loyalty / invoice / TDS / settlement settings.
+  - **08 Incident Report** — incident create + queue.
+
+  **Build status.** Only **Reports → Billing** is backend-wired today (Phase 1:
+  the "All" + "User-wise" panels). Its detailed records come from the general
+  `GET /orders` endpoint (documented under **42 Orders**, not duplicated here);
+  its metric cards + user-wise aggregate come from the two finance-specific
+  endpoints in **01 Reports/01 Billing**. Every other subfolder is a placeholder
+  for endpoints not built yet (those screens are currently frontend-only / mock) —
+  add their requests here as they are implemented.
+
+  Run **Business Auth → Login** first so `businessAccessToken` is populated.
+}

@@ -1,0 +1,30 @@
+meta {
+  name: Invoice Summary
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/invoices/summary
+  body: none
+  auth: bearer
+}
+
+params:query {
+  ~invoiceType: B2B
+  ~paymentStatus: PENDING
+  ~dueStatus: OVERDUE
+  ~dateFrom: 2026-08-01
+  ~dateTo: 2026-08-31
+  ~branchId: {{branchId}}
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  The seven invoice summary-card totals over the same scoped/filtered dataset the
+  list paginates (so cards reconcile with the list): `grossAmount`, `tdsAmount`,
+  `netAmount`, `paidInvoice`, `paidTds`, `outstandingInvoice`, `outstandingTds`.
+}

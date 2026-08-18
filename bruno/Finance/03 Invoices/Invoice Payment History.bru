@@ -1,0 +1,23 @@
+meta {
+  name: Invoice Payment History
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/invoices/{{invoiceId}}/payments
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  List all receipts posted against the invoice (newest first): each row's
+  `paymentFor` (INVOICE / TDS), `amount`, `paymentMode`, `reference`,
+  `attachmentUrl`, `paymentDate`, `notes`, `createdBy` (Person id), and
+  `createdByName` (that person's resolved display name, for the "By" column).
+  404 `INVOICE_NOT_FOUND` if the invoice does not resolve.
+}

@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { OutsourceCenter, OutsourceCenterContact, Prisma } from '@prisma/client';
+import {
+  OutsourceCenter,
+  OutsourceCenterContact,
+  Prisma,
+} from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import { extname, join } from 'path';

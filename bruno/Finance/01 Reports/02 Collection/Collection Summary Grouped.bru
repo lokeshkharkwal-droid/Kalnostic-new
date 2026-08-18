@@ -1,0 +1,52 @@
+meta {
+  name: Collection Summary Grouped
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/orders/collection-summary/grouped?statuses=ORDER,APPOINTMENT,CANCELLED&groupBy=b2b
+  body: none
+  auth: bearer
+}
+
+params:query {
+  statuses: ORDER,APPOINTMENT,CANCELLED
+  groupBy: b2b
+  ~dateFrom: 2026-07-01
+  ~dateTo: 2026-07-31
+  ~branchId: {{branchId}}
+  ~paymentMode: UPI
+  ~search: john
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Grouped Collection aggregate powering the dimension panels — the realization view
+  of `/orders/billing-summary/grouped` (same shared grouping layer with
+  `report:'collection'`). `groupBy` = `b2b` | `ref-by` | `internal-referral` |
+  `external-referral` | `int-ref-user` | `ext-ref-user` | `outsource` (order-level) or
+  `lab-test` | `lab-panel` | `department` | `category` | `subcategory` (item-level,
+  allocated). Grouping matches the Billing endpoint:
+
+  - `lab-test` / `lab-panel` group by the stable test/panel **code** (same test
+    across pricing lists → one row); panels group only panel lines.
+  - `department` / `category` / `subcategory` resolve the classification as **branch
+    scalar ?? master catalogue** (via `sourceLabTestId` / `sourceLabPanelId`); both
+    tests and panels contribute, no individual test/panel rows.
+  - `internal-referral` / `external-referral` are re-sourced to accession
+    `SampleTransfer`s: internal groups by the **destination branch**, external by the
+    **external partner**; money is order-level.
+  - `int-ref-user` / `ext-ref-user` group by the internal / external referral **user**
+    from the order's Referral Details (`internalReferralId` / `externalReferralId`).
+  - `outsource` groups by the **outsource center** of the order's accession
+    `SampleTransfer` (`kind=OUTSOURCE`).
+
+  Each row returns the totals + the five-mode payment breakdown (`cash` / `upi` /
+  `bankTransfer` / `debitCard` / `creditCard`, WALLET excluded), where
+  `Σ modes === paid`. `Σ groups` reconciles with `/orders/collection-summary` and
+  `/orders/collection-records` for the same dimension + filters.
+}

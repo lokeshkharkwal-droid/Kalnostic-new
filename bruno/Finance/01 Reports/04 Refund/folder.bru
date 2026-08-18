@@ -1,0 +1,24 @@
+meta {
+  name: 04 Refund
+  seq: 4
+}
+
+docs {
+  # Finance → Reports → Refund
+
+  The Refund report (`/finance/reports/refund`) — orders that have a **refund** (a
+  `PaymentDetails` row with `entryType = REFUND`, from Billing → Refund /
+  Cancel-with-Refund). Reuses the SAME dimension/allocation layer as Billing with
+  `report:'refund'`, plus a **`refundAmount`** figure (Σ of the REFUND rows'
+  `refundAmount`). So for a given tab + filters: **Σ records = cards = Σ summary**.
+
+  1. **Detailed records** — `GET /orders/refund-records?dimension=…` (adds a Refund
+     Amount column on the frontend).
+  2. **Metric cards** — `GET /orders/refund-summary?dimension=…` (adds `refundAmount`).
+  3. **User-wise panel** — `GET /orders/refund-summary/by-user`.
+  4. **Grouped panels** — `GET /orders/refund-summary/grouped?groupBy=…`.
+
+  `dimension` / `groupBy` are the SAME set as Billing (incl. `outsource`). Refund +
+  cancellation-charge figures are allocated to item-dimension lines proportionally by
+  net (so lab-test/department tabs reconcile). Same shared filters as Billing.
+}

@@ -30,9 +30,9 @@ tests {
 docs {
   Refund part of an order's paid amount **without** cancelling it (the standalone
   "Refund Without Cancellation" action). Writes a REFUND row to the payment ledger
-  and recomputes `paymentStatus` off the new effective paid amount. Works on active
-  **and** already-cancelled orders (use it to top up a partial refund made at
-  cancellation time).
+  and recomputes `paymentStatus` **and** `refundStatus` off the new effective paid
+  amount. Works on active **and** already-cancelled orders (use it to top up a
+  partial refund made at cancellation time).
 
   Body:
   - `amount` (minor units, required, ≥1) — returned to the patient.
@@ -53,5 +53,8 @@ docs {
     (`refundable − refundCharge`), else 422 `PARTIAL_REFUND_NOT_ALLOWED`.
 
   The refunded total surfaces in the billing list's `refundedAmount`
-  ("Refund Provided" column).
+  ("Refund Provided" column). The order's `refundStatus`
+  (`NONE | PARTIALLY_REFUNDED | FULLY_REFUNDED`) is also updated, so the billing /
+  refund lists fold the refund state into the Status label ("Refunded" /
+  "Partially Refunded") instead of showing "Not Paid".
 }

@@ -459,8 +459,16 @@ export class LabReportService {
         branchId: true,
         orderItem: {
           select: {
-            branchLabTest: { select: { departmentId: true, categoryId: true, subCategoryId: true } },
-            branchLabPanel: { select: { departmentId: true, categoryId: true } },
+            branchLabTest: {
+              select: {
+                departmentId: true,
+                categoryId: true,
+                subCategoryId: true,
+              },
+            },
+            branchLabPanel: {
+              select: { departmentId: true, categoryId: true },
+            },
           },
         },
       },
@@ -521,9 +529,11 @@ export class LabReportService {
 
     const basis = settings.signatoryBasis;
     const classificationId =
-      basis === 'category' ? categoryId
-      : basis === 'subCategory' ? subCategoryId
-      : departmentId;
+      basis === 'category'
+        ? categoryId
+        : basis === 'subCategory'
+          ? subCategoryId
+          : departmentId;
     // Report the axis actually used back to the caller as `departmentId` for
     // backward compatibility with the response shape — callers only ever
     // used this field to know "is there a governing classification at all",
@@ -534,7 +544,13 @@ export class LabReportService {
       tenantId,
       isSignatory: true,
       deletedAt: null,
-      type: { in: ['USER', 'CONSULTANT_DOCTOR', 'REPORTING_DOCTOR'] as PersonMappingType[] },
+      type: {
+        in: [
+          'USER',
+          'CONSULTANT_DOCTOR',
+          'REPORTING_DOCTOR',
+        ] as PersonMappingType[],
+      },
       OR: [{ branchId: report.branchId }, { branchId: null }],
     };
     const mappings =
@@ -570,50 +586,71 @@ export class LabReportService {
       .filter((m) => m.type === 'USER')
       .map((m) => m.personId);
     const doctorIds = winners
-      .filter((m) => m.type === 'CONSULTANT_DOCTOR' || m.type === 'REPORTING_DOCTOR')
+      .filter(
+        (m) => m.type === 'CONSULTANT_DOCTOR' || m.type === 'REPORTING_DOCTOR',
+      )
       .map((m) => m.personId);
 
     const [persons, doctors] = await Promise.all([
       userIds.length
         ? this.prisma.person.findMany({
             where: { id: { in: userIds }, deletedAt: null },
-            select: { id: true, firstName: true, middleName: true, lastName: true, designation: true },
+            select: {
+              id: true,
+              firstName: true,
+              middleName: true,
+              lastName: true,
+              designation: true,
+            },
           })
         : Promise.resolve([]),
       doctorIds.length
         ? this.prisma.doctor.findMany({
             where: { id: { in: doctorIds }, tenantId, deletedAt: null },
-            select: { id: true, firstName: true, lastName: true, signatoryDesignation: true, registrationCouncil: true },
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              signatoryDesignation: true,
+              registrationCouncil: true,
+            },
           })
         : Promise.resolve([]),
     ]);
     const personById = new Map(persons.map((p) => [p.id, p]));
     const doctorById = new Map(doctors.map((d) => [d.id, d]));
 
-    const candidates: LabReportSignatoryCandidate[] = winners.map((m, index) => {
-      if (m.type === 'USER') {
-        const p = personById.get(m.personId);
+    const candidates: LabReportSignatoryCandidate[] = winners.map(
+      (m, index) => {
+        if (m.type === 'USER') {
+          const p = personById.get(m.personId);
+          return {
+            slot: (index + 1) as 1 | 2 | 3,
+            priority: m.priority,
+            personId: m.personId,
+            type: 'USER',
+            displayName: p
+              ? fullName([p.firstName, p.middleName, p.lastName])
+              : '(Unavailable)',
+            designation: p?.designation ?? null,
+            resolvable: Boolean(p),
+          };
+        }
+        const d = doctorById.get(m.personId);
         return {
           slot: (index + 1) as 1 | 2 | 3,
           priority: m.priority,
           personId: m.personId,
-          type: 'USER',
-          displayName: p ? fullName([p.firstName, p.middleName, p.lastName]) : '(Unavailable)',
-          designation: p?.designation ?? null,
-          resolvable: Boolean(p),
+          type: m.type as 'CONSULTANT_DOCTOR' | 'REPORTING_DOCTOR',
+          displayName: d
+            ? fullName([d.firstName, d.lastName])
+            : '(Unavailable)',
+          designation:
+            d?.signatoryDesignation ?? d?.registrationCouncil ?? null,
+          resolvable: Boolean(d),
         };
-      }
-      const d = doctorById.get(m.personId);
-      return {
-        slot: (index + 1) as 1 | 2 | 3,
-        priority: m.priority,
-        personId: m.personId,
-        type: m.type as 'CONSULTANT_DOCTOR' | 'REPORTING_DOCTOR',
-        displayName: d ? fullName([d.firstName, d.lastName]) : '(Unavailable)',
-        designation: d?.signatoryDesignation ?? d?.registrationCouncil ?? null,
-        resolvable: Boolean(d),
-      };
-    });
+      },
+    );
 
     return { departmentId: classificationId, candidates };
   }
@@ -1004,10 +1041,18 @@ export class LabReportService {
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.requireReport(id, tenantId, activeBranchId);
     if (!report.labTestId) {
-      return { usefulFor: null, interpretation: null, limitations: null, references: null };
+      return {
+        usefulFor: null,
+        interpretation: null,
+        limitations: null,
+        references: null,
+      };
     }
 
-    const settings = await this.technicianSettingsService.getForBranch(tenantId, activeBranchId);
+    const settings = await this.technicianSettingsService.getForBranch(
+      tenantId,
+      activeBranchId,
+    );
     const patch: { usefulFor?: string; interpretationOfResults?: string } = {};
     if (settings.isUsefulForEditable && dto.usefulFor !== undefined) {
       patch.usefulFor = dto.usefulFor;
@@ -1547,37 +1592,63 @@ export class LabReportService {
   private async resolveStoredSignatories(
     report: Pick<
       LabReportDetailWithContent,
-      | 'signatoryAuthority1Id' | 'signatoryAuthority1Type'
-      | 'signatoryAuthority2Id' | 'signatoryAuthority2Type'
-      | 'signatoryAuthority3Id' | 'signatoryAuthority3Type'
+      | 'signatoryAuthority1Id'
+      | 'signatoryAuthority1Type'
+      | 'signatoryAuthority2Id'
+      | 'signatoryAuthority2Type'
+      | 'signatoryAuthority3Id'
+      | 'signatoryAuthority3Type'
     >,
     tenantId: string,
   ): Promise<SigningAuthorityDto[]> {
     const slots = [
-      { id: report.signatoryAuthority1Id, type: report.signatoryAuthority1Type },
-      { id: report.signatoryAuthority2Id, type: report.signatoryAuthority2Type },
-      { id: report.signatoryAuthority3Id, type: report.signatoryAuthority3Type },
-    ].filter(
-      (s): s is { id: string; type: PersonMappingType } => Boolean(s.id && s.type),
+      {
+        id: report.signatoryAuthority1Id,
+        type: report.signatoryAuthority1Type,
+      },
+      {
+        id: report.signatoryAuthority2Id,
+        type: report.signatoryAuthority2Type,
+      },
+      {
+        id: report.signatoryAuthority3Id,
+        type: report.signatoryAuthority3Type,
+      },
+    ].filter((s): s is { id: string; type: PersonMappingType } =>
+      Boolean(s.id && s.type),
     );
     if (slots.length === 0) return [];
 
     const userIds = slots.filter((s) => s.type === 'USER').map((s) => s.id);
     const doctorIds = slots
-      .filter((s) => s.type === 'CONSULTANT_DOCTOR' || s.type === 'REPORTING_DOCTOR')
+      .filter(
+        (s) => s.type === 'CONSULTANT_DOCTOR' || s.type === 'REPORTING_DOCTOR',
+      )
       .map((s) => s.id);
 
     const [persons, doctors] = await Promise.all([
       userIds.length
         ? this.prisma.person.findMany({
             where: { id: { in: userIds }, deletedAt: null },
-            select: { id: true, firstName: true, middleName: true, lastName: true, designation: true },
+            select: {
+              id: true,
+              firstName: true,
+              middleName: true,
+              lastName: true,
+              designation: true,
+            },
           })
         : Promise.resolve([]),
       doctorIds.length
         ? this.prisma.doctor.findMany({
             where: { id: { in: doctorIds }, tenantId, deletedAt: null },
-            select: { id: true, firstName: true, lastName: true, signatoryDesignation: true, registrationCouncil: true },
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              signatoryDesignation: true,
+              registrationCouncil: true,
+            },
           })
         : Promise.resolve([]),
     ]);
@@ -1599,7 +1670,8 @@ export class LabReportService {
         if (d) {
           signatories.push({
             name: fullName([d.firstName, d.lastName]),
-            designation: d.signatoryDesignation ?? d.registrationCouncil ?? undefined,
+            designation:
+              d.signatoryDesignation ?? d.registrationCouncil ?? undefined,
           });
         }
       }
@@ -2094,11 +2166,23 @@ export class LabReportService {
     dto: ApproveReportDto,
   ): Promise<{
     signatoryAuthority1Id: string | null;
-    signatoryAuthority1Type: 'USER' | 'CONSULTANT_DOCTOR' | 'REPORTING_DOCTOR' | null;
+    signatoryAuthority1Type:
+      | 'USER'
+      | 'CONSULTANT_DOCTOR'
+      | 'REPORTING_DOCTOR'
+      | null;
     signatoryAuthority2Id: string | null;
-    signatoryAuthority2Type: 'USER' | 'CONSULTANT_DOCTOR' | 'REPORTING_DOCTOR' | null;
+    signatoryAuthority2Type:
+      | 'USER'
+      | 'CONSULTANT_DOCTOR'
+      | 'REPORTING_DOCTOR'
+      | null;
     signatoryAuthority3Id: string | null;
-    signatoryAuthority3Type: 'USER' | 'CONSULTANT_DOCTOR' | 'REPORTING_DOCTOR' | null;
+    signatoryAuthority3Type:
+      | 'USER'
+      | 'CONSULTANT_DOCTOR'
+      | 'REPORTING_DOCTOR'
+      | null;
   }> {
     const { candidates } = await this.getSignatoryCandidatesInternal(
       id,
@@ -2110,7 +2194,10 @@ export class LabReportService {
     const resolveSlot = (
       personId: string | undefined,
       required: boolean,
-    ): { id: string | null; type: 'USER' | 'CONSULTANT_DOCTOR' | 'REPORTING_DOCTOR' | null } => {
+    ): {
+      id: string | null;
+      type: 'USER' | 'CONSULTANT_DOCTOR' | 'REPORTING_DOCTOR' | null;
+    } => {
       if (!personId) {
         if (required) throw new InvalidSignatoryAuthorityException('(missing)');
         return { id: null, type: null };
@@ -2124,10 +2211,7 @@ export class LabReportService {
 
     // Slot 1 is mandatory only when the department actually has ≥1 candidate;
     // an empty/misconfigured department must not block approval.
-    const slot1 = resolveSlot(
-      dto.signatoryAuthority1Id,
-      candidates.length > 0,
-    );
+    const slot1 = resolveSlot(dto.signatoryAuthority1Id, candidates.length > 0);
     const slot2 = resolveSlot(dto.signatoryAuthority2Id, false);
     const slot3 = resolveSlot(dto.signatoryAuthority3Id, false);
 
