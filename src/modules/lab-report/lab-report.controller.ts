@@ -131,6 +131,7 @@ export class LabReportController {
       tenantId,
       profile.branchId,
       dto.templateId,
+      dto.orderItemIds,
     );
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(

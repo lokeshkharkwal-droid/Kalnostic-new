@@ -30,4 +30,8 @@ docs {
 
   Requires an `{{orderId}}` that has at least one lab report (throws
   `LabReportNotFoundException` otherwise).
+
+  An optional `orderItemIds` (array of `OrderItem` UUIDs) can be added to the body
+  to scope the consolidated PDF to only those order items' reports — see
+  `50 Technician Reporting/Print All Order Reports.bru` for the full contract.
 }

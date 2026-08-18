@@ -1673,6 +1673,8 @@ export class OrderService {
         return this.buildTrfContext(order);
       case 'lab_quotation_print':
         return this.buildQuotationContext(order);
+      case 'order_barcode_print':
+        return this.buildOrderBarcodeContext(order);
     }
   }
 
@@ -1854,6 +1856,36 @@ export class OrderService {
         ...this.referralVariables(order),
       },
       sections: { items: this.itemRows(order) },
+    };
+  }
+
+  /**
+   * `order_barcode_print` — order-level barcode label: the order's own
+   * identifier (`orderCode`) plus a short patient/test summary. Variable names
+   * (`barcode`, `order_code`, `patient_name`, `test_names`) intentionally mirror
+   * `AccessionSampleService.buildLabelVariables` so template authors reuse
+   * familiar merge fields; this is a distinct type from that per-sample label
+   * (see `ORDER_PRINT_TYPES` doc comment).
+   */
+  private buildOrderBarcodeContext(order: OrderWithRelations): GeneratePdfDto {
+    return {
+      variables: {
+        order_code: order.orderCode,
+        barcode: order.orderCode,
+        order_date: this.dateOnly(order.orderDate),
+        branch_name: order.branch?.name ?? '',
+        test_names: order.items
+          .map(
+            (it) =>
+              it.branchLabTest?.testName ??
+              it.branchLabPanel?.panelName ??
+              it.direct ??
+              '',
+          )
+          .filter(Boolean)
+          .join(', '),
+        ...this.patientVariables(order),
+      },
     };
   }
 
