@@ -4,6 +4,7 @@ import {
   QuotationStatus,
   RefundStatus,
 } from '@prisma/client';
+import { roundToTwoDecimalPlaces } from '../../../common/utils';
 
 /**
  * Derive an order's {@link PaymentStatus} from its payment ledger totals — the
@@ -38,7 +39,9 @@ export function computeEffectivePaid(
   refundSum: number,
   refundChargeSum: number,
 ): number {
-  return Math.max(0, p - cancellationCharge - refundSum - refundChargeSum);
+  return roundToTwoDecimalPlaces(
+    Math.max(0, p - cancellationCharge - refundSum - refundChargeSum),
+  );
 }
 
 /**
@@ -259,7 +262,9 @@ export const ORDER_LIST_INCLUDE = {
   referralPanel: {
     select: { id: true, name: true, code: true, directorMobile: true },
   },
-  internalReferral: { select: { id: true, fullName: true, mobileNumber: true } },
+  internalReferral: {
+    select: { id: true, fullName: true, mobileNumber: true },
+  },
   externalReferral: { select: { id: true, name: true, mobileNumber: true } },
   appointment: { select: { id: true, status: true, code: true } },
   items: {

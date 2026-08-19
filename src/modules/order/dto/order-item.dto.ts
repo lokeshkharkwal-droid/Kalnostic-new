@@ -10,7 +10,7 @@ import {
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { DiscountMode } from '@prisma/client';
-import { roundMinorUnits } from '../../../common/utils';
+import { roundToTwoDecimalPlacesTransform } from '../../../common/utils';
 
 /**
  * One catalogue entry on an order. Exactly one of `branchLabTestId` /
@@ -40,13 +40,13 @@ export class OrderItemDto {
   direct?: string;
 
   /**
-   * Per-line discount in minor units (0 = none). Defaults to 0 when omitted.
-   * Accepts a float (e.g. from percentage math) and is rounded to a whole minor
-   * unit, since a fraction of a minor unit isn't representable.
+   * Per-line discount in rupees, up to 2 decimal places (0 = none). Defaults to
+   * 0 when omitted. Accepts a value with more precision than currency allows
+   * (e.g. from percentage math) and rounds it to the nearest paisa.
    */
   @IsOptional()
-  @Transform(roundMinorUnits)
-  @IsNumber()
+  @Transform(roundToTwoDecimalPlacesTransform)
+  @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   discount?: number;
 
