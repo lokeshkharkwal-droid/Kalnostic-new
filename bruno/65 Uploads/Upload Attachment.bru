@@ -1,0 +1,40 @@
+meta {
+  name: Upload Attachment
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/uploads/attachment
+  body: multipartForm
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:multipart-form {
+  file: @file(C:\path\to\receipt.pdf)
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.url) bru.setEnvVar("attachmentUrl", data.url);
+}
+
+docs {
+  Upload one file to S3 and get its public URL. Form field name is **`file`**.
+
+  Accepted types: PDF, JPG/JPEG, PNG. Max **10 MB**, otherwise 422
+  `INVALID_UPLOAD_FILE`. Returns `{ "url": "https://s3-<region>.amazonaws.com/<bucket>/<key>" }`
+  — store that string wherever an attachment URL is kept (e.g. pass it as
+  `attachmentUrl` to **Receive Invoice Payment** / **Settle Settlement**).
+
+  500 `UPLOAD_NOT_CONFIGURED` if the server's AWS_BUCKET / AWS_ACCESS_KEY /
+  AWS_SECRET_KEY are unset. The bucket/prefix must be publicly readable (bucket
+  policy) for the returned URL to preview in a browser.
+
+  Edit the `@file(...)` path to a real file on your machine before sending. Run
+  **Business Auth → Login** first so `{{businessAccessToken}}` is set.
+}

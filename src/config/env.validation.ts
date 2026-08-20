@@ -35,6 +35,13 @@ export const envValidationSchema = Joi.object({
     .integer()
     .min(1)
     .default(10 * 1024 * 1024),
+  // S3 attachment uploads (POST /uploads/attachment). All optional so the app
+  // still boots without them; the endpoint throws UPLOAD_NOT_CONFIGURED if a
+  // required var is missing when an upload is actually attempted.
+  AWS_REGION: Joi.string().default('ap-southeast-1'),
+  AWS_BUCKET: Joi.string().allow('').optional(),
+  AWS_ACCESS_KEY: Joi.string().allow('').optional(),
+  AWS_SECRET_KEY: Joi.string().allow('').optional(),
   // When true, PrismaService sets app.current_tenant_id per request so Postgres
   // RLS (prisma/rls.sql) enforces tenant isolation. Requires a non-owner DB role
   // and rls.sql applied. Default false — isolation then relies on where-clauses.

@@ -1,0 +1,21 @@
+meta {
+  name: 65 Uploads
+  seq: 65
+}
+
+docs {
+  # Uploads
+
+  Generic S3-backed file upload (`uploads` module). Business-authenticated; the
+  tenant comes from the JWT and namespaces the S3 key. The endpoint pushes the
+  file to S3 and returns only its public URL — no DB row is written. Callers
+  persist that URL string into their own `attachmentUrl` field (e.g. finance
+  **Receive Invoice Payment** and **Settle Settlement**).
+
+  Endpoint:
+  - `POST /uploads/attachment` — upload one file (multipart `file`), returns `{ url }`.
+
+  Requires `AWS_REGION` / `AWS_BUCKET` / `AWS_ACCESS_KEY` / `AWS_SECRET_KEY` in the
+  server env; otherwise 500 `UPLOAD_NOT_CONFIGURED`. Run **Business Auth → Login**
+  first so `businessAccessToken` is populated.
+}
