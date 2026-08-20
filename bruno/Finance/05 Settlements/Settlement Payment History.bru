@@ -1,0 +1,22 @@
+meta {
+  name: Settlement Payment History
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/finance/settlements/{{settlementId}}/payments
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  A settlement's payout history (newest first): amount, `payoutMode`, `reference`,
+  `attachmentUrl`, `paymentDate`, `notes`, and `createdByName` (the recording user,
+  resolved for the "By" column). History is append-only. 404
+  `SETTLEMENT_NOT_FOUND` if the settlement does not resolve.
+}

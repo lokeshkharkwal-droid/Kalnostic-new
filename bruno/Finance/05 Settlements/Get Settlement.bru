@@ -1,0 +1,21 @@
+meta {
+  name: Get Settlement
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/finance/settlements/{{settlementId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Fetch one settlement (Overview) with its source-order links (each carrying the
+  order's collected/gross/discount/net/due snapshot) and payout history. Returns
+  404 `SETTLEMENT_NOT_FOUND` if missing / soft-deleted / another tenant.
+}

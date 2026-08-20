@@ -1,0 +1,39 @@
+meta {
+  name: Approve Settlement
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/finance/settlements/{{settlementId}}/approve
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "approvedAmount": 115000,
+    "notes": "Verified against collection report",
+    "attachmentUrl": "https://example.com/approval.pdf"
+  }
+}
+
+docs {
+  Approve a settlement (doc §7.2). Allowed from `PENDING_APPROVAL` or `REJECTED`
+  (resubmit). `approvedAmount` is an optional override (defaults to the proposed
+  amount set at creation = the collected basis); it can never be below the amount
+  already settled, and cannot exceed the order's collected amount not already
+  committed to OTHER non-rejected settlements (so total settled ≤ collected).
+  Records the approver, timestamp, notes and attachment; status → `APPROVED` (or
+  `PARTIALLY_SETTLED`/`SETTLED` if payouts already exist).
+  Errors: 404 `SETTLEMENT_NOT_FOUND`, 409 `SETTLEMENT_INVALID_STATUS`,
+  422 `SETTLEMENT_EDIT_BLOCKED`, 422 `SETTLEMENT_APPROVED_EXCEEDS_BASIS`.
+}

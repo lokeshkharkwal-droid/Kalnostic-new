@@ -298,6 +298,7 @@ enum AuditModule {
   CRITICAL_ALERT
   OUT_OF_RANGE_FLAG
   INVOICE // Finance invoices (create / receive payment / cancel)
+  SETTLEMENT // Finance settlements (create / approve / reject / settle / edit)
   DELTA_CHECK
   SCHEDULED_TEST
   INVENTORY_USAGE
@@ -4634,6 +4635,11 @@ model BillingSetting {
   invoiceResetCycle BillingInvoiceResetCycle @default(YEARLY) @map("invoice_reset_cycle")
   receiptFooter     String?                  @map("receipt_footer")
 
+  // Settlement numbering — drawn atomically by the settlement module (mirrors the
+  // invoice counter above). A settlement consolidates collected referral amounts.
+  settlementPrefix     String @default("STL-") @map("settlement_prefix")
+  nextSettlementNumber Int    @default(1) @map("next_settlement_number")
+
   gstMode            GstMode @default(INCLUSIVE) @map("gst_mode")
   defaultGstPercent  Int     @default(18) @map("default_gst_percent")
   counterDiscountMax Int     @default(10) @map("counter_discount_max")
@@ -5820,6 +5826,10 @@ model Order {
   // rls.sql), which is the double-invoice guard.
   invoiceLinks InvoiceSourceOrder[]
 
+  // Settlement links for this order's payments (back-relation, keyed via the
+  // denormalized orderId). Settlements are per-payment; this is context/reporting.
+  settlementLinks SettlementSourcePayment[]
+
   createdBy String?   @map("created_by")
   updatedBy String?   @map("updated_by")
   createdAt DateTime  @default(now()) @map("created_at")
@@ -6007,6 +6017,178 @@ model InvoicePayment {
   @@index([paymentFor])
   @@index([deletedAt])
   @@map("invoice_payments")
+}
+
+// ── Settlement enums ─────────────────────────────────────────────────────────────
+
+/// Which of the four referral parties a settlement pays out. Chosen by the
+/// Collection report panel the user creates the settlement from; the server
+/// resolves the party from the matching Order FK (mirrors InvoicePartyType).
+enum SettlementPartyType {
+  B2B // Order.referralPanelId -> ReferralPanel
+  REFERRED_BY // Order.referredByDoctorId -> ReferralDoctor
+  INTERNAL_REFERRAL_USER // Order.internalReferralId -> InternalReferral
+  EXTERNAL_REFERRAL_USER // Order.externalReferralId -> ExternalReferral
+}
+
+/// Settlement approval + payout lifecycle. A new settlement enters PENDING_APPROVAL
+/// and cannot be settled before approval. Once APPROVED, partial payouts accumulate
+/// (PARTIALLY_SETTLED) until the cumulative settled amount equals the approved
+/// amount (SETTLED). REJECTED settlements may be edited and resubmitted.
+enum SettlementStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  PARTIALLY_SETTLED
+  SETTLED
+}
+
+/// Payout mode captured per settlement-payment transaction (doc §8). Distinct from
+/// the order-level PaymentMode (which lacks CHEQUE) and ReferralPaymentMode (which
+/// lacks UPI/CARD).
+enum SettlementPayoutMode {
+  BANK_TRANSFER
+  UPI
+  CHEQUE
+  CASH
+  CARD
+}
+
+// ── Settlement models ────────────────────────────────────────────────────────────
+
+/// A consolidation of selected collection order records for one referral party,
+/// settled (paid out) by the business. Tenant-scoped + branch-level, soft delete.
+/// The financial basis is the COLLECTED (paid) amount of the source records; all
+/// money is whole-rupee integers (see order.service `orderLevelFigures`). Party
+/// name/mobile are snapshot at creation. Balance is derived (approvedAmount −
+/// settledAmount), not stored.
+model Settlement {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  settlementNo   String   @map("settlement_no")
+  settlementDate DateTime @default(now()) @map("settlement_date")
+
+  // Source collection period (min/max order date of the source records).
+  periodFrom DateTime @map("period_from")
+  periodTo   DateTime @map("period_to")
+
+  // Party — server-derived from the source orders (same-party enforced).
+  partyType   SettlementPartyType @map("party_type")
+  partyId     String              @map("party_id")
+  partyName   String              @map("party_name")
+  partyMobile String?             @map("party_mobile")
+
+  // Money (whole rupees). Snapshots of the selected collection records.
+  grossAmount    Int @default(0) @map("gross_amount")
+  discountAmount Int @default(0) @map("discount_amount")
+  netAmount      Int @default(0) @map("net_amount")
+  paidAmount     Int @default(0) @map("paid_amount")
+  dueAmount      Int @default(0) @map("due_amount")
+
+  // Approved settlement liability (proposed = paidAmount at creation; confirmable
+  // at approval) and the cumulative amount actually paid out via settle actions.
+  approvedAmount Int @default(0) @map("approved_amount")
+  settledAmount  Int @default(0) @map("settled_amount")
+
+  status SettlementStatus @default(PENDING_APPROVAL)
+  notes  String?
+
+  // Approval / rejection trail.
+  approvedBy            String?   @map("approved_by")
+  approvedAt            DateTime? @map("approved_at")
+  rejectedBy            String?   @map("rejected_by")
+  rejectedAt            DateTime? @map("rejected_at")
+  decisionNotes         String?   @map("decision_notes")
+  decisionAttachmentUrl String?   @map("decision_attachment_url")
+
+  sourcePayments SettlementSourcePayment[]
+  payments       SettlementPayment[]
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([partyType, partyId])
+  @@index([status])
+  @@index([settlementNo])
+  @@index([deletedAt])
+  @@map("settlements")
+}
+
+/// Link row between a settlement and one source PAYMENT (a single collected
+/// receipt), carrying the payment's collected-basis snapshot for THIS settlement
+/// (its remaining unsettled amount at creation). Σ collectedAmount over a
+/// settlement's rows == Settlement.paidAmount. A payment may back MULTIPLE active
+/// links (partial re-settlement); eligibility is driven by the remaining amount
+/// (payment.paid − Σ reserved), computed in the service. `orderId` is kept
+/// denormalized (= payment.orderId) for context/reporting.
+model SettlementSourcePayment {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  settlementId String     @map("settlement_id")
+  settlement   Settlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+
+  paymentId String         @map("payment_id")
+  payment   PaymentDetails @relation(fields: [paymentId], references: [id])
+
+  orderId String @map("order_id")
+  order   Order  @relation(fields: [orderId], references: [id])
+
+  collectedAmount Int @map("collected_amount")
+  grossAmount     Int @default(0) @map("gross_amount")
+  discountAmount  Int @default(0) @map("discount_amount")
+  netAmount       Int @default(0) @map("net_amount")
+  dueAmount       Int @default(0) @map("due_amount")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([settlementId])
+  @@index([paymentId])
+  @@index([orderId])
+  @@index([deletedAt])
+  @@map("settlement_source_payments")
+}
+
+/// One payout posted against a settlement. Payment History preserves each payout;
+/// the cumulative Σ amount == Settlement.settledAmount. Attachment is a URL-only
+/// string. History is append-only (no reversal in this pass).
+model SettlementPayment {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  settlementId String     @map("settlement_id")
+  settlement   Settlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+
+  amount        Int
+  payoutMode    SettlementPayoutMode @map("payout_mode")
+  reference     String
+  attachmentUrl String?              @map("attachment_url")
+  paymentDate   DateTime             @default(now()) @map("payment_date")
+  notes         String?
+
+  createdBy String?   @map("created_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([settlementId])
+  @@index([deletedAt])
+  @@map("settlement_payments")
 }
 
 /// Which Order Overview note tab a note belongs to. ORDER / SAMPLE / TECH mirror
@@ -6884,6 +7066,11 @@ model PaymentDetails {
   /// For REFUND rows created via a standalone "Refund Without Cancellation":
   /// fee retained by the lab out of the refund (minor units). 0 otherwise.
   refundCharge Int              @default(0) @map("refund_charge")
+
+  // Settlement links that consolidated this collected payment (back-relation).
+  // A payment may back multiple active links (partial re-settlement); it is
+  // ineligible for a new settlement once its collected amount is fully reserved.
+  settlementLinks SettlementSourcePayment[]
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")

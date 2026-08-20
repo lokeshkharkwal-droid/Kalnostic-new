@@ -1,0 +1,55 @@
+meta {
+  name: Payment Summary (KPI Cards)
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/finance/payments/summary
+  body: none
+  auth: bearer
+}
+
+params:query {
+  ~branchId: {{branchId}}
+  ~dateFrom: 2026-07-01
+  ~dateTo: 2026-07-31
+  ~search: john
+  ~type: DIRECT
+  ~referralPanelId: {{referralPanelId}}
+  ~referredByDoctorId: {{referralDoctorId}}
+  ~internalReferralId: {{internalReferralId}}
+  ~externalReferralId: {{externalReferralId}}
+  ~userId: {{personId}}
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  # Payment Summary — GET /finance/payments/summary
+
+  KPI totals for the Finance → Payments summary cards over the active filters.
+  Same tenant/branch/date/type/referral/user/search filters as the records list
+  (**Payment Records**), but **ignores** `mode` and `status` — it always computes
+  the full breakdown. Amounts are whole rupees.
+
+  ```json
+  {
+    "totalPayments": 12000,   // cash + upi + bankTransfer + debitCard + creditCard (COMPLETED)
+    "cash": 5000,
+    "upi": 3000,
+    "bankTransfer": 2000,
+    "debitCard": 1000,        // PaymentMode CARD
+    "creditCard": 1000,       // PaymentMode CREDIT
+    "cancelledCount": 2,      // payments on CANCELLED orders/invoices
+    "cancelledAmount": 1500,
+    "refundedCount": 1,       // REFUND ledger rows (Direct only)
+    "refundedAmount": 500
+  }
+  ```
+
+  Wallet/Privilege/Loyalty are intentionally excluded (those cards are greyed on
+  the FE for this phase). Run **Business Auth → Login** first.
+}

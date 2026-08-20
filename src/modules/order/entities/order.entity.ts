@@ -259,7 +259,9 @@ export const ORDER_LIST_INCLUDE = {
   referralPanel: {
     select: { id: true, name: true, code: true, directorMobile: true },
   },
-  internalReferral: { select: { id: true, fullName: true, mobileNumber: true } },
+  internalReferral: {
+    select: { id: true, fullName: true, mobileNumber: true },
+  },
   externalReferral: { select: { id: true, name: true, mobileNumber: true } },
   appointment: { select: { id: true, status: true, code: true } },
   items: {
@@ -310,6 +312,7 @@ export const ORDER_LIST_INCLUDE = {
   payments: {
     where: { deletedAt: null },
     select: {
+      id: true,
       totalAmount: true,
       orderDiscount: true,
       netAmount: true,
@@ -319,6 +322,9 @@ export const ORDER_LIST_INCLUDE = {
       entryType: true,
       refundAmount: true,
       refundCharge: true,
+      reference: true,
+      paymentDate: true,
+      createdAt: true,
     },
   },
   // The order(s) this quote was converted into — used to surface "View Order"
@@ -400,6 +406,24 @@ export type BillingRecordRow = BillingOrder & {
   /** Refund total (Refund report) + cancellation charge (Cancel report). */
   refundAmount: number;
   cancelAmount: number;
+  /**
+   * Settlement reservation info (Collection report). How much of this record's
+   * collected amount is already reserved by non-rejected settlements, and the
+   * remaining unsettled amount. Used to disable fully-settled records from
+   * Create-Settlement selection.
+   */
+  settlementSettled?: number;
+  settlementRemaining?: number;
+  /**
+   * Per-payment identity (Collection report only — the report is re-grained to one
+   * row per collected payment). `paymentId` is the record's identity + the
+   * settlement source; the rest describe that single receipt. Absent on the other
+   * reports (which stay order-grained).
+   */
+  paymentId?: string;
+  paymentMode?: string;
+  paymentReference?: string | null;
+  paymentDate?: Date | null;
 };
 
 /**

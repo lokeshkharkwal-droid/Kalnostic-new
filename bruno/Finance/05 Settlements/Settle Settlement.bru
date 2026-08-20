@@ -1,0 +1,39 @@
+meta {
+  name: Settle Settlement
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/finance/settlements/{{settlementId}}/settle
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "amount": 100000,
+    "payoutMode": "BANK_TRANSFER",
+    "reference": "UTR1234567890",
+    "attachmentUrl": "https://example.com/payout.pdf",
+    "notes": "First partial payout"
+  }
+}
+
+docs {
+  Record one payout against an APPROVED (or PARTIALLY_SETTLED) settlement (doc §8).
+  `amount` must be > 0 and ≤ the remaining balance (approved − settled).
+  `payoutMode` ∈ BANK_TRANSFER / UPI / CHEQUE / CASH / CARD. Appends to Payment
+  History, accumulates `settledAmount`, and recomputes status → `PARTIALLY_SETTLED`
+  (balance remains) or `SETTLED` (balance zero). Errors: 404
+  `SETTLEMENT_NOT_FOUND`, 409 `SETTLEMENT_NOT_APPROVED` (Pending/Rejected),
+  422 `SETTLEMENT_OVER_SETTLEMENT`.
+}
