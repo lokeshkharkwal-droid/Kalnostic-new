@@ -249,4 +249,65 @@ describe('OrderService — TDS & Discount rules', () => {
       expect(() => run({ payments: [{ tdsDeduction: 30 }] })).not.toThrow();
     });
   });
+
+  describe('direct entry item pricing', () => {
+    it('uses a direct item unitPrice for its line-discount % check', () => {
+      expect(() =>
+        run({
+          items: [
+            {
+              direct: 'ABC',
+              unitPrice: 1000,
+              discount: 300, // 30% of 1000, max is 20
+              discountMode: DiscountMode.PERCENT,
+              discountValue: 30,
+            },
+          ],
+        }),
+      ).toThrow(LineItemDiscountOutOfRangeException);
+    });
+
+    it('accepts an in-range discount on a priced direct item', () => {
+      expect(() =>
+        run({
+          items: [
+            {
+              direct: 'ABC',
+              unitPrice: 1000,
+              discount: 150,
+              discountMode: DiscountMode.PERCENT,
+              discountValue: 15,
+            },
+          ],
+        }),
+      ).not.toThrow();
+    });
+
+    it("includes a direct item's unitPrice in the order-level discount % base", () => {
+      // Previously a direct item always priced at 0 ⇒ itemsGross stayed 0 ⇒
+      // any order discount was wrongly rejected as "no positive base". With
+      // unitPrice wired through, 100/1000 = 10%, within [5,20].
+      expect(() =>
+        run({
+          items: [{ direct: 'ABC', unitPrice: 1000 }],
+          payments: [{ orderDiscount: 100 }],
+        }),
+      ).not.toThrow();
+    });
+
+    it('treats a direct item with no unitPrice as zero price (matches prior default, no throw)', () => {
+      expect(() =>
+        run({
+          items: [
+            {
+              direct: 'ABC',
+              discount: 50,
+              discountMode: DiscountMode.AMOUNT,
+              discountValue: 50,
+            },
+          ],
+        }),
+      ).not.toThrow();
+    });
+  });
 });

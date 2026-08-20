@@ -16,9 +16,18 @@ auth:bearer {
 
 docs {
   Fetch one order fully composed: patient ref, active `items` (with their resolved
-  test/panel, incl. the catalogue list price `priceMsrp` and the per-line
-  `discount`), the `diagnostics`/`opd`/`radiology` sections with resolved refs, and
-  the active `payments` ledger. Also returns `orderTime` and the `billingDetails`
-  sub-form. 404 `ORDER_NOT_FOUND` if missing, soft-deleted, or owned by another
-  tenant.
+  test/panel and the per-line `discount`), the `diagnostics`/`opd`/`radiology`
+  sections with resolved refs, and the active `payments` ledger. Also returns
+  `orderTime` and the `billingDetails` sub-form. 404 `ORDER_NOT_FOUND` if missing,
+  soft-deleted, or owned by another tenant.
+
+  Each item's `unitPrice` is the authoritative per-line price — the amount
+  actually resolved/charged at order or quotation time (from the pricing list's
+  `listPrice` for a catalogue line, or the client-supplied amount for a `direct`
+  line — see "Create Order"). This is the field to render/edit as the line's
+  price. The nested `branchLabTest.priceMsrp`/`branchLabPanel.priceMsrp` is a
+  **different** field — the referenced catalogue's current master reference
+  price, which is independently editable in Master Data and may have since
+  drifted from what this line was actually charged. Do not use `priceMsrp` for
+  line pricing/totals.
 }

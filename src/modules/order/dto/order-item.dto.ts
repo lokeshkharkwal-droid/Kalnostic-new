@@ -80,4 +80,17 @@ export class OrderItemDto {
   @IsOptional()
   @IsUUID()
   outsourceCenterId?: string;
+
+  /**
+   * The real amount for a free-text `direct` entry line, in rupees, up to 2
+   * decimal places. Ignored for a catalogue line (branchLabTestId/
+   * branchLabPanelId) — that price is always resolved server-side from the
+   * active pricing list's `listPrice` (see `loadItemUnitPrices`). Sending it
+   * on a non-direct line is rejected in `assertItems`.
+   */
+  @IsOptional()
+  @Transform(roundToTwoDecimalPlacesTransform)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  unitPrice?: number;
 }
