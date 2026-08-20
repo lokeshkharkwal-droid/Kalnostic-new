@@ -1,0 +1,51 @@
+meta {
+  name: Create Order - UnitPrice On Catalog Item (422)
+  type: http
+  seq: 20
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "orderDate": "2026-07-09",
+    "orderType": "WALK_IN",
+    "billingType": "CASH_CLIENT",
+    "patientId": "{{patientId}}",
+    "items": [
+      { "branchLabTestId": "{{branchLabTestId}}", "unitPrice": 500 }
+    ]
+  }
+}
+
+tests {
+  test("422 Unprocessable Entity", function () {
+    expect(res.getStatus()).to.equal(422);
+  });
+  test("INVALID_ORDER_ITEM", function () {
+    expect(res.getBody().error.code).to.equal("INVALID_ORDER_ITEM");
+  });
+}
+
+docs {
+  Negative case: `unitPrice` may only be sent on a free-text `direct` line. A
+  catalogue line (`branchLabTestId`/`branchLabPanelId`, as here) always has its
+  price resolved server-side from the active pricing list's `listPrice` — the
+  server never trusts a client-supplied price for a catalogue item, so sending
+  `unitPrice` alongside `branchLabTestId`/`branchLabPanelId` is rejected with
+  422 `INVALID_ORDER_ITEM`, the same error family as "Create Order - Invalid
+  Item" (which covers the exactly-one-of ref check). See "Create Order" for the
+  `direct` line's `unitPrice` usage.
+}
