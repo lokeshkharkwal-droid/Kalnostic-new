@@ -15,10 +15,7 @@ import { UpdateOutsourceCenterDto } from './dto/update-outsource-center.dto';
 import { OutsourceCenterContactDto } from './dto/outsource-center-contact.dto';
 import { ListOutsourceCentersDto } from './dto/list-outsource-centers.dto';
 import { CreateOutsourceCenterDocumentDto } from './dto/create-outsource-center-document.dto';
-import {
-  OutsourceCenterEntity,
-  OutsourceCenterListView,
-} from './entities/outsource-center.entity';
+import { OutsourceCenterEntity } from './entities/outsource-center.entity';
 import { OutsourceCenterDocumentEntity } from './entities/outsource-center-document.entity';
 import {
   DuplicateContactRoleException,

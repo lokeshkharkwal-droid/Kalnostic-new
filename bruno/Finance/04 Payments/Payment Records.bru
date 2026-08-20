@@ -1,0 +1,91 @@
+meta {
+  name: Payment Records
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/finance/payments?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~branchId: {{branchId}}
+  ~dateFrom: 2026-07-01
+  ~dateTo: 2026-07-31
+  ~search: john
+  ~mode: CASH
+  ~type: DIRECT
+  ~status: COMPLETED
+  ~referralPanelId: {{referralPanelId}}
+  ~referredByDoctorId: {{referralDoctorId}}
+  ~internalReferralId: {{internalReferralId}}
+  ~externalReferralId: {{externalReferralId}}
+  ~userId: {{personId}}
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  # Payment Records — GET /finance/payments
+
+  The consolidated payment **ledger** behind the Finance → Payments page. Merges
+  the two payment sources into one paginated, filterable list, newest first:
+
+  - **Direct** — order payments (`payment_details`, one row per collection).
+  - **Invoice** — invoice receipts (`invoice_payments`).
+
+  All amounts are **whole rupees** in both sources (no conversion). Each row:
+
+  ```json
+  {
+    "paymentId": "<row uuid>",
+    "dateTime": "2026-07-12T10:20:00.000Z",
+    "type": "DIRECT",              // DIRECT | INVOICE
+    "billOrInvoiceId": "DIG-001",  // Direct: billId ?? orderCode; Invoice: invoiceNo
+    "customerName": "Rajesh Verma",
+    "mobile": "9876543210",
+    "amount": 2000,
+    "mode": "Cash",                // display label
+    "modeKey": "CASH",             // PaymentMode enum
+    "refId": "UPI-001",
+    "user": "Receptionist A",      // resolved actor name
+    "userId": "<person uuid>",
+    "branch": "Branch Hyderabad",
+    "branchId": "<branch uuid>",
+    "status": "COMPLETED",         // COMPLETED | CANCELLED | REFUNDED
+    "referralPanel": null,
+    "referredBy": "Dr. Mehta",
+    "internalReferralUser": null,
+    "externalReferralUser": null,
+    "notes": null,
+    "attachmentUrl": null,
+    "orderId": "<order uuid>",     // Direct only — for the Cancel/Edit actions
+    "invoiceId": null              // Invoice only
+  }
+  ```
+
+  **Status is derived** (no per-payment status column):
+  - a REFUND ledger row → `REFUNDED`;
+  - a payment whose parent order/invoice is CANCELLED → `CANCELLED`;
+  - otherwise `COMPLETED`.
+
+  **Filters** (all optional, tenant taken from the JWT — never the query):
+  - `branchId` — validated against the caller's tenant (404 otherwise). Omit for all branches.
+  - `dateFrom` / `dateTo` — on the payment transaction date (`paymentDate ?? createdAt`); a date-only `dateTo` is treated as end-of-day.
+  - `search` — payment id, bill/order id, invoice no, customer name, mobile.
+  - `mode` — `PaymentMode` enum (`CASH` | `UPI` | `BANK_TRANSFER` | `CARD` (Debit Card) | `CREDIT` (Credit Card) | `WALLET`).
+  - `type` — `DIRECT` | `INVOICE`.
+  - `status` — `COMPLETED` | `CANCELLED` | `REFUNDED` (Invoices have no refund concept, so `REFUNDED` returns Direct rows only).
+  - `referralPanelId` / `referredByDoctorId` / `internalReferralId` / `externalReferralId` — for Direct, matched on the order's referral FK; for Invoice, mapped to the invoice `partyType`+`partyId`.
+  - `userId` — the `Person.id` responsible (`Order.createdBy` for Direct; `InvoicePayment.createdBy` for Invoice).
+  - `page` / `limit` — offset pagination (`limit` capped at 100). `meta` carries `total`/`page`/`limit`/`totalPages`.
+
+  Pagination merges the top `page*limit` of each source and slices; `total` is the
+  exact sum of per-source counts. Run **Business Auth → Login** first.
+}

@@ -560,21 +560,6 @@ export class PartialPaymentBelowMinimumException extends KaltrosException {
 }
 
 /**
- * 422 — the branch's external order/quote id format is NONE (manual entry) but
- * no `externalOrderId` was supplied for a finalized order/quotation.
- */
-export class ExternalOrderIdRequiredException extends KaltrosException {
-  constructor(isQuote: boolean) {
-    super(
-      'EXTERNAL_ORDER_ID_REQUIRED',
-      isQuote ? 'A Quote ID is required' : 'An Order ID is required',
-      { isQuote },
-      HttpStatus.UNPROCESSABLE_ENTITY,
-    );
-  }
-}
-
-/**
  * 422 — a payment was collected while "Generate Bill" is No (`isBillGenerated =
  * false`). With no bill generated the order cannot take money, so the paid
  * amount must be 0. Defence in depth — the frontend also disables the Payment

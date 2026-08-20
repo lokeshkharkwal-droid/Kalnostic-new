@@ -6,6 +6,7 @@ import {
   DoctorType,
   ExternalIdFormat,
   ExternalIdPurpose,
+  InvoicePaymentStatus,
   Order,
   OrderDateType,
   OrderStatus,
@@ -16,6 +17,7 @@ import {
   QuotationStatus,
   RepeatIntervalUnit,
   SampleSource,
+  SettlementStatus,
   TransferKind,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -177,7 +179,6 @@ import {
   PreviousDuesOverpaymentException,
   FullPaymentRequiredException,
   PartialPaymentBelowMinimumException,
-  ExternalOrderIdRequiredException,
   DuplicateExternalOrderIdException,
   OrderDiscountNotAllowedException,
   OrderDiscountOutOfRangeException,
@@ -471,19 +472,11 @@ export class OrderService {
         )
       : ExternalIdFormat.NONE;
     const externalIdIsManual = externalIdFormat === ExternalIdFormat.NONE;
+    // A manual external Order/Quote id is optional: the internal `orderCode` is
+    // always generated below, independent of the external id. When a value is
+    // supplied (NONE format) it is kept and uniqueness-checked; otherwise the
+    // external id is simply left null.
     const manualExternalId = dto.externalOrderId?.trim() || null;
-    // Manual id is mandatory on a finalized order/quotation (DRAFT/APPOINTMENT
-    // exempt — mirrors assertBillingRules).
-    const requiresManualExternalId =
-      dto.status === OrderStatus.ORDER || dto.status === OrderStatus.QUOTE;
-    if (
-      branchId &&
-      externalIdIsManual &&
-      requiresManualExternalId &&
-      !manualExternalId
-    ) {
-      throw new ExternalOrderIdRequiredException(isQuote);
-    }
 
     let createdId: string;
     try {
@@ -2636,6 +2629,169 @@ export class OrderService {
   }
 
   /**
+   * Resolve, for a set of PAYMENTS (collected receipts), each payment's collected
+   * amount + its order's four referral-party FKs + the payment date + the order's
+   * COLLECTION money figures prorated to that payment (order figure × payment.paid ÷
+   * order collected). The single sanctioned reuse point for the Settlement module
+   * (per-payment grain; CLAUDE.md rule #3 — injected via DI). `paid` is the
+   * settlement basis (a single physical receipt's collected amount).
+   *
+   * Runs inside the caller's tenant transaction (`tx`) so the reads share the RLS
+   * GUC set by `withTenant`.
+   *
+   * @param tx active tenant-scoped transaction client (from `withTenant`)
+   * @param tenantId tenant scope (defence in depth on top of RLS)
+   * @param paymentIds the source payment ids to resolve
+   * @returns a map keyed by payment id → `{ paid, orderId, paymentDate, *Share, party
+   *   FKs }`; ids that don't resolve to an active payment/order are simply absent
+   */
+  async getCollectionInfoForPayments(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    paymentIds: string[],
+  ): Promise<
+    Map<
+      string,
+      {
+        paid: number;
+        orderId: string;
+        paymentDate: Date;
+        grossShare: number;
+        discountShare: number;
+        netShare: number;
+        dueShare: number;
+        referralPanelId: string | null;
+        referredByDoctorId: string | null;
+        internalReferralId: string | null;
+        externalReferralId: string | null;
+      }
+    >
+  > {
+    const result = new Map<
+      string,
+      {
+        paid: number;
+        orderId: string;
+        paymentDate: Date;
+        grossShare: number;
+        discountShare: number;
+        netShare: number;
+        dueShare: number;
+        referralPanelId: string | null;
+        referredByDoctorId: string | null;
+        internalReferralId: string | null;
+        externalReferralId: string | null;
+      }
+    >();
+    if (paymentIds.length === 0) return result;
+    const payments = await tx.paymentDetails.findMany({
+      where: { id: { in: paymentIds }, tenantId, deletedAt: null },
+      select: {
+        id: true,
+        paidAmount: true,
+        orderId: true,
+        paymentDate: true,
+        createdAt: true,
+      },
+    });
+    const orderIds = [...new Set(payments.map((p) => p.orderId))];
+    const orders = await tx.order.findMany({
+      where: { id: { in: orderIds }, tenantId, deletedAt: null },
+      include: BILLING_ORDER_INCLUDE,
+    });
+    const figByOrder = new Map(
+      orders.map((o) => [
+        o.id,
+        { fig: this.orderLevelFigures(o, 'collection'), order: o },
+      ]),
+    );
+    for (const p of payments) {
+      const entry = figByOrder.get(p.orderId);
+      if (!entry) continue;
+      const { fig, order: o } = entry;
+      // Prorate the order-level figures to this payment's share of the order's
+      // total collected, so per-payment snapshots reconcile to order totals.
+      const factor = fig.paid > 0 ? p.paidAmount / fig.paid : 0;
+      result.set(p.id, {
+        paid: p.paidAmount,
+        orderId: p.orderId,
+        paymentDate: p.paymentDate ?? p.createdAt,
+        grossShare: Math.round(fig.gross * factor),
+        discountShare: Math.round(fig.discount * factor),
+        netShare: Math.round(fig.net * factor),
+        dueShare: Math.round(fig.due * factor),
+        referralPanelId: o.referralPanelId,
+        referredByDoctorId: o.referredByDoctorId,
+        internalReferralId: o.internalReferralId,
+        externalReferralId: o.externalReferralId,
+      });
+    }
+    return result;
+  }
+
+  /**
+   * Resolve, per PAYMENT, how much of its collected amount is already **reserved**
+   * by settlements — used by the Settlement module (create eligibility + Approved
+   * cap) and the Collection report (per-record remaining). A settlement reserves,
+   * per source payment, its `approvedAmount` weighted by that payment's share of the
+   * settlement's basis: `approvedAmount × collectedAmount / paidAmount`. Summed over
+   * the payment's links whose settlement is NOT rejected and NOT soft-deleted.
+   *
+   * Derived (not stored) so it stays correct when Approved is edited/approved and
+   * frees automatically when a settlement is rejected. Queries the
+   * `settlement_source_payments` table directly (not the Settlement service) to
+   * avoid a circular module dependency.
+   *
+   * @param client tenant-scoped client — pass the active `tx` when inside a
+   *   `withTenant` block (e.g. settlement create), else the request-scoped
+   *   `this.prisma` (e.g. the Collection report read).
+   * @param tenantId tenant scope (defence in depth on top of RLS)
+   * @param paymentIds the payment ids to resolve
+   * @param excludeSettlementId when set, ignore this settlement's own links — so a
+   *   settlement can compute how much its payments are committed to OTHER
+   *   settlements (used to cap its Approved without counting itself).
+   * @returns map of payment id → reserved amount (whole rupees; absent = 0)
+   */
+  async getReservedForPayments(
+    client: Prisma.TransactionClient,
+    tenantId: string,
+    paymentIds: string[],
+    excludeSettlementId?: string,
+  ): Promise<Map<string, number>> {
+    const reserved = new Map<string, number>();
+    if (paymentIds.length === 0) return reserved;
+    const links = await client.settlementSourcePayment.findMany({
+      where: {
+        tenantId,
+        paymentId: { in: paymentIds },
+        deletedAt: null,
+        ...(excludeSettlementId
+          ? { settlementId: { not: excludeSettlementId } }
+          : {}),
+        settlement: {
+          is: { status: { not: SettlementStatus.REJECTED }, deletedAt: null },
+        },
+      },
+      select: {
+        paymentId: true,
+        collectedAmount: true,
+        settlement: { select: { approvedAmount: true, paidAmount: true } },
+      },
+    });
+    for (const l of links) {
+      const paid = l.settlement.paidAmount;
+      if (paid <= 0) continue;
+      const share = l.collectedAmount / paid;
+      const contribution = Math.round(l.settlement.approvedAmount * share);
+      reserved.set(
+        l.paymentId,
+        (reserved.get(l.paymentId) ?? 0) + contribution,
+      );
+    }
+    return reserved;
+  }
+
+  /**
    * Allocate the order-level money across its line items so the per-line sums
    * reconcile with the order totals exactly:
    * - `gross` per line = `unitPrice` (Σ = totalAmount).
@@ -3172,6 +3328,19 @@ export class OrderService {
       orders = orders.filter(
         (o) => this.orderLevelFigures(o, 'outstanding').due > 0,
       );
+      // An order's due can also be settled through a consolidated invoice, whose
+      // payments post to the invoice ledger — never back to the order's own
+      // PaymentDetails. Drop orders linked to a fully-paid (COMPLETED) invoice so
+      // the Outstanding view reflects invoice settlement too. Invoiced-but-unpaid
+      // orders stay (money is still owed until the invoice completes); a cancelled
+      // invoice soft-deletes its links, so those orders reappear automatically.
+      const settled = await this.invoiceSettledOrderIds(
+        tenantId,
+        orders.map((o) => o.id),
+      );
+      if (settled.size > 0) {
+        orders = orders.filter((o) => !settled.has(o.id));
+      }
     }
     if (report === 'collection') {
       // Realization view: WALLET is excluded from collection `paid`
@@ -3231,6 +3400,35 @@ export class OrderService {
       );
     }
     return orders;
+  }
+
+  /**
+   * Order ids whose outstanding due has been consolidated into a fully-paid
+   * (COMPLETED) invoice. Keyed on the active (non-deleted) InvoiceSourceOrder
+   * link → non-cancelled invoice; a cancelled invoice soft-deletes its links,
+   * so its orders drop out of this set and return to the Outstanding report.
+   * @param tenantId tenant scope (from JWT / RLS context)
+   * @param orderIds candidate order ids (the already-scoped outstanding set)
+   * @returns set of order ids to exclude from the Outstanding report
+   */
+  private async invoiceSettledOrderIds(
+    tenantId: string,
+    orderIds: string[],
+  ): Promise<Set<string>> {
+    if (orderIds.length === 0) return new Set();
+    const links = await this.prisma.invoiceSourceOrder.findMany({
+      where: {
+        tenantId,
+        orderId: { in: orderIds },
+        deletedAt: null,
+        invoice: {
+          deletedAt: null,
+          paymentStatus: InvoicePaymentStatus.COMPLETED,
+        },
+      },
+      select: { orderId: true },
+    });
+    return new Set(links.map((l) => l.orderId));
   }
 
   /**
@@ -3308,9 +3506,78 @@ export class OrderService {
       return { data, total, page, limit };
     }
 
-    // Order-level dimensions: one row per order.
+    // Collection report (order-level dimensions) is re-grained to ONE ROW PER
+    // COLLECTED PAYMENT: each physical receipt is an independently selectable /
+    // settleable record. Every other report stays one row per order.
+    if (report === 'collection') {
+      const physicalModes = new Set<PaymentMode>([
+        PaymentMode.CASH,
+        PaymentMode.UPI,
+        PaymentMode.BANK_TRANSFER,
+        PaymentMode.CARD,
+        PaymentMode.CREDIT,
+      ]);
+      // Flatten matched orders → their qualifying payment rows (PAYMENT entry,
+      // physical mode, positive amount — WALLET/REFUND excluded, matching the
+      // Collection `paid` definition).
+      const payRows: {
+        order: BillingOrder;
+        payment: BillingOrder['payments'][number];
+        orderPaid: number;
+        fig: BillingFigures;
+      }[] = [];
+      for (const o of orders) {
+        const fig = this.orderLevelFigures(o, 'collection');
+        for (const p of o.payments) {
+          if (p.entryType !== PaymentEntryType.PAYMENT) continue;
+          if (!physicalModes.has(p.paymentMode)) continue;
+          if (p.paidAmount <= 0) continue;
+          payRows.push({ order: o, payment: p, orderPaid: fig.paid, fig });
+        }
+      }
+      const total = payRows.length;
+      const pageRows = payRows.slice((page - 1) * limit, page * limit);
+      const reserved = await this.getReservedForPayments(
+        this.prisma,
+        tenantId,
+        pageRows.map((r) => r.payment.id),
+      );
+      const data = pageRows.map(({ order: o, payment: p, orderPaid, fig }) => {
+        // Prorate order figures by this payment's share of the order's collected.
+        const factor = orderPaid > 0 ? p.paidAmount / orderPaid : 0;
+        const settlementSettled = reserved.get(p.id) ?? 0;
+        const modeAmt = (m: PaymentMode) =>
+          p.paymentMode === m ? p.paidAmount : 0;
+        return {
+          ...o,
+          grossAmount: Math.round(fig.gross * factor),
+          discountAmount: Math.round(fig.discount * factor),
+          netAmount: Math.round(fig.net * factor),
+          tdsAmount: Math.round(fig.tds * factor),
+          dueAmount: Math.round(fig.due * factor),
+          paidAmount: p.paidAmount,
+          cash: modeAmt(PaymentMode.CASH),
+          upi: modeAmt(PaymentMode.UPI),
+          bankTransfer: modeAmt(PaymentMode.BANK_TRANSFER),
+          debitCard: modeAmt(PaymentMode.CARD),
+          creditCard: modeAmt(PaymentMode.CREDIT),
+          refundAmount: 0,
+          cancelAmount: 0,
+          settlementSettled,
+          settlementRemaining: Math.max(0, p.paidAmount - settlementSettled),
+          paymentId: p.id,
+          paymentMode: p.paymentMode,
+          paymentReference: p.reference,
+          paymentDate: p.paymentDate ?? p.createdAt,
+        };
+      });
+      return { data, total, page, limit };
+    }
+
+    // Order-level dimensions (non-collection): one row per order.
     const total = orders.length;
-    const data = orders.slice((page - 1) * limit, page * limit).map((o) => {
+    const pageOrders = orders.slice((page - 1) * limit, page * limit);
+    const data = pageOrders.map((o) => {
       const f = this.dimensionFiguresForOrder(o, dimension, report);
       return {
         ...o,
@@ -4015,19 +4282,9 @@ export class OrderService {
       dto.externalOrderId !== undefined
         ? dto.externalOrderId.trim() || null
         : undefined;
-    if (branchId && externalIdIsManualUpd) {
-      const effectiveExternalId =
-        manualExternalIdUpd !== undefined
-          ? manualExternalIdUpd
-          : (existing?.externalOrderId ?? null);
-      if (
-        (effectiveStatus === OrderStatus.ORDER ||
-          effectiveStatus === OrderStatus.QUOTE) &&
-        !effectiveExternalId
-      ) {
-        throw new ExternalOrderIdRequiredException(isQuoteUpd);
-      }
-    }
+    // A manual external Order/Quote id is optional here too — never required to
+    // finalize an order/quote. Any supplied value is still persisted and
+    // uniqueness-checked below.
 
     await this.prisma.withTenant(tenantId, async (tx) => {
       // Resolve the external-id value to persist (undefined = leave untouched).

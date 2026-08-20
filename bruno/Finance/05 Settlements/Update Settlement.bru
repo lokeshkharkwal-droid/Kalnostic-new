@@ -1,0 +1,37 @@
+meta {
+  name: Update Settlement
+  type: http
+  seq: 9
+}
+
+patch {
+  url: {{baseUrl}}/finance/settlements/{{settlementId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "approvedAmount": 110000,
+    "notes": "Adjusted after review"
+  }
+}
+
+docs {
+  Edit a settlement (doc §7.3). `notes` / `attachmentUrl` can change at any status.
+  Changing `approvedAmount` while APPROVED / PARTIALLY_SETTLED / SETTLED resets the
+  settlement to `PENDING_APPROVAL` (re-approval rule) and clears the approval trail.
+  The approved amount can never drop below the amount already settled, nor exceed the
+  order's collected amount not already committed to OTHER non-rejected settlements
+  (so total settled ≤ collected). All edits are audited. Errors: 404
+  `SETTLEMENT_NOT_FOUND`, 422 `SETTLEMENT_EDIT_BLOCKED`,
+  422 `SETTLEMENT_APPROVED_EXCEEDS_BASIS`.
+}

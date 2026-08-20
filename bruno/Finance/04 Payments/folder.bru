@@ -6,8 +6,19 @@ meta {
 docs {
   # Finance → Payments
 
-  Payment list by mode (`/finance/payments`; All / Cash / UPI / Bank Transfer /
-  Debit Card / Credit Card / Wallet / Privilege Card / Loyalty Points).
-  **No dedicated finance endpoint yet** — order payments are written via the order
-  flow (see **46 Order Payments**). Placeholder for a finance payments list endpoint.
+  The consolidated payment **ledger** behind `/finance/payments` (All / Cash / UPI /
+  Bank Transfer / Debit Card / Credit Card / Cancelled / Refunded; Wallet /
+  Privilege Card / Loyalty Points are greyed on the FE for this phase).
+
+  Two read endpoints back the page (order + invoice payments merged; status is
+  derived — no per-payment status column):
+
+  - **Payment Records** — `GET /finance/payments` (paginated, filtered list).
+  - **Payment Summary (KPI Cards)** — `GET /finance/payments/summary` (mode totals + cancelled/refunded).
+
+  Payments are still **written** via the existing flows — order collections through
+  the order flow / `POST /payments` (see **46 Order Payments**), invoice receipts
+  through `POST /invoices/:id/receive-payment` (see **03 Invoices**). Cancelling a
+  ledger row cancels its parent via `PATCH /orders/:id/cancel` or
+  `POST /invoices/:id/cancel`.
 }

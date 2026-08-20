@@ -65,3 +65,49 @@ export class LocationHasChildrenException extends KaltrosException {
     );
   }
 }
+
+/**
+ * 500 — the bundled India location master JSON could not be located on the
+ * server. The searched paths are logged (context) but never returned to the
+ * client, so no filesystem layout leaks out.
+ */
+export class IndiaLocationDataFileNotFoundException extends KaltrosException {
+  constructor(searchedPaths: string[], detail?: string) {
+    super(
+      'INDIA_LOCATION_DATA_FILE_NOT_FOUND',
+      'India location data is not available on the server.',
+      { searchedPaths, detail },
+      HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+  }
+}
+
+/**
+ * 500 — the India location master JSON is present but could not be parsed or
+ * failed structural validation (bad JSON / unexpected shape).
+ */
+export class IndiaLocationDataMalformedException extends KaltrosException {
+  constructor(detail: string) {
+    super(
+      'INDIA_LOCATION_DATA_MALFORMED',
+      'India location data is malformed and could not be processed.',
+      { detail },
+      HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+  }
+}
+
+/**
+ * 500 — a database error interrupted the India location sync. The transaction
+ * rolls back, so the sync stays all-or-nothing; the client is asked to retry.
+ */
+export class IndiaLocationSyncFailedException extends KaltrosException {
+  constructor(detail: string) {
+    super(
+      'INDIA_LOCATION_SYNC_FAILED',
+      'The India location sync could not be completed. Please try again.',
+      { detail },
+      HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+  }
+}
