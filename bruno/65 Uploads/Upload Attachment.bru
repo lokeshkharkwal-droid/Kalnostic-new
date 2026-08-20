@@ -16,6 +16,7 @@ auth:bearer {
 
 body:multipart-form {
   file: @file(C:\path\to\receipt.pdf)
+  ~folder: signatures
 }
 
 script:post-response {
@@ -24,10 +25,12 @@ script:post-response {
 }
 
 docs {
-  Upload one file to S3 and get its public URL. Form field name is **`file`**.
+  Upload one file to S3 and get its public URL. Form field name is **`file`**;
+  an optional **`folder`** slug namespaces the S3 key (e.g. `signatures`).
 
-  Accepted types: PDF, JPG/JPEG, PNG. Max **10 MB**, otherwise 422
-  `INVALID_UPLOAD_FILE`. Returns `{ "url": "https://s3-<region>.amazonaws.com/<bucket>/<key>" }`
+  Accepted types: PDF, JPG/JPEG/PNG/WEBP/GIF/SVG, DOC/DOCX, XLS/XLSX, CSV. Max
+  **10 MB**, otherwise 422 `INVALID_UPLOAD_FILE`. Returns
+  `{ "url": "https://s3-<region>.amazonaws.com/<bucket>/<key>" }`
   — store that string wherever an attachment URL is kept (e.g. pass it as
   `attachmentUrl` to **Receive Invoice Payment** / **Settle Settlement**).
 

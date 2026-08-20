@@ -1,0 +1,24 @@
+meta {
+  name: 66 Attachments
+  seq: 66
+}
+
+docs {
+  # Attachments (generic)
+
+  A polymorphic attachment sub-resource (`attachments` module). Any feature can
+  persist an uploaded file's S3 URL against one of its records via
+  (`entityType`, `entityId`) — no per-feature table needed. Bytes are uploaded
+  first via **65 Uploads → Upload Attachment** (returns `{ url }`); this module
+  then records that URL + metadata.
+
+  Endpoints (all under `/attachments`, business-authenticated, tenant + active
+  branch from the JWT):
+  - `POST /attachments` — attach a file to an owner record
+  - `GET /attachments?entityType=&entityId=&category=` — list an owner's files
+  - `DELETE /attachments/:id` — soft-delete
+
+  `entityType` is an allow-listed slug (INCIDENT_REPORT, TECHNICIAN_PROCESS,
+  QUALITY_CONTROL, INVENTORY, ACCESSION, TEMPLATE, ORDER, PATIENT, LAB_REPORT,
+  PHLEBOTOMY, MISC). Run **Business Auth → Login** first.
+}

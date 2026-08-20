@@ -208,6 +208,7 @@ export class InvoiceService {
             paymentStatus: InvoicePaymentStatus.PENDING,
             dueStatus,
             notes: dto.notes ?? null,
+            attachmentUrl: dto.attachmentUrl ?? null,
             createdBy: actorId,
             sourceOrders: {
               create: orderIds.map((oid) => ({

@@ -33,6 +33,7 @@ import { LabAdapterModule } from './modules/lab-adapter/lab-adapter.module';
 import { LocationModule } from './modules/location/location.module';
 import { OutsourceCenterModule } from './modules/outsource-center/outsource-center.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
+import { AttachmentsModule } from './modules/attachments/attachments.module';
 import { ReferralPanelModule } from './modules/referral-panel/referral-panel.module';
 import { ReferralPanelSettingsModule } from './modules/referral-panel-settings/referral-panel-settings.module';
 import { DoctorsModule } from './modules/doctors/doctors.module';
@@ -137,6 +138,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     LocationModule,
     OutsourceCenterModule,
     UploadsModule,
+    AttachmentsModule,
     ReferralPanelModule,
     ReferralPanelSettingsModule,
     DoctorsModule,

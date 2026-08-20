@@ -37,6 +37,8 @@ export class UploadsService {
    * @param file the multipart file (type/size already validated by the
    *   controller's `FileInterceptor`).
    * @param tenantId owning tenant, used only to namespace the S3 key.
+   * @param folder optional key sub-folder (validated slug) to group objects by
+   *   feature, e.g. `signatures` → `uploads/finance-attachments/<tenant>/signatures/<uuid>`.
    * @returns `{ url }` — the fully-qualified S3 URL of the stored object.
    * @throws UploadNotConfiguredException if bucket/credentials are unset.
    * @throws UploadFailedException if the S3 put fails.
@@ -44,6 +46,7 @@ export class UploadsService {
   async uploadAttachment(
     file: Express.Multer.File,
     tenantId: string,
+    folder?: string,
   ): Promise<UploadAttachmentResult> {
     const bucket = this.config.get<string>('AWS_BUCKET');
     const accessKeyId = this.config.get<string>('AWS_ACCESS_KEY');
@@ -59,10 +62,15 @@ export class UploadsService {
     }
 
     const ext = extname(file.originalname).toLowerCase();
-    const key = `${ATTACHMENT_PREFIX}/${tenantId}/${randomUUID()}${ext}`;
+    const sub = folder ? `${folder}/` : '';
+    const key = `${ATTACHMENT_PREFIX}/${tenantId}/${sub}${randomUUID()}${ext}`;
 
     const client = new S3Client({
       region,
+      // Path-style addressing is required for bucket names containing dots (e.g.
+      // `stage.ez.reports`): virtual-hosted style over HTTPS would fail TLS cert
+      // validation. This also matches the path-style URL we return below.
+      forcePathStyle: true,
       credentials: {
         accessKeyId: accessKeyId!,
         secretAccessKey: secretAccessKey!,
@@ -76,6 +84,10 @@ export class UploadsService {
           Key: key,
           Body: file.buffer,
           ContentType: file.mimetype,
+          // The bucket is private, so tag each uploaded attachment public-read
+          // so its returned URL previews directly in the browser. Access control
+          // is the unguessable UUID key (same model as the legacy documents route).
+          ACL: 'public-read',
         }),
       );
     } catch (err) {

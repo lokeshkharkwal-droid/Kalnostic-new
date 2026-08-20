@@ -1,0 +1,21 @@
+meta {
+  name: Delete Attachment
+  type: http
+  seq: 3
+}
+
+delete {
+  url: {{baseUrl}}/attachments/{{attachmentId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Soft-delete an attachment by id. 404 `ATTACHMENT_NOT_FOUND` if missing,
+  already deleted, or not in this tenant. Run **Create Attachment** first so
+  `{{attachmentId}}` is set.
+}

@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Post,
   UploadedFile,
@@ -9,6 +10,7 @@ import { UploadsService } from './uploads.service';
 import {
   ALLOWED_ATTACHMENT_MIME_TYPES,
   MAX_ATTACHMENT_BYTES,
+  UploadAttachmentDto,
   UploadAttachmentResult,
 } from './dto/upload-attachment.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
@@ -27,7 +29,8 @@ export class UploadsController {
 
   /**
    * Upload a single file (multipart `file` field) to S3 and return its public
-   * URL. Accepts PDF and JPEG/PNG images up to 10 MB.
+   * URL. Accepts PDF, images, office docs and spreadsheets up to 10 MB. An
+   * optional `folder` field namespaces the S3 key.
    *
    * @returns `{ url }` — store this string wherever an attachment URL is kept.
    * @throws InvalidUploadFileException if no file is sent or the type is unsupported.
@@ -51,11 +54,12 @@ export class UploadsController {
   )
   uploadAttachment(
     @CurrentTenant() tenantId: string,
+    @Body() dto: UploadAttachmentDto,
     @UploadedFile() file?: Express.Multer.File,
   ): Promise<UploadAttachmentResult> {
     if (!file) {
       throw new InvalidUploadFileException('No file was uploaded');
     }
-    return this.uploadsService.uploadAttachment(file, tenantId);
+    return this.uploadsService.uploadAttachment(file, tenantId, dto.folder);
   }
 }

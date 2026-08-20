@@ -1853,3 +1853,44 @@ DROP POLICY IF EXISTS settlement_payments_tenant_isolation ON settlement_payment
 CREATE POLICY settlement_payments_tenant_isolation ON settlement_payments
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── attachments ─────────────────────────────────────────────────────────────────
+ALTER TABLE attachments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE attachments FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS attachments_tenant_isolation ON attachments;
+CREATE POLICY attachments_tenant_isolation ON attachments
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── communication_logs ──────────────────────────────────────────────────────────
+-- Outbound message queue + delivery log. Never global, so plain tenant isolation.
+ALTER TABLE communication_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE communication_logs FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS communication_logs_tenant_isolation ON communication_logs;
+CREATE POLICY communication_logs_tenant_isolation ON communication_logs
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── notifications ─────────────────────────────────────────────────────────────
+ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE notifications FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS notifications_tenant_isolation ON notifications;
+CREATE POLICY notifications_tenant_isolation ON notifications
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── notification_actors ─────────────────────────────────────────────────────────
+ALTER TABLE notification_actors ENABLE ROW LEVEL SECURITY;
+ALTER TABLE notification_actors FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS notification_actors_tenant_isolation ON notification_actors;
+CREATE POLICY notification_actors_tenant_isolation ON notification_actors
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── notification_targets ────────────────────────────────────────────────────────
+ALTER TABLE notification_targets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE notification_targets FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS notification_targets_tenant_isolation ON notification_targets;
+CREATE POLICY notification_targets_tenant_isolation ON notification_targets
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());

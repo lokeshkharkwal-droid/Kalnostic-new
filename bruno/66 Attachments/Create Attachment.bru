@@ -1,0 +1,46 @@
+meta {
+  name: Create Attachment
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/attachments
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "entityType": "MISC",
+    "entityId": "{{attachmentEntityId}}",
+    "category": "EVIDENCE",
+    "url": "{{attachmentUrl}}",
+    "fileName": "receipt.pdf",
+    "mimeType": "application/pdf",
+    "fileSize": 20480
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("attachmentId", data.id);
+}
+
+docs {
+  Attach an already-uploaded file (S3 `url` from **Upload Attachment**) to an
+  owner record identified by `entityType` + `entityId`. `category` is an optional
+  sub-bucket. Returns the created attachment row.
+
+  `entityType` must be one of the allow-listed slugs (else 422). Set
+  `attachmentUrl` (from Upload Attachment) and `attachmentEntityId` (any owner id)
+  as vars first.
+}
