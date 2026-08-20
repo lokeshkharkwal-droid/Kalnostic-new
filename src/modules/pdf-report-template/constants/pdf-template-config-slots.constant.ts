@@ -34,12 +34,20 @@ export const PDF_TEMPLATE_CONFIG_SLOT_GROUPS: PdfTemplateConfigSlotGroup[] = [
         label: 'Referring Panel Patient Bill PDF Template',
       },
       { key: 'accounts_biling', label: 'Accounts Billing Bill PDF Template' },
+      { key: 'accounts_biling_ipd', label: 'Accounts Billing - IPD' },
+      {
+        key: 'accounts_biling_referrals',
+        label: 'Accounts Billing - Referrals',
+      },
+      { key: 'referral_invoice', label: 'Referral Invoice' },
+      { key: 'wallet_transaction_bill', label: 'Wallet Transaction Bill' },
     ],
   },
   {
     label: 'Lab',
     slots: [
       { key: 'lab_report', label: 'Lab Test Report' },
+      { key: 'lab_report_manual_fill', label: 'Lab Report Manual Fill' },
       { key: 'lab_panel', label: 'Lab Panel Report' },
       { key: 'lab_all_report', label: 'Lab All Reports' },
       {
@@ -47,10 +55,12 @@ export const PDF_TEMPLATE_CONFIG_SLOT_GROUPS: PdfTemplateConfigSlotGroup[] = [
         label: 'Lab All Reports With Letterhead Images',
       },
       { key: 'order_print', label: 'Lab Order PDF Template' },
+      { key: 'order_envelope_print', label: 'Order Envelope Print' },
       {
         key: 'order_print_without_bill',
         label: 'Lab Order Without Bill PDF Template',
       },
+      { key: 'order_phlebo_detail', label: 'Order Phlebo Detail Print' },
       { key: 'bill_print', label: 'Lab Order Bill PDF Template' },
       { key: 'trf_print', label: 'Test Requisition Form (TRF) PDF Template' },
       {
@@ -99,7 +109,26 @@ export const PDF_TEMPLATE_CONFIG_SLOT_GROUPS: PdfTemplateConfigSlotGroup[] = [
         key: 'visit_note_print_all_investigation',
         label: 'Visit Note Print All Investigation Template',
       },
+      {
+        key: 'visit_note_print_external_refer_to',
+        label: 'Visit Note, External Refer To',
+      },
+      {
+        key: 'visit_note_medical_certificate',
+        label: 'Visit Note, Medical Certificate',
+      },
+      {
+        key: 'echocardiography_certificate',
+        label: 'Visit Note, Echocardiography Certificate',
+      },
+      { key: 'ekg_ecg_certificate', label: 'Visit Note, EKG/ECG Certificate' },
+      {
+        key: 'ultrasound_certificate',
+        label: 'Visit Note, Ultrasound Certificate',
+      },
       { key: 'patient_discharge', label: 'Patient Discharge Slip' },
+      { key: 'patient_diet_chart', label: 'Patient Diet Chart' },
+      { key: 'diet_chart_report', label: 'Diet Chart Report' },
     ],
   },
   {
@@ -109,6 +138,16 @@ export const PDF_TEMPLATE_CONFIG_SLOT_GROUPS: PdfTemplateConfigSlotGroup[] = [
       {
         key: 'blood_request_cross_match',
         label: 'Blood Request Cross Match Report',
+      },
+    ],
+  },
+  {
+    label: 'Other',
+    slots: [
+      { key: 'duty_roster_report', label: 'Duty Roster Report' },
+      {
+        key: 'pharmacy_sales_invoice_print',
+        label: 'Pharmacy Sales Invoice',
       },
     ],
   },
