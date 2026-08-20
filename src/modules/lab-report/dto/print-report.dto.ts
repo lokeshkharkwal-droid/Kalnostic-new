@@ -1,6 +1,6 @@
-import { IsIn, IsOptional, IsUUID } from 'class-validator';
+import { IsArray, IsIn, IsOptional, IsUUID } from 'class-validator';
 
-/** Body for `POST /lab-reports/:id/print`. */
+/** Body for `POST /lab-reports/:id/print` and `POST /lab-reports/order/:orderId/print-all`. */
 export class PrintReportDto {
   /** Which `PdfReportTemplate` to render with. Omit to use the tenant's
    * single active template of `type` (the common case — most tenants only
@@ -18,4 +18,14 @@ export class PrintReportDto {
   @IsOptional()
   @IsIn(['lab_report', 'lab_panel'])
   type?: 'lab_report' | 'lab_panel';
+
+  /**
+   * `POST .../print-all` only: restrict the consolidated PDF to the reports
+   * whose `orderItemId` is in this list, instead of every report on the
+   * order. Omit to render the whole order (unchanged default behaviour).
+   */
+  @IsOptional()
+  @IsArray()
+  @IsUUID('4', { each: true })
+  orderItemIds?: string[];
 }

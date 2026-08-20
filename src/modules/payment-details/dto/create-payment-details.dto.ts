@@ -3,7 +3,6 @@ import {
   IsBoolean,
   IsDateString,
   IsEnum,
-  IsInt,
   IsNumber,
   IsOptional,
   IsString,
@@ -12,54 +11,59 @@ import {
   Min,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
-import { roundMinorUnits } from '../../../common/utils';
+import { roundToTwoDecimalPlacesTransform } from '../../../common/utils';
 
 /**
  * Create a payment record against an order. `orderId` is validated to belong to
  * the caller's tenant; `tenantId`/`branchId` are taken from the order's context,
- * never the body. All amounts are integer minor units. Wallet/Points/Previous-
- * Dues fields are stored as provided but NOT computed this phase (deferred).
+ * never the body. All amounts are rupees, up to 2 decimal places. Wallet/Points/
+ * Previous-Dues fields are stored as provided but NOT computed this phase (deferred).
  */
 export class CreatePaymentDetailsDto {
   @IsUUID()
   orderId: string;
 
   @IsOptional()
-  @IsInt()
+  @Transform(roundToTwoDecimalPlacesTransform)
+  @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   totalAmount?: number;
 
-  /** Order-level discount in minor units; a float is rounded to a whole minor unit. */
+  /** Order-level discount (rupees, up to 2 decimal places); a value with more precision (e.g. from percentage math) is rounded to the nearest paisa. */
   @IsOptional()
-  @Transform(roundMinorUnits)
-  @IsNumber()
+  @Transform(roundToTwoDecimalPlacesTransform)
+  @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   orderDiscount?: number;
 
-  /** Total discount applied to the order (item-level + order-level) in minor units; a float is rounded to a whole minor unit. */
+  /** Total discount applied to the order (item-level + order-level), rupees up to 2 decimal places; a value with more precision is rounded to the nearest paisa. */
   @IsOptional()
-  @Transform(roundMinorUnits)
-  @IsNumber()
+  @Transform(roundToTwoDecimalPlacesTransform)
+  @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   netDiscount?: number;
 
   @IsOptional()
-  @IsInt()
+  @Transform(roundToTwoDecimalPlacesTransform)
+  @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   visitingCharges?: number;
 
   @IsOptional()
-  @IsInt()
+  @Transform(roundToTwoDecimalPlacesTransform)
+  @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   netAmount?: number;
 
   @IsOptional()
-  @IsInt()
+  @Transform(roundToTwoDecimalPlacesTransform)
+  @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   deductFromWallet?: number;
 
   @IsOptional()
-  @IsInt()
+  @Transform(roundToTwoDecimalPlacesTransform)
+  @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   deductFromPoints?: number;
 
@@ -68,22 +72,26 @@ export class CreatePaymentDetailsDto {
   hasClearedPreviousDues?: boolean;
 
   @IsOptional()
-  @IsInt()
+  @Transform(roundToTwoDecimalPlacesTransform)
+  @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   tdsDeduction?: number;
 
   @IsOptional()
-  @IsInt()
+  @Transform(roundToTwoDecimalPlacesTransform)
+  @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   payableAmount?: number;
 
   @IsOptional()
-  @IsInt()
+  @Transform(roundToTwoDecimalPlacesTransform)
+  @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   paidAmount?: number;
 
   @IsOptional()
-  @IsInt()
+  @Transform(roundToTwoDecimalPlacesTransform)
+  @IsNumber({ maxDecimalPlaces: 2 })
   remainingBalance?: number;
 
   @IsOptional()

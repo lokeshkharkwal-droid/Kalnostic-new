@@ -1,4 +1,5 @@
 import { CollectionStatus, Prisma } from '@prisma/client';
+import { toNum } from '../../../common/utils';
 
 /**
  * `include` for a home-visit collection list row. Pulls the linked order's patient,
@@ -149,10 +150,13 @@ export function toCollectionListRow(
   row: CollectionWithRelations,
 ): CollectionListRow {
   const payments = row.order?.payments ?? [];
-  const grossAmount = payments.reduce((s, p) => s + p.totalAmount, 0);
-  const discountAmount = payments.reduce((s, p) => s + p.orderDiscount, 0);
-  const netAmount = payments.reduce((s, p) => s + p.netAmount, 0);
-  const paidAmount = payments.reduce((s, p) => s + p.paidAmount, 0);
+  const grossAmount = payments.reduce((s, p) => s + toNum(p.totalAmount), 0);
+  const discountAmount = payments.reduce(
+    (s, p) => s + toNum(p.orderDiscount),
+    0,
+  );
+  const netAmount = payments.reduce((s, p) => s + toNum(p.netAmount), 0);
+  const paidAmount = payments.reduce((s, p) => s + toNum(p.paidAmount), 0);
   const diagnostics = row.order?.diagnostics ?? null;
   const items = row.order?.items ?? [];
   const samples = row.order?.accessionSamples ?? [];

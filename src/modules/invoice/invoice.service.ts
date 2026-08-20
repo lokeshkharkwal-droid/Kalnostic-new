@@ -128,6 +128,12 @@ export class InvoiceService {
         const partyIds = new Set<string>();
         const missingParty: string[] = [];
         const noDue: string[] = [];
+        // Invoices are deliberately whole-rupee (Invoice.grossAmount is an `Int`
+        // column) — an order's due can now carry paise (PaymentDetails supports
+        // decimals), so it's rounded to the nearest rupee here, at the point it
+        // enters the invoice, as an intentional business rule rather than a
+        // silent truncation.
+        const dueByOrder = new Map<string, number>();
         let gross = 0;
         for (const oid of orderIds) {
           const row = info.get(oid) as OrderPartyInfo;
@@ -137,11 +143,13 @@ export class InvoiceService {
             continue;
           }
           partyIds.add(fk);
-          if (row.due <= 0) {
+          const due = Math.round(row.due);
+          dueByOrder.set(oid, due);
+          if (due <= 0) {
             noDue.push(oid);
             continue;
           }
-          gross += row.due;
+          gross += due;
         }
         if (missingParty.length > 0) {
           throw new InvoicePartyMismatchException(dto.partyType, missingParty);
@@ -206,7 +214,7 @@ export class InvoiceService {
                 tenantId,
                 branchId,
                 orderId: oid,
-                invoicedAmount: (info.get(oid) as OrderPartyInfo).due,
+                invoicedAmount: dueByOrder.get(oid) ?? 0,
               })),
             },
           },
