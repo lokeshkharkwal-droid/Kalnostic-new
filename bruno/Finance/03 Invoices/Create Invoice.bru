@@ -1,0 +1,42 @@
+meta {
+  name: Create Invoice
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/invoices
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "partyType": "B2B",
+    "sourceOrderIds": ["{{orderId}}"],
+    "invoiceDueDate": "2026-09-15",
+    "tdsDueDate": "2026-09-20",
+    "isTdsApplicable": true,
+    "tdsPercent": 10,
+    "notes": "Consolidated monthly billing"
+  }
+}
+
+docs {
+  Create an invoice from selected outstanding order records. `partyType` is the
+  Outstanding report panel (`B2B` / `REFERRED_BY` / `INTERNAL_REFERRAL_USER` /
+  `EXTERNAL_REFERRAL_USER`). The server re-derives the gross amount (Σ of the
+  orders' current outstanding due) and the party from `sourceOrderIds` — no amounts
+  are read from the body. `isTdsApplicable`/`tdsPercent` are optional overrides
+  (default from the party master). Errors: `INVOICE_ORDER_NOT_FOUND`,
+  `INVOICE_ORDER_ALREADY_INVOICED` (409), `INVOICE_PARTY_MISMATCH`,
+  `INVOICE_MIXED_PARTY`, `INVOICE_ORDER_NOT_OUTSTANDING`, `INVOICE_ZERO_AMOUNT`.
+}

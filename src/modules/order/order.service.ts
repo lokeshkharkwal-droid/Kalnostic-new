@@ -6,6 +6,7 @@ import {
   DoctorType,
   ExternalIdFormat,
   ExternalIdPurpose,
+  InvoicePaymentStatus,
   Order,
   OrderDateType,
   OrderStatus,
@@ -16,6 +17,7 @@ import {
   QuotationStatus,
   RepeatIntervalUnit,
   SampleSource,
+  SettlementStatus,
   TransferKind,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -29,7 +31,12 @@ import { RegistrationSettingsService } from '../registration-settings/registrati
 import { ExternalIdService } from '../registration-settings/external-id.service';
 import type { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
 import { PaginatedResult } from '../../common/dto/response.dto';
-import { addInterval, subtractInterval } from '../../common/utils';
+import {
+  addInterval,
+  subtractInterval,
+  toNum,
+  roundToTwoDecimalPlaces,
+} from '../../common/utils';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { ListOrdersDto } from './dto/list-orders.dto';
@@ -172,7 +179,6 @@ import {
   PreviousDuesOverpaymentException,
   FullPaymentRequiredException,
   PartialPaymentBelowMinimumException,
-  ExternalOrderIdRequiredException,
   DuplicateExternalOrderIdException,
   OrderDiscountNotAllowedException,
   OrderDiscountOutOfRangeException,
@@ -348,13 +354,11 @@ export class OrderService {
     const { appointmentAt, appointmentType } = this.resolveAppointment(dto);
 
     // Derive the stored payment status from the inline payment ledger (if any).
-    const payNet = (dto.payments ?? []).reduce(
-      (s, p) => s + (p.netAmount ?? 0),
-      0,
+    const payNet = roundToTwoDecimalPlaces(
+      (dto.payments ?? []).reduce((s, p) => s + (p.netAmount ?? 0), 0),
     );
-    const payPaid = (dto.payments ?? []).reduce(
-      (s, p) => s + (p.paidAmount ?? 0),
-      0,
+    const payPaid = roundToTwoDecimalPlaces(
+      (dto.payments ?? []).reduce((s, p) => s + (p.paidAmount ?? 0), 0),
     );
     // The total paid can never exceed the amount owed (`netAmount`, which the
     // caller sets to the payable). Blocks overpayment across every workflow
@@ -468,19 +472,11 @@ export class OrderService {
         )
       : ExternalIdFormat.NONE;
     const externalIdIsManual = externalIdFormat === ExternalIdFormat.NONE;
+    // A manual external Order/Quote id is optional: the internal `orderCode` is
+    // always generated below, independent of the external id. When a value is
+    // supplied (NONE format) it is kept and uniqueness-checked; otherwise the
+    // external id is simply left null.
     const manualExternalId = dto.externalOrderId?.trim() || null;
-    // Manual id is mandatory on a finalized order/quotation (DRAFT/APPOINTMENT
-    // exempt — mirrors assertBillingRules).
-    const requiresManualExternalId =
-      dto.status === OrderStatus.ORDER || dto.status === OrderStatus.QUOTE;
-    if (
-      branchId &&
-      externalIdIsManual &&
-      requiresManualExternalId &&
-      !manualExternalId
-    ) {
-      throw new ExternalOrderIdRequiredException(isQuote);
-    }
 
     let createdId: string;
     try {
@@ -831,7 +827,7 @@ export class OrderService {
       branchLabTestId: i.branchLabTestId ?? undefined,
       branchLabPanelId: i.branchLabPanelId ?? undefined,
       direct: i.direct ?? undefined,
-      discount: i.discount,
+      discount: toNum(i.discount),
       outsourceCenterId: i.outsourceCenterId ?? undefined,
     }));
     // Carry the source's order-level totals onto a single fresh (unpaid) ledger row.
@@ -839,10 +835,13 @@ export class OrderService {
     const payments: OrderPaymentDto[] = src0
       ? [
           {
-            totalAmount: src0.totalAmount ?? 0,
-            orderDiscount: src0.orderDiscount ?? 0,
-            netAmount: src0.netAmount ?? 0,
-            payableAmount: src0.payableAmount ?? src0.netAmount ?? 0,
+            totalAmount: toNum(src0.totalAmount),
+            orderDiscount: toNum(src0.orderDiscount),
+            netAmount: toNum(src0.netAmount),
+            payableAmount:
+              src0.payableAmount != null
+                ? toNum(src0.payableAmount)
+                : toNum(src0.netAmount),
             paidAmount: 0,
           },
         ]
@@ -975,11 +974,11 @@ export class OrderService {
     });
     let outstanding = 0;
     for (const o of orders) {
-      const net = o.payments.reduce((s, p) => s + p.netAmount, 0);
-      const paid = o.payments.reduce((s, p) => s + p.paidAmount, 0);
+      const net = o.payments.reduce((s, p) => s + toNum(p.netAmount), 0);
+      const paid = o.payments.reduce((s, p) => s + toNum(p.paidAmount), 0);
       outstanding += Math.max(net - paid, 0);
     }
-    return outstanding;
+    return roundToTwoDecimalPlaces(outstanding);
   }
 
   /**
@@ -1336,8 +1335,8 @@ export class OrderService {
     let remaining = amount;
     for (const o of orders) {
       if (remaining <= 0) break;
-      const net = o.payments.reduce((s, p) => s + p.netAmount, 0);
-      const paid = o.payments.reduce((s, p) => s + p.paidAmount, 0);
+      const net = o.payments.reduce((s, p) => s + toNum(p.netAmount), 0);
+      const paid = o.payments.reduce((s, p) => s + toNum(p.paidAmount), 0);
       const balance = net - paid;
       if (balance <= 0) continue;
       const applied = Math.min(balance, remaining);
@@ -1609,12 +1608,12 @@ export class OrderService {
         order.branchId,
       );
       if (settings.BillingMenu_AllowBillCopyPrintForPaidBillingsOnly) {
-        const net = order.payments.reduce((s, p) => s + p.netAmount, 0);
+        const net = order.payments.reduce((s, p) => s + toNum(p.netAmount), 0);
         const effectivePaid = computeEffectivePaid(
-          order.payments.reduce((s, p) => s + p.paidAmount, 0),
-          order.cancellationCharge,
-          order.payments.reduce((s, p) => s + p.refundAmount, 0),
-          order.payments.reduce((s, p) => s + p.refundCharge, 0),
+          order.payments.reduce((s, p) => s + toNum(p.paidAmount), 0),
+          toNum(order.cancellationCharge),
+          order.payments.reduce((s, p) => s + toNum(p.refundAmount), 0),
+          order.payments.reduce((s, p) => s + toNum(p.refundCharge), 0),
         );
         if (net - effectivePaid > 0) {
           throw new BillCopyPrintNotAllowedForUnpaidException(id);
@@ -1673,6 +1672,8 @@ export class OrderService {
         return this.buildTrfContext(order);
       case 'lab_quotation_print':
         return this.buildQuotationContext(order);
+      case 'order_barcode_print':
+        return this.buildOrderBarcodeContext(order);
     }
   }
 
@@ -1717,7 +1718,7 @@ export class OrderService {
         code: test?.testCode ?? panel?.panelCode ?? '',
         type: test ? 'Test' : panel ? 'Panel' : 'Direct',
         price: Number(test?.priceMsrp ?? panel?.priceMsrp ?? 0),
-        discount: it.discount ?? 0,
+        discount: toNum(it.discount),
       };
     });
   }
@@ -1730,8 +1731,9 @@ export class OrderService {
     paid: number;
     balance: number;
   } {
-    const sum = (pick: (p: OrderWithRelations['payments'][number]) => number) =>
-      order.payments.reduce((acc, p) => acc + pick(p), 0);
+    const sum = (
+      pick: (p: OrderWithRelations['payments'][number]) => Prisma.Decimal,
+    ) => order.payments.reduce((acc, p) => acc + toNum(pick(p)), 0);
     const gross = sum((p) => p.totalAmount);
     const discount = sum((p) => p.orderDiscount);
     const net = sum((p) => p.netAmount);
@@ -1854,6 +1856,36 @@ export class OrderService {
         ...this.referralVariables(order),
       },
       sections: { items: this.itemRows(order) },
+    };
+  }
+
+  /**
+   * `order_barcode_print` — order-level barcode label: the order's own
+   * identifier (`orderCode`) plus a short patient/test summary. Variable names
+   * (`barcode`, `order_code`, `patient_name`, `test_names`) intentionally mirror
+   * `AccessionSampleService.buildLabelVariables` so template authors reuse
+   * familiar merge fields; this is a distinct type from that per-sample label
+   * (see `ORDER_PRINT_TYPES` doc comment).
+   */
+  private buildOrderBarcodeContext(order: OrderWithRelations): GeneratePdfDto {
+    return {
+      variables: {
+        order_code: order.orderCode,
+        barcode: order.orderCode,
+        order_date: this.dateOnly(order.orderDate),
+        branch_name: order.branch?.name ?? '',
+        test_names: order.items
+          .map(
+            (it) =>
+              it.branchLabTest?.testName ??
+              it.branchLabPanel?.panelName ??
+              it.direct ??
+              '',
+          )
+          .filter(Boolean)
+          .join(', '),
+        ...this.patientVariables(order),
+      },
     };
   }
 
@@ -2286,18 +2318,30 @@ export class OrderService {
       rows.map((r) => r.id),
     );
     const data: OrderListRow[] = rows.map((r) => {
-      const grossAmount = r.payments.reduce((s, p) => s + p.totalAmount, 0);
-      const discountAmount = r.payments.reduce(
-        (s, p) => s + p.orderDiscount,
+      const grossAmount = r.payments.reduce(
+        (s, p) => s + toNum(p.totalAmount),
         0,
       );
-      const netAmount = r.payments.reduce((s, p) => s + p.netAmount, 0);
-      const paidAmount = r.payments.reduce((s, p) => s + p.paidAmount, 0);
-      const tdsAmount = r.payments.reduce((s, p) => s + p.tdsDeduction, 0);
+      const discountAmount = r.payments.reduce(
+        (s, p) => s + toNum(p.orderDiscount),
+        0,
+      );
+      const netAmount = r.payments.reduce((s, p) => s + toNum(p.netAmount), 0);
+      const paidAmount = r.payments.reduce(
+        (s, p) => s + toNum(p.paidAmount),
+        0,
+      );
+      const tdsAmount = r.payments.reduce(
+        (s, p) => s + toNum(p.tdsDeduction),
+        0,
+      );
       const dueAmount = Math.max(0, netAmount - paidAmount);
-      const refundedAmount = r.payments.reduce((s, p) => s + p.refundAmount, 0);
+      const refundedAmount = r.payments.reduce(
+        (s, p) => s + toNum(p.refundAmount),
+        0,
+      );
       const refundChargeTotal = r.payments.reduce(
-        (s, p) => s + p.refundCharge,
+        (s, p) => s + toNum(p.refundCharge),
         0,
       );
       const count = counts.get(r.id);
@@ -2368,9 +2412,15 @@ export class OrderService {
   ): number[] {
     const out = new Array<number>(weights.length).fill(0);
     if (weights.length === 0 || amount === 0 || sumW <= 0) return out;
-    const raw = weights.map((w) => (amount * w) / sumW);
+    // The largest-remainder method below only reconciles exactly (Σ === amount)
+    // over INTEGER units — so it runs in whole paise (amount's smallest unit)
+    // rather than rupees, which may carry a fraction. Converting back to
+    // rupees at the end keeps Σ result === amount to the paisa even when
+    // `amount` is a decimal (e.g. ₹133.33 split across weighted lines).
+    const amountPaise = Math.round(amount * 100);
+    const raw = weights.map((w) => (amountPaise * w) / sumW);
     const floors = raw.map((x) => Math.floor(x));
-    let rem = amount - floors.reduce((s, x) => s + x, 0);
+    let rem = amountPaise - floors.reduce((s, x) => s + x, 0);
     const byFrac = raw
       .map((x, i) => ({ i, frac: x - Math.floor(x) }))
       .sort((a, b) => b.frac - a.frac);
@@ -2379,7 +2429,7 @@ export class OrderService {
       floors[i] = (floors[i] ?? 0) + 1;
       rem--;
     }
-    return floors;
+    return floors.map((paise) => roundToTwoDecimalPlaces(paise / 100));
   }
 
   /**
@@ -2397,7 +2447,7 @@ export class OrderService {
       if (rem <= 0) break;
       const take = Math.min(v, rem);
       out[i] = take;
-      rem -= take;
+      rem = roundToTwoDecimalPlaces(rem - take);
     }
     return out;
   }
@@ -2460,13 +2510,13 @@ export class OrderService {
     let wallet = 0;
     let refundAmount = 0;
     for (const p of order.payments) {
-      gross += p.totalAmount;
-      discount += p.orderDiscount;
-      net += p.netAmount;
-      tds += p.tdsDeduction;
+      gross += toNum(p.totalAmount);
+      discount += toNum(p.orderDiscount);
+      net += toNum(p.netAmount);
+      tds += toNum(p.tdsDeduction);
       // REFUND rows carry `refundAmount` (0 on PAYMENT rows) — Σ = total refunded.
-      refundAmount += p.refundAmount;
-      const a = p.paidAmount;
+      refundAmount += toNum(p.refundAmount);
+      const a = toNum(p.paidAmount);
       switch (p.paymentMode) {
         case PaymentMode.CASH:
           cash += a;
@@ -2493,7 +2543,7 @@ export class OrderService {
     // (net = totalAmount − Σ itemDiscount − orderDiscount), so surfacing them
     // here keeps `gross − discount === net` and stops genuinely-discounted
     // orders from showing a ₹0 discount.
-    for (const it of order.items) discount += it.discount;
+    for (const it of order.items) discount += toNum(it.discount);
     const receipts = cash + upi + bankTransfer + debitCard + creditCard;
     const paid = report === 'collection' ? receipts : receipts + wallet;
     // Gross is DERIVED as net + discount (not raw Σ totalAmount): the ledger
@@ -2503,21 +2553,242 @@ export class OrderService {
     // tab). Guards against inconsistent ledgers where netAmount > totalAmount.
     gross = net + discount;
     return {
-      gross,
-      discount,
-      net,
-      paid,
-      due: Math.max(0, net - paid),
-      tds,
-      cash,
-      upi,
-      bankTransfer,
-      debitCard,
-      creditCard,
-      refundAmount,
+      gross: roundToTwoDecimalPlaces(gross),
+      discount: roundToTwoDecimalPlaces(discount),
+      net: roundToTwoDecimalPlaces(net),
+      paid: roundToTwoDecimalPlaces(paid),
+      due: roundToTwoDecimalPlaces(Math.max(0, net - paid)),
+      tds: roundToTwoDecimalPlaces(tds),
+      cash: roundToTwoDecimalPlaces(cash),
+      upi: roundToTwoDecimalPlaces(upi),
+      bankTransfer: roundToTwoDecimalPlaces(bankTransfer),
+      debitCard: roundToTwoDecimalPlaces(debitCard),
+      creditCard: roundToTwoDecimalPlaces(creditCard),
+      refundAmount: roundToTwoDecimalPlaces(refundAmount),
       // The cancellation charge retained on the order (Cancel report).
-      cancelAmount: order.cancellationCharge ?? 0,
+      cancelAmount: toNum(order.cancellationCharge),
     };
+  }
+
+  /**
+   * Resolve, for a set of orders, each order's current outstanding `due` and its
+   * four referral-party FKs — the single sanctioned reuse point for the Invoice
+   * module (CLAUDE.md rule #3: injected via DI, never a direct file import). Uses
+   * the SAME `orderLevelFigures(o, 'outstanding')` the Outstanding report uses, so
+   * invoicing stays reconciled with that report by construction.
+   *
+   * Runs inside the caller's tenant transaction (`tx`) so the reads share the RLS
+   * GUC set by `withTenant`.
+   *
+   * @param tx active tenant-scoped transaction client (from `withTenant`)
+   * @param tenantId tenant scope (defence in depth on top of RLS)
+   * @param orderIds the source order ids to resolve
+   * @returns a map keyed by order id → `{ due, party FKs }`; ids that don't resolve
+   *   to an active order in the tenant are simply absent from the map
+   */
+  async getOutstandingInfoForOrders(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    orderIds: string[],
+  ): Promise<
+    Map<
+      string,
+      {
+        due: number;
+        referralPanelId: string | null;
+        referredByDoctorId: string | null;
+        internalReferralId: string | null;
+        externalReferralId: string | null;
+      }
+    >
+  > {
+    const orders = await tx.order.findMany({
+      where: { id: { in: orderIds }, tenantId, deletedAt: null },
+      include: BILLING_ORDER_INCLUDE,
+    });
+    const result = new Map<
+      string,
+      {
+        due: number;
+        referralPanelId: string | null;
+        referredByDoctorId: string | null;
+        internalReferralId: string | null;
+        externalReferralId: string | null;
+      }
+    >();
+    for (const o of orders) {
+      result.set(o.id, {
+        due: this.orderLevelFigures(o, 'outstanding').due,
+        referralPanelId: o.referralPanelId,
+        referredByDoctorId: o.referredByDoctorId,
+        internalReferralId: o.internalReferralId,
+        externalReferralId: o.externalReferralId,
+      });
+    }
+    return result;
+  }
+
+  /**
+   * Resolve, for a set of PAYMENTS (collected receipts), each payment's collected
+   * amount + its order's four referral-party FKs + the payment date + the order's
+   * COLLECTION money figures prorated to that payment (order figure × payment.paid ÷
+   * order collected). The single sanctioned reuse point for the Settlement module
+   * (per-payment grain; CLAUDE.md rule #3 — injected via DI). `paid` is the
+   * settlement basis (a single physical receipt's collected amount).
+   *
+   * Runs inside the caller's tenant transaction (`tx`) so the reads share the RLS
+   * GUC set by `withTenant`.
+   *
+   * @param tx active tenant-scoped transaction client (from `withTenant`)
+   * @param tenantId tenant scope (defence in depth on top of RLS)
+   * @param paymentIds the source payment ids to resolve
+   * @returns a map keyed by payment id → `{ paid, orderId, paymentDate, *Share, party
+   *   FKs }`; ids that don't resolve to an active payment/order are simply absent
+   */
+  async getCollectionInfoForPayments(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    paymentIds: string[],
+  ): Promise<
+    Map<
+      string,
+      {
+        paid: number;
+        orderId: string;
+        paymentDate: Date;
+        grossShare: number;
+        discountShare: number;
+        netShare: number;
+        dueShare: number;
+        referralPanelId: string | null;
+        referredByDoctorId: string | null;
+        internalReferralId: string | null;
+        externalReferralId: string | null;
+      }
+    >
+  > {
+    const result = new Map<
+      string,
+      {
+        paid: number;
+        orderId: string;
+        paymentDate: Date;
+        grossShare: number;
+        discountShare: number;
+        netShare: number;
+        dueShare: number;
+        referralPanelId: string | null;
+        referredByDoctorId: string | null;
+        internalReferralId: string | null;
+        externalReferralId: string | null;
+      }
+    >();
+    if (paymentIds.length === 0) return result;
+    const payments = await tx.paymentDetails.findMany({
+      where: { id: { in: paymentIds }, tenantId, deletedAt: null },
+      select: {
+        id: true,
+        paidAmount: true,
+        orderId: true,
+        paymentDate: true,
+        createdAt: true,
+      },
+    });
+    const orderIds = [...new Set(payments.map((p) => p.orderId))];
+    const orders = await tx.order.findMany({
+      where: { id: { in: orderIds }, tenantId, deletedAt: null },
+      include: BILLING_ORDER_INCLUDE,
+    });
+    const figByOrder = new Map(
+      orders.map((o) => [
+        o.id,
+        { fig: this.orderLevelFigures(o, 'collection'), order: o },
+      ]),
+    );
+    for (const p of payments) {
+      const entry = figByOrder.get(p.orderId);
+      if (!entry) continue;
+      const { fig, order: o } = entry;
+      // Prorate the order-level figures to this payment's share of the order's
+      // total collected, so per-payment snapshots reconcile to order totals.
+      const factor = fig.paid > 0 ? p.paidAmount / fig.paid : 0;
+      result.set(p.id, {
+        paid: p.paidAmount,
+        orderId: p.orderId,
+        paymentDate: p.paymentDate ?? p.createdAt,
+        grossShare: Math.round(fig.gross * factor),
+        discountShare: Math.round(fig.discount * factor),
+        netShare: Math.round(fig.net * factor),
+        dueShare: Math.round(fig.due * factor),
+        referralPanelId: o.referralPanelId,
+        referredByDoctorId: o.referredByDoctorId,
+        internalReferralId: o.internalReferralId,
+        externalReferralId: o.externalReferralId,
+      });
+    }
+    return result;
+  }
+
+  /**
+   * Resolve, per PAYMENT, how much of its collected amount is already **reserved**
+   * by settlements — used by the Settlement module (create eligibility + Approved
+   * cap) and the Collection report (per-record remaining). A settlement reserves,
+   * per source payment, its `approvedAmount` weighted by that payment's share of the
+   * settlement's basis: `approvedAmount × collectedAmount / paidAmount`. Summed over
+   * the payment's links whose settlement is NOT rejected and NOT soft-deleted.
+   *
+   * Derived (not stored) so it stays correct when Approved is edited/approved and
+   * frees automatically when a settlement is rejected. Queries the
+   * `settlement_source_payments` table directly (not the Settlement service) to
+   * avoid a circular module dependency.
+   *
+   * @param client tenant-scoped client — pass the active `tx` when inside a
+   *   `withTenant` block (e.g. settlement create), else the request-scoped
+   *   `this.prisma` (e.g. the Collection report read).
+   * @param tenantId tenant scope (defence in depth on top of RLS)
+   * @param paymentIds the payment ids to resolve
+   * @param excludeSettlementId when set, ignore this settlement's own links — so a
+   *   settlement can compute how much its payments are committed to OTHER
+   *   settlements (used to cap its Approved without counting itself).
+   * @returns map of payment id → reserved amount (whole rupees; absent = 0)
+   */
+  async getReservedForPayments(
+    client: Prisma.TransactionClient,
+    tenantId: string,
+    paymentIds: string[],
+    excludeSettlementId?: string,
+  ): Promise<Map<string, number>> {
+    const reserved = new Map<string, number>();
+    if (paymentIds.length === 0) return reserved;
+    const links = await client.settlementSourcePayment.findMany({
+      where: {
+        tenantId,
+        paymentId: { in: paymentIds },
+        deletedAt: null,
+        ...(excludeSettlementId
+          ? { settlementId: { not: excludeSettlementId } }
+          : {}),
+        settlement: {
+          is: { status: { not: SettlementStatus.REJECTED }, deletedAt: null },
+        },
+      },
+      select: {
+        paymentId: true,
+        collectedAmount: true,
+        settlement: { select: { approvedAmount: true, paidAmount: true } },
+      },
+    });
+    for (const l of links) {
+      const paid = l.settlement.paidAmount;
+      if (paid <= 0) continue;
+      const share = l.collectedAmount / paid;
+      const contribution = Math.round(l.settlement.approvedAmount * share);
+      reserved.set(
+        l.paymentId,
+        (reserved.get(l.paymentId) ?? 0) + contribution,
+      );
+    }
+    return reserved;
   }
 
   /**
@@ -2545,22 +2816,28 @@ export class OrderService {
     // already bundles order + every item discount, so using it here would
     // double-count the item discounts.)
     const orderDiscount = order.payments.reduce(
-      (s, p) => s + p.orderDiscount,
+      (s, p) => s + toNum(p.orderDiscount),
       0,
     );
     const netTotal = fig.net;
     const paidTotal = fig.paid;
     const tdsTotal = fig.tds;
     const items = order.items;
-    const base = items.map((it) => Math.max(0, it.unitPrice - it.discount));
+    const base = items.map((it) =>
+      Math.max(0, it.unitPrice - toNum(it.discount)),
+    );
     const sumBase = base.reduce((s, x) => s + x, 0);
     const discShare = this.allocateProportional(orderDiscount, base, sumBase);
     const net = items.map((_, k) =>
-      Math.max(0, (base[k] ?? 0) - (discShare[k] ?? 0)),
+      roundToTwoDecimalPlaces(
+        Math.max(0, (base[k] ?? 0) - (discShare[k] ?? 0)),
+      ),
     );
     // If the ledger's netAmount disagrees with (Σ base − orderDiscount) — e.g.
     // visiting charges — nudge the largest line so Σ net === netAmount exactly.
-    const netDrift = netTotal - net.reduce((s, x) => s + x, 0);
+    const netDrift = roundToTwoDecimalPlaces(
+      netTotal - net.reduce((s, x) => s + x, 0),
+    );
     if (netDrift !== 0 && net.length > 0) {
       let big = 0;
       for (let k = 1; k < net.length; k++) {
@@ -2638,12 +2915,16 @@ export class OrderService {
         // charges) is absorbed here too. Keeps `gross ≥ net` per line and
         // `Σ gross = netAmount + Σdiscount = totalAmount`. For an ordinary line
         // this equals unitPrice, so nothing changes for the common case.
-        gross: (net[k] ?? 0) + it.discount + (discShare[k] ?? 0),
+        gross: roundToTwoDecimalPlaces(
+          (net[k] ?? 0) + toNum(it.discount) + (discShare[k] ?? 0),
+        ),
         // Full line discount = its own item discount + its share of the
         // order-level discount (Σ over lines = Σ itemDiscount + orderDiscount),
         // so gross − discount === net per line and the item-dimension discount
         // totals match the order-level Discount figure.
-        discount: it.discount + (discShare[k] ?? 0),
+        discount: roundToTwoDecimalPlaces(
+          toNum(it.discount) + (discShare[k] ?? 0),
+        ),
         net: net[k] ?? 0,
         paid: paid[k] ?? 0,
         due: (net[k] ?? 0) - (paid[k] ?? 0),
@@ -3047,6 +3328,19 @@ export class OrderService {
       orders = orders.filter(
         (o) => this.orderLevelFigures(o, 'outstanding').due > 0,
       );
+      // An order's due can also be settled through a consolidated invoice, whose
+      // payments post to the invoice ledger — never back to the order's own
+      // PaymentDetails. Drop orders linked to a fully-paid (COMPLETED) invoice so
+      // the Outstanding view reflects invoice settlement too. Invoiced-but-unpaid
+      // orders stay (money is still owed until the invoice completes); a cancelled
+      // invoice soft-deletes its links, so those orders reappear automatically.
+      const settled = await this.invoiceSettledOrderIds(
+        tenantId,
+        orders.map((o) => o.id),
+      );
+      if (settled.size > 0) {
+        orders = orders.filter((o) => !settled.has(o.id));
+      }
     }
     if (report === 'collection') {
       // Realization view: WALLET is excluded from collection `paid`
@@ -3106,6 +3400,35 @@ export class OrderService {
       );
     }
     return orders;
+  }
+
+  /**
+   * Order ids whose outstanding due has been consolidated into a fully-paid
+   * (COMPLETED) invoice. Keyed on the active (non-deleted) InvoiceSourceOrder
+   * link → non-cancelled invoice; a cancelled invoice soft-deletes its links,
+   * so its orders drop out of this set and return to the Outstanding report.
+   * @param tenantId tenant scope (from JWT / RLS context)
+   * @param orderIds candidate order ids (the already-scoped outstanding set)
+   * @returns set of order ids to exclude from the Outstanding report
+   */
+  private async invoiceSettledOrderIds(
+    tenantId: string,
+    orderIds: string[],
+  ): Promise<Set<string>> {
+    if (orderIds.length === 0) return new Set();
+    const links = await this.prisma.invoiceSourceOrder.findMany({
+      where: {
+        tenantId,
+        orderId: { in: orderIds },
+        deletedAt: null,
+        invoice: {
+          deletedAt: null,
+          paymentStatus: InvoicePaymentStatus.COMPLETED,
+        },
+      },
+      select: { orderId: true },
+    });
+    return new Set(links.map((l) => l.orderId));
   }
 
   /**
@@ -3183,9 +3506,78 @@ export class OrderService {
       return { data, total, page, limit };
     }
 
-    // Order-level dimensions: one row per order.
+    // Collection report (order-level dimensions) is re-grained to ONE ROW PER
+    // COLLECTED PAYMENT: each physical receipt is an independently selectable /
+    // settleable record. Every other report stays one row per order.
+    if (report === 'collection') {
+      const physicalModes = new Set<PaymentMode>([
+        PaymentMode.CASH,
+        PaymentMode.UPI,
+        PaymentMode.BANK_TRANSFER,
+        PaymentMode.CARD,
+        PaymentMode.CREDIT,
+      ]);
+      // Flatten matched orders → their qualifying payment rows (PAYMENT entry,
+      // physical mode, positive amount — WALLET/REFUND excluded, matching the
+      // Collection `paid` definition).
+      const payRows: {
+        order: BillingOrder;
+        payment: BillingOrder['payments'][number];
+        orderPaid: number;
+        fig: BillingFigures;
+      }[] = [];
+      for (const o of orders) {
+        const fig = this.orderLevelFigures(o, 'collection');
+        for (const p of o.payments) {
+          if (p.entryType !== PaymentEntryType.PAYMENT) continue;
+          if (!physicalModes.has(p.paymentMode)) continue;
+          if (p.paidAmount <= 0) continue;
+          payRows.push({ order: o, payment: p, orderPaid: fig.paid, fig });
+        }
+      }
+      const total = payRows.length;
+      const pageRows = payRows.slice((page - 1) * limit, page * limit);
+      const reserved = await this.getReservedForPayments(
+        this.prisma,
+        tenantId,
+        pageRows.map((r) => r.payment.id),
+      );
+      const data = pageRows.map(({ order: o, payment: p, orderPaid, fig }) => {
+        // Prorate order figures by this payment's share of the order's collected.
+        const factor = orderPaid > 0 ? p.paidAmount / orderPaid : 0;
+        const settlementSettled = reserved.get(p.id) ?? 0;
+        const modeAmt = (m: PaymentMode) =>
+          p.paymentMode === m ? p.paidAmount : 0;
+        return {
+          ...o,
+          grossAmount: Math.round(fig.gross * factor),
+          discountAmount: Math.round(fig.discount * factor),
+          netAmount: Math.round(fig.net * factor),
+          tdsAmount: Math.round(fig.tds * factor),
+          dueAmount: Math.round(fig.due * factor),
+          paidAmount: p.paidAmount,
+          cash: modeAmt(PaymentMode.CASH),
+          upi: modeAmt(PaymentMode.UPI),
+          bankTransfer: modeAmt(PaymentMode.BANK_TRANSFER),
+          debitCard: modeAmt(PaymentMode.CARD),
+          creditCard: modeAmt(PaymentMode.CREDIT),
+          refundAmount: 0,
+          cancelAmount: 0,
+          settlementSettled,
+          settlementRemaining: Math.max(0, p.paidAmount - settlementSettled),
+          paymentId: p.id,
+          paymentMode: p.paymentMode,
+          paymentReference: p.reference,
+          paymentDate: p.paymentDate ?? p.createdAt,
+        };
+      });
+      return { data, total, page, limit };
+    }
+
+    // Order-level dimensions (non-collection): one row per order.
     const total = orders.length;
-    const data = orders.slice((page - 1) * limit, page * limit).map((o) => {
+    const pageOrders = orders.slice((page - 1) * limit, page * limit);
+    const data = pageOrders.map((o) => {
       const f = this.dimensionFiguresForOrder(o, dimension, report);
       return {
         ...o,
@@ -3716,13 +4108,11 @@ export class OrderService {
 
     // When the payment ledger is being replaced, recompute the stored payment
     // status from the incoming rows (same derivation as create).
-    const payNet = (dto.payments ?? []).reduce(
-      (s, p) => s + (p.netAmount ?? 0),
-      0,
+    const payNet = roundToTwoDecimalPlaces(
+      (dto.payments ?? []).reduce((s, p) => s + (p.netAmount ?? 0), 0),
     );
-    const payPaid = (dto.payments ?? []).reduce(
-      (s, p) => s + (p.paidAmount ?? 0),
-      0,
+    const payPaid = roundToTwoDecimalPlaces(
+      (dto.payments ?? []).reduce((s, p) => s + (p.paidAmount ?? 0), 0),
     );
     // Same overpayment guard as create, but only when the ledger is part of
     // this patch (an update without `payments` leaves the stored totals alone).
@@ -3753,7 +4143,8 @@ export class OrderService {
         _sum: { paidAmount: true },
       });
       if (
-        payPaid !== (storedPaid._sum.paidAmount ?? 0) &&
+        payPaid !==
+          roundToTwoDecimalPlaces(toNum(storedPaid._sum.paidAmount)) &&
         !billingSettings.BillingMenu_AllowCollectionOfAmountByOtherUser
       ) {
         throw new PaymentCollectionByOtherUserNotAllowedException(
@@ -3775,18 +4166,25 @@ export class OrderService {
       branchId &&
       effectiveBillGenerated
     ) {
-      const effectivePayments =
+      const effectivePayments: DiscountTdsPaymentRow[] =
         dto.payments !== undefined
           ? dto.payments
-          : await this.prisma.paymentDetails.findMany({
-              where: { orderId: id, tenantId, deletedAt: null },
-              select: {
-                netAmount: true,
-                paidAmount: true,
-                orderDiscount: true,
-                tdsDeduction: true,
-              },
-            });
+          : (
+              await this.prisma.paymentDetails.findMany({
+                where: { orderId: id, tenantId, deletedAt: null },
+                select: {
+                  netAmount: true,
+                  paidAmount: true,
+                  orderDiscount: true,
+                  tdsDeduction: true,
+                },
+              })
+            ).map((p) => ({
+              netAmount: toNum(p.netAmount),
+              paidAmount: toNum(p.paidAmount),
+              orderDiscount: toNum(p.orderDiscount),
+              tdsDeduction: toNum(p.tdsDeduction),
+            }));
 
       // Effective items + their unit prices: the incoming items (re-priced from
       // the branch catalogue) when the patch replaces them, else the stored rows
@@ -3817,7 +4215,7 @@ export class OrderService {
           branchLabTestId: s.branchLabTestId ?? undefined,
           branchLabPanelId: s.branchLabPanelId ?? undefined,
           direct: s.direct ?? undefined,
-          discount: s.discount,
+          discount: toNum(s.discount),
           discountMode: s.discountMode ?? undefined,
           discountValue: s.discountValue ?? undefined,
         }));
@@ -3884,19 +4282,9 @@ export class OrderService {
       dto.externalOrderId !== undefined
         ? dto.externalOrderId.trim() || null
         : undefined;
-    if (branchId && externalIdIsManualUpd) {
-      const effectiveExternalId =
-        manualExternalIdUpd !== undefined
-          ? manualExternalIdUpd
-          : (existing?.externalOrderId ?? null);
-      if (
-        (effectiveStatus === OrderStatus.ORDER ||
-          effectiveStatus === OrderStatus.QUOTE) &&
-        !effectiveExternalId
-      ) {
-        throw new ExternalOrderIdRequiredException(isQuoteUpd);
-      }
-    }
+    // A manual external Order/Quote id is optional here too — never required to
+    // finalize an order/quote. Any supplied value is still persisted and
+    // uniqueness-checked below.
 
     await this.prisma.withTenant(tenantId, async (tx) => {
       // Resolve the external-id value to persist (undefined = leave untouched).
@@ -4292,7 +4680,7 @@ export class OrderService {
     // configured amount. No settings (no branch) → trust the body as before.
     const cancellationCharge = settings
       ? settings.CancellationAndRefund_CancellationChargesApplicable
-        ? Math.round(
+        ? roundToTwoDecimalPlaces(
             Number(
               dto.cancellationCharge ??
                 settings.CancellationAndRefund_CancellationChargesAmount ??
@@ -4342,10 +4730,10 @@ export class OrderService {
           refundCharge: true,
         },
       });
-      const netSum = agg._sum.netAmount ?? 0;
-      const paidSum = agg._sum.paidAmount ?? 0;
-      const refundSum = agg._sum.refundAmount ?? 0;
-      const refundChargeSum = agg._sum.refundCharge ?? 0;
+      const netSum = toNum(agg._sum.netAmount);
+      const paidSum = toNum(agg._sum.paidAmount);
+      const refundSum = toNum(agg._sum.refundAmount);
+      const refundChargeSum = toNum(agg._sum.refundCharge);
 
       if (cancellationCharge > paidSum) {
         throw new CancellationChargeExceedsPaidException(
@@ -4504,7 +4892,7 @@ export class OrderService {
     // default. No settings (no branch) → trust the body as before.
     const refundCharge = settings
       ? settings.CancellationAndRefund_RefundChargesApplicable
-        ? Math.round(
+        ? roundToTwoDecimalPlaces(
             Number(
               dto.refundCharge ??
                 settings.CancellationAndRefund_RefundChargesAmount ??
@@ -4523,16 +4911,16 @@ export class OrderService {
           refundCharge: true,
         },
       });
-      const netSum = agg._sum.netAmount ?? 0;
-      const paidSum = agg._sum.paidAmount ?? 0;
-      const refundSum = agg._sum.refundAmount ?? 0;
-      const refundChargeSum = agg._sum.refundCharge ?? 0;
+      const netSum = toNum(agg._sum.netAmount);
+      const paidSum = toNum(agg._sum.paidAmount);
+      const refundSum = toNum(agg._sum.refundAmount);
+      const refundChargeSum = toNum(agg._sum.refundCharge);
 
       // Refundable = current effective paid (respects any cancellation charge and
       // prior refunds).
       const refundable = computeEffectivePaid(
         paidSum,
-        existing.cancellationCharge,
+        toNum(existing.cancellationCharge),
         refundSum,
         refundChargeSum,
       );
@@ -4577,7 +4965,7 @@ export class OrderService {
       const newRefundChargeSum = refundChargeSum + refundCharge;
       const effectivePaid = computeEffectivePaid(
         paidSum,
-        existing.cancellationCharge,
+        toNum(existing.cancellationCharge),
         newRefundSum,
         newRefundChargeSum,
       );
@@ -4589,7 +4977,7 @@ export class OrderService {
           // read "Refunded" / "Partially Refunded" rather than "Not Paid".
           refundStatus: deriveRefundStatus(
             paidSum,
-            existing.cancellationCharge,
+            toNum(existing.cancellationCharge),
             newRefundSum,
             newRefundChargeSum,
           ),

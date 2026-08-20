@@ -38,6 +38,12 @@ docs {
     - `bill_print` — the patient bill (amounts + item list + payment history).
     - `trf_print` — the Test Requisition Form (requested tests + clinical notes).
     - `lab_quotation_print` — the quotation (items + totals + validity).
+    - `order_barcode_print` — a barcode label for the order's own identifier
+      (`orderCode`) plus a short patient/test summary. Distinct from
+      `order_label_print`, which is the per-`AccessionSample` specimen barcode
+      printed via `POST /accession/samples/print-label(s)` — this type is for
+      the Order Console's per-row "Print Order Barcode" action, not specimen
+      tracking.
   - `templateId` (optional) — the `PdfReportTemplate` to render with. The frontend
     picker always sends the selected id. Omit to fall back to the tenant's single
     active template of `type`.
@@ -52,7 +58,8 @@ docs {
     branch Registration Setting
     `BillingMenu_AllowBillCopyPrintForPaidBillingsOnly` is on and the order is not
     fully paid (net − effective-paid > 0). Only `bill_print` is gated; `trf_print`,
-    `order_print`, and `lab_quotation_print` are always printable.
+    `order_print`, `lab_quotation_print`, and `order_barcode_print` are always
+    printable.
 
   In Bruno, use "Save Response → Save to file" to inspect the PDF.
 }

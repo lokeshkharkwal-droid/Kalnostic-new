@@ -1,0 +1,54 @@
+meta {
+  name: Sync India Data
+  type: http
+  seq: 34
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/locations/sync/india
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns per-tier tallies", function () {
+    const data = res.getBody() && res.getBody().data;
+    expect(data).to.have.property("countries");
+    expect(data).to.have.property("states");
+    expect(data).to.have.property("cities");
+  });
+}
+
+docs {
+  Import/refresh the bundled India location master from
+  `jsons/location/index.json` (country → states/UTs → districts-as-cities).
+  Auth: SiteAdmin token (`jwt-siteadmin`), requires `master-data:write`
+  (CONTENT_ADMIN+).
+
+  Idempotent: existing country/states/cities are matched by normalized name
+  within their parent and reused; only missing rows are created; nothing is
+  deleted. Runs inside a single transaction (all-or-nothing).
+
+  Response `data` shape — one `{ created, existing }` tally per tier:
+  ```
+  {
+    "countries": { "created": 1, "existing": 0 },
+    "states":    { "created": 36, "existing": 0 },
+    "cities":    { "created": 783, "existing": 0 }
+  }
+  ```
+
+  A second run returns all-`existing` tallies (0 created). Platform-level data:
+  no tenant/branch. Districts are stored as City rows (empty `pinCode`); the
+  source carries no Area data, so areas are untouched.
+
+  Errors (never leak server paths): `INDIA_LOCATION_DATA_FILE_NOT_FOUND`,
+  `INDIA_LOCATION_DATA_MALFORMED`, `INDIA_LOCATION_SYNC_FAILED` (all 500).
+}

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { OrderStatus, PaymentDetails, Prisma } from '@prisma/client';
+import { OrderStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import {
@@ -10,6 +10,10 @@ import { RegistrationSettingsService } from '../registration-settings/registrati
 import { CreatePaymentDetailsDto } from './dto/create-payment-details.dto';
 import { UpdatePaymentDetailsDto } from './dto/update-payment-details.dto';
 import { ListPaymentDetailsDto } from './dto/list-payment-details.dto';
+import {
+  mapPaymentDetails,
+  PaymentDetailsEntity,
+} from './entities/payment-details.entity';
 import {
   PaymentCollectionByOtherUserNotAllowedException,
   PaymentDetailsNotFoundException,
@@ -98,7 +102,7 @@ export class PaymentDetailsService {
     tenantId: string,
     personId: string | null,
     dto: CreatePaymentDetailsDto,
-  ): Promise<PaymentDetails> {
+  ): Promise<PaymentDetailsEntity> {
     const order = await this.prisma.order.findFirst({
       where: { id: dto.orderId, tenantId, deletedAt: null },
       select: {
@@ -135,12 +139,12 @@ export class PaymentDetailsService {
         },
       });
       const effectivePaid = computeEffectivePaid(
-        agg._sum.paidAmount ?? 0,
-        order.cancellationCharge,
-        agg._sum.refundAmount ?? 0,
-        agg._sum.refundCharge ?? 0,
+        agg._sum.paidAmount?.toNumber() ?? 0,
+        order.cancellationCharge.toNumber(),
+        agg._sum.refundAmount?.toNumber() ?? 0,
+        agg._sum.refundCharge?.toNumber() ?? 0,
       );
-      const pending = (agg._sum.netAmount ?? 0) - effectivePaid;
+      const pending = (agg._sum.netAmount?.toNumber() ?? 0) - effectivePaid;
       const attempted = dto.paidAmount ?? 0;
       if (attempted > pending) {
         throw new PaymentOverpaymentException(pending, attempted);
@@ -154,7 +158,7 @@ export class PaymentDetailsService {
         },
       });
       await this.recomputePaymentStatus(tx, tenantId, dto.orderId);
-      return row;
+      return mapPaymentDetails(row);
     });
   }
 
@@ -162,14 +166,14 @@ export class PaymentDetailsService {
    * Fetch one payment record by id, scoped to the caller's tenant.
    * @throws PaymentDetailsNotFoundException if missing/soft-deleted/other tenant
    */
-  async findById(id: string, tenantId: string): Promise<PaymentDetails> {
+  async findById(id: string, tenantId: string): Promise<PaymentDetailsEntity> {
     const row = await this.prisma.paymentDetails.findFirst({
       where: { id, tenantId, deletedAt: null },
     });
     if (!row) {
       throw new PaymentDetailsNotFoundException(id);
     }
-    return row;
+    return mapPaymentDetails(row);
   }
 
   /**
@@ -181,7 +185,7 @@ export class PaymentDetailsService {
   async findAll(
     tenantId: string,
     query: ListPaymentDetailsDto,
-  ): Promise<PaginatedResult<PaymentDetails>> {
+  ): Promise<PaginatedResult<PaymentDetailsEntity>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const where: Prisma.PaymentDetailsWhereInput = {
@@ -200,7 +204,7 @@ export class PaymentDetailsService {
       }),
       this.prisma.paymentDetails.count({ where }),
     ]);
-    return { data, total, page, limit };
+    return { data: data.map(mapPaymentDetails), total, page, limit };
   }
 
   /**
@@ -215,7 +219,7 @@ export class PaymentDetailsService {
     tenantId: string,
     personId: string | null,
     dto: UpdatePaymentDetailsDto,
-  ): Promise<PaymentDetails> {
+  ): Promise<PaymentDetailsEntity> {
     const existing = await this.findById(id, tenantId);
     await this.assertCanCollectForOrder(tenantId, existing.orderId, personId);
     const { paymentDate, ...rest } = dto;
@@ -228,7 +232,7 @@ export class PaymentDetailsService {
         },
       });
       await this.recomputePaymentStatus(tx, tenantId, existing.orderId);
-      return row;
+      return mapPaymentDetails(row);
     });
   }
 
@@ -243,7 +247,7 @@ export class PaymentDetailsService {
     id: string,
     tenantId: string,
     personId: string | null,
-  ): Promise<PaymentDetails> {
+  ): Promise<PaymentDetailsEntity> {
     const existing = await this.findById(id, tenantId);
     await this.assertCanCollectForOrder(tenantId, existing.orderId, personId);
     return this.prisma.withTenant(tenantId, async (tx) => {
@@ -252,7 +256,7 @@ export class PaymentDetailsService {
         data: { deletedAt: new Date() },
       });
       await this.recomputePaymentStatus(tx, tenantId, existing.orderId);
-      return row;
+      return mapPaymentDetails(row);
     });
   }
 
@@ -286,12 +290,12 @@ export class PaymentDetailsService {
         select: { cancellationCharge: true },
       }),
     ]);
-    const net = agg._sum.netAmount ?? 0;
+    const net = agg._sum.netAmount?.toNumber() ?? 0;
     const effectivePaid = computeEffectivePaid(
-      agg._sum.paidAmount ?? 0,
-      order?.cancellationCharge ?? 0,
-      agg._sum.refundAmount ?? 0,
-      agg._sum.refundCharge ?? 0,
+      agg._sum.paidAmount?.toNumber() ?? 0,
+      order?.cancellationCharge.toNumber() ?? 0,
+      agg._sum.refundAmount?.toNumber() ?? 0,
+      agg._sum.refundCharge?.toNumber() ?? 0,
     );
     await tx.order.update({
       where: { id: orderId },

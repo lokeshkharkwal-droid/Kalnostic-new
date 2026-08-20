@@ -1,0 +1,23 @@
+meta {
+  name: Get Invoice
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/invoices/{{invoiceId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Fetch one invoice with its `sourceOrders` (each linked order + `invoicedAmount`)
+  and its `payments` history (newest first). The invoice carries `settledLate`
+  (true when it was fully paid AFTER its due date — a reporting flag; `dueStatus`
+  stays ON_TIME once there's no balance). 404 `INVOICE_NOT_FOUND` if missing,
+  soft-deleted, or owned by another tenant.
+}

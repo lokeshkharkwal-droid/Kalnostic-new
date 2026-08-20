@@ -4,10 +4,12 @@ import { CountryService } from './country.service';
 import { StateService } from './state.service';
 import { CityService } from './city.service';
 import { AreaService } from './area.service';
+import { LocationSyncService } from './location-sync.service';
 import { SiteAdminCountryController } from './siteadmin-country.controller';
 import { SiteAdminStateController } from './siteadmin-state.controller';
 import { SiteAdminCityController } from './siteadmin-city.controller';
 import { SiteAdminAreaController } from './siteadmin-area.controller';
+import { SiteAdminLocationSyncController } from './siteadmin-location-sync.controller';
 import { LocationController } from './location.controller';
 
 /**
@@ -26,9 +28,16 @@ import { LocationController } from './location.controller';
     SiteAdminStateController,
     SiteAdminCityController,
     SiteAdminAreaController,
+    SiteAdminLocationSyncController,
     LocationController,
   ],
-  providers: [CountryService, StateService, CityService, AreaService],
+  providers: [
+    CountryService,
+    StateService,
+    CityService,
+    AreaService,
+    LocationSyncService,
+  ],
   exports: [CountryService, StateService, CityService, AreaService],
 })
 export class LocationModule {}

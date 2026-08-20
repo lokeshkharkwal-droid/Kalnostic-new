@@ -6,6 +6,10 @@ meta {
 docs {
   # Finance → Settlements
 
-  B2B settlements (`/finance/settlements`). **Not backend-wired yet** —
-  frontend-only / mock. Placeholder for settlement endpoints.
+  Referral settlements (`/finance/settlements`). Backend-wired. Settlements are
+  created ONLY from selected Collection-report order records (the four referral
+  parties: B2B / REFERRED_BY / INTERNAL_REFERRAL_USER / EXTERNAL_REFERRAL_USER).
+  The financial basis is the COLLECTED (paid) amount; all money is re-derived
+  server-side. Lifecycle: Pending Approval → Approved / Rejected → Partially
+  Settled → Settled. Balance = Approved − cumulative Settled.
 }

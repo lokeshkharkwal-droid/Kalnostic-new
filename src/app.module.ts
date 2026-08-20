@@ -80,6 +80,9 @@ import { SalesSettingsModule } from './modules/sales-settings/sales-settings.mod
 import { PhlebotomistSettingsModule } from './modules/phlebotomist-settings/phlebotomist-settings.module';
 import { LabReportModule } from './modules/lab-report/lab-report.module';
 import { RegistrationSettingsModule } from './modules/registration-settings/registration-settings.module';
+import { InvoiceModule } from './modules/invoice/invoice.module';
+import { SettlementModule } from './modules/settlement/settlement.module';
+import { FinancePaymentsModule } from './modules/finance-payments/finance-payments.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 
 /**
@@ -157,9 +160,12 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     PatientCategoryModule,
     PtCategoryModule,
     OrderModule,
+    InvoiceModule,
+    SettlementModule,
     PricingModule,
     OrderFieldConfigModule,
     PaymentDetailsModule,
+    FinancePaymentsModule,
     BillingSettingsModule,
     ConsoleSettingsModule,
     ReportSettingsModule,

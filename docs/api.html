@@ -585,6 +585,24 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>GET /siteadmin/contact-us</td><td>SiteAdmin · business:read</td><td>list contact submissions (paginated; search over name/mobileNumber/email, from/to createdAt range; returns id/name/organization/mobileNumber/email/message/createdOn)</td></tr>
   <tr><td>GET /siteadmin/contact-us/:id</td><td>SiteAdmin · business:read</td><td>get one contact submission (full record)</td></tr>
   <tr><td>DELETE /siteadmin/contact-us/:id</td><td>SiteAdmin · business:suspend</td><td>soft-delete a contact submission</td></tr>
+  <tr><td>POST /invoices</td><td>Business JWT</td><td>intended <code>billing:manage</code> — create an invoice from selected outstanding order records (server re-derives gross/party from <code>sourceOrderIds</code>; same-party + no-double-invoice enforced)</td></tr>
+  <tr><td>GET /invoices</td><td>Business JWT</td><td>intended <code>billing:read</code> — list invoices (branch-scoped; filters: search/invoiceType/paymentStatus/dueStatus/partyId/date range)</td></tr>
+  <tr><td>GET /invoices/summary</td><td>Business JWT</td><td>intended <code>billing:read</code> — the seven summary-card totals over the filtered set</td></tr>
+  <tr><td>GET /invoices/:id</td><td>Business JWT</td><td>intended <code>billing:read</code> — one invoice + source orders + payment history</td></tr>
+  <tr><td>GET /invoices/:id/payments</td><td>Business JWT</td><td>intended <code>billing:read</code> — invoice payment history</td></tr>
+  <tr><td>POST /invoices/:id/receive-payment</td><td>Business JWT</td><td>intended <code>billing:manage</code> — record an INVOICE or TDS receipt (separate rows per for/mode/ref; capped at outstanding)</td></tr>
+  <tr><td>POST /invoices/:id/cancel</td><td>Business JWT</td><td>intended <code>billing:manage</code> — cancel with a mandatory reason (blocked once payments exist; number never reused)</td></tr>
+  <tr><td>GET /finance/payments</td><td>Business JWT</td><td>intended <code>billing:read</code> — consolidated payment ledger (order <code>PaymentDetails</code> + <code>InvoicePayment</code> merged, paginated, newest first); filters: branchId/dateFrom/dateTo/search/mode/type(DIRECT|INVOICE)/status(COMPLETED|CANCELLED|REFUNDED)/referral ids/userId. Status derived (REFUND row → REFUNDED; parent cancelled → CANCELLED)</td></tr>
+  <tr><td>GET /finance/payments/summary</td><td>Business JWT</td><td>intended <code>billing:read</code> — KPI totals (cash/upi/bankTransfer/debitCard/creditCard + cancelled/refunded count+amount) over the same filters, ignoring mode/status; wallet/privilege/loyalty excluded</td></tr>
+  <tr><td>POST /finance/settlements</td><td>Business JWT</td><td>intended <code>billing:manage</code> — create a settlement from selected Collection-report PAYMENT records (each collection row = one collected payment; server re-derives party + money from <code>sourcePaymentIds</code>; basis = each payment's REMAINING collected amount, so partial re-settlement across multiple settlements is allowed until fully settled; same-party enforced; enters PENDING_APPROVAL, proposed approvedAmount = remaining, capped at it)</td></tr>
+  <tr><td>GET /finance/settlements</td><td>Business JWT</td><td>intended <code>billing:read</code> — list settlements (branch-scoped; filters: search/settlementType/status/partyId/date range)</td></tr>
+  <tr><td>GET /finance/settlements/summary</td><td>Business JWT</td><td>intended <code>billing:read</code> — nine summary-card totals (gross/discount/net/paid/due/approved/settled + derived balance + pendingApprovalCount) over the filtered set</td></tr>
+  <tr><td>GET /finance/settlements/:id</td><td>Business JWT</td><td>intended <code>billing:read</code> — one settlement + source orders + payout history + approval trail</td></tr>
+  <tr><td>GET /finance/settlements/:id/payments</td><td>Business JWT</td><td>intended <code>billing:read</code> — settlement payout history (newest first; append-only)</td></tr>
+  <tr><td>POST /finance/settlements/:id/approve</td><td>Business JWT</td><td>intended <code>billing:manage</code> — approve (confirm/adjust approvedAmount + notes + attachment URL); allowed from PENDING_APPROVAL/REJECTED</td></tr>
+  <tr><td>POST /finance/settlements/:id/reject</td><td>Business JWT</td><td>intended <code>billing:manage</code> — reject (notes + attachment URL); may be edited and resubmitted</td></tr>
+  <tr><td>POST /finance/settlements/:id/settle</td><td>Business JWT</td><td>intended <code>billing:manage</code> — record one payout (amount ≤ balance, payoutMode, reference, attachment URL); accumulates Settled → PARTIALLY_SETTLED/SETTLED</td></tr>
+  <tr><td>PATCH /finance/settlements/:id</td><td>Business JWT</td><td>intended <code>billing:manage</code> — edit (approvedAmount/notes/attachment); changing approvedAmount after approval forces re-approval; never below already-settled</td></tr>
 </table>
 
 <h2 id="data-model">Data model — models &amp; tiers</h2>
