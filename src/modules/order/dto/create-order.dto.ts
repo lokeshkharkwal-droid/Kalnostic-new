@@ -64,10 +64,11 @@ export class CreateOrderDto {
   sourceQuotationId?: string;
 
   /**
-   * User-facing external Order/Quote id. Only honoured when the branch's
-   * configured external-id format is NONE (manual entry) — then it is required
-   * on a finalized ORDER/QUOTE and must be unique within the branch. When a
-   * format is configured, the value is auto-generated server-side and any
+   * User-facing external Order/Quote id — always optional and independent of the
+   * internal `orderCode` (which the backend always generates). Only honoured when
+   * the branch's configured external-id format is NONE (manual entry): if a value
+   * is supplied it must be unique within the branch, otherwise it is left unset.
+   * When a format is configured, the value is auto-generated server-side and any
    * supplied value here is ignored.
    */
   @IsOptional()

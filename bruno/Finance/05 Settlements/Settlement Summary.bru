@@ -1,0 +1,33 @@
+meta {
+  name: Settlement Summary
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/finance/settlements/summary
+  body: none
+  auth: bearer
+}
+
+params:query {
+  ~search: STL-
+  ~settlementType: REFERRED_BY
+  ~status: APPROVED
+  ~partyId: {{referralDoctorId}}
+  ~dateFrom: 2026-08-01
+  ~dateTo: 2026-08-31
+  ~branchId: {{branchId}}
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Summary-card totals (independent KPI API) over the same scoped dataset the list
+  paginates. Returns `grossAmount`, `discountAmount`, `netAmount`, `paidAmount`,
+  `dueAmount`, `approvedAmount`, `settledAmount`, derived `balance` (approved −
+  settled) and `pendingApprovalCount`. Accepts the same filters as List Settlements
+  (minus pagination) so the cards reconcile with the list.
+}

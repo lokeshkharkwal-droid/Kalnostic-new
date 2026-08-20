@@ -1821,3 +1821,35 @@ DROP POLICY IF EXISTS invoice_payments_tenant_isolation ON invoice_payments;
 CREATE POLICY invoice_payments_tenant_isolation ON invoice_payments
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── settlements ─────────────────────────────────────────────────────────────────
+ALTER TABLE settlements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE settlements FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS settlements_tenant_isolation ON settlements;
+CREATE POLICY settlements_tenant_isolation ON settlements
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- Settlement number unique per tenant among ACTIVE rows.
+CREATE UNIQUE INDEX IF NOT EXISTS settlements_tenant_no_active_unique
+  ON settlements (tenant_id, settlement_no) WHERE deleted_at IS NULL;
+
+-- ── settlement_source_payments ──────────────────────────────────────────────────
+ALTER TABLE settlement_source_payments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE settlement_source_payments FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS settlement_source_payments_tenant_isolation ON settlement_source_payments;
+CREATE POLICY settlement_source_payments_tenant_isolation ON settlement_source_payments
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- NOTE: no unique index on (tenant_id, payment_id) — a payment may back MULTIPLE
+-- active settlement links (partial re-settlement). Eligibility is driven by the
+-- remaining unsettled amount (payment.paid − Σ reserved), computed in the service.
+
+-- ── settlement_payments ─────────────────────────────────────────────────────────
+ALTER TABLE settlement_payments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE settlement_payments FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS settlement_payments_tenant_isolation ON settlement_payments;
+CREATE POLICY settlement_payments_tenant_isolation ON settlement_payments
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());

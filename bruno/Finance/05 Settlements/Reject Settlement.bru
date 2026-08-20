@@ -1,0 +1,33 @@
+meta {
+  name: Reject Settlement
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/finance/settlements/{{settlementId}}/reject
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "notes": "Amount mismatch — needs review",
+    "attachmentUrl": "https://example.com/rejection.pdf"
+  }
+}
+
+docs {
+  Reject a settlement (doc §7.2). Allowed only from `PENDING_APPROVAL`. Records the
+  rejecting user, timestamp, notes and attachment; status → `REJECTED`. A rejected
+  settlement may be edited and resubmitted (re-approved). Errors: 404
+  `SETTLEMENT_NOT_FOUND`, 409 `SETTLEMENT_INVALID_STATUS`.
+}

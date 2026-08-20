@@ -153,11 +153,13 @@ docs {
   - `patientId` — required; validated to be an active patient in the tenant (422
     `ORDER_PATIENT_NOT_FOUND` otherwise). `appointmentAt` — ISO date-time.
   - `orderCode` is system-generated (`ORD-00001`…) — never sent in the body.
-  - `externalOrderId` — user-facing external Order/Quote id. Honoured **only** when
-    the branch's configured external-id format (Registration Settings → Order ID
-    Configuration / Quotation, per `status`) is `NONE`: then it is **required** on a
-    finalized `ORDER`/`QUOTE` (422 `EXTERNAL_ORDER_ID_REQUIRED` if missing) and must
-    be unique among the branch's active orders (409 `DUPLICATE_EXTERNAL_ORDER_ID`).
+  - `externalOrderId` — user-facing external Order/Quote id, always **optional** and
+    fully independent of the internal `orderCode` (which is always generated). It is
+    **never required** to finalize an `ORDER`/`QUOTE`, and the create form no longer
+    collects or sends it. Honoured **only** when the branch's configured external-id
+    format (Registration Settings → Order ID Configuration / Quotation, per `status`)
+    is `NONE`: a supplied value is kept and must be unique among the branch's active
+    orders (409 `DUPLICATE_EXTERNAL_ORDER_ID`), otherwise it is simply left unset.
     When a format is configured the id is auto-generated server-side at creation
     (from the branch's per-branch daily/monthly/yearly counter + `Branch.shortName`
     for `BRANCH_*` formats) and any value sent here is ignored. Preview via

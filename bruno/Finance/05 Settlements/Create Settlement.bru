@@ -1,0 +1,51 @@
+meta {
+  name: Create Settlement
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/finance/settlements
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "partyType": "REFERRED_BY",
+    "sourcePaymentIds": ["{{paymentId}}"],
+    "approvedAmount": 3000,
+    "settlementDate": "2026-08-19T14:30:00.000Z"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("settlementId", data.id);
+}
+
+docs {
+  Create a settlement from selected Collection-report PAYMENT records (each row on
+  the Collection report is one collected payment). `partyType` is the Collection
+  panel (`B2B` / `REFERRED_BY` / `INTERNAL_REFERRAL_USER` / `EXTERNAL_REFERRAL_USER`).
+  The server re-derives the party (from each payment's order) and all money from
+  `sourcePaymentIds` — no amounts are read from the body. The basis is each payment's
+  REMAINING collectable amount (paid − already reserved by prior non-rejected
+  settlements), so a payment can be settled across multiple settlements until fully
+  reserved (partial re-settlement). A fully-settled payment is rejected. New
+  settlements enter `PENDING_APPROVAL`. Optional: `approvedAmount` (defaults to the
+  remaining basis, **capped at it**), `settlementDate` (ISO; defaults to now),
+  `notes`, `attachmentUrl` (URL only — file upload deferred). Errors:
+  `SETTLEMENT_SOURCE_PAYMENTS_EMPTY`, `SETTLEMENT_PAYMENT_NOT_FOUND`,
+  `SETTLEMENT_PAYMENT_FULLY_SETTLED` (422), `SETTLEMENT_PARTY_MISMATCH`,
+  `SETTLEMENT_MIXED_PARTY`, `SETTLEMENT_ZERO_AMOUNT`,
+  `SETTLEMENT_APPROVED_EXCEEDS_BASIS`, `SETTLEMENT_PARTY_RESOLUTION_FAILED`.
+}
