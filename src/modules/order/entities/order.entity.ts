@@ -1,4 +1,5 @@
 import {
+  OrderStatus,
   PaymentStatus,
   Prisma,
   QuotationStatus,
@@ -19,6 +20,28 @@ export function derivePaymentStatus(net: number, paid: number): PaymentStatus {
   if (paid <= 0) return PaymentStatus.NOT_PAID;
   if (paid >= net) return PaymentStatus.PAID;
   return PaymentStatus.PARTIALLY_PAID;
+}
+
+/**
+ * Whether "Generate Bill" is effectively true for this order/quote — the flag
+ * that decides whether the payment ledger carries real money or is zeroed and
+ * forced PAID (see `OrderService.create`/`update`). Always `true` for a
+ * `QUOTE`: the lean Create/Edit-Quote form has no such concept and never
+ * sends this field, so a quotation's ledger must never be zeroed by an
+ * omitted or stale stored value. For every other status, an explicit
+ * `false` (on this request, else the previously stored value) means "no
+ * bill"; omitted everywhere else defaults to `true` (bill generated).
+ * @param status the order's effective status (`dto.status` on create; `dto.status ?? existing.status` on update)
+ * @param dtoValue `isBillGenerated` as sent on this request, if any
+ * @param existingValue the order's currently stored `isBillGenerated` (update only)
+ */
+export function resolveBillGenerated(
+  status: OrderStatus | undefined,
+  dtoValue: boolean | undefined,
+  existingValue?: boolean | null,
+): boolean {
+  if (status === OrderStatus.QUOTE) return true;
+  return dtoValue ?? existingValue ?? true;
 }
 
 /**
