@@ -17,6 +17,12 @@ auth:bearer {
 docs {
   Result Done → Approved (LABORATORY.docx §2.2, §6.6).
 
+  If "09 Validate" deferred this report (`reportingDeferredUntil` set, in the
+  future), Approve is blocked until that time passes — 422
+  `REPORTING_WINDOW_CLOSED` with the unlock instant in the message (SRS
+  §5.4/§5.5). `reportingDeferredUntil` is cleared on a successful approve.
+
   404 `LAB_REPORT_NOT_FOUND`. 409 `LAB_REPORT_LOCKED`. 409
-  `INVALID_LAB_REPORT_TRANSITION` if the report isn't Result Done.
+  `INVALID_LAB_REPORT_TRANSITION` if the report isn't Result Done. 422
+  `REPORTING_WINDOW_CLOSED` if still deferred to a later Reporting session.
 }

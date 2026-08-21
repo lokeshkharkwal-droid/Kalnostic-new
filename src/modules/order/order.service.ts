@@ -3553,6 +3553,7 @@ export class OrderService {
         pageRows.map((r) => r.payment.id),
       );
       const data = pageRows.map(({ order: o, payment: p, orderPaid, fig }) => {
+        const paidAmountNum = p.paidAmount.toNumber();
         // Prorate order figures by this payment's share of the order's collected.
         const paid = Number(p.paidAmount);
         const factor = orderPaid > 0 ? paid / orderPaid : 0;

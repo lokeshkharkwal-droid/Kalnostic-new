@@ -29,7 +29,8 @@ body:json {
     "isViewDeltaCheckIconEnabled": true,
     "isViewScheduledTestIconEnabled": true,
     "authoritySignatures": 2,
-    "signatoryBasis": "category"
+    "signatoryBasis": "category",
+    "tatAdjustmentReasons": ["QC Failure", "Instrument Issue", "Calibration Failure", "Other"]
   }
 }
 
@@ -54,5 +55,6 @@ docs {
   Validation: `tatWarningMinutes` / `tatCriticalMinutes` / `tatImminentMinutes`
   0-999 and must satisfy Warning > Critical > Imminent (minutes remaining
   before TAT Max); `authoritySignatures` 1-3; `signatoryBasis` must be one of
-  `department` | `category` | `subCategory`.
+  `department` | `category` | `subCategory`; `tatAdjustmentReasons` a non-empty
+  string array (reason options for the "Adjust TAT" audit-log dropdown).
 }

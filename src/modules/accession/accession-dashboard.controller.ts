@@ -78,9 +78,10 @@ export class AccessionDashboardController {
   }
 
   /** Normalizes a resolved scope to whatever `AccessionDashboardService` methods expect (`string | string[] | undefined`). */
-  private scopeToBranchId(
-    scope: { branchId?: string; branchIds?: string[] },
-  ): string | string[] | undefined {
+  private scopeToBranchId(scope: {
+    branchId?: string;
+    branchIds?: string[];
+  }): string | string[] | undefined {
     return scope.branchId ?? scope.branchIds;
   }
 
@@ -95,8 +96,16 @@ export class AccessionDashboardController {
     @CurrentUser('person_id') personId: string,
     @Query() query: AccessionDashboardQueryDto,
   ) {
-    const scope = await this.resolveBranchScope(tenantId, profile, personId, query.branchId);
-    return this.dashboardService.getStatsSummary(tenantId, this.scopeToBranchId(scope));
+    const scope = await this.resolveBranchScope(
+      tenantId,
+      profile,
+      personId,
+      query.branchId,
+    );
+    return this.dashboardService.getStatsSummary(
+      tenantId,
+      this.scopeToBranchId(scope),
+    );
   }
 
   /**
@@ -110,7 +119,12 @@ export class AccessionDashboardController {
     @CurrentUser('person_id') personId: string,
     @Query() query: AccessionDashboardQueryDto,
   ) {
-    const scope = await this.resolveBranchScope(tenantId, profile, personId, query.branchId);
+    const scope = await this.resolveBranchScope(
+      tenantId,
+      profile,
+      personId,
+      query.branchId,
+    );
     return this.dashboardService.getOrderStatusOverview(
       tenantId,
       this.scopeToBranchId(scope),
@@ -128,8 +142,16 @@ export class AccessionDashboardController {
     @CurrentUser('person_id') personId: string,
     @Query() query: AccessionDashboardQueryDto,
   ) {
-    const scope = await this.resolveBranchScope(tenantId, profile, personId, query.branchId);
-    return this.dashboardService.getTatCompliance(tenantId, this.scopeToBranchId(scope));
+    const scope = await this.resolveBranchScope(
+      tenantId,
+      profile,
+      personId,
+      query.branchId,
+    );
+    return this.dashboardService.getTatCompliance(
+      tenantId,
+      this.scopeToBranchId(scope),
+    );
   }
 
   /**
@@ -145,7 +167,12 @@ export class AccessionDashboardController {
     @CurrentUser('person_id') personId: string,
     @Query() query: AccessionDashboardQueryDto,
   ) {
-    const scope = await this.resolveBranchScope(tenantId, profile, personId, query.branchId);
+    const scope = await this.resolveBranchScope(
+      tenantId,
+      profile,
+      personId,
+      query.branchId,
+    );
     return this.dashboardService.getCriticalAlerts(
       tenantId,
       this.scopeToBranchId(scope),
@@ -166,7 +193,12 @@ export class AccessionDashboardController {
     @CurrentUser('person_id') personId: string,
     @Query() query: AccessionDashboardQueryDto,
   ) {
-    const scope = await this.resolveBranchScope(tenantId, profile, personId, query.branchId);
+    const scope = await this.resolveBranchScope(
+      tenantId,
+      profile,
+      personId,
+      query.branchId,
+    );
     return this.dashboardService.getInternalReferralOrders(
       tenantId,
       this.scopeToBranchId(scope),
@@ -187,7 +219,12 @@ export class AccessionDashboardController {
     @CurrentUser('person_id') personId: string,
     @Query() query: AccessionDashboardQueryDto,
   ) {
-    const scope = await this.resolveBranchScope(tenantId, profile, personId, query.branchId);
+    const scope = await this.resolveBranchScope(
+      tenantId,
+      profile,
+      personId,
+      query.branchId,
+    );
     return this.dashboardService.getExternalReferralOrdersSent(
       tenantId,
       this.scopeToBranchId(scope),
@@ -207,7 +244,12 @@ export class AccessionDashboardController {
     @CurrentUser('person_id') personId: string,
     @Query() query: AccessionDashboardQueryDto,
   ) {
-    const scope = await this.resolveBranchScope(tenantId, profile, personId, query.branchId);
+    const scope = await this.resolveBranchScope(
+      tenantId,
+      profile,
+      personId,
+      query.branchId,
+    );
     return this.dashboardService.getOutsourceOrders(
       tenantId,
       this.scopeToBranchId(scope),

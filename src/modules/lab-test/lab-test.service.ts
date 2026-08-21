@@ -604,6 +604,12 @@ export class LabTestService {
           procTimeMaxUnit: t.procTimeMaxUnit,
           approvalTimeFrom: t.approvalTimeFrom,
           approvalTimeTo: t.approvalTimeTo,
+          reportingTimeFrom: t.reportingTimeFrom,
+          reportingTimeTo: t.reportingTimeTo,
+          approvalDurationMinValue: t.approvalDurationMinValue,
+          approvalDurationMinUnit: t.approvalDurationMinUnit,
+          approvalDurationMaxValue: t.approvalDurationMaxValue,
+          approvalDurationMaxUnit: t.approvalDurationMaxUnit,
         }));
 
       case LabTestListView.FLAGS:

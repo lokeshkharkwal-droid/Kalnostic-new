@@ -84,9 +84,10 @@ export class RegistrationDashboardController {
   }
 
   /** Normalizes a resolved scope to whatever `DashboardService` methods expect (`string | string[] | undefined`). */
-  private scopeToBranchId(
-    scope: { branchId?: string; branchIds?: string[] },
-  ): string | string[] | undefined {
+  private scopeToBranchId(scope: {
+    branchId?: string;
+    branchIds?: string[];
+  }): string | string[] | undefined {
     return scope.branchId ?? scope.branchIds;
   }
 
@@ -102,7 +103,12 @@ export class RegistrationDashboardController {
     @CurrentUser('person_id') personId: string,
     @Query() query: BranchAdminDashboardQueryDto,
   ) {
-    const scope = await this.resolveBranchScope(tenantId, profile, personId, query.branchId);
+    const scope = await this.resolveBranchScope(
+      tenantId,
+      profile,
+      personId,
+      query.branchId,
+    );
     return this.dashboardService.getRegistrationUsers(
       tenantId,
       this.scopeToBranchId(scope) ?? [],
@@ -121,7 +127,12 @@ export class RegistrationDashboardController {
     @CurrentUser('person_id') personId: string,
     @Query() query: RegistrationOrdersQueryDto,
   ) {
-    const scope = await this.resolveBranchScope(tenantId, profile, personId, query.branchId);
+    const scope = await this.resolveBranchScope(
+      tenantId,
+      profile,
+      personId,
+      query.branchId,
+    );
     return this.dashboardService.getOrdersSummary(
       tenantId,
       this.scopeToBranchId(scope),
@@ -141,7 +152,12 @@ export class RegistrationDashboardController {
     @CurrentUser('person_id') personId: string,
     @Query() query: RegistrationBillingsQueryDto,
   ) {
-    const scope = await this.resolveBranchScope(tenantId, profile, personId, query.branchId);
+    const scope = await this.resolveBranchScope(
+      tenantId,
+      profile,
+      personId,
+      query.branchId,
+    );
     return this.dashboardService.getBillingsSummary(
       tenantId,
       this.scopeToBranchId(scope),
@@ -173,7 +189,12 @@ export class RegistrationDashboardController {
     @CurrentUser('person_id') personId: string,
     @Query() query: RegistrationCanceledQueryDto,
   ) {
-    const scope = await this.resolveBranchScope(tenantId, profile, personId, query.branchId);
+    const scope = await this.resolveBranchScope(
+      tenantId,
+      profile,
+      personId,
+      query.branchId,
+    );
     if (query.view === 'b2b') {
       return this.dashboardService.getTopCancellationChargesByPanel(
         tenantId,
@@ -208,7 +229,12 @@ export class RegistrationDashboardController {
     @CurrentUser('person_id') personId: string,
     @Query() query: RegistrationOutstandingsQueryDto,
   ) {
-    const scope = await this.resolveBranchScope(tenantId, profile, personId, query.branchId);
+    const scope = await this.resolveBranchScope(
+      tenantId,
+      profile,
+      personId,
+      query.branchId,
+    );
     if (query.view !== 'b2b') {
       return this.dashboardService.getTopOutstandingDues(
         tenantId,
@@ -245,7 +271,12 @@ export class RegistrationDashboardController {
     @CurrentUser('person_id') personId: string,
     @Query() query: RegistrationRefundsQueryDto,
   ) {
-    const scope = await this.resolveBranchScope(tenantId, profile, personId, query.branchId);
+    const scope = await this.resolveBranchScope(
+      tenantId,
+      profile,
+      personId,
+      query.branchId,
+    );
     if (query.view === 'b2b') {
       return this.dashboardService.getTopRefundsByPanel(
         tenantId,
@@ -272,7 +303,12 @@ export class RegistrationDashboardController {
     @CurrentUser('person_id') personId: string,
     @Query() query: RegistrationOrdersQueryDto,
   ) {
-    const scope = await this.resolveBranchScope(tenantId, profile, personId, query.branchId);
+    const scope = await this.resolveBranchScope(
+      tenantId,
+      profile,
+      personId,
+      query.branchId,
+    );
     return this.dashboardService.getPatientsSummary(
       tenantId,
       this.scopeToBranchId(scope),
@@ -294,7 +330,12 @@ export class RegistrationDashboardController {
     @CurrentUser('person_id') personId: string,
     @Query() query: RegistrationAppointmentsStatusQueryDto,
   ) {
-    const scope = await this.resolveBranchScope(tenantId, profile, personId, query.branchId);
+    const scope = await this.resolveBranchScope(
+      tenantId,
+      profile,
+      personId,
+      query.branchId,
+    );
     return this.dashboardService.getAppointmentsStatusSummary(
       tenantId,
       this.scopeToBranchId(scope),
@@ -310,7 +351,12 @@ export class RegistrationDashboardController {
     @CurrentUser('person_id') personId: string,
     @Query() query: RegistrationUserFilterQueryDto,
   ) {
-    const scope = await this.resolveBranchScope(tenantId, profile, personId, query.branchId);
+    const scope = await this.resolveBranchScope(
+      tenantId,
+      profile,
+      personId,
+      query.branchId,
+    );
     return this.dashboardService.getQuotationsSummary(
       tenantId,
       this.scopeToBranchId(scope) ?? [],
@@ -331,7 +377,12 @@ export class RegistrationDashboardController {
     @CurrentUser('person_id') personId: string,
     @Query() query: RegistrationPaymentStatusQueryDto,
   ) {
-    const scope = await this.resolveBranchScope(tenantId, profile, personId, query.branchId);
+    const scope = await this.resolveBranchScope(
+      tenantId,
+      profile,
+      personId,
+      query.branchId,
+    );
     return this.dashboardService.getPaymentStatusSummary(
       tenantId,
       this.scopeToBranchId(scope),
@@ -356,7 +407,12 @@ export class RegistrationDashboardController {
     @CurrentUser('person_id') personId: string,
     @Query() query: RegistrationAppointmentsStatusQueryDto,
   ) {
-    const scope = await this.resolveBranchScope(tenantId, profile, personId, query.branchId);
+    const scope = await this.resolveBranchScope(
+      tenantId,
+      profile,
+      personId,
+      query.branchId,
+    );
     return this.dashboardService.getAppointmentPaymentStatusSummary(
       tenantId,
       this.scopeToBranchId(scope),
@@ -380,7 +436,12 @@ export class RegistrationDashboardController {
     @CurrentUser('person_id') personId: string,
     @Query() query: RegistrationCollectionsQueryDto,
   ) {
-    const scope = await this.resolveBranchScope(tenantId, profile, personId, query.branchId);
+    const scope = await this.resolveBranchScope(
+      tenantId,
+      profile,
+      personId,
+      query.branchId,
+    );
     return this.dashboardService.getCollectionsSummary(
       tenantId,
       this.scopeToBranchId(scope),
@@ -397,7 +458,12 @@ export class RegistrationDashboardController {
     @CurrentUser('person_id') personId: string,
     @Query() query: BranchAdminDashboardQueryDto,
   ) {
-    const scope = await this.resolveBranchScope(tenantId, profile, personId, query.branchId);
+    const scope = await this.resolveBranchScope(
+      tenantId,
+      profile,
+      personId,
+      query.branchId,
+    );
     return this.dashboardService.getStaffAvailabilitySummary(
       tenantId,
       this.scopeToBranchId(scope),

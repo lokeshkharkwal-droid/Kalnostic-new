@@ -176,6 +176,34 @@ export class BulkEditBranchLabTestItemDto {
   approvalTimeTo?: string;
 
   @IsOptional()
+  @IsString()
+  @Matches(HH_MM, { message: 'reportingTimeFrom must be a 24h HH:mm time' })
+  reportingTimeFrom?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(HH_MM, { message: 'reportingTimeTo must be a 24h HH:mm time' })
+  reportingTimeTo?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  approvalDurationMinValue?: number;
+
+  @IsOptional()
+  @IsEnum(TatUnit)
+  approvalDurationMinUnit?: TatUnit;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  approvalDurationMaxValue?: number;
+
+  @IsOptional()
+  @IsEnum(TatUnit)
+  approvalDurationMaxUnit?: TatUnit;
+
+  @IsOptional()
   @IsBoolean()
   isHideInOrderScreen?: boolean;
 

@@ -29,6 +29,13 @@ tests {
     expect(d).to.have.property("departmentLabel");
     if (d.tests.length > 0) expect(d.tests[0]).to.have.property("department");
   });
+  test("includes flattened outsource center per test", function () {
+    const d = res.getBody().data;
+    if (d.tests.length > 0) {
+      expect(d.tests[0]).to.have.property("outsourceCenterId");
+      expect(d.tests[0]).to.have.property("outsourceCenter");
+    }
+  });
 }
 
 docs {
@@ -38,6 +45,10 @@ docs {
   referral). A sample-level `departmentLabel` carries the distinct department
   names joined with ", " (null when none resolve) — the classification lives on
   `BranchLabTest`/`BranchLabPanel` as a logical `departmentId` (no relation), so
-  names are resolved from the tenant's `Department` table. 404
+  names are resolved from the tenant's `Department` table. Each test also
+  carries a flattened `outsourceCenterId`/`outsourceCenter`, taken from that
+  test's order item's own assigned outsource center (null = in-house / none
+  chosen at order time) — same flattening convention as `department`, so the
+  frontend doesn't need to know the raw order-item relation shape. 404
   `ACCESSION_SAMPLE_NOT_FOUND` if missing / soft-deleted / other tenant.
 }

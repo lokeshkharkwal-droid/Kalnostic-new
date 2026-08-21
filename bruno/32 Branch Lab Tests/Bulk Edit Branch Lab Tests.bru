@@ -1,0 +1,80 @@
+meta {
+  name: Bulk Edit Branch Lab Tests
+  type: http
+  seq: 11
+}
+
+patch {
+  url: {{baseUrl}}/branch-lab-tests/bulk
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "data": [
+      {
+        "id": "{{branchLabTestId}}",
+        "isActive": false,
+        "priceMsrp": 1500,
+        "priceMaximum": 1400,
+        "priceMinimum": 1000,
+        "commissionPrice": 55,
+        "reportingTimeFrom": "09:00",
+        "reportingTimeTo": "17:00",
+        "approvalDurationMinValue": 30,
+        "approvalDurationMinUnit": "MINUTES",
+        "approvalDurationMaxValue": 2,
+        "approvalDurationMaxUnit": "HOURS"
+      }
+    ]
+  }
+}
+
+vars:pre-request {
+  branchLabTestId: 00000000-0000-0000-0000-000000000000
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("reports updated count", function () {
+    const data = res.getBody() && res.getBody().data;
+    expect(data).to.have.property("updated");
+  });
+}
+
+docs {
+  Bulk-edit the active branch's Lab Test List: `data` is an array of per-row
+  edits, each carrying its own `id` plus the branch-tunable fields to change
+  **for that row** (scoped to the caller's tenant + active branch). Only the
+  rows in the payload are touched. Returns `{ updated: <count> }`.
+
+  ## Rules
+
+  - `data` — 1 to 500 items. Each item's `id` must resolve to an active branch
+    lab test in the caller's tenant + active branch; an unresolved id → 404
+    `BRANCH_LAB_TEST_NOT_FOUND`.
+  - Each item may set any subset of the same branch-tunable fields as the
+    single-row `PUT /branch-lab-tests/:id` (pricing, TAT, schedule, flags,
+    notes, status) — including the Reporting window / Approval duration pair
+    (`reportingTimeFrom`/`reportingTimeTo`,
+    `approvalDurationMinValue`/`MinUnit`/`MaxValue`/`MaxUnit`, SRS §5.4/§5.5).
+    Identity (`testName`/`testCode`), classification, and the
+    clinical snapshot are **not** bulk-editable — those are managed via
+    re-import/sync.
+  - **All-or-nothing**: a duplicate `id`, an item with no changes, or a broken
+    price ordering (min ≤ max ≤ msrp, re-checked per row against its existing
+    values) → 422 `VALIDATION_ERROR` and **nothing** is changed. Updates run in
+    one transaction.
+  - Note: a later **sync** overwrites any bulk edits made to imported originals.
+}

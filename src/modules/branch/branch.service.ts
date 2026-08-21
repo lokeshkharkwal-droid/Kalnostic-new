@@ -345,7 +345,13 @@ export class BranchService {
     moduleKey: string,
   ): Promise<boolean> {
     const row = await this.prisma.branchModule.findFirst({
-      where: { tenantId, branchId, moduleKey, isEnabled: true, deletedAt: null },
+      where: {
+        tenantId,
+        branchId,
+        moduleKey,
+        isEnabled: true,
+        deletedAt: null,
+      },
       select: { id: true },
     });
     return !!row;

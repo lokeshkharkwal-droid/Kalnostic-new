@@ -40,7 +40,11 @@ export type OrderDateMode = 'today' | 'backdated' | 'advanced-dated';
  * — "Phlebotomist" is not a real `AppointmentType`. `'consultant'`/
  * `'radiologist'` are disabled placeholders for now (always all-zero).
  */
-export type AppointmentsStatusModule = 'diagnostic' | 'phlebotomist' | 'consultant' | 'radiologist';
+export type AppointmentsStatusModule =
+  | 'diagnostic'
+  | 'phlebotomist'
+  | 'consultant'
+  | 'radiologist';
 
 /** One entry in the Outstandings card's "User-wise" Top-5 view — one order's live outstanding balance, tagged with its patient and creator. */
 export interface TopOutstandingDue {
@@ -99,7 +103,10 @@ function createdAtRange(
  */
 function branchWhere(
   branchId?: string | string[],
-): { branchId: string } | { branchId: { in: string[] } } | Record<string, never> {
+):
+  | { branchId: string }
+  | { branchId: { in: string[] } }
+  | Record<string, never> {
   if (!branchId) return {};
   if (Array.isArray(branchId)) return { branchId: { in: branchId } };
   return { branchId };
@@ -551,7 +558,10 @@ export class DashboardService {
     ];
 
     if (module === 'consultant' || module === 'radiologist') {
-      return displayOrder.map((status) => ({ label: labelByStatus[status], value: 0 }));
+      return displayOrder.map((status) => ({
+        label: labelByStatus[status],
+        value: 0,
+      }));
     }
 
     const isHomeVisit = module === 'phlebotomist';
@@ -624,7 +634,11 @@ export class DashboardService {
     return persons
       .map((p) => ({
         id: p.id,
-        name: [p.firstName, p.middleName, p.lastName].filter(Boolean).join(' ').trim() || p.id,
+        name:
+          [p.firstName, p.middleName, p.lastName]
+            .filter(Boolean)
+            .join(' ')
+            .trim() || p.id,
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }
@@ -644,12 +658,20 @@ export class DashboardService {
   ): Promise<DashboardSlice[]> {
     const branchIds = Array.isArray(branchId) ? branchId : [branchId];
     const perBranch = await Promise.all(
-      branchIds.map((id) => this.getQuotationsSummaryForBranch(tenantId, id, createdBy)),
+      branchIds.map((id) =>
+        this.getQuotationsSummaryForBranch(tenantId, id, createdBy),
+      ),
     );
     return [
       { label: 'Draft', value: perBranch.reduce((sum, r) => sum + r.draft, 0) },
-      { label: 'Converted', value: perBranch.reduce((sum, r) => sum + r.converted, 0) },
-      { label: 'Expired', value: perBranch.reduce((sum, r) => sum + r.expired, 0) },
+      {
+        label: 'Converted',
+        value: perBranch.reduce((sum, r) => sum + r.converted, 0),
+      },
+      {
+        label: 'Expired',
+        value: perBranch.reduce((sum, r) => sum + r.expired, 0),
+      },
     ];
   }
 
@@ -1001,65 +1023,60 @@ export class DashboardService {
       ...(createdBy ? { createdBy } : {}),
     };
 
-    const [
-      paymentSums,
-      cashPaid,
-      onlinePaid,
-      canceledGross,
-      byOrder,
-    ] = await Promise.all([
-      this.prisma.paymentDetails.aggregate({
-        where: { deletedAt: null, order: orderScope },
-        _sum: {
-          totalAmount: true,
-          orderDiscount: true,
-          netAmount: true,
-          tdsDeduction: true,
-        },
-      }),
-      this.prisma.paymentDetails.aggregate({
-        where: { deletedAt: null, paymentMode: 'CASH', order: orderScope },
-        _sum: { paidAmount: true },
-      }),
-      this.prisma.paymentDetails.aggregate({
-        where: {
-          deletedAt: null,
-          paymentMode: { not: 'CASH' },
-          order: orderScope,
-        },
-        _sum: { paidAmount: true },
-      }),
-      this.prisma.paymentDetails.aggregate({
-        where: {
-          deletedAt: null,
-          order: { ...orderScope, status: 'CANCELLED' },
-        },
-        _sum: { totalAmount: true },
-      }),
-      // Balance = Σ(net − live effective-paid) per order, NOT a straight sum of
-      // PaymentDetails.remainingBalance — that column is a snapshot written at
-      // payment time and never revisited when a LATER payment row settles the
-      // same order, so summing it across rows double-counts stale snapshots
-      // (same staleness bug originally found and fixed on Outstandings).
-      this.prisma.paymentDetails.groupBy({
-        by: ['orderId'],
-        where: { deletedAt: null, order: orderScope },
-        _sum: {
-          netAmount: true,
-          paidAmount: true,
-          refundAmount: true,
-          refundCharge: true,
-        },
-      }),
-    ]);
+    const [paymentSums, cashPaid, onlinePaid, canceledGross, byOrder] =
+      await Promise.all([
+        this.prisma.paymentDetails.aggregate({
+          where: { deletedAt: null, order: orderScope },
+          _sum: {
+            totalAmount: true,
+            orderDiscount: true,
+            netAmount: true,
+            tdsDeduction: true,
+          },
+        }),
+        this.prisma.paymentDetails.aggregate({
+          where: { deletedAt: null, paymentMode: 'CASH', order: orderScope },
+          _sum: { paidAmount: true },
+        }),
+        this.prisma.paymentDetails.aggregate({
+          where: {
+            deletedAt: null,
+            paymentMode: { not: 'CASH' },
+            order: orderScope,
+          },
+          _sum: { paidAmount: true },
+        }),
+        this.prisma.paymentDetails.aggregate({
+          where: {
+            deletedAt: null,
+            order: { ...orderScope, status: 'CANCELLED' },
+          },
+          _sum: { totalAmount: true },
+        }),
+        // Balance = Σ(net − live effective-paid) per order, NOT a straight sum of
+        // PaymentDetails.remainingBalance — that column is a snapshot written at
+        // payment time and never revisited when a LATER payment row settles the
+        // same order, so summing it across rows double-counts stale snapshots
+        // (same staleness bug originally found and fixed on Outstandings).
+        this.prisma.paymentDetails.groupBy({
+          by: ['orderId'],
+          where: { deletedAt: null, order: orderScope },
+          _sum: {
+            netAmount: true,
+            paidAmount: true,
+            refundAmount: true,
+            refundCharge: true,
+          },
+        }),
+      ]);
 
-    const gross = paymentSums._sum.totalAmount ?? 0;
-    const discount = paymentSums._sum.orderDiscount ?? 0;
-    const net = paymentSums._sum.netAmount ?? 0;
-    const tds = paymentSums._sum.tdsDeduction ?? 0;
-    const paidCash = cashPaid._sum.paidAmount ?? 0;
-    const paidOnline = onlinePaid._sum.paidAmount ?? 0;
-    const canceled = canceledGross._sum.totalAmount ?? 0;
+    const gross = paymentSums._sum.totalAmount?.toNumber() ?? 0;
+    const discount = paymentSums._sum.orderDiscount?.toNumber() ?? 0;
+    const net = paymentSums._sum.netAmount?.toNumber() ?? 0;
+    const tds = paymentSums._sum.tdsDeduction?.toNumber() ?? 0;
+    const paidCash = cashPaid._sum.paidAmount?.toNumber() ?? 0;
+    const paidOnline = onlinePaid._sum.paidAmount?.toNumber() ?? 0;
+    const canceled = canceledGross._sum.totalAmount?.toNumber() ?? 0;
     const totalBillings = net;
 
     const cancellationChargeByOrder = await this.prisma.order.findMany({
@@ -1070,12 +1087,12 @@ export class DashboardService {
       cancellationChargeByOrder.map((o) => [o.id, o.cancellationCharge]),
     );
     const balance = byOrder.reduce((sum, g) => {
-      const orderNet = g._sum.netAmount ?? 0;
+      const orderNet = g._sum.netAmount?.toNumber() ?? 0;
       const effectivePaid = computeEffectivePaid(
-        g._sum.paidAmount ?? 0,
-        cancellationChargeById.get(g.orderId) ?? 0,
-        g._sum.refundAmount ?? 0,
-        g._sum.refundCharge ?? 0,
+        g._sum.paidAmount?.toNumber() ?? 0,
+        cancellationChargeById.get(g.orderId)?.toNumber() ?? 0,
+        g._sum.refundAmount?.toNumber() ?? 0,
+        g._sum.refundCharge?.toNumber() ?? 0,
       );
       return sum + Math.max(0, orderNet - effectivePaid);
     }, 0);
@@ -1086,12 +1103,32 @@ export class DashboardService {
     return {
       totalBillings,
       rows: [
-        { label: 'Gross', amount: gross, percentLabel: pct(gross, totalBillings) },
-        { label: 'Discount', amount: discount, percentLabel: pct(discount, gross) },
+        {
+          label: 'Gross',
+          amount: gross,
+          percentLabel: pct(gross, totalBillings),
+        },
+        {
+          label: 'Discount',
+          amount: discount,
+          percentLabel: pct(discount, gross),
+        },
         { label: 'Net', amount: net, percentLabel: pct(net, gross) },
-        { label: 'Paid Online', amount: paidOnline, percentLabel: pct(paidOnline, gross) },
-        { label: 'Paid Cash', amount: paidCash, percentLabel: pct(paidCash, gross) },
-        { label: 'Balance', amount: balance, percentLabel: pct(balance, gross) },
+        {
+          label: 'Paid Online',
+          amount: paidOnline,
+          percentLabel: pct(paidOnline, gross),
+        },
+        {
+          label: 'Paid Cash',
+          amount: paidCash,
+          percentLabel: pct(paidCash, gross),
+        },
+        {
+          label: 'Balance',
+          amount: balance,
+          percentLabel: pct(balance, gross),
+        },
         // Canceled is drawn from cancelled orders — a population deliberately
         // excluded from Gross (so nothing double-counts). There is no valid
         // "% of Gross" for it, so no percentage is shown at all rather than a
@@ -1170,7 +1207,12 @@ export class DashboardService {
         cancellationCharge: { gt: 0 },
         ...extraOrderWhere,
       },
-      select: { id: true, updatedBy: true, cancellationCharge: true, patientId: true },
+      select: {
+        id: true,
+        updatedBy: true,
+        cancellationCharge: true,
+        patientId: true,
+      },
       orderBy: { cancellationCharge: 'desc' },
       take: 5,
     });
@@ -1179,18 +1221,30 @@ export class DashboardService {
     }
 
     const personIds = [
-      ...new Set(orders.map((o) => o.updatedBy).filter((id): id is string => Boolean(id))),
+      ...new Set(
+        orders
+          .map((o) => o.updatedBy)
+          .filter((id): id is string => Boolean(id)),
+      ),
     ];
     const persons = personIds.length
       ? await this.prisma.person.findMany({
           where: { id: { in: personIds } },
-          select: { id: true, firstName: true, middleName: true, lastName: true },
+          select: {
+            id: true,
+            firstName: true,
+            middleName: true,
+            lastName: true,
+          },
         })
       : [];
     const nameById = new Map(
       persons.map((p) => [
         p.id,
-        [p.firstName, p.middleName, p.lastName].filter(Boolean).join(' ').trim() || p.id,
+        [p.firstName, p.middleName, p.lastName]
+          .filter(Boolean)
+          .join(' ')
+          .trim() || p.id,
       ]),
     );
 
@@ -1198,21 +1252,31 @@ export class DashboardService {
     const patients = patientIds.length
       ? await this.prisma.patient.findMany({
           where: { id: { in: patientIds } },
-          select: { id: true, firstName: true, middleName: true, lastName: true },
+          select: {
+            id: true,
+            firstName: true,
+            middleName: true,
+            lastName: true,
+          },
         })
       : [];
     const patientNameById = new Map(
       patients.map((p) => [
         p.id,
-        [p.firstName, p.middleName, p.lastName].filter(Boolean).join(' ').trim() || p.id,
+        [p.firstName, p.middleName, p.lastName]
+          .filter(Boolean)
+          .join(' ')
+          .trim() || p.id,
       ]),
     );
 
     return orders.map((o) => ({
       orderId: o.id,
       patientName: patientNameById.get(o.patientId) ?? 'Unknown',
-      cancelledByName: o.updatedBy ? nameById.get(o.updatedBy) ?? o.updatedBy : 'Unknown',
-      cancellationChargeAmount: o.cancellationCharge,
+      cancelledByName: o.updatedBy
+        ? (nameById.get(o.updatedBy) ?? o.updatedBy)
+        : 'Unknown',
+      cancellationChargeAmount: o.cancellationCharge.toNumber(),
     }));
   }
 
@@ -1237,14 +1301,10 @@ export class DashboardService {
     createdBy?: string,
     referralPanelId?: string,
   ): Promise<DashboardSlice[]> {
-    const byOrder = await this.getLiveOutstandingByOrder(
-      tenantId,
-      branchId,
-      {
-        ...(createdBy ? { createdBy } : {}),
-        ...(referralPanelId ? { referralPanelId } : {}),
-      },
-    );
+    const byOrder = await this.getLiveOutstandingByOrder(tenantId, branchId, {
+      ...(createdBy ? { createdBy } : {}),
+      ...(referralPanelId ? { referralPanelId } : {}),
+    });
     if (byOrder.size === 0) {
       return [];
     }
@@ -1267,7 +1327,7 @@ export class DashboardService {
     const amountByLabel = new Map<string, number>();
     for (const { outstanding, referralPanelId } of byOrder.values()) {
       const label = referralPanelId
-        ? nameById.get(referralPanelId) ?? 'Others'
+        ? (nameById.get(referralPanelId) ?? 'Others')
         : 'Others';
       amountByLabel.set(label, (amountByLabel.get(label) ?? 0) + outstanding);
     }
@@ -1319,21 +1379,27 @@ export class DashboardService {
 
     const personIds = [
       ...new Set(
-        top5
-          .map((d) => d.createdBy)
-          .filter((id): id is string => Boolean(id)),
+        top5.map((d) => d.createdBy).filter((id): id is string => Boolean(id)),
       ),
     ];
     const persons = personIds.length
       ? await this.prisma.person.findMany({
           where: { id: { in: personIds } },
-          select: { id: true, firstName: true, middleName: true, lastName: true },
+          select: {
+            id: true,
+            firstName: true,
+            middleName: true,
+            lastName: true,
+          },
         })
       : [];
     const nameById = new Map(
       persons.map((p) => [
         p.id,
-        [p.firstName, p.middleName, p.lastName].filter(Boolean).join(' ').trim() || p.id,
+        [p.firstName, p.middleName, p.lastName]
+          .filter(Boolean)
+          .join(' ')
+          .trim() || p.id,
       ]),
     );
 
@@ -1341,20 +1407,30 @@ export class DashboardService {
     const patients = patientIds.length
       ? await this.prisma.patient.findMany({
           where: { id: { in: patientIds } },
-          select: { id: true, firstName: true, middleName: true, lastName: true },
+          select: {
+            id: true,
+            firstName: true,
+            middleName: true,
+            lastName: true,
+          },
         })
       : [];
     const patientNameById = new Map(
       patients.map((p) => [
         p.id,
-        [p.firstName, p.middleName, p.lastName].filter(Boolean).join(' ').trim() || p.id,
+        [p.firstName, p.middleName, p.lastName]
+          .filter(Boolean)
+          .join(' ')
+          .trim() || p.id,
       ]),
     );
 
     return top5.map((d) => ({
       orderId: d.orderId,
       patientName: patientNameById.get(d.patientId) ?? 'Unknown',
-      createdByName: d.createdBy ? nameById.get(d.createdBy) ?? d.createdBy : 'Unknown',
+      createdByName: d.createdBy
+        ? (nameById.get(d.createdBy) ?? d.createdBy)
+        : 'Unknown',
       outstandingAmount: d.outstanding,
     }));
   }
@@ -1432,12 +1508,12 @@ export class DashboardService {
     for (const g of grouped) {
       const order = orderById.get(g.orderId);
       if (!order) continue;
-      const net = g._sum.netAmount ?? 0;
+      const net = g._sum.netAmount?.toNumber() ?? 0;
       const effectivePaid = computeEffectivePaid(
-        g._sum.paidAmount ?? 0,
-        order.cancellationCharge,
-        g._sum.refundAmount ?? 0,
-        g._sum.refundCharge ?? 0,
+        g._sum.paidAmount?.toNumber() ?? 0,
+        order.cancellationCharge.toNumber(),
+        g._sum.refundAmount?.toNumber() ?? 0,
+        g._sum.refundCharge?.toNumber() ?? 0,
       );
       const outstanding = net - effectivePaid;
       if (outstanding > 0) {
@@ -1532,19 +1608,29 @@ export class DashboardService {
 
     const personIds = [
       ...new Set(
-        payments.map((p) => p.order.createdBy).filter((id): id is string => Boolean(id)),
+        payments
+          .map((p) => p.order.createdBy)
+          .filter((id): id is string => Boolean(id)),
       ),
     ];
     const persons = personIds.length
       ? await this.prisma.person.findMany({
           where: { id: { in: personIds } },
-          select: { id: true, firstName: true, middleName: true, lastName: true },
+          select: {
+            id: true,
+            firstName: true,
+            middleName: true,
+            lastName: true,
+          },
         })
       : [];
     const nameById = new Map(
       persons.map((p) => [
         p.id,
-        [p.firstName, p.middleName, p.lastName].filter(Boolean).join(' ').trim() || p.id,
+        [p.firstName, p.middleName, p.lastName]
+          .filter(Boolean)
+          .join(' ')
+          .trim() || p.id,
       ]),
     );
 
@@ -1552,21 +1638,31 @@ export class DashboardService {
     const patients = patientIds.length
       ? await this.prisma.patient.findMany({
           where: { id: { in: patientIds } },
-          select: { id: true, firstName: true, middleName: true, lastName: true },
+          select: {
+            id: true,
+            firstName: true,
+            middleName: true,
+            lastName: true,
+          },
         })
       : [];
     const patientNameById = new Map(
       patients.map((p) => [
         p.id,
-        [p.firstName, p.middleName, p.lastName].filter(Boolean).join(' ').trim() || p.id,
+        [p.firstName, p.middleName, p.lastName]
+          .filter(Boolean)
+          .join(' ')
+          .trim() || p.id,
       ]),
     );
 
     return payments.map((p) => ({
       orderId: p.order.id,
       patientName: patientNameById.get(p.order.patientId) ?? 'Unknown',
-      createdByName: p.order.createdBy ? nameById.get(p.order.createdBy) ?? p.order.createdBy : 'Unknown',
-      refundAmount: p.refundAmount,
+      createdByName: p.order.createdBy
+        ? (nameById.get(p.order.createdBy) ?? p.order.createdBy)
+        : 'Unknown',
+      refundAmount: p.refundAmount.toNumber(),
     }));
   }
 
@@ -1623,9 +1719,12 @@ export class DashboardService {
     const amountByLabel = new Map<string, number>();
     for (const p of payments) {
       const label = p.order.referralPanelId
-        ? nameById.get(p.order.referralPanelId) ?? 'Others'
+        ? (nameById.get(p.order.referralPanelId) ?? 'Others')
         : 'Others';
-      amountByLabel.set(label, (amountByLabel.get(label) ?? 0) + p[amountField]);
+      amountByLabel.set(
+        label,
+        (amountByLabel.get(label) ?? 0) + p[amountField].toNumber(),
+      );
     }
 
     const others = amountByLabel.get('Others');
@@ -1715,10 +1814,13 @@ export class DashboardService {
     ]);
 
     return [
-      { label: 'Pending', value: pending._sum.netAmount ?? 0 },
-      { label: 'Partially Pending', value: partiallyPending._sum.netAmount ?? 0 },
-      { label: 'Paid', value: paid._sum.netAmount ?? 0 },
-      { label: 'Canceled', value: canceled._sum.netAmount ?? 0 },
+      { label: 'Pending', value: pending._sum.netAmount?.toNumber() ?? 0 },
+      {
+        label: 'Partially Pending',
+        value: partiallyPending._sum.netAmount?.toNumber() ?? 0,
+      },
+      { label: 'Paid', value: paid._sum.netAmount?.toNumber() ?? 0 },
+      { label: 'Canceled', value: canceled._sum.netAmount?.toNumber() ?? 0 },
     ];
   }
 
@@ -1804,21 +1906,24 @@ export class DashboardService {
       cancellationChargeByOrder.map((o) => [o.id, o.cancellationCharge]),
     );
     const balance = byOrder.reduce((sum, g) => {
-      const orderNet = g._sum.netAmount ?? 0;
+      const orderNet = g._sum.netAmount?.toNumber() ?? 0;
       const effectivePaid = computeEffectivePaid(
-        g._sum.paidAmount ?? 0,
-        cancellationChargeById.get(g.orderId) ?? 0,
-        g._sum.refundAmount ?? 0,
-        g._sum.refundCharge ?? 0,
+        g._sum.paidAmount?.toNumber() ?? 0,
+        cancellationChargeById.get(g.orderId)?.toNumber() ?? 0,
+        g._sum.refundAmount?.toNumber() ?? 0,
+        g._sum.refundCharge?.toNumber() ?? 0,
       );
       return sum + Math.max(0, orderNet - effectivePaid);
     }, 0);
 
     return [
-      { label: 'Gross', value: paymentSums._sum.totalAmount ?? 0 },
-      { label: 'Discount', value: paymentSums._sum.orderDiscount ?? 0 },
-      { label: 'Net', value: paymentSums._sum.netAmount ?? 0 },
-      { label: 'Paid', value: paymentSums._sum.paidAmount ?? 0 },
+      { label: 'Gross', value: paymentSums._sum.totalAmount?.toNumber() ?? 0 },
+      {
+        label: 'Discount',
+        value: paymentSums._sum.orderDiscount?.toNumber() ?? 0,
+      },
+      { label: 'Net', value: paymentSums._sum.netAmount?.toNumber() ?? 0 },
+      { label: 'Paid', value: paymentSums._sum.paidAmount?.toNumber() ?? 0 },
       { label: 'Balance', value: balance },
     ];
   }
@@ -1869,10 +1974,7 @@ export class DashboardService {
     // Applied directly on PaymentDetails (via an OR against paymentDate OR,
     // when null, createdAt) rather than via the Order relation's orderDate.
     const effectiveDateWhere = (bound: { gte?: Date; lt?: Date }) => ({
-      OR: [
-        { paymentDate: bound },
-        { paymentDate: null, createdAt: bound },
-      ],
+      OR: [{ paymentDate: bound }, { paymentDate: null, createdAt: bound }],
     });
     const dateBound: { gte?: Date; lt?: Date } =
       dateMode === 'backdated'
@@ -1891,15 +1993,30 @@ export class DashboardService {
 
     const [cash, upi, card, bankTransfer, deductions] = await Promise.all([
       this.prisma.paymentDetails.aggregate({
-        where: { deletedAt: null, paymentMode: 'CASH', order: orderScope, ...effectiveDateWhere(dateBound) },
+        where: {
+          deletedAt: null,
+          paymentMode: 'CASH',
+          order: orderScope,
+          ...effectiveDateWhere(dateBound),
+        },
         _sum: { paidAmount: true },
       }),
       this.prisma.paymentDetails.aggregate({
-        where: { deletedAt: null, paymentMode: 'UPI', order: orderScope, ...effectiveDateWhere(dateBound) },
+        where: {
+          deletedAt: null,
+          paymentMode: 'UPI',
+          order: orderScope,
+          ...effectiveDateWhere(dateBound),
+        },
         _sum: { paidAmount: true },
       }),
       this.prisma.paymentDetails.aggregate({
-        where: { deletedAt: null, paymentMode: 'CARD', order: orderScope, ...effectiveDateWhere(dateBound) },
+        where: {
+          deletedAt: null,
+          paymentMode: 'CARD',
+          order: orderScope,
+          ...effectiveDateWhere(dateBound),
+        },
         _sum: { paidAmount: true },
       }),
       this.prisma.paymentDetails.aggregate({
@@ -1912,23 +2029,33 @@ export class DashboardService {
         _sum: { paidAmount: true },
       }),
       this.prisma.paymentDetails.aggregate({
-        where: { deletedAt: null, order: orderScope, ...effectiveDateWhere(dateBound) },
+        where: {
+          deletedAt: null,
+          order: orderScope,
+          ...effectiveDateWhere(dateBound),
+        },
         _sum: { deductFromWallet: true, deductFromPoints: true },
       }),
     ]);
 
     return [
-      { label: 'Cash', value: cash._sum.paidAmount ?? 0 },
-      { label: 'UPI', value: upi._sum.paidAmount ?? 0 },
-      { label: 'Card', value: card._sum.paidAmount ?? 0 },
-      { label: 'Bank Transfer', value: bankTransfer._sum.paidAmount ?? 0 },
+      { label: 'Cash', value: cash._sum.paidAmount?.toNumber() ?? 0 },
+      { label: 'UPI', value: upi._sum.paidAmount?.toNumber() ?? 0 },
+      { label: 'Card', value: card._sum.paidAmount?.toNumber() ?? 0 },
+      {
+        label: 'Bank Transfer',
+        value: bankTransfer._sum.paidAmount?.toNumber() ?? 0,
+      },
       { label: 'Wallet Added', value: 0 },
-      { label: 'Wallet Used', value: deductions._sum.deductFromWallet ?? 0 },
+      {
+        label: 'Wallet Used',
+        value: deductions._sum.deductFromWallet?.toNumber() ?? 0,
+      },
       { label: 'Privilege Card Added', value: 0 },
       { label: 'Privilege Card Used', value: 0 },
       {
         label: 'Loyalty Point Used',
-        value: deductions._sum.deductFromPoints ?? 0,
+        value: deductions._sum.deductFromPoints?.toNumber() ?? 0,
       },
     ];
   }

@@ -31,7 +31,13 @@ body:json {
         "priceMinimum": 900,
         "commissionPrice": 80,
         "tatMaxValue": 48,
-        "tatMaxUnit": "HOURS"
+        "tatMaxUnit": "HOURS",
+        "reportingTimeFrom": "09:00",
+        "reportingTimeTo": "17:00",
+        "approvalDurationMinValue": 30,
+        "approvalDurationMinUnit": "MINUTES",
+        "approvalDurationMaxValue": 2,
+        "approvalDurationMaxUnit": "HOURS"
       },
       {
         "rowNumber": 3,
@@ -63,6 +69,10 @@ docs {
   samples/parameters. Each row may carry an optional `rowNumber` (echoed in error
   messages; falls back to the 1-based index). `testName` and `testCode` are
   required per row.
+
+  Includes the Reporting window / Approval duration pair (SRS §5.4/§5.5):
+  `reportingTimeFrom`/`reportingTimeTo` ("HH:mm") and
+  `approvalDurationMinValue`/`MinUnit`/`MaxValue`/`MaxUnit`.
   
   ## Behaviour
   

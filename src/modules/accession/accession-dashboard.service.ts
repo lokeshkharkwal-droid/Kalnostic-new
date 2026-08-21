@@ -53,7 +53,10 @@ function createdAtRange(
  */
 function branchWhere(
   branchId?: string | string[],
-): { branchId: string } | { branchId: { in: string[] } } | Record<string, never> {
+):
+  | { branchId: string }
+  | { branchId: { in: string[] } }
+  | Record<string, never> {
   if (!branchId) return {};
   if (Array.isArray(branchId)) return { branchId: { in: branchId } };
   return { branchId };
@@ -426,7 +429,10 @@ export class AccessionDashboardService {
         ...receivedGrouped.map((g) => g.originBranchId),
       ]),
     ].filter((id): id is string => Boolean(id));
-    const branchNameById = await this.resolveBranchNames(tenantId, otherBranchIds);
+    const branchNameById = await this.resolveBranchNames(
+      tenantId,
+      otherBranchIds,
+    );
 
     return {
       sent: sentGrouped.map((g) => ({

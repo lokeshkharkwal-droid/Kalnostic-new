@@ -192,7 +192,7 @@ export class CategoryService {
       include: MAPPINGS_INCLUDE,
       skip: (page - 1) * limit,
       take: limit,
-      orderBy: { createdAt: 'desc' },
+      orderBy: { name: 'asc' },
     });
     const total = await this.prisma.category.count({ where });
     return { data, total, page, limit };

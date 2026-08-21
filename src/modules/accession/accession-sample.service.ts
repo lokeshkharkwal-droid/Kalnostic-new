@@ -457,6 +457,12 @@ export class AccessionSampleService {
       return {
         ...t,
         department: deptId ? (nameById.get(deptId) ?? null) : null,
+        // Flattened from t.orderItem (same convention as `department` above)
+        // so the frontend doesn't need to know about the raw order-item
+        // relation shape — just the order's own assigned outsource center,
+        // if any (null = in-house / none chosen at order time).
+        outsourceCenterId: t.orderItem?.outsourceCenterId ?? null,
+        outsourceCenter: t.orderItem?.outsourceCenter ?? null,
       };
     });
     const distinct = [
@@ -521,7 +527,9 @@ export class AccessionSampleService {
     branchId: string | null,
   ): Promise<Array<AccessionStatusHistory & AccessionHistoryActor>> {
     const actorIds = [
-      ...new Set(rows.map((r) => r.changedBy).filter((id): id is string => Boolean(id))),
+      ...new Set(
+        rows.map((r) => r.changedBy).filter((id): id is string => Boolean(id)),
+      ),
     ];
     if (actorIds.length === 0) {
       return rows.map((r) => ({ ...r, actorName: null, actorRole: null }));
@@ -551,7 +559,9 @@ export class AccessionSampleService {
         [p.firstName, p.middleName, p.lastName].filter(Boolean).join(' '),
       ]),
     );
-    const roleById = new Map(profiles.map((p) => [p.personId, p.authRole.name]));
+    const roleById = new Map(
+      profiles.map((p) => [p.personId, p.authRole.name]),
+    );
 
     return rows.map((r) => ({
       ...r,

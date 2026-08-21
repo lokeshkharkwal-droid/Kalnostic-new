@@ -24,6 +24,12 @@ body:json {
     "priceMaximum": 600,
     "commissionPrice": 60,
     "remarks": "Q3 price revision",
+    "reportingTimeFrom": "09:00",
+    "reportingTimeTo": "17:00",
+    "approvalDurationMinValue": 30,
+    "approvalDurationMinUnit": "MINUTES",
+    "approvalDurationMaxValue": 2,
+    "approvalDurationMaxUnit": "HOURS",
     "branchId":"c1a13dd2-6562-446c-83ca-4f0220976134"
   }
 }
@@ -36,6 +42,12 @@ vars:pre-request {
 docs {
   Patch a lab test's core fields (send only what changes). `versionHistory` is
   never edited here (use Add Version).
+
+  Includes the Reporting window / Approval duration pair (SRS §5.4/§5.5):
+  `reportingTimeFrom`/`reportingTimeTo` ("HH:mm", signatory-availability
+  window) and `approvalDurationMinValue`/`MinUnit`/`MaxValue`/`MaxUnit`
+  (expected approval turnaround, value+unit — distinct from the existing
+  `approvalTimeFrom`/`approvalTimeTo` time-of-day window).
   
   Child sets are REPLACED when provided: include a full `samples` array and/or
   `resultParams` array (each param with its `referenceRanges`/`referenceValues`)

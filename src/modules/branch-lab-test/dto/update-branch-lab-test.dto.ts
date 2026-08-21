@@ -176,6 +176,36 @@ export class UpdateBranchLabTestDto {
   @Matches(HH_MM, { message: 'approvalTimeTo must be a 24h HH:mm time' })
   approvalTimeTo?: string;
 
+  // Reporting window (SRS §5.4) — signatory availability
+  @IsOptional()
+  @IsString()
+  @Matches(HH_MM, { message: 'reportingTimeFrom must be a 24h HH:mm time' })
+  reportingTimeFrom?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(HH_MM, { message: 'reportingTimeTo must be a 24h HH:mm time' })
+  reportingTimeTo?: string;
+
+  // Approval duration (SRS §5.5) — expected review/approval turnaround
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  approvalDurationMinValue?: number;
+
+  @IsOptional()
+  @IsEnum(TatUnit)
+  approvalDurationMinUnit?: TatUnit;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  approvalDurationMaxValue?: number;
+
+  @IsOptional()
+  @IsEnum(TatUnit)
+  approvalDurationMaxUnit?: TatUnit;
+
   // Flags
   @IsOptional()
   @IsBoolean()
