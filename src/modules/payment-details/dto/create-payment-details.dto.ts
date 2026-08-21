@@ -6,6 +6,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  IsUrl,
   IsUUID,
   MaxLength,
   Min,
@@ -112,4 +113,9 @@ export class CreatePaymentDetailsDto {
   @IsString()
   @MaxLength(1024)
   notes?: string;
+
+  /** Optional supporting-document URL (S3) — receipt / payment proof. */
+  @IsOptional()
+  @IsUrl()
+  attachmentUrl?: string;
 }

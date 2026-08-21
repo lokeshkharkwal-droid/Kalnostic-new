@@ -311,6 +311,7 @@ enum AuditModule {
   SALES_SETTINGS
   REGISTRATION_SETTINGS
   TECHNICIAN_SETTINGS
+  COMMUNICATION // Outbound messaging (Email/SMS/WhatsApp) + in-app notifications
 }
 
 /// Type of controlled document managed by the document module.
@@ -416,6 +417,33 @@ enum MessagingLevel {
 /// Application a template is restricted to. NULL = all applications.
 enum ApplicationScope {
   KALNOSTIC
+}
+
+// ── Communication enums ───────────────────────────────────────────────────────
+
+/// Delivery lifecycle of a queued outbound message (the worker drives this).
+/// Ports Kishan's `message_queue.status` P/S/F, spelled out, plus CANCELLED for
+/// rows dropped past their `expiry_date`.
+enum CommunicationStatus {
+  PENDING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+/// Who a compose/send request targets — resolves how `recipientId` is interpreted.
+enum RecipientType {
+  PATIENT
+  DOCTOR
+  STAFF
+  CUSTOM
+}
+
+/// In-app notification kind (Kishan `notification.type`): a conversational
+/// MESSAGE vs a system-generated ALERT.
+enum NotificationKind {
+  MESSAGE
+  ALERT
 }
 
 // ── Lab-test enums (UPPERCASE per project convention; values map to the raw
@@ -1642,6 +1670,136 @@ model PdfTemplateConfig {
   @@index([branchId])
   @@index([deletedAt])
   @@map("pdf_template_configs")
+}
+
+/// A single outbound message row — serves as BOTH the async send queue and the
+/// delivery log (`status` drives the background worker, ported from Kishan's
+/// `message_queue`, and the same row is what the Communication dashboard lists).
+/// Tenant-scoped, branch-level (CLAUDE.md §4.6): a send happens at the active
+/// branch. Actual delivery is delegated to the external Exchange gateway. RLS
+/// policy in prisma/rls.sql.
+model CommunicationLog {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id") // null = tenant-level send
+
+  channel MessagingChannel // EMAIL / SMS / WHATSAPP / IAM / IAA / PBN
+  status  CommunicationStatus @default(PENDING)
+
+  /// FEATURE_TYPES key when the send is event-driven; null for ad-hoc compose.
+  feature String?
+  /// Resolved Template.id when a template drove the body; null for free-text.
+  templateId String? @map("template_id")
+
+  recipientType RecipientType @map("recipient_type")
+  recipientId   String?       @map("recipient_id") // person/doctor id when known
+  recipientName String?       @map("recipient_name")
+  toAddress     String        @map("to_address") // email / E.164 phone / whatsapp number
+
+  subject String? @db.Text // email subject (plain; base64-encoded at the Exchange boundary)
+  body    String  @db.Text // resolved, placeholder-substituted body
+
+  /// Attachments, template params, raw compose input, multi-recipient summary.
+  payload  Json?
+  campaign String? // campaign/batch tag for FE filtering
+
+  retry         Int     @default(0)
+  maxRetry      Int     @default(3) @map("max_retry")
+  statusMessage String? @db.Text @map("status_message") // Exchange response / error text
+  exchangeId    String? @map("exchange_id") // Exchange response `id` (isOk)
+
+  scheduledAt  DateTime? @map("scheduled_at") // null = send ASAP
+  expiryDate   DateTime? @map("expiry_date") // drop (CANCELLED) if past
+  sentAt       DateTime? @map("sent_at")
+  userTimezone String?   @map("user_timezone")
+
+  createdBy String? @map("created_by")
+  updatedBy String? @map("updated_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([status])
+  @@index([channel])
+  @@index([scheduledAt])
+  @@index([deletedAt])
+  @@map("communication_logs")
+}
+
+/// An in-app notification event (ported from Kishan `notification`), now
+/// tenant-scoped + branch-level so RLS holds. A MESSAGE is conversational
+/// (targets can reply, forming a thread via `contextId`); an ALERT is
+/// system-generated. Recipients live in `NotificationTarget`, senders in
+/// `NotificationActor`. RLS policy in prisma/rls.sql.
+model Notification {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  kind        NotificationKind
+  verb        String // 'message' | 'reply_message' | ...
+  contextId   String? @map("context_id") // thread root notification id (reply chain)
+  contextType String? @map("context_type") // 'notification' for replies
+
+  subject String? @db.Text
+  body    String  @db.Text
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  actors  NotificationActor[]
+  targets NotificationTarget[]
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([kind])
+  @@index([contextId])
+  @@index([deletedAt])
+  @@map("notifications")
+}
+
+/// Who triggered a notification (Kishan `notification_actors`). Carries
+/// `tenantId` for RLS; joins to the parent notification.
+model NotificationActor {
+  id             String @id @default(uuid())
+  tenantId       String @map("tenant_id")
+  notificationId String @map("notification_id")
+
+  entityId   String  @map("entity_id") // sender person id
+  entityType String  @map("entity_type") // 'STAFF' | 'PATIENT' | ...
+  name       String?
+
+  notification Notification @relation(fields: [notificationId], references: [id])
+
+  @@index([tenantId])
+  @@index([notificationId])
+  @@map("notification_actors")
+}
+
+/// Who receives a notification + their read state (Kishan `notification_targets`;
+/// `notified` Y/N becomes `isRead`). Carries `tenantId` for RLS.
+model NotificationTarget {
+  id             String @id @default(uuid())
+  tenantId       String @map("tenant_id")
+  notificationId String @map("notification_id")
+
+  entityId   String    @map("entity_id") // recipient person id
+  entityType String    @map("entity_type")
+  isRead     Boolean   @default(false) @map("is_read")
+  readAt     DateTime? @map("read_at")
+  name       String?
+
+  notification Notification @relation(fields: [notificationId], references: [id])
+
+  @@index([tenantId])
+  @@index([notificationId])
+  @@index([entityId])
+  @@index([isRead])
+  @@map("notification_targets")
 }
 
 /// A department within a tenant (business-wide; NOT branch-scoped — CLAUDE.md
@@ -5511,6 +5669,37 @@ model PatientDocument {
   @@map("patient_documents")
 }
 
+/// Generic polymorphic attachment. One row per uploaded file (S3 URL), owned by
+/// any record via (`entityType`, `entityId`). `entityType` is an application-level
+/// slug (see the attachments module's ENTITY_TYPES) kept as a plain string so a
+/// new owner needs no enum migration. Tenant-scoped + optional branch (§4.6).
+model Attachment {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  entityType String  @map("entity_type")
+  entityId   String  @map("entity_id")
+  category   String?
+
+  url      String
+  fileName String  @map("file_name")
+  mimeType String? @map("mime_type")
+  fileSize Int?    @map("file_size")
+
+  createdBy String? @map("created_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([tenantId, entityType, entityId])
+  @@index([deletedAt])
+  @@map("attachments")
+}
+
 // ── Order Management ────────────────────────────────────────────────────────────
 
 /// Lifecycle stage of an order (Draft → Quote → Appointment → Order). CANCELLED is
@@ -5926,6 +6115,9 @@ model Invoice {
   // TDS due date is captured only when TDS applies.
   tdsDueDate DateTime? @map("tds_due_date")
   notes      String?
+
+  // Optional supporting document (S3 URL) captured at invoice creation.
+  attachmentUrl String? @map("attachment_url")
 
   paymentStatus InvoicePaymentStatus @default(PENDING) @map("payment_status")
   dueStatus     InvoiceDueStatus     @default(ON_TIME) @map("due_status")

@@ -1,0 +1,25 @@
+meta {
+  name: List Attachments
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/attachments?entityType=MISC&entityId={{attachmentEntityId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+params:query {
+  entityType: MISC
+  entityId: {{attachmentEntityId}}
+}
+
+docs {
+  List active attachments for one owner record (newest first). Optionally add a
+  `category` query param to filter within the owner.
+}

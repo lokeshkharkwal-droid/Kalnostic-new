@@ -218,7 +218,7 @@ export class FinancePaymentsService {
         _sum: { paidAmount: true },
       });
       for (const g of completed) {
-        this.addToBucket(buckets, g.paymentMode, g._sum.paidAmount ?? 0);
+        this.addToBucket(buckets, g.paymentMode, Number(g._sum.paidAmount ?? 0));
       }
 
       const refund = await this.prisma.paymentDetails.aggregate({
@@ -226,7 +226,7 @@ export class FinancePaymentsService {
         _sum: { refundAmount: true },
         _count: { _all: true },
       });
-      refundedAmount += refund._sum.refundAmount ?? 0;
+      refundedAmount += Number(refund._sum.refundAmount ?? 0);
       refundedCount += refund._count._all;
 
       const cancelled = await this.prisma.paymentDetails.aggregate({
@@ -242,7 +242,7 @@ export class FinancePaymentsService {
         _sum: { paidAmount: true },
         _count: { _all: true },
       });
-      cancelledAmount += cancelled._sum.paidAmount ?? 0;
+      cancelledAmount += Number(cancelled._sum.paidAmount ?? 0);
       cancelledCount += cancelled._count._all;
     }
 
@@ -514,7 +514,7 @@ export class FinancePaymentsService {
       billOrInvoiceId: o.billId ?? o.orderCode,
       customerName,
       mobile: p.mobile,
-      amount: isRefund ? r.refundAmount : r.paidAmount,
+      amount: Number(isRefund ? r.refundAmount : r.paidAmount),
       mode: paymentModeLabel(r.paymentMode),
       modeKey: r.paymentMode,
       refId: r.reference,

@@ -63,6 +63,7 @@ import {
   BillingSummaryByUserRow,
   BillingGroupRow,
   derivePaymentStatus,
+  resolveBillGenerated,
   computeEffectivePaid,
   deriveRefundStatus,
 } from './entities/order.entity';
@@ -376,7 +377,10 @@ export class OrderService {
     // is zeroed (payable/net/paid = 0 → no dues) and its payment status is forced
     // to PAID (settled). The billing rules + previous-dues settlement below are all
     // skipped for it.
-    const billNotGenerated = dto.isBillGenerated === false;
+    const billNotGenerated = !resolveBillGenerated(
+      dto.status,
+      dto.isBillGenerated,
+    );
     const paymentStatus = billNotGenerated
       ? PaymentStatus.PAID
       : derivePaymentStatus(payNet, payPaid);
@@ -559,7 +563,7 @@ export class OrderService {
             orderType: dto.orderType,
             billingType: dto.billingType,
             isUrgentBill: dto.isUrgentBill ?? false,
-            isBillGenerated: dto.isBillGenerated ?? false,
+            isBillGenerated: dto.isBillGenerated ?? true,
             orderNotes: dto.orderNotes ?? null,
             orderTime: dto.orderTime ?? null,
             billingDetails:
@@ -639,9 +643,11 @@ export class OrderService {
               branchLabTestId: i.branchLabTestId ?? null,
               branchLabPanelId: i.branchLabPanelId ?? null,
               direct: i.direct ?? null,
-              unitPrice:
-                itemPrices.get(i.branchLabTestId ?? i.branchLabPanelId ?? '') ??
-                0,
+              unitPrice: i.direct
+                ? (i.unitPrice ?? 0)
+                : (itemPrices.get(
+                    i.branchLabTestId ?? i.branchLabPanelId ?? '',
+                  ) ?? 0),
               discount: i.discount ?? 0,
               discountMode: i.discountMode ?? null,
               discountValue: i.discountValue ?? null,
@@ -1207,7 +1213,9 @@ export class OrderService {
     let lineDiscountTotal = 0;
     for (const item of items) {
       const key = item.branchLabTestId ?? item.branchLabPanelId ?? '';
-      const price = itemPrices.get(key) ?? 0;
+      const price = item.direct
+        ? (item.unitPrice ?? 0)
+        : (itemPrices.get(key) ?? 0);
       itemsGross += price;
       const discount = item.discount ?? 0;
       lineDiscountTotal += discount;
@@ -1215,8 +1223,9 @@ export class OrderService {
       if (!lineDiscountEnabled) throw new LineItemDiscountNotAllowedException();
       // Effective percentage: use the typed PERCENT value directly, else derive
       // it from the amount and the line's price. A discount on a zero-price
-      // (e.g. direct) line with an AMOUNT mode can't be expressed as a %, so the
-      // range check is skipped (the allow-flag above still applies).
+      // line (e.g. a direct entry with no unitPrice) with an AMOUNT mode can't
+      // be expressed as a %, so the range check is skipped (the allow-flag
+      // above still applies).
       let pct: number | null = null;
       if (
         item.discountMode === DiscountMode.PERCENT &&
@@ -1717,7 +1726,7 @@ export class OrderService {
         name: test?.testName ?? panel?.panelName ?? it.direct ?? '',
         code: test?.testCode ?? panel?.panelCode ?? '',
         type: test ? 'Test' : panel ? 'Panel' : 'Direct',
-        price: Number(test?.priceMsrp ?? panel?.priceMsrp ?? 0),
+        price: it.unitPrice,
         discount: toNum(it.discount),
       };
     });
@@ -2711,9 +2720,10 @@ export class OrderService {
       const { fig, order: o } = entry;
       // Prorate the order-level figures to this payment's share of the order's
       // total collected, so per-payment snapshots reconcile to order totals.
-      const factor = fig.paid > 0 ? p.paidAmount / fig.paid : 0;
+      const paid = Number(p.paidAmount);
+      const factor = fig.paid > 0 ? paid / fig.paid : 0;
       result.set(p.id, {
-        paid: p.paidAmount,
+        paid,
         orderId: p.orderId,
         paymentDate: p.paymentDate ?? p.createdAt,
         grossShare: Math.round(fig.gross * factor),
@@ -3531,7 +3541,7 @@ export class OrderService {
         for (const p of o.payments) {
           if (p.entryType !== PaymentEntryType.PAYMENT) continue;
           if (!physicalModes.has(p.paymentMode)) continue;
-          if (p.paidAmount <= 0) continue;
+          if (Number(p.paidAmount) <= 0) continue;
           payRows.push({ order: o, payment: p, orderPaid: fig.paid, fig });
         }
       }
@@ -3544,10 +3554,10 @@ export class OrderService {
       );
       const data = pageRows.map(({ order: o, payment: p, orderPaid, fig }) => {
         // Prorate order figures by this payment's share of the order's collected.
-        const factor = orderPaid > 0 ? p.paidAmount / orderPaid : 0;
+        const paid = Number(p.paidAmount);
+        const factor = orderPaid > 0 ? paid / orderPaid : 0;
         const settlementSettled = reserved.get(p.id) ?? 0;
-        const modeAmt = (m: PaymentMode) =>
-          p.paymentMode === m ? p.paidAmount : 0;
+        const modeAmt = (m: PaymentMode) => (p.paymentMode === m ? paid : 0);
         return {
           ...o,
           grossAmount: Math.round(fig.gross * factor),
@@ -3555,7 +3565,7 @@ export class OrderService {
           netAmount: Math.round(fig.net * factor),
           tdsAmount: Math.round(fig.tds * factor),
           dueAmount: Math.round(fig.due * factor),
-          paidAmount: p.paidAmount,
+          paidAmount: paid,
           cash: modeAmt(PaymentMode.CASH),
           upi: modeAmt(PaymentMode.UPI),
           bankTransfer: modeAmt(PaymentMode.BANK_TRANSFER),
@@ -3564,7 +3574,7 @@ export class OrderService {
           refundAmount: 0,
           cancelAmount: 0,
           settlementSettled,
-          settlementRemaining: Math.max(0, p.paidAmount - settlementSettled),
+          settlementRemaining: Math.max(0, paid - settlementSettled),
           paymentId: p.id,
           paymentMode: p.paymentMode,
           paymentReference: p.reference,
@@ -4122,8 +4132,11 @@ export class OrderService {
     // Generate Bill = No (either set by this patch or already stored): the order
     // may not carry a positive paid amount. Only bites when the ledger is part of
     // this patch — a non-payment edit leaves the stored totals untouched.
-    const effectiveBillGenerated =
-      dto.isBillGenerated ?? existing?.isBillGenerated ?? false;
+    const effectiveBillGenerated = resolveBillGenerated(
+      effectiveStatus,
+      dto.isBillGenerated,
+      existing?.isBillGenerated,
+    );
     if (dto.payments !== undefined && !effectiveBillGenerated && payPaid > 0) {
       throw new PaymentWithoutBillGeneratedException(payPaid);
     }
@@ -4215,6 +4228,7 @@ export class OrderService {
           branchLabTestId: s.branchLabTestId ?? undefined,
           branchLabPanelId: s.branchLabPanelId ?? undefined,
           direct: s.direct ?? undefined,
+          unitPrice: s.unitPrice,
           discount: toNum(s.discount),
           discountMode: s.discountMode ?? undefined,
           discountValue: s.discountValue ?? undefined,
@@ -4411,9 +4425,11 @@ export class OrderService {
               branchLabTestId: i.branchLabTestId ?? null,
               branchLabPanelId: i.branchLabPanelId ?? null,
               direct: i.direct ?? null,
-              unitPrice:
-                itemPrices.get(i.branchLabTestId ?? i.branchLabPanelId ?? '') ??
-                0,
+              unitPrice: i.direct
+                ? (i.unitPrice ?? 0)
+                : (itemPrices.get(
+                    i.branchLabTestId ?? i.branchLabPanelId ?? '',
+                  ) ?? 0),
               discount: i.discount ?? 0,
               discountMode: i.discountMode ?? null,
               discountValue: i.discountValue ?? null,
@@ -5097,6 +5113,16 @@ export class OrderService {
       }
       if (item.branchLabTestId) testIds.push(item.branchLabTestId);
       if (item.branchLabPanelId) panelIds.push(item.branchLabPanelId);
+
+      // `unitPrice` is only meaningful for a free-text direct line — a
+      // catalogue line's price is always resolved server-side from the
+      // active pricing list, never trusted from the client, so a payload
+      // that tries to set it here is rejected outright.
+      if (item.unitPrice !== undefined && !item.direct) {
+        throw new InvalidOrderItemException(
+          'unitPrice may only be sent for a direct entry line',
+        );
+      }
 
       // discountMode/discountValue are a pair — either both present (a
       // technician actively chose a mode and typed a number) or both absent
