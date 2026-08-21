@@ -242,6 +242,36 @@ export class CreateLabTestDto {
   @IsOptional()
   approvalTimeTo?: string;
 
+  // ── Reporting window (SRS §5.4) ───────────────────────────────────────────────
+  @IsString()
+  @Matches(HH_MM, { message: 'reportingTimeFrom must be a 24h HH:mm time' })
+  @IsOptional()
+  reportingTimeFrom?: string;
+
+  @IsString()
+  @Matches(HH_MM, { message: 'reportingTimeTo must be a 24h HH:mm time' })
+  @IsOptional()
+  reportingTimeTo?: string;
+
+  // ── Approval duration (SRS §5.5) ──────────────────────────────────────────────
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  approvalDurationMinValue?: number;
+
+  @IsEnum(TatUnit)
+  @IsOptional()
+  approvalDurationMinUnit?: TatUnit;
+
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  approvalDurationMaxValue?: number;
+
+  @IsEnum(TatUnit)
+  @IsOptional()
+  approvalDurationMaxUnit?: TatUnit;
+
   // ── Flags ─────────────────────────────────────────────────────────────────────
   @IsBoolean()
   @IsOptional()

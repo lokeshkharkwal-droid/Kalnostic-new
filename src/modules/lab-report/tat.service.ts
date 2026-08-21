@@ -11,6 +11,8 @@ import {
   classifyTat,
   evaluateTat,
   hhmmToMinutes,
+  nextReportingSessionStart,
+  resolveReportingCutoff,
   tatUnitToMinutes,
   toBranchLocalInstant,
   WorkingShift,
@@ -53,6 +55,37 @@ export interface TatBreakdown {
   timezone: string | null;
   /** The active schedule the operating calendar came from, if any. */
   scheduleId: string | null;
+  /** The test's TAT configuration (Turnaround Time Details modal fields) —
+   * null when the report is panel-backed (no equivalent config exists on
+   * BranchLabPanel; see gather()'s test-only scheduleDays lookup). */
+  config: TatConfigSnapshot | null;
+}
+
+/**
+ * A test's TAT configuration, as configured on `BranchLabTest` (Turnaround
+ * Time Details modal — Scheduled Days/Time, Processing Time Min/Max,
+ * Reporting Time, Approval Duration Min/Max). Read-only display data; not
+ * itself part of the TAT calculation inputs above (those are flattened
+ * separately into shifts/scheduledDays/maxValue/maxUnit).
+ */
+export interface TatConfigSnapshot {
+  tatMinValue: number | null;
+  tatMinUnit: TatUnit | null;
+  tatMaxValue: number | null;
+  tatMaxUnit: TatUnit | null;
+  scheduleDays: DayOfWeek[];
+  scheduleFrom: string | null;
+  scheduleTo: string | null;
+  procTimeMinValue: number | null;
+  procTimeMinUnit: TatUnit | null;
+  procTimeMaxValue: number | null;
+  procTimeMaxUnit: TatUnit | null;
+  reportingTimeFrom: string | null;
+  reportingTimeTo: string | null;
+  approvalDurationMinValue: number | null;
+  approvalDurationMinUnit: TatUnit | null;
+  approvalDurationMaxValue: number | null;
+  approvalDurationMaxUnit: TatUnit | null;
 }
 
 /** The four `LabReport` columns frozen at approval (hybrid storage). */
@@ -91,6 +124,7 @@ interface TatInputs {
   maxUnit: TatUnit | null;
   timezone: string | null;
   scheduleId: string | null;
+  config: TatConfigSnapshot | null;
 }
 
 /**
@@ -136,6 +170,11 @@ export class TatService {
         band: nabl.tatBand,
         timezone: await this.loadTimezone(tenantId, activeBranchId),
         scheduleId: null,
+        config: await this.loadConfigSnapshot(
+          reportId,
+          tenantId,
+          activeBranchId,
+        ),
       };
     }
     const inputs = await this.gather(reportId, tenantId, activeBranchId);
@@ -300,6 +339,7 @@ export class TatService {
       maxUnit: test?.tatMaxUnit ?? panel?.tatMaxUnit ?? null,
       timezone,
       scheduleId,
+      config: this.toConfigSnapshot(test),
     };
   }
 
@@ -352,6 +392,133 @@ export class TatService {
     return branch?.timezone ?? null;
   }
 
+  /** Map a `BranchLabTest` row's TAT-config fields into a display snapshot
+   * (Turnaround Time Details modal). Null input (panel-backed report, or
+   * report not found) yields null — see {@link TatConfigSnapshot}'s doc. */
+  private toConfigSnapshot(
+    test: {
+      tatMinValue: number | null;
+      tatMinUnit: TatUnit | null;
+      tatMaxValue: number | null;
+      tatMaxUnit: TatUnit | null;
+      scheduleDays: DayOfWeek[];
+      scheduleFrom: string | null;
+      scheduleTo: string | null;
+      procTimeMinValue: number | null;
+      procTimeMinUnit: TatUnit | null;
+      procTimeMaxValue: number | null;
+      procTimeMaxUnit: TatUnit | null;
+      reportingTimeFrom: string | null;
+      reportingTimeTo: string | null;
+      approvalDurationMinValue: number | null;
+      approvalDurationMinUnit: TatUnit | null;
+      approvalDurationMaxValue: number | null;
+      approvalDurationMaxUnit: TatUnit | null;
+    } | null,
+  ): TatConfigSnapshot | null {
+    if (!test) return null;
+    return {
+      tatMinValue: test.tatMinValue,
+      tatMinUnit: test.tatMinUnit,
+      tatMaxValue: test.tatMaxValue,
+      tatMaxUnit: test.tatMaxUnit,
+      scheduleDays: test.scheduleDays,
+      scheduleFrom: test.scheduleFrom,
+      scheduleTo: test.scheduleTo,
+      procTimeMinValue: test.procTimeMinValue,
+      procTimeMinUnit: test.procTimeMinUnit,
+      procTimeMaxValue: test.procTimeMaxValue,
+      procTimeMaxUnit: test.procTimeMaxUnit,
+      reportingTimeFrom: test.reportingTimeFrom,
+      reportingTimeTo: test.reportingTimeTo,
+      approvalDurationMinValue: test.approvalDurationMinValue,
+      approvalDurationMinUnit: test.approvalDurationMinUnit,
+      approvalDurationMaxValue: test.approvalDurationMaxValue,
+      approvalDurationMaxUnit: test.approvalDurationMaxUnit,
+    };
+  }
+
+  /** Load + map a report's test TAT config (NABL path — doesn't otherwise
+   * fetch `orderItem.branchLabTest`, unlike {@link gather}). */
+  private async loadConfigSnapshot(
+    reportId: string,
+    tenantId: string,
+    branchId: string,
+  ): Promise<TatConfigSnapshot | null> {
+    const report = await this.prisma.labReport.findFirst({
+      where: { id: reportId, tenantId, branchId, deletedAt: null },
+      include: { orderItem: { include: { branchLabTest: true } } },
+    });
+    return this.toConfigSnapshot(report?.orderItem?.branchLabTest ?? null);
+  }
+
+  /**
+   * Whether a report's result — being validated right now — has landed after
+   * today's reporting cutoff (SRS §5.4/§5.5), and if so, when the next
+   * Reporting session opens. Called by `LabReportService.validate()`; the
+   * returned `deferredUntil` (if any) is stamped onto
+   * `LabReport.reportingDeferredUntil` in the same update, and later checked
+   * by `approve()`. Returns `{ isPastCutoff: false }` when the report's test
+   * has no Reporting Time / Approval Duration configured — the gate is opt-in
+   * per test, not a default restriction.
+   * @param reportId the lab report id
+   * @param tenantId tenant scope
+   * @param branchId active branch (required)
+   */
+  async resolveReportingDeferral(
+    reportId: string,
+    tenantId: string,
+    branchId: string,
+  ): Promise<{ isPastCutoff: boolean; deferredUntil: Date | null }> {
+    const report = await this.prisma.labReport.findFirst({
+      where: { id: reportId, tenantId, branchId, deletedAt: null },
+      include: {
+        orderItem: { include: { branchLabTest: true } },
+      },
+    });
+    if (!report) throw new LabReportNotFoundException(reportId);
+
+    // Reporting window / Approval duration / Scheduled days are LabTest-only
+    // concepts (no equivalent on BranchLabPanel — see LabPanel/BranchLabPanel,
+    // which only carry Min/Max TAT) — a panel-backed report has nothing to
+    // defer against, same as gather()'s test-only scheduleDays lookup above.
+    const test = report.orderItem?.branchLabTest ?? null;
+    const reportingTimeFrom = test?.reportingTimeFrom ?? null;
+    const reportingTimeTo = test?.reportingTimeTo ?? null;
+    const maxApprovalMinutes = tatUnitToMinutes(
+      test?.approvalDurationMaxValue ?? null,
+      test?.approvalDurationMaxUnit ?? null,
+    );
+    const scheduledDays = test?.scheduleDays ?? [];
+
+    const timezone = await this.loadTimezone(tenantId, branchId);
+    const now = new Date();
+    const nowLocal = toBranchLocalInstant(now, timezone);
+
+    const cutoff = resolveReportingCutoff(
+      nowLocal,
+      reportingTimeTo,
+      maxApprovalMinutes,
+    );
+    if (!cutoff.configured || !cutoff.isPastCutoff || !reportingTimeFrom) {
+      return { isPastCutoff: false, deferredUntil: null };
+    }
+
+    const nextLocal = nextReportingSessionStart(
+      nowLocal,
+      reportingTimeFrom,
+      scheduledDays,
+    );
+    // nextReportingSessionStart works in the same "UTC fields = branch-local
+    // clock" space as nowLocal; convert back to a real instant by re-applying
+    // the branch's UTC offset, derived from this single `now` read (avoids a
+    // second wall-clock call drifting the offset by the time between reads).
+    const offsetMs = nowLocal.getTime() - now.getTime();
+    const deferredUntil = new Date(nextLocal.getTime() - offsetMs);
+
+    return { isPastCutoff: true, deferredUntil };
+  }
+
   /** Turn gathered inputs + an end instant into a breakdown. */
   private evaluate(
     inputs: TatInputs,
@@ -365,6 +532,7 @@ export class TatService {
       isFinal,
       timezone: inputs.timezone,
       scheduleId: inputs.scheduleId,
+      config: inputs.config,
     };
 
     if (!inputs.startRaw) {
@@ -433,6 +601,7 @@ export class TatService {
         result.set(r.id, {
           band: r.tatBand,
           netMinutes: r.tatNetMinutes,
+          maxTatMinutes: r.tatMaxMinutes,
           isFinal: true,
           computable: r.tatBand != null,
         });
@@ -442,6 +611,7 @@ export class TatService {
         result.set(r.id, {
           band: r.tatBand,
           netMinutes: r.tatNetMinutes,
+          maxTatMinutes: r.tatMaxMinutes,
           isFinal: false,
           computable: r.tatStartAt != null,
         });
@@ -476,6 +646,7 @@ export class TatService {
         result.set(r.id, {
           band: null,
           netMinutes: null,
+          maxTatMinutes: null,
           isFinal: false,
           computable: false,
         });
@@ -493,6 +664,7 @@ export class TatService {
       result.set(r.id, {
         band: evaluation.band ? TatBand[evaluation.band] : null,
         netMinutes: Math.round(evaluation.netMinutes),
+        maxTatMinutes: evaluation.maxTatMinutes,
         isFinal: false,
         computable: true,
       });

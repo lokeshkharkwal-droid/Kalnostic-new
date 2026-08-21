@@ -34,6 +34,11 @@ export const SAMPLE_INCLUDE = {
         select: {
           branchLabTest: { select: { departmentId: true } },
           branchLabPanel: { select: { departmentId: true } },
+          // The center this order line was assigned to at order create/edit
+          // time (null = in-house) — surfaced so the Outsource Sample modal
+          // can pre-select it instead of opening blank (PDF §A.10.16).
+          outsourceCenterId: true,
+          outsourceCenter: { select: { id: true, name: true } },
         },
       },
     },

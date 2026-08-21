@@ -24,6 +24,13 @@ docs {
   Validation Pending → Result Done (LABORATORY.docx §2.2, §6.4). `notes` is
   optional; when present it's recorded as a TECH note on the report.
 
+  If the test has a Reporting Time / Approval Duration configured (Turnaround
+  Time Details modal — SRS §5.4/§5.5) and this result lands after today's
+  cutoff (`reportingTimeTo - approvalDurationMaxValue`), the report is stamped
+  with `reportingDeferredUntil` = the next scheduled Reporting session's start.
+  Status still becomes RESULT_DONE either way — see "13 Approve", which
+  enforces the deferral.
+
   404 `LAB_REPORT_NOT_FOUND`. 409 `LAB_REPORT_LOCKED`. 409
   `INVALID_LAB_REPORT_TRANSITION` if the report isn't Validation Pending.
 }

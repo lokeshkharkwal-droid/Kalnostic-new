@@ -1,4 +1,14 @@
-import { IsBoolean, IsIn, IsInt, IsOptional, Max, Min } from 'class-validator';
+import {
+  ArrayNotEmpty,
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+} from 'class-validator';
 
 export const SIGNATORY_BASES = [
   'department',
@@ -67,4 +77,11 @@ export class SaveTechnicianSettingsDto {
   @IsOptional()
   @IsBoolean()
   isInterpretationEditable?: boolean;
+
+  /** Reason options for the "Adjust TAT" audit-log dropdown. */
+  @IsOptional()
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsString({ each: true })
+  tatAdjustmentReasons?: string[];
 }

@@ -25,6 +25,7 @@ tests {
     expect(d).to.have.property("tatImminentMinutes");
     expect(d).to.have.property("authoritySignatures");
     expect(d).to.have.property("signatoryBasis");
+    expect(d).to.have.property("tatAdjustmentReasons");
   });
 }
 
@@ -41,6 +42,10 @@ docs {
     icon visibility toggles, all default `true`); `authoritySignatures`
     (1-3, default 1); `signatoryBasis` (`department` | `category` |
     `subCategory`, default `department`).
+  - **Adjust TAT History:** `tatAdjustmentReasons` (string[], default
+    `['QC Failure', 'Instrument Issue', 'Calibration Failure', 'Other']`) —
+    reason options for the worklist's "Adjust TAT" audit-log dropdown
+    (`POST /lab-reports/:id/tat-adjustments`).
 
   A branch that has never saved settings gets the module defaults — this
   endpoint never 404s.

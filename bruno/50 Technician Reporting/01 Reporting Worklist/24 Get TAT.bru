@@ -22,7 +22,15 @@ docs {
 
   Response:
   `{ reportId, computable, reason, startAt, endAt, isFinal, netMinutes,
-     maxTatMinutes, band, timezone, scheduleId }`
+     maxTatMinutes, band, timezone, scheduleId, config }`
+
+  `config` (Turnaround Time Details modal) is the test's TAT configuration
+  snapshot: `{ tatMinValue, tatMinUnit, tatMaxValue, tatMaxUnit, scheduleDays,
+  scheduleFrom, scheduleTo, procTimeMinValue, procTimeMinUnit,
+  procTimeMaxValue, procTimeMaxUnit, reportingTimeFrom, reportingTimeTo,
+  approvalDurationMinValue, approvalDurationMinUnit, approvalDurationMaxValue,
+  approvalDurationMaxUnit }`, or `null` for a panel-backed report (no
+  equivalent config exists on `BranchLabPanel`).
 
   - `band` ∈ WITHIN | WARNING | CRITICAL | BREACHED (null if no Max TAT
     configured on the test/panel, or not computable).

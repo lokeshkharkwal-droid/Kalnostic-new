@@ -20,6 +20,7 @@ import { ImportBranchLabPanelsDto } from './dto/import-branch-lab-panels.dto';
 import { SyncBranchLabPanelsDto } from './dto/sync-branch-lab-panels.dto';
 import { ListBranchLabPanelsQueryDto } from './dto/list-branch-lab-panels-query.dto';
 import { UpdateBranchLabPanelDto } from './dto/update-branch-lab-panel.dto';
+import { BulkEditBranchLabPanelsDto } from './dto/bulk-edit-branch-lab-panels.dto';
 import { SetBranchLabPanelActiveDto } from './dto/set-branch-lab-panel-active.dto';
 import { ActiveBranchRequiredException } from '../branch-lab-test/exceptions/branch-lab-test.exceptions';
 
@@ -81,6 +82,31 @@ export class BranchLabPanelController {
     @Body() dto: SyncBranchLabPanelsDto,
   ) {
     return this.branchLabPanelService.syncFromMasterData(
+      tenantId,
+      this.requireBranch(profile),
+      personId,
+      dto,
+    );
+  }
+
+  /**
+   * Bulk-edit branch lab panels: apply per-row branch-tunable changes to the
+   * selected ids. Declared before the `:id` routes so `bulk` isn't matched as
+   * an id.
+   */
+  @Patch('bulk')
+  @Audit({
+    module: AuditModule.LAB_PANEL,
+    action: AuditAction.UPDATE,
+    description: 'Bulk-edited branch lab panels',
+  })
+  bulkUpdate(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Body() dto: BulkEditBranchLabPanelsDto,
+  ) {
+    return this.branchLabPanelService.bulkUpdate(
       tenantId,
       this.requireBranch(profile),
       personId,

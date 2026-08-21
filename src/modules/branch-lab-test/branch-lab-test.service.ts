@@ -12,6 +12,7 @@ import { ImportBranchLabTestsDto } from './dto/import-branch-lab-tests.dto';
 import { SyncBranchLabTestsDto } from './dto/sync-branch-lab-tests.dto';
 import { ListBranchLabTestsQueryDto } from './dto/list-branch-lab-tests-query.dto';
 import { UpdateBranchLabTestDto } from './dto/update-branch-lab-test.dto';
+import { BulkEditBranchLabTestsDto } from './dto/bulk-edit-branch-lab-tests.dto';
 import {
   BranchLabTestDefaultConflictException,
   BranchLabTestNotFoundException,
@@ -22,6 +23,11 @@ import {
   BranchLabTestListRow,
   BranchLabTestSyncResult,
 } from './entities/branch-lab-test.entity';
+
+/** Result of a bulk-edit: the number of branch lab tests updated. */
+export interface BranchLabTestBulkEditResult {
+  updated: number;
+}
 
 /** A Create-Order lab-test option row (Diagnostic Items table). */
 export interface BranchLabTestOption {
@@ -528,6 +534,69 @@ export class BranchLabTestService {
   }
 
   /**
+   * Bulk-edit branch lab tests: apply per-row branch-tunable changes to the
+   * selected ids (all scoped to the caller's tenant + active branch). All
+   * existence/invariant checks run before the transaction opens, so if any item
+   * is invalid or its `id` can't be resolved, nothing changes.
+   * @param tenantId tenant scope (from JWT)
+   * @param branchId active branch (from JWT)
+   * @param actorId person id recorded as updated-by (or null)
+   * @param dto the array of per-row edits
+   * @returns the number of branch lab tests updated
+   * @throws ValidationException on duplicate ids, an empty item, or a broken price ordering
+   * @throws BranchLabTestNotFoundException if an `id` doesn't resolve to an active row
+   */
+  async bulkUpdate(
+    tenantId: string,
+    branchId: string,
+    actorId: string | null,
+    dto: BulkEditBranchLabTestsDto,
+  ): Promise<BranchLabTestBulkEditResult> {
+    const items = dto.data;
+    const ids = items.map((i) => i.id);
+    if (new Set(ids).size !== ids.length) {
+      throw new ValidationException('Duplicate id in payload');
+    }
+
+    const edits = items.map((item) => {
+      const { id, ...changes } = item;
+      const data = this.pickDefined(changes);
+      if (Object.keys(data).length === 0) {
+        throw new ValidationException(`No changes provided for row ${id}`);
+      }
+      return { id, changes, data };
+    });
+
+    const rows = await this.prisma.branchLabTest.findMany({
+      where: { id: { in: ids }, tenantId, branchId, deletedAt: null },
+    });
+    const rowById = new Map(rows.map((r) => [r.id, r]));
+    const missing = ids.find((id) => !rowById.has(id));
+    if (missing) {
+      throw new BranchLabTestNotFoundException(missing);
+    }
+
+    for (const { id, changes } of edits) {
+      const row = rowById.get(id)!;
+      this.assertPriceOrdering({
+        priceMsrp: changes.priceMsrp ?? row.priceMsrp,
+        priceMaximum: changes.priceMaximum ?? row.priceMaximum,
+        priceMinimum: changes.priceMinimum ?? row.priceMinimum,
+      });
+    }
+
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      for (const { id, data } of edits) {
+        await tx.branchLabTest.update({
+          where: { id },
+          data: { ...data, updatedBy: actorId },
+        });
+      }
+    });
+    return { updated: edits.length };
+  }
+
+  /**
    * Enable/disable a branch lab test in the branch's Lab Test List.
    * @throws BranchLabTestNotFoundException if missing
    */
@@ -756,6 +825,19 @@ export class BranchLabTestService {
         'priceMinimum must be less than or equal to priceMaximum',
       );
     }
+  }
+
+  /** Strip undefined keys from one bulk-edit item's changes, yielding a Prisma update. */
+  private pickDefined(
+    changes: Omit<BulkEditBranchLabTestsDto['data'][number], 'id'>,
+  ): Prisma.BranchLabTestUncheckedUpdateInput {
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(changes)) {
+      if (value !== undefined) {
+        out[key] = value;
+      }
+    }
+    return out;
   }
 
   /** Translate the one-default-per-group unique violation into a typed 409. */

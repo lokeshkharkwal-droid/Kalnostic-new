@@ -20,6 +20,7 @@ import { ImportBranchLabTestsDto } from './dto/import-branch-lab-tests.dto';
 import { SyncBranchLabTestsDto } from './dto/sync-branch-lab-tests.dto';
 import { ListBranchLabTestsQueryDto } from './dto/list-branch-lab-tests-query.dto';
 import { UpdateBranchLabTestDto } from './dto/update-branch-lab-test.dto';
+import { BulkEditBranchLabTestsDto } from './dto/bulk-edit-branch-lab-tests.dto';
 import { SetBranchLabTestActiveDto } from './dto/set-branch-lab-test-active.dto';
 import { ActiveBranchRequiredException } from './exceptions/branch-lab-test.exceptions';
 
@@ -81,6 +82,31 @@ export class BranchLabTestController {
     @Body() dto: SyncBranchLabTestsDto,
   ) {
     return this.branchLabTestService.syncFromMasterData(
+      tenantId,
+      this.requireBranch(profile),
+      personId,
+      dto,
+    );
+  }
+
+  /**
+   * Bulk-edit branch lab tests: apply per-row branch-tunable changes to the
+   * selected ids. Declared before the `:id` routes so `bulk` isn't matched as
+   * an id.
+   */
+  @Patch('bulk')
+  @Audit({
+    module: AuditModule.LAB_TEST,
+    action: AuditAction.UPDATE,
+    description: 'Bulk-edited branch lab tests',
+  })
+  bulkUpdate(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Body() dto: BulkEditBranchLabTestsDto,
+  ) {
+    return this.branchLabTestService.bulkUpdate(
       tenantId,
       this.requireBranch(profile),
       personId,
