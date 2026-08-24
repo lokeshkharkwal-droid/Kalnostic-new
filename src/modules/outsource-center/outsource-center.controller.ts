@@ -14,6 +14,8 @@ import { CreateOutsourceCenterDto } from './dto/create-outsource-center.dto';
 import { UpdateOutsourceCenterDto } from './dto/update-outsource-center.dto';
 import { ListOutsourceCentersDto } from './dto/list-outsource-centers.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
+import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
+import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
@@ -37,9 +39,10 @@ export class OutsourceCenterController {
   })
   create(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Body() dto: CreateOutsourceCenterDto,
   ) {
-    return this.outsourceCenterService.create(tenantId, dto);
+    return this.outsourceCenterService.create(tenantId, profile.branchId, dto);
   }
 
   /**
@@ -76,10 +79,16 @@ export class OutsourceCenterController {
   })
   update(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Param('id') id: string,
     @Body() dto: UpdateOutsourceCenterDto,
   ) {
-    return this.outsourceCenterService.update(id, tenantId, dto);
+    return this.outsourceCenterService.update(
+      id,
+      tenantId,
+      profile.branchId,
+      dto,
+    );
   }
 
   /**

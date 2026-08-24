@@ -14,8 +14,11 @@ import { OutsourceCenterContactDto } from './outsource-center-contact.dto';
 /**
  * Body for updating an outsource center. All fields are optional (explicit, not
  * PartialType). `code` is immutable and never accepted. `contacts` are replace-all
- * when present and left unchanged when absent. `labTestId` / `labPanelId` are
- * validated to be active lab tests/panels in the tenant when present.
+ * when present and left unchanged when absent. `labTestId`/`labPanelId` are legacy
+ * refs to a single active lab test/panel (still used by order-routing
+ * eligibility). `branchLabTestListId`/`branchLabPanelListId` assign the branch's
+ * named Lab Test List / Lab Panel List, validated against the active branch on
+ * the JWT.
  */
 export class UpdateOutsourceCenterDto {
   // ── Basic details ──
@@ -42,7 +45,6 @@ export class UpdateOutsourceCenterDto {
 
   @IsString()
   @IsOptional()
-  @MinLength(1)
   @MaxLength(255)
   city?: string;
 
@@ -95,7 +97,8 @@ export class UpdateOutsourceCenterDto {
   @IsOptional()
   isNablAccredited?: boolean;
 
-  // ── Assigned lab test / lab panel (single, optional) ──
+  // ── Assigned lab test / lab panel (single, optional; legacy — retained for
+  // order-routing eligibility, no longer set by the Outsource Center form) ──
   @IsUUID()
   @IsOptional()
   labTestId?: string;
@@ -103,6 +106,16 @@ export class UpdateOutsourceCenterDto {
   @IsUUID()
   @IsOptional()
   labPanelId?: string;
+
+  // ── Assigned Lab Test List / Lab Panel List (single, optional; the branch's
+  // named pricing lists, validated against the active branch on the JWT) ──
+  @IsUUID()
+  @IsOptional()
+  branchLabTestListId?: string;
+
+  @IsUUID()
+  @IsOptional()
+  branchLabPanelListId?: string;
 
   // ── Contacts (replace-all when present) ──
   @IsArray()
