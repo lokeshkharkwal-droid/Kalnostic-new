@@ -66,7 +66,8 @@ docs {
   - `PRICING` — the full price ladder (msrp/min/max/original/franchise/emergency,
     discountCapPct, isAllowPriceOverride).
   - `TAT` — tatMin/Max (value+unit), schedule from/to, processing time min/max
-    (value+unit), approval time from/to.
+    (value+unit), approval time from/to, reportingTimeFrom/To, approval
+    duration min/max (value+unit, SRS §5.4/§5.5).
   - `FLAGS` — isHideInOrderScreen, isEnableCms, isPreferenceTest, isActive.
   - `SAMPLE` — testName, testCode, departmentName, isActive + nested `samples[]`
     (sampleNameId, containerType, sampleSize, isFastingRequired, transportTemperature).
@@ -90,8 +91,6 @@ docs {
   
   - `FLAGS` "Reference test" → `isPreferenceTest`; "Bill only / Disable discount
     / Outsource / Sample flow" → omitted.
-  - `TAT` "Reporting time" and extra from/to → omitted (only schedule/processing/
-    approval windows exist).
   - `BASIC_DETAILS` "Approval" → `approvalWorkflowId` (logical ref).
   - `SAMPLE` "Sample / Sample type" → `sampleNameId` + `containerType` (no sample
     catalogue yet, so no resolved sample name).

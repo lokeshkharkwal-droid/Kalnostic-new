@@ -8,6 +8,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUrl,
   IsUUID,
   Max,
   Min,
@@ -61,4 +62,9 @@ export class CreateInvoiceDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  /** Optional supporting-document URL (S3) uploaded at invoice creation. */
+  @IsOptional()
+  @IsUrl()
+  attachmentUrl?: string;
 }

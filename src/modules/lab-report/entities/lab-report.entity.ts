@@ -21,6 +21,9 @@ import {
 export interface WorklistTat {
   band: TatBand | null;
   netMinutes: number | null;
+  /** The test/panel's configured Max TAT (minutes) — lets the frontend derive
+   * remaining time (`maxTatMinutes - netMinutes`) without a second call. */
+  maxTatMinutes: number | null;
   isFinal: boolean;
   computable: boolean;
 }

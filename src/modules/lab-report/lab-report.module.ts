@@ -6,6 +6,8 @@ import { LabTestModule } from '../lab-test/lab-test.module';
 import { LabReportController } from './lab-report.controller';
 import { LabReportService } from './lab-report.service';
 import { LabReportDirectoryService } from './lab-report-directory.service';
+import { TatAdjustmentController } from './tat-adjustment.controller';
+import { TatAdjustmentService } from './tat-adjustment.service';
 import { ReRunController } from './re-run.controller';
 import { ReRunService } from './re-run.service';
 import { CriticalAlertController } from './critical-alert.controller';
@@ -49,6 +51,7 @@ import { NablTatCronService } from './nabl-tat-cron.service';
   ],
   controllers: [
     LabReportController,
+    TatAdjustmentController,
     ReRunController,
     CriticalAlertController,
     OutOfRangeController,
@@ -59,6 +62,7 @@ import { NablTatCronService } from './nabl-tat-cron.service';
   providers: [
     LabReportService,
     LabReportDirectoryService,
+    TatAdjustmentService,
     ReRunService,
     CriticalAlertService,
     OutOfRangeService,

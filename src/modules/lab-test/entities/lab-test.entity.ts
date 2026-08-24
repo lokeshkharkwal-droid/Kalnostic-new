@@ -139,6 +139,12 @@ export interface LabTestTatRow {
   procTimeMaxUnit: TatUnit | null;
   approvalTimeFrom: string | null;
   approvalTimeTo: string | null;
+  reportingTimeFrom: string | null;
+  reportingTimeTo: string | null;
+  approvalDurationMinValue: number | null;
+  approvalDurationMinUnit: TatUnit | null;
+  approvalDurationMaxValue: number | null;
+  approvalDurationMaxUnit: TatUnit | null;
 }
 
 /** FLAGS view: the boolean flags that exist on the model today. */

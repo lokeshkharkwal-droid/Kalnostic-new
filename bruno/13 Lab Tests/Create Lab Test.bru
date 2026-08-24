@@ -67,6 +67,12 @@ body:json {
     "procTimeMaxUnit": "HOURS",
     "approvalTimeFrom": "09:00",
     "approvalTimeTo": "17:00",
+    "reportingTimeFrom": "09:00",
+    "reportingTimeTo": "17:00",
+    "approvalDurationMinValue": 30,
+    "approvalDurationMinUnit": "MINUTES",
+    "approvalDurationMaxValue": 2,
+    "approvalDurationMaxUnit": "HOURS",
     "isHideInOrderScreen": false,
     "isPreferenceTest": true,
     "isMandatoryTest": true,
@@ -240,6 +246,13 @@ docs {
     drives the NABL cron-managed TAT stopwatch — start/pause bounds), `procTimeMinValue`/
     `procTimeMinUnit`, `procTimeMaxValue`/`procTimeMaxUnit`,
     `approvalTimeFrom`/`approvalTimeTo`.
+  - **Reporting window / Approval duration (SRS §5.4/§5.5):**
+    `reportingTimeFrom`/`reportingTimeTo` ("HH:mm") — the signatory-availability
+    window. `approvalDurationMinValue`/`approvalDurationMinUnit`/
+    `approvalDurationMaxValue`/`approvalDurationMaxUnit` — the expected approval
+    turnaround (value+unit: MINUTES/HOURS/DAYS), distinct from
+    `approvalTimeFrom`/`approvalTimeTo` above (a time-of-day window, not a
+    duration).
   - **Flags:** `isAllowDiscounts`, `isPreferenceTest`, `isActive` (Active/Inactive).
   - **Notes:** `usefulFor`, `interpretationOfResults`, `limitations`, `remarks`,
     `references`.

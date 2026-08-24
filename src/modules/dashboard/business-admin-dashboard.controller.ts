@@ -17,6 +17,24 @@ export class BusinessAdminDashboardController {
   constructor(private readonly dashboardService: DashboardService) {}
 
   /**
+   * Org-wide Total Branches / Active Users stat row. Tenant-wide only — no
+   * `branchId` param, since this row has no branch filter in the UI. Does
+   * take the header's `dateFrom`/`dateTo` — omitted returns current totals,
+   * set scopes both counts to rows created in that range.
+   */
+  @Get('stats-summary')
+  getStatsSummary(
+    @CurrentTenant() tenantId: string,
+    @Query() query: BusinessAdminDashboardQueryDto,
+  ) {
+    return this.dashboardService.getStatsSummary(
+      tenantId,
+      query.dateFrom,
+      query.dateTo,
+    );
+  }
+
+  /**
    * Active lab tests, grouped by department, for the "Master Data - Total
    * Tests" donut.
    */
@@ -25,7 +43,12 @@ export class BusinessAdminDashboardController {
     @CurrentTenant() tenantId: string,
     @Query() query: BusinessAdminDashboardQueryDto,
   ) {
-    return this.dashboardService.getMasterDataSummary(tenantId, query.branchId);
+    return this.dashboardService.getMasterDataSummary(
+      tenantId,
+      query.branchId,
+      query.dateFrom,
+      query.dateTo,
+    );
   }
 
   /** Referral panels, grouped by payment type. */
@@ -37,6 +60,8 @@ export class BusinessAdminDashboardController {
     return this.dashboardService.getReferralPanelsSummary(
       tenantId,
       query.branchId,
+      query.dateFrom,
+      query.dateTo,
     );
   }
 
@@ -49,6 +74,8 @@ export class BusinessAdminDashboardController {
     return this.dashboardService.getReferralDoctorsSummary(
       tenantId,
       query.branchId,
+      query.dateFrom,
+      query.dateTo,
     );
   }
 
@@ -61,6 +88,8 @@ export class BusinessAdminDashboardController {
     return this.dashboardService.getExternalReferralsSummary(
       tenantId,
       query.branchId,
+      query.dateFrom,
+      query.dateTo,
     );
   }
 
@@ -71,6 +100,43 @@ export class BusinessAdminDashboardController {
     @Query() query: BusinessAdminDashboardQueryDto,
   ) {
     return this.dashboardService.getInternalReferralsSummary(
+      tenantId,
+      query.branchId,
+      query.dateFrom,
+      query.dateTo,
+    );
+  }
+
+  /** Active staff headcount, grouped by role. */
+  @Get('users-by-role-summary')
+  getUsersByRoleSummary(
+    @CurrentTenant() tenantId: string,
+    @Query() query: BusinessAdminDashboardQueryDto,
+  ) {
+    return this.dashboardService.getUsersByRoleSummary(
+      tenantId,
+      query.branchId,
+      query.dateFrom,
+      query.dateTo,
+    );
+  }
+
+  /**
+   * Weekly open/closed schedule with per-shift timing for one specific
+   * branch's currently-ACTIVE schedule. Unlike every other endpoint here, a
+   * schedule is inherently branch-specific — there's no tenant-wide
+   * aggregate — so an omitted `branchId` ("All Branches") returns an empty
+   * array rather than calling through with `undefined`.
+   */
+  @Get('schedule-plan-summary')
+  getSchedulePlanSummary(
+    @CurrentTenant() tenantId: string,
+    @Query() query: BusinessAdminDashboardQueryDto,
+  ) {
+    if (!query.branchId) {
+      return [];
+    }
+    return this.dashboardService.getSchedulePlanSummary(
       tenantId,
       query.branchId,
     );
