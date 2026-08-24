@@ -3251,9 +3251,18 @@ model OutsourceCenter {
 
   // Single selected lab test / lab panel the center handles. Logical refs to a
   // LabTest / LabPanel (no Prisma relation, mirroring LabPanelTest.labTestId);
-  // validated active + tenant-scoped in OutsourceCenterService.
+  // validated active + tenant-scoped in OutsourceCenterService. Legacy —
+  // retained only for order-routing eligibility (OrderService.assertOutsourceCenter);
+  // superseded on the Outsource Center form by branchLabTestListId/branchLabPanelListId.
   labTestId  String? @map("lab_test_id")
   labPanelId String? @map("lab_panel_id")
+
+  // Single assigned Lab Test List / Lab Panel List — the branch's named pricing
+  // lists (BranchLabTestList/BranchLabPanelList, logical refs, no Prisma relation).
+  // Validated tenant+branch-scoped in OutsourceCenterService against the active
+  // branch on the JWT.
+  branchLabTestListId  String? @map("branch_lab_test_list_id")
+  branchLabPanelListId String? @map("branch_lab_panel_list_id")
 
   contacts   OutsourceCenterContact[]
   orderItems OrderItem[]
@@ -3266,6 +3275,8 @@ model OutsourceCenter {
   @@index([tenantId])
   @@index([labTestId])
   @@index([labPanelId])
+  @@index([branchLabTestListId])
+  @@index([branchLabPanelListId])
   @@index([deletedAt])
   @@map("outsource_centers")
 }
