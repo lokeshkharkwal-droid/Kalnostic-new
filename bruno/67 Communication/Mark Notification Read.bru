@@ -1,0 +1,20 @@
+meta {
+  name: Mark Notification Read
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/notifications/{{notificationId}}/read
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Mark the caller's copy of a notification as read (clears it from the unread
+  badge). Returns the number of target rows updated.
+}

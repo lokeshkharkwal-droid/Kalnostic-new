@@ -5944,6 +5944,11 @@ model Order {
   // − cancellationCharge).
   cancellationCharge Decimal @default(0) @db.Decimal(12, 2) @map("cancellation_charge")
 
+  // Set once when the "order completed" notification has been dispatched (all
+  // report-bearing items published), so completion notifies the patient exactly
+  // once (NULL = not yet notified). Written by the report-published listener.
+  completionNotifiedAt DateTime? @map("completion_notified_at")
+
   // Quotation lifecycle (only meaningful when status = QUOTE). EXPIRED is also
   // derived at query time from quotationValidTill.
   quotationStatus    QuotationStatus? @map("quotation_status")
@@ -7304,6 +7309,10 @@ model Appointment {
   status                AppointmentStatus @default(NEW)
 
   statusHistory AppointmentStatusHistory[]
+
+  /// Set once when the appointment-reminder cron has dispatched the ~24h-ahead
+  /// reminder, so it fires exactly once per appointment (NULL = not yet sent).
+  reminderSentAt DateTime? @map("reminder_sent_at")
 
   /// Back-relation to the order that owns this appointment (1:1). Set when an
   /// order is saved with status = APPOINTMENT; the FK lives on `Order`.

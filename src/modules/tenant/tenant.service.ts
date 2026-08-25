@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   Prisma,
   StaffStatus,
@@ -74,6 +75,7 @@ export class TenantService {
     private readonly stateService: StateService,
     private readonly cityService: CityService,
     private readonly areaService: AreaService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   /**
@@ -307,6 +309,22 @@ export class TenantService {
       this.logger.log(
         `Tenant created: ${tenant.id} (${tenant.slug}) by SiteAdmin ${createdBy}`,
       );
+
+      // Fire-and-forget: welcome the business (Email/SMS/WhatsApp). Handled by
+      // BusinessEventListener; never blocks tenant creation. Falls back to the
+      // admin contact when the business contact fields are empty.
+      void this.eventEmitter.emitAsync('business.registration.completed', {
+        tenantId: tenant.id,
+        businessName: tenant.name,
+        email: tenant.email ?? dto.adminEmail ?? null,
+        phone: tenant.phone ?? dto.adminPhone ?? null,
+        slug: tenant.slug,
+        adminName: [dto.adminFirstName, dto.adminLastName]
+          .filter(Boolean)
+          .join(' ')
+          .trim(),
+      });
+
       return { tenant, adminPhone: dto.adminPhone };
     } catch (error) {
       this.logger.error(
@@ -546,7 +564,7 @@ export class TenantService {
     status: SubscriptionStatus,
     updatedBy: string,
   ): Promise<Tenant> {
-    await this.findById(id);
+    const before = await this.findById(id);
     const updated = await this.prisma.tenant.update({
       where: { id },
       data: { subscriptionStatus: status, updatedBy },
@@ -554,6 +572,29 @@ export class TenantService {
     this.logger.log(
       `Tenant subscription status -> ${status}: ${id} by ${updatedBy}`,
     );
+
+    // Fire-and-forget: notify the business (Email/SMS) on the relevant
+    // transitions — suspended (any active → SUSPENDED) and reinstated
+    // (SUSPENDED → ACTIVE). Other transitions (e.g. TRIALING → ACTIVE) don't
+    // notify. Handled by BusinessEventListener; never blocks the status change.
+    const payload = {
+      tenantId: updated.id,
+      businessName: updated.name,
+      email: updated.email,
+      phone: updated.phone,
+    };
+    if (
+      status === SubscriptionStatus.SUSPENDED &&
+      before.subscriptionStatus !== SubscriptionStatus.SUSPENDED
+    ) {
+      void this.eventEmitter.emitAsync('business.status.suspended', payload);
+    } else if (
+      status === SubscriptionStatus.ACTIVE &&
+      before.subscriptionStatus === SubscriptionStatus.SUSPENDED
+    ) {
+      void this.eventEmitter.emitAsync('business.status.unsuspended', payload);
+    }
+
     return updated;
   }
 
@@ -637,6 +678,15 @@ export class TenantService {
 
     const updated = await this.prisma.tenant.update({ where: { id }, data });
     this.logger.log(`Tenant updated: ${id} by ${updatedBy}`);
+
+    // Fire-and-forget: confirm the profile change to the business (Email/SMS).
+    void this.eventEmitter.emitAsync('business.details.updated', {
+      tenantId: updated.id,
+      businessName: updated.name,
+      email: updated.email,
+      phone: updated.phone,
+    });
+
     return updated;
   }
 

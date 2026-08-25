@@ -421,6 +421,99 @@ export class TemplateService {
     });
   }
 
+  // ── Delivery resolution (used by the communication module) ──────────────────
+
+  /**
+   * Resolve the single template to use when SENDING a message for a given
+   * `feature` + `channel`. Mirrors the old Kishan default→override merge, but
+   * keyed on this model: the most specific active template wins, in order —
+   *   1. branch-level (tenant + this branch),
+   *   2. tenant-level (tenant, `branchId` null),
+   *   3. SITE_ADMIN global master (`tenantId` null).
+   * Within a level the `isDefault` row is preferred, then most recently updated.
+   * Only `isActive`, non-soft-deleted rows are considered. Runs inside
+   * `withTenant` so the templates RLS policy permits reading the NULL-tenant
+   * global source while the tenant GUC is set.
+   *
+   * @param tenantId caller's tenant (from JWT)
+   * @param scopeBranchId active branch, or null for a tenant-level send
+   * @param channel the delivery channel (preference) to match
+   * @param feature the FEATURE_TYPES key to match
+   * @returns the best matching active template, or null when none exists
+   */
+  async resolveForDelivery(
+    tenantId: string,
+    scopeBranchId: string | null,
+    channel: MessagingChannel,
+    feature: string,
+  ): Promise<Template | null> {
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const scopes: Prisma.TemplateWhereInput[] = [];
+      if (scopeBranchId !== null) {
+        scopes.push({ tenantId, branchId: scopeBranchId });
+      }
+      scopes.push({ tenantId, branchId: null });
+      scopes.push({ tenantId: null });
+      for (const scope of scopes) {
+        const match = await tx.template.findFirst({
+          where: {
+            ...scope,
+            preference: channel,
+            feature,
+            isActive: true,
+            deletedAt: null,
+          },
+          orderBy: [{ isDefault: 'desc' }, { updatedAt: 'desc' }],
+        });
+        if (match) return match;
+      }
+      return null;
+    });
+  }
+
+  /**
+   * Resolve the ACTIVATED tenant template for a feature + channel — like
+   * {@link resolveForDelivery} but restricted to the caller's own scope
+   * (branch-level → tenant-level); it does NOT fall back to the SITE_ADMIN
+   * global. A tenant "activates" a template by cloning a global into its scope
+   * (the OldTemplates enable flow) or creating one directly. Used where only
+   * tenant-activated templates are allowed (e.g. Share and Inform).
+   *
+   * @param tenantId caller's tenant (from JWT)
+   * @param scopeBranchId active branch, or null for tenant-level
+   * @param channel the delivery channel (preference) to match
+   * @param feature the FEATURE_TYPES key to match
+   * @returns the best matching active tenant/branch template, or null when none
+   */
+  async resolveActivatedTemplate(
+    tenantId: string,
+    scopeBranchId: string | null,
+    channel: MessagingChannel,
+    feature: string,
+  ): Promise<Template | null> {
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const scopes: Prisma.TemplateWhereInput[] = [];
+      if (scopeBranchId !== null) {
+        scopes.push({ tenantId, branchId: scopeBranchId });
+      }
+      scopes.push({ tenantId, branchId: null });
+      for (const scope of scopes) {
+        const match = await tx.template.findFirst({
+          where: {
+            ...scope,
+            preference: channel,
+            feature,
+            isActive: true,
+            deletedAt: null,
+          },
+          orderBy: [{ isDefault: 'desc' }, { updatedAt: 'desc' }],
+        });
+        if (match) return match;
+      }
+      return null;
+    });
+  }
+
   // ── Helpers ─────────────────────────────────────────────────────────────────
 
   /**

@@ -26,6 +26,10 @@ import { ReferenceRangeMethodsQueryDto } from './dto/reference-range-methods-que
 import { TrendReportQueryDto } from './dto/trend-report-query.dto';
 import { PrintReportDto } from './dto/print-report.dto';
 import {
+  ShareOrderReportDto,
+  ShareAllOrderReportDto,
+} from './dto/share-order-report.dto';
+import {
   CreateLabReportNoteDto,
   ListLabReportNotesDto,
 } from './dto/lab-report-note.dto';
@@ -140,6 +144,80 @@ export class LabReportController {
     );
     res.setHeader('Content-Length', pdf.length);
     res.end(pdf);
+  }
+
+  /**
+   * "Share and Inform" (Order Console): queue the order's lab report to the
+   * patient over one channel using the tenant's activated
+   * `console_lab_report_as_attachment` template. Declared before `:id` so
+   * `order` isn't captured as a report id.
+   */
+  /**
+   * Preload for the Share and Inform popup: patient contacts + which channels
+   * have an activated console-share template. Declared before `:id`.
+   */
+  @Get('order/:orderId/share-info')
+  shareInfo(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('orderId') orderId: string,
+  ) {
+    return this.labReportService.getShareInfo(
+      orderId,
+      tenantId,
+      profile.branchId,
+    );
+  }
+
+  @Post('order/:orderId/share')
+  @Audit({
+    module: AuditModule.COMMUNICATION,
+    action: AuditAction.CREATE,
+    description: 'Shared an order lab report with the patient',
+  })
+  shareOrderReport(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Param('orderId') orderId: string,
+    @Body() dto: ShareOrderReportDto,
+  ) {
+    return this.labReportService.shareOrderReport(
+      orderId,
+      tenantId,
+      profile.branchId,
+      dto,
+      personId,
+    );
+  }
+
+  /**
+   * "Share All": send the order's lab report to the patient over every channel
+   * the tenant has activated a `console_lab_report_as_attachment` template for
+   * (Email / SMS / WhatsApp / in-app IAM) in one request. Returns a per-channel
+   * result summary; a channel with no activated template is skipped, not an
+   * error. Declared before `:id` so `order` isn't captured as a report id.
+   */
+  @Post('order/:orderId/share-all')
+  @Audit({
+    module: AuditModule.COMMUNICATION,
+    action: AuditAction.CREATE,
+    description: 'Shared an order lab report with the patient on all channels',
+  })
+  shareAllOrderReport(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Param('orderId') orderId: string,
+    @Body() dto: ShareAllOrderReportDto,
+  ) {
+    return this.labReportService.shareAllForOrder(
+      orderId,
+      tenantId,
+      profile.branchId,
+      dto,
+      personId,
+    );
   }
 
   @Get(':id')

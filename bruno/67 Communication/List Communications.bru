@@ -1,0 +1,36 @@
+meta {
+  name: List Communications
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/communications?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~channel: SMS
+  ~status: PENDING
+  ~recipientType: PATIENT
+  ~feature: lab_order_report_published_inform_patient
+  ~campaign: August Reports
+  ~from: 2026-08-01T00:00:00.000Z
+  ~to: 2026-08-31T23:59:59.000Z
+  ~search: Rohan
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Paginated communication log/queue for the caller's tenant, newest first.
+  Pagination lands in `meta`. Filters (toggle the `~`): `channel`, `status`
+  (`PENDING` | `SENT` | `FAILED` | `CANCELLED`), `recipientType`, `feature`,
+  `campaign`, `from`/`to` (ISO date range on createdAt), and `search`
+  (case-insensitive over recipient name/address and subject).
+}

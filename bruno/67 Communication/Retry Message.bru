@@ -1,0 +1,21 @@
+meta {
+  name: Retry Message
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/communications/{{communicationId}}/retry
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Requeue a FAILED (or CANCELLED) message: resets it to PENDING and clears the
+  expiry so the worker attempts delivery again. The retry counter is preserved,
+  and `maxRetry` is bumped to allow at least one more attempt.
+}

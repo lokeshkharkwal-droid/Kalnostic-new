@@ -1,0 +1,26 @@
+meta {
+  name: TRF Share Info
+  type: http
+  seq: 39
+}
+
+get {
+  url: {{baseUrl}}/orders/{{orderId}}/trf-share-info
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Preload for the Accession "Share and Inform" popup (in-house / referral / external /
+  outsource). Returns the patient + referral panel default contacts and which of
+  Email / WhatsApp (plus IAM) the tenant has an activated template for. Reuses the
+  `order_bill_as_attachment` messaging template; the shared document is the TRF.
+
+  Returns `{ orderId, orderCode, billId, patientName,
+    channels: [{ channel: EMAIL|WHATSAPP, activated }], iamActivated,
+    recipients: { patient: {name,email,whatsapp,sms}, panel: {...}|null } }`.
+}

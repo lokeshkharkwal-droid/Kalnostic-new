@@ -85,6 +85,7 @@ import { RegistrationSettingsModule } from './modules/registration-settings/regi
 import { InvoiceModule } from './modules/invoice/invoice.module';
 import { SettlementModule } from './modules/settlement/settlement.module';
 import { FinancePaymentsModule } from './modules/finance-payments/finance-payments.module';
+import { CommunicationModule } from './modules/communication/communication.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 
 /**
@@ -170,6 +171,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     OrderFieldConfigModule,
     PaymentDetailsModule,
     FinancePaymentsModule,
+    CommunicationModule,
     BillingSettingsModule,
     ConsoleSettingsModule,
     ReportSettingsModule,

@@ -128,9 +128,28 @@ export const ORDER_INCLUDE = {
   referredByDoctor: {
     select: { id: true, firstName: true, lastName: true },
   },
-  referralPanel: { select: { id: true, name: true, code: true } },
+  referralPanel: {
+    select: {
+      id: true,
+      name: true,
+      code: true,
+      // Accounts-person contact — drives the `accounts_biling` document + the
+      // panel recipient of the order-bill "Share and Inform" flow.
+      accountsPersonName: true,
+      accountsPersonEmail: true,
+      accountsPersonMobile: true,
+    },
+  },
   internalReferral: {
-    select: { id: true, firstName: true, lastName: true, fullName: true },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      fullName: true,
+      // Logical ref to persons.id — the in-app (IAM) share target for an
+      // internal-referral party.
+      employeeId: true,
+    },
   },
   externalReferral: { select: { id: true, name: true } },
   items: {
@@ -201,7 +220,19 @@ export const ORDER_INCLUDE = {
 /** A fully-composed order (the get-one / create / update response shape). */
 export type OrderWithRelations = Prisma.OrderGetPayload<{
   include: typeof ORDER_INCLUDE;
-}>;
+}> & {
+  /**
+   * Whether an invoice has been generated for this order — true when an active
+   * (non-deleted) `InvoiceSourceOrder` link to a non-deleted invoice exists.
+   * Drives the frontend "invoice-locked" restriction (an invoiced order can no
+   * longer be updated or cancelled) and the backend update/cancel guards.
+   * Independent of the invoice's payment status; a cancelled invoice
+   * soft-deletes its links, so this returns to false.
+   */
+  hasInvoice: boolean;
+  /** The invoice number of the active invoice linked to this order, if any. */
+  invoiceCode: string | null;
+};
 
 /**
  * Aggregated Billing/Collection metrics (whole rupees) for the Finance → Reports
@@ -272,6 +303,8 @@ export const ORDER_LIST_INCLUDE = {
       middleName: true,
       lastName: true,
       mobile: true,
+      email: true, // Share and Inform: auto-fill the Email recipient
+      whatsappNumber: true, // Share and Inform: auto-fill the WhatsApp recipient
       gender: true,
       age: true,
       dateOfBirth: true,
@@ -496,4 +529,14 @@ export type OrderListRow = Prisma.OrderGetPayload<{
    */
   convertedOrderId: string | null;
   convertedOrderCode: string | null;
+  /**
+   * Whether an invoice has been generated for this order — true when an active
+   * (non-deleted) `InvoiceSourceOrder` link to a non-deleted invoice exists.
+   * Drives the frontend "invoice-locked" restriction (an invoiced order can no
+   * longer be updated or cancelled), regardless of the invoice's payment status.
+   * A cancelled invoice soft-deletes its links, so this returns to false.
+   */
+  hasInvoice: boolean;
+  /** The invoice number of the active invoice linked to this order, if any. */
+  invoiceCode: string | null;
 };

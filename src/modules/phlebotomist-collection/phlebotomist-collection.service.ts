@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   AppointmentStatus,
   CollectionPriority,
@@ -53,6 +54,7 @@ export class PhlebotomistCollectionService {
     private readonly prisma: PrismaService,
     private readonly slotReservation: SlotReservationService,
     private readonly accessionSamples: AccessionSampleService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   // ── Creation hook (order → collection) ─────────────────────────────────────
@@ -477,6 +479,25 @@ export class PhlebotomistCollectionService {
         },
       });
     });
+
+    // Fire-and-forget: inform the patient of the new appointment time. Handled
+    // by ClinicalEventListener (lab_move_appointment).
+    if (order) {
+      const info = await this.prisma.withTenant(tenantId, (tx) =>
+        tx.order.findFirst({
+          where: { id: order.id, tenantId },
+          select: { patientId: true, orderCode: true },
+        }),
+      );
+      void this.eventEmitter.emitAsync('appointment.moved', {
+        tenantId,
+        branchId,
+        orderId: order.id,
+        patientId: info?.patientId ?? null,
+        orderCode: info?.orderCode ?? null,
+        newAppointmentAt: newAt,
+      });
+    }
 
     return this.findById(id, tenantId);
   }

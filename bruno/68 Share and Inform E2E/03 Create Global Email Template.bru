@@ -1,0 +1,49 @@
+meta {
+  name: 03 Create Global Email Template
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/templates
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "preference": "EMAIL",
+    "feature": "console_lab_report_as_attachment",
+    "displayTitle": "Console Share — Email",
+    "messageType": "TRANSACTIONAL",
+    "isActive": true,
+    "isDefault": true,
+    "level": "BUSINESS",
+    "template": "<p>Dear {patient_name},</p><p>Please find your lab report for order <strong>{order_code}</strong> attached.</p><p>Regards,<br/>{branch_name}</p>"
+  }
+}
+
+script:post-response {
+  const d = res.getBody() && res.getBody().data;
+  if (d && d.id) bru.setVar("shareEmailGlobalId", d.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  Create the GLOBAL Email template (feature `console_lab_report_as_attachment`).
+  Captures `shareEmailGlobalId`. The lab_all_report PDF is attached at send time
+  (step 12), not stored on the template.
+}

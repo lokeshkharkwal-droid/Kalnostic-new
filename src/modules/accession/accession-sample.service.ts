@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   AccessionSample,
   AccessionStatusHistory,
@@ -98,6 +99,7 @@ export class AccessionSampleService {
     private readonly settings: AccessionSettingsService,
     private readonly labReportService: LabReportService,
     private readonly pdfReportTemplateService: PdfReportTemplateService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   // ── Sample generation (order → accession) ─────────────────────────────────
@@ -722,7 +724,7 @@ export class AccessionSampleService {
     personId: string | null,
     dto: SampleNoteDto,
   ): Promise<AccessionSampleWithRelations[]> {
-    return this.transitionIds(
+    const samples = await this.transitionIds(
       ids,
       tenantId,
       personId,
@@ -730,6 +732,10 @@ export class AccessionSampleService {
       () => ({ data: {} }),
       dto,
     );
+    // Fire-and-forget: inform the order's referring panel (B2B). Handled by
+    // ClinicalEventListener; walk-in orders (no panel) are skipped there.
+    this.emitSampleFlagged('accession.sample.error', tenantId, samples);
+    return samples;
   }
 
   /** Hold — New/Repeat → Hold. */
@@ -756,7 +762,7 @@ export class AccessionSampleService {
     personId: string | null,
     dto: RepeatSampleDto,
   ): Promise<AccessionSampleWithRelations[]> {
-    return this.transitionIds(
+    const samples = await this.transitionIds(
       ids,
       tenantId,
       personId,
@@ -764,6 +770,30 @@ export class AccessionSampleService {
       () => ({ data: {}, reason: dto.repeatReason }),
       dto,
     );
+    // Fire-and-forget: inform the order's referring panel (B2B). Handled by
+    // ClinicalEventListener; walk-in orders (no panel) are skipped there.
+    this.emitSampleFlagged('accession.sample.repeat', tenantId, samples);
+    return samples;
+  }
+
+  /**
+   * Emit a per-sample notification event (`accession.sample.error` /
+   * `.repeat`) so the communication module can inform the order's referring
+   * panel. Fire-and-forget; one event per affected sample.
+   */
+  private emitSampleFlagged(
+    event: string,
+    tenantId: string,
+    samples: { id: string; branchId: string | null; orderId: string }[],
+  ): void {
+    for (const s of samples) {
+      void this.eventEmitter.emitAsync(event, {
+        tenantId,
+        branchId: s.branchId ?? null,
+        sampleId: s.id,
+        orderId: s.orderId,
+      });
+    }
   }
 
   /** Store — Accepted → Stored (records the storage location). */

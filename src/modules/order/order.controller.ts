@@ -23,6 +23,7 @@ import { CancelOrderDto } from './dto/cancel-order.dto';
 import { RefundOrderDto } from './dto/refund-order.dto';
 import { PatientDuesQueryDto } from './dto/patient-dues.dto';
 import { PrintOrderDto } from './dto/print-order.dto';
+import { ShareOrderChannelDto, ShareOrderAllDto } from './dto/share.dto';
 import { CollectOrderItemDto } from './dto/collect-order-item.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
@@ -533,6 +534,256 @@ export class OrderController {
     );
     res.setHeader('Content-Length', pdf.length);
     res.end(pdf);
+  }
+
+  /**
+   * "Share and Inform" (Billings): preload the popup — patient + panel contacts
+   * and which of Email/WhatsApp (+ IAM) the tenant has activated an
+   * `order_bill_as_attachment` template for. Declared before `:id` handlers by
+   * path depth (`orders/:id/bill-share-info`).
+   */
+  @Get(':id/bill-share-info')
+  billShareInfo(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+  ) {
+    return this.orderService.getBillShareInfo(id, tenantId, profile.branchId);
+  }
+
+  /**
+   * "Share Bill" (single channel): queue the order's `accounts_biling` bill PDF to
+   * the patient or referral panel over Email/WhatsApp using the tenant's activated
+   * `order_bill_as_attachment` template.
+   */
+  @Post(':id/share-bill')
+  @Audit({
+    module: AuditModule.COMMUNICATION,
+    action: AuditAction.CREATE,
+    description: 'Shared an order bill with the patient/panel',
+  })
+  shareBill(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Param('id') id: string,
+    @Body() dto: ShareOrderChannelDto,
+  ) {
+    return this.orderService.shareBill(
+      id,
+      tenantId,
+      profile.branchId,
+      dto,
+      personId,
+    );
+  }
+
+  /**
+   * "Share Bill All": send the bill to the chosen recipient over Email + WhatsApp
+   * AND raise the in-app (IAM) notification to the order creator + referral
+   * parties. Returns a per-channel result summary (a channel with no activated
+   * template is skipped, not an error).
+   */
+  @Post(':id/share-bill-all')
+  @Audit({
+    module: AuditModule.COMMUNICATION,
+    action: AuditAction.CREATE,
+    description: 'Shared an order bill with the patient/panel on all channels',
+  })
+  shareBillAll(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Param('id') id: string,
+    @Body() dto: ShareOrderAllDto,
+  ) {
+    return this.orderService.shareBillAll(
+      id,
+      tenantId,
+      profile.branchId,
+      dto,
+      personId,
+    );
+  }
+
+  // ── Quotation share (feature lab_quotation_as_attachment; Send All → patient + panel) ──
+
+  /** Preload the Quotations "Share and Inform" popup. */
+  @Get(':id/quote-share-info')
+  quoteShareInfo(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+  ) {
+    return this.orderService.getQuoteShareInfo(id, tenantId, profile.branchId);
+  }
+
+  /** Resend the quotation PDF over one channel to the patient or referral panel. */
+  @Post(':id/share-quote')
+  @Audit({
+    module: AuditModule.COMMUNICATION,
+    action: AuditAction.CREATE,
+    description: 'Shared a lab quotation with the patient/panel',
+  })
+  shareQuote(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Param('id') id: string,
+    @Body() dto: ShareOrderChannelDto,
+  ) {
+    return this.orderService.shareQuote(
+      id,
+      tenantId,
+      profile.branchId,
+      dto,
+      personId,
+    );
+  }
+
+  /** Resend the quotation over Email + WhatsApp to the patient AND panel, + IAM. */
+  @Post(':id/share-quote-all')
+  @Audit({
+    module: AuditModule.COMMUNICATION,
+    action: AuditAction.CREATE,
+    description:
+      'Shared a lab quotation with the patient + panel on all channels',
+  })
+  shareQuoteAll(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Param('id') id: string,
+    @Body() dto: ShareOrderAllDto,
+  ) {
+    return this.orderService.shareQuoteAll(
+      id,
+      tenantId,
+      profile.branchId,
+      dto,
+      personId,
+    );
+  }
+
+  // ── Appointment-confirmation share (feature lab_create_appointment_inform_patient; no PDF) ──
+
+  /** Preload the Appointments "Share and Inform" popup. */
+  @Get(':id/appointment-share-info')
+  appointmentShareInfo(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+  ) {
+    return this.orderService.getAppointmentShareInfo(
+      id,
+      tenantId,
+      profile.branchId,
+    );
+  }
+
+  /** Send the appointment confirmation to the patient over one channel (SMS/Email/WhatsApp). */
+  @Post(':id/share-appointment')
+  @Audit({
+    module: AuditModule.COMMUNICATION,
+    action: AuditAction.CREATE,
+    description: 'Shared an appointment confirmation with the patient',
+  })
+  shareAppointment(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Param('id') id: string,
+    @Body() dto: ShareOrderChannelDto,
+  ) {
+    return this.orderService.shareAppointment(
+      id,
+      tenantId,
+      profile.branchId,
+      dto,
+      personId,
+    );
+  }
+
+  /** Send the appointment confirmation to the patient over SMS + Email + WhatsApp, + IAM. */
+  @Post(':id/share-appointment-all')
+  @Audit({
+    module: AuditModule.COMMUNICATION,
+    action: AuditAction.CREATE,
+    description:
+      'Shared an appointment confirmation with the patient on all channels',
+  })
+  shareAppointmentAll(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Param('id') id: string,
+    @Body() dto: ShareOrderAllDto,
+  ) {
+    return this.orderService.shareAppointmentAll(
+      id,
+      tenantId,
+      profile.branchId,
+      dto,
+      personId,
+    );
+  }
+
+  // ── TRF share (Accession pages; feature reuses order_bill_as_attachment, trf_print PDF) ──
+
+  /** Preload the Accession "Share and Inform" popup (patient/panel contacts + activated channels). */
+  @Get(':id/trf-share-info')
+  trfShareInfo(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+  ) {
+    return this.orderService.getTrfShareInfo(id, tenantId, profile.branchId);
+  }
+
+  /** Share the order's TRF PDF over one channel to the patient or referral panel. */
+  @Post(':id/share-trf')
+  @Audit({
+    module: AuditModule.COMMUNICATION,
+    action: AuditAction.CREATE,
+    description: 'Shared an order TRF with the patient/panel',
+  })
+  shareTrf(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Param('id') id: string,
+    @Body() dto: ShareOrderChannelDto,
+  ) {
+    return this.orderService.shareTrf(
+      id,
+      tenantId,
+      profile.branchId,
+      dto,
+      personId,
+    );
+  }
+
+  /** Share the order's TRF over Email + WhatsApp to the chosen recipient, + IAM. */
+  @Post(':id/share-trf-all')
+  @Audit({
+    module: AuditModule.COMMUNICATION,
+    action: AuditAction.CREATE,
+    description: 'Shared an order TRF with the patient/panel on all channels',
+  })
+  shareTrfAll(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Param('id') id: string,
+    @Body() dto: ShareOrderAllDto,
+  ) {
+    return this.orderService.shareTrfAll(
+      id,
+      tenantId,
+      profile.branchId,
+      dto,
+      personId,
+    );
   }
 
   /** Update an order (scalars, items replacement, section upserts). */

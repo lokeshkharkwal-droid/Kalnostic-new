@@ -218,6 +218,10 @@ export const MESSAGING_FEATURES_GROUPED: FeatureGroup[] = [
       },
       { value: 'lab_report_as_attachment', label: 'Lab Report as Attachment' },
       {
+        value: 'console_lab_report_as_attachment',
+        label: 'Console — Lab Report as Attachment',
+      },
+      {
         value: 'smart_lab_report_as_attachment',
         label: 'Smart Lab Report as Attachment',
       },
@@ -281,6 +285,10 @@ export const MESSAGING_FEATURES_GROUPED: FeatureGroup[] = [
       {
         value: 'patient_pay_request_for_order',
         label: 'Patient Pay Request for Order',
+      },
+      {
+        value: 'order_cancelled_inform_patient',
+        label: 'Order Cancelled — Inform Patient',
       },
     ],
   },

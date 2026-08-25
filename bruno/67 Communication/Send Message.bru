@@ -1,0 +1,62 @@
+meta {
+  name: Send Message
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/communications/send
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "channel": "SMS",
+    "feature": "lab_order_report_published_inform_patient",
+    "recipients": [
+      { "recipientType": "PATIENT", "recipientName": "Rohan Mehta", "toAddress": "+919999999999" }
+    ],
+    "variables": { "test_name": "CBC", "report_link": "https://portal.example.com/r/abc" },
+    "campaign": "August Reports"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (Array.isArray(data) && data[0] && data[0].id) bru.setEnvVar("communicationId", data[0].id);
+}
+
+docs {
+  Compose + queue a message (Email / SMS / WhatsApp) to one or more recipients.
+  Tenant + active branch come from the JWT — never the body (CLAUDE.md §4.7).
+
+  The body is resolved in this precedence:
+    1. explicit `body` (free text),
+    2. `templateId` (a Template in the caller's scope),
+    3. `feature` → the best active template for that feature + channel
+       (branch → tenant → SITE_ADMIN global fallback).
+
+  Placeholders (`{pn}`, `{patient_name}`, `{test_name}`, …) are substituted from
+  `variables` (plus each recipient's name). One PENDING `communication_logs` row
+  is created per recipient; the background worker delivers via the Exchange
+  gateway. Captures the first row id as `communicationId`.
+
+  ## Fields
+  - `channel` (required): `EMAIL` | `SMS` | `WHATSAPP` (in-app uses /notifications).
+  - `templateId` / `feature` / `body`: at least one required (see precedence).
+  - `subject`: email subject (ignored for SMS/WhatsApp).
+  - `recipients[]` (required, ≥1): `{ recipientType, recipientId?, recipientName?, toAddress }`.
+  - `variables`: placeholder map (keys WITHOUT braces).
+  - `attachments[]`: `{ data (base64), name, type }`.
+  - `schedule` / `expiryDate`: ISO datetimes (defer / drop-after).
+  - `campaign`, `userTimezone`: optional.
+}

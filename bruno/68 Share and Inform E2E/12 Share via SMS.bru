@@ -1,0 +1,49 @@
+meta {
+  name: 12 Share via SMS
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/order/{{shareOrderId}}/share
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "channel": "SMS"
+  }
+}
+
+script:post-response {
+  const d = res.getBody() && res.getBody().data;
+  if (Array.isArray(d) && d[0]) bru.setVar("shareCommId", d[0].id);
+}
+
+tests {
+  test("201 + queued SMS row", function () {
+    expect(res.getStatus()).to.equal(201);
+    const d = res.getBody().data;
+    expect(Array.isArray(d) && d.length >= 1).to.equal(true);
+    expect(d[0].channel).to.equal("SMS");
+  });
+}
+
+docs {
+  The sure path: SMS is text-only (no PDF), so it needs only the activated SMS
+  template (step 07) + a patient mobile. `toAddress` omitted → the patient's
+  mobile is used. Returns the queued communication_logs row(s); the worker
+  delivers via the Exchange gateway. Body placeholders ({patient_name},
+  {order_code}) are substituted from the activated template.
+
+  Omit step 07 to see the gate: 422 SHARE_TEMPLATE_NOT_ACTIVATED.
+}

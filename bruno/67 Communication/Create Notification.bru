@@ -1,0 +1,45 @@
+meta {
+  name: Create Notification
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/notifications
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "kind": "MESSAGE",
+    "verb": "message",
+    "subject": "Report ready",
+    "body": "The lab report for order ORD-001 is ready to view.",
+    "targets": [
+      { "entityId": "00000000-0000-0000-0000-000000000000", "entityType": "PATIENT", "name": "Rohan Mehta" }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("notificationId", data.id);
+}
+
+docs {
+  Create an in-app notification (a conversational `MESSAGE` or a system `ALERT`)
+  targeting one or more users. The sender (actor) is derived from the JWT; tenant
+  + branch come from the request context. Captures `notificationId`.
+
+  `POST /notifications/:id/reply { "body": "..." }` replies in-thread (targets the
+  original actors); `GET /notifications/:id` fetches one and marks it read.
+}

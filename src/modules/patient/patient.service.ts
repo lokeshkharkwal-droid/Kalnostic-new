@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   ExternalIdFormat,
   ExternalIdPurpose,
@@ -82,6 +83,7 @@ export class PatientService {
     private readonly prisma: PrismaService,
     private readonly ptCategoryService: PtCategoryService,
     private readonly externalIdService: ExternalIdService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   /**
@@ -417,7 +419,7 @@ export class PatientService {
     const { dateOfBirth, ...rest } = dto;
     const actorId = ctx.actorId;
     try {
-      return await this.prisma.patient.update({
+      const updated = await this.prisma.patient.update({
         where: { id },
         data: {
           ...rest,
@@ -427,6 +429,14 @@ export class PatientService {
           updatedBy: actorId ?? null,
         },
       });
+      // Fire-and-forget: confirm the profile change to the patient. Handled by
+      // ClinicalEventListener (patient_profile_update).
+      void this.eventEmitter.emitAsync('patient.updated', {
+        tenantId,
+        branchId: ctx.branchId ?? null,
+        patientId: id,
+      });
+      return updated;
     } catch (e) {
       this.rethrowPatientWriteConflict(e, dto.mobile ?? '', dto.umId ?? null);
     }

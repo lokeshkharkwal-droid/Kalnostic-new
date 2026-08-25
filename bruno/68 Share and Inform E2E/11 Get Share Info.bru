@@ -1,0 +1,38 @@
+meta {
+  name: 11 Get Share Info
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/order/{{shareOrderId}}/share-info
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 + per-channel activation info", function () {
+    expect(res.getStatus()).to.equal(200);
+    const d = res.getBody().data;
+    expect(d.channels).to.be.an("array");
+    expect(d.channels.length).to.equal(3);
+  });
+}
+
+docs {
+  Preload for the Share and Inform popup — one call the UI uses to (a) auto-fill
+  the recipient per channel and (b) enable only channels that have an ACTIVATED
+  template. Returns:
+
+    { orderId, orderCode, patientName, patientId,
+      channels: [ { channel, activated, toAddress }, … ] }  // EMAIL, SMS, WHATSAPP
+
+  Run this AFTER the activate steps (07-09): `activated` should be true for the
+  channels you cloned. `toAddress` is the patient's stored contact for that
+  channel (Email→email, SMS→mobile, WhatsApp→whatsappNumber∥mobile). This is the
+  READ half of the pair; step 12-14 are the send half.
+}

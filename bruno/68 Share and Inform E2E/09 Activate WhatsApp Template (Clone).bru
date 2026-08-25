@@ -1,0 +1,25 @@
+meta {
+  name: 09 Activate WhatsApp Template (Clone)
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/templates/global/{{shareWhatsappGlobalId}}/clone
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200/201 cloned", function () {
+    expect([200, 201]).to.include(res.getStatus());
+  });
+}
+
+docs {
+  Activate (clone) the WhatsApp template into the tenant. Enables Share via WhatsApp (step 13).
+}

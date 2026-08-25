@@ -1,0 +1,26 @@
+meta {
+  name: Appointment Share Info
+  type: http
+  seq: 36
+}
+
+get {
+  url: {{baseUrl}}/orders/{{orderId}}/appointment-share-info
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Preload for the Appointments "Share and Inform" popup. Returns the patient's
+  contacts and which of SMS / Email / WhatsApp (plus IAM) the tenant has ACTIVATED a
+  `lab_create_appointment_inform_patient` template for.
+
+  Returns `{ orderId, orderCode, billId, patientName,
+    channels: [{ channel: SMS|EMAIL|WHATSAPP, activated }], iamActivated,
+    recipients: { patient: {name,email,whatsapp,sms}, panel: null } }`.
+  There is no panel recipient and no PDF attachment for this kind.
+}

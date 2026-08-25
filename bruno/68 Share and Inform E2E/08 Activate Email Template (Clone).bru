@@ -1,0 +1,25 @@
+meta {
+  name: 08 Activate Email Template (Clone)
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/templates/global/{{shareEmailGlobalId}}/clone
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200/201 cloned", function () {
+    expect([200, 201]).to.include(res.getStatus());
+  });
+}
+
+docs {
+  Activate (clone) the Email template into the tenant. Enables Share via Email (step 12).
+}

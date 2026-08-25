@@ -1,0 +1,38 @@
+meta {
+  name: Share TRF All
+  type: http
+  seq: 41
+}
+
+post {
+  url: {{baseUrl}}/orders/{{orderId}}/share-trf-all
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "recipientType": "PATIENT",
+    "email": "patient@example.com",
+    "whatsapp": "919999999999"
+  }
+}
+
+docs {
+  Share the order's TRF over Email + WhatsApp to the chosen recipient AND raise the
+  in-app (IAM) notification, in one call — the Accession "Send All". IAM targets the
+  order creator + referral parties (internal-referral employee), not the patient.
+
+  Returns `{ orderId, results: [{ channel, status, reason?, logId? }] }`; a channel
+  with no activated template is skipped, not an error. The TRF PDF is rendered once
+  and reused across Email/WhatsApp. Prereqs: activated `order_bill_as_attachment`
+  templates (Email/WhatsApp/IAM) + an active `trf_print` PDF template.
+}

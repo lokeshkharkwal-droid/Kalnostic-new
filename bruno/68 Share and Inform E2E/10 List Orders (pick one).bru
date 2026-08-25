@@ -1,0 +1,47 @@
+meta {
+  name: 10 List Orders (pick one)
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/orders?page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 10
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  const rows = (res.getBody() && res.getBody().data) || [];
+  // Prefer an order whose patient has a mobile (needed for the SMS path).
+  const pick = rows.find((o) => o.patient && o.patient.mobile) || rows[0];
+  if (pick) {
+    bru.setVar("shareOrderId", pick.id);
+    if (pick.patient) {
+      if (pick.patient.email) bru.setVar("sharePatientEmail", pick.patient.email);
+      if (pick.patient.mobile) bru.setVar("sharePatientMobile", pick.patient.mobile);
+    }
+  }
+}
+
+tests {
+  test("200 + captured an order id", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(bru.getVar("shareOrderId")).to.be.a("string");
+  });
+}
+
+docs {
+  List orders and capture the first one's id → `shareOrderId` (used by the share
+  steps). Also captures the patient's email/mobile so you can eyeball what the
+  auto-fill would show. For Email/WhatsApp the chosen order should have lab
+  reports (accepted samples); for SMS any order with a patient mobile works.
+}

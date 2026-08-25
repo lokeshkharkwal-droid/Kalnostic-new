@@ -1,0 +1,44 @@
+meta {
+  name: Share Order Report
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/order/{{orderId}}/share
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "channel": "EMAIL",
+    "toAddress": "patient@example.com"
+  }
+}
+
+docs {
+  "Share and Inform" from the Order Console: queue the order's lab report to the
+  patient over one channel, using the tenant's ACTIVATED
+  `console_lab_report_as_attachment` template (no template picker).
+
+  - `channel` (required): `EMAIL` | `SMS` | `WHATSAPP`.
+  - `toAddress` (optional): destination override; when omitted, the patient's
+    stored email (EMAIL) / whatsappNumber||mobile (WHATSAPP) / mobile (SMS) is used.
+
+  Email/WhatsApp attach the rendered `lab_all_report` PDF (base64); SMS is text-only.
+  Requires: an activated messaging template for the channel + feature, AND an
+  active `lab_all_report` PDF template for the tenant (so the report can render).
+
+  Errors: 422 `SHARE_TEMPLATE_NOT_ACTIVATED` (no activated template for the channel),
+  400 `SHARE_RECIPIENT_MISSING` (no address/number), 404 `ORDER_REPORTS_NOT_FOUND`.
+  Returns the queued communication_logs row(s); the worker delivers via Exchange.
+}

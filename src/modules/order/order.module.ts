@@ -6,6 +6,7 @@ import { AccessionModule } from '../accession/accession.module';
 import { PhlebotomistScheduleModule } from '../phlebotomist-schedule/phlebotomist-schedule.module';
 import { PhlebotomistCollectionModule } from '../phlebotomist-collection/phlebotomist-collection.module';
 import { RegistrationSettingsModule } from '../registration-settings/registration-settings.module';
+import { CommunicationModule } from '../communication/communication.module';
 import { OrderController } from './order.controller';
 import { OrderService } from './order.service';
 
@@ -31,6 +32,7 @@ import { OrderService } from './order.service';
     PhlebotomistCollectionModule,
     AccessionModule,
     RegistrationSettingsModule,
+    CommunicationModule,
   ],
   controllers: [OrderController],
   providers: [OrderService],

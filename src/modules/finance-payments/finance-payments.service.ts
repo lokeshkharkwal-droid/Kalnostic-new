@@ -218,7 +218,11 @@ export class FinancePaymentsService {
         _sum: { paidAmount: true },
       });
       for (const g of completed) {
-        this.addToBucket(buckets, g.paymentMode, Number(g._sum.paidAmount ?? 0));
+        this.addToBucket(
+          buckets,
+          g.paymentMode,
+          Number(g._sum.paidAmount ?? 0),
+        );
       }
 
       const refund = await this.prisma.paymentDetails.aggregate({

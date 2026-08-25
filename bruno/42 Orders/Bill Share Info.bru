@@ -1,0 +1,31 @@
+meta {
+  name: Bill Share Info
+  type: http
+  seq: 30
+}
+
+get {
+  url: {{baseUrl}}/orders/{{orderId}}/bill-share-info
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Preload for the Billings "Share and Inform" popup. Returns the patient + referral
+  panel default contacts and which of Email / WhatsApp (plus IAM) the tenant has
+  ACTIVATED an `order_bill_as_attachment` template for.
+
+  Returns:
+  `{ orderId, orderCode, billId, patientName,
+     channels: [{ channel: EMAIL|WHATSAPP, activated }],
+     iamActivated,
+     recipients: { patient: { name, email, whatsapp },
+                   panel:  { name, email, whatsapp } | null } }`
+
+  `recipients.panel` is null when the order has no referral panel. The panel
+  contact is the panel's Accounts Person.
+}

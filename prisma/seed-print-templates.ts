@@ -72,6 +72,23 @@ ${PATIENT_LINE}
     ),
   },
   {
+    type: 'accounts_biling',
+    name: 'Sample Accounts Billing',
+    meta: meta(
+      '<h2>{branch_name}</h2><div>Accounts Billing</div>',
+      `<div>Bill: <b>{bill_id}</b> &nbsp; Order: {order_code} &nbsp; Date: {order_date} &nbsp; Status: {status} ({payment_status})</div>
+${PATIENT_LINE}
+<div class="muted">Panel: {panel_name} ({panel_code}) &nbsp; Accounts: {panel_accounts_person} &nbsp; {panel_accounts_email} &nbsp; {panel_accounts_mobile}</div>
+<table><thead><tr><th>#</th><th>Service</th><th>Code</th><th>Price</th><th>Disc</th></tr></thead>
+<tbody>{{#each items}}<tr><td>{sr_no}</td><td>{name}</td><td>{code}</td><td>{price}</td><td>{discount}</td></tr>{{/each}}</tbody></table>
+<div>Gross: {gross_amount} &nbsp; Discount: {discount_amount} &nbsp; Net: <b>{net_amount}</b> &nbsp; Paid: {paid_amount} &nbsp; Balance: {balance_amount}</div>
+<h4>Payments</h4>
+<table><thead><tr><th>Date</th><th>Mode</th><th>Reference</th><th>Amount</th></tr></thead>
+<tbody>{{#each payments}}<tr><td>{date}</td><td>{mode}</td><td>{reference}</td><td>{amount}</td></tr>{{/each}}</tbody></table>`,
+      '<div class="muted">Accounts billing for order {order_code}.</div>',
+    ),
+  },
+  {
     type: 'trf_print',
     name: 'Sample Test Requisition Form',
     meta: meta(

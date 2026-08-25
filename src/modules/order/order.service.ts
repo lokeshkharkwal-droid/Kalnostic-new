@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   AppointmentStatus,
   AppointmentType,
@@ -7,6 +8,7 @@ import {
   ExternalIdFormat,
   ExternalIdPurpose,
   InvoicePaymentStatus,
+  MessagingChannel,
   Order,
   OrderDateType,
   OrderStatus,
@@ -14,6 +16,7 @@ import {
   PaymentMode,
   PaymentStatus,
   Prisma,
+  RecipientType,
   QuotationStatus,
   RepeatIntervalUnit,
   SampleSource,
@@ -22,6 +25,11 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
+import {
+  ShareService,
+  type ShareRecipient,
+  type ShareChannelResult,
+} from '../communication/services/share.service';
 import { OrderPrintType } from './dto/print-order.dto';
 import { AppointmentService } from '../appointment/appointment.service';
 import { AccessionSampleService } from '../accession/accession-sample.service';
@@ -69,6 +77,14 @@ import {
 } from './entities/order.entity';
 import { BillingGroupBy } from './dto/billing-grouped-query.dto';
 import { BillingDimension } from './dto/billing-query.dto';
+import {
+  type ShareOrderChannelDto,
+  type ShareOrderAllDto,
+  type ShareOrderInfo,
+  type ShareOrderAllResult,
+  type ShareRecipientContacts,
+  type ShareRecipientType,
+} from './dto/share.dto';
 
 /**
  * Which Finance report is being served. `billing` = invoiced view (`paid` is the
@@ -156,6 +172,7 @@ import {
   OrderDiagnosticPanelNotFoundException,
   OrderExternalReferralNotFoundException,
   OrderAlreadyCancelledException,
+  OrderAlreadyInvoicedException,
   CancellationChargeExceedsPaidException,
   RefundExceedsRefundableException,
   NothingToRefundException,
@@ -243,6 +260,105 @@ export interface OrderNoteView {
   action?: string;
 }
 
+/** The order documents that support "Share and Inform". */
+type ShareKind = 'bill' | 'quote' | 'appointment' | 'trf';
+
+/** The order context a share needs (patient/panel contacts + IAM-target ids). */
+type ShareOrderCtx = Awaited<ReturnType<OrderService['loadOrderForShareCtx']>>;
+
+/**
+ * Per-kind share rules — the ONLY place that differs between bill / quote /
+ * appointment. Add a new entry (+ a controller endpoint pair) to share on a new
+ * page. `printType` undefined = no PDF attachment; `allowPanel` = the referral
+ * panel is a valid recipient; `sendBothOnAll` = "Send All" delivers to patient
+ * AND panel together (quotation) rather than the single selected recipient (bill).
+ */
+interface ShareKindConfig {
+  feature: string;
+  channels: MessagingChannel[];
+  printType?: OrderPrintType;
+  attachmentName?: (ctx: ShareOrderCtx) => string;
+  allowPanel: boolean;
+  sendBothOnAll: boolean;
+  iamVerb: string;
+  iamSubject: string;
+  variables: (ctx: ShareOrderCtx) => Record<string, string>;
+}
+
+const SHARE_KINDS: Record<ShareKind, ShareKindConfig> = {
+  bill: {
+    feature: 'order_bill_as_attachment',
+    channels: [MessagingChannel.EMAIL, MessagingChannel.WHATSAPP],
+    printType: 'accounts_biling',
+    attachmentName: (c) => `bill-${c.orderCode ?? c.billId ?? c.id}.pdf`,
+    allowPanel: true,
+    sendBothOnAll: false,
+    iamVerb: 'bill_shared',
+    iamSubject: 'Bill shared',
+    variables: (c) => ({
+      order_code: c.orderCode ?? '',
+      bill_id: c.billId ?? c.orderCode ?? '',
+      patient_name: c.patientName,
+      patient: c.patientName,
+    }),
+  },
+  quote: {
+    feature: 'lab_quotation_as_attachment',
+    channels: [MessagingChannel.EMAIL, MessagingChannel.WHATSAPP],
+    printType: 'lab_quotation_print',
+    attachmentName: (c) => `quotation-${c.orderCode ?? c.id}.pdf`,
+    allowPanel: true,
+    sendBothOnAll: true, // Patient AND all applicable referring panels
+    iamVerb: 'quotation_shared',
+    iamSubject: 'Quotation shared',
+    variables: (c) => ({
+      order_code: c.orderCode ?? '',
+      quote_id: c.orderCode ?? '',
+      patient_name: c.patientName,
+      patient: c.patientName,
+    }),
+  },
+  appointment: {
+    feature: 'lab_create_appointment_inform_patient',
+    channels: [
+      MessagingChannel.SMS,
+      MessagingChannel.EMAIL,
+      MessagingChannel.WHATSAPP,
+    ],
+    // No PDF attachment — a confirmation message only.
+    allowPanel: false,
+    sendBothOnAll: false,
+    iamVerb: 'appointment_shared',
+    iamSubject: 'Appointment',
+    variables: (c) => ({
+      order_code: c.orderCode ?? '',
+      appointment_code: c.appointmentCode ?? '',
+      patient_name: c.patientName,
+      patient: c.patientName,
+    }),
+  },
+  // Accession "Share and Inform" (in-house / referral / external / outsource) —
+  // shares the order's TRF (Test Requisition Form) to the patient or referral panel.
+  // Uses the `order_invoice_as_attachment` messaging template; the attachment is
+  // the `trf_print` PDF (Test Requisition Form), not an invoice.
+  trf: {
+    feature: 'order_invoice_as_attachment',
+    channels: [MessagingChannel.EMAIL, MessagingChannel.WHATSAPP],
+    printType: 'trf_print',
+    attachmentName: (c) => `trf-${c.orderCode ?? c.id}.pdf`,
+    allowPanel: true,
+    sendBothOnAll: false,
+    iamVerb: 'trf_shared',
+    iamSubject: 'Test requisition shared',
+    variables: (c) => ({
+      order_code: c.orderCode ?? '',
+      trf_ref: c.orderCode ?? '',
+      patient_name: c.patientName,
+      patient: c.patientName,
+    }),
+  },
+};
+
 @Injectable()
 export class OrderService {
   constructor(
@@ -254,6 +370,8 @@ export class OrderService {
     private readonly pdfReportTemplateService: PdfReportTemplateService,
     private readonly registrationSettingsService: RegistrationSettingsService,
     private readonly externalIdService: ExternalIdService,
+    private readonly eventEmitter: EventEmitter2,
+    private readonly shareService: ShareService,
   ) {}
 
   /**
@@ -770,7 +888,17 @@ export class OrderService {
       this.rethrowConflict(e);
       throw e;
     }
-    return this.findById(createdId, tenantId);
+    const created = await this.findById(createdId, tenantId);
+    // Fire-and-forget: notify the patient (email + in-app) that the order was
+    // created. Handled by ClinicalEventListener; never blocks order creation.
+    void this.eventEmitter.emitAsync('order.created', {
+      tenantId,
+      branchId,
+      orderId: created.id,
+      patientId: created.patientId,
+      orderCode: created.orderCode,
+    });
+    return created;
   }
 
   /**
@@ -1400,7 +1528,14 @@ export class OrderService {
     if (!order) {
       throw new OrderNotFoundException(id);
     }
-    return order;
+    // Invoice-lock status: exposed on every composed-order response (get-one,
+    // create, update, cancel, …), all of which funnel through here.
+    const invoiceCodes = await this.invoicedOrderCodes(tenantId, [id]);
+    return {
+      ...order,
+      hasInvoice: invoiceCodes.has(id),
+      invoiceCode: invoiceCodes.get(id) ?? null,
+    };
   }
 
   // ── Order Overview notes (Order / Sample / Tech tabs) ───────────────────────
@@ -1677,6 +1812,8 @@ export class OrderService {
         return this.buildOrderPrintContext(order);
       case 'bill_print':
         return this.buildBillContext(order);
+      case 'accounts_biling':
+        return this.buildAccountsBillingContext(order);
       case 'trf_print':
         return this.buildTrfContext(order);
       case 'lab_quotation_print':
@@ -1821,6 +1958,29 @@ export class OrderService {
     };
   }
 
+  /**
+   * `accounts_biling` — the accounts / B2B billing document. A superset of the
+   * patient bill context (amounts + item list + payment history) plus the
+   * referral panel's accounts-person contact block, for the B2B billing party.
+   */
+  private buildAccountsBillingContext(
+    order: OrderWithRelations,
+  ): GeneratePdfDto {
+    const bill = this.buildBillContext(order);
+    const panel = order.referralPanel;
+    return {
+      variables: {
+        ...bill.variables,
+        panel_name: panel?.name ?? '',
+        panel_code: panel?.code ?? '',
+        panel_accounts_person: panel?.accountsPersonName ?? '',
+        panel_accounts_email: panel?.accountsPersonEmail ?? '',
+        panel_accounts_mobile: panel?.accountsPersonMobile ?? '',
+      },
+      sections: bill.sections,
+    };
+  }
+
   /** `trf_print` — Test Requisition Form: requested tests + clinical notes. */
   private buildTrfContext(order: OrderWithRelations): GeneratePdfDto {
     return {
@@ -1896,6 +2056,487 @@ export class OrderService {
         ...this.patientVariables(order),
       },
     };
+  }
+
+  // ── Share and Inform (order documents) ──────────────────────────────────────
+
+  /**
+   * Order + patient/panel contacts + IAM-target ids for any share, or throws if
+   * the order isn't in the tenant. A dedicated lean select — the `whatsappNumber`,
+   * panel accounts-person contacts and appointment code the shares need aren't all
+   * on `ORDER_INCLUDE`.
+   */
+  private async loadOrderForShareCtx(orderId: string, tenantId: string) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, tenantId, deletedAt: null },
+      select: {
+        id: true,
+        orderCode: true,
+        billId: true,
+        createdBy: true,
+        patient: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            mobile: true,
+            whatsappNumber: true,
+          },
+        },
+        referralPanel: {
+          select: {
+            id: true,
+            name: true,
+            accountsPersonName: true,
+            accountsPersonEmail: true,
+            accountsPersonMobile: true,
+          },
+        },
+        internalReferral: { select: { id: true, employeeId: true } },
+        appointment: { select: { code: true } },
+      },
+    });
+    if (!order) {
+      throw new OrderNotFoundException(orderId);
+    }
+    const patientName = [order.patient?.firstName, order.patient?.lastName]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+    return {
+      ...order,
+      appointmentCode: order.appointment?.code ?? null,
+      patientName,
+    };
+  }
+
+  /** A memoized base64 render of an order print `type` (rendered once, reused). */
+  private makePrintPdfProvider(
+    orderId: string,
+    tenantId: string,
+    type: OrderPrintType,
+  ): () => Promise<string> {
+    let cache: string | null = null;
+    return async (): Promise<string> => {
+      if (cache === null) {
+        const pdf = await this.print(orderId, tenantId, type);
+        cache = pdf.toString('base64');
+      }
+      return cache;
+    };
+  }
+
+  /** The patient `ShareRecipient` (Email→email, WhatsApp→whatsapp||mobile, SMS→mobile). */
+  private sharePatientRecipient(ctx: ShareOrderCtx): ShareRecipient {
+    const patient = ctx.patient;
+    return {
+      recipientId: patient?.id ?? null,
+      recipientName: ctx.patientName || null,
+      type: RecipientType.PATIENT,
+      email: patient?.email ?? null,
+      sms: patient?.mobile ?? null,
+      whatsapp: patient?.whatsappNumber ?? patient?.mobile ?? null,
+    };
+  }
+
+  /** The referral-panel `ShareRecipient` (the panel's Accounts Person contact). */
+  private sharePanelRecipient(ctx: ShareOrderCtx): ShareRecipient {
+    const panel = ctx.referralPanel;
+    return {
+      recipientId: panel?.id ?? null,
+      recipientName: panel?.accountsPersonName ?? panel?.name ?? null,
+      type: RecipientType.CUSTOM,
+      email: panel?.accountsPersonEmail ?? null,
+      sms: panel?.accountsPersonMobile ?? null,
+      whatsapp: panel?.accountsPersonMobile ?? null,
+    };
+  }
+
+  /** The patient or panel recipient by type. */
+  private shareRecipientOf(
+    recipientType: ShareRecipientType,
+    ctx: ShareOrderCtx,
+  ): ShareRecipient {
+    return recipientType === 'PANEL'
+      ? this.sharePanelRecipient(ctx)
+      : this.sharePatientRecipient(ctx);
+  }
+
+  /** A `ShareRecipient` → the popup's default-contact block. */
+  private shareContacts(r: ShareRecipient): ShareRecipientContacts {
+    return {
+      name: r.recipientName ?? null,
+      email: r.email ?? null,
+      whatsapp: r.whatsapp ?? null,
+      sms: r.sms ?? null,
+    };
+  }
+
+  /**
+   * IAM targets for a share: the order **creator** and any referral party that
+   * resolves to a person (the internal referral's linked employee). Panels /
+   * external referrals are B2B contacts with no in-app user, so they receive the
+   * document over Email/WhatsApp, not IAM. Addressed as `STAFF` (matching the
+   * notification bell's `{ person_id, STAFF }` identity); deduped.
+   */
+  private shareIamTargets(
+    ctx: ShareOrderCtx,
+  ): { entityId: string; entityType: string }[] {
+    const ids = [
+      ...new Set(
+        [ctx.createdBy, ctx.internalReferral?.employeeId].filter(
+          (id): id is string => !!id,
+        ),
+      ),
+    ];
+    return ids.map((id) => ({ entityId: id, entityType: 'STAFF' }));
+  }
+
+  /** Collapse a channel's per-recipient outcomes into one result for the summary. */
+  private aggregateChannel(
+    channel: MessagingChannel,
+    outcomes: ShareChannelResult[],
+  ): ShareChannelResult {
+    const queued = outcomes.find((o) => o.status === 'QUEUED');
+    if (queued) return { channel, status: 'QUEUED', logId: queued.logId };
+    const failed = outcomes.find((o) => o.status === 'FAILED');
+    if (failed) return { channel, status: 'FAILED', reason: failed.reason };
+    return {
+      channel,
+      status: 'SKIPPED',
+      reason: outcomes[0]?.reason ?? 'Skipped',
+    };
+  }
+
+  /**
+   * Preload for a share popup: patient (+ panel) contacts and which of the kind's
+   * deliverable channels (+ IAM) the tenant has ACTIVATED a template for. One call
+   * drives the popup (recipient selector + channel enablement).
+   * @throws OrderNotFoundException if the order isn't in the tenant
+   */
+  private async getShareInfoFor(
+    kind: ShareKind,
+    orderId: string,
+    tenantId: string,
+    branchId: string | null,
+  ): Promise<ShareOrderInfo> {
+    const cfg = SHARE_KINDS[kind];
+    const ctx = await this.loadOrderForShareCtx(orderId, tenantId);
+    const info = await this.shareService.getChannelInfo(
+      tenantId,
+      branchId,
+      cfg.feature,
+      [...cfg.channels, MessagingChannel.IAM],
+      () => null,
+    );
+    const iamActivated =
+      info.find((c) => c.channel === MessagingChannel.IAM)?.activated ?? false;
+    const panel =
+      cfg.allowPanel && ctx.referralPanel
+        ? this.shareContacts(this.sharePanelRecipient(ctx))
+        : null;
+    return {
+      orderId: ctx.id,
+      orderCode: ctx.orderCode,
+      billId: ctx.billId,
+      patientName: ctx.patientName,
+      channels: info
+        .filter((c) => c.channel !== MessagingChannel.IAM)
+        .map((c) => ({ channel: c.channel, activated: c.activated })),
+      iamActivated,
+      recipients: {
+        patient: this.shareContacts(this.sharePatientRecipient(ctx)),
+        panel,
+      },
+    };
+  }
+
+  /**
+   * Single-channel share: queue the kind's document to one recipient over one
+   * deliverable channel, using the tenant's ACTIVATED template for the kind's
+   * feature. Email/WhatsApp attach the kind's PDF (if any); SMS is text-only.
+   * @throws OrderNotFoundException / ShareTemplateNotActivatedException / ShareRecipientMissingException
+   */
+  private async shareOneFor(
+    kind: ShareKind,
+    orderId: string,
+    tenantId: string,
+    branchId: string | null,
+    dto: ShareOrderChannelDto,
+    actorId: string,
+  ) {
+    const cfg = SHARE_KINDS[kind];
+    const ctx = await this.loadOrderForShareCtx(orderId, tenantId);
+
+    // In-app (IAM) — no address/PDF: raise the notification to the order creator
+    // + referral parties (same targets as "Send All"). Returns an empty log array
+    // (IAM lives in the notifications table, not communication_logs).
+    if (dto.channel === MessagingChannel.IAM) {
+      await this.shareService.dispatchIam(
+        tenantId,
+        branchId,
+        cfg.feature,
+        this.shareIamTargets(ctx),
+        actorId,
+        cfg.variables(ctx),
+        {
+          verb: cfg.iamVerb,
+          subject: cfg.iamSubject,
+          actorEntityType: 'STAFF',
+        },
+      );
+      return [];
+    }
+
+    const recipient = cfg.allowPanel
+      ? this.shareRecipientOf(dto.recipientType ?? 'PATIENT', ctx)
+      : this.sharePatientRecipient(ctx);
+    const getPdf = cfg.printType
+      ? this.makePrintPdfProvider(orderId, tenantId, cfg.printType)
+      : undefined;
+    return this.shareService.dispatchDeliverable(
+      tenantId,
+      branchId,
+      cfg.feature,
+      dto.channel,
+      recipient,
+      dto.toAddress,
+      actorId,
+      getPdf,
+      cfg.variables(ctx),
+      cfg.attachmentName?.(ctx),
+    );
+  }
+
+  /**
+   * "Send All": deliver the kind's document over every deliverable channel AND
+   * raise the in-app (IAM) notification to the order creator + referral parties.
+   * For a `sendBothOnAll` kind (quotation) each channel goes to the patient AND
+   * the referral panel; otherwise to the single selected recipient. Each channel
+   * is attempted independently and never aborts the others; the per-recipient
+   * outcomes are collapsed into one result per channel. Any PDF is rendered once.
+   * @throws OrderNotFoundException if the order isn't in the tenant
+   */
+  private async shareAllFor(
+    kind: ShareKind,
+    orderId: string,
+    tenantId: string,
+    branchId: string | null,
+    dto: ShareOrderAllDto,
+    actorId: string,
+  ): Promise<ShareOrderAllResult> {
+    const cfg = SHARE_KINDS[kind];
+    const ctx = await this.loadOrderForShareCtx(orderId, tenantId);
+    const getPdf = cfg.printType
+      ? this.makePrintPdfProvider(orderId, tenantId, cfg.printType)
+      : undefined;
+    const variables = cfg.variables(ctx);
+    const attachmentName = cfg.attachmentName?.(ctx);
+    const selected = dto.recipientType ?? 'PATIENT';
+
+    // Which recipient(s) each channel is sent to (and which one edits apply to).
+    const targets: { recipient: ShareRecipient; matches: boolean }[] = [];
+    if (cfg.sendBothOnAll && cfg.allowPanel) {
+      targets.push({
+        recipient: this.sharePatientRecipient(ctx),
+        matches: selected === 'PATIENT',
+      });
+      if (ctx.referralPanel) {
+        targets.push({
+          recipient: this.sharePanelRecipient(ctx),
+          matches: selected === 'PANEL',
+        });
+      }
+    } else {
+      targets.push({
+        recipient: cfg.allowPanel
+          ? this.shareRecipientOf(selected, ctx)
+          : this.sharePatientRecipient(ctx),
+        matches: true,
+      });
+    }
+
+    const overrideFor = (
+      channel: MessagingChannel,
+      matches: boolean,
+    ): string | undefined => {
+      if (!matches) return undefined;
+      return channel === MessagingChannel.EMAIL
+        ? dto.email
+        : channel === MessagingChannel.WHATSAPP
+          ? dto.whatsapp
+          : channel === MessagingChannel.SMS
+            ? dto.sms
+            : undefined;
+    };
+
+    const results: ShareChannelResult[] = [];
+    for (const channel of cfg.channels) {
+      const outcomes: ShareChannelResult[] = [];
+      for (const t of targets) {
+        try {
+          const logs = await this.shareService.dispatchDeliverable(
+            tenantId,
+            branchId,
+            cfg.feature,
+            channel,
+            t.recipient,
+            overrideFor(channel, t.matches),
+            actorId,
+            getPdf,
+            variables,
+            attachmentName,
+          );
+          outcomes.push({ channel, status: 'QUEUED', logId: logs[0]?.id });
+        } catch (err) {
+          outcomes.push(this.shareService.classifyError(channel, err));
+        }
+      }
+      results.push(this.aggregateChannel(channel, outcomes));
+    }
+
+    // In-app (IAM) — order creator + referral parties (not the patient).
+    try {
+      const notificationId = await this.shareService.dispatchIam(
+        tenantId,
+        branchId,
+        cfg.feature,
+        this.shareIamTargets(ctx),
+        actorId,
+        variables,
+        {
+          verb: cfg.iamVerb,
+          subject: cfg.iamSubject,
+          actorEntityType: 'STAFF',
+        },
+      );
+      results.push({
+        channel: MessagingChannel.IAM,
+        status: 'QUEUED',
+        logId: notificationId,
+      });
+    } catch (err) {
+      results.push(this.shareService.classifyError(MessagingChannel.IAM, err));
+    }
+
+    return { orderId: ctx.id, results };
+  }
+
+  // ── Public per-kind share wrappers (called by OrderController) ──
+
+  /** Order-bill share preload (feature `order_bill_as_attachment`, accounts_biling PDF). */
+  getBillShareInfo(orderId: string, tenantId: string, branchId: string | null) {
+    return this.getShareInfoFor('bill', orderId, tenantId, branchId);
+  }
+  shareBill(
+    orderId: string,
+    tenantId: string,
+    branchId: string | null,
+    dto: ShareOrderChannelDto,
+    actorId: string,
+  ) {
+    return this.shareOneFor('bill', orderId, tenantId, branchId, dto, actorId);
+  }
+  shareBillAll(
+    orderId: string,
+    tenantId: string,
+    branchId: string | null,
+    dto: ShareOrderAllDto,
+    actorId: string,
+  ) {
+    return this.shareAllFor('bill', orderId, tenantId, branchId, dto, actorId);
+  }
+
+  /** Quotation share preload (feature `lab_quotation_as_attachment`, lab_quotation_print PDF; Send All → patient + panel). */
+  getQuoteShareInfo(
+    orderId: string,
+    tenantId: string,
+    branchId: string | null,
+  ) {
+    return this.getShareInfoFor('quote', orderId, tenantId, branchId);
+  }
+  shareQuote(
+    orderId: string,
+    tenantId: string,
+    branchId: string | null,
+    dto: ShareOrderChannelDto,
+    actorId: string,
+  ) {
+    return this.shareOneFor('quote', orderId, tenantId, branchId, dto, actorId);
+  }
+  shareQuoteAll(
+    orderId: string,
+    tenantId: string,
+    branchId: string | null,
+    dto: ShareOrderAllDto,
+    actorId: string,
+  ) {
+    return this.shareAllFor('quote', orderId, tenantId, branchId, dto, actorId);
+  }
+
+  /** Appointment-confirmation share preload (feature `lab_create_appointment_inform_patient`, no PDF; patient only). */
+  getAppointmentShareInfo(
+    orderId: string,
+    tenantId: string,
+    branchId: string | null,
+  ) {
+    return this.getShareInfoFor('appointment', orderId, tenantId, branchId);
+  }
+  shareAppointment(
+    orderId: string,
+    tenantId: string,
+    branchId: string | null,
+    dto: ShareOrderChannelDto,
+    actorId: string,
+  ) {
+    return this.shareOneFor(
+      'appointment',
+      orderId,
+      tenantId,
+      branchId,
+      dto,
+      actorId,
+    );
+  }
+  shareAppointmentAll(
+    orderId: string,
+    tenantId: string,
+    branchId: string | null,
+    dto: ShareOrderAllDto,
+    actorId: string,
+  ) {
+    return this.shareAllFor(
+      'appointment',
+      orderId,
+      tenantId,
+      branchId,
+      dto,
+      actorId,
+    );
+  }
+
+  /** TRF share preload (Accession pages; feature `order_invoice_as_attachment`, `trf_print` PDF). */
+  getTrfShareInfo(orderId: string, tenantId: string, branchId: string | null) {
+    return this.getShareInfoFor('trf', orderId, tenantId, branchId);
+  }
+  shareTrf(
+    orderId: string,
+    tenantId: string,
+    branchId: string | null,
+    dto: ShareOrderChannelDto,
+    actorId: string,
+  ) {
+    return this.shareOneFor('trf', orderId, tenantId, branchId, dto, actorId);
+  }
+  shareTrfAll(
+    orderId: string,
+    tenantId: string,
+    branchId: string | null,
+    dto: ShareOrderAllDto,
+    actorId: string,
+  ) {
+    return this.shareAllFor('trf', orderId, tenantId, branchId, dto, actorId);
   }
 
   /**
@@ -2322,10 +2963,11 @@ export class OrderService {
       this.prisma.order.count({ where }),
     ]);
 
-    const counts = await this.countItemsByOrder(
-      tenantId,
-      rows.map((r) => r.id),
-    );
+    const orderIds = rows.map((r) => r.id);
+    const [counts, invoiceCodes] = await Promise.all([
+      this.countItemsByOrder(tenantId, orderIds),
+      this.invoicedOrderCodes(tenantId, orderIds),
+    ]);
     const data: OrderListRow[] = rows.map((r) => {
       const grossAmount = r.payments.reduce(
         (s, p) => s + toNum(p.totalAmount),
@@ -2395,6 +3037,11 @@ export class OrderService {
         // The converted order's order code (searchable in the Order Console) —
         // used to pre-search the order when "View Order" opens the console.
         convertedOrderCode: converted?.orderCode ?? null,
+        // Invoice-lock: an order with an active invoice link can no longer be
+        // updated or cancelled (enforced by the frontend UI and the backend
+        // update/cancel guards).
+        hasInvoice: invoiceCodes.has(r.id),
+        invoiceCode: invoiceCodes.get(r.id) ?? null,
       };
     });
     return { data, total, page, limit };
@@ -3442,6 +4089,66 @@ export class OrderService {
   }
 
   /**
+   * Map of order id → its active invoice's number, for every order in `orderIds`
+   * that has an invoice generated for it. "Invoiced" = an active (non-deleted)
+   * `InvoiceSourceOrder` link to a non-deleted invoice — regardless of the
+   * invoice's payment status. This is the same relationship the invoice
+   * double-invoice guard keys on; cancelling an invoice soft-deletes its links,
+   * so its orders drop out of this map (returning to editable/cancellable).
+   * Drives `hasInvoice`/`invoiceCode` on order responses and the update/cancel
+   * guard (`assertNotInvoiced`).
+   * @param tenantId tenant scope (from JWT / RLS context)
+   * @param orderIds candidate order ids
+   * @returns map of order id → invoice number (only invoiced orders are present)
+   */
+  private async invoicedOrderCodes(
+    tenantId: string,
+    orderIds: string[],
+  ): Promise<Map<string, string>> {
+    if (orderIds.length === 0) return new Map();
+    const links = await this.prisma.invoiceSourceOrder.findMany({
+      where: {
+        tenantId,
+        orderId: { in: orderIds },
+        deletedAt: null,
+        invoice: { deletedAt: null },
+      },
+      select: { orderId: true, invoice: { select: { invoiceNo: true } } },
+    });
+    return new Map(links.map((l) => [l.orderId, l.invoice.invoiceNo]));
+  }
+
+  /**
+   * Guard: throw if an invoice has already been generated for this order. Invoice
+   * generation is the definitive point at which an order becomes immutable — an
+   * invoiced order can be neither updated nor cancelled, regardless of payment
+   * status. The frontend disables these actions too; this is the non-bypassable
+   * backstop. Cancelling the invoice soft-deletes its link and unlocks the order.
+   * @param tenantId tenant scope (from JWT / RLS context)
+   * @param orderId the order being updated/cancelled
+   * @param action which operation is being attempted (drives the message)
+   * @throws OrderAlreadyInvoicedException (409) when an active invoice link exists
+   */
+  private async assertNotInvoiced(
+    tenantId: string,
+    orderId: string,
+    action: 'update' | 'cancel',
+  ): Promise<void> {
+    const invoiced = await this.prisma.invoiceSourceOrder.findFirst({
+      where: {
+        tenantId,
+        orderId,
+        deletedAt: null,
+        invoice: { deletedAt: null },
+      },
+      select: { id: true },
+    });
+    if (invoiced) {
+      throw new OrderAlreadyInvoicedException(orderId, action);
+    }
+  }
+
+  /**
    * Paginated detailed records for a Billing dimension.
    *
    * - **Order-level dimensions** (`all`/`userwise`/`b2b`/`ref-by`/referral/
@@ -3978,6 +4685,7 @@ export class OrderService {
    * @param tenantId tenant scope
    * @param dto partial update
    * @throws OrderNotFoundException / reference 422s
+   * @throws OrderAlreadyInvoicedException (409) if an invoice exists for the order
    */
   async update(
     id: string,
@@ -3986,6 +4694,8 @@ export class OrderService {
     dto: UpdateOrderDto,
   ): Promise<OrderWithRelations> {
     await this.findById(id, tenantId);
+    // Invoice-lock: an invoiced order is immutable — reject any update.
+    await this.assertNotInvoiced(tenantId, id, 'update');
     await this.assertItems(tenantId, dto.items);
     await this.assertReferrals(tenantId, dto);
     if (dto.diagnostics) {
@@ -4014,6 +4724,7 @@ export class OrderService {
         isBillGenerated: true,
         createdBy: true,
         appointmentId: true,
+        appointmentAt: true,
         appointment: { select: { status: true } },
         diagnostics: {
           select: {
@@ -4577,6 +5288,27 @@ export class OrderService {
       }
     });
 
+    // Fire-and-forget: if this order is an appointment and its time actually
+    // changed, inform the patient of the reschedule (lab_move_appointment).
+    // Handled by ClinicalEventListener; the collection-reschedule path emits the
+    // same event, so behaviour is identical regardless of how the move happened.
+    if (existing?.appointmentId && sectionAppt) {
+      const newAt = new Date(sectionAppt);
+      const oldMs = existing.appointmentAt
+        ? new Date(existing.appointmentAt).getTime()
+        : null;
+      if (newAt.getTime() !== oldMs) {
+        void this.eventEmitter.emitAsync('appointment.moved', {
+          tenantId,
+          branchId,
+          orderId: id,
+          patientId: existing.patientId,
+          orderCode: existing.orderCode,
+          newAppointmentAt: newAt,
+        });
+      }
+    }
+
     return this.findById(id, tenantId);
   }
 
@@ -4653,6 +5385,7 @@ export class OrderService {
    * @returns the fully-composed order after cancellation
    * @throws OrderNotFoundException if missing/soft-deleted/other tenant
    * @throws OrderAlreadyCancelledException if already cancelled
+   * @throws OrderAlreadyInvoicedException (409) if an invoice exists for the order
    * @throws CancellationChargeExceedsPaidException if the charge exceeds paid
    * @throws RefundExceedsRefundableException if the refund exceeds the refundable balance
    */
@@ -4666,6 +5399,8 @@ export class OrderService {
     if (existing.status === OrderStatus.CANCELLED) {
       throw new OrderAlreadyCancelledException(id);
     }
+    // Invoice-lock: an invoiced order is immutable — reject cancellation.
+    await this.assertNotInvoiced(tenantId, id, 'cancel');
     // Branch Registration Settings gate the whole flow (UI + API). Null when the
     // order has no branch — then we stay permissive and trust the request body.
     const settings = existing.branchId
@@ -4868,6 +5603,16 @@ export class OrderService {
         );
       }
     });
+    // Fire-and-forget: inform the patient the order was cancelled (mentioning the
+    // refund when one was issued). Handled by ClinicalEventListener.
+    void this.eventEmitter.emitAsync('order.cancelled', {
+      tenantId,
+      branchId: existing.branchId,
+      orderId: id,
+      patientId: existing.patientId,
+      orderCode: existing.orderCode,
+      refundAmount: dto.refund?.amount ?? null,
+    });
     return this.findById(id, tenantId);
   }
 
@@ -5000,6 +5745,15 @@ export class OrderService {
           updatedBy: actorId,
         },
       });
+    });
+    // Fire-and-forget: confirm the refund to the patient. Handled by ClinicalEventListener.
+    void this.eventEmitter.emitAsync('order.refunded', {
+      tenantId,
+      branchId: existing.branchId,
+      orderId: id,
+      patientId: existing.patientId,
+      orderCode: existing.orderCode,
+      refundAmount: dto.amount,
     });
     return this.findById(id, tenantId);
   }

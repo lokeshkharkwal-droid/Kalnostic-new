@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { OrderStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
@@ -33,6 +34,7 @@ export class PaymentDetailsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly registrationSettingsService: RegistrationSettingsService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   /**
@@ -121,7 +123,7 @@ export class PaymentDetailsService {
     }
     await this.assertCanCollect(tenantId, order, personId);
     const { paymentDate, ...rest } = dto;
-    return this.prisma.withTenant(tenantId, async (tx) => {
+    const result = await this.prisma.withTenant(tenantId, async (tx) => {
       // Overpayment guard: never let the collected amount exceed the pending
       // balance. Pending is derived off the order's EFFECTIVE paid amount
       // (`paid − cancellationCharge − refunds − refund charges`) — the same
@@ -160,6 +162,15 @@ export class PaymentDetailsService {
       await this.recomputePaymentStatus(tx, tenantId, dto.orderId);
       return mapPaymentDetails(row);
     });
+    // Fire-and-forget: acknowledge the payment to the patient (email + in-app).
+    // Handled by ClinicalEventListener; never blocks payment recording.
+    void this.eventEmitter.emitAsync('payment.received', {
+      tenantId,
+      orderId: dto.orderId,
+      amount: dto.paidAmount ?? 0,
+      paymentMode: dto.paymentMode ?? null,
+    });
+    return result;
   }
 
   /**
