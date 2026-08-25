@@ -1,0 +1,29 @@
+meta {
+  name: 29 List TAT Adjustments
+  type: http
+  seq: 29
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/tat-adjustments
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  List a report's "Adjust TAT History" entries, most recent first.
+
+  Response: array of
+  `{ id, labReportId, reason, notes, enteredBy, enteredByName, createdAt }`
+  (soft-deleted entries excluded).
+
+  `enteredByName` is resolved from `enteredBy` (a `Person.id`) at read time —
+  falls back to the raw id if the person lookup ever misses. `enteredBy`
+  itself is still returned unresolved, same convention as `LabReportHistory`.
+
+  404 `LAB_REPORT_NOT_FOUND`. 422 `ACTIVE_BRANCH_REQUIRED` if no active branch.
+}

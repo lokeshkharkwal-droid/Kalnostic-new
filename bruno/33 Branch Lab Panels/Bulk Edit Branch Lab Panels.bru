@@ -1,0 +1,71 @@
+meta {
+  name: Bulk Edit Branch Lab Panels
+  type: http
+  seq: 11
+}
+
+patch {
+  url: {{baseUrl}}/branch-lab-panels/bulk
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "data": [
+      {
+        "id": "{{branchLabPanelId}}",
+        "isActive": false,
+        "priceMsrp": 3000,
+        "priceMaximum": 2800,
+        "priceMinimum": 2000,
+        "isHomeCollection": true
+      }
+    ]
+  }
+}
+
+vars:pre-request {
+  branchLabPanelId: 00000000-0000-0000-0000-000000000000
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("reports updated count", function () {
+    const data = res.getBody() && res.getBody().data;
+    expect(data).to.have.property("updated");
+  });
+}
+
+docs {
+  Bulk-edit the active branch's Lab Panel List: `data` is an array of per-row
+  edits, each carrying its own `id` plus the branch-tunable fields to change
+  **for that row** (scoped to the caller's tenant + active branch). Only the
+  rows in the payload are touched. Returns `{ updated: <count> }`.
+
+  ## Rules
+
+  - `data` — 1 to 500 items. Each item's `id` must resolve to an active branch
+    lab panel in the caller's tenant + active branch; an unresolved id → 404
+    `BRANCH_LAB_PANEL_NOT_FOUND`.
+  - Each item may set any subset of the same branch-tunable fields as the
+    single-row `PUT /branch-lab-panels/:id` (pricing, applicability, TAT,
+    flags, instructions, status). Identity (`panelName`/`panelCode`) and
+    member-test composition are **not** bulk-editable — those are managed via
+    re-import/sync.
+  - **All-or-nothing**: a duplicate `id`, an item with no changes, or a broken
+    price ordering (min ≤ max ≤ msrp, re-checked per row against its existing
+    values) → 422 `VALIDATION_ERROR` and **nothing** is changed. Updates run in
+    one transaction.
+  - Note: a later **sync** overwrites any bulk edits made to imported originals.
+}

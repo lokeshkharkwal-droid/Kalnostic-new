@@ -1,0 +1,44 @@
+meta {
+  name: 28 Add TAT Adjustment
+  type: http
+  seq: 28
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/tat-adjustments
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "reason": "QC Failure",
+    "notes": "Daily QC failed for this analyte."
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("tatAdjustmentId", data.id);
+}
+
+docs {
+  Add a manual TAT adjustment record ("Adjust TAT History" — Turnaround Time
+  Details modal). Append-only audit log; does not itself change any TAT
+  calculation (see "24 Get TAT") — purely a record of *why* a TAT figure was
+  manually annotated.
+
+  Body: `{ reason: string (required, max 255), notes?: string (max 2000) }`.
+  `reason` is free text — the frontend populates its dropdown from
+  `GET /technician-settings` → `tatAdjustmentReasons` (soft-validated, same
+  convention as accession's `MasterData_RepeatReasons`; not a hard enum).
+  `tenantId`/`branchId`/`enteredBy` come from the JWT/active-branch context,
+  never the body.
+
+  Captures `tatAdjustmentId`. 404 `LAB_REPORT_NOT_FOUND`. 422
+  `ACTIVE_BRANCH_REQUIRED` if no active branch.
+}

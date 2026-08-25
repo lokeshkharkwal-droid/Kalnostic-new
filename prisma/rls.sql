@@ -1822,6 +1822,14 @@ CREATE POLICY invoice_payments_tenant_isolation ON invoice_payments
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── tat_adjustments ──────────────────────────────────────────────────────────
+ALTER TABLE tat_adjustments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tat_adjustments FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tat_adjustments_tenant_isolation ON tat_adjustments;
+CREATE POLICY tat_adjustments_tenant_isolation ON tat_adjustments
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- ── settlements ─────────────────────────────────────────────────────────────────
 ALTER TABLE settlements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE settlements FORCE ROW LEVEL SECURITY;

@@ -74,6 +74,7 @@ import {
   NoActivePrintTemplateException,
   AmbiguousPrintTemplateException,
   OrderReportsNotFoundException,
+  ReportingWindowClosedException,
 } from './exceptions/lab-report.exceptions';
 import {
   computeTrendFlag,
@@ -2372,6 +2373,15 @@ export class LabReportService {
     const report = await this.requireReport(id, tenantId, activeBranchId);
     this.assertTransition('validate', report.status);
 
+    // SRS §5.4/§5.5: a result finished after today's reporting cutoff
+    // (reportingTimeTo - approvalDurationMax) defers to the next Reporting
+    // session — stamped here (not blocked), enforced later by approve().
+    const deferral = await this.tatService.resolveReportingDeferral(
+      id,
+      tenantId,
+      activeBranchId,
+    );
+
     return this.prisma.withTenant(tenantId, async (tx) => {
       const updated = await tx.labReport.update({
         where: { id },
@@ -2379,6 +2389,7 @@ export class LabReportService {
           status: LabReportStatus.RESULT_DONE,
           validatedAt: new Date(),
           validatedBy: actorId,
+          reportingDeferredUntil: deferral.deferredUntil,
         },
       });
       if (notes) {
@@ -2597,6 +2608,15 @@ export class LabReportService {
     const report = await this.requireReport(id, tenantId, activeBranchId);
     this.assertTransition('approve', report.status);
 
+    // SRS §5.4/§5.5: block approval while still deferred to a later Reporting
+    // session (stamped by validate() when the result landed after cutoff).
+    if (
+      report.reportingDeferredUntil &&
+      report.reportingDeferredUntil > new Date()
+    ) {
+      throw new ReportingWindowClosedException(report.reportingDeferredUntil);
+    }
+
     const signatoryColumns = await this.resolveSignatoryColumns(
       id,
       tenantId,
@@ -2644,6 +2664,7 @@ export class LabReportService {
           status: LabReportStatus.APPROVED,
           approvedAt,
           approvedBy: actorId,
+          reportingDeferredUntil: null,
           ...tatData,
           ...signatoryColumns,
         },

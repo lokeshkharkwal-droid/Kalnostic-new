@@ -9,6 +9,8 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
+import { toNum } from '../../common/utils/decimal-to-number.util';
+import { roundToTwoDecimalPlaces } from '../../common/utils/round-to-two-decimal-places.util';
 import {
   FinancePaymentsSummary,
   PaymentLedgerItem,
@@ -218,11 +220,7 @@ export class FinancePaymentsService {
         _sum: { paidAmount: true },
       });
       for (const g of completed) {
-        this.addToBucket(
-          buckets,
-          g.paymentMode,
-          Number(g._sum.paidAmount ?? 0),
-        );
+        this.addToBucket(buckets, g.paymentMode, toNum(g._sum.paidAmount));
       }
 
       const refund = await this.prisma.paymentDetails.aggregate({
@@ -230,7 +228,7 @@ export class FinancePaymentsService {
         _sum: { refundAmount: true },
         _count: { _all: true },
       });
-      refundedAmount += Number(refund._sum.refundAmount ?? 0);
+      refundedAmount += toNum(refund._sum.refundAmount);
       refundedCount += refund._count._all;
 
       const cancelled = await this.prisma.paymentDetails.aggregate({
@@ -246,7 +244,7 @@ export class FinancePaymentsService {
         _sum: { paidAmount: true },
         _count: { _all: true },
       });
-      cancelledAmount += Number(cancelled._sum.paidAmount ?? 0);
+      cancelledAmount += toNum(cancelled._sum.paidAmount);
       cancelledCount += cancelled._count._all;
     }
 
@@ -283,20 +281,25 @@ export class FinancePaymentsService {
       cancelledCount += cancelled._count._all;
     }
 
-    const totalPayments =
+    const totalPayments = roundToTwoDecimalPlaces(
       buckets.cash +
-      buckets.upi +
-      buckets.bankTransfer +
-      buckets.debitCard +
-      buckets.creditCard;
+        buckets.upi +
+        buckets.bankTransfer +
+        buckets.debitCard +
+        buckets.creditCard,
+    );
 
     return {
       totalPayments,
-      ...buckets,
+      cash: roundToTwoDecimalPlaces(buckets.cash),
+      upi: roundToTwoDecimalPlaces(buckets.upi),
+      bankTransfer: roundToTwoDecimalPlaces(buckets.bankTransfer),
+      debitCard: roundToTwoDecimalPlaces(buckets.debitCard),
+      creditCard: roundToTwoDecimalPlaces(buckets.creditCard),
       cancelledCount,
-      cancelledAmount,
+      cancelledAmount: roundToTwoDecimalPlaces(cancelledAmount),
       refundedCount,
-      refundedAmount,
+      refundedAmount: roundToTwoDecimalPlaces(refundedAmount),
     };
   }
 
@@ -518,7 +521,7 @@ export class FinancePaymentsService {
       billOrInvoiceId: o.billId ?? o.orderCode,
       customerName,
       mobile: p.mobile,
-      amount: Number(isRefund ? r.refundAmount : r.paidAmount),
+      amount: toNum(isRefund ? r.refundAmount : r.paidAmount),
       mode: paymentModeLabel(r.paymentMode),
       modeKey: r.paymentMode,
       refId: r.reference,

@@ -3367,10 +3367,10 @@ export class OrderService {
       const { fig, order: o } = entry;
       // Prorate the order-level figures to this payment's share of the order's
       // total collected, so per-payment snapshots reconcile to order totals.
-      const paid = Number(p.paidAmount);
-      const factor = fig.paid > 0 ? paid / fig.paid : 0;
+      const paidAmount = toNum(p.paidAmount);
+      const factor = fig.paid > 0 ? paidAmount / fig.paid : 0;
       result.set(p.id, {
-        paid,
+        paid: paidAmount,
         orderId: p.orderId,
         paymentDate: p.paymentDate ?? p.createdAt,
         grossShare: Math.round(fig.gross * factor),
@@ -4248,7 +4248,7 @@ export class OrderService {
         for (const p of o.payments) {
           if (p.entryType !== PaymentEntryType.PAYMENT) continue;
           if (!physicalModes.has(p.paymentMode)) continue;
-          if (Number(p.paidAmount) <= 0) continue;
+          if (toNum(p.paidAmount) <= 0) continue;
           payRows.push({ order: o, payment: p, orderPaid: fig.paid, fig });
         }
       }
@@ -4261,10 +4261,11 @@ export class OrderService {
       );
       const data = pageRows.map(({ order: o, payment: p, orderPaid, fig }) => {
         // Prorate order figures by this payment's share of the order's collected.
-        const paid = Number(p.paidAmount);
-        const factor = orderPaid > 0 ? paid / orderPaid : 0;
+        const paidAmount = toNum(p.paidAmount);
+        const factor = orderPaid > 0 ? paidAmount / orderPaid : 0;
         const settlementSettled = reserved.get(p.id) ?? 0;
-        const modeAmt = (m: PaymentMode) => (p.paymentMode === m ? paid : 0);
+        const modeAmt = (m: PaymentMode) =>
+          p.paymentMode === m ? paidAmount : 0;
         return {
           ...o,
           grossAmount: Math.round(fig.gross * factor),
@@ -4272,7 +4273,7 @@ export class OrderService {
           netAmount: Math.round(fig.net * factor),
           tdsAmount: Math.round(fig.tds * factor),
           dueAmount: Math.round(fig.due * factor),
-          paidAmount: paid,
+          paidAmount,
           cash: modeAmt(PaymentMode.CASH),
           upi: modeAmt(PaymentMode.UPI),
           bankTransfer: modeAmt(PaymentMode.BANK_TRANSFER),
@@ -4281,7 +4282,9 @@ export class OrderService {
           refundAmount: 0,
           cancelAmount: 0,
           settlementSettled,
-          settlementRemaining: Math.max(0, paid - settlementSettled),
+          settlementRemaining: roundToTwoDecimalPlaces(
+            Math.max(0, paidAmount - settlementSettled),
+          ),
           paymentId: p.id,
           paymentMode: p.paymentMode,
           paymentReference: p.reference,

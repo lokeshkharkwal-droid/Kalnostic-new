@@ -2448,6 +2448,22 @@ model LabTest {
   approvalTimeFrom String? @map("approval_time_from")
   approvalTimeTo   String? @map("approval_time_to")
 
+  // Reporting window (SRS "Copy of Turnaround Time" §5.4) — signatory
+  // availability, e.g. "the pathologist is only here 08:00-18:00". Distinct
+  // from the approval DURATION pair below, which is how long approval itself
+  // is expected to take once a result is ready.
+  reportingTimeFrom String? @map("reporting_time_from")
+  reportingTimeTo   String? @map("reporting_time_to")
+
+  // Approval duration (SRS §5.5) — expected review/approval turnaround once a
+  // result is ready. Feeds the reporting cutoff:
+  // latestResultTime = reportingTimeTo - approvalDurationMaxValue. Distinct
+  // from approvalTimeFrom/To above (a time-of-day window, not a duration).
+  approvalDurationMinValue Int?     @map("approval_duration_min_value")
+  approvalDurationMinUnit  TatUnit? @map("approval_duration_min_unit")
+  approvalDurationMaxValue Int?     @map("approval_duration_max_value")
+  approvalDurationMaxUnit  TatUnit? @map("approval_duration_max_unit")
+
   // Flags
   isHideInOrderScreen Boolean @default(false) @map("is_hide_in_order_screen")
   isPreferenceTest    Boolean @default(false) @map("is_preference_test")
@@ -2886,6 +2902,22 @@ model BranchLabTest {
   // Approval window
   approvalTimeFrom String? @map("approval_time_from")
   approvalTimeTo   String? @map("approval_time_to")
+
+  // Reporting window (SRS "Copy of Turnaround Time" §5.4) — signatory
+  // availability, e.g. "the pathologist is only here 08:00-18:00". Distinct
+  // from the approval DURATION pair below, which is how long approval itself
+  // is expected to take once a result is ready.
+  reportingTimeFrom String? @map("reporting_time_from")
+  reportingTimeTo   String? @map("reporting_time_to")
+
+  // Approval duration (SRS §5.5) — expected review/approval turnaround once a
+  // result is ready. Feeds the reporting cutoff:
+  // latestResultTime = reportingTimeTo - approvalDurationMaxValue. Distinct
+  // from approvalTimeFrom/To above (a time-of-day window, not a duration).
+  approvalDurationMinValue Int?     @map("approval_duration_min_value")
+  approvalDurationMinUnit  TatUnit? @map("approval_duration_min_unit")
+  approvalDurationMaxValue Int?     @map("approval_duration_max_value")
+  approvalDurationMaxUnit  TatUnit? @map("approval_duration_max_unit")
 
   // Flags
   isHideInOrderScreen Boolean @default(false) @map("is_hide_in_order_screen")
@@ -3409,9 +3441,18 @@ model OutsourceCenter {
 
   // Single selected lab test / lab panel the center handles. Logical refs to a
   // LabTest / LabPanel (no Prisma relation, mirroring LabPanelTest.labTestId);
-  // validated active + tenant-scoped in OutsourceCenterService.
+  // validated active + tenant-scoped in OutsourceCenterService. Legacy —
+  // retained only for order-routing eligibility (OrderService.assertOutsourceCenter);
+  // superseded on the Outsource Center form by branchLabTestListId/branchLabPanelListId.
   labTestId  String? @map("lab_test_id")
   labPanelId String? @map("lab_panel_id")
+
+  // Single assigned Lab Test List / Lab Panel List — the branch's named pricing
+  // lists (BranchLabTestList/BranchLabPanelList, logical refs, no Prisma relation).
+  // Validated tenant+branch-scoped in OutsourceCenterService against the active
+  // branch on the JWT.
+  branchLabTestListId  String? @map("branch_lab_test_list_id")
+  branchLabPanelListId String? @map("branch_lab_panel_list_id")
 
   contacts   OutsourceCenterContact[]
   orderItems OrderItem[]
@@ -3424,6 +3465,8 @@ model OutsourceCenter {
   @@index([tenantId])
   @@index([labTestId])
   @@index([labPanelId])
+  @@index([branchLabTestListId])
+  @@index([branchLabPanelListId])
   @@index([deletedAt])
   @@map("outsource_centers")
 }
@@ -6626,6 +6669,15 @@ model LabReport {
   tatLastTickAt DateTime? @map("tat_last_tick_at")
   tatEndAt      DateTime? @map("tat_end_at")
 
+  /// Signatory-availability deferral (SRS §5.4/§5.5). Stamped by validate()
+  /// when the result is finished after the reporting cutoff
+  /// (reportingTimeTo - approvalDurationMaxValue) — the next Reporting
+  /// session's start instant. approve() blocks with
+  /// ReportingWindowClosedException while now < reportingDeferredUntil.
+  /// Null = no deferral in effect (the common case). Status stays RESULT_DONE
+  /// either way — this is a lightweight gate, not a separate status.
+  reportingDeferredUntil DateTime? @map("reporting_deferred_until")
+
   isLocked  Boolean   @default(false) @map("is_locked")
   lockedAt  DateTime? @map("locked_at")
   lockedBy  String?   @map("locked_by")
@@ -6652,6 +6704,7 @@ model LabReport {
   scheduledTests   ScheduledTest[]
   multiStepProcess MultiStepTestProcess?
   inventoryUsage   LabReportInventoryUsage[]
+  tatAdjustments   TatAdjustment[]
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -6800,6 +6853,37 @@ model LabReportHistory {
   @@index([tenantId])
   @@index([labReportId])
   @@map("lab_report_history")
+}
+
+/// Manual TAT adjustment audit log ("Adjust TAT History" — Turnaround Time
+/// Details modal). Append-only from the user's perspective (soft-delete only,
+/// never edited in place) — each row records why a TAT figure was manually
+/// annotated (e.g. QC Failure, Instrument Issue) for a given report. Reason is
+/// a free string validated softly against the branch's configurable
+/// MasterData_TatAdjustmentReasons list (TechnicianSettings), not a hard enum
+/// — same convention as accession's MasterData_RepeatReasons.
+model TatAdjustment {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  labReportId String    @map("lab_report_id")
+  labReport   LabReport @relation(fields: [labReportId], references: [id], onDelete: Cascade)
+
+  reason String
+  notes  String?
+
+  enteredBy String? @map("entered_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([labReportId])
+  @@index([deletedAt])
+  @@map("tat_adjustments")
 }
 
 // ── Technician Reporting: special worklists ─────────────────────────────────
@@ -7852,6 +7936,13 @@ model TechnicianSetting {
   /// References, which stay permanently read-only — were not).
   isUsefulForEditable      Boolean @default(false) @map("is_useful_for_editable")
   isInterpretationEditable Boolean @default(false) @map("is_interpretation_editable")
+
+  /// Configurable reason options for the "Adjust TAT" audit-log dropdown
+  /// (Turnaround Time Details modal). Soft-validated (frontend-populated
+  /// dropdown, backend accepts any string) — same convention as accession's
+  /// MasterData_RepeatReasons; not a hard enum so an admin can add/rename
+  /// reasons without a migration.
+  tatAdjustmentReasons String[] @default(["QC Failure", "Instrument Issue", "Calibration Failure", "Other"]) @map("tat_adjustment_reasons")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")

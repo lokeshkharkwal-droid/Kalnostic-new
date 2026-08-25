@@ -30,6 +30,12 @@ body:json {
     "isHideInOrderScreen": false,
     "processingTimeFrom": "09:00",
     "processingTimeTo": "17:00",
+    "reportingTimeFrom": "09:00",
+    "reportingTimeTo": "17:00",
+    "approvalDurationMinValue": 30,
+    "approvalDurationMinUnit": "MINUTES",
+    "approvalDurationMaxValue": 2,
+    "approvalDurationMaxUnit": "HOURS",
     "remarks": "Branch-specific pricing"
   }
 }
@@ -46,4 +52,15 @@ docs {
   (`PUT /branches/:id/settings`), the 1-minute cron accrues TAT only inside this
   window (on `scheduleDays`), pausing at `processingTimeTo` and resuming the next
   scheduled day.
+
+  **Reporting window / Approval duration (SRS §5.4/§5.5, Turnaround Time
+  Details modal):** `reportingTimeFrom`/`reportingTimeTo` ("HH:mm") is the
+  signatory-availability window. `approvalDurationMinValue`/`MinUnit`/
+  `MaxValue`/`MaxUnit` is the expected approval turnaround (value+unit:
+  MINUTES/HOURS/DAYS) — distinct from `approvalTimeFrom`/`approvalTimeTo`
+  above (a time-of-day window, not a duration). If a result lands after
+  `reportingTimeTo - approvalDurationMaxValue`, `POST
+  /lab-reports/:id/validate` defers the report to the next Reporting session
+  (blocks `/approve` until then — see "50 Technician Reporting" → "09
+  Validate"/"13 Approve").
 }
