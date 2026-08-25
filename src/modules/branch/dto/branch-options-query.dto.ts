@@ -1,6 +1,7 @@
 import { BranchType } from '@prisma/client';
-import { IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsEnum, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
+import { SYSTEM_MODULE_KEYS } from '../../permissions/constants/system-modules.constant';
 
 /**
  * Query DTO for the lightweight `GET /branches/options` endpoint (id + name
@@ -11,6 +12,10 @@ import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
  *   `excludeBranchType=COLLECTION_CENTER` to list valid sample-receiving
  *   branches, since a Collection Center cannot receive from another).
  * - `search` — case-insensitive match against branch `name` OR `code`.
+ * - `moduleKey` — include only branches where this module is enabled
+ *   (`BranchModule.isEnabled`). Used by the Registration/Accession dashboards'
+ *   Business Admin branch selector, so the dropdown only ever lists branches
+ *   where that module is actually turned on — never every tenant branch.
  * - `page` / `limit` (inherited) — **opt-in** offset pagination. When `page` is
  *   omitted the endpoint returns the full `{ id, name }[]` array (legacy
  *   behaviour for callers that need every option); when `page` is supplied it
@@ -33,4 +38,8 @@ export class BranchOptionsQueryDto extends PaginationQueryDto {
   @IsString()
   @MaxLength(100)
   search?: string;
+
+  @IsOptional()
+  @IsIn(SYSTEM_MODULE_KEYS)
+  moduleKey?: string;
 }

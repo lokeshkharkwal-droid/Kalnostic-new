@@ -26,7 +26,13 @@ body:json {
         "isActive": false,
         "samplePriorityType": "STAT",
         "priceMsrp": 750,
-        "commissionPrice": 55
+        "commissionPrice": 55,
+        "reportingTimeFrom": "09:00",
+        "reportingTimeTo": "17:00",
+        "approvalDurationMinValue": 30,
+        "approvalDurationMinUnit": "MINUTES",
+        "approvalDurationMaxValue": 2,
+        "approvalDurationMaxUnit": "HOURS"
       }
     ]
   }
@@ -58,7 +64,10 @@ docs {
   - `data` — 1 to 500 items. Each item's `labTestId` must resolve to an active
     lab test in this master data; an unresolved id → 404 `LAB_TEST_NOT_FOUND`.
   - Each item may set any subset of the test's **scalar** fields (classification,
-    pricing, TAT, schedule, flags, notes, status). `testName`/`testCode` and the
+    pricing, TAT, schedule, flags, notes, status) — including the Reporting
+    window / Approval duration pair (`reportingTimeFrom`/`reportingTimeTo`,
+    `approvalDurationMinValue`/`MinUnit`/`MaxValue`/`MaxUnit`, SRS §5.4/§5.5).
+    `testName`/`testCode` and the
     children (`samples`/`resultParams`) are **not** bulk-editable — use the
     single-test update for those.
   - **All-or-nothing**: duplicate `labTestId`s, an item with no changes, or a

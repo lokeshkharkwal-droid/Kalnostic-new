@@ -265,3 +265,19 @@ export class InvalidSignatoryAuthorityException extends KaltrosException {
     );
   }
 }
+
+/** 422 — Approve was called while the report is deferred to its next Reporting
+ * session (SRS §5.4/§5.5): its result was validated after today's cutoff
+ * (`reportingTimeTo - approvalDurationMax`), so there wasn't enough approval
+ * time left before the signatory window closed. Blocks until
+ * `LabReport.reportingDeferredUntil` (the next session's start) has passed. */
+export class ReportingWindowClosedException extends KaltrosException {
+  constructor(deferredUntil: Date) {
+    super(
+      'REPORTING_WINDOW_CLOSED',
+      `This report's result came in after today's reporting cutoff. Approval opens again at ${deferredUntil.toISOString()}.`,
+      { deferredUntil: deferredUntil.toISOString() },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}

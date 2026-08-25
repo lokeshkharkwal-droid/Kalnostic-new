@@ -175,7 +175,7 @@ export class DepartmentService {
       include: MAPPINGS_INCLUDE,
       skip: (page - 1) * limit,
       take: limit,
-      orderBy: { createdAt: 'desc' },
+      orderBy: { name: 'asc' },
     });
     const total = await this.prisma.department.count({ where });
     return { data, total, page, limit };

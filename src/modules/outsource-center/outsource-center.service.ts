@@ -10,6 +10,9 @@ import { mkdir, readFile, writeFile } from 'fs/promises';
 import { extname, join } from 'path';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
+import { BranchLabTestListService } from '../branch-lab-test-list/branch-lab-test-list.service';
+import { BranchLabPanelListService } from '../branch-lab-panel-list/branch-lab-panel-list.service';
+import { ActiveBranchRequiredException } from '../branch-lab-test/exceptions/branch-lab-test.exceptions';
 import { CreateOutsourceCenterDto } from './dto/create-outsource-center.dto';
 import { UpdateOutsourceCenterDto } from './dto/update-outsource-center.dto';
 import { OutsourceCenterContactDto } from './dto/outsource-center-contact.dto';
@@ -33,9 +36,11 @@ const DOCUMENTS_SUBDIR = 'outsource-center-documents';
  * Outsource-center management. Tenant-scoped, tenant-level (CLAUDE.md §4.6): every
  * query carries `tenantId` (defence in depth on top of RLS, §4.3) and filters
  * soft-deleted rows. Contacts are child rows owned by the center and managed
- * together with it (replace-all on update). A center carries a single optional lab
- * test and lab panel (`labTestId` / `labPanelId`), each a logical ref validated to
- * be an active lab test/panel in the tenant.
+ * together with it (replace-all on update). A center carries a single optional
+ * legacy lab test/panel (`labTestId`/`labPanelId`, still used for order-routing
+ * eligibility) and a single optional Lab Test List / Lab Panel List
+ * (`branchLabTestListId`/`branchLabPanelListId`), each a logical ref validated
+ * against the tenant (and, for the lists, the caller's active branch).
  */
 @Injectable()
 export class OutsourceCenterService {
@@ -47,6 +52,8 @@ export class OutsourceCenterService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly branchLabTestListService: BranchLabTestListService,
+    private readonly branchLabPanelListService: BranchLabPanelListService,
   ) {}
 
   /**
@@ -56,19 +63,31 @@ export class OutsourceCenterService {
    * optional `labTestId` / `labPanelId` are validated to be active lab tests/panels
    * in the tenant.
    * @param tenantId owning tenant
+   * @param branchId the caller's active branch (JWT), required only when a
+   *   `branchLabTestListId`/`branchLabPanelListId` is being assigned
    * @param dto validated payload (no `code`/`tenantId` — set here / from context)
-   * @returns the created center with its active contacts and resolved test/panel names
+   * @returns the created center with its active contacts and resolved test/panel/list names
    * @throws DuplicateContactRoleException if a contact role appears twice
    * @throws InvalidLabTestException / InvalidLabPanelException if the selected
    *   test/panel is not an active item in the tenant
+   * @throws ActiveBranchRequiredException if a list is assigned with no active branch
+   * @throws BranchLabTestListNotFoundException / BranchLabPanelListNotFoundException
+   *   if the selected list isn't found in the active branch
    * @throws OutsourceCenterNameConflictException if the name is already used by an
    *   active center in this tenant
    */
   async create(
     tenantId: string,
+    branchId: string | null,
     dto: CreateOutsourceCenterDto,
   ): Promise<OutsourceCenterEntity> {
     await this.validateLabSelection(tenantId, dto.labTestId, dto.labPanelId);
+    await this.validateBranchListSelection(
+      tenantId,
+      branchId,
+      dto.branchLabTestListId,
+      dto.branchLabPanelListId,
+    );
     const contacts = this.cleanContacts(dto.contacts);
 
     try {
@@ -202,19 +221,31 @@ export class OutsourceCenterService {
    * active lab tests/panels in the tenant (pass `null` to clear).
    * @param id center id
    * @param tenantId tenant scope
+   * @param branchId the caller's active branch (JWT), required only when a
+   *   `branchLabTestListId`/`branchLabPanelListId` is being assigned
    * @param dto partial update
    * @throws OutsourceCenterNotFoundException if missing/soft-deleted
    * @throws InvalidLabTestException / InvalidLabPanelException for a bad selection
+   * @throws ActiveBranchRequiredException if a list is assigned with no active branch
+   * @throws BranchLabTestListNotFoundException / BranchLabPanelListNotFoundException
+   *   if the selected list isn't found in the active branch
    * @throws OutsourceCenterNameConflictException if the new name collides
    */
   async update(
     id: string,
     tenantId: string,
+    branchId: string | null,
     dto: UpdateOutsourceCenterDto,
   ): Promise<OutsourceCenterEntity> {
     await this.findById(id, tenantId);
 
     await this.validateLabSelection(tenantId, dto.labTestId, dto.labPanelId);
+    await this.validateBranchListSelection(
+      tenantId,
+      branchId,
+      dto.branchLabTestListId,
+      dto.branchLabPanelListId,
+    );
     const contacts =
       dto.contacts !== undefined ? this.cleanContacts(dto.contacts) : undefined;
 
@@ -417,9 +448,11 @@ export class OutsourceCenterService {
   }
 
   /**
-   * Resolve each center's single `labTestId` / `labPanelId` to its `testName` /
-   * `panelName` (batched across the given centers), returning enriched entities.
-   * Names are `null` when the id is unset or the referenced test/panel was deleted.
+   * Resolve each center's single `labTestId`/`labPanelId` to its `testName`/
+   * `panelName`, and its `branchLabTestListId`/`branchLabPanelListId` to its
+   * list `name` (all batched across the given centers), returning enriched
+   * entities. Names are `null` when the id is unset or the referenced
+   * test/panel/list was deleted.
    * @param tenantId tenant scope
    * @param centers the centers to enrich (any include shape)
    */
@@ -433,6 +466,8 @@ export class OutsourceCenterService {
       T & {
         labTestName: string | null;
         labPanelName: string | null;
+        branchLabTestListName: string | null;
+        branchLabPanelListName: string | null;
         directorName: string | null;
         directorEmail: string | null;
         directorMobile: string | null;
@@ -449,8 +484,22 @@ export class OutsourceCenterService {
         centers.map((c) => c.labPanelId).filter((v): v is string => !!v),
       ),
     ];
+    const testListIds = [
+      ...new Set(
+        centers
+          .map((c) => c.branchLabTestListId)
+          .filter((v): v is string => !!v),
+      ),
+    ];
+    const panelListIds = [
+      ...new Set(
+        centers
+          .map((c) => c.branchLabPanelListId)
+          .filter((v): v is string => !!v),
+      ),
+    ];
 
-    const [tests, panels] = await Promise.all([
+    const [tests, panels, testLists, panelLists] = await Promise.all([
       testIds.length
         ? this.prisma.labTest.findMany({
             where: { tenantId, id: { in: testIds } },
@@ -463,9 +512,23 @@ export class OutsourceCenterService {
             select: { id: true, panelName: true },
           })
         : Promise.resolve([]),
+      testListIds.length
+        ? this.prisma.branchLabTestList.findMany({
+            where: { tenantId, id: { in: testListIds } },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([]),
+      panelListIds.length
+        ? this.prisma.branchLabPanelList.findMany({
+            where: { tenantId, id: { in: panelListIds } },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([]),
     ]);
     const testMap = new Map(tests.map((t) => [t.id, t.testName]));
     const panelMap = new Map(panels.map((p) => [p.id, p.panelName]));
+    const testListMap = new Map(testLists.map((l) => [l.id, l.name]));
+    const panelListMap = new Map(panelLists.map((l) => [l.id, l.name]));
 
     return centers.map((c) => {
       const director = c.contacts?.find(
@@ -476,6 +539,12 @@ export class OutsourceCenterService {
         labTestName: c.labTestId ? (testMap.get(c.labTestId) ?? null) : null,
         labPanelName: c.labPanelId
           ? (panelMap.get(c.labPanelId) ?? null)
+          : null,
+        branchLabTestListName: c.branchLabTestListId
+          ? (testListMap.get(c.branchLabTestListId) ?? null)
+          : null,
+        branchLabPanelListName: c.branchLabPanelListId
+          ? (panelListMap.get(c.branchLabPanelListId) ?? null)
           : null,
         directorName: director?.name ?? null,
         directorEmail: director?.email ?? null,
@@ -518,6 +587,47 @@ export class OutsourceCenterService {
   }
 
   /**
+   * Validate the optional single Lab Test List / Lab Panel List selection: each
+   * id, when present, must be a non-deleted `BranchLabTestList`/`BranchLabPanelList`
+   * in the tenant's active branch. Requires an active branch only when a list is
+   * actually being assigned — an outsource center with no list selection needs
+   * none.
+   * @param tenantId tenant scope
+   * @param branchId the caller's active branch (JWT), or `null` if none
+   * @param branchLabTestListId optional selected Lab Test List id
+   * @param branchLabPanelListId optional selected Lab Panel List id
+   * @throws ActiveBranchRequiredException if a list id is given with no active branch
+   * @throws BranchLabTestListNotFoundException / BranchLabPanelListNotFoundException
+   */
+  private async validateBranchListSelection(
+    tenantId: string,
+    branchId: string | null,
+    branchLabTestListId?: string,
+    branchLabPanelListId?: string,
+  ): Promise<void> {
+    if (!branchLabTestListId && !branchLabPanelListId) {
+      return;
+    }
+    if (!branchId) {
+      throw new ActiveBranchRequiredException();
+    }
+    if (branchLabTestListId) {
+      await this.branchLabTestListService.findById(
+        branchLabTestListId,
+        tenantId,
+        branchId,
+      );
+    }
+    if (branchLabPanelListId) {
+      await this.branchLabPanelListService.findById(
+        branchLabPanelListId,
+        tenantId,
+        branchId,
+      );
+    }
+  }
+
+  /**
    * Filter out contact entries with no name, mobile, or email, and reject duplicate
    * roles (the DB allows one active contact per role per center).
    * @param contacts raw contact DTOs (may be undefined)
@@ -556,7 +666,7 @@ export class OutsourceCenterService {
       shortName: dto.shortName ?? null,
       address: dto.address ?? null,
       country: dto.country ?? null,
-      city: dto.city,
+      city: dto.city ?? '',
       state: dto.state ?? null,
       pincode: dto.pincode ?? null,
       gstNumber: dto.gstNumber ?? null,
@@ -569,6 +679,8 @@ export class OutsourceCenterService {
       isNablAccredited: dto.isNablAccredited ?? false,
       labTestId: dto.labTestId ?? null,
       labPanelId: dto.labPanelId ?? null,
+      branchLabTestListId: dto.branchLabTestListId ?? null,
+      branchLabPanelListId: dto.branchLabPanelListId ?? null,
     };
   }
 
@@ -601,6 +713,10 @@ export class OutsourceCenterService {
       data.isNablAccredited = dto.isNablAccredited;
     if (dto.labTestId !== undefined) data.labTestId = dto.labTestId ?? null;
     if (dto.labPanelId !== undefined) data.labPanelId = dto.labPanelId ?? null;
+    if (dto.branchLabTestListId !== undefined)
+      data.branchLabTestListId = dto.branchLabTestListId ?? null;
+    if (dto.branchLabPanelListId !== undefined)
+      data.branchLabPanelListId = dto.branchLabPanelListId ?? null;
     return data;
   }
 

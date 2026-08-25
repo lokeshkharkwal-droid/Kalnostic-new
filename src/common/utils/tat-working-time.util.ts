@@ -364,3 +364,84 @@ export function evaluateTat(
     band: classifyTat(netMinutes, maxTatMinutes, thresholds),
   };
 }
+
+// ── Reporting window / signatory-availability gate (SRS §5.4/§5.5) ───────────
+//
+// A separate, isolated concern from the TAT-minutes engine above: not "how much
+// working time has this report used", but "is a signatory available right now
+// to approve it, or has the result come in too late in today's session to be
+// safely reviewed before it closes". Deliberately kept out of
+// workingMinutesBetween/evaluateTat — those must stay focused on TAT accrual.
+
+/** Result of {@link resolveReportingCutoff}. */
+export interface ReportingCutoffResult {
+  /** Whether a cutoff could be computed at all (both window+duration configured). */
+  configured: boolean;
+  /** `reportingTimeTo - maxApprovalDuration`, in minutes-since-midnight on the
+   * session day `now` falls in. Null when `configured` is false. */
+  cutoffMinutes: number | null;
+  /** Whether `now` (branch-local) falls after that cutoff, on a day the
+   * reporting window actually runs. */
+  isPastCutoff: boolean;
+}
+
+/**
+ * Compute today's reporting cutoff and whether `now` has passed it.
+ * `latestResultTime = reportingTimeTo - maxApprovalDuration` (SRS §5.5) — a
+ * result generated after this instant would not leave enough approval time
+ * before the signatory window closes.
+ * @param now branch-local instant (see module timezone contract)
+ * @param reportingTimeTo the signatory-availability window's end, `HH:mm`
+ * @param maxApprovalMinutes the configured Maximum Approval Duration, in minutes
+ */
+export function resolveReportingCutoff(
+  now: Date,
+  reportingTimeTo: string | null | undefined,
+  maxApprovalMinutes: number | null,
+): ReportingCutoffResult {
+  if (!reportingTimeTo || maxApprovalMinutes == null) {
+    return { configured: false, cutoffMinutes: null, isPastCutoff: false };
+  }
+  const cutoffMinutes = hhmmToMinutes(reportingTimeTo) - maxApprovalMinutes;
+  const nowMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
+  return {
+    configured: true,
+    cutoffMinutes,
+    isPastCutoff: nowMinutes > cutoffMinutes,
+  };
+}
+
+/**
+ * The next instant (branch-local) the reporting session opens at or after
+ * `now`, given the window's start time and the days it runs. Used to stamp
+ * `LabReport.reportingDeferredUntil` when a result lands after today's cutoff.
+ * Scans forward day-by-day (today included) up to a week, same defensive
+ * bound style as {@link workingMinutesBetween}'s scan cap.
+ * @param now branch-local instant to search from
+ * @param reportingTimeFrom the signatory-availability window's start, `HH:mm`
+ * @param scheduledDays days the reporting session runs; empty/omitted = every day
+ */
+export function nextReportingSessionStart(
+  now: Date,
+  reportingTimeFrom: string,
+  scheduledDays: DayOfWeek[] | undefined,
+): Date {
+  const scheduled =
+    scheduledDays && scheduledDays.length > 0 ? new Set(scheduledDays) : null;
+  const startMinutes = hhmmToMinutes(reportingTimeFrom);
+  const todayMidnight = utcMidnight(now.getTime());
+  const nowMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
+
+  for (let offset = 0; offset <= 7; offset++) {
+    const dayMs = todayMidnight + offset * MS_PER_DAY;
+    const dow = WEEKDAY_BY_UTC_DAY[new Date(dayMs).getUTCDay()];
+    if (!dow || (scheduled && !scheduled.has(dow))) continue;
+    // Today only counts if the session hasn't already started.
+    if (offset === 0 && nowMinutes >= startMinutes) continue;
+    return new Date(dayMs + startMinutes * MS_PER_MINUTE);
+  }
+  // No scheduled day found within a week — fall back to tomorrow's start time
+  // rather than looping forever; an admin with an empty schedule needs to fix
+  // their config, not hit an unbounded scan.
+  return new Date(todayMidnight + MS_PER_DAY + startMinutes * MS_PER_MINUTE);
+}

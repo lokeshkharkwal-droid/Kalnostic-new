@@ -14,9 +14,10 @@ import { OutsourceCenterContactDto } from './outsource-center-contact.dto';
 /**
  * Body for creating an outsource center together with its contacts. `tenantId`
  * and `code` are never accepted from the client — the tenant comes from the JWT
- * and the code is system-generated. A single lab test and lab panel may be
- * assigned (`labTestId` / `labPanelId`), each validated to be an active lab
- * test/panel in the tenant.
+ * and the code is system-generated. `labTestId`/`labPanelId` are legacy refs to
+ * a single active lab test/panel (still used by order-routing eligibility).
+ * `branchLabTestListId`/`branchLabPanelListId` assign the branch's named Lab
+ * Test List / Lab Panel List, validated against the active branch on the JWT.
  */
 export class CreateOutsourceCenterDto {
   // ── Basic details ──
@@ -41,9 +42,9 @@ export class CreateOutsourceCenterDto {
   country?: string;
 
   @IsString()
-  @MinLength(1)
+  @IsOptional()
   @MaxLength(255)
-  city: string;
+  city?: string;
 
   @IsString()
   @IsOptional()
@@ -94,7 +95,8 @@ export class CreateOutsourceCenterDto {
   @IsOptional()
   isNablAccredited?: boolean;
 
-  // ── Assigned lab test / lab panel (single, optional) ──
+  // ── Assigned lab test / lab panel (single, optional; legacy — retained for
+  // order-routing eligibility, no longer set by the Outsource Center form) ──
   @IsUUID()
   @IsOptional()
   labTestId?: string;
@@ -102,6 +104,16 @@ export class CreateOutsourceCenterDto {
   @IsUUID()
   @IsOptional()
   labPanelId?: string;
+
+  // ── Assigned Lab Test List / Lab Panel List (single, optional; the branch's
+  // named pricing lists, validated against the active branch on the JWT) ──
+  @IsUUID()
+  @IsOptional()
+  branchLabTestListId?: string;
+
+  @IsUUID()
+  @IsOptional()
+  branchLabPanelListId?: string;
 
   // ── Contacts (up to five, all optional) ──
   @IsArray()

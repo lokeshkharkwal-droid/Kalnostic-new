@@ -21,8 +21,24 @@ tests {
 }
 
 docs {
-  The sample's append-only status-change log (§A.10.5), newest first. Each row
-  carries `action`, `fromStatus`, `toStatus`, optional `reason` / `notes` /
-  `attachmentUrl`, and `changedBy`. The first `generate` row is written when the
-  sample is created from the order.
+  The sample's status-MOVEMENT log (§A.10.5), newest first, for the Audit
+  Trail UI. Each row carries `action`, `fromStatus`, `toStatus`, optional
+  `reason` / `notes` / `attachmentUrl`, and `changedBy` (raw `Person.id`).
+
+  Only rows where the sample's status actually moved from one real status to
+  another are returned (`fromStatus` non-null and different from `toStatus`).
+  The underlying `accession_status_history` table also has non-movement rows
+  — the system-written `generate` row (sample created from the order,
+  `fromStatus = null`, no prior status to move FROM) and no-status-change
+  actions (`assign-barcode`, `update` notes, both written with `fromStatus
+  === toStatus`) — these are real audit facts kept in the table, but this
+  endpoint filters them out since they aren't lifecycle movement. A sample
+  still sitting at NEW with nothing done to it yet returns `[]`.
+
+  Each row is also enriched with `actorName` (the `changedBy` person's full
+  name) and `actorRole` (their CURRENT role name at the caller's active
+  branch, via `UserBranchProfile` → `AuthRole` — not a snapshot of the role
+  held at the time of the action, since that isn't captured anywhere in this
+  codebase today). Both are `null` if unresolved, e.g. a person with no
+  active profile at this branch.
 }

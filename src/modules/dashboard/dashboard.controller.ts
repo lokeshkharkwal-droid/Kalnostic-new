@@ -43,7 +43,9 @@ export class DashboardController {
 
   /**
    * Active lab tests in the caller's branch, grouped by department, for the
-   * "Master Data - Total Tests" donut.
+   * "Master Data - Total Tests" donut. Also takes the header's date-range
+   * filter — omitted returns the current active-test total, set scopes to
+   * tests created in that range.
    */
   @Get('master-data-summary')
   getMasterDataSummary(
@@ -54,6 +56,8 @@ export class DashboardController {
     return this.dashboardService.getMasterDataSummary(
       tenantId,
       this.resolveBranch(profile, query.branchId),
+      query.dateFrom,
+      query.dateTo,
     );
   }
 
@@ -67,6 +71,8 @@ export class DashboardController {
     return this.dashboardService.getReferralPanelsSummary(
       tenantId,
       this.resolveBranch(profile, query.branchId),
+      query.dateFrom,
+      query.dateTo,
     );
   }
 
@@ -80,6 +86,8 @@ export class DashboardController {
     return this.dashboardService.getReferralDoctorsSummary(
       tenantId,
       this.resolveBranch(profile, query.branchId),
+      query.dateFrom,
+      query.dateTo,
     );
   }
 
@@ -93,6 +101,8 @@ export class DashboardController {
     return this.dashboardService.getExternalReferralsSummary(
       tenantId,
       this.resolveBranch(profile, query.branchId),
+      query.dateFrom,
+      query.dateTo,
     );
   }
 
@@ -104,6 +114,39 @@ export class DashboardController {
     @Query() query: BranchAdminDashboardQueryDto,
   ) {
     return this.dashboardService.getInternalReferralsSummary(
+      tenantId,
+      this.resolveBranch(profile, query.branchId),
+      query.dateFrom,
+      query.dateTo,
+    );
+  }
+
+  /** Active staff headcount in the caller's branch, grouped by role. */
+  @Get('users-by-role-summary')
+  getUsersByRoleSummary(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: BranchAdminDashboardQueryDto,
+  ) {
+    return this.dashboardService.getUsersByRoleSummary(
+      tenantId,
+      this.resolveBranch(profile, query.branchId),
+      query.dateFrom,
+      query.dateTo,
+    );
+  }
+
+  /**
+   * Weekly open/closed schedule with per-shift timing, for the caller's
+   * branch's currently-ACTIVE schedule (empty array if none covers today).
+   */
+  @Get('schedule-plan-summary')
+  getSchedulePlanSummary(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: BranchAdminDashboardQueryDto,
+  ) {
+    return this.dashboardService.getSchedulePlanSummary(
       tenantId,
       this.resolveBranch(profile, query.branchId),
     );

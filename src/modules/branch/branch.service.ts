@@ -262,8 +262,12 @@ export class BranchService {
    *
    * @param tenantId tenant scope
    * @param filters optional `branchType` (include) / `excludeBranchType`
-   *   (exclude) — when both are set, the include filter wins — plus `search`
-   *   and opt-in `page` / `limit`
+   *   (exclude) — when both are set, the include filter wins — plus `search`,
+   *   `moduleKey` (only branches where that module is enabled — see
+   *   {@link isModuleEnabledForBranch}'s sibling lookup below; `BranchModule`
+   *   has no named Prisma relation back to `Branch`, so this is a two-step
+   *   branchId lookup rather than a relational `where`), and opt-in
+   *   `page` / `limit`
    * @returns id + name of each matching branch (array, or paginated envelope
    *   when `page` is supplied)
    */
@@ -273,6 +277,7 @@ export class BranchService {
       branchType?: BranchType;
       excludeBranchType?: BranchType;
       search?: string;
+      moduleKey?: string;
       page?: number;
       limit?: number;
     } = {},
@@ -291,6 +296,18 @@ export class BranchService {
         { name: { contains: filters.search, mode: 'insensitive' } },
         { code: { contains: filters.search, mode: 'insensitive' } },
       ];
+    }
+    if (filters.moduleKey) {
+      const enabledBranchIds = await this.prisma.branchModule.findMany({
+        where: {
+          tenantId,
+          moduleKey: filters.moduleKey,
+          isEnabled: true,
+          deletedAt: null,
+        },
+        select: { branchId: true },
+      });
+      where.id = { in: enabledBranchIds.map((row) => row.branchId) };
     }
 
     // Legacy mode: no `page` → return the full list unchanged.
@@ -314,6 +331,62 @@ export class BranchService {
     });
     const total = await this.prisma.branch.count({ where });
     return { data, total, page, limit };
+  }
+
+  /**
+   * Whether a given module is enabled at a given branch. Used by dashboard
+   * controllers (Registration/Accession) to validate a Business Admin's
+   * explicit `branchId` selection against real `BranchModule` data, without
+   * re-fetching the full branch-options list on every request.
+   */
+  async isModuleEnabledForBranch(
+    tenantId: string,
+    branchId: string,
+    moduleKey: string,
+  ): Promise<boolean> {
+    const row = await this.prisma.branchModule.findFirst({
+      where: {
+        tenantId,
+        branchId,
+        moduleKey,
+        isEnabled: true,
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+    return !!row;
+  }
+
+  /**
+   * Which branches have `moduleKey` enabled at all, for a Business Admin's
+   * dashboard branch selector / "All Branches" aggregate.
+   *
+   * Deliberately NOT scoped by `personId`/`UserBranchProfile.enabledModules`
+   * — that field tracks a specific STAFF member's individual per-branch
+   * grant (e.g. a receptionist's Registration access), which a Business
+   * Admin never holds: their own `UserBranchProfile` row is tenant-level
+   * (`branchId: null`, `enabledModules: []`) with no per-branch grants of
+   * its own. A Business Admin's access is coarser — "any branch where this
+   * module is enabled at all" (`BranchModule.isEnabled`), the same check
+   * {@link findOptionsForTenant}'s `moduleKey` filter already performs; this
+   * mirrors that logic exactly (kept as a separate id-only method rather
+   * than reusing `findOptionsForTenant` so dashboard controllers doing a
+   * single-branch existence check don't need the full `{ id, name }`
+   * options shape). `personId` is accepted for interface symmetry with the
+   * dashboard controllers' `resolveBranchScope` call site and to leave room
+   * for a future coarser per-admin permission check, but is currently
+   * unused.
+   */
+  async getAccessibleBranchIds(
+    tenantId: string,
+    _personId: string,
+    moduleKey: string,
+  ): Promise<string[]> {
+    const rows = await this.prisma.branchModule.findMany({
+      where: { tenantId, moduleKey, isEnabled: true, deletedAt: null },
+      select: { branchId: true },
+    });
+    return rows.map((row) => row.branchId);
   }
 
   /**
