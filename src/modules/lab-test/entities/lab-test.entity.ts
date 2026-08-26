@@ -203,6 +203,8 @@ export interface LabTestResultsRow {
 /** One reference-range row (parameter name/method denormalised in). */
 export interface LabTestRefRangeRow {
   id: string;
+  /** The owning result parameter's id — not shown on screen, used for import matching. */
+  paramId: string;
   parameterName: string;
   method: string | null;
   gender: ReferenceGender;
@@ -225,6 +227,8 @@ export interface LabTestReferenceRangeRow {
 /** One reference-value row (parameter name/method denormalised in). */
 export interface LabTestRefValueRow {
   id: string;
+  /** The owning result parameter's id — not shown on screen, used for import matching. */
+  paramId: string;
   parameterName: string;
   method: string | null;
   gender: ReferenceGender;
@@ -334,4 +338,61 @@ export interface LabTestSyncResult {
   synced: LabTestSyncOutcome[];
   skipped: LabTestSyncOutcome[];
   failed: LabTestSyncOutcome[];
+}
+
+// ── Excel export/import ────────────────────────────────────────────────────
+
+/** A result parameter composed with its reference ranges/values, for the
+ * flat single-sheet export (reflex tests flattened to a name list — see
+ * `reflexTestNames`, export-only/informational on import). */
+export type LabTestExportParam = Omit<LabTestResultParam, 'reflexTests'> & {
+  reflexTestNames: string;
+  referenceRanges: LabTestReferenceRange[];
+  referenceValues: LabTestReferenceValue[];
+};
+
+/**
+ * One fully-composed lab test for the flat single-sheet export: every
+ * scalar field plus resolved classification names, its samples, and its
+ * result parameters (each carrying nested reference ranges/values). This is
+ * the ONLY shape the export endpoint returns now — the frontend's
+ * `buildLabTestWorkbook` walks each test's `samples`/`resultParams` directly
+ * to lay out the row-expansion pattern (see `labTestExcel.ts`); there are no
+ * more per-grid-tab "views" projections.
+ */
+export type LabTestExportTest = LabTest & {
+  departmentName: string | null;
+  /** Resolved name of `mandatoryDeptId` — the "Mandatory Department" xlsx column. */
+  mandatoryDeptName: string | null;
+  categoryName: string | null;
+  subCategoryName: string | null;
+  samples: LabTestSample[];
+  resultParams: LabTestExportParam[];
+};
+
+/** Full unpaginated snapshot of a master data's lab tests, returned by the export endpoint. */
+export interface LabTestExportPayload {
+  tests: LabTestExportTest[];
+}
+
+/** One test's row-span that failed validation and was skipped (not saved). */
+export interface ImportXlsxSkippedTest {
+  /** e.g. "Row 3" or "Rows 3-8" — the failed test's row-span in the sheet. */
+  rowLabel: string;
+  /** Every reason this specific test was skipped, in plain Excel-column terms. */
+  errors: string[];
+}
+
+/**
+ * Result of an Excel import: how many lab tests were created/updated, and
+ * which ones (if any) were skipped for failing validation. Partial import —
+ * every test in the file is validated independently; a test with an error
+ * is skipped and reported in `skipped`, but every other valid test in the
+ * same file is still created/updated. `skipped` is empty on a fully clean
+ * import.
+ */
+export interface ImportXlsxResult {
+  created: number;
+  updated: number;
+  skipped: ImportXlsxSkippedTest[];
 }
