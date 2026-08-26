@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import {
+  AbnormalFlag,
+  AgeUnit,
+  ContainerType,
   DataSource,
+  DayOfWeek,
   LabTest,
   LabTestReferenceRange,
   LabTestReferenceValue,
@@ -8,7 +12,15 @@ import {
   LabTestSample,
   ParameterType,
   Prisma,
+  ProcessMethod,
+  ReferenceGender,
+  RepeatIntervalUnit,
+  ResultRounding,
+  ResultType,
+  SamplePriority,
+  TatUnit,
 } from '@prisma/client';
+import * as ExcelJS from 'exceljs';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -30,7 +42,29 @@ import {
   ImportLabTestsDto,
 } from './dto/import-lab-tests.dto';
 import {
+  ImportXlsxReferenceRangeRowDto,
+  ImportXlsxReferenceValueRowDto,
+  ImportXlsxResultParamRowDto,
+  ImportXlsxSampleRowDto,
+  ImportXlsxTestRowDto,
+  BOOLEAN_FIELDS,
+  DAY_LABEL_TO_ENUM,
+  ENUM_LABEL_FIELDS,
+  ENUM_VALUE_TO_LABEL,
+  FIELD_TO_COLUMN_LABEL,
+  INTEGER_FIELDS,
+  NUMERIC_FIELDS,
+  SEMICOLON_LIST_FIELDS,
+  STATUS_LABEL_TO_ACTIVE,
+  XLSX_COLUMNS,
+  XLSX_SHEET_NAME,
+} from './dto/import-lab-tests-xlsx.dto';
+import {
   ImportableTemplateRow,
+  ImportXlsxResult,
+  ImportXlsxSkippedTest,
+  LabTestExportPayload,
+  LabTestExportTest,
   LabTestImportResult,
   LabTestListRow,
   LabTestListView,
@@ -67,6 +101,70 @@ export interface ImportResult {
 export interface CloneResult {
   copied: number;
   skipped: number;
+}
+
+/**
+ * Canonical `XLSX_COLUMNS` position (0-based) for every field the flat
+ * single-sheet import parser reads, resolved once per import by
+ * `LabTestService.buildColumnIndex()`. A concrete field list (not
+ * `Record<string, number>`) so indexed access stays a plain, always-defined
+ * `number` under `noUncheckedIndexedAccess` — see the doc comment on
+ * `buildColumnIndex` for why several of these disambiguate a repeated
+ * header label via block position (Result Parameter / Reference Range /
+ * Reference Value).
+ */
+interface ColumnIndex {
+  testName: number;
+  sampleName: number;
+  sampleType: number;
+  containerType: number;
+  sampleSize: number;
+  collectionMethod: number;
+  numberOfSamples: number;
+  stability: number;
+  transportTemperature: number;
+  preservative: number;
+  sampleHandlingInstructions: number;
+  fastingRequired: number;
+  lightProtection: number;
+  setAsDefault: number;
+  groupName: number;
+  groupLayout: number;
+  groupSettings: number;
+  paramName: number;
+  parameterCode: number;
+  paramMethod: number;
+  reportingUnit: number;
+  resultType: number;
+  parameterType: number;
+  nabl: number;
+  cap: number;
+  resultRoundingType: number;
+  iconSettings: number;
+  reflexTest: number;
+  calculationFormula: number;
+  allowableUnits: number;
+  paramNotes: number;
+  rangeMethod: number;
+  rangeGender: number;
+  rangeAgeFrom: number;
+  rangeAgeFromUnit: number;
+  rangeAgeTo: number;
+  rangeAgeToUnit: number;
+  lowerLimit: number;
+  upperLimit: number;
+  criticalMin: number;
+  criticalMax: number;
+  displayOfRange: number;
+  rangeFlag: number;
+  valueMethod: number;
+  valueGender: number;
+  valueAgeFrom: number;
+  valueAgeFromUnit: number;
+  valueAgeTo: number;
+  valueAgeToUnit: number;
+  displayOfValue: number;
+  valueFlag: number;
 }
 
 /** Row keys that are re-derived (never copied) when cloning. */
@@ -696,6 +794,7 @@ export class LabTestService {
                 const param = paramMap.get(r.paramId);
                 return {
                   id: r.id,
+                  paramId: r.paramId,
                   parameterName: param?.parameterName ?? '',
                   method: r.method ?? param?.method ?? null,
                   gender: r.gender,
@@ -728,6 +827,7 @@ export class LabTestService {
                 const param = paramMap.get(v.paramId);
                 return {
                   id: v.id,
+                  paramId: v.paramId,
                   parameterName: param?.parameterName ?? '',
                   method: v.method ?? param?.method ?? null,
                   gender: v.gender,
@@ -828,6 +928,30 @@ export class LabTestService {
   /** Look up a resolved name by (possibly null) id. */
   private nameOf(map: Map<string, string>, id: string | null): string | null {
     return id ? (map.get(id) ?? null) : null;
+  }
+
+  /**
+   * Batch-resolve `Person.id` → display name (`firstName [middleName] lastName`),
+   * for showing a human name instead of a raw id — e.g. a lab test's
+   * `versionHistory.modifiedBy`/`approvedBy` on export. `Person` is a
+   * platform-level model (no tenant scoping).
+   */
+  private async personNamesById(ids: string[]): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+    if (!ids.length) {
+      return map;
+    }
+    const people = await this.prisma.person.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, firstName: true, middleName: true, lastName: true },
+    });
+    for (const p of people) {
+      const name = [p.firstName, p.middleName, p.lastName]
+        .filter((part): part is string => Boolean(part && part.trim()))
+        .join(' ');
+      if (name) map.set(p.id, name);
+    }
+    return map;
   }
 
   /** The default sample per test (`isDefault`), keyed by `labTestId`. */
@@ -2154,6 +2278,1434 @@ export class LabTestService {
     return { created: rows.length };
   }
 
+  /**
+   * Full, unpaginated snapshot of every active lab test in a master data plus
+   * all of its children (samples, result parameters, reference ranges/values),
+   * for the "Export" Excel workbook. Classification names are resolved so the
+   * exported sheet is human-editable (round-tripped back to ids on import).
+   * @param masterDataId parent master data id
+   * @param tenantId tenant scope
+   * @throws MasterDataNotFoundException if the master data is missing/other tenant
+   */
+  /**
+   * Full unpaginated snapshot of a master data's active lab tests, fully
+   * composed with their samples and result parameters (each carrying nested
+   * reference ranges/values), for the frontend to build the single flat
+   * "Lab Tests" export sheet (see `labTestExcel.ts`'s row-expansion
+   * algorithm). Classification ids are resolved to display names; no
+   * per-grid-tab "views" projection any more — this new format is one sheet,
+   * not twelve.
+   */
+  async exportAll(
+    masterDataId: string,
+    tenantId: string,
+  ): Promise<LabTestExportPayload> {
+    await this.masterDataService.findById(masterDataId, tenantId);
+    const tests = await this.prisma.labTest.findMany({
+      where: { masterDataId, tenantId, deletedAt: null },
+      orderBy: { createdAt: 'asc' },
+    });
+    const ids = tests.map((t) => t.id);
+
+    const [deptNames, catNames, subcatNames] = await Promise.all([
+      this.resolveNames('department', tenantId, [
+        ...tests.map((t) => t.departmentId),
+        ...tests.map((t) => t.mandatoryDeptId),
+      ]),
+      this.resolveNames(
+        'category',
+        tenantId,
+        tests.map((t) => t.categoryId),
+      ),
+      this.resolveNames(
+        'subCategory',
+        tenantId,
+        tests.map((t) => t.subCategoryId),
+      ),
+    ]);
+
+    const [samplesByTest, paramsByTest, rangesByTest, valuesByTest] =
+      await Promise.all([
+        this.fetchSamples(tenantId, ids),
+        this.fetchParams(tenantId, ids),
+        this.fetchRanges(tenantId, ids),
+        this.fetchValues(tenantId, ids),
+      ]);
+
+    const personIds = new Set<string>();
+    for (const t of tests) {
+      for (const v of this.readVersionHistory(t.versionHistory)) {
+        if (v.modifiedBy) personIds.add(v.modifiedBy);
+        if (v.approvedBy) personIds.add(v.approvedBy);
+      }
+    }
+    const personNames = await this.personNamesById([...personIds]);
+
+    const exportTests: LabTestExportTest[] = tests.map((t) => {
+      const params = paramsByTest.get(t.id) ?? [];
+      return {
+        ...t,
+        versionHistory: this.readVersionHistory(t.versionHistory).map((v) => ({
+          ...v,
+          modifiedBy: v.modifiedBy
+            ? (personNames.get(v.modifiedBy) ?? v.modifiedBy)
+            : null,
+          approvedBy: v.approvedBy
+            ? (personNames.get(v.approvedBy) ?? v.approvedBy)
+            : null,
+        })),
+        departmentName: this.nameOf(deptNames, t.departmentId),
+        mandatoryDeptName: this.nameOf(deptNames, t.mandatoryDeptId),
+        categoryName: this.nameOf(catNames, t.categoryId),
+        subCategoryName: this.nameOf(subcatNames, t.subCategoryId),
+        samples: samplesByTest.get(t.id) ?? [],
+        resultParams: params.map((p) => {
+          const { reflexTests, ...scalars } = p;
+          const refs = (reflexTests ?? []) as unknown as ReflexTestRef[];
+          return {
+            ...scalars,
+            reflexTestNames: refs.map((r) => r.name).join('; '),
+            referenceRanges: (rangesByTest.get(t.id) ?? []).filter(
+              (r) => r.paramId === p.id,
+            ),
+            referenceValues: (valuesByTest.get(t.id) ?? []).filter(
+              (v) => v.paramId === p.id,
+            ),
+          };
+        }),
+      };
+    });
+
+    return { tests: exportTests };
+  }
+
+  /**
+   * Import (upsert) lab tests from an uploaded `.xlsx` workbook: ONE flat
+   * worksheet named `Lab Tests` (`XLSX_SHEET_NAME`), 120 columns (117 match
+   * the reference file exactly plus 3 added — see `ImportXlsxTestRowDto`'s
+   * doc comment; `XLSX_COLUMNS`, positional order — several header labels
+   * repeat, e.g. "Parameter Name"/"Method"/"GENDER" each appear in the
+   * Result Parameter block AND the Reference Range block AND the Reference
+   * Value block, so columns are read by POSITION, not by unique header
+   * text). A test spans one or more physical rows — Test-level scalar
+   * columns are populated only on the test's FIRST row (a row with a blank
+   * `Test Name` continues the nearest test above it, per the row-span
+   * grouping below); Samples align positionally within the row-span
+   * (`buildSamplesForSpan`); Result Parameters and their nested Reference
+   * Ranges/Values form contiguous blocks (`buildParamsForSpan`).
+   *
+   * PARTIAL IMPORT: every assembled test is validated independently. A test
+   * with an error is skipped (not saved) and reported in the returned
+   * `skipped` array with every reason for that specific test — but every
+   * OTHER valid test in the same file is still created/updated in one
+   * transaction. This is deliberately NOT all-or-nothing: a large edited
+   * sheet where only one test has a typo should not block updating the
+   * rest. The one exception is a FILE-level structural failure (unreadable
+   * file, missing sheet, missing a required column, no data rows at all) —
+   * those have no single test to blame and still reject the whole upload,
+   * since there's no per-row context to partially trust.
+   *
+   * A test matches an existing active test by `testCode` (case-insensitive)
+   * — no match creates a new test. Whether matched or newly created, EVERY
+   * written test's samples are fully replaced (delete-and-recreate); each
+   * Result Parameter matches an existing one by `parameterCode` to preserve
+   * its id (see `upsertParamsByCode`), and its Reference Ranges/Values are
+   * fully replaced. Version Control columns are exported for round-trip
+   * fidelity but IGNORED on import (version history is an audit trail
+   * managed elsewhere, never bulk-edited via Excel).
+   * @param masterDataId parent master data id
+   * @param tenantId tenant scope
+   * @param actorId person id recorded as `modifiedBy` on newly-created tests
+   * @param buffer the uploaded `.xlsx` file bytes
+   * @returns `{ created, updated, skipped }` — `skipped` is empty on a fully clean import
+   * @throws MasterDataNotFoundException if the master data is missing/other tenant
+   * @throws LabTestImportValidationException only for a file-level structural failure
+   */
+  async importXlsx(
+    masterDataId: string,
+    tenantId: string,
+    actorId: string,
+    buffer: Buffer,
+  ): Promise<ImportXlsxResult> {
+    const masterData = await this.masterDataService.findById(
+      masterDataId,
+      tenantId,
+    );
+
+    const workbook = new ExcelJS.Workbook();
+    try {
+      await workbook.xlsx.load(buffer as unknown as ExcelJS.Buffer);
+    } catch {
+      throw new LabTestImportValidationException([
+        'The uploaded file could not be read — make sure it is a valid .xlsx workbook',
+      ]);
+    }
+
+    const sheet = workbook.getWorksheet(XLSX_SHEET_NAME);
+    if (!sheet) {
+      throw new LabTestImportValidationException([
+        `Missing sheet: ${XLSX_SHEET_NAME}`,
+      ]);
+    }
+
+    const errors: string[] = [];
+
+    // ── 1. Locate the header row. The reference file's row 1 is entirely
+    //        blank and row 2 carries the headers — so the header row is
+    //        found by CONTENT (the first row containing "Test Name"), not
+    //        assumed to be row 1. Resolve each of the 117 canonical columns
+    //        (`XLSX_COLUMNS`, positional) to a worksheet column NUMBER on
+    //        that row. Several header labels repeat (e.g. "Parameter Name"
+    //        appears at canonical positions 68/84/98 — Result Parameter /
+    //        Reference Range / Reference Value blocks); the Nth occurrence
+    //        of a label in `XLSX_COLUMNS` is matched to the Nth occurrence
+    //        of that same label in the worksheet's header row, so a
+    //        straight header-text→column Map (which can only hold one
+    //        column per text) is NOT used here. ──────────────────────────
+    const maxScanRow = Math.min(sheet.lastRow?.number ?? 1, 10);
+    let headerRowNum = -1;
+    for (let r = 1; r <= maxScanRow; r++) {
+      const row = sheet.getRow(r);
+      let found = false;
+      row.eachCell((cell) => {
+        if (this.cellToString(cell.value).trim() === 'Test Name') found = true;
+      });
+      if (found) {
+        headerRowNum = r;
+        break;
+      }
+    }
+    if (headerRowNum === -1) {
+      throw new LabTestImportValidationException([
+        `Could not find the header row (looking for a "Test Name" column in the first ${maxScanRow} rows)`,
+      ]);
+    }
+    const headerRow = sheet.getRow(headerRowNum);
+    const worksheetColsByLabel = new Map<string, number[]>();
+    headerRow.eachCell((cell, colNumber) => {
+      const text = this.cellToString(cell.value).trim();
+      if (!text) return;
+      const arr = worksheetColsByLabel.get(text);
+      if (arr) arr.push(colNumber);
+      else worksheetColsByLabel.set(text, [colNumber]);
+    });
+    const occurrenceIndex = new Map<string, number>();
+    const colForCanonicalIndex: (number | undefined)[] = XLSX_COLUMNS.map(
+      (label) => {
+        const seen = occurrenceIndex.get(label) ?? 0;
+        occurrenceIndex.set(label, seen + 1);
+        return worksheetColsByLabel.get(label)?.[seen];
+      },
+    );
+    const missingColumns = XLSX_COLUMNS.filter(
+      (_, i) => colForCanonicalIndex[i] === undefined,
+    );
+    if (missingColumns.length) {
+      throw new LabTestImportValidationException(
+        [...new Set(missingColumns)].map((c) => `Missing column: ${c}`),
+      );
+    }
+
+    const COL = this.buildColumnIndex();
+
+    // ── 2. Extract every data row into a plain `string[]` positioned by
+    //        CANONICAL column index (0-based, matching `XLSX_COLUMNS`). The
+    //        exported file vertically merges a test's scalar columns
+    //        (including Test Name) across its whole row-span, and a Result
+    //        Parameter's own columns (including its Parameter Name) across
+    //        just its own range/value sub-block, for readability (see
+    //        `labTestExcel.ts`). ExcelJS's `getCell()` returns the SAME text
+    //        for every cell in a merged range, so a continuation row's Test
+    //        Name / Parameter Name would otherwise read as non-blank too —
+    //        blank them back out here (BEFORE anything downstream reads
+    //        `v[COL.testName]`/`v[COL.paramName]`) so a merge-continuation
+    //        row is indistinguishable from a genuinely blank one, exactly
+    //        matching what an unmerged file would produce. ─────────────────
+    type RawRow = { rowNum: number; v: string[] };
+    const rawRows: RawRow[] = [];
+    const lastRow = sheet.lastRow?.number ?? headerRowNum;
+    const mergeSensitiveCanonicalCols = [COL.testName, COL.paramName];
+    for (let rowNum = headerRowNum + 1; rowNum <= lastRow; rowNum++) {
+      const row = sheet.getRow(rowNum);
+      if (row.cellCount === 0) continue;
+      const v = colForCanonicalIndex.map((col) =>
+        col ? this.cellToString(row.getCell(col).value) : '',
+      );
+      for (const canonicalIdx of mergeSensitiveCanonicalCols) {
+        const col = colForCanonicalIndex[canonicalIdx];
+        const cell = col ? row.getCell(col) : undefined;
+        // `Cell.master.row` is mistyped as `string` in @types/exceljs (it's
+        // actually a `number` at runtime, verified directly) — cast to compare.
+        const isMergeContinuation = Boolean(
+          cell?.isMerged && (cell.master.row as unknown as number) !== rowNum,
+        );
+        if (isMergeContinuation) v[canonicalIdx] = '';
+      }
+      if (v.every((x) => x === '')) continue;
+      rawRows.push({ rowNum, v });
+    }
+
+    if (!rawRows.length) {
+      throw new LabTestImportValidationException([
+        'The uploaded file has no data rows',
+      ]);
+    }
+
+    // ── 3. Group rows into per-test row-spans: a row with a non-blank
+    //        "Test Name" starts a new test; every row until (not including)
+    //        the next non-blank "Test Name" belongs to that same test. ──────
+    type TestSpan = { rows: RawRow[]; rowLabel: string };
+    const spans: TestSpan[] = [];
+    for (const raw of rawRows) {
+      const testName = raw.v[COL.testName];
+      if (testName !== '' || spans.length === 0) {
+        spans.push({ rows: [raw], rowLabel: `Row ${raw.rowNum}` });
+      } else {
+        // `spans.length > 0` here, so this is always the just-pushed span.
+        const span = spans[spans.length - 1]!;
+        span.rows.push(raw);
+        const first = span.rows[0]!.rowNum;
+        const last = raw.rowNum;
+        span.rowLabel =
+          first === last ? `Row ${first}` : `Rows ${first}-${last}`;
+      }
+    }
+    for (const span of spans) {
+      // Every span is constructed with at least one row (see the push above).
+      if (span.rows[0]!.v[COL.testName] === '') {
+        errors.push(
+          `${span.rowLabel}: Test Name is required on a test's first row`,
+        );
+      }
+    }
+
+    // ── 4. Assemble each span into one `ImportXlsxTestRowDto`. ─────────────
+    const assembled: { dto: ImportXlsxTestRowDto; span: TestSpan }[] = [];
+    for (const span of spans) {
+      const firstRow = span.rows[0]!;
+      if (firstRow.v[COL.testName] === '') continue; // already reported
+      const dto = this.buildTestScalarsDto(firstRow, span.rowLabel);
+      dto.samples = this.buildSamplesForSpan(span.rows, COL);
+      dto.resultParams = this.buildParamsForSpan(span.rows, COL, errors);
+      assembled.push({ dto, span });
+    }
+
+    // Per-test error tracking for PARTIAL import: every error message is
+    // pushed as `${rowLabel}: ...` (rowLabel uniquely identifies one test's
+    // row-span within this file — no two spans can share a range), so
+    // grouping the flat `errors` list by that prefix tells us exactly which
+    // tests to exclude from the write step while keeping every other valid
+    // test. A structural failure (unreadable file, missing sheet/columns,
+    // no data rows — all thrown directly, above) has no single test to
+    // blame and still aborts the whole import; only per-test errors from
+    // here on are skip-only.
+    const rowLabelsWithErrors = new Set<string>();
+    const recordError = (rowLabel: string, message: string): void => {
+      errors.push(`${rowLabel}: ${message}`);
+      rowLabelsWithErrors.add(rowLabel);
+    };
+
+    // ── 5. Resolve Department/Category/Sub Category/Mandatory Department
+    //        name → id lookups. Mandatory Department reuses the same
+    //        `department` lookup table as Department. ─────────────────────
+    const deptNameToId = await this.namesToIds('department', tenantId, [
+      ...assembled.map((a) => a.dto.departmentId),
+      ...assembled.map((a) => a.dto.mandatoryDeptId),
+    ]);
+    const catNameToId = await this.namesToIds(
+      'category',
+      tenantId,
+      assembled.map((a) => a.dto.categoryId),
+    );
+    const subcatNameToId = await this.namesToIds(
+      'subCategory',
+      tenantId,
+      assembled.map((a) => a.dto.subCategoryId),
+    );
+    for (const { dto, span } of assembled) {
+      const nameErrors: string[] = [];
+      dto.departmentId = this.resolveOptionalNameField(
+        dto.departmentId,
+        'Department',
+        deptNameToId,
+        span.rowLabel,
+        nameErrors,
+      );
+      dto.mandatoryDeptId = this.resolveOptionalNameField(
+        dto.mandatoryDeptId,
+        'Mandatory Department',
+        deptNameToId,
+        span.rowLabel,
+        nameErrors,
+      );
+      dto.categoryId = this.resolveOptionalNameField(
+        dto.categoryId,
+        'Category',
+        catNameToId,
+        span.rowLabel,
+        nameErrors,
+      );
+      dto.subCategoryId = this.resolveOptionalNameField(
+        dto.subCategoryId,
+        'Subcategory',
+        subcatNameToId,
+        span.rowLabel,
+        nameErrors,
+      );
+      // `resolveOptionalNameField` already formats each message as
+      // "<rowLabel>: <label> '<raw>' not found" — strip that back off so
+      // `recordError` doesn't double the prefix.
+      for (const m of nameErrors) {
+        recordError(span.rowLabel, m.slice(span.rowLabel.length + 2));
+      }
+    }
+
+    // ── 6. class-validator + cross-field invariants, per assembled test
+    //        (skipping any span step 5 already failed — its resolved ids
+    //        are unreliable, so validating it further would just pile on
+    //        confusing secondary errors for a test we're excluding anyway). ─
+    const validTests: {
+      dto: ImportXlsxTestRowDto;
+      matchedId: string | null;
+    }[] = [];
+    for (const { dto: raw, span } of assembled) {
+      if (rowLabelsWithErrors.has(span.rowLabel)) continue;
+      const instance = plainToInstance(ImportXlsxTestRowDto, raw);
+      const failures = await validate(instance, {
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      });
+      if (failures.length) {
+        for (const f of failures) {
+          for (const { rowLabel, message } of this.flattenValidationMessages(
+            f,
+            span.rowLabel,
+          )) {
+            recordError(rowLabel, message);
+          }
+        }
+        continue;
+      }
+      try {
+        this.assertCoreInvariants({
+          priceMsrp: instance.priceMsrp ?? 0,
+          priceMaximum: instance.priceMaximum ?? 0,
+          priceMinimum: instance.priceMinimum ?? 0,
+          isMandatoryTest: instance.isMandatoryTest ?? false,
+          mandatoryDeptId: instance.mandatoryDeptId ?? null,
+          isRepeatIntervalRestriction:
+            instance.isRepeatIntervalRestriction ?? false,
+          repeatIntervalValue: instance.repeatIntervalValue ?? null,
+          repeatIntervalUnit: instance.repeatIntervalUnit ?? null,
+        });
+        await this.assertCatalogueRefs(tenantId, {
+          departmentId: instance.departmentId,
+          categoryId: instance.categoryId,
+          subCategoryId: instance.subCategoryId,
+          mandatoryDeptId: instance.mandatoryDeptId,
+        });
+        for (const p of instance.resultParams ?? []) {
+          this.assertImportParam(p);
+        }
+      } catch (e) {
+        if (e instanceof ValidationException) {
+          recordError(span.rowLabel, this.validationMessage(e));
+          continue;
+        }
+        throw e;
+      }
+
+      let matchedId: string | null = null;
+      const byCode = await this.prisma.labTest.findFirst({
+        where: {
+          masterDataId,
+          tenantId,
+          deletedAt: null,
+          testCode: { equals: instance.testCode, mode: 'insensitive' },
+        },
+        select: { id: true },
+      });
+      if (byCode) matchedId = byCode.id;
+
+      validTests.push({ dto: instance, matchedId });
+    }
+
+    // ── 7. Duplicate testName/testCode checks (within batch + against
+    //        existing, excluding a row's own matched id). Also duplicate
+    //        Parameter Code within the same test. Runs only over tests that
+    //        passed steps 5-6 — a duplicate here excludes just that test,
+    //        same as any other per-test failure. ─────────────────────────
+    const existing = await this.prisma.labTest.findMany({
+      where: { masterDataId, tenantId, deletedAt: null },
+      select: { id: true, testName: true, testCode: true },
+    });
+    const existingByName = new Map(
+      existing.map((t) => [t.testName.toLowerCase(), t.id]),
+    );
+    const existingByCode = new Map(
+      existing.map((t) => [t.testCode.toLowerCase(), t.id]),
+    );
+    const seenNames = new Map<string, string>();
+    const seenCodes = new Map<string, string>();
+    for (const { dto, matchedId } of validTests) {
+      const rowLabel = dto.rowLabel ?? '';
+      const nameKey = dto.testName.toLowerCase();
+      const codeKey = dto.testCode.toLowerCase();
+      const nameOwner = existingByName.get(nameKey);
+      if (nameOwner && nameOwner !== matchedId) {
+        recordError(
+          rowLabel,
+          `testName '${dto.testName}' already exists in this master data`,
+        );
+      } else if (
+        seenNames.has(nameKey) &&
+        seenNames.get(nameKey) !== rowLabel
+      ) {
+        recordError(
+          rowLabel,
+          `testName '${dto.testName}' is duplicated in the import`,
+        );
+        recordError(
+          seenNames.get(nameKey)!,
+          `testName '${dto.testName}' is duplicated in the import`,
+        );
+      } else {
+        seenNames.set(nameKey, rowLabel);
+      }
+      const codeOwner = existingByCode.get(codeKey);
+      if (codeOwner && codeOwner !== matchedId) {
+        recordError(
+          rowLabel,
+          `testCode '${dto.testCode}' already exists in this master data`,
+        );
+      } else if (
+        seenCodes.has(codeKey) &&
+        seenCodes.get(codeKey) !== rowLabel
+      ) {
+        recordError(
+          rowLabel,
+          `testCode '${dto.testCode}' is duplicated in the import`,
+        );
+        recordError(
+          seenCodes.get(codeKey)!,
+          `testCode '${dto.testCode}' is duplicated in the import`,
+        );
+      } else {
+        seenCodes.set(codeKey, rowLabel);
+      }
+
+      const seenParamCodes = new Set<string>();
+      for (const p of dto.resultParams ?? []) {
+        const pKey = p.parameterCode.toLowerCase();
+        if (seenParamCodes.has(pKey)) {
+          recordError(
+            rowLabel,
+            `Parameter Code '${p.parameterCode}' is duplicated within this test`,
+          );
+        } else {
+          seenParamCodes.add(pKey);
+        }
+      }
+    }
+
+    // ── 8. Write every test that never accumulated an error, in one
+    //        transaction; skip the rest and report why. A test whose error
+    //        surfaced only in step 7 (e.g. a duplicate) is still sitting in
+    //        `validTests` from step 6 — filter those out here rather than
+    //        threading a second removal through step 7's loop. ────────────
+    const testsToWrite = validTests.filter(
+      ({ dto }) => !rowLabelsWithErrors.has(dto.rowLabel ?? ''),
+    );
+    const skippedByRowLabel = new Map<string, string[]>();
+    for (const message of errors) {
+      const colonIdx = message.indexOf(': ');
+      const rowLabel = colonIdx === -1 ? message : message.slice(0, colonIdx);
+      const reason = colonIdx === -1 ? message : message.slice(colonIdx + 2);
+      const list = skippedByRowLabel.get(rowLabel);
+      if (list) list.push(reason);
+      else skippedByRowLabel.set(rowLabel, [reason]);
+    }
+    const skipped: ImportXlsxSkippedTest[] = [
+      ...skippedByRowLabel.entries(),
+    ].map(([rowLabel, errs]) => ({ rowLabel, errors: errs }));
+
+    let created = 0;
+    let updated = 0;
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      const now = new Date();
+      for (const { dto, matchedId } of testsToWrite) {
+        const { samples, resultParams, rowLabel: _rowLabel, ...scalars } = dto;
+        const cleanSamples = this.cleanImportSampleDtos(samples);
+        const cleanParams = this.cleanImportParamDtos(resultParams);
+        if (matchedId) {
+          await tx.labTest.update({ where: { id: matchedId }, data: scalars });
+          const where = { labTestId: matchedId, tenantId, deletedAt: null };
+          await tx.labTestSample.updateMany({
+            where,
+            data: { deletedAt: now },
+          });
+          await this.createSamples(
+            tx,
+            tenantId,
+            masterData.branchId,
+            matchedId,
+            cleanSamples,
+          );
+          await this.upsertParamsByCode(
+            tx,
+            tenantId,
+            masterData.branchId,
+            matchedId,
+            cleanParams,
+            now,
+          );
+          updated += 1;
+        } else {
+          const labTest = await tx.labTest.create({
+            data: {
+              ...scalars,
+              tenantId,
+              branchId: masterData.branchId,
+              masterDataId,
+              versionHistory: [
+                this.seedVersion(actorId),
+              ] as unknown as Prisma.InputJsonValue,
+            },
+          });
+          await this.createSamples(
+            tx,
+            tenantId,
+            masterData.branchId,
+            labTest.id,
+            cleanSamples,
+          );
+          await this.createParams(
+            tx,
+            tenantId,
+            masterData.branchId,
+            labTest.id,
+            cleanParams,
+          );
+          created += 1;
+        }
+      }
+    });
+
+    return { created, updated, skipped };
+  }
+
+  /**
+   * The real human-readable message from a `ValidationException` (or any
+   * `KaltrosException`). `HttpException.message` is NOT this — Nest derives it
+   * from the exception's constructor name when the `super()` response is an
+   * object (as `KaltrosException` always passes), so the actual message must
+   * be read back out of `getResponse().error.message`.
+   */
+  private validationMessage(e: ValidationException): string {
+    const response = e.getResponse();
+    if (
+      typeof response === 'object' &&
+      response !== null &&
+      'error' in response
+    ) {
+      const err = (response as { error?: { message?: unknown } }).error;
+      if (typeof err?.message === 'string') return err.message;
+    }
+    return e.message;
+  }
+
+  /**
+   * Strip the import-only `rowLabel` field from a set of assembled sample
+   * rows before handing them to `createSamples` (which passes them straight
+   * to Prisma's `createMany` — an unknown column throws).
+   */
+  private cleanImportSampleDtos(
+    samples: ImportXlsxSampleRowDto[] | undefined,
+  ): CreateLabTestDto['samples'] {
+    return samples?.map(({ rowLabel: _rowLabel, ...rest }) => rest);
+  }
+
+  /**
+   * Strip the import-only `rowLabel`/`reflexTestNames` fields from a set of
+   * assembled result-parameter rows (and their nested reference ranges/
+   * values) before handing them to `createParams`. `reflexTestNames` is
+   * export-only/informational (no name→id lookup is built for v1 — see the
+   * DTO's doc comment) so it never reaches the write payload.
+   */
+  private cleanImportParamDtos(
+    params: ImportXlsxResultParamRowDto[] | undefined,
+  ): LabTestResultParamDto[] | undefined {
+    return params?.map(
+      ({
+        rowLabel: _rowLabel,
+        reflexTestNames: _reflexTestNames,
+        referenceRanges,
+        referenceValues,
+        ...rest
+      }) => ({
+        ...rest,
+        referenceRanges: referenceRanges?.map(({ rowLabel: _rrl, ...r }) => r),
+        referenceValues: referenceValues?.map(({ rowLabel: _vrl, ...v }) => v),
+      }),
+    );
+  }
+
+  /**
+   * Flatten a (possibly nested, e.g. a `samples[0].containerType` failure)
+   * class-validator error into `{ rowLabel, message }` pairs, recursing
+   * through `children` since a parent-level error (e.g. on `samples`)
+   * carries no `constraints` of its own — only its children do. Each nested
+   * item (a sample/result-param/range/value DTO instance) carries its OWN
+   * `rowLabel` on `error.target` when set; falls back to the parent test's
+   * row-span label otherwise.
+   */
+  private flattenValidationMessages(
+    error: {
+      property: string;
+      constraints?: Record<string, string>;
+      children?: unknown[];
+      target?: unknown;
+    },
+    fallbackRowLabel: string,
+  ): { rowLabel: string; message: string }[] {
+    const ownRowLabel =
+      (error.target as { rowLabel?: string } | undefined)?.rowLabel ??
+      fallbackRowLabel;
+    const messages: { rowLabel: string; message: string }[] = [];
+    if (error.constraints) {
+      messages.push(
+        ...Object.values(error.constraints).map((m) => ({
+          rowLabel: ownRowLabel,
+          message: this.humanizeValidationMessage(error.property, m),
+        })),
+      );
+    }
+    for (const child of error.children ?? []) {
+      messages.push(
+        ...this.flattenValidationMessages(
+          child as {
+            property: string;
+            constraints?: Record<string, string>;
+            children?: unknown[];
+            target?: unknown;
+          },
+          ownRowLabel,
+        ),
+      );
+    }
+    return messages;
+  }
+
+  /**
+   * Rewrite a raw class-validator constraint message (which always embeds
+   * the DTO's camelCase property name, e.g. "priceMsrp must be an integer
+   * number") into one naming the actual Excel column a spreadsheet user
+   * sees (e.g. "Price MSRP must be an integer number"). Falls back to the
+   * bare property name only if it's not in `FIELD_TO_COLUMN_LABEL` (should
+   * not happen for any field on the import DTOs — see that map's doc
+   * comment — but never worse than the previous, fully-raw message).
+   */
+  private humanizeValidationMessage(property: string, message: string): string {
+    const label = FIELD_TO_COLUMN_LABEL[property] ?? property;
+    // Replace whole-word occurrences only, so a property name that happens
+    // to be a substring of another word in the message is left alone.
+    const fieldPattern = new RegExp(
+      `\\b${property.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`,
+      'g',
+    );
+    let result = message.replace(fieldPattern, label);
+    // An @IsEnum failure lists valid values by raw enum member (e.g.
+    // "SINGLE_STEP, MULTI_STEP") — swap each for the label the user actually
+    // types into the sheet.
+    for (const [value, valueLabel] of Object.entries(ENUM_VALUE_TO_LABEL)) {
+      const valuePattern = new RegExp(`\\b${value}\\b`, 'g');
+      result = result.replace(valuePattern, valueLabel);
+    }
+    return result;
+  }
+
+  // ── Excel import parsing helpers (single flat sheet) ────────────────────
+
+  /** A cell's value as a trimmed string (handles ExcelJS rich-text/formula cells). */
+  private cellToString(value: ExcelJS.CellValue): string {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'object' && 'text' in (value as object)) {
+      return this.asString((value as { text: unknown }).text).trim();
+    }
+    if (typeof value === 'object' && 'result' in (value as object)) {
+      return this.asString((value as { result: unknown }).result).trim();
+    }
+    return this.asString(value).trim();
+  }
+
+  /** Safely stringify a value of unknown shape without risking `[object Object]`. */
+  private asString(value: unknown): string {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return String(value);
+    }
+    if (value instanceof Date) return value.toISOString();
+    return '';
+  }
+
+  /** Coerce one cell's raw (already-stringified) value according to the
+   * target field's declared type. `str === ''` → `undefined` (blank cell). */
+  private coerceCellValue(field: string, str: string): unknown {
+    if (str === '') return undefined;
+    if (BOOLEAN_FIELDS.has(field)) {
+      return ['true', 'yes', '1'].includes(str.toLowerCase());
+    }
+    if (field === 'isActive') {
+      return STATUS_LABEL_TO_ACTIVE[str] ?? str;
+    }
+    if (field === 'scheduleDays') {
+      return str
+        .split(';')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((s) => DAY_LABEL_TO_ENUM[s] ?? s);
+    }
+    if (SEMICOLON_LIST_FIELDS.has(field)) {
+      return str
+        .split(';')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+    if (field === 'discountCapPct') {
+      // "20%" or "20" — strip a trailing percent sign before numeric coercion.
+      const n = Number(str.replace(/%\s*$/, ''));
+      return Number.isFinite(n) ? Math.round(n) : str;
+    }
+    if (INTEGER_FIELDS.has(field)) {
+      const n = Number(str);
+      return Number.isFinite(n) ? Math.round(n) : str;
+    }
+    if (NUMERIC_FIELDS.has(field)) {
+      const n = Number(str);
+      return Number.isFinite(n) ? n : str;
+    }
+    if (ENUM_LABEL_FIELDS[field]) {
+      return this.lookupEnumLabel(field, str) ?? str;
+    }
+    return str;
+  }
+
+  /** Case-insensitive lookup into `ENUM_LABEL_FIELDS[field]` — the reference
+   * file itself uses inconsistent casing for free-typed shorthand (e.g.
+   * "yrs" vs "Yrs", "day" vs "Days"), so an exact-case match would reject
+   * perfectly legible data. Built once per field and cached. */
+  private static readonly LOWERCASED_ENUM_LABELS = new Map<
+    string,
+    Map<string, string>
+  >();
+  private lookupEnumLabel(field: string, str: string): string | undefined {
+    let map = LabTestService.LOWERCASED_ENUM_LABELS.get(field);
+    if (!map) {
+      const labels = ENUM_LABEL_FIELDS[field] ?? {};
+      map = new Map(
+        Object.entries(labels).map(([label, value]) => [
+          label.toLowerCase(),
+          value,
+        ]),
+      );
+      LabTestService.LOWERCASED_ENUM_LABELS.set(field, map);
+    }
+    return map.get(str.toLowerCase());
+  }
+
+  /**
+   * Convert a 12-hour clock string (e.g. "11:00 AM", "2:30 pm") to 24-hour
+   * `HH:mm`. Returns the original string unchanged if it doesn't match the
+   * expected 12h shape (so a malformed value surfaces as a normal
+   * `Matches(HH_MM)` validation failure instead of silently disappearing).
+   */
+  private to24Hour(value: string): string {
+    const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec(value.trim());
+    if (!m) return value;
+    let hour = Number(m[1]);
+    const minute = m[2];
+    const period = m[3]!.toUpperCase();
+    if (period === 'AM') {
+      if (hour === 12) hour = 0;
+    } else if (hour !== 12) {
+      hour += 12;
+    }
+    return `${String(hour).padStart(2, '0')}:${minute}`;
+  }
+
+  /** Batch-resolve a set of catalogue names (case-insensitive) → ids. */
+  private async namesToIds(
+    model: 'department' | 'category' | 'subCategory',
+    tenantId: string,
+    namesRaw: (string | undefined)[],
+  ): Promise<Map<string, string>> {
+    const names = [
+      ...new Set(
+        namesRaw
+          .map((n) => (typeof n === 'string' ? n.trim() : ''))
+          .filter(Boolean),
+      ),
+    ];
+    const map = new Map<string, string>();
+    if (!names.length) return map;
+    // `mode: 'insensitive'` — the sheet's Department/Category/Sub Category
+    // text is free-typed by a business user and won't reliably match the
+    // catalogue's stored casing (e.g. reference file has "BIOCHEMISTRY" for
+    // a catalogue row actually named "Biochemistry").
+    const where = {
+      tenantId,
+      deletedAt: null,
+      OR: names.map((name) => ({
+        name: { equals: name, mode: 'insensitive' as const },
+      })),
+    };
+    const rows =
+      model === 'department'
+        ? await this.prisma.department.findMany({
+            where,
+            select: { id: true, name: true },
+          })
+        : model === 'category'
+          ? await this.prisma.category.findMany({
+              where,
+              select: { id: true, name: true },
+            })
+          : await this.prisma.subCategory.findMany({
+              where,
+              select: { id: true, name: true },
+            });
+    for (const r of rows) map.set(r.name.toLowerCase(), r.id);
+    return map;
+  }
+
+  /** Resolve one classification-name field (currently holding the raw sheet
+   * text) to an id, or record a lookup error. Blank stays blank/undefined. */
+  private resolveOptionalNameField(
+    raw: string | undefined,
+    label: string,
+    nameToId: Map<string, string>,
+    rowLabel: string,
+    errors: string[],
+  ): string | undefined {
+    if (raw === undefined || raw === null || raw === '') return undefined;
+    const id = nameToId.get(raw.trim().toLowerCase());
+    if (!id) {
+      errors.push(`${rowLabel}: ${label} '${raw}' not found`);
+      return undefined;
+    }
+    return id;
+  }
+
+  /**
+   * Resolve every canonical `XLSX_COLUMNS` position this parser needs, once
+   * per import, keyed by a friendly name. Several header labels repeat
+   * (`Parameter Name`/`Method`/`GENDER`/`AGE FROM`/`AGE FROM UNIT`/`AGE TO`/
+   * `AGE TO UNIT`/`ABNORMAL FLAG LOGIC` each appear in the Result Parameter
+   * block AND the Reference Range block AND/or the Reference Value block —
+   * see the header-count check in the reference CSV), so `occurrence`
+   * disambiguates which one a given field means (0 = Result Parameter
+   * block's own copy, 1 = Reference Range block's copy, 2 = Reference Value
+   * block's copy, matching left-to-right order in `XLSX_COLUMNS`).
+   */
+  private buildColumnIndex(): ColumnIndex {
+    const idx = (label: string, occurrence = 0): number => {
+      let seen = -1;
+      for (let i = 0; i < XLSX_COLUMNS.length; i++) {
+        if (XLSX_COLUMNS[i] === label) {
+          seen += 1;
+          if (seen === occurrence) return i;
+        }
+      }
+      throw new Error(
+        `Unknown column label '${label}' (occurrence ${occurrence})`,
+      );
+    };
+    return {
+      testName: idx('Test Name'),
+      sampleName: idx('Sample Name'),
+      sampleType: idx('Sample Type'),
+      containerType: idx('Conatiner Type'),
+      sampleSize: idx('Sample Size'),
+      collectionMethod: idx('collection method'),
+      numberOfSamples: idx('number of samples'),
+      stability: idx('stability'),
+      transportTemperature: idx('transport temperature'),
+      preservative: idx('preservative'),
+      sampleHandlingInstructions: idx('sample handling instructions'),
+      fastingRequired: idx('fasting required'),
+      lightProtection: idx('light protection'),
+      setAsDefault: idx('set as default'),
+      groupName: idx('Group Name'),
+      groupLayout: idx('Group Layout'),
+      groupSettings: idx('Group Settings'),
+      paramName: idx('Parameter Name', 0),
+      parameterCode: idx('Parameter Code'),
+      paramMethod: idx('Method', 0),
+      reportingUnit: idx('reporting unit'),
+      resultType: idx('Result type'),
+      parameterType: idx('parameter type'),
+      nabl: idx('NABL'),
+      cap: idx('CAP'),
+      resultRoundingType: idx('result rounding type'),
+      iconSettings: idx('icon settings'),
+      reflexTest: idx('reflex test'),
+      calculationFormula: idx('calculation formula'),
+      allowableUnits: idx('allowable units'),
+      paramNotes: idx('Notes'),
+      rangeMethod: idx('Method', 1),
+      rangeGender: idx('GENDER', 0),
+      rangeAgeFrom: idx('AGE FROM', 0),
+      rangeAgeFromUnit: idx('AGE FROM UNIT', 0),
+      rangeAgeTo: idx('AGE TO', 0),
+      rangeAgeToUnit: idx('AGE TO UNIT', 0),
+      lowerLimit: idx('LOWER LIMIT'),
+      upperLimit: idx('UPPER LIMIT'),
+      criticalMin: idx('CRITICAL MIN'),
+      criticalMax: idx('CRITICAL MAX'),
+      displayOfRange: idx('DISPLAY OF REFERENCE RANGE'),
+      rangeFlag: idx('ABNORMAL FLAG LOGIC', 0),
+      valueMethod: idx('Method', 2),
+      valueGender: idx('GENDER', 1),
+      valueAgeFrom: idx('AGE FROM', 1),
+      valueAgeFromUnit: idx('AGE FROM UNIT', 1),
+      valueAgeTo: idx('AGE TO', 1),
+      valueAgeToUnit: idx('AGE TO UNIT', 1),
+      displayOfValue: idx('DISPLAY OF REFERENCE VALUE'),
+      valueFlag: idx('ABNORMAL FLAG LOGIC', 1),
+    };
+  }
+
+  /** Assemble a test-span's FIRST row into the Test-level scalar `ImportXlsxTestRowDto` fields. */
+  private buildTestScalarsDto(
+    firstRow: { v: string[] },
+    rowLabel: string,
+  ): ImportXlsxTestRowDto {
+    const v = firstRow.v;
+    const at = (i: number) => v[i] ?? '';
+    const dto = new ImportXlsxTestRowDto();
+    dto.rowLabel = rowLabel;
+    dto.testName = at(0);
+    dto.testDisplayName = this.coerceCellValue('testDisplayName', at(1)) as
+      | string
+      | undefined;
+    dto.testCode = at(2);
+    dto.aka = this.coerceCellValue('aka', at(3)) as string | undefined;
+    // Department/Category/Sub Category are resolved name→id AFTER this
+    // build step (see step 5 in `importXlsx`) — stash the raw name here.
+    dto.departmentId = at(4) || undefined;
+    dto.categoryId = at(5) || undefined;
+    dto.subCategoryId = at(6) || undefined;
+    dto.processMethod = this.coerceCellValue('processMethod', at(7)) as
+      | ProcessMethod
+      | undefined;
+    dto.approvalWorkflowId = at(8) || undefined;
+    dto.isMandatoryTest = this.coerceCellValue('isMandatoryTest', at(9)) as
+      | boolean
+      | undefined;
+    // "Mandatory Department" (added on top of the reference file's 117
+    // columns — see the doc comment on `ImportXlsxTestRowDto`) is resolved
+    // name→id AFTER this build step, same as departmentId/categoryId above.
+    dto.mandatoryDeptId = at(10) || undefined;
+    dto.isRepeatIntervalRestriction = this.coerceCellValue(
+      'isRepeatIntervalRestriction',
+      at(11),
+    ) as boolean | undefined;
+    dto.repeatIntervalValue = this.coerceCellValue(
+      'repeatIntervalValue',
+      at(12),
+    ) as number | undefined;
+    dto.repeatIntervalUnit = this.coerceCellValue(
+      'repeatIntervalUnit',
+      at(13),
+    ) as RepeatIntervalUnit | undefined;
+    dto.isHideInOrderScreen = this.coerceCellValue(
+      'isHideInOrderScreen',
+      at(14),
+    ) as boolean | undefined;
+    dto.clinicalTags = this.coerceCellValue('clinicalTags', at(15)) as
+      | string[]
+      | undefined;
+    dto.icdCode = at(16) || undefined;
+    dto.loincCode = at(17) || undefined;
+    dto.reportTemplateId = at(18) || undefined;
+    dto.samplePriorityType = this.coerceCellValue(
+      'samplePriorityType',
+      at(19),
+    ) as SamplePriority | undefined;
+    dto.pdfSettingsId = at(20) || undefined;
+    dto.imageSettingsId = at(21) || undefined;
+    dto.isEnableCms = this.coerceCellValue('isEnableCms', at(22)) as
+      | boolean
+      | undefined;
+    dto.priceMsrp = this.coerceCellValue('priceMsrp', at(23)) as
+      | number
+      | undefined;
+    dto.priceMaximum = this.coerceCellValue('priceMaximum', at(24)) as
+      | number
+      | undefined;
+    dto.priceMinimum = this.coerceCellValue('priceMinimum', at(25)) as
+      | number
+      | undefined;
+    dto.priceOriginal = this.coerceCellValue('priceOriginal', at(26)) as
+      | number
+      | undefined;
+    dto.franchisePrice = this.coerceCellValue('franchisePrice', at(27)) as
+      | number
+      | undefined;
+    dto.emergencyPrice = this.coerceCellValue('emergencyPrice', at(28)) as
+      | number
+      | undefined;
+    dto.isAllowPriceOverride = this.coerceCellValue(
+      'isAllowPriceOverride',
+      at(29),
+    ) as boolean | undefined;
+    dto.discountCapPct = this.coerceCellValue('discountCapPct', at(30)) as
+      | number
+      | undefined;
+    dto.tatMinValue = this.coerceCellValue('tatMinValue', at(31)) as
+      | number
+      | undefined;
+    dto.tatMinUnit = this.coerceCellValue('tatMinUnit', at(32)) as
+      | TatUnit
+      | undefined;
+    dto.tatMaxValue = this.coerceCellValue('tatMaxValue', at(33)) as
+      | number
+      | undefined;
+    dto.tatMaxUnit = this.coerceCellValue('tatMaxUnit', at(34)) as
+      | TatUnit
+      | undefined;
+    dto.scheduleDays = this.coerceCellValue('scheduleDays', at(35)) as
+      | DayOfWeek[]
+      | undefined;
+    dto.scheduleFrom = at(36) ? this.to24Hour(at(36)) : undefined;
+    dto.scheduleTo = at(37) ? this.to24Hour(at(37)) : undefined;
+    dto.procTimeMinValue = this.coerceCellValue('procTimeMinValue', at(38)) as
+      | number
+      | undefined;
+    dto.procTimeMinUnit = this.coerceCellValue('procTimeMinUnit', at(39)) as
+      | TatUnit
+      | undefined;
+    dto.procTimeMaxValue = this.coerceCellValue('procTimeMaxValue', at(40)) as
+      | number
+      | undefined;
+    dto.procTimeMaxUnit = this.coerceCellValue('procTimeMaxUnit', at(41)) as
+      | TatUnit
+      | undefined;
+    dto.approvalDurationMinValue = this.coerceCellValue(
+      'approvalDurationMinValue',
+      at(42),
+    ) as number | undefined;
+    dto.approvalDurationMinUnit = this.coerceCellValue(
+      'approvalDurationMinUnit',
+      at(43),
+    ) as TatUnit | undefined;
+    dto.approvalDurationMaxValue = this.coerceCellValue(
+      'approvalDurationMaxValue',
+      at(44),
+    ) as number | undefined;
+    dto.approvalDurationMaxUnit = this.coerceCellValue(
+      'approvalDurationMaxUnit',
+      at(45),
+    ) as TatUnit | undefined;
+    dto.reportingTimeFrom = at(46) ? this.to24Hour(at(46)) : undefined;
+    dto.reportingTimeTo = at(47) ? this.to24Hour(at(47)) : undefined;
+    // at(48)="Bill Only Test", at(50)="Outsource", at(52)="Sample Flow" — no
+    // matching DB field; read but intentionally discarded (export-only).
+    dto.isAllowDiscounts = this.coerceCellValue('isAllowDiscounts', at(49)) as
+      | boolean
+      | undefined;
+    dto.isPreferenceTest = this.coerceCellValue('isPreferenceTest', at(51)) as
+      | boolean
+      | undefined;
+    dto.isActive = this.coerceCellValue('isActive', at(53)) as
+      | boolean
+      | undefined;
+    dto.usefulFor = at(109) || undefined;
+    dto.interpretationOfResults = at(110) || undefined;
+    dto.limitations = at(111) || undefined;
+    dto.remarks = at(112) || undefined;
+    dto.references = at(113) || undefined;
+    return dto;
+  }
+
+  /**
+   * Build a test's sample list from its row-span: Samples align
+   * POSITIONALLY — the Nth row of the span (that has any non-blank Sample
+   * column) contributes the Nth sample. A row with every Sample column blank
+   * contributes no sample (the Parameter/Range/Value "track" may simply be
+   * longer for that test).
+   */
+  private buildSamplesForSpan(
+    rows: { rowNum: number; v: string[] }[],
+    COL: ColumnIndex,
+  ): ImportXlsxSampleRowDto[] {
+    const samples: ImportXlsxSampleRowDto[] = [];
+    for (const row of rows) {
+      const v = row.v;
+      const sampleName = v[COL.sampleName] ?? '';
+      const sampleType = v[COL.sampleType] ?? '';
+      const hasAny =
+        sampleName !== '' ||
+        sampleType !== '' ||
+        (v[COL.containerType] ?? '') !== '' ||
+        (v[COL.sampleSize] ?? '') !== '' ||
+        (v[COL.collectionMethod] ?? '') !== '' ||
+        (v[COL.numberOfSamples] ?? '') !== '' ||
+        (v[COL.stability] ?? '') !== '' ||
+        (v[COL.transportTemperature] ?? '') !== '' ||
+        (v[COL.preservative] ?? '') !== '' ||
+        (v[COL.sampleHandlingInstructions] ?? '') !== '' ||
+        (v[COL.fastingRequired] ?? '') !== '' ||
+        (v[COL.lightProtection] ?? '') !== '' ||
+        (v[COL.setAsDefault] ?? '') !== '';
+      if (!hasAny) continue;
+      const dto = new ImportXlsxSampleRowDto();
+      dto.rowLabel = `Row ${row.rowNum}`;
+      dto.sampleNameId = sampleName || undefined;
+      dto.sampleType = sampleType || undefined;
+      dto.containerType = this.coerceCellValue(
+        'containerType',
+        v[COL.containerType] ?? '',
+      ) as ContainerType | undefined;
+      dto.sampleSize = v[COL.sampleSize] || undefined;
+      dto.collectionMethod = v[COL.collectionMethod] || undefined;
+      dto.numberOfSamples = this.coerceCellValue(
+        'numberOfSamples',
+        v[COL.numberOfSamples] ?? '',
+      ) as number | undefined;
+      dto.stability = v[COL.stability] || undefined;
+      dto.transportTemperature = v[COL.transportTemperature] || undefined;
+      dto.preservative = v[COL.preservative] || undefined;
+      dto.sampleHandlingInstructions =
+        v[COL.sampleHandlingInstructions] || undefined;
+      dto.isFastingRequired = this.coerceCellValue(
+        'isFastingRequired',
+        v[COL.fastingRequired] ?? '',
+      ) as boolean | undefined;
+      dto.isLightProtection = this.coerceCellValue(
+        'isLightProtection',
+        v[COL.lightProtection] ?? '',
+      ) as boolean | undefined;
+      dto.isDefault = this.coerceCellValue(
+        'isDefault',
+        v[COL.setAsDefault] ?? '',
+      ) as boolean | undefined;
+      samples.push(dto);
+    }
+    return samples;
+  }
+
+  /**
+   * Build a test's result-parameter list (with nested reference ranges/
+   * values) from its row-span, per the contiguous-block rule: a row whose
+   * "Parameter Name" is non-blank starts a new parameter block (its own
+   * columns filled, plus its first range/value if present on that same
+   * row); continuation rows (blank Parameter Name) contribute only their
+   * Reference Range and/or Reference Value columns to the CURRENT (most
+   * recent) parameter, until the row-span ends or another non-blank
+   * Parameter Name starts the next block.
+   */
+  private buildParamsForSpan(
+    rows: { rowNum: number; v: string[] }[],
+    COL: ColumnIndex,
+    errors: string[],
+  ): ImportXlsxResultParamRowDto[] {
+    const params: ImportXlsxResultParamRowDto[] = [];
+    let current: ImportXlsxResultParamRowDto | null = null;
+    let ownerRowLabel = '';
+
+    const rangeHasAny = (v: string[]) =>
+      (v[COL.rangeMethod] ?? '') !== '' ||
+      (v[COL.rangeGender] ?? '') !== '' ||
+      (v[COL.rangeAgeFrom] ?? '') !== '' ||
+      (v[COL.rangeAgeFromUnit] ?? '') !== '' ||
+      (v[COL.rangeAgeTo] ?? '') !== '' ||
+      (v[COL.rangeAgeToUnit] ?? '') !== '' ||
+      (v[COL.lowerLimit] ?? '') !== '' ||
+      (v[COL.upperLimit] ?? '') !== '' ||
+      (v[COL.criticalMin] ?? '') !== '' ||
+      (v[COL.criticalMax] ?? '') !== '' ||
+      (v[COL.displayOfRange] ?? '') !== '' ||
+      (v[COL.rangeFlag] ?? '') !== '';
+
+    const valueHasAny = (v: string[]) =>
+      (v[COL.valueMethod] ?? '') !== '' ||
+      (v[COL.valueGender] ?? '') !== '' ||
+      (v[COL.valueAgeFrom] ?? '') !== '' ||
+      (v[COL.valueAgeFromUnit] ?? '') !== '' ||
+      (v[COL.valueAgeTo] ?? '') !== '' ||
+      (v[COL.valueAgeToUnit] ?? '') !== '' ||
+      (v[COL.displayOfValue] ?? '') !== '' ||
+      (v[COL.valueFlag] ?? '') !== '';
+
+    for (const row of rows) {
+      const v = row.v;
+      const paramName = v[COL.paramName] ?? '';
+      if (paramName !== '') {
+        const dto = new ImportXlsxResultParamRowDto();
+        dto.rowLabel = `Row ${row.rowNum}`;
+        dto.groupName = v[COL.groupName] || undefined;
+        dto.groupLayoutId = v[COL.groupLayout] || undefined;
+        dto.groupSettingsId = v[COL.groupSettings] || undefined;
+        dto.parameterName = paramName;
+        dto.parameterCode = v[COL.parameterCode] ?? '';
+        dto.method = v[COL.paramMethod] || undefined;
+        dto.reportingUnit = v[COL.reportingUnit] || undefined;
+        dto.resultType = (this.coerceCellValue(
+          'resultType',
+          v[COL.resultType] ?? '',
+        ) ?? 'QUANTITATIVE') as ResultType;
+        dto.parameterType = this.coerceCellValue(
+          'parameterType',
+          v[COL.parameterType] ?? '',
+        ) as ParameterType | undefined;
+        dto.isNabl = this.coerceCellValue('isNabl', v[COL.nabl] ?? '') as
+          | boolean
+          | undefined;
+        dto.isCap = this.coerceCellValue('isCap', v[COL.cap] ?? '') as
+          | boolean
+          | undefined;
+        dto.resultRoundingType = this.coerceCellValue(
+          'resultRoundingType',
+          v[COL.resultRoundingType] ?? '',
+        ) as ResultRounding | undefined;
+        dto.iconSettingsId = v[COL.iconSettings] || undefined;
+        // `imgae settings` (sic) — no matching DB field; not read.
+        dto.reflexTestNames = v[COL.reflexTest] || undefined;
+        dto.calculationFormula = v[COL.calculationFormula] || undefined;
+        dto.allowableUnits = v[COL.allowableUnits] || undefined;
+        dto.notes = v[COL.paramNotes] || undefined;
+        dto.referenceRanges = [];
+        dto.referenceValues = [];
+        params.push(dto);
+        current = dto;
+        ownerRowLabel = `Row ${row.rowNum}`;
+      }
+
+      if (!current) {
+        if (rangeHasAny(v) || valueHasAny(v)) {
+          errors.push(
+            `Row ${row.rowNum}: a Reference Range/Value is present but no Result Parameter has been introduced yet`,
+          );
+        }
+        continue;
+      }
+
+      if (rangeHasAny(v)) {
+        const range = new ImportXlsxReferenceRangeRowDto();
+        range.rowLabel = `Row ${row.rowNum}`;
+        range.method = v[COL.rangeMethod] || undefined;
+        range.gender = this.coerceCellValue(
+          'gender',
+          v[COL.rangeGender] ?? '',
+        ) as ReferenceGender | undefined;
+        range.ageFrom = this.coerceCellValue(
+          'ageFrom',
+          v[COL.rangeAgeFrom] ?? '',
+        ) as number | undefined;
+        range.ageFromUnit = this.coerceCellValue(
+          'ageFromUnit',
+          v[COL.rangeAgeFromUnit] ?? '',
+        ) as AgeUnit | undefined;
+        range.ageTo = this.coerceCellValue('ageTo', v[COL.rangeAgeTo] ?? '') as
+          | number
+          | undefined;
+        range.ageToUnit = this.coerceCellValue(
+          'ageToUnit',
+          v[COL.rangeAgeToUnit] ?? '',
+        ) as AgeUnit | undefined;
+        range.lowerLimit = this.coerceCellValue(
+          'lowerLimit',
+          v[COL.lowerLimit] ?? '',
+        ) as number | undefined;
+        range.upperLimit = this.coerceCellValue(
+          'upperLimit',
+          v[COL.upperLimit] ?? '',
+        ) as number | undefined;
+        range.criticalMin = this.coerceCellValue(
+          'criticalMin',
+          v[COL.criticalMin] ?? '',
+        ) as number | undefined;
+        range.criticalMax = this.coerceCellValue(
+          'criticalMax',
+          v[COL.criticalMax] ?? '',
+        ) as number | undefined;
+        range.displayOfReferenceRange = v[COL.displayOfRange] || undefined;
+        range.abnormalFlagLogic = this.coerceCellValue(
+          'abnormalFlagLogic',
+          v[COL.rangeFlag] ?? '',
+        ) as AbnormalFlag | undefined;
+        this.assertImportRangeQuiet(range, range.rowLabel, errors);
+        current.referenceRanges = current.referenceRanges ?? [];
+        current.referenceRanges.push(range);
+      }
+
+      if (valueHasAny(v)) {
+        const value = new ImportXlsxReferenceValueRowDto();
+        value.rowLabel = `Row ${row.rowNum}`;
+        value.method = v[COL.valueMethod] || undefined;
+        value.gender = this.coerceCellValue(
+          'gender',
+          v[COL.valueGender] ?? '',
+        ) as ReferenceGender | undefined;
+        value.ageFrom = this.coerceCellValue(
+          'ageFrom',
+          v[COL.valueAgeFrom] ?? '',
+        ) as number | undefined;
+        value.ageFromUnit = this.coerceCellValue(
+          'ageFromUnit',
+          v[COL.valueAgeFromUnit] ?? '',
+        ) as AgeUnit | undefined;
+        value.ageTo = this.coerceCellValue('ageTo', v[COL.valueAgeTo] ?? '') as
+          | number
+          | undefined;
+        value.ageToUnit = this.coerceCellValue(
+          'ageToUnit',
+          v[COL.valueAgeToUnit] ?? '',
+        ) as AgeUnit | undefined;
+        value.normalValueText = v[COL.displayOfValue] ?? '';
+        value.abnormalFlagLogic = this.coerceCellValue(
+          'abnormalFlagLogic',
+          v[COL.valueFlag] ?? '',
+        ) as AbnormalFlag | undefined;
+        current.referenceValues = current.referenceValues ?? [];
+        current.referenceValues.push(value);
+      }
+    }
+    void ownerRowLabel;
+
+    return params;
+  }
+
+  /** Validate a result parameter + its embedded reference ranges (import path). */
+  private assertImportParam(p: ImportXlsxResultParamRowDto): void {
+    if (p.parameterType === ParameterType.CALCULATED && !p.calculationFormula) {
+      throw new ValidationException(
+        'calculationFormula is required when parameterType is CALCULATED',
+        { parameterCode: p.parameterCode },
+      );
+    }
+    (p.referenceRanges ?? []).forEach((r) => this.assertRange(r));
+  }
+
+  /** Validate a range row's numeric bounds without throwing (aggregate instead). */
+  private assertImportRangeQuiet(
+    r: ImportXlsxReferenceRangeRowDto,
+    rowLabel: string | undefined,
+    errors: string[],
+  ): void {
+    try {
+      this.assertRange(r);
+    } catch (e) {
+      if (e instanceof ValidationException) {
+        errors.push(`${rowLabel}: ${this.validationMessage(e)}`);
+        return;
+      }
+      throw e;
+    }
+  }
+
   // ── Helpers ───────────────────────────────────────────────────────────────────
 
   /** Strip undefined keys from one bulk-edit item's changes, yielding a Prisma update. */
@@ -2326,6 +3878,120 @@ export class LabTestService {
     }
   }
 
+  /**
+   * Xlsx-import update path only: replace a test's result parameters while
+   * preserving the DB `id` of any parameter whose `parameterCode` (case-
+   * insensitive) matches one that's already active on this test. Other
+   * modules hold logical (non-FK) references to `LabTestResultParam.id` —
+   * `LabReportResultValue.resultParamId`, `CriticalAlert.resultParamId`,
+   * `OutOfRangeFlag.resultParamId` — so a blind delete-and-recreate on every
+   * re-import (what `createParams` does) would silently orphan any existing
+   * lab report tied to that parameter. A matched parameter's scalars are
+   * patched in place and its reference ranges/values are fully replaced
+   * (those have no natural key in the xlsx format — full-replace there
+   * matches `LabTestService.update()`'s existing contract); an unmatched
+   * uploaded code creates a new parameter; an existing active parameter
+   * whose code no longer appears in the upload is soft-deleted.
+   */
+  private async upsertParamsByCode(
+    tx: Prisma.TransactionClient,
+    tenantId: string | null,
+    branchId: string | null,
+    labTestId: string,
+    params: LabTestResultParamDto[] | undefined,
+    now: Date,
+  ): Promise<void> {
+    const existing = await tx.labTestResultParam.findMany({
+      where: { labTestId, tenantId, deletedAt: null },
+      select: { id: true, parameterCode: true },
+    });
+    const existingByCode = new Map(
+      existing.map((p) => [p.parameterCode.toLowerCase(), p.id]),
+    );
+    const matchedIds = new Set<string>();
+
+    for (const p of params ?? []) {
+      const { referenceRanges, referenceValues, reflexTests, ...paramScalars } =
+        p;
+      const existingId = existingByCode.get(p.parameterCode.toLowerCase());
+
+      let paramId: string;
+      if (existingId) {
+        matchedIds.add(existingId);
+        await tx.labTestResultParam.update({
+          where: { id: existingId },
+          data: {
+            ...paramScalars,
+            reflexTests: (reflexTests ??
+              []) as unknown as Prisma.InputJsonValue,
+          },
+        });
+        paramId = existingId;
+        await tx.labTestReferenceRange.updateMany({
+          where: { paramId, tenantId, deletedAt: null },
+          data: { deletedAt: now },
+        });
+        await tx.labTestReferenceValue.updateMany({
+          where: { paramId, tenantId, deletedAt: null },
+          data: { deletedAt: now },
+        });
+      } else {
+        const created = await tx.labTestResultParam.create({
+          data: {
+            ...paramScalars,
+            reflexTests: (reflexTests ??
+              []) as unknown as Prisma.InputJsonValue,
+            tenantId,
+            branchId,
+            labTestId,
+          },
+        });
+        paramId = created.id;
+      }
+
+      if (referenceRanges?.length) {
+        await tx.labTestReferenceRange.createMany({
+          data: referenceRanges.map((r) => ({
+            ...r,
+            tenantId,
+            branchId,
+            labTestId,
+            paramId,
+          })),
+        });
+      }
+      if (referenceValues?.length) {
+        await tx.labTestReferenceValue.createMany({
+          data: referenceValues.map((v) => ({
+            ...v,
+            tenantId,
+            branchId,
+            labTestId,
+            paramId,
+          })),
+        });
+      }
+    }
+
+    const droppedIds = existing
+      .map((p) => p.id)
+      .filter((id) => !matchedIds.has(id));
+    if (droppedIds.length) {
+      await tx.labTestResultParam.updateMany({
+        where: { id: { in: droppedIds } },
+        data: { deletedAt: now },
+      });
+      await tx.labTestReferenceRange.updateMany({
+        where: { paramId: { in: droppedIds }, deletedAt: null },
+        data: { deletedAt: now },
+      });
+      await tx.labTestReferenceValue.updateMany({
+        where: { paramId: { in: droppedIds }, deletedAt: null },
+        data: { deletedAt: now },
+      });
+    }
+  }
+
   /** A shallow copy of a row with the re-derived meta keys removed (for cloning). */
   private stripMeta(row: Record<string, unknown>): Record<string, unknown> {
     const copy: Record<string, unknown> = { ...row };
@@ -2353,6 +4019,21 @@ export class LabTestService {
       : [];
   }
 
+  /**
+   * Derive a short parameter code from a parameter name, for a brand-new
+   * "Results" sheet row that has no `Parameter Code` column to read one from
+   * (that column isn't on the Results tab — see `RESULT_PARAMS_SHEET_FIELDS`).
+   * Not guaranteed globally unique; a genuine collision within the same test
+   * surfaces as a normal 409 via the DB's partial unique index.
+   */
+  private slugifyParamCode(parameterName: string | undefined): string {
+    const slug = (parameterName ?? '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+    return (slug || 'PARAM').slice(0, 50);
+  }
+
   /** The day before a `YYYY-MM-DD` date, as `YYYY-MM-DD` (UTC). */
   private previousDay(dateStr: string): string {
     const d = new Date(`${dateStr}T00:00:00.000Z`);
@@ -2372,20 +4053,21 @@ export class LabTestService {
     repeatIntervalUnit: string | null;
   }): void {
     if (c.priceMaximum > c.priceMsrp) {
-      throw new ValidationException('priceMaximum must be ≤ priceMsrp', {
+      throw new ValidationException('Price Maximum must be ≤ Price MSRP', {
         priceMaximum: String(c.priceMaximum),
         priceMsrp: String(c.priceMsrp),
       });
     }
     if (c.priceMinimum > c.priceMaximum) {
-      throw new ValidationException('priceMinimum must be ≤ priceMaximum', {
+      throw new ValidationException('Price Minimum must be ≤ Price Maximum', {
         priceMinimum: String(c.priceMinimum),
         priceMaximum: String(c.priceMaximum),
       });
     }
     if (c.isMandatoryTest && !c.mandatoryDeptId) {
       throw new ValidationException(
-        'mandatoryDeptId is required when isMandatoryTest is true',
+        'Mandatory Department is required when Mandatory Test is Yes',
+        { mandatoryDeptId: 'missing' },
       );
     }
     if (
@@ -2393,7 +4075,8 @@ export class LabTestService {
       (c.repeatIntervalValue == null || c.repeatIntervalUnit == null)
     ) {
       throw new ValidationException(
-        'repeatIntervalValue and repeatIntervalUnit are required when isRepeatIntervalRestriction is true',
+        'Repeat Interval Value and Repeat Interval Unit are required when Repeat Interval Restriction is Yes',
+        { repeatIntervalValue: 'missing', repeatIntervalUnit: 'missing' },
       );
     }
   }
