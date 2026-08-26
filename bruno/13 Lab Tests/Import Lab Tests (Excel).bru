@@ -1,0 +1,170 @@
+meta {
+  name: Import Lab Tests (Excel)
+  type: http
+  seq: 21
+}
+
+post {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/lab-tests/import-xlsx
+  body: multipartForm
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:multipart-form {
+  file: @file(C:\path\to\lab-tests-export.xlsx)
+}
+
+vars:pre-request {
+  masterDataId: 3bebbd8d-eef4-4bfa-88f3-3aff4a4a4516
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("reports created/updated/skipped", function () {
+    const data = res.getBody() && res.getBody().data;
+    expect(data).to.have.property("created");
+    expect(data).to.have.property("updated");
+    expect(data).to.have.property("skipped");
+    expect(data.skipped).to.be.an("array");
+  });
+}
+
+docs {
+  Upload an edited `.xlsx` workbook (downloaded from **Export Lab Tests
+  (Excel)**, or hand-built to the same layout) to bulk **upsert** lab tests —
+  the counterpart to the JSON-rows **Bulk Import Lab Tests** endpoint above,
+  but this one supports updates and nested samples/result
+  parameters/reference ranges/values, and reads a real `.xlsx` file instead
+  of pre-parsed JSON.
+
+  Form field name is **`file`**. Only
+  `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+  (`.xlsx`) is accepted; anything else → 400/422 `INVALID_UPLOAD_FILE`. Max
+  size matches the generic attachment cap (10 MB).
+
+  ## Expected file format
+
+  ONE worksheet named **`Lab Tests`**, blank row 1, a 120-column header row
+  2, then data starting row 3. 117 of those columns are the exact list from
+  the business team's reference format — several labels intentionally
+  repeat across the Result Parameter / Reference Range / Reference Value
+  blocks, so columns are matched by **position**, not unique header text. 3
+  columns are additions on top of that reference format — **"Mandatory
+  Department"** (right after "Mandatory Test") and **"Repeat Interval
+  Value"**/**"Repeat Interval Unit"** (right after "Repeat Interval
+  Restriction") — added because the reference format had no way to satisfy
+  `assertCoreInvariants` when the paired flag is Yes; see **Export Lab Tests
+  (Excel)** above for why.
+
+  A test occupies **one or more rows**:
+  - Test-level scalar columns (Test Name → Test Status, the Notes block) are
+    read only from the row where **Test Name is non-blank** — that row
+    starts a new test; every row after it with a blank Test Name is a
+    **continuation row** of that same test.
+  - **Mandatory Department** and **Repeat Interval Value**/**Repeat Interval
+    Unit** are read like any other test-level scalar (from the test's first
+    row only). Mandatory Department is resolved name→id the same way
+    Department is; it's **required** (422 `LAB_TEST_IMPORT_VALIDATION_FAILED`,
+    message "Mandatory Department is required when Mandatory Test is Yes")
+    whenever "Mandatory Test" is Yes. Repeat Interval Value+Unit are likewise
+    both required whenever "Repeat Interval Restriction" is Yes.
+  - **Samples** are read positionally: the sample columns on the test's Nth
+    row belong to its Nth sample.
+  - **Result Parameters** (and their Reference Ranges/Values) are read as
+    **contiguous blocks**: a non-blank "Parameter Name" cell starts a new
+    parameter and claims every row below it (with a blank Parameter Name)
+    until the next non-blank "Parameter Name" or the test's row-span ends.
+    Each of those rows may also carry one Reference Range and/or one
+    Reference Value for that parameter.
+  - **Version Control** columns are read for round-trip display only and are
+    **ignored** on import (version history is managed elsewhere, never
+    bulk-edited via Excel).
+
+  The exported file's test-level and per-parameter-own columns are vertically
+  merged and center-aligned for readability (see **Export Lab Tests
+  (Excel)** above). A merged Excel cell reports its value on every row of the
+  merge (via `getCell()`), so a continuation row's Test Name / Parameter Name
+  cell would otherwise look non-blank too — the parser explicitly detects
+  this (a cell whose merge master lives on an earlier row) and treats it as
+  blank BEFORE grouping rows into tests/parameters, so it behaves exactly
+  like an unmerged file with a genuinely blank continuation cell. **If a
+  user unmerges a Test Name or Parameter Name cell and retypes the same
+  text into every row**, that text is no longer a merge continuation — the
+  file now genuinely looks like two separate tests/parameters with the same
+  name, and import correctly rejects it as a duplicate (not a parsing bug;
+  don't unmerge those two columns). Samples and Reference Ranges/Values are
+  never merged in the export and are always read strictly per-row.
+
+  ## Matching (create vs. update)
+
+  A test matches an existing **active** test in this master data by
+  **Test Code** (case-insensitive); no match creates a new test. There are
+  no hidden id columns in this format.
+
+  **Samples** have no natural key in the xlsx format — on every update, the
+  uploaded file's Samples become the complete new set for that test
+  (existing ones soft-deleted, the uploaded set inserted fresh). Nothing
+  outside this test holds a reference to a `LabTestSample` id, so this is
+  safe.
+
+  **Result Parameters** are different: `LabReportResultValue`,
+  `CriticalAlert`, and `OutOfRangeFlag` all hold a logical reference to
+  `LabTestResultParam.id`, so blindly recreating parameters on every
+  re-import would silently orphan any existing lab report tied to one. To
+  prevent that, a parameter matches an existing **active** one on the same
+  test by **Parameter Code** (case-insensitive):
+  - **Matched** → its `id` is preserved; its own scalar fields are patched
+    in place, and its Reference Ranges/Values are fully replaced (those
+    have no natural key, so full-replace is safe there).
+  - **Unmatched** (a new Parameter Code) → a new parameter is created.
+  - **An existing active parameter whose code is absent from the upload**
+    → soft-deleted (its id and history remain intact for anything still
+    referencing it; it just drops off the live test).
+
+  ## Behaviour
+
+  - **PARTIAL import — every test is validated independently.** Each
+    assembled test is checked on its own: structural (types/required/enum),
+    catalogue-name lookups (Department/Category/Sub Category, case-
+    insensitive), cross-field invariants (price ordering, mandatory-dept,
+    repeat-interval, calc-formula-required), and duplicate `testName`/
+    `testCode`/`parameterCode`. A test with **any** error is **skipped**
+    (not saved) — but every OTHER valid test in the same file is still
+    created/updated in one transaction. A duplicate name/code found between
+    two tests in the same file skips **both** of them (there's no way to
+    tell which one the user meant to keep).
+  - Response is always `200` (never a rejection for a per-test problem) →
+    `{ "created": <count>, "updated": <count>, "skipped": [ { "rowLabel":
+    "Row N" | "Rows N-M", "errors": ["<reason>", ...] }, ... ] }`. `skipped`
+    is `[]` on a fully clean import.
+  - The ONE exception: a **file-level structural failure** — the upload
+    isn't a readable `.xlsx`, the `Lab Tests` sheet or a required column is
+    missing, or there are no data rows at all — has no single test to blame
+    and still rejects the whole file as 422
+    `LAB_TEST_IMPORT_VALIDATION_FAILED` with **nothing** saved, since
+    there's no per-row context left to partially trust.
+
+  **Every error message names the Excel column, never the internal DTO
+  field.** A raw class-validator message always embeds the DTO's camelCase
+  property name (e.g. `"priceMsrp must be an integer number"`, or an
+  `@IsEnum` failure listing raw enum members like `SINGLE_STEP`) — a
+  spreadsheet user has no way to map that back to a column or a value they'd
+  actually type. `LabTestService.humanizeValidationMessage` rewrites every
+  such message before it's returned: the field name becomes its Excel header
+  (`"Price MSRP must be an integer number"`), and any raw enum member in the
+  message becomes the display label the sheet uses (`"must be one of the
+  following values: Single Step, Multi Step"`). This applies uniformly to
+  every field on the test/sample/result-parameter/reference-range/value
+  DTOs — a string typed into a numeric column, an invalid enum label, a
+  too-short Test Name, etc. all read in plain Excel terms.
+
+  Round-trip an unmodified export through this endpoint to confirm
+  `{ created: 0, updated: <all active tests>, skipped: [] }` — a good smoke
+  test before trusting an edited file.
+}
