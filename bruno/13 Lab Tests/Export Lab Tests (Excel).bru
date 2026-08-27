@@ -1,0 +1,98 @@
+meta {
+  name: Export Lab Tests (Excel)
+  type: http
+  seq: 20
+}
+
+get {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/lab-tests/export
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  masterDataId: 3bebbd8d-eef4-4bfa-88f3-3aff4a4a4516
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns a tests array", function () {
+    const data = res.getBody() && res.getBody().data;
+    expect(data).to.have.property("tests");
+    expect(data.tests).to.be.an("array");
+  });
+}
+
+docs {
+  Full, unpaginated snapshot of every **active** lab test in a master data,
+  composed with its samples and result parameters (each carrying its own
+  reference ranges/values) — the source data the frontend turns into the
+  "Lab Tests" Excel workbook (see **Import Lab Tests (Excel)** below).
+
+  Returns `{ "tests": [ { ...LabTest scalars, departmentName, categoryName,
+  subCategoryName, samples: [...], resultParams: [ { ...scalars,
+  reflexTestNames, referenceRanges: [...], referenceValues: [...] } ] } ] }`.
+
+  No pagination — every active test in the master data is returned in one
+  call. Classification names (`departmentName`/`categoryName`/
+  `subCategoryName`) are resolved server-side so the exported sheet is
+  human-editable without a separate lookup call. Each `versionHistory`
+  entry's `modifiedBy`/`approvedBy` is likewise resolved from a raw
+  `Person.id` to a display name (`firstName [middleName] lastName`) server-
+  side — falls back to the raw id only if the person can't be found.
+
+  ## The Excel format
+
+  The frontend builds **one flat worksheet** named `Lab Tests` from this
+  payload: a blank row 1, a 120-column header row 2, then one or more data
+  rows per test starting at row 3. 117 of those columns are the exact
+  set/order the business team specified — several header labels
+  intentionally repeat, e.g. "Parameter Name"/"Method"/"GENDER" appear once
+  in the Result Parameter block and again in the Reference Range block and
+  again in the Reference Value block. 3 columns were added on top of the
+  reference format: **"Mandatory Department"** (right after "Mandatory
+  Test") and **"Repeat Interval Value"**/**"Repeat Interval Unit"** (right
+  after "Repeat Interval Restriction") — the reference file had no column
+  for these, so setting "Mandatory Test"/"Repeat Interval Restriction" to
+  Yes via Excel was a dead end (`assertCoreInvariants` requires the paired
+  field and rejects with no way to fix it — confirmed by a real user hitting
+  exactly this).
+
+  A test spans **multiple physical rows** when it has more than one Sample,
+  Result Parameter, Reference Range, or Reference Value:
+  - Test-level scalar columns (Test Name → Test Status, plus the Notes block
+    and read-only Version Control columns) are written once and **vertically
+    merged** across the test's full row-span, so they visually read as one
+    cell instead of being blank on continuation rows. A merged cell is
+    **center-aligned** (horizontal + vertical center, wrap text) so it reads
+    clearly as one grouped value spanning several rows.
+  - **Samples** align positionally within the test's row-span (the Nth
+    sample's columns land on the Nth row) and are left as separate,
+    unmerged, **top-aligned** rows — each row is a genuinely distinct sample
+    the user can edit independently, never merged even if two samples
+    happen to share the same value.
+  - **Result Parameters** (and their nested Reference Ranges/Values) form
+    **contiguous blocks**: a parameter's own columns populate its first row
+    and are **vertically merged and center-aligned** across just that
+    parameter's own range/value sub-block (not the whole test); its
+    Reference Ranges/Values stay one-per-row, unmerged, top-aligned, since
+    each is genuinely distinct, independently-editable data.
+  - A test's total row count = `max(samples needed, rows needed to lay out
+    all parameters+ranges+values contiguously)`; whichever track is shorter
+    is just blank on the extra rows.
+  - **Merging is structural, never value-based**: only the columns the
+    row-expansion algorithm inherently writes once per test/parameter are
+    merged. Two rows with coincidentally identical Sample/Reference Range/
+    Reference Value data are never merged — only genuine category-level
+    fields (test identity/pricing/TAT/flags/notes, or a parameter's own
+    identity/config) are.
+
+  Round-trip this file unmodified through **Import Lab Tests (Excel)** to
+  confirm `{ created: 0, updated: <same count> }` with no errors.
+}
