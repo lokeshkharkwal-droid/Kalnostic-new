@@ -233,6 +233,27 @@ export class OrderHomeVisitSlotRequiredException extends KaltrosException {
   }
 }
 
+/**
+ * 409 — an invoice has already been generated for this order, so it is locked:
+ * it can no longer be updated or cancelled. Invoice generation is the definitive
+ * point at which the order becomes immutable for update/cancel — independent of
+ * the invoice's payment status. Cancelling the invoice soft-deletes its source
+ * link, which unlocks the order again. `action` records which operation was
+ * blocked ('update' | 'cancel').
+ */
+export class OrderAlreadyInvoicedException extends KaltrosException {
+  constructor(id: string, action: 'update' | 'cancel') {
+    super(
+      'ORDER_ALREADY_INVOICED',
+      action === 'cancel'
+        ? 'This order cannot be cancelled because an invoice has already been generated for this order'
+        : 'This order cannot be updated because an invoice has already been generated for this order',
+      { id, action },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
 /** 409 — the order is already cancelled, so it can't be cancelled again. */
 export class OrderAlreadyCancelledException extends KaltrosException {
   constructor(id: string) {

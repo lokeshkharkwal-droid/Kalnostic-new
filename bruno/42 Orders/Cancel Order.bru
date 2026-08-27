@@ -71,6 +71,12 @@ docs {
     with no `createdBy` stay cancellable by anyone.
 
   Cancelling an already-cancelled order returns 409 `ORDER_ALREADY_CANCELLED`.
+
+  **Invoice lock:** once an invoice has been generated for the order (an active
+  `InvoiceSourceOrder` link exists), cancellation is rejected with 409
+  `ORDER_ALREADY_INVOICED`, regardless of payment status. Cancelling that invoice
+  (`POST /invoices/:id/cancel`) soft-deletes its source link and unlocks the order.
+
   Once cancelled, `POST /payments` for the order is rejected with 422
   `PAYMENT_ORDER_CANCELLED` (further refunds still go through `POST /orders/:id/refund`).
 

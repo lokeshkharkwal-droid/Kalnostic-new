@@ -1,4 +1,7 @@
-import { Body, Controller, Get, Param, Patch } from '@nestjs/common';
+import { UseGuards, Body, Controller, Get, Param, Patch } from '@nestjs/common';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { ScheduledTestService } from './scheduled-test.service';
 import { ScheduleTestDto } from './dto/schedule-test.dto';
@@ -16,10 +19,12 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * status update on an existing row.
  */
 @Controller('scheduled-tests')
+@UseGuards(PermissionGuard)
 export class ScheduledTestController {
   constructor(private readonly scheduledTestService: ScheduledTestService) {}
 
   @Get()
+  @RequirePermission(PERMISSION_KEYS.LAB_ACCESS_SCHEDULED_LIST)
   findAll(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -28,6 +33,7 @@ export class ScheduledTestController {
   }
 
   @Patch(':id')
+  @RequirePermission(PERMISSION_KEYS.LAB_UPDATE_SCHEDULED)
   @Audit({
     module: AuditModule.SCHEDULED_TEST,
     action: AuditAction.UPDATE,
@@ -50,6 +56,7 @@ export class ScheduledTestController {
   }
 
   @Patch(':id/status')
+  @RequirePermission(PERMISSION_KEYS.LAB_UPDATE_SCHEDULED)
   @Audit({
     module: AuditModule.SCHEDULED_TEST,
     action: AuditAction.UPDATE,

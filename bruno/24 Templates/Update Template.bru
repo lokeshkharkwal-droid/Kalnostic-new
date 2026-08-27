@@ -33,6 +33,8 @@ vars:pre-request {
 }
 
 docs {
+  🔒 **RBAC:** requires ANY of `business_admin:templates__edit_sms_template`, `business_admin:templates__edit_email_template`, `business_admin:templates__edit_whatsapp_template`, `business_admin:templates__edit_consent_form` — enforced by `PermissionGuard` (`@RequirePermission` / `@RequireAnyPermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Update a messaging template (partial). Every field is optional and only the
   fields present in the body are changed; `tenantId` / `branchId` are never
   accepted (scope is fixed). The accepted field set matches the Create request

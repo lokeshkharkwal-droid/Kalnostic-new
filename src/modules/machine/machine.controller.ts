@@ -1,4 +1,5 @@
 import {
+  UseGuards,
   Body,
   Controller,
   Delete,
@@ -8,6 +9,9 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { MachineService } from './machine.service';
 import { CreateMachineDto } from './dto/create-machine.dto';
@@ -25,6 +29,7 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * body; adapter logs have their own sub-routes.
  */
 @Controller('machines')
+@UseGuards(PermissionGuard)
 export class MachineController {
   constructor(private readonly machineService: MachineService) {}
 
@@ -32,6 +37,7 @@ export class MachineController {
    * Create a machine (with nested reagent kits, test mappings, and branch ids).
    */
   @Post()
+  @RequirePermission(PERMISSION_KEYS.BR_MACHINE_ADD)
   @Audit({
     module: AuditModule.MACHINE,
     action: AuditAction.CREATE,
@@ -61,6 +67,7 @@ export class MachineController {
    * Update a machine (and replace child / branch sets when provided).
    */
   @Patch(':id')
+  @RequirePermission(PERMISSION_KEYS.BR_MACHINE_EDIT)
   @Audit({
     module: AuditModule.MACHINE,
     action: AuditAction.UPDATE,
@@ -78,6 +85,7 @@ export class MachineController {
    * Soft-delete a machine (cascade soft-deletes its children + branch mappings).
    */
   @Delete(':id')
+  @RequirePermission(PERMISSION_KEYS.BR_MACHINE_DELETE)
   @Audit({
     module: AuditModule.MACHINE,
     action: AuditAction.DELETE,

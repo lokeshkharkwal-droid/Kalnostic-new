@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { BranchModule } from '../branch/branch.module';
+import { PermissionsModule } from '../permissions/permissions.module';
 import { RegistrationSettingsController } from './registration-settings.controller';
 import { RegistrationSettingsService } from './registration-settings.service';
 import { RegistrationIdSequenceController } from './registration-id-sequence.controller';
@@ -8,7 +9,7 @@ import { RegistrationIdSequenceService } from './registration-id-sequence.servic
 import { ExternalIdService } from './external-id.service';
 
 @Module({
-  imports: [PrismaModule, BranchModule],
+  imports: [PrismaModule, BranchModule, PermissionsModule],
   controllers: [
     RegistrationSettingsController,
     RegistrationIdSequenceController,

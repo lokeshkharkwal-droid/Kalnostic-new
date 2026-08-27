@@ -1,4 +1,5 @@
 import {
+  UseGuards,
   Body,
   Controller,
   Delete,
@@ -7,6 +8,9 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { BranchLabTestListService } from './branch-lab-test-list.service';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
@@ -26,6 +30,7 @@ import { ActiveBranchRequiredException } from '../branch-lab-test/exceptions/bra
  * `:id` so it isn't matched as an id.
  */
 @Controller('branch-lab-test-lists')
+@UseGuards(PermissionGuard)
 export class BranchLabTestListController {
   constructor(private readonly service: BranchLabTestListService) {}
 
@@ -57,6 +62,7 @@ export class BranchLabTestListController {
 
   /** Create a new list (seeded from the default list with computed prices). */
   @Post()
+  @RequirePermission(PERMISSION_KEYS.BR_LTL_ADD)
   @Audit({
     module: AuditModule.LAB_TEST,
     action: AuditAction.CREATE,
@@ -78,6 +84,7 @@ export class BranchLabTestListController {
 
   /** Clone an existing list into a new independent list. */
   @Post(':id/clone')
+  @RequirePermission(PERMISSION_KEYS.BR_LTL_CLONE)
   @Audit({
     module: AuditModule.LAB_TEST,
     action: AuditAction.CREATE,
@@ -101,6 +108,7 @@ export class BranchLabTestListController {
 
   /** Rename a list. */
   @Patch(':id')
+  @RequirePermission(PERMISSION_KEYS.BR_LTL_RENAME)
   @Audit({
     module: AuditModule.LAB_TEST,
     action: AuditAction.UPDATE,
@@ -124,6 +132,7 @@ export class BranchLabTestListController {
 
   /** Soft-delete a list (blocked for the default Walk-in list). */
   @Delete(':id')
+  @RequirePermission(PERMISSION_KEYS.BR_LTL_DELETE)
   @Audit({
     module: AuditModule.LAB_TEST,
     action: AuditAction.DELETE,

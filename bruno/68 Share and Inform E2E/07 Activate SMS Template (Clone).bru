@@ -1,0 +1,28 @@
+meta {
+  name: 07 Activate SMS Template (Clone)
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/templates/global/{{shareSmsGlobalId}}/clone
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200/201 cloned into tenant", function () {
+    expect([200, 201]).to.include(res.getStatus());
+    expect(res.getBody().data.clonedFromId).to.equal(bru.getVar("shareSmsGlobalId"));
+  });
+}
+
+docs {
+  "Activate" the SMS template for this tenant = clone the global into tenant
+  scope (the same thing /business-admin/old-template/sms → Send → Submit does).
+  Idempotent. After this, Share via SMS (step 11) resolves this activated template.
+}

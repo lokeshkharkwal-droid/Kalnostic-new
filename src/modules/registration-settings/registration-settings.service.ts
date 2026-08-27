@@ -50,6 +50,44 @@ export class RegistrationSettingsService {
   }
 
   /**
+   * Fetch the tenant-level ("business") Registration settings — the single row
+   * with `branchId = null` — creating defaults on first access. This is the
+   * business-wide baseline a Business Admin edits; branches that have not
+   * customised their own row fall back to it (see {@link getResolvedForBranch}).
+   *
+   * The composite `tenantId_branchId` upsert can't target a null branch, so this
+   * uses findFirst + create.
+   */
+  async getTenantLevel(tenantId: string): Promise<RegistrationSetting> {
+    const existing = await this.prisma.registrationSetting.findFirst({
+      where: { tenantId, branchId: null, deletedAt: null },
+    });
+    if (existing) {
+      return existing;
+    }
+    return this.prisma.registrationSetting.create({
+      data: { tenantId, branchId: null },
+    });
+  }
+
+  /**
+   * The **effective** Registration settings for a branch: the branch's own row
+   * if it has one, otherwise the tenant-level ("business") row. Unlike
+   * {@link getForBranch}, this does NOT auto-create a branch row, so an
+   * uncustomised branch genuinely inherits the business settings.
+   */
+  async getResolvedForBranch(
+    tenantId: string,
+    branchId: string,
+  ): Promise<RegistrationSetting> {
+    await this.branchService.findById(branchId, tenantId);
+    const branchRow = await this.prisma.registrationSetting.findFirst({
+      where: { tenantId, branchId, deletedAt: null },
+    });
+    return branchRow ?? this.getTenantLevel(tenantId);
+  }
+
+  /**
    * Save (partial patch, upsert semantics) the active branch's Registration
    * settings after validating the min/max threshold pairs and the
    * mutually-exclusive discount-mode rule.
@@ -77,6 +115,36 @@ export class RegistrationSettingsService {
       where: { tenantId_branchId: { tenantId, branchId } },
       create: { tenantId, branchId, ...patch },
       update: { ...patch },
+    });
+  }
+
+  /**
+   * Save (partial patch) the tenant-level ("business") Registration settings —
+   * the `branchId = null` row a Business Admin edits. Same validation as
+   * {@link saveForBranch}; uses findFirst + create/update since the composite
+   * upsert can't target a null branch.
+   */
+  async saveTenantLevel(
+    tenantId: string,
+    dto: SaveRegistrationSettingsDto,
+  ): Promise<RegistrationSetting> {
+    const existing = await this.prisma.registrationSetting.findFirst({
+      where: { tenantId, branchId: null, deletedAt: null },
+    });
+
+    const patch = this.applyAppointmentPaymentExclusivity(dto);
+    const effective = { ...(existing ?? {}), ...patch };
+    this.validateThresholdRanges(effective);
+    this.validateDiscountModeExclusivity(effective);
+
+    if (existing) {
+      return this.prisma.registrationSetting.update({
+        where: { id: existing.id },
+        data: { ...patch },
+      });
+    }
+    return this.prisma.registrationSetting.create({
+      data: { tenantId, branchId: null, ...patch },
     });
   }
 

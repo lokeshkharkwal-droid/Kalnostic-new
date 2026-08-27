@@ -23,6 +23,8 @@ body:json {
 }
 
 docs {
+  🔒 **RBAC:** requires `registration:appointments__update_doctor_configuration` — enforced by `PermissionGuard`; a caller lacking it (and not `business_admin`/`administrator`, which bypass) gets **403 `PERMISSION_DENIED`**.
+  
   Partial update. `doctorId`/`branchId` are immutable. Children
   (days/holidays/overrides) are replaced when supplied. When the effective config
   or status changes, future **unbooked** slots are regenerated — past and booked

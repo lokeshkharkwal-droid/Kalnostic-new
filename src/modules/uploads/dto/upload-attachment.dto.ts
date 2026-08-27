@@ -43,7 +43,8 @@ export class UploadAttachmentDto {
   @IsString()
   @MaxLength(64)
   @Matches(/^[a-z0-9][a-z0-9-_]*$/, {
-    message: 'folder may contain lowercase letters, digits, dash and underscore only',
+    message:
+      'folder may contain lowercase letters, digits, dash and underscore only',
   })
   folder?: string;
 }

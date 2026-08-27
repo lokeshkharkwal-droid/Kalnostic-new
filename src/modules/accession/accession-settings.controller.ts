@@ -1,7 +1,10 @@
-import { Body, Controller, Get, Put } from '@nestjs/common';
+import { Body, Controller, Get, Put, UseGuards } from '@nestjs/common';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { AccessionSettingsService } from './accession-settings.service';
 import { SaveAccessionSettingsDto } from './dto/save-accession-settings.dto';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
 import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
@@ -16,11 +19,13 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * settings. Falls back to module defaults when the branch has never saved.
  */
 @Controller('accession/settings')
+@UseGuards(PermissionGuard)
 export class AccessionSettingsController {
   constructor(private readonly settings: AccessionSettingsService) {}
 
   /** Effective accession settings for the active branch (defaults + overrides). */
   @Get()
+  @RequirePermission(PERMISSION_KEYS.ACC_SETTINGS_VIEW)
   get(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -30,6 +35,7 @@ export class AccessionSettingsController {
 
   /** Save (upsert) the active branch's accession settings. */
   @Put()
+  @RequirePermission(PERMISSION_KEYS.ACC_SETTINGS_UPDATE)
   @Audit({
     module: AuditModule.ACCESSION,
     action: AuditAction.UPDATE,

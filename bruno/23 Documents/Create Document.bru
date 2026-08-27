@@ -55,6 +55,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** requires ANY of `business_admin:document_management__add_document`, `branch_admin:document_management__add_document` — enforced by `PermissionGuard` (`@RequirePermission` / `@RequireAnyPermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Create a controlled document in the caller's ACTIVE BRANCH and seed version 1
   of its preserved history. Captures `documentId`.
   

@@ -1,4 +1,7 @@
-import { Body, Controller, Get, Param, Patch } from '@nestjs/common';
+import { UseGuards, Body, Controller, Get, Param, Patch } from '@nestjs/common';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { DeltaCheckService } from './delta-check.service';
 import { UpdateDeltaCheckStatusDto } from './dto/update-worklist-status.dto';
@@ -15,10 +18,12 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * Reviewed -> Re-Run/Accepted -> Completed vocabulary).
  */
 @Controller('delta-checks')
+@UseGuards(PermissionGuard)
 export class DeltaCheckController {
   constructor(private readonly deltaCheckService: DeltaCheckService) {}
 
   @Get()
+  @RequirePermission(PERMISSION_KEYS.LAB_ACCESS_DELTA_LIST)
   findAll(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -27,6 +32,7 @@ export class DeltaCheckController {
   }
 
   @Patch(':id/status')
+  @RequirePermission(PERMISSION_KEYS.LAB_UPDATE_DELTA)
   @Audit({
     module: AuditModule.DELTA_CHECK,
     action: AuditAction.UPDATE,

@@ -21,6 +21,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** requires `business_admin:master_data__delete_the_panel` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Soft-delete a lab panel (sets `deletedAt`) and cascade soft-delete its included
   tests in one transaction. The panel and its tests no longer appear in any list
   or get. A missing/already-deleted/foreign panel → 404 `LAB_PANEL_NOT_FOUND`.

@@ -34,6 +34,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** requires ANY of `business_admin:document_management__add_document`, `branch_admin:document_management__add_document` — enforced by `PermissionGuard` (`@RequirePermission` / `@RequireAnyPermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Negative case: `documentType` must be one of the allowed enum values (`SOP`,
   `POLICY`, `FORM`, `CERTIFICATE`, `ACCREDITATION`, `QC_DOCUMENT`,
   `WORK_INSTRUCTION`, `OTHER`). `"MANUAL"` is not valid, so the validation pipe

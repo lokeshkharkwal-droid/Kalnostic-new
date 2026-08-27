@@ -59,6 +59,8 @@ script:post-response {
 }
 
 docs {
+  🔒 **RBAC:** requires `branch_admin:outsource_centers__add_outsource_center` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Create an outsource center together with its contacts (one transaction).
 
   **Basic details:** `name` (required, 2-255, unique among active centers in the

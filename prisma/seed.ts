@@ -4,6 +4,7 @@ import {
   MessagingLevel,
   PrismaClient,
   SiteAdminRole,
+  SmsType,
   WhatsappMessageType,
   WhatsappTemplateCategory,
 } from '@prisma/client';
@@ -189,6 +190,85 @@ async function seedGlobalMessagingTemplates(): Promise<void> {
       templateType: WhatsappMessageType.TEXT,
       templateCategory: WhatsappTemplateCategory.UTILITY,
     },
+    // ── Site Admin business lifecycle ──
+    // Business Registration Complete → Email / SMS / WhatsApp.
+    {
+      preference: MessagingChannel.EMAIL,
+      feature: 'business_registration_complete',
+      displayTitle: 'Business Registration Complete',
+      template:
+        '<p>Dear {business_name},</p><p>Your business has been registered successfully. You can now sign in and start setting up your lab.</p><p>Thank you.</p>',
+      messageType: MessageType.TRANSACTIONAL,
+    },
+    {
+      preference: MessagingChannel.SMS,
+      feature: 'business_registration_complete',
+      displayTitle: 'Business Registration Complete',
+      template:
+        'Welcome {business_name}! Your business registration is complete. You can now sign in and set up your lab.',
+      messageType: MessageType.TRANSACTIONAL,
+    },
+    {
+      preference: MessagingChannel.WHATSAPP,
+      feature: 'business_registration_complete',
+      displayTitle: 'Business Registration Complete',
+      template:
+        'Welcome {business_name}! Your business registration is complete. You can now sign in and set up your lab.',
+      messageType: MessageType.TRANSACTIONAL,
+      templateType: WhatsappMessageType.TEXT,
+      templateCategory: WhatsappTemplateCategory.UTILITY,
+    },
+    // Business Details Updated → Email / SMS.
+    {
+      preference: MessagingChannel.EMAIL,
+      feature: 'business_details_update',
+      displayTitle: 'Business Details Updated',
+      template:
+        '<p>Dear {business_name},</p><p>Your business profile details have been updated. If you did not request this change, please contact support.</p>',
+      messageType: MessageType.TRANSACTIONAL,
+    },
+    {
+      preference: MessagingChannel.SMS,
+      feature: 'business_details_update',
+      displayTitle: 'Business Details Updated',
+      template:
+        'Dear {business_name}, your business profile details have been updated. If this was not you, please contact support.',
+      messageType: MessageType.TRANSACTIONAL,
+    },
+    // Business Status Suspended → Email / SMS.
+    {
+      preference: MessagingChannel.EMAIL,
+      feature: 'business_status_suspend',
+      displayTitle: 'Business Status — Suspended',
+      template:
+        '<p>Dear {business_name},</p><p>Access to your business account has been suspended. Please contact support for assistance.</p>',
+      messageType: MessageType.TRANSACTIONAL,
+    },
+    {
+      preference: MessagingChannel.SMS,
+      feature: 'business_status_suspend',
+      displayTitle: 'Business Status — Suspended',
+      template:
+        'Dear {business_name}, access to your business account has been suspended. Please contact support for assistance.',
+      messageType: MessageType.TRANSACTIONAL,
+    },
+    // Business Status Unsuspended → Email / SMS.
+    {
+      preference: MessagingChannel.EMAIL,
+      feature: 'business_status_unsuspend',
+      displayTitle: 'Business Status — Unsuspended',
+      template:
+        '<p>Dear {business_name},</p><p>Access to your business account has been reinstated. You can sign in again as usual.</p><p>Thank you.</p>',
+      messageType: MessageType.TRANSACTIONAL,
+    },
+    {
+      preference: MessagingChannel.SMS,
+      feature: 'business_status_unsuspend',
+      displayTitle: 'Business Status — Unsuspended',
+      template:
+        'Dear {business_name}, access to your business account has been reinstated. You can sign in again as usual.',
+      messageType: MessageType.TRANSACTIONAL,
+    },
     // ── Bulk (MARKETING) ──
     {
       preference: MessagingChannel.SMS,
@@ -253,10 +333,161 @@ async function seedGlobalMessagingTemplates(): Promise<void> {
   );
 }
 
+/**
+ * Seed the SITE_ADMIN global messaging templates for the "Share and Inform" flows
+ * (Billings / Quotations / Appointments), so a tenant can enable + activate them
+ * under Templates and the share endpoints resolve a template per channel:
+ *  - `order_bill_as_attachment`            — EMAIL, WHATSAPP, IAM
+ *  - `lab_quotation_as_attachment`         — EMAIL, WHATSAPP, IAM
+ *  - `lab_create_appointment_inform_patient` — SMS, EMAIL, WHATSAPP, IAM
+ * SMS/WhatsApp carry placeholder DLT/approved-template ids so the cloned copy
+ * passes the carrier-settings check (the dev Exchange gateway is a no-op). IAM
+ * globals have no channel tab in the enable UI yet — activate them another way.
+ * Idempotent: matched on (tenant-null, preference, feature).
+ */
+async function seedShareTemplates(): Promise<void> {
+  interface Seed {
+    preference: MessagingChannel;
+    feature: string;
+    displayTitle: string;
+    template: string;
+    smsTemplateId?: string;
+    smsSenderId?: string;
+    smsType?: SmsType;
+    templateType?: WhatsappMessageType;
+    templateCategory?: WhatsappTemplateCategory;
+  }
+
+  // Shared carrier placeholders (dev): make the carrier-settings validation pass.
+  const WA = {
+    smsTemplateId: 'wa_test_template_id',
+    templateType: WhatsappMessageType.TEXT,
+    templateCategory: WhatsappTemplateCategory.UTILITY,
+  };
+  const SMS = {
+    smsTemplateId: 'DLT_TEST_TEMPLATE_ID',
+    smsSenderId: 'KALNOS',
+    smsType: SmsType.TRANSACTIONAL,
+  };
+
+  const seeds: Seed[] = [
+    // ── Order Bill (Billings + Finance Billing) ──
+    {
+      preference: MessagingChannel.EMAIL,
+      feature: 'order_bill_as_attachment',
+      displayTitle: 'Order Bill (Email)',
+      template:
+        'Dear {patient_name}, please find your bill {bill_id} for order {order_code} attached.',
+    },
+    {
+      preference: MessagingChannel.WHATSAPP,
+      feature: 'order_bill_as_attachment',
+      displayTitle: 'Order Bill (WhatsApp)',
+      template:
+        'Hi {patient_name}, your bill {bill_id} for order {order_code} is attached.',
+      ...WA,
+    },
+    {
+      preference: MessagingChannel.IAM,
+      feature: 'order_bill_as_attachment',
+      displayTitle: 'Order Bill (In-App)',
+      template: 'Bill {bill_id} shared for order {order_code} ({patient_name}).',
+    },
+    // ── Lab Quotation (Quotations) ──
+    {
+      preference: MessagingChannel.EMAIL,
+      feature: 'lab_quotation_as_attachment',
+      displayTitle: 'Lab Quotation (Email)',
+      template:
+        'Dear {patient_name}, please find your quotation {quote_id} attached.',
+    },
+    {
+      preference: MessagingChannel.WHATSAPP,
+      feature: 'lab_quotation_as_attachment',
+      displayTitle: 'Lab Quotation (WhatsApp)',
+      template: 'Hi {patient_name}, your quotation {quote_id} is attached.',
+      ...WA,
+    },
+    {
+      preference: MessagingChannel.IAM,
+      feature: 'lab_quotation_as_attachment',
+      displayTitle: 'Lab Quotation (In-App)',
+      template: 'Quotation {quote_id} shared ({patient_name}).',
+    },
+    // ── Appointment confirmation (Appointments) ──
+    {
+      preference: MessagingChannel.SMS,
+      feature: 'lab_create_appointment_inform_patient',
+      displayTitle: 'Appointment Confirmation (SMS)',
+      template:
+        'Dear {patient_name}, your appointment {appointment_code} is confirmed.',
+      ...SMS,
+    },
+    {
+      preference: MessagingChannel.EMAIL,
+      feature: 'lab_create_appointment_inform_patient',
+      displayTitle: 'Appointment Confirmation (Email)',
+      template:
+        'Dear {patient_name}, your appointment {appointment_code} is confirmed.',
+    },
+    {
+      preference: MessagingChannel.WHATSAPP,
+      feature: 'lab_create_appointment_inform_patient',
+      displayTitle: 'Appointment Confirmation (WhatsApp)',
+      template:
+        'Hi {patient_name}, your appointment {appointment_code} is confirmed.',
+      ...WA,
+    },
+    {
+      preference: MessagingChannel.IAM,
+      feature: 'lab_create_appointment_inform_patient',
+      displayTitle: 'Appointment (In-App)',
+      template: 'Appointment {appointment_code} shared ({patient_name}).',
+    },
+  ];
+
+  let created = 0;
+  for (const s of seeds) {
+    const existing = await prisma.template.findFirst({
+      where: {
+        tenantId: null,
+        preference: s.preference,
+        feature: s.feature,
+        deletedAt: null,
+      },
+    });
+    if (existing) continue;
+    await prisma.template.create({
+      data: {
+        tenantId: null,
+        branchId: null,
+        preference: s.preference,
+        feature: s.feature,
+        displayTitle: s.displayTitle,
+        template: s.template,
+        messageType: MessageType.TRANSACTIONAL,
+        smsTemplateId: s.smsTemplateId ?? null,
+        smsSenderId: s.smsSenderId ?? null,
+        smsType: s.smsType ?? null,
+        templateType: s.templateType ?? null,
+        templateCategory: s.templateCategory ?? null,
+        level: MessagingLevel.ADMIN,
+        isActive: true,
+      },
+    });
+    created += 1;
+  }
+  console.log(
+    `Seeded Share & Inform global templates: ${created} created ` +
+      `(${seeds.length} in the set).`,
+  );
+}
+
 async function main() {
   await seedSiteAdmin();
   await seedSystemRoles();
   await seedGlobalMessagingTemplates();
+  await seedShareTemplates();
   await seedPrintTemplates(prisma);
 }
 

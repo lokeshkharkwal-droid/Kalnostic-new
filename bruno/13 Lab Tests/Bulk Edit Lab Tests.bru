@@ -54,6 +54,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** requires `business_admin:master_data__allow_multiple_edit` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Bulk-edit lab tests: `data` is an array of per-test edits, each carrying its own
   `labTestId` plus the scalar fields to change **for that test** (scoped to the
   caller's tenant + the path's master data). Only the tests in the payload are

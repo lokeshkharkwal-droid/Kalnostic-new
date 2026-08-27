@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { OrderStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
@@ -7,6 +8,8 @@ import {
   computeEffectivePaid,
 } from '../order/entities/order.entity';
 import { RegistrationSettingsService } from '../registration-settings/registration-settings.service';
+import { PermissionCheckService } from '../permissions/services/permission-check.service';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { CreatePaymentDetailsDto } from './dto/create-payment-details.dto';
 import { UpdatePaymentDetailsDto } from './dto/update-payment-details.dto';
 import { ListPaymentDetailsDto } from './dto/list-payment-details.dto';
@@ -33,6 +36,8 @@ export class PaymentDetailsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly registrationSettingsService: RegistrationSettingsService,
+    private readonly permissionCheck: PermissionCheckService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   /**
@@ -102,6 +107,7 @@ export class PaymentDetailsService {
     tenantId: string,
     personId: string | null,
     dto: CreatePaymentDetailsDto,
+    actor?: { branchId: string | null; profileKey: string | null },
   ): Promise<PaymentDetailsEntity> {
     const order = await this.prisma.order.findFirst({
       where: { id: dto.orderId, tenantId, deletedAt: null },
@@ -120,8 +126,22 @@ export class PaymentDetailsService {
       throw new PaymentOrderCancelledException(dto.orderId);
     }
     await this.assertCanCollect(tenantId, order, personId);
+    // "Settle payment of other users": collecting on an order created by someone
+    // else additionally requires the permission (layered on top of the branch
+    // setting checked in assertCanCollect). Admin roles bypass in the checker.
+    if (personId && order.createdBy && order.createdBy !== personId && actor) {
+      await this.permissionCheck.assert(
+        {
+          tenantId,
+          personId,
+          branchId: actor.branchId,
+          profileKey: actor.profileKey,
+        },
+        PERMISSION_KEYS.REG_SETTLE_PAYMENT_OTHERS,
+      );
+    }
     const { paymentDate, ...rest } = dto;
-    return this.prisma.withTenant(tenantId, async (tx) => {
+    const result = await this.prisma.withTenant(tenantId, async (tx) => {
       // Overpayment guard: never let the collected amount exceed the pending
       // balance. Pending is derived off the order's EFFECTIVE paid amount
       // (`paid − cancellationCharge − refunds − refund charges`) — the same
@@ -160,6 +180,15 @@ export class PaymentDetailsService {
       await this.recomputePaymentStatus(tx, tenantId, dto.orderId);
       return mapPaymentDetails(row);
     });
+    // Fire-and-forget: acknowledge the payment to the patient (email + in-app).
+    // Handled by ClinicalEventListener; never blocks payment recording.
+    void this.eventEmitter.emitAsync('payment.received', {
+      tenantId,
+      orderId: dto.orderId,
+      amount: dto.paidAmount ?? 0,
+      paymentMode: dto.paymentMode ?? null,
+    });
+    return result;
   }
 
   /**

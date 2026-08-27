@@ -30,4 +30,11 @@ docs {
   price, which is independently editable in Master Data and may have since
   drifted from what this line was actually charged. Do not use `priceMsrp` for
   line pricing/totals.
+
+  Also returns `hasInvoice` (boolean) and `invoiceCode` (the linked invoice's
+  number, or null): true when an invoice has been generated for this order (an
+  active `InvoiceSourceOrder` link exists). An invoiced order is locked — it can
+  no longer be updated (`PATCH /orders/:id`) or cancelled (`PATCH
+  /orders/:id/cancel`); both return 409 `ORDER_ALREADY_INVOICED`. Cancelling the
+  invoice unlinks it and returns `hasInvoice` to false.
 }

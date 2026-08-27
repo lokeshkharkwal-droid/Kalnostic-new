@@ -35,6 +35,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** requires ANY of `business_admin:document_management__update_document`, `branch_admin:document_management__update_document` — enforced by `PermissionGuard` (`@RequirePermission` / `@RequireAnyPermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Negative case: every edit must introduce a NEW, unique version string. Reusing
   an existing version (here `"1.0"`, the original) is rejected with 409
   `DOCUMENT_VERSION_CONFLICT` and no new version is created. Run after Create +

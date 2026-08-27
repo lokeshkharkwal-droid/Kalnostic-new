@@ -35,6 +35,8 @@ vars:pre-request {
 }
 
 docs {
+  🔒 **RBAC:** requires `business_admin:center_and_operations__update_branch` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Enable / disable system modules at this branch (upsert per module; the client
   sends the desired set). This gates which work-area modules can be picked as a
   user's default module and which appear in the per-user permission modal for

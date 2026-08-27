@@ -1,4 +1,5 @@
 import {
+  UseGuards,
   Body,
   Controller,
   Delete,
@@ -8,6 +9,9 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequireAnyPermission } from '../permissions/decorators/require-permission.decorator';
+import { ADMIN_KEY_GROUPS } from '../permissions/constants/module-permissions.constant';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { DoctorsService } from './doctors.service';
 import { CreateDoctorDto } from './dto/create-doctor.dto';
@@ -21,6 +25,7 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * The global `JwtAuthGuard` protects all routes.
  */
 @Controller('doctors')
+@UseGuards(PermissionGuard)
 export class DoctorsController {
   constructor(private readonly doctorsService: DoctorsService) {}
 
@@ -28,6 +33,7 @@ export class DoctorsController {
    * Register a doctor in the caller's tenant.
    */
   @Post()
+  @RequireAnyPermission(...ADMIN_KEY_GROUPS.DOCTOR_ADD)
   @Audit({
     module: AuditModule.DOCTOR,
     action: AuditAction.CREATE,
@@ -58,6 +64,7 @@ export class DoctorsController {
    * Update a doctor.
    */
   @Patch(':id')
+  @RequireAnyPermission(...ADMIN_KEY_GROUPS.DOCTOR_UPDATE)
   @Audit({
     module: AuditModule.DOCTOR,
     action: AuditAction.UPDATE,
@@ -75,6 +82,7 @@ export class DoctorsController {
    * Soft-delete a doctor.
    */
   @Delete(':id')
+  @RequireAnyPermission(...ADMIN_KEY_GROUPS.DOCTOR_DELETE)
   @Audit({
     module: AuditModule.DOCTOR,
     action: AuditAction.DELETE,

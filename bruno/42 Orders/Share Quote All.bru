@@ -1,0 +1,43 @@
+meta {
+  name: Share Quote All
+  type: http
+  seq: 35
+}
+
+post {
+  url: {{baseUrl}}/orders/{{orderId}}/share-quote-all
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "recipientType": "PATIENT",
+    "email": "patient@example.com",
+    "whatsapp": "919999999999"
+  }
+}
+
+docs {
+  Resend the lab quotation over Email + WhatsApp to the patient AND the referral
+  panel together, and raise the in-app (IAM) notification, in one call.
+
+  - `recipientType` (PATIENT default) — which recipient the `email`/`whatsapp`
+    overrides apply to; the OTHER recipient uses its stored contacts.
+  - IAM targets the order creator + referral parties (internal-referral employee),
+    NOT the patient (panels/external referrals have no in-app user).
+
+  Per-channel outcomes are collapsed to one result per channel (QUEUED if either
+  recipient queued). Returns `{ orderId, results: [{ channel, status, reason?, logId? }] }`.
+  The quotation PDF is rendered once and reused. Prereqs: activated
+  `lab_quotation_as_attachment` templates (Email/WhatsApp/IAM) + an active
+  `lab_quotation_print` PDF template.
+}

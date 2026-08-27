@@ -32,6 +32,8 @@ vars:pre-request {
 }
 
 docs {
+  🔒 **RBAC:** requires ANY of `business_admin:user_management__update_users`, `branch_admin:user_management__update_users_for_assigned_branch` — enforced by `PermissionGuard` (`@RequirePermission` / `@RequireAnyPermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Edit a staff user. Identity, password (always editable by admin), the OPTIONAL
   primary `roleKey`, and global `status`. `username`, `email`, and `userCode` are
   **immutable** — they are not accepted (the global validation pipe rejects unknown

@@ -19,5 +19,7 @@ vars:pre-request {
 }
 
 docs {
+  🔒 **RBAC:** requires `business_admin:center_and_operations__delete_branch` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Soft-delete a branch (sets `deletedAt`). Scoped to the caller's tenant.
 }

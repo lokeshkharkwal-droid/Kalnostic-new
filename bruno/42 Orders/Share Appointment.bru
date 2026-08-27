@@ -1,0 +1,39 @@
+meta {
+  name: Share Appointment
+  type: http
+  seq: 37
+}
+
+post {
+  url: {{baseUrl}}/orders/{{orderId}}/share-appointment
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "channel": "SMS",
+    "toAddress": "919999999999"
+  }
+}
+
+docs {
+  Send the appointment confirmation to the patient over one channel (SMS / EMAIL /
+  WHATSAPP), using the tenant's ACTIVATED `lab_create_appointment_inform_patient`
+  template. No PDF attachment — a confirmation message only.
+
+  - `channel` (required) — SMS, EMAIL or WHATSAPP.
+  - `toAddress` (optional) — override the patient's stored contact for the channel.
+  - `recipientType` is ignored (patient only).
+
+  Errors: 404 ORDER_NOT_FOUND · 422 SHARE_TEMPLATE_NOT_ACTIVATED /
+  SHARE_TEMPLATE_NOT_CONFIGURED · 400 SHARE_RECIPIENT_MISSING.
+}

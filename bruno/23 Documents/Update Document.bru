@@ -39,6 +39,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** requires ANY of `business_admin:document_management__update_document`, `branch_admin:document_management__update_document` — enforced by `PermissionGuard` (`@RequirePermission` / `@RequireAnyPermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Edit a document. **Every edit creates a new preserved version.** The current
   row is updated in place AND a fresh immutable snapshot is appended; all earlier
   snapshots remain read-only (use List Document Versions to see them).

@@ -21,6 +21,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** requires `branch_admin:machines__delete_machine` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Soft-delete a machine (sets `deletedAt`). Cascades a soft-delete to its reagent
   kits, test mappings, adapter logs, and branch assignments in one transaction. The
   machine then disappears from List/Get. 404 `MACHINE_NOT_FOUND` if already

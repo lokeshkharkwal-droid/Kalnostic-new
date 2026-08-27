@@ -1,0 +1,33 @@
+meta {
+  name: 10 Save Business Registration Settings
+  type: http
+  seq: 10
+}
+
+put {
+  url: {{baseUrl}}/registration-settings/business
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "General_AllowAddPatientPhoto": true,
+    "General_ViewMedicalHistory": true
+  }
+}
+
+docs {
+  Save (partial patch) the tenant-level ("business") Registration settings —
+  the `branchId = null` row. Same validation as the branch PUT (min/max percent
+  pairs, exclusive discount modes). Gated by `registration:settings` (Business
+  Admin bypasses). Audited under `AuditModule.REGISTRATION_SETTINGS`.
+}

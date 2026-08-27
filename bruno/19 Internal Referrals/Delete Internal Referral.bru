@@ -25,6 +25,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** requires `branch_admin:referrals__delete_internal_referral_user` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Soft-delete an internal referral (sets `deletedAt`) and cascade soft-deletes its
   active assigned lab tests/panels, in one transaction. Scoped to the caller's
   tenant. 404 `INTERNAL_REFERRAL_NOT_FOUND` if missing, already soft-deleted, or

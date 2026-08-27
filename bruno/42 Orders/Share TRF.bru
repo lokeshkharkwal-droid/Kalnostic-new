@@ -1,0 +1,42 @@
+meta {
+  name: Share TRF
+  type: http
+  seq: 40
+}
+
+post {
+  url: {{baseUrl}}/orders/{{orderId}}/share-trf
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "channel": "EMAIL",
+    "recipientType": "PATIENT",
+    "toAddress": "patient@example.com"
+  }
+}
+
+docs {
+  Share the order's TRF (Test Requisition Form, `trf_print` PDF) to the patient or
+  referral panel over one channel (EMAIL / WHATSAPP), used by the Accession pages.
+  Reuses the tenant's ACTIVATED `order_bill_as_attachment` messaging template (only
+  the attachment differs — the TRF, not the bill).
+
+  - `channel` (required) — EMAIL or WHATSAPP (both attach the PDF).
+  - `recipientType` (required) — PATIENT or PANEL (panel's Accounts Person).
+  - `toAddress` (optional) — override the auto-filled recipient contact.
+  - `channel: "IAM"` is also accepted (in-app only, no address/PDF).
+
+  Errors: 404 ORDER_NOT_FOUND · 422 SHARE_TEMPLATE_NOT_ACTIVATED /
+  SHARE_TEMPLATE_NOT_CONFIGURED · 400 SHARE_RECIPIENT_MISSING.
+}

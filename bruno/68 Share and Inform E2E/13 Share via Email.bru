@@ -1,0 +1,51 @@
+meta {
+  name: 13 Share via Email
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/order/{{shareOrderId}}/share
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "channel": "EMAIL",
+    "toAddress": "{{shareTestEmail}}"
+  }
+}
+
+vars:pre-request {
+  shareTestEmail: your.name@example.com
+}
+
+tests {
+  test("201 + queued Email row (when reports + PDF template exist)", function () {
+    expect(res.getStatus()).to.equal(201);
+    expect(res.getBody().data[0].channel).to.equal("EMAIL");
+  });
+}
+
+docs {
+  ✅ EMAIL IS THE CHANNEL THAT ACTUALLY DELIVERS without any carrier registration
+  (unlike SMS/WhatsApp, which need real DLT/Meta ids). Set `shareTestEmail` (pre-
+  request var) to YOUR inbox to receive it. ⚠ The dev backend points at the
+  PRODUCTION relay, so a real email is sent. Omit `toAddress` to use the
+  patient's stored email instead.
+
+  Renders the tenant's active `lab_all_report` PDF (step 06) and attaches it.
+  Requires: activated Email template (step 08) + the order has lab reports
+  (accepted samples) + an active lab_all_report template (step 06). Otherwise:
+  422 SHARE_TEMPLATE_NOT_ACTIVATED / 404 ORDER_REPORTS_NOT_FOUND /
+  NO_ACTIVE_PRINT_TEMPLATE.
+}

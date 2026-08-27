@@ -1,4 +1,5 @@
 import {
+  UseGuards,
   Body,
   Controller,
   Delete,
@@ -10,6 +11,9 @@ import {
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { LabTestService } from './lab-test.service';
@@ -35,6 +39,7 @@ const MAX_IMPORT_XLSX_BYTES = 10 * 1024 * 1024; // 10 MB, matches the generic at
  * from the JWT. The global `JwtAuthGuard` protects all routes.
  */
 @Controller('master-data/:masterDataId/lab-tests')
+@UseGuards(PermissionGuard)
 export class LabTestController {
   constructor(private readonly labTestService: LabTestService) {}
 
@@ -42,6 +47,7 @@ export class LabTestController {
    * Create a lab test (with nested samples + result parameters) in a master data.
    */
   @Post()
+  @RequirePermission(PERMISSION_KEYS.BA_MD_ADD_TEST)
   @Audit({
     module: AuditModule.LAB_TEST,
     action: AuditAction.CREATE,
@@ -90,6 +96,7 @@ export class LabTestController {
    * (duplicate name/code skipped). Returns `{ copied, skipped }`.
    */
   @Post('clone')
+  @RequirePermission(PERMISSION_KEYS.BA_MD_DUPLICATE_TEST)
   @Audit({
     module: AuditModule.LAB_TEST,
     action: AuditAction.CREATE,
@@ -112,6 +119,7 @@ export class LabTestController {
    * Declared before the `:labTestId` routes so `bulk` isn't matched as an id.
    */
   @Patch('bulk')
+  @RequirePermission(PERMISSION_KEYS.BA_MD_ALLOW_MULTIPLE_EDIT)
   @Audit({
     module: AuditModule.LAB_TEST,
     action: AuditAction.UPDATE,
@@ -130,6 +138,7 @@ export class LabTestController {
    * Declared before the `:labTestId` routes so `import` isn't matched as an id.
    */
   @Post('import')
+  @RequirePermission(PERMISSION_KEYS.BA_MD_ALLOW_IMPORT_TESTS)
   @Audit({
     module: AuditModule.LAB_TEST,
     action: AuditAction.CREATE,
@@ -222,6 +231,7 @@ export class LabTestController {
    * Update a lab test (and replace child sets when provided).
    */
   @Patch(':labTestId')
+  @RequirePermission(PERMISSION_KEYS.BA_MD_UPDATE_TEST)
   @Audit({
     module: AuditModule.LAB_TEST,
     action: AuditAction.UPDATE,
@@ -240,6 +250,7 @@ export class LabTestController {
    * Soft-delete a lab test (cascade soft-deletes its children).
    */
   @Delete(':labTestId')
+  @RequirePermission(PERMISSION_KEYS.BA_MD_DELETE_TEST)
   @Audit({
     module: AuditModule.LAB_TEST,
     action: AuditAction.DELETE,
@@ -257,6 +268,7 @@ export class LabTestController {
    * Append a version entry to the lab test's version history.
    */
   @Post(':labTestId/versions')
+  @RequirePermission(PERMISSION_KEYS.BA_MD_UPDATE_TEST)
   @Audit({
     module: AuditModule.LAB_TEST,
     action: AuditAction.UPDATE,

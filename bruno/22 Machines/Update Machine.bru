@@ -43,6 +43,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** requires `branch_admin:machines__edit_machine` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Partial update. Any omitted field is left unchanged. When `reagentKits`,
   `testMappings`, or `branchIds` is provided, the whole corresponding set is
   REPLACED (old active rows soft-deleted, the new set created) in one transaction —

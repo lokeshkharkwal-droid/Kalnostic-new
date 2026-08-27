@@ -1,0 +1,25 @@
+meta {
+  name: 01 Get Branch Role Grid
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/permissions/branch-roles/grid
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  The full Branch × Role grid for the tenant — every branch × every role
+  (system + custom), each row `{ branchId, branchName, authRoleId, roleKey,
+  roleLabel, roleActive, overriddenCount }`. `roleActive` is the role's
+  `isActive` flag; `overriddenCount > 0` means the (branch + role) has its own
+  branch-level overrides ("Branch"), else it inherits the role baseline
+  ("Business"). The cartesian is computed server-side; only overrides are
+  stored. Business Admin surface.
+}

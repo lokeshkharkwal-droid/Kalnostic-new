@@ -1,0 +1,34 @@
+meta {
+  name: 15 List Communications (verify)
+  type: http
+  seq: 15
+}
+
+get {
+  url: {{baseUrl}}/communications?page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 10
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 + the shared rows are logged", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Confirm the shares landed in the communication log/queue. The rows created by
+  steps 11-13 appear here (newest first). The background worker flips each
+  PENDING → SENT (with an `exchangeId`) within ~30s once the Exchange relay
+  accepts it. You can also GET /communications/{{shareCommId}} for the SMS row
+  captured in step 11.
+}

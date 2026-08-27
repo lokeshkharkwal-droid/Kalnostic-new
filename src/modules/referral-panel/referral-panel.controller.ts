@@ -1,4 +1,5 @@
 import {
+  UseGuards,
   Body,
   Controller,
   Delete,
@@ -8,6 +9,9 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { ReferralPanelService } from './referral-panel.service';
 import { CreateReferralPanelDto } from './dto/create-referral-panel.dto';
@@ -24,6 +28,7 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * The global `JwtAuthGuard` protects all routes.
  */
 @Controller('referral-panels')
+@UseGuards(PermissionGuard)
 export class ReferralPanelController {
   constructor(private readonly referralPanelService: ReferralPanelService) {}
 
@@ -31,6 +36,7 @@ export class ReferralPanelController {
    * Create a referral panel with its assigned lab tests/panels.
    */
   @Post()
+  @RequirePermission(PERMISSION_KEYS.BR_REF_ADD_PANEL)
   @Audit({
     module: AuditModule.REFERRAL_PANEL,
     action: AuditAction.CREATE,
@@ -78,6 +84,7 @@ export class ReferralPanelController {
    * Update a referral panel (assigned lab tests/panels are replace-all when sent).
    */
   @Patch(':id')
+  @RequirePermission(PERMISSION_KEYS.BR_REF_UPDATE_PANEL)
   @Audit({
     module: AuditModule.REFERRAL_PANEL,
     action: AuditAction.UPDATE,
@@ -103,6 +110,7 @@ export class ReferralPanelController {
    * Soft-delete a referral panel (cascades to assigned lab tests/panels).
    */
   @Delete(':id')
+  @RequirePermission(PERMISSION_KEYS.BR_REF_DELETE_PANEL)
   @Audit({
     module: AuditModule.REFERRAL_PANEL,
     action: AuditAction.DELETE,

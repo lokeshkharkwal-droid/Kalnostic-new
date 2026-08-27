@@ -175,6 +175,10 @@ export interface ProfilePermissionRow {
 export interface ResolvedBranchPermission {
   moduleKey: string;
   moduleLabel: string;
+  /** Sub-section slug within the module (for grouping in the editor). */
+  section: string;
+  /** Human-readable sub-section heading. */
+  sectionLabel: string;
   permissionKey: string;
   label: string;
   baseline: boolean;
@@ -1656,21 +1660,49 @@ export class UsersService {
     const overrideMap = new Map(
       overrides.map((o) => [o.permissionKey, o.allowed]),
     );
+    // Tier-2: branch-level role overrides for this branch + role. Resolution is
+    // user override ?? branch-role override ?? role baseline (§ permission plan).
+    const branchRoleMap = await this.getBranchRoleOverrideMap(
+      tenantId,
+      branchId,
+      profile.authRoleId,
+    );
 
     return MODULE_PERMISSION_CATALOG.filter((e) =>
       enabledModules.has(e.moduleKey),
     ).map((e) => {
       const base = baseline.has(e.permissionKey);
-      const override = overrideMap.get(e.permissionKey);
       return {
         moduleKey: e.moduleKey,
         moduleLabel: moduleLabel(e.moduleKey),
+        section: e.section,
+        sectionLabel: e.sectionLabel,
         permissionKey: e.permissionKey,
         label: e.label,
         baseline: base,
-        allowed: override ?? base,
+        allowed:
+          overrideMap.get(e.permissionKey) ??
+          branchRoleMap.get(e.permissionKey) ??
+          base,
       };
     });
+  }
+
+  /**
+   * Tier-2 permission map for a (branch + role): the branch-level overrides that
+   * sit between a user's own overrides and the static role baseline. Returns
+   * `permissionKey → allowed`; an absent key means "inherit the baseline".
+   */
+  private async getBranchRoleOverrideMap(
+    tenantId: string,
+    branchId: string,
+    authRoleId: string | null | undefined,
+  ): Promise<Map<string, boolean>> {
+    if (!authRoleId) return new Map();
+    const rows = await this.prisma.branchRolePermission.findMany({
+      where: { tenantId, branchId, authRoleId, deletedAt: null },
+    });
+    return new Map(rows.map((r) => [r.permissionKey, r.allowed]));
   }
 
   /**
@@ -1750,6 +1782,7 @@ export class UsersService {
     // the branch's enabled modules.
     let baseline = new Set<string>();
     let overrideMap = new Map<string, boolean>();
+    let branchRoleMap = new Map<string, boolean>();
     let permGate = new Set<string>();
     if (roleKey) {
       const effective = this.resolveEffectiveModules(
@@ -1761,14 +1794,23 @@ export class UsersService {
         where: { tenantId, personId, branchId, deletedAt: null },
       });
       overrideMap = new Map(overrides.map((o) => [o.permissionKey, o.allowed]));
+      // Tier-2: branch-level role overrides (branch + role) — the layer between
+      // the user's own overrides and the role baseline.
+      branchRoleMap = await this.getBranchRoleOverrideMap(
+        tenantId,
+        branchId,
+        activeProfile?.authRoleId,
+      );
       // Gate = branch-enabled ∩ (assigned modules ∪ modules with an allow
-      // override) — so an explicit permission grant still surfaces its module,
-      // and modules the branch doesn't enable are always denied.
+      // override at either tier) — so an explicit permission grant still
+      // surfaces its module, and modules the branch doesn't enable are denied.
       const gateModules = new Set(effective.moduleKeys);
-      for (const [permissionKey, allowed] of overrideMap) {
-        if (allowed) {
-          const mk = this.moduleOfPermission(permissionKey);
-          if (mk) gateModules.add(mk);
+      for (const map of [branchRoleMap, overrideMap]) {
+        for (const [permissionKey, allowed] of map) {
+          if (allowed) {
+            const mk = this.moduleOfPermission(permissionKey);
+            if (mk) gateModules.add(mk);
+          }
         }
       }
       permGate = new Set([...gateModules].filter((k) => moduleFilter.has(k)));
@@ -1777,6 +1819,7 @@ export class UsersService {
     const grouped = this.groupResolvedPermissions(
       baseline,
       overrideMap,
+      branchRoleMap,
       permGate,
     );
     return {
@@ -1785,6 +1828,24 @@ export class UsersService {
       modules: grouped.modules,
       allowed: grouped.allowed,
     };
+  }
+
+  /**
+   * The flat set of effective permission keys a user holds at a branch — the
+   * same `allowed` list {@link getMyPermissions} returns, as a Set for O(1)
+   * membership checks. Used by the business permission guard (@RequirePermission).
+   */
+  async getEffectivePermissionKeys(
+    tenantId: string,
+    personId: string,
+    branchId: string,
+  ): Promise<Set<string>> {
+    const { allowed } = await this.getMyPermissions(
+      tenantId,
+      personId,
+      branchId,
+    );
+    return new Set(allowed);
   }
 
   /**
@@ -1800,6 +1861,7 @@ export class UsersService {
   private groupResolvedPermissions(
     baseline: Set<string>,
     overrideMap: Map<string, boolean>,
+    branchRoleMap: Map<string, boolean>,
     moduleFilter: Set<string>,
   ): GroupedPermissions {
     const groups = new Map<string, PermissionModuleGroup>();
@@ -1808,8 +1870,11 @@ export class UsersService {
     for (const entry of MODULE_PERMISSION_CATALOG) {
       const moduleEnabled = moduleFilter.has(entry.moduleKey);
       const base = baseline.has(entry.permissionKey);
+      // user override ?? branch-role override ?? role baseline
       const isAllowed = moduleEnabled
-        ? (overrideMap.get(entry.permissionKey) ?? base)
+        ? (overrideMap.get(entry.permissionKey) ??
+          branchRoleMap.get(entry.permissionKey) ??
+          base)
         : false;
 
       if (!isAllowed) continue; // only allowed keys appear in the output

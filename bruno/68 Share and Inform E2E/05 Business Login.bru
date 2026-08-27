@@ -1,0 +1,47 @@
+meta {
+  name: 05 Business Login
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "identifier": "{{bizIdentifier}}",
+    "password": "{{bizPassword}}"
+  }
+}
+
+vars:pre-request {
+  bizIdentifier: priya@email.com
+  bizPassword: Password@123
+  bizTenantSlug: acme-diagnostics
+}
+
+script:post-response {
+  const b = res.getBody();
+  if (b && b.success && b.data) bru.setVar("businessAccessToken", b.data.accessToken);
+}
+
+tests {
+  test("200 OK + token", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getBody().data.accessToken).to.be.a("string");
+  });
+}
+
+docs {
+  Business (branch/business admin) login → captures `businessAccessToken` for the
+  activate + share steps. `identifier` = phone | email | system_username;
+  `tenantSlug` is required for staff login. Set your real tenant admin creds in
+  the pre-request vars.
+}

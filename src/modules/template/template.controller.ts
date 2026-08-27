@@ -1,4 +1,5 @@
 import {
+  UseGuards,
   Body,
   Controller,
   Delete,
@@ -8,6 +9,9 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequireAnyPermission } from '../permissions/decorators/require-permission.decorator';
+import { ADMIN_KEY_GROUPS } from '../permissions/constants/module-permissions.constant';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { TemplateService } from './template.service';
 import { CreateTemplateDto } from './dto/create-template.dto';
@@ -30,6 +34,7 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * global `JwtAuthGuard` protects all routes.
  */
 @Controller('templates')
+@UseGuards(PermissionGuard)
 export class TemplateController {
   constructor(private readonly templateService: TemplateService) {}
 
@@ -37,6 +42,7 @@ export class TemplateController {
    * Create a messaging template in the caller's scope.
    */
   @Post()
+  @RequireAnyPermission(...ADMIN_KEY_GROUPS.TEMPLATE_ADD)
   @Audit({
     module: AuditModule.TEMPLATE,
     action: AuditAction.CREATE,
@@ -133,6 +139,7 @@ export class TemplateController {
    * Update a template.
    */
   @Patch(':id')
+  @RequireAnyPermission(...ADMIN_KEY_GROUPS.TEMPLATE_EDIT)
   @Audit({
     module: AuditModule.TEMPLATE,
     action: AuditAction.UPDATE,
@@ -158,6 +165,7 @@ export class TemplateController {
    * Soft-delete a template.
    */
   @Delete(':id')
+  @RequireAnyPermission(...ADMIN_KEY_GROUPS.TEMPLATE_DELETE)
   @Audit({
     module: AuditModule.TEMPLATE,
     action: AuditAction.DELETE,
@@ -175,6 +183,7 @@ export class TemplateController {
    * Duplicate a template within the caller's scope.
    */
   @Post(':id/duplicate')
+  @RequireAnyPermission(...ADMIN_KEY_GROUPS.TEMPLATE_ADD)
   @Audit({
     module: AuditModule.TEMPLATE,
     action: AuditAction.CREATE,

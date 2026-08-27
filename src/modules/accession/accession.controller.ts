@@ -7,8 +7,12 @@ import {
   Post,
   Query,
   Res,
+  UseGuards,
 } from '@nestjs/common';
 import { AuditAction, AuditModule } from '@prisma/client';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import type { Response } from 'express';
 import { AccessionSampleService } from './accession-sample.service';
 import { PrintLabelDto, PrintLabelsDto } from './dto/print-label.dto';
@@ -58,6 +62,7 @@ const auditUpdate = (description: string) => ({
  * captured as an `:id`.
  */
 @Controller('accession/samples')
+@UseGuards(PermissionGuard)
 export class AccessionController {
   constructor(private readonly sampleService: AccessionSampleService) {}
 
@@ -130,6 +135,7 @@ export class AccessionController {
 
   /** Bulk Collect. */
   @Post('bulk/collect')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_COLLECT)
   @Audit(auditUpdate('Bulk collected samples'))
   bulkCollect(
     @CurrentTenant() tenantId: string,
@@ -141,6 +147,7 @@ export class AccessionController {
 
   /** Bulk Collect & Print. */
   @Post('bulk/collect-print')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_COLLECT)
   @Audit(auditUpdate('Bulk collected & printed samples'))
   bulkCollectPrint(
     @CurrentTenant() tenantId: string,
@@ -152,6 +159,7 @@ export class AccessionController {
 
   /** Bulk Accept. */
   @Post('bulk/accept')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_ACCEPT)
   @Audit(auditUpdate('Bulk accepted samples'))
   bulkAccept(
     @CurrentTenant() tenantId: string,
@@ -163,6 +171,7 @@ export class AccessionController {
 
   /** Bulk Acquire. */
   @Post('bulk/acquire')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_ACQUIRE)
   @Audit(auditUpdate('Bulk acquired samples'))
   bulkAcquire(
     @CurrentTenant() tenantId: string,
@@ -174,6 +183,7 @@ export class AccessionController {
 
   /** Bulk Hault. */
   @Post('bulk/halt')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_HALT)
   @Audit(auditUpdate('Bulk halted samples'))
   bulkHalt(
     @CurrentTenant() tenantId: string,
@@ -185,6 +195,7 @@ export class AccessionController {
 
   /** Bulk Error. */
   @Post('bulk/error')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_ERROR)
   @Audit(auditUpdate('Bulk flagged samples errored'))
   bulkError(
     @CurrentTenant() tenantId: string,
@@ -196,6 +207,7 @@ export class AccessionController {
 
   /** Bulk Hold. */
   @Post('bulk/hold')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_HOLD)
   @Audit(auditUpdate('Bulk held samples'))
   bulkHold(
     @CurrentTenant() tenantId: string,
@@ -218,6 +230,7 @@ export class AccessionController {
 
   /** Bulk Store. */
   @Post('bulk/store')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_STORE)
   @Audit(auditUpdate('Bulk stored samples'))
   bulkStore(
     @CurrentTenant() tenantId: string,
@@ -229,6 +242,7 @@ export class AccessionController {
 
   /** Bulk Discard. */
   @Post('bulk/discard')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_DISCARD)
   @Audit(auditUpdate('Bulk discarded samples'))
   bulkDiscard(
     @CurrentTenant() tenantId: string,
@@ -240,6 +254,7 @@ export class AccessionController {
 
   /** Bulk Return. */
   @Post('bulk/return')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_RETURN)
   @Audit(auditUpdate('Bulk returned samples'))
   bulkReturn(
     @CurrentTenant() tenantId: string,
@@ -251,6 +266,7 @@ export class AccessionController {
 
   /** Bulk Cancel. */
   @Post('bulk/cancel')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_CANCEL)
   @Audit(auditUpdate('Bulk cancelled samples'))
   bulkCancel(
     @CurrentTenant() tenantId: string,
@@ -262,6 +278,7 @@ export class AccessionController {
 
   /** Bulk Retrieve (universal undo). */
   @Post('bulk/retrieve')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_RETRIEVE)
   @Audit(auditUpdate('Bulk retrieved samples'))
   bulkRetrieve(
     @CurrentTenant() tenantId: string,
@@ -273,6 +290,7 @@ export class AccessionController {
 
   /** Bulk Assign Barcode (system-generated per sample). */
   @Post('bulk/assign-barcode')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_ASSIGN_BARCODE)
   @Audit(auditUpdate('Bulk assigned barcodes'))
   bulkAssignBarcode(
     @CurrentTenant() tenantId: string,
@@ -304,6 +322,7 @@ export class AccessionController {
 
   /** Collect Sample (§A.10.1). */
   @Post(':id/collect')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_COLLECT)
   @Audit(auditUpdate('Collected a sample'))
   async collect(
     @CurrentTenant() tenantId: string,
@@ -316,6 +335,7 @@ export class AccessionController {
 
   /** Collect & Print (§A.10.1). */
   @Post(':id/collect-print')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_COLLECT)
   @Audit(auditUpdate('Collected & printed a sample'))
   async collectPrint(
     @CurrentTenant() tenantId: string,
@@ -330,6 +350,7 @@ export class AccessionController {
 
   /** Accept Sample. */
   @Post(':id/accept')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_ACCEPT)
   @Audit(auditUpdate('Accepted a sample'))
   async accept(
     @CurrentTenant() tenantId: string,
@@ -342,6 +363,7 @@ export class AccessionController {
 
   /** Acquire. */
   @Post(':id/acquire')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_ACQUIRE)
   @Audit(auditUpdate('Acquired a sample'))
   async acquire(
     @CurrentTenant() tenantId: string,
@@ -354,6 +376,7 @@ export class AccessionController {
 
   /** Hault. */
   @Post(':id/halt')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_HALT)
   @Audit(auditUpdate('Halted a sample'))
   async halt(
     @CurrentTenant() tenantId: string,
@@ -366,6 +389,7 @@ export class AccessionController {
 
   /** Error. */
   @Post(':id/error')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_ERROR)
   @Audit(auditUpdate('Flagged a sample errored'))
   async error(
     @CurrentTenant() tenantId: string,
@@ -378,6 +402,7 @@ export class AccessionController {
 
   /** Hold. */
   @Post(':id/hold')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_HOLD)
   @Audit(auditUpdate('Held a sample'))
   async hold(
     @CurrentTenant() tenantId: string,
@@ -402,6 +427,7 @@ export class AccessionController {
 
   /** Store. */
   @Post(':id/store')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_STORE)
   @Audit(auditUpdate('Stored a sample'))
   async store(
     @CurrentTenant() tenantId: string,
@@ -414,6 +440,7 @@ export class AccessionController {
 
   /** Discard. */
   @Post(':id/discard')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_DISCARD)
   @Audit(auditUpdate('Discarded a sample'))
   async discard(
     @CurrentTenant() tenantId: string,
@@ -426,6 +453,7 @@ export class AccessionController {
 
   /** Return. */
   @Post(':id/return')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_RETURN)
   @Audit(auditUpdate('Returned a sample'))
   async returnSample(
     @CurrentTenant() tenantId: string,
@@ -440,6 +468,7 @@ export class AccessionController {
 
   /** Cancel. */
   @Post(':id/cancel')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_CANCEL)
   @Audit(auditUpdate('Cancelled a sample'))
   async cancel(
     @CurrentTenant() tenantId: string,
@@ -452,6 +481,7 @@ export class AccessionController {
 
   /** Retrieve (universal undo). */
   @Post(':id/retrieve')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_RETRIEVE)
   @Audit(auditUpdate('Retrieved a sample'))
   async retrieve(
     @CurrentTenant() tenantId: string,
@@ -466,6 +496,7 @@ export class AccessionController {
 
   /** Assign Barcode & Print (§A.10.2). */
   @Post(':id/assign-barcode')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_ASSIGN_BARCODE)
   @Audit(auditUpdate('Assigned a barcode'))
   async assignBarcode(
     @CurrentTenant() tenantId: string,
@@ -492,6 +523,7 @@ export class AccessionController {
 
   /** Update Sample (§A.10.3) — note/attachment only, no status change. */
   @Patch(':id')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_UPDATE_NOTES)
   @Audit(auditUpdate('Updated a sample'))
   async update(
     @CurrentTenant() tenantId: string,

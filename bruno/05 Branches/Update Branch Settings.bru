@@ -29,6 +29,8 @@ vars:pre-request {
 }
 
 docs {
+  🔒 **RBAC:** requires `business_admin:center_and_operations__update_branch` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Update this branch's operational settings (upsert — the settings row is created
   with defaults on first write; only supplied fields change).
 

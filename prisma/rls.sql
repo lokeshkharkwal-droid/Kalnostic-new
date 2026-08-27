@@ -863,6 +863,14 @@ CREATE POLICY ubperm_tenant_isolation ON user_branch_permissions
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── branch_role_permissions ───────────────────────────────────────────────────
+ALTER TABLE branch_role_permissions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE branch_role_permissions FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS brp_tenant_isolation ON branch_role_permissions;
+CREATE POLICY brp_tenant_isolation ON branch_role_permissions
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- ── machines ────────────────────────────────────────────────────────────────────
 ALTER TABLE machines ENABLE ROW LEVEL SECURITY;
 ALTER TABLE machines FORCE ROW LEVEL SECURITY;
@@ -1647,6 +1655,11 @@ DROP POLICY IF EXISTS registration_settings_tenant_isolation ON registration_set
 CREATE POLICY registration_settings_tenant_isolation ON registration_settings
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
+-- branch_id is nullable: a branch row or the single tenant-level "business" row.
+-- @@unique([tenantId, branchId]) can't guard the tenant-level row (Postgres
+-- treats NULLs as distinct), so enforce one-per-tenant with a partial index.
+CREATE UNIQUE INDEX IF NOT EXISTS registration_settings_tenant_level_unique
+  ON registration_settings (tenant_id) WHERE branch_id IS NULL AND deleted_at IS NULL;
 
 -- ── registration_id_sequences ───────────────────────────────────────────────
 ALTER TABLE registration_id_sequences ENABLE ROW LEVEL SECURITY;

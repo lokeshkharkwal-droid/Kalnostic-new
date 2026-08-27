@@ -30,6 +30,8 @@ vars:pre-request {
 }
 
 docs {
+  🔒 **RBAC:** requires `business_admin:center_and_operations__update_branch` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Set (or change) the tenant's single main branch. Idempotent upsert — only one
   main branch exists per tenant at a time. The `branchId` must belong to the
   caller's tenant (validated server-side; 404 otherwise).

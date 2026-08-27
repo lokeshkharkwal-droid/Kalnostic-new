@@ -1,0 +1,22 @@
+meta {
+  name: 09 Get Business Registration Settings
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/registration-settings/business
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  The tenant-level ("business") Registration settings — the single row with
+  `branchId = null`, created with defaults on first access. Branches that have
+  not customised their own row fall back to this. Gated by the
+  `registration:settings` permission (Business Admin bypasses the guard).
+}

@@ -38,6 +38,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** requires `branch_admin:referrals__add_referral_doctor` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Demonstrates the cross-field commission validation. Here `commissionType` is
   `FIXED_AMOUNT` but `fixedCommissionCycle` (the "Fixed Type") is missing, so the
   service rejects it with 422 `REFERRAL_DOCTOR_INVALID_COMMISSION_CONFIG`.

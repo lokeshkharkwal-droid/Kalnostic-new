@@ -1,4 +1,7 @@
-import { Body, Controller, Get, Param, Patch } from '@nestjs/common';
+import { UseGuards, Body, Controller, Get, Param, Patch } from '@nestjs/common';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { OutOfRangeService } from './out-of-range.service';
 import { UpdateWorklistStatusDto } from './dto/update-worklist-status.dto';
@@ -14,10 +17,12 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * controller covers the worklist's own list/status-update.
  */
 @Controller('out-of-range-flags')
+@UseGuards(PermissionGuard)
 export class OutOfRangeController {
   constructor(private readonly outOfRangeService: OutOfRangeService) {}
 
   @Get()
+  @RequirePermission(PERMISSION_KEYS.LAB_ACCESS_OOR)
   findAll(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -26,6 +31,7 @@ export class OutOfRangeController {
   }
 
   @Patch(':id/status')
+  @RequirePermission(PERMISSION_KEYS.LAB_UPDATE_OOR)
   @Audit({
     module: AuditModule.OUT_OF_RANGE_FLAG,
     action: AuditAction.UPDATE,

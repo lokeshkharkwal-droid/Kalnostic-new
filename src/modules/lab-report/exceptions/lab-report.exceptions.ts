@@ -249,6 +249,17 @@ export class OrderReportsNotFoundException extends KaltrosException {
   }
 }
 
+/**
+ * The "Share and Inform" exceptions now live in the communication module (they are
+ * reused by every share flow via `ShareService`); re-exported here so existing
+ * `lab-report/exceptions` imports keep resolving.
+ */
+export {
+  ShareTemplateNotActivatedException,
+  ShareTemplateNotConfiguredException,
+  ShareRecipientMissingException,
+} from '../../communication/exceptions/communication.exceptions';
+
 /** 422 — Approve was called with a `signatoryAuthority*Id` that does not match
  * any currently-valid signatory candidate for this report's department/branch
  * (see `LabReportService.getSignatoryCandidates`). Re-validated server-side at

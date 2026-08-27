@@ -46,6 +46,8 @@ script:post-response {
 }
 
 docs {
+  🔒 **RBAC:** requires ANY of `business_admin:templates__add_sms_template`, `business_admin:templates__add_email_template`, `business_admin:templates__add_whatsapp_template`, `business_admin:templates__add_consent_form` — enforced by `PermissionGuard` (`@RequirePermission` / `@RequireAnyPermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Create a messaging template in the caller's scope. Scope is derived from the
   JWT (`@CurrentProfile`): a **business_admin** token (`active_branch_id: null`)
   creates a **tenant-level** template; a **branch-admin** token creates a

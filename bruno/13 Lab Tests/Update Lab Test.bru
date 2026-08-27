@@ -40,6 +40,8 @@ vars:pre-request {
 }
 
 docs {
+  🔒 **RBAC:** requires `business_admin:master_data__update_test` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Patch a lab test's core fields (send only what changes). `versionHistory` is
   never edited here (use Add Version).
 

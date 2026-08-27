@@ -59,6 +59,8 @@ script:post-response {
 }
 
 docs {
+  🔒 **RBAC:** requires `business_admin:user_management__add_user` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Create a staff user. Identity → Person (Aadhaar encrypted), credentials →
   PersonCredentials (chosen `username` + `password`), employment →
   TenantStaffMembership (sequential `userCode`), branch assignment(s) →

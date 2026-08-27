@@ -56,6 +56,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** requires ANY of `branch_admin:consultant_doctors__update_consultant_doctor`, `branch_admin:reporting_doctors__update_reporting_doctor` — enforced by `PermissionGuard` (`@RequirePermission` / `@RequireAnyPermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Update a doctor (scoped to the caller's tenant). All fields optional; only
   supplied fields change. Same field rules as create.
 

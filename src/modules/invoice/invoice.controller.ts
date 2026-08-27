@@ -1,4 +1,15 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import {
+  UseGuards,
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+} from '@nestjs/common';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { InvoiceService } from './invoice.service';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
@@ -19,11 +30,13 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * `/:id` routes so they win.
  */
 @Controller('invoices')
+@UseGuards(PermissionGuard)
 export class InvoiceController {
   constructor(private readonly invoiceService: InvoiceService) {}
 
   /** Create an invoice from selected outstanding order records. */
   @Post()
+  @RequirePermission(PERMISSION_KEYS.FIN_INVOICE_CREATE)
   @Audit({
     module: AuditModule.INVOICE,
     action: AuditAction.CREATE,
@@ -45,6 +58,7 @@ export class InvoiceController {
 
   /** List invoices (paginated, with filters). Scoped to the active branch. */
   @Get()
+  @RequirePermission(PERMISSION_KEYS.FIN_INVOICE_LIST)
   list(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -55,6 +69,7 @@ export class InvoiceController {
 
   /** Summary-card totals over the same scoped dataset the list paginates. */
   @Get('summary')
+  @RequirePermission(PERMISSION_KEYS.FIN_INVOICE_LIST)
   summary(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -65,18 +80,21 @@ export class InvoiceController {
 
   /** Fetch one invoice with its source orders + payment history. */
   @Get(':id')
+  @RequirePermission(PERMISSION_KEYS.FIN_INVOICE_LIST)
   getOne(@CurrentTenant() tenantId: string, @Param('id') id: string) {
     return this.invoiceService.getOne(id, tenantId);
   }
 
   /** List an invoice's payment history (newest first). */
   @Get(':id/payments')
+  @RequirePermission(PERMISSION_KEYS.FIN_INVOICE_LIST)
   payments(@CurrentTenant() tenantId: string, @Param('id') id: string) {
     return this.invoiceService.paymentHistory(id, tenantId);
   }
 
   /** Record an invoice or TDS receipt against an invoice. */
   @Post(':id/receive-payment')
+  @RequirePermission(PERMISSION_KEYS.FIN_INVOICE_RECEIVE_PAYMENT)
   @Audit({
     module: AuditModule.INVOICE,
     action: AuditAction.UPDATE,
@@ -100,6 +118,7 @@ export class InvoiceController {
 
   /** Cancel an invoice with a mandatory reason (blocked once payments exist). */
   @Post(':id/cancel')
+  @RequirePermission(PERMISSION_KEYS.FIN_INVOICE_CANCEL)
   @Audit({
     module: AuditModule.INVOICE,
     action: AuditAction.UPDATE,

@@ -219,6 +219,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** requires `business_admin:master_data__add_test` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Create a lab test inside a master data (tenant/branch from the JWT + the path's
   master data). Captures `labTestId`. Children (`samples`, `resultParams`, each
   param's `referenceRanges`/`referenceValues`) are created in the same

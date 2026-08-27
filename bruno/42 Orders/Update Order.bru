@@ -82,6 +82,15 @@ docs {
   `paidAmount` exceeds the summed `netAmount` is refused with 422
   `PAYMENT_OVERPAYMENT` and the patch rolls back. `patientId` is not editable.
 
+  ## Invoice lock
+
+  Once an invoice has been generated for the order (an active `InvoiceSourceOrder`
+  link exists), the order is immutable: any update is rejected with 409
+  `ORDER_ALREADY_INVOICED`, regardless of payment status. Cancelling that invoice
+  (`POST /invoices/:id/cancel`) soft-deletes its source link and unlocks the order.
+  The order list/detail responses expose `hasInvoice` (boolean) and `invoiceCode`
+  so the frontend can disable the edit/cancel actions before the call.
+
   ## Billing Menu creator-scoped guards (by other user)
 
   Enforced from the branch Registration Settings against `Order.createdBy` vs the

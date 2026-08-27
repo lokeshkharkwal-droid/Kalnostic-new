@@ -1,0 +1,40 @@
+meta {
+  name: Share Appointment All
+  type: http
+  seq: 38
+}
+
+post {
+  url: {{baseUrl}}/orders/{{orderId}}/share-appointment-all
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "email": "patient@example.com",
+    "sms": "919999999999",
+    "whatsapp": "919999999999"
+  }
+}
+
+docs {
+  Send the appointment confirmation to the patient over SMS + Email + WhatsApp AND
+  raise the in-app (IAM) notification, in one call. No PDF attachment.
+
+  - `email` / `sms` / `whatsapp` (optional) — override the patient's stored contact
+    per channel.
+  - IAM targets the order creator + referral parties (internal-referral employee).
+
+  Returns `{ orderId, results: [{ channel, status, reason?, logId? }] }`; a channel
+  with no activated template is skipped, not an error. Prereqs: activated
+  `lab_create_appointment_inform_patient` templates (SMS/Email/WhatsApp/IAM).
+}

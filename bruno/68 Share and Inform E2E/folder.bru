@@ -1,0 +1,58 @@
+meta {
+  name: 68 Share and Inform E2E
+  seq: 68
+}
+
+docs {
+  End-to-end, DEPENDENT chain for the Order Console "Share and Inform" feature:
+  send a patient their lab report over SMS / Email / WhatsApp, reusing the
+  communication module. Run the requests top-to-bottom (Bruno "Run Folder", or
+  one by one) — each captures a variable the next needs.
+
+  Flow:
+    01 SiteAdmin Login              → siteAdminToken
+    02-04 SiteAdmin: create GLOBAL messaging templates (SMS/Email/WhatsApp),
+          feature = console_lab_report_as_attachment → share*GlobalId
+    05 Business Login               → businessAccessToken
+    06 Business: create an active lab_all_report PDF template (so Email/WhatsApp
+       can render + attach the report PDF)                → labAllReportTemplateId
+    07-09 Business: ACTIVATE each global (clone into tenant)
+    10 Business: list orders → pick one                    → shareOrderId
+    11 Get Share Info (preload: patient contacts + which channels are activated)
+    12 Share via SMS   (text-only, needs only a patient mobile — the sure path)
+    13 Share via Email (attaches the lab_all_report PDF)
+    14 Share via WhatsApp (attaches the PDF)
+    15 List communications → confirm the queued rows
+
+  The feature's own NEW endpoints are just TWO: GET .../share-info (step 11, the
+  popup preload) and POST .../share (steps 12-14, one per channel). Everything
+  else reuses existing template/order/communication APIs.
+
+  WHAT ACTUALLY REACHES THE RECIPIENT (important):
+    - EMAIL  → really delivers. No carrier registration needed. Set your inbox in
+      step 13 (`shareTestEmail`) and you'll receive it (with the PDF).
+    - SMS / WhatsApp → the API + relay ACCEPT them (status SENT, exchange_id set),
+      but a real phone only receives them if the template's provider ids are REAL:
+      SMS needs a DLT-registered smsTemplateId + smsSenderId (and body matching the
+      DLT text); WhatsApp needs a Meta/AiSensy-APPROVED template id. The steps ship
+      with PLACEHOLDER ids so the flow runs green end-to-end (guard passes, relay
+      accepts) — replace them with your real provider ids to get actual handset
+      delivery. Until then, SMS/WhatsApp will show SENT but won't arrive on a phone.
+
+  Notes:
+    - SMS/WhatsApp DELIVERY needs carrier registration: set real provider ids in
+      steps 02 (smsDltTemplateId + smsSenderId) and 04 (whatsappTemplateId +
+      whatsappSenderId) BEFORE creating the globals — the clone in 07-09 copies
+      them into the tenant. Missing them → 422 SHARE_TEMPLATE_NOT_CONFIGURED on
+      share (the relay would otherwise accept + the carrier silently drop).
+      Re-activating after editing a global: delete the stale tenant clone first
+      (DELETE /templates/:id), since clone is idempotent and won't overwrite.
+    - A channel only works if its global template was activated (07-09). Skipping
+      activation → 422 SHARE_TEMPLATE_NOT_ACTIVATED (that's the gate working).
+    - Email/WhatsApp additionally need the order to HAVE lab reports (accepted
+      samples) AND an active lab_all_report template (step 06); otherwise the PDF
+      render throws ORDER_REPORTS_NOT_FOUND / NO_ACTIVE_PRINT_TEMPLATE. SMS has no
+      such dependency.
+    - Set your real login creds in steps 01 and 05 (pre-request vars) if the
+      defaults don't match your environment.
+}
