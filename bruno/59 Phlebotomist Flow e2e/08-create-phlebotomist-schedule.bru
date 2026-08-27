@@ -40,6 +40,8 @@ script:post-response {
 }
 
 docs {
+  🔒 **RBAC:** requires `registration:appointments__add_phlebotomist_configuration` — POST /phlebotomist-schedules is enforced by `PermissionGuard`; a caller lacking it (and not `business_admin`/`administrator`, which bypass) gets **403 `PERMISSION_DENIED`**. (PATCH/DELETE need `…__update_phlebotomist_configuration`).
+  
   **Step 8 — Create the phlebotomist's schedule. REQUIRED before the order.**
 
   Order creation reserves a home-visit slot inside its transaction. Without an

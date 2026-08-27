@@ -5,6 +5,7 @@ import { TechnicianSettingsModule } from '../technician-settings/technician-sett
 import { LabTestModule } from '../lab-test/lab-test.module';
 import { CommunicationModule } from '../communication/communication.module';
 import { TemplateModule } from '../template/template.module';
+import { PermissionsModule } from '../permissions/permissions.module';
 import { LabReportController } from './lab-report.controller';
 import { LabReportService } from './lab-report.service';
 import { LabReportDirectoryService } from './lab-report-directory.service';
@@ -52,6 +53,7 @@ import { NablTatCronService } from './nabl-tat-cron.service';
     LabTestModule,
     CommunicationModule,
     TemplateModule,
+    PermissionsModule,
   ],
   controllers: [
     LabReportController,

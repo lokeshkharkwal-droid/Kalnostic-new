@@ -6,7 +6,11 @@ import {
   Param,
   Patch,
   Post,
+  UseGuards,
 } from '@nestjs/common';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { InventoryUsageService } from './inventory-usage.service';
 import {
@@ -26,10 +30,12 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * which have their own tenant-wide list views).
  */
 @Controller('lab-reports/:labReportId/inventory')
+@UseGuards(PermissionGuard)
 export class InventoryUsageController {
   constructor(private readonly inventoryUsageService: InventoryUsageService) {}
 
   @Get()
+  @RequirePermission(PERMISSION_KEYS.LAB_VIEW_INVENTORY)
   findAll(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -43,6 +49,7 @@ export class InventoryUsageController {
   }
 
   @Post()
+  @RequirePermission(PERMISSION_KEYS.LAB_UPDATE_INVENTORY)
   @Audit({
     module: AuditModule.INVENTORY_USAGE,
     action: AuditAction.CREATE,
@@ -63,6 +70,7 @@ export class InventoryUsageController {
   }
 
   @Patch(':usageId')
+  @RequirePermission(PERMISSION_KEYS.LAB_UPDATE_INVENTORY)
   @Audit({
     module: AuditModule.INVENTORY_USAGE,
     action: AuditAction.UPDATE,
@@ -85,6 +93,7 @@ export class InventoryUsageController {
   }
 
   @Delete(':usageId')
+  @RequirePermission(PERMISSION_KEYS.LAB_UPDATE_INVENTORY)
   @Audit({
     module: AuditModule.INVENTORY_USAGE,
     action: AuditAction.DELETE,

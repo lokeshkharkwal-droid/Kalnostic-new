@@ -82,6 +82,7 @@ import { SalesSettingsModule } from './modules/sales-settings/sales-settings.mod
 import { PhlebotomistSettingsModule } from './modules/phlebotomist-settings/phlebotomist-settings.module';
 import { LabReportModule } from './modules/lab-report/lab-report.module';
 import { RegistrationSettingsModule } from './modules/registration-settings/registration-settings.module';
+import { PermissionsModule } from './modules/permissions/permissions.module';
 import { InvoiceModule } from './modules/invoice/invoice.module';
 import { SettlementModule } from './modules/settlement/settlement.module';
 import { FinancePaymentsModule } from './modules/finance-payments/finance-payments.module';
@@ -192,6 +193,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     PhlebotomistSettingsModule,
     LabReportModule,
     RegistrationSettingsModule,
+    PermissionsModule,
   ],
   providers: [
     // Global business authentication. SiteAdmin routes use @Public() + their

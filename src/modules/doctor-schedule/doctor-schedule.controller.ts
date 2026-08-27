@@ -7,8 +7,12 @@ import {
   Patch,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import { AuditAction, AuditModule } from '@prisma/client';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { DoctorScheduleService } from './doctor-schedule.service';
 import { DoctorSlotService } from './doctor-slot.service';
 import { CreateDoctorScheduleDto } from './dto/create-doctor-schedule.dto';
@@ -27,6 +31,7 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * ids.
  */
 @Controller('doctor-schedules')
+@UseGuards(PermissionGuard)
 export class DoctorScheduleController {
   constructor(
     private readonly scheduleService: DoctorScheduleService,
@@ -37,6 +42,7 @@ export class DoctorScheduleController {
    * Create a doctor schedule and generate its future slots.
    */
   @Post()
+  @RequirePermission(PERMISSION_KEYS.REG_ADD_DOCTOR_CONFIG)
   @Audit({
     module: AuditModule.DOCTOR_SCHEDULE,
     action: AuditAction.CREATE,
@@ -123,6 +129,7 @@ export class DoctorScheduleController {
    * Update a schedule; regenerates future unbooked slots.
    */
   @Patch(':id')
+  @RequirePermission(PERMISSION_KEYS.REG_UPDATE_DOCTOR_CONFIG)
   @Audit({
     module: AuditModule.DOCTOR_SCHEDULE,
     action: AuditAction.UPDATE,
@@ -141,6 +148,7 @@ export class DoctorScheduleController {
    * Soft-delete a schedule (blocked if it has future booked slots).
    */
   @Delete(':id')
+  @RequirePermission(PERMISSION_KEYS.REG_UPDATE_DOCTOR_CONFIG)
   @Audit({
     module: AuditModule.DOCTOR_SCHEDULE,
     action: AuditAction.DELETE,

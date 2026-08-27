@@ -15,6 +15,8 @@ auth:bearer {
 }
 
 docs {
+  🔒 **RBAC:** requires `registration:appointments__update_doctor_configuration` — enforced by `PermissionGuard`; a caller lacking it (and not `business_admin`/`administrator`, which bypass) gets **403 `PERMISSION_DENIED`**.
+  
   Soft-delete a schedule (and its future unbooked slots + child rows). Blocked
   with `SCHEDULE_HAS_BOOKINGS` (422) when future booked slots exist — booked
   appointments are never removed automatically.

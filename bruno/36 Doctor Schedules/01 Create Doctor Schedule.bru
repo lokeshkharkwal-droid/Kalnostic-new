@@ -43,6 +43,8 @@ script:post-response {
 }
 
 docs {
+  🔒 **RBAC:** requires `registration:appointments__add_doctor_configuration` — enforced by `PermissionGuard`; a caller lacking it (and not `business_admin`/`administrator`, which bypass) gets **403 `PERMISSION_DENIED`**.
+  
   Create a doctor's schedule and generate its future slots. `doctorId`/`branchId`
   are validated against the caller's tenant; `tenantId` comes from the JWT.
   Captures `doctorScheduleId`.

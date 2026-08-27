@@ -1,4 +1,5 @@
 import {
+  UseGuards,
   Body,
   Controller,
   Delete,
@@ -8,6 +9,9 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { ExternalReferralService } from './external-referral.service';
 import { CreateExternalReferralDto } from './dto/create-external-referral.dto';
@@ -24,6 +28,7 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * JWT). The global `JwtAuthGuard` protects all routes.
  */
 @Controller('external-referrals')
+@UseGuards(PermissionGuard)
 export class ExternalReferralController {
   constructor(
     private readonly externalReferralService: ExternalReferralService,
@@ -33,6 +38,7 @@ export class ExternalReferralController {
    * Register an external referral in the caller's tenant.
    */
   @Post()
+  @RequirePermission(PERMISSION_KEYS.BR_REF_ADD_EXTERNAL)
   @Audit({
     module: AuditModule.EXTERNAL_REFERRAL,
     action: AuditAction.CREATE,
@@ -84,6 +90,7 @@ export class ExternalReferralController {
    * Update an external referral.
    */
   @Patch(':id')
+  @RequirePermission(PERMISSION_KEYS.BR_REF_UPDATE_EXTERNAL)
   @Audit({
     module: AuditModule.EXTERNAL_REFERRAL,
     action: AuditAction.UPDATE,
@@ -109,6 +116,7 @@ export class ExternalReferralController {
    * Soft-delete an external referral.
    */
   @Delete(':id')
+  @RequirePermission(PERMISSION_KEYS.BR_REF_DELETE_EXTERNAL)
   @Audit({
     module: AuditModule.EXTERNAL_REFERRAL,
     action: AuditAction.DELETE,

@@ -34,6 +34,8 @@ vars:pre-request {
 }
 
 docs {
+  🔒 **RBAC:** requires ANY of `business_admin:center_and_operations__link_branch`, `business_admin:center_and_operations__edit_link`, `business_admin:center_and_operations__delete_link` — enforced by `PermissionGuard` (`@RequirePermission` / `@RequireAnyPermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Replace the full set of sample-receiving branches mapped to this Collection
   Center (PUT replaces the whole set). Mappings no longer in the array are
   soft-deleted; ids in the array are upserted (a previously removed mapping is

@@ -26,4 +26,9 @@ docs {
   duplicates. Panel membership is remapped to the branch test copies. Runs as one
   transaction. Hand-created branch rows can't exist (branch admins can't create).
   Returns `{ tests: { created, updated }, panels: { created, updated } }`.
+
+  **Authorization:** requires ANY of `branch_admin:master_data__import_master_lab_tests`
+  or `branch_admin:master_data__import_master_lab_panels` (one atomic import covers
+  both). `branch_admin` holds both by baseline; `business_admin`/`administrator`
+  bypass. A branch role missing both → 403 PERMISSION_DENIED.
 }

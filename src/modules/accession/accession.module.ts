@@ -3,6 +3,7 @@ import { PrismaModule } from '../../prisma/prisma.module';
 import { BranchModule } from '../branch/branch.module';
 import { LabReportModule } from '../lab-report/lab-report.module';
 import { PdfReportTemplateModule } from '../pdf-report-template/pdf-report-template.module';
+import { PermissionsModule } from '../permissions/permissions.module';
 import { AccessionController } from './accession.controller';
 import { SampleTransferController } from './sample-transfer.controller';
 import { AccessionSettingsController } from './accession-settings.controller';
@@ -36,6 +37,7 @@ import { AccessionDashboardService } from './accession-dashboard.service';
     BranchModule,
     LabReportModule,
     PdfReportTemplateModule,
+    PermissionsModule,
   ],
   controllers: [
     AccessionController,

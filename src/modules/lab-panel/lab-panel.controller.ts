@@ -1,4 +1,5 @@
 import {
+  UseGuards,
   Body,
   Controller,
   Delete,
@@ -8,6 +9,15 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import {
+  RequirePermission,
+  RequireAnyPermission,
+} from '../permissions/decorators/require-permission.decorator';
+import {
+  PERMISSION_KEYS,
+  ADMIN_KEY_GROUPS,
+} from '../permissions/constants/module-permissions.constant';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { LabPanelService } from './lab-panel.service';
 import { CreateLabPanelDto } from './dto/create-lab-panel.dto';
@@ -24,6 +34,7 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * from the JWT. The global `JwtAuthGuard` protects all routes.
  */
 @Controller('master-data/:masterDataId/lab-panels')
+@UseGuards(PermissionGuard)
 export class LabPanelController {
   constructor(private readonly labPanelService: LabPanelService) {}
 
@@ -31,6 +42,7 @@ export class LabPanelController {
    * Create a lab panel (with nested included tests) in a master data.
    */
   @Post()
+  @RequirePermission(PERMISSION_KEYS.BA_MD_ADD_LAB_PANEL)
   @Audit({
     module: AuditModule.LAB_PANEL,
     action: AuditAction.CREATE,
@@ -81,6 +93,7 @@ export class LabPanelController {
    * Declared before the `:panelId` routes so `bulk` isn't matched as an id.
    */
   @Patch('bulk')
+  @RequirePermission(PERMISSION_KEYS.BA_MD_ALLOW_MULTIPLE_EDIT)
   @Audit({
     module: AuditModule.LAB_PANEL,
     action: AuditAction.UPDATE,
@@ -110,6 +123,7 @@ export class LabPanelController {
    * Update a lab panel (and replace its included-test set when provided).
    */
   @Patch(':panelId')
+  @RequireAnyPermission(...ADMIN_KEY_GROUPS.PANEL_UPDATE)
   @Audit({
     module: AuditModule.LAB_PANEL,
     action: AuditAction.UPDATE,
@@ -128,6 +142,7 @@ export class LabPanelController {
    * Soft-delete a lab panel (cascade soft-deletes its included tests).
    */
   @Delete(':panelId')
+  @RequirePermission(PERMISSION_KEYS.BA_MD_DELETE_THE_PANEL)
   @Audit({
     module: AuditModule.LAB_PANEL,
     action: AuditAction.DELETE,

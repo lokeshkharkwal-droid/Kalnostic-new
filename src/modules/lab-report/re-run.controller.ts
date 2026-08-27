@@ -1,4 +1,7 @@
-import { Body, Controller, Get, Param, Patch } from '@nestjs/common';
+import { UseGuards, Body, Controller, Get, Param, Patch } from '@nestjs/common';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { ReRunService } from './re-run.service';
 import { UpdateActionWorklistStatusDto } from './dto/update-worklist-status.dto';
@@ -14,10 +17,12 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * report itself; this controller covers the worklist's own list/status-update.
  */
 @Controller('re-run-requests')
+@UseGuards(PermissionGuard)
 export class ReRunController {
   constructor(private readonly reRunService: ReRunService) {}
 
   @Get()
+  @RequirePermission(PERMISSION_KEYS.LAB_ACCESS_RE_RUN_LIST)
   findAll(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -26,6 +31,7 @@ export class ReRunController {
   }
 
   @Patch(':id/status')
+  @RequirePermission(PERMISSION_KEYS.LAB_UPDATE_RE_RUN)
   @Audit({
     module: AuditModule.RE_RUN_REQUEST,
     action: AuditAction.UPDATE,

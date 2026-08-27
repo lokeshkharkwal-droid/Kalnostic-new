@@ -7,8 +7,12 @@ import {
   Patch,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import { AuditAction, AuditModule } from '@prisma/client';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { PhlebotomistScheduleService } from './phlebotomist-schedule.service';
 import { PhlebotomistSlotService } from './phlebotomist-slot.service';
 import { CreatePhlebotomistScheduleDto } from './dto/create-phlebotomist-schedule.dto';
@@ -30,6 +34,7 @@ import { ActiveBranchRequiredException } from './exceptions/phlebotomist-schedul
  * captured as ids.
  */
 @Controller('phlebotomist-schedules')
+@UseGuards(PermissionGuard)
 export class PhlebotomistScheduleController {
   constructor(
     private readonly scheduleService: PhlebotomistScheduleService,
@@ -46,6 +51,7 @@ export class PhlebotomistScheduleController {
 
   /** Create a phlebotomist schedule and generate its future slots. */
   @Post()
+  @RequirePermission(PERMISSION_KEYS.REG_ADD_PHLEBOTOMIST_CONFIG)
   @Audit({
     module: AuditModule.PHLEBOTOMIST_SCHEDULE,
     action: AuditAction.CREATE,
@@ -127,6 +133,7 @@ export class PhlebotomistScheduleController {
 
   /** Update a schedule; regenerates future unbooked slots. */
   @Patch(':id')
+  @RequirePermission(PERMISSION_KEYS.REG_UPDATE_PHLEBOTOMIST_CONFIG)
   @Audit({
     module: AuditModule.PHLEBOTOMIST_SCHEDULE,
     action: AuditAction.UPDATE,
@@ -150,6 +157,7 @@ export class PhlebotomistScheduleController {
 
   /** Soft-delete a schedule (blocked if it has future booked visits). */
   @Delete(':id')
+  @RequirePermission(PERMISSION_KEYS.REG_UPDATE_PHLEBOTOMIST_CONFIG)
   @Audit({
     module: AuditModule.PHLEBOTOMIST_SCHEDULE,
     action: AuditAction.DELETE,

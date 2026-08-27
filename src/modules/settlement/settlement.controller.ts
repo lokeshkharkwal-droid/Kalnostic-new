@@ -1,4 +1,5 @@
 import {
+  UseGuards,
   Body,
   Controller,
   Get,
@@ -7,6 +8,9 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { SettlementService } from './settlement.service';
 import { CreateSettlementDto } from './dto/create-settlement.dto';
@@ -29,11 +33,13 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * `/:id` routes so they win.
  */
 @Controller('finance/settlements')
+@UseGuards(PermissionGuard)
 export class SettlementController {
   constructor(private readonly settlementService: SettlementService) {}
 
   /** Create a settlement from selected collection order records. */
   @Post()
+  @RequirePermission(PERMISSION_KEYS.FIN_SETTLE_CREATE)
   @Audit({
     module: AuditModule.SETTLEMENT,
     action: AuditAction.CREATE,
@@ -55,6 +61,7 @@ export class SettlementController {
 
   /** List settlements (paginated, with filters). Scoped to the active branch. */
   @Get()
+  @RequirePermission(PERMISSION_KEYS.FIN_SETTLE_LIST)
   list(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -65,6 +72,7 @@ export class SettlementController {
 
   /** Summary-card totals over the same scoped dataset the list paginates. */
   @Get('summary')
+  @RequirePermission(PERMISSION_KEYS.FIN_SETTLE_LIST)
   summary(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -75,18 +83,21 @@ export class SettlementController {
 
   /** Fetch one settlement with its source orders + payout history. */
   @Get(':id')
+  @RequirePermission(PERMISSION_KEYS.FIN_SETTLE_LIST)
   getOne(@CurrentTenant() tenantId: string, @Param('id') id: string) {
     return this.settlementService.getOne(id, tenantId);
   }
 
   /** List a settlement's payout history (newest first). */
   @Get(':id/payments')
+  @RequirePermission(PERMISSION_KEYS.FIN_SETTLE_LIST)
   payments(@CurrentTenant() tenantId: string, @Param('id') id: string) {
     return this.settlementService.paymentHistory(id, tenantId);
   }
 
   /** Approve a settlement (confirm/adjust the approved amount + document it). */
   @Post(':id/approve')
+  @RequirePermission(PERMISSION_KEYS.FIN_SETTLE_APPROVE)
   @Audit({
     module: AuditModule.SETTLEMENT,
     action: AuditAction.UPDATE,
@@ -103,6 +114,7 @@ export class SettlementController {
 
   /** Reject a settlement (may be edited and resubmitted). */
   @Post(':id/reject')
+  @RequirePermission(PERMISSION_KEYS.FIN_SETTLE_CANCEL)
   @Audit({
     module: AuditModule.SETTLEMENT,
     action: AuditAction.UPDATE,
@@ -119,6 +131,7 @@ export class SettlementController {
 
   /** Record one payout against an approved settlement. */
   @Post(':id/settle')
+  @RequirePermission(PERMISSION_KEYS.FIN_SETTLE_SETTLE)
   @Audit({
     module: AuditModule.SETTLEMENT,
     action: AuditAction.UPDATE,
@@ -142,6 +155,7 @@ export class SettlementController {
 
   /** Edit a settlement (changing the approved amount forces re-approval). */
   @Patch(':id')
+  @RequirePermission(PERMISSION_KEYS.FIN_SETTLE_CREATE)
   @Audit({
     module: AuditModule.SETTLEMENT,
     action: AuditAction.UPDATE,

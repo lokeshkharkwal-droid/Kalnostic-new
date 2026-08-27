@@ -41,6 +41,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** collecting a payment on an order created by ANOTHER user requires `registration:billings__settle_payment_of_other_users` (layered on top of the branch's `AllowCollectionOfAmountByOtherUser` setting). Own-order payments are unaffected; admin roles bypass.
+  
   Create a payment record against an order (1:many ledger). `orderId` is validated
   to be an active order in the caller's tenant (422 `PAYMENT_ORDER_NOT_FOUND`
   otherwise); `tenantId`/`branchId` are inherited from the order. Amounts are

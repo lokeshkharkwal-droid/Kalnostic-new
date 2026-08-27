@@ -1,4 +1,5 @@
 import {
+  UseGuards,
   Body,
   Controller,
   Delete,
@@ -8,6 +9,9 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequireAnyPermission } from '../permissions/decorators/require-permission.decorator';
+import { ADMIN_KEY_GROUPS } from '../permissions/constants/module-permissions.constant';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { ReferralPanelSettingsService } from './referral-panel-settings.service';
 import { CreateReferralPanelSettingsDto } from './dto/create-referral-panel-settings.dto';
@@ -25,6 +29,7 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * reusable billing/communication profile referenced by referral entities.
  */
 @Controller('referral-panel-settings')
+@UseGuards(PermissionGuard)
 export class ReferralPanelSettingsController {
   constructor(
     private readonly referralPanelSettingsService: ReferralPanelSettingsService,
@@ -34,6 +39,7 @@ export class ReferralPanelSettingsController {
    * Create a referral panel settings template.
    */
   @Post()
+  @RequireAnyPermission(...ADMIN_KEY_GROUPS.RPS_CREATE)
   @Audit({
     module: AuditModule.REFERRAL_PANEL_SETTINGS,
     action: AuditAction.CREATE,
@@ -76,6 +82,7 @@ export class ReferralPanelSettingsController {
    * Update a settings template.
    */
   @Patch(':id')
+  @RequireAnyPermission(...ADMIN_KEY_GROUPS.RPS_EDIT)
   @Audit({
     module: AuditModule.REFERRAL_PANEL_SETTINGS,
     action: AuditAction.UPDATE,
@@ -99,6 +106,7 @@ export class ReferralPanelSettingsController {
    * Soft-delete a settings template.
    */
   @Delete(':id')
+  @RequireAnyPermission(...ADMIN_KEY_GROUPS.RPS_DELETE)
   @Audit({
     module: AuditModule.REFERRAL_PANEL_SETTINGS,
     action: AuditAction.DELETE,

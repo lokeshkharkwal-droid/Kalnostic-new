@@ -37,6 +37,8 @@ body:json {
 }
 
 docs {
+  🔒 **RBAC:** requires `branch_admin:outsource_centers__update_outsource_center` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Update an outsource center (scoped to the caller's tenant). All fields are
   optional; `code` is immutable and never accepted. Also used to
   **activate/inactivate** a center — just send `{ "isActive": false }`.

@@ -1,4 +1,5 @@
 import {
+  UseGuards,
   Body,
   Controller,
   Delete,
@@ -8,6 +9,9 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequireAnyPermission } from '../permissions/decorators/require-permission.decorator';
+import { ADMIN_KEY_GROUPS } from '../permissions/constants/module-permissions.constant';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { DocumentService } from './document.service';
 import { CreateDocumentDto } from './dto/create-document.dto';
@@ -31,6 +35,7 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * individual version.
  */
 @Controller('documents')
+@UseGuards(PermissionGuard)
 export class DocumentController {
   constructor(private readonly documentService: DocumentService) {}
 
@@ -39,6 +44,7 @@ export class DocumentController {
    * the active branch; Business Admin → tenant-level (`branchId` null).
    */
   @Post()
+  @RequireAnyPermission(...ADMIN_KEY_GROUPS.DOC_ADD)
   @Audit({
     module: AuditModule.DOCUMENT,
     action: AuditAction.CREATE,
@@ -141,6 +147,7 @@ export class DocumentController {
    * Edit a document — creates a new preserved version on every edit.
    */
   @Patch(':id')
+  @RequireAnyPermission(...ADMIN_KEY_GROUPS.DOC_UPDATE)
   @Audit({
     module: AuditModule.DOCUMENT,
     action: AuditAction.UPDATE,
@@ -166,6 +173,7 @@ export class DocumentController {
    * Soft-delete a document (version history is preserved).
    */
   @Delete(':id')
+  @RequireAnyPermission(...ADMIN_KEY_GROUPS.DOC_DELETE)
   @Audit({
     module: AuditModule.DOCUMENT,
     action: AuditAction.DELETE,

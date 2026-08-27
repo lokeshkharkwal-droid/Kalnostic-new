@@ -42,6 +42,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** requires ANY of `business_admin:master_data__update_lab_panel`, `business_admin:master_data__edit_the_panel` — enforced by `PermissionGuard` (`@RequirePermission` / `@RequireAnyPermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Partial update of a lab panel. Only the keys present are changed. When `tests`
   is provided, the **whole** included-test set is replaced (old active rows
   soft-deleted, the new set created) in one transaction — omit `tests` to leave

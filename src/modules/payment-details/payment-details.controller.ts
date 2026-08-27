@@ -1,4 +1,5 @@
 import {
+  UseGuards,
   Body,
   Controller,
   Delete,
@@ -8,6 +9,9 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { PaymentDetailsService } from './payment-details.service';
 import { CreatePaymentDetailsDto } from './dto/create-payment-details.dto';
@@ -15,6 +19,8 @@ import { UpdatePaymentDetailsDto } from './dto/update-payment-details.dto';
 import { ListPaymentDetailsDto } from './dto/list-payment-details.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
+import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
@@ -23,6 +29,7 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * created inline with an order via the order create API.
  */
 @Controller('payments')
+@UseGuards(PermissionGuard)
 export class PaymentDetailsController {
   constructor(private readonly paymentDetailsService: PaymentDetailsService) {}
 
@@ -36,9 +43,13 @@ export class PaymentDetailsController {
   create(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Body() dto: CreatePaymentDetailsDto,
   ) {
-    return this.paymentDetailsService.create(tenantId, personId, dto);
+    return this.paymentDetailsService.create(tenantId, personId, dto, {
+      branchId: profile.branchId,
+      profileKey: profile.profileKey,
+    });
   }
 
   /** List payments (paginated, optionally filtered by `orderId`). */
@@ -58,6 +69,7 @@ export class PaymentDetailsController {
 
   /** Update a payment record. */
   @Patch(':id')
+  @RequirePermission(PERMISSION_KEYS.FIN_PAYMENTS_EDIT_DIRECT)
   @Audit({
     module: AuditModule.PAYMENT_DETAILS,
     action: AuditAction.UPDATE,
@@ -74,6 +86,7 @@ export class PaymentDetailsController {
 
   /** Soft-delete a payment record. */
   @Delete(':id')
+  @RequirePermission(PERMISSION_KEYS.FIN_PAYMENTS_CANCEL_DIRECT)
   @Audit({
     module: AuditModule.PAYMENT_DETAILS,
     action: AuditAction.DELETE,

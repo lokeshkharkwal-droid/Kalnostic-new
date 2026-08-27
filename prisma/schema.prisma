@@ -1281,10 +1281,11 @@ model AuthRole {
 
   // Uniqueness (key/name, scoped per tenant for custom roles and globally for
   // system roles) is enforced by partial unique indexes in prisma/rls.sql.
-  profiles            UserBranchProfile[]
-  staffMemberships    TenantStaffMembership[]
-  permissionOverrides UserProfilePermissionOverride[]
-  refreshTokens       RefreshToken[]
+  profiles              UserBranchProfile[]
+  staffMemberships      TenantStaffMembership[]
+  permissionOverrides   UserProfilePermissionOverride[]
+  refreshTokens         RefreshToken[]
+  branchRolePermissions BranchRolePermission[]
 
   @@index([tenantId])
   @@index([deletedAt])
@@ -1454,6 +1455,36 @@ model UserBranchPermission {
   @@index([tenantId, personId])
   @@index([branchId])
   @@map("user_branch_permissions")
+}
+
+/// Module-grouped, per-(branch + role) permission overrides (User Management v2.0).
+/// This is the branch-level tier that sits between the static role baseline (code)
+/// and per-user overrides (UserBranchPermission). Resolution precedence:
+/// user override ?? branch-role override ?? static role baseline. Absence of a row
+/// means "inherit the role baseline". Keyed on authRoleId so it works for both
+/// system and tenant-custom roles; roleKey is denormalized for grid reads/labels.
+model BranchRolePermission {
+  id            String   @id @default(uuid())
+  tenantId      String   @map("tenant_id")
+  branchId      String   @map("branch_id")
+  authRoleId    String   @map("auth_role_id")
+  authRole      AuthRole @relation(fields: [authRoleId], references: [id])
+  roleKey       String   @map("role_key")
+  moduleKey     String   @map("module_key")
+  permissionKey String   @map("permission_key")
+  allowed       Boolean
+
+  setBy String? @map("set_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([tenantId, branchId, authRoleId, permissionKey])
+  @@index([tenantId, branchId, authRoleId])
+  @@index([branchId])
+  @@index([authRoleId])
+  @@map("branch_role_permissions")
 }
 
 /// Maps a receptionist to the doctors they handle at a branch.
@@ -5152,9 +5183,14 @@ enum ExternalIdCounterType {
 /// scoping. Field names follow `<Heading>_<Setting>` to mirror the source doc
 /// 1:1. Tenant-scoped + branch-level. RLS policy in prisma/rls.sql.
 model RegistrationSetting {
-  id       String @id @default(uuid())
-  tenantId String @map("tenant_id")
-  branchId String @map("branch_id")
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  // Nullable: a branch row (branchId set) or the single tenant-level "business"
+  // row (branchId = null). Callers resolve branch row first, then fall back to
+  // the tenant-level row. The tenant-level row's uniqueness (one per tenant) is
+  // enforced by a partial unique index in prisma/rls.sql (Postgres treats NULLs
+  // as distinct, so @@unique([tenantId, branchId]) alone won't guard it).
+  branchId String? @map("branch_id")
 
   // ── General ──
   General_AllowAddPatientPhoto    Boolean     @default(true) @map("general_allow_add_patient_photo")

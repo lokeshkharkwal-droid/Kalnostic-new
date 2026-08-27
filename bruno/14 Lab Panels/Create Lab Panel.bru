@@ -72,6 +72,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** requires `business_admin:master_data__add_lab_panel` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Create a lab panel inside a master data (tenant/branch from the JWT + the
   path's master data). Captures `labPanelId`. Included `tests` are created in the
   same transaction; the response includes them, ordered by `sortOrder`.

@@ -1,0 +1,27 @@
+meta {
+  name: 02 Get Branch Role Permissions
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/permissions/branch-roles/{{branchId}}/{{authRoleId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchId: 37e8cb33-9c10-4778-bc4c-20490e1c0f75
+  authRoleId: 00000000-0000-0000-0000-000000000000
+}
+
+docs {
+  The module-grouped permissions for one (branch + role). Each row:
+  `moduleKey`, `moduleLabel`, `permissionKey`, `label`, `baseline` (from the
+  role's static template) and `allowed` (effective = branch-role override ??
+  baseline). Only modules **enabled for the branch** are returned.
+}

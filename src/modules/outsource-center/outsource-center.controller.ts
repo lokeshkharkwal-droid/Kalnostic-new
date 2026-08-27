@@ -1,4 +1,5 @@
 import {
+  UseGuards,
   Body,
   Controller,
   Delete,
@@ -8,6 +9,9 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { OutsourceCenterService } from './outsource-center.service';
 import { CreateOutsourceCenterDto } from './dto/create-outsource-center.dto';
@@ -23,6 +27,7 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * The global `JwtAuthGuard` protects all routes.
  */
 @Controller('outsource-centers')
+@UseGuards(PermissionGuard)
 export class OutsourceCenterController {
   constructor(
     private readonly outsourceCenterService: OutsourceCenterService,
@@ -32,6 +37,7 @@ export class OutsourceCenterController {
    * Create an outsource center with its contacts and branch assignments.
    */
   @Post()
+  @RequirePermission(PERMISSION_KEYS.BR_OUT_ADD)
   @Audit({
     module: AuditModule.OUTSOURCE_CENTER,
     action: AuditAction.CREATE,
@@ -72,6 +78,7 @@ export class OutsourceCenterController {
    * activate/inactivate too, via `{ isActive }`.
    */
   @Patch(':id')
+  @RequirePermission(PERMISSION_KEYS.BR_OUT_UPDATE)
   @Audit({
     module: AuditModule.OUTSOURCE_CENTER,
     action: AuditAction.UPDATE,
@@ -95,6 +102,7 @@ export class OutsourceCenterController {
    * Soft-delete an outsource center (cascades to its contacts).
    */
   @Delete(':id')
+  @RequirePermission(PERMISSION_KEYS.BR_OUT_DELETE)
   @Audit({
     module: AuditModule.OUTSOURCE_CENTER,
     action: AuditAction.DELETE,

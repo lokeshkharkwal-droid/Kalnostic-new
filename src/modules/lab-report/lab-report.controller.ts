@@ -7,9 +7,19 @@ import {
   Post,
   Query,
   Res,
+  UseGuards,
 } from '@nestjs/common';
 import { AuditAction, AuditModule } from '@prisma/client';
 import type { Response } from 'express';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import {
+  RequirePermission,
+  RequireAnyPermission,
+} from '../permissions/decorators/require-permission.decorator';
+import {
+  PERMISSION_KEYS,
+  LAB_RESUBMIT_KEYS,
+} from '../permissions/constants/module-permissions.constant';
 import { LabReportService } from './lab-report.service';
 import { TatService } from './tat.service';
 import { ReRunService } from './re-run.service';
@@ -59,6 +69,7 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * as ids, mirroring PhlebotomistScheduleController's ordering convention.
  */
 @Controller('lab-reports')
+@UseGuards(PermissionGuard)
 export class LabReportController {
   constructor(
     private readonly labReportService: LabReportService,
@@ -269,6 +280,7 @@ export class LabReportController {
   }
 
   @Post(':id/notes')
+  @RequirePermission(PERMISSION_KEYS.LAB_UPDATE_TECH_NOTES)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.CREATE,
@@ -321,6 +333,7 @@ export class LabReportController {
   }
 
   @Get(':id/trend')
+  @RequirePermission(PERMISSION_KEYS.LAB_VIEW_TREND)
   findTrend(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -368,6 +381,7 @@ export class LabReportController {
   }
 
   @Patch(':id/results')
+  @RequirePermission(PERMISSION_KEYS.LAB_ENTER_RESULT)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -397,6 +411,7 @@ export class LabReportController {
    * stay permanently read-only.
    */
   @Patch(':id/content-sections')
+  @RequirePermission(PERMISSION_KEYS.LAB_EDIT_REPORT)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -417,6 +432,7 @@ export class LabReportController {
   }
 
   @Post(':id/save')
+  @RequirePermission(PERMISSION_KEYS.LAB_ENTER_RESULT)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -432,6 +448,7 @@ export class LabReportController {
   }
 
   @Post(':id/submit')
+  @RequirePermission(PERMISSION_KEYS.LAB_ENTER_RESULT)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -452,6 +469,7 @@ export class LabReportController {
   }
 
   @Post(':id/validate')
+  @RequirePermission(PERMISSION_KEYS.LAB_ACCESS_VALIDATION_PENDING)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -474,6 +492,7 @@ export class LabReportController {
   }
 
   @Post(':id/edit-report')
+  @RequirePermission(PERMISSION_KEYS.LAB_EDIT_REPORT)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -494,6 +513,7 @@ export class LabReportController {
   }
 
   @Post(':id/reject')
+  @RequirePermission(PERMISSION_KEYS.LAB_MARK_RESULT_REJECTED)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -516,6 +536,7 @@ export class LabReportController {
   }
 
   @Post(':id/resubmit')
+  @RequireAnyPermission(...LAB_RESUBMIT_KEYS)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -549,6 +570,7 @@ export class LabReportController {
   }
 
   @Post(':id/approve')
+  @RequirePermission(PERMISSION_KEYS.LAB_ACCESS_RESULT_DONE)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -571,6 +593,7 @@ export class LabReportController {
   }
 
   @Post(':id/publish')
+  @RequirePermission(PERMISSION_KEYS.LAB_ACCESS_APPROVED)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -591,6 +614,7 @@ export class LabReportController {
   }
 
   @Post(':id/error-reported')
+  @RequirePermission(PERMISSION_KEYS.LAB_MARK_ERROR_REPORTED)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -613,6 +637,7 @@ export class LabReportController {
   }
 
   @Post(':id/lock')
+  @RequirePermission(PERMISSION_KEYS.LAB_MARK_LOCK_TEST)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -663,6 +688,7 @@ export class LabReportController {
   }
 
   @Post(':id/update-status')
+  @RequirePermission(PERMISSION_KEYS.LAB_UPDATE_TECH_NOTES)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -685,6 +711,7 @@ export class LabReportController {
   }
 
   @Post(':id/re-run')
+  @RequirePermission(PERMISSION_KEYS.LAB_MARK_RE_RUN)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -707,6 +734,7 @@ export class LabReportController {
   }
 
   @Post(':id/critical-alert')
+  @RequirePermission(PERMISSION_KEYS.LAB_MARK_CRITICAL_ALERT)
   @Audit({
     module: AuditModule.CRITICAL_ALERT,
     action: AuditAction.CREATE,
@@ -729,6 +757,7 @@ export class LabReportController {
   }
 
   @Post(':id/out-of-range')
+  @RequirePermission(PERMISSION_KEYS.LAB_MARK_OOR)
   @Audit({
     module: AuditModule.OUT_OF_RANGE_FLAG,
     action: AuditAction.CREATE,
@@ -751,6 +780,7 @@ export class LabReportController {
   }
 
   @Post(':id/delta-check')
+  @RequirePermission(PERMISSION_KEYS.LAB_MARK_DELTA_CHECK)
   @Audit({
     module: AuditModule.DELTA_CHECK,
     action: AuditAction.CREATE,
@@ -773,6 +803,7 @@ export class LabReportController {
   }
 
   @Post(':id/schedule')
+  @RequirePermission(PERMISSION_KEYS.LAB_MARK_SCHEDULED)
   @Audit({
     module: AuditModule.SCHEDULED_TEST,
     action: AuditAction.CREATE,
@@ -808,6 +839,7 @@ export class LabReportController {
   }
 
   @Post(':id/multi-step-process')
+  @RequirePermission(PERMISSION_KEYS.LAB_MARK_MULTISTEP)
   @Audit({
     module: AuditModule.MULTI_STEP_PROCESS,
     action: AuditAction.CREATE,
@@ -830,6 +862,7 @@ export class LabReportController {
   }
 
   @Post(':id/multi-step-process/advance')
+  @RequirePermission(PERMISSION_KEYS.LAB_MARK_MULTISTEP)
   @Audit({
     module: AuditModule.MULTI_STEP_PROCESS,
     action: AuditAction.UPDATE,

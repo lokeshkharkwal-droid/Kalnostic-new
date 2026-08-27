@@ -1,4 +1,5 @@
 import {
+  UseGuards,
   Body,
   Controller,
   Delete,
@@ -11,6 +12,15 @@ import {
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import {
+  RequirePermission,
+  RequireAnyPermission,
+} from '../permissions/decorators/require-permission.decorator';
+import {
+  PERMISSION_KEYS,
+  ADMIN_KEY_GROUPS,
+} from '../permissions/constants/module-permissions.constant';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { UsersService } from './users.service';
@@ -46,11 +56,13 @@ const MAX_PHOTO_BYTES = 2 * 1024 * 1024;
  * person/patient routes on `users`. Responses use the global `meta` envelope.
  */
 @Controller('users/manage')
+@UseGuards(PermissionGuard)
 export class UserManagementController {
   constructor(private readonly usersService: UsersService) {}
 
   /** Create a staff user (returns the generated user code + login identifier). */
   @Post()
+  @RequirePermission(PERMISSION_KEYS.BA_UM_ADD_USER)
   @Audit({
     module: AuditModule.USER,
     action: AuditAction.CREATE,
@@ -165,6 +177,7 @@ export class UserManagementController {
 
   /** Edit a staff user (identity, password, role, status). */
   @Patch(':id')
+  @RequireAnyPermission(...ADMIN_KEY_GROUPS.USER_UPDATE)
   @Audit({
     module: AuditModule.USER,
     action: AuditAction.UPDATE,
@@ -326,6 +339,7 @@ export class UserManagementController {
 
   /** Replace the (user + branch) permission grants. */
   @Put(':id/branch-permissions')
+  @RequireAnyPermission(...ADMIN_KEY_GROUPS.USER_UPDATE_PERMISSIONS)
   @Audit({
     module: AuditModule.USER,
     action: AuditAction.UPDATE,

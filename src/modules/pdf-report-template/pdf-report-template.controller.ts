@@ -1,4 +1,5 @@
 import {
+  UseGuards,
   Body,
   Controller,
   Delete,
@@ -9,6 +10,9 @@ import {
   Query,
   Res,
 } from '@nestjs/common';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { AuditAction, AuditModule } from '@prisma/client';
 import type { Response } from 'express';
 import { PdfReportTemplateService } from './pdf-report-template.service';
@@ -31,6 +35,7 @@ import {
  * (except `generate`, which streams a raw PDF via a library-specific response).
  */
 @Controller('pdf-report-templates')
+@UseGuards(PermissionGuard)
 export class PdfReportTemplateController {
   constructor(private readonly service: PdfReportTemplateService) {}
 
@@ -38,6 +43,7 @@ export class PdfReportTemplateController {
    * Create a PDF report template in the caller's tenant.
    */
   @Post()
+  @RequirePermission(PERMISSION_KEYS.BA_TPL_ADD_REPORT)
   @Audit({
     module: AuditModule.PDF_REPORT_TEMPLATE,
     action: AuditAction.CREATE,
@@ -91,6 +97,7 @@ export class PdfReportTemplateController {
    * Idempotent — a template already imported returns the existing copy.
    */
   @Post('global/:id/clone')
+  @RequirePermission(PERMISSION_KEYS.BA_TPL_ADD_REPORT)
   @Audit({
     module: AuditModule.PDF_REPORT_TEMPLATE,
     action: AuditAction.CREATE,
@@ -152,6 +159,7 @@ export class PdfReportTemplateController {
    * Update a template.
    */
   @Patch(':id')
+  @RequirePermission(PERMISSION_KEYS.BA_TPL_EDIT_REPORT)
   @Audit({
     module: AuditModule.PDF_REPORT_TEMPLATE,
     action: AuditAction.UPDATE,
@@ -169,6 +177,7 @@ export class PdfReportTemplateController {
    * Soft-delete a template.
    */
   @Delete(':id')
+  @RequirePermission(PERMISSION_KEYS.BA_TPL_DELETE_REPORT)
   @Audit({
     module: AuditModule.PDF_REPORT_TEMPLATE,
     action: AuditAction.DELETE,

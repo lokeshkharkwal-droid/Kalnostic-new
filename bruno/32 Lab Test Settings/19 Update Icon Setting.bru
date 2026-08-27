@@ -31,6 +31,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** requires `business_admin:lab_test_settings__edit_icon_settings` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Partially update a lab icon setting. Multipart request; only send the
   `payload` fields you want to change (all optional).
 

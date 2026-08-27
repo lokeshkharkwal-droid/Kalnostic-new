@@ -1274,6 +1274,52 @@ export class OrderService {
   }
 
   /**
+   * The current money aggregate for an order — total discount (order-level +
+   * per-line), TDS, and paid amount — read from the stored order. Used by the
+   * controller to diff against an incoming update so a money-field permission is
+   * only enforced when the caller actually raises a discount/TDS or changes the
+   * paid amount (resending an unchanged value is never blocked).
+   */
+  async getMoneyAggregate(
+    id: string,
+    tenantId: string,
+  ): Promise<{ discount: number; tds: number; paid: number }> {
+    const order = await this.prisma.order.findFirst({
+      where: { id, tenantId, deletedAt: null },
+      select: {
+        items: { where: { deletedAt: null }, select: { discount: true } },
+        payments: {
+          where: { deletedAt: null },
+          select: { orderDiscount: true, tdsDeduction: true, paidAmount: true },
+        },
+      },
+    });
+    if (!order) return { discount: 0, tds: 0, paid: 0 };
+    const lineDiscount = order.items.reduce((s, i) => s + toNum(i.discount), 0);
+    const orderDiscount = toNum(order.payments[0]?.orderDiscount);
+    const tds = toNum(order.payments[0]?.tdsDeduction);
+    const paid = order.payments.reduce((s, p) => s + toNum(p.paidAmount), 0);
+    return { discount: lineDiscount + orderDiscount, tds, paid };
+  }
+
+  /**
+   * Read the stored external order id (the editable "Order ID" field) so the
+   * controller can diff it against an incoming update and enforce the
+   * `Update order ID` permission only when the value actually changes. Returns
+   * `null` when the order has no external id or does not exist.
+   */
+  async getExternalOrderId(
+    id: string,
+    tenantId: string,
+  ): Promise<string | null> {
+    const order = await this.prisma.order.findFirst({
+      where: { id, tenantId, deletedAt: null },
+      select: { externalOrderId: true },
+    });
+    return order?.externalOrderId ?? null;
+  }
+
+  /**
    * Enforce the branch's **TDS & Discount** rules (Registration Settings →
    * Charges & Deductions) when finalizing a real order (`status = ORDER`) at a
    * branch. Everything is computed from the server-side `itemPrices` (never a

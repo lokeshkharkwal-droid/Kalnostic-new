@@ -19,6 +19,8 @@ vars:pre-request {
 }
 
 docs {
+  🔒 **RBAC:** requires ANY of `business_admin:templates__add_sms_template`, `business_admin:templates__add_email_template`, `business_admin:templates__add_whatsapp_template`, `business_admin:templates__add_consent_form` — enforced by `PermissionGuard` (`@RequirePermission` / `@RequireAnyPermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Duplicate a template within the caller's scope. Copies the source with
   " (Copy)" appended to the `displayTitle` and `isDefault` reset to `false`; all
   other fields are copied verbatim. No request body. 404 `TEMPLATE_NOT_FOUND` if

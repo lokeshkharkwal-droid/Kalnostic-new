@@ -2239,17 +2239,18 @@ config (Order/Quotation/Appointment/Patient-UMID external ids) is a separate sib
 
 <div class="ep" id="registration-settings-get">
   <div><span class="m get">GET</span><span class="path">/api/v1/registration-settings</span></div>
-  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span><span class="tag biz">requires <code>registration:settings</code></span></div>
   <p>The active branch's Registration settings (tenant from JWT, branch from the caller's active profile) —
   one row per branch, created with schema defaults on first access. Never 404s. ~50 fields grouped by
   heading: <code>General_*</code>, <code>Quotation_*</code>, <code>ChargesAndDeductions_*</code>,
   <code>CancellationAndRefund_*</code>, <code>ReferralAndStaffPermissions_*</code>, <code>BillingMenu_*</code>,
-  <code>Appointment_*</code>, <code>Patients_*</code>.</p>
+  <code>Appointment_*</code>, <code>Patients_*</code>. Gated by the <code>registration:settings</code>
+  permission (<code>PermissionGuard</code>); <code>business_admin</code>/<code>administrator</code> bypass.</p>
 </div>
 
 <div class="ep" id="registration-settings-save">
   <div><span class="m put">PUT</span><span class="path">/api/v1/registration-settings</span></div>
-  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span><span class="tag biz">requires <code>registration:settings</code></span></div>
   <p>Upsert the active branch's Registration settings (partial patch — omitted fields keep their
   previously-saved value, or the schema default on first save). Cross-field rules: every
   <code>Minimum*Percent</code> must not exceed its paired <code>Maximum*Percent</code> (TDS, discount,
@@ -2259,6 +2260,52 @@ config (Order/Quotation/Appointment/Patient-UMID external ids) is a separate sib
   <code>AllowBothOrderAndLineDiscount</code> may be <code>true</code> — otherwise
   <span class="pill">422 CONFLICTING_DISCOUNT_MODE</span>. Returns the saved row. Audited under
   <code>AuditModule.REGISTRATION_SETTINGS</code>.</p>
+</div>
+
+<div class="ep" id="registration-settings-business-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/registration-settings/business</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span><span class="tag biz">requires <code>registration:settings</code></span></div>
+  <p>The tenant-level ("business") Registration settings — the single <code>branchId = null</code> row,
+  created with defaults on first access. Branches that have not customised their own row fall back to
+  this. Same field set as the branch row. Business Admins (no active branch) edit this tier.</p>
+</div>
+
+<div class="ep" id="registration-settings-business-save">
+  <div><span class="m put">PUT</span><span class="path">/api/v1/registration-settings/business</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span><span class="tag biz">requires <code>registration:settings</code></span></div>
+  <p>Save (partial patch) the tenant-level ("business") Registration settings (<code>branchId = null</code>).
+  Same cross-field validation as the branch PUT. Audited under <code>AuditModule.REGISTRATION_SETTINGS</code>.</p>
+</div>
+
+<div class="ep" id="branch-role-permissions-grid">
+  <div><span class="m get">GET</span><span class="path">/api/v1/permissions/branch-roles/grid</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Tier-2 <b>Branch × Role</b> permissions. The full cartesian for the tenant (every branch × every
+  role, system + custom) — each row <code>{ branchId, branchName, authRoleId, roleKey, roleLabel,
+  roleActive, overriddenCount }</code>. <code>roleActive</code> is the role's <code>isActive</code>
+  flag; <code>overriddenCount &gt; 0</code> means the (branch + role) has its own branch-level overrides
+  ("Branch"), else it inherits the role baseline ("Business"). Only overrides are stored; the cartesian
+  is computed server-side. Business Admin surface. Resolution precedence: <b>user override ?? branch-role
+  override ?? role baseline</b>.</p>
+</div>
+
+<div class="ep" id="branch-role-permissions-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/permissions/branch-roles/:branchId/:authRoleId</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>The module-grouped permissions for one (branch + role): <code>baseline</code> (the role's static
+  template) and <code>allowed</code> (branch-role override ?? baseline), gated by the branch's enabled
+  modules. A Branch Admin may only target its own active branch (else <span class="pill">403
+  BRANCH_SCOPE_VIOLATION</span>).</p>
+</div>
+
+<div class="ep" id="branch-role-permissions-save">
+  <div><span class="m put">PUT</span><span class="path">/api/v1/permissions/branch-roles/:branchId/:authRoleId</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Replace the (branch + role) overrides (full desired set — Select-All / Deselect-All). Only modules
+  enabled for the branch are accepted; each <code>permissionKey</code> must belong to its
+  <code>moduleKey</code> (else <span class="pill">422 INVALID_MODULE_KEY</span> /
+  <span class="pill">MODULE_NOT_ENABLED_FOR_BRANCH</span>). Branch scoping as above. Audited under
+  <code>AuditModule.USER</code>.</p>
 </div>
 
 <div class="note"><b>Enforced on order creation.</b> The <code>ChargesAndDeductions_*</code>

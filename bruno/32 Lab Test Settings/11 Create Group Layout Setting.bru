@@ -47,6 +47,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** requires `business_admin:lab_test_settings__add_group_layout` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Create a lab group layout setting for the caller's tenant (tenant id taken
   from JWT).
 

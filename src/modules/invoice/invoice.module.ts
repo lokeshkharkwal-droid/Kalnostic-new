@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
+import { PermissionsModule } from '../permissions/permissions.module';
 import { OrderModule } from '../order/order.module';
 import { InvoiceController } from './invoice.controller';
 import { InvoiceService } from './invoice.service';
@@ -11,7 +12,7 @@ import { InvoiceService } from './invoice.service';
  * report. Invoice numbers are drawn from the tenant's `BillingSetting`.
  */
 @Module({
-  imports: [PrismaModule, OrderModule],
+  imports: [PrismaModule, PermissionsModule, OrderModule],
   controllers: [InvoiceController],
   providers: [InvoiceService],
   exports: [InvoiceService],

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
+import { PermissionsModule } from '../permissions/permissions.module';
 import { FinancePaymentsController } from './finance-payments.controller';
 import { FinancePaymentsService } from './finance-payments.service';
 
@@ -9,7 +10,7 @@ import { FinancePaymentsService } from './finance-payments.service';
  * (`InvoicePayment`); no writes, so it only needs Prisma.
  */
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, PermissionsModule],
   controllers: [FinancePaymentsController],
   providers: [FinancePaymentsService],
 })

@@ -8,10 +8,15 @@ import {
   Post,
   Query,
   Res,
+  UseGuards,
 } from '@nestjs/common';
-import { AuditAction, AuditModule } from '@prisma/client';
+import { AuditAction, AuditModule, OrderStatus } from '@prisma/client';
 import type { Response } from 'express';
 import { OrderService } from './order.service';
+import { PermissionCheckService } from '../permissions/services/permission-check.service';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { ListOrdersDto } from './dto/list-orders.dto';
@@ -38,23 +43,90 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * payments) in one call.
  */
 @Controller('orders')
+@UseGuards(PermissionGuard)
 export class OrderController {
-  constructor(private readonly orderService: OrderService) {}
+  constructor(
+    private readonly orderService: OrderService,
+    private readonly permissionCheck: PermissionCheckService,
+  ) {}
 
-  /** Create an order (with items, sections, and payments) in one call. */
+  /**
+   * Create an order (with items, sections, and payments) in one call. `POST
+   * /orders` is a shared endpoint — the same route creates an order, a quote, or
+   * an appointment (distinguished by `dto.status`), and converts a quote to an
+   * order (`dto.sourceQuotationId` on a non-QUOTE save). A single route guard
+   * can't tell these apart, so the required permission is resolved per-request.
+   */
   @Post()
   @Audit({
     module: AuditModule.ORDER,
     action: AuditAction.CREATE,
     description: 'Created an order',
   })
-  create(
+  async create(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
     @CurrentUser('person_id') personId: string,
     @Body() dto: CreateOrderDto,
   ) {
+    const ctx = {
+      tenantId,
+      personId,
+      branchId: profile.branchId,
+      profileKey: profile.profileKey,
+    };
+    const key =
+      dto.sourceQuotationId && dto.status !== OrderStatus.QUOTE
+        ? PERMISSION_KEYS.REG_CONVERT_QUOTATION
+        : dto.status === OrderStatus.QUOTE
+          ? PERMISSION_KEYS.REG_CREATE_QUOTATION
+          : dto.status === OrderStatus.APPOINTMENT
+            ? PERMISSION_KEYS.REG_CREATE_APPOINTMENT
+            : PERMISSION_KEYS.REG_ALLOW_CREATE_ORDER;
+    await this.permissionCheck.assert(ctx, key);
+    // "Allow zero bill order": finalizing a real ORDER with Generate Bill = No
+    // (no bill / zero payable) requires the dedicated permission.
+    if (dto.status === OrderStatus.ORDER && dto.isBillGenerated === false) {
+      await this.permissionCheck.assert(
+        ctx,
+        PERMISSION_KEYS.REG_ALLOW_ZERO_BILL_ORDER,
+      );
+    }
+    // Money-field permissions: applying a discount / TDS on a finalized order
+    // requires the matching permission (paid amount is normal at creation).
+    if (dto.status === OrderStatus.ORDER) {
+      const money = this.incomingMoney(dto);
+      if (money && money.discount > 0) {
+        await this.permissionCheck.assert(
+          ctx,
+          PERMISSION_KEYS.REG_ORDER_DISCOUNT,
+        );
+      }
+      if (money && money.tds > 0) {
+        await this.permissionCheck.assert(ctx, PERMISSION_KEYS.REG_ALLOW_TDS);
+      }
+    }
     return this.orderService.create(tenantId, profile.branchId, personId, dto);
+  }
+
+  /**
+   * Aggregate the money fields from an order payload: total discount (order-level
+   * on the first payment row + per-line item discounts), TDS, and paid amount.
+   * Returns null when the payload carries no payments (so the update path leaves
+   * money untouched — no permission check).
+   */
+  private incomingMoney(
+    dto: CreateOrderDto | UpdateOrderDto,
+  ): { discount: number; tds: number; paid: number } | null {
+    if (!dto.payments) return null;
+    const orderDiscount = dto.payments[0]?.orderDiscount ?? 0;
+    const lineDiscount = (dto.items ?? []).reduce(
+      (sum, item) => sum + (item.discount ?? 0),
+      0,
+    );
+    const tds = dto.payments[0]?.tdsDeduction ?? 0;
+    const paid = dto.payments.reduce((sum, p) => sum + (p.paidAmount ?? 0), 0);
+    return { discount: orderDiscount + lineDiscount, tds, paid };
   }
 
   /**
@@ -64,6 +136,8 @@ export class OrderController {
    * the source quote is currently expired.
    */
   @Post(':id/duplicate')
+  @UseGuards(PermissionGuard)
+  @RequirePermission(PERMISSION_KEYS.REG_RECREATE_QUOTATION)
   @Audit({
     module: AuditModule.ORDER,
     action: AuditAction.CREATE,
@@ -114,6 +188,7 @@ export class OrderController {
    * Declared before `:id` so the static path isn't captured by the param route.
    */
   @Get('billing-summary')
+  @RequirePermission(PERMISSION_KEYS.FIN_REPORT_BILLING)
   billingSummary(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -135,6 +210,7 @@ export class OrderController {
    * with `billing-summary` for the same filters. Declared before `:id`.
    */
   @Get('billing-records')
+  @RequirePermission(PERMISSION_KEYS.FIN_REPORT_BILLING)
   billingRecords(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -155,6 +231,7 @@ export class OrderController {
    * `:id` so the static path isn't captured by the param route.
    */
   @Get('billing-summary/by-user')
+  @RequirePermission(PERMISSION_KEYS.FIN_REPORT_BILLING)
   billingSummaryByUser(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -175,6 +252,7 @@ export class OrderController {
    * captured by the param route.
    */
   @Get('billing-summary/grouped')
+  @RequirePermission(PERMISSION_KEYS.FIN_REPORT_BILLING)
   billingSummaryGrouped(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -196,6 +274,7 @@ export class OrderController {
 
   /** Collection metric-card totals (incl. the payment-mode breakdown). */
   @Get('collection-summary')
+  @RequirePermission(PERMISSION_KEYS.FIN_REPORT_COLLECTION)
   collectionSummary(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -212,6 +291,7 @@ export class OrderController {
 
   /** Paginated detailed Collection records (per-row payment-mode breakdown). */
   @Get('collection-records')
+  @RequirePermission(PERMISSION_KEYS.FIN_REPORT_COLLECTION)
   collectionRecords(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -228,6 +308,7 @@ export class OrderController {
 
   /** User-wise Collection aggregate (grouped by order creator). */
   @Get('collection-summary/by-user')
+  @RequirePermission(PERMISSION_KEYS.FIN_REPORT_COLLECTION)
   collectionSummaryByUser(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -243,6 +324,7 @@ export class OrderController {
 
   /** Grouped Collection aggregate for the dimension panels. */
   @Get('collection-summary/grouped')
+  @RequirePermission(PERMISSION_KEYS.FIN_REPORT_COLLECTION)
   collectionSummaryGrouped(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -264,6 +346,7 @@ export class OrderController {
 
   /** Outstanding metric-card totals (only orders that still owe money). */
   @Get('outstanding-summary')
+  @RequirePermission(PERMISSION_KEYS.FIN_REPORT_OUTSTANDING)
   outstandingSummary(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -280,6 +363,7 @@ export class OrderController {
 
   /** Paginated detailed Outstanding records (every row has due > 0). */
   @Get('outstanding-records')
+  @RequirePermission(PERMISSION_KEYS.FIN_REPORT_OUTSTANDING)
   outstandingRecords(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -296,6 +380,7 @@ export class OrderController {
 
   /** User-wise Outstanding aggregate (grouped by order creator). */
   @Get('outstanding-summary/by-user')
+  @RequirePermission(PERMISSION_KEYS.FIN_REPORT_OUTSTANDING)
   outstandingSummaryByUser(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -311,6 +396,7 @@ export class OrderController {
 
   /** Grouped Outstanding aggregate for the dimension panels. */
   @Get('outstanding-summary/grouped')
+  @RequirePermission(PERMISSION_KEYS.FIN_REPORT_OUTSTANDING)
   outstandingSummaryGrouped(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -331,6 +417,7 @@ export class OrderController {
 
   /** Refund metric-card totals (incl. `refundAmount`). */
   @Get('refund-summary')
+  @RequirePermission(PERMISSION_KEYS.FIN_REPORT_REFUND)
   refundSummary(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -347,6 +434,7 @@ export class OrderController {
 
   /** Paginated detailed Refund records (every row has a refund). */
   @Get('refund-records')
+  @RequirePermission(PERMISSION_KEYS.FIN_REPORT_REFUND)
   refundRecords(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -363,6 +451,7 @@ export class OrderController {
 
   /** User-wise Refund aggregate (grouped by order creator). */
   @Get('refund-summary/by-user')
+  @RequirePermission(PERMISSION_KEYS.FIN_REPORT_REFUND)
   refundSummaryByUser(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -378,6 +467,7 @@ export class OrderController {
 
   /** Grouped Refund aggregate for the dimension panels. */
   @Get('refund-summary/grouped')
+  @RequirePermission(PERMISSION_KEYS.FIN_REPORT_REFUND)
   refundSummaryGrouped(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -398,6 +488,7 @@ export class OrderController {
 
   /** Cancel metric-card totals (incl. `cancelAmount`). */
   @Get('cancel-summary')
+  @RequirePermission(PERMISSION_KEYS.FIN_REPORT_CANCEL)
   cancelSummary(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -414,6 +505,7 @@ export class OrderController {
 
   /** Paginated detailed Cancel records (every row is CANCELLED). */
   @Get('cancel-records')
+  @RequirePermission(PERMISSION_KEYS.FIN_REPORT_CANCEL)
   cancelRecords(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -430,6 +522,7 @@ export class OrderController {
 
   /** User-wise Cancel aggregate (grouped by order creator). */
   @Get('cancel-summary/by-user')
+  @RequirePermission(PERMISSION_KEYS.FIN_REPORT_CANCEL)
   cancelSummaryByUser(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -445,6 +538,7 @@ export class OrderController {
 
   /** Grouped Cancel aggregate for the dimension panels. */
   @Get('cancel-summary/grouped')
+  @RequirePermission(PERMISSION_KEYS.FIN_REPORT_CANCEL)
   cancelSummaryGrouped(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -793,12 +887,56 @@ export class OrderController {
     action: AuditAction.UPDATE,
     description: 'Updated an order',
   })
-  update(
+  async update(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @CurrentUser('person_id') personId: string,
     @Param('id') id: string,
     @Body() dto: UpdateOrderDto,
   ) {
+    const ctx = {
+      tenantId,
+      personId,
+      branchId: profile.branchId,
+      profileKey: profile.profileKey,
+    };
+    // "Update order ID": enforced only when the incoming external order id
+    // actually CHANGES the stored value (echoing an unchanged / disabled field
+    // is never blocked). Creation-time id entry is governed by the branch's
+    // External-ID format config, not this permission.
+    if (dto.externalOrderId !== undefined) {
+      const incoming = dto.externalOrderId?.trim() || null;
+      const current = await this.orderService.getExternalOrderId(id, tenantId);
+      if (incoming !== current) {
+        await this.permissionCheck.assert(
+          ctx,
+          PERMISSION_KEYS.REG_UPDATE_ORDER_ID,
+        );
+      }
+    }
+    // Money-field permissions: only enforced when the caller actually RAISES a
+    // discount/TDS or CHANGES the paid amount vs the stored order (resending an
+    // unchanged, disabled-field value is never blocked).
+    const money = this.incomingMoney(dto);
+    if (money) {
+      const base = await this.orderService.getMoneyAggregate(id, tenantId);
+      const EPS = 0.01;
+      if (money.discount > base.discount + EPS) {
+        await this.permissionCheck.assert(
+          ctx,
+          PERMISSION_KEYS.REG_ORDER_DISCOUNT,
+        );
+      }
+      if (money.tds > base.tds + EPS) {
+        await this.permissionCheck.assert(ctx, PERMISSION_KEYS.REG_ALLOW_TDS);
+      }
+      if (Math.abs(money.paid - base.paid) > EPS) {
+        await this.permissionCheck.assert(
+          ctx,
+          PERMISSION_KEYS.REG_UPDATE_PAID_AMOUNT,
+        );
+      }
+    }
     return this.orderService.update(id, tenantId, personId, dto);
   }
 
@@ -836,12 +974,26 @@ export class OrderController {
     action: AuditAction.UPDATE,
     description: 'Cancelled an order',
   })
-  cancel(
+  async cancel(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @CurrentUser('person_id') personId: string,
     @Param('id') id: string,
     @Body() dto: CancelOrderDto,
   ) {
+    // Cancel-with-refund and cancel-without-refund are the same endpoint,
+    // distinguished by the presence of `dto.refund`.
+    await this.permissionCheck.assert(
+      {
+        tenantId,
+        personId,
+        branchId: profile.branchId,
+        profileKey: profile.profileKey,
+      },
+      dto.refund
+        ? PERMISSION_KEYS.REG_CANCEL_ORDER_WITH_REFUND
+        : PERMISSION_KEYS.REG_CANCEL_ORDER_WITHOUT_REFUND,
+    );
     return this.orderService.cancel(id, tenantId, personId, dto);
   }
 
@@ -851,6 +1003,8 @@ export class OrderController {
    * already-cancelled order. Capped at the order's current refundable balance.
    */
   @Post(':id/refund')
+  @UseGuards(PermissionGuard)
+  @RequirePermission(PERMISSION_KEYS.REG_UPDATE_REFUND_AMOUNT)
   @Audit({
     module: AuditModule.ORDER,
     action: AuditAction.UPDATE,

@@ -80,6 +80,8 @@ script:post-response {
 }
 
 docs {
+  🔒 **RBAC:** requires `branch_admin:referrals__add_referral_panel` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Create a referral panel (an external referring entity — clinic/hospital/lab)
   together with its assigned lab tests/panels, in one transaction. Captures
   `referralPanelId` for the Get/Update/Delete requests.

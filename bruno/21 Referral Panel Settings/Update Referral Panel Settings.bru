@@ -30,6 +30,8 @@ body:json {
 }
 
 docs {
+  🔒 **RBAC:** requires ANY of `branch_admin:referral_panel_settings__edit_cash_referral_panel_settings`, `branch_admin:referral_panel_settings__edit_credit_referral_panel_settings`, `branch_admin:referral_panel_settings__edit_prepaid_referral_panel_settings` — enforced by `PermissionGuard` (`@RequirePermission` / `@RequireAnyPermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Update a settings template (scoped to the caller's tenant). All fields are
   optional.
 
