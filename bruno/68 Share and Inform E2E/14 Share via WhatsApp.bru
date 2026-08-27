@@ -1,0 +1,39 @@
+meta {
+  name: 14 Share via WhatsApp
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/order/{{shareOrderId}}/share
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "channel": "WHATSAPP"
+  }
+}
+
+tests {
+  test("201 + queued WhatsApp row", function () {
+    expect(res.getStatus()).to.equal(201);
+    expect(res.getBody().data[0].channel).to.equal("WHATSAPP");
+  });
+}
+
+docs {
+  Share via WhatsApp — same as Email but the PDF rides a WhatsApp document
+  message. `toAddress` omitted → patient's whatsappNumber (falls back to mobile).
+  Requires the activated WhatsApp template (step 09) + reports + active
+  lab_all_report template (step 06).
+}

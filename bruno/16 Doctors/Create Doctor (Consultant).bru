@@ -67,6 +67,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** requires ANY of `branch_admin:consultant_doctors__add_consultant_doctor`, `branch_admin:reporting_doctors__add_reporting_doctor` — enforced by `PermissionGuard` (`@RequirePermission` / `@RequireAnyPermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Register a CONSULTANT doctor in the caller's tenant, scoped to a branch. Same
   endpoint and fields as "Create Doctor (Reporting)" — only `doctorType` differs.
   Consultants typically omit the signatory/accreditation block. `branchId` is

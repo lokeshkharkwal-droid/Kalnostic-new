@@ -1,13 +1,27 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   LabReportHistory,
   LabReportStatus,
+  MessagingChannel,
   PersonMappingType,
   Prisma,
+  RecipientType,
   ResultValueSource,
   SampleStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  ShareService,
+  type ShareRecipient,
+} from '../communication/services/share.service';
+import {
+  ShareOrderReportDto,
+  ShareAllOrderReportDto,
+  ShareAllResult,
+  ShareChannelResult,
+  ShareInfo,
+} from './dto/share-order-report.dto';
 import { ListLabReportsDto } from './dto/list-lab-reports.dto';
 import { UpsertResultValuesDto } from './dto/upsert-result-values.dto';
 import { ReferenceRangeQueryDto } from './dto/reference-range-query.dto';
@@ -88,7 +102,14 @@ export class LabReportService {
     private readonly tatService: TatService,
     private readonly technicianSettingsService: TechnicianSettingsService,
     private readonly labTestService: LabTestService,
+    private readonly eventEmitter: EventEmitter2,
+    private readonly shareService: ShareService,
   ) {}
+
+  private readonly logger = new Logger(LabReportService.name);
+
+  /** The messaging feature key the Order Console "Share" flow resolves templates by. */
+  private static readonly SHARE_FEATURE = 'console_lab_report_as_attachment';
 
   // ── Creation (triggered by Accession's sample-accept signal) ──────────────
 
@@ -1916,6 +1937,346 @@ export class LabReportService {
     );
   }
 
+  /**
+   * "Share and Inform" (Order Console): send the order's lab report to the
+   * patient over one channel (Email / SMS / WhatsApp), using the tenant's
+   * ACTIVATED `console_lab_report_as_attachment` template — no template picker.
+   * Email/WhatsApp carry the rendered `lab_all_report` PDF as an attachment; SMS
+   * is text-only. Delegates delivery to the communication queue/worker.
+   *
+   * @param orderId the order whose report is shared
+   * @param tenantId tenant scope (from JWT)
+   * @param branchId active branch (from JWT) — required for report rendering
+   * @param dto the chosen channel + optional recipient override
+   * @param actorId the sending user (audit trail)
+   * @returns the queued communication log row(s)
+   * @throws ShareTemplateNotActivatedException if no activated template for the channel
+   * @throws ShareRecipientMissingException if no address/number for the channel
+   */
+  async shareOrderReport(
+    orderId: string,
+    tenantId: string,
+    branchId: string | null,
+    dto: ShareOrderReportDto,
+    actorId: string,
+  ) {
+    const ctx = await this.loadOrderForShare(orderId, tenantId);
+    const getPdf = this.makeSharePdfProvider(orderId, tenantId, branchId);
+
+    if (dto.channel === MessagingChannel.IAM) {
+      // Single-channel in-app share — no communication_logs row is created
+      // (IAM lives in the notifications table), so return an empty log array.
+      await this.dispatchIamShare(ctx, tenantId, branchId, actorId);
+      return [];
+    }
+    return this.dispatchDeliverableShare(
+      ctx,
+      tenantId,
+      branchId,
+      dto.channel,
+      dto.toAddress,
+      actorId,
+      getPdf,
+    );
+  }
+
+  /**
+   * "Share All" (Order Console): send the order's lab report to the patient
+   * over EVERY channel the tenant has activated a
+   * `console_lab_report_as_attachment` template for — Email, SMS, WhatsApp and
+   * the in-app message (IAM) — in one request. Each channel is attempted
+   * independently and never aborts the others: a channel with no activated
+   * template (or no recipient on file) is reported `SKIPPED`, a genuine error
+   * is `FAILED`, and a successfully queued/created one is `QUEUED`. The
+   * report PDF is rendered at most once and reused across Email/WhatsApp.
+   *
+   * @param orderId the order whose report is shared
+   * @param tenantId tenant scope (from JWT)
+   * @param branchId active branch (from JWT)
+   * @param dto optional per-channel recipient overrides
+   * @param actorId the sending user (audit trail + IAM sender)
+   * @returns a per-channel result summary
+   * @throws OrderReportsNotFoundException if the order isn't in the tenant
+   */
+  async shareAllForOrder(
+    orderId: string,
+    tenantId: string,
+    branchId: string | null,
+    dto: ShareAllOrderReportDto,
+    actorId: string,
+  ): Promise<ShareAllResult> {
+    const ctx = await this.loadOrderForShare(orderId, tenantId);
+    const getPdf = this.makeSharePdfProvider(orderId, tenantId, branchId);
+
+    const overrideFor = (channel: MessagingChannel): string | undefined =>
+      channel === MessagingChannel.EMAIL
+        ? dto.email
+        : channel === MessagingChannel.SMS
+          ? dto.sms
+          : channel === MessagingChannel.WHATSAPP
+            ? dto.whatsapp
+            : undefined;
+
+    const results: ShareChannelResult[] = [];
+
+    for (const channel of [
+      MessagingChannel.EMAIL,
+      MessagingChannel.SMS,
+      MessagingChannel.WHATSAPP,
+    ]) {
+      try {
+        const logs = await this.dispatchDeliverableShare(
+          ctx,
+          tenantId,
+          branchId,
+          channel,
+          overrideFor(channel),
+          actorId,
+          getPdf,
+        );
+        results.push({ channel, status: 'QUEUED', logId: logs[0]?.id });
+      } catch (err) {
+        results.push(this.shareService.classifyError(channel, err));
+      }
+    }
+
+    // In-app message (IAM) — targets the staff sender + order creator in-app.
+    try {
+      const notificationId = await this.dispatchIamShare(
+        ctx,
+        tenantId,
+        branchId,
+        actorId,
+      );
+      results.push({
+        channel: MessagingChannel.IAM,
+        status: 'QUEUED',
+        logId: notificationId,
+      });
+    } catch (err) {
+      results.push(this.shareService.classifyError(MessagingChannel.IAM, err));
+    }
+
+    return { orderId: ctx.order.id, results };
+  }
+
+  /** Order + patient contact for a share, or throws if the order isn't found. */
+  private async loadOrderForShare(orderId: string, tenantId: string) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, tenantId, deletedAt: null },
+      select: {
+        id: true,
+        orderCode: true,
+        createdBy: true,
+        patient: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            mobile: true,
+            whatsappNumber: true,
+          },
+        },
+      },
+    });
+    if (!order) {
+      throw new OrderReportsNotFoundException(orderId);
+    }
+    const patient = order.patient;
+    const patientName = [patient?.firstName, patient?.lastName]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+    return { order, patient, patientName };
+  }
+
+  /**
+   * A memoized base64 render of the order's consolidated lab-report PDF: the
+   * first call renders (via `printAllForOrder`), subsequent calls return the
+   * cache — so a "Share All" over both Email and WhatsApp renders once, not
+   * twice. Only invoked for channels that carry the attachment.
+   */
+  private makeSharePdfProvider(
+    orderId: string,
+    tenantId: string,
+    branchId: string | null,
+  ): () => Promise<string> {
+    let cache: string | null = null;
+    return async (): Promise<string> => {
+      if (cache === null) {
+        const pdf = await this.printAllForOrder(orderId, tenantId, branchId);
+        cache = pdf.toString('base64');
+      }
+      return cache;
+    };
+  }
+
+  /**
+   * The patient `ShareRecipient` for a lab-report share's deliverable channels —
+   * Email → `email`, WhatsApp → `whatsappNumber` (falling back to `mobile`),
+   * SMS → `mobile`.
+   */
+  private shareRecipient(
+    ctx: Awaited<ReturnType<LabReportService['loadOrderForShare']>>,
+  ): ShareRecipient {
+    const { patient, patientName } = ctx;
+    return {
+      recipientId: patient?.id ?? null,
+      recipientName: patientName || null,
+      type: RecipientType.PATIENT,
+      email: patient?.email ?? null,
+      sms: patient?.mobile ?? null,
+      whatsapp: patient?.whatsappNumber ?? patient?.mobile ?? null,
+    };
+  }
+
+  /** Template `{variables}` shared across a lab-report share's channels. */
+  private shareVariables(
+    ctx: Awaited<ReturnType<LabReportService['loadOrderForShare']>>,
+  ): Record<string, string> {
+    const { order, patientName } = ctx;
+    return {
+      pn: patientName,
+      patient_name: patientName,
+      order_code: order.orderCode ?? '',
+    };
+  }
+
+  /**
+   * Resolve + enqueue a single deliverable-channel (Email/SMS/WhatsApp) share of
+   * the order's report to the patient — delegates to the reusable `ShareService`
+   * with the patient recipient + the rendered lab-report PDF. Email/WhatsApp carry
+   * the PDF (from `getPdf`); SMS is text-only.
+   */
+  private dispatchDeliverableShare(
+    ctx: Awaited<ReturnType<LabReportService['loadOrderForShare']>>,
+    tenantId: string,
+    branchId: string | null,
+    channel: MessagingChannel,
+    toAddressOverride: string | undefined,
+    actorId: string,
+    getPdf: () => Promise<string>,
+  ) {
+    return this.shareService.dispatchDeliverable(
+      tenantId,
+      branchId,
+      LabReportService.SHARE_FEATURE,
+      channel,
+      this.shareRecipient(ctx),
+      toAddressOverride,
+      actorId,
+      getPdf,
+      this.shareVariables(ctx),
+      `lab-report-${ctx.order.orderCode ?? ctx.order.id}.pdf`,
+    );
+  }
+
+  /**
+   * Raise the in-app (IAM) confirmation for a shared report — delegates to
+   * `ShareService`. Recipients are the **staff sender** and the **order's
+   * creator** (deduped), addressed as `STAFF` so the alert lands in their
+   * notification bell. The patient is intentionally NOT targeted: patients don't
+   * log into the business app (they still get the report over Email/SMS/WhatsApp).
+   */
+  private dispatchIamShare(
+    ctx: Awaited<ReturnType<LabReportService['loadOrderForShare']>>,
+    tenantId: string,
+    branchId: string | null,
+    actorId: string,
+  ): Promise<string> {
+    const recipientIds = [
+      ...new Set(
+        [actorId, ctx.order.createdBy].filter((id): id is string => !!id),
+      ),
+    ];
+    return this.shareService.dispatchIam(
+      tenantId,
+      branchId,
+      LabReportService.SHARE_FEATURE,
+      recipientIds.map((id) => ({ entityId: id, entityType: 'STAFF' })),
+      actorId,
+      this.shareVariables(ctx),
+      {
+        verb: 'lab_report_shared',
+        subject: 'Lab report shared',
+        actorEntityType: 'STAFF',
+      },
+    );
+  }
+
+  /**
+   * Preload for the Share and Inform popup: the patient's contacts + which
+   * channels the tenant has ACTIVATED a `console_lab_report_as_attachment`
+   * template for (so the UI auto-fills recipients and enables only the usable
+   * channels — no template picker). One call drives the whole popup.
+   *
+   * @param orderId the order being shared
+   * @param tenantId tenant scope (from JWT)
+   * @param branchId active branch (from JWT)
+   * @returns order code, patient name, and a per-channel {activated, toAddress}
+   * @throws OrderReportsNotFoundException if the order isn't in the tenant
+   */
+  async getShareInfo(
+    orderId: string,
+    tenantId: string,
+    branchId: string | null,
+  ): Promise<ShareInfo> {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, tenantId, deletedAt: null },
+      select: {
+        id: true,
+        orderCode: true,
+        patient: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            mobile: true,
+            whatsappNumber: true,
+          },
+        },
+      },
+    });
+    if (!order) {
+      throw new OrderReportsNotFoundException(orderId);
+    }
+    const p = order.patient;
+    const patientName = [p?.firstName, p?.lastName]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+    const contactFor = (channel: MessagingChannel): string | null =>
+      channel === MessagingChannel.EMAIL
+        ? (p?.email ?? null)
+        : channel === MessagingChannel.WHATSAPP
+          ? (p?.whatsappNumber ?? p?.mobile ?? null)
+          : channel === MessagingChannel.SMS
+            ? (p?.mobile ?? null)
+            : null; // IAM (in-app) has no external address
+
+    const channels = await this.shareService.getChannelInfo(
+      tenantId,
+      branchId,
+      LabReportService.SHARE_FEATURE,
+      [
+        MessagingChannel.EMAIL,
+        MessagingChannel.SMS,
+        MessagingChannel.WHATSAPP,
+        MessagingChannel.IAM,
+      ],
+      contactFor,
+    );
+    return {
+      orderId: order.id,
+      orderCode: order.orderCode,
+      patientName,
+      patientId: p?.id ?? null,
+      channels,
+    };
+  }
+
   // ── Save / Submit ──────────────────────────────────────────────────────────
 
   async save(
@@ -2343,8 +2704,8 @@ export class LabReportService {
     const report = await this.requireReport(id, tenantId, activeBranchId);
     this.assertTransition('publish', report.status);
 
-    return this.prisma.withTenant(tenantId, async (tx) => {
-      const updated = await tx.labReport.update({
+    const updated = await this.prisma.withTenant(tenantId, async (tx) => {
+      const u = await tx.labReport.update({
         where: { id },
         data: {
           status: LabReportStatus.PUBLISHED,
@@ -2361,8 +2722,17 @@ export class LabReportService {
         'publish',
         actorId,
       );
-      return updated;
+      return u;
     });
+    // Fire-and-forget: "report ready" to the patient (email + in-app), resolved
+    // via order item → order. Handled by ClinicalEventListener.
+    void this.eventEmitter.emitAsync('lab-report.published', {
+      tenantId,
+      branchId,
+      reportId: updated.id,
+      orderItemId: updated.orderItemId,
+    });
+    return updated;
   }
 
   async errorReported(

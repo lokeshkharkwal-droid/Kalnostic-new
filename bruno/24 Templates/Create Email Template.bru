@@ -41,6 +41,8 @@ script:post-response {
 }
 
 docs {
+  🔒 **RBAC:** requires ANY of `business_admin:templates__add_sms_template`, `business_admin:templates__add_email_template`, `business_admin:templates__add_whatsapp_template`, `business_admin:templates__add_consent_form` — enforced by `PermissionGuard` (`@RequirePermission` / `@RequireAnyPermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Email messaging template. `preference` is `EMAIL`, so `template` holds rich
   HTML. See "Create SMS Template" for the full field reference shared by all
   channels (preference / feature / displayTitle / messageType / flags / scope

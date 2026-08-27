@@ -1,0 +1,56 @@
+meta {
+  name: Share Bill All
+  type: http
+  seq: 32
+}
+
+post {
+  url: {{baseUrl}}/orders/{{orderId}}/share-bill-all
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "recipientType": "PATIENT",
+    "email": "patient@example.com",
+    "whatsapp": "919999999999"
+  }
+}
+
+docs {
+  "Share Bill All" from the Billings page: in one call, send the order's bill PDF
+  (the tenant's `accounts_biling` template) to the chosen recipient over Email +
+  WhatsApp AND raise the in-app (IAM) notification.
+
+  ## Body
+  - `recipientType` (required) — `PATIENT` or `PANEL` (Accounts Person) for the
+    Email/WhatsApp recipient.
+  - `email` / `whatsapp` (optional) — override the auto-filled recipient for that
+    channel (blank = the recipient's stored contact).
+
+  ## IAM recipients
+  The in-app notification targets the **order creator** and any **referral party**
+  that resolves to a person (the internal referral's linked employee) — NOT the
+  patient. Referral panels / external referrals are B2B contacts with no in-app
+  user, so they receive the bill over Email/WhatsApp instead.
+
+  Each channel is attempted independently and never aborts the others:
+  - QUEUED  — handed to the queue (Email/WhatsApp) or created in-app (IAM).
+  - SKIPPED — no activated template for the channel, or no recipient on file.
+  - FAILED  — an error (e.g. WhatsApp template missing its approved id).
+
+  Returns `{ orderId, results: [{ channel, status, reason?, logId? }] }`.
+  The bill PDF is rendered at most once and reused across Email/WhatsApp.
+
+  Prereqs: activated `order_bill_as_attachment` messaging templates (Email /
+  WhatsApp / IAM as desired) + an active `accounts_biling` PDF template.
+}

@@ -1,9 +1,17 @@
-import { BadRequestException, Controller, Post } from '@nestjs/common';
+import {
+  BadRequestException,
+  Controller,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { LabPanelService } from './lab-panel.service';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequireAnyPermission } from '../permissions/decorators/require-permission.decorator';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 
 /**
  * The Tenant→Branch master-data sync ("Import Master Data" on the branch-admin
@@ -22,6 +30,11 @@ export class MasterDataSyncController {
    * (`active_branch_id`) — 400 for a tenant-level role with no active branch.
    */
   @Post('import-from-tenant')
+  @UseGuards(PermissionGuard)
+  @RequireAnyPermission(
+    PERMISSION_KEYS.BR_MD_IMPORT_TESTS,
+    PERMISSION_KEYS.BR_MD_IMPORT_PANELS,
+  )
   @Audit({
     module: AuditModule.MASTER_DATA,
     action: AuditAction.UPDATE,

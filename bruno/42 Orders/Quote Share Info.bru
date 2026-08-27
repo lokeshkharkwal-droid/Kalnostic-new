@@ -1,0 +1,25 @@
+meta {
+  name: Quote Share Info
+  type: http
+  seq: 33
+}
+
+get {
+  url: {{baseUrl}}/orders/{{orderId}}/quote-share-info
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Preload for the Quotations "Share and Inform" popup. Returns the patient +
+  referral panel default contacts and which of Email / WhatsApp (plus IAM) the
+  tenant has ACTIVATED a `lab_quotation_as_attachment` template for.
+
+  Returns `{ orderId, orderCode, billId, patientName,
+    channels: [{ channel: EMAIL|WHATSAPP, activated }], iamActivated,
+    recipients: { patient: {name,email,whatsapp,sms}, panel: {...}|null } }`.
+}

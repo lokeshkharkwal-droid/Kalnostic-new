@@ -52,6 +52,8 @@ script:post-response {
 }
 
 docs {
+  🔒 **RBAC:** requires ANY of `branch_admin:referral_panel_settings__create_cash_referral_panel_settings`, `branch_admin:referral_panel_settings__create_credit_referral_panel_settings`, `branch_admin:referral_panel_settings__create_prepaid_referral_panel_settings` — enforced by `PermissionGuard` (`@RequirePermission` / `@RequireAnyPermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Create a PREPAID settings template (wallet + bonus configuration).
 
   **Wallet / bonus (PREPAID)** — `minWalletAdvance`, `minAdvanceForBonus`,

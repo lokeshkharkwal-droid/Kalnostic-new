@@ -36,6 +36,9 @@ docs {
   - `type` (required) — which order document to render. One of:
     - `order_print` — the order slip (header, patient, referral, item list).
     - `bill_print` — the patient bill (amounts + item list + payment history).
+    - `accounts_biling` — the accounts / B2B billing document (bill context + the
+      referral panel's accounts-person contact block). Used as the attachment for
+      the Billings "Share and Inform" flow.
     - `trf_print` — the Test Requisition Form (requested tests + clinical notes).
     - `lab_quotation_print` — the quotation (items + totals + validity).
     - `order_barcode_print` — a barcode label for the order's own identifier

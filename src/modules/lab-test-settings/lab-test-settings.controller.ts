@@ -1,4 +1,5 @@
 import {
+  UseGuards,
   Body,
   Controller,
   Delete,
@@ -10,6 +11,9 @@ import {
   UseInterceptors,
   UploadedFiles,
 } from '@nestjs/common';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
@@ -42,6 +46,7 @@ import {
 const MAX_ICON_BYTES = 2 * 1024 * 1024;
 
 @Controller('business-admin/lab-test-settings')
+@UseGuards(PermissionGuard)
 export class LabTestSettingsController {
   constructor(private readonly service: LabTestSettingsService) {}
 
@@ -61,6 +66,7 @@ export class LabTestSettingsController {
   }
 
   @Post('image-settings')
+  @RequirePermission(PERMISSION_KEYS.BA_LTS_ADD_IMAGE)
   @Audit({
     module: AuditModule.LAB_TEST_SETTINGS,
     action: AuditAction.CREATE,
@@ -84,6 +90,7 @@ export class LabTestSettingsController {
   }
 
   @Patch('image-settings/:id')
+  @RequirePermission(PERMISSION_KEYS.BA_LTS_EDIT_IMAGE)
   @Audit({
     module: AuditModule.LAB_TEST_SETTINGS,
     action: AuditAction.UPDATE,
@@ -99,6 +106,7 @@ export class LabTestSettingsController {
   }
 
   @Delete('image-settings/:id')
+  @RequirePermission(PERMISSION_KEYS.BA_LTS_DELETE_IMAGE)
   @Audit({
     module: AuditModule.LAB_TEST_SETTINGS,
     action: AuditAction.DELETE,
@@ -130,6 +138,7 @@ export class LabTestSettingsController {
   }
 
   @Post('pdf-settings')
+  @RequirePermission(PERMISSION_KEYS.BA_LTS_ADD_PDF)
   @Audit({
     module: AuditModule.LAB_TEST_SETTINGS,
     action: AuditAction.CREATE,
@@ -153,6 +162,7 @@ export class LabTestSettingsController {
   }
 
   @Patch('pdf-settings/:id')
+  @RequirePermission(PERMISSION_KEYS.BA_LTS_EDIT_PDF)
   @Audit({
     module: AuditModule.LAB_TEST_SETTINGS,
     action: AuditAction.UPDATE,
@@ -168,6 +178,7 @@ export class LabTestSettingsController {
   }
 
   @Delete('pdf-settings/:id')
+  @RequirePermission(PERMISSION_KEYS.BA_LTS_DELETE_PDF)
   @Audit({
     module: AuditModule.LAB_TEST_SETTINGS,
     action: AuditAction.DELETE,
@@ -199,6 +210,7 @@ export class LabTestSettingsController {
   }
 
   @Post('group-layout-settings')
+  @RequirePermission(PERMISSION_KEYS.BA_LTS_ADD_GROUP)
   @Audit({
     module: AuditModule.LAB_TEST_SETTINGS,
     action: AuditAction.CREATE,
@@ -230,6 +242,7 @@ export class LabTestSettingsController {
   }
 
   @Patch('group-layout-settings/:id')
+  @RequirePermission(PERMISSION_KEYS.BA_LTS_EDIT_GROUP)
   @Audit({
     module: AuditModule.LAB_TEST_SETTINGS,
     action: AuditAction.UPDATE,
@@ -250,6 +263,7 @@ export class LabTestSettingsController {
   }
 
   @Delete('group-layout-settings/:id')
+  @RequirePermission(PERMISSION_KEYS.BA_LTS_DELETE_GROUP)
   @Audit({
     module: AuditModule.LAB_TEST_SETTINGS,
     action: AuditAction.DELETE,
@@ -297,6 +311,7 @@ export class LabTestSettingsController {
   }
 
   @Post('icon-settings')
+  @RequirePermission(PERMISSION_KEYS.BA_LTS_ADD_ICON)
   @Audit({
     module: AuditModule.LAB_TEST_SETTINGS,
     action: AuditAction.CREATE,
@@ -355,6 +370,7 @@ export class LabTestSettingsController {
   }
 
   @Patch('icon-settings/:id')
+  @RequirePermission(PERMISSION_KEYS.BA_LTS_EDIT_ICON)
   @Audit({
     module: AuditModule.LAB_TEST_SETTINGS,
     action: AuditAction.UPDATE,
@@ -412,6 +428,7 @@ export class LabTestSettingsController {
   }
 
   @Delete('icon-settings/:id')
+  @RequirePermission(PERMISSION_KEYS.BA_LTS_DELETE_ICON)
   @Audit({
     module: AuditModule.LAB_TEST_SETTINGS,
     action: AuditAction.DELETE,

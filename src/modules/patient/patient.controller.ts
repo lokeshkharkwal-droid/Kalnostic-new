@@ -7,8 +7,12 @@ import {
   Patch,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import { AuditAction, AuditModule } from '@prisma/client';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { PatientService } from './patient.service';
 import { CreatePatientDto } from './dto/create-patient.dto';
 import { UpdatePatientDto } from './dto/update-patient.dto';
@@ -25,6 +29,7 @@ import type { ActiveProfile } from '../auth/decorators/current-profile.decorator
  * protects all routes.
  */
 @Controller('patients')
+@UseGuards(PermissionGuard)
 export class PatientController {
   constructor(private readonly patientService: PatientService) {}
 
@@ -34,6 +39,7 @@ export class PatientController {
    * profile (JWT), never the body.
    */
   @Post()
+  @RequirePermission(PERMISSION_KEYS.REG_CREATE_PATIENT)
   @Audit({
     module: AuditModule.PATIENT,
     action: AuditAction.CREATE,
@@ -101,6 +107,7 @@ export class PatientController {
 
   /** Update a patient's details. */
   @Patch(':id')
+  @RequirePermission(PERMISSION_KEYS.REG_UPDATE_PATIENT_DETAILS)
   @Audit({
     module: AuditModule.PATIENT,
     action: AuditAction.UPDATE,

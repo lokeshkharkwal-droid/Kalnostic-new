@@ -38,6 +38,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** requires `business_admin:lab_test_settings__edit_group_layout` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Partially update a lab group layout setting. Only send the fields you want
   to change — all fields from Create Group Layout Setting are accepted but all
   are optional here.

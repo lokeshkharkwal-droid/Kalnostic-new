@@ -21,6 +21,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** requires `business_admin:lab_test_settings__delete_group_layout` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Soft-delete a lab group layout setting. The record is preserved in the
   database (deletedAt is set) and will no longer appear in List or Get
   responses.

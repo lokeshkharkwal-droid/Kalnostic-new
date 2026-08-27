@@ -1,4 +1,5 @@
 import {
+  UseGuards,
   Body,
   Controller,
   Delete,
@@ -9,6 +10,15 @@ import {
   Put,
   Query,
 } from '@nestjs/common';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import {
+  RequirePermission,
+  RequireAnyPermission,
+} from '../permissions/decorators/require-permission.decorator';
+import {
+  PERMISSION_KEYS,
+  ADMIN_KEY_GROUPS,
+} from '../permissions/constants/module-permissions.constant';
 import { BranchService } from './branch.service';
 import { CreateBranchDto } from './dto/create-branch.dto';
 import { UpdateBranchDto } from './dto/update-branch.dto';
@@ -28,6 +38,7 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * The global `JwtAuthGuard` protects all routes.
  */
 @Controller('branches')
+@UseGuards(PermissionGuard)
 export class BranchController {
   constructor(private readonly branchService: BranchService) {}
 
@@ -36,6 +47,7 @@ export class BranchController {
    * branch yet, the new branch is auto-set as the main branch.
    */
   @Post()
+  @RequirePermission(PERMISSION_KEYS.BA_BRANCH_ADD)
   @Audit({
     module: AuditModule.BRANCH,
     action: AuditAction.CREATE,
@@ -111,6 +123,7 @@ export class BranchController {
    * Set (or change) the tenant's main branch.
    */
   @Put('main-branch')
+  @RequirePermission(PERMISSION_KEYS.BA_BRANCH_UPDATE)
   @Audit({
     module: AuditModule.BRANCH,
     action: AuditAction.UPDATE,
@@ -136,6 +149,7 @@ export class BranchController {
    * Update a branch.
    */
   @Patch(':id')
+  @RequirePermission(PERMISSION_KEYS.BA_BRANCH_UPDATE)
   @Audit({
     module: AuditModule.BRANCH,
     action: AuditAction.UPDATE,
@@ -153,6 +167,7 @@ export class BranchController {
    * Soft-delete a branch.
    */
   @Delete(':id')
+  @RequirePermission(PERMISSION_KEYS.BA_BRANCH_DELETE)
   @Audit({
     module: AuditModule.BRANCH,
     action: AuditAction.DELETE,
@@ -174,6 +189,7 @@ export class BranchController {
    * Set which system modules are enabled at this branch.
    */
   @Put(':id/modules')
+  @RequirePermission(PERMISSION_KEYS.BA_BRANCH_UPDATE)
   @Audit({
     module: AuditModule.BRANCH,
     action: AuditAction.UPDATE,
@@ -201,6 +217,7 @@ export class BranchController {
    * row with defaults on first write).
    */
   @Put(':id/settings')
+  @RequirePermission(PERMISSION_KEYS.BA_BRANCH_UPDATE)
   @Audit({
     module: AuditModule.BRANCH,
     action: AuditAction.UPDATE,
@@ -231,6 +248,7 @@ export class BranchController {
    * Center (PUT replaces the whole set; an empty array clears all mappings).
    */
   @Put(':id/collection-mappings')
+  @RequireAnyPermission(...ADMIN_KEY_GROUPS.BRANCH_LINK)
   @Audit({
     module: AuditModule.BRANCH,
     action: AuditAction.UPDATE,

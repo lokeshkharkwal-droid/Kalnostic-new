@@ -21,6 +21,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** requires ANY of `business_admin:document_management__delete_document`, `branch_admin:document_management__delete_document` — enforced by `PermissionGuard` (`@RequirePermission` / `@RequireAnyPermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Soft-delete a document (sets `deletedAt`). It drops out of List/Get, but its
   version snapshots are PRESERVED in the database for the record. 404
   `DOCUMENT_NOT_FOUND` if already missing.

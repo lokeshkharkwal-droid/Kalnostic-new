@@ -1,4 +1,5 @@
 import {
+  UseGuards,
   Body,
   Controller,
   Delete,
@@ -8,6 +9,9 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { InternalReferralService } from './internal-referral.service';
 import { CreateInternalReferralDto } from './dto/create-internal-referral.dto';
@@ -24,6 +28,7 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * JWT). The global `JwtAuthGuard` protects all routes.
  */
 @Controller('internal-referrals')
+@UseGuards(PermissionGuard)
 export class InternalReferralController {
   constructor(
     private readonly internalReferralService: InternalReferralService,
@@ -33,6 +38,7 @@ export class InternalReferralController {
    * Register an internal referral in the caller's tenant.
    */
   @Post()
+  @RequirePermission(PERMISSION_KEYS.BR_REF_ADD_INTERNAL)
   @Audit({
     module: AuditModule.INTERNAL_REFERRAL,
     action: AuditAction.CREATE,
@@ -84,6 +90,7 @@ export class InternalReferralController {
    * Update an internal referral.
    */
   @Patch(':id')
+  @RequirePermission(PERMISSION_KEYS.BR_REF_UPDATE_INTERNAL)
   @Audit({
     module: AuditModule.INTERNAL_REFERRAL,
     action: AuditAction.UPDATE,
@@ -109,6 +116,7 @@ export class InternalReferralController {
    * Soft-delete an internal referral.
    */
   @Delete(':id')
+  @RequirePermission(PERMISSION_KEYS.BR_REF_DELETE_INTERNAL)
   @Audit({
     module: AuditModule.INTERNAL_REFERRAL,
     action: AuditAction.DELETE,

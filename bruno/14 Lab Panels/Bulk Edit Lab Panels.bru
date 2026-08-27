@@ -54,6 +54,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** requires `business_admin:master_data__allow_multiple_edit` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Bulk-edit lab panels: `data` is an array of per-panel edits, each carrying its
   own `labPanelId` plus the scalar fields to change **for that panel** (scoped to
   the caller's tenant + the path's master data). Only the panels in the payload

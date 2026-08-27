@@ -8,6 +8,8 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
 import { BranchService } from '../branch/branch.service';
+import { PermissionCheckService } from '../permissions/services/permission-check.service';
+import { ACCESSION_TRANSFER_KEY_GROUPS } from '../permissions/constants/module-permissions.constant';
 import { AccessionSampleService } from './accession-sample.service';
 import {
   TransferAction,
@@ -72,6 +74,7 @@ export class SampleTransferService {
     private readonly prisma: PrismaService,
     private readonly samples: AccessionSampleService,
     private readonly branches: BranchService,
+    private readonly permissionCheck: PermissionCheckService,
   ) {}
 
   // ── Sending side (In-House → transfer) ─────────────────────────────────────
@@ -242,8 +245,31 @@ export class SampleTransferService {
     tenantId: string,
     personId: string | null,
     dto: AssignCenterDto,
+    actor?: { branchId: string | null; profileKey: string | null },
   ): Promise<SampleTransferWithRelations> {
     const transfer = await this.findTransferById(transferId, tenantId);
+    // Permission: setting a MISSING destination is "Assign … center"; changing an
+    // ALREADY-SET destination is "Update … center". Enforce the matching group
+    // (assertAny across kinds; admin roles bypass in the checker).
+    const alreadySet =
+      transfer.kind === TransferKind.INTERNAL
+        ? !!transfer.destinationBranchId
+        : transfer.kind === TransferKind.OUTSOURCE
+          ? !!transfer.outsourceCenterId
+          : !!transfer.externalPartnerName;
+    if (actor) {
+      await this.permissionCheck.assertAny(
+        {
+          tenantId,
+          personId: personId ?? '',
+          branchId: actor.branchId,
+          profileKey: actor.profileKey,
+        },
+        alreadySet
+          ? [...ACCESSION_TRANSFER_KEY_GROUPS.UPDATE_CENTER]
+          : [...ACCESSION_TRANSFER_KEY_GROUPS.ASSIGN_CENTER],
+      );
+    }
     const data: Prisma.SampleTransferUpdateInput = { updatedBy: personId };
     if (transfer.kind === TransferKind.INTERNAL) {
       if (!dto.destinationBranchId) {

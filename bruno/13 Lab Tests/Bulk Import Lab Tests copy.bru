@@ -173,6 +173,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** requires `business_admin:master_data__allow_import_tests` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Bulk-import lab tests (**create-only**) from the frontend's parsed Excel rows.
   `rows` is an array (1–1000) of **core/scalar** test fields — no nested
   samples/parameters. Each row may carry an optional `rowNumber` (echoed in error

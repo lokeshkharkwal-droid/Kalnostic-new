@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
+import { PermissionsModule } from '../permissions/permissions.module';
 import { OrderModule } from '../order/order.module';
 import { SettlementController } from './settlement.controller';
 import { SettlementService } from './settlement.service';
@@ -11,7 +12,7 @@ import { SettlementService } from './settlement.service';
  * basis matches the Collection report. Settlement numbers come from `BillingSetting`.
  */
 @Module({
-  imports: [PrismaModule, OrderModule],
+  imports: [PrismaModule, PermissionsModule, OrderModule],
   controllers: [SettlementController],
   providers: [SettlementService],
   exports: [SettlementService],

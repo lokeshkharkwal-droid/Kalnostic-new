@@ -45,6 +45,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** creating a real ORDER with `isBillGenerated: false` (Generate Bill = No / zero-bill) requires `registration:order_details__allow_zero_bill_order`. Normal billed orders are unaffected; admin roles bypass.
+  
   Create an order with **Generate Bill = No** (`isBillGenerated: false`) and no
   `payments`. The order is finalized (`status = ORDER`) but records **nothing
   owed**: its stored ledger is zeroed (`payableAmount`/`netAmount`/`paidAmount` = 0,

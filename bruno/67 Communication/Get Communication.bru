@@ -1,0 +1,20 @@
+meta {
+  name: Get Communication
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/communications/{{communicationId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Fetch one communication log row by id, scoped to the caller's tenant. 404
+  (`COMMUNICATION_LOG_NOT_FOUND`) if missing or soft-deleted.
+}

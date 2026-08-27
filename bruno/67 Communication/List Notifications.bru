@@ -1,0 +1,31 @@
+meta {
+  name: List Notifications
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/notifications?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~kind: MESSAGE
+  ~unreadOnly: true
+  ~search: report
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  In-app notifications addressed to the caller (recipient identity comes from the
+  JWT — person id + patient/staff context). Newest first; pagination in `meta`.
+  The response `data` carries `unread` (badge count). Filters: `kind`
+  (`MESSAGE` | `ALERT`), `unreadOnly`, and `search` over subject/body.
+  `GET /notifications/alerts` is the same list forced to `kind=ALERT`.
+}

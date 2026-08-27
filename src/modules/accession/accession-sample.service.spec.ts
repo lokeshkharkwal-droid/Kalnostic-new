@@ -1,3 +1,4 @@
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AccessionSettingsService } from './accession-settings.service';
 import { AccessionSampleService } from './accession-sample.service';
 import { LabReportService } from '../lab-report/lab-report.service';
@@ -27,6 +28,7 @@ describe('AccessionSampleService — samplesOfPanel', () => {
       {} as unknown as AccessionSettingsService,
       {} as unknown as LabReportService,
       {} as unknown as PdfReportTemplateService,
+      {} as unknown as EventEmitter2,
     );
   });
 

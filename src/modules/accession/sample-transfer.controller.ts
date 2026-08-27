@@ -1,5 +1,22 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { AuditAction, AuditModule } from '@prisma/client';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import {
+  RequirePermission,
+  RequireAnyPermission,
+} from '../permissions/decorators/require-permission.decorator';
+import {
+  PERMISSION_KEYS,
+  ACCESSION_TRANSFER_KEY_GROUPS,
+} from '../permissions/constants/module-permissions.constant';
 import { SampleTransferService } from './sample-transfer.service';
 import { ListTransfersDto } from './dto/list-transfers.dto';
 import { SendSampleDto } from './dto/send-sample.dto';
@@ -46,6 +63,7 @@ const auditUpdate = (description: string) => ({
  * captured as an `:id`.
  */
 @Controller('accession')
+@UseGuards(PermissionGuard)
 export class SampleTransferController {
   constructor(private readonly transfers: SampleTransferService) {}
 
@@ -53,6 +71,7 @@ export class SampleTransferController {
 
   /** Bulk Send (Internal Transfer). */
   @Post('samples/bulk/send')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_SEND)
   @Audit(auditUpdate('Bulk sent samples (internal transfer)'))
   bulkSend(
     @CurrentTenant() tenantId: string,
@@ -64,6 +83,7 @@ export class SampleTransferController {
 
   /** Bulk Forward (External Transfer). */
   @Post('samples/bulk/forward')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_FORWARD)
   @Audit(auditUpdate('Bulk forwarded samples (external transfer)'))
   bulkForward(
     @CurrentTenant() tenantId: string,
@@ -75,6 +95,7 @@ export class SampleTransferController {
 
   /** Bulk Outsource. */
   @Post('samples/bulk/outsource')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_OUTSOURCE)
   @Audit(auditUpdate('Bulk outsourced samples'))
   bulkOutsource(
     @CurrentTenant() tenantId: string,
@@ -86,6 +107,7 @@ export class SampleTransferController {
 
   /** Send (Internal Transfer) — Accepted → Sent (Internal). */
   @Post('samples/:id/send')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_SEND)
   @Audit(auditUpdate('Sent a sample (internal transfer)'))
   async send(
     @CurrentTenant() tenantId: string,
@@ -98,6 +120,7 @@ export class SampleTransferController {
 
   /** Forward (External Transfer) — Accepted → Forward (External). */
   @Post('samples/:id/forward')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_FORWARD)
   @Audit(auditUpdate('Forwarded a sample (external transfer)'))
   async forward(
     @CurrentTenant() tenantId: string,
@@ -110,6 +133,7 @@ export class SampleTransferController {
 
   /** Outsource — Accepted → Outsourced. */
   @Post('samples/:id/outsource')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_OUTSOURCE)
   @Audit(auditUpdate('Outsourced a sample'))
   async outsource(
     @CurrentTenant() tenantId: string,
@@ -134,6 +158,7 @@ export class SampleTransferController {
 
   /** Bulk Picked Up. */
   @Post('transfers/bulk/pick-up')
+  @RequireAnyPermission(...ACCESSION_TRANSFER_KEY_GROUPS.PICK_UP)
   @Audit(auditUpdate('Bulk picked up transfers'))
   bulkPickUp(
     @CurrentTenant() tenantId: string,
@@ -145,6 +170,7 @@ export class SampleTransferController {
 
   /** Bulk Receive. */
   @Post('transfers/bulk/receive')
+  @RequireAnyPermission(...ACCESSION_TRANSFER_KEY_GROUPS.RECEIVE)
   @Audit(auditUpdate('Bulk received transfers'))
   bulkReceive(
     @CurrentTenant() tenantId: string,
@@ -156,6 +182,7 @@ export class SampleTransferController {
 
   /** Bulk Accept (RULE 1 clone per transfer). */
   @Post('transfers/bulk/accept')
+  @RequireAnyPermission(...ACCESSION_TRANSFER_KEY_GROUPS.ACCEPT)
   @Audit(auditUpdate('Bulk accepted transfers'))
   bulkAccept(
     @CurrentTenant() tenantId: string,
@@ -167,6 +194,7 @@ export class SampleTransferController {
 
   /** Bulk Repeat. */
   @Post('transfers/bulk/repeat')
+  @RequireAnyPermission(...ACCESSION_TRANSFER_KEY_GROUPS.REPEAT)
   @Audit(auditUpdate('Bulk repeated transfers'))
   bulkRepeat(
     @CurrentTenant() tenantId: string,
@@ -178,6 +206,7 @@ export class SampleTransferController {
 
   /** Bulk Reject. */
   @Post('transfers/bulk/reject')
+  @RequireAnyPermission(...ACCESSION_TRANSFER_KEY_GROUPS.REJECT)
   @Audit(auditUpdate('Bulk rejected transfers'))
   bulkReject(
     @CurrentTenant() tenantId: string,
@@ -195,6 +224,7 @@ export class SampleTransferController {
 
   /** Picked Up (§B.11.1). */
   @Post('transfers/:id/pick-up')
+  @RequireAnyPermission(...ACCESSION_TRANSFER_KEY_GROUPS.PICK_UP)
   @Audit(auditUpdate('Picked up a transfer'))
   async pickUp(
     @CurrentTenant() tenantId: string,
@@ -207,6 +237,7 @@ export class SampleTransferController {
 
   /** Receive (§B.11.2). */
   @Post('transfers/:id/receive')
+  @RequireAnyPermission(...ACCESSION_TRANSFER_KEY_GROUPS.RECEIVE)
   @Audit(auditUpdate('Received a transfer'))
   async receive(
     @CurrentTenant() tenantId: string,
@@ -219,6 +250,7 @@ export class SampleTransferController {
 
   /** Accept (§B.11.3) — INTERNAL clones into In-House (RULE 1). */
   @Post('transfers/:id/accept')
+  @RequireAnyPermission(...ACCESSION_TRANSFER_KEY_GROUPS.ACCEPT)
   @Audit(auditUpdate('Accepted a transfer'))
   async accept(
     @CurrentTenant() tenantId: string,
@@ -231,6 +263,7 @@ export class SampleTransferController {
 
   /** Repeat (§B.11.4). */
   @Post('transfers/:id/repeat')
+  @RequireAnyPermission(...ACCESSION_TRANSFER_KEY_GROUPS.REPEAT)
   @Audit(auditUpdate('Repeated a transfer'))
   async repeat(
     @CurrentTenant() tenantId: string,
@@ -245,6 +278,7 @@ export class SampleTransferController {
 
   /** Reject (§B.11.5). */
   @Post('transfers/:id/reject')
+  @RequireAnyPermission(...ACCESSION_TRANSFER_KEY_GROUPS.REJECT)
   @Audit(auditUpdate('Rejected a transfer'))
   async reject(
     @CurrentTenant() tenantId: string,
@@ -255,16 +289,25 @@ export class SampleTransferController {
     return (await this.transfers.reject([id], tenantId, personId, dto))[0];
   }
 
-  /** Assign Center (§A.7) — set a missing destination. */
+  /**
+   * Assign/Update Center (§A.7). Setting a MISSING destination requires the
+   * *Assign … center* permission; changing an ALREADY-SET one requires
+   * *Update … center* — enforced programmatically in the service (assertAny per
+   * group) since one endpoint serves both.
+   */
   @Post('transfers/:id/assign-center')
   @Audit(auditUpdate('Assigned a transfer center'))
   assignCenter(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Param('id') id: string,
     @Body() dto: AssignCenterDto,
   ) {
-    return this.transfers.assignCenter(id, tenantId, personId, dto);
+    return this.transfers.assignCenter(id, tenantId, personId, dto, {
+      branchId: profile.branchId,
+      profileKey: profile.profileKey,
+    });
   }
 
   /** Manually update an OUTSOURCE transfer's status (CR-3). */

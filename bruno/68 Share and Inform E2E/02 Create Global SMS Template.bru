@@ -1,0 +1,65 @@
+meta {
+  name: 02 Create Global SMS Template
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/templates
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "preference": "SMS",
+    "feature": "console_lab_report_as_attachment",
+    "displayTitle": "Console Share — SMS",
+    "messageType": "TRANSACTIONAL",
+    "isActive": true,
+    "isDefault": true,
+    "level": "BUSINESS",
+    "smsType": "TRANSACTIONAL",
+    "smsTemplateId": "{{smsDltTemplateId}}",
+    "smsSenderId": "{{smsSenderId}}",
+    "template": "Dear Patient,\nYour order with {branch_short_name} is complete.\nPlease check the report at https://kdls.in/KALNOS/s/{short_url_code} with your password {password}\nThanks\nTeam Kalnostic"
+  }
+}
+
+vars:pre-request {
+  smsDltTemplateId: 1107170200840404035
+  smsSenderId: KALNOS
+}
+
+script:post-response {
+  const d = res.getBody() && res.getBody().data;
+  if (d && d.id) bru.setVar("shareSmsGlobalId", d.id);
+}
+
+tests {
+  test("201 + global (tenantId null)", function () {
+    expect(res.getStatus()).to.equal(201);
+    expect(res.getBody().data.tenantId).to.equal(null);
+  });
+}
+
+docs {
+  Create the GLOBAL SMS template for the Share feature (feature
+  `console_lab_report_as_attachment`). Captures `shareSmsGlobalId` for the
+  activate step (07). Requires the SiteAdmin `master-data:write` permission.
+
+  ⚠ REQUIRED for actual delivery: `smsTemplateId` (your carrier's DLT-registered
+  template id) and `smsSenderId` (approved sender/header, e.g. KALNOS). Set them
+  in the pre-request vars above to YOUR real DLT values, and make the `template`
+  body match the registered DLT text EXACTLY. Without valid values the relay
+  accepts the send (returns an id) but the carrier drops it — and the share
+  endpoint now rejects it up-front with 422 SHARE_TEMPLATE_NOT_CONFIGURED.
+}

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { BranchModule } from '../branch/branch.module';
+import { PermissionsModule } from '../permissions/permissions.module';
 import { TechnicianSettingsController } from './technician-settings.controller';
 import { TechnicianSettingsService } from './technician-settings.service';
 
@@ -11,7 +12,7 @@ import { TechnicianSettingsService } from './technician-settings.service';
  * settings (`BranchService.findById`).
  */
 @Module({
-  imports: [PrismaModule, BranchModule],
+  imports: [PrismaModule, BranchModule, PermissionsModule],
   controllers: [TechnicianSettingsController],
   providers: [TechnicianSettingsService],
   exports: [TechnicianSettingsService],

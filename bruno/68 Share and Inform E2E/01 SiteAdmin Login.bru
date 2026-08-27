@@ -1,0 +1,45 @@
+meta {
+  name: 01 SiteAdmin Login
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "email": "{{siteAdminEmail}}",
+    "password": "{{siteAdminPassword}}"
+  }
+}
+
+vars:pre-request {
+  siteAdminEmail: admin@kalnostics.com
+  siteAdminPassword: SuperSecret1
+}
+
+script:post-response {
+  const b = res.getBody();
+  if (b && b.success && b.data) bru.setVar("siteAdminToken", b.data.accessToken);
+}
+
+tests {
+  test("200 OK + token", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getBody().data.accessToken).to.be.a("string");
+  });
+}
+
+docs {
+  Email-only SiteAdmin login → captures `siteAdminToken` (used by steps 02-04 to
+  create the GLOBAL templates). Default seeded super_owner is
+  `admin@kalnostics.com` / `SuperSecret1` — change the pre-request vars if yours differ.
+}

@@ -1,0 +1,30 @@
+meta {
+  name: 69 Branch Role Permissions
+  seq: 69
+}
+
+docs {
+  # Branch × Role Permissions (tier-2)
+
+  The branch-level role permission overrides — the layer between the static
+  role baseline (code templates) and per-user overrides
+  (`user_branch_permissions`). Effective resolution (in `GET
+  /users/manage/me/permissions`): **user override ?? branch-role override ??
+  role baseline**.
+
+  Managed under `permissions/branch-roles` (business-authenticated; tenant +
+  actor from the JWT):
+
+  - **GET `/grid`** — the full Branch × Role cartesian for the tenant (every
+    branch × every role), each row with `overriddenCount`. Business Admin.
+  - **GET `/:branchId/:authRoleId`** — the module-grouped permissions for one
+    (branch + role): `baseline` (role template) + `allowed` (branch-role
+    override ?? baseline), gated by the branch's enabled modules.
+  - **PUT `/:branchId/:authRoleId`** — replace that (branch + role)'s overrides
+    (full desired set; Select-All / Deselect-All). Audited under
+    `AuditModule.USER`.
+
+  Branch scoping: a Business Admin (tenant-level context, `active_branch_id`
+  null) may target any branch; a Branch Admin (branch-level context) may only
+  target its own active branch (else 403 `BRANCH_SCOPE_VIOLATION`).
+}

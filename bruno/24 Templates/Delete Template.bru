@@ -19,6 +19,8 @@ vars:pre-request {
 }
 
 docs {
+  🔒 **RBAC:** requires ANY of `business_admin:templates__delete_sms_template`, `business_admin:templates__delete_email_template`, `business_admin:templates__delete_whatsapp_template`, `business_admin:templates__delete_consent_form` — enforced by `PermissionGuard` (`@RequirePermission` / `@RequireAnyPermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Soft-delete a template (sets `deletedAt`; the row is preserved). Scoped to the
   caller's tenant + scope branch. 404 `TEMPLATE_NOT_FOUND` if
   missing/already-deleted.

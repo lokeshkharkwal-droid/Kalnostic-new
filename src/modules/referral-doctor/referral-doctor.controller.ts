@@ -1,4 +1,5 @@
 import {
+  UseGuards,
   Body,
   Controller,
   Delete,
@@ -8,6 +9,9 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { ReferralDoctorService } from './referral-doctor.service';
 import { CreateReferralDoctorDto } from './dto/create-referral-doctor.dto';
@@ -24,6 +28,7 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * JWT). The global `JwtAuthGuard` protects all routes.
  */
 @Controller('referral-doctors')
+@UseGuards(PermissionGuard)
 export class ReferralDoctorController {
   constructor(private readonly referralDoctorService: ReferralDoctorService) {}
 
@@ -31,6 +36,7 @@ export class ReferralDoctorController {
    * Register a referral doctor in the caller's tenant.
    */
   @Post()
+  @RequirePermission(PERMISSION_KEYS.BR_REF_ADD_DOCTOR)
   @Audit({
     module: AuditModule.REFERRAL_DOCTOR,
     action: AuditAction.CREATE,
@@ -79,6 +85,7 @@ export class ReferralDoctorController {
    * Update a referral doctor.
    */
   @Patch(':id')
+  @RequirePermission(PERMISSION_KEYS.BR_REF_UPDATE_DOCTOR)
   @Audit({
     module: AuditModule.REFERRAL_DOCTOR,
     action: AuditAction.UPDATE,
@@ -104,6 +111,7 @@ export class ReferralDoctorController {
    * Soft-delete a referral doctor.
    */
   @Delete(':id')
+  @RequirePermission(PERMISSION_KEYS.BR_REF_DELETE_DOCTOR)
   @Audit({
     module: AuditModule.REFERRAL_DOCTOR,
     action: AuditAction.DELETE,

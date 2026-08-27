@@ -15,6 +15,8 @@ auth:bearer {
 }
 
 docs {
+  🔒 **RBAC:** requires `branch_admin:outsource_centers__delete_outsource_center` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Soft-delete an outsource center (sets `deletedAt`). Cascades a soft-delete to
   its active contacts, branch assignments, and the assignments' selected
   tests/panels in the same transaction. Scoped to the caller's tenant.

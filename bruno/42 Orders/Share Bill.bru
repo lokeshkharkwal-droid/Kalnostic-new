@@ -1,0 +1,50 @@
+meta {
+  name: Share Bill
+  type: http
+  seq: 31
+}
+
+post {
+  url: {{baseUrl}}/orders/{{orderId}}/share-bill
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "channel": "EMAIL",
+    "recipientType": "PATIENT",
+    "toAddress": "patient@example.com"
+  }
+}
+
+docs {
+  "Share Bill" (single channel) from the Billings page: queue the order's bill PDF
+  (the tenant's `accounts_biling` template) to the patient or referral panel over
+  one deliverable channel, using the tenant's ACTIVATED `order_bill_as_attachment`
+  messaging template for that channel.
+
+  ## Body
+  - `channel` (required) — `EMAIL` or `WHATSAPP` (both attach the PDF).
+  - `recipientType` (required) — `PATIENT` or `PANEL` (the referral panel's
+    Accounts Person).
+  - `toAddress` (optional) — auto-filled, editable contact; omit to use the
+    recipient's stored contact for the channel.
+
+  ## Errors
+  - 404 `ORDER_NOT_FOUND` — order missing / soft-deleted / other tenant.
+  - 422 `SHARE_TEMPLATE_NOT_ACTIVATED` — no activated template for the channel.
+  - 422 `SHARE_TEMPLATE_NOT_CONFIGURED` — WhatsApp template missing its approved id.
+  - 400 `SHARE_RECIPIENT_MISSING` — no address/number for the chosen recipient.
+
+  Prereqs: an activated `order_bill_as_attachment` messaging template (per channel)
+  and an active `accounts_biling` PDF template so the bill can render.
+}

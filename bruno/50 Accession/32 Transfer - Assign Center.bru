@@ -31,6 +31,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** setting a MISSING destination requires the *Assign* center permission (any of `accession:in_house_order__assign_{internal_referral,external_referral,outsource}_center`); changing an ALREADY-SET destination (re-assign / Edit Station) requires the *Update* center permission (any of `…__update_internal_referral_center` / `…__update_the_external_referral_center` / `…__update_outsource_center`). Enforced in the service (assertAny); admin roles bypass.
+  
   Assign Center (§A.7) — set the destination on a transfer created without one.
   The field required depends on the transfer's `kind`: INTERNAL →
   `destinationBranchId`; OUTSOURCE → `outsourceCenterId`; EXTERNAL →

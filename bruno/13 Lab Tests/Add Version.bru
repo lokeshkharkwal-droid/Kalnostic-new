@@ -26,6 +26,8 @@ body:json {
 }
 
 docs {
+  🔒 **RBAC:** requires `business_admin:master_data__update_test` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Append a version entry to the lab test's `versionHistory` JSON array. The entry
   shape is `{ version, effectiveFrom, effectiveTo, modifiedBy, approvedBy }` — no
   row snapshot.

@@ -1,0 +1,58 @@
+meta {
+  name: 06 Create Lab All Report PDF Template
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/pdf-report-templates
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "type": "lab_all_report",
+    "name": "Lab All Report (Share)",
+    "isActive": true,
+    "meta": {
+      "orientation": "P",
+      "page_size": "A4",
+      "default_font_size": "10",
+      "default_font": "helvetica",
+      "margin_left": "15",
+      "margin_right": "10",
+      "margin_top": "10",
+      "margin_bottom": "10",
+      "body_name": "Body",
+      "body_html": "<h3>Lab Report — {patient_name} ({order_code})</h3><table><tbody id='order_test_section'><tr><th>Test</th><th>Parameter</th><th>Result</th></tr>{{#each results}}<tr><td>{{this.test_name}}</td><td>{{this.parameter_name}}</td><td>{{this.observed1}}</td></tr>{{/each}}</tbody></table>"
+    }
+  }
+}
+
+script:post-response {
+  const d = res.getBody() && res.getBody().data;
+  if (d && d.id) bru.setVar("labAllReportTemplateId", d.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  Create the tenant's ACTIVE `lab_all_report` PDF template so Share via
+  Email/WhatsApp (steps 12-13) can render + attach the report PDF. Only ONE
+  active `lab_all_report` may exist per tenant/branch — if you already have one,
+  skip this (a second active one makes the render ambiguous). Not needed for the
+  SMS path (step 11).
+}

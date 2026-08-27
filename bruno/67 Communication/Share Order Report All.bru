@@ -1,0 +1,49 @@
+meta {
+  name: Share Order Report All
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/order/{{orderId}}/share-all
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "email": "patient@example.com",
+    "sms": "919999999999",
+    "whatsapp": "919999999999"
+  }
+}
+
+docs {
+  "Share All" from the Order Console: queue the order's lab report to the patient
+  over EVERY channel the tenant has ACTIVATED a `console_lab_report_as_attachment`
+  template for — Email, SMS, WhatsApp AND the in-app message (IAM) — in one call.
+
+  - Body is optional. `email` / `sms` / `whatsapp` override the auto-filled
+    recipient for that channel (blank = the patient's stored contact). IAM has no
+    address — it targets the patient's in-app inbox.
+
+  Each channel is attempted independently and never aborts the others:
+  - QUEUED  — handed to the queue (Email/SMS/WhatsApp) or created in-app (IAM).
+  - SKIPPED — no activated template for the channel, or no recipient on file.
+  - FAILED  — an error (e.g. template missing DLT/WhatsApp provider settings).
+
+  Email/WhatsApp attach the rendered `lab_all_report` PDF (rendered once, reused).
+  Returns `{ orderId, results: [{ channel, status, reason?, logId? }] }`.
+  `logId` is a communication_logs id (deliverable channels) or a notification id (IAM).
+
+  Prereqs: activated messaging templates (per channel) for the feature, and an
+  active `lab_all_report` PDF template so Email/WhatsApp can render.
+}

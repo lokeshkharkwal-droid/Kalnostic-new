@@ -63,7 +63,11 @@ docs {
   (`NONE | PARTIALLY_REFUNDED | FULLY_REFUNDED`, so a refunded order's Status folds
   to "Refunded" rather than "Not Paid"), the
   active-item count (`itemCount`), the collected-item count (`collectedItemCount`)
-  and the `effectiveQuotationStatus`. On the Quotations screen (`isQuotation=true`)
+  and the `effectiveQuotationStatus`. Each row also carries `hasInvoice` (boolean)
+  and `invoiceCode` — true when an invoice has been generated for the order (an
+  active `InvoiceSourceOrder` link exists), which locks the order against update
+  and cancel (both return 409 `ORDER_ALREADY_INVOICED`); the frontend uses it to
+  disable those actions. On the Quotations screen (`isQuotation=true`)
   the quotation expiry is computed **at runtime** from the order date + the branch's
   current Registration Settings validity window (no persisted "Expired" flag): a
   DRAFT quote whose order date is older than the window is reported as `EXPIRED`, and

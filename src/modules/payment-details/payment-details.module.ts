@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { RegistrationSettingsModule } from '../registration-settings/registration-settings.module';
+import { PermissionsModule } from '../permissions/permissions.module';
 import { PaymentDetailsController } from './payment-details.controller';
 import { PaymentDetailsService } from './payment-details.service';
 
@@ -10,7 +11,7 @@ import { PaymentDetailsService } from './payment-details.service';
  * Imports `RegistrationSettingsModule` for the collection-by-other-user gate.
  */
 @Module({
-  imports: [PrismaModule, RegistrationSettingsModule],
+  imports: [PrismaModule, PermissionsModule, RegistrationSettingsModule],
   controllers: [PaymentDetailsController],
   providers: [PaymentDetailsService],
   exports: [PaymentDetailsService],

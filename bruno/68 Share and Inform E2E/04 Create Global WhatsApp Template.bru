@@ -1,0 +1,66 @@
+meta {
+  name: 04 Create Global WhatsApp Template
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/templates
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "preference": "WHATSAPP",
+    "feature": "console_lab_report_as_attachment",
+    "displayTitle": "Console Share — WhatsApp",
+    "messageType": "TRANSACTIONAL",
+    "isActive": true,
+    "isDefault": true,
+    "level": "BUSINESS",
+    "templateType": "DOCUMENT",
+    "templateCategory": "UTILITY",
+    "smsTemplateId": "{{whatsappTemplateId}}",
+    "smsSenderId": "{{whatsappSenderId}}",
+    "template": "Hi {patient_name}, your lab report for order {order_code} is attached."
+  }
+}
+
+vars:pre-request {
+  whatsappTemplateId: lab_report_ready
+  whatsappSenderId: 919999999999
+}
+
+script:post-response {
+  const d = res.getBody() && res.getBody().data;
+  if (d && d.id) bru.setVar("shareWhatsappGlobalId", d.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  Create the GLOBAL WhatsApp template (feature `console_lab_report_as_attachment`).
+  Captures `shareWhatsappGlobalId`.
+
+  ⚠ REQUIRED for actual delivery: `smsTemplateId` = the **Meta/AiSensy-approved
+  WhatsApp template name/id** (the template must already be approved), and
+  `smsSenderId` = your registered WhatsApp sender (business number). Set them in
+  the pre-request vars to your real values. The `template` body must match the
+  approved template's text/variables. Without a valid approved-template id the
+  relay accepts the send but Meta drops it — and the share endpoint now rejects
+  it up-front with 422 SHARE_TEMPLATE_NOT_CONFIGURED. `templateType` +
+  `templateCategory` are also required by the backend for WhatsApp.
+}

@@ -94,6 +94,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** requires `branch_admin:machines__add_machine` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Create a machine (tenant from the JWT). Captures `machineId`. Reagent kits, test
   mappings, adapter logs, and branch assignments are created in the same
   transaction; the response embeds `reagentKits`, `testMappings`, and `branches`.

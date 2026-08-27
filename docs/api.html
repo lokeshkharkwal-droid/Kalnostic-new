@@ -1340,6 +1340,97 @@ tests never appear regardless of status.</div>
     "Row 5: testCode 'CBC' already exists in this master data" ] } }</pre>
 </div>
 
+<div class="ep" id="lt-export">
+  <div><span class="m get">GET</span><span class="path">/api/v1/master-data/:masterDataId/lab-tests/export</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Full, unpaginated snapshot of every <b>active</b> lab test in a master data, composed with its
+  <code>samples</code> and <code>resultParams</code> (each carrying <code>referenceRanges</code>/
+  <code>referenceValues</code>) — the source data the frontend turns into the single-worksheet "Lab Tests"
+  Excel export. No pagination; classification names (<code>departmentName</code>/<code>categoryName</code>/
+  <code>subCategoryName</code>) are resolved server-side, as is each <code>versionHistory</code> entry's
+  <code>modifiedBy</code>/<code>approvedBy</code> (a raw <code>Person.id</code> → display name, falling back
+  to the id if the person can't be found). Returns <code>{ tests: [...] }</code>.</p>
+  <p>The frontend builds ONE flat worksheet (blank row 1, a 120-column header row 2, data from row 3 — 117
+  columns match the business team's reference format exactly, plus 3 added on top: <code>Mandatory
+  Department</code>, <code>Repeat Interval Value</code>, <code>Repeat Interval Unit</code>, since the reference
+  format had no way to satisfy <code>assertCoreInvariants</code> when the paired flag is Yes) where a
+  test spans multiple rows when it has more than one Sample/Result Parameter/Reference Range/Reference Value:
+  test-level columns are written once and <b>vertically merged and center-aligned</b> across the test's full
+  row-span (so they read as one cell instead of blank continuation rows); Samples align <b>positionally</b>
+  within the row-span and stay unmerged and top-aligned, one row per sample; Result Parameters (and their
+  nested Ranges/Values) form <b>contiguous blocks</b> — a parameter's own columns are vertically merged and
+  center-aligned across just its own range/value sub-block, while the Ranges/Values themselves stay
+  one-per-row and top-aligned. Merging is <b>structural, never value-based</b>: only columns the row-expansion
+  algorithm inherently writes once per test/parameter are merged — Samples/Ranges/Values stay separate and
+  independently editable even when two rows happen to hold identical values. See
+  <span class="path">POST .../lab-tests/import-xlsx</span> below for the full row-layout rule and the exact
+  column list.</p>
+</div>
+
+<div class="ep" id="lt-import-xlsx">
+  <div><span class="m post">POST</span><span class="path">/api/v1/master-data/:masterDataId/lab-tests/import-xlsx</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Bulk <b>upsert</b> lab tests from an uploaded <code>.xlsx</code> workbook (downloaded from
+  <span class="path">GET .../lab-tests/export</span>, or hand-built to the same layout) — the file-based
+  counterpart to <span class="path">POST .../lab-tests/import</span> above, but supports updates and nested
+  samples/result parameters/reference ranges/values. Multipart, form field <code>file</code>; only
+  <code>application/vnd.openxmlformats-officedocument.spreadsheetml.sheet</code> is accepted (max 10&nbsp;MB),
+  otherwise <span class="pill">INVALID_UPLOAD_FILE</span>.</p>
+  <p><b>File format:</b> ONE worksheet named <code>Lab Tests</code>, blank row 1, a 120-column header row 2
+  (117 match the business team's reference format exactly — several labels intentionally repeat across the
+  Result Parameter / Reference Range / Reference Value blocks, so columns are matched by <b>position</b>, not
+  unique header text — plus 3 columns added on top: <code>Mandatory Department</code> right after
+  <code>Mandatory Test</code>, and <code>Repeat Interval Value</code>/<code>Repeat Interval Unit</code> right
+  after <code>Repeat Interval Restriction</code>), data from row 3. A test occupies one or
+  more rows: a non-blank <b>Test Name</b> starts a new test and every following blank-Test-Name row continues
+  it; <b>Mandatory Department</b> (resolved name→id like Department) is <b>required</b> whenever
+  <b>Mandatory Test</b> is Yes, and <b>Repeat Interval Value</b>+<b>Repeat Interval Unit</b> are both required
+  whenever <b>Repeat Interval Restriction</b> is Yes — either gap is a 422 naming the missing column by its
+  Excel header text, not its internal field name; <b>Samples</b> are read positionally (the test's Nth row's
+  sample columns = its Nth sample); a non-blank
+  <b>Parameter Name</b> starts a new Result Parameter block and claims every row below it (blank Parameter Name)
+  until the next non-blank Parameter Name or the test's row-span ends, each of those rows optionally carrying
+  one Reference Range and/or one Reference Value for that parameter. <b>Version Control</b> columns are
+  read-only display, ignored on import.</p>
+  <p>The exported file's test-level and per-parameter-own columns are merged/center-aligned for readability
+  (see <span class="path">GET .../lab-tests/export</span> above). A merged Excel cell reports its value on
+  every row it spans, so a continuation row's Test Name / Parameter Name cell would otherwise look non-blank
+  too — the parser detects a cell whose merge master is on an earlier row and treats it as blank before
+  grouping rows, so it behaves exactly like an unmerged file. <b>If a user unmerges a Test Name or Parameter
+  Name cell and retypes the same text into every row</b>, the file now genuinely looks like two separate
+  tests/parameters sharing a name, and import correctly rejects it as a duplicate — don't unmerge those two
+  columns. Samples and Reference Ranges/Values are never merged and are always read strictly per-row.</p>
+  <p><b>Matching:</b> a test matches an existing <b>active</b> test by <code>testCode</code> (case-insensitive);
+  no match creates one. There are no hidden id columns. <b>Samples</b> have no natural key, so on update the
+  uploaded file's Samples become the complete new set (old rows soft-deleted, new set inserted) — nothing
+  outside the test references a Sample id, so this is safe. <b>Result Parameters</b> are matched by
+  <code>parameterCode</code> (case-insensitive) because <code>LabReportResultValue</code>,
+  <code>CriticalAlert</code>, and <code>OutOfRangeFlag</code> hold logical references to
+  <code>LabTestResultParam.id</code>: a matched code preserves its id and patches its scalars in place (its
+  Reference Ranges/Values are fully replaced, having no natural key of their own); an unmatched code creates a
+  new parameter; an existing active parameter whose code is absent from the upload is soft-deleted (id and
+  history retained for anything still referencing it).</p>
+  <p><b>PARTIAL import — every test is validated independently.</b> Each assembled test is checked on its
+  own — structural, catalogue-name lookups (Department/Category/Sub Category, case-insensitive), cross-field
+  invariants, duplicate <code>testName</code>/<code>testCode</code>/<code>parameterCode</code>. A test with
+  <b>any</b> error is <b>skipped</b> (not saved), but every OTHER valid test in the file is still
+  created/updated in one transaction. A duplicate name/code between two tests in the same file skips
+  <b>both</b> of them. Response is always <code>201</code> →
+  <code>{ created, updated, skipped: [ { rowLabel, errors: [...] }, ... ] }</code> — <code>skipped</code> is
+  <code>[]</code> on a fully clean import. The one exception: a <b>file-level structural failure</b>
+  (unreadable file, missing sheet/column, no data rows) has no single test to blame and still rejects the
+  whole upload as <span class="pill">422 LAB_TEST_IMPORT_VALIDATION_FAILED</span> with nothing saved.</p>
+  <p><b>Every message names the Excel column, never the internal field.</b> Raw class-validator messages embed
+  the DTO's camelCase property name and, for enum failures, the raw enum member — neither means anything to a
+  spreadsheet user.
+  <code>LabTestService.humanizeValidationMessage</code> rewrites both before the response is sent: the field
+  name becomes its Excel header (<code>"priceMsrp"</code> → <code>"Price MSRP"</code>), and any raw enum
+  member becomes the display label the sheet uses (<code>SINGLE_STEP</code> → <code>"Single Step"</code>).
+  Applies to every field on the test/sample/result-parameter/reference-range/value DTOs.</p>
+  <pre>{ "success": true, "data": { "created": 1, "updated": 1, "skipped": [
+  { "rowLabel": "Row 5", "errors": [ "Price Maximum must be ≤ Price MSRP" ] } ] } }</pre>
+</div>
+
 <div class="ep" id="lt-get">
   <div><span class="m get">GET</span><span class="path">/api/v1/master-data/:masterDataId/lab-tests/:labTestId</span></div>
   <div class="tags"><span class="tag biz">business JWT</span></div>
@@ -2239,17 +2330,18 @@ config (Order/Quotation/Appointment/Patient-UMID external ids) is a separate sib
 
 <div class="ep" id="registration-settings-get">
   <div><span class="m get">GET</span><span class="path">/api/v1/registration-settings</span></div>
-  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span><span class="tag biz">requires <code>registration:settings</code></span></div>
   <p>The active branch's Registration settings (tenant from JWT, branch from the caller's active profile) —
   one row per branch, created with schema defaults on first access. Never 404s. ~50 fields grouped by
   heading: <code>General_*</code>, <code>Quotation_*</code>, <code>ChargesAndDeductions_*</code>,
   <code>CancellationAndRefund_*</code>, <code>ReferralAndStaffPermissions_*</code>, <code>BillingMenu_*</code>,
-  <code>Appointment_*</code>, <code>Patients_*</code>.</p>
+  <code>Appointment_*</code>, <code>Patients_*</code>. Gated by the <code>registration:settings</code>
+  permission (<code>PermissionGuard</code>); <code>business_admin</code>/<code>administrator</code> bypass.</p>
 </div>
 
 <div class="ep" id="registration-settings-save">
   <div><span class="m put">PUT</span><span class="path">/api/v1/registration-settings</span></div>
-  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span><span class="tag biz">requires <code>registration:settings</code></span></div>
   <p>Upsert the active branch's Registration settings (partial patch — omitted fields keep their
   previously-saved value, or the schema default on first save). Cross-field rules: every
   <code>Minimum*Percent</code> must not exceed its paired <code>Maximum*Percent</code> (TDS, discount,
@@ -2259,6 +2351,52 @@ config (Order/Quotation/Appointment/Patient-UMID external ids) is a separate sib
   <code>AllowBothOrderAndLineDiscount</code> may be <code>true</code> — otherwise
   <span class="pill">422 CONFLICTING_DISCOUNT_MODE</span>. Returns the saved row. Audited under
   <code>AuditModule.REGISTRATION_SETTINGS</code>.</p>
+</div>
+
+<div class="ep" id="registration-settings-business-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/registration-settings/business</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span><span class="tag biz">requires <code>registration:settings</code></span></div>
+  <p>The tenant-level ("business") Registration settings — the single <code>branchId = null</code> row,
+  created with defaults on first access. Branches that have not customised their own row fall back to
+  this. Same field set as the branch row. Business Admins (no active branch) edit this tier.</p>
+</div>
+
+<div class="ep" id="registration-settings-business-save">
+  <div><span class="m put">PUT</span><span class="path">/api/v1/registration-settings/business</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span><span class="tag biz">requires <code>registration:settings</code></span></div>
+  <p>Save (partial patch) the tenant-level ("business") Registration settings (<code>branchId = null</code>).
+  Same cross-field validation as the branch PUT. Audited under <code>AuditModule.REGISTRATION_SETTINGS</code>.</p>
+</div>
+
+<div class="ep" id="branch-role-permissions-grid">
+  <div><span class="m get">GET</span><span class="path">/api/v1/permissions/branch-roles/grid</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Tier-2 <b>Branch × Role</b> permissions. The full cartesian for the tenant (every branch × every
+  role, system + custom) — each row <code>{ branchId, branchName, authRoleId, roleKey, roleLabel,
+  roleActive, overriddenCount }</code>. <code>roleActive</code> is the role's <code>isActive</code>
+  flag; <code>overriddenCount &gt; 0</code> means the (branch + role) has its own branch-level overrides
+  ("Branch"), else it inherits the role baseline ("Business"). Only overrides are stored; the cartesian
+  is computed server-side. Business Admin surface. Resolution precedence: <b>user override ?? branch-role
+  override ?? role baseline</b>.</p>
+</div>
+
+<div class="ep" id="branch-role-permissions-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/permissions/branch-roles/:branchId/:authRoleId</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>The module-grouped permissions for one (branch + role): <code>baseline</code> (the role's static
+  template) and <code>allowed</code> (branch-role override ?? baseline), gated by the branch's enabled
+  modules. A Branch Admin may only target its own active branch (else <span class="pill">403
+  BRANCH_SCOPE_VIOLATION</span>).</p>
+</div>
+
+<div class="ep" id="branch-role-permissions-save">
+  <div><span class="m put">PUT</span><span class="path">/api/v1/permissions/branch-roles/:branchId/:authRoleId</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Replace the (branch + role) overrides (full desired set — Select-All / Deselect-All). Only modules
+  enabled for the branch are accepted; each <code>permissionKey</code> must belong to its
+  <code>moduleKey</code> (else <span class="pill">422 INVALID_MODULE_KEY</span> /
+  <span class="pill">MODULE_NOT_ENABLED_FOR_BRANCH</span>). Branch scoping as above. Audited under
+  <code>AuditModule.USER</code>.</p>
 </div>
 
 <div class="note"><b>Enforced on order creation.</b> The <code>ChargesAndDeductions_*</code>

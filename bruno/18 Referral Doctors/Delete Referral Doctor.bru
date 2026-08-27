@@ -25,6 +25,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** requires `branch_admin:referrals__delete_referral_doctor` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Soft-delete a referral doctor (sets `deletedAt`) and cascade soft-deletes its
   active qualifications, experiences, and assigned lab tests/panels, in one
   transaction. Scoped to the caller's tenant. 404 `REFERRAL_DOCTOR_NOT_FOUND` if

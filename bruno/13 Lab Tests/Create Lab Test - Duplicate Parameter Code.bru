@@ -51,6 +51,8 @@ tests {
 }
 
 docs {
+  🔒 **RBAC:** requires `business_admin:master_data__add_test` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
   Negative case: `parameterCode` is unique **within a lab test**. This single
   create sends two result parameters that share `HGB`; the second insert trips the
   per-test parameter-code index → 409 `LAB_TEST_PARAM_CODE_CONFLICT`. The whole

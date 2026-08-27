@@ -1,4 +1,5 @@
 import {
+  UseGuards,
   Body,
   Controller,
   Delete,
@@ -7,7 +8,13 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { LabTestService } from './lab-test.service';
 import { CreateLabTestDto } from './dto/create-lab-test.dto';
@@ -20,6 +27,11 @@ import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ListLabTestsDto } from './dto/list-lab-tests.dto';
 import { Audit } from '../../common/decorators/audit.decorator';
+import { InvalidUploadFileException } from '../uploads/exceptions/uploads.exceptions';
+
+const XLSX_MIME_TYPE =
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+const MAX_IMPORT_XLSX_BYTES = 10 * 1024 * 1024; // 10 MB, matches the generic attachment upload cap
 
 /**
  * Lab-test endpoints, nested under a master data
@@ -27,6 +39,7 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * from the JWT. The global `JwtAuthGuard` protects all routes.
  */
 @Controller('master-data/:masterDataId/lab-tests')
+@UseGuards(PermissionGuard)
 export class LabTestController {
   constructor(private readonly labTestService: LabTestService) {}
 
@@ -34,6 +47,7 @@ export class LabTestController {
    * Create a lab test (with nested samples + result parameters) in a master data.
    */
   @Post()
+  @RequirePermission(PERMISSION_KEYS.BA_MD_ADD_TEST)
   @Audit({
     module: AuditModule.LAB_TEST,
     action: AuditAction.CREATE,
@@ -82,6 +96,7 @@ export class LabTestController {
    * (duplicate name/code skipped). Returns `{ copied, skipped }`.
    */
   @Post('clone')
+  @RequirePermission(PERMISSION_KEYS.BA_MD_DUPLICATE_TEST)
   @Audit({
     module: AuditModule.LAB_TEST,
     action: AuditAction.CREATE,
@@ -104,6 +119,7 @@ export class LabTestController {
    * Declared before the `:labTestId` routes so `bulk` isn't matched as an id.
    */
   @Patch('bulk')
+  @RequirePermission(PERMISSION_KEYS.BA_MD_ALLOW_MULTIPLE_EDIT)
   @Audit({
     module: AuditModule.LAB_TEST,
     action: AuditAction.UPDATE,
@@ -122,6 +138,7 @@ export class LabTestController {
    * Declared before the `:labTestId` routes so `import` isn't matched as an id.
    */
   @Post('import')
+  @RequirePermission(PERMISSION_KEYS.BA_MD_ALLOW_IMPORT_TESTS)
   @Audit({
     module: AuditModule.LAB_TEST,
     action: AuditAction.CREATE,
@@ -134,6 +151,68 @@ export class LabTestController {
     @Body() dto: ImportLabTestsDto,
   ) {
     return this.labTestService.importAll(masterDataId, tenantId, personId, dto);
+  }
+
+  /**
+   * Full unpaginated export of this master data's active lab tests plus all of
+   * their children (samples, result parameters, reference ranges/values), for
+   * the frontend to build the single-worksheet "Lab Tests" Excel export.
+   * Declared before the `:labTestId` routes so `export` isn't matched as an id.
+   */
+  @Get('export')
+  export(
+    @CurrentTenant() tenantId: string,
+    @Param('masterDataId') masterDataId: string,
+  ) {
+    return this.labTestService.exportAll(masterDataId, tenantId);
+  }
+
+  /**
+   * Import (upsert) lab tests from an uploaded `.xlsx` workbook: ONE flat
+   * worksheet ("Lab Tests", 120 columns) where a test spans one or more rows
+   * (Samples align positionally; Result Parameters and their nested Reference
+   * Ranges/Values form contiguous row-blocks — see `LabTestService.importXlsx`
+   * for the full row-expansion rule). PARTIAL IMPORT: each test is validated
+   * independently — a test with an error is skipped and reported in the
+   * response's `skipped` array, but every other valid test in the file is
+   * still created/updated. Only a file-level structural failure (unreadable
+   * file, missing sheet/column, no data rows) rejects the whole upload.
+   * Declared before the `:labTestId` routes so `import-xlsx` isn't matched
+   * as an id.
+   */
+  @Post('import-xlsx')
+  @Audit({
+    module: AuditModule.LAB_TEST,
+    action: AuditAction.UPDATE,
+    description: 'Imported lab tests from an Excel workbook',
+  })
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: MAX_IMPORT_XLSX_BYTES },
+      fileFilter: (_req, file, cb) => {
+        if (file.mimetype === XLSX_MIME_TYPE) {
+          cb(null, true);
+        } else {
+          cb(new InvalidUploadFileException('Unsupported file type'), false);
+        }
+      },
+    }),
+  )
+  importXlsx(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+    @Param('masterDataId') masterDataId: string,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new InvalidUploadFileException('No file was uploaded');
+    }
+    return this.labTestService.importXlsx(
+      masterDataId,
+      tenantId,
+      personId,
+      file.buffer,
+    );
   }
 
   /**
@@ -152,6 +231,7 @@ export class LabTestController {
    * Update a lab test (and replace child sets when provided).
    */
   @Patch(':labTestId')
+  @RequirePermission(PERMISSION_KEYS.BA_MD_UPDATE_TEST)
   @Audit({
     module: AuditModule.LAB_TEST,
     action: AuditAction.UPDATE,
@@ -170,6 +250,7 @@ export class LabTestController {
    * Soft-delete a lab test (cascade soft-deletes its children).
    */
   @Delete(':labTestId')
+  @RequirePermission(PERMISSION_KEYS.BA_MD_DELETE_TEST)
   @Audit({
     module: AuditModule.LAB_TEST,
     action: AuditAction.DELETE,
@@ -187,6 +268,7 @@ export class LabTestController {
    * Append a version entry to the lab test's version history.
    */
   @Post(':labTestId/versions')
+  @RequirePermission(PERMISSION_KEYS.BA_MD_UPDATE_TEST)
   @Audit({
     module: AuditModule.LAB_TEST,
     action: AuditAction.UPDATE,

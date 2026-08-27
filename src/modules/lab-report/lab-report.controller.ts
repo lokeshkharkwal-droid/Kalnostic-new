@@ -7,9 +7,19 @@ import {
   Post,
   Query,
   Res,
+  UseGuards,
 } from '@nestjs/common';
 import { AuditAction, AuditModule } from '@prisma/client';
 import type { Response } from 'express';
+import { PermissionGuard } from '../permissions/guards/permission.guard';
+import {
+  RequirePermission,
+  RequireAnyPermission,
+} from '../permissions/decorators/require-permission.decorator';
+import {
+  PERMISSION_KEYS,
+  LAB_RESUBMIT_KEYS,
+} from '../permissions/constants/module-permissions.constant';
 import { LabReportService } from './lab-report.service';
 import { TatService } from './tat.service';
 import { ReRunService } from './re-run.service';
@@ -25,6 +35,10 @@ import { ReferenceRangeQueryDto } from './dto/reference-range-query.dto';
 import { ReferenceRangeMethodsQueryDto } from './dto/reference-range-methods-query.dto';
 import { TrendReportQueryDto } from './dto/trend-report-query.dto';
 import { PrintReportDto } from './dto/print-report.dto';
+import {
+  ShareOrderReportDto,
+  ShareAllOrderReportDto,
+} from './dto/share-order-report.dto';
 import {
   CreateLabReportNoteDto,
   ListLabReportNotesDto,
@@ -55,6 +69,7 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * as ids, mirroring PhlebotomistScheduleController's ordering convention.
  */
 @Controller('lab-reports')
+@UseGuards(PermissionGuard)
 export class LabReportController {
   constructor(
     private readonly labReportService: LabReportService,
@@ -142,6 +157,80 @@ export class LabReportController {
     res.end(pdf);
   }
 
+  /**
+   * "Share and Inform" (Order Console): queue the order's lab report to the
+   * patient over one channel using the tenant's activated
+   * `console_lab_report_as_attachment` template. Declared before `:id` so
+   * `order` isn't captured as a report id.
+   */
+  /**
+   * Preload for the Share and Inform popup: patient contacts + which channels
+   * have an activated console-share template. Declared before `:id`.
+   */
+  @Get('order/:orderId/share-info')
+  shareInfo(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('orderId') orderId: string,
+  ) {
+    return this.labReportService.getShareInfo(
+      orderId,
+      tenantId,
+      profile.branchId,
+    );
+  }
+
+  @Post('order/:orderId/share')
+  @Audit({
+    module: AuditModule.COMMUNICATION,
+    action: AuditAction.CREATE,
+    description: 'Shared an order lab report with the patient',
+  })
+  shareOrderReport(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Param('orderId') orderId: string,
+    @Body() dto: ShareOrderReportDto,
+  ) {
+    return this.labReportService.shareOrderReport(
+      orderId,
+      tenantId,
+      profile.branchId,
+      dto,
+      personId,
+    );
+  }
+
+  /**
+   * "Share All": send the order's lab report to the patient over every channel
+   * the tenant has activated a `console_lab_report_as_attachment` template for
+   * (Email / SMS / WhatsApp / in-app IAM) in one request. Returns a per-channel
+   * result summary; a channel with no activated template is skipped, not an
+   * error. Declared before `:id` so `order` isn't captured as a report id.
+   */
+  @Post('order/:orderId/share-all')
+  @Audit({
+    module: AuditModule.COMMUNICATION,
+    action: AuditAction.CREATE,
+    description: 'Shared an order lab report with the patient on all channels',
+  })
+  shareAllOrderReport(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Param('orderId') orderId: string,
+    @Body() dto: ShareAllOrderReportDto,
+  ) {
+    return this.labReportService.shareAllForOrder(
+      orderId,
+      tenantId,
+      profile.branchId,
+      dto,
+      personId,
+    );
+  }
+
   @Get(':id')
   findOne(
     @CurrentTenant() tenantId: string,
@@ -191,6 +280,7 @@ export class LabReportController {
   }
 
   @Post(':id/notes')
+  @RequirePermission(PERMISSION_KEYS.LAB_UPDATE_TECH_NOTES)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.CREATE,
@@ -243,6 +333,7 @@ export class LabReportController {
   }
 
   @Get(':id/trend')
+  @RequirePermission(PERMISSION_KEYS.LAB_VIEW_TREND)
   findTrend(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
@@ -290,6 +381,7 @@ export class LabReportController {
   }
 
   @Patch(':id/results')
+  @RequirePermission(PERMISSION_KEYS.LAB_ENTER_RESULT)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -319,6 +411,7 @@ export class LabReportController {
    * stay permanently read-only.
    */
   @Patch(':id/content-sections')
+  @RequirePermission(PERMISSION_KEYS.LAB_EDIT_REPORT)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -339,6 +432,7 @@ export class LabReportController {
   }
 
   @Post(':id/save')
+  @RequirePermission(PERMISSION_KEYS.LAB_ENTER_RESULT)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -354,6 +448,7 @@ export class LabReportController {
   }
 
   @Post(':id/submit')
+  @RequirePermission(PERMISSION_KEYS.LAB_ENTER_RESULT)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -374,6 +469,7 @@ export class LabReportController {
   }
 
   @Post(':id/validate')
+  @RequirePermission(PERMISSION_KEYS.LAB_ACCESS_VALIDATION_PENDING)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -396,6 +492,7 @@ export class LabReportController {
   }
 
   @Post(':id/edit-report')
+  @RequirePermission(PERMISSION_KEYS.LAB_EDIT_REPORT)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -416,6 +513,7 @@ export class LabReportController {
   }
 
   @Post(':id/reject')
+  @RequirePermission(PERMISSION_KEYS.LAB_MARK_RESULT_REJECTED)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -438,6 +536,7 @@ export class LabReportController {
   }
 
   @Post(':id/resubmit')
+  @RequireAnyPermission(...LAB_RESUBMIT_KEYS)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -471,6 +570,7 @@ export class LabReportController {
   }
 
   @Post(':id/approve')
+  @RequirePermission(PERMISSION_KEYS.LAB_ACCESS_RESULT_DONE)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -493,6 +593,7 @@ export class LabReportController {
   }
 
   @Post(':id/publish')
+  @RequirePermission(PERMISSION_KEYS.LAB_ACCESS_APPROVED)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -513,6 +614,7 @@ export class LabReportController {
   }
 
   @Post(':id/error-reported')
+  @RequirePermission(PERMISSION_KEYS.LAB_MARK_ERROR_REPORTED)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -535,6 +637,7 @@ export class LabReportController {
   }
 
   @Post(':id/lock')
+  @RequirePermission(PERMISSION_KEYS.LAB_MARK_LOCK_TEST)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -585,6 +688,7 @@ export class LabReportController {
   }
 
   @Post(':id/update-status')
+  @RequirePermission(PERMISSION_KEYS.LAB_UPDATE_TECH_NOTES)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -607,6 +711,7 @@ export class LabReportController {
   }
 
   @Post(':id/re-run')
+  @RequirePermission(PERMISSION_KEYS.LAB_MARK_RE_RUN)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -629,6 +734,7 @@ export class LabReportController {
   }
 
   @Post(':id/critical-alert')
+  @RequirePermission(PERMISSION_KEYS.LAB_MARK_CRITICAL_ALERT)
   @Audit({
     module: AuditModule.CRITICAL_ALERT,
     action: AuditAction.CREATE,
@@ -651,6 +757,7 @@ export class LabReportController {
   }
 
   @Post(':id/out-of-range')
+  @RequirePermission(PERMISSION_KEYS.LAB_MARK_OOR)
   @Audit({
     module: AuditModule.OUT_OF_RANGE_FLAG,
     action: AuditAction.CREATE,
@@ -673,6 +780,7 @@ export class LabReportController {
   }
 
   @Post(':id/delta-check')
+  @RequirePermission(PERMISSION_KEYS.LAB_MARK_DELTA_CHECK)
   @Audit({
     module: AuditModule.DELTA_CHECK,
     action: AuditAction.CREATE,
@@ -695,6 +803,7 @@ export class LabReportController {
   }
 
   @Post(':id/schedule')
+  @RequirePermission(PERMISSION_KEYS.LAB_MARK_SCHEDULED)
   @Audit({
     module: AuditModule.SCHEDULED_TEST,
     action: AuditAction.CREATE,
@@ -730,6 +839,7 @@ export class LabReportController {
   }
 
   @Post(':id/multi-step-process')
+  @RequirePermission(PERMISSION_KEYS.LAB_MARK_MULTISTEP)
   @Audit({
     module: AuditModule.MULTI_STEP_PROCESS,
     action: AuditAction.CREATE,
@@ -752,6 +862,7 @@ export class LabReportController {
   }
 
   @Post(':id/multi-step-process/advance')
+  @RequirePermission(PERMISSION_KEYS.LAB_MARK_MULTISTEP)
   @Audit({
     module: AuditModule.MULTI_STEP_PROCESS,
     action: AuditAction.UPDATE,
