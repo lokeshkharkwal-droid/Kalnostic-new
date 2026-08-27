@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { UsersService } from '../../users/users.service';
 import { JwtPayload } from '../../auth/types/jwt-payload.type';
 import { PermissionDeniedException } from '../exceptions/permissions.exceptions';
+import { PrismaService } from '../../../prisma/prisma.service';
+import { tenantContext } from '../../../prisma/tenant-context';
 
 /**
  * Role keys that hold the full management catalogue and therefore bypass every
@@ -44,17 +46,16 @@ export function contextFromJwt(user: JwtPayload): PermissionContext {
 export class PermissionCheckService {
   private readonly logger = new Logger(PermissionCheckService.name);
 
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   /** Whether the caller effectively holds a single permission key. */
   async has(ctx: PermissionContext, key: string): Promise<boolean> {
     if (this.isAdmin(ctx)) return true;
     if (!ctx.branchId) return false;
-    const granted = await this.usersService.getEffectivePermissionKeys(
-      ctx.tenantId,
-      ctx.personId,
-      ctx.branchId,
-    );
+    const granted = await this.getGrantedKeys(ctx);
     return granted.has(key);
   }
 
@@ -73,11 +74,7 @@ export class PermissionCheckService {
     if (this.isAdmin(ctx)) return true;
 
     const granted = ctx.branchId
-      ? await this.usersService.getEffectivePermissionKeys(
-          ctx.tenantId,
-          ctx.personId,
-          ctx.branchId,
-        )
+      ? await this.getGrantedKeys(ctx)
       : new Set<string>();
 
     const held = keys.filter((k) => granted.has(k));
@@ -108,5 +105,29 @@ export class PermissionCheckService {
 
   private isAdmin(ctx: PermissionContext): boolean {
     return !!ctx.profileKey && ADMIN_BYPASS_ROLES.has(ctx.profileKey);
+  }
+
+  /**
+   * Resolve the caller's effective permission keys, ensuring the RLS tenant GUC
+   * is set for the lookup. `PermissionGuard` runs this from `canActivate()` — a
+   * Guard, which Nest executes *before* interceptors — so when there's no
+   * pre-existing async-local tenant context, `TenantContextInterceptor` hasn't
+   * run yet. Without this, `RLS_ENABLED=true` deployments silently filter out
+   * every row via `prisma/rls.sql`'s tenant-isolation policies, and a real
+   * staff member gets a false `StaffMembershipNotFoundException`. Reuses an
+   * already-active context untouched (e.g. a controller calling `has()`/
+   * `enforce()` directly after the interceptor has run, or from inside
+   * `PrismaService.withTenant`).
+   */
+  private getGrantedKeys(ctx: PermissionContext): Promise<Set<string>> {
+    const resolve = () =>
+      this.usersService.getEffectivePermissionKeys(
+        ctx.tenantId,
+        ctx.personId,
+        ctx.branchId as string,
+      );
+    return tenantContext.getStore()?.tenantId
+      ? resolve()
+      : this.prisma.runWithTenant(ctx.tenantId, resolve);
   }
 }
