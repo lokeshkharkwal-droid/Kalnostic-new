@@ -59,3 +59,47 @@ export function matchKey(value: unknown): string {
   }
   return value.trim().toLowerCase();
 }
+
+/** MIME → file extension for the image types analyzers send as histograms. */
+const MIME_EXT: Record<string, string> = {
+  'image/bmp': '.bmp',
+  'image/x-ms-bmp': '.bmp',
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/jpg': '.jpg',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+};
+
+/** A decoded data-URI: the raw bytes plus its MIME type and file extension. */
+export interface DecodedDataUri {
+  buffer: Buffer;
+  contentType: string;
+  ext: string;
+}
+
+/**
+ * Decode a base64 `data:` URI (e.g. `data:image/bmp;base64,Qk1…`) into its bytes,
+ * MIME type and file extension — used to persist analyzer histogram images.
+ * @param data the data-URI string
+ * @returns the decoded buffer/contentType/ext, or `null` if not a base64 data-URI
+ */
+export function parseDataUri(data: unknown): DecodedDataUri | null {
+  if (typeof data !== 'string') {
+    return null;
+  }
+  const match = /^data:([^;,]+);base64,(.*)$/s.exec(data.trim());
+  if (!match) {
+    return null;
+  }
+  const contentType = (match[1] ?? '').toLowerCase();
+  const b64 = match[2] ?? '';
+  if (!contentType || !b64) {
+    return null;
+  }
+  const buffer = Buffer.from(b64, 'base64');
+  if (buffer.length === 0) {
+    return null;
+  }
+  return { buffer, contentType, ext: MIME_EXT[contentType] ?? '.bin' };
+}

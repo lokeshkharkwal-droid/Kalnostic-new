@@ -33,6 +33,18 @@ export interface EmiTestResult {
   [extra: string]: unknown;
 }
 
+/**
+ * One supplementary artifact sent alongside the results — typically an analyzer
+ * histogram/scattergram image (WBC/RBC/PLT/Diff) as a base64 data-URI. `type` is
+ * the histogram label; `data` is a `data:image/…;base64,…` string.
+ */
+export interface EmiTestResultSupplement {
+  type?: string;
+  format?: string;
+  data?: string;
+  [extra: string]: unknown;
+}
+
 /** The full submit payload (only the fields we consume are typed). */
 export interface SubmitResultBody {
   specimen_type?: string;
@@ -47,6 +59,8 @@ export interface SubmitResultBody {
   status?: string;
   local_db_status?: string;
   test_results?: EmiTestResult[];
+  /** Histogram/scattergram images (base64 data-URIs). Legacy misspelling kept. */
+  test_result_suplement?: EmiTestResultSupplement[];
   comment?: string;
   token_id?: string;
   adapter_id?: string;

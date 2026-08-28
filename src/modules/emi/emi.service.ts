@@ -7,7 +7,12 @@ import {
   ResultValueSource,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { SubmitResultBody, EmiTestResult } from './dto/submit-result.dto';
+import { UploadsService } from '../uploads/uploads.service';
+import {
+  SubmitResultBody,
+  EmiTestResult,
+  EmiTestResultSupplement,
+} from './dto/submit-result.dto';
 import {
   EMI,
   EMI_STATUS,
@@ -20,6 +25,7 @@ import {
 import {
   genderInitial,
   matchKey,
+  parseDataUri,
   parseResultDate,
   toEpochSeconds,
 } from './util/emi-format';
@@ -47,7 +53,14 @@ const ORDER_INCLUDE = {
   items: {
     where: { deletedAt: null },
     include: {
-      branchLabTest: { select: { id: true, testName: true, testCode: true } },
+      branchLabTest: {
+        select: {
+          id: true,
+          testName: true,
+          testCode: true,
+          sourceLabTestId: true,
+        },
+      },
       branchLabPanel: { select: { id: true, panelName: true } },
       labReport: true,
     },
@@ -93,7 +106,10 @@ interface SubmittedValue {
 export class EmiService {
   private readonly logger = new Logger(EmiService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly uploads: UploadsService,
+  ) {}
 
   /**
    * Resolve the authenticating adapter from the raw `TOKEN` header value. Because
@@ -154,8 +170,17 @@ export class EmiService {
         select: { name: true },
       });
 
-      // ut_ids: mapped + still-fillable tests on this order, by testCode.
+      // ut_ids: for each mapped + still-fillable test on this order, the test's
+      // display NAME plus each of its result-parameter NAMES (deduped) — the
+      // legacy `getFormattedOrder` shape the analyzers are calibrated against
+      // (they send these same strings back as `universal_test_id` on submit).
       const utIds: string[] = [];
+      const pushUnique = (name: string | null | undefined): void => {
+        const v = name?.trim();
+        if (v && !utIds.includes(v)) {
+          utIds.push(v);
+        }
+      };
       for (const item of order.items) {
         if (
           !item.branchLabTestId ||
@@ -166,9 +191,15 @@ export class EmiService {
         const report = item.labReport;
         const fillable =
           !report || (FILLABLE_STATUSES.has(report.status) && !report.isLocked);
-        const testCode = item.branchLabTest?.testCode;
-        if (fillable && testCode && !utIds.includes(testCode)) {
-          utIds.push(testCode);
+        if (!fillable) {
+          continue;
+        }
+        pushUnique(item.branchLabTest?.testName);
+        const labTestId =
+          report?.labTestId ?? item.branchLabTest?.sourceLabTestId ?? null;
+        const params = await this.resolveParams(tx, labTestId, item);
+        for (const p of params) {
+          pushUnique(p.parameterName);
         }
       }
 
@@ -215,230 +246,333 @@ export class EmiService {
     const testResults = Array.isArray(body.test_results)
       ? body.test_results
       : [];
+    const supplements = Array.isArray(body.test_result_suplement)
+      ? body.test_result_suplement
+      : [];
     const emiCode = this.emiStatusCode(body, testResults);
 
-    return this.prisma.withTenant(adapter.tenantId, async (tx) => {
-      const ctx = await this.resolveContext(tx, adapter);
-      const code = body.tube_no?.trim() ?? '';
-      const order = code
-        ? await this.findOrder(tx, adapter.tenantId, code, ctx)
-        : null;
+    // Captured from inside the tx so histogram images upload to S3 AFTER it
+    // commits — never hold the interactive tx open across slow network I/O (its
+    // 5s timeout would roll back the fill).
+    const filledReportIds: string[] = [];
+    let filledOrderCode = '';
 
-      // Common audit-row writer (one row per submission).
-      const writeAudit = (
-        orderId: string | null,
-        branchId: string | null,
-        updateTestStatus: string | null,
-      ): Promise<unknown> =>
-        tx.adapterResult.create({
-          data: {
-            tenantId: adapter.tenantId,
-            branchId,
-            orderId,
-            tokenId: adapter.token,
-            adapterId: adapter.id,
-            adapterCode: ctx.equipmentCode,
-            equipmentId: adapter.equipmentId,
-            tubeInformationId: body.tube_information_id ?? null,
-            tubeNo: body.tube_no ?? null,
-            originalTubeNo: body.original_tube_no ?? null,
-            specimenType: body.specimen_type ?? null,
-            resultDate: body.result_date ?? null,
-            sent: body.sent ?? null,
-            sentDate: body.sent_date ?? null,
-            status: body.status ?? null,
-            localDbStatus: body.local_db_status ?? null,
-            comment: body.comment ?? null,
-            testResults: testResults as unknown as Prisma.InputJsonValue,
-            emiStatus: emiCode,
-            updateTestStatus,
-            sourceIp,
-          },
-        });
+    const envelope = await this.prisma.withTenant(
+      adapter.tenantId,
+      async (tx) => {
+        const ctx = await this.resolveContext(tx, adapter);
+        const code = body.tube_no?.trim() ?? '';
+        const order = code
+          ? await this.findOrder(tx, adapter.tenantId, code, ctx)
+          : null;
 
-      // Order not found.
-      if (!order) {
-        await writeAudit(null, null, UPDATE_TEST_STATUS.ORDER_NOT_FOUND);
-        return {
-          s: EMI.OK,
-          m: 'Result added successfully',
-          emi_status: this.emiStatusLabel(emiCode),
-          test_status: 'Order not found.',
-          prefered_test: ctx.preferedTest,
-          unique_test_ids: {},
-        };
-      }
-
-      // Order already closed (our terminal state is CANCELLED; per-report
-      // fillability guards the rest — a completed order's reports are APPROVED/
-      // PUBLISHED and therefore not fillable below).
-      if (order.status === OrderStatus.CANCELLED) {
-        await writeAudit(
-          order.id,
-          order.branchId,
-          UPDATE_TEST_STATUS.ALREADY_COMPLETE,
-        );
-        return {
-          s: EMI.OK,
-          m: 'Result added successfully',
-          emi_status: this.emiStatusLabel(emiCode),
-          test_status: 'Test already marked as complete',
-          prefered_test: ctx.preferedTest,
-          unique_test_ids: {},
-        };
-      }
-
-      const submitted = this.normaliseSubmitted(testResults);
-      if (submitted.length === 0) {
-        await writeAudit(
-          order.id,
-          order.branchId,
-          UPDATE_TEST_STATUS.MISSING_VALUES,
-        );
-        return {
-          s: EMI.OK,
-          m: 'Result added successfully',
-          emi_status: this.emiStatusLabel(emiCode),
-          test_status: 'No test result submitted',
-          prefered_test: ctx.preferedTest,
-          unique_test_ids: {},
-        };
-      }
-
-      const now = new Date();
-      const enteredAt = parseResultDate(body.result_date) ?? now;
-      const log: EmiReportLog[] = [];
-      let updatedCount = 0;
-
-      for (const item of order.items) {
-        const report = item.labReport;
-        if (!report) {
-          continue; // no reporting row yet (sample not accepted) → nothing to fill
-        }
-        const reportName =
-          item.branchLabTest?.testName ?? item.branchLabPanel?.panelName ?? '';
-        const base: EmiReportLog = {
-          report_id: report.id,
-          report_name: reportName,
-          status: report.status,
-          before_report_status: report.status,
-          fill_status: '',
-          available_branches: ctx.branchIds,
-          branch_id: order.branchId,
-        };
-
-        // Not fillable (terminal status / locked).
-        if (!FILLABLE_STATUSES.has(report.status) || report.isLocked) {
-          log.push({
-            ...base,
-            fill_status: 'Not filled due to report status is not pending.',
+        // Common audit-row writer (one row per submission).
+        const writeAudit = (
+          orderId: string | null,
+          branchId: string | null,
+          updateTestStatus: string | null,
+        ): Promise<unknown> =>
+          tx.adapterResult.create({
+            data: {
+              tenantId: adapter.tenantId,
+              branchId,
+              orderId,
+              tokenId: adapter.token,
+              adapterId: adapter.id,
+              adapterCode: ctx.equipmentCode,
+              equipmentId: adapter.equipmentId,
+              tubeInformationId: body.tube_information_id ?? null,
+              tubeNo: body.tube_no ?? null,
+              originalTubeNo: body.original_tube_no ?? null,
+              specimenType: body.specimen_type ?? null,
+              resultDate: body.result_date ?? null,
+              sent: body.sent ?? null,
+              sentDate: body.sent_date ?? null,
+              status: body.status ?? null,
+              localDbStatus: body.local_db_status ?? null,
+              comment: body.comment ?? null,
+              testResults: testResults as unknown as Prisma.InputJsonValue,
+              testResultSupplement:
+                supplements as unknown as Prisma.InputJsonValue,
+              emiStatus: emiCode,
+              updateTestStatus,
+              sourceIp,
+            },
           });
-          continue;
+
+        // Order not found.
+        if (!order) {
+          await writeAudit(null, null, UPDATE_TEST_STATUS.ORDER_NOT_FOUND);
+          return {
+            s: EMI.OK,
+            m: 'Result added successfully',
+            emi_status: this.emiStatusLabel(emiCode),
+            test_status: 'Order not found.',
+            prefered_test: ctx.preferedTest,
+            unique_test_ids: {},
+          };
         }
 
-        // Not one of the adapter's prefered (mapped) tests.
-        if (
-          !item.branchLabTestId ||
-          !ctx.mappedTestIds.has(item.branchLabTestId)
-        ) {
-          log.push({
-            ...base,
-            fill_status: `${reportName} Not in prefered test list`,
-          });
-          continue;
+        // Order already closed (our terminal state is CANCELLED; per-report
+        // fillability guards the rest — a completed order's reports are APPROVED/
+        // PUBLISHED and therefore not fillable below).
+        if (order.status === OrderStatus.CANCELLED) {
+          await writeAudit(
+            order.id,
+            order.branchId,
+            UPDATE_TEST_STATUS.ALREADY_COMPLETE,
+          );
+          return {
+            s: EMI.OK,
+            m: 'Result added successfully',
+            emi_status: this.emiStatusLabel(emiCode),
+            test_status: 'Test already marked as complete',
+            prefered_test: ctx.preferedTest,
+            unique_test_ids: {},
+          };
         }
 
-        const params = await this.resolveParams(tx, report.labTestId, item);
-        const matches = this.matchValues(params, submitted, item.branchLabTest);
-        if (matches.length === 0) {
-          log.push({
-            ...base,
-            fill_status: 'No matching result value for this report',
-          });
-          continue;
+        const submitted = this.normaliseSubmitted(testResults);
+        if (submitted.length === 0) {
+          await writeAudit(
+            order.id,
+            order.branchId,
+            UPDATE_TEST_STATUS.MISSING_VALUES,
+          );
+          return {
+            s: EMI.OK,
+            m: 'Result added successfully',
+            emi_status: this.emiStatusLabel(emiCode),
+            test_status: 'No test result submitted',
+            prefered_test: ctx.preferedTest,
+            unique_test_ids: {},
+          };
         }
 
-        for (const match of matches) {
-          await tx.labReportResultValue.upsert({
-            where: {
-              labReportId_resultParamId: {
+        const now = new Date();
+        const enteredAt = parseResultDate(body.result_date) ?? now;
+        const log: EmiReportLog[] = [];
+        let updatedCount = 0;
+
+        for (const item of order.items) {
+          const report = item.labReport;
+          if (!report) {
+            continue; // no reporting row yet (sample not accepted) → nothing to fill
+          }
+          const reportName =
+            item.branchLabTest?.testName ??
+            item.branchLabPanel?.panelName ??
+            '';
+          const base: EmiReportLog = {
+            report_id: report.id,
+            report_name: reportName,
+            status: report.status,
+            before_report_status: report.status,
+            fill_status: '',
+            available_branches: ctx.branchIds,
+            branch_id: order.branchId,
+          };
+
+          // Not fillable (terminal status / locked).
+          if (!FILLABLE_STATUSES.has(report.status) || report.isLocked) {
+            log.push({
+              ...base,
+              fill_status: 'Not filled due to report status is not pending.',
+            });
+            continue;
+          }
+
+          // Not one of the adapter's prefered (mapped) tests.
+          if (
+            !item.branchLabTestId ||
+            !ctx.mappedTestIds.has(item.branchLabTestId)
+          ) {
+            log.push({
+              ...base,
+              fill_status: `${reportName} Not in prefered test list`,
+            });
+            continue;
+          }
+
+          const params = await this.resolveParams(tx, report.labTestId, item);
+          const matches = this.matchValues(
+            params,
+            submitted,
+            item.branchLabTest,
+          );
+          if (matches.length === 0) {
+            log.push({
+              ...base,
+              fill_status: 'No matching result value for this report',
+            });
+            continue;
+          }
+
+          for (const match of matches) {
+            await tx.labReportResultValue.upsert({
+              where: {
+                labReportId_resultParamId: {
+                  labReportId: report.id,
+                  resultParamId: match.resultParamId,
+                },
+              },
+              create: {
+                tenantId: adapter.tenantId,
                 labReportId: report.id,
                 resultParamId: match.resultParamId,
+                observed1: match.value,
+                unit: match.unit,
+                source: ResultValueSource.ADAPTER,
+                enteredAt,
+                enteredBy: adapter.id,
               },
+              update: {
+                observed1: match.value,
+                unit: match.unit,
+                source: ResultValueSource.ADAPTER,
+                enteredAt,
+                enteredBy: adapter.id,
+                deletedAt: null,
+              },
+            });
+          }
+
+          await tx.labReport.update({
+            where: { id: report.id },
+            data: {
+              status: LabReportStatus.SAVED,
+              savedAt: now,
+              savedBy: adapter.id,
             },
-            create: {
-              tenantId: adapter.tenantId,
-              labReportId: report.id,
-              resultParamId: match.resultParamId,
-              observed1: match.value,
-              unit: match.unit,
-              source: ResultValueSource.ADAPTER,
-              enteredAt,
-              enteredBy: adapter.id,
-            },
-            update: {
-              observed1: match.value,
-              unit: match.unit,
-              source: ResultValueSource.ADAPTER,
-              enteredAt,
-              enteredBy: adapter.id,
-              deletedAt: null,
-            },
+          });
+
+          updatedCount += 1;
+          filledReportIds.push(report.id);
+          filledOrderCode = order.orderCode;
+          log.push({
+            ...base,
+            status: LabReportStatus.SAVED,
+            fill_status: 'Report filled',
           });
         }
 
-        await tx.labReport.update({
-          where: { id: report.id },
-          data: {
-            status: LabReportStatus.SAVED,
-            savedAt: now,
-            savedBy: adapter.id,
-          },
-        });
+        const reportLog = {
+          order_id: order.orderCode,
+          datetime: this.formatDateTime(now),
+          log,
+        };
 
-        updatedCount += 1;
-        log.push({
-          ...base,
-          status: LabReportStatus.SAVED,
-          fill_status: 'Report filled',
-        });
-      }
+        if (updatedCount > 0) {
+          // Success path: audit row with no error status.
+          await writeAudit(order.id, order.branchId, null);
+          return {
+            s: EMI.OK,
+            m: 'Result updated successfully',
+            emi_status: this.emiStatusLabel(emiCode),
+            test_status: `${updatedCount} test updated`,
+            report_log: reportLog,
+            prefered_test: ctx.preferedTest,
+            unique_test_ids: {},
+          };
+        }
 
-      const reportLog = {
-        order_id: order.orderCode,
-        datetime: this.formatDateTime(now),
-        log,
-      };
-
-      if (updatedCount > 0) {
-        // Success path: audit row with no error status.
-        await writeAudit(order.id, order.branchId, null);
+        await writeAudit(
+          order.id,
+          order.branchId,
+          UPDATE_TEST_STATUS.TOKEN_MISMATCH,
+        );
         return {
           s: EMI.OK,
-          m: 'Result updated successfully',
+          m: 'Result added successfully',
           emi_status: this.emiStatusLabel(emiCode),
-          test_status: `${updatedCount} test updated`,
+          test_status: 'no test match found for requested token',
           report_log: reportLog,
           prefered_test: ctx.preferedTest,
           unique_test_ids: {},
         };
-      }
+      },
+    );
 
-      await writeAudit(
-        order.id,
-        order.branchId,
-        UPDATE_TEST_STATUS.TOKEN_MISMATCH,
+    // Persist the analyzer's histogram images (base64) to S3 and link them to the
+    // filled report(s). Outside the tx; failures are logged, never fatal.
+    if (filledReportIds.length > 0 && supplements.length > 0) {
+      await this.saveHistograms(
+        adapter,
+        filledOrderCode,
+        filledReportIds,
+        supplements,
       );
-      return {
-        s: EMI.OK,
-        m: 'Result added successfully',
-        emi_status: this.emiStatusLabel(emiCode),
-        test_status: 'no test match found for requested token',
-        report_log: reportLog,
-        prefered_test: ctx.preferedTest,
-        unique_test_ids: {},
-      };
-    });
+    }
+    return envelope;
+  }
+
+  /**
+   * Upload the analyzer's histogram images (base64 data-URIs) to S3 and link each
+   * as a `LabReportAttachment` on every report filled in this submission. Runs
+   * AFTER the fill transaction (S3 I/O must not block it). Each image is
+   * independent: a decode/S3 failure is logged and skipped — it never fails the
+   * already-committed result fill (e.g. `UploadNotConfiguredException` when AWS
+   * credentials are unset).
+   */
+  private async saveHistograms(
+    adapter: LabAdapter,
+    orderCode: string,
+    reportIds: string[],
+    supplements: EmiTestResultSupplement[],
+  ): Promise<void> {
+    // 1. Decode + upload each image (no DB tx held during network I/O).
+    const uploaded: Array<{ type: string; url: string; ext: string }> = [];
+    for (const [i, s] of supplements.entries()) {
+      const decoded = parseDataUri(s?.data);
+      if (!decoded) {
+        continue;
+      }
+      const rawType = typeof s?.type === 'string' ? s.type.trim() : '';
+      const type = rawType || `image-${i + 1}`;
+      try {
+        const { url } = await this.uploads.uploadBuffer(
+          decoded.buffer,
+          decoded.contentType,
+          decoded.ext,
+          adapter.tenantId,
+          'emi-histograms',
+        );
+        uploaded.push({ type, url, ext: decoded.ext });
+      } catch (e) {
+        this.logger.error(
+          `EMI histogram upload failed (${type}): ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+    if (uploaded.length === 0) {
+      return;
+    }
+
+    // 2. Link them to the filled report(s) in one short tenant transaction.
+    const codePart = orderCode ? `${orderCode}-` : '';
+    try {
+      await this.prisma.withTenant(adapter.tenantId, async (tx) => {
+        for (const reportId of reportIds) {
+          for (const img of uploaded) {
+            await tx.labReportAttachment.create({
+              data: {
+                tenantId: adapter.tenantId,
+                labReportId: reportId,
+                kind: 'image',
+                fileUrl: img.url,
+                fileName: `${codePart}${img.type}${img.ext}`,
+                notes: `${img.type} histogram`,
+                uploadedBy: adapter.id,
+              },
+            });
+          }
+        }
+      });
+    } catch (e) {
+      this.logger.error(
+        `EMI histogram attach failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
   }
 
   // ── helpers ─────────────────────────────────────────────────────────────────

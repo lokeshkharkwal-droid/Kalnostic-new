@@ -116,7 +116,7 @@ export class EmiController {
   /**
    * Decode the submit body. The raw-body middleware delivers a string (JSON under
    * `text/plain`); an empty body is treated as an empty payload. Returns `null`
-   * only when the body is present but not valid JSON.
+   * only when the body is present but not valid JSON even after tolerant cleanup.
    */
   private parseBody(req: Request): SubmitResultBody | null {
     const raw: unknown = req.body;
@@ -128,12 +128,33 @@ export class EmiController {
       try {
         return JSON.parse(trimmed) as SubmitResultBody;
       } catch {
-        return null;
+        // Some analyzers emit slightly-malformed JSON (empty array slots `},,{`,
+        // trailing commas) that the legacy PHP tolerated. Sanitize the structural
+        // artifacts and retry once (base64 payloads contain no commas, so this is
+        // safe). Only runs when strict parsing already failed.
+        try {
+          return JSON.parse(this.sanitizeJson(trimmed)) as SubmitResultBody;
+        } catch {
+          return null;
+        }
       }
     }
     if (raw && typeof raw === 'object') {
       return raw as SubmitResultBody;
     }
     return {};
+  }
+
+  /** Remove empty array/object slots (`,,`) and trailing commas before `}`/`]`. */
+  private sanitizeJson(text: string): string {
+    let out = text;
+    for (let i = 0; i < 3; i++) {
+      const next = out.replace(/,\s*,/g, ',').replace(/,\s*([}\]])/g, '$1');
+      if (next === out) {
+        break;
+      }
+      out = next;
+    }
+    return out;
   }
 }

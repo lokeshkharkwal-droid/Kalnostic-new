@@ -39,6 +39,13 @@ body:text {
         "specimen_types": []
       }
     ],
+    "test_result_suplement": [
+      {
+        "type": "WBC",
+        "format": "Base64",
+        "data": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+      }
+    ],
     "comment": "auto from analyzer",
     "token_id": "{{adapterToken}}",
     "adapter_id": "14",
@@ -51,6 +58,19 @@ docs {
 
   Reproduces the legacy EzHealthTrack `GET /emi/submitResult`. The analyzer posts
   test result values, which are filled onto the order's reports.
+
+  ## Histogram images (`test_result_suplement`)
+  Analyzers send instrument histograms/scattergrams (WBC/RBC/PLT/Diff) as base64
+  data-URIs in `test_result_suplement[]`. On a successful fill the server uploads
+  each image to S3 and links it as a `LabReportAttachment` (`kind = image`) on the
+  filled report(s) — visible in Technician Reporting. The raw array is also kept
+  verbatim on the `adapter_results` audit row. Upload failures are logged and
+  skipped; they never fail the result fill.
+
+  ## Tolerant JSON
+  Some analyzers emit slightly-malformed JSON (empty array slots `},,{`, trailing
+  commas). The server retries parsing after sanitizing those structural artifacts
+  (the legacy PHP tolerated them), so such payloads still succeed.
 
   ## Compatibility notes (all preserved verbatim from the legacy contract)
   - **HTTP GET with a JSON body under `Content-Type: text/plain`** — a legacy

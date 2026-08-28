@@ -1,0 +1,29 @@
+meta {
+  name: 15 List Report Attachments
+  type: http
+  seq: 15
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/attachments
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.length && data[0].id) bru.setVar("labReportAttachmentId", data[0].id);
+}
+
+docs {
+  List a report's attachments (Image / Doc / File), newest first — **including the
+  analyzer histogram images** the EMI submit flow uploads (`kind = "image"`, e.g.
+  "WBC histogram"). Open (a view). Each row:
+  `{ id, labReportId, kind, fileUrl, fileName, notes, uploadedBy, uploadedAt }`.
+  `fileUrl` is a public S3 URL the FE links/thumbnails directly. Captures
+  `labReportAttachmentId` for the delete request.
+}

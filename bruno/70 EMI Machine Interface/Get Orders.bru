@@ -54,12 +54,15 @@ docs {
       "admission_number": "ORD-00051",
       "sender_organization": "<tenant name>",
       "sender_doctor": "<referring doctor>",
-      "ut_ids": ["1234"]
+      "ut_ids": ["Complete Blood Count", "Hemoglobin", "WBC"]
     }]
   }
   ```
-  `ut_ids` lists the `testCode`s of the order's tests that are mapped to this
-  adapter AND still fillable. Dates are Unix **seconds** (0 when absent).
+  For each of the order's tests that are mapped to this adapter AND still fillable,
+  `ut_ids` lists the test's **display name plus each of its result-parameter
+  names** (deduped) — the legacy `getFormattedOrder` shape the analyzers are
+  calibrated against (they send these same strings back as `universal_test_id` on
+  submit). Dates are Unix **seconds** (0 when absent).
 
   ## Error envelopes
   - `{ "s": "400", "m": "Missing Auth token" }` — no `TOKEN` header.

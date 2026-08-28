@@ -2807,8 +2807,10 @@ Every submission is persisted as an <code>AdapterResult</code> audit row.</div>
   <p>Order + patient + pending-test info for a scanned id. Returns
   <code>{ s: "200", orders: [{ specimen_id, order_date, patient_id, patient_name, patient_surname,
   birth_date, patient_gender, admission_number, sender_organization, sender_doctor, ut_ids }] }</code>.
-  Dates are Unix <strong>seconds</strong> (0 when absent); <code>ut_ids</code> lists the <code>testCode</code>s
-  of the order's tests that are mapped to this adapter and still fillable. Unknown order →
+  Dates are Unix <strong>seconds</strong> (0 when absent). For each of the order's tests that are mapped to
+  this adapter and still fillable, <code>ut_ids</code> lists the test's <strong>display name plus each of its
+  result-parameter names</strong> (deduped) — the legacy <code>getFormattedOrder</code> shape the analyzers are
+  calibrated against (sent back as <code>universal_test_id</code> on submit). Unknown order →
   <code>{ "s": "400", "m": "Specimen id not found" }</code>.</p>
 </div>
 <div class="ep" id="emi-submit">
@@ -2827,12 +2829,28 @@ Every submission is persisted as an <code>AdapterResult</code> audit row.</div>
   available_branches, branch_id }] }, prefered_test, unique_test_ids }</code>. Other outcomes (still
   <code>s: "200"</code>): <code>"Order not found."</code>, <code>"Test already marked as complete"</code>,
   <code>"No test result submitted"</code>, <code>"no test match found for requested token"</code> (with per-report
-  <code>fill_status</code> notes such as <code>"Not filled due to report status is not pending."</code>).</p>
+  <code>fill_status</code> notes such as <code>"Not filled due to report status is not pending."</code>).
+  <strong>Histogram images</strong> in <code>test_result_suplement[]</code> (WBC/RBC/PLT/Diff as base64 data-URIs)
+  are, on a successful fill, uploaded to S3 and linked as <code>LabReportAttachment</code>s (<code>kind = image</code>)
+  on the filled report(s) — shown in Technician Reporting; the raw array is also kept on the
+  <code>adapter_results</code> audit row. The parser tolerates the analyzers' slightly-malformed JSON (empty
+  array slots <code>},,{</code>, trailing commas).</p>
   <pre>TOKEN: &lt;adapter token&gt;
 { "tube_no": "ORD-00051", "result_date": "1668583670356",
   "test_results": [ { "universal_test_id": "1234", "test_result": "10.24", "unit": "mg/dL",
                       "test_name": "site admin -01" } ],
+  "test_result_suplement": [ { "type": "WBC", "format": "Base64", "data": "data:image/bmp;base64,…" } ],
   "adapter_id": "14", "adapter_code": "erba-h560" }</pre>
+</div>
+<div class="ep" id="lab-report-attachments">
+  <div><span class="m get">GET</span><span class="path">/lab-reports/:id/attachments</span> &nbsp;
+    <span class="m post">POST</span> &nbsp; <span class="m delete">DELETE</span> <span class="path">/:attachmentId</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Technician Reporting attachments (Image / Doc / File in the result-entry modal). URL-only: the file is
+  uploaded first via <code>POST /uploads/attachment</code> (S3), then <code>POST</code> here persists
+  <code>{ kind: "image"|"document"|"file", fileUrl, fileName, notes? }</code> against the report.
+  <code>GET</code> lists them (newest first), <strong>including the analyzer histogram images</strong> the EMI
+  submit flow attaches. <code>GET</code> is open; create/delete require the technician-notes permission.</p>
 </div>
 
 <p style="margin:40px 0 10px;color:var(--muted);font-size:13px">
