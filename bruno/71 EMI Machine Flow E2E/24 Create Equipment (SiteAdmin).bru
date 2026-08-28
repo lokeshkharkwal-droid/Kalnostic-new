@@ -1,0 +1,48 @@
+meta {
+  name: 24 Create Equipment (SiteAdmin)
+  type: http
+  seq: 24
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/equipment
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "name": "EMI Analyzer {{tatRunId}}",
+    "code": "erba-h560-{{tatRunId}}",
+    "description": "Auto-created by the EMI Machine Flow E2E"
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.id) bru.setVar("equipmentId", data.id);
+}
+
+tests {
+  test("equipment created", function () {
+    expect(res.getStatus()).to.equal(201);
+    expect(res.body.data).to.have.property("id");
+  });
+}
+
+docs {
+  **Register the machine (1/2) — global equipment.** The lab adapter references a
+  platform-level (SiteAdmin) `Equipment`, so we create one first using
+  `siteAdminToken` (from step 01). `name` is unique among active equipment;
+  `code` becomes the adapter's `adapter_code` echoed back to the machine.
+  `labTestIds` is intentionally omitted (optional — the adapter only needs the
+  equipment to exist). Captures **`equipmentId`**.
+}

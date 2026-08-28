@@ -2,6 +2,7 @@ import {
   AccessionBarcodeResetCycle,
   AccessionBarcodeSeparator,
 } from '@prisma/client';
+import { CONTAINER_TYPE_LABEL_LIST } from './container-type.constants';
 
 /**
  * Default per-branch Accession Module master-data lists (LIMS Settings
@@ -40,16 +41,10 @@ export interface AccessionSettingsMap {
 
 /** The out-of-the-box Accession Module settings a branch uses until it saves its own. */
 export const DEFAULT_ACCESSION_SETTINGS: AccessionSettingsMap = {
-  MasterData_TubeTypes: [
-    'SST (Yellow)',
-    'EDTA (Purple)',
-    'Sodium Citrate (Blue)',
-    'Fluoride Oxalate (Grey)',
-    'Heparin (Green)',
-    'Urine Cup',
-    'Swab',
-    'Other',
-  ],
+  // Seeded from the canonical container-type labels so every container a test
+  // can be configured with is a selectable tube type here (Collect & Print
+  // auto-selects the configured container against this list).
+  MasterData_TubeTypes: [...CONTAINER_TYPE_LABEL_LIST],
   MasterData_SampleConditions: [
     'Satisfactory',
     'Hemolyzed',

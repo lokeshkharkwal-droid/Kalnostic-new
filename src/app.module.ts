@@ -87,6 +87,7 @@ import { InvoiceModule } from './modules/invoice/invoice.module';
 import { SettlementModule } from './modules/settlement/settlement.module';
 import { FinancePaymentsModule } from './modules/finance-payments/finance-payments.module';
 import { CommunicationModule } from './modules/communication/communication.module';
+import { EmiModule } from './modules/emi/emi.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 
 /**
@@ -194,6 +195,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     LabReportModule,
     RegistrationSettingsModule,
     PermissionsModule,
+    EmiModule,
   ],
   providers: [
     // Global business authentication. SiteAdmin routes use @Public() + their

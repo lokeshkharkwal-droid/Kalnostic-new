@@ -153,7 +153,12 @@ export class AccessionSampleService {
         item.direct ??
         null;
       const samples = item.branchLabTest
-        ? this.samplesOf(item.branchLabTest.configSnapshot)
+        ? await this.samplesForTest(
+            tx,
+            tenantId,
+            item.branchLabTest.sourceLabTestId,
+            item.branchLabTest.configSnapshot,
+          )
         : item.branchLabPanel
           ? await this.samplesOfPanel(tx, tenantId, item.branchLabPanel.id)
           : [];
@@ -1428,6 +1433,31 @@ export class AccessionSampleService {
   }
 
   /**
+   * Sample/container requirements for a branch lab test. Reads the LIVE
+   * `LabTestSample` rows of the source Master Data test (via `sourceLabTestId`)
+   * so a sample/container configured — or edited — AFTER the branch pricing-list
+   * copies were created still reaches accession. The per-list `configSnapshot`
+   * is a frozen point-in-time copy that is NOT refreshed when Master Data
+   * samples change, so it's only used as a fallback (e.g. a SITE_ADMIN template
+   * whose sample config lives solely in the snapshot, or a deleted source).
+   */
+  private async samplesForTest(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sourceLabTestId: string | null,
+    snapshot: Prisma.JsonValue | undefined,
+  ): Promise<LabTestSample[]> {
+    if (sourceLabTestId) {
+      const live = await tx.labTestSample.findMany({
+        where: { labTestId: sourceLabTestId, tenantId, deletedAt: null },
+        orderBy: { createdAt: 'asc' },
+      });
+      if (live.length > 0) return live;
+    }
+    return this.samplesOf(snapshot);
+  }
+
+  /**
    * Sample/container requirements for a panel — the union of its constituent
    * tests' `configSnapshot.samples` (deduped by sample+container type, since
    * a multi-test panel commonly has several tests sharing the same tube).
@@ -1456,12 +1486,20 @@ export class AccessionSampleService {
         tenantId,
         deletedAt: null,
       },
-      select: { configSnapshot: true },
+      select: { configSnapshot: true, sourceLabTestId: true },
     });
     const seen = new Set<string>();
     const samples: LabTestSample[] = [];
     for (const test of tests) {
-      for (const s of this.samplesOf(test.configSnapshot)) {
+      // Live source samples (snapshot fallback) — same freshness fix as the
+      // standalone-test path, so a panel's tube requirements reflect current config.
+      const src = await this.samplesForTest(
+        tx,
+        tenantId,
+        test.sourceLabTestId,
+        test.configSnapshot,
+      );
+      for (const s of src) {
         const key = `${s.containerType ?? ''}|${s.sampleType ?? ''}`;
         if (seen.has(key)) continue;
         seen.add(key);

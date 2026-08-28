@@ -1,0 +1,56 @@
+meta {
+  name: 25 Create Lab Adapter
+  type: http
+  seq: 25
+}
+
+post {
+  url: {{baseUrl}}/lab-adapters
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "name": "EMI Bridge {{tatRunId}}",
+    "equipmentId": "{{equipmentId}}",
+    "branchIds": ["{{branchId}}"],
+    "labTestIds": ["{{branchLabTestId}}"],
+    "isActive": true
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data) {
+    if (data.id) bru.setVar("labAdapterId", data.id);
+    // The machine credential — captured here so the EMI steps below need no
+    // manual token. This is the whole point: the adapter's token IS the auth.
+    if (data.token) bru.setVar("flowAdapterToken", data.token);
+  }
+}
+
+tests {
+  test("adapter created with a token", function () {
+    expect(res.getStatus()).to.equal(201);
+    expect(res.body.data).to.have.property("token");
+    expect(res.body.data.token).to.be.a("string").and.not.empty;
+  });
+}
+
+docs {
+  **Register the machine (2/2) — the lab adapter.** A tenant-level bridge created
+  with `businessAdminToken` (from step 03) that references the global
+  **`equipmentId`** (step 24), is assigned to this run's **`branchId`**, and maps
+  the run's **`branchLabTestId`** (step 18) as a "prefered" test. The response's
+  system-generated **`token`** is captured as **`flowAdapterToken`** — the value a
+  real analyzer would carry in its `TOKEN` header. Nothing is copied by hand.
+}
