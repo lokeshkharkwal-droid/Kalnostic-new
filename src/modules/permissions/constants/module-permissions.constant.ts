@@ -621,9 +621,7 @@ const PERMISSION_SPEC: Record<string, SectionSpec[]> = {
   // control is needed.
   inventory: [{ label: 'Inventory', permissions: ['View inventory'] }],
   sales: [{ label: 'Sales', permissions: ['View sales'] }],
-  phlebotomist: [
-    { label: 'Phlebotomist', permissions: ['View phlebotomist'] },
-  ],
+  phlebotomist: [{ label: 'Phlebotomist', permissions: ['View phlebotomist'] }],
 };
 
 /** The permission-bearing module keys, in catalogue order. */

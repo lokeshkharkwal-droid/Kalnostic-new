@@ -1,0 +1,33 @@
+meta {
+  name: 13 Resolve Branch Master Data
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/master-data?branchId={{branchId}}&page=1&limit=1
+  body: none
+  auth: bearer
+}
+
+params:query {
+  branchId: {{branchId}}
+  page: 1
+  limit: 1
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.length && data[0].id) bru.setVar("masterDataId", data[0].id);
+}
+
+docs {
+  **Workflow 4 — Resolve the branch's master data.** Every branch is
+  auto-provisioned a default master data on creation; the branch lab-test/panel
+  import reads from it, so the test/panel (steps 12–13) are created inside it.
+  Captures **`masterDataId`** from the first (only) row.
+}

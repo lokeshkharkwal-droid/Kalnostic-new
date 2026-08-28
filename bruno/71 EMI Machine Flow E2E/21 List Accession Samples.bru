@@ -1,0 +1,35 @@
+meta {
+  name: 21 List Accession Samples
+  type: http
+  seq: 21
+}
+
+get {
+  url: {{baseUrl}}/accession/samples?orderId={{orderId}}&page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  orderId: {{orderId}}
+  page: 1
+  limit: 20
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.length && data[0].id) {
+    bru.setVar("sampleId", data[0].id);
+    if (data[0].accessionNo) bru.setVar("accessionNo", data[0].accessionNo);
+  }
+}
+
+docs {
+  **TAT 1 — Find the accession sample** generated for the order (status `NEW`).
+  Captures **`sampleId`** (and `accessionNo`) from the first row — the sample we
+  collect + accept next.
+}

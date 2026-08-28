@@ -21,6 +21,14 @@ export class LabTestSampleDto {
   @IsOptional()
   sampleNameId?: string;
 
+  // Human-readable sample name chosen in the form (e.g. "Blood (EDTA)"). Kept
+  // alongside `sampleType` because one sampleType (e.g. "Blood") can back several
+  // sample names, so it can't be derived on read-back.
+  @IsString()
+  @IsOptional()
+  @MaxLength(100)
+  sampleName?: string;
+
   @IsString()
   @IsOptional()
   @MaxLength(100)

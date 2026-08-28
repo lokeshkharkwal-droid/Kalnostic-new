@@ -90,6 +90,7 @@ body:json {
     "references": "WHO 2011 Guidelines",
     "samples": [
       {
+        "sampleName": "Blood (EDTA)",
         "sampleType": "Blood",
         "containerType": "EDTA_TUBE_PURPLE_TOP",
         "sampleSize": "3 mL",
@@ -258,7 +259,11 @@ docs {
   - **Flags:** `isAllowDiscounts`, `isPreferenceTest`, `isActive` (Active/Inactive).
   - **Notes:** `usefulFor`, `interpretationOfResults`, `limitations`, `remarks`,
     `references`.
-  - **Samples[]:** `sampleType`, `containerType`, `sampleSize`,
+  - **Samples[]:** `sampleName` (human-readable, e.g. "Blood (EDTA)"),
+    `sampleType`, `containerType` (enum: `EDTA_TUBE_PURPLE_TOP`,
+    `PLAIN_TUBE_RED_TOP`, `SST_TUBE_YELLOW_TOP`, `CITRATE_TUBE_BLUE_TOP`,
+    `FLUORIDE_TUBE_GREY_TOP`, `HEPARIN_TUBE_GREEN_TOP`, `URINE_CONTAINER`,
+    `STOOL_CONTAINER`, `SWAB`, `STERILE_CONTAINER`, `OTHER`), `sampleSize`,
     `collectionMethod`, `numberOfSamples`, `stability`, `transportTemperature`,
     `preservative`, `sampleHandlingInstructions`, `isFastingRequired`,
     `isLightProtection`, `isDefault`.

@@ -153,6 +153,14 @@ export class UpdatePatientDto {
   @MaxLength(60)
   privilegeNumber?: string;
 
+  /** Selected privilege-card tier/name (e.g. "Lifetime Family Card"). `null`
+   *  clears it. */
+  @IsOptional()
+  @ValidateIf((_o, value) => value !== null)
+  @IsString()
+  @MaxLength(60)
+  privilegeCard?: string | null;
+
   @IsEnum(PatientCategory)
   @IsOptional()
   patientCategory?: PatientCategory;

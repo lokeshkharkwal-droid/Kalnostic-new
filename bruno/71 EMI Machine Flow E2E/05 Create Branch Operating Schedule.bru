@@ -1,0 +1,61 @@
+meta {
+  name: 05 Create Branch Operating Schedule
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/branches/{{branchId}}/schedules
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+script:pre-request {
+  // Open-ended ACTIVE schedule effective from 30 days ago, so it covers "now"
+  // (the TAT engine only uses an ACTIVE schedule whose date range covers today).
+  const from = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  bru.setVar("scheduleEffectiveFrom", from.toISOString().slice(0, 10));
+}
+
+body:json {
+  {
+    "planName": "TAT Flow — All Day Coverage {{tatRunId}}",
+    "status": "ACTIVE",
+    "effectiveFrom": "{{scheduleEffectiveFrom}}",
+    "shifts": [
+      {
+        "shiftName": "MORNING",
+        "startTime": "00:00",
+        "endTime": "23:59",
+        "breakStartTime": "03:00",
+        "breakEndTime": "03:10",
+        "activeDays": ["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"]
+      }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.id) bru.setVar("branchScheduleId", data.id);
+}
+
+docs {
+  **Step 3 — Create the branch operating schedule. REQUIRED for TAT.**
+
+  The TAT engine computes *working* time by excluding non-operating hours and
+  breaks; it reads them from the branch's **ACTIVE** `Schedule`. Without one, the
+  breakdown returns `computable: false, reason: NO_ACTIVE_SCHEDULE`.
+
+  This creates a single all-day shift (00:00–23:59, every day, with a tiny
+  03:00–03:10 break) effective from 30 days ago (open-ended) so any accept/approve
+  time during the run counts as working time. Captures **`branchScheduleId`**.
+}

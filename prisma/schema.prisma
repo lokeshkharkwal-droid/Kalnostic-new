@@ -555,13 +555,22 @@ enum AbnormalFlag {
   COLOUR_HIGHLIGHT
 }
 
-/// Sample container type (tube/colour or receptacle).
+/// Sample container type (tube/colour or receptacle). One display label per value
+/// lives in `CONTAINER_TYPE_LABELS` (accession constants); keep the two in sync.
+/// STERILE_CONTAINER is retained for legacy rows created before the tube colours
+/// (Citrate/Stool) were split into their own values.
 enum ContainerType {
   EDTA_TUBE_PURPLE_TOP
   PLAIN_TUBE_RED_TOP
+  SST_TUBE_YELLOW_TOP
+  CITRATE_TUBE_BLUE_TOP
   FLUORIDE_TUBE_GREY_TOP
+  HEPARIN_TUBE_GREEN_TOP
   URINE_CONTAINER
+  STOOL_CONTAINER
+  SWAB
   STERILE_CONTAINER
+  OTHER
 }
 
 // ── Doctor enums (UPPERCASE per project convention) ─────────────────────────────
@@ -2559,6 +2568,7 @@ model LabTestSample {
   labTestId String  @map("lab_test_id")
 
   sampleNameId               String?        @map("sample_name_id")
+  sampleName                 String?        @map("sample_name")
   sampleType                 String?        @map("sample_type")
   containerType              ContainerType? @map("container_type")
   sampleSize                 String?        @map("sample_size")
@@ -3436,6 +3446,63 @@ model LabAdapterTest {
   @@index([branchLabTestId])
   @@index([deletedAt])
   @@map("lab_adapter_tests")
+}
+
+/// Raw audit row for one machine (EMI) result submission — the analyzer/adapter
+/// compatibility layer (`/emi/submitResult`, module `emi`). Mirrors the legacy
+/// EzHealthTrack `adapter_result` table so the "original result as received from
+/// the instrument" is retained for investigation, plus the resolved processing
+/// outcome (`emiStatus` / `updateTestStatus`). Tenant-scoped, branch-level
+/// (CLAUDE.md §4.6): `tenantId` comes from the authenticating `LabAdapter`, not a
+/// JWT; `orderId` links to the resolved order when one was matched.
+model AdapterResult {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  // Logical ref → Order resolved from `tubeNo` (our orderCode); NULL when the
+  // order could not be matched.
+  orderId String? @map("order_id")
+
+  // Adapter identity (echoed back to the machine + kept for tracing).
+  tokenId     String? @map("token_id")
+  adapterId   String? @map("adapter_id")
+  adapterCode String? @map("adapter_code")
+  equipmentId String? @map("equipment_id")
+
+  // Specimen / tube identity as sent by the machine.
+  tubeInformationId String? @map("tube_information_id")
+  tubeNo            String? @map("tube_no")
+  originalTubeNo    String? @map("original_tube_no")
+  specimenType      String? @map("specimen_type")
+
+  // Machine-supplied flags (kept verbatim as text — legacy shape).
+  resultDate    String? @map("result_date")
+  sent          String?
+  sentDate      String? @map("sent_date")
+  status        String?
+  localDbStatus String? @map("local_db_status")
+  comment       String? @db.Text
+
+  // Full submitted `test_results[]` payload, verbatim.
+  testResults Json @default("[]") @map("test_results")
+
+  // Resolved outcome. `emiStatus`: "0" in-complete / "1" complete.
+  // `updateTestStatus`: 0 order-not-found, 1 missing-values, 2 already-complete,
+  // 3 token/test-mismatch (legacy AdapterResult::UPDATE_TEST_STATUS_*).
+  emiStatus        String? @map("emi_status")
+  updateTestStatus String? @map("update_test_status")
+
+  sourceIp String? @map("source_ip")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([orderId])
+  @@index([deletedAt])
+  @@map("adapter_results")
 }
 
 /// An external reference lab a tenant sends samples to. Tenant-scoped,
@@ -5536,6 +5603,10 @@ model Patient {
   // ── Privilege / category ──
   hasPrivilegeCard Boolean          @default(false) @map("has_privilege_card")
   privilegeNumber  String?          @map("privilege_number")
+  // Selected privilege-card tier/name (e.g. "Lifetime Family Card"); NULL when
+  // the patient has no card. Persisted so the registration form can restore the
+  // exact card the user picked instead of defaulting back to "None".
+  privilegeCard    String?          @map("privilege_card")
   // Legacy static privilege tier (General/VIP/…), retained for existing data;
   // superseded in the UI by the branch-level PT Category below.
   patientCategory  PatientCategory? @map("patient_category")

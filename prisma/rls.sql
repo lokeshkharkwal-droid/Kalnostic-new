@@ -1602,6 +1602,21 @@ CREATE POLICY lab_adapters_tenant_isolation ON lab_adapters
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- Machine (EMI) authentication needs to read an adapter BY ITS TOKEN before any
+-- tenant context exists (the machine only presents a TOKEN header — there is no
+-- JWT and therefore no `app.current_tenant_id`). This additional read-only
+-- policy lets the `emi` module resolve the adapter (→ its tenantId) by setting
+-- `set_config('app.adapter_token', <token>, true)` for that lookup only. The
+-- token is a 64-hex opaque secret, so matching on it is itself the credential
+-- check. WITH CHECK is omitted → this policy grants SELECT only, never writes.
+DROP POLICY IF EXISTS lab_adapters_token_lookup ON lab_adapters;
+CREATE POLICY lab_adapters_token_lookup ON lab_adapters
+  FOR SELECT
+  USING (
+    token IS NOT NULL
+    AND token = NULLIF(current_setting('app.adapter_token', true), '')
+  );
+
 -- An adapter name is unique per tenant among ACTIVE rows.
 CREATE UNIQUE INDEX IF NOT EXISTS lab_adapter_name_active_unique
   ON lab_adapters (tenant_id, name) WHERE deleted_at IS NULL;
@@ -1631,6 +1646,17 @@ CREATE POLICY lab_adapter_tests_tenant_isolation ON lab_adapter_tests
 CREATE UNIQUE INDEX IF NOT EXISTS lab_adapter_test_active_unique
   ON lab_adapter_tests (tenant_id, lab_adapter_id, branch_lab_test_id)
   WHERE deleted_at IS NULL;
+
+-- ── adapter_results ─────────────────────────────────────────────────────────
+-- Raw audit rows for machine (EMI) result submissions. Written inside the
+-- adapter's tenant context (set from the authenticating token), so the standard
+-- tenant-isolation policy applies.
+ALTER TABLE adapter_results ENABLE ROW LEVEL SECURITY;
+ALTER TABLE adapter_results FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS adapter_results_tenant_isolation ON adapter_results;
+CREATE POLICY adapter_results_tenant_isolation ON adapter_results
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
 
 -- ── appointment_settings ─────────────────────────────────────────────────────
 ALTER TABLE appointment_settings ENABLE ROW LEVEL SECURITY;

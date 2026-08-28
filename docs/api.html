@@ -2791,6 +2791,50 @@ accession state machine — guarded, never destructive) and the linked appointme
   (KM/on-time deferred). Filters: <code>dateFrom</code>/<code>dateTo</code>, <code>phlebotomistId</code>, <code>branchId</code>.</p>
 </div>
 
+<h2 id="emi">EMI — Lab Machine Interface <span style="font-size:13px;color:var(--muted)">(analyzer/adapter compatibility layer)</span></h2>
+<div class="note">Reproduces the legacy EzHealthTrack <code>/emi</code> contract so existing lab analyzers integrate with
+only a host change. These routes are <strong>served at the root</strong> (NOT under <code>/api/v1</code>),
+authenticated by a <code>TOKEN</code> header carrying an active <code>LabAdapter.token</code> (never the business
+JWT), and return the <strong>flat legacy envelope</strong> <code>{ s, m, … }</code> (NOT
+<code>{ success, data, meta }</code>). The scanned <code>specimen_id</code>/<code>tube_no</code> maps to the
+order's <code>orderCode</code> (there is no barcode/specimen table here). Auth errors:
+<code>{ "s": "400", "m": "Missing Auth token" }</code>, <code>{ "s": "403", "m": "Invalid authorization" }</code>.
+Every submission is persisted as an <code>AdapterResult</code> audit row.</div>
+
+<div class="ep" id="emi-orders">
+  <div><span class="m get">GET</span><span class="path">/emi/orders?specimen_id=&lt;orderCode&gt;</span></div>
+  <div class="tags"><span class="tag pub">TOKEN header</span></div>
+  <p>Order + patient + pending-test info for a scanned id. Returns
+  <code>{ s: "200", orders: [{ specimen_id, order_date, patient_id, patient_name, patient_surname,
+  birth_date, patient_gender, admission_number, sender_organization, sender_doctor, ut_ids }] }</code>.
+  Dates are Unix <strong>seconds</strong> (0 when absent); <code>ut_ids</code> lists the <code>testCode</code>s
+  of the order's tests that are mapped to this adapter and still fillable. Unknown order →
+  <code>{ "s": "400", "m": "Specimen id not found" }</code>.</p>
+</div>
+<div class="ep" id="emi-submit">
+  <div><span class="m get">GET</span><span class="path">/emi/submitResult</span></div>
+  <div class="tags"><span class="tag pub">TOKEN header</span></div>
+  <p>Fill the machine's result values onto the order's reports. <strong>GET with a JSON body under
+  <code>Content-Type: text/plain</code></strong> (legacy quirk — the server reads the raw body and skips the
+  global ValidationPipe, so extra machine fields are accepted). Mirrors legacy
+  <code>processAdapterResult</code>: only <strong>fillable</strong> reports (status PENDING/PARTIAL_PENDING/SAVED,
+  not locked) belonging to the adapter's mapped tests are filled — the value is stored with
+  <code>source = ADAPTER</code> and the report moves to <code>SAVED</code>; reports are never auto-approved. Each
+  <code>test_results[]</code> entry's <code>universal_test_id</code> is matched to <code>BranchLabTest.testCode</code>
+  then <code>test_name</code> (single-parameter tests fill on a test-level match). Success →
+  <code>{ s: "200", m: "Result updated successfully", emi_status: "Complete", test_status: "&lt;n&gt; test updated",
+  report_log: { order_id, datetime, log: [{ report_id, report_name, status, before_report_status, fill_status,
+  available_branches, branch_id }] }, prefered_test, unique_test_ids }</code>. Other outcomes (still
+  <code>s: "200"</code>): <code>"Order not found."</code>, <code>"Test already marked as complete"</code>,
+  <code>"No test result submitted"</code>, <code>"no test match found for requested token"</code> (with per-report
+  <code>fill_status</code> notes such as <code>"Not filled due to report status is not pending."</code>).</p>
+  <pre>TOKEN: &lt;adapter token&gt;
+{ "tube_no": "ORD-00051", "result_date": "1668583670356",
+  "test_results": [ { "universal_test_id": "1234", "test_result": "10.24", "unit": "mg/dL",
+                      "test_name": "site admin -01" } ],
+  "adapter_id": "14", "adapter_code": "erba-h560" }</pre>
+</div>
+
 <p style="margin:40px 0 10px;color:var(--muted);font-size:13px">
 Generated for Kalnostics New · reflects the implemented controllers under <code>src/modules</code>.
 Token TTLs, lockout, and password/MRN formats are defined in <code>CLAUDE.md §5</code>.
