@@ -3487,6 +3487,11 @@ model AdapterResult {
   // Full submitted `test_results[]` payload, verbatim.
   testResults Json @default("[]") @map("test_results")
 
+  // Full submitted `test_result_suplement[]` payload, verbatim (histogram images
+  // as base64 data-URIs, kept for investigation). The images are also uploaded to
+  // S3 and linked as LabReportAttachments on the filled report(s).
+  testResultSupplement Json @default("[]") @map("test_result_supplement")
+
   // Resolved outcome. `emiStatus`: "0" in-complete / "1" complete.
   // `updateTestStatus`: 0 order-not-found, 1 missing-values, 2 already-complete,
   // 3 token/test-mismatch (legacy AdapterResult::UPDATE_TEST_STATUS_*).

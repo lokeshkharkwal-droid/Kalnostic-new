@@ -1,0 +1,47 @@
+meta {
+  name: 16 Create Report Attachment
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/attachments
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "kind": "document",
+    "fileUrl": "https://s3-ap-southeast-1.amazonaws.com/stage.ez.reports/uploads/finance-attachments/demo/report.pdf",
+    "fileName": "report.pdf",
+    "notes": "Reference document"
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.id) bru.setVar("labReportAttachmentId", data.id);
+}
+
+docs {
+  Persist an already-uploaded file against a report. Upload the bytes **first** via
+  `POST /uploads/attachment` (S3) to get `fileUrl`, then send it here.
+
+  **Body**
+  - `kind` (required) — `image` | `document` | `file` (the entry-modal buckets).
+  - `fileUrl` (required, url) — the S3 URL from `POST /uploads/attachment`.
+  - `fileName` (required) — display name.
+  - `notes` (optional) — caption.
+
+  Gated on the technician-notes permission. The same table backs the EMI histogram
+  images, so both show in `GET .../attachments`. Captures `labReportAttachmentId`.
+}

@@ -48,6 +48,43 @@ export class UploadsService {
     tenantId: string,
     folder?: string,
   ): Promise<UploadAttachmentResult> {
+    const ext = extname(file.originalname).toLowerCase();
+    return this.put(file.buffer, file.mimetype, ext, tenantId, folder);
+  }
+
+  /**
+   * Upload an in-memory buffer to S3 and return its public URL — the server-side
+   * counterpart to {@link uploadAttachment}, used when the bytes originate inside
+   * the app (e.g. base64 histogram images decoded from an EMI machine submission)
+   * rather than from a multipart HTTP upload. No MIME allow-list is applied (the
+   * caller is trusted server code).
+   * @param buffer the file bytes
+   * @param contentType the object's MIME type (e.g. `image/bmp`)
+   * @param ext the file extension including the dot (e.g. `.bmp`)
+   * @param tenantId owning tenant, used only to namespace the S3 key
+   * @param folder optional key sub-folder (e.g. `emi-histograms`)
+   * @returns `{ url }` — the fully-qualified S3 URL of the stored object
+   * @throws UploadNotConfiguredException if bucket/credentials are unset
+   * @throws UploadFailedException if the S3 put fails
+   */
+  async uploadBuffer(
+    buffer: Buffer,
+    contentType: string,
+    ext: string,
+    tenantId: string,
+    folder?: string,
+  ): Promise<UploadAttachmentResult> {
+    return this.put(buffer, contentType, ext, tenantId, folder);
+  }
+
+  /** Shared S3 put: builds the namespaced key, sends the object, returns its URL. */
+  private async put(
+    body: Buffer,
+    contentType: string,
+    ext: string,
+    tenantId: string,
+    folder?: string,
+  ): Promise<UploadAttachmentResult> {
     const bucket = this.config.get<string>('AWS_BUCKET');
     const accessKeyId = this.config.get<string>('AWS_ACCESS_KEY');
     const secretAccessKey = this.config.get<string>('AWS_SECRET_KEY');
@@ -61,7 +98,6 @@ export class UploadsService {
       throw new UploadNotConfiguredException(missing);
     }
 
-    const ext = extname(file.originalname).toLowerCase();
     const sub = folder ? `${folder}/` : '';
     const key = `${ATTACHMENT_PREFIX}/${tenantId}/${sub}${randomUUID()}${ext}`;
 
@@ -82,8 +118,8 @@ export class UploadsService {
         new PutObjectCommand({
           Bucket: bucket!,
           Key: key,
-          Body: file.buffer,
-          ContentType: file.mimetype,
+          Body: body,
+          ContentType: contentType,
           // The bucket is private, so tag each uploaded attachment public-read
           // so its returned URL previews directly in the browser. Access control
           // is the unguessable UUID key (same model as the legacy documents route).
