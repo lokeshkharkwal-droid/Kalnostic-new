@@ -6,6 +6,7 @@ import { BranchModule } from '../branch/branch.module';
 import { LocationModule } from '../location/location.module';
 import { TenantController } from './tenant.controller';
 import { TenantLocaleController } from './tenant-locale.controller';
+import { TenantAccessionSettingsController } from './tenant-accession-settings.controller';
 import { TenantService } from './tenant.service';
 
 /**
@@ -23,7 +24,11 @@ import { TenantService } from './tenant.service';
     BranchModule,
     LocationModule,
   ],
-  controllers: [TenantController, TenantLocaleController],
+  controllers: [
+    TenantController,
+    TenantLocaleController,
+    TenantAccessionSettingsController,
+  ],
   providers: [TenantService],
   exports: [TenantService],
 })
