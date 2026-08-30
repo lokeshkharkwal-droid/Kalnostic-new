@@ -4,7 +4,7 @@ import { RequirePermission } from '../permissions/decorators/require-permission.
 import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { CriticalAlertService } from './critical-alert.service';
-import { UpdateWorklistStatusDto } from './dto/update-worklist-status.dto';
+import { UpdateAlertReviewStatusDto } from './dto/update-worklist-status.dto';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
 import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
@@ -43,7 +43,7 @@ export class CriticalAlertController {
     @CurrentProfile() profile: ActiveProfile,
     @CurrentUser('person_id') personId: string,
     @Param('id') id: string,
-    @Body() dto: UpdateWorklistStatusDto,
+    @Body() dto: UpdateAlertReviewStatusDto,
   ) {
     return this.criticalAlertService.updateStatus(
       id,

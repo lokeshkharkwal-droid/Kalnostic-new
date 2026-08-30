@@ -1,10 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { ActionWorklistStatus } from '@prisma/client';
+import { ScheduledTestStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LabReportDirectoryService } from './lab-report-directory.service';
 import { LabReportService } from './lab-report.service';
 import { ScheduleTestDto } from './dto/schedule-test.dto';
-import { UpdateActionWorklistStatusDto } from './dto/update-worklist-status.dto';
+import { UpdateScheduledTestStatusDto } from './dto/update-worklist-status.dto';
 import {
   SCHEDULED_TEST_INCLUDE,
   attachWorklistBranchNames,
@@ -22,9 +22,8 @@ import {
  * Schedule Test worklist (LABORATORY.docx §5.6, §8.5). Per CR-03, there is no
  * standalone "+ Add Schedule" creation path — rows are created only via the
  * per-test Schedule action (`schedule`), and the same fields serve Reschedule
- * (`reschedule`) from the worklist itself. Uses `ActionWorklistStatus`
- * (Pending/In Progress/Completed) — §8.5 never describes a "New" state here,
- * unlike Critical Alerts/Out of Range.
+ * (`reschedule`) from the worklist itself. Uses `ScheduledTestStatus`
+ * (Scheduled/In Progress/Rescheduled/Completed).
  */
 @Injectable()
 export class ScheduledTestService {
@@ -72,7 +71,7 @@ export class ScheduledTestService {
             tenantId,
             branchId: activeBranchId,
             labReportId,
-            status: ActionWorklistStatus.PENDING,
+            status: ScheduledTestStatus.SCHEDULED,
             scheduledAt: new Date(dto.scheduledAt),
             dispatchAt: dto.dispatchAt ? new Date(dto.dispatchAt) : undefined,
             assignedToId: dto.assignedToId,
@@ -199,7 +198,7 @@ export class ScheduledTestService {
     tenantId: string,
     branchId: string | null,
     actorId: string,
-    dto: UpdateActionWorklistStatusDto,
+    dto: UpdateScheduledTestStatusDto,
   ) {
     const activeBranchId = this.requireBranch(branchId);
     const entry = await this.prisma.scheduledTest.findFirst({

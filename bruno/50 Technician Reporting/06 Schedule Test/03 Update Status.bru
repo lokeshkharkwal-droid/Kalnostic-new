@@ -22,10 +22,10 @@ body:json {
 }
 
 docs {
-  Manual status update (LABORATORY.docx §8.5): `status` one of `PENDING` |
-  `IN_PROGRESS` | `COMPLETED` (`ActionWorklistStatus` — no `NEW`, unlike
-  Critical Alerts/Out of Range), updated manually as the process steps
-  progress. `notes` optional.
+  Manual status update (LABORATORY.docx §8.5): `status` one of `SCHEDULED` |
+  `IN_PROGRESS` | `RESCHEDULED` | `COMPLETED` (`ScheduledTestStatus`), updated
+  manually as the process steps progress. `notes` optional. A value from another
+  worklist is rejected with 400.
 
   404 `SCHEDULED_TEST_NOT_FOUND`.
 }

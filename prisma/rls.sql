@@ -1148,11 +1148,14 @@ CREATE POLICY patients_tenant_isolation ON patients
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
--- Per-tenant unique mobile among ACTIVE rows (a number freed by a soft-delete is
--- reusable). Prevents duplicate active patients on the same mobile. Prisma can't
--- express partial unique indexes, so it lives here.
+-- Per-tenant unique mobile among ACTIVE, NON-family-member rows (a number freed
+-- by a soft-delete is reusable). Prevents duplicate active primary patients on the
+-- same mobile. Family members (`is_family_member = true`) are EXCLUDED: households
+-- routinely share one mobile, so a family member linked to an anchor must be
+-- creatable even when it reuses the anchor's number. Prisma can't express partial
+-- unique indexes, so it lives here.
 CREATE UNIQUE INDEX IF NOT EXISTS patients_tenant_mobile_active_unique
-  ON patients (tenant_id, mobile) WHERE deleted_at IS NULL;
+  ON patients (tenant_id, mobile) WHERE deleted_at IS NULL AND is_family_member = false;
 
 -- Globally-unique patient UMID across the WHOLE db (all tenants/branches), among
 -- ACTIVE rows only. Backs the "PAT" + auto-increment UMID (and manual entries).

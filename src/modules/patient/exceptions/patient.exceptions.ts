@@ -25,6 +25,22 @@ export class PatientMobileConflictException extends KaltrosException {
   }
 }
 
+/**
+ * 409 — a patient write hit a unique constraint we couldn't classify as a
+ * mobile/UMID conflict (e.g. a DB-level partial unique index whose P2002 carries
+ * no `meta.target`). Surfaced as a clean conflict instead of leaking a raw 500.
+ */
+export class PatientWriteConflictException extends KaltrosException {
+  constructor(context: Record<string, unknown> = {}) {
+    super(
+      'PATIENT_WRITE_CONFLICT',
+      'This patient conflicts with an existing record',
+      context,
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
 /** 400 — a UMID is required (the branch's patient id format is NONE / manual). */
 export class PatientUmIdRequiredException extends KaltrosException {
   constructor() {

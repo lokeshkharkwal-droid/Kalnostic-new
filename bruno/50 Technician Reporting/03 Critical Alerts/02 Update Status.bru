@@ -16,15 +16,18 @@ auth:bearer {
 
 body:json {
   {
-    "status": "IN_PROGRESS",
+    "status": "UNDER_REVIEW",
     "notes": "Consultant informed by phone; awaiting acknowledgement."
   }
 }
 
 docs {
-  Manual status update (LABORATORY.docx §8.2): `status` one of `NEW` |
-  `PENDING` | `IN_PROGRESS` | `COMPLETED` — e.g. In Progress while informing
-  the consultant, Completed when done. `notes` optional.
+  Manual status update (LABORATORY.docx §8.2): `status` one of the shared
+  review-workflow vocabulary (`AlertReviewStatus`, shared with Out of Range and
+  Delta Check): `NEW` | `ACKNOWLEDGED` | `UNDER_REVIEW` | `INITIATE_RERUN` |
+  `IN_PROGRESS` | `RERUN_COMPLETED` | `ACCEPT_AND_RELEASE` | `RESOLVED`.
+  `notes` optional. A value outside this list (e.g. a Re-Run `CANCELLED`) is
+  rejected with 400.
 
   404 `CRITICAL_ALERT_NOT_FOUND`.
 }

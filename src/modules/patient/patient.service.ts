@@ -38,6 +38,7 @@ import {
   PatientNotFoundException,
   PatientUmIdConflictException,
   PatientUmIdRequiredException,
+  PatientWriteConflictException,
   UmIdGenerationConflictException,
 } from './exceptions/patient.exceptions';
 
@@ -814,6 +815,10 @@ export class PatientService {
             umId: dto.umId ?? null,
             tenantId,
             branchId: anchor.branchId,
+            // Flags this patient as a family member so it's exempt from the
+            // per-tenant active-mobile unique index — households share a mobile,
+            // so reusing the anchor's number must not raise a P2002.
+            isFamilyMember: true,
             createdBy: ctx.actorId ?? null,
             updatedBy: ctx.actorId ?? null,
           },
@@ -987,6 +992,14 @@ export class PatientService {
     }
     if (this.isMobileConflict(e)) {
       throw new PatientMobileConflictException(mobile);
+    }
+    // Any OTHER unique violation (P2002) — e.g. a DB-level partial index whose
+    // error carries no recognizable `meta.target` — must not escape as a raw
+    // 500. Surface a typed 409 conflict instead.
+    if (this.isUniqueViolation(e)) {
+      throw new PatientWriteConflictException({
+        target: e.meta?.target ?? null,
+      });
     }
     throw e;
   }

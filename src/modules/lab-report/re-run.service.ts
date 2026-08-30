@@ -1,9 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { ActionWorklistStatus } from '@prisma/client';
+import { ReRunStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LabReportService } from './lab-report.service';
 import { RaiseReRunDto } from './dto/re-run.dto';
-import { UpdateActionWorklistStatusDto } from './dto/update-worklist-status.dto';
+import { UpdateReRunStatusDto } from './dto/update-worklist-status.dto';
 import {
   WORKLIST_REPORT_INCLUDE,
   attachWorklistBranchNames,
@@ -23,9 +23,9 @@ import {
  * `LabReportService.resetForRerun`) and creates this tracking row, so the
  * report-side reset and the worklist-tracking-to-completion stay independent
  * concerns, matching the spec's "Re-Run Status reflects the current report
- * status ... independently". Uses `ActionWorklistStatus`
- * (Pending/In Progress/Completed) — §8.1 never describes a "New" state here,
- * unlike Critical Alerts/Out of Range.
+ * status ... independently". Uses `ReRunStatus`
+ * (Pending/In Progress/Completed/Cancelled) — §8.1 never describes a "New" state
+ * here, unlike Critical Alerts/Out of Range.
  */
 @Injectable()
 export class ReRunService {
@@ -69,7 +69,7 @@ export class ReRunService {
         tenantId,
         branchId: activeBranchId,
         labReportId,
-        status: ActionWorklistStatus.PENDING,
+        status: ReRunStatus.PENDING,
         requestedBy: actorId,
         requestNotes: dto.notes,
       },
@@ -118,7 +118,7 @@ export class ReRunService {
     tenantId: string,
     branchId: string | null,
     actorId: string,
-    dto: UpdateActionWorklistStatusDto,
+    dto: UpdateReRunStatusDto,
   ) {
     const activeBranchId = this.requireBranch(branchId);
     const entry = await this.prisma.reRunRequest.findFirst({

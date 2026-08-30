@@ -12,6 +12,8 @@ export const SAMPLE_LIST_INCLUDE = {
     select: {
       id: true,
       orderCode: true,
+      orderDate: true,
+      orderTime: true,
       billId: true,
       patient: true,
       referredByDoctor: true,
@@ -49,6 +51,8 @@ export const SAMPLE_INCLUDE = {
     select: {
       id: true,
       orderCode: true,
+      orderDate: true,
+      orderTime: true,
       billId: true,
       patient: true,
       referredByDoctor: true,

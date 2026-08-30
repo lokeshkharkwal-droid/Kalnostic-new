@@ -1,9 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { WorklistStatus, WorklistTrigger } from '@prisma/client';
+import { AlertReviewStatus, WorklistTrigger } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LabReportService } from './lab-report.service';
 import { RaiseWorklistEntryDto } from './dto/raise-worklist-entry.dto';
-import { UpdateWorklistStatusDto } from './dto/update-worklist-status.dto';
+import { UpdateAlertReviewStatusDto } from './dto/update-worklist-status.dto';
 import {
   CRITICAL_ALERT_INCLUDE,
   attachWorklistBranchNames,
@@ -65,7 +65,7 @@ export class CriticalAlertService {
             tenantId,
             branchId: activeBranchId,
             labReportId,
-            status: WorklistStatus.NEW,
+            status: AlertReviewStatus.NEW,
             trigger: WorklistTrigger.MANUAL,
             reportStatusAtTrigger: report.status,
             resultParamId: dto.resultParamId,
@@ -121,7 +121,7 @@ export class CriticalAlertService {
     tenantId: string,
     branchId: string | null,
     actorId: string,
-    dto: UpdateWorklistStatusDto,
+    dto: UpdateAlertReviewStatusDto,
   ) {
     const activeBranchId = this.requireBranch(branchId);
     const entry = await this.prisma.criticalAlert.findFirst({

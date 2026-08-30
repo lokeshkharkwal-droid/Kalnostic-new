@@ -16,14 +16,17 @@ auth:bearer {
 
 body:json {
   {
-    "status": "COMPLETED",
+    "status": "RESOLVED",
     "notes": "Repeat result confirmed the value; report released."
   }
 }
 
 docs {
-  Manual status update (LABORATORY.docx §8.3): `status` one of `NEW` |
-  `PENDING` | `IN_PROGRESS` | `COMPLETED`. `notes` optional.
+  Manual status update (LABORATORY.docx §8.3): `status` one of the shared
+  review-workflow vocabulary (`AlertReviewStatus`, shared with Critical Alerts
+  and Delta Check): `NEW` | `ACKNOWLEDGED` | `UNDER_REVIEW` | `INITIATE_RERUN` |
+  `IN_PROGRESS` | `RERUN_COMPLETED` | `ACCEPT_AND_RELEASE` | `RESOLVED`.
+  `notes` optional.
 
   404 `OUT_OF_RANGE_FLAG_NOT_FOUND`.
 }
