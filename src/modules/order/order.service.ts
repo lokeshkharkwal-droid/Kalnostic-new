@@ -32,7 +32,7 @@ import {
 } from '../communication/services/share.service';
 import { OrderPrintType } from './dto/print-order.dto';
 import { AppointmentService } from '../appointment/appointment.service';
-import { AccessionSampleService } from '../accession/accession-sample.service';
+import { OrderSampleService } from '../accession/accession-sample.service';
 import { SlotReservationService } from '../phlebotomist-schedule/slot-reservation.service';
 import { PhlebotomistCollectionService } from '../phlebotomist-collection/phlebotomist-collection.service';
 import { RegistrationSettingsService } from '../registration-settings/registration-settings.service';
@@ -364,7 +364,7 @@ export class OrderService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly appointmentService: AppointmentService,
-    private readonly accessionSamples: AccessionSampleService,
+    private readonly orderSamples: OrderSampleService,
     private readonly slotReservation: SlotReservationService,
     private readonly homeVisitCollections: PhlebotomistCollectionService,
     private readonly pdfReportTemplateService: PdfReportTemplateService,
@@ -864,7 +864,7 @@ export class OrderService {
         // A confirmed diagnostic order enters accession: generate its samples
         // (status NEW) from the ordered items. Idempotent per order.
         if (this.shouldGenerateSamples(dto.status, Boolean(dto.diagnostics))) {
-          await this.accessionSamples.generateForOrderInTx(
+          await this.orderSamples.generateForOrderInTx(
             tx,
             tenantId,
             branchId,
@@ -1670,7 +1670,7 @@ export class OrderService {
     }));
 
     if (!query.category || query.category === 'SAMPLE') {
-      notes.push(...(await this.loadAccessionSampleNotes(id, tenantId)));
+      notes.push(...(await this.loadOrderSampleNotes(id, tenantId)));
     }
 
     notes.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
@@ -1679,21 +1679,21 @@ export class OrderService {
 
   /**
    * Loads the read-only accession sample notes for an order — every
-   * `AccessionStatusHistory` row (with a note) across the order's samples, mapped
+   * `OrderSampleStatusHistory` row (with a note) across the order's samples, mapped
    * into the SAMPLE `OrderNoteView` shape. These come from the accession page's
    * Collect Sample / status-update actions (CLAUDE.md §4 accession flow).
    */
-  private async loadAccessionSampleNotes(
+  private async loadOrderSampleNotes(
     orderId: string,
     tenantId: string,
   ): Promise<OrderNoteView[]> {
-    const samples = await this.prisma.accessionSample.findMany({
+    const samples = await this.prisma.orderSample.findMany({
       where: { orderId, tenantId, deletedAt: null },
       select: { id: true },
     });
     if (samples.length === 0) return [];
 
-    const history = await this.prisma.accessionStatusHistory.findMany({
+    const history = await this.prisma.orderSampleStatusHistory.findMany({
       where: {
         tenantId,
         sampleId: { in: samples.map((s) => s.id) },
@@ -2078,7 +2078,7 @@ export class OrderService {
    * `order_barcode_print` — order-level barcode label: the order's own
    * identifier (`orderCode`) plus a short patient/test summary. Variable names
    * (`barcode`, `order_code`, `patient_name`, `test_names`) intentionally mirror
-   * `AccessionSampleService.buildLabelVariables` so template authors reuse
+   * `OrderSampleService.buildLabelVariables` so template authors reuse
    * familiar merge fields; this is a distinct type from that per-sample label
    * (see `ORDER_PRINT_TYPES` doc comment).
    */
@@ -3870,7 +3870,7 @@ export class OrderService {
         // Re-sourced to accession transfers: orders whose sample was sent to
         // another branch (INTERNAL SampleTransfer), not the order's referral FK.
         return and({
-          accessionSamples: {
+          orderSamples: {
             some: {
               deletedAt: null,
               transfers: {
@@ -3882,7 +3882,7 @@ export class OrderService {
       case 'external-referral':
         // Orders whose sample was sent to an external partner (EXTERNAL transfer).
         return and({
-          accessionSamples: {
+          orderSamples: {
             some: {
               deletedAt: null,
               transfers: {
@@ -3925,7 +3925,7 @@ export class OrderService {
         // Orders sent to an external lab via an accession OUTSOURCE transfer
         // (the /accession/outsource view), NOT the diagnostics sample source.
         return and({
-          accessionSamples: {
+          orderSamples: {
             some: {
               deletedAt: null,
               transfers: {
@@ -5294,7 +5294,7 @@ export class OrderService {
       // skips if this order already has samples.
       const hasDiagnostics = Boolean(dto.diagnostics ?? existing?.diagnostics);
       if (this.shouldGenerateSamples(effectiveStatus, hasDiagnostics)) {
-        await this.accessionSamples.generateForOrderInTx(
+        await this.orderSamples.generateForOrderInTx(
           tx,
           tenantId,
           branchId,
@@ -5367,11 +5367,11 @@ export class OrderService {
    * Both the order and the item are validated against the caller's tenant first.
    *
    * Beyond the order-item `collectedAt` flag, this also drives the real accession
-   * sample lifecycle: the item's linked `AccessionSample`(s) still in a
+   * sample lifecycle: the item's linked `OrderSample`(s) still in a
    * collectable status are transitioned to `COLLECTED` (with a barcode when
    * `opts.print` is set), and — because a sample is one physical tube shared by
    * several tests — every sibling order item on a transitioned sample is stamped
-   * collected too (`AccessionSampleService.collectForOrderItemInTx`). Both writes
+   * collected too (`OrderSampleService.collectForOrderItemInTx`). Both writes
    * share one `withTenant` transaction so they commit atomically under the same
    * RLS tenant context. Safe no-op when the order has no samples yet (e.g. a
    * DRAFT / non-diagnostic order): only `collectedAt` is set.
@@ -5408,7 +5408,7 @@ export class OrderService {
           data: { collectedAt: new Date(), collectedBy: actorId },
         });
       }
-      await this.accessionSamples.collectForOrderItemInTx(
+      await this.orderSamples.collectForOrderItemInTx(
         tx,
         tenantId,
         actorId,

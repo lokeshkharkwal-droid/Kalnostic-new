@@ -20,7 +20,7 @@ export const SAMPLE_LIST_INCLUDE = {
       referralPanel: true,
     },
   },
-} satisfies Prisma.AccessionSampleInclude;
+} satisfies Prisma.OrderSampleInclude;
 
 /**
  * Full relations for a single accession sample (Sample Overview — PDF §A.10.4).
@@ -59,15 +59,15 @@ export const SAMPLE_INCLUDE = {
       referralPanel: true,
     },
   },
-} satisfies Prisma.AccessionSampleInclude;
+} satisfies Prisma.OrderSampleInclude;
 
 /** An accession sample list row with its test links + order/patient context. */
-export type AccessionSampleListRow = Prisma.AccessionSampleGetPayload<{
+export type OrderSampleListRow = Prisma.OrderSampleGetPayload<{
   include: typeof SAMPLE_LIST_INCLUDE;
 }>;
 
 /** A fully-composed accession sample (tests + history + transfers + order). */
-export type AccessionSampleWithRelations = Prisma.AccessionSampleGetPayload<{
+export type OrderSampleWithRelations = Prisma.OrderSampleGetPayload<{
   include: typeof SAMPLE_INCLUDE;
 }>;
 
@@ -77,18 +77,15 @@ export type AccessionSampleWithRelations = Prisma.AccessionSampleGetPayload<{
  * departments joined with ", " (null when none resolve); each test also carries
  * its own `department` name.
  */
-export type AccessionSampleDetail = Omit<
-  AccessionSampleWithRelations,
-  'tests'
-> & {
+export type OrderSampleDetail = Omit<OrderSampleWithRelations, 'tests'> & {
   departmentLabel: string | null;
-  tests: (AccessionSampleWithRelations['tests'][number] & {
+  tests: (OrderSampleWithRelations['tests'][number] & {
     department: string | null;
   })[];
 };
 
 /** A list row enriched with its derived TAT band (§A.4 — not stored). */
-export type AccessionSampleListItem = AccessionSampleListRow & {
+export type OrderSampleListItem = OrderSampleListRow & {
   tatStatus: TatStatus | null;
 };
 

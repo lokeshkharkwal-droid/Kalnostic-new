@@ -60,10 +60,10 @@ export class LabReportLockedException extends KaltrosException {
 
 /**
  * 409 — safety net, not reachable through the real app today. Every genuine
- * `LabReport` is only ever created by `AccessionSampleService
+ * `LabReport` is only ever created by `OrderSampleService
  * .ensureLabReportsForAcceptedSample`, which runs after the sample it's for
  * has already been accepted — so a real report always has a linked
- * `AccessionSampleTest` by construction. This guards the one case that
+ * `OrderSampleTest` by construction. This guards the one case that
  * invariant doesn't cover on its own: a report created some other way (a
  * future bug, a data migration, direct DB access) with no sample behind it
  * at all — without this, nothing would stop such a report from being

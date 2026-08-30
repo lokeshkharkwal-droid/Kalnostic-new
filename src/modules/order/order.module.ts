@@ -19,7 +19,7 @@ import { OrderService } from './order.service';
  * Imports `AppointmentModule` so an order saved as APPOINTMENT can create its
  * linked appointment lifecycle record via `AppointmentService`, and
  * `AccessionModule` so a confirmed order generates its accession samples via
- * `AccessionSampleService` (rule #3 DI). Technician Reporting's `LabReport`
+ * `OrderSampleService` (rule #3 DI). Technician Reporting's `LabReport`
  * creation is no longer triggered from here — `AccessionModule` now owns that
  * trigger (a sample reaching `ACCEPTED`), so `OrderModule` no longer needs
  * `LabReportModule`.

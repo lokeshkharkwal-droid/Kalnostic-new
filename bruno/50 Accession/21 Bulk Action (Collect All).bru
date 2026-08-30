@@ -5,7 +5,7 @@ meta {
 }
 
 post {
-  url: {{baseUrl}}/accession/samples/bulk/collect
+  url: {{baseUrl}}/accession/order-samples/bulk/collect
   body: json
   auth: bearer
 }
@@ -37,7 +37,7 @@ tests {
 
 docs {
   Representative **bulk** action (§A.11). Every single-sample action has a bulk
-  twin at `POST /accession/samples/bulk/<action>` taking `{ "ids": [...] }` **plus
+  twin at `POST /accession/order-samples/bulk/<action>` taking `{ "ids": [...] }` **plus
   the same action fields**, applying the transition to all ids in one transaction
   (up to 500). Available bulk actions: `collect`, `collect-print`, `accept`,
   `acquire`, `halt`, `error`, `hold`, `repeat`, `store`, `discard`, `return`,

@@ -9,7 +9,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SlotReservationService } from '../phlebotomist-schedule/slot-reservation.service';
-import { AccessionSampleService } from '../accession/accession-sample.service';
+import { OrderSampleService } from '../accession/accession-sample.service';
 import { nextSampleStatus } from '../accession/constants/sample-transitions.constant';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
 import { ListCollectionsDto } from './dto/list-collections.dto';
@@ -42,7 +42,7 @@ import { CollectionNotFoundException } from './exceptions/phlebotomist-collectio
  *
  * Status transitions are the single source of truth for the field visit and
  * **cascade** to keep the linked records in sync: `SAMPLE_COLLECTED` collects the
- * order's items + accession samples (via `AccessionSampleService` — never writing
+ * order's items + accession samples (via `OrderSampleService` — never writing
  * `SampleStatus` directly), `ACCEPTED_BY_LAB` accepts them, and
  * CONFIRMED/COMPLETED/CANCELLED drive the linked appointment (+ slot release on
  * cancel). Every accession hand-off is guarded (`nextSampleStatus`) so it is a
@@ -53,7 +53,7 @@ export class PhlebotomistCollectionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly slotReservation: SlotReservationService,
-    private readonly accessionSamples: AccessionSampleService,
+    private readonly orderSamples: OrderSampleService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
@@ -294,9 +294,9 @@ export class PhlebotomistCollectionService {
         });
         // Accession samples → COLLECTED via the accession state machine (only where
         // the `collect` action is legal from the sample's current status).
-        for (const s of order.accessionSamples) {
+        for (const s of order.orderSamples) {
           if (!nextSampleStatus('collect', s.status)) continue;
-          await this.accessionSamples.transitionInTx(
+          await this.orderSamples.transitionInTx(
             tx,
             tenantId,
             personId,
@@ -315,9 +315,9 @@ export class PhlebotomistCollectionService {
       }
 
       if (target === CollectionStatus.ACCEPTED_BY_LAB && order) {
-        for (const s of order.accessionSamples) {
+        for (const s of order.orderSamples) {
           if (!nextSampleStatus('accept', s.status)) continue;
-          await this.accessionSamples.transitionInTx(
+          await this.orderSamples.transitionInTx(
             tx,
             tenantId,
             personId,
@@ -662,7 +662,7 @@ export class PhlebotomistCollectionService {
             id: true,
             appointmentId: true,
             appointment: { select: { status: true, branchId: true } },
-            accessionSamples: {
+            orderSamples: {
               where: { deletedAt: null },
               select: { id: true, status: true },
             },
@@ -775,7 +775,7 @@ export class PhlebotomistCollectionService {
           },
         },
         {
-          accessionSamples: {
+          orderSamples: {
             some: {
               deletedAt: null,
               barcode: { contains: search, mode: 'insensitive' },

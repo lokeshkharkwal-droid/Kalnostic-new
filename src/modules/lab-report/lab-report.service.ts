@@ -116,8 +116,8 @@ export class LabReportService {
   /**
    * Create a `LabReport` for an order item once its sample is accepted, if one
    * doesn't already exist (idempotent). Real trigger: called from
-   * `AccessionSampleService` when a sample transitions to `ACCEPTED`, once per
-   * `OrderItem` linked to that sample (via `AccessionSampleTest` — one sample
+   * `OrderSampleService` when a sample transitions to `ACCEPTED`, once per
+   * `OrderItem` linked to that sample (via `OrderSampleTest` — one sample
    * can serve several order items). Pass the caller's transaction client as
    * `tx` so the report is created atomically alongside the sample's own status
    * change; omit it to run standalone in a new transaction (e.g. from a script
@@ -253,7 +253,7 @@ export class LabReportService {
       orderItem.orderId = filters.orderId;
     }
     if (filters.sampleStatus) {
-      orderItem.accessionSampleTests = {
+      orderItem.orderSampleTests = {
         some: { sample: { status: filters.sampleStatus }, deletedAt: null },
       };
     }
@@ -745,8 +745,8 @@ export class LabReportService {
    * modules" (view-only; this attaches no permission to change them —
    * enforcement is a separate, not-yet-built piece; see the module's own
    * tracking notes). An `OrderItem` can be linked to more than one
-   * `AccessionSample` (a test needing both a blood tube and a urine cup —
-   * see `AccessionSampleService.generateForOrderInTx`'s per-sample-type
+   * `OrderSample` (a test needing both a blood tube and a urine cup —
+   * see `OrderSampleService.generateForOrderInTx`'s per-sample-type
    * grouping), so `sampleStatuses`/`sampleIds` are index-paired arrays (one
    * entry per distinct sample), not a single picked value — deduped on the
    * (sampleId, status) pair so two different samples sharing a status don't
@@ -760,7 +760,7 @@ export class LabReportService {
     const orderItemIds = [...new Set(rows.map((r) => r.orderItemId))];
     if (orderItemIds.length === 0) return rows;
 
-    const sampleTests = await this.prisma.accessionSampleTest.findMany({
+    const sampleTests = await this.prisma.orderSampleTest.findMany({
       where: { orderItemId: { in: orderItemIds }, tenantId, deletedAt: null },
       select: {
         orderItemId: true,
@@ -1188,7 +1188,7 @@ export class LabReportService {
     // Safety net (see LabReportSampleMissingException's own doc comment for
     // why this should never fire for a genuine report, and what it guards
     // against when it does).
-    const hasSample = await this.prisma.accessionSampleTest.findFirst({
+    const hasSample = await this.prisma.orderSampleTest.findFirst({
       where: { orderItemId: report.orderItemId, tenantId, deletedAt: null },
       select: { id: true },
     });

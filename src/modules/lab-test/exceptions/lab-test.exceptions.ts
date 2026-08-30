@@ -37,6 +37,22 @@ export class LabTestCodeConflictException extends KaltrosException {
   }
 }
 
+/**
+ * 422 — a lab test was created (or its samples cleared on update) without at
+ * least one `LabTestSample`. Every lab test must carry a sample so the order flow
+ * can generate its `OrderSample` rows (one per test × sample).
+ */
+export class LabTestSampleRequiredException extends KaltrosException {
+  constructor() {
+    super(
+      'LAB_TEST_SAMPLE_REQUIRED',
+      'A lab test must have at least one sample',
+      {},
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
 /** 409 — duplicate parameter code within a lab test. */
 export class LabTestParamCodeConflictException extends KaltrosException {
   constructor(parameterCode: string) {

@@ -216,14 +216,14 @@ export interface LabReportWorklistRow {
   } | null;
 
   /** `LabReport.orderItemId` — the lookup key `attachSampleStatuses` uses to
-   * find this row's `AccessionSampleTest`(s). Not itself a display field. */
+   * find this row's `OrderSampleTest`(s). Not itself a display field. */
   orderItemId: string;
 
   /** The real Accession sample-lifecycle status(es) for this row (client
    * requirement: "technician should be able to see all the statuses from
    * both modules"). An order item can be linked to more than one
-   * `AccessionSample` (e.g. a test requiring both a blood tube and a urine
-   * cup — see `AccessionSampleService.generateForOrderInTx`'s per-sample-type
+   * `OrderSample` (e.g. a test requiring both a blood tube and a urine
+   * cup — see `OrderSampleService.generateForOrderInTx`'s per-sample-type
    * grouping), so this is every distinct status among them, not a single
    * picked value. Empty array if no linked sample is found (shouldn't happen
    * in practice — a `LabReport` only exists once a sample has been accepted —
@@ -237,7 +237,7 @@ export interface LabReportWorklistRow {
    * `LabReportService.findAll` via `TatService.computeBandsForReports`. */
   tat: WorklistTat | null;
 
-  /** The `AccessionSample.id`(s) linked to this row, in the same order as
+  /** The `OrderSample.id`(s) linked to this row, in the same order as
    * `sampleStatuses` (index-paired) — lets the frontend's Sample Overview
    * action call Accession's own, already-complete panel endpoint (`GET
    * /accession/samples/:id`, ACCESSION.docx §A.10.4/§B.9) directly, rather

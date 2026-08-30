@@ -35,7 +35,7 @@ export type AccessionSettingsResponse = AccessionSettingsMap &
  * (TAT/acceptance-window/barcode-mapping) settings are native typed columns.
  * A branch with no saved row uses the module defaults; `resolve` always
  * returns a complete settings object (stored values merged over the
- * defaults), which `AccessionSampleService` uses for TAT thresholds and the
+ * defaults), which `OrderSampleService` uses for TAT thresholds and the
  * FE uses to populate both the Settings page and action-modal dropdowns.
  */
 @Injectable()

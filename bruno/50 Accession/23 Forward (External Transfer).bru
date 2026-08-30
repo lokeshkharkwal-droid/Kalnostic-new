@@ -5,7 +5,7 @@ meta {
 }
 
 post {
-  url: {{baseUrl}}/accession/samples/{{sampleId}}/forward
+  url: {{baseUrl}}/accession/order-samples/{{sampleId}}/forward
   body: json
   auth: bearer
 }
@@ -38,5 +38,5 @@ docs {
   EXTERNAL `SampleTransfer` at `IN_TRANSIT`. `externalPartnerName` is **required**.
   Phase 3 builds the **sending side only** — cross-tenant receiving is an open
   decision; the transfer's `transferStatus` is the sending row's "External Order
-  Status" column. Bulk: `POST /accession/samples/bulk/forward`.
+  Status" column. Bulk: `POST /accession/order-samples/bulk/forward`.
 }

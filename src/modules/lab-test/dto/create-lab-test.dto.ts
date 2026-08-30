@@ -7,6 +7,7 @@ import {
 } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
+  ArrayMinSize,
   ArrayUnique,
   IsArray,
   IsBoolean,
@@ -337,11 +338,12 @@ export class CreateLabTestDto {
   references?: string;
 
   // ── Children ──────────────────────────────────────────────────────────────────
+  // A lab test must carry at least one sample (drives OrderSample generation).
   @IsArray()
-  @IsOptional()
+  @ArrayMinSize(1)
   @ValidateNested({ each: true })
   @Type(() => LabTestSampleDto)
-  samples?: LabTestSampleDto[];
+  samples!: LabTestSampleDto[];
 
   @IsArray()
   @IsOptional()

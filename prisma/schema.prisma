@@ -6167,8 +6167,8 @@ model Order {
   radiology   OrderRadiology?
   payments    PaymentDetails[]
 
-  // Accession samples generated for this order (one per required sample/tube).
-  accessionSamples AccessionSample[]
+  // Order samples generated for this order (one per test × required sample).
+  orderSamples OrderSample[]
 
   // Append-only note history surfaced on the Order Overview page's
   // Order / Sample / Tech tabs (one row per note, never overwritten).
@@ -6645,8 +6645,8 @@ model OrderItem {
   collectedAt DateTime? @map("collected_at")
   collectedBy String?   @map("collected_by")
 
-  // Accession sample links (which generated sample/tube carries this order item).
-  accessionSampleTests AccessionSampleTest[]
+  // Order sample links (which generated sample carries this order item's test).
+  orderSampleTests OrderSampleTest[]
 
   /// The outsource center this line was sent to, chosen per-row at order
   /// create/edit time. NULL = processed in-house (the default — no outsource
@@ -6679,7 +6679,7 @@ model OrderItem {
 //
 // Downstream of Accession's own sample lifecycle (New → Collected → Accepted →
 // ...). LabReport rows are created only once a sample is accepted — see
-// `AccessionSampleService.ensureLabReportsForAcceptedSample`, called when a
+// `OrderSampleService.ensureLabReportsForAcceptedSample`, called when a
 // sample's status transitions to ACCEPTED (either via the normal
 // accept-transition path, or `SampleTransferService.cloneIntoDestination`'s
 // internal-transfer-accept path), which calls
@@ -7580,7 +7580,7 @@ model AppointmentStatusHistory {
 /// 1:1 with `Order`; the field-visit lifecycle lives here (deliberately NOT on
 /// `OrderDiagnostics`) so the collection status + history never disturb the
 /// diagnostics/accession rows. Transitions cascade to the linked `Appointment` and
-/// `AccessionSample`s (via their own services) so all three stay in sync.
+/// `OrderSample`s (via their own services) so all three stay in sync.
 /// Tenant-scoped (RLS) + branch-level (CLAUDE.md §4.5/§4.7).
 model HomeVisitCollection {
   id       String  @id @default(uuid())
@@ -7662,9 +7662,9 @@ model HomeVisitStatusHistory {
 
 // ── Accession Module ────────────────────────────────────────────────────────────
 
-/// Lifecycle status of an accession sample/tube (PDF §A.5). Held as the CURRENT
-/// status on `AccessionSample`; every change is appended to
-/// `AccessionStatusHistory`. `previousStatus` supports the universal Retrieve/undo
+/// Lifecycle status of an order sample (PDF §A.5). Held as the CURRENT
+/// status on `OrderSample`; every change is appended to
+/// `OrderSampleStatusHistory`. `previousStatus` supports the universal Retrieve/undo
 /// action (PDF §A.10.19). Reason/condition/tube dropdowns are tenant-configurable
 /// strings (PDF §G) — only the status set itself is a hard enum.
 enum SampleStatus {
@@ -7704,21 +7704,22 @@ enum TransferStatus {
   REJECTED
 }
 
-/// The core accession entity — one row per required sample/tube of an order (one
-/// accession list row = one sample). Tenant-scoped (RLS) + branch-level
-/// (CLAUDE.md §4.5/§4.7). Generated when a diagnostic order reaches
-/// `status ∈ {ORDER, APPOINTMENT}` (see AccessionSampleService.generateForOrderInTx):
-/// the order's items are grouped by required sample from
-/// `BranchLabTest.configSnapshot.samples`, one sample per group. `accessionNo`
-/// (`ACC-00001`…) is a per-tenant sequential value from `Tenant.accessionCounter`,
-/// unique per tenant among active rows (partial unique index in prisma/rls.sql).
-/// `barcode` (`BAR-00001-A`…) is nullable until assigned (unique per tenant among
-/// active rows). `status` holds the CURRENT lifecycle stage; `previousStatus`
-/// backs the universal Retrieve/undo. `reportStatus` is display-only here (the
-/// Finance/Reports module owns report creation). Branch ids (`originBranchId`/
-/// `processingBranchId`) are logical refs validated in the service via
-/// `BranchService.findById`. RLS policy in prisma/rls.sql.
-model AccessionSample {
+/// The core order-sample entity — one row per (test × required sample) of an
+/// order. Tenant-scoped (RLS) + branch-level (CLAUDE.md §4.5/§4.7). Generated
+/// when a diagnostic order reaches `status ∈ {ORDER, APPOINTMENT}` (see
+/// OrderSampleService.generateForOrderInTx): every ordered test — including each
+/// test expanded from a lab panel — produces one row per `LabTestSample` it
+/// requires, carrying `labTestSampleId` (→ lab_test_samples) and `departmentId`.
+/// `accessionNo` (`ACC-00001`…) is a per-tenant sequential value from
+/// `Tenant.accessionCounter`, unique per tenant among active rows (partial unique
+/// index in prisma/rls.sql). `barcode` (`BAR-00001-A`…) is nullable until
+/// assigned (unique per tenant among active rows). `status` holds the CURRENT
+/// lifecycle stage; `previousStatus` backs the universal Retrieve/undo.
+/// `reportStatus` is display-only here (the Finance/Reports module owns report
+/// creation). Branch ids (`originBranchId`/`processingBranchId`) are logical refs
+/// validated in the service via `BranchService.findById`. RLS policy in
+/// prisma/rls.sql.
+model OrderSample {
   id       String  @id @default(uuid())
   tenantId String  @map("tenant_id")
   branchId String? @map("branch_id")
@@ -7726,10 +7727,16 @@ model AccessionSample {
   orderId String @map("order_id")
   order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
+  // The specific test this row is for (logical ref; for a panel-expanded row it
+  // is the constituent test), its resolved required sample, and department.
+  labTestId       String? @map("lab_test_id")
+  labTestSampleId String  @map("lab_test_sample_id")
+  departmentId    String? @map("department_id")
+
   accessionNo String  @map("accession_no")
   barcode     String? @map("barcode")
 
-  // Sample identity (snapshotted from the source test's configSnapshot.samples).
+  // Sample identity (snapshotted from the resolved LabTestSample).
   sampleType       String?        @map("sample_type")
   containerType    ContainerType? @map("container_type")
   sampleGroupLabel String?        @map("sample_group_label") // e.g. "EDTA ×2"
@@ -7761,8 +7768,8 @@ model AccessionSample {
   originBranchId     String? @map("origin_branch_id")
   processingBranchId String? @map("processing_branch_id")
 
-  tests         AccessionSampleTest[]
-  statusHistory AccessionStatusHistory[]
+  tests         OrderSampleTest[]
+  statusHistory OrderSampleStatusHistory[]
   transfers     SampleTransfer[]
 
   createdBy String?   @map("created_by")
@@ -7774,29 +7781,35 @@ model AccessionSample {
   @@index([tenantId])
   @@index([branchId])
   @@index([orderId])
+  @@index([labTestId])
+  @@index([labTestSampleId])
+  @@index([departmentId])
   @@index([status])
   @@index([barcode])
   @@index([originBranchId])
   @@index([processingBranchId])
   @@index([deletedAt])
-  @@map("accession_samples")
+  @@map("order_samples")
 }
 
-/// Junction linking an accession sample to the order items (tests) it carries, so
-/// one sample/tube can hold several tests. Snapshots `testName` for the Sample
-/// Overview "Test Details" table (PDF §A.10.4). Tenant-scoped + branch-level.
-model AccessionSampleTest {
+/// Junction linking an order sample to the order item (test) it carries. With
+/// per-(test × sample) generation there is exactly one row per `OrderSample`, but
+/// the junction is retained for the Sample Overview "Test Details" table (PDF
+/// §A.10.4) and downstream includes. Snapshots `testName`/`labTestId` for display.
+/// Tenant-scoped + branch-level.
+model OrderSampleTest {
   id       String  @id @default(uuid())
   tenantId String  @map("tenant_id")
   branchId String? @map("branch_id")
 
-  sampleId String          @map("sample_id")
-  sample   AccessionSample @relation(fields: [sampleId], references: [id], onDelete: Cascade)
+  sampleId String      @map("sample_id")
+  sample   OrderSample @relation(fields: [sampleId], references: [id], onDelete: Cascade)
 
   orderItemId String    @map("order_item_id")
   orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
 
-  testName String? @map("test_name") // snapshot for display
+  labTestId String? @map("lab_test_id") // the specific (panel-expanded) test
+  testName  String? @map("test_name") // snapshot for display
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -7807,21 +7820,21 @@ model AccessionSampleTest {
   @@index([sampleId])
   @@index([orderItemId])
   @@index([deletedAt])
-  @@map("accession_sample_tests")
+  @@map("order_sample_tests")
 }
 
-/// Append-only history of accession sample status changes — one row per action,
+/// Append-only history of order-sample status changes — one row per action,
 /// never mutated (mirrors `AppointmentStatusHistory`). Powers the Sample History
 /// panel (PDF §A.10.5). `attachmentUrl` stores a URL only (no upload endpoint —
 /// plan decision #4). Tenant-scoped (RLS) + branch-level. RLS policy in
 /// prisma/rls.sql.
-model AccessionStatusHistory {
+model OrderSampleStatusHistory {
   id       String  @id @default(uuid())
   tenantId String  @map("tenant_id")
   branchId String? @map("branch_id")
 
-  sampleId String          @map("sample_id")
-  sample   AccessionSample @relation(fields: [sampleId], references: [id], onDelete: Cascade)
+  sampleId String      @map("sample_id")
+  sample   OrderSample @relation(fields: [sampleId], references: [id], onDelete: Cascade)
 
   action     String // the action that triggered this change (e.g. "collect")
   toStatus   SampleStatus  @map("to_status")
@@ -7841,7 +7854,7 @@ model AccessionStatusHistory {
   @@index([sampleId])
   @@index([createdAt])
   @@index([deletedAt])
-  @@map("accession_status_history")
+  @@map("order_sample_status_history")
 }
 
 /// A sample transfer/referral (PDF Parts B/C/D). Distinct from the commission
@@ -7856,8 +7869,8 @@ model SampleTransfer {
   tenantId String  @map("tenant_id")
   branchId String? @map("branch_id")
 
-  sampleId String          @map("sample_id")
-  sample   AccessionSample @relation(fields: [sampleId], references: [id], onDelete: Cascade)
+  sampleId String      @map("sample_id")
+  sample   OrderSample @relation(fields: [sampleId], references: [id], onDelete: Cascade)
 
   kind           TransferKind
   transferStatus TransferStatus @default(IN_TRANSIT) @map("transfer_status")
