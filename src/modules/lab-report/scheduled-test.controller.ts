@@ -5,7 +5,7 @@ import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.con
 import { AuditAction, AuditModule } from '@prisma/client';
 import { ScheduledTestService } from './scheduled-test.service';
 import { ScheduleTestDto } from './dto/schedule-test.dto';
-import { UpdateActionWorklistStatusDto } from './dto/update-worklist-status.dto';
+import { UpdateScheduledTestStatusDto } from './dto/update-worklist-status.dto';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
 import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
@@ -67,7 +67,7 @@ export class ScheduledTestController {
     @CurrentProfile() profile: ActiveProfile,
     @CurrentUser('person_id') personId: string,
     @Param('id') id: string,
-    @Body() dto: UpdateActionWorklistStatusDto,
+    @Body() dto: UpdateScheduledTestStatusDto,
   ) {
     return this.scheduledTestService.updateStatus(
       id,

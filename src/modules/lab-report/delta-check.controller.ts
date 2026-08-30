@@ -4,7 +4,7 @@ import { RequirePermission } from '../permissions/decorators/require-permission.
 import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { DeltaCheckService } from './delta-check.service';
-import { UpdateDeltaCheckStatusDto } from './dto/update-worklist-status.dto';
+import { UpdateAlertReviewStatusDto } from './dto/update-worklist-status.dto';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
 import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
@@ -14,8 +14,10 @@ import { Audit } from '../../common/decorators/audit.decorator';
 /**
  * Delta Check worklist endpoints (LABORATORY.docx §8.4). Raising a check lives
  * on `LabReportController` (`POST /lab-reports/:id/delta-check`); this
- * controller covers the worklist's own list/status-update (its own New ->
- * Reviewed -> Re-Run/Accepted -> Completed vocabulary).
+ * controller covers the worklist's own list/status-update (the shared
+ * `AlertReviewStatus` vocabulary: New -> Acknowledged -> Under Review ->
+ * Initiate Rerun -> In Progress -> Rerun Completed -> Accept & Release ->
+ * Resolved).
  */
 @Controller('delta-checks')
 @UseGuards(PermissionGuard)
@@ -43,7 +45,7 @@ export class DeltaCheckController {
     @CurrentProfile() profile: ActiveProfile,
     @CurrentUser('person_id') personId: string,
     @Param('id') id: string,
-    @Body() dto: UpdateDeltaCheckStatusDto,
+    @Body() dto: UpdateAlertReviewStatusDto,
   ) {
     return this.deltaCheckService.updateStatus(
       id,

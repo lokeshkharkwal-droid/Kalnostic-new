@@ -249,6 +249,9 @@ export class LabReportService {
     if (filters.branchLabTestId) {
       orderItem.branchLabTestId = filters.branchLabTestId;
     }
+    if (filters.orderId) {
+      orderItem.orderId = filters.orderId;
+    }
     if (filters.sampleStatus) {
       orderItem.accessionSampleTests = {
         some: { sample: { status: filters.sampleStatus }, deletedAt: null },
@@ -1269,8 +1272,8 @@ export class LabReportService {
    * of the order/report — every action, status change...") and §8.1-8.5
    * (each worklist explicitly lists "Audit Trail" as an available action).
    *
-   * Each worklist has its own status vocabulary (`ActionWorklistStatus`,
-   * `WorklistStatus`, `DeltaCheckStatus`) distinct from `LabReportStatus`, so
+   * Each worklist has its own status vocabulary (`ReRunStatus`,
+   * `AlertReviewStatus`, `ScheduledTestStatus`) distinct from `LabReportStatus`, so
    * `fromStatus`/`toStatus` (strictly typed to `LabReportStatus` in the
    * schema) can't literally hold those values — instead the worklist's own
    * transition is folded into `action`/`notes` as free text, and

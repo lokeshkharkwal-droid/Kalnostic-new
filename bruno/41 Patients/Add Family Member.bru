@@ -50,14 +50,17 @@ docs {
   ## Fields
 
   - `name` (required) — the member's name, stored as the new patient's `firstName`.
-  - `mobile` (required) — unique per tenant among active patients.
+  - `mobile` (required) — family members MAY share the anchor's (or another
+    patient's) mobile: they're flagged `is_family_member` and excluded from the
+    per-tenant active-mobile unique index, so a shared household number does NOT
+    conflict.
   - `relationship` (required) — one of `SELF`, `SPOUSE`, `SON`, `DAUGHTER`,
     `FATHER`, `MOTHER`, `BROTHER`, `SISTER`, `SIBLING`, `GUARDIAN`, `FRIEND`,
     `OTHER`. Invalid values are rejected (400) before any write.
   - `age` (optional, integer ≥ 0).
-  - `umId` (optional) — frontend-supplied UMID for the new patient.
+  - `umId` (optional) — frontend-supplied UMID for the new patient. Still globally
+    unique among active patients (409 `PATIENT_UMID_CONFLICT` on collision).
 
   `tenantId`/`branchId`/`patientId` are never accepted in the body. 404
-  `PATIENT_NOT_FOUND` if the anchor is missing/other tenant. 409
-  `PATIENT_MOBILE_CONFLICT` if the mobile is already used by an active patient.
+  `PATIENT_NOT_FOUND` if the anchor is missing/other tenant.
 }

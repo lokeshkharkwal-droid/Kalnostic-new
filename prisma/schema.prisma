@@ -5647,6 +5647,14 @@ model Patient {
   status   PatientStatus @default(CREATED)
   isActive Boolean       @default(true) @map("is_active")
 
+  // True when this patient was created as another patient's family member
+  // (`POST /patients/:id/family-members`). Household members routinely share the
+  // anchor's mobile, so family members are EXCLUDED from the per-tenant
+  // active-mobile unique index (declared in `rls.sql` with
+  // `WHERE ... AND is_family_member = false`) — this lets them be created without
+  // tripping the dedup constraint that governs primary registrations.
+  isFamilyMember Boolean @default(false) @map("is_family_member")
+
   // One-to-many: a patient can have multiple medical-history records.
   medicalHistories MedicalHistory[]
 
@@ -7007,36 +7015,40 @@ model TatAdjustment {
 // status vocabulary) that a shared JSON-metadata column would weaken.
 
 /// Shared status vocabulary for Critical Alerts and Out of Range worklists
-/// (LABORATORY.docx §8.2-8.3 — both list "Alert Status"/"Out of Range Status"
-/// as New/Pending/Completed). Re-Run and Schedule Test use
-/// `ActionWorklistStatus` instead (see below) — their own sections (§8.1, §8.5)
-/// only ever describe Pending/In Progress/Completed, no New. Delta Check has
-/// its own distinct `DeltaCheckStatus`.
-enum WorklistStatus {
+/// Shared review-workflow status vocabulary for Critical Alerts, Out of Range,
+/// and Delta Check — these three worklists move a flagged result through the
+/// same lifecycle: triaged (New/Acknowledged), reviewed (Under Review), optional
+/// re-run (Initiate Rerun → In Progress → Rerun Completed), then released
+/// (Accept & Release / Resolved). A single enum since the three lists share one
+/// identical vocabulary; `@IsEnum` still prevents cross-workflow values from the
+/// Re-Run / Schedule Test endpoints (which have their own enums below).
+enum AlertReviewStatus {
   NEW
+  ACKNOWLEDGED
+  UNDER_REVIEW
+  INITIATE_RERUN
+  IN_PROGRESS
+  RERUN_COMPLETED
+  ACCEPT_AND_RELEASE
+  RESOLVED
+}
+
+/// Status vocabulary for the Re-Run worklist (LABORATORY.docx §8.1) —
+/// Pending/In Progress/Completed, plus Cancelled for re-run requests that are
+/// abandoned before completion.
+enum ReRunStatus {
   PENDING
   IN_PROGRESS
   COMPLETED
+  CANCELLED
 }
 
-/// Status vocabulary for Re-Run and Schedule Test worklists (LABORATORY.docx
-/// §8.1, §8.5) — Pending/In Progress/Completed only; unlike Critical
-/// Alerts/Out of Range (`WorklistStatus`), neither section ever describes a
-/// "New" state for these two.
-enum ActionWorklistStatus {
-  PENDING
+/// Status vocabulary for the Schedule Test worklist (LABORATORY.docx §8.5) — a
+/// test is Scheduled, moves to In Progress, may be Rescheduled, then Completed.
+enum ScheduledTestStatus {
+  SCHEDULED
   IN_PROGRESS
-  COMPLETED
-}
-
-/// Delta Check's own status vocabulary (LABORATORY.docx §8.4): New items await
-/// review; Reviewed items are either sent for Re-Run or marked Accepted (no
-/// re-run needed); Completed once the report is released.
-enum DeltaCheckStatus {
-  NEW
-  REVIEWED
-  RE_RUN
-  ACCEPTED
+  RESCHEDULED
   COMPLETED
 }
 
@@ -7060,9 +7072,9 @@ model ReRunRequest {
   labReportId String    @map("lab_report_id")
   labReport   LabReport @relation(fields: [labReportId], references: [id], onDelete: Cascade)
 
-  status       ActionWorklistStatus @default(PENDING)
-  requestedBy  String               @map("requested_by")
-  requestNotes String?              @map("request_notes")
+  status       ReRunStatus @default(PENDING)
+  requestedBy  String      @map("requested_by")
+  requestNotes String?     @map("request_notes")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -7086,10 +7098,10 @@ model CriticalAlert {
   labReportId String    @map("lab_report_id")
   labReport   LabReport @relation(fields: [labReportId], references: [id], onDelete: Cascade)
 
-  status                WorklistStatus  @default(NEW)
-  trigger               WorklistTrigger @default(MANUAL)
-  reportStatusAtTrigger LabReportStatus @map("report_status_at_trigger")
-  resultParamId         String?         @map("result_param_id")
+  status                AlertReviewStatus @default(NEW)
+  trigger               WorklistTrigger   @default(MANUAL)
+  reportStatusAtTrigger LabReportStatus   @map("report_status_at_trigger")
+  resultParamId         String?           @map("result_param_id")
 
   createdBy String?   @map("created_by")
   createdAt DateTime  @default(now()) @map("created_at")
@@ -7113,10 +7125,10 @@ model OutOfRangeFlag {
   labReportId String    @map("lab_report_id")
   labReport   LabReport @relation(fields: [labReportId], references: [id], onDelete: Cascade)
 
-  status                WorklistStatus  @default(NEW)
-  trigger               WorklistTrigger @default(MANUAL)
-  reportStatusAtTrigger LabReportStatus @map("report_status_at_trigger")
-  resultParamId         String?         @map("result_param_id")
+  status                AlertReviewStatus @default(NEW)
+  trigger               WorklistTrigger   @default(MANUAL)
+  reportStatusAtTrigger LabReportStatus   @map("report_status_at_trigger")
+  resultParamId         String?           @map("result_param_id")
 
   createdBy String?   @map("created_by")
   createdAt DateTime  @default(now()) @map("created_at")
@@ -7141,8 +7153,8 @@ model DeltaCheck {
   labReportId String    @map("lab_report_id")
   labReport   LabReport @relation(fields: [labReportId], references: [id], onDelete: Cascade)
 
-  status  DeltaCheckStatus @default(NEW)
-  trigger WorklistTrigger  @default(MANUAL)
+  status  AlertReviewStatus @default(NEW)
+  trigger WorklistTrigger   @default(MANUAL)
 
   previousResultValueId String? @map("previous_result_value_id")
   resultParamId         String? @map("result_param_id")
@@ -7173,7 +7185,7 @@ model ScheduledTest {
   labReportId String    @map("lab_report_id")
   labReport   LabReport @relation(fields: [labReportId], references: [id], onDelete: Cascade)
 
-  status ActionWorklistStatus @default(PENDING)
+  status ScheduledTestStatus @default(SCHEDULED)
 
   scheduledAt DateTime  @map("scheduled_at")
   dispatchAt  DateTime? @map("dispatch_at")

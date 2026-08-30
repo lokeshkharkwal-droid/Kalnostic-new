@@ -85,6 +85,16 @@ export class ListLabReportsDto {
   patientId?: string;
 
   /**
+   * Patient Entry modal's "all tests of this order" view — narrows to a single
+   * order's reports regardless of status (via `OrderItem.orderId`). Unlike the
+   * status-scoped worklist, this returns every report the order has so the modal
+   * can show the full test set with the source panel's status sorted first.
+   */
+  @IsOptional()
+  @IsUUID()
+  orderId?: string;
+
+  /**
    * "All Sample Status" filter (LABORATORY.docx §3.1) — the real Accession
    * sample-lifecycle enum, matching what `LabReportWorklistRow.sampleStatuses`
    * already returns (see `LabReportService.attachSampleStatuses`). Narrows to
