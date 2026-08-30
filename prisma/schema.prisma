@@ -806,6 +806,11 @@ model Tenant {
   categoryCounter        Int     @default(0) @map("category_counter") // per-tenant sequential category code
   subCategoryCounter     Int     @default(0) @map("sub_category_counter") // per-tenant sequential sub-category code
   outsourceCenterCounter Int     @default(0) @map("outsource_center_counter") // per-tenant sequential outsource-center code
+  // Accession "Group Settings" — tenant-wide, business-admin-only. Defaults to
+  // DEPARTMENT_SAMPLE_NAME so every existing tenant's behavior is unchanged the
+  // moment this column exists (that mode already matches today's hardcoded
+  // physical-sample grouping — see AccessionGroupingMode's doc comment).
+  groupingMode           AccessionGroupingMode @default(DEPARTMENT_SAMPLE_NAME) @map("grouping_mode")
   referralPanelCounter   Int     @default(0) @map("referral_panel_counter") // per-tenant sequential referral-panel code
   orderCounter           Int     @default(0) @map("order_counter") // per-tenant sequential order code (ORD-00001)
   appointmentCounter     Int     @default(0) @map("appointment_counter") // per-tenant sequential appointment code (APT-00001)
@@ -7923,6 +7928,22 @@ enum AccessionBarcodeResetCycle {
   DAILY
   MONTHLY
   YEARLY
+}
+
+/// How an order's lab tests are grouped for sample collection + barcode
+/// assignment ("Group Settings" — Kalnostic_LIMS_Accession_Group_Settings.docx).
+/// Tenant-wide (`Tenant.groupingMode`), configured in business-admin only —
+/// NOT per-branch/per-user.
+enum AccessionGroupingMode {
+  /// One group per unique Department+Sample-Name combination — the most
+  /// granular mode, and the system's default.
+  DEPARTMENT_SAMPLE_NAME
+  /// One group per Department, irrespective of sample type.
+  DEPARTMENT
+  /// One group per Sample Name, irrespective of department.
+  SAMPLE_NAME
+  /// One group for the whole order, irrespective of department or sample type.
+  ORDER
 }
 
 /// Per-branch Accession Module Settings (LIMS Settings Master — Accession
