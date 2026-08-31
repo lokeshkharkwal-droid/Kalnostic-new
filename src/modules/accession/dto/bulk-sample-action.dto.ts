@@ -1,4 +1,11 @@
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsUUID } from 'class-validator';
+import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
+  IsBoolean,
+  IsOptional,
+  IsUUID,
+} from 'class-validator';
 import { SampleNoteDto } from './sample-note.dto';
 import { CollectSampleDto } from './collect-sample.dto';
 import { AcceptSampleDto } from './accept-sample.dto';
@@ -23,6 +30,24 @@ export class BulkSampleNoteDto extends SampleNoteDto {
   @ArrayMaxSize(500)
   @IsUUID('all', { each: true })
   ids: string[];
+
+  /**
+   * "Send all + skip invalid" — for group-scoped actions the FE sends every
+   * sample id in the group; samples not in a legal state for this action are
+   * skipped server-side instead of failing the batch. Omit for strict bulk.
+   */
+  @IsOptional()
+  @IsBoolean()
+  skipInvalid?: boolean;
+
+  /**
+   * "Force" (group status actions) — apply the action to every id regardless of
+   * its current status, overriding to the action's target status (no transition
+   * validation). Distinct from `skipInvalid` (which skips instead of forcing).
+   */
+  @IsOptional()
+  @IsBoolean()
+  force?: boolean;
 }
 
 /** Bulk Collect / Collect & Print (§A.10.1). */
@@ -32,6 +57,24 @@ export class BulkCollectDto extends CollectSampleDto {
   @ArrayMaxSize(500)
   @IsUUID('all', { each: true })
   ids: string[];
+
+  /**
+   * "Send all + skip invalid" — for group-scoped actions the FE sends every
+   * sample id in the group; samples not in a legal state for this action are
+   * skipped server-side instead of failing the batch. Omit for strict bulk.
+   */
+  @IsOptional()
+  @IsBoolean()
+  skipInvalid?: boolean;
+
+  /**
+   * "Force" (group status actions) — apply the action to every id regardless of
+   * its current status, overriding to the action's target status (no transition
+   * validation). Distinct from `skipInvalid` (which skips instead of forcing).
+   */
+  @IsOptional()
+  @IsBoolean()
+  force?: boolean;
 }
 
 /** Bulk Accept (§A.10). */
@@ -41,6 +84,24 @@ export class BulkAcceptDto extends AcceptSampleDto {
   @ArrayMaxSize(500)
   @IsUUID('all', { each: true })
   ids: string[];
+
+  /**
+   * "Send all + skip invalid" — for group-scoped actions the FE sends every
+   * sample id in the group; samples not in a legal state for this action are
+   * skipped server-side instead of failing the batch. Omit for strict bulk.
+   */
+  @IsOptional()
+  @IsBoolean()
+  skipInvalid?: boolean;
+
+  /**
+   * "Force" (group status actions) — apply the action to every id regardless of
+   * its current status, overriding to the action's target status (no transition
+   * validation). Distinct from `skipInvalid` (which skips instead of forcing).
+   */
+  @IsOptional()
+  @IsBoolean()
+  force?: boolean;
 }
 
 /** Bulk Store (§A.10). */
@@ -50,6 +111,24 @@ export class BulkStoreDto extends StoreSampleDto {
   @ArrayMaxSize(500)
   @IsUUID('all', { each: true })
   ids: string[];
+
+  /**
+   * "Send all + skip invalid" — for group-scoped actions the FE sends every
+   * sample id in the group; samples not in a legal state for this action are
+   * skipped server-side instead of failing the batch. Omit for strict bulk.
+   */
+  @IsOptional()
+  @IsBoolean()
+  skipInvalid?: boolean;
+
+  /**
+   * "Force" (group status actions) — apply the action to every id regardless of
+   * its current status, overriding to the action's target status (no transition
+   * validation). Distinct from `skipInvalid` (which skips instead of forcing).
+   */
+  @IsOptional()
+  @IsBoolean()
+  force?: boolean;
 }
 
 /** Bulk Discard (§A.10). */
@@ -59,6 +138,24 @@ export class BulkDiscardDto extends DiscardSampleDto {
   @ArrayMaxSize(500)
   @IsUUID('all', { each: true })
   ids: string[];
+
+  /**
+   * "Send all + skip invalid" — for group-scoped actions the FE sends every
+   * sample id in the group; samples not in a legal state for this action are
+   * skipped server-side instead of failing the batch. Omit for strict bulk.
+   */
+  @IsOptional()
+  @IsBoolean()
+  skipInvalid?: boolean;
+
+  /**
+   * "Force" (group status actions) — apply the action to every id regardless of
+   * its current status, overriding to the action's target status (no transition
+   * validation). Distinct from `skipInvalid` (which skips instead of forcing).
+   */
+  @IsOptional()
+  @IsBoolean()
+  force?: boolean;
 }
 
 /** Bulk Cancel (§A.10). */
@@ -68,6 +165,24 @@ export class BulkCancelDto extends CancelSampleDto {
   @ArrayMaxSize(500)
   @IsUUID('all', { each: true })
   ids: string[];
+
+  /**
+   * "Send all + skip invalid" — for group-scoped actions the FE sends every
+   * sample id in the group; samples not in a legal state for this action are
+   * skipped server-side instead of failing the batch. Omit for strict bulk.
+   */
+  @IsOptional()
+  @IsBoolean()
+  skipInvalid?: boolean;
+
+  /**
+   * "Force" (group status actions) — apply the action to every id regardless of
+   * its current status, overriding to the action's target status (no transition
+   * validation). Distinct from `skipInvalid` (which skips instead of forcing).
+   */
+  @IsOptional()
+  @IsBoolean()
+  force?: boolean;
 }
 
 /** Bulk Repeat (§A.10). */
@@ -77,6 +192,24 @@ export class BulkRepeatDto extends RepeatSampleDto {
   @ArrayMaxSize(500)
   @IsUUID('all', { each: true })
   ids: string[];
+
+  /**
+   * "Send all + skip invalid" — for group-scoped actions the FE sends every
+   * sample id in the group; samples not in a legal state for this action are
+   * skipped server-side instead of failing the batch. Omit for strict bulk.
+   */
+  @IsOptional()
+  @IsBoolean()
+  skipInvalid?: boolean;
+
+  /**
+   * "Force" (group status actions) — apply the action to every id regardless of
+   * its current status, overriding to the action's target status (no transition
+   * validation). Distinct from `skipInvalid` (which skips instead of forcing).
+   */
+  @IsOptional()
+  @IsBoolean()
+  force?: boolean;
 }
 
 /** Bulk Return (§A.10). */
@@ -86,4 +219,22 @@ export class BulkReturnDto extends ReturnSampleDto {
   @ArrayMaxSize(500)
   @IsUUID('all', { each: true })
   ids: string[];
+
+  /**
+   * "Send all + skip invalid" — for group-scoped actions the FE sends every
+   * sample id in the group; samples not in a legal state for this action are
+   * skipped server-side instead of failing the batch. Omit for strict bulk.
+   */
+  @IsOptional()
+  @IsBoolean()
+  skipInvalid?: boolean;
+
+  /**
+   * "Force" (group status actions) — apply the action to every id regardless of
+   * its current status, overriding to the action's target status (no transition
+   * validation). Distinct from `skipInvalid` (which skips instead of forcing).
+   */
+  @IsOptional()
+  @IsBoolean()
+  force?: boolean;
 }

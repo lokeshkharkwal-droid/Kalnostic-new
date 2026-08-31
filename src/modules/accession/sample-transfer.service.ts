@@ -10,7 +10,7 @@ import { PaginatedResult, paginated } from '../../common/dto/response.dto';
 import { BranchService } from '../branch/branch.service';
 import { PermissionCheckService } from '../permissions/services/permission-check.service';
 import { ACCESSION_TRANSFER_KEY_GROUPS } from '../permissions/constants/module-permissions.constant';
-import { AccessionSampleService } from './accession-sample.service';
+import { OrderSampleService } from './accession-sample.service';
 import {
   TransferAction,
   nextTransferStatus,
@@ -33,7 +33,7 @@ import {
 } from './entities/sample-transfer.entity';
 import {
   AccessionNumberConflictException,
-  AccessionSampleNotFoundException,
+  OrderSampleNotFoundException,
   InvalidTransferTransitionException,
   OutsourceCenterNotFoundException,
   SampleTransferNotFoundException,
@@ -72,7 +72,7 @@ interface TransferDestination {
 export class SampleTransferService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly samples: AccessionSampleService,
+    private readonly samples: OrderSampleService,
     private readonly branches: BranchService,
     private readonly permissionCheck: PermissionCheckService,
   ) {}
@@ -345,7 +345,7 @@ export class SampleTransferService {
       };
     }
     // Filters on the linked sample + its order (accession search, referral refs).
-    const sample: Prisma.AccessionSampleWhereInput = {};
+    const sample: Prisma.OrderSampleWhereInput = {};
     if (query.search) {
       sample.accessionNo = { contains: query.search, mode: 'insensitive' };
     }
@@ -507,7 +507,7 @@ export class SampleTransferService {
 
   /**
    * RULE 1 (PDF §B.11.3): when an INTERNAL transfer is accepted, materialise the
-   * sample in the receiving branch's In-House list — a new `AccessionSample` at
+   * sample in the receiving branch's In-House list — a new `OrderSample` at
    * status `ACCEPTED`, in the destination branch, carrying the same order + tests.
    * External/outsource transfers have no local receiving branch, so no clone.
    */
@@ -527,11 +527,11 @@ export class SampleTransferService {
     if (!transfer.destinationBranchId) {
       throw new TransferDestinationMissingException(transfer.id);
     }
-    const source = await tx.accessionSample.findFirst({
+    const source = await tx.orderSample.findFirst({
       where: { id: transfer.sampleId, tenantId, deletedAt: null },
       include: { tests: true },
     });
-    if (!source) throw new AccessionSampleNotFoundException(transfer.sampleId);
+    if (!source) throw new OrderSampleNotFoundException(transfer.sampleId);
 
     const destBranch = transfer.destinationBranchId;
     const now = new Date();
@@ -541,11 +541,14 @@ export class SampleTransferService {
       select: { accessionCounter: true },
     });
     const accessionNo = `ACC-${String(tenant.accessionCounter).padStart(5, '0')}`;
-    const cloned = await tx.accessionSample.create({
+    const cloned = await tx.orderSample.create({
       data: {
         tenantId,
         branchId: destBranch,
         orderId: source.orderId,
+        labTestId: source.labTestId,
+        labTestSampleId: source.labTestSampleId,
+        departmentId: source.departmentId,
         accessionNo,
         sampleType: source.sampleType,
         containerType: source.containerType,
@@ -564,6 +567,7 @@ export class SampleTransferService {
             tenantId,
             branchId: destBranch,
             orderItemId: t.orderItemId,
+            labTestId: t.labTestId,
             testName: t.testName,
           })),
         },
@@ -581,7 +585,7 @@ export class SampleTransferService {
 
     // Real Technician Reporting trigger — this clone is created directly at
     // ACCEPTED (RULE 1), bypassing transitionIds/transitionInTx, so it needs
-    // its own call (see AccessionSampleService.ensureLabReportsForAcceptedSample).
+    // its own call (see OrderSampleService.ensureLabReportsForAcceptedSample).
     await this.samples.ensureLabReportsForAcceptedSample(
       tx,
       tenantId,

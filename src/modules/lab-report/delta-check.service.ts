@@ -1,9 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { DeltaCheckStatus, WorklistTrigger } from '@prisma/client';
+import { AlertReviewStatus, WorklistTrigger } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LabReportService } from './lab-report.service';
 import { RaiseWorklistEntryDto } from './dto/raise-worklist-entry.dto';
-import { UpdateDeltaCheckStatusDto } from './dto/update-worklist-status.dto';
+import { UpdateAlertReviewStatusDto } from './dto/update-worklist-status.dto';
 import {
   DELTA_CHECK_INCLUDE,
   attachWorklistBranchNames,
@@ -17,10 +17,12 @@ import {
 } from './exceptions/lab-report.exceptions';
 
 /**
- * Delta Check worklist (LABORATORY.docx §5.2, §8.4). Own status vocabulary
- * (New -> Reviewed -> Re-Run/Accepted -> Completed), distinct from
- * `WorklistStatus` (Critical Alerts/Out of Range) and `ActionWorklistStatus`
- * (Re-Run/Schedule Test). `raise` covers the manual trigger; automatic
+ * Delta Check worklist (LABORATORY.docx §5.2, §8.4). Shares the
+ * `AlertReviewStatus` vocabulary with Critical Alerts and Out of Range
+ * (New -> Acknowledged -> Under Review -> Initiate Rerun -> In Progress ->
+ * Rerun Completed -> Accept & Release -> Resolved), distinct from the Re-Run
+ * (`ReRunStatus`) and Schedule Test (`ScheduledTestStatus`) worklists. `raise`
+ * covers the manual trigger; automatic
  * detection (abnormal vs. the patient's previous result) is out of scope for
  * this pass — `findPreviousResultValue` is provided as the lookup a future
  * automatic-trigger job would call.
@@ -98,7 +100,7 @@ export class DeltaCheckService {
             tenantId,
             branchId: activeBranchId,
             labReportId,
-            status: DeltaCheckStatus.NEW,
+            status: AlertReviewStatus.NEW,
             trigger: WorklistTrigger.MANUAL,
             resultParamId: dto.resultParamId,
             previousResultValueId,
@@ -154,7 +156,7 @@ export class DeltaCheckService {
     tenantId: string,
     branchId: string | null,
     actorId: string,
-    dto: UpdateDeltaCheckStatusDto,
+    dto: UpdateAlertReviewStatusDto,
   ) {
     const activeBranchId = this.requireBranch(branchId);
     const entry = await this.prisma.deltaCheck.findFirst({

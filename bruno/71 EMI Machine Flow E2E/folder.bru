@@ -1,0 +1,118 @@
+meta {
+  name: 71 EMI Machine Flow E2E
+  seq: 71
+}
+
+script:pre-request {
+  // ---------------------------------------------------------------------------
+  // EMI Machine Flow E2E — folder-level setup (runs before every request here).
+  //
+  // Proves the FULL lab-analyzer (EMI) path end-to-end, zero manual input:
+  //   bootstrap (siteadmin → tenant → branch → operator) →
+  //   catalogue (lab test WITH a result parameter, so it is fillable) →
+  //   order → accession collect → ACCEPT (creates the report) →
+  //   register the machine (siteadmin equipment + business lab adapter → token) →
+  //   MACHINE scan (/emi/orders) → MACHINE submit (/emi/submitResult) →
+  //   verify the value landed on the report (source = ADAPTER, status = SAVED).
+  //
+  // Every id/token is captured by each request's post-response via
+  // bru.setVar(...) — nothing is copied by hand. Just Run Folder, or click Next
+  // through 01 → 29. A per-run unique id (tatRunId) keeps unique fields from
+  // colliding on re-runs.
+  // ---------------------------------------------------------------------------
+
+  if (!bru.getVar("baseUrl"))    bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+  // EMI endpoints live at the ROOT (not under /api/v1) — host only.
+  if (!bru.getVar("emiBaseUrl")) bru.setVar("emiBaseUrl", "http://localhost:3000");
+
+  // Entry point — the SEEDED platform SiteAdmin (prisma/seed.ts). The ONLY
+  // credential this flow assumes exists; the tenant + business admin are created
+  // at runtime. Change these two only if your seeded SiteAdmin differs.
+  if (!bru.getVar("siteAdminEmail"))    bru.setVar("siteAdminEmail", "admin@kalnostics.com");
+  if (!bru.getVar("siteAdminPassword")) bru.setVar("siteAdminPassword", "SuperSecret1");
+
+  // Known passwords this flow sets (so every login is automated). The business
+  // admin password is chosen by SiteAdmin at tenant-create time (not a temp one).
+  if (!bru.getVar("operatorPassword"))       bru.setVar("operatorPassword", "Str0ng@Pass1");
+  if (!bru.getVar("bootstrapAdminPassword")) bru.setVar("bootstrapAdminPassword", "Str0ng@Pass1");
+
+  // The analyte the machine reports. Must equal the result parameter created on
+  // the lab test in step 14 (parameterCode) so the machine's universal_test_id
+  // matches it. Fixed — not per-run.
+  if (!bru.getVar("emiParamCode")) bru.setVar("emiParamCode", "HGB");
+  if (!bru.getVar("emiParamUnit")) bru.setVar("emiParamUnit", "g/dL");
+  if (!bru.getVar("emiResultValue")) bru.setVar("emiResultValue", "13.5");
+
+  // One-time per-run unique suffix + derived unique mobiles. Guarded so it is
+  // computed once and reused for the whole run. (adminIdentifier / adminPassword
+  // / tenantSlug are captured from the tenant created in step 02.)
+  if (!bru.getVar("tatRunId")) {
+    const n = String(Date.now());
+    bru.setVar("tatRunId", n.slice(-6));
+    // 10-digit national mobile (no country code) — the tenant create DTO requires
+    // adminPhone to match ^\d{10}$; it is also the admin's login identifier.
+    bru.setVar("adminBootstrapPhone", "95" + n.slice(-8));
+    bru.setVar("operatorMobile", "98" + n.slice(-8));
+    bru.setVar("phleboMobile",   "97" + n.slice(-8));
+    bru.setVar("patientMobile",  "96" + n.slice(-8));
+  }
+}
+
+docs {
+  # EMI Machine Flow E2E — fully automated, click-Next end-to-end
+
+  Reproduces the **legacy EzHealthTrack analyzer integration** on our stack, from
+  scratch, with no manual copy/paste: it accepts an order into the lab, registers
+  a machine (lab adapter), then has that "machine" scan the order and submit a
+  result — exactly as a real analyzer would (same `TOKEN` header, same
+  GET-with-`text/plain`-body, same flat `{ s, m, … }` responses).
+
+  ## How to run
+  Select this folder and **Run Folder**, or click **Next** through 01 → 29. Each
+  request captures the ids/tokens the next one needs via `bru.setVar(...)`. A
+  `tatRunId` is generated once per run so re-runs never collide on unique fields.
+  The only credential assumed to exist is the **seeded SiteAdmin**
+  (`admin@kalnostics.com` / `SuperSecret1`) — everything else is created at runtime.
+
+  ## Flow (steps run in `seq` order; a few numbers are skipped by design)
+  **Bootstrap:** 01 SiteAdmin login → 02 create tenant + business admin → 03
+  business-admin login → 04 branch (enables the `accession` module) → 05 operating
+  schedule → 06 operator user (`receptionist`) → 08 grant the operator the two
+  accession permissions (collect + accept) → 09 operator login (branch-scoped).
+
+  **Catalogue + order:** 12 patient → 13 resolve branch master data → **14 lab
+  test — created by the Business Admin (bypasses master-data RBAC), WITH a
+  `resultParams` entry (`HGB`) so the report is fillable** → 16 import it into the
+  branch → 18 resolve `branchLabTestId` → 20 create the in-center order (captures
+  `orderCode`).
+
+  **Accept into the lab:** 21 list accession samples → 22 collect → **23 accept
+  the sample** — this auto-creates the technician `LabReport` (status PENDING),
+  the row the machine will fill.
+
+  **Register the machine:** **24 create SiteAdmin equipment** → **25 create the
+  business lab adapter** mapped to this branch + branch lab test → captures the
+  adapter's **`flowAdapterToken`** (the machine credential).
+
+  **Machine talks to us:** **26 `GET /emi/orders`** (scan the order by
+  `orderCode`) → **27 `GET /emi/submitResult`** (submit the `HGB` value).
+
+  **Verify:** 28 resolve the report → **29 get the report detail** and confirm the
+  value `HGB = {{emiResultValue}}` is present with **`source: "ADAPTER"`** and the
+  report is now **`SAVED`** — i.e. the machine result reached the reporting
+  workflow, no human entry.
+
+  > Lab-test creation is a Business-Admin console action (RBAC key
+  > `business_admin:master_data__add_test`), so step 14 uses the business-admin
+  > token. The accession Collect/Accept transitions are RBAC-enforced, so step 08
+  > grants the branch-scoped operator exactly those two permission keys. Order
+  > creation and report reads are open to the operator.
+
+  ## Notes
+  - EMI endpoints are at the **root** (`{{emiBaseUrl}}/emi/...`), authenticated by
+    the `TOKEN` header (the adapter token), NOT the business JWT, and return the
+    legacy `{ s, m, … }` envelope — see folder **70 EMI Machine Interface** for the
+    standalone request reference.
+  - `emiParamCode` (`HGB`) is sent as the machine's `universal_test_id`; it matches
+    the result parameter created in step 14, so the value fills that parameter.
+}

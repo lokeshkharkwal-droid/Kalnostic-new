@@ -1148,11 +1148,14 @@ CREATE POLICY patients_tenant_isolation ON patients
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
--- Per-tenant unique mobile among ACTIVE rows (a number freed by a soft-delete is
--- reusable). Prevents duplicate active patients on the same mobile. Prisma can't
--- express partial unique indexes, so it lives here.
+-- Per-tenant unique mobile among ACTIVE, NON-family-member rows (a number freed
+-- by a soft-delete is reusable). Prevents duplicate active primary patients on the
+-- same mobile. Family members (`is_family_member = true`) are EXCLUDED: households
+-- routinely share one mobile, so a family member linked to an anchor must be
+-- creatable even when it reuses the anchor's number. Prisma can't express partial
+-- unique indexes, so it lives here.
 CREATE UNIQUE INDEX IF NOT EXISTS patients_tenant_mobile_active_unique
-  ON patients (tenant_id, mobile) WHERE deleted_at IS NULL;
+  ON patients (tenant_id, mobile) WHERE deleted_at IS NULL AND is_family_member = false;
 
 -- Globally-unique patient UMID across the WHOLE db (all tenants/branches), among
 -- ACTIVE rows only. Backs the "PAT" + auto-increment UMID (and manual entries).
@@ -1544,35 +1547,35 @@ CREATE POLICY phlebotomist_day_loads_tenant_isolation ON phlebotomist_day_loads
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
--- ── accession_samples ─────────────────────────────────────────────────────────
-ALTER TABLE accession_samples ENABLE ROW LEVEL SECURITY;
-ALTER TABLE accession_samples FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS accession_samples_tenant_isolation ON accession_samples;
-CREATE POLICY accession_samples_tenant_isolation ON accession_samples
+-- ── order_samples ─────────────────────────────────────────────────────────────
+ALTER TABLE order_samples ENABLE ROW LEVEL SECURITY;
+ALTER TABLE order_samples FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS order_samples_tenant_isolation ON order_samples;
+CREATE POLICY order_samples_tenant_isolation ON order_samples
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
 -- Per-tenant unique accession number + barcode among ACTIVE rows (a value freed
 -- by a soft-delete is reusable). Both are system-generated (ACC-00001…/BAR-…).
 -- Prisma can't express partial unique indexes, so they live here.
-CREATE UNIQUE INDEX IF NOT EXISTS accession_samples_tenant_accession_no_active_unique
-  ON accession_samples (tenant_id, accession_no) WHERE deleted_at IS NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS accession_samples_tenant_barcode_active_unique
-  ON accession_samples (tenant_id, barcode) WHERE deleted_at IS NULL AND barcode IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS order_samples_tenant_accession_no_active_unique
+  ON order_samples (tenant_id, accession_no) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS order_samples_tenant_barcode_active_unique
+  ON order_samples (tenant_id, barcode) WHERE deleted_at IS NULL AND barcode IS NOT NULL;
 
--- ── accession_sample_tests ────────────────────────────────────────────────────
-ALTER TABLE accession_sample_tests ENABLE ROW LEVEL SECURITY;
-ALTER TABLE accession_sample_tests FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS accession_sample_tests_tenant_isolation ON accession_sample_tests;
-CREATE POLICY accession_sample_tests_tenant_isolation ON accession_sample_tests
+-- ── order_sample_tests ────────────────────────────────────────────────────────
+ALTER TABLE order_sample_tests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE order_sample_tests FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS order_sample_tests_tenant_isolation ON order_sample_tests;
+CREATE POLICY order_sample_tests_tenant_isolation ON order_sample_tests
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
--- ── accession_status_history ──────────────────────────────────────────────────
-ALTER TABLE accession_status_history ENABLE ROW LEVEL SECURITY;
-ALTER TABLE accession_status_history FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS accession_status_history_tenant_isolation ON accession_status_history;
-CREATE POLICY accession_status_history_tenant_isolation ON accession_status_history
+-- ── order_sample_status_history ───────────────────────────────────────────────
+ALTER TABLE order_sample_status_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE order_sample_status_history FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS order_sample_status_history_tenant_isolation ON order_sample_status_history;
+CREATE POLICY order_sample_status_history_tenant_isolation ON order_sample_status_history
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
@@ -1601,6 +1604,21 @@ DROP POLICY IF EXISTS lab_adapters_tenant_isolation ON lab_adapters;
 CREATE POLICY lab_adapters_tenant_isolation ON lab_adapters
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
+
+-- Machine (EMI) authentication needs to read an adapter BY ITS TOKEN before any
+-- tenant context exists (the machine only presents a TOKEN header — there is no
+-- JWT and therefore no `app.current_tenant_id`). This additional read-only
+-- policy lets the `emi` module resolve the adapter (→ its tenantId) by setting
+-- `set_config('app.adapter_token', <token>, true)` for that lookup only. The
+-- token is a 64-hex opaque secret, so matching on it is itself the credential
+-- check. WITH CHECK is omitted → this policy grants SELECT only, never writes.
+DROP POLICY IF EXISTS lab_adapters_token_lookup ON lab_adapters;
+CREATE POLICY lab_adapters_token_lookup ON lab_adapters
+  FOR SELECT
+  USING (
+    token IS NOT NULL
+    AND token = NULLIF(current_setting('app.adapter_token', true), '')
+  );
 
 -- An adapter name is unique per tenant among ACTIVE rows.
 CREATE UNIQUE INDEX IF NOT EXISTS lab_adapter_name_active_unique
@@ -1631,6 +1649,17 @@ CREATE POLICY lab_adapter_tests_tenant_isolation ON lab_adapter_tests
 CREATE UNIQUE INDEX IF NOT EXISTS lab_adapter_test_active_unique
   ON lab_adapter_tests (tenant_id, lab_adapter_id, branch_lab_test_id)
   WHERE deleted_at IS NULL;
+
+-- ── adapter_results ─────────────────────────────────────────────────────────
+-- Raw audit rows for machine (EMI) result submissions. Written inside the
+-- adapter's tenant context (set from the authenticating token), so the standard
+-- tenant-isolation policy applies.
+ALTER TABLE adapter_results ENABLE ROW LEVEL SECURITY;
+ALTER TABLE adapter_results FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS adapter_results_tenant_isolation ON adapter_results;
+CREATE POLICY adapter_results_tenant_isolation ON adapter_results
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
 
 -- ── appointment_settings ─────────────────────────────────────────────────────
 ALTER TABLE appointment_settings ENABLE ROW LEVEL SECURITY;

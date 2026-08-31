@@ -1,0 +1,86 @@
+meta {
+  name: 27 EMI - Submit Result
+  type: http
+  seq: 27
+}
+
+get {
+  url: {{emiBaseUrl}}/emi/submitResult
+  body: text
+  auth: none
+}
+
+headers {
+  TOKEN: {{flowAdapterToken}}
+  Content-Type: text/plain
+}
+
+body:text {
+  {
+    "specimen_type": "",
+    "tube_information_id": "e9b6927a-f2e0-4898-910b-d892b45d8de1",
+    "equipment_id": "11111112",
+    "tube_no": "{{orderCode}}",
+    "original_tube_no": "{{orderCode}}",
+    "result_date": "1668583670356",
+    "sent": "",
+    "sent_date": "",
+    "status": "-1",
+    "local_db_status": "1",
+    "test_results": [
+      {
+        "test_result_id": "b0a69d67-4434-44f0-b1e5-cf43f83bc536",
+        "test_result": "{{emiResultValue}}",
+        "test_name": "Hemoglobin",
+        "display_name": "Hemoglobin",
+        "universal_test_id": "{{emiParamCode}}",
+        "unit": "{{emiParamUnit}}",
+        "result_type": "",
+        "specimen_types": []
+      }
+    ],
+    "comment": "auto from analyzer (EMI E2E)",
+    "token_id": "{{flowAdapterToken}}",
+    "adapter_id": "14",
+    "adapter_code": "erba-h560"
+  }
+}
+
+script:post-response {
+  const b = res.body;
+  if (b && b.report_log && b.report_log.log && b.report_log.log.length) {
+    bru.setVar("emiReportId", b.report_log.log[0].report_id);
+  }
+}
+
+tests {
+  test("result accepted (legacy s=200)", function () {
+    expect(res.body.s).to.equal("200");
+  });
+  test("a report was filled", function () {
+    expect(res.body.m).to.equal("Result updated successfully");
+    expect(res.body.test_status).to.match(/test updated/);
+    expect(res.body.report_log.log[0].fill_status).to.equal("Report filled");
+  });
+}
+
+docs {
+  **Machine step 2 — submit the result.** Exactly what a real analyzer sends:
+  a **GET** to `/emi/submitResult` with a **JSON body under
+  `Content-Type: text/plain`** (a legacy quirk — the server reads the raw body).
+  Auth is the **`TOKEN`** header (`flowAdapterToken`).
+
+  Key fields, all auto-filled from earlier steps:
+  - `tube_no` = **`orderCode`** (the scanned id).
+  - `test_results[0].universal_test_id` = **`emiParamCode`** (`HGB`) — matches the
+    result parameter created on the lab test in step 14, so the value fills that
+    parameter. `test_result` = `emiResultValue`, `unit` = `emiParamUnit`.
+
+  The report is fillable (PENDING, from the accept in step 23) and its test is
+  adapter-mapped, so the value is written with **`source = ADAPTER`** and the
+  report moves to **`SAVED`**. Success →
+  `{ "s": "200", "m": "Result updated successfully", "emi_status": "Complete",
+  "test_status": "1 test updated", "report_log": { … log: [{ fill_status:
+  "Report filled", … }] }, "prefered_test": { … }, "unique_test_ids": {} }`.
+  Captures **`emiReportId`** from the report log.
+}

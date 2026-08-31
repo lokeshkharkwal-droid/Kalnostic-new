@@ -14,7 +14,7 @@ import { PermissionGuard } from '../permissions/guards/permission.guard';
 import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
 import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import type { Response } from 'express';
-import { AccessionSampleService } from './accession-sample.service';
+import { OrderSampleService } from './accession-sample.service';
 import { PrintLabelDto, PrintLabelsDto } from './dto/print-label.dto';
 import { ListSamplesDto } from './dto/list-samples.dto';
 import { SampleNoteDto } from './dto/sample-note.dto';
@@ -61,10 +61,10 @@ const auditUpdate = (description: string) => ({
  * NOTE: bulk routes are declared before the `:id/...` routes so `bulk` is never
  * captured as an `:id`.
  */
-@Controller('accession/samples')
+@Controller('accession/order-samples')
 @UseGuards(PermissionGuard)
 export class AccessionController {
-  constructor(private readonly sampleService: AccessionSampleService) {}
+  constructor(private readonly sampleService: OrderSampleService) {}
 
   // ── Reads ──────────────────────────────────────────────────────────────────
 
@@ -85,6 +85,20 @@ export class AccessionController {
     @CurrentProfile() profile: ActiveProfile,
   ) {
     return this.sampleService.summary(tenantId, profile.branchId);
+  }
+
+  /**
+   * Grouped in-house list — records grouped + paginated by group (10/page) per
+   * the tenant's Grouping Settings (Sample/Order/Department/Department+Sample).
+   * Declared before `:id` so `grouped` is never captured as an id.
+   */
+  @Get('grouped')
+  findAllGrouped(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: ListSamplesDto,
+  ) {
+    return this.sampleService.findAllGrouped(tenantId, profile.branchId, query);
   }
 
   // ── Print Label (in-house/referral/external-referral orders) — declared

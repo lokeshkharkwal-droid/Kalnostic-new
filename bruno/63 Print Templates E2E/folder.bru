@@ -35,8 +35,8 @@ docs {
   | lab_report | `POST /pdf-report-templates` | `POST /lab-reports/{{labReportId}}/print` `{type:"lab_report"}` |
   | lab_all_report | `POST /pdf-report-templates` | `POST /lab-reports/order/{{orderId}}/print-all` |
   | lab_panel | `POST /pdf-report-templates` | `POST /lab-reports/{{labReportId}}/print` `{type:"lab_panel"}` |
-  | order_label_print | `POST /pdf-report-templates` | `POST /accession/samples/print-label` `{sampleId}` |
-  | multiple_order_label_print | `POST /pdf-report-templates` | `POST /accession/samples/print-labels` `{ids}` |
+  | order_label_print | `POST /pdf-report-templates` | `POST /accession/order-samples/print-label` `{sampleId}` |
+  | multiple_order_label_print | `POST /pdf-report-templates` | `POST /accession/order-samples/print-labels` `{ids}` |
   | bill_print | `POST /pdf-report-templates` | `POST /orders/{{orderId}}/print` `{type:"bill_print"}` |
   | trf_print | `POST /pdf-report-templates` | `POST /orders/{{orderId}}/print` `{type:"trf_print"}` |
   | lab_quotation_print | `POST /pdf-report-templates` | `POST /orders/{{orderId}}/print` `{type:"lab_quotation_print"}` |

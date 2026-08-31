@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
+  AccessionGroupingMode,
   Prisma,
   StaffStatus,
   SubscriptionStatus,
@@ -383,6 +384,41 @@ export class TenantService {
       dateFormat: merged.date_format,
       language: merged.language,
     };
+  }
+
+  /**
+   * Read the caller tenant's Accession Group Settings mode
+   * (Kalnostic_LIMS_Accession_Group_Settings.docx). Tenant-wide, defaults to
+   * DEPARTMENT_SAMPLE_NAME (matches the system's original hardcoded behavior)
+   * for any tenant that has never explicitly changed it.
+   * @throws TenantNotFoundException if missing or soft-deleted
+   */
+  async getGroupingMode(
+    tenantId: string,
+  ): Promise<{ groupingMode: AccessionGroupingMode }> {
+    const tenant = await this.findById(tenantId);
+    return { groupingMode: tenant.groupingMode };
+  }
+
+  /**
+   * Update the caller tenant's Accession Group Settings mode. Business-admin
+   * only (route-gated). Does NOT retroactively re-group already-accessioned
+   * orders or affect physical sample generation (doc §5) — it only changes
+   * how `/accession/inhouse-orders` groups rows and which samples an action
+   * fans out to, from this point forward.
+   * @throws TenantNotFoundException if missing or soft-deleted
+   */
+  async updateGroupingMode(
+    tenantId: string,
+    groupingMode: AccessionGroupingMode,
+  ): Promise<{ groupingMode: AccessionGroupingMode }> {
+    await this.findById(tenantId);
+    const tenant = await this.prisma.tenant.update({
+      where: { id: tenantId },
+      data: { groupingMode },
+      select: { groupingMode: true },
+    });
+    return { groupingMode: tenant.groupingMode };
   }
 
   /**

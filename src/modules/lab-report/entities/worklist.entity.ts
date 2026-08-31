@@ -273,7 +273,7 @@ export async function attachWorklistSampleStatuses<
   const orderItemIds = [...new Set(rows.map((r) => r.orderItemId))];
   if (orderItemIds.length === 0) return rows;
 
-  const sampleTests = await prisma.accessionSampleTest.findMany({
+  const sampleTests = await prisma.orderSampleTest.findMany({
     where: { orderItemId: { in: orderItemIds }, tenantId, deletedAt: null },
     select: {
       orderItemId: true,

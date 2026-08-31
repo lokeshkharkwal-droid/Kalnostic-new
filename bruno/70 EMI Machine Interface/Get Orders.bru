@@ -1,0 +1,72 @@
+meta {
+  name: Get Orders
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{emiBaseUrl}}/emi/orders?specimen_id={{emiSpecimenId}}
+  body: none
+  auth: none
+}
+
+params:query {
+  specimen_id: {{emiSpecimenId}}
+}
+
+headers {
+  TOKEN: {{adapterToken}}
+}
+
+docs {
+  # EMI — Get Orders (machine/analyzer interface)
+
+  Reproduces the legacy EzHealthTrack `GET /emi/orders`. After scanning, the
+  analyzer calls this to fetch the order + patient + pending-test info for the
+  scanned id.
+
+  ## Compatibility notes
+  - **Served at the root** (`/emi/orders`) — NOT under `/api/v1`. Use
+    `{{emiBaseUrl}}` (host only), not `{{baseUrl}}`.
+  - **Auth:** a `TOKEN` header carrying an active `LabAdapter.token` (create an
+    adapter under "Lab Adapters"; the token is system-generated). NOT the
+    business JWT. Set `{{adapterToken}}` in the environment.
+  - **Response is the flat legacy envelope** `{ s, orders: [...] }`, NOT the
+    standard `{ success, data, meta }` wrapper.
+
+  ## Query params
+  - `specimen_id` (required) — the scanned id. **In our system this is the
+    order's `orderCode`** (e.g. `ORD-00051`); the legacy barcode/specimen table
+    does not exist here.
+
+  ## Success (200)
+  ```json
+  {
+    "s": "200",
+    "orders": [{
+      "specimen_id": "ORD-00051",
+      "order_date": 1787529600,
+      "patient_id": "<umId or patient id>",
+      "patient_name": "Anjali",
+      "patient_surname": "Upadhya",
+      "birth_date": 0,
+      "patient_gender": "F",
+      "admission_number": "ORD-00051",
+      "sender_organization": "<tenant name>",
+      "sender_doctor": "<referring doctor>",
+      "ut_ids": ["Complete Blood Count", "Hemoglobin", "WBC"]
+    }]
+  }
+  ```
+  For each of the order's tests that are mapped to this adapter AND still fillable,
+  `ut_ids` lists the test's **display name plus each of its result-parameter
+  names** (deduped) — the legacy `getFormattedOrder` shape the analyzers are
+  calibrated against (they send these same strings back as `universal_test_id` on
+  submit). Dates are Unix **seconds** (0 when absent).
+
+  ## Error envelopes
+  - `{ "s": "400", "m": "Missing Auth token" }` — no `TOKEN` header.
+  - `{ "s": "403", "m": "Invalid authorization" }` — unknown/inactive token.
+  - `{ "s": "400", "m": "Specimen id not found" }` — no order with that
+    `orderCode` in the adapter's tenant/branches.
+}

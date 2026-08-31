@@ -1,0 +1,48 @@
+meta {
+  name: 08 Assign Operator Permissions
+  type: http
+  seq: 8
+}
+
+put {
+  url: {{baseUrl}}/users/manage/{{operatorUserId}}/branch-permissions
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "branchId": "{{branchId}}",
+    "items": [
+      { "moduleKey": "accession", "permissionKey": "accession:in_house_order__collect_the_sample", "allowed": true },
+      { "moduleKey": "accession", "permissionKey": "accession:in_house_order__accept_the_sample", "allowed": true }
+    ]
+  }
+}
+
+docs {
+  **Step 4b — Grant the operator the two accession permissions the flow needs.**
+
+  The accession **Collect** and **Accept** transitions are RBAC-enforced
+  (`@RequirePermission(ACC_IH_COLLECT / ACC_IH_ACCEPT)`), so the branch-scoped
+  operator must hold them:
+  - `accession:in_house_order__collect_the_sample`
+  - `accession:in_house_order__accept_the_sample`
+
+  `permissionKey` = `moduleKey:section__action` (from the permission catalog —
+  `GET /users/manage/permission-catalog`); only modules enabled at the **branch**
+  are accepted, so this works because step 04 enabled `accession` on the branch
+  (the grant is independent of the operator's own module set — the `receptionist`
+  role template doesn't include `accession`, but the direct permission grant is
+  what the guard checks). Order creation (`registration`) and report reads are not
+  blocked for the operator, and lab-test creation is done by the Business Admin
+  (bypass) in step 14 — so no other grants are needed here.
+}

@@ -1,0 +1,136 @@
+meta {
+  name: Submit Result
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{emiBaseUrl}}/emi/submitResult
+  body: text
+  auth: none
+}
+
+headers {
+  TOKEN: {{adapterToken}}
+  Content-Type: text/plain
+}
+
+body:text {
+  {
+    "specimen_type": "",
+    "tube_information_id": "e9b6927a-f2e0-4898-910b-d892b45d8de1",
+    "equipment_id": "11111112",
+    "tube_no": "{{emiSpecimenId}}",
+    "original_tube_no": "{{emiSpecimenId}}",
+    "result_date": "1668583670356",
+    "sent": "",
+    "sent_date": "",
+    "status": "-1",
+    "local_db_status": "1",
+    "test_results": [
+      {
+        "test_result_id": "b0a69d67-4434-44f0-b1e5-cf43f83bc536",
+        "test_result": "10.24",
+        "test_name": "site admin -01",
+        "display_name": "site admin -01",
+        "universal_test_id": "1234",
+        "unit": "mg/dL",
+        "result_type": "",
+        "specimen_types": []
+      }
+    ],
+    "test_result_suplement": [
+      {
+        "type": "WBC",
+        "format": "Base64",
+        "data": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+      }
+    ],
+    "comment": "auto from analyzer",
+    "token_id": "{{adapterToken}}",
+    "adapter_id": "14",
+    "adapter_code": "erba-h560"
+  }
+}
+
+docs {
+  # EMI — Submit Result (machine/analyzer interface)
+
+  Reproduces the legacy EzHealthTrack `GET /emi/submitResult`. The analyzer posts
+  test result values, which are filled onto the order's reports.
+
+  ## Histogram images (`test_result_suplement`)
+  Analyzers send instrument histograms/scattergrams (WBC/RBC/PLT/Diff) as base64
+  data-URIs in `test_result_suplement[]`. On a successful fill the server uploads
+  each image to S3 and links it as a `LabReportAttachment` (`kind = image`) on the
+  filled report(s) — visible in Technician Reporting. The raw array is also kept
+  verbatim on the `adapter_results` audit row. Upload failures are logged and
+  skipped; they never fail the result fill.
+
+  ## Tolerant JSON
+  Some analyzers emit slightly-malformed JSON (empty array slots `},,{`, trailing
+  commas). The server retries parsing after sanitizing those structural artifacts
+  (the legacy PHP tolerated them), so such payloads still succeed.
+
+  ## Compatibility notes (all preserved verbatim from the legacy contract)
+  - **HTTP GET with a JSON body under `Content-Type: text/plain`** — a legacy
+    quirk. The server reads the raw body for this path and JSON-decodes it (the
+    global ValidationPipe is intentionally skipped, so extra machine fields like
+    `alarm_conditions`, `rack_no`, histograms are accepted, not rejected).
+  - **Root path** `/emi/submitResult` (use `{{emiBaseUrl}}`), **`TOKEN` header**
+    auth, **flat `{ s, m, … }` response** — same as Get Orders.
+
+  ## Key payload fields
+  - `tube_no` / `original_tube_no` — the specimen id = the order's **`orderCode`**.
+  - `test_results[]` — one per analyte:
+    - `universal_test_id` — matched to our `BranchLabTest.testCode` first, then to
+      `test_name`/`display_name`; for a single-parameter test the value fills that
+      parameter even when only the test name/code matches.
+    - `test_result` → written to the report parameter's observed value.
+    - `unit` → the value's unit (falls back to the parameter's reporting unit).
+  - `result_date` — epoch **milliseconds** (or seconds) → the value's entry time.
+  - `equipment_id`, `adapter_id`, `adapter_code`, `token_id` — adapter identity,
+    retained on the `AdapterResult` audit row.
+
+  ## Fill behaviour (mirrors legacy `processAdapterResult`)
+  - Order resolved from `tube_no` (`orderCode`) within the adapter's tenant +
+    branches. Only reports that are **fillable** (status PENDING / PARTIAL_PENDING
+    / SAVED and not locked) and belong to the adapter's **prefered** (mapped)
+    tests are filled. Filled values are stored with `source = ADAPTER`; the report
+    moves to `SAVED`. Reports are **never auto-approved/published** — human
+    sign-off is unchanged. Every call writes an `AdapterResult` audit row.
+
+  ## Success (200) — at least one report filled
+  ```json
+  {
+    "s": "200",
+    "m": "Result updated successfully",
+    "emi_status": "Complete",
+    "test_status": "1 test updated",
+    "report_log": {
+      "order_id": "ORD-00051",
+      "datetime": "2026-08-27 18:47:48",
+      "log": [{
+        "report_id": "...", "report_name": "site admin -01",
+        "status": "SAVED", "before_report_status": "PENDING",
+        "fill_status": "Report filled",
+        "available_branches": ["..."], "branch_id": "..."
+      }]
+    },
+    "prefered_test": { "<branchLabTestId>": "site admin -01" },
+    "unique_test_ids": {}
+  }
+  ```
+
+  ## Other outcomes (still `s: "200"`, legacy semantics)
+  - `test_status: "Order not found."` — no order matched `tube_no`.
+  - `test_status: "Test already marked as complete"` — order is CANCELLED/closed.
+  - `test_status: "No test result submitted"` — empty `test_results`.
+  - `test_status: "no test match found for requested token"` — nothing fillable
+    matched; each skipped report carries a `fill_status` such as
+    `"Not filled due to report status is not pending."` or
+    `"... Not in prefered test list"`.
+
+  ## Auth errors
+  - `{ "s": "400", "m": "Missing Auth token" }` / `{ "s": "403", "m": "Invalid authorization" }`.
+}

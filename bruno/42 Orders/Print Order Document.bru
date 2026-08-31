@@ -44,7 +44,7 @@ docs {
     - `order_barcode_print` — a barcode label for the order's own identifier
       (`orderCode`) plus a short patient/test summary. Distinct from
       `order_label_print`, which is the per-`AccessionSample` specimen barcode
-      printed via `POST /accession/samples/print-label(s)` — this type is for
+      printed via `POST /accession/order-samples/print-label(s)` — this type is for
       the Order Console's per-row "Print Order Barcode" action, not specimen
       tracking.
   - `templateId` (optional) — the `PdfReportTemplate` to render with. The frontend

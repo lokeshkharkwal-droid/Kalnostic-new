@@ -1,0 +1,42 @@
+meta {
+  name: 28 Verify - Resolve Report
+  type: http
+  seq: 28
+}
+
+get {
+  url: {{baseUrl}}/lab-reports?branchLabTestId={{branchLabTestId}}&page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  branchLabTestId: {{branchLabTestId}}
+  page: 1
+  limit: 10
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.length && data[0].id) bru.setVar("labReportId", data[0].id);
+}
+
+tests {
+  test("report is now SAVED (machine-filled)", function () {
+    const rows = res.body.data;
+    expect(rows).to.be.an("array").with.length.of.at.least(1);
+    expect(rows[0].status).to.equal("SAVED");
+  });
+}
+
+docs {
+  **Verify (1/2) — resolve the report from the app side.** Using the operator's
+  branch-scoped token, list the technician reports for this run's
+  **`branchLabTestId`** — it's exactly our report. The machine submission moved it
+  from `PENDING` to **`SAVED`**, which this asserts. Captures **`labReportId`** for
+  the detail read next.
+}

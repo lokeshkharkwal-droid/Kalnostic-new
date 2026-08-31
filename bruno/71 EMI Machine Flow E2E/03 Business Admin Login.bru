@@ -1,0 +1,38 @@
+meta {
+  name: 03 Business Admin Login
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "identifier": "{{adminIdentifier}}",
+    "password": "{{adminPassword}}",
+    "tenantSlug": "{{tenantSlug}}"
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.accessToken) {
+    bru.setVar("businessAdminToken", data.accessToken);
+    if (data.refreshToken) bru.setVar("businessAdminRefreshToken", data.refreshToken);
+  }
+}
+
+docs {
+  **Workflow — Log in as the Business Admin.** Uses the `adminIdentifier` /
+  `adminPassword` / `tenantSlug` captured from the tenant created in step 02 (the
+  one-time temp password) — no manual copy. Captures **`businessAdminToken`** for
+  the tenant-level setup (branch, schedule, user) in steps 04–08.
+}

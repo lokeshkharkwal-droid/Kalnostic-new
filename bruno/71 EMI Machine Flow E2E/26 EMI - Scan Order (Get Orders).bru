@@ -1,0 +1,54 @@
+meta {
+  name: 26 EMI - Scan Order (Get Orders)
+  type: http
+  seq: 26
+}
+
+get {
+  url: {{emiBaseUrl}}/emi/orders?specimen_id={{orderCode}}
+  body: none
+  auth: none
+}
+
+params:query {
+  specimen_id: {{orderCode}}
+}
+
+headers {
+  TOKEN: {{flowAdapterToken}}
+}
+
+script:post-response {
+  const b = res.body;
+  if (b && b.orders && b.orders.length && b.orders[0].ut_ids) {
+    bru.setVar("emiUtIds", JSON.stringify(b.orders[0].ut_ids));
+  }
+}
+
+tests {
+  test("machine sees the order (legacy s=200 envelope)", function () {
+    expect(res.body.s).to.equal("200");
+    expect(res.body.orders).to.be.an("array").with.length.of.at.least(1);
+  });
+  test("order carries patient + pending tests", function () {
+    const o = res.body.orders[0];
+    expect(o.specimen_id).to.equal(bru.getVar("orderCode"));
+    expect(o).to.have.property("patient_name");
+    expect(o.ut_ids).to.be.an("array");
+  });
+}
+
+docs {
+  **Machine step 1 — scan the order.** This is the request a real analyzer makes
+  after scanning the specimen: `GET /emi/orders` at the **root** (`{{emiBaseUrl}}`,
+  NOT `/api/v1`), authenticated by the **`TOKEN`** header carrying
+  **`flowAdapterToken`** (step 25) — not the business JWT. `specimen_id` is the
+  order's **`orderCode`** (captured in step 20), since our backend has no separate
+  barcode/specimen id.
+
+  Returns the flat legacy envelope
+  `{ "s": "200", "orders": [{ specimen_id, order_date, patient_id, patient_name,
+  patient_surname, birth_date, patient_gender, admission_number,
+  sender_organization, sender_doctor, ut_ids }] }`. `ut_ids` lists the `testCode`s
+  of this order's tests that are mapped to the adapter and still fillable.
+}

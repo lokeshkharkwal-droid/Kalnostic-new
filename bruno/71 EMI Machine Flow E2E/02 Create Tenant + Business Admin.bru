@@ -1,0 +1,66 @@
+meta {
+  name: 02 Create Tenant + Business Admin
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/tenants
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "name": "TAT Flow Business {{tatRunId}}",
+    "adminFirstName": "TAT",
+    "adminLastName": "Admin {{tatRunId}}",
+    "adminPhone": "{{adminBootstrapPhone}}",
+    "adminPassword": "{{bootstrapAdminPassword}}",
+    "adminEmail": "emi.bizadmin.{{tatRunId}}@acme.test",
+    "email": "emi.contact.{{tatRunId}}@acme.test",
+    "shortName": "EMIDx",
+    "mrnPrefix": "EM",
+    "settings": {
+      "timezone": "Asia/Kolkata",
+      "currency": "INR",
+      "date_format": "DD/MM/YYYY",
+      "language": "en"
+    }
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data) {
+    if (data.id) bru.setVar("tenantId", data.id);
+    if (data.slug) bru.setVar("tenantSlug", data.slug);
+  }
+  // The admin password is CHOSEN by us at create time (not a returned temp), and
+  // the phone we sent is the login identifier — wire both into step 03 directly,
+  // so login is automated with no manual copy.
+  bru.setVar("adminIdentifier", bru.getVar("adminBootstrapPhone"));
+  bru.setVar("adminPassword", bru.getVar("bootstrapAdminPassword"));
+}
+
+docs {
+  **Bootstrap 2 — Create the tenant AND its first business admin** (as SiteAdmin).
+
+  `adminPhone` must be a **10-digit** national mobile (it is also the login
+  identifier), and `adminPassword` is **chosen here** by SiteAdmin (min 8, ≥1
+  upper, ≥1 digit) — it is NOT a returned temp password. The post-response
+  captures `tenantSlug` (auto-generated from the name) and wires `adminIdentifier`
+  (= the phone we sent) + `adminPassword` (= the password we sent) into step 03, so
+  login is automated with **no manual copy**. Phone / emails are unique per run.
+
+  > If a future backend build stops returning `tempPassword` on create, use
+  > SiteAdmin → **Reset Admin Password** to obtain one and set `adminPassword`.
+}

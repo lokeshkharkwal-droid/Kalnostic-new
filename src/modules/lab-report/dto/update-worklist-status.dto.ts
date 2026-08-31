@@ -1,34 +1,40 @@
 import {
-  ActionWorklistStatus,
-  DeltaCheckStatus,
-  WorklistStatus,
+  AlertReviewStatus,
+  ReRunStatus,
+  ScheduledTestStatus,
 } from '@prisma/client';
 import { IsEnum, IsOptional, IsString } from 'class-validator';
 
-/** Body for `PATCH .../:id/status` on Critical Alert / Out of Range (New/Pending/In Progress/Completed). */
-export class UpdateWorklistStatusDto {
-  @IsEnum(WorklistStatus)
-  status: WorklistStatus;
+/** Body for `PATCH /re-run-requests/:id/status` — Pending/In Progress/Completed/Cancelled. */
+export class UpdateReRunStatusDto {
+  @IsEnum(ReRunStatus)
+  status: ReRunStatus;
 
   @IsOptional()
   @IsString()
   notes?: string;
 }
 
-/** Body for `PATCH .../:id/status` on Re-Run / Schedule Test (Pending/In Progress/Completed — no New). */
-export class UpdateActionWorklistStatusDto {
-  @IsEnum(ActionWorklistStatus)
-  status: ActionWorklistStatus;
+/**
+ * Body for `PATCH .../:id/status` on the three review worklists — Critical
+ * Alert, Out of Range, and Delta Check — which share one vocabulary
+ * (`AlertReviewStatus`). `@IsEnum` rejects any value outside this list, so a
+ * Re-Run or Schedule Test status cannot be set on these endpoints (and vice
+ * versa).
+ */
+export class UpdateAlertReviewStatusDto {
+  @IsEnum(AlertReviewStatus)
+  status: AlertReviewStatus;
 
   @IsOptional()
   @IsString()
   notes?: string;
 }
 
-/** Body for `PATCH /delta-checks/:id/status` — Delta Check's own vocabulary. */
-export class UpdateDeltaCheckStatusDto {
-  @IsEnum(DeltaCheckStatus)
-  status: DeltaCheckStatus;
+/** Body for `PATCH /scheduled-tests/:id/status` — Scheduled/In Progress/Rescheduled/Completed. */
+export class UpdateScheduledTestStatusDto {
+  @IsEnum(ScheduledTestStatus)
+  status: ScheduledTestStatus;
 
   @IsOptional()
   @IsString()

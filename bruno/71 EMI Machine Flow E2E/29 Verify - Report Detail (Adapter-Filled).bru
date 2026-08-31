@@ -1,0 +1,47 @@
+meta {
+  name: 29 Verify - Report Detail (Adapter-Filled)
+  type: http
+  seq: 29
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+tests {
+  test("report detail loads", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.body.data).to.have.property("resultValues");
+  });
+  test("the machine value landed with source = ADAPTER", function () {
+    const values = res.body.data.resultValues || [];
+    const adapterValue = values.find(function (v) { return v.source === "ADAPTER"; });
+    expect(adapterValue, "a resultValue with source ADAPTER").to.exist;
+    expect(String(adapterValue.observed1)).to.equal(bru.getVar("emiResultValue"));
+  });
+  test("report is SAVED, not auto-approved", function () {
+    expect(res.body.data.status).to.equal("SAVED");
+  });
+}
+
+docs {
+  **Verify (2/2) — the machine result is on the report.** Fetches the full report
+  detail and confirms the analyzer's value reached the reporting workflow with **no
+  human entry**:
+  - `resultValues[]` contains an entry with **`source: "ADAPTER"`** whose
+    `observed1` equals **`emiResultValue`** (`{{emiResultValue}}`), filled against
+    the `HGB` parameter.
+  - `status` is **`SAVED`** — the machine fills and leaves the report for human
+    validation/approval; it is **never** auto-approved/published (lab QA
+    unchanged).
+
+  This closes the loop: order accepted → machine scanned it → machine submitted a
+  result → the result is visible on the report, all auto-chained with no manual
+  copy/paste.
+}

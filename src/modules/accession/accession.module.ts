@@ -9,7 +9,7 @@ import { SampleTransferController } from './sample-transfer.controller';
 import { AccessionSettingsController } from './accession-settings.controller';
 import { AccessionReportController } from './accession-report.controller';
 import { AccessionDashboardController } from './accession-dashboard.controller';
-import { AccessionSampleService } from './accession-sample.service';
+import { OrderSampleService } from './accession-sample.service';
 import { SampleTransferService } from './sample-transfer.service';
 import { AccessionSettingsService } from './accession-settings.service';
 import { AccessionReportService } from './accession-report.service';
@@ -17,7 +17,7 @@ import { AccessionDashboardService } from './accession-dashboard.service';
 
 /**
  * Accession module — the sample-lifecycle hub (post-order). Tenant-scoped +
- * branch-level. Exports `AccessionSampleService` so the order module can generate
+ * branch-level. Exports `OrderSampleService` so the order module can generate
  * an order's samples when it is confirmed, via DI (CLAUDE.md rule #3). Imports
  * `BranchModule` to validate transfer destinations + settings branches, and
  * `LabReportModule` so a sample reaching `ACCEPTED` (either via the in-house
@@ -47,12 +47,12 @@ import { AccessionDashboardService } from './accession-dashboard.service';
     AccessionDashboardController,
   ],
   providers: [
-    AccessionSampleService,
+    OrderSampleService,
     SampleTransferService,
     AccessionSettingsService,
     AccessionReportService,
     AccessionDashboardService,
   ],
-  exports: [AccessionSampleService],
+  exports: [OrderSampleService],
 })
 export class AccessionModule {}

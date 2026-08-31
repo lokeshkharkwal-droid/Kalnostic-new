@@ -72,7 +72,7 @@ export const COLLECTION_LIST_INCLUDE = {
           paidAmount: true,
         },
       },
-      accessionSamples: {
+      orderSamples: {
         where: { deletedAt: null },
         select: { id: true, accessionNo: true, barcode: true, status: true },
       },
@@ -159,7 +159,7 @@ export function toCollectionListRow(
   const paidAmount = payments.reduce((s, p) => s + toNum(p.paidAmount), 0);
   const diagnostics = row.order?.diagnostics ?? null;
   const items = row.order?.items ?? [];
-  const samples = row.order?.accessionSamples ?? [];
+  const samples = row.order?.orderSamples ?? [];
   const withBarcode = samples.find((s) => s.barcode);
   return {
     ...row,

@@ -1,0 +1,34 @@
+meta {
+  name: 23 Accept Sample (creates report)
+  type: http
+  seq: 23
+}
+
+post {
+  url: {{baseUrl}}/accession/order-samples/{{sampleId}}/accept
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "sampleCondition": "Good",
+    "notes": "Accepted for processing"
+  }
+}
+
+docs {
+  **Accept the sample — this is the step that makes the order machine-ready.**
+  COLLECTED → ACCEPTED. Accepting **auto-creates the Technician `LabReport`
+  (status PENDING)** for the order item — the exact row the analyzer fills in step
+  27. Requires the `accession:in_house_order__accept_the_sample` permission granted
+  to the operator in step 08.
+}

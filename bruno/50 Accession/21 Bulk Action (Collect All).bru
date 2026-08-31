@@ -5,7 +5,7 @@ meta {
 }
 
 post {
-  url: {{baseUrl}}/accession/samples/bulk/collect
+  url: {{baseUrl}}/accession/order-samples/bulk/collect
   body: json
   auth: bearer
 }
@@ -22,7 +22,8 @@ body:json {
   {
     "ids": ["{{sampleId}}"],
     "tubeType": "EDTA (Purple)",
-    "notes": "Bulk collected from the selection toolbar"
+    "notes": "Bulk collected from the selection toolbar",
+    "skipInvalid": false
   }
 }
 
@@ -37,9 +38,27 @@ tests {
 
 docs {
   Representative **bulk** action (§A.11). Every single-sample action has a bulk
-  twin at `POST /accession/samples/bulk/<action>` taking `{ "ids": [...] }` **plus
+  twin at `POST /accession/order-samples/bulk/<action>` taking `{ "ids": [...] }` **plus
   the same action fields**, applying the transition to all ids in one transaction
   (up to 500). Available bulk actions: `collect`, `collect-print`, `accept`,
   `acquire`, `halt`, `error`, `hold`, `repeat`, `store`, `discard`, `return`,
   `cancel`, `retrieve`, `assign-barcode`.
+
+  ## `skipInvalid` (group actions — "send all + skip invalid")
+
+  Optional boolean (default `false`). When `false` the batch is strict: if any id
+  is not in a legal state for the action the whole request fails with 422
+  `INVALID_SAMPLE_TRANSITION`. When `true` (used by the grouped in-house page's
+  Order / Department / Department+Sample action buttons, which send every
+  `sampleIds` in the group) samples not in a legal state are **skipped** and the
+  response returns only the ids that transitioned.
+
+  ## `force` (group status actions — "direct status override")
+
+  Optional boolean (default `false`). When `true`, the action is applied to
+  **every** id **regardless of its current status** — the transition legality
+  check is skipped and each sample is set to the action's fixed target status
+  (Accept→ACCEPTED, Halt→HALT, Acquire→ACQUIRED, …). Used by the grouped in-house
+  page's status buttons so e.g. Accept on a group of mixed New/Collected/Accepted/
+  Halted samples sets them **all** to ACCEPTED. `retrieve` is never forced.
 }

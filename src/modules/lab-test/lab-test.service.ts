@@ -85,6 +85,7 @@ import {
   LabTestNameConflictException,
   LabTestNotFoundException,
   LabTestParamCodeConflictException,
+  LabTestSampleRequiredException,
 } from './exceptions/lab-test.exceptions';
 
 /** Result of a bulk edit: how many lab tests were updated. */
@@ -241,6 +242,8 @@ export class LabTestService {
       masterDataId,
       tenantId,
     );
+    // A lab test must carry at least one sample (drives OrderSample generation).
+    if (!dto.samples?.length) throw new LabTestSampleRequiredException();
     this.assertCoreInvariants({
       priceMsrp: dto.priceMsrp ?? 0,
       priceMaximum: dto.priceMaximum ?? 0,
@@ -1105,6 +1108,11 @@ export class LabTestService {
     dto: UpdateLabTestDto,
   ): Promise<LabTestWithChildren> {
     const existing = await this.findCoreById(labTestId, masterDataId, tenantId);
+    // Samples may be omitted (left unchanged), but never cleared to empty — a
+    // lab test must always keep at least one sample.
+    if (dto.samples !== undefined && dto.samples.length < 1) {
+      throw new LabTestSampleRequiredException();
+    }
     this.assertCoreInvariants({
       priceMsrp: dto.priceMsrp ?? existing.priceMsrp,
       priceMaximum: dto.priceMaximum ?? existing.priceMaximum,
@@ -2746,6 +2754,14 @@ export class LabTestService {
         throw e;
       }
 
+      // A lab test must carry at least one sample (drives OrderSample
+      // generation). An update-match row also wipes+recreates its samples
+      // below, so an empty one would clear them — reject it here.
+      if (!instance.samples?.length) {
+        recordError(span.rowLabel, 'A lab test must have at least one sample');
+        continue;
+      }
+
       let matchedId: string | null = null;
       const byCode = await this.prisma.labTest.findFirst({
         where: {
@@ -2952,7 +2968,7 @@ export class LabTestService {
    */
   private cleanImportSampleDtos(
     samples: ImportXlsxSampleRowDto[] | undefined,
-  ): CreateLabTestDto['samples'] {
+  ): CreateLabTestDto['samples'] | undefined {
     return samples?.map(({ rowLabel: _rowLabel, ...rest }) => rest);
   }
 
@@ -3849,7 +3865,7 @@ export class LabTestService {
     tenantId: string | null,
     branchId: string | null,
     labTestId: string,
-    samples: CreateLabTestDto['samples'],
+    samples: CreateLabTestDto['samples'] | undefined,
   ): Promise<void> {
     if (!samples?.length) {
       return;

@@ -8,6 +8,8 @@ import { TemplateModule } from '../template/template.module';
 import { PermissionsModule } from '../permissions/permissions.module';
 import { LabReportController } from './lab-report.controller';
 import { LabReportService } from './lab-report.service';
+import { LabReportAttachmentController } from './lab-report-attachment.controller';
+import { LabReportAttachmentService } from './lab-report-attachment.service';
 import { LabReportDirectoryService } from './lab-report-directory.service';
 import { TatAdjustmentController } from './tat-adjustment.controller';
 import { TatAdjustmentService } from './tat-adjustment.service';
@@ -57,6 +59,7 @@ import { NablTatCronService } from './nabl-tat-cron.service';
   ],
   controllers: [
     LabReportController,
+    LabReportAttachmentController,
     TatAdjustmentController,
     ReRunController,
     CriticalAlertController,
@@ -67,6 +70,7 @@ import { NablTatCronService } from './nabl-tat-cron.service';
   ],
   providers: [
     LabReportService,
+    LabReportAttachmentService,
     LabReportDirectoryService,
     TatAdjustmentService,
     ReRunService,

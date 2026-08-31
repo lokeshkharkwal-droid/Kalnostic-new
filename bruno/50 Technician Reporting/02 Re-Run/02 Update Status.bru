@@ -23,10 +23,10 @@ body:json {
 
 docs {
   Manual status update (LABORATORY.docx §8.1): `status` one of `PENDING` |
-  `IN_PROGRESS` | `COMPLETED` (`ActionWorklistStatus` — no `NEW`, unlike
-  Critical Alerts/Out of Range; §8.1 never describes a "New" state). Mark In
-  Progress while re-processing; mark Completed once the re-run report is
-  approved/released. `notes` optional.
+  `IN_PROGRESS` | `COMPLETED` | `CANCELLED` (`ReRunStatus`). Mark In Progress
+  while re-processing; Completed once the re-run report is approved/released;
+  Cancelled if the re-run is abandoned. `notes` optional. Sending a value from
+  another worklist (e.g. `UNDER_REVIEW`) is rejected with 400.
 
   404 `RE_RUN_REQUEST_NOT_FOUND`.
 }

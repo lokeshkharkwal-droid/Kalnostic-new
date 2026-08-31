@@ -5,7 +5,7 @@ meta {
 }
 
 post {
-  url: {{baseUrl}}/accession/samples/{{sampleId}}/send
+  url: {{baseUrl}}/accession/order-samples/{{sampleId}}/send
   body: json
   auth: bearer
 }
@@ -45,5 +45,5 @@ docs {
   Send (Internal Transfer) — **Accepted → Sent (Internal)**, creating an INTERNAL
   `SampleTransfer` at `IN_TRANSIT`. `destinationBranchId` is another branch in the
   same tenant (validated); omit it to assign later via **Assign Center** (§A.7).
-  Captures `transferId`. Bulk: `POST /accession/samples/bulk/send` with `ids[]`.
+  Captures `transferId`. Bulk: `POST /accession/order-samples/bulk/send` with `ids[]`.
 }

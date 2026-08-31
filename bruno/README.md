@@ -116,7 +116,7 @@ environment and no manual edits:
 - **Accession** (`/accession`): the sample lifecycle after an order. Samples are
   **auto-generated** (status `NEW`, `ACC-00001`…) when a diagnostic order is saved
   as `ORDER`/`APPOINTMENT` — one per required tube. Endpoints:
-  - **Samples** (`/accession/samples`): list (`search`/`status`/`priority`/
+  - **Samples** (`/accession/order-samples`): list (`search`/`status`/`priority`/
     `tatStatus`/branch/patient/referral filters; rows carry a derived `tatStatus`),
     `summary` (status-tab + TAT-bar counts), get (Sample Overview), `:id/history`.
   - **In-House state machine** (§A.9) as per-action POSTs — `collect`,

@@ -7,6 +7,7 @@ import {
 } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
+  ArrayMinSize,
   ArrayUnique,
   IsArray,
   IsBoolean,
@@ -324,8 +325,11 @@ export class UpdateLabTestDto {
   @IsOptional()
   references?: string;
 
+  // Optional on update (omit = leave samples unchanged), but if provided it must
+  // be non-empty — a lab test can never be left with zero samples.
   @IsArray()
   @IsOptional()
+  @ArrayMinSize(1)
   @ValidateNested({ each: true })
   @Type(() => LabTestSampleDto)
   samples?: LabTestSampleDto[];

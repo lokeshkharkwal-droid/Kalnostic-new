@@ -22,6 +22,7 @@ params:query {
   ~departmentId: {{departmentId}}
   ~branchLabPanelId: {{branchLabPanelId}}
   ~branchLabTestId: {{branchLabTestId}}
+  ~orderId: {{orderId}}
   ~sampleStatus: COLLECTED
   ~outsource: true
   ~urgent: true
@@ -48,8 +49,13 @@ docs {
   `GET /orders`; omit to default to the caller's active branch), `source`
   (`ALL`|`IN_HOUSE`|`OUTSOURCE`), `search`, `dateFrom`/`dateTo`,
   `referredByDoctorId`, `referralPanelId`, `departmentId`, `branchLabPanelId`,
-  `branchLabTestId`, `sampleStatus`, `outsource`, `urgent`, `homeCollection`,
-  `page`/`limit` (default 25).
+  `branchLabTestId`, `orderId`, `sampleStatus`, `outsource`, `urgent`,
+  `homeCollection`, `page`/`limit` (default 25).
+
+  `orderId` narrows to a single order's reports **regardless of status** (via
+  `OrderItem.orderId`) — used by the Patient Entry modal to load every test of
+  the selected order (the status tabs only ever load one status at a time). Pair
+  with a high `limit` to get the whole order in one page.
 
   `search` matches Patient Name (first/last), Order ID (order code), Test
   Name (the order item's branch lab test name), or Ref Panel (the order's

@@ -1,9 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
-  AccessionSample,
-  AccessionStatusHistory,
-  ContainerType,
+  AccessionGroupingMode,
+  OrderSample,
+  OrderSampleStatusHistory,
   LabTestSample,
   Prisma,
   SamplePriority,
@@ -20,6 +20,7 @@ import { BranchLabTestConfigSnapshot } from '../branch-lab-test/entities/branch-
 import {
   SampleAction,
   nextSampleStatus,
+  FORCE_TARGET,
   COLLECTABLE_SAMPLE_STATUSES,
 } from './constants/sample-transitions.constant';
 import {
@@ -44,14 +45,18 @@ import { AssignBarcodeDto } from './dto/assign-barcode.dto';
 import {
   SAMPLE_INCLUDE,
   SAMPLE_LIST_INCLUDE,
-  AccessionSampleListItem,
-  AccessionSampleDetail,
-  AccessionSampleWithRelations,
+  OrderSampleListItem,
+  OrderSampleDetail,
+  OrderSampleWithRelations,
   AccessionSummary,
+  OrderSampleGroup,
+  GroupedSampleItem,
+  SampleActionScope,
+  AccessionGroupType,
 } from './entities/accession-sample.entity';
 import {
   AccessionNumberConflictException,
-  AccessionSampleNotFoundException,
+  OrderSampleNotFoundException,
   InvalidSampleTransitionException,
   NoActiveLabelTemplateException,
   AmbiguousLabelTemplateException,
@@ -63,18 +68,23 @@ export interface AccessionHistoryActor {
   actorRole: string | null;
 }
 
-/** A grouping bucket accumulated while generating samples for an order. */
-interface SampleGroup {
-  sampleType: string | null;
-  containerType: ContainerType | null;
-  label: string;
-  /** order-item id → snapshot test name (deduped per group). */
-  items: Map<string, string | null>;
+/**
+ * A single resolved (test × required sample) unit accumulated while generating an
+ * order's samples — one `OrderSample` row is created per unit. A `sample` of null
+ * is a test/item that resolved no `LabTestSample` (e.g. a `direct` free-text
+ * item); such units are skipped since `labTestSampleId` is mandatory.
+ */
+interface SampleUnit {
+  orderItemId: string;
+  labTestId: string | null;
+  testName: string | null;
+  departmentId: string | null;
+  sample: LabTestSample | null;
 }
 
 /** The scalar field writes + optional history reason an action applies. */
 interface ActionPatch {
-  data: Prisma.AccessionSampleUpdateInput;
+  data: Prisma.OrderSampleUpdateInput;
   reason?: string;
 }
 
@@ -82,10 +92,24 @@ interface ActionPatch {
 interface ActionNote {
   notes?: string;
   attachmentUrl?: string;
+  /**
+   * When true (group actions — "send all + skip invalid"), a bulk transition
+   * silently skips samples not in a legal state for the action instead of
+   * failing the whole request. Omitted/false = strict (single-item + normal
+   * multi-select bulk), preserving all-or-nothing behavior.
+   */
+  skipInvalid?: boolean;
+  /**
+   * When true (group status actions — "direct status override"), the action is
+   * applied to the sample **regardless of its current status**: the transition
+   * legality check is skipped and the sample is set to the action's fixed
+   * `FORCE_TARGET` status. `retrieve` is never forced (no forced target).
+   */
+  force?: boolean;
 }
 
 /**
- * Accession samples — the core per-tube entity of the accession module.
+ * Order samples — the core per-(test × sample) entity of the accession module.
  * Tenant-scoped (RLS) + branch-level (CLAUDE.md §4.5/§4.7).
  *
  * Owns: (a) generating a diagnostic order's samples when it is confirmed
@@ -94,12 +118,12 @@ interface ActionNote {
  * (c) the PDF §A.9 sample state machine — every action (`collect`/`accept`/… and
  * the transfer entry points) validates the transition, moves `status`, records
  * `previousStatus` for the universal Retrieve/undo, and appends an immutable
- * `AccessionStatusHistory` row, all in one `withTenant` transaction. Each action
+ * `OrderSampleStatusHistory` row, all in one `withTenant` transaction. Each action
  * has a single-item and a bulk (`ids[]`) variant looping inside one transaction
  * (PDF §A.11). Reads always filter `{ tenantId, deletedAt: null }`.
  */
 @Injectable()
-export class AccessionSampleService {
+export class OrderSampleService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly settings: AccessionSettingsService,
@@ -111,16 +135,18 @@ export class AccessionSampleService {
   // ── Sample generation (order → accession) ─────────────────────────────────
 
   /**
-   * Generate the accession samples for an order inside an existing (already
-   * tenant-scoped) transaction. Groups the order's items by their required
-   * sample (container + sample type). A single-test item's requirement comes
-   * from its own `BranchLabTest.configSnapshot.samples`; a panel item has no
-   * `branchLabTest` of its own, so its requirement is the union of its
-   * constituent tests' `configSnapshot.samples` (see `samplesOfPanel`). Creates
-   * one `AccessionSample` (status `NEW`) per group, each linked to the
-   * contributing order items via `AccessionSampleTest` and seeded with an initial
-   * `AccessionStatusHistory` row. Idempotent per order: skips generation if the
-   * order already has samples.
+   * Generate the order samples for an order inside an existing (already
+   * tenant-scoped) transaction. Produces **one `OrderSample` row per (test ×
+   * required sample)**: every ordered individual test contributes one row per
+   * `LabTestSample` it requires, and every lab panel is expanded into its
+   * constituent tests (via `BranchLabPanelTest`) which each contribute the same
+   * way. Each row carries `labTestSampleId` (→ `lab_test_samples`) and the test's
+   * `departmentId`, is linked to its originating order item via `OrderSampleTest`,
+   * and is seeded with an initial `OrderSampleStatusHistory` row (status `NEW`).
+   * A test/item that resolves no sample (e.g. a `direct` free-text line) is
+   * skipped, since `labTestSampleId` is mandatory — the lab-test module enforces
+   * that every real test has at least one `LabTestSample`. Idempotent per order:
+   * skips generation if the order already has samples.
    * @param tx active Prisma transaction client (already tenant-scoped)
    * @param tenantId tenant scope
    * @param branchId active branch (origin + processing branch; may be null)
@@ -134,7 +160,7 @@ export class AccessionSampleService {
     personId: string | null,
     orderId: string,
   ): Promise<void> {
-    const existing = await tx.accessionSample.count({
+    const existing = await tx.orderSample.count({
       where: { orderId, tenantId, deletedAt: null },
     });
     if (existing > 0) return;
@@ -145,61 +171,67 @@ export class AccessionSampleService {
     });
     if (items.length === 0) return;
 
-    const groups = new Map<string, SampleGroup>();
+    // Flatten the order into (test × sample) units — panels expanded to tests.
+    const units: SampleUnit[] = [];
     for (const item of items) {
-      const testName =
-        item.branchLabTest?.testName ??
-        item.branchLabPanel?.panelName ??
-        item.direct ??
-        null;
-      const samples = item.branchLabTest
-        ? this.samplesOf(item.branchLabTest.configSnapshot)
-        : item.branchLabPanel
-          ? await this.samplesOfPanel(tx, tenantId, item.branchLabPanel.id)
-          : [];
-      if (samples.length === 0) {
-        this.addToGroup(groups, null, null, item.id, testName);
-        continue;
-      }
-      for (const s of samples) {
-        this.addToGroup(
-          groups,
-          s.sampleType ?? null,
-          s.containerType ?? null,
+      if (item.branchLabTest) {
+        await this.collectTestUnits(
+          tx,
+          tenantId,
           item.id,
-          testName,
+          item.branchLabTest,
+          units,
         );
+      } else if (item.branchLabPanel) {
+        const tests = await this.panelConstituentTests(
+          tx,
+          tenantId,
+          item.branchLabPanel.id,
+        );
+        for (const test of tests) {
+          await this.collectTestUnits(tx, tenantId, item.id, test, units);
+        }
       }
+      // `direct` free-text items resolve no LabTestSample and are skipped.
     }
 
-    for (const group of groups.values()) {
+    for (const unit of units) {
+      if (!unit.sample) continue; // labTestSampleId is mandatory
       const tenant = await tx.tenant.update({
         where: { id: tenantId },
         data: { accessionCounter: { increment: 1 } },
         select: { accessionCounter: true },
       });
       const accessionNo = `ACC-${String(tenant.accessionCounter).padStart(5, '0')}`;
-      await tx.accessionSample.create({
+      await tx.orderSample.create({
         data: {
           tenantId,
           branchId,
           orderId,
+          labTestId: unit.labTestId,
+          labTestSampleId: unit.sample.id,
+          departmentId: unit.departmentId,
           accessionNo,
-          sampleType: group.sampleType,
-          containerType: group.containerType,
-          sampleGroupLabel: group.label,
+          sampleType: unit.sample.sampleType,
+          containerType: unit.sample.containerType,
+          sampleGroupLabel:
+            unit.sample.sampleName ??
+            unit.sample.sampleType ??
+            unit.sample.containerType ??
+            'General',
           status: SampleStatus.NEW,
           originBranchId: branchId,
           processingBranchId: branchId,
           createdBy: personId,
           updatedBy: personId,
           tests: {
-            create: [...group.items.entries()].map(([orderItemId, name]) => ({
+            create: {
               tenantId,
               branchId,
-              orderItemId,
-              testName: name,
-            })),
+              orderItemId: unit.orderItemId,
+              labTestId: unit.labTestId,
+              testName: unit.testName,
+            },
           },
           statusHistory: {
             create: {
@@ -242,7 +274,7 @@ export class AccessionSampleService {
     orderItemId: string,
     opts: { print: boolean },
   ): Promise<void> {
-    const samples = await tx.accessionSample.findMany({
+    const samples = await tx.orderSample.findMany({
       where: {
         tenantId,
         deletedAt: null,
@@ -285,7 +317,7 @@ export class AccessionSampleService {
       // A tube is drawn once → every test it carries is collected together.
       // Stamp all sibling order items on this sample (preserve already-set
       // timestamps via `collectedAt: null`).
-      const siblings = await tx.accessionSampleTest.findMany({
+      const siblings = await tx.orderSampleTest.findMany({
         where: { sampleId: s.id, tenantId, deletedAt: null },
         select: { orderItemId: true },
       });
@@ -319,7 +351,7 @@ export class AccessionSampleService {
     tenantId: string,
     branchId: string | null,
     query: ListSamplesDto,
-  ): Promise<PaginatedResult<AccessionSampleListItem>> {
+  ): Promise<PaginatedResult<OrderSampleListItem>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const nowMs = Date.now();
@@ -331,21 +363,188 @@ export class AccessionSampleService {
     // both queries — array-form bypasses the per-op RLS extension and returns
     // zero rows under enforced RLS (see PrismaService).
     const [data, total] = await this.prisma.withTenant(tenantId, async (tx) => {
-      const rows = await tx.accessionSample.findMany({
+      const rows = await tx.orderSample.findMany({
         where,
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { createdAt: 'desc' },
         include: SAMPLE_LIST_INCLUDE,
       });
-      const count = await tx.accessionSample.count({ where });
+      const count = await tx.orderSample.count({ where });
       return [rows, count] as const;
     });
-    const items: AccessionSampleListItem[] = data.map((row) => ({
+    const items: OrderSampleListItem[] = data.map((row) => ({
       ...row,
       tatStatus: deriveTatStatus(row.createdAt, row.status, tat, nowMs),
     }));
     return paginated(items, total, page, limit);
+  }
+
+  /**
+   * Grouped in-house list — the same filters as `findAll`, but records are
+   * grouped and **paginated by group** (10 groups/page) per the tenant's
+   * `AccessionGroupingMode` (Grouping Settings). The grouping/pagination unit is
+   * the order (`SAMPLE_NAME`/`ORDER`) or the department (`DEPARTMENT`/
+   * `DEPARTMENT_SAMPLE_NAME`), so each top-level group renders whole. Each group
+   * carries the `actionScope` its action button applies to and the flat
+   * `sampleIds` that button targets; `DEPARTMENT_SAMPLE_NAME` additionally nests
+   * `subGroups` by sample name. Reuses `buildSampleWhere` + `deriveTatStatus`.
+   * @param tenantId tenant scope (from JWT)
+   * @param branchId active branch (from JWT profile)
+   * @param query pagination + the §A.3 filters (status tab, search, dates, …)
+   */
+  async findAllGrouped(
+    tenantId: string,
+    branchId: string | null,
+    query: ListSamplesDto,
+  ): Promise<PaginatedResult<OrderSampleGroup>> {
+    const page = query.page ?? 1;
+    const limit = 10; // group-aware pagination: 10 groups per page
+    const nowMs = Date.now();
+    const tat = await this.tatThresholds(tenantId, branchId);
+    const where = this.buildSampleWhere(tenantId, branchId, query, tat, nowMs);
+
+    const { keys, total, rows, mode } = await this.prisma.withTenant(
+      tenantId,
+      async (tx) => {
+        const tenant = await tx.tenant.findUnique({
+          where: { id: tenantId },
+          select: { groupingMode: true },
+        });
+        const mode =
+          tenant?.groupingMode ?? AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME;
+        const byDepartment =
+          mode === AccessionGroupingMode.DEPARTMENT ||
+          mode === AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME;
+
+        // Page of group keys (ordered by most-recent sample) + total group count.
+        const [pageGroups, allGroups] = byDepartment
+          ? await Promise.all([
+              tx.orderSample.groupBy({
+                by: ['departmentId'],
+                where,
+                orderBy: { _max: { createdAt: 'desc' } },
+                skip: (page - 1) * limit,
+                take: limit,
+              }),
+              tx.orderSample.groupBy({ by: ['departmentId'], where }),
+            ])
+          : await Promise.all([
+              tx.orderSample.groupBy({
+                by: ['orderId'],
+                where,
+                orderBy: { _max: { createdAt: 'desc' } },
+                skip: (page - 1) * limit,
+                take: limit,
+              }),
+              tx.orderSample.groupBy({ by: ['orderId'], where }),
+            ]);
+        const keys: (string | null)[] = byDepartment
+          ? (pageGroups as { departmentId: string | null }[]).map(
+              (g) => g.departmentId,
+            )
+          : (pageGroups as { orderId: string }[]).map((g) => g.orderId);
+
+        // Fetch all samples belonging to this page's groups.
+        const nonNull = keys.filter((k): k is string => k !== null);
+        const keyFilter: Prisma.OrderSampleWhereInput = byDepartment
+          ? keys.includes(null)
+            ? {
+                OR: [{ departmentId: { in: nonNull } }, { departmentId: null }],
+              }
+            : { departmentId: { in: nonNull } }
+          : { orderId: { in: nonNull } };
+        const rows = await tx.orderSample.findMany({
+          where: { ...where, ...keyFilter },
+          include: SAMPLE_LIST_INCLUDE,
+          orderBy: { createdAt: 'desc' },
+        });
+        return { keys, total: allGroups.length, rows, mode };
+      },
+    );
+
+    const byDepartment =
+      mode === AccessionGroupingMode.DEPARTMENT ||
+      mode === AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME;
+    const groupType: AccessionGroupType = byDepartment ? 'DEPARTMENT' : 'ORDER';
+    const actionScope: SampleActionScope =
+      mode === AccessionGroupingMode.ORDER
+        ? 'ORDER'
+        : mode === AccessionGroupingMode.DEPARTMENT
+          ? 'DEPARTMENT'
+          : mode === AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME
+            ? 'DEPARTMENT_SAMPLE'
+            : 'SAMPLE';
+
+    // Batch-resolve department names for the rows in view.
+    const deptIds = [
+      ...new Set(
+        rows.map((r) => r.departmentId).filter((v): v is string => !!v),
+      ),
+    ];
+    const deptNameById = new Map<string, string>();
+    if (deptIds.length > 0) {
+      const depts = await this.prisma.withTenant(tenantId, (tx) =>
+        tx.department.findMany({
+          where: { id: { in: deptIds }, tenantId, deletedAt: null },
+          select: { id: true, name: true },
+        }),
+      );
+      depts.forEach((d) => deptNameById.set(d.id, d.name));
+    }
+
+    const toItem = (row: (typeof rows)[number]): GroupedSampleItem => ({
+      ...row,
+      tatStatus: deriveTatStatus(row.createdAt, row.status, tat, nowMs),
+      departmentName: row.departmentId
+        ? (deptNameById.get(row.departmentId) ?? null)
+        : null,
+    });
+
+    // Assemble groups in the paged-key order.
+    const groups: OrderSampleGroup[] = [];
+    for (const key of keys) {
+      const groupRows = rows.filter((r) =>
+        byDepartment ? r.departmentId === key : r.orderId === key,
+      );
+      if (groupRows.length === 0) continue;
+      const items = groupRows.map(toItem);
+      const group: OrderSampleGroup = {
+        groupKey: key,
+        groupType,
+        actionScope,
+        order: byDepartment ? null : (groupRows[0]?.order ?? null),
+        department: byDepartment
+          ? {
+              id: key,
+              name: key ? (deptNameById.get(key) ?? key) : 'Unassigned',
+            }
+          : null,
+        sampleIds: items.map((i) => i.id),
+        samples: items,
+        subGroups: null,
+      };
+      if (mode === AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME) {
+        const bySample = new Map<string, GroupedSampleItem[]>();
+        for (const it of items) {
+          const k = it.sampleGroupLabel ?? 'General';
+          const arr = bySample.get(k);
+          if (arr) arr.push(it);
+          else bySample.set(k, [it]);
+        }
+        group.subGroups = [...bySample.entries()].map(
+          ([sampleKey, samples]) => ({
+            sampleKey,
+            sampleLabel: sampleKey,
+            sampleIds: samples.map((s) => s.id),
+            samples,
+          }),
+        );
+      }
+      groups.push(group);
+    }
+
+    return paginated(groups, total, page, limit);
   }
 
   /**
@@ -359,12 +558,12 @@ export class AccessionSampleService {
     tenantId: string,
     branchId: string | null,
   ): Promise<AccessionSummary> {
-    const where: Prisma.AccessionSampleWhereInput = {
+    const where: Prisma.OrderSampleWhereInput = {
       tenantId,
       branchId,
       deletedAt: null,
     };
-    const grouped = await this.prisma.accessionSample.groupBy({
+    const grouped = await this.prisma.orderSample.groupBy({
       by: ['status'],
       where,
       _count: { _all: true },
@@ -381,7 +580,7 @@ export class AccessionSampleService {
 
     const nowMs = Date.now();
     const tat = await this.tatThresholds(tenantId, branchId);
-    const rows = await this.prisma.accessionSample.findMany({
+    const rows = await this.prisma.orderSample.findMany({
       where,
       select: { createdAt: true, status: true },
     });
@@ -403,15 +602,15 @@ export class AccessionSampleService {
    * order/patient), scoped to the tenant (Sample Overview — PDF §A.10.4).
    * @param id sample id
    * @param tenantId tenant scope
-   * @throws AccessionSampleNotFoundException if missing/soft-deleted/other tenant
+   * @throws OrderSampleNotFoundException if missing/soft-deleted/other tenant
    */
-  async findById(id: string, tenantId: string): Promise<AccessionSampleDetail> {
-    const sample = await this.prisma.accessionSample.findFirst({
+  async findById(id: string, tenantId: string): Promise<OrderSampleDetail> {
+    const sample = await this.prisma.orderSample.findFirst({
       where: { id, tenantId, deletedAt: null },
       include: SAMPLE_INCLUDE,
     });
     if (!sample) {
-      throw new AccessionSampleNotFoundException(id);
+      throw new OrderSampleNotFoundException(id);
     }
     return this.withDepartments(sample, tenantId);
   }
@@ -428,9 +627,9 @@ export class AccessionSampleService {
    * @returns the sample enriched with `departmentLabel` + per-test `department`
    */
   private async withDepartments(
-    sample: AccessionSampleWithRelations,
+    sample: OrderSampleWithRelations,
     tenantId: string,
-  ): Promise<AccessionSampleDetail> {
+  ): Promise<OrderSampleDetail> {
     const deptIdByTest = new Map<string, string | null>();
     for (const t of sample.tests) {
       const deptId =
@@ -493,15 +692,15 @@ export class AccessionSampleService {
    * correctly has an empty trail.
    * @param id sample id
    * @param tenantId tenant scope
-   * @throws AccessionSampleNotFoundException if the sample is missing
+   * @throws OrderSampleNotFoundException if the sample is missing
    */
   async findHistory(
     id: string,
     tenantId: string,
     branchId: string | null,
-  ): Promise<Array<AccessionStatusHistory & AccessionHistoryActor>> {
+  ): Promise<Array<OrderSampleStatusHistory & AccessionHistoryActor>> {
     await this.findById(id, tenantId);
-    const rows = await this.prisma.accessionStatusHistory.findMany({
+    const rows = await this.prisma.orderSampleStatusHistory.findMany({
       where: { sampleId: id, tenantId, deletedAt: null },
       orderBy: { createdAt: 'desc' },
     });
@@ -524,10 +723,10 @@ export class AccessionSampleService {
    * guessing, e.g. if the person has no active profile at this branch anymore.
    */
   private async enrichHistoryActors(
-    rows: AccessionStatusHistory[],
+    rows: OrderSampleStatusHistory[],
     tenantId: string,
     branchId: string | null,
-  ): Promise<Array<AccessionStatusHistory & AccessionHistoryActor>> {
+  ): Promise<Array<OrderSampleStatusHistory & AccessionHistoryActor>> {
     const actorIds = [
       ...new Set(
         rows.map((r) => r.changedBy).filter((id): id is string => Boolean(id)),
@@ -579,7 +778,7 @@ export class AccessionSampleService {
    * Resolves the tenant's active `order_label_print` template (or the
    * caller's explicit `templateId`) and renders it with this sample's real
    * data via `PdfReportTemplateService.generatePdf`.
-   * @throws AccessionSampleNotFoundException if missing/soft-deleted
+   * @throws OrderSampleNotFoundException if missing/soft-deleted
    * @throws NoActiveLabelTemplateException if no active template exists
    * @throws AmbiguousLabelTemplateException if multiple exist and no
    * `templateId` was given
@@ -607,7 +806,7 @@ export class AccessionSampleService {
    * every sample folded into a single repeating `sections.labels` row-set —
    * same flattened-section approach as `LabReportService.printAllForOrder`
    * (the renderer only expands one level of `{{#each}}`).
-   * @throws AccessionSampleNotFoundException if any sample id is missing
+   * @throws OrderSampleNotFoundException if any sample id is missing
    * @throws NoActiveLabelTemplateException if no active template exists
    * @throws AmbiguousLabelTemplateException if multiple exist and no
    * `templateId` was given
@@ -661,7 +860,7 @@ export class AccessionSampleService {
 
   /** Flat `{variable}` values for one sample's label. */
   private buildLabelVariables(
-    sample: AccessionSampleWithRelations,
+    sample: OrderSampleWithRelations,
   ): Record<string, unknown> {
     const patient = sample.order?.patient;
     return {
@@ -690,9 +889,7 @@ export class AccessionSampleService {
   }
 
   /** Render context for a single-sample label print. */
-  private buildLabelContext(
-    sample: AccessionSampleWithRelations,
-  ): GeneratePdfDto {
+  private buildLabelContext(sample: OrderSampleWithRelations): GeneratePdfDto {
     return { variables: this.buildLabelVariables(sample) };
   }
 
@@ -704,7 +901,7 @@ export class AccessionSampleService {
     tenantId: string,
     personId: string | null,
     dto: CollectSampleDto,
-  ): Promise<AccessionSampleWithRelations[]> {
+  ): Promise<OrderSampleWithRelations[]> {
     return this.transitionIds(
       ids,
       tenantId,
@@ -727,7 +924,7 @@ export class AccessionSampleService {
     tenantId: string,
     personId: string | null,
     dto: CollectSampleDto,
-  ): Promise<AccessionSampleWithRelations[]> {
+  ): Promise<OrderSampleWithRelations[]> {
     return this.transitionIds(
       ids,
       tenantId,
@@ -751,7 +948,7 @@ export class AccessionSampleService {
     tenantId: string,
     personId: string | null,
     dto: AcceptSampleDto,
-  ): Promise<AccessionSampleWithRelations[]> {
+  ): Promise<OrderSampleWithRelations[]> {
     const now = new Date();
     return this.transitionIds(
       ids,
@@ -775,7 +972,7 @@ export class AccessionSampleService {
     tenantId: string,
     personId: string | null,
     dto: SampleNoteDto,
-  ): Promise<AccessionSampleWithRelations[]> {
+  ): Promise<OrderSampleWithRelations[]> {
     return this.transitionIds(
       ids,
       tenantId,
@@ -792,7 +989,7 @@ export class AccessionSampleService {
     tenantId: string,
     personId: string | null,
     dto: SampleNoteDto,
-  ): Promise<AccessionSampleWithRelations[]> {
+  ): Promise<OrderSampleWithRelations[]> {
     return this.transitionIds(
       ids,
       tenantId,
@@ -809,7 +1006,7 @@ export class AccessionSampleService {
     tenantId: string,
     personId: string | null,
     dto: SampleNoteDto,
-  ): Promise<AccessionSampleWithRelations[]> {
+  ): Promise<OrderSampleWithRelations[]> {
     const samples = await this.transitionIds(
       ids,
       tenantId,
@@ -830,7 +1027,7 @@ export class AccessionSampleService {
     tenantId: string,
     personId: string | null,
     dto: SampleNoteDto,
-  ): Promise<AccessionSampleWithRelations[]> {
+  ): Promise<OrderSampleWithRelations[]> {
     return this.transitionIds(
       ids,
       tenantId,
@@ -847,7 +1044,7 @@ export class AccessionSampleService {
     tenantId: string,
     personId: string | null,
     dto: RepeatSampleDto,
-  ): Promise<AccessionSampleWithRelations[]> {
+  ): Promise<OrderSampleWithRelations[]> {
     const samples = await this.transitionIds(
       ids,
       tenantId,
@@ -888,7 +1085,7 @@ export class AccessionSampleService {
     tenantId: string,
     personId: string | null,
     dto: StoreSampleDto,
-  ): Promise<AccessionSampleWithRelations[]> {
+  ): Promise<OrderSampleWithRelations[]> {
     return this.transitionIds(
       ids,
       tenantId,
@@ -905,7 +1102,7 @@ export class AccessionSampleService {
     tenantId: string,
     personId: string | null,
     dto: DiscardSampleDto,
-  ): Promise<AccessionSampleWithRelations[]> {
+  ): Promise<OrderSampleWithRelations[]> {
     return this.transitionIds(
       ids,
       tenantId,
@@ -922,7 +1119,7 @@ export class AccessionSampleService {
     tenantId: string,
     personId: string | null,
     dto: ReturnSampleDto,
-  ): Promise<AccessionSampleWithRelations[]> {
+  ): Promise<OrderSampleWithRelations[]> {
     return this.transitionIds(
       ids,
       tenantId,
@@ -941,7 +1138,7 @@ export class AccessionSampleService {
     tenantId: string,
     personId: string | null,
     dto: CancelSampleDto,
-  ): Promise<AccessionSampleWithRelations[]> {
+  ): Promise<OrderSampleWithRelations[]> {
     return this.transitionIds(
       ids,
       tenantId,
@@ -962,7 +1159,7 @@ export class AccessionSampleService {
     tenantId: string,
     personId: string | null,
     dto: SampleNoteDto,
-  ): Promise<AccessionSampleWithRelations[]> {
+  ): Promise<OrderSampleWithRelations[]> {
     return this.transitionIds(
       ids,
       tenantId,
@@ -985,7 +1182,7 @@ export class AccessionSampleService {
     tenantId: string,
     personId: string | null,
     dto: AssignBarcodeDto,
-  ): Promise<AccessionSampleWithRelations[]> {
+  ): Promise<OrderSampleWithRelations[]> {
     return this.mutateIds(
       ids,
       tenantId,
@@ -1006,7 +1203,7 @@ export class AccessionSampleService {
     tenantId: string,
     personId: string | null,
     dto: SampleNoteDto,
-  ): Promise<AccessionSampleWithRelations[]> {
+  ): Promise<OrderSampleWithRelations[]> {
     return this.mutateIds(
       ids,
       tenantId,
@@ -1027,7 +1224,7 @@ export class AccessionSampleService {
     tenantId: string,
     personId: string | null,
     dto: ShareSampleDto,
-  ): Promise<AccessionSampleWithRelations> {
+  ): Promise<OrderSampleWithRelations> {
     const [sample] = await this.mutateIds(
       [id],
       tenantId,
@@ -1050,7 +1247,7 @@ export class AccessionSampleService {
    * so the transfer service can drive a sample transition + create/close its
    * `SampleTransfer` atomically in one transaction.
    * @returns the updated sample row
-   * @throws AccessionSampleNotFoundException / InvalidSampleTransitionException
+   * @throws OrderSampleNotFoundException / InvalidSampleTransitionException
    */
   async transitionInTx(
     tx: Prisma.TransactionClient,
@@ -1058,18 +1255,23 @@ export class AccessionSampleService {
     personId: string | null,
     sampleId: string,
     action: SampleAction,
-    build: (sample: AccessionSample) => ActionPatch,
+    build: (sample: OrderSample) => ActionPatch,
     note: ActionNote = {},
-  ): Promise<AccessionSample> {
-    const sample = await tx.accessionSample.findFirst({
+  ): Promise<OrderSample> {
+    const sample = await tx.orderSample.findFirst({
       where: { id: sampleId, tenantId, deletedAt: null },
     });
-    if (!sample) throw new AccessionSampleNotFoundException(sampleId);
+    if (!sample) throw new OrderSampleNotFoundException(sampleId);
 
+    // Group status actions force a direct override: the sample is moved to the
+    // action's fixed target status regardless of its current status (no legality
+    // check). `retrieve` has no forced target, so it keeps its normal behaviour.
+    const forced = note.force ? FORCE_TARGET[action] : undefined;
     const toStatus =
-      action === 'retrieve'
+      forced ??
+      (action === 'retrieve'
         ? (nextSampleStatus('retrieve', sample.status) ?? sample.previousStatus)
-        : nextSampleStatus(action, sample.status);
+        : nextSampleStatus(action, sample.status));
     if (!toStatus) {
       throw new InvalidSampleTransitionException(action, sample.status);
     }
@@ -1097,7 +1299,7 @@ export class AccessionSampleService {
     }
 
     const built = build(sample);
-    const updated = await tx.accessionSample.update({
+    const updated = await tx.orderSample.update({
       where: { id: sample.id },
       data: {
         ...built.data,
@@ -1106,7 +1308,7 @@ export class AccessionSampleService {
         updatedBy: personId,
       },
     });
-    await tx.accessionStatusHistory.create({
+    await tx.orderSampleStatusHistory.create({
       data: {
         tenantId,
         branchId: sample.branchId,
@@ -1126,7 +1328,7 @@ export class AccessionSampleService {
   /**
    * Apply a validated §A.9 transition to each id inside one tenant-scoped
    * transaction (loops `transitionInTx`). All-or-nothing across the id set.
-   * @throws AccessionSampleNotFoundException / InvalidSampleTransitionException
+   * @throws OrderSampleNotFoundException / InvalidSampleTransitionException
    * @throws AccessionNumberConflictException on a barcode clash (collect & print)
    */
   private async transitionIds(
@@ -1134,23 +1336,36 @@ export class AccessionSampleService {
     tenantId: string,
     personId: string | null,
     action: SampleAction,
-    build: (sample: AccessionSample) => ActionPatch,
+    build: (sample: OrderSample) => ActionPatch,
     note: ActionNote = {},
-  ): Promise<AccessionSampleWithRelations[]> {
+  ): Promise<OrderSampleWithRelations[]> {
     let changed: string[];
     try {
       changed = await this.prisma.withTenant(tenantId, async (tx) => {
         const done: string[] = [];
         for (const id of ids) {
-          const updated = await this.transitionInTx(
-            tx,
-            tenantId,
-            personId,
-            id,
-            action,
-            build,
-            note,
-          );
+          let updated: OrderSample;
+          try {
+            updated = await this.transitionInTx(
+              tx,
+              tenantId,
+              personId,
+              id,
+              action,
+              build,
+              note,
+            );
+          } catch (e) {
+            // Group actions ("send all + skip invalid"): skip a sample that is
+            // not in a legal state for this action; surface everything else.
+            if (
+              note.skipInvalid &&
+              e instanceof InvalidSampleTransitionException
+            ) {
+              continue;
+            }
+            throw e;
+          }
           done.push(updated.id);
           if (updated.status === SampleStatus.ACCEPTED) {
             await this.ensureLabReportsForAcceptedSample(
@@ -1175,7 +1390,7 @@ export class AccessionSampleService {
    * ensureCreatedForAcceptedItem` doc comment): once a sample transitions to
    * `ACCEPTED`, create a `LabReport` for every `OrderItem` it serves — one
    * sample can carry several order items (e.g. one EDTA tube for both CBC and
-   * HbA1c), via the `AccessionSampleTest` junction, so this creates one report
+   * HbA1c), via the `OrderSampleTest` junction, so this creates one report
    * per linked item, not one per sample. Runs inside the caller's transaction
    * so report creation and the sample's own status change commit atomically.
    * Idempotent (delegates to `ensureCreatedForAcceptedItem`, a no-op if a
@@ -1183,7 +1398,7 @@ export class AccessionSampleService {
    *
    * Public (not private) so `SampleTransferService.cloneIntoDestination` —
    * the other real path into `ACCEPTED` (RULE 1, internal transfer accept,
-   * which creates a new `AccessionSample` directly rather than transitioning
+   * which creates a new `OrderSample` directly rather than transitioning
    * an existing one through `transitionIds`) — can call it too, keeping one
    * single place that knows how to create LabReports for an accepted sample.
    */
@@ -1193,7 +1408,7 @@ export class AccessionSampleService {
     sampleId: string,
     acceptedBy: string | null,
   ): Promise<void> {
-    const sampleTests = await tx.accessionSampleTest.findMany({
+    const sampleTests = await tx.orderSampleTest.findMany({
       where: { sampleId, tenantId, deletedAt: null },
       select: { orderItemId: true },
     });
@@ -1210,31 +1425,31 @@ export class AccessionSampleService {
   /**
    * Apply a no-status-change mutation (assign-barcode / update notes) to each id
    * in one transaction, appending a history row that keeps the current status.
-   * @throws AccessionSampleNotFoundException / AccessionNumberConflictException
+   * @throws OrderSampleNotFoundException / AccessionNumberConflictException
    */
   private async mutateIds(
     ids: string[],
     tenantId: string,
     personId: string | null,
     action: string,
-    build: (sample: AccessionSample) => ActionPatch,
+    build: (sample: OrderSample) => ActionPatch,
     note: ActionNote,
-  ): Promise<AccessionSampleWithRelations[]> {
+  ): Promise<OrderSampleWithRelations[]> {
     let changed: string[];
     try {
       changed = await this.prisma.withTenant(tenantId, async (tx) => {
         const done: string[] = [];
         for (const id of ids) {
-          const sample = await tx.accessionSample.findFirst({
+          const sample = await tx.orderSample.findFirst({
             where: { id, tenantId, deletedAt: null },
           });
-          if (!sample) throw new AccessionSampleNotFoundException(id);
+          if (!sample) throw new OrderSampleNotFoundException(id);
           const built = build(sample);
-          await tx.accessionSample.update({
+          await tx.orderSample.update({
             where: { id: sample.id },
             data: { ...built.data, updatedBy: personId },
           });
-          await tx.accessionStatusHistory.create({
+          await tx.orderSampleStatusHistory.create({
             data: {
               tenantId,
               branchId: sample.branchId,
@@ -1274,8 +1489,8 @@ export class AccessionSampleService {
     query: ListSamplesDto,
     tat: TatThresholds,
     nowMs: number,
-  ): Prisma.AccessionSampleWhereInput {
-    const where: Prisma.AccessionSampleWhereInput = {
+  ): Prisma.OrderSampleWhereInput {
+    const where: Prisma.OrderSampleWhereInput = {
       tenantId,
       branchId,
       deletedAt: null,
@@ -1328,7 +1543,7 @@ export class AccessionSampleService {
       order.diagnostics = { is: { isHomeVisit: true } };
     }
 
-    const and: Prisma.AccessionSampleWhereInput[] = [];
+    const and: Prisma.OrderSampleWhereInput[] = [];
     if (query.search) {
       and.push({
         OR: [
@@ -1357,7 +1572,7 @@ export class AccessionSampleService {
   private applyOrderMode(
     mode: OrderMode | undefined,
     order: Prisma.OrderWhereInput,
-    and: Prisma.AccessionSampleWhereInput[],
+    and: Prisma.OrderSampleWhereInput[],
   ): void {
     switch (mode) {
       case 'Home Visit':
@@ -1428,71 +1643,142 @@ export class AccessionSampleService {
   }
 
   /**
-   * Sample/container requirements for a panel — the union of its constituent
-   * tests' `configSnapshot.samples` (deduped by sample+container type, since
-   * a multi-test panel commonly has several tests sharing the same tube).
-   * A panel order item has no `branchLabTest` of its own (it's the panel's
-   * own row, not one test), so `generateForOrderInTx` couldn't previously see
-   * any sample requirement here at all — accession samples for panels always
-   * got `sampleType`/`containerType: null` even though the underlying tests'
-   * snapshots have this data (same `BranchLabTest` rows a standalone order of
-   * the same test would use).
+   * Sample/container requirements for a branch lab test. Reads the LIVE
+   * `LabTestSample` rows of the source Master Data test (via `sourceLabTestId`)
+   * so a sample/container configured — or edited — AFTER the branch pricing-list
+   * copies were created still reaches accession. The per-list `configSnapshot`
+   * is a frozen point-in-time copy that is NOT refreshed when Master Data
+   * samples change, so it's only used as a fallback (e.g. a SITE_ADMIN template
+   * whose sample config lives solely in the snapshot, or a deleted source).
    */
-  private async samplesOfPanel(
+  private async samplesForTest(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sourceLabTestId: string | null,
+    snapshot: Prisma.JsonValue | undefined,
+  ): Promise<LabTestSample[]> {
+    if (sourceLabTestId) {
+      const live = await tx.labTestSample.findMany({
+        where: { labTestId: sourceLabTestId, tenantId, deletedAt: null },
+        orderBy: { createdAt: 'asc' },
+      });
+      if (live.length > 0) return live;
+    }
+    return this.samplesOf(snapshot);
+  }
+
+  /**
+   * Resolve every (test × required sample) unit a single branch lab test
+   * contributes and append them to `units`. Reads the test's live/snapshot
+   * `LabTestSample` rows (see `samplesForTest`) — one unit per sample — and
+   * resolves the test's department once. A test with no resolvable sample yields
+   * a single sample-less unit (skipped at creation, since `labTestSampleId` is
+   * mandatory). `labTestId` is the source Master Data test id (the same test that
+   * owns the `LabTestSample` rows).
+   */
+  private async collectTestUnits(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    orderItemId: string,
+    test: {
+      testName: string | null;
+      departmentId: string | null;
+      sourceLabTestId: string | null;
+      configSnapshot: Prisma.JsonValue;
+    },
+    units: SampleUnit[],
+  ): Promise<void> {
+    const departmentId = await this.resolveDepartmentId(
+      tx,
+      tenantId,
+      test.departmentId,
+      test.sourceLabTestId,
+    );
+    const labTestId = test.sourceLabTestId ?? null;
+    const samples = await this.samplesForTest(
+      tx,
+      tenantId,
+      test.sourceLabTestId,
+      test.configSnapshot,
+    );
+    if (samples.length === 0) {
+      units.push({
+        orderItemId,
+        labTestId,
+        testName: test.testName,
+        departmentId,
+        sample: null,
+      });
+      return;
+    }
+    for (const sample of samples) {
+      units.push({
+        orderItemId,
+        labTestId,
+        testName: test.testName,
+        departmentId,
+        sample,
+      });
+    }
+  }
+
+  /**
+   * The constituent branch lab tests of a panel (via the `BranchLabPanelTest`
+   * junction — a logical ref, so the tests are fetched separately), carrying the
+   * fields needed to resolve each one's samples + department. A panel order item
+   * has no `branchLabTest` of its own, so this is how it's expanded into tests.
+   */
+  private async panelConstituentTests(
     tx: Prisma.TransactionClient,
     tenantId: string,
     branchLabPanelId: string,
-  ): Promise<LabTestSample[]> {
-    // `BranchLabPanelTest.branchLabTestId` is a logical ref (no Prisma relation
-    // — see the model's doc comment), so the linked tests are fetched separately.
+  ): Promise<
+    {
+      testName: string | null;
+      departmentId: string | null;
+      sourceLabTestId: string | null;
+      configSnapshot: Prisma.JsonValue;
+    }[]
+  > {
     const panelTests = await tx.branchLabPanelTest.findMany({
       where: { tenantId, branchLabPanelId, deletedAt: null },
       select: { branchLabTestId: true },
     });
     if (panelTests.length === 0) return [];
-    const tests = await tx.branchLabTest.findMany({
+    return tx.branchLabTest.findMany({
       where: {
         id: { in: panelTests.map((pt) => pt.branchLabTestId) },
         tenantId,
         deletedAt: null,
       },
-      select: { configSnapshot: true },
+      select: {
+        testName: true,
+        departmentId: true,
+        sourceLabTestId: true,
+        configSnapshot: true,
+      },
     });
-    const seen = new Set<string>();
-    const samples: LabTestSample[] = [];
-    for (const test of tests) {
-      for (const s of this.samplesOf(test.configSnapshot)) {
-        const key = `${s.containerType ?? ''}|${s.sampleType ?? ''}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        samples.push(s);
-      }
-    }
-    return samples;
   }
 
-  /** Add an order item to its sample group (keyed by container + sample type). */
-  private addToGroup(
-    groups: Map<string, SampleGroup>,
-    sampleType: string | null,
-    containerType: ContainerType | null,
-    orderItemId: string,
-    testName: string | null,
-  ): void {
-    const key = `${containerType ?? ''}|${sampleType ?? ''}`;
-    let group = groups.get(key);
-    if (!group) {
-      group = {
-        sampleType,
-        containerType,
-        label: sampleType ?? containerType ?? 'General',
-        items: new Map(),
-      };
-      groups.set(key, group);
+  /**
+   * Resolve a test's department id: prefer the branch test's own logical
+   * `departmentId`, falling back to its source Master Data test's `departmentId`.
+   */
+  private async resolveDepartmentId(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    branchDepartmentId: string | null,
+    sourceLabTestId: string | null,
+  ): Promise<string | null> {
+    if (branchDepartmentId) return branchDepartmentId;
+    if (sourceLabTestId) {
+      const src = await tx.labTest.findFirst({
+        where: { id: sourceLabTestId, tenantId, deletedAt: null },
+        select: { departmentId: true },
+      });
+      return src?.departmentId ?? null;
     }
-    if (!group.items.has(orderItemId)) {
-      group.items.set(orderItemId, testName);
-    }
+    return null;
   }
 
   /**

@@ -1,0 +1,21 @@
+meta {
+  name: 17 Delete Report Attachment
+  type: http
+  seq: 17
+}
+
+delete {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/attachments/{{labReportAttachmentId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Remove one attachment from a report (hard delete — the model has no soft-delete
+  column). Gated on the technician-notes permission. Uses `labReportAttachmentId`
+  captured by the list/create requests. Returns `{ id }`.
+}
