@@ -11,7 +11,7 @@ import { PhlebotomistCollectionService } from './phlebotomist-collection.service
  * Schedule, dashboard and reports.
  *
  * Imports (rule #3 — services injected, never imported directly):
- * - `AccessionModule` → `AccessionSampleService` to collect/accept the order's
+ * - `AccessionModule` → `OrderSampleService` to collect/accept the order's
  *   samples through the accession state machine when a collection advances.
  * - `PhlebotomistScheduleModule` → `SlotReservationService` to release/reserve the
  *   phlebotomist slot on reschedule/cancel.

@@ -120,7 +120,7 @@ const STATUS_DISPLAY_ORDER: SampleStatus[] = [
 
 /**
  * Aggregate read-models for the Accession dashboard (`/accession/dashboard`).
- * Distinct from `AccessionSampleService`'s `summary()` (which powers the
+ * Distinct from `OrderSampleService`'s `summary()` (which powers the
  * in-branch sample list's status tabs + TAT bar) — this service supports an
  * optional tenant-wide `branchId` (the dashboard's "All Branches" filter),
  * unlike every other Accession endpoint, which is always locked to the
@@ -206,7 +206,7 @@ export class AccessionDashboardService {
    * statuses always present (zero-filled) so the pill grid's layout never
    * shifts. Every status currently open on an accession sample — unlike
    * {@link getStatsSummary}, this is a live snapshot (no date window), same
-   * as `AccessionSampleService.summary()`'s status tabs.
+   * as `OrderSampleService.summary()`'s status tabs.
    * @param tenantId tenant scope
    * @param branchId branch scope; omitted ("All Branches") aggregates across the whole tenant
    */
@@ -214,7 +214,7 @@ export class AccessionDashboardService {
     tenantId: string,
     branchId?: string | string[],
   ): Promise<AccessionDashboardSlice[]> {
-    const grouped = await this.prisma.accessionSample.groupBy({
+    const grouped = await this.prisma.orderSample.groupBy({
       by: ['status'],
       where: {
         tenantId,
@@ -236,7 +236,7 @@ export class AccessionDashboardService {
    * TAT compliance donut: a count per TAT band (Within TAT / Warning /
    * Breach (Imminent) / Breached), derived live from each sample's age vs
    * the branch's TAT thresholds — same `deriveTatStatus()` utility
-   * `AccessionSampleService.summary()` uses for the in-branch TAT bar.
+   * `OrderSampleService.summary()` uses for the in-branch TAT bar.
    * Terminal samples (discarded/returned/cancelled) have no active TAT and
    * are excluded, same as that method.
    *
@@ -260,7 +260,7 @@ export class AccessionDashboardService {
     const singleBranchId = typeof branchId === 'string' ? branchId : null;
     const tat = await this.tatThresholds(tenantId, singleBranchId);
     const nowMs = Date.now();
-    const samples = await this.prisma.accessionSample.findMany({
+    const samples = await this.prisma.orderSample.findMany({
       where: {
         tenantId,
         ...branchWhere(branchId),
@@ -292,7 +292,7 @@ export class AccessionDashboardService {
    *
    * - TAT Breached: samples in the BREACHED band (same `deriveTatStatus()`
    *   computation as {@link getTatCompliance}).
-   * - Samples On Hold / Repeat Samples: `AccessionSample.status` = HOLD /
+   * - Samples On Hold / Repeat Samples: `OrderSample.status` = HOLD /
    *   REPEAT (live counts, no date window — matches {@link getOrderStatusOverview}).
    * - Rejected Samples: `SampleTransfer.transferStatus = REJECTED`, scoped
    *   by `destinationBranchId` (the receiving branch — the one that made the
@@ -325,7 +325,7 @@ export class AccessionDashboardService {
         : { destinationBranchId: branchId };
 
     const [samples, rejectedCount] = await Promise.all([
-      this.prisma.accessionSample.findMany({
+      this.prisma.orderSample.findMany({
         where: {
           tenantId,
           ...branchWhere(branchId),
@@ -559,7 +559,7 @@ export class AccessionDashboardService {
 
   /**
    * The branch's (or tenant-default, when `branchId` is null) TAT
-   * thresholds in minutes. Mirrors `AccessionSampleService`'s private
+   * thresholds in minutes. Mirrors `OrderSampleService`'s private
    * `tatThresholds()` exactly — duplicated rather than exposed, since it's
    * a small pure computation over `AccessionSettingsService.resolve()`.
    */
@@ -597,7 +597,7 @@ export class AccessionDashboardService {
     externalReferral: number;
     outsourced: number;
   }> {
-    const samples = await this.prisma.accessionSample.findMany({
+    const samples = await this.prisma.orderSample.findMany({
       where: {
         tenantId,
         ...branchWhere(branchId),
@@ -640,7 +640,7 @@ export class AccessionDashboardService {
   }
 
   /**
-   * UTC-midnight boundaries for "today" and "yesterday" — `AccessionSample.
+   * UTC-midnight boundaries for "today" and "yesterday" — `OrderSample.
    * createdAt` is a real timestamp, so any day-boundary comparison must use a
    * fixed UTC reference (same convention as `DashboardService.
    * getUtcTodayBounds`), not server-local midnight.

@@ -5,7 +5,7 @@ meta {
 }
 
 post {
-  url: {{baseUrl}}/accession/samples/{{sampleId}}/outsource
+  url: {{baseUrl}}/accession/order-samples/{{sampleId}}/outsource
   body: json
   auth: bearer
 }
@@ -38,7 +38,7 @@ docs {
   `outsourceCenterId` references an existing `OutsourceCenter` (validated → 404
   `ACCESSION_OUTSOURCE_CENTER_NOT_FOUND` if missing). Third-party labs don't use
   Kalnostic, so tracking is **manual** via `outsourceStatus` (CR-3). Bulk:
-  `POST /accession/samples/bulk/outsource`.
+  `POST /accession/order-samples/bulk/outsource`.
 
   > Set `{{outsourceCenterId}}` from the Outsource Centers folder first.
 }

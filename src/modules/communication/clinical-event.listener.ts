@@ -51,7 +51,7 @@ interface OrderRefundedEvent {
   currency?: string | null;
 }
 
-/** `accession.sample.error` / `accession.sample.repeat` — emitted by AccessionSampleService. */
+/** `accession.sample.error` / `accession.sample.repeat` — emitted by OrderSampleService. */
 interface SampleFlaggedEvent {
   tenantId: string;
   branchId: string | null;

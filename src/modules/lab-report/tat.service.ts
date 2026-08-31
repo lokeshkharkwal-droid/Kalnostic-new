@@ -311,7 +311,7 @@ export class TatService {
     if (!report) throw new LabReportNotFoundException(reportId);
 
     // Earliest acceptedAt among the test's (non-deleted) linked samples = start.
-    const links = await this.prisma.accessionSampleTest.findMany({
+    const links = await this.prisma.orderSampleTest.findMany({
       where: { orderItemId: report.orderItemId, tenantId },
       include: { sample: { select: { acceptedAt: true, deletedAt: true } } },
     });
@@ -626,7 +626,7 @@ export class TatService {
 
     // Earliest acceptedAt per order item, batched across the whole page.
     const orderItemIds = [...new Set(inflight.map((r) => r.orderItemId))];
-    const links = await this.prisma.accessionSampleTest.findMany({
+    const links = await this.prisma.orderSampleTest.findMany({
       where: { orderItemId: { in: orderItemIds }, tenantId },
       include: { sample: { select: { acceptedAt: true, deletedAt: true } } },
     });

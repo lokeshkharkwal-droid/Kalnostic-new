@@ -5,7 +5,7 @@ meta {
 }
 
 post {
-  url: {{baseUrl}}/accession/samples/{{sampleId}}/send
+  url: {{baseUrl}}/accession/order-samples/{{sampleId}}/send
   body: json
   auth: bearer
 }
@@ -45,5 +45,14 @@ docs {
   Send (Internal Transfer) — **Accepted → Sent (Internal)**, creating an INTERNAL
   `SampleTransfer` at `IN_TRANSIT`. `destinationBranchId` is another branch in the
   same tenant (validated); omit it to assign later via **Assign Center** (§A.7).
-  Captures `transferId`. Bulk: `POST /accession/samples/bulk/send` with `ids[]`.
+  Captures `transferId`. Bulk: `POST /accession/order-samples/bulk/send` with `ids[]`.
+
+  ## Group override (bulk) — `force` / `skipInvalid`
+
+  The bulk variant accepts the same group flags as the sample actions. `force:
+  true` (grouped in-house Actions dropdown) creates the transfer for **every** id
+  regardless of its current status, forcing each sample to `SENT_INTERNAL` with no
+  §A.9 legality check. `skipInvalid: true` instead skips ids not in a legal
+  (Accepted) state rather than failing the batch. Same flags apply to
+  `bulk/forward` and `bulk/outsource`.
 }

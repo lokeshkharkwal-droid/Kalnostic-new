@@ -120,7 +120,7 @@ export class NablTatCronService {
         );
       }
 
-      const samples = await tx.accessionSample.findMany({
+      const samples = await tx.orderSample.findMany({
         where: {
           status: SampleStatus.ACCEPTED,
           deletedAt: null,

@@ -1,0 +1,44 @@
+meta {
+  name: 41 Bulk Update Notes (Group)
+  type: http
+  seq: 41
+}
+
+post {
+  url: {{baseUrl}}/accession/order-samples/bulk/update
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "ids": ["{{sampleId}}"],
+    "notes": "Group note added to every sample; no status change",
+    "attachmentUrl": "https://files.example.com/note.pdf"
+  }
+}
+
+tests {
+  test("200/201 OK", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201]);
+  });
+  test("returns an array of updated samples", function () {
+    if (res.getStatus() < 400) expect(res.getBody().data).to.be.an("array");
+  });
+}
+
+docs {
+  Bulk Update Sample Notes (§A.10.3) — the group-level twin of `PATCH
+  /accession/order-samples/:id`. Writes the same `notes` / `attachmentUrl` to
+  **every** id (no status change), used by the grouped in-house page's Actions
+  cell so a note applies to the whole group in one call. Body: `{ ids: [...],
+  notes?, attachmentUrl? }`.
+}

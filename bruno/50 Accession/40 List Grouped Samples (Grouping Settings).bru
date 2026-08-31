@@ -1,0 +1,70 @@
+meta {
+  name: 40 List Grouped Samples (Grouping Settings)
+  type: http
+  seq: 40
+}
+
+get {
+  url: {{baseUrl}}/accession/order-samples/grouped?page=1
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  ~status: NEW
+  ~search: ACC-00001
+  ~tatStatus: WITHIN
+  ~dateFrom: 2026-07-01
+  ~dateTo: 2026-07-31
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("groups carry groupType + actionScope + sampleIds", function () {
+    const d = res.getBody().data;
+    if (d.length) {
+      expect(d[0]).to.have.property("groupType");
+      expect(d[0]).to.have.property("actionScope");
+      expect(d[0]).to.have.property("sampleIds");
+    }
+  });
+}
+
+docs {
+  Grouped, **group-paginated** in-house list (10 groups/page) — the same filters
+  as `01 List Samples`, but records are grouped and the pagination unit is the
+  group, per the tenant's Grouping Settings
+  (`GET/PUT /tenant/accession-settings/grouping-mode`,
+  `AccessionGroupingMode`). The in-house-orders page renders + scopes actions from
+  this response.
+
+  ## Grouping mode → response shape (set via Assessment Settings)
+
+  - `SAMPLE_NAME` (Sample-wise) — `groupType: ORDER`, `actionScope: SAMPLE`
+    (order header, each sample acted on individually).
+  - `ORDER` (Order-wise) — `groupType: ORDER`, `actionScope: ORDER`
+    (one action set for the whole order).
+  - `DEPARTMENT` (Department-wise) — `groupType: DEPARTMENT`,
+    `actionScope: DEPARTMENT` (one action set per department, across orders).
+  - `DEPARTMENT_SAMPLE_NAME` (Department + Sample-wise) — `groupType: DEPARTMENT`,
+    `actionScope: DEPARTMENT_SAMPLE`, with nested `subGroups[]` keyed by sample.
+
+  ## Each group carries
+
+  - `groupKey` — the order id or department id (null = "Unassigned" department).
+  - `order` (ORDER groups) / `department: { id, name }` (DEPARTMENT groups) —
+    header context.
+  - `samples[]` — the group's list rows (each with `tatStatus` + `departmentName`).
+  - `sampleIds[]` — the flat set a group action targets (sent to a `bulk/<action>`
+    with `skipInvalid: true` — see the bulk action requests).
+  - `subGroups[]` — only in `DEPARTMENT_SAMPLE_NAME` mode.
+
+  `meta.total` / `meta.totalPages` count **groups**, not samples.
+}

@@ -7,7 +7,7 @@ import { REPORT_STATUSES } from './constants/report-statuses.constant';
 import { AccessionReportQueryDto } from './dto/accession-report-query.dto';
 
 /** A report row = an exception sample plus the reason recorded for that exception. */
-export type AccessionReportRow = Prisma.AccessionSampleGetPayload<{
+export type AccessionReportRow = Prisma.OrderSampleGetPayload<{
   include: typeof SAMPLE_LIST_INCLUDE;
 }> & { reason: string | null };
 
@@ -33,7 +33,7 @@ export class AccessionReportService {
     tenantId: string,
     branchId: string | null,
   ): Promise<Record<SampleStatus, number>> {
-    const grouped = await this.prisma.accessionSample.groupBy({
+    const grouped = await this.prisma.orderSample.groupBy({
       by: ['status'],
       where: {
         tenantId,
@@ -65,7 +65,7 @@ export class AccessionReportService {
   ): Promise<PaginatedResult<AccessionReportRow>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
-    const where: Prisma.AccessionSampleWhereInput = {
+    const where: Prisma.OrderSampleWhereInput = {
       tenantId,
       branchId,
       deletedAt: null,
@@ -91,7 +91,7 @@ export class AccessionReportService {
     // both queries — array-form bypasses the per-op RLS extension and returns
     // zero rows under enforced RLS (see PrismaService).
     const [data, total] = await this.prisma.withTenant(tenantId, async (tx) => {
-      const rows = await tx.accessionSample.findMany({
+      const rows = await tx.orderSample.findMany({
         where,
         skip: (page - 1) * limit,
         take: limit,
@@ -105,7 +105,7 @@ export class AccessionReportService {
           },
         },
       });
-      const count = await tx.accessionSample.count({ where });
+      const count = await tx.orderSample.count({ where });
       return [rows, count] as const;
     });
     const rows: AccessionReportRow[] = data.map((row) => {

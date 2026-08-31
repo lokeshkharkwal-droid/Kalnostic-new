@@ -1,6 +1,6 @@
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AccessionSettingsService } from './accession-settings.service';
-import { AccessionSampleService } from './accession-sample.service';
+import { OrderSampleService } from './accession-sample.service';
 import { LabReportService } from '../lab-report/lab-report.service';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -13,17 +13,17 @@ import { PrismaService } from '../../prisma/prisma.service';
  * `sampleType`/`containerType: null`. This asserts the fixed behaviour reads
  * the panel's constituent tests' `configSnapshot.samples` instead.
  */
-describe('AccessionSampleService — samplesOfPanel', () => {
+describe('OrderSampleService — samplesOfPanel', () => {
   const txMock = {
     branchLabPanelTest: { findMany: jest.fn() },
     branchLabTest: { findMany: jest.fn() },
   };
 
-  let service: AccessionSampleService;
+  let service: OrderSampleService;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    service = new AccessionSampleService(
+    service = new OrderSampleService(
       {} as unknown as PrismaService,
       {} as unknown as AccessionSettingsService,
       {} as unknown as LabReportService,

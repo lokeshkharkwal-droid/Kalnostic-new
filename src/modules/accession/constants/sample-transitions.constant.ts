@@ -122,6 +122,32 @@ export const COLLECTABLE_SAMPLE_STATUSES: readonly SampleStatus[] = Object.keys(
 ) as SampleStatus[];
 
 /**
+ * The **forced** target status for an action, independent of the sample's current
+ * status. Used by group-level status actions ("direct status override" — every
+ * sample in the group is set to exactly the action's status, regardless of its
+ * previous status; the previous status must NOT block the action). Each action's
+ * target is a single status in `SAMPLE_TRANSITIONS`, so this is that status.
+ * `retrieve` is intentionally excluded — it keeps its "revert to previous status"
+ * behaviour and is never force-applied.
+ */
+export const FORCE_TARGET: Partial<Record<SampleAction, SampleStatus>> = {
+  collect: SampleStatus.COLLECTED,
+  accept: SampleStatus.ACCEPTED,
+  acquire: SampleStatus.ACQUIRED,
+  halt: SampleStatus.HALT,
+  error: SampleStatus.ERROR,
+  hold: SampleStatus.HOLD,
+  repeat: SampleStatus.REPEAT,
+  store: SampleStatus.STORED,
+  discard: SampleStatus.DISCARDED,
+  return: SampleStatus.RETURNED,
+  cancel: SampleStatus.CANCELLED,
+  send: SampleStatus.SENT_INTERNAL,
+  forward: SampleStatus.FORWARD_EXTERNAL,
+  outsource: SampleStatus.OUTSOURCED,
+};
+
+/**
  * Resolve the target status for an action from a given current status, or `null`
  * when the action is not legal from that status (per §A.9).
  * @param action the action being applied

@@ -8,7 +8,7 @@ import { IsIn, IsOptional, IsUUID } from 'class-validator';
  * order documents; lab reports and per-accession-sample labels have their own
  * endpoints. `order_barcode_print` renders a barcode for the ORDER's own
  * identifier (`orderCode`) — distinct from `order_label_print`, which is the
- * per-`AccessionSample` specimen barcode printed via
+ * per-`OrderSample` specimen barcode printed via
  * `POST /accession/samples/print-label(s)`.
  */
 export const ORDER_PRINT_TYPES = [

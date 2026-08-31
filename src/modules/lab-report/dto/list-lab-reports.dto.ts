@@ -98,7 +98,7 @@ export class ListLabReportsDto {
    * "All Sample Status" filter (LABORATORY.docx §3.1) — the real Accession
    * sample-lifecycle enum, matching what `LabReportWorklistRow.sampleStatuses`
    * already returns (see `LabReportService.attachSampleStatuses`). Narrows to
-   * reports where at least one linked `AccessionSample` has this status.
+   * reports where at least one linked `OrderSample` has this status.
    */
   @IsOptional()
   @IsEnum(SampleStatus)

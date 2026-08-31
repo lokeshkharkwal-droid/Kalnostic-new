@@ -5,7 +5,7 @@ import { SampleAction } from '../constants/sample-transitions.constant';
 import { TransferAction } from '../constants/transfer-transitions.constant';
 
 /** 404 — accession sample not found within the caller's tenant/branch. */
-export class AccessionSampleNotFoundException extends KaltrosException {
+export class OrderSampleNotFoundException extends KaltrosException {
   constructor(id: string) {
     super(
       'ACCESSION_SAMPLE_NOT_FOUND',

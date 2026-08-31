@@ -6,7 +6,7 @@ import { TransferStatus } from '@prisma/client';
  * maps the transfer's current `transferStatus` to its next value. The sending side
  * creates a transfer at `IN_TRANSIT` (via the sample's Send/Forward/Outsource
  * action); the universal Retrieve recalls an open transfer (handled in
- * `AccessionSampleService.transitionInTx`, not encoded here).
+ * `OrderSampleService.transitionInTx`, not encoded here).
  */
 export type TransferAction =
   | 'pick-up'

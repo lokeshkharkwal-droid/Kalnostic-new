@@ -1547,35 +1547,35 @@ CREATE POLICY phlebotomist_day_loads_tenant_isolation ON phlebotomist_day_loads
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
--- ── accession_samples ─────────────────────────────────────────────────────────
-ALTER TABLE accession_samples ENABLE ROW LEVEL SECURITY;
-ALTER TABLE accession_samples FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS accession_samples_tenant_isolation ON accession_samples;
-CREATE POLICY accession_samples_tenant_isolation ON accession_samples
+-- ── order_samples ─────────────────────────────────────────────────────────────
+ALTER TABLE order_samples ENABLE ROW LEVEL SECURITY;
+ALTER TABLE order_samples FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS order_samples_tenant_isolation ON order_samples;
+CREATE POLICY order_samples_tenant_isolation ON order_samples
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
 -- Per-tenant unique accession number + barcode among ACTIVE rows (a value freed
 -- by a soft-delete is reusable). Both are system-generated (ACC-00001…/BAR-…).
 -- Prisma can't express partial unique indexes, so they live here.
-CREATE UNIQUE INDEX IF NOT EXISTS accession_samples_tenant_accession_no_active_unique
-  ON accession_samples (tenant_id, accession_no) WHERE deleted_at IS NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS accession_samples_tenant_barcode_active_unique
-  ON accession_samples (tenant_id, barcode) WHERE deleted_at IS NULL AND barcode IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS order_samples_tenant_accession_no_active_unique
+  ON order_samples (tenant_id, accession_no) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS order_samples_tenant_barcode_active_unique
+  ON order_samples (tenant_id, barcode) WHERE deleted_at IS NULL AND barcode IS NOT NULL;
 
--- ── accession_sample_tests ────────────────────────────────────────────────────
-ALTER TABLE accession_sample_tests ENABLE ROW LEVEL SECURITY;
-ALTER TABLE accession_sample_tests FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS accession_sample_tests_tenant_isolation ON accession_sample_tests;
-CREATE POLICY accession_sample_tests_tenant_isolation ON accession_sample_tests
+-- ── order_sample_tests ────────────────────────────────────────────────────────
+ALTER TABLE order_sample_tests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE order_sample_tests FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS order_sample_tests_tenant_isolation ON order_sample_tests;
+CREATE POLICY order_sample_tests_tenant_isolation ON order_sample_tests
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
--- ── accession_status_history ──────────────────────────────────────────────────
-ALTER TABLE accession_status_history ENABLE ROW LEVEL SECURITY;
-ALTER TABLE accession_status_history FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS accession_status_history_tenant_isolation ON accession_status_history;
-CREATE POLICY accession_status_history_tenant_isolation ON accession_status_history
+-- ── order_sample_status_history ───────────────────────────────────────────────
+ALTER TABLE order_sample_status_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE order_sample_status_history FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS order_sample_status_history_tenant_isolation ON order_sample_status_history;
+CREATE POLICY order_sample_status_history_tenant_isolation ON order_sample_status_history
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 

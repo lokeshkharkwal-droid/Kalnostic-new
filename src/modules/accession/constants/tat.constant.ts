@@ -10,7 +10,7 @@ export type TatStatus = 'WITHIN' | 'WARNING' | 'CRITICAL' | 'BREACHED';
 /**
  * Absolute elapsed-minute cutoffs (ascending: warning < critical < breached)
  * used by `deriveTatStatus`/`tatCreatedAtRange`. Computed by
- * `AccessionSampleService.tatThresholds()` from the branch's Accession Module
+ * `OrderSampleService.tatThresholds()` from the branch's Accession Module
  * Settings (`Accession_MaximumTimeToAcceptSampleMinutes` minus the
  * `Accession_WarningThresholdMinutes`/`Accession_CriticalThresholdMinutes`
  * "minutes remaining" countdown the LIMS Settings doc describes them as).
