@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
+  AccessionGroupingMode,
   OrderSample,
   OrderSampleStatusHistory,
   LabTestSample,
@@ -19,6 +20,7 @@ import { BranchLabTestConfigSnapshot } from '../branch-lab-test/entities/branch-
 import {
   SampleAction,
   nextSampleStatus,
+  FORCE_TARGET,
   COLLECTABLE_SAMPLE_STATUSES,
 } from './constants/sample-transitions.constant';
 import {
@@ -47,6 +49,10 @@ import {
   OrderSampleDetail,
   OrderSampleWithRelations,
   AccessionSummary,
+  OrderSampleGroup,
+  GroupedSampleItem,
+  SampleActionScope,
+  AccessionGroupType,
 } from './entities/accession-sample.entity';
 import {
   AccessionNumberConflictException,
@@ -86,6 +92,20 @@ interface ActionPatch {
 interface ActionNote {
   notes?: string;
   attachmentUrl?: string;
+  /**
+   * When true (group actions — "send all + skip invalid"), a bulk transition
+   * silently skips samples not in a legal state for the action instead of
+   * failing the whole request. Omitted/false = strict (single-item + normal
+   * multi-select bulk), preserving all-or-nothing behavior.
+   */
+  skipInvalid?: boolean;
+  /**
+   * When true (group status actions — "direct status override"), the action is
+   * applied to the sample **regardless of its current status**: the transition
+   * legality check is skipped and the sample is set to the action's fixed
+   * `FORCE_TARGET` status. `retrieve` is never forced (no forced target).
+   */
+  force?: boolean;
 }
 
 /**
@@ -358,6 +378,173 @@ export class OrderSampleService {
       tatStatus: deriveTatStatus(row.createdAt, row.status, tat, nowMs),
     }));
     return paginated(items, total, page, limit);
+  }
+
+  /**
+   * Grouped in-house list — the same filters as `findAll`, but records are
+   * grouped and **paginated by group** (10 groups/page) per the tenant's
+   * `AccessionGroupingMode` (Grouping Settings). The grouping/pagination unit is
+   * the order (`SAMPLE_NAME`/`ORDER`) or the department (`DEPARTMENT`/
+   * `DEPARTMENT_SAMPLE_NAME`), so each top-level group renders whole. Each group
+   * carries the `actionScope` its action button applies to and the flat
+   * `sampleIds` that button targets; `DEPARTMENT_SAMPLE_NAME` additionally nests
+   * `subGroups` by sample name. Reuses `buildSampleWhere` + `deriveTatStatus`.
+   * @param tenantId tenant scope (from JWT)
+   * @param branchId active branch (from JWT profile)
+   * @param query pagination + the §A.3 filters (status tab, search, dates, …)
+   */
+  async findAllGrouped(
+    tenantId: string,
+    branchId: string | null,
+    query: ListSamplesDto,
+  ): Promise<PaginatedResult<OrderSampleGroup>> {
+    const page = query.page ?? 1;
+    const limit = 10; // group-aware pagination: 10 groups per page
+    const nowMs = Date.now();
+    const tat = await this.tatThresholds(tenantId, branchId);
+    const where = this.buildSampleWhere(tenantId, branchId, query, tat, nowMs);
+
+    const { keys, total, rows, mode } = await this.prisma.withTenant(
+      tenantId,
+      async (tx) => {
+        const tenant = await tx.tenant.findUnique({
+          where: { id: tenantId },
+          select: { groupingMode: true },
+        });
+        const mode =
+          tenant?.groupingMode ?? AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME;
+        const byDepartment =
+          mode === AccessionGroupingMode.DEPARTMENT ||
+          mode === AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME;
+
+        // Page of group keys (ordered by most-recent sample) + total group count.
+        const [pageGroups, allGroups] = byDepartment
+          ? await Promise.all([
+              tx.orderSample.groupBy({
+                by: ['departmentId'],
+                where,
+                orderBy: { _max: { createdAt: 'desc' } },
+                skip: (page - 1) * limit,
+                take: limit,
+              }),
+              tx.orderSample.groupBy({ by: ['departmentId'], where }),
+            ])
+          : await Promise.all([
+              tx.orderSample.groupBy({
+                by: ['orderId'],
+                where,
+                orderBy: { _max: { createdAt: 'desc' } },
+                skip: (page - 1) * limit,
+                take: limit,
+              }),
+              tx.orderSample.groupBy({ by: ['orderId'], where }),
+            ]);
+        const keys: (string | null)[] = byDepartment
+          ? (pageGroups as { departmentId: string | null }[]).map(
+              (g) => g.departmentId,
+            )
+          : (pageGroups as { orderId: string }[]).map((g) => g.orderId);
+
+        // Fetch all samples belonging to this page's groups.
+        const nonNull = keys.filter((k): k is string => k !== null);
+        const keyFilter: Prisma.OrderSampleWhereInput = byDepartment
+          ? keys.includes(null)
+            ? {
+                OR: [{ departmentId: { in: nonNull } }, { departmentId: null }],
+              }
+            : { departmentId: { in: nonNull } }
+          : { orderId: { in: nonNull } };
+        const rows = await tx.orderSample.findMany({
+          where: { ...where, ...keyFilter },
+          include: SAMPLE_LIST_INCLUDE,
+          orderBy: { createdAt: 'desc' },
+        });
+        return { keys, total: allGroups.length, rows, mode };
+      },
+    );
+
+    const byDepartment =
+      mode === AccessionGroupingMode.DEPARTMENT ||
+      mode === AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME;
+    const groupType: AccessionGroupType = byDepartment ? 'DEPARTMENT' : 'ORDER';
+    const actionScope: SampleActionScope =
+      mode === AccessionGroupingMode.ORDER
+        ? 'ORDER'
+        : mode === AccessionGroupingMode.DEPARTMENT
+          ? 'DEPARTMENT'
+          : mode === AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME
+            ? 'DEPARTMENT_SAMPLE'
+            : 'SAMPLE';
+
+    // Batch-resolve department names for the rows in view.
+    const deptIds = [
+      ...new Set(
+        rows.map((r) => r.departmentId).filter((v): v is string => !!v),
+      ),
+    ];
+    const deptNameById = new Map<string, string>();
+    if (deptIds.length > 0) {
+      const depts = await this.prisma.withTenant(tenantId, (tx) =>
+        tx.department.findMany({
+          where: { id: { in: deptIds }, tenantId, deletedAt: null },
+          select: { id: true, name: true },
+        }),
+      );
+      depts.forEach((d) => deptNameById.set(d.id, d.name));
+    }
+
+    const toItem = (row: (typeof rows)[number]): GroupedSampleItem => ({
+      ...row,
+      tatStatus: deriveTatStatus(row.createdAt, row.status, tat, nowMs),
+      departmentName: row.departmentId
+        ? (deptNameById.get(row.departmentId) ?? null)
+        : null,
+    });
+
+    // Assemble groups in the paged-key order.
+    const groups: OrderSampleGroup[] = [];
+    for (const key of keys) {
+      const groupRows = rows.filter((r) =>
+        byDepartment ? r.departmentId === key : r.orderId === key,
+      );
+      if (groupRows.length === 0) continue;
+      const items = groupRows.map(toItem);
+      const group: OrderSampleGroup = {
+        groupKey: key,
+        groupType,
+        actionScope,
+        order: byDepartment ? null : (groupRows[0]?.order ?? null),
+        department: byDepartment
+          ? {
+              id: key,
+              name: key ? (deptNameById.get(key) ?? key) : 'Unassigned',
+            }
+          : null,
+        sampleIds: items.map((i) => i.id),
+        samples: items,
+        subGroups: null,
+      };
+      if (mode === AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME) {
+        const bySample = new Map<string, GroupedSampleItem[]>();
+        for (const it of items) {
+          const k = it.sampleGroupLabel ?? 'General';
+          const arr = bySample.get(k);
+          if (arr) arr.push(it);
+          else bySample.set(k, [it]);
+        }
+        group.subGroups = [...bySample.entries()].map(
+          ([sampleKey, samples]) => ({
+            sampleKey,
+            sampleLabel: sampleKey,
+            sampleIds: samples.map((s) => s.id),
+            samples,
+          }),
+        );
+      }
+      groups.push(group);
+    }
+
+    return paginated(groups, total, page, limit);
   }
 
   /**
@@ -1076,10 +1263,15 @@ export class OrderSampleService {
     });
     if (!sample) throw new OrderSampleNotFoundException(sampleId);
 
+    // Group status actions force a direct override: the sample is moved to the
+    // action's fixed target status regardless of its current status (no legality
+    // check). `retrieve` has no forced target, so it keeps its normal behaviour.
+    const forced = note.force ? FORCE_TARGET[action] : undefined;
     const toStatus =
-      action === 'retrieve'
+      forced ??
+      (action === 'retrieve'
         ? (nextSampleStatus('retrieve', sample.status) ?? sample.previousStatus)
-        : nextSampleStatus(action, sample.status);
+        : nextSampleStatus(action, sample.status));
     if (!toStatus) {
       throw new InvalidSampleTransitionException(action, sample.status);
     }
@@ -1152,15 +1344,28 @@ export class OrderSampleService {
       changed = await this.prisma.withTenant(tenantId, async (tx) => {
         const done: string[] = [];
         for (const id of ids) {
-          const updated = await this.transitionInTx(
-            tx,
-            tenantId,
-            personId,
-            id,
-            action,
-            build,
-            note,
-          );
+          let updated: OrderSample;
+          try {
+            updated = await this.transitionInTx(
+              tx,
+              tenantId,
+              personId,
+              id,
+              action,
+              build,
+              note,
+            );
+          } catch (e) {
+            // Group actions ("send all + skip invalid"): skip a sample that is
+            // not in a legal state for this action; surface everything else.
+            if (
+              note.skipInvalid &&
+              e instanceof InvalidSampleTransitionException
+            ) {
+              continue;
+            }
+            throw e;
+          }
           done.push(updated.id);
           if (updated.status === SampleStatus.ACCEPTED) {
             await this.ensureLabReportsForAcceptedSample(

@@ -55,8 +55,8 @@ const auditUpdate = (description: string) => ({
 /**
  * Sample-transfer endpoints (PDF Parts B/C/D — Internal/External Referral +
  * Outsource). Business-authenticated; tenant from the JWT, branch from the active
- * profile. Sending-side actions live under `samples/*` (they act on a sample);
- * the receiving queue + §B.10 lifecycle live under `transfers/*`. Each has a
+ * profile. Sending-side actions live under `order-samples/*` (they act on a
+ * sample); the receiving queue + §B.10 lifecycle live under `transfers/*`. Each has a
  * single (`:id/<action>`) and a bulk (`bulk/<action>`, `{ ids: [] }`) variant.
  *
  * NOTE: bulk routes are declared before the `:id/...` routes so `bulk` is never
@@ -70,7 +70,7 @@ export class SampleTransferController {
   // ── Sending side (bulk before :id) — operate on SAMPLE ids ─────────────────
 
   /** Bulk Send (Internal Transfer). */
-  @Post('samples/bulk/send')
+  @Post('order-samples/bulk/send')
   @RequirePermission(PERMISSION_KEYS.ACC_IH_SEND)
   @Audit(auditUpdate('Bulk sent samples (internal transfer)'))
   bulkSend(
@@ -82,7 +82,7 @@ export class SampleTransferController {
   }
 
   /** Bulk Forward (External Transfer). */
-  @Post('samples/bulk/forward')
+  @Post('order-samples/bulk/forward')
   @RequirePermission(PERMISSION_KEYS.ACC_IH_FORWARD)
   @Audit(auditUpdate('Bulk forwarded samples (external transfer)'))
   bulkForward(
@@ -94,7 +94,7 @@ export class SampleTransferController {
   }
 
   /** Bulk Outsource. */
-  @Post('samples/bulk/outsource')
+  @Post('order-samples/bulk/outsource')
   @RequirePermission(PERMISSION_KEYS.ACC_IH_OUTSOURCE)
   @Audit(auditUpdate('Bulk outsourced samples'))
   bulkOutsource(
@@ -106,7 +106,7 @@ export class SampleTransferController {
   }
 
   /** Send (Internal Transfer) — Accepted → Sent (Internal). */
-  @Post('samples/:id/send')
+  @Post('order-samples/:id/send')
   @RequirePermission(PERMISSION_KEYS.ACC_IH_SEND)
   @Audit(auditUpdate('Sent a sample (internal transfer)'))
   async send(
@@ -119,7 +119,7 @@ export class SampleTransferController {
   }
 
   /** Forward (External Transfer) — Accepted → Forward (External). */
-  @Post('samples/:id/forward')
+  @Post('order-samples/:id/forward')
   @RequirePermission(PERMISSION_KEYS.ACC_IH_FORWARD)
   @Audit(auditUpdate('Forwarded a sample (external transfer)'))
   async forward(
@@ -132,7 +132,7 @@ export class SampleTransferController {
   }
 
   /** Outsource — Accepted → Outsourced. */
-  @Post('samples/:id/outsource')
+  @Post('order-samples/:id/outsource')
   @RequirePermission(PERMISSION_KEYS.ACC_IH_OUTSOURCE)
   @Audit(auditUpdate('Outsourced a sample'))
   async outsource(

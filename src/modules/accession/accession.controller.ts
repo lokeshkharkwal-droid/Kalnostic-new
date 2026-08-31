@@ -87,6 +87,20 @@ export class AccessionController {
     return this.sampleService.summary(tenantId, profile.branchId);
   }
 
+  /**
+   * Grouped in-house list — records grouped + paginated by group (10/page) per
+   * the tenant's Grouping Settings (Sample/Order/Department/Department+Sample).
+   * Declared before `:id` so `grouped` is never captured as an id.
+   */
+  @Get('grouped')
+  findAllGrouped(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: ListSamplesDto,
+  ) {
+    return this.sampleService.findAllGrouped(tenantId, profile.branchId, query);
+  }
+
   // ── Print Label (in-house/referral/external-referral orders) — declared
   // before `:id` routes, same convention as the bulk actions below ──────────
 

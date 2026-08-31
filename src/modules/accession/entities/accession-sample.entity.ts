@@ -99,3 +99,50 @@ export interface AccessionSummary {
   byStatus: Record<SampleStatus, number>;
   byTat: Record<TatStatus, number>;
 }
+
+/**
+ * How the in-house list is grouped + the scope a group's action button applies
+ * to, derived from the tenant's `AccessionGroupingMode` (Grouping Settings):
+ * - `SAMPLE` (Sample-wise): order-grouped display, each sample acted on alone.
+ * - `ORDER` (Order-wise): one action set per order.
+ * - `DEPARTMENT` (Department-wise): one action set per department.
+ * - `DEPARTMENT_SAMPLE` (Department + Sample-wise): one per department+sample.
+ */
+export type SampleActionScope =
+  | 'SAMPLE'
+  | 'ORDER'
+  | 'DEPARTMENT'
+  | 'DEPARTMENT_SAMPLE';
+
+/** Top-level grouping unit (also the group-aware pagination unit). */
+export type AccessionGroupType = 'ORDER' | 'DEPARTMENT';
+
+/** A list sample enriched with its resolved department name for grouped views. */
+export type GroupedSampleItem = OrderSampleListItem & {
+  departmentName: string | null;
+};
+
+/** A secondary (sample-name) group inside a department — Department+Sample mode. */
+export interface OrderSampleSubGroup {
+  sampleKey: string;
+  sampleLabel: string;
+  sampleIds: string[];
+  samples: GroupedSampleItem[];
+}
+
+/**
+ * One top-level group of the grouped in-house list. `order` is set for ORDER
+ * groups (header context), `department` for DEPARTMENT groups. `sampleIds` is the
+ * flat set the group's action button targets ("send all + skip invalid").
+ * `subGroups` is populated only in Department+Sample mode.
+ */
+export interface OrderSampleGroup {
+  groupKey: string | null;
+  groupType: AccessionGroupType;
+  actionScope: SampleActionScope;
+  order: OrderSampleListRow['order'] | null;
+  department: { id: string | null; name: string } | null;
+  sampleIds: string[];
+  samples: GroupedSampleItem[];
+  subGroups: OrderSampleSubGroup[] | null;
+}
