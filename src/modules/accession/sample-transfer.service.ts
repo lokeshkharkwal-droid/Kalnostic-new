@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  OrderSample,
   Prisma,
   SampleStatus,
   TransferKind,
@@ -34,6 +35,7 @@ import {
 import {
   AccessionNumberConflictException,
   OrderSampleNotFoundException,
+  InvalidSampleTransitionException,
   InvalidTransferTransitionException,
   OutsourceCenterNotFoundException,
   SampleTransferNotFoundException,
@@ -410,21 +412,37 @@ export class SampleTransferService {
     const created = await this.prisma.withTenant(tenantId, async (tx) => {
       const done: string[] = [];
       for (const sampleId of sampleIds) {
-        const sample = await this.samples.transitionInTx(
-          tx,
-          tenantId,
-          personId,
-          sampleId,
-          sampleAction,
-          () => ({
-            data: {
-              dispatchedAt: sendDate,
-              logisticsType: dto.logisticsType ?? null,
-              logisticsPerson: dto.logisticsPerson ?? null,
+        // Group override: `force` moves every sample straight to the transfer's
+        // target status regardless of its current one; `skipInvalid` skips
+        // samples not in a legal state instead of failing the whole batch.
+        let sample: OrderSample;
+        try {
+          sample = await this.samples.transitionInTx(
+            tx,
+            tenantId,
+            personId,
+            sampleId,
+            sampleAction,
+            () => ({
+              data: {
+                dispatchedAt: sendDate,
+                logisticsType: dto.logisticsType ?? null,
+                logisticsPerson: dto.logisticsPerson ?? null,
+              },
+            }),
+            {
+              notes: dto.notes,
+              attachmentUrl: dto.attachmentUrl,
+              force: dto.force,
+              skipInvalid: dto.skipInvalid,
             },
-          }),
-          { notes: dto.notes, attachmentUrl: dto.attachmentUrl },
-        );
+          );
+        } catch (e) {
+          if (dto.skipInvalid && e instanceof InvalidSampleTransitionException) {
+            continue;
+          }
+          throw e;
+        }
         const data: Prisma.SampleTransferUncheckedCreateInput = {
           tenantId,
           branchId: sample.branchId,

@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsDateString,
   IsOptional,
   IsString,
@@ -43,4 +44,22 @@ export class TransferDispatchDto extends SampleNoteDto {
   @IsString()
   @MaxLength(150)
   logisticsPerson?: string;
+
+  /**
+   * Group status override (grouped in-house Actions) — create the transfer for
+   * **every** id regardless of its current status, forcing each sample straight
+   * to the action's target (Send→SENT_INTERNAL, Forward→FORWARD_EXTERNAL,
+   * Outsource→OUTSOURCED) with no §A.9 legality check.
+   */
+  @IsOptional()
+  @IsBoolean()
+  force?: boolean;
+
+  /**
+   * Group "send all + skip invalid" — skip samples not in a legal state for the
+   * transfer instead of failing the whole batch. Ignored when `force` is set.
+   */
+  @IsOptional()
+  @IsBoolean()
+  skipInvalid?: boolean;
 }
