@@ -1192,26 +1192,39 @@ export class LabTestService {
     tenantId: string,
   ): Promise<LabTest> {
     await this.findCoreById(labTestId, masterDataId, tenantId);
-    const now = new Date();
-    return this.prisma.withTenant(tenantId, async (tx) => {
-      const where = { labTestId, tenantId, deletedAt: null };
-      await tx.labTestReferenceRange.updateMany({
-        where,
-        data: { deletedAt: now },
-      });
-      await tx.labTestReferenceValue.updateMany({
-        where,
-        data: { deletedAt: now },
-      });
-      await tx.labTestResultParam.updateMany({
-        where,
-        data: { deletedAt: now },
-      });
-      await tx.labTestSample.updateMany({ where, data: { deletedAt: now } });
-      return tx.labTest.update({
-        where: { id: labTestId },
-        data: { deletedAt: now },
-      });
+    return this.prisma.withTenant(tenantId, (tx) =>
+      this.cascadeDeleteTest(tx, labTestId, tenantId, new Date()),
+    );
+  }
+
+  /**
+   * Soft-delete cascade body shared by `remove()` (user-initiated) and
+   * `syncTestsIntoBranch` (orphan cleanup for a tenant-deleted source test).
+   * Assumes the caller has already validated the test and owns the tx.
+   */
+  private async cascadeDeleteTest(
+    tx: Prisma.TransactionClient,
+    labTestId: string,
+    tenantId: string,
+    now: Date,
+  ): Promise<LabTest> {
+    const where = { labTestId, tenantId, deletedAt: null };
+    await tx.labTestReferenceRange.updateMany({
+      where,
+      data: { deletedAt: now },
+    });
+    await tx.labTestReferenceValue.updateMany({
+      where,
+      data: { deletedAt: now },
+    });
+    await tx.labTestResultParam.updateMany({
+      where,
+      data: { deletedAt: now },
+    });
+    await tx.labTestSample.updateMany({ where, data: { deletedAt: now } });
+    return tx.labTest.update({
+      where: { id: labTestId },
+      data: { deletedAt: now },
     });
   }
 
@@ -1309,14 +1322,17 @@ export class LabTestService {
   }
 
   /**
-   * Sync (update-or-create) all active lab tests from a Tenant Master Data into a
-   * Branch Master Data, keyed on `sourceMasterLabTestId` (falling back to
-   * `testCode` to adopt a legacy branch row and avoid a unique collision). A
-   * matched branch test is FULLY overwritten from the tenant test (scalars +
-   * hard-deleted/rebuilt children, version bumped); an unmatched one is cloned.
-   * Runs inside the caller's transaction. Returns a `tenantTestId → branchTestId`
-   * map (so panels can remap membership) plus counts. Branch tests whose tenant
-   * source no longer exists are left untouched (no orphan deletion).
+   * Sync (update-or-create-or-delete) all active lab tests from a Tenant Master
+   * Data into a Branch Master Data, keyed on `sourceMasterLabTestId` (falling
+   * back to `testCode` to adopt a legacy branch row and avoid a unique
+   * collision). A matched branch test is FULLY overwritten from the tenant
+   * test (scalars + hard-deleted/rebuilt children, version bumped); an
+   * unmatched one is cloned. Runs inside the caller's transaction. Returns a
+   * `tenantTestId → branchTestId` map (so panels can remap membership) plus
+   * counts. A branch test whose tenant source has been soft-deleted (i.e. no
+   * longer among the active `sourceTests`) is itself soft-deleted, cascading
+   * to its children — UNLESS its `sourceMasterLabTestId` is NULL, meaning it
+   * was hand-created/never synced, which is always left untouched.
    * @param tx caller's transaction client (already in `withTenant`)
    * @param params tenant + branch scope and both master-data ids
    */
@@ -1333,6 +1349,7 @@ export class LabTestService {
     testIdMap: Map<string, string>;
     created: number;
     updated: number;
+    deleted: number;
   }> {
     const {
       tenantId,
@@ -1353,6 +1370,7 @@ export class LabTestService {
       if (t.sourceMasterLabTestId) bySource.set(t.sourceMasterLabTestId, t);
       byCode.set(t.testCode, t);
     }
+    const sourceIds = new Set(sourceTests.map((t) => t.id));
 
     const testIdMap = new Map<string, string>();
     let created = 0;
@@ -1415,7 +1433,20 @@ export class LabTestService {
         created += 1;
       }
     }
-    return { testIdMap, created, updated };
+
+    const orphans = branchTests.filter(
+      (t) =>
+        t.sourceMasterLabTestId !== null &&
+        !sourceIds.has(t.sourceMasterLabTestId),
+    );
+    const now = new Date();
+    let deleted = 0;
+    for (const orphan of orphans) {
+      await this.cascadeDeleteTest(tx, orphan.id, tenantId, now);
+      deleted += 1;
+    }
+
+    return { testIdMap, created, updated, deleted };
   }
 
   /**
