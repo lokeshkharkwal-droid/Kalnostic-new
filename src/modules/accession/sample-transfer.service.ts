@@ -438,7 +438,10 @@ export class SampleTransferService {
             },
           );
         } catch (e) {
-          if (dto.skipInvalid && e instanceof InvalidSampleTransitionException) {
+          if (
+            dto.skipInvalid &&
+            e instanceof InvalidSampleTransitionException
+          ) {
             continue;
           }
           throw e;

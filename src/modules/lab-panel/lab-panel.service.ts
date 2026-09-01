@@ -449,16 +449,29 @@ export class LabPanelService {
     tenantId: string,
   ): Promise<LabPanel> {
     await this.findCoreById(panelId, masterDataId, tenantId);
-    const now = new Date();
-    return this.prisma.withTenant(tenantId, async (tx) => {
-      await tx.labPanelTest.updateMany({
-        where: { labPanelId: panelId, tenantId, deletedAt: null },
-        data: { deletedAt: now },
-      });
-      return tx.labPanel.update({
-        where: { id: panelId },
-        data: { deletedAt: now },
-      });
+    return this.prisma.withTenant(tenantId, (tx) =>
+      this.cascadeDeletePanel(tx, panelId, tenantId, new Date()),
+    );
+  }
+
+  /**
+   * Soft-delete cascade body shared by `remove()` (user-initiated) and
+   * `syncPanelsIntoBranch` (orphan cleanup for a tenant-deleted source panel).
+   * Assumes the caller has already validated the panel and owns the tx.
+   */
+  private async cascadeDeletePanel(
+    tx: Prisma.TransactionClient,
+    panelId: string,
+    tenantId: string,
+    now: Date,
+  ): Promise<LabPanel> {
+    await tx.labPanelTest.updateMany({
+      where: { labPanelId: panelId, tenantId, deletedAt: null },
+      data: { deletedAt: now },
+    });
+    return tx.labPanel.update({
+      where: { id: panelId },
+      data: { deletedAt: now },
     });
   }
 
@@ -738,10 +751,14 @@ export class LabPanelService {
    * Orchestrate the **Tenant Master Data → Branch Master Data** sync ("Import
    * Master Data"). Resolves both master datas (get-or-create), then in ONE
    * transaction: (1) syncs lab tests via `LabTestService.syncTestsIntoBranch`
-   * (update-or-create, full overwrite) building a `tenantTestId → branchTestId`
-   * map, and (2) syncs panels + their membership remapped through that map. All
-   * or nothing. Hand-created branch data cannot exist (branch admins can't
-   * create), so no dedup beyond the provenance/code keys is needed.
+   * (update-or-create-or-delete, full overwrite) building a
+   * `tenantTestId → branchTestId` map, and (2) syncs panels + their membership
+   * remapped through that map. All or nothing. Hand-created branch data
+   * cannot exist (branch admins can't create), so no dedup beyond the
+   * provenance/code keys is needed. A branch test/panel whose tenant source
+   * has been soft-deleted is itself soft-deleted (cascading to children),
+   * unless it was never sync-derived (`sourceMasterLabTestId`/
+   * `sourceMasterLabPanelId` NULL) — those are always left untouched.
    * @param tenantId tenant scope
    * @param branchId the target branch (from the JWT)
    * @param actorId person recorded on version bumps (or null)
@@ -751,8 +768,8 @@ export class LabPanelService {
     branchId: string,
     actorId: string | null,
   ): Promise<{
-    tests: { created: number; updated: number };
-    panels: { created: number; updated: number };
+    tests: { created: number; updated: number; deleted: number };
+    panels: { created: number; updated: number; deleted: number };
   }> {
     const tenantMd =
       await this.masterDataService.getOrCreateTenantMasterData(tenantId);
@@ -779,19 +796,23 @@ export class LabPanelService {
         t.testIdMap,
       );
       return {
-        tests: { created: t.created, updated: t.updated },
-        panels: { created: p.created, updated: p.updated },
+        tests: { created: t.created, updated: t.updated, deleted: t.deleted },
+        panels: { created: p.created, updated: p.updated, deleted: p.deleted },
       };
     });
   }
 
   /**
-   * Sync (update-or-create) all active panels from a Tenant Master Data into a
-   * Branch Master Data, keyed on `sourceMasterLabPanelId` (falling back to
-   * `panelCode`). A matched branch panel is fully overwritten and its membership
-   * rebuilt; an unmatched one is created. Panel membership `labTestId`s are
-   * remapped through `testIdMap` (built by the test sync) to the branch test
-   * copies; members with no mapping are dropped. Runs inside the caller's tx.
+   * Sync (update-or-create-or-delete) all active panels from a Tenant Master
+   * Data into a Branch Master Data, keyed on `sourceMasterLabPanelId` (falling
+   * back to `panelCode`). A matched branch panel is fully overwritten and its
+   * membership rebuilt; an unmatched one is created. Panel membership
+   * `labTestId`s are remapped through `testIdMap` (built by the test sync) to
+   * the branch test copies; members with no mapping are dropped. A branch
+   * panel whose tenant source has been soft-deleted is itself soft-deleted
+   * (cascading its membership rows) — UNLESS its `sourceMasterLabPanelId` is
+   * NULL (hand-created/never synced), which is always left untouched. Runs
+   * inside the caller's tx.
    */
   private async syncPanelsIntoBranch(
     tx: Prisma.TransactionClient,
@@ -802,7 +823,7 @@ export class LabPanelService {
       branchMasterDataId: string;
     },
     testIdMap: Map<string, string>,
-  ): Promise<{ created: number; updated: number }> {
+  ): Promise<{ created: number; updated: number; deleted: number }> {
     const { tenantId, branchId, tenantMasterDataId, branchMasterDataId } =
       params;
     const sourcePanels = await tx.labPanel.findMany({
@@ -817,6 +838,7 @@ export class LabPanelService {
       if (p.sourceMasterLabPanelId) bySource.set(p.sourceMasterLabPanelId, p);
       byCode.set(p.panelCode, p);
     }
+    const sourcePanelIds = new Set(sourcePanels.map((p) => p.id));
 
     let created = 0;
     let updated = 0;
@@ -881,7 +903,20 @@ export class LabPanelService {
         });
       }
     }
-    return { created, updated };
+
+    const orphanPanels = branchPanels.filter(
+      (p) =>
+        p.sourceMasterLabPanelId !== null &&
+        !sourcePanelIds.has(p.sourceMasterLabPanelId),
+    );
+    const now = new Date();
+    let deleted = 0;
+    for (const orphan of orphanPanels) {
+      await this.cascadeDeletePanel(tx, orphan.id, tenantId, now);
+      deleted += 1;
+    }
+
+    return { created, updated, deleted };
   }
 
   /**

@@ -139,7 +139,7 @@ export const DEFAULT_ACCESSION_TYPED_SETTINGS: AccessionTypedSettings = {
   SampleBarcodeSettings_Prefix: '',
   SampleBarcodeSettings_Suffix: '',
   SampleBarcodeSettings_Separator: AccessionBarcodeSeparator.NONE,
-  SampleBarcodeSettings_NumberLength: 6,
+  SampleBarcodeSettings_NumberLength: 5,
   SampleBarcodeSettings_ResetInterval: AccessionBarcodeResetCycle.NEVER,
   SampleBarcodeSettings_CurrentNumber: 0,
   SampleBarcodeSettings_LastResetAt: null,

@@ -4,6 +4,7 @@ import { OrderSampleService } from './accession-sample.service';
 import { LabReportService } from '../lab-report/lab-report.service';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { BarcodeService } from './barcode.service';
 
 /**
  * Unit coverage for `samplesOfPanel` (private, exercised via an `as unknown`
@@ -29,6 +30,7 @@ describe('OrderSampleService — samplesOfPanel', () => {
       {} as unknown as LabReportService,
       {} as unknown as PdfReportTemplateService,
       {} as unknown as EventEmitter2,
+      {} as unknown as BarcodeService,
     );
   });
 

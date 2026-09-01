@@ -1,0 +1,51 @@
+meta {
+  name: 43 Set Grouping Mode (Group Settings)
+  type: http
+  seq: 43
+}
+
+put {
+  url: {{baseUrl}}/tenant/accession-settings/grouping-mode
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "groupingMode": "DEPARTMENT_SAMPLE_NAME"
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("echoes the saved grouping mode", function () {
+    expect(res.getBody().data).to.have.property("groupingMode");
+  });
+}
+
+docs {
+  Change the caller tenant's Accession **Group Settings** mode
+  (`AccessionGroupingMode`). Business-admin only (`ACC_SETTINGS_UPDATE`).
+
+  The change is **retroactive to the display**:
+  `GET /accession/order-samples/grouped` re-groups existing orders under the new
+  mode immediately (grouping is computed live, not frozen at create). Because the
+  barcodes assigned under the old grouping would no longer match the new groups,
+  a **real** mode change **clears every sample's barcode** (value + rendered
+  image) for the tenant — each regrouped group then shows "No barcode" until a
+  fresh Assign Barcode is run on it (no barcodes are auto-regenerated). A no-op
+  change (same mode) leaves barcodes untouched.
+
+  `groupingMode` — one of `SAMPLE_NAME` | `ORDER` | `DEPARTMENT` |
+  `DEPARTMENT_SAMPLE_NAME`.
+}

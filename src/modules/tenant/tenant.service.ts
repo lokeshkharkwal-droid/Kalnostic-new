@@ -402,22 +402,41 @@ export class TenantService {
 
   /**
    * Update the caller tenant's Accession Group Settings mode. Business-admin
-   * only (route-gated). Does NOT retroactively re-group already-accessioned
-   * orders or affect physical sample generation (doc §5) — it only changes
-   * how `/accession/inhouse-orders` groups rows and which samples an action
-   * fans out to, from this point forward.
+   * only (route-gated). The change is **retroactive to the display**:
+   * `/accession/in-house-orders` re-groups existing orders under the new mode
+   * immediately (grouping is computed live, not frozen). Because the barcodes
+   * assigned under the old grouping would no longer match the new groups, a mode
+   * change **clears every sample's barcode** (value + rendered image) for the
+   * tenant; each regrouped group then shows "No barcode" until a fresh Assign
+   * Barcode is run on it (no barcodes are auto-regenerated). A no-op change (same
+   * mode) leaves barcodes untouched.
    * @throws TenantNotFoundException if missing or soft-deleted
    */
   async updateGroupingMode(
     tenantId: string,
     groupingMode: AccessionGroupingMode,
   ): Promise<{ groupingMode: AccessionGroupingMode }> {
-    await this.findById(tenantId);
+    const current = await this.findById(tenantId);
+    if (current.groupingMode === groupingMode) {
+      return { groupingMode: current.groupingMode };
+    }
+
     const tenant = await this.prisma.tenant.update({
       where: { id: tenantId },
       data: { groupingMode },
       select: { groupingMode: true },
     });
+
+    // Clear now-stale barcodes for every one of the tenant's samples. RLS-scoped
+    // via withTenant (order_samples is tenant-scoped); the Assign Barcode action
+    // re-issues a fresh shared barcode per regrouped group on demand.
+    await this.prisma.withTenant(tenantId, (tx) =>
+      tx.orderSample.updateMany({
+        where: { tenantId, deletedAt: null, NOT: { barcode: null } },
+        data: { barcode: null, orderIdBarcode: null },
+      }),
+    );
+
     return { groupingMode: tenant.groupingMode };
   }
 

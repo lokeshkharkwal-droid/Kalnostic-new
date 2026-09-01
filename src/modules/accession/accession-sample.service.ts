@@ -11,6 +11,7 @@ import {
   TransferStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ValidationException } from '../../common/exceptions/kaltros.exception';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
 import { LabReportService } from '../lab-report/lab-report.service';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
@@ -31,6 +32,7 @@ import {
   tatCreatedAtRange,
 } from './constants/tat.constant';
 import { AccessionSettingsService } from './accession-settings.service';
+import { BarcodeService } from './barcode.service';
 import { ListSamplesDto, OrderMode } from './dto/list-samples.dto';
 import { SampleNoteDto } from './dto/sample-note.dto';
 import { ShareSampleDto } from './dto/share-sample.dto';
@@ -49,10 +51,9 @@ import {
   OrderSampleDetail,
   OrderSampleWithRelations,
   AccessionSummary,
-  OrderSampleGroup,
+  InHouseOrderGroup,
+  InHouseSampleGroup,
   GroupedSampleItem,
-  SampleActionScope,
-  AccessionGroupType,
 } from './entities/accession-sample.entity';
 import {
   AccessionNumberConflictException,
@@ -80,6 +81,16 @@ interface SampleUnit {
   testName: string | null;
   departmentId: string | null;
   sample: LabTestSample | null;
+}
+
+/**
+ * The minimal shape needed to bucket a sample for grouping-aware barcode
+ * assignment: its id plus the department + sample-name it belongs to.
+ */
+interface BarcodeGroupable {
+  id: string;
+  departmentId: string | null;
+  sampleGroupLabel: string | null;
 }
 
 /** The scalar field writes + optional history reason an action applies. */
@@ -130,6 +141,7 @@ export class OrderSampleService {
     private readonly labReportService: LabReportService,
     private readonly pdfReportTemplateService: PdfReportTemplateService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly barcodeService: BarcodeService,
   ) {}
 
   // ── Sample generation (order → accession) ─────────────────────────────────
@@ -195,6 +207,7 @@ export class OrderSampleService {
       // `direct` free-text items resolve no LabTestSample and are skipped.
     }
 
+    const createdSamples: BarcodeGroupable[] = [];
     for (const unit of units) {
       if (!unit.sample) continue; // labTestSampleId is mandatory
       const tenant = await tx.tenant.update({
@@ -203,7 +216,8 @@ export class OrderSampleService {
         select: { accessionCounter: true },
       });
       const accessionNo = `ACC-${String(tenant.accessionCounter).padStart(5, '0')}`;
-      await tx.orderSample.create({
+      const created = await tx.orderSample.create({
+        select: { id: true, departmentId: true, sampleGroupLabel: true },
         data: {
           tenantId,
           branchId,
@@ -244,6 +258,106 @@ export class OrderSampleService {
           },
         },
       });
+      createdSamples.push(created);
+    }
+
+    // Auto-assign barcodes grouping-aware (Sample / Order / Department /
+    // Dept+Sample per Tenant.groupingMode) — samples in the same bucket share
+    // one barcode value + rendered Code 39 image. Synchronous: an S3 failure
+    // rolls the whole order back (see BarcodeService).
+    await this.assignBarcodesToGroups(
+      tx,
+      tenantId,
+      branchId,
+      personId,
+      createdSamples,
+    );
+  }
+
+  /**
+   * The barcode-grouping key for a sample under the tenant's grouping mode —
+   * samples sharing a key share one barcode. Mirrors the accession list's
+   * `actionScope`: Sample-wise = unique per row; Order-wise = whole order;
+   * Department-wise = per department; Dept+Sample = per department + sample name.
+   */
+  private barcodeGroupKey(
+    sample: BarcodeGroupable,
+    mode: AccessionGroupingMode,
+  ): string {
+    switch (mode) {
+      case AccessionGroupingMode.ORDER:
+        return 'ORDER';
+      case AccessionGroupingMode.DEPARTMENT:
+        return `DEPT::${sample.departmentId ?? 'none'}`;
+      case AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME:
+        return `DEPT_SAMPLE::${sample.departmentId ?? 'none'}::${
+          sample.sampleGroupLabel ?? 'General'
+        }`;
+      case AccessionGroupingMode.SAMPLE_NAME:
+      default:
+        // Sample-wise = a unique barcode per individual sample row.
+        return `SAMPLE::${sample.id}`;
+    }
+  }
+
+  /**
+   * Assign barcodes to a set of samples inside an existing (already
+   * tenant-scoped) transaction, bucketed by the tenant's grouping mode. Each
+   * bucket gets one allocated barcode value + one rendered/uploaded Code 39
+   * image; every member is updated to the shared `barcode` + `orderIdBarcode`.
+   * A history row (`assign-barcode`, no status change) is written per sample.
+   * @param tx active Prisma transaction client (already tenant-scoped)
+   */
+  private async assignBarcodesToGroups(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    branchId: string | null,
+    personId: string | null,
+    samples: BarcodeGroupable[],
+  ): Promise<void> {
+    // Barcodes live on the branch's Accession Settings counter, so a branchless
+    // order (rare — diagnostics are branch-level) is left unbarcoded here; a
+    // barcode can be assigned later via the Assign Barcode action.
+    if (samples.length === 0 || !branchId) return;
+    const tenant = await tx.tenant.findUnique({
+      where: { id: tenantId },
+      select: { groupingMode: true },
+    });
+    const mode =
+      tenant?.groupingMode ?? AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME;
+
+    const buckets = new Map<string, string[]>();
+    for (const sample of samples) {
+      const key = this.barcodeGroupKey(sample, mode);
+      const arr = buckets.get(key);
+      if (arr) arr.push(sample.id);
+      else buckets.set(key, [sample.id]);
+    }
+
+    for (const ids of buckets.values()) {
+      const value = await this.barcodeService.allocateNumberInTx(
+        tx,
+        tenantId,
+        branchId,
+      );
+      const url = await this.barcodeService.generateAndUpload(value, tenantId);
+      await tx.orderSample.updateMany({
+        where: { id: { in: ids }, tenantId },
+        data: { barcode: value, orderIdBarcode: url, updatedBy: personId },
+      });
+      for (const id of ids) {
+        await tx.orderSampleStatusHistory.create({
+          data: {
+            tenantId,
+            branchId,
+            sampleId: id,
+            action: 'assign-barcode',
+            toStatus: SampleStatus.NEW,
+            fromStatus: SampleStatus.NEW,
+            changedBy: personId,
+          },
+        });
+      }
     }
   }
 
@@ -381,14 +495,17 @@ export class OrderSampleService {
   }
 
   /**
-   * Grouped in-house list — the same filters as `findAll`, but records are
-   * grouped and **paginated by group** (10 groups/page) per the tenant's
-   * `AccessionGroupingMode` (Grouping Settings). The grouping/pagination unit is
-   * the order (`SAMPLE_NAME`/`ORDER`) or the department (`DEPARTMENT`/
-   * `DEPARTMENT_SAMPLE_NAME`), so each top-level group renders whole. Each group
-   * carries the `actionScope` its action button applies to and the flat
-   * `sampleIds` that button targets; `DEPARTMENT_SAMPLE_NAME` additionally nests
-   * `subGroups` by sample name. Reuses `buildSampleWhere` + `deriveTatStatus`.
+   * Grouped in-house list — the same filters as `findAll`, but **order-first**:
+   * the Order ID is always the top-level grouping and the pagination unit (10
+   * orders/page), never crossing order boundaries (Critical Rule #1). Within each
+   * order, samples are grouped into **final groups by the tenant's current
+   * `groupingMode`** (via `barcodeGroupKey`) — Sample/Order/Department/
+   * Department+Sample — so the displayed grouping, the shared barcode and the
+   * action scope always follow the live Group Settings, even after the mode is
+   * changed. Each final group carries the flat `sampleIds` its action button
+   * targets — a status change cascades to every sample in the group (Rule #3).
+   * The tenant's current `groupingMode` is echoed as a FE layout hint.
+   * Reuses `buildSampleWhere` + `deriveTatStatus`.
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT profile)
    * @param query pagination + the §A.3 filters (status tab, search, dates, …)
@@ -397,14 +514,14 @@ export class OrderSampleService {
     tenantId: string,
     branchId: string | null,
     query: ListSamplesDto,
-  ): Promise<PaginatedResult<OrderSampleGroup>> {
+  ): Promise<PaginatedResult<InHouseOrderGroup>> {
     const page = query.page ?? 1;
-    const limit = 10; // group-aware pagination: 10 groups per page
+    const limit = 10; // group-aware pagination: 10 orders per page
     const nowMs = Date.now();
     const tat = await this.tatThresholds(tenantId, branchId);
     const where = this.buildSampleWhere(tenantId, branchId, query, tat, nowMs);
 
-    const { keys, total, rows, mode } = await this.prisma.withTenant(
+    const { orderIds, total, rows, mode } = await this.prisma.withTenant(
       tenantId,
       async (tx) => {
         const tenant = await tx.tenant.findUnique({
@@ -413,68 +530,29 @@ export class OrderSampleService {
         });
         const mode =
           tenant?.groupingMode ?? AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME;
-        const byDepartment =
-          mode === AccessionGroupingMode.DEPARTMENT ||
-          mode === AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME;
 
-        // Page of group keys (ordered by most-recent sample) + total group count.
-        const [pageGroups, allGroups] = byDepartment
-          ? await Promise.all([
-              tx.orderSample.groupBy({
-                by: ['departmentId'],
-                where,
-                orderBy: { _max: { createdAt: 'desc' } },
-                skip: (page - 1) * limit,
-                take: limit,
-              }),
-              tx.orderSample.groupBy({ by: ['departmentId'], where }),
-            ])
-          : await Promise.all([
-              tx.orderSample.groupBy({
-                by: ['orderId'],
-                where,
-                orderBy: { _max: { createdAt: 'desc' } },
-                skip: (page - 1) * limit,
-                take: limit,
-              }),
-              tx.orderSample.groupBy({ by: ['orderId'], where }),
-            ]);
-        const keys: (string | null)[] = byDepartment
-          ? (pageGroups as { departmentId: string | null }[]).map(
-              (g) => g.departmentId,
-            )
-          : (pageGroups as { orderId: string }[]).map((g) => g.orderId);
+        // Page of order ids (ordered by most-recent sample) + total order count.
+        const [pageGroups, allGroups] = await Promise.all([
+          tx.orderSample.groupBy({
+            by: ['orderId'],
+            where,
+            orderBy: { _max: { createdAt: 'desc' } },
+            skip: (page - 1) * limit,
+            take: limit,
+          }),
+          tx.orderSample.groupBy({ by: ['orderId'], where }),
+        ]);
+        const orderIds = pageGroups.map((g) => g.orderId);
 
-        // Fetch all samples belonging to this page's groups.
-        const nonNull = keys.filter((k): k is string => k !== null);
-        const keyFilter: Prisma.OrderSampleWhereInput = byDepartment
-          ? keys.includes(null)
-            ? {
-                OR: [{ departmentId: { in: nonNull } }, { departmentId: null }],
-              }
-            : { departmentId: { in: nonNull } }
-          : { orderId: { in: nonNull } };
+        // Fetch all samples belonging to this page's orders.
         const rows = await tx.orderSample.findMany({
-          where: { ...where, ...keyFilter },
+          where: { ...where, orderId: { in: orderIds } },
           include: SAMPLE_LIST_INCLUDE,
           orderBy: { createdAt: 'desc' },
         });
-        return { keys, total: allGroups.length, rows, mode };
+        return { orderIds, total: allGroups.length, rows, mode };
       },
     );
-
-    const byDepartment =
-      mode === AccessionGroupingMode.DEPARTMENT ||
-      mode === AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME;
-    const groupType: AccessionGroupType = byDepartment ? 'DEPARTMENT' : 'ORDER';
-    const actionScope: SampleActionScope =
-      mode === AccessionGroupingMode.ORDER
-        ? 'ORDER'
-        : mode === AccessionGroupingMode.DEPARTMENT
-          ? 'DEPARTMENT'
-          : mode === AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME
-            ? 'DEPARTMENT_SAMPLE'
-            : 'SAMPLE';
 
     // Batch-resolve department names for the rows in view.
     const deptIds = [
@@ -501,47 +579,67 @@ export class OrderSampleService {
         : null,
     });
 
-    // Assemble groups in the paged-key order.
-    const groups: OrderSampleGroup[] = [];
-    for (const key of keys) {
-      const groupRows = rows.filter((r) =>
-        byDepartment ? r.departmentId === key : r.orderId === key,
-      );
-      if (groupRows.length === 0) continue;
-      const items = groupRows.map(toItem);
-      const group: OrderSampleGroup = {
-        groupKey: key,
-        groupType,
-        actionScope,
-        order: byDepartment ? null : (groupRows[0]?.order ?? null),
-        department: byDepartment
-          ? {
-              id: key,
-              name: key ? (deptNameById.get(key) ?? key) : 'Unassigned',
-            }
-          : null,
-        sampleIds: items.map((i) => i.id),
-        samples: items,
-        subGroups: null,
-      };
-      if (mode === AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME) {
-        const bySample = new Map<string, GroupedSampleItem[]>();
-        for (const it of items) {
-          const k = it.sampleGroupLabel ?? 'General';
-          const arr = bySample.get(k);
-          if (arr) arr.push(it);
-          else bySample.set(k, [it]);
-        }
-        group.subGroups = [...bySample.entries()].map(
-          ([sampleKey, samples]) => ({
-            sampleKey,
-            sampleLabel: sampleKey,
+    // The single distinct value across a bucket, else null (used for the group's
+    // department / sample-name label).
+    const distinctOrNull = <T>(values: T[]): T | null => {
+      const set = new Set(values);
+      return set.size === 1 ? [...set][0]! : null;
+    };
+
+    // Assemble one InHouseOrderGroup per paged order id (order-first).
+    const groups: InHouseOrderGroup[] = [];
+    for (const orderId of orderIds) {
+      const orderRows = rows.filter((r) => r.orderId === orderId);
+      if (orderRows.length === 0) continue;
+      const items = orderRows.map(toItem);
+
+      // Final groups within the order, bucketed by the tenant's LIVE grouping
+      // mode (Sample-wise = per sample; Order-wise = the whole order;
+      // Department-wise = per department; Dept+Sample = per department + sample
+      // name) — the very same `barcodeGroupKey` used at barcode-assignment time.
+      // Grouping keys off the current mode (not the frozen barcode), so the
+      // displayed grouping, the barcode grouping and the action scope always
+      // agree with the tenant's current Group Settings — even after the mode is
+      // changed, a sample is missing a barcode, or a barcode was edited.
+      const buckets = new Map<string, GroupedSampleItem[]>();
+      for (const it of items) {
+        const bucketKey = this.barcodeGroupKey(it, mode);
+        const arr = buckets.get(bucketKey);
+        if (arr) arr.push(it);
+        else buckets.set(bucketKey, [it]);
+      }
+
+      const finalGroups: InHouseSampleGroup[] = [...buckets.entries()].map(
+        ([bucketKey, samples]) => {
+          const deptId = distinctOrNull(samples.map((s) => s.departmentId));
+          const sampleLabel = distinctOrNull(
+            samples.map((s) => s.sampleGroupLabel ?? null),
+          );
+          // One shared barcode per group when the members agree; `null` (→ the
+          // FE's "No barcode") when they carry differing/blank values — e.g.
+          // left stale after a mode change (which nulls them) — flagging the
+          // group for a fresh Assign Barcode.
+          const barcode = distinctOrNull(samples.map((s) => s.barcode ?? null));
+          return {
+            groupKey: `${orderId}::${bucketKey}`,
+            barcode,
+            department: deptId
+              ? { id: deptId, name: deptNameById.get(deptId) ?? deptId }
+              : null,
+            sampleLabel,
             sampleIds: samples.map((s) => s.id),
             samples,
-          }),
-        );
-      }
-      groups.push(group);
+          };
+        },
+      );
+
+      groups.push({
+        orderId,
+        order: orderRows[0]?.order ?? null,
+        groupingMode: mode,
+        sampleIds: items.map((i) => i.id),
+        groups: finalGroups,
+      });
     }
 
     return paginated(groups, total, page, limit);
@@ -866,6 +964,10 @@ export class OrderSampleService {
     return {
       accession_no: sample.accessionNo,
       barcode: sample.barcode ?? '',
+      // S3 URL of the rendered Code 39 barcode image, so a label template can
+      // show the scannable image via `<img src="{orderIdBarcode}">` (in addition
+      // to the font-rendered `{barcode}` value).
+      orderIdBarcode: sample.orderIdBarcode ?? '',
       patient_name: patient
         ? [patient.firstName, patient.middleName, patient.lastName]
             .filter(Boolean)
@@ -1173,9 +1275,17 @@ export class OrderSampleService {
   // ── No-status-change mutations (§A.10.2 / §A.10.3) ─────────────────────────
 
   /**
-   * Assign Barcode & Print (§A.10.2) — available at any status, no status change.
-   * Assigns the given barcode, or the system-generated `BAR-#####-A` when omitted.
-   * @throws AccessionNumberConflictException on a barcode uniqueness clash
+   * Assign / Edit Barcode (§A.10.2) — available at any status, no status change.
+   * Assigns ONE shared barcode to **every** id (the FE passes a whole group's
+   * sample ids): the typed `dto.barcode` when supplied, otherwise the next
+   * system-sequential value from the branch counter (which skips any value
+   * already taken). A manual value is rejected when already used by a sample
+   * outside this group. A single Code 39 image is rendered and uploaded to S3,
+   * and all members are updated to the shared `barcode` + `orderIdBarcode` in one
+   * transaction (all-or-none). A failed render/upload rolls the whole assignment
+   * back (fail-together).
+   * @throws OrderSampleNotFoundException if any id is missing / other-tenant
+   * @throws ValidationException if a manual barcode is already in use
    */
   async assignBarcode(
     ids: string[],
@@ -1183,18 +1293,70 @@ export class OrderSampleService {
     personId: string | null,
     dto: AssignBarcodeDto,
   ): Promise<OrderSampleWithRelations[]> {
-    return this.mutateIds(
-      ids,
-      tenantId,
-      personId,
-      'assign-barcode',
-      (sample) => ({
-        data: {
-          barcode: dto.barcode ?? this.deriveBarcode(sample.accessionNo),
-        },
-      }),
-      {},
-    );
+    if (ids.length === 0) return [];
+    const changed = await this.prisma.withTenant(tenantId, async (tx) => {
+      const samples = await tx.orderSample.findMany({
+        where: { id: { in: ids }, tenantId, deletedAt: null },
+        select: { id: true, status: true, branchId: true },
+      });
+      const found = new Set(samples.map((s) => s.id));
+      const missing = ids.find((id) => !found.has(id));
+      if (missing) throw new OrderSampleNotFoundException(missing);
+
+      const branchId = samples[0]?.branchId ?? null;
+      let value: string;
+      if (dto.barcode) {
+        // A manually-entered barcode must be free across the tenant: reject when
+        // any sample OUTSIDE the current group already carries it. Re-assigning
+        // the same value to this same group stays allowed (idempotent edit).
+        const clash = await tx.orderSample.findFirst({
+          where: {
+            tenantId,
+            barcode: dto.barcode,
+            deletedAt: null,
+            id: { notIn: ids },
+          },
+          select: { id: true },
+        });
+        if (clash) {
+          throw new ValidationException(
+            `Barcode "${dto.barcode}" is already in use.`,
+          );
+        }
+        value = dto.barcode;
+      } else if (branchId) {
+        value = await this.barcodeService.allocateNumberInTx(
+          tx,
+          tenantId,
+          branchId,
+        );
+      } else {
+        throw new ValidationException(
+          'Auto-generating a barcode requires the sample to belong to a branch.',
+        );
+      }
+      const url = await this.barcodeService.generateAndUpload(value, tenantId);
+
+      await tx.orderSample.updateMany({
+        where: { id: { in: ids }, tenantId },
+        data: { barcode: value, orderIdBarcode: url, updatedBy: personId },
+      });
+      for (const sample of samples) {
+        await tx.orderSampleStatusHistory.create({
+          data: {
+            tenantId,
+            branchId: sample.branchId,
+            sampleId: sample.id,
+            action: 'assign-barcode',
+            toStatus: sample.status,
+            fromStatus: sample.status,
+            changedBy: personId,
+          },
+        });
+      }
+      return ids;
+    });
+    return Promise.all(changed.map((id) => this.findById(id, tenantId)));
   }
 
   /** Update Sample (§A.10.3) — records a note/attachment with no status change. */

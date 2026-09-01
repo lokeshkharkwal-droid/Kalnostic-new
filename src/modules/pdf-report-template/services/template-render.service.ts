@@ -169,6 +169,7 @@ export class TemplateRenderService {
       designation: s.designation ?? '',
       registrationNumber: s.registrationNumber ?? '',
       signatureImage: s.signatureImage ?? '',
+      report_approved_by_certifications: s.certifications ?? '',
     };
     return template.replace(/\{([a-zA-Z0-9_]+)\}/g, (whole, key: string) =>
       key in fields ? this.escape(this.stringify(fields[key])) : whole,
@@ -186,9 +187,12 @@ export class TemplateRenderService {
     const reg = s.registrationNumber
       ? `<div class="sa-reg">${this.escape(s.registrationNumber)}</div>`
       : '';
+    const certifications = s.certifications
+      ? `<div class="sa-certifications">${this.escape(s.certifications)}</div>`
+      : '';
     return `<div class="signing-authority">${img}<div class="sa-name">${this.escape(
       s.name,
-    )}</div>${designation}${reg}</div>`;
+    )}</div>${designation}${reg}${certifications}</div>`;
   }
 
   /** Wrap the fragments in a complete HTML document with base + custom CSS. */
