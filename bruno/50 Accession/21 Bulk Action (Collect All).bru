@@ -44,6 +44,14 @@ docs {
   `acquire`, `halt`, `error`, `hold`, `repeat`, `store`, `discard`, `return`,
   `cancel`, `retrieve`, `assign-barcode`.
 
+  ## `bulk/assign-barcode` (group barcode)
+
+  `POST /accession/order-samples/bulk/assign-barcode` with `{ "ids": [...] }` and
+  an optional `"barcode"` assigns **one shared barcode** to every id (the FE sends
+  a whole group's `sampleIds`). Omit `barcode` to allocate the next
+  system-sequential value (from `10001`); a single Code 39 image is rendered and
+  its S3 URL stored in `orderIdBarcode` on all members, in one transaction.
+
   ## `skipInvalid` (group actions — "send all + skip invalid")
 
   Optional boolean (default `false`). When `false` the batch is strict: if any id

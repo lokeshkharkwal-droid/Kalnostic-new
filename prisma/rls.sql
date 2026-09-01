@@ -1555,13 +1555,15 @@ CREATE POLICY order_samples_tenant_isolation ON order_samples
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
--- Per-tenant unique accession number + barcode among ACTIVE rows (a value freed
--- by a soft-delete is reusable). Both are system-generated (ACC-00001…/BAR-…).
--- Prisma can't express partial unique indexes, so they live here.
+-- Per-tenant unique accession number among ACTIVE rows (a value freed by a
+-- soft-delete is reusable). Prisma can't express partial unique indexes here.
 CREATE UNIQUE INDEX IF NOT EXISTS order_samples_tenant_accession_no_active_unique
   ON order_samples (tenant_id, accession_no) WHERE deleted_at IS NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS order_samples_tenant_barcode_active_unique
-  ON order_samples (tenant_id, barcode) WHERE deleted_at IS NULL AND barcode IS NOT NULL;
+-- NOTE: `barcode` is intentionally NOT unique — grouping-aware assignment shares
+-- one barcode value across a bucket of samples (order / department / dept+sample
+-- per Tenant.groupingMode). The old unique index was dropped in migration
+-- 20260831120100_relax_order_sample_barcode_unique.
+DROP INDEX IF EXISTS order_samples_tenant_barcode_active_unique;
 
 -- ── order_sample_tests ────────────────────────────────────────────────────────
 ALTER TABLE order_sample_tests ENABLE ROW LEVEL SECURITY;
