@@ -44,6 +44,7 @@ import {
   subtractInterval,
   toNum,
   roundToTwoDecimalPlaces,
+  amountInWords,
 } from '../../common/utils';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
@@ -1810,7 +1811,7 @@ export class OrderService {
         }
       }
     }
-    const context = this.buildPrintContext(order, type);
+    const context = await this.buildPrintContext(order, type);
     const resolvedTemplateId =
       templateId ?? (await this.resolvePrintTemplateId(tenantId, type));
     return this.pdfReportTemplateService.generatePdf(
@@ -1849,10 +1850,10 @@ export class OrderService {
   }
 
   /** Dispatch to the per-type render-context builder. */
-  private buildPrintContext(
+  private async buildPrintContext(
     order: OrderWithRelations,
     type: OrderPrintType,
-  ): GeneratePdfDto {
+  ): Promise<GeneratePdfDto> {
     switch (type) {
       case 'order_print':
         return this.buildOrderPrintContext(order);
@@ -1876,12 +1877,14 @@ export class OrderService {
       patient_name: [p.firstName, p.middleName, p.lastName]
         .filter(Boolean)
         .join(' '),
+      patient_salutation: p.salutation ?? '',
       patient_age: p.age ?? '',
       patient_gender: p.gender ?? '',
       patient_um_id: p.umId ?? '',
       patient_mobile: p.mobile ?? '',
       patient_email: p.email ?? '',
       patient_blood_group: p.bloodGroup ?? '',
+      patient_address1: p.addressLine1 ?? '',
     };
   }
 
@@ -1911,6 +1914,62 @@ export class OrderService {
         type: test ? 'Test' : panel ? 'Panel' : 'Direct',
         price: it.unitPrice,
         discount: toNum(it.discount),
+      };
+    });
+  }
+
+  /**
+   * Same shape as {@link itemRows}, plus `panel_tests_name` on panel rows — a
+   * comma-joined list of the panel's constituent test names (empty string for
+   * Test/Direct rows). `BranchLabPanelTest.branchLabPanelId`/`branchLabTestId`
+   * are raw FKs (no Prisma relation field on either model, mirroring the same
+   * pattern already used in `LabReportService.getResultParams`), so the
+   * member test names are batch-resolved with two extra queries rather than
+   * joined via `include`.
+   */
+  private async itemRowsWithPanelTests(
+    order: OrderWithRelations,
+  ): Promise<Array<Record<string, unknown>>> {
+    const panelIds = [
+      ...new Set(
+        order.items
+          .map((it) => it.branchLabPanel?.id)
+          .filter((id): id is string => id != null),
+      ),
+    ];
+    const testNamesByPanelId = new Map<string, string>();
+    if (panelIds.length > 0) {
+      const memberRows = await this.prisma.branchLabPanelTest.findMany({
+        where: { branchLabPanelId: { in: panelIds }, deletedAt: null },
+        select: { branchLabPanelId: true, branchLabTestId: true },
+        orderBy: { sortOrder: 'asc' },
+      });
+      const branchLabTestIds = [
+        ...new Set(memberRows.map((r) => r.branchLabTestId)),
+      ];
+      const branchLabTests = await this.prisma.branchLabTest.findMany({
+        where: { id: { in: branchLabTestIds } },
+        select: { id: true, testName: true },
+      });
+      const testNameById = new Map(
+        branchLabTests.map((t) => [t.id, t.testName]),
+      );
+      for (const panelId of panelIds) {
+        const names = memberRows
+          .filter((r) => r.branchLabPanelId === panelId)
+          .map((r) => testNameById.get(r.branchLabTestId))
+          .filter((name): name is string => Boolean(name));
+        testNamesByPanelId.set(panelId, names.join(', '));
+      }
+    }
+
+    return this.itemRows(order).map((row, i) => {
+      const panelId = order.items[i]?.branchLabPanel?.id;
+      return {
+        ...row,
+        panel_tests_name: panelId
+          ? (testNamesByPanelId.get(panelId) ?? '')
+          : '',
       };
     });
   }
@@ -1974,8 +2033,14 @@ export class OrderService {
   }
 
   /** `bill_print` — patient bill: amounts + item list + payment history. */
-  private buildBillContext(order: OrderWithRelations): GeneratePdfDto {
+  private async buildBillContext(
+    order: OrderWithRelations,
+  ): Promise<GeneratePdfDto> {
     const totals = this.billTotals(order);
+    const discountPercentage =
+      totals.gross > 0
+        ? roundToTwoDecimalPlaces((totals.discount / totals.gross) * 100)
+        : 0;
     return {
       variables: {
         bill_id: order.billId ?? order.orderCode,
@@ -1986,14 +2051,16 @@ export class OrderService {
         branch_name: order.branch?.name ?? '',
         gross_amount: totals.gross,
         discount_amount: totals.discount,
+        discount_percentage: discountPercentage,
         net_amount: totals.net,
+        total_amount_in_words: amountInWords(totals.net),
         paid_amount: totals.paid,
         balance_amount: totals.balance,
         ...this.patientVariables(order),
         ...this.referralVariables(order),
       },
       sections: {
-        items: this.itemRows(order),
+        items: await this.itemRowsWithPanelTests(order),
         payments: order.payments.map((pd) => ({
           date: this.dateOnly(pd.paymentDate),
           mode: pd.paymentMode,
@@ -2009,10 +2076,10 @@ export class OrderService {
    * patient bill context (amounts + item list + payment history) plus the
    * referral panel's accounts-person contact block, for the B2B billing party.
    */
-  private buildAccountsBillingContext(
+  private async buildAccountsBillingContext(
     order: OrderWithRelations,
-  ): GeneratePdfDto {
-    const bill = this.buildBillContext(order);
+  ): Promise<GeneratePdfDto> {
+    const bill = await this.buildBillContext(order);
     const panel = order.referralPanel;
     return {
       variables: {
@@ -2028,7 +2095,8 @@ export class OrderService {
   }
 
   /** `trf_print` — Test Requisition Form: requested tests + clinical notes. */
-  private buildTrfContext(order: OrderWithRelations): GeneratePdfDto {
+  private async buildTrfContext(order: OrderWithRelations): Promise<GeneratePdfDto> {
+    const testRows = await this.itemRowsWithPanelTests(order);
     return {
       variables: {
         trf_ref: order.billId ?? order.orderCode,
@@ -2040,16 +2108,7 @@ export class OrderService {
         ...this.referralVariables(order),
       },
       sections: {
-        tests: order.items.map((it, i) => {
-          const test = it.branchLabTest;
-          const panel = it.branchLabPanel;
-          return {
-            sr_no: i + 1,
-            name: test?.testName ?? panel?.panelName ?? it.direct ?? '',
-            code: test?.testCode ?? panel?.panelCode ?? '',
-            status: 'REQUESTED',
-          };
-        }),
+        tests: testRows.map((row) => ({ ...row, status: 'REQUESTED' })),
       },
     };
   }

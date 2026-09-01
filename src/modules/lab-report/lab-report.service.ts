@@ -355,7 +355,11 @@ export class LabReportService {
       this.prisma.labReport.findMany({
         where,
         include: LAB_REPORT_LIST_INCLUDE,
-        orderBy: { createdAt: 'desc' },
+        // Default sort matches Registration Billing / Accession worklists:
+        // by when the ORDER was placed, not when this LabReport row itself
+        // was created (which is stamped later, at sample-ACCEPTED time, and
+        // drifts out of order when samples are accepted out of sequence).
+        orderBy: { orderItem: { order: { createdAt: 'desc' } } },
         skip: (page - 1) * limit,
         take: limit,
       }),
@@ -1673,6 +1677,9 @@ export class LabReportService {
               lastName: true,
               signatoryDesignation: true,
               registrationCouncil: true,
+              isNablAuthorized: true,
+              isCapCertified: true,
+              isIsoCertified: true,
             },
           })
         : Promise.resolve([]),
@@ -1693,10 +1700,18 @@ export class LabReportService {
       } else {
         const d = doctorById.get(slot.id);
         if (d) {
+          const certifications = [
+            d.isNablAuthorized ? 'NABL Authorized' : null,
+            d.isCapCertified ? 'CAP Certified' : null,
+            d.isIsoCertified ? 'ISO Certified' : null,
+          ]
+            .filter((c): c is string => c !== null)
+            .join(', ');
           signatories.push({
             name: fullName([d.firstName, d.lastName]),
             designation:
               d.signatoryDesignation ?? d.registrationCouncil ?? undefined,
+            certifications: certifications || undefined,
           });
         }
       }
@@ -1733,6 +1748,33 @@ export class LabReportService {
 
     const signatories = await this.resolveStoredSignatories(report, tenantId);
 
+    // The sample this report's test was drawn from — `OrderSampleTest`/
+    // `OrderSample` are raw FKs (no Prisma relation field on `LabReport`),
+    // resolved via the same `orderItemId` `LabReport` already carries.
+    // Per-(test × sample) generation means at most one active row.
+    const sampleTest = await this.prisma.orderSampleTest.findFirst({
+      where: { orderItemId: report.orderItemId, deletedAt: null },
+      select: {
+        sample: {
+          select: {
+            collectedAt: true,
+            receivedAt: true,
+            sampleType: true,
+            sampleGroupLabel: true,
+            barcode: true,
+          },
+        },
+      },
+    });
+    const sample = sampleTest?.sample;
+
+    // Most recent SAMPLE-category note (append-only log — latest wins).
+    const sampleNote = await this.prisma.labReportNote.findFirst({
+      where: { labReportId: report.id, category: 'SAMPLE' },
+      orderBy: { createdAt: 'desc' },
+      select: { body: true },
+    });
+
     // `LabReportResultValue.resultParamId` is a raw FK (no Prisma relation
     // field on the model) — batch-fetch the parameter names separately
     // rather than one query per row.
@@ -1744,10 +1786,13 @@ export class LabReportService {
         ? []
         : await this.prisma.labTestResultParam.findMany({
             where: { id: { in: resultParamIds } },
-            select: { id: true, parameterName: true },
+            select: { id: true, parameterName: true, groupName: true },
           });
     const paramNameById = new Map(
       resultParams.map((p) => [p.id, p.parameterName]),
+    );
+    const groupNameByParamId = new Map(
+      resultParams.map((p) => [p.id, p.groupName ?? '']),
     );
 
     const results = report.resultValues.map((v) => ({
@@ -1757,18 +1802,22 @@ export class LabReportService {
       unit: v.unit ?? '',
       methodology: v.methodology ?? '',
       reference_display: v.referenceDisplay ?? '',
+      group_name: groupNameByParamId.get(v.resultParamId) ?? '',
     }));
 
     return {
       variables: {
         order_code: order.orderCode,
         order_date: order.orderDate.toISOString().slice(0, 10),
+        order_external_id: order.externalOrderId ?? '',
         patient_name: [patient.firstName, patient.middleName, patient.lastName]
           .filter(Boolean)
           .join(' '),
+        patient_salutation: patient.salutation ?? '',
         patient_age: patient.age ?? '',
         patient_gender: patient.gender ?? '',
         patient_um_id: patient.umId ?? '',
+        patient_mobile: patient.mobile ?? '',
         referred_by: order.referredByDoctor
           ? [order.referredByDoctor.firstName, order.referredByDoctor.lastName]
               .filter(Boolean)
@@ -1789,6 +1838,19 @@ export class LabReportService {
         interpretation: report.contentSections.interpretation ?? '',
         limitations: report.contentSections.limitations ?? '',
         references: report.contentSections.references ?? '',
+        last_report_prepared_on: report.publishedAt
+          ? report.publishedAt.toISOString().slice(0, 10)
+          : '',
+        sample_collected_date: sample?.collectedAt
+          ? sample.collectedAt.toISOString().slice(0, 10)
+          : '',
+        sample_received_date: sample?.receivedAt
+          ? sample.receivedAt.toISOString().slice(0, 10)
+          : '',
+        sample_type: sample?.sampleType ?? '',
+        sample_source_label: sample?.sampleGroupLabel ?? sample?.sampleType ?? '',
+        order_id_barcode: sample?.barcode ?? '',
+        sample_note: sampleNote?.body ?? '',
       },
       sections: { results },
       signatories,
