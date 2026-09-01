@@ -8,6 +8,7 @@ import {
   ExternalIdFormat,
   ExternalIdPurpose,
   InvoicePaymentStatus,
+  LabReportStatus,
   MessagingChannel,
   Order,
   OrderDateType,
@@ -75,6 +76,7 @@ import {
   resolveBillGenerated,
   computeEffectivePaid,
   deriveRefundStatus,
+  deriveReportStatus,
 } from './entities/order.entity';
 import { BillingGroupBy } from './dto/billing-grouped-query.dto';
 import { BillingDimension } from './dto/billing-query.dto';
@@ -2095,7 +2097,9 @@ export class OrderService {
   }
 
   /** `trf_print` — Test Requisition Form: requested tests + clinical notes. */
-  private async buildTrfContext(order: OrderWithRelations): Promise<GeneratePdfDto> {
+  private async buildTrfContext(
+    order: OrderWithRelations,
+  ): Promise<GeneratePdfDto> {
     const testRows = await this.itemRowsWithPanelTests(order);
     return {
       variables: {
@@ -2946,6 +2950,64 @@ export class OrderService {
           break;
       }
     }
+    if (query.reportStatus) {
+      // Per-test reporting progress, mirrored from `deriveReportStatus`. A test
+      // has "reached done" once its LabReport is RESULT_DONE/APPROVED/PUBLISHED,
+      // and "reached approved" at APPROVED/PUBLISHED. Expressed as some/none over
+      // active items (not `every`, which can't exclude soft-deleted items).
+      const doneStatuses: LabReportStatus[] = [
+        LabReportStatus.RESULT_DONE,
+        LabReportStatus.APPROVED,
+        LabReportStatus.PUBLISHED,
+      ];
+      const approvedStatuses: LabReportStatus[] = [
+        LabReportStatus.APPROVED,
+        LabReportStatus.PUBLISHED,
+      ];
+      // An active item that has NOT reached done: no report yet, or report below done.
+      const notReachedDone: Prisma.OrderItemWhereInput = {
+        deletedAt: null,
+        OR: [
+          { labReport: { is: null } },
+          { labReport: { is: { status: { notIn: doneStatuses } } } },
+        ],
+      };
+      // An active item that has NOT reached approved.
+      const notApproved: Prisma.OrderItemWhereInput = {
+        deletedAt: null,
+        OR: [
+          { labReport: { is: null } },
+          { labReport: { is: { status: { notIn: approvedStatuses } } } },
+        ],
+      };
+      const reachedDone: Prisma.OrderItemWhereInput = {
+        deletedAt: null,
+        labReport: { is: { status: { in: doneStatuses } } },
+      };
+      switch (query.reportStatus) {
+        case 'PENDING':
+          // Has items, none has reached done.
+          and.push({ items: { some: { deletedAt: null } } });
+          and.push({ items: { none: reachedDone } });
+          break;
+        case 'PARTIALLY_COMPLETED':
+          // At least one reached done and at least one has not.
+          and.push({ items: { some: reachedDone } });
+          and.push({ items: { some: notReachedDone } });
+          break;
+        case 'COMPLETED':
+          // Every active item reached done, but not all are approved.
+          and.push({ items: { some: { deletedAt: null } } });
+          and.push({ items: { none: notReachedDone } });
+          and.push({ items: { some: notApproved } });
+          break;
+        case 'APPROVED':
+          // Has items, none is unapproved.
+          and.push({ items: { some: { deletedAt: null } } });
+          and.push({ items: { none: notApproved } });
+          break;
+      }
+    }
 
     // Patient name / mobile via the to-one patient relation filter.
     const patientName = query.patientName?.trim();
@@ -3128,6 +3190,8 @@ export class OrderService {
         ...r,
         itemCount: count?.total ?? 0,
         collectedItemCount: count?.collected ?? 0,
+        // Order-level "Order Status": derived per-test from each item's LabReport.
+        reportStatus: deriveReportStatus(r.items),
         grossAmount,
         discountAmount,
         netAmount,

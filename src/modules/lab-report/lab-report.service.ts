@@ -1848,7 +1848,8 @@ export class LabReportService {
           ? sample.receivedAt.toISOString().slice(0, 10)
           : '',
         sample_type: sample?.sampleType ?? '',
-        sample_source_label: sample?.sampleGroupLabel ?? sample?.sampleType ?? '',
+        sample_source_label:
+          sample?.sampleGroupLabel ?? sample?.sampleType ?? '',
         order_id_barcode: sample?.barcode ?? '',
         sample_note: sampleNote?.body ?? '',
       },
@@ -2159,8 +2160,7 @@ export class LabReportService {
       where: { id: tenantId },
       select: { name: true, settings: true },
     });
-    const settings =
-      (tenant?.settings as { timezone?: string } | null) ?? null;
+    const settings = (tenant?.settings as { timezone?: string } | null) ?? null;
     const businessName = tenant?.name ?? '';
     const timezone = settings?.timezone ?? null;
     return { order, patient, patientName, businessName, timezone };

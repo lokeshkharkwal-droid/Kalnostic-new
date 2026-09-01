@@ -75,7 +75,9 @@ describe('LabPanelService.syncPanelsIntoBranch', () => {
       labTestServiceMock as unknown as LabTestService,
     );
     syncPanelsIntoBranch = (
-      service as unknown as { syncPanelsIntoBranch: typeof syncPanelsIntoBranch }
+      service as unknown as {
+        syncPanelsIntoBranch: typeof syncPanelsIntoBranch;
+      }
     ).syncPanelsIntoBranch.bind(service);
   });
 
