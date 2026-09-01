@@ -109,19 +109,31 @@ export class CommunicationService {
     return this.prisma.withTenant(tenantId, (tx) =>
       Promise.all(
         dto.recipients.map((r) => {
-          const body = this.fillTemplate(rawBody, {
+          const mergedVars: Record<string, string> = {
             ...(dto.variables ?? {}),
             pn: r.recipientName ?? dto.variables?.['pn'] ?? '',
             patient_name:
               r.recipientName ?? dto.variables?.['patient_name'] ?? '',
-          });
+          };
+          const body = this.fillTemplate(rawBody, mergedVars);
+          // WhatsApp templates render at Meta from the APPROVED template + a
+          // POSITIONAL `template_params` array — the free-text body we send is
+          // ignored by Meta. When the caller didn't pass an explicit list,
+          // derive the params from the template body's `{placeholder}` order
+          // (which must mirror the approved WhatsApp template's variables), so
+          // the counts/positions line up and Meta doesn't reject the send.
+          const templateParams = dto.templateParams?.length
+            ? dto.templateParams
+            : dto.channel === MessagingChannel.WHATSAPP
+              ? this.extractPlaceholders(rawBody).map(
+                  (k) => mergedVars[k] ?? '',
+                )
+              : undefined;
           const payload: CommunicationPayload = {
             ...(attachments?.length ? { attachments } : {}),
             ...(meta ? { exchange: meta } : {}),
             ...(dto.variables ? { variables: dto.variables } : {}),
-            ...(dto.templateParams?.length
-              ? { templateParams: dto.templateParams }
-              : {}),
+            ...(templateParams?.length ? { templateParams } : {}),
           };
           return tx.communicationLog.create({
             data: {
@@ -400,6 +412,23 @@ export class CommunicationService {
     let out = raw || '';
     for (const [k, v] of Object.entries(vars)) {
       out = out.split(`{${k}}`).join(v ?? '');
+    }
+    return out;
+  }
+
+  /**
+   * The `{placeholder}` keys of a template body, in the order they appear (one
+   * entry per occurrence, matching WhatsApp's `{{1}}…{{n}}` positional slots).
+   * Turns a template body into the positional `template_params` list aiSensy/Meta
+   * expects — the body's placeholder order MUST mirror the approved template.
+   * @param raw the template body with `{placeholder}` tokens
+   */
+  private extractPlaceholders(raw: string): string[] {
+    const out: string[] = [];
+    const re = /\{([a-zA-Z0-9_]+)\}/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(raw || '')) !== null) {
+      if (m[1]) out.push(m[1]);
     }
     return out;
   }
