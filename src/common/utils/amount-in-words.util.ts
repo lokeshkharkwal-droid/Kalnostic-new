@@ -70,7 +70,9 @@ export function amountInWords(value: number): string {
 
   const rupeeWords = groups
     .filter(([n]) => n > 0)
-    .map(([n, label]) => [spellUnderThousand(n), label].filter(Boolean).join(' '))
+    .map(([n, label]) =>
+      [spellUnderThousand(n), label].filter(Boolean).join(' '),
+    )
     .join(' ');
 
   const words = `Rupees ${rupeeWords || 'Zero'}`;
