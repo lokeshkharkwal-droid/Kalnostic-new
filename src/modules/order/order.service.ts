@@ -1877,12 +1877,14 @@ export class OrderService {
       patient_name: [p.firstName, p.middleName, p.lastName]
         .filter(Boolean)
         .join(' '),
+      patient_salutation: p.salutation ?? '',
       patient_age: p.age ?? '',
       patient_gender: p.gender ?? '',
       patient_um_id: p.umId ?? '',
       patient_mobile: p.mobile ?? '',
       patient_email: p.email ?? '',
       patient_blood_group: p.bloodGroup ?? '',
+      patient_address1: p.addressLine1 ?? '',
     };
   }
 
@@ -2093,7 +2095,8 @@ export class OrderService {
   }
 
   /** `trf_print` — Test Requisition Form: requested tests + clinical notes. */
-  private buildTrfContext(order: OrderWithRelations): GeneratePdfDto {
+  private async buildTrfContext(order: OrderWithRelations): Promise<GeneratePdfDto> {
+    const testRows = await this.itemRowsWithPanelTests(order);
     return {
       variables: {
         trf_ref: order.billId ?? order.orderCode,
@@ -2105,16 +2108,7 @@ export class OrderService {
         ...this.referralVariables(order),
       },
       sections: {
-        tests: order.items.map((it, i) => {
-          const test = it.branchLabTest;
-          const panel = it.branchLabPanel;
-          return {
-            sr_no: i + 1,
-            name: test?.testName ?? panel?.panelName ?? it.direct ?? '',
-            code: test?.testCode ?? panel?.panelCode ?? '',
-            status: 'REQUESTED',
-          };
-        }),
+        tests: testRows.map((row) => ({ ...row, status: 'REQUESTED' })),
       },
     };
   }
