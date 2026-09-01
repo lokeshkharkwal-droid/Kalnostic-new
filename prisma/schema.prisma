@@ -7717,8 +7717,11 @@ enum TransferStatus {
 /// requires, carrying `labTestSampleId` (→ lab_test_samples) and `departmentId`.
 /// `accessionNo` (`ACC-00001`…) is a per-tenant sequential value from
 /// `Tenant.accessionCounter`, unique per tenant among active rows (partial unique
-/// index in prisma/rls.sql). `barcode` (`BAR-00001-A`…) is nullable until
-/// assigned (unique per tenant among active rows). `status` holds the CURRENT
+/// index in prisma/rls.sql). `barcode` (a system-sequential value from `10001`)
+/// is nullable until assigned; it is NOT unique — a grouping bucket (order /
+/// department / dept+sample per `Tenant.groupingMode`) shares one barcode across
+/// its samples. `orderIdBarcode` holds the S3 URL of the rendered Code 39 image.
+/// `status` holds the CURRENT
 /// lifecycle stage; `previousStatus` backs the universal Retrieve/undo.
 /// `reportStatus` is display-only here (the Finance/Reports module owns report
 /// creation). Branch ids (`originBranchId`/`processingBranchId`) are logical refs
@@ -7739,7 +7742,11 @@ model OrderSample {
   departmentId    String? @map("department_id")
 
   accessionNo String  @map("accession_no")
-  barcode     String? @map("barcode")
+  // `barcode` is the barcode VALUE/ID (system-sequential from 10001, shared across
+  // a grouping bucket); `orderIdBarcode` is the S3 URL of the rendered Code 39
+  // image asset. Both are set together by barcode assignment.
+  barcode        String? @map("barcode")
+  orderIdBarcode String? @map("order_id_barcode")
 
   // Sample identity (snapshotted from the resolved LabTestSample).
   sampleType       String?        @map("sample_type")
@@ -7983,7 +7990,7 @@ model AccessionSetting {
   SampleBarcodeSettings_Prefix        String                     @default("") @map("sample_barcode_settings_prefix") @db.VarChar(24)
   SampleBarcodeSettings_Suffix        String                     @default("") @map("sample_barcode_settings_suffix") @db.VarChar(24)
   SampleBarcodeSettings_Separator     AccessionBarcodeSeparator  @default(NONE) @map("sample_barcode_settings_separator")
-  SampleBarcodeSettings_NumberLength  Int                        @default(6) @map("sample_barcode_settings_number_length")
+  SampleBarcodeSettings_NumberLength  Int                        @default(5) @map("sample_barcode_settings_number_length")
   SampleBarcodeSettings_ResetInterval AccessionBarcodeResetCycle @default(NEVER) @map("sample_barcode_settings_reset_interval")
   /// System-managed running counter — never accepted from the client.
   SampleBarcodeSettings_CurrentNumber Int                        @default(0) @map("sample_barcode_settings_current_number")

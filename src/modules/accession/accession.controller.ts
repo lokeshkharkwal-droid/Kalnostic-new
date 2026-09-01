@@ -29,6 +29,7 @@ import { AssignBarcodeDto } from './dto/assign-barcode.dto';
 import { ShareSampleDto } from './dto/share-sample.dto';
 import {
   BulkAcceptDto,
+  BulkAssignBarcodeDto,
   BulkCancelDto,
   BulkCollectDto,
   BulkDiscardDto,
@@ -302,16 +303,21 @@ export class AccessionController {
     return this.sampleService.retrieve(dto.ids, tenantId, personId, dto);
   }
 
-  /** Bulk Assign Barcode (system-generated per sample). */
+  /**
+   * Bulk Assign / Edit Barcode (§A.10.2) — assign ONE shared barcode to every
+   * sample in the selected group (the FE sends the group's sample ids). The
+   * value is the typed `barcode` when supplied, otherwise the next
+   * system-sequential value; a Code 39 image is rendered + stored per group.
+   */
   @Post('bulk/assign-barcode')
   @RequirePermission(PERMISSION_KEYS.ACC_IH_ASSIGN_BARCODE)
   @Audit(auditUpdate('Bulk assigned barcodes'))
   bulkAssignBarcode(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
-    @Body() dto: BulkSampleNoteDto,
+    @Body() dto: BulkAssignBarcodeDto,
   ) {
-    return this.sampleService.assignBarcode(dto.ids, tenantId, personId, {});
+    return this.sampleService.assignBarcode(dto.ids, tenantId, personId, dto);
   }
 
   /**

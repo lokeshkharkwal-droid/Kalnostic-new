@@ -4,6 +4,7 @@ import { BranchModule } from '../branch/branch.module';
 import { LabReportModule } from '../lab-report/lab-report.module';
 import { PdfReportTemplateModule } from '../pdf-report-template/pdf-report-template.module';
 import { PermissionsModule } from '../permissions/permissions.module';
+import { UploadsModule } from '../uploads/uploads.module';
 import { AccessionController } from './accession.controller';
 import { SampleTransferController } from './sample-transfer.controller';
 import { AccessionSettingsController } from './accession-settings.controller';
@@ -14,6 +15,7 @@ import { SampleTransferService } from './sample-transfer.service';
 import { AccessionSettingsService } from './accession-settings.service';
 import { AccessionReportService } from './accession-report.service';
 import { AccessionDashboardService } from './accession-dashboard.service';
+import { BarcodeService } from './barcode.service';
 
 /**
  * Accession module — the sample-lifecycle hub (post-order). Tenant-scoped +
@@ -38,6 +40,7 @@ import { AccessionDashboardService } from './accession-dashboard.service';
     LabReportModule,
     PdfReportTemplateModule,
     PermissionsModule,
+    UploadsModule,
   ],
   controllers: [
     AccessionController,
@@ -52,6 +55,7 @@ import { AccessionDashboardService } from './accession-dashboard.service';
     AccessionSettingsService,
     AccessionReportService,
     AccessionDashboardService,
+    BarcodeService,
   ],
   exports: [OrderSampleService],
 })

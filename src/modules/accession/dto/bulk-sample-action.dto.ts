@@ -7,6 +7,7 @@ import {
   IsUUID,
 } from 'class-validator';
 import { SampleNoteDto } from './sample-note.dto';
+import { AssignBarcodeDto } from './assign-barcode.dto';
 import { CollectSampleDto } from './collect-sample.dto';
 import { AcceptSampleDto } from './accept-sample.dto';
 import { StoreSampleDto } from './store-sample.dto';
@@ -44,6 +45,37 @@ export class BulkSampleNoteDto extends SampleNoteDto {
    * "Force" (group status actions) — apply the action to every id regardless of
    * its current status, overriding to the action's target status (no transition
    * validation). Distinct from `skipInvalid` (which skips instead of forcing).
+   */
+  @IsOptional()
+  @IsBoolean()
+  force?: boolean;
+}
+
+/**
+ * Bulk Assign / Edit Barcode (§A.10.2). The FE sends every sample id in the
+ * selected group; the service assigns ONE shared barcode to all of them —
+ * `barcode` (inherited, optional) is the manually-typed value, or the service
+ * allocates the next system-sequential value when omitted.
+ */
+export class BulkAssignBarcodeDto extends AssignBarcodeDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(500)
+  @IsUUID('all', { each: true })
+  ids: string[];
+
+  /**
+   * "Send all + skip invalid" — the FE sends this uniform group-action flag; it
+   * is a no-op for barcode assignment (which performs no status transition), but
+   * declaring it keeps the payload whitelisted under `forbidNonWhitelisted`.
+   */
+  @IsOptional()
+  @IsBoolean()
+  skipInvalid?: boolean;
+
+  /**
+   * "Force" — likewise accepted for payload uniformity; a no-op for barcode
+   * assignment (no transition to override).
    */
   @IsOptional()
   @IsBoolean()
