@@ -11,13 +11,17 @@ import { roundToTwoDecimalPlaces } from '../../../common/utils';
 /**
  * Derive an order's {@link PaymentStatus} from its payment ledger totals — the
  * summed `netAmount` and `paidAmount` across active `PaymentDetails` rows.
- * `NOT_PAID` when nothing is paid, `PAID` once the paid amount covers the net,
- * otherwise `PARTIALLY_PAID`. Kept as a pure helper so the order create and the
- * payment-details writes agree on the stored value (and the FE mapper mirrors it).
+ * `PAID` when nothing is owed (`net <= 0` — a fully-discounted or zero-value
+ * order has nothing left to collect, regardless of `paid`), `NOT_PAID` when
+ * something is owed and nothing has been paid, `PAID` once the paid amount
+ * covers the net, otherwise `PARTIALLY_PAID`. Kept as a pure helper so the
+ * order create and the payment-details writes agree on the stored value (and
+ * the FE mapper's `deriveStatus` mirrors it — see `mapBill.ts`).
  * @param net summed net amount
  * @param paid summed paid amount
  */
 export function derivePaymentStatus(net: number, paid: number): PaymentStatus {
+  if (net <= 0) return PaymentStatus.PAID;
   if (paid <= 0) return PaymentStatus.NOT_PAID;
   if (paid >= net) return PaymentStatus.PAID;
   return PaymentStatus.PARTIALLY_PAID;

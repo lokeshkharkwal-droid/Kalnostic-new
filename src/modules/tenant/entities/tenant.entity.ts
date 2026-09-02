@@ -5,6 +5,7 @@ export interface TenantSettings {
   timezone: string;
   currency: string;
   date_format: string;
+  time_format: string;
   language: string;
   logo_url?: string;
   primary_color?: string;

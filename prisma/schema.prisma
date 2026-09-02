@@ -7469,6 +7469,12 @@ model PaymentDetails {
   reference              String?     @map("reference")
   notes                  String?
 
+  /// The staff `Person` who collected/recorded this payment (logical ref, no
+  /// FK — same no-FK-on-personId convention as `OrderSample.collectedBy`).
+  /// Null on rows written before this field existed (no retroactive backfill
+  /// possible — historical payments never captured who collected them).
+  collectedBy String? @map("collected_by")
+
   /// Ledger entry kind. PAYMENT (default) = money collected (`paidAmount`).
   /// REFUND = money returned to the patient (`refundAmount`, `paidAmount` stays 0).
   entryType    PaymentEntryType @default(PAYMENT) @map("entry_type")
