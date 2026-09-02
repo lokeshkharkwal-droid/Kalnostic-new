@@ -44,6 +44,10 @@ export const SUPPORTED_CURRENCIES = [
   'NPR',
 ] as const;
 
+/** Clock styles a business may be configured with. Mirrors the Site Admin
+ * time-format dropdown (`TIME_FORMAT_OPTIONS`); validated on write. */
+export const SUPPORTED_TIME_FORMATS = ['12h', '24h'] as const;
+
 /**
  * Locale settings carried inside a tenant's `settings` JSON. Time zone and
  * currency are **required** and constrained to the supported shortlists;
@@ -68,6 +72,13 @@ export class TenantSettingsDto {
   @IsOptional()
   @MaxLength(50)
   date_format?: string;
+
+  @IsString()
+  @IsOptional()
+  @IsIn([...SUPPORTED_TIME_FORMATS], {
+    message: 'time_format must be one of: 12h, 24h',
+  })
+  time_format?: string;
 
   @IsString()
   @IsOptional()
@@ -99,6 +110,13 @@ export class UpdateTenantLocaleDto {
   @IsOptional()
   @MaxLength(50)
   date_format?: string;
+
+  @IsString()
+  @IsOptional()
+  @IsIn([...SUPPORTED_TIME_FORMATS], {
+    message: 'time_format must be one of: 12h, 24h',
+  })
+  time_format?: string;
 
   @IsString()
   @IsOptional()

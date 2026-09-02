@@ -8,6 +8,7 @@ import { PhlebotomistCollectionModule } from '../phlebotomist-collection/phlebot
 import { RegistrationSettingsModule } from '../registration-settings/registration-settings.module';
 import { CommunicationModule } from '../communication/communication.module';
 import { PermissionsModule } from '../permissions/permissions.module';
+import { TenantModule } from '../tenant/tenant.module';
 import { OrderController } from './order.controller';
 import { OrderService } from './order.service';
 
@@ -35,6 +36,7 @@ import { OrderService } from './order.service';
     RegistrationSettingsModule,
     CommunicationModule,
     PermissionsModule,
+    TenantModule,
   ],
   controllers: [OrderController],
   providers: [OrderService],
