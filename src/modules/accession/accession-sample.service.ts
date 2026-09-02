@@ -13,6 +13,8 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
+import { toBranchLocalInstant, formatTenantDate } from '../../common/utils';
+import { TenantService } from '../tenant/tenant.service';
 import { LabReportService } from '../lab-report/lab-report.service';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
 import type { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
@@ -141,6 +143,7 @@ export class OrderSampleService {
     private readonly labReportService: LabReportService,
     private readonly pdfReportTemplateService: PdfReportTemplateService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly tenantService: TenantService,
     private readonly barcodeService: BarcodeService,
   ) {}
 
@@ -887,7 +890,7 @@ export class OrderSampleService {
     templateId?: string,
   ): Promise<Buffer> {
     const sample = await this.findById(id, tenantId);
-    const context = this.buildLabelContext(sample);
+    const context = await this.buildLabelContext(sample, tenantId);
     const resolvedTemplateId =
       templateId ??
       (await this.resolveLabelTemplateId(tenantId, 'order_label_print'));
@@ -917,7 +920,11 @@ export class OrderSampleService {
     const samples = await Promise.all(
       ids.map((id) => this.findById(id, tenantId)),
     );
-    const labels = samples.map((s) => this.buildLabelVariables(s));
+    const { timezone, dateFormat } =
+      await this.tenantService.getLocale(tenantId);
+    const labels = samples.map((s) =>
+      this.buildLabelVariables(s, timezone, dateFormat),
+    );
     const combined: GeneratePdfDto = { sections: { labels } };
 
     const resolvedTemplateId =
@@ -959,6 +966,8 @@ export class OrderSampleService {
   /** Flat `{variable}` values for one sample's label. */
   private buildLabelVariables(
     sample: OrderSampleWithRelations,
+    timezone: string,
+    dateFormat: string,
   ): Record<string, unknown> {
     const patient = sample.order?.patient;
     return {
@@ -985,14 +994,24 @@ export class OrderSampleService {
       container_type: sample.containerType ?? '',
       priority: sample.priority,
       collected_at: sample.collectedAt
-        ? sample.collectedAt.toISOString().slice(0, 10)
+        ? formatTenantDate(
+            toBranchLocalInstant(sample.collectedAt, timezone),
+            dateFormat,
+          )
         : '',
     };
   }
 
   /** Render context for a single-sample label print. */
-  private buildLabelContext(sample: OrderSampleWithRelations): GeneratePdfDto {
-    return { variables: this.buildLabelVariables(sample) };
+  private async buildLabelContext(
+    sample: OrderSampleWithRelations,
+    tenantId: string,
+  ): Promise<GeneratePdfDto> {
+    const { timezone, dateFormat } =
+      await this.tenantService.getLocale(tenantId);
+    return {
+      variables: this.buildLabelVariables(sample, timezone, dateFormat),
+    };
   }
 
   // ── State-machine actions (PDF §A.9/§A.10) ─────────────────────────────────

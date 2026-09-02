@@ -336,22 +336,6 @@ export class AccessionController {
     return this.sampleService.updateNotes(dto.ids, tenantId, personId, dto);
   }
 
-  /**
-   * Bulk Update Sample Notes (§A.10.3) — write the same note/attachment to every
-   * sample in the group (no status change). Declared before `:id` so `bulk` is
-   * never captured as an id.
-   */
-  @Post('bulk/update')
-  @RequirePermission(PERMISSION_KEYS.ACC_IH_UPDATE_NOTES)
-  @Audit(auditUpdate('Bulk updated sample notes'))
-  bulkUpdateNotes(
-    @CurrentTenant() tenantId: string,
-    @CurrentUser('person_id') personId: string,
-    @Body() dto: BulkSampleNoteDto,
-  ) {
-    return this.sampleService.updateNotes(dto.ids, tenantId, personId, dto);
-  }
-
   // ── Single-sample reads ────────────────────────────────────────────────────
 
   /** Fetch one sample fully composed (Sample Overview — §A.10.4). */

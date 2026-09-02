@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { PDFDocument } from 'pdf-lib';
 import {
   LabReportHistory,
   LabReportStatus,
@@ -11,6 +12,14 @@ import {
   SampleStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  genderLabel,
+  sampleSourceLabel,
+  toBranchLocalInstant,
+  formatTenantDate,
+} from '../../common/utils';
+import { CONTAINER_TYPE_LABELS } from '../accession/constants/container-type.constants';
+import { TenantService } from '../tenant/tenant.service';
 import {
   ShareService,
   type ShareRecipient,
@@ -104,6 +113,7 @@ export class LabReportService {
     private readonly labTestService: LabTestService,
     private readonly eventEmitter: EventEmitter2,
     private readonly shareService: ShareService,
+    private readonly tenantService: TenantService,
   ) {}
 
   private readonly logger = new Logger(LabReportService.name);
@@ -1747,6 +1757,8 @@ export class LabReportService {
       report.orderItem.branchLabTest ?? report.orderItem.branchLabPanel;
 
     const signatories = await this.resolveStoredSignatories(report, tenantId);
+    const { timezone, dateFormat } =
+      await this.tenantService.getLocale(tenantId);
 
     // The sample this report's test was drawn from — `OrderSampleTest`/
     // `OrderSample` are raw FKs (no Prisma relation field on `LabReport`),
@@ -1761,12 +1773,21 @@ export class LabReportService {
             receivedAt: true,
             sampleType: true,
             sampleGroupLabel: true,
+            containerType: true,
             barcode: true,
           },
         },
       },
     });
     const sample = sampleTest?.sample;
+
+    // `sample_source_label` is the order-level Sample Source (In-House /
+    // Supplied) from `OrderDiagnostics`, not anything on `OrderSample` — a
+    // separate lookup since `LAB_REPORT_DETAIL_INCLUDE` doesn't carry it.
+    const diagnostics = await this.prisma.orderDiagnostics.findUnique({
+      where: { orderId: order.id },
+      select: { sampleSource: true },
+    });
 
     // Most recent SAMPLE-category note (append-only log — latest wins).
     const sampleNote = await this.prisma.labReportNote.findFirst({
@@ -1786,7 +1807,12 @@ export class LabReportService {
         ? []
         : await this.prisma.labTestResultParam.findMany({
             where: { id: { in: resultParamIds } },
-            select: { id: true, parameterName: true, groupName: true },
+            select: {
+              id: true,
+              parameterName: true,
+              groupName: true,
+              sortOrder: true,
+            },
           });
     const paramNameById = new Map(
       resultParams.map((p) => [p.id, p.parameterName]),
@@ -1794,8 +1820,22 @@ export class LabReportService {
     const groupNameByParamId = new Map(
       resultParams.map((p) => [p.id, p.groupName ?? '']),
     );
+    const sortOrderByParamId = new Map(
+      resultParams.map((p) => [p.id, p.sortOrder]),
+    );
 
-    const results = report.resultValues.map((v) => ({
+    // `resultValues` (the include on `LAB_REPORT_DETAIL_INCLUDE`) carries no
+    // `orderBy` — rows come back in whatever order Postgres returns them,
+    // not necessarily insertion or entry order. A multi-parameter test (e.g.
+    // CBC) must print in the catalogue's configured `sortOrder`, not
+    // arbitrary DB order.
+    const sortedResultValues = [...report.resultValues].sort(
+      (a, b) =>
+        (sortOrderByParamId.get(a.resultParamId) ?? 0) -
+        (sortOrderByParamId.get(b.resultParamId) ?? 0),
+    );
+
+    const results = sortedResultValues.map((v) => ({
       parameter_name: paramNameById.get(v.resultParamId) ?? '',
       observed1: v.observed1 ?? '',
       observed2: v.observed2 ?? '',
@@ -1808,14 +1848,14 @@ export class LabReportService {
     return {
       variables: {
         order_code: order.orderCode,
-        order_date: order.orderDate.toISOString().slice(0, 10),
+        order_date: formatTenantDate(order.orderDate, dateFormat),
         order_external_id: order.externalOrderId ?? '',
         patient_name: [patient.firstName, patient.middleName, patient.lastName]
           .filter(Boolean)
           .join(' '),
         patient_salutation: patient.salutation ?? '',
         patient_age: patient.age ?? '',
-        patient_gender: patient.gender ?? '',
+        patient_gender: genderLabel(patient.gender),
         patient_um_id: patient.umId ?? '',
         patient_mobile: patient.mobile ?? '',
         referred_by: order.referredByDoctor
@@ -1839,13 +1879,22 @@ export class LabReportService {
         limitations: report.contentSections.limitations ?? '',
         references: report.contentSections.references ?? '',
         last_report_prepared_on: report.publishedAt
-          ? report.publishedAt.toISOString().slice(0, 10)
+          ? formatTenantDate(
+              toBranchLocalInstant(report.publishedAt, timezone),
+              dateFormat,
+            )
           : '',
         sample_collected_date: sample?.collectedAt
-          ? sample.collectedAt.toISOString().slice(0, 10)
+          ? formatTenantDate(
+              toBranchLocalInstant(sample.collectedAt, timezone),
+              dateFormat,
+            )
           : '',
         sample_received_date: sample?.receivedAt
-          ? sample.receivedAt.toISOString().slice(0, 10)
+          ? formatTenantDate(
+              toBranchLocalInstant(sample.receivedAt, timezone),
+              dateFormat,
+            )
           : '',
         sample_type: sample?.sampleType ?? '',
         sample_source_label:
@@ -1912,26 +1961,32 @@ export class LabReportService {
 
   /**
    * Print All (order-console's "Lab All Report" action, PDF templates
-   * integration checklist item 3). Unlike {@link print} (one report, one
-   * template render), this renders ONE `lab_all_report`-type template ONCE,
-   * with every one of the order's reports' result rows flattened into a
-   * single `sections.results` row-set (each row carries its own `test_name`
-   * so the body table reads as one continuous report, test by test).
+   * integration checklist item 3). Generates each of the order's reports as
+   * its OWN complete, independent single-report PDF (via {@link print} —
+   * same code path, same `lab_report` template resolution, as a normal
+   * single print) and merges those PDFs into one file with `pdf-lib`.
    *
-   * Deliberately flat, not nested (`sections.reports[].results`):
-   * `TemplateRenderService.interpolateSections` only expands ONE level of
-   * `{{#each}}` — it has no per-row nested-loop support — so a template
-   * author cannot write "for each report, for each result" in one pass.
-   * Flattening avoids that limitation entirely rather than extending the
-   * shared renderer (which every other template type also depends on) for
-   * this one case.
+   * Chosen over rendering one shared template across every report's flattened
+   * results (the previous approach): `TemplateRenderService.interpolateSections`
+   * only expands ONE level of `{{#each}}` — it has no per-row nested-loop
+   * support — so a single template could never give each test its own
+   * header/title/content-sections, only one shared table for the whole
+   * order. Merging N already-correct single-report PDFs sidesteps that
+   * limitation entirely, and reuses `print()`'s per-report template
+   * resolution as-is: if per-test template selection is added later (e.g. a
+   * `LabTest`-specific override in `resolvePrintTemplateId`), this method
+   * inherits it automatically since each report resolves its own template
+   * independently, exactly as a standalone print does today.
+   * @param templateId when given, forces EVERY report in this merge to use
+   * this one specific template, skipping each report's own resolution —
+   * an explicit override, not the default per-report behavior.
    * @param orderItemIds when given (non-empty), restricts the consolidated
    * PDF to only these order items' reports instead of every report on the
    * order — used by the Order Overview modal's multi-select bulk actions.
    * @throws OrderReportsNotFoundException if the order (or the selected
    * items) has no lab reports (wrong id, or no item has reached ACCEPTED yet)
-   * @throws NoActivePrintTemplateException if no active `lab_all_report`
-   * template exists
+   * @throws NoActivePrintTemplateException if a report's tenant has no
+   * active `lab_report` template (and no override `templateId` was given)
    * @throws AmbiguousPrintTemplateException if multiple exist and no
    * `templateId` was given
    */
@@ -1960,47 +2015,19 @@ export class LabReportService {
       throw new OrderReportsNotFoundException(orderId);
     }
 
-    const contexts = await Promise.all(
-      reportRows.map((r) => this.buildPrintContext(r.id, tenantId, branchId)),
+    const pdfBuffers = await Promise.all(
+      reportRows.map((r) =>
+        this.print(r.id, tenantId, branchId, templateId, 'lab_report'),
+      ),
     );
-    const first = contexts[0]!;
-    const combined: GeneratePdfDto = {
-      // Order/patient variables are identical across every report on the
-      // same order — the first context's is as good as any.
-      variables: first.variables,
-      signatories: first.signatories,
-      sections: {
-        results: contexts.flatMap((c) => {
-          const testName = c.variables?.test_name ?? '';
-          const rows = c.sections?.results ?? [];
-          // A report with no result rows yet still gets one row (test name
-          // visible, blanks for the observed value) so it isn't silently
-          // dropped from the consolidated report.
-          return rows.length > 0
-            ? rows.map((row) => ({ test_name: testName, ...row }))
-            : [
-                {
-                  test_name: testName,
-                  parameter_name: '',
-                  observed1: '',
-                  observed2: '',
-                  unit: '',
-                  methodology: '',
-                  reference_display: '',
-                },
-              ];
-        }),
-      },
-    };
 
-    const resolvedTemplateId =
-      templateId ??
-      (await this.resolvePrintTemplateId(tenantId, 'lab_all_report'));
-    return this.pdfReportTemplateService.generatePdf(
-      resolvedTemplateId,
-      tenantId,
-      combined,
-    );
+    const merged = await PDFDocument.create();
+    for (const buf of pdfBuffers) {
+      const src = await PDFDocument.load(buf);
+      const pages = await merged.copyPages(src, src.getPageIndices());
+      for (const page of pages) merged.addPage(page);
+    }
+    return Buffer.from(await merged.save());
   }
 
   /**

@@ -4,6 +4,7 @@ import { BranchModule } from '../branch/branch.module';
 import { LabReportModule } from '../lab-report/lab-report.module';
 import { PdfReportTemplateModule } from '../pdf-report-template/pdf-report-template.module';
 import { PermissionsModule } from '../permissions/permissions.module';
+import { TenantModule } from '../tenant/tenant.module';
 import { UploadsModule } from '../uploads/uploads.module';
 import { AccessionController } from './accession.controller';
 import { SampleTransferController } from './sample-transfer.controller';
@@ -40,6 +41,7 @@ import { BarcodeService } from './barcode.service';
     LabReportModule,
     PdfReportTemplateModule,
     PermissionsModule,
+    TenantModule,
     UploadsModule,
   ],
   controllers: [
