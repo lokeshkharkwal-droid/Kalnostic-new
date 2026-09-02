@@ -20,7 +20,7 @@ auth:bearer {
 
 body:json {
   {
-    "barcode": "BAR-00001-A"
+    "barcode": "10025"
   }
 }
 
@@ -31,11 +31,20 @@ tests {
   test("barcode is set", function () {
     expect(res.getBody().data.barcode).to.be.a("string");
   });
+  test("barcode image url is set", function () {
+    expect(res.getBody().data.orderIdBarcode).to.be.a("string");
+  });
 }
 
 docs {
-  Assign Barcode & Print (§A.10.2) — available at **any status, no status change**.
-  `barcode` is optional: omit it to assign the system-generated `BAR-#####-A`
-  (derived from the accession number); supply it to override (letters/digits/
-  hyphens). A clash returns 409 `ACCESSION_NUMBER_CONFLICT`.
+  Assign / Edit Barcode (§A.10.2) — available at **any status, no status change**.
+  `barcode` is optional: omit it to assign the next **system-sequential** value
+  (from `10001`, per the branch's Sample Barcode Settings counter — auto values
+  **skip any barcode already in use** and allocation is transaction-safe); supply
+  it to override (letters/digits/hyphens). A supplied value is **rejected** (400
+  `VALIDATION_ERROR`) when already used by a sample outside this group. On
+  assignment the server renders a **Code 39** image (`jsbarcode`), uploads it to
+  S3, and stores the URL in `orderIdBarcode` for **every** sample in the group.
+  All samples in one group share the same barcode value + image.
+
 }

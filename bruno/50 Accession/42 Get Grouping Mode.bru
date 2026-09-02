@@ -1,0 +1,48 @@
+meta {
+  name: 42 Get Grouping Mode
+  type: http
+  seq: 42
+}
+
+get {
+  url: {{baseUrl}}/tenant/accession-settings/grouping-mode
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the tenant's grouping mode", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("groupingMode");
+    expect(d.groupingMode).to.be.oneOf([
+      "SAMPLE_NAME",
+      "ORDER",
+      "DEPARTMENT",
+      "DEPARTMENT_SAMPLE_NAME",
+    ]);
+  });
+}
+
+docs {
+  Read the caller tenant's Accession **Group Settings** mode
+  (`AccessionGroupingMode`) — the tenant-wide setting (configured on the
+  business-admin Accession Settings page) that controls how
+  `GET /accession/order-samples/grouped` groups samples within an order **and**
+  the scope at which a group action/status update fans out. Defaults to
+  `DEPARTMENT_SAMPLE_NAME`. Gated by the `ACC_SETTINGS_VIEW` permission.
+
+  Modes:
+
+  - `SAMPLE_NAME` (Sample-wise) — one group per individual sample.
+  - `ORDER` (Order-wise) — one group for the whole order.
+  - `DEPARTMENT` (Department-wise) — one group per Order + Department.
+  - `DEPARTMENT_SAMPLE_NAME` (Department + Sample-wise) — one per
+    Order + Department + Sample (default).
+}

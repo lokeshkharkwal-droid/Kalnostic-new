@@ -35,6 +35,16 @@ export class SigningAuthorityDto {
   @IsString()
   @MaxLength(2_000_000)
   signatureImage?: string;
+
+  /**
+   * Comma-joined accreditation labels for this signatory (e.g. "NABL
+   * Authorized, CAP Certified") — empty when the signatory is a plain staff
+   * `Person` (only `Doctor` rows carry certification flags) or has none set.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  certifications?: string;
 }
 
 /**

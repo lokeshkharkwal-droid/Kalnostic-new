@@ -29,6 +29,7 @@ import { AssignBarcodeDto } from './dto/assign-barcode.dto';
 import { ShareSampleDto } from './dto/share-sample.dto';
 import {
   BulkAcceptDto,
+  BulkAssignBarcodeDto,
   BulkCancelDto,
   BulkCollectDto,
   BulkDiscardDto,
@@ -302,16 +303,37 @@ export class AccessionController {
     return this.sampleService.retrieve(dto.ids, tenantId, personId, dto);
   }
 
-  /** Bulk Assign Barcode (system-generated per sample). */
+  /**
+   * Bulk Assign / Edit Barcode (§A.10.2) — assign ONE shared barcode to every
+   * sample in the selected group (the FE sends the group's sample ids). The
+   * value is the typed `barcode` when supplied, otherwise the next
+   * system-sequential value; a Code 39 image is rendered + stored per group.
+   */
   @Post('bulk/assign-barcode')
   @RequirePermission(PERMISSION_KEYS.ACC_IH_ASSIGN_BARCODE)
   @Audit(auditUpdate('Bulk assigned barcodes'))
   bulkAssignBarcode(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
+    @Body() dto: BulkAssignBarcodeDto,
+  ) {
+    return this.sampleService.assignBarcode(dto.ids, tenantId, personId, dto);
+  }
+
+  /**
+   * Bulk Update Sample Notes (§A.10.3) — write the same note/attachment to every
+   * sample in the group (no status change). Declared before `:id` so `bulk` is
+   * never captured as an id.
+   */
+  @Post('bulk/update')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_UPDATE_NOTES)
+  @Audit(auditUpdate('Bulk updated sample notes'))
+  bulkUpdateNotes(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
     @Body() dto: BulkSampleNoteDto,
   ) {
-    return this.sampleService.assignBarcode(dto.ids, tenantId, personId, {});
+    return this.sampleService.updateNotes(dto.ids, tenantId, personId, dto);
   }
 
   /**

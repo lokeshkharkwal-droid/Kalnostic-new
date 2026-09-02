@@ -291,9 +291,21 @@ export class SampleTransferService {
       }
       data.externalPartnerName = dto.externalPartnerName;
     }
-    await this.prisma.withTenant(tenantId, (tx) =>
-      tx.sampleTransfer.update({ where: { id: transferId }, data }),
-    );
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      await tx.sampleTransfer.update({ where: { id: transferId }, data });
+      // Keep the source sample's processing branch in step when an INTERNAL
+      // destination is assigned (or changed) after dispatch, mirroring the
+      // dispatch-time behaviour so the origin branch's list stays accurate.
+      if (transfer.kind === TransferKind.INTERNAL && dto.destinationBranchId) {
+        await tx.orderSample.update({
+          where: { id: transfer.sampleId },
+          data: {
+            processingBranchId: dto.destinationBranchId,
+            updatedBy: personId,
+          },
+        });
+      }
+    });
     return this.findTransferById(transferId, tenantId);
   }
 
@@ -438,7 +450,10 @@ export class SampleTransferService {
             },
           );
         } catch (e) {
-          if (dto.skipInvalid && e instanceof InvalidSampleTransitionException) {
+          if (
+            dto.skipInvalid &&
+            e instanceof InvalidSampleTransitionException
+          ) {
             continue;
           }
           throw e;
@@ -464,6 +479,20 @@ export class SampleTransferService {
           updatedBy: personId,
         };
         const transfer = await tx.sampleTransfer.create({ data });
+        // For an INTERNAL send with a known destination, reflect where the
+        // sample is now being processed on the source row itself, so the origin
+        // branch's In-House list shows `processing = destination branch` (not the
+        // origin) once it's sent. Forward/outsource have no local receiving
+        // branch, so they leave the processing branch unchanged.
+        if (kind === TransferKind.INTERNAL && destination.destinationBranchId) {
+          await tx.orderSample.update({
+            where: { id: sample.id },
+            data: {
+              processingBranchId: destination.destinationBranchId,
+              updatedBy: personId,
+            },
+          });
+        }
         done.push(transfer.id);
       }
       return done;

@@ -27,44 +27,57 @@ tests {
   test("200 OK", function () {
     expect(res.getStatus()).to.equal(200);
   });
-  test("groups carry groupType + actionScope + sampleIds", function () {
+  test("order-first: each order carries orderId + groups + sampleIds", function () {
     const d = res.getBody().data;
     if (d.length) {
-      expect(d[0]).to.have.property("groupType");
-      expect(d[0]).to.have.property("actionScope");
+      expect(d[0]).to.have.property("orderId");
+      expect(d[0]).to.have.property("groups");
       expect(d[0]).to.have.property("sampleIds");
+      if (d[0].groups.length) {
+        expect(d[0].groups[0]).to.have.property("barcode");
+        expect(d[0].groups[0]).to.have.property("sampleIds");
+      }
     }
   });
 }
 
 docs {
-  Grouped, **group-paginated** in-house list (10 groups/page) — the same filters
-  as `01 List Samples`, but records are grouped and the pagination unit is the
-  group, per the tenant's Grouping Settings
-  (`GET/PUT /tenant/accession-settings/grouping-mode`,
-  `AccessionGroupingMode`). The in-house-orders page renders + scopes actions from
-  this response.
+  Grouped, **order-paginated** in-house list (10 orders/page) — the same filters
+  as `01 List Samples`, but **order-first**: the Order ID is ALWAYS the top-level
+  grouping and the pagination unit; groups never cross order boundaries. Within
+  each order, samples are grouped into final groups by the tenant's **current
+  grouping mode** (computed live, not the frozen barcode), so the displayed
+  grouping, the shared barcode and the action scope always follow the live Group
+  Settings — even after the mode is changed. The in-house-orders page renders +
+  scopes actions from this response.
 
-  ## Grouping mode → response shape (set via Assessment Settings)
+  Grouping mode (`GET/PUT /tenant/accession-settings/grouping-mode`,
+  `AccessionGroupingMode`) determines the within-order groups:
 
-  - `SAMPLE_NAME` (Sample-wise) — `groupType: ORDER`, `actionScope: SAMPLE`
-    (order header, each sample acted on individually).
-  - `ORDER` (Order-wise) — `groupType: ORDER`, `actionScope: ORDER`
-    (one action set for the whole order).
-  - `DEPARTMENT` (Department-wise) — `groupType: DEPARTMENT`,
-    `actionScope: DEPARTMENT` (one action set per department, across orders).
-  - `DEPARTMENT_SAMPLE_NAME` (Department + Sample-wise) — `groupType: DEPARTMENT`,
-    `actionScope: DEPARTMENT_SAMPLE`, with nested `subGroups[]` keyed by sample.
+  - `SAMPLE_NAME` (Sample-wise) — one final group per sample (each acted on alone).
+  - `ORDER` (Order-wise) — one final group for the whole order.
+  - `DEPARTMENT` (Department-wise) — one final group per Order + Department.
+  - `DEPARTMENT_SAMPLE_NAME` (Department + Sample-wise) — one per
+    Order + Department + Sample (default).
 
-  ## Each group carries
+  ## Each order (top-level) carries
 
-  - `groupKey` — the order id or department id (null = "Unassigned" department).
-  - `order` (ORDER groups) / `department: { id, name }` (DEPARTMENT groups) —
-    header context.
+  - `orderId` + `order` — the order id and its header context (patient, referral).
+  - `groupingMode` — the tenant's current mode (FE layout hint).
+  - `sampleIds[]` — all sample ids in the order.
+  - `groups[]` — the final (barcode) groups within the order.
+
+  ## Each final group carries
+
+  - `groupKey` — `${orderId}::${modeKey}` (deterministic from the current mode).
+  - `barcode` — the group's shared barcode, or null when the members carry
+    differing/blank barcodes (e.g. cleared after a mode change → shows
+    "No barcode" until a fresh Assign Barcode).
+  - `department: { id, name } | null` — the single distinct department, else null.
+  - `sampleLabel: string | null` — the single distinct sample name, else null.
   - `samples[]` — the group's list rows (each with `tatStatus` + `departmentName`).
-  - `sampleIds[]` — the flat set a group action targets (sent to a `bulk/<action>`
-    with `skipInvalid: true` — see the bulk action requests).
-  - `subGroups[]` — only in `DEPARTMENT_SAMPLE_NAME` mode.
+  - `sampleIds[]` — the flat set a group status action targets (sent to a
+    `bulk/<action>`); a status change cascades to every sample in the group.
 
-  `meta.total` / `meta.totalPages` count **groups**, not samples.
+  `meta.total` / `meta.totalPages` count **orders**, not groups or samples.
 }

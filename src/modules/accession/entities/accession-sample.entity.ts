@@ -1,4 +1,4 @@
-import { Prisma, SampleStatus } from '@prisma/client';
+import { AccessionGroupingMode, Prisma, SampleStatus } from '@prisma/client';
 import { TatStatus } from '../constants/tat.constant';
 
 /**
@@ -100,49 +100,42 @@ export interface AccessionSummary {
   byTat: Record<TatStatus, number>;
 }
 
-/**
- * How the in-house list is grouped + the scope a group's action button applies
- * to, derived from the tenant's `AccessionGroupingMode` (Grouping Settings):
- * - `SAMPLE` (Sample-wise): order-grouped display, each sample acted on alone.
- * - `ORDER` (Order-wise): one action set per order.
- * - `DEPARTMENT` (Department-wise): one action set per department.
- * - `DEPARTMENT_SAMPLE` (Department + Sample-wise): one per department+sample.
- */
-export type SampleActionScope =
-  | 'SAMPLE'
-  | 'ORDER'
-  | 'DEPARTMENT'
-  | 'DEPARTMENT_SAMPLE';
-
-/** Top-level grouping unit (also the group-aware pagination unit). */
-export type AccessionGroupType = 'ORDER' | 'DEPARTMENT';
-
 /** A list sample enriched with its resolved department name for grouped views. */
 export type GroupedSampleItem = OrderSampleListItem & {
   departmentName: string | null;
 };
 
-/** A secondary (sample-name) group inside a department — Department+Sample mode. */
-export interface OrderSampleSubGroup {
-  sampleKey: string;
-  sampleLabel: string;
+/**
+ * One **final group** within an order — the unit a status/barcode action targets.
+ * Order ID is always the top-level grouping (Critical Rule #1: never group across
+ * orders); within an order, samples are grouped by the tenant's **current
+ * grouping mode** (Sample/Order/Department/Department+Sample), so display,
+ * barcode and action scope stay in lock-step with the live Group Settings.
+ * `barcode`/`department`/`sampleLabel` are the single distinct value across the
+ * group (else `null` — e.g. `barcode` is `null` when members carry differing/
+ * blank barcodes, flagging the group for a fresh Assign Barcode). `sampleIds` is
+ * the flat set the group's action button targets, so a status change cascades to
+ * every sample in the group (Rule #3).
+ */
+export interface InHouseSampleGroup {
+  groupKey: string;
+  barcode: string | null;
+  department: { id: string | null; name: string } | null;
+  sampleLabel: string | null;
   sampleIds: string[];
   samples: GroupedSampleItem[];
 }
 
 /**
- * One top-level group of the grouped in-house list. `order` is set for ORDER
- * groups (header context), `department` for DEPARTMENT groups. `sampleIds` is the
- * flat set the group's action button targets ("send all + skip invalid").
- * `subGroups` is populated only in Department+Sample mode.
+ * One order of the grouped in-house list — the top-level grouping and the
+ * group-aware pagination unit. `order` carries the header context (patient,
+ * referral); `groups` are the final (barcode) groups within the order;
+ * `groupingMode` echoes the tenant's current mode as a layout hint for the FE.
  */
-export interface OrderSampleGroup {
-  groupKey: string | null;
-  groupType: AccessionGroupType;
-  actionScope: SampleActionScope;
+export interface InHouseOrderGroup {
+  orderId: string;
   order: OrderSampleListRow['order'] | null;
-  department: { id: string | null; name: string } | null;
+  groupingMode: AccessionGroupingMode;
   sampleIds: string[];
-  samples: GroupedSampleItem[];
-  subGroups: OrderSampleSubGroup[] | null;
+  groups: InHouseSampleGroup[];
 }

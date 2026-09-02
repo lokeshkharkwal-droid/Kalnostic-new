@@ -267,6 +267,16 @@ export class ListOrdersDto extends PaginationQueryDto {
   @IsIn(['PENDING', 'PARTIAL', 'COLLECTED'])
   sampleStatus?: 'PENDING' | 'PARTIAL' | 'COLLECTED';
 
+  /**
+   * Order-level reporting progress, derived per-test from each item's LabReport
+   * (Order Console "Order Status"): `PENDING` (no test reported), `COMPLETED`
+   * (all reported, not all approved), `APPROVED` (all approved),
+   * `PARTIALLY_COMPLETED` (some but not all reported).
+   */
+  @IsOptional()
+  @IsIn(['PENDING', 'PARTIALLY_COMPLETED', 'COMPLETED', 'APPROVED'])
+  reportStatus?: 'PENDING' | 'PARTIALLY_COMPLETED' | 'COMPLETED' | 'APPROVED';
+
   /** Home-visit filter (`OrderDiagnostics.isHomeVisit`). */
   @IsOptional()
   @ToBoolean()

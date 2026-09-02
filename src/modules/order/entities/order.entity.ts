@@ -1,4 +1,5 @@
 import {
+  LabReportStatus,
   OrderStatus,
   PaymentStatus,
   Prisma,
@@ -99,6 +100,60 @@ export function deriveRefundStatus(
 }
 
 /**
+ * Order-level reporting progress, derived per-test from each item's `LabReport`.
+ * Ordered `PENDING < PARTIALLY_COMPLETED < COMPLETED < APPROVED`. This is the
+ * "Order Status" the Order Console renders (and can filter by).
+ */
+export type OrderReportStatus =
+  | 'PENDING'
+  | 'PARTIALLY_COMPLETED'
+  | 'COMPLETED'
+  | 'APPROVED';
+
+/** Report statuses that count a test as having reached "Result Done". */
+const REPORT_DONE_STATUSES: readonly LabReportStatus[] = [
+  LabReportStatus.RESULT_DONE,
+  LabReportStatus.APPROVED,
+  LabReportStatus.PUBLISHED,
+];
+
+/** Report statuses that count a test as "Approved" (published implies approved). */
+const REPORT_APPROVED_STATUSES: readonly LabReportStatus[] = [
+  LabReportStatus.APPROVED,
+  LabReportStatus.PUBLISHED,
+];
+
+/**
+ * Derive an order's {@link OrderReportStatus} from the reporting state of its
+ * tests. Each active item (test) is 1:1 with a `LabReport`; a test with no
+ * report yet, or whose report has not reached `RESULT_DONE`, is treated as
+ * "not yet reported" (the accession stages Accept/Acquire/Store fall here).
+ *
+ * - `APPROVED` — every test reached Approved/Published.
+ * - `COMPLETED` — every test reached Result Done, but not all are Approved.
+ * - `PARTIALLY_COMPLETED` — at least one test reached Result Done, but not all did.
+ * - `PENDING` — no test reached Result Done (or the order has no items).
+ *
+ * @param items the order's active items, each with its optional `labReport.status`
+ */
+export function deriveReportStatus(
+  items: { labReport: { status: LabReportStatus } | null }[],
+): OrderReportStatus {
+  if (items.length === 0) return 'PENDING';
+  let doneCount = 0;
+  let approvedCount = 0;
+  for (const item of items) {
+    const status = item.labReport?.status;
+    if (status && REPORT_DONE_STATUSES.includes(status)) doneCount++;
+    if (status && REPORT_APPROVED_STATUSES.includes(status)) approvedCount++;
+  }
+  if (approvedCount === items.length) return 'APPROVED';
+  if (doneCount === items.length) return 'COMPLETED';
+  if (doneCount >= 1) return 'PARTIALLY_COMPLETED';
+  return 'PENDING';
+}
+
+/**
  * Prisma `include` for a fully-composed order read: patient ref, the referral
  * refs (referral doctor / panel and internal / external referral records),
  * catalogue items (active only, with their resolved test/panel — `direct` items
@@ -113,6 +168,7 @@ export const ORDER_INCLUDE = {
       firstName: true,
       middleName: true,
       lastName: true,
+      salutation: true,
       mobile: true,
       gender: true,
       age: true,
@@ -122,6 +178,7 @@ export const ORDER_INCLUDE = {
       alternateMobileNumber: true,
       alternateEmail: true,
       umId: true,
+      addressLine1: true,
     },
   },
   branch: { select: { id: true, name: true, code: true } },
@@ -332,6 +389,10 @@ export const ORDER_LIST_INCLUDE = {
       branchLabPanel: {
         select: { id: true, panelName: true, panelCode: true },
       },
+      // Reporting progress of this test's report (1:1 LabReport, created lazily
+      // once a linked sample is accepted). Absent until then — that's a
+      // "not yet reported" test. Drives the order-level `reportStatus`.
+      labReport: { select: { status: true } },
     },
   },
   diagnostics: {
@@ -497,6 +558,11 @@ export type OrderListRow = Prisma.OrderGetPayload<{
   itemCount: number;
   /** Count of the order's active items with a `collectedAt` timestamp. */
   collectedItemCount: number;
+  /**
+   * Order-level reporting progress, derived per-test from each item's LabReport
+   * ({@link deriveReportStatus}). This is the Order Console's "Order Status".
+   */
+  reportStatus: OrderReportStatus;
   grossAmount: number;
   discountAmount: number;
   netAmount: number;
