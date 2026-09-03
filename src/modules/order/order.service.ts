@@ -38,6 +38,7 @@ import { SlotReservationService } from '../phlebotomist-schedule/slot-reservatio
 import { PhlebotomistCollectionService } from '../phlebotomist-collection/phlebotomist-collection.service';
 import { RegistrationSettingsService } from '../registration-settings/registration-settings.service';
 import { ExternalIdService } from '../registration-settings/external-id.service';
+import { TenantService } from '../tenant/tenant.service';
 import type { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import {
@@ -46,6 +47,10 @@ import {
   toNum,
   roundToTwoDecimalPlaces,
   amountInWords,
+  genderLabel,
+  toBranchLocalInstant,
+  formatTenantDate,
+  formatTenantDateTime,
 } from '../../common/utils';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
@@ -375,6 +380,7 @@ export class OrderService {
     private readonly externalIdService: ExternalIdService,
     private readonly eventEmitter: EventEmitter2,
     private readonly shareService: ShareService,
+    private readonly tenantService: TenantService,
   ) {}
 
   /**
@@ -823,6 +829,10 @@ export class OrderService {
                   }
                 : {}),
               paymentDate: p.paymentDate ? new Date(p.paymentDate) : null,
+              // Who actually collected/recorded this payment — the logged-in
+              // actor, never client-submitted (no `collectedBy` field exists on
+              // `OrderPaymentDto`).
+              collectedBy: personId,
             })),
           });
         }
@@ -845,6 +855,7 @@ export class OrderService {
             orderCode,
             this.settlementPaymentMode(dto.payments),
             new Date(dto.orderDate),
+            personId,
           );
         }
         // Reserve the phlebotomist slot for a home-visit appointment (atomic
@@ -1497,6 +1508,7 @@ export class OrderService {
     newOrderCode: string,
     paymentMode: PaymentMode,
     paymentDate: Date,
+    personId: string | null,
   ): Promise<void> {
     if (amount <= 0) return;
     const orders = await tx.order.findMany({
@@ -1538,6 +1550,7 @@ export class OrderService {
           hasClearedPreviousDues: true,
           paymentMode,
           paymentDate,
+          collectedBy: personId,
           reference: newOrderCode,
           notes: `Previous dues settled via order ${newOrderCode}`,
         },
@@ -1813,7 +1826,7 @@ export class OrderService {
         }
       }
     }
-    const context = await this.buildPrintContext(order, type);
+    const context = await this.buildPrintContext(order, type, tenantId);
     const resolvedTemplateId =
       templateId ?? (await this.resolvePrintTemplateId(tenantId, type));
     return this.pdfReportTemplateService.generatePdf(
@@ -1855,25 +1868,34 @@ export class OrderService {
   private async buildPrintContext(
     order: OrderWithRelations,
     type: OrderPrintType,
+    tenantId: string,
   ): Promise<GeneratePdfDto> {
     switch (type) {
       case 'order_print':
-        return this.buildOrderPrintContext(order);
+        return this.buildOrderPrintContext(order, tenantId);
       case 'bill_print':
-        return this.buildBillContext(order);
+        return this.buildBillContext(order, tenantId);
       case 'accounts_biling':
-        return this.buildAccountsBillingContext(order);
+        return this.buildAccountsBillingContext(order, tenantId);
       case 'trf_print':
-        return this.buildTrfContext(order);
+        return this.buildTrfContext(order, tenantId);
       case 'lab_quotation_print':
-        return this.buildQuotationContext(order);
+        return this.buildQuotationContext(order, tenantId);
       case 'order_barcode_print':
-        return this.buildOrderBarcodeContext(order);
+        return this.buildOrderBarcodeContext(order, tenantId);
     }
   }
 
-  /** Common patient `{variables}` shared by every order document. */
-  private patientVariables(order: OrderWithRelations): Record<string, unknown> {
+  /**
+   * Common patient `{variables}` shared by every order document.
+   * @param dateFormat the tenant's configured date format, for `patient_dob`
+   * — the caller already has this from its own `tenantService.getLocale`
+   * call, so it's passed in rather than re-fetched here.
+   */
+  private patientVariables(
+    order: OrderWithRelations,
+    dateFormat: string,
+  ): Record<string, unknown> {
     const p = order.patient;
     return {
       patient_name: [p.firstName, p.middleName, p.lastName]
@@ -1881,12 +1903,17 @@ export class OrderService {
         .join(' '),
       patient_salutation: p.salutation ?? '',
       patient_age: p.age ?? '',
-      patient_gender: p.gender ?? '',
+      patient_gender: genderLabel(p.gender),
       patient_um_id: p.umId ?? '',
       patient_mobile: p.mobile ?? '',
       patient_email: p.email ?? '',
       patient_blood_group: p.bloodGroup ?? '',
       patient_address1: p.addressLine1 ?? '',
+      // `dateOfBirth` is `@db.Date` (no time component) — same treatment as
+      // `order_date`, no timezone conversion needed.
+      patient_dob: p.dateOfBirth
+        ? formatTenantDate(p.dateOfBirth, dateFormat)
+        : '',
     };
   }
 
@@ -1994,11 +2021,6 @@ export class OrderService {
     return { gross, discount, net, paid, balance: net - paid };
   }
 
-  /** Format a DATE-only value as `YYYY-MM-DD` (empty when null). */
-  private dateOnly(value: Date | null | undefined): string {
-    return value ? value.toISOString().slice(0, 10) : '';
-  }
-
   /**
    * Classify an order's date relative to server "today" (both compared as
    * DATE-only, matching the `orderDate @db.Date` column). Used to stamp
@@ -2017,17 +2039,21 @@ export class OrderService {
   }
 
   /** `order_print` — order slip: header, patient, referral, item list. */
-  private buildOrderPrintContext(order: OrderWithRelations): GeneratePdfDto {
+  private async buildOrderPrintContext(
+    order: OrderWithRelations,
+    tenantId: string,
+  ): Promise<GeneratePdfDto> {
+    const { dateFormat } = await this.tenantService.getLocale(tenantId);
     return {
       variables: {
         order_code: order.orderCode,
         bill_id: order.billId ?? '',
-        order_date: this.dateOnly(order.orderDate),
+        order_date: formatTenantDate(order.orderDate, dateFormat),
         order_time: order.orderTime ?? '',
         status: order.status,
         branch_name: order.branch?.name ?? '',
         item_count: order.items.length,
-        ...this.patientVariables(order),
+        ...this.patientVariables(order, dateFormat),
         ...this.referralVariables(order),
       },
       sections: { items: this.itemRows(order) },
@@ -2037,17 +2063,44 @@ export class OrderService {
   /** `bill_print` — patient bill: amounts + item list + payment history. */
   private async buildBillContext(
     order: OrderWithRelations,
+    tenantId: string,
   ): Promise<GeneratePdfDto> {
     const totals = this.billTotals(order);
     const discountPercentage =
       totals.gross > 0
         ? roundToTwoDecimalPlaces((totals.discount / totals.gross) * 100)
         : 0;
+    const { timezone, dateFormat, timeFormat } =
+      await this.tenantService.getLocale(tenantId);
+    // The bill's own date/time is when it was actually generated — the
+    // earliest payment ledger row's `paymentDate` (`order.payments` is
+    // ordered `createdAt: 'asc'`, see `ORDER_INCLUDE`), which carries real
+    // time-of-day precision unlike `orderDate` (`@db.Date`, scheduled/entered
+    // service date, no time). Falls back to the order's own row-creation
+    // timestamp for a "Generate Bill = No" order with an empty ledger.
+    const billInstant = order.payments[0]?.paymentDate ?? order.createdAt;
+    const billDateTime = formatTenantDateTime(
+      toBranchLocalInstant(billInstant, timezone),
+      dateFormat,
+      timeFormat,
+    );
+    // Who collected the bill — the earliest payment row's `collectedBy` (same
+    // "first payment" convention as `bill_date_time` above), resolved to a
+    // display name. Rows written before this field existed have no value, so
+    // this is only populated going forward — no retroactive backfill possible.
+    const collectorNameById = await this.resolveActorNames([
+      order.payments[0]?.collectedBy,
+    ]);
+    const paymentCollectedBy = order.payments[0]?.collectedBy
+      ? (collectorNameById.get(order.payments[0].collectedBy) ?? '')
+      : '';
     return {
       variables: {
         bill_id: order.billId ?? order.orderCode,
         order_code: order.orderCode,
-        order_date: this.dateOnly(order.orderDate),
+        order_date: formatTenantDate(order.orderDate, dateFormat),
+        bill_date_time: billDateTime,
+        payment_collected_by: paymentCollectedBy,
         status: order.status,
         payment_status: order.paymentStatus,
         branch_name: order.branch?.name ?? '',
@@ -2058,13 +2111,17 @@ export class OrderService {
         total_amount_in_words: amountInWords(totals.net),
         paid_amount: totals.paid,
         balance_amount: totals.balance,
-        ...this.patientVariables(order),
+        ...this.patientVariables(order, dateFormat),
         ...this.referralVariables(order),
       },
       sections: {
         items: await this.itemRowsWithPanelTests(order),
         payments: order.payments.map((pd) => ({
-          date: this.dateOnly(pd.paymentDate),
+          date: formatTenantDateTime(
+            toBranchLocalInstant(pd.paymentDate ?? order.createdAt, timezone),
+            dateFormat,
+            timeFormat,
+          ),
           mode: pd.paymentMode,
           reference: pd.reference ?? '',
           amount: pd.paidAmount,
@@ -2080,8 +2137,9 @@ export class OrderService {
    */
   private async buildAccountsBillingContext(
     order: OrderWithRelations,
+    tenantId: string,
   ): Promise<GeneratePdfDto> {
-    const bill = await this.buildBillContext(order);
+    const bill = await this.buildBillContext(order, tenantId);
     const panel = order.referralPanel;
     return {
       variables: {
@@ -2099,16 +2157,18 @@ export class OrderService {
   /** `trf_print` — Test Requisition Form: requested tests + clinical notes. */
   private async buildTrfContext(
     order: OrderWithRelations,
+    tenantId: string,
   ): Promise<GeneratePdfDto> {
     const testRows = await this.itemRowsWithPanelTests(order);
+    const { dateFormat } = await this.tenantService.getLocale(tenantId);
     return {
       variables: {
         trf_ref: order.billId ?? order.orderCode,
         order_code: order.orderCode,
-        order_date: this.dateOnly(order.orderDate),
+        order_date: formatTenantDate(order.orderDate, dateFormat),
         clinical_notes: order.orderNotes ?? '',
         branch_name: order.branch?.name ?? '',
-        ...this.patientVariables(order),
+        ...this.patientVariables(order, dateFormat),
         ...this.referralVariables(order),
       },
       sections: {
@@ -2118,19 +2178,25 @@ export class OrderService {
   }
 
   /** `lab_quotation_print` — the quotation: items + totals + validity. */
-  private buildQuotationContext(order: OrderWithRelations): GeneratePdfDto {
+  private async buildQuotationContext(
+    order: OrderWithRelations,
+    tenantId: string,
+  ): Promise<GeneratePdfDto> {
     const totals = this.billTotals(order);
+    const { dateFormat } = await this.tenantService.getLocale(tenantId);
     return {
       variables: {
         quote_id: order.orderCode,
-        quote_date: this.dateOnly(order.orderDate),
-        valid_till: this.dateOnly(order.quotationValidTill),
+        quote_date: formatTenantDate(order.orderDate, dateFormat),
+        valid_till: order.quotationValidTill
+          ? formatTenantDate(order.quotationValidTill, dateFormat)
+          : '',
         status: order.quotationStatus ?? '',
         branch_name: order.branch?.name ?? '',
         gross_amount: totals.gross,
         discount_amount: totals.discount,
         net_amount: totals.net,
-        ...this.patientVariables(order),
+        ...this.patientVariables(order, dateFormat),
         ...this.referralVariables(order),
       },
       sections: { items: this.itemRows(order) },
@@ -2145,12 +2211,16 @@ export class OrderService {
    * familiar merge fields; this is a distinct type from that per-sample label
    * (see `ORDER_PRINT_TYPES` doc comment).
    */
-  private buildOrderBarcodeContext(order: OrderWithRelations): GeneratePdfDto {
+  private async buildOrderBarcodeContext(
+    order: OrderWithRelations,
+    tenantId: string,
+  ): Promise<GeneratePdfDto> {
+    const { dateFormat } = await this.tenantService.getLocale(tenantId);
     return {
       variables: {
         order_code: order.orderCode,
         barcode: order.orderCode,
-        order_date: this.dateOnly(order.orderDate),
+        order_date: formatTenantDate(order.orderDate, dateFormat),
         branch_name: order.branch?.name ?? '',
         test_names: order.items
           .map(
@@ -2162,7 +2232,7 @@ export class OrderService {
           )
           .filter(Boolean)
           .join(', '),
-        ...this.patientVariables(order),
+        ...this.patientVariables(order, dateFormat),
       },
     };
   }
@@ -5382,6 +5452,11 @@ export class OrderService {
                   }
                 : {}),
               paymentDate: p.paymentDate ? new Date(p.paymentDate) : null,
+              // The whole ledger is soft-deleted + recreated on every payments
+              // patch (no per-row identity survives), so the current editor
+              // becomes the recorded collector for the resulting rows — same
+              // as every other row-replace field here (no partial-row history).
+              collectedBy: personId,
             })),
           });
         }
@@ -5456,6 +5531,7 @@ export class OrderService {
           existing.orderCode,
           this.settlementPaymentMode(dto.payments),
           dto.orderDate ? new Date(dto.orderDate) : new Date(),
+          personId,
         );
       }
     });
@@ -5749,6 +5825,7 @@ export class OrderService {
             paymentDate: dto.refund.paymentDate
               ? new Date(dto.refund.paymentDate)
               : new Date(),
+            collectedBy: actorId,
           },
         });
         newRefundSum += dto.refund.amount;
@@ -5924,6 +6001,7 @@ export class OrderService {
           paymentMode: dto.paymentMode,
           reference: dto.reference ?? null,
           paymentDate: dto.paymentDate ? new Date(dto.paymentDate) : new Date(),
+          collectedBy: actorId,
         },
       });
 
