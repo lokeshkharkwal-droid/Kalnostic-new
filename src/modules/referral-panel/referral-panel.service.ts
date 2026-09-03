@@ -191,6 +191,9 @@ export class ReferralPanelService {
    * @param branchId active branch from the JWT (null → no list assignment written)
    * @param actorId person id recorded as created-by on the list assignment (or null)
    * @param dto validated payload (no `code`/`tenantId` — set here / from context)
+   * @param options.legacyId source EzHealthTrack referring_panels.id, stored for
+   *   idempotent data migration + traceability (migration tooling only; never
+   *   client-supplied)
    * @returns the created panel, with the resolved list assignment (enriched)
    * @throws InvalidCommissionConfigException on a commission/incentive invariant
    * @throws ReferralPanelNameConflictException / ReferralPanelCodeConflictException
@@ -200,6 +203,7 @@ export class ReferralPanelService {
     branchId: string | null,
     actorId: string | null,
     dto: CreateReferralPanelDto,
+    options?: { legacyId?: number | null },
   ): Promise<ReferralPanelEntity> {
     const commissionEff: CommissionEffective = {
       isCommissionApplicable: dto.isCommissionApplicable ?? false,
@@ -282,6 +286,7 @@ export class ReferralPanelService {
           fileName: dto.fileName ?? null,
           fileUrl: dto.fileUrl ?? null,
           remarks: dto.remarks ?? null,
+          legacyId: options?.legacyId ?? null,
         };
 
         const panel = await tx.referralPanel.create({ data });

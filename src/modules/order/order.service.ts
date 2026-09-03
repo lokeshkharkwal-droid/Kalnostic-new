@@ -5543,6 +5543,39 @@ export class OrderService {
   }
 
   /**
+   * Collect a whole **group** of the order's accession samples in one shot — the
+   * group-wise counterpart of {@link collectItem}, backing the Product Overview
+   * modal's grouped Test Details (Collect / Collect & Print on a group's flat
+   * `sampleIds`). Every collectable sample in the set is transitioned to
+   * COLLECTED and its sibling order items stamped collected, all in one
+   * `withTenant` transaction (`OrderSampleService.collectSamplesInTx`). Idempotent
+   * — already-collected samples are skipped. `print` also assigns a barcode to any
+   * sample that lacks one.
+   * @param orderId the order the samples belong to (validated against the tenant)
+   * @param sampleIds the group's accession sample ids to collect
+   * @param tenantId tenant scope (from JWT)
+   * @param actorId acting person id (recorded as `collectedBy`), may be null
+   * @param opts `print` also assigns a barcode to the collected sample(s)
+   * @returns the fully-composed order after the update
+   * @throws OrderNotFoundException if the order is missing/soft-deleted/other tenant
+   */
+  async collectGroup(
+    orderId: string,
+    sampleIds: string[],
+    tenantId: string,
+    actorId: string | null,
+    opts: { print?: boolean } = {},
+  ): Promise<OrderWithRelations> {
+    await this.findById(orderId, tenantId);
+    await this.prisma.withTenant(tenantId, (tx) =>
+      this.orderSamples.collectSamplesInTx(tx, tenantId, actorId, sampleIds, {
+        print: !!opts.print,
+      }),
+    );
+    return this.findById(orderId, tenantId);
+  }
+
+  /**
    * Cancel an order — set `status = CANCELLED` (terminal). Optionally retains a
    * `cancellationCharge` (deducted from the order's effective paid amount) and,
    * when `dto.refund` is present, refunds part of the paid amount back to the

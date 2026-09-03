@@ -46,6 +46,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS branches_tenant_code_active_unique
   ON branches (tenant_id, code) WHERE deleted_at IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS branches_tenant_name_active_unique
   ON branches (tenant_id, name) WHERE deleted_at IS NULL;
+-- Per-tenant uniqueness for the legacy EzHealthTrack BUSINESS_ID, among ACTIVE
+-- rows with a legacy id set, so the data migration is idempotent (a re-run finds
+-- the existing branch instead of duplicating it).
+CREATE UNIQUE INDEX IF NOT EXISTS branches_tenant_legacy_id_active_unique
+  ON branches (tenant_id, legacy_branch_id) WHERE deleted_at IS NULL AND legacy_branch_id IS NOT NULL;
 
 -- ── tenant_main_branch ──────────────────────────────────────────────────────────
 ALTER TABLE tenant_main_branch ENABLE ROW LEVEL SECURITY;
@@ -639,6 +644,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS referral_panels_tenant_name_active_unique
 CREATE UNIQUE INDEX IF NOT EXISTS referral_panels_tenant_panel_code_active_unique
   ON referral_panels (tenant_id, panel_code)
   WHERE deleted_at IS NULL AND panel_code IS NOT NULL;
+-- Per-tenant + per-branch uniqueness for the legacy EzHealthTrack
+-- referring_panels.id, among ACTIVE rows with a legacy id set. A legacy
+-- business-level panel maps to ONE ReferralPanel PER branch it's associated with
+-- (branch link derived from referring_panel_price_detail.branch_id), or stays
+-- tenant-level (branch_id NULL) when it has no branch mapping — so the key
+-- includes branch_id. NULLS NOT DISTINCT makes the tenant-level (NULL branch)
+-- case idempotent too. Keeps the data migration re-runnable without duplicates.
+CREATE UNIQUE INDEX IF NOT EXISTS referral_panels_tenant_legacy_id_active_unique
+  ON referral_panels (tenant_id, legacy_id, branch_id) NULLS NOT DISTINCT
+  WHERE deleted_at IS NULL AND legacy_id IS NOT NULL;
 
 -- ── referral_panel_lab_tests ──────────────────────────────────────────────────
 ALTER TABLE referral_panel_lab_tests ENABLE ROW LEVEL SECURITY;
@@ -1163,6 +1178,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS patients_tenant_mobile_active_unique
 -- fails if pre-existing active patients share a um_id — dedupe first.
 CREATE UNIQUE INDEX IF NOT EXISTS patients_um_id_global_unique
   ON patients (um_id) WHERE um_id IS NOT NULL AND deleted_at IS NULL;
+
+-- Per-tenant uniqueness for the legacy EzHealthTrack PATIENT_ID, among ACTIVE
+-- rows with a legacy id set, so the data migration is idempotent (a re-run finds
+-- the existing patient instead of duplicating it).
+CREATE UNIQUE INDEX IF NOT EXISTS patients_tenant_legacy_id_active_unique
+  ON patients (tenant_id, legacy_patient_id) WHERE deleted_at IS NULL AND legacy_patient_id IS NOT NULL;
 
 -- ── medical_histories ───────────────────────────────────────────────────────────
 ALTER TABLE medical_histories ENABLE ROW LEVEL SECURITY;
