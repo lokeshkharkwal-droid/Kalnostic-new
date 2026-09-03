@@ -1453,8 +1453,79 @@ export class LabTestService {
       await this.cascadeDeleteTest(tx, orphan.id, tenantId, now);
       deleted += 1;
     }
+    if (orphans.length) {
+      await this.cascadeDeleteBranchLabTestCopies(
+        tx,
+        tenantId,
+        branchId,
+        orphans.map((o) => o.id),
+        now,
+      );
+    }
 
     return { testIdMap, created, updated, deleted };
+  }
+
+  /**
+   * Soft-delete the branch's operational `BranchLabTest` copies (Lab Test List)
+   * whose `sourceLabTestId` points at a Branch Master Data test that was just
+   * soft-deleted as an orphan (its tenant source is gone). Scoped to the branch's
+   * default (Walk-in) list only — the one connected to Master Data, matching
+   * `BranchLabTestService.syncFromMasterData`'s own scope — and excludes user
+   * duplicates (`isDuplicate: true`), which are already independently decoupled.
+   * If the group's promoted-to-default row was among the deleted, promotes a
+   * remaining active sibling (same `sourceLabTestId`) so the group stays
+   * orderable, mirroring `BranchLabTestService.remove()`. Runs inside the
+   * caller's tx; no-op if the branch has never imported into its Lab Test List.
+   */
+  private async cascadeDeleteBranchLabTestCopies(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    branchId: string,
+    orphanSourceIds: string[],
+    now: Date,
+  ): Promise<void> {
+    const walkIn = await tx.branchLabTestList.findFirst({
+      where: { tenantId, branchId, isDefault: true, deletedAt: null },
+      select: { id: true },
+    });
+    if (!walkIn) {
+      return;
+    }
+    const copies = await tx.branchLabTest.findMany({
+      where: {
+        tenantId,
+        branchId,
+        listId: walkIn.id,
+        deletedAt: null,
+        isDuplicate: false,
+        sourceLabTestId: { in: orphanSourceIds },
+      },
+      select: { id: true, isDefault: true, sourceLabTestId: true },
+    });
+    for (const copy of copies) {
+      await tx.branchLabTest.update({
+        where: { id: copy.id },
+        data: { deletedAt: now },
+      });
+      if (copy.isDefault && copy.sourceLabTestId) {
+        const sibling = await tx.branchLabTest.findFirst({
+          where: {
+            tenantId,
+            branchId,
+            sourceLabTestId: copy.sourceLabTestId,
+            deletedAt: null,
+          },
+          orderBy: { createdAt: 'asc' },
+        });
+        if (sibling) {
+          await tx.branchLabTest.update({
+            where: { id: sibling.id },
+            data: { isDefault: true },
+          });
+        }
+      }
+    }
   }
 
   /**
