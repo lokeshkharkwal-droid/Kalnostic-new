@@ -41,6 +41,13 @@ describe('LabPanelService.syncPanelsIntoBranch', () => {
       deleteMany: jest.Mock;
       updateMany: jest.Mock;
     };
+    branchLabPanelList: { findFirst: jest.Mock };
+    branchLabPanel: {
+      findMany: jest.Mock;
+      update: jest.Mock;
+      findFirst: jest.Mock;
+    };
+    branchLabPanelTest: { updateMany: jest.Mock };
   };
   let masterDataMock: Record<string, jest.Mock>;
   let labTestServiceMock: Record<string, jest.Mock>;
@@ -66,6 +73,16 @@ describe('LabPanelService.syncPanelsIntoBranch', () => {
         deleteMany: jest.fn(),
         updateMany: jest.fn(),
       },
+      // Branch Lab Panel List cascade: no default (Walk-in) panel list by
+      // default, so `cascadeDeleteBranchLabPanelCopies` no-ops unless a test
+      // opts in.
+      branchLabPanelList: { findFirst: jest.fn().mockResolvedValue(null) },
+      branchLabPanel: {
+        findMany: jest.fn().mockResolvedValue([]),
+        update: jest.fn().mockResolvedValue({}),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      branchLabPanelTest: { updateMany: jest.fn() },
     };
     masterDataMock = {};
     labTestServiceMock = {};
@@ -144,6 +161,61 @@ describe('LabPanelService.syncPanelsIntoBranch', () => {
     expect(prismaMock.labPanel.update).toHaveBeenCalledWith({
       where: { id: 'orphan-1' },
       data: { deletedAt: expect.any(Date) },
+    });
+  });
+
+  it('also soft-deletes (cascading joins) the branch Lab Panel List copy of an orphaned branch panel, promoting a duplicate sibling to default', async () => {
+    const orphan = panel({
+      id: 'orphan-1',
+      panelCode: 'GONE',
+      sourceMasterLabPanelId: 'deleted-tenant-panel',
+    });
+    prismaMock.labPanel.findMany
+      .mockResolvedValueOnce([]) // sourcePanels: nothing active tenant-side
+      .mockResolvedValueOnce([orphan]); // branchPanels
+    prismaMock.branchLabPanelList.findFirst.mockResolvedValueOnce({
+      id: 'walk-in-panel-list',
+    });
+    const copy = {
+      id: 'branch-panel-copy-1',
+      isDefault: true,
+      sourceLabPanelId: 'orphan-1',
+    };
+    prismaMock.branchLabPanel.findMany.mockResolvedValueOnce([copy]);
+    const sibling = { id: 'branch-panel-copy-dup', isDefault: false };
+    prismaMock.branchLabPanel.findFirst.mockResolvedValueOnce(sibling);
+
+    const result = await syncPanelsIntoBranch(
+      prismaMock as unknown as Prisma.TransactionClient,
+      baseParams,
+      new Map(),
+    );
+
+    expect(result).toMatchObject({ created: 0, updated: 0, deleted: 1 });
+    expect(prismaMock.branchLabPanel.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          listId: 'walk-in-panel-list',
+          isDuplicate: false,
+          sourceLabPanelId: { in: ['orphan-1'] },
+        }),
+      }),
+    );
+    expect(prismaMock.branchLabPanelTest.updateMany).toHaveBeenCalledWith({
+      where: {
+        branchLabPanelId: 'branch-panel-copy-1',
+        tenantId: 'tenant-1',
+        deletedAt: null,
+      },
+      data: { deletedAt: expect.any(Date) },
+    });
+    expect(prismaMock.branchLabPanel.update).toHaveBeenCalledWith({
+      where: { id: 'branch-panel-copy-1' },
+      data: { deletedAt: expect.any(Date) },
+    });
+    expect(prismaMock.branchLabPanel.update).toHaveBeenCalledWith({
+      where: { id: 'branch-panel-copy-dup' },
+      data: { isDefault: true },
     });
   });
 

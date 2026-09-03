@@ -915,8 +915,84 @@ export class LabPanelService {
       await this.cascadeDeletePanel(tx, orphan.id, tenantId, now);
       deleted += 1;
     }
+    if (orphanPanels.length) {
+      await this.cascadeDeleteBranchLabPanelCopies(
+        tx,
+        tenantId,
+        branchId,
+        orphanPanels.map((p) => p.id),
+        now,
+      );
+    }
 
     return { created, updated, deleted };
+  }
+
+  /**
+   * Soft-delete the branch's operational `BranchLabPanel` copies (Lab Panel List)
+   * whose `sourceLabPanelId` points at a Branch Master Data panel that was just
+   * soft-deleted as an orphan (its tenant source is gone) — cascading to their
+   * `BranchLabPanelTest` join rows. Scoped to the branch's default (Walk-in) panel
+   * list only, matching `BranchLabPanelService.syncFromMasterData`'s own scope,
+   * and excludes user duplicates (`isDuplicate: true`), already independently
+   * decoupled. Promotes a remaining active sibling (same `sourceLabPanelId`) to
+   * default when the deleted copy held that spot, mirroring
+   * `BranchLabPanelService.remove()`. Runs inside the caller's tx; no-op if the
+   * branch has never imported into its Lab Panel List. Underlying member
+   * `BranchLabTest` rows are left untouched (out of scope, same as `remove()`).
+   */
+  private async cascadeDeleteBranchLabPanelCopies(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    branchId: string,
+    orphanSourceIds: string[],
+    now: Date,
+  ): Promise<void> {
+    const walkInPanel = await tx.branchLabPanelList.findFirst({
+      where: { tenantId, branchId, isDefault: true, deletedAt: null },
+      select: { id: true },
+    });
+    if (!walkInPanel) {
+      return;
+    }
+    const copies = await tx.branchLabPanel.findMany({
+      where: {
+        tenantId,
+        branchId,
+        listId: walkInPanel.id,
+        deletedAt: null,
+        isDuplicate: false,
+        sourceLabPanelId: { in: orphanSourceIds },
+      },
+      select: { id: true, isDefault: true, sourceLabPanelId: true },
+    });
+    for (const copy of copies) {
+      await tx.branchLabPanelTest.updateMany({
+        where: { branchLabPanelId: copy.id, tenantId, deletedAt: null },
+        data: { deletedAt: now },
+      });
+      await tx.branchLabPanel.update({
+        where: { id: copy.id },
+        data: { deletedAt: now },
+      });
+      if (copy.isDefault && copy.sourceLabPanelId) {
+        const sibling = await tx.branchLabPanel.findFirst({
+          where: {
+            tenantId,
+            branchId,
+            sourceLabPanelId: copy.sourceLabPanelId,
+            deletedAt: null,
+          },
+          orderBy: { createdAt: 'asc' },
+        });
+        if (sibling) {
+          await tx.branchLabPanel.update({
+            where: { id: sibling.id },
+            data: { isDefault: true },
+          });
+        }
+      }
+    }
   }
 
   /**
