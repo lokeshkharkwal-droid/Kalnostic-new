@@ -50,6 +50,7 @@ import {
   SAMPLE_INCLUDE,
   SAMPLE_LIST_INCLUDE,
   OrderSampleListItem,
+  OrderSampleListRow,
   OrderSampleDetail,
   OrderSampleWithRelations,
   AccessionSummary,
@@ -397,6 +398,42 @@ export class OrderSampleService {
         deletedAt: null,
         tests: { some: { orderItemId, tenantId, deletedAt: null } },
       },
+      select: { id: true },
+    });
+    await this.collectSamplesInTx(
+      tx,
+      tenantId,
+      personId,
+      samples.map((s) => s.id),
+      opts,
+    );
+  }
+
+  /**
+   * Collect a set of accession samples by id inside an existing (already
+   * tenant-scoped) transaction — the group-scoped counterpart of
+   * {@link collectForOrderItemInTx}, driving the Product Overview modal's
+   * **group-wise** Collect / Collect & Print (the group's flat `sampleIds`).
+   * Only samples still in a collectable status (`NEW`/`HOLD`/`REPEAT`) are
+   * transitioned; the rest are skipped, so a repeat click (or a partly-collected
+   * group) is idempotent. Every sample shares one `collectedAt` stamp. Safe
+   * no-op on an empty/all-collected id set.
+   * @param tx active Prisma transaction client (already tenant-scoped)
+   * @param tenantId tenant scope
+   * @param personId acting person id (recorded as `collectedBy`/`changedBy`)
+   * @param sampleIds the accession sample ids to collect
+   * @param opts `print` also assigns a barcode when the sample lacks one
+   */
+  async collectSamplesInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    personId: string | null,
+    sampleIds: string[],
+    opts: { print: boolean },
+  ): Promise<void> {
+    if (sampleIds.length === 0) return;
+    const samples = await tx.orderSample.findMany({
+      where: { id: { in: sampleIds }, tenantId, deletedAt: null },
       select: { id: true, status: true },
     });
     const collectable = samples.filter((s) =>
@@ -406,50 +443,72 @@ export class OrderSampleService {
 
     const now = new Date();
     for (const s of collectable) {
-      await this.transitionInTx(
-        tx,
-        tenantId,
-        personId,
-        s.id,
-        'collect',
-        (sample) => ({
-          data: {
-            collectedAt: now,
-            collectedBy: personId,
-            tubeType:
-              sample.tubeType ??
-              sample.containerType ??
-              sample.sampleType ??
-              undefined,
-            ...(opts.print
-              ? {
-                  barcode:
-                    sample.barcode ?? this.deriveBarcode(sample.accessionNo),
-                }
-              : {}),
-          },
-        }),
-      );
+      await this.collectSampleInTx(tx, tenantId, personId, s.id, now, opts);
+    }
+  }
 
-      // A tube is drawn once → every test it carries is collected together.
-      // Stamp all sibling order items on this sample (preserve already-set
-      // timestamps via `collectedAt: null`).
-      const siblings = await tx.orderSampleTest.findMany({
-        where: { sampleId: s.id, tenantId, deletedAt: null },
-        select: { orderItemId: true },
+  /**
+   * Collect one accession sample inside an existing (already tenant-scoped)
+   * transaction: apply the §A.9 `collect` transition → `COLLECTED` (stamping
+   * `collectedAt`/`collectedBy`/`tubeType`, and a barcode when `print` is set,
+   * exactly like `collect`/`collectAndPrint`), then — because a sample is one
+   * physical tube shared by several tests — stamp every sibling order item on
+   * the sample collected too (a tube is drawn once). The caller must have already
+   * confirmed the sample is in a collectable status. Shared by
+   * {@link collectSamplesInTx} (group / per-item collect bridges).
+   * @param now the shared collection timestamp for the batch
+   */
+  private async collectSampleInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    personId: string | null,
+    sampleId: string,
+    now: Date,
+    opts: { print: boolean },
+  ): Promise<void> {
+    await this.transitionInTx(
+      tx,
+      tenantId,
+      personId,
+      sampleId,
+      'collect',
+      (sample) => ({
+        data: {
+          collectedAt: now,
+          collectedBy: personId,
+          tubeType:
+            sample.tubeType ??
+            sample.containerType ??
+            sample.sampleType ??
+            undefined,
+          ...(opts.print
+            ? {
+                barcode:
+                  sample.barcode ?? this.deriveBarcode(sample.accessionNo),
+              }
+            : {}),
+        },
+      }),
+    );
+
+    // A tube is drawn once → every test it carries is collected together.
+    // Stamp all sibling order items on this sample (preserve already-set
+    // timestamps via `collectedAt: null`).
+    const siblings = await tx.orderSampleTest.findMany({
+      where: { sampleId, tenantId, deletedAt: null },
+      select: { orderItemId: true },
+    });
+    const siblingIds = siblings.map((t) => t.orderItemId);
+    if (siblingIds.length > 0) {
+      await tx.orderItem.updateMany({
+        where: {
+          id: { in: siblingIds },
+          tenantId,
+          deletedAt: null,
+          collectedAt: null,
+        },
+        data: { collectedAt: now, collectedBy: personId },
       });
-      const siblingIds = siblings.map((t) => t.orderItemId);
-      if (siblingIds.length > 0) {
-        await tx.orderItem.updateMany({
-          where: {
-            id: { in: siblingIds },
-            tenantId,
-            deletedAt: null,
-            collectedAt: null,
-          },
-          data: { collectedAt: now, collectedBy: personId },
-        });
-      }
     }
   }
 
@@ -574,7 +633,111 @@ export class OrderSampleService {
       depts.forEach((d) => deptNameById.set(d.id, d.name));
     }
 
-    const toItem = (row: (typeof rows)[number]): GroupedSampleItem => ({
+    // Assemble one InHouseOrderGroup per paged order id (order-first).
+    const groups: InHouseOrderGroup[] = [];
+    for (const orderId of orderIds) {
+      const orderRows = rows.filter((r) => r.orderId === orderId);
+      if (orderRows.length === 0) continue;
+      groups.push(
+        this.buildOrderGroup(
+          orderId,
+          orderRows,
+          mode,
+          deptNameById,
+          tat,
+          nowMs,
+        ),
+      );
+    }
+
+    return paginated(groups, total, page, limit);
+  }
+
+  /**
+   * Grouped samples for a **single order** — the same order-first grouping the
+   * in-house list produces (via {@link buildOrderGroup} keyed on the tenant's
+   * current `groupingMode`), but scoped to one order id rather than a page of
+   * orders. Powers the Product Overview modal's grouped Test Details, so its
+   * groups/barcodes/action-scope match `/accession/inhouse-orders` exactly.
+   * Scoped by tenant + order id only (no branch filter): the modal always
+   * targets a specific order the caller just created/opened.
+   * @param tenantId tenant scope (from JWT)
+   * @param orderId the order whose samples to group
+   * @returns the order's grouped samples, or `null` when it has none yet (e.g. a
+   *   DRAFT / non-diagnostic order with no generated samples)
+   */
+  async findOrderGrouped(
+    tenantId: string,
+    orderId: string,
+  ): Promise<InHouseOrderGroup | null> {
+    const nowMs = Date.now();
+    // TAT bands are branch-scoped; without the modal's active branch we resolve
+    // the tenant default (branchId = null) — good enough for the derived band a
+    // grouped row shows, and never affects grouping/action scope.
+    const tat = await this.tatThresholds(tenantId, null);
+
+    const { rows, mode } = await this.prisma.withTenant(
+      tenantId,
+      async (tx) => {
+        const tenant = await tx.tenant.findUnique({
+          where: { id: tenantId },
+          select: { groupingMode: true },
+        });
+        const mode =
+          tenant?.groupingMode ?? AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME;
+        const rows = await tx.orderSample.findMany({
+          where: { orderId, tenantId, deletedAt: null },
+          include: SAMPLE_LIST_INCLUDE,
+          orderBy: { createdAt: 'desc' },
+        });
+        return { rows, mode };
+      },
+    );
+
+    if (rows.length === 0) return null;
+
+    // Batch-resolve department names for the order's samples.
+    const deptIds = [
+      ...new Set(
+        rows.map((r) => r.departmentId).filter((v): v is string => !!v),
+      ),
+    ];
+    const deptNameById = new Map<string, string>();
+    if (deptIds.length > 0) {
+      const depts = await this.prisma.withTenant(tenantId, (tx) =>
+        tx.department.findMany({
+          where: { id: { in: deptIds }, tenantId, deletedAt: null },
+          select: { id: true, name: true },
+        }),
+      );
+      depts.forEach((d) => deptNameById.set(d.id, d.name));
+    }
+
+    return this.buildOrderGroup(orderId, rows, mode, deptNameById, tat, nowMs);
+  }
+
+  /**
+   * Assemble a single order's {@link InHouseOrderGroup}: enrich each raw sample
+   * row with its derived TAT band + department name, then bucket the order's
+   * samples into **final groups** by the tenant's LIVE grouping mode
+   * (Sample-wise = per sample; Order-wise = the whole order; Department-wise =
+   * per department; Dept+Sample = per department + sample name) — the very same
+   * `barcodeGroupKey` used at barcode-assignment time. Grouping keys off the
+   * current mode (not the frozen barcode), so the displayed grouping, the
+   * barcode grouping and the action scope always agree with the tenant's current
+   * Group Settings — even after the mode is changed, a sample is missing a
+   * barcode, or a barcode was edited. Shared by {@link findAllGrouped} (list)
+   * and {@link findOrderGrouped} (single order).
+   */
+  private buildOrderGroup(
+    orderId: string,
+    orderRows: OrderSampleListRow[],
+    mode: AccessionGroupingMode,
+    deptNameById: Map<string, string>,
+    tat: TatThresholds,
+    nowMs: number,
+  ): InHouseOrderGroup {
+    const toItem = (row: OrderSampleListRow): GroupedSampleItem => ({
       ...row,
       tatStatus: deriveTatStatus(row.createdAt, row.status, tat, nowMs),
       departmentName: row.departmentId
@@ -589,63 +752,47 @@ export class OrderSampleService {
       return set.size === 1 ? [...set][0]! : null;
     };
 
-    // Assemble one InHouseOrderGroup per paged order id (order-first).
-    const groups: InHouseOrderGroup[] = [];
-    for (const orderId of orderIds) {
-      const orderRows = rows.filter((r) => r.orderId === orderId);
-      if (orderRows.length === 0) continue;
-      const items = orderRows.map(toItem);
+    const items = orderRows.map(toItem);
 
-      // Final groups within the order, bucketed by the tenant's LIVE grouping
-      // mode (Sample-wise = per sample; Order-wise = the whole order;
-      // Department-wise = per department; Dept+Sample = per department + sample
-      // name) — the very same `barcodeGroupKey` used at barcode-assignment time.
-      // Grouping keys off the current mode (not the frozen barcode), so the
-      // displayed grouping, the barcode grouping and the action scope always
-      // agree with the tenant's current Group Settings — even after the mode is
-      // changed, a sample is missing a barcode, or a barcode was edited.
-      const buckets = new Map<string, GroupedSampleItem[]>();
-      for (const it of items) {
-        const bucketKey = this.barcodeGroupKey(it, mode);
-        const arr = buckets.get(bucketKey);
-        if (arr) arr.push(it);
-        else buckets.set(bucketKey, [it]);
-      }
-
-      const finalGroups: InHouseSampleGroup[] = [...buckets.entries()].map(
-        ([bucketKey, samples]) => {
-          const deptId = distinctOrNull(samples.map((s) => s.departmentId));
-          const sampleLabel = distinctOrNull(
-            samples.map((s) => s.sampleGroupLabel ?? null),
-          );
-          // One shared barcode per group when the members agree; `null` (→ the
-          // FE's "No barcode") when they carry differing/blank values — e.g.
-          // left stale after a mode change (which nulls them) — flagging the
-          // group for a fresh Assign Barcode.
-          const barcode = distinctOrNull(samples.map((s) => s.barcode ?? null));
-          return {
-            groupKey: `${orderId}::${bucketKey}`,
-            barcode,
-            department: deptId
-              ? { id: deptId, name: deptNameById.get(deptId) ?? deptId }
-              : null,
-            sampleLabel,
-            sampleIds: samples.map((s) => s.id),
-            samples,
-          };
-        },
-      );
-
-      groups.push({
-        orderId,
-        order: orderRows[0]?.order ?? null,
-        groupingMode: mode,
-        sampleIds: items.map((i) => i.id),
-        groups: finalGroups,
-      });
+    const buckets = new Map<string, GroupedSampleItem[]>();
+    for (const it of items) {
+      const bucketKey = this.barcodeGroupKey(it, mode);
+      const arr = buckets.get(bucketKey);
+      if (arr) arr.push(it);
+      else buckets.set(bucketKey, [it]);
     }
 
-    return paginated(groups, total, page, limit);
+    const finalGroups: InHouseSampleGroup[] = [...buckets.entries()].map(
+      ([bucketKey, samples]) => {
+        const deptId = distinctOrNull(samples.map((s) => s.departmentId));
+        const sampleLabel = distinctOrNull(
+          samples.map((s) => s.sampleGroupLabel ?? null),
+        );
+        // One shared barcode per group when the members agree; `null` (→ the
+        // FE's "No barcode") when they carry differing/blank values — e.g.
+        // left stale after a mode change (which nulls them) — flagging the
+        // group for a fresh Assign Barcode.
+        const barcode = distinctOrNull(samples.map((s) => s.barcode ?? null));
+        return {
+          groupKey: `${orderId}::${bucketKey}`,
+          barcode,
+          department: deptId
+            ? { id: deptId, name: deptNameById.get(deptId) ?? deptId }
+            : null,
+          sampleLabel,
+          sampleIds: samples.map((s) => s.id),
+          samples,
+        };
+      },
+    );
+
+    return {
+      orderId,
+      order: orderRows[0]?.order ?? null,
+      groupingMode: mode,
+      sampleIds: items.map((i) => i.id),
+      groups: finalGroups,
+    };
   }
 
   /**

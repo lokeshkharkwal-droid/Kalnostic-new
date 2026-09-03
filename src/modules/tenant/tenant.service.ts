@@ -159,10 +159,14 @@ export class TenantService {
    *
    * @param dto tenant + admin data (incl. the admin's login password)
    * @param createdBy SiteAdmin user id
+   * @param options.legacyTenantId source EzHealthTrack BUSINESS_ID, stored on the
+   *   tenant for idempotent data migration + traceability (migration tooling
+   *   only; never client-supplied)
    */
   async create(
     dto: CreateTenantDto,
     createdBy: string,
+    options?: { legacyTenantId?: number | null },
   ): Promise<{ tenant: Tenant; adminPhone: string }> {
     let slug: string;
     if (dto.slug) {
@@ -239,6 +243,7 @@ export class TenantService {
             subscriptionStatus: SubscriptionStatus.TRIALING,
             isActive: true,
             createdBy,
+            legacyTenantId: options?.legacyTenantId ?? null,
           },
         });
 

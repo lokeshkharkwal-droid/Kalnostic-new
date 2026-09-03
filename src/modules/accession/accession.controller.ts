@@ -102,6 +102,22 @@ export class AccessionController {
     return this.sampleService.findAllGrouped(tenantId, profile.branchId, query);
   }
 
+  /**
+   * Grouped samples for a **single order** — the same order-first grouping the
+   * in-house list uses (keyed on the tenant's Grouping Settings), scoped to one
+   * order id. Powers the Product Overview modal's grouped Test Details so its
+   * groups/barcodes/action-scope mirror `/accession/inhouse-orders`. Returns
+   * `null` when the order has no generated samples yet. Declared before `:id`
+   * (3 segments — never captured as an id).
+   */
+  @Get('order/:orderId/grouped')
+  findOrderGrouped(
+    @CurrentTenant() tenantId: string,
+    @Param('orderId') orderId: string,
+  ) {
+    return this.sampleService.findOrderGrouped(tenantId, orderId);
+  }
+
   // ── Print Label (in-house/referral/external-referral orders) — declared
   // before `:id` routes, same convention as the bulk actions below ──────────
 

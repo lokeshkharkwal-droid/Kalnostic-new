@@ -30,6 +30,7 @@ import { PatientDuesQueryDto } from './dto/patient-dues.dto';
 import { PrintOrderDto } from './dto/print-order.dto';
 import { ShareOrderChannelDto, ShareOrderAllDto } from './dto/share.dto';
 import { CollectOrderItemDto } from './dto/collect-order-item.dto';
+import { CollectGroupDto } from './dto/collect-group.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
 import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
@@ -961,6 +962,36 @@ export class OrderController {
     return this.orderService.collectItem(id, itemId, tenantId, personId, {
       print: query.print,
     });
+  }
+
+  /**
+   * Collect a whole **group** of the order's accession samples at once — the
+   * group-wise counterpart of the per-item collect, backing the Product Overview
+   * modal's grouped Test Details (`{ sampleIds, print }`). Transitions every
+   * collectable sample in the group to COLLECTED (idempotent) and stamps sibling
+   * order items; `print` also assigns a barcode ("Collect & Print").
+   */
+  @Post(':id/collect-group')
+  @Audit({
+    module: AuditModule.ORDER,
+    action: AuditAction.UPDATE,
+    description: 'Collected a sample group',
+  })
+  collectGroup(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+    @Param('id') id: string,
+    @Body() dto: CollectGroupDto,
+  ) {
+    return this.orderService.collectGroup(
+      id,
+      dto.sampleIds,
+      tenantId,
+      personId,
+      {
+        print: dto.print,
+      },
+    );
   }
 
   /**

@@ -822,6 +822,10 @@ model Tenant {
   createdBy              String? @map("created_by") // SiteAdmin user id (creator)
   updatedBy              String? @map("updated_by") // SiteAdmin user id (last editor)
 
+  /// Source BUSINESS_ID from the legacy EzHealthTrack MySQL database, kept for
+  /// idempotent data migration + traceability. Null for natively-created tenants.
+  legacyTenantId Int? @unique @map("legacy_tenant_id")
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -1230,6 +1234,12 @@ model Branch {
   licenseNo String? @map("license_no")
   remarks   String?
 
+  /// Source BUSINESS_ID (child business) from the legacy EzHealthTrack MySQL
+  /// database, kept for idempotent data migration + traceability. Unique per
+  /// tenant among active rows (partial unique index in prisma/rls.sql). Null for
+  /// natively-created branches.
+  legacyBranchId Int? @map("legacy_branch_id")
+
   // Doctors scoped to this branch (managed via DoctorsService).
   doctors Doctor[]
 
@@ -1241,6 +1251,7 @@ model Branch {
   deletedAt DateTime? @map("deleted_at")
 
   @@index([tenantId])
+  @@index([legacyBranchId])
   @@index([deletedAt])
   @@map("branches")
 }
@@ -3802,6 +3813,12 @@ model ReferralPanel {
   /// Orders billed to this referral (B2B) panel.
   orders Order[]
 
+  /// Source referring_panels.id from the legacy EzHealthTrack MySQL database,
+  /// kept for idempotent data migration + traceability. Unique per tenant among
+  /// active rows (partial unique index in prisma/rls.sql). Null for
+  /// natively-created panels.
+  legacyId Int? @map("legacy_id")
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -3809,6 +3826,7 @@ model ReferralPanel {
   @@index([tenantId])
   @@index([branchId])
   @@index([referralPanelSettingsId])
+  @@index([legacyId])
   @@index([deletedAt])
   @@map("referral_panels")
 }
@@ -5676,6 +5694,12 @@ model Patient {
   createdBy String? @map("created_by")
   updatedBy String? @map("updated_by")
 
+  /// Source PATIENT_ID from the legacy EzHealthTrack MySQL database, kept for
+  /// idempotent data migration + traceability. Unique per tenant among active
+  /// rows (partial unique index in prisma/rls.sql). Null for natively-created
+  /// patients.
+  legacyPatientId Int? @map("legacy_patient_id")
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -5684,6 +5708,7 @@ model Patient {
   @@index([branchId])
   @@index([isActive])
   @@index([ptCategoryId])
+  @@index([legacyPatientId])
   @@index([deletedAt])
   @@map("patients")
 }
