@@ -2380,6 +2380,49 @@ model SiteAdminAuditLog {
   @@map("siteadmin_audit_logs")
 }
 
+/// Which EMI adapter operation an `AdapterLog` row records. `ORDERS` is the
+/// order-download call (`/emi/orders?specimen_id=…`), `SUBMIT_RESULT` is the
+/// result-upload call (`/emi/submitResult`); `OTHER` covers anything else the
+/// adapter layer logs.
+enum AdapterAction {
+  ORDERS
+  SUBMIT_RESULT
+  OTHER
+}
+
+/// A single EMI adapter transaction log line — one row per call the lab adapter
+/// makes to the `emi/orders` / `emi/submitResult` endpoints, with the raw
+/// request/response retained for investigation. Tenant-scoped + branch-level
+/// (CLAUDE.md §4.6): `tenantId` (and `branchId` when the call is tied to a
+/// location) come from the authenticating adapter context, never a request body.
+/// Append-only in practice — read via the `/adapter-logs` (business) and
+/// `/siteadmin/adapter-logs` (cross-tenant) endpoints. RLS policy in prisma/rls.sql.
+model AdapterLog {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id") // null = tenant-level / not location-bound
+
+  token           String? // adapter/session token echoed by the machine
+  action          AdapterAction @default(OTHER)
+  status          String? // textual status shown in the table (e.g. "SUCCESS")
+  statusCode      Int?          @map("status_code") // HTTP status code (detail view)
+  sourceIpAddress String?       @map("source_ip_address") // caller IP
+
+  request  String? @db.Text // raw request payload, verbatim
+  response String? @db.Text // raw response payload, verbatim
+
+  createdAt DateTime  @default(now()) @map("created_at") // the "Date & Time"
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([action])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@map("adapter_logs")
+}
+
 /// A master-data container for a branch. Tenant-scoped + branch-level. A non-main
 /// branch may have several; the main branch is capped at one (its auto-created
 /// default). The first master data is auto-created on branch creation (named after

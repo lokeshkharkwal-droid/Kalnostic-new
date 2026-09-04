@@ -55,6 +55,7 @@ script:pre-request {
     bru.setVar("operatorMobile", "98" + n.slice(-8));
     bru.setVar("phleboMobile",   "97" + n.slice(-8));
     bru.setVar("patientMobile",  "96" + n.slice(-8));
+    bru.setVar("branchAdminMobile", "94" + n.slice(-8));
   }
 }
 
@@ -68,7 +69,7 @@ docs {
   GET-with-`text/plain`-body, same flat `{ s, m, … }` responses).
 
   ## How to run
-  Select this folder and **Run Folder**, or click **Next** through 01 → 29. Each
+  Select this folder and **Run Folder**, or click **Next** through 01 → 31. Each
   request captures the ids/tokens the next one needs via `bru.setVar(...)`. A
   `tatRunId` is generated once per run so re-runs never collide on unique fields.
   The only credential assumed to exist is the **seeded SiteAdmin**
@@ -76,9 +77,10 @@ docs {
 
   ## Flow (steps run in `seq` order; a few numbers are skipped by design)
   **Bootstrap:** 01 SiteAdmin login → 02 create tenant + business admin → 03
-  business-admin login → 04 branch (enables the `accession` module) → 05 operating
-  schedule → 06 operator user (`receptionist`) → 08 grant the operator the two
-  accession permissions (collect + accept) → 09 operator login (branch-scoped).
+  business-admin login → 04 branch (enables `accession` + `branch_admin` modules)
+  → 05 operating schedule → 06 operator user (`receptionist`) → **07 create a
+  `branch_admin` user (for UI login)** → 08 grant the operator the two accession
+  permissions (collect + accept) → 09 operator login (branch-scoped).
 
   **Catalogue + order:** 12 patient → 13 resolve branch master data → **14 lab
   test — created by the Business Admin (bypasses master-data RBAC), WITH a
@@ -97,16 +99,64 @@ docs {
   **Machine talks to us:** **26 `GET /emi/orders`** (scan the order by
   `orderCode`) → **27 `GET /emi/submitResult`** (submit the `HGB` value).
 
-  **Verify:** 28 resolve the report → **29 get the report detail** and confirm the
-  value `HGB = {{emiResultValue}}` is present with **`source: "ADAPTER"`** and the
-  report is now **`SAVED`** — i.e. the machine result reached the reporting
-  workflow, no human entry.
+  **Verify it's logged — read back in all THREE scopes.** The machine calls
+  (26/27) each write an `adapter_logs` row (fire-and-forget). The **same rows**
+  are then read three ways to prove the scoping — `adapter_logs` is tenant-scoped
+  **and branch-level**, and the read scope is derived from the caller's token:
+  - **28 Branch Admin scope** — `GET /adapter-logs` as the **branch-scoped
+    operator** (`operatorToken`): the backend **locks to the token's own branch**
+    (`where.branchId = active_branch_id`), so only this branch's rows return.
+  - **29 Business Admin scope** — `GET /adapter-logs` as **`business_admin`**
+    (`businessAdminToken`, tenant-level): **no branch lock → all branches** in the
+    tenant (optionally narrow with `?branchId=`).
+  - **30 Site Admin scope** — `GET /siteadmin/adapter-logs?tenantId={{tenantId}}`
+    as **SiteAdmin** (`siteAdminToken`, `adapter-logs:read`): **cross-tenant** (all
+    businesses; here narrowed to this run), rows enriched with `tenantName`.
+
+  This is the round-trip: **call `/emi/orders` + `/emi/submitResult` → they show
+  up in the adapter logs, viewable branch- / tenant- / platform-scoped.** (Note: a
+  branch read filters `branchId = <that branch>`, so tenant-level rows
+  (`branchId = null`, e.g. an EMI call that matched no order) appear only in the
+  Business Admin / Site Admin scopes.)
+
+  **Verify it filled the report:** **31** resolve the report → **32 get the
+  report detail** and confirm the value `HGB = {{emiResultValue}}` is present with
+  **`source: "ADAPTER"`** and the report is now **`SAVED`** — i.e. the machine
+  result reached the reporting workflow, no human entry.
 
   > Lab-test creation is a Business-Admin console action (RBAC key
   > `business_admin:master_data__add_test`), so step 14 uses the business-admin
   > token. The accession Collect/Accept transitions are RBAC-enforced, so step 08
   > grants the branch-scoped operator exactly those two permission keys. Order
   > creation and report reads are open to the operator.
+
+  ## Verify in the UI — Business Admin & Branch Admin
+  After a run, log into the **Kaltros FE** and open **Support → Adapter Logs** to
+  see this run's EMI rows. Scope is by **module** (route access) + the token's
+  **profile** (data scope); the Adapter Logs page itself needs **no per-permission
+  key** (the Audit page's `..:center_and_operations__view_audit` has no
+  adapter-logs equivalent).
+
+  **Business Admin** (already created — the tenant admin from step 02):
+  - Profile / role key: **`business_admin`** · Module key: **`business_admin`**
+    (tenant-level; `business_admin` is in `ADMIN_BYPASS_ROLES`, so it bypasses
+    per-permission RBAC).
+  - Login — Identifier: `{{adminIdentifier}}` · Password: `{{adminPassword}}`
+    (`Str0ng@Pass1`) · Tenant slug: `{{tenantSlug}}`.
+  - URL: **`/business-admin/support/adapter-logs`** → tenant-wide (all branches).
+
+  **Branch Admin** (created in **step 07**):
+  - Profile / role key: **`branch_admin`** · Module key: **`branch_admin`**
+    (branch-level — enabled on the branch in step 04).
+  - Login — Identifier: `{{branchAdminLoginIdentifier}}` · Password:
+    `{{operatorPassword}}` (`Str0ng@Pass1`) · Tenant slug: `{{tenantSlug}}`.
+  - URL: **`/branch-admin/support/adapter-logs`** → branch-scoped to *EMI Flow
+    Center* (only this branch's rows).
+
+  > Grant keys reference (`moduleKey:section__action`, from
+  > `GET /users/manage/permission-catalog`): use these with **08**-style
+  > `PUT /users/manage/{userId}/branch-permissions` only for RBAC-gated features.
+  > Adapter Logs is not gated, so no grant is required for either admin.
 
   ## Notes
   - EMI endpoints are at the **root** (`{{emiBaseUrl}}/emi/...`), authenticated by

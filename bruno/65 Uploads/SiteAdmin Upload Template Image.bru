@@ -1,0 +1,47 @@
+meta {
+  name: SiteAdmin Upload Template Image
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/uploads/attachment
+  body: multipartForm
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:multipart-form {
+  file: @file(C:\path\to\logo.png)
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.url) bru.setEnvVar("attachmentUrl", data.url);
+}
+
+docs {
+  Upload one **image** for a global (SiteAdmin, tenant-less) PDF template and get
+  its public S3 URL. Form field name is **`file`**. Images are stored under the
+  fixed `global/pdf-templates` namespace (SiteAdmin templates carry no tenant).
+
+  Accepted types: JPG/JPEG/PNG/WEBP/GIF/SVG only. Max **10 MB**, otherwise 422
+  `INVALID_UPLOAD_FILE`. Returns
+  `{ "url": "https://s3-<region>.amazonaws.com/<bucket>/<key>" }`.
+
+  The SiteAdmin PDF-template editor derives an image **id** from the last path
+  segment of that URL (e.g. `a1b2…-uuid.png`), stores `id → url` in the
+  template's `meta.images`, and hands the user a `{{image:<id>}}` token to paste
+  into header/body/footer HTML. For a watermark, the URL is stored directly in
+  `meta.watermark_image`. See **SiteAdmin PDF Report Templates → Update PDF
+  Report Template**.
+
+  Auth is the SiteAdmin token (requires `master-data:write`). Run **SiteAdmin
+  Auth → Login** first so `{{siteAdminToken}}` is set. 500
+  `UPLOAD_NOT_CONFIGURED` if the server's AWS_* env is unset.
+
+  Edit the `@file(...)` path to a real image on your machine before sending.
+}

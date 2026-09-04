@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
+  AdapterAction,
   LabAdapter,
   LabReportStatus,
   OrderStatus,
@@ -8,6 +9,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UploadsService } from '../uploads/uploads.service';
+import { AdapterLogsService } from '../adapter-logs/adapter-logs.service';
 import {
   SubmitResultBody,
   EmiTestResult,
@@ -109,7 +111,53 @@ export class EmiService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly uploads: UploadsService,
+    private readonly adapterLogs: AdapterLogsService,
   ) {}
+
+  /**
+   * Record a lightweight `adapter_logs` transaction row for one EMI call so it
+   * surfaces in the Adapter Logs support listing (Site Admin / Business Admin /
+   * Branch Admin). Fire-and-forget via {@link AdapterLogsService.record}; never
+   * blocks or fails the machine response. The legacy `s` code maps to the
+   * numeric `statusCode` and a textual `status` (`SUCCESS` for 200/199, else
+   * `FAILED`). The request payload is stored compactly (no base64 supplements)
+   * and both payloads are length-capped.
+   * @param adapter the authenticating adapter (tenant + token)
+   * @param action which EMI operation (`ORDERS` / `SUBMIT_RESULT`)
+   * @param sourceIp caller IP
+   * @param request compact request summary (already stringified)
+   * @param envelope the legacy `{ s, m, … }` response returned to the machine
+   * @param branchId the resolved order's branch (null when not location-bound)
+   */
+  private recordAdapterLog(
+    adapter: LabAdapter,
+    action: AdapterAction,
+    sourceIp: string | null,
+    request: string,
+    envelope: { s?: string } | null | undefined,
+    branchId: string | null,
+  ): void {
+    const s = envelope?.s;
+    const code = s !== undefined ? Number(s) : NaN;
+    const ok = s === EMI.OK || s === EMI.EMPTY;
+    this.adapterLogs.record({
+      tenantId: adapter.tenantId,
+      branchId,
+      token: adapter.token,
+      action,
+      status: ok ? 'SUCCESS' : 'FAILED',
+      statusCode: Number.isFinite(code) ? code : null,
+      sourceIpAddress: sourceIp,
+      request: this.capPayload(request),
+      response: this.capPayload(JSON.stringify(envelope ?? {})),
+    });
+  }
+
+  /** Cap a stored request/response payload so a huge machine body can't bloat the log row. */
+  private capPayload(text: string): string {
+    const MAX = 8000;
+    return text.length > MAX ? `${text.slice(0, MAX)}… [truncated]` : text;
+  }
 
   /**
    * Resolve the authenticating adapter from the raw `TOKEN` header value. Because
@@ -152,78 +200,94 @@ export class EmiService {
   async getOrders(
     adapter: LabAdapter,
     specimenId: string | undefined,
+    sourceIp: string | null = null,
   ): Promise<EmiOrdersResponse> {
     const code = specimenId?.trim();
-    if (!code) {
-      return { s: EMI.BAD_REQUEST, m: 'Missing specimen id' };
-    }
+    let branchId: string | null = null;
 
-    return this.prisma.withTenant(adapter.tenantId, async (tx) => {
-      const ctx = await this.resolveContext(tx, adapter);
-      const order = await this.findOrder(tx, adapter.tenantId, code, ctx);
-      if (!order) {
-        return { s: EMI.BAD_REQUEST, m: 'Specimen id not found' };
-      }
+    const envelope: EmiOrdersResponse = !code
+      ? { s: EMI.BAD_REQUEST, m: 'Missing specimen id' }
+      : await this.prisma.withTenant(adapter.tenantId, async (tx) => {
+          const ctx = await this.resolveContext(tx, adapter);
+          const order = await this.findOrder(tx, adapter.tenantId, code, ctx);
+          if (!order) {
+            return { s: EMI.BAD_REQUEST, m: 'Specimen id not found' };
+          }
+          branchId = order.branchId;
 
-      const tenant = await tx.tenant.findUnique({
-        where: { id: adapter.tenantId },
-        select: { name: true },
-      });
+          const tenant = await tx.tenant.findUnique({
+            where: { id: adapter.tenantId },
+            select: { name: true },
+          });
 
-      // ut_ids: for each mapped + still-fillable test on this order, the test's
-      // display NAME plus each of its result-parameter NAMES (deduped) — the
-      // legacy `getFormattedOrder` shape the analyzers are calibrated against
-      // (they send these same strings back as `universal_test_id` on submit).
-      const utIds: string[] = [];
-      const pushUnique = (name: string | null | undefined): void => {
-        const v = name?.trim();
-        if (v && !utIds.includes(v)) {
-          utIds.push(v);
-        }
-      };
-      for (const item of order.items) {
-        if (
-          !item.branchLabTestId ||
-          !ctx.mappedTestIds.has(item.branchLabTestId)
-        ) {
-          continue;
-        }
-        const report = item.labReport;
-        const fillable =
-          !report || (FILLABLE_STATUSES.has(report.status) && !report.isLocked);
-        if (!fillable) {
-          continue;
-        }
-        pushUnique(item.branchLabTest?.testName);
-        const labTestId =
-          report?.labTestId ?? item.branchLabTest?.sourceLabTestId ?? null;
-        const params = await this.resolveParams(tx, labTestId, item);
-        for (const p of params) {
-          pushUnique(p.parameterName);
-        }
-      }
+          // ut_ids: for each mapped + still-fillable test on this order, the test's
+          // display NAME plus each of its result-parameter NAMES (deduped) — the
+          // legacy `getFormattedOrder` shape the analyzers are calibrated against
+          // (they send these same strings back as `universal_test_id` on submit).
+          const utIds: string[] = [];
+          const pushUnique = (name: string | null | undefined): void => {
+            const v = name?.trim();
+            if (v && !utIds.includes(v)) {
+              utIds.push(v);
+            }
+          };
+          for (const item of order.items) {
+            if (
+              !item.branchLabTestId ||
+              !ctx.mappedTestIds.has(item.branchLabTestId)
+            ) {
+              continue;
+            }
+            const report = item.labReport;
+            const fillable =
+              !report ||
+              (FILLABLE_STATUSES.has(report.status) && !report.isLocked);
+            if (!fillable) {
+              continue;
+            }
+            pushUnique(item.branchLabTest?.testName);
+            const labTestId =
+              report?.labTestId ?? item.branchLabTest?.sourceLabTestId ?? null;
+            const params = await this.resolveParams(tx, labTestId, item);
+            for (const p of params) {
+              pushUnique(p.parameterName);
+            }
+          }
 
-      const doctor = order.referredByDoctor;
-      const doctorName = doctor
-        ? [doctor.firstName, doctor.lastName].filter(Boolean).join(' ').trim()
-        : '';
+          const doctor = order.referredByDoctor;
+          const doctorName = doctor
+            ? [doctor.firstName, doctor.lastName]
+                .filter(Boolean)
+                .join(' ')
+                .trim()
+            : '';
 
-      const row: EmiOrderRow = {
-        specimen_id: code,
-        order_date: toEpochSeconds(order.orderDate),
-        patient_id: order.patient.umId ?? order.patient.id,
-        patient_name: order.patient.firstName,
-        patient_surname: order.patient.lastName ?? '',
-        birth_date: toEpochSeconds(order.patient.dateOfBirth),
-        patient_gender: genderInitial(order.patient.gender),
-        admission_number: order.orderCode,
-        sender_organization: tenant?.name ?? '',
-        sender_doctor: doctorName,
-        ut_ids: utIds,
-      };
+          const row: EmiOrderRow = {
+            specimen_id: code,
+            order_date: toEpochSeconds(order.orderDate),
+            patient_id: order.patient.umId ?? order.patient.id,
+            patient_name: order.patient.firstName,
+            patient_surname: order.patient.lastName ?? '',
+            birth_date: toEpochSeconds(order.patient.dateOfBirth),
+            patient_gender: genderInitial(order.patient.gender),
+            admission_number: order.orderCode,
+            sender_organization: tenant?.name ?? '',
+            sender_doctor: doctorName,
+            ut_ids: utIds,
+          };
 
-      return { s: EMI.OK, orders: [row] };
-    });
+          return { s: EMI.OK, orders: [row] };
+        });
+
+    this.recordAdapterLog(
+      adapter,
+      AdapterAction.ORDERS,
+      sourceIp,
+      JSON.stringify({ specimen_id: code ?? specimenId ?? null }),
+      envelope,
+      branchId,
+    );
+    return envelope;
   }
 
   /**
@@ -256,6 +320,7 @@ export class EmiService {
     // 5s timeout would roll back the fill).
     const filledReportIds: string[] = [];
     let filledOrderCode = '';
+    let loggedBranchId: string | null = null;
 
     const envelope = await this.prisma.withTenant(
       adapter.tenantId,
@@ -265,6 +330,7 @@ export class EmiService {
         const order = code
           ? await this.findOrder(tx, adapter.tenantId, code, ctx)
           : null;
+        loggedBranchId = order?.branchId ?? null;
 
         // Common audit-row writer (one row per submission).
         const writeAudit = (
@@ -503,6 +569,18 @@ export class EmiService {
         supplements,
       );
     }
+
+    this.recordAdapterLog(
+      adapter,
+      AdapterAction.SUBMIT_RESULT,
+      sourceIp,
+      JSON.stringify({
+        tube_no: body.tube_no ?? null,
+        test_results: testResults,
+      }),
+      envelope,
+      loggedBranchId,
+    );
     return envelope;
   }
 

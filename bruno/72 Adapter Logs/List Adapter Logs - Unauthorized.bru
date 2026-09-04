@@ -1,0 +1,30 @@
+meta {
+  name: List Adapter Logs - Unauthorized
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/adapter-logs
+  body: none
+  auth: none
+}
+
+tests {
+  test("401 without a token", () => {
+    expect(res.getStatus()).to.equal(401);
+  });
+  test("KaltrosException error envelope", () => {
+    const b = res.getBody();
+    expect(b.success).to.equal(false);
+    expect(b.error).to.have.property("code");
+  });
+}
+
+docs {
+  Negative case: the adapter-logs endpoints are protected by the global business
+  `JwtAuthGuard`. With no `Authorization` header the request is rejected with
+  `401 UNAUTHORISED` and the `{ success:false, error:{ code, message } }`
+  envelope. (The same holds for `/siteadmin/adapter-logs` without a SiteAdmin
+  token.)
+}

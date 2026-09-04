@@ -14,6 +14,7 @@ export const SITE_ADMIN_PERM = {
   BUSINESS_SUSPEND: 'business:suspend',
   BUSINESS_REACTIVATE: 'business:reactivate',
   AUDIT_LOGS_READ: 'audit-logs:read',
+  ADAPTER_LOGS_READ: 'adapter-logs:read',
   REPORTS_OPERATIONAL: 'reports:operational',
   // full_admin and above
   REPORTS_FINANCE: 'reports:finance',
@@ -41,6 +42,7 @@ const OPERATIONS_ADMIN: SiteAdminPermission[] = [
   SITE_ADMIN_PERM.BUSINESS_SUSPEND,
   SITE_ADMIN_PERM.BUSINESS_REACTIVATE,
   SITE_ADMIN_PERM.AUDIT_LOGS_READ,
+  SITE_ADMIN_PERM.ADAPTER_LOGS_READ,
   SITE_ADMIN_PERM.REPORTS_OPERATIONAL,
 ];
 

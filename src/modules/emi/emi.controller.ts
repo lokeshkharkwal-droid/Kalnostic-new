@@ -54,7 +54,13 @@ export class EmiController {
         ? req.query.specimen_id
         : undefined;
     try {
-      res.json(await this.emiService.getOrders(adapter, specimenId));
+      res.json(
+        await this.emiService.getOrders(
+          adapter,
+          specimenId,
+          extractClientIp(req),
+        ),
+      );
     } catch (e) {
       this.logger.error(
         `GET /emi/orders failed: ${e instanceof Error ? e.message : String(e)}`,
