@@ -14,6 +14,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   genderLabel,
+  salutationLabel,
   sampleSourceLabel,
   toBranchLocalInstant,
   formatTenantDate,
@@ -1687,6 +1688,7 @@ export class LabReportService {
               lastName: true,
               signatoryDesignation: true,
               registrationCouncil: true,
+              signatureImagePath: true,
               isNablAuthorized: true,
               isCapCertified: true,
               isIsoCertified: true,
@@ -1722,6 +1724,7 @@ export class LabReportService {
             designation:
               d.signatoryDesignation ?? d.registrationCouncil ?? undefined,
             certifications: certifications || undefined,
+            signatureImage: d.signatureImagePath ?? undefined,
           });
         }
       }
@@ -1775,6 +1778,7 @@ export class LabReportService {
             sampleGroupLabel: true,
             containerType: true,
             barcode: true,
+            orderIdBarcode: true,
           },
         },
       },
@@ -1841,6 +1845,10 @@ export class LabReportService {
       observed2: v.observed2 ?? '',
       unit: v.unit ?? '',
       methodology: v.methodology ?? '',
+      // Alias for the classic old-template tag name (`{method_name}`) — same
+      // value as `methodology`, kept separate so pre-existing lab_report
+      // templates authored against that tag don't need to be re-authored.
+      method_name: v.methodology ?? '',
       reference_display: v.referenceDisplay ?? '',
       group_name: groupNameByParamId.get(v.resultParamId) ?? '',
     }));
@@ -1853,7 +1861,7 @@ export class LabReportService {
         patient_name: [patient.firstName, patient.middleName, patient.lastName]
           .filter(Boolean)
           .join(' '),
-        patient_salutation: patient.salutation ?? '',
+        patient_salutation: salutationLabel(patient.salutation),
         patient_age: patient.age ?? '',
         patient_gender: genderLabel(patient.gender),
         patient_um_id: patient.umId ?? '',
@@ -1897,10 +1905,24 @@ export class LabReportService {
             )
           : '',
         sample_type: sample?.sampleType ?? '',
+        // The true Sample Source (In-House/Supplied) lives on
+        // `OrderDiagnostics`, not the sample row — fall back to the sample's
+        // own group label/type only when the order has no diagnostics row.
         sample_source_label:
-          sample?.sampleGroupLabel ?? sample?.sampleType ?? '',
+          sampleSourceLabel(diagnostics?.sampleSource) ||
+          sample?.sampleGroupLabel ||
+          sample?.sampleType ||
+          '',
+        // Kept as the plain barcode VALUE for backward compatibility with
+        // existing templates using `{order_id_barcode}` as flat text.
         order_id_barcode: sample?.barcode ?? '',
         sample_note: sampleNote?.body ?? '',
+      },
+      images: {
+        // The actual rendered Code 39 barcode graphic — templates should
+        // use `{{image:order_id_barcode}}` to embed it, not the flat
+        // `{order_id_barcode}` text tag above.
+        order_id_barcode: sample?.orderIdBarcode ?? '',
       },
       sections: { results },
       signatories,
