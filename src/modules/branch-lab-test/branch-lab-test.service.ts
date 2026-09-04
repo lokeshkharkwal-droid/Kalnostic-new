@@ -246,12 +246,17 @@ export class BranchLabTestService {
     }
     const copies = await this.prisma.branchLabTest.findMany({
       where,
-      select: { id: true, sourceLabTestId: true },
+      select: { id: true, sourceLabTestId: true, isDefault: true },
     });
 
     const updates: {
       id: string;
       data: Prisma.BranchLabTestUncheckedUpdateInput;
+    }[] = [];
+    const toDelete: {
+      id: string;
+      isDefault: boolean;
+      sourceLabTestId: string | null;
     }[] = [];
     let skipped = 0;
     for (const copy of copies) {
@@ -271,14 +276,16 @@ export class BranchLabTestService {
         });
       } catch (e) {
         if (e instanceof LabTestNotFoundException) {
-          skipped += 1;
+          // Source has been soft-deleted at Master Data — the branch's copy is
+          // stale and no longer orderable, so it is removed rather than skipped.
+          toDelete.push(copy);
           continue;
         }
         throw e;
       }
     }
 
-    if (updates.length) {
+    if (updates.length || toDelete.length) {
       try {
         await this.prisma.withTenant(tenantId, async (tx) => {
           for (const u of updates) {
@@ -287,13 +294,36 @@ export class BranchLabTestService {
               data: u.data,
             });
           }
+          for (const d of toDelete) {
+            await tx.branchLabTest.update({
+              where: { id: d.id },
+              data: { deletedAt: new Date() },
+            });
+            if (d.isDefault && d.sourceLabTestId) {
+              const sibling = await tx.branchLabTest.findFirst({
+                where: {
+                  tenantId,
+                  branchId,
+                  sourceLabTestId: d.sourceLabTestId,
+                  deletedAt: null,
+                },
+                orderBy: { createdAt: 'asc' },
+              });
+              if (sibling) {
+                await tx.branchLabTest.update({
+                  where: { id: sibling.id },
+                  data: { isDefault: true },
+                });
+              }
+            }
+          }
         });
       } catch (e) {
         this.rethrowConflict(e);
         throw e;
       }
     }
-    return { synced: updates.length, skipped };
+    return { synced: updates.length, deleted: toDelete.length, skipped };
   }
 
   /**

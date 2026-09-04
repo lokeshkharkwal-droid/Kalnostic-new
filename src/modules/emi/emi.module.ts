@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma';
 import { UploadsModule } from '../uploads/uploads.module';
+import { AdapterLogsModule } from '../adapter-logs/adapter-logs.module';
 import { EmiController } from './emi.controller';
 import { EmiService } from './emi.service';
 
@@ -13,7 +14,7 @@ import { EmiService } from './emi.service';
  * histogram images before they're linked as `LabReportAttachment`s.
  */
 @Module({
-  imports: [PrismaModule, UploadsModule],
+  imports: [PrismaModule, UploadsModule, AdapterLogsModule],
   controllers: [EmiController],
   providers: [EmiService],
 })

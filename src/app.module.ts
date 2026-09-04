@@ -13,6 +13,7 @@ import {
   TenantContextInterceptor,
 } from './common/interceptors';
 import { AuditModule } from './modules/audit/audit.module';
+import { AdapterLogsModule } from './modules/adapter-logs/adapter-logs.module';
 import { BranchModule } from './modules/branch/branch.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { BranchCatalogueModule } from './modules/branch-catalogue/branch-catalogue.module';
@@ -121,6 +122,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 
     // Feature + infrastructure modules.
     AuditModule,
+    AdapterLogsModule,
     BranchModule,
     DashboardModule,
     BranchCatalogueModule,

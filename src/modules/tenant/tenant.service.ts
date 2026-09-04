@@ -35,7 +35,10 @@ import { UpdateTenantSettingsDto } from './dto/update-tenant-settings.dto';
 import { ListTenantsQueryDto } from './dto/list-tenants-query.dto';
 import { BranchQueryDto } from '../branch/dto/branch-query.dto';
 import { TenantSettings } from './entities/tenant.entity';
-import { SUPPORTED_TIMEZONES } from './dto/tenant-settings.dto';
+import {
+  SUPPORTED_TIMEZONES,
+  SUPPORTED_TIME_FORMATS,
+} from './dto/tenant-settings.dto';
 import {
   TenantCustomDomainTakenException,
   TenantNotFoundException,
@@ -47,6 +50,7 @@ const DEFAULT_SETTINGS: TenantSettings = {
   timezone: 'Asia/Kolkata',
   currency: 'INR',
   date_format: 'DD/MM/YYYY',
+  time_format: '12h',
   language: 'en',
 };
 
@@ -155,10 +159,14 @@ export class TenantService {
    *
    * @param dto tenant + admin data (incl. the admin's login password)
    * @param createdBy SiteAdmin user id
+   * @param options.legacyTenantId source EzHealthTrack BUSINESS_ID, stored on the
+   *   tenant for idempotent data migration + traceability (migration tooling
+   *   only; never client-supplied)
    */
   async create(
     dto: CreateTenantDto,
     createdBy: string,
+    options?: { legacyTenantId?: number | null },
   ): Promise<{ tenant: Tenant; adminPhone: string }> {
     let slug: string;
     if (dto.slug) {
@@ -235,6 +243,7 @@ export class TenantService {
             subscriptionStatus: SubscriptionStatus.TRIALING,
             isActive: true,
             createdBy,
+            legacyTenantId: options?.legacyTenantId ?? null,
           },
         });
 
@@ -354,16 +363,18 @@ export class TenantService {
    * Resolve the caller tenant's locale (time zone + currency) for the business
    * frontend to convert UTC timestamps for display. Stored `settings` are merged
    * over `DEFAULT_SETTINGS`, so a legacy tenant without settings still gets a
-   * usable value. An unsupported stored time zone is logged and falls back to the
-   * platform default (§7 fallback) rather than being returned to the client.
+   * usable value. An unsupported stored time zone or time format is logged and
+   * falls back to the platform default (§7 fallback) rather than being returned
+   * to the client.
    * @param tenantId caller's tenant (from the business JWT)
-   * @returns `{ timezone, currency, dateFormat, language }`
+   * @returns `{ timezone, currency, dateFormat, timeFormat, language }`
    * @throws TenantNotFoundException if the tenant is missing/soft-deleted
    */
   async getLocale(tenantId: string): Promise<{
     timezone: string;
     currency: string;
     dateFormat: string;
+    timeFormat: string;
     language: string;
   }> {
     const tenant = await this.findById(tenantId);
@@ -378,10 +389,22 @@ export class TenantService {
       merged.timezone = DEFAULT_SETTINGS.timezone;
     }
 
+    if (
+      !(SUPPORTED_TIME_FORMATS as readonly string[]).includes(
+        merged.time_format,
+      )
+    ) {
+      this.logger.warn(
+        `Tenant ${tenantId} has unsupported time_format '${merged.time_format}', falling back to ${DEFAULT_SETTINGS.time_format}`,
+      );
+      merged.time_format = DEFAULT_SETTINGS.time_format;
+    }
+
     return {
       timezone: merged.timezone,
       currency: merged.currency,
       dateFormat: merged.date_format,
+      timeFormat: merged.time_format,
       language: merged.language,
     };
   }

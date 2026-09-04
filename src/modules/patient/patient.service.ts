@@ -8,7 +8,9 @@ import {
   Patient,
   PatientDocument,
   PatientDocumentCategory,
+  PatientFamilyLink,
   Prisma,
+  Relationship,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
@@ -62,6 +64,20 @@ const FAMILY_MEMBER_SELECT = {
 export interface PatientWriteContext {
   branchId: string | null;
   actorId?: string;
+  /**
+   * Source PATIENT_ID from the legacy EzHealthTrack MySQL database. Stored for
+   * idempotent data migration + traceability. Migration tooling only — normal
+   * request contexts leave this undefined.
+   */
+  legacyPatientId?: number | null;
+  /**
+   * Marks the row as a family member, which EXCLUDES it from the per-tenant
+   * active-mobile unique index (see the `patients` model). Migration tooling
+   * uses this to still import a legacy patient whose mobile already belongs to
+   * another active patient in the tenant; normal registrations leave it unset
+   * (the dedicated family-members endpoint is the usual path).
+   */
+  isFamilyMember?: boolean;
 }
 
 /**
@@ -205,6 +221,10 @@ export class PatientService {
           dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
           tenantId,
           branchId: ctx.branchId,
+          ...(ctx.isFamilyMember !== undefined
+            ? { isFamilyMember: ctx.isFamilyMember }
+            : {}),
+          legacyPatientId: ctx.legacyPatientId ?? null,
           createdBy: ctx.actorId ?? null,
           updatedBy: ctx.actorId ?? null,
         },
@@ -839,6 +859,58 @@ export class PatientService {
     } catch (e) {
       this.rethrowPatientWriteConflict(e, dto.mobile, dto.umId ?? null);
     }
+  }
+
+  /**
+   * Link two ALREADY-EXISTING patients as anchor ↔ family member (idempotent).
+   * Unlike {@link addFamilyMember} (which creates a brand-new member patient),
+   * this joins patients that both already exist — the case for data migration,
+   * where the anchor and the member were each imported as independent patients
+   * from their own source records. Creates the `PatientFamilyLink` if none is
+   * active for this (anchor, member) pair, and marks the member as a family
+   * member (exempting it from the per-tenant active-mobile unique index), in one
+   * transaction. Re-running is safe: an existing active link is returned as-is.
+   * @param tenantId tenant scope
+   * @param patientId anchor patient id
+   * @param memberId member (family) patient id
+   * @param relationship the member's relationship to the anchor
+   * @param ctx acting person (the branch is inherited from the anchor)
+   * @returns the existing or newly created link
+   * @throws PatientNotFoundException if either patient is missing in this tenant
+   */
+  async linkExistingFamilyMember(
+    tenantId: string,
+    patientId: string,
+    memberId: string,
+    relationship: Relationship,
+    ctx: { actorId?: string },
+  ): Promise<PatientFamilyLink> {
+    const anchor = await this.ensurePatient(patientId, tenantId);
+    await this.ensurePatient(memberId, tenantId);
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const existing = await tx.patientFamilyLink.findFirst({
+        where: { tenantId, patientId, memberId, deletedAt: null },
+      });
+      if (existing) {
+        return existing;
+      }
+      const link = await tx.patientFamilyLink.create({
+        data: {
+          tenantId,
+          branchId: anchor.branchId,
+          patientId,
+          memberId,
+          relationship,
+          createdBy: ctx.actorId ?? null,
+          updatedBy: ctx.actorId ?? null,
+        },
+      });
+      await tx.patient.update({
+        where: { id: memberId },
+        data: { isFamilyMember: true },
+      });
+      return link;
+    });
   }
 
   /**

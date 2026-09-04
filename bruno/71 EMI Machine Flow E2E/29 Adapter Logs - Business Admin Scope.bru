@@ -1,0 +1,49 @@
+meta {
+  name: 29 Adapter Logs - Business Admin Scope
+  type: http
+  seq: 29
+}
+
+get {
+  url: {{baseUrl}}/adapter-logs?limit=50
+  body: none
+  auth: bearer
+}
+
+params:query {
+  limit: 50
+  ~branchId: {{branchId}}
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+tests {
+  test("tenant-wide read returns (paginated envelope)", function () {
+    expect(res.getStatus()).to.equal(200);
+    const b = res.getBody();
+    expect(b.success).to.equal(true);
+    expect(b.data).to.be.an("array");
+  });
+  test("TENANT-SCOPED: both EMI calls are visible tenant-wide (all branches)", function () {
+    const rows = res.getBody().data;
+    const actions = rows
+      .filter((r) => r.token === bru.getVar("flowAdapterToken"))
+      .map((r) => r.action);
+    expect(actions).to.include.members(["ORDERS", "SUBMIT_RESULT"]);
+  });
+}
+
+docs {
+  **Scope 2 — Business Admin (tenant-scoped / all branches).** Reads
+  `GET /adapter-logs` with the **`business_admin` token** (`businessAdminToken`,
+  a tenant-level profile with no active branch). The backend does **not** apply a
+  branch lock, so this user sees **every branch in the tenant**. Optionally narrow
+  to one branch with the `branchId` query param (the `~`-disabled example).
+
+  Asserts both EMI calls of this run (`ORDERS` + `SUBMIT_RESULT`) are visible
+  tenant-wide — the same rows the Branch Admin saw in step 28, plus any
+  tenant-level (`branchId = null`) rows a branch read would hide. Same endpoint as
+  step 28; only the token's profile differs — that's what changes the scope.
+}
