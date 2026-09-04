@@ -65,9 +65,14 @@ export class InternalReferralController {
   @Get()
   findAll(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Query() query: ListInternalReferralsDto,
   ) {
-    return this.internalReferralService.findAllForTenant(tenantId, query);
+    return this.internalReferralService.findAllForTenant(
+      tenantId,
+      profile.branchId,
+      query,
+    );
   }
 
   /**

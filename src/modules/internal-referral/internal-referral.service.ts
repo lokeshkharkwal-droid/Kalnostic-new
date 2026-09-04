@@ -314,11 +314,16 @@ export class InternalReferralService {
    * trimmed listing projection. Supports a free-text `search` by employee name
    * (whitespace-tokenised across first/last/full name, with the mobile number as a
    * fallback) plus `status` and `branchId` filters.
+   * Each row is enriched with the active branch's assigned Lab Test List / Lab
+   * Panel List (bulk-resolved in a fixed number of extra queries, never per-row).
    * @param tenantId tenant scope
+   * @param activeBranchId caller's active branch (from JWT); used to resolve the
+   *   Lab Test/Panel List assignment, distinct from the `branchId` query filter
    * @param query pagination + filters
    */
   async findAllForTenant(
     tenantId: string,
+    activeBranchId: string | null,
     query: ListInternalReferralsDto,
   ): Promise<PaginatedResult<InternalReferralListItem>> {
     const page = query.page ?? 1;
@@ -356,7 +361,18 @@ export class InternalReferralService {
       }),
       this.prisma.internalReferral.count({ where }),
     ]);
-    const data: InternalReferralListItem[] = rows;
+    const assignments =
+      await this.listAssignmentService.getAssignmentsWithListNames(
+        tenantId,
+        activeBranchId,
+        ReferralType.INTERNAL,
+        rows.map((r) => r.id),
+      );
+    const data: InternalReferralListItem[] = rows.map((r) => ({
+      ...r,
+      labTestList: assignments.get(r.id)?.labTestList ?? null,
+      labPanelList: assignments.get(r.id)?.labPanelList ?? null,
+    }));
     return { data, total, page, limit };
   }
 

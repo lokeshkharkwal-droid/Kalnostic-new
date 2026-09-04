@@ -3,6 +3,7 @@ import {
   ExternalReferralStatus,
   Prisma,
 } from '@prisma/client';
+import { LabListRef } from '../../referral-list/entities/referral-list.entity';
 
 /**
  * One slab-based commission row as stored in `ExternalReferral.commissionSlabs`
@@ -58,8 +59,15 @@ export type ExternalReferralListRow = Prisma.ExternalReferralGetPayload<{
   select: typeof EXTERNAL_REFERRAL_LIST_SELECT;
 }>;
 
-/** The list endpoint response: the selected columns for one external referral. */
-export type ExternalReferralListItem = ExternalReferralListRow;
+/**
+ * The list endpoint response: the selected columns for one external referral,
+ * plus the active branch's assigned Lab Test List / Lab Panel List, bulk-resolved
+ * by `ReferralListAssignmentService.getAssignmentsWithListNames` (never per-row).
+ */
+export type ExternalReferralListItem = ExternalReferralListRow & {
+  labTestList: LabListRef | null;
+  labPanelList: LabListRef | null;
+};
 
 /** Re-export for convenience at call sites. */
 export type { ExternalReferralStatus };

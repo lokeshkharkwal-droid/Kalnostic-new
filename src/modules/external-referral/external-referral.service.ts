@@ -275,11 +275,16 @@ export class ExternalReferralService {
    * trimmed listing projection. Supports a free-text `search` by referral name
    * (whitespace-tokenised, with organisation name / mobile number / referral code as
    * fallbacks), a `status` filter, and a `branchId` filter.
+   * Each row is enriched with the active branch's assigned Lab Test List / Lab
+   * Panel List (bulk-resolved in a fixed number of extra queries, never per-row).
    * @param tenantId tenant scope
+   * @param activeBranchId caller's active branch (from JWT); used to resolve the
+   *   Lab Test/Panel List assignment, distinct from the `branchId` query filter
    * @param query pagination + filters
    */
   async findAllForTenant(
     tenantId: string,
+    activeBranchId: string | null,
     query: ListExternalReferralsDto,
   ): Promise<PaginatedResult<ExternalReferralListItem>> {
     const page = query.page ?? 1;
@@ -316,7 +321,18 @@ export class ExternalReferralService {
       }),
       this.prisma.externalReferral.count({ where }),
     ]);
-    const data: ExternalReferralListItem[] = rows;
+    const assignments =
+      await this.listAssignmentService.getAssignmentsWithListNames(
+        tenantId,
+        activeBranchId,
+        ReferralType.EXTERNAL,
+        rows.map((r) => r.id),
+      );
+    const data: ExternalReferralListItem[] = rows.map((r) => ({
+      ...r,
+      labTestList: assignments.get(r.id)?.labTestList ?? null,
+      labPanelList: assignments.get(r.id)?.labPanelList ?? null,
+    }));
     return { data, total, page, limit };
   }
 
