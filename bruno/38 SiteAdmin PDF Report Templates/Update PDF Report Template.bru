@@ -26,8 +26,12 @@ body:json {
       "orientation": "L",
       "page_size": "A4",
       "watermark_text": "COPY",
+      "watermark_image": "https://s3-ap-southeast-1.amazonaws.com/bucket/uploads/finance-attachments/global/pdf-templates/uuid.png",
       "template_version": "v2.0",
-      "header_html": "<div class='title'>{hospital_name}</div>",
+      "images": {
+        "uuid.png": "https://s3-ap-southeast-1.amazonaws.com/bucket/uploads/finance-attachments/global/pdf-templates/uuid.png"
+      },
+      "header_html": "<div class='title'>{hospital_name}</div>{{image:uuid.png}}",
       "body_html": "<h3>Patient: {patient_name}</h3>",
       "footer_html": "<signing_authority_tag></signing_authority_tag>"
     }
@@ -39,4 +43,11 @@ docs {
   `master-data:write`. Any supplied `meta` REPLACES the stored blob (defaults are
   re-applied). `type` must remain a supported key; `branchId` is ignored (global
   templates are never branch-scoped). 404 if missing.
+
+  **Images & watermark.** Upload images via **Uploads → SiteAdmin Upload Template
+  Image**. Store each returned URL in `meta.images` keyed by an id (the URL's last
+  path segment, e.g. `uuid.png`) and reference it in header/body/footer HTML as
+  `{{image:<id>}}` — the renderer resolves it to `<img src="…">`. Set
+  `meta.watermark_image` to an uploaded URL to apply an image watermark (takes
+  precedence over `watermark_text`); it is applied automatically, no HTML needed.
 }

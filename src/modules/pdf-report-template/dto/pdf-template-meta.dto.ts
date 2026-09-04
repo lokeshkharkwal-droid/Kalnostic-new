@@ -3,6 +3,7 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
+  IsObject,
   IsOptional,
   IsString,
   MaxLength,
@@ -206,6 +207,24 @@ export class PdfTemplateMetaDto {
   @IsString()
   @MaxLength(255)
   watermark_text?: string;
+
+  /**
+   * Optional uploaded watermark image URL. When set it is applied automatically
+   * as the PDF watermark (takes precedence over `watermark_text`).
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  watermark_image?: string;
+
+  /**
+   * Registry of uploaded template images: `{{image:<id>}}` token id → resolved
+   * (S3) URL. Populated by the editor's image-upload controls; the renderer
+   * resolves `{{image:<id>}}` placeholders in header/body/footer HTML against it.
+   */
+  @IsOptional()
+  @IsObject()
+  images?: Record<string, string>;
 
   /** Version name/tag for the template. */
   @IsOptional()

@@ -58,7 +58,7 @@ restore_backup() {
 }
 
 echo "==> Building"
-if ! pnpm build; then
+if ! NODE_OPTIONS="--max-old-space-size=2048" pnpm run build; then
   echo "ERROR: build failed — restoring previous dist/, nothing deployed." >&2
   restore_backup
   exit 1

@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { PDF_TEMPLATE_META_DEFAULTS } from '../src/modules/pdf-report-template/constants/pdf-template-meta.constant';
 
 /**
@@ -20,7 +20,7 @@ function meta(
   header: string,
   body: string,
   footer: string,
-): Record<string, string> {
+): Prisma.InputJsonObject {
   return {
     ...PDF_TEMPLATE_META_DEFAULTS,
     default_font: 'helvetica',
@@ -39,7 +39,7 @@ const PATIENT_LINE =
 const TEMPLATES: Array<{
   type: string;
   name: string;
-  meta: Record<string, string>;
+  meta: Prisma.InputJsonObject;
 }> = [
   {
     type: 'order_print',

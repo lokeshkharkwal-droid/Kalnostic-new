@@ -335,6 +335,14 @@ CREATE POLICY audit_logs_tenant_isolation ON audit_logs
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── adapter_logs ──────────────────────────────────────────────────────────────
+ALTER TABLE adapter_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE adapter_logs FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS adapter_logs_tenant_isolation ON adapter_logs;
+CREATE POLICY adapter_logs_tenant_isolation ON adapter_logs
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- ── master_data ─────────────────────────────────────────────────────────────────
 ALTER TABLE master_data ENABLE ROW LEVEL SECURITY;
 ALTER TABLE master_data FORCE ROW LEVEL SECURITY;

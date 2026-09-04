@@ -1,0 +1,61 @@
+meta {
+  name: 30 Adapter Logs - Site Admin Scope
+  type: http
+  seq: 30
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/adapter-logs?tenantId={{tenantId}}&limit=50
+  body: none
+  auth: bearer
+}
+
+params:query {
+  tenantId: {{tenantId}}
+  limit: 50
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+tests {
+  test("cross-tenant read returns (paginated envelope)", function () {
+    expect(res.getStatus()).to.equal(200);
+    const b = res.getBody();
+    expect(b.success).to.equal(true);
+    expect(b.data).to.be.an("array");
+  });
+  test("SITEADMIN-SCOPED: rows carry tenantName and match this run's tenant", function () {
+    const rows = res.getBody().data;
+    expect(rows.length, "rows for this tenant").to.be.at.least(2);
+    rows.forEach((r) => {
+      expect(r.tenantId).to.equal(bru.getVar("tenantId"));
+      expect(r).to.have.property("tenantName");
+    });
+  });
+  test("both EMI calls are visible in the cross-tenant view", function () {
+    const actions = res
+      .getBody()
+      .data.filter((r) => r.token === bru.getVar("flowAdapterToken"))
+      .map((r) => r.action);
+    expect(actions).to.include.members(["ORDERS", "SUBMIT_RESULT"]);
+  });
+}
+
+docs {
+  **Scope 3 — Site Admin (cross-tenant / all businesses).** Reads the SiteAdmin
+  endpoint `GET /siteadmin/adapter-logs` with the **`siteAdminToken`** (permission
+  `adapter-logs:read`, operations_admin+). This view spans **ALL tenants**; here
+  it is narrowed to this run's business via `?tenantId={{tenantId}}` so the
+  assertions are exact (omit `tenantId` to see every business at once).
+
+  Each row is enriched with `tenantName` (the owning business). Asserts the run's
+  EMI rows are present, all carry this run's `tenantId`, and both `ORDERS` +
+  `SUBMIT_RESULT` show — proving the same logged activity is visible at the
+  platform level, not just to the tenant.
+
+  This is a **different endpoint + a different token type** from steps 28/29:
+  business routes use the business JWT; SiteAdmin routes use the SiteAdmin token
+  and are gated by `SiteAdminPermissionGuard`.
+}

@@ -30,7 +30,10 @@ export class TemplateRenderService {
    */
   render(meta: PdfTemplateMeta, context: GeneratePdfDto): string {
     const variables = context.variables ?? {};
-    const images = context.images ?? {};
+    // The template's own uploaded-image registry resolves `{{image:<id>}}`
+    // tokens the editor produced; a generate-time `context.images` map (e.g. a
+    // per-order image) wins on id collisions.
+    const images = { ...(meta.images ?? {}), ...(context.images ?? {}) };
     const sections = context.sections ?? {};
 
     const header = this.renderFragment(meta.header_html, variables, images, {});
@@ -104,8 +107,9 @@ export class TemplateRenderService {
     html: string,
     images: Record<string, string>,
   ): string {
+    // Ids may include the file extension (e.g. `abc-uuid.png`), so allow dots.
     return html.replace(
-      /\{\{image:([a-zA-Z0-9_-]+)\}\}/g,
+      /\{\{image:([a-zA-Z0-9_.-]+)\}\}/g,
       (_match, id: string) => {
         const src = images[id];
         return src ? `<img src="${this.escapeAttr(src)}" alt="${id}" />` : '';
@@ -204,9 +208,15 @@ export class TemplateRenderService {
   ): string {
     const fontFamily = meta.default_font ? `${meta.default_font}, ` : '';
     const fontSize = meta.default_font_size || '10';
-    const watermark = meta.watermark_text
-      ? `<div class="pdf-watermark">${this.escape(meta.watermark_text)}</div>`
-      : '';
+    // An uploaded watermark image is applied automatically and takes precedence
+    // over the text watermark; fall back to text when no image is set.
+    const watermark = meta.watermark_image
+      ? `<div class="pdf-watermark-image"><img src="${this.escapeAttr(
+          meta.watermark_image,
+        )}" alt="watermark" /></div>`
+      : meta.watermark_text
+        ? `<div class="pdf-watermark">${this.escape(meta.watermark_text)}</div>`
+        : '';
 
     const baseCss = `
       * { box-sizing: border-box; }
@@ -216,6 +226,10 @@ export class TemplateRenderService {
       .pdf-watermark { position: fixed; top: 45%; left: 0; right: 0; text-align: center;
         font-size: 72pt; color: rgba(0,0,0,0.08); transform: rotate(-30deg);
         z-index: 0; pointer-events: none; }
+      .pdf-watermark-image { position: fixed; inset: 0; display: flex;
+        align-items: center; justify-content: center; z-index: 0;
+        pointer-events: none; }
+      .pdf-watermark-image img { max-width: 60%; max-height: 60%; opacity: 0.12; }
       .pdf-header, .pdf-body, .pdf-footer { position: relative; z-index: 1; }
       .signing-authority { display: inline-block; text-align: center; margin: 0 16px; vertical-align: bottom; }
       .signing-authority .sa-signature { max-height: 48px; display: block; margin: 0 auto 4px; }
