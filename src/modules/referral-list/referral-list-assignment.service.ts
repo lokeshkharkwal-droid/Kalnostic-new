@@ -4,6 +4,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { PtCategoryService } from '../pt-category/pt-category.service';
 import { ResolveListsQueryDto } from './dto/resolve-lists-query.dto';
 import {
+  LabListRef,
+  ReferralListAssignmentView,
   ReferralListSelection,
   ResolvedLists,
 } from './entities/referral-list.entity';
@@ -107,6 +109,87 @@ export class ReferralListAssignmentService {
     return this.prisma.referralListAssignment.findFirst({
       where: { tenantId, branchId, referralType, referralId, deletedAt: null },
     });
+  }
+
+  /**
+   * Bulk-fetch the active branch's list assignments for many referrals at once,
+   * resolving each assigned list's display name too — used by each referral
+   * type's list endpoint to enrich a page of rows in a fixed number of extra
+   * queries (never one per row). Referrals with no assignment (or a null
+   * `branchId`/empty `referralIds`) are simply absent from the returned map.
+   * @param tenantId tenant scope (from JWT)
+   * @param branchId active branch (from JWT); null → returns an empty map
+   * @param referralType which referral kind
+   * @param referralIds the current page's referral ids
+   */
+  async getAssignmentsWithListNames(
+    tenantId: string,
+    branchId: string | null,
+    referralType: ReferralType,
+    referralIds: string[],
+  ): Promise<Map<string, ReferralListAssignmentView>> {
+    if (!branchId || referralIds.length === 0) {
+      return new Map();
+    }
+
+    const assignments = await this.prisma.referralListAssignment.findMany({
+      where: {
+        tenantId,
+        branchId,
+        referralType,
+        referralId: { in: referralIds },
+        deletedAt: null,
+      },
+    });
+    if (assignments.length === 0) {
+      return new Map();
+    }
+
+    const testListIds = [
+      ...new Set(
+        assignments
+          .map((a) => a.branchLabTestListId)
+          .filter((v): v is string => !!v),
+      ),
+    ];
+    const panelListIds = [
+      ...new Set(
+        assignments
+          .map((a) => a.branchLabPanelListId)
+          .filter((v): v is string => !!v),
+      ),
+    ];
+
+    const [testLists, panelLists] = await Promise.all([
+      testListIds.length
+        ? this.prisma.branchLabTestList.findMany({
+            where: { id: { in: testListIds }, tenantId, deletedAt: null },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([]),
+      panelListIds.length
+        ? this.prisma.branchLabPanelList.findMany({
+            where: { id: { in: panelListIds }, tenantId, deletedAt: null },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    const testNameById = new Map(testLists.map((l) => [l.id, l.name]));
+    const panelNameById = new Map(panelLists.map((l) => [l.id, l.name]));
+
+    const toRef = (
+      id: string | null,
+      nameById: Map<string, string>,
+    ): LabListRef | null => (id ? { id, name: nameById.get(id) ?? '' } : null);
+
+    const result = new Map<string, ReferralListAssignmentView>();
+    for (const a of assignments) {
+      result.set(a.referralId, {
+        labTestList: toRef(a.branchLabTestListId, testNameById),
+        labPanelList: toRef(a.branchLabPanelListId, panelNameById),
+      });
+    }
+    return result;
   }
 
   /**

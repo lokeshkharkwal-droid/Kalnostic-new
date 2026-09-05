@@ -54,7 +54,10 @@ docs {
   Each row contains ONLY: `id`, `fullName` (composed first/middle/last),
   `mobileNumber`, `email`, `department` (`{ id, name }` or `null`), `specialty`
   (the linked category `{ id, name }`, or `null`), `superSpecialty` (the linked
-  sub-category `{ id, name }`, or `null`), `isCommissionApplicable`, and `status`.
-  Fetch the full record (all fields, qualifications, experiences, assigned lab
-  tests/panels, derived `age`/`duration`) via "Get Referral Doctor".
+  sub-category `{ id, name }`, or `null`), `isCommissionApplicable`, `status`, and
+  `labTestList` / `labPanelList` — `{ id, name } | null` — the caller's active
+  branch's assigned Lab Test List / Lab Panel List, bulk-resolved for the whole
+  page (not a per-row lookup). Fetch the full record (all fields, qualifications,
+  experiences, the raw `branchLabTestListId`/`branchLabPanelListId`, derived
+  `age`/`duration`) via "Get Referral Doctor".
 }

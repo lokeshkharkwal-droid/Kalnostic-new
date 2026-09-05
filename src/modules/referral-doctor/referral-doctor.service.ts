@@ -15,6 +15,7 @@ import { CategoryService } from '../category/category.service';
 import { DepartmentService } from '../department/department.service';
 import { SubCategoryService } from '../sub-category/sub-category.service';
 import { ReferralListAssignmentService } from '../referral-list/referral-list-assignment.service';
+import { ReferralListAssignmentView } from '../referral-list/entities/referral-list.entity';
 import { ReferralPanelSettingsService } from '../referral-panel-settings/referral-panel-settings.service';
 import { CreateReferralDoctorDto } from './dto/create-referral-doctor.dto';
 import { UpdateReferralDoctorDto } from './dto/update-referral-doctor.dto';
@@ -314,11 +315,16 @@ export class ReferralDoctorService {
    * (whitespace-tokenised across first/middle/last name, with the mobile number as
    * a fallback) plus `departmentId`, `categoryId`, `status`, and `branchId`
    * filters.
+   * Each row is enriched with the active branch's assigned Lab Test List / Lab
+   * Panel List (bulk-resolved in a fixed number of extra queries, never per-row).
    * @param tenantId tenant scope
+   * @param activeBranchId caller's active branch (from JWT); used to resolve the
+   *   Lab Test/Panel List assignment, distinct from the `branchId` query filter
    * @param query pagination + filters
    */
   async findAllForTenant(
     tenantId: string,
+    activeBranchId: string | null,
     query: ListReferralDoctorsDto,
   ): Promise<PaginatedResult<ReferralDoctorListItem>> {
     const page = query.page ?? 1;
@@ -358,8 +364,15 @@ export class ReferralDoctorService {
       }),
       this.prisma.referralDoctor.count({ where }),
     ]);
+    const assignments =
+      await this.listAssignmentService.getAssignmentsWithListNames(
+        tenantId,
+        activeBranchId,
+        ReferralType.DOCTOR,
+        rows.map((r) => r.id),
+      );
     return {
-      data: rows.map((r) => this.toListItem(r)),
+      data: rows.map((r) => this.toListItem(r, assignments.get(r.id))),
       total,
       page,
       limit,
@@ -878,8 +891,13 @@ export class ReferralDoctorService {
    * Reshape a selected list row into the listing response (composed `fullName`,
    * `specialty` ← category, `superSpecialty` ← sub-category).
    * @param row a row from `REFERRAL_DOCTOR_LIST_SELECT`
+   * @param assignment the row's bulk-resolved Lab Test/Panel List assignment, or
+   *   undefined when none was found (both fields default to null)
    */
-  private toListItem(row: ReferralDoctorListRow): ReferralDoctorListItem {
+  private toListItem(
+    row: ReferralDoctorListRow,
+    assignment?: ReferralListAssignmentView,
+  ): ReferralDoctorListItem {
     return {
       id: row.id,
       fullName: this.computeFullName(
@@ -897,6 +915,8 @@ export class ReferralDoctorService {
       tds: row.tds,
       paymentCycle: row.paymentCycle,
       status: row.status,
+      labTestList: assignment?.labTestList ?? null,
+      labPanelList: assignment?.labPanelList ?? null,
     };
   }
 

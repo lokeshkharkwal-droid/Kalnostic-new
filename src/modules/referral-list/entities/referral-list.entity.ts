@@ -17,3 +17,15 @@ export interface ReferralListSelection {
   branchLabTestListId?: string | null;
   branchLabPanelListId?: string | null;
 }
+
+/** A `{ id, name }` reference to a named Lab Test List / Lab Panel List. */
+export interface LabListRef {
+  id: string;
+  name: string;
+}
+
+/** A referral's bulk-resolved list assignment, as merged onto a list-item row. */
+export interface ReferralListAssignmentView {
+  labTestList: LabListRef | null;
+  labPanelList: LabListRef | null;
+}

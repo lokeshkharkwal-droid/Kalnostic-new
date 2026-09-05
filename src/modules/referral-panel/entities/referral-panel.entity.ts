@@ -1,4 +1,5 @@
 import { ReferralPanel } from '@prisma/client';
+import { LabListRef } from '../../referral-list/entities/referral-list.entity';
 
 /**
  * One slab-based commission row as stored in `ReferralPanel.commissionSlabs`
@@ -32,7 +33,13 @@ export type ReferralPanelEntity = ReferralPanel & {
 };
 
 /**
- * The list endpoint response shape for a referral panel: the plain panel row (the
- * per-branch list assignment is prefilled only on the single-item GET).
+ * The list endpoint response shape for a referral panel: the plain panel row plus
+ * the active branch's assigned Lab Test List / Lab Panel List, bulk-resolved by
+ * `ReferralListAssignmentService.getAssignmentsWithListNames` (never per-row). The
+ * raw `branchLabTestListId`/`branchLabPanelListId` ids are still only on the
+ * single-item GET (`ReferralPanelEntity`).
  */
-export type ReferralPanelListItem = ReferralPanel;
+export type ReferralPanelListItem = ReferralPanel & {
+  labTestList: LabListRef | null;
+  labPanelList: LabListRef | null;
+};
