@@ -1,6 +1,7 @@
 import {
   ParameterType,
   ResultEntryMode,
+  ResultGroupLayout,
   ResultRounding,
   ResultType,
 } from '@prisma/client';
@@ -38,6 +39,11 @@ export class LabTestResultParamDto {
   @MaxLength(255)
   groupName?: string;
 
+  /** Plain display mode (Tabular vs Sequential). Distinct from groupLayoutId. */
+  @IsEnum(ResultGroupLayout)
+  @IsOptional()
+  groupLayout?: ResultGroupLayout;
+
   @IsUUID()
   @IsOptional()
   groupLayoutId?: string;
@@ -69,6 +75,10 @@ export class LabTestResultParamDto {
   @IsUUID()
   @IsOptional()
   iconSettingsId?: string;
+
+  @IsUUID()
+  @IsOptional()
+  imageSettingsId?: string;
 
   @IsString()
   @IsOptional()

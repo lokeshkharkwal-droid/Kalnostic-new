@@ -176,6 +176,7 @@ export const ORDER_INCLUDE = {
       mobile: true,
       gender: true,
       age: true,
+      ageType: true,
       dateOfBirth: true,
       bloodGroup: true,
       email: true,

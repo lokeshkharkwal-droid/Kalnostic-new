@@ -84,3 +84,29 @@ export function formatTenantDateTime(
 ): string {
   return `${formatTenantDate(localInstant, dateFormat)}, ${formatTenantTime(localInstant, timeFormat)}`;
 }
+
+/**
+ * Fixed lab-report date-time stamp: `DD-MM-YYYY hh:mm AM/PM` (e.g.
+ * `05-09-2026 03:30 PM`). Unlike {@link formatTenantDateTime} this ignores the
+ * tenant's `date_format`/`time_format` and always emits the report layout the
+ * business requires for `{order_date}`, `{sample_collection_date}`,
+ * `{sample_received_date}`, `{last_report_prepared_on}` and the Latte
+ * all-reports header. Reads UTC getters under the same convention as the rest
+ * of this module — the caller must convert to a tenant-local wall-clock instant
+ * via `toBranchLocalInstant` first. Empty string for a null/invalid instant.
+ */
+export function formatReportDateTime(
+  localInstant: Date | null | undefined,
+): string {
+  if (!localInstant || Number.isNaN(localInstant.getTime())) {
+    return '';
+  }
+  const day = pad2(localInstant.getUTCDate());
+  const month = pad2(localInstant.getUTCMonth() + 1);
+  const year = localInstant.getUTCFullYear();
+  const hours24 = localInstant.getUTCHours();
+  const minutes = pad2(localInstant.getUTCMinutes());
+  const period = hours24 >= 12 ? 'PM' : 'AM';
+  const hours12 = hours24 % 12 || 12;
+  return `${day}-${month}-${year} ${pad2(hours12)}:${minutes} ${period}`;
+}

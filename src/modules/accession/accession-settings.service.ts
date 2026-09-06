@@ -22,9 +22,12 @@ const SEPARATOR_TOKENS: Record<AccessionBarcodeSeparator, string> = {
   UNDERSCORE: '_',
 };
 
-/** Full Accession Module Settings response: master-data lists + typed columns + a computed barcode preview. */
+/** Full Accession Module Settings response: master-data lists + typed columns + computed barcode previews. */
 export type AccessionSettingsResponse = AccessionSettingsMap &
-  AccessionTypedSettings & { SampleBarcodeSettings_Preview: string };
+  AccessionTypedSettings & {
+    SampleBarcodeSettings_Preview: string;
+    OrderBarcodeSettings_Preview: string;
+  };
 
 /**
  * Per-branch Accession Module Settings (LIMS Settings Master — Accession
@@ -274,6 +277,24 @@ export class AccessionSettingsService {
         number: row.SampleBarcodeSettings_CurrentNumber + 1,
         numberLength: row.SampleBarcodeSettings_NumberLength,
         suffix: row.SampleBarcodeSettings_Suffix,
+      }),
+      OrderBarcodeSettings_Prefix: row.OrderBarcodeSettings_Prefix,
+      OrderBarcodeSettings_Suffix: row.OrderBarcodeSettings_Suffix,
+      OrderBarcodeSettings_Separator: row.OrderBarcodeSettings_Separator,
+      OrderBarcodeSettings_NumberLength: row.OrderBarcodeSettings_NumberLength,
+      OrderBarcodeSettings_ResetInterval:
+        row.OrderBarcodeSettings_ResetInterval,
+      OrderBarcodeSettings_CurrentNumber:
+        row.OrderBarcodeSettings_CurrentNumber,
+      OrderBarcodeSettings_LastResetAt: row.OrderBarcodeSettings_LastResetAt,
+      // Next order barcode the branch would emit (current + 1), same floor logic
+      // as allocation: the first emitted value is always at least 10001.
+      OrderBarcodeSettings_Preview: this.composeBarcode({
+        prefix: row.OrderBarcodeSettings_Prefix,
+        separator: row.OrderBarcodeSettings_Separator,
+        number: Math.max(row.OrderBarcodeSettings_CurrentNumber, 10000) + 1,
+        numberLength: row.OrderBarcodeSettings_NumberLength,
+        suffix: row.OrderBarcodeSettings_Suffix,
       }),
       Accession_MinimumTimeToAcceptSampleMinutes:
         row.Accession_MinimumTimeToAcceptSampleMinutes,

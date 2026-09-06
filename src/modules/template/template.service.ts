@@ -463,7 +463,16 @@ export class TemplateService {
             isActive: true,
             deletedAt: null,
           },
-          orderBy: [{ isDefault: 'desc' }, { updatedAt: 'desc' }],
+          // `id` is the final, fully-deterministic tie-break: two rows in the
+          // same scope can share isDefault AND updatedAt (e.g. templates cloned
+          // together carry an identical updated_at), in which case DB order would
+          // otherwise be arbitrary — so the same (feature, channel) must never
+          // resolve to a different template between calls.
+          orderBy: [
+            { isDefault: 'desc' },
+            { updatedAt: 'desc' },
+            { id: 'asc' },
+          ],
         });
         if (match) return match;
       }
@@ -506,7 +515,14 @@ export class TemplateService {
             isActive: true,
             deletedAt: null,
           },
-          orderBy: [{ isDefault: 'desc' }, { updatedAt: 'desc' }],
+          // Final `id` tie-break for fully-deterministic selection (see
+          // resolveForDelivery) — same scope + isDefault + updatedAt never yields
+          // a different activated template between calls.
+          orderBy: [
+            { isDefault: 'desc' },
+            { updatedAt: 'desc' },
+            { id: 'asc' },
+          ],
         });
         if (match) return match;
       }

@@ -1,6 +1,46 @@
 import { Injectable } from '@nestjs/common';
 import { PdfTemplateMeta } from '../constants/pdf-template-meta.constant';
 import { GeneratePdfDto, SigningAuthorityDto } from '../dto/generate-pdf.dto';
+import {
+  PreparedPdfHtml,
+  buildPdfDocuments,
+  escapeHtml,
+  escapeAttr,
+} from './pdf-document.util';
+
+// Re-exported so existing importers (`pdf-report-template.service.ts`) that pull
+// `PreparedPdfHtml` from this module keep working after the assembly logic moved
+// to `pdf-document.util.ts` (now shared with the Latte all-reports renderer).
+export type { PreparedPdfHtml } from './pdf-document.util';
+
+/** Matches an `{{image:<id>}}` token; ids may include a file extension (dots). */
+const IMAGE_TOKEN_RE = /\{\{image:([a-zA-Z0-9_.-]+)\}\}/g;
+
+/**
+ * Collect the distinct `{{image:<id>}}` token ids referenced anywhere in the
+ * given HTML fragments (header/body/footer). Used to resolve tokens against the
+ * durable, tenant-wide image registry so an image uploaded in one template can be
+ * reused (by pasting its token) in another. Pure — no DB, no side effects.
+ * @param fragments HTML strings to scan (undefined/empty entries are ignored)
+ * @returns the unique token ids, in first-seen order
+ */
+export function extractImageTokens(
+  ...fragments: Array<string | undefined>
+): string[] {
+  const ids = new Set<string>();
+  for (const html of fragments) {
+    if (!html) {
+      continue;
+    }
+    for (const match of html.matchAll(IMAGE_TOKEN_RE)) {
+      const id = match[1];
+      if (id) {
+        ids.add(id);
+      }
+    }
+  }
+  return [...ids];
+}
 
 /**
  * Turns a stored template's `meta` (header/body/footer HTML + CSS) plus a render
@@ -23,12 +63,14 @@ import { GeneratePdfDto, SigningAuthorityDto } from '../dto/generate-pdf.dto';
 @Injectable()
 export class TemplateRenderService {
   /**
-   * Assemble the full HTML document for a template + render context.
+   * Resolve a template + render context into the body document plus the header
+   * and footer templates Puppeteer renders in the page margins (see
+   * {@link PreparedPdfHtml}). Placeholders/images/repeating sections/signing
+   * authority are all interpolated here.
    * @param meta the template's normalized meta (all keys present)
    * @param context the data to interpolate (variables, images, sections, signatories)
-   * @returns a complete `<!DOCTYPE html>` document string
    */
-  render(meta: PdfTemplateMeta, context: GeneratePdfDto): string {
+  render(meta: PdfTemplateMeta, context: GeneratePdfDto): PreparedPdfHtml {
     const variables = context.variables ?? {};
     // The template's own uploaded-image registry resolves `{{image:<id>}}`
     // tokens the editor produced; a generate-time `context.images` map (e.g. a
@@ -49,7 +91,7 @@ export class TemplateRenderService {
     );
     const footer = this.renderFragment(footerHtml, variables, images, {});
 
-    return this.buildDocument(meta, header, body, footer);
+    return buildPdfDocuments(meta, header, body, footer);
   }
 
   /**
@@ -89,12 +131,15 @@ export class TemplateRenderService {
           // Row scope: resolve both {{this.col}} and {col} against the row.
           let piece = inner.replace(
             /\{\{this\.([a-zA-Z0-9_]+)\}\}/g,
-            (_m, col: string) => this.escape(this.stringify(row[col])),
+            (_m, col: string) =>
+              escapeHtml(this.stringify(this.resolveField(row, col).value)),
           );
           piece = piece.replace(
             /\{([a-zA-Z0-9_][a-zA-Z0-9_.]*)\}/g,
-            (whole, col: string) =>
-              col in row ? this.escape(this.stringify(row[col])) : whole,
+            (whole, col: string) => {
+              const r = this.resolveField(row, col);
+              return r.found ? escapeHtml(this.stringify(r.value)) : whole;
+            },
           );
           return piece;
         })
@@ -112,7 +157,7 @@ export class TemplateRenderService {
       /\{\{image:([a-zA-Z0-9_.-]+)\}\}/g,
       (_match, id: string) => {
         const src = images[id];
-        return src ? `<img src="${this.escapeAttr(src)}" alt="${id}" />` : '';
+        return src ? `<img src="${escapeAttr(src)}" alt="${id}" />` : '';
       },
     );
   }
@@ -120,8 +165,10 @@ export class TemplateRenderService {
   /**
    * Replace flat `{placeholder}` tokens with escaped values from `variables`.
    * Only matches `{identifier}` (word chars/dots) so CSS braces are untouched;
-   * this runs on HTML fragments, never on the stylesheet. Unknown tokens are
-   * left as-is to surface template mistakes.
+   * this runs on HTML fragments, never on the stylesheet. Lookup is
+   * case-insensitive (so a legacy `{DISCOUNT_AMOUNT}` resolves the same
+   * `discount_amount` context key). Unknown tokens are left as-is to surface
+   * template mistakes.
    */
   private interpolateVariables(
     html: string,
@@ -129,9 +176,35 @@ export class TemplateRenderService {
   ): string {
     return html.replace(
       /\{([a-zA-Z0-9_][a-zA-Z0-9_.]*)\}/g,
-      (whole, key: string) =>
-        key in variables ? this.escape(this.stringify(variables[key])) : whole,
+      (whole, key: string) => {
+        const r = this.resolveField(variables, key);
+        return r.found ? escapeHtml(this.stringify(r.value)) : whole;
+      },
     );
+  }
+
+  /**
+   * Resolve a token key against a context object, case-insensitively. Tries an
+   * exact match first (the common path), then falls back to a case-insensitive
+   * scan so templates authored with UPPERCASE tags (e.g. the legacy bill
+   * templates' `{PAYMENT_COLLECTED_BY}`) resolve the lowercase snake_case keys
+   * the context builders emit. `found` is false for a genuinely unknown key so
+   * the caller leaves the token literal (surfacing real typos).
+   */
+  private resolveField(
+    obj: Record<string, unknown>,
+    key: string,
+  ): { found: boolean; value: unknown } {
+    if (key in obj) {
+      return { found: true, value: obj[key] };
+    }
+    const lower = key.toLowerCase();
+    for (const k of Object.keys(obj)) {
+      if (k.toLowerCase() === lower) {
+        return { found: true, value: obj[k] };
+      }
+    }
+    return { found: false, value: undefined };
   }
 
   /**
@@ -176,82 +249,27 @@ export class TemplateRenderService {
       report_approved_by_certifications: s.certifications ?? '',
     };
     return template.replace(/\{([a-zA-Z0-9_]+)\}/g, (whole, key: string) =>
-      key in fields ? this.escape(this.stringify(fields[key])) : whole,
+      key in fields ? escapeHtml(this.stringify(fields[key])) : whole,
     );
   }
 
   /** Default markup for one signatory when the tag carries no inner template. */
   private defaultSignatoryBlock(s: SigningAuthorityDto): string {
     const img = s.signatureImage
-      ? `<img class="sa-signature" src="${this.escapeAttr(s.signatureImage)}" alt="signature" />`
+      ? `<img class="sa-signature" src="${escapeAttr(s.signatureImage)}" alt="signature" />`
       : '';
     const designation = s.designation
-      ? `<div class="sa-designation">${this.escape(s.designation)}</div>`
+      ? `<div class="sa-designation">${escapeHtml(s.designation)}</div>`
       : '';
     const reg = s.registrationNumber
-      ? `<div class="sa-reg">${this.escape(s.registrationNumber)}</div>`
+      ? `<div class="sa-reg">${escapeHtml(s.registrationNumber)}</div>`
       : '';
     const certifications = s.certifications
-      ? `<div class="sa-certifications">${this.escape(s.certifications)}</div>`
+      ? `<div class="sa-certifications">${escapeHtml(s.certifications)}</div>`
       : '';
-    return `<div class="signing-authority">${img}<div class="sa-name">${this.escape(
+    return `<div class="signing-authority">${img}<div class="sa-name">${escapeHtml(
       s.name,
     )}</div>${designation}${reg}${certifications}</div>`;
-  }
-
-  /** Wrap the fragments in a complete HTML document with base + custom CSS. */
-  private buildDocument(
-    meta: PdfTemplateMeta,
-    header: string,
-    body: string,
-    footer: string,
-  ): string {
-    const fontFamily = meta.default_font ? `${meta.default_font}, ` : '';
-    const fontSize = meta.default_font_size || '10';
-    // An uploaded watermark image is applied automatically and takes precedence
-    // over the text watermark; fall back to text when no image is set.
-    const watermark = meta.watermark_image
-      ? `<div class="pdf-watermark-image"><img src="${this.escapeAttr(
-          meta.watermark_image,
-        )}" alt="watermark" /></div>`
-      : meta.watermark_text
-        ? `<div class="pdf-watermark">${this.escape(meta.watermark_text)}</div>`
-        : '';
-
-    const baseCss = `
-      * { box-sizing: border-box; }
-      body { font-family: ${fontFamily}sans-serif; font-size: ${this.escape(
-        fontSize,
-      )}pt; color: #1a1a1a; margin: 0; padding: 0; }
-      .pdf-watermark { position: fixed; top: 45%; left: 0; right: 0; text-align: center;
-        font-size: 72pt; color: rgba(0,0,0,0.08); transform: rotate(-30deg);
-        z-index: 0; pointer-events: none; }
-      .pdf-watermark-image { position: fixed; inset: 0; display: flex;
-        align-items: center; justify-content: center; z-index: 0;
-        pointer-events: none; }
-      .pdf-watermark-image img { max-width: 60%; max-height: 60%; opacity: 0.12; }
-      .pdf-header, .pdf-body, .pdf-footer { position: relative; z-index: 1; }
-      .signing-authority { display: inline-block; text-align: center; margin: 0 16px; vertical-align: bottom; }
-      .signing-authority .sa-signature { max-height: 48px; display: block; margin: 0 auto 4px; }
-      .signing-authority .sa-name { font-weight: bold; }
-    `;
-
-    return `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8" />
-<style>
-${baseCss}
-${meta.custom_css || ''}
-</style>
-</head>
-<body>
-${watermark}
-<div class="pdf-header">${header}</div>
-<div class="pdf-body">${body}</div>
-<div class="pdf-footer">${footer}</div>
-</body>
-</html>`;
   }
 
   /** Coerce any value to a display string (null/undefined → ''). */
@@ -266,18 +284,5 @@ ${watermark}
       return String(value);
     }
     return JSON.stringify(value);
-  }
-
-  /** Escape HTML text content. */
-  private escape(value: string): string {
-    return value
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
-  }
-
-  /** Escape a value for use inside a double-quoted HTML attribute. */
-  private escapeAttr(value: string): string {
-    return this.escape(value).replace(/"/g, '&quot;');
   }
 }

@@ -5,7 +5,12 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { BranchService } from '../branch/branch.service';
 import { PdfService } from '../pdf/pdf.service';
-import { TemplateRenderService } from './services/template-render.service';
+import {
+  TemplateRenderService,
+  extractImageTokens,
+  PreparedPdfHtml,
+} from './services/template-render.service';
+import { LatteReportRenderService } from './services/latte-render.service';
 import { CreatePdfReportTemplateDto } from './dto/create-pdf-report-template.dto';
 import { UpdatePdfReportTemplateDto } from './dto/update-pdf-report-template.dto';
 import { GeneratePdfDto } from './dto/generate-pdf.dto';
@@ -51,6 +56,7 @@ export class PdfReportTemplateService {
     private readonly branchService: BranchService,
     private readonly pdfService: PdfService,
     private readonly renderService: TemplateRenderService,
+    private readonly latteRenderService: LatteReportRenderService,
   ) {}
 
   /**
@@ -74,8 +80,8 @@ export class PdfReportTemplateService {
     }
     const meta = this.normalizeMeta(dto.meta);
     try {
-      return await this.prisma.withTenant(tenantId, (tx) =>
-        tx.pdfReportTemplate.create({
+      return await this.prisma.withTenant(tenantId, async (tx) => {
+        const created = await tx.pdfReportTemplate.create({
           data: {
             tenantId,
             branchId: dto.branchId ?? null,
@@ -85,8 +91,12 @@ export class PdfReportTemplateService {
             meta: meta,
             doc: dto.doc ? (dto.doc as Prisma.InputJsonValue) : undefined,
           },
-        }),
-      );
+        });
+        // Register this template's uploaded images so their `{{image:<id>}}`
+        // tokens are reusable in other templates (see syncImageRegistry).
+        await this.syncImageRegistry(tx, tenantId, meta);
+        return created;
+      });
     } catch (e) {
       this.rethrowUniqueViolation(e, dto.name);
       throw e;
@@ -182,16 +192,26 @@ export class PdfReportTemplateService {
     if (dto.name !== undefined) data.name = dto.name.trim();
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
     if (dto.branchId !== undefined) data.branchId = dto.branchId;
-    if (dto.meta !== undefined) {
-      data.meta = this.normalizeMeta(dto.meta);
+    const meta =
+      dto.meta !== undefined ? this.normalizeMeta(dto.meta) : undefined;
+    if (meta !== undefined) {
+      data.meta = meta;
     }
     if (dto.doc !== undefined) {
       data.doc = dto.doc as Prisma.InputJsonValue;
     }
     try {
-      return await this.prisma.withTenant(tenantId, (tx) =>
-        tx.pdfReportTemplate.update({ where: { id }, data }),
-      );
+      return await this.prisma.withTenant(tenantId, async (tx) => {
+        const updated = await tx.pdfReportTemplate.update({
+          where: { id },
+          data,
+        });
+        // Keep the reusable-image registry in sync with the saved meta.images.
+        if (meta !== undefined) {
+          await this.syncImageRegistry(tx, tenantId, meta);
+        }
+        return updated;
+      });
     } catch (e) {
       this.rethrowUniqueViolation(e, dto.name ?? '');
       throw e;
@@ -232,12 +252,57 @@ export class PdfReportTemplateService {
   ): Promise<Buffer> {
     const template = await this.findById(id, tenantId);
     const meta = this.readMeta(template.meta);
-    const html = this.renderService.render(meta, context);
+    const context2 = await this.withRegistryImages(tenantId, meta, context);
+    const prepared = this.renderService.render(meta, context2);
     try {
-      return await this.pdfService.htmlToPdf(html, this.metaToPdfOptions(meta));
+      return await this.pdfService.htmlToPdf(
+        prepared.bodyHtml,
+        this.metaToPdfOptions(meta, prepared),
+      );
     } catch (e) {
       throw new PdfGenerationFailedException(id, (e as Error).message);
     }
+  }
+
+  /**
+   * Render a `lab_all_report`-type template to a PDF using the Latte engine and
+   * an order-scoped `report_tests`/`header_fields` context (see
+   * {@link LatteReportRenderService}). Unlike {@link generatePdf} the whole order
+   * is one continuous document — the template iterates every test and manages its
+   * own per-test page headers/breaks — so there is no `pdf-lib` merge.
+   * @param id template id (must be a `lab_all_report` template)
+   * @param tenantId tenant scope
+   * @param context the Latte data (`report_tests`, `header_fields`)
+   * @returns the generated PDF bytes
+   * @throws PdfReportTemplateNotFoundException if missing/soft-deleted
+   * @throws PdfGenerationFailedException if rendering fails
+   */
+  async generateLattePdf(
+    id: string,
+    tenantId: string,
+    context: Record<string, unknown>,
+  ): Promise<Buffer> {
+    const template = await this.findById(id, tenantId);
+    const meta = this.readMeta(template.meta);
+    const prepared = this.latteRenderService.render(meta, context);
+    try {
+      return await this.pdfService.htmlToPdf(
+        prepared.bodyHtml,
+        this.metaToPdfOptions(meta, prepared),
+      );
+    } catch (e) {
+      throw new PdfGenerationFailedException(id, (e as Error).message);
+    }
+  }
+
+  /**
+   * Read a template's `type` (used to decide whether "Print All Reports" should
+   * route through the Latte all-reports path or the legacy per-report merge).
+   * @throws PdfReportTemplateNotFoundException if missing/soft-deleted
+   */
+  async getType(id: string, tenantId: string): Promise<PdfReportTemplateType> {
+    const template = await this.findById(id, tenantId);
+    return this.assertType(template.type);
   }
 
   // ── SITE_ADMIN global templates (tenant_id NULL) ─────────────────────────────
@@ -259,7 +324,7 @@ export class PdfReportTemplateService {
     const type = this.assertType(dto.type ?? DEFAULT_PDF_REPORT_TEMPLATE_TYPE);
     const meta = this.normalizeMeta(dto.meta);
     try {
-      return await this.prisma.pdfReportTemplate.create({
+      const created = await this.prisma.pdfReportTemplate.create({
         data: {
           tenantId: null,
           branchId: null,
@@ -270,6 +335,10 @@ export class PdfReportTemplateService {
           doc: dto.doc ? (dto.doc as Prisma.InputJsonValue) : undefined,
         },
       });
+      // Register images under the global (NULL-tenant) registry so their tokens
+      // are reusable across global templates.
+      await this.syncImageRegistry(this.prisma, null, meta);
+      return created;
     } catch (e) {
       this.rethrowUniqueViolation(e, dto.name);
       throw e;
@@ -347,17 +416,23 @@ export class PdfReportTemplateService {
     if (dto.type !== undefined) data.type = this.assertType(dto.type);
     if (dto.name !== undefined) data.name = dto.name.trim();
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
-    if (dto.meta !== undefined) {
-      data.meta = this.normalizeMeta(dto.meta);
+    const meta =
+      dto.meta !== undefined ? this.normalizeMeta(dto.meta) : undefined;
+    if (meta !== undefined) {
+      data.meta = meta;
     }
     if (dto.doc !== undefined) {
       data.doc = dto.doc as Prisma.InputJsonValue;
     }
     try {
-      return await this.prisma.pdfReportTemplate.update({
+      const updated = await this.prisma.pdfReportTemplate.update({
         where: { id },
         data,
       });
+      if (meta !== undefined) {
+        await this.syncImageRegistry(this.prisma, null, meta);
+      }
+      return updated;
     } catch (e) {
       this.rethrowUniqueViolation(e, dto.name ?? '');
       throw e;
@@ -391,9 +466,13 @@ export class PdfReportTemplateService {
   ): Promise<Buffer> {
     const template = await this.findGlobalById(id);
     const meta = this.readMeta(template.meta);
-    const html = this.renderService.render(meta, context);
+    const context2 = await this.withRegistryImages(null, meta, context);
+    const prepared = this.renderService.render(meta, context2);
     try {
-      return await this.pdfService.htmlToPdf(html, this.metaToPdfOptions(meta));
+      return await this.pdfService.htmlToPdf(
+        prepared.bodyHtml,
+        this.metaToPdfOptions(meta, prepared),
+      );
     } catch (e) {
       throw new PdfGenerationFailedException(id, (e as Error).message);
     }
@@ -533,6 +612,101 @@ export class PdfReportTemplateService {
   }
 
   /**
+   * Persist a template's uploaded images into the durable, tenant-wide
+   * `PrintTemplateImage` registry so their `{{image:<id>}}` tokens become
+   * REUSABLE across templates (a token copied from one template resolves when
+   * pasted into another). Upserts every `meta.images` entry `[token → url]` and
+   * resurrects a soft-deleted row. Rows are never removed when a template is
+   * deleted/edited, so an image referenced elsewhere stays resolvable.
+   *
+   * A nullable `tenantId` participates in the `@@unique([tenantId, token])`, and
+   * Prisma rejects `null` in a compound-unique `upsert` where-key, so this
+   * find-then-write is used instead. A P2002 on create is a benign concurrent
+   * race (the same token was inserted first) and is ignored.
+   *
+   * @param client a Prisma client/transaction (tenant path: a `withTenant` tx;
+   *   global path: the base client) — reads/writes obey the row's RLS policy.
+   * @param tenantId owning tenant, or `null` for a SITE_ADMIN global-template image
+   * @param meta the normalized meta whose `images` map is being registered
+   */
+  private async syncImageRegistry(
+    client: Prisma.TransactionClient,
+    tenantId: string | null,
+    meta: PdfTemplateMeta,
+  ): Promise<void> {
+    const images = meta.images ?? {};
+    for (const [token, url] of Object.entries(images)) {
+      if (!token || !url) {
+        continue;
+      }
+      const existing = await client.printTemplateImage.findFirst({
+        where: { tenantId, token },
+        select: { id: true },
+      });
+      if (existing) {
+        await client.printTemplateImage.update({
+          where: { id: existing.id },
+          data: { url, deletedAt: null },
+        });
+        continue;
+      }
+      try {
+        await client.printTemplateImage.create({
+          data: { tenantId, token, url },
+        });
+      } catch (e) {
+        if (
+          !(
+            e instanceof Prisma.PrismaClientKnownRequestError &&
+            e.code === 'P2002'
+          )
+        ) {
+          throw e;
+        }
+      }
+    }
+  }
+
+  /**
+   * Build the render context, back-filling any `{{image:<id>}}` token referenced
+   * in the template's header/body/footer that isn't in the template's own
+   * `meta.images` from the tenant-wide `PrintTemplateImage` registry — this is
+   * what makes a pasted token from another template resolve. Registry hits are
+   * merged UNDER a caller-supplied `context.images` (runtime images still win),
+   * and only cover the missing tokens so they never shadow the template's own
+   * `meta.images` (which `render` applies).
+   * @param tenantId tenant scope, or `null` for a global template
+   * @param meta the template's normalized meta
+   * @param context the incoming render context
+   * @returns a context whose `images` includes resolved registry tokens
+   */
+  private async withRegistryImages(
+    tenantId: string | null,
+    meta: PdfTemplateMeta,
+    context: GeneratePdfDto,
+  ): Promise<GeneratePdfDto> {
+    const referenced = extractImageTokens(
+      meta.header_html,
+      meta.body_html,
+      meta.footer_html,
+    );
+    const own = meta.images ?? {};
+    const missing = referenced.filter((id) => !(id in own));
+    if (!missing.length) {
+      return context;
+    }
+    const rows = await this.prisma.printTemplateImage.findMany({
+      where: { tenantId, token: { in: missing }, deletedAt: null },
+      select: { token: true, url: true },
+    });
+    if (!rows.length) {
+      return context;
+    }
+    const registry = Object.fromEntries(rows.map((r) => [r.token, r.url]));
+    return { ...context, images: { ...registry, ...(context.images ?? {}) } };
+  }
+
+  /**
    * Merge a client's partial `meta` over the defaults so the persisted blob
    * always has every key. Undefined values are dropped so they can't clobber a
    * default.
@@ -551,8 +725,16 @@ export class PdfReportTemplateService {
     return { ...PDF_TEMPLATE_META_DEFAULTS, ...stored };
   }
 
-  /** Map the template's page settings to Puppeteer PDF options. */
-  private metaToPdfOptions(meta: PdfTemplateMeta): PDFOptions {
+  /**
+   * Map the template's page settings to Puppeteer PDF options. The top/bottom
+   * page margins reserve the bands into which Chromium paints the header/footer
+   * templates on every page; `displayHeaderFooter` is enabled only when the
+   * template actually has header/footer content (else a plain body-only PDF).
+   */
+  private metaToPdfOptions(
+    meta: PdfTemplateMeta,
+    prepared: PreparedPdfHtml,
+  ): PDFOptions {
     return {
       format: meta.page_size as PDFOptions['format'],
       landscape: meta.orientation === 'L',
@@ -563,6 +745,9 @@ export class PdfReportTemplateService {
         bottom: `${meta.margin_bottom}mm`,
         left: `${meta.margin_left}mm`,
       },
+      displayHeaderFooter: prepared.hasHeaderFooter,
+      headerTemplate: prepared.headerTemplate,
+      footerTemplate: prepared.footerTemplate,
     };
   }
 

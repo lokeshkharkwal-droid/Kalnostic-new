@@ -22,6 +22,7 @@ tests {
     const d = res.getBody().data;
     expect(d).to.have.property("MasterData_TubeTypes");
     expect(d).to.have.property("SampleBarcodeSettings_Preview");
+    expect(d).to.have.property("OrderBarcodeSettings_Preview");
     expect(d).to.have.property("Accession_MaximumTimeToAcceptSampleMinutes");
   });
 }
@@ -48,6 +49,16 @@ docs {
   `SampleBarcodeSettings_CurrentNumber` (system-managed, read-only),
   `SampleBarcodeSettings_LastResetAt` (system-managed, read-only),
   `SampleBarcodeSettings_Preview` (computed, read-only — e.g. "SBC-000001-AM").
+
+  **Order Barcode Settings** (typed columns) — the order-level barcode
+  generated at order creation, a separate entity/counter/format from the sample
+  barcode (order and sample numbers may coincide):
+  `OrderBarcodeSettings_Prefix`, `OrderBarcodeSettings_Suffix`,
+  `OrderBarcodeSettings_Separator`, `OrderBarcodeSettings_NumberLength` (4-10),
+  `OrderBarcodeSettings_ResetInterval`,
+  `OrderBarcodeSettings_CurrentNumber` (system-managed, read-only),
+  `OrderBarcodeSettings_LastResetAt` (system-managed, read-only),
+  `OrderBarcodeSettings_Preview` (computed, read-only; floors at 10001).
 
   **Accession** (TAT / acceptance-window / barcode-mapping toggles, typed
   columns): `Accession_MinimumTimeToAcceptSampleMinutes`,

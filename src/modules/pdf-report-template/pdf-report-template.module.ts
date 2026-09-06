@@ -8,6 +8,7 @@ import { SiteAdminPdfReportTemplateController } from './siteadmin-pdf-report-tem
 import { PdfReportTemplateService } from './pdf-report-template.service';
 import { PdfTemplateConfigService } from './pdf-template-config.service';
 import { TemplateRenderService } from './services/template-render.service';
+import { LatteReportRenderService } from './services/latte-render.service';
 
 /**
  * PDF report template feature module. Tenant-scoped, branch-level (CLAUDE.md
@@ -26,6 +27,7 @@ import { TemplateRenderService } from './services/template-render.service';
     PdfReportTemplateService,
     PdfTemplateConfigService,
     TemplateRenderService,
+    LatteReportRenderService,
   ],
   exports: [PdfReportTemplateService],
 })

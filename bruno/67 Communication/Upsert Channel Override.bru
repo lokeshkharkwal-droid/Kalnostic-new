@@ -1,0 +1,42 @@
+meta {
+  name: Upsert Channel Override
+  type: http
+  seq: 12
+}
+
+put {
+  url: {{baseUrl}}/communication/channel-settings/overrides
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "feature": "lab_order_report_published_inform_patient",
+    "channel": "WHATSAPP",
+    "status": "DONT_SEND"
+  }
+}
+
+docs {
+  Upsert one per-(feature, channel) override for the active scope. `DONT_SEND`
+  suppresses that channel for that feature only; `ACTIVE` restores the default.
+  Tenant + branch come from the JWT — never the body (CLAUDE.md §4.7).
+
+  This is the business-override gate the notification enablement resolver applies
+  after the channel capability gate and before patient opt-out. Returns the full
+  settings view (same shape as **Get Channel Settings**).
+
+  ## Fields
+  - `feature` (required): a FEATURE_TYPES key.
+  - `channel` (required): `EMAIL` | `SMS` | `WHATSAPP` (in-app IAM isn't gated here).
+  - `status` (required): `ACTIVE` | `DONT_SEND`.
+}

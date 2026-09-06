@@ -14,11 +14,12 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   genderLabel,
+  salutationLabel,
+  patientAgeDisplay,
   sampleSourceLabel,
   toBranchLocalInstant,
-  formatTenantDate,
+  formatReportDateTime,
 } from '../../common/utils';
-import { CONTAINER_TYPE_LABELS } from '../accession/constants/container-type.constants';
 import { TenantService } from '../tenant/tenant.service';
 import {
   ShareService,
@@ -42,6 +43,10 @@ import {
   PLAIN_NOTE_CATEGORIES,
 } from './dto/lab-report-note.dto';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
+import {
+  escapeHtml,
+  toText,
+} from '../pdf-report-template/services/pdf-document.util';
 import type { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
 import { TechnicianSettingsService } from '../technician-settings/technician-settings.service';
 import { LabTestService } from '../lab-test/lab-test.service';
@@ -1690,6 +1695,7 @@ export class LabReportService {
               isNablAuthorized: true,
               isCapCertified: true,
               isIsoCertified: true,
+              signatureImagePath: true,
             },
           })
         : Promise.resolve([]),
@@ -1722,11 +1728,91 @@ export class LabReportService {
             designation:
               d.signatoryDesignation ?? d.registrationCouncil ?? undefined,
             certifications: certifications || undefined,
+            signatureImage: d.signatureImagePath ?? undefined,
           });
         }
       }
     }
     return signatories;
+  }
+
+  /**
+   * Resolve the report's approving **Doctor** for the flat
+   * `{report_approved_by_*}` tags — name, designation, certifications and
+   * signature image. Per the product decision these tags are Doctor-only, so we
+   * take the first signatory slot whose stored type is a Doctor
+   * (`CONSULTANT_DOCTOR`/`REPORTING_DOCTOR`), ignoring `USER` slots (which have
+   * no certifications/signature). Reads the report's own frozen signatory
+   * columns (same snapshot semantics as {@link resolveStoredSignatories}).
+   * Returns `null` (→ blank tags, never `undefined`) when no Doctor signatory
+   * exists or the record was since soft-deleted.
+   */
+  private async resolveApprovingDoctor(
+    report: Pick<
+      LabReportDetailWithContent,
+      | 'signatoryAuthority1Id'
+      | 'signatoryAuthority1Type'
+      | 'signatoryAuthority2Id'
+      | 'signatoryAuthority2Type'
+      | 'signatoryAuthority3Id'
+      | 'signatoryAuthority3Type'
+    >,
+    tenantId: string,
+  ): Promise<{
+    name: string;
+    designation: string;
+    certifications: string;
+    signatureImage: string;
+  } | null> {
+    const doctorSlot = [
+      {
+        id: report.signatoryAuthority1Id,
+        type: report.signatoryAuthority1Type,
+      },
+      {
+        id: report.signatoryAuthority2Id,
+        type: report.signatoryAuthority2Type,
+      },
+      {
+        id: report.signatoryAuthority3Id,
+        type: report.signatoryAuthority3Type,
+      },
+    ].find(
+      (s): s is { id: string; type: PersonMappingType } =>
+        Boolean(s.id) &&
+        (s.type === 'CONSULTANT_DOCTOR' || s.type === 'REPORTING_DOCTOR'),
+    );
+    if (!doctorSlot) return null;
+
+    const d = await this.prisma.doctor.findFirst({
+      where: { id: doctorSlot.id, tenantId, deletedAt: null },
+      select: {
+        firstName: true,
+        lastName: true,
+        signatoryDesignation: true,
+        registrationCouncil: true,
+        isNablAuthorized: true,
+        isCapCertified: true,
+        isIsoCertified: true,
+        signatureImagePath: true,
+      },
+    });
+    if (!d) return null;
+
+    const certifications = [
+      d.isNablAuthorized ? 'NABL Authorized' : null,
+      d.isCapCertified ? 'CAP Certified' : null,
+      d.isIsoCertified ? 'ISO Certified' : null,
+    ]
+      .filter((c): c is string => c !== null)
+      .join(', ');
+
+    return {
+      name: fullName([d.firstName, d.lastName]),
+      designation: d.signatoryDesignation ?? d.registrationCouncil ?? '',
+      certifications,
+      signatureImage: d.signatureImagePath ?? '',
+    };
   }
 
   /**
@@ -1757,8 +1843,8 @@ export class LabReportService {
       report.orderItem.branchLabTest ?? report.orderItem.branchLabPanel;
 
     const signatories = await this.resolveStoredSignatories(report, tenantId);
-    const { timezone, dateFormat } =
-      await this.tenantService.getLocale(tenantId);
+    const approver = await this.resolveApprovingDoctor(report, tenantId);
+    const { timezone } = await this.tenantService.getLocale(tenantId);
 
     // The sample this report's test was drawn from — `OrderSampleTest`/
     // `OrderSample` are raw FKs (no Prisma relation field on `LabReport`),
@@ -1788,6 +1874,22 @@ export class LabReportService {
       where: { orderId: order.id },
       select: { sampleSource: true },
     });
+
+    // `last_report_prepared_on` is ORDER-scoped: the approval time of the most
+    // recently approved test across the whole order (not this one report's
+    // `publishedAt`). A report keeps its `approvedAt` after moving on to
+    // PUBLISHED/ERROR_REPORTED, so match on `approvedAt` presence rather than a
+    // single status — "the latest test that has been approved on this order".
+    const latestApproved = await this.prisma.labReport.aggregate({
+      where: {
+        tenantId,
+        deletedAt: null,
+        approvedAt: { not: null },
+        orderItem: { orderId: order.id },
+      },
+      _max: { approvedAt: true },
+    });
+    const lastReportPreparedOn = latestApproved._max.approvedAt ?? null;
 
     // Most recent SAMPLE-category note (append-only log — latest wins).
     const sampleNote = await this.prisma.labReportNote.findFirst({
@@ -1848,16 +1950,19 @@ export class LabReportService {
     return {
       variables: {
         order_code: order.orderCode,
-        order_date: formatTenantDate(order.orderDate, dateFormat),
+        order_date: formatReportDateTime(
+          toBranchLocalInstant(order.orderDate, timezone),
+        ),
         order_external_id: order.externalOrderId ?? '',
         patient_name: [patient.firstName, patient.middleName, patient.lastName]
           .filter(Boolean)
           .join(' '),
-        patient_salutation: patient.salutation ?? '',
-        patient_age: patient.age ?? '',
+        patient_salutation: salutationLabel(patient.salutation),
+        patient_age: patientAgeDisplay(patient.age, patient.ageType),
         patient_gender: genderLabel(patient.gender),
         patient_um_id: patient.umId ?? '',
         patient_mobile: patient.mobile ?? '',
+        patient_address1: patient.addressLine1 ?? '',
         referred_by: order.referredByDoctor
           ? [order.referredByDoctor.firstName, order.referredByDoctor.lastName]
               .filter(Boolean)
@@ -1878,29 +1983,56 @@ export class LabReportService {
         interpretation: report.contentSections.interpretation ?? '',
         limitations: report.contentSections.limitations ?? '',
         references: report.contentSections.references ?? '',
-        last_report_prepared_on: report.publishedAt
-          ? formatTenantDate(
-              toBranchLocalInstant(report.publishedAt, timezone),
-              dateFormat,
+        last_report_prepared_on: lastReportPreparedOn
+          ? formatReportDateTime(
+              toBranchLocalInstant(lastReportPreparedOn, timezone),
             )
           : '',
         sample_collected_date: sample?.collectedAt
-          ? formatTenantDate(
+          ? formatReportDateTime(
               toBranchLocalInstant(sample.collectedAt, timezone),
-              dateFormat,
             )
           : '',
         sample_received_date: sample?.receivedAt
-          ? formatTenantDate(
+          ? formatReportDateTime(
               toBranchLocalInstant(sample.receivedAt, timezone),
-              dateFormat,
             )
           : '',
         sample_type: sample?.sampleType ?? '',
-        sample_source_label:
-          sample?.sampleGroupLabel ?? sample?.sampleType ?? '',
-        order_id_barcode: sample?.barcode ?? '',
+        sample_source_label: sampleSourceLabel(diagnostics?.sampleSource),
+        // Approver (Doctor-only per product decision) — flat tags for templates
+        // that print the signing pathologist inline in the body. Blank (never
+        // `undefined`) when no Doctor signatory is stored on the report.
+        report_approved_by_name: approver?.name ?? '',
+        report_approved_by_designation: approver?.designation ?? '',
+        report_approved_by_certifications: approver?.certifications ?? '',
+        report_approved_by_signature: approver?.signatureImage ?? '',
+        // Patient photo (persisted on `Patient.photoUrl`, set at registration).
+        // Flat `{patient_image}` prints the URL; `{{image:patient_image}}`
+        // auto-renders an <img> via the images map below.
+        patient_image: patient.photoUrl ?? '',
+        // Order-level barcode (generated at order creation) — the VALUE and the
+        // rendered image URL. `{order_id_barcode}` prints the value;
+        // `{order_id_qr_code}` holds the S3 image URL (usable as
+        // `<img src="{order_id_qr_code}">` or auto-rendered via the images map
+        // below as `{{image:order_id_qr_code}}`). Despite the tag name it is a
+        // barcode image, not a QR code.
+        order_id_barcode: order.orderIdBarcode ?? '',
+        order_id_qr_code: order.orderIdQrCode ?? '',
         sample_note: sampleNote?.body ?? '',
+      },
+      // Register images so `{{image:<id>}}` auto-renders an <img> (the
+      // renderer's dedicated image-tag path), in addition to the flat URL
+      // substitutions above: the order barcode, the patient photo, and the
+      // approving Doctor's signature.
+      images: {
+        ...(order.orderIdQrCode
+          ? { order_id_qr_code: order.orderIdQrCode }
+          : {}),
+        ...(patient.photoUrl ? { patient_image: patient.photoUrl } : {}),
+        ...(approver?.signatureImage
+          ? { report_approved_by_signature: approver.signatureImage }
+          : {}),
       },
       sections: { results },
       signatories,
@@ -1960,6 +2092,180 @@ export class LabReportService {
   }
 
   /**
+   * Build the Latte render context for a `lab_all_report` template — one
+   * continuous document that iterates EVERY test on the order. Shapes the data
+   * the ported legacy templates expect:
+   *  - `report_tests.tests[]` — one entry per test/report on the order, each
+   *    carrying its pre-rendered `body_html` (result table + content sections),
+   *    per-test `sample_collected_date`/`sample_received_date`/`report_prepared_on`
+   *    (DD-MM-YYYY hh:mm AM/PM), `lab_test_id`, and a `tests[]` visibility list.
+   *  - `report_tests.groups[]` — the department-grouped section. Left empty here
+   *    (all reports flow through the flat `tests[]` section, which the templates
+   *    iterate identically); the shape is preserved so a grouped template still
+   *    parses. The block-page-header's `$group_name` param is unused by the
+   *    reference template, so grouping has no visual effect today.
+   *  - `header_fields` — the order/patient header block shared across pages.
+   *
+   * Reuses {@link buildPrintContext} per report so every Part-A tag fix (dates,
+   * `sample_source_label`, external id, patient photo, approver) is inherited.
+   * @throws OrderReportsNotFoundException if the order (or selected items) has no reports
+   */
+  async buildAllReportsContext(
+    orderId: string,
+    tenantId: string,
+    branchId: string | null,
+    orderItemIds?: string[],
+  ): Promise<Record<string, unknown>> {
+    const activeBranchId = this.requireBranch(branchId);
+    const reportRows = await this.prisma.labReport.findMany({
+      where: {
+        tenantId,
+        branchId: activeBranchId,
+        deletedAt: null,
+        orderItem: { orderId },
+        ...(orderItemIds && orderItemIds.length > 0
+          ? { orderItemId: { in: orderItemIds } }
+          : {}),
+      },
+      select: {
+        id: true,
+        labTestId: true,
+        approvedAt: true,
+        publishedAt: true,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (reportRows.length === 0) {
+      throw new OrderReportsNotFoundException(orderId);
+    }
+
+    const { timezone } = await this.tenantService.getLocale(tenantId);
+
+    // Order/patient/diagnostics/referral for the shared header block.
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, tenantId, deletedAt: null },
+      include: {
+        patient: true,
+        referredByDoctor: true,
+        referralPanel: true,
+      },
+    });
+    if (!order) {
+      throw new OrderReportsNotFoundException(orderId);
+    }
+    const diagnostics = await this.prisma.orderDiagnostics.findUnique({
+      where: { orderId },
+      select: { sampleSource: true },
+    });
+    const patient = order.patient;
+    const headerFields = {
+      // Letterhead image is not wired to a source yet (branch logo/print-template
+      // header); templates that need it can reference a branch asset later.
+      header_image: '',
+      patient: {
+        salutation: salutationLabel(patient.salutation),
+        full_name: fullName([
+          patient.firstName,
+          patient.middleName,
+          patient.lastName,
+        ]),
+      },
+      client_age: patientAgeDisplay(patient.age, patient.ageType),
+      // Raw M/F/O code (templates test `client_gender == 'M'`).
+      client_gender: patient.gender
+        ? String(patient.gender).charAt(0).toUpperCase()
+        : '',
+      client_phone: patient.mobile ?? '',
+      client_uhid: patient.umId ?? '',
+      external_order_id: order.externalOrderId ?? '',
+      sample_source_label: sampleSourceLabel(diagnostics?.sampleSource),
+      // Reference templates default an absent referrer/panel to the sentinel
+      // `" -- "` and swap it for "Self"/"Walk-in" in the layout.
+      refer_by_name: order.referredByDoctor
+        ? fullName([
+            order.referredByDoctor.firstName,
+            order.referredByDoctor.lastName,
+          ])
+        : ' -- ',
+      referring_panel_name: order.referralPanel?.name ?? ' -- ',
+      order_date_time: formatReportDateTime(
+        toBranchLocalInstant(order.orderDate, timezone),
+      ),
+      // Barcode IMAGE url (templates use it as `<img src=…>`).
+      order_id_barcode: order.orderIdQrCode ?? '',
+    };
+
+    // Per-report body + dates, reusing the single-report context builder.
+    const contexts = await Promise.all(
+      reportRows.map((r) => this.buildPrintContext(r.id, tenantId, branchId)),
+    );
+    const reports = reportRows.map((r, idx) => {
+      const c = contexts[idx];
+      const preparedOn = r.approvedAt ?? r.publishedAt;
+      return {
+        lab_test_id: r.labTestId ?? '',
+        body_html: this.buildTestBodyHtml(c),
+        sample_collected_date: toText(c?.variables?.sample_collected_date),
+        sample_received_date: toText(c?.variables?.sample_received_date),
+        report_prepared_on: preparedOn
+          ? formatReportDateTime(toBranchLocalInstant(preparedOn, timezone))
+          : '',
+        // One visible test entry per report (a panel's sub-tests are already
+        // flattened into `body_html`); drives the templates' display gate/count.
+        tests: [{ display_test_sample: '1' }],
+      };
+    });
+
+    return {
+      report_tests: { groups: [], tests: reports },
+      header_fields: headerFields,
+    };
+  }
+
+  /**
+   * Render one test's result content (the `report->body_html` a `lab_all_report`
+   * template drops per iteration) from its single-report {@link buildPrintContext}
+   * output: the parameter results table plus any content sections. Self-contained
+   * HTML — the surrounding patient/order header comes from the template's own
+   * page-header block, so this is the results only (no duplicate header).
+   */
+  private buildTestBodyHtml(ctx: GeneratePdfDto | undefined): string {
+    const v = ctx?.variables ?? {};
+    const results = ctx?.sections?.results ?? [];
+    const testName = escapeHtml(toText(v.test_name));
+
+    const rows = results
+      .map((row) => {
+        const name = escapeHtml(toText(row.parameter_name));
+        const method = escapeHtml(toText(row.methodology));
+        const value = escapeHtml(toText(row.observed1));
+        const unit = escapeHtml(toText(row.unit));
+        const ref = escapeHtml(toText(row.reference_display));
+        const methodHtml = method
+          ? `<div class="rr-method">${method}</div>`
+          : '';
+        return `<tr><td>${name}${methodHtml}</td><td>${value}</td><td>${unit}</td><td>${ref}</td></tr>`;
+      })
+      .join('');
+    const table = results.length
+      ? `<table class="report-results" width="100%" cellpadding="4" cellspacing="0"><thead><tr><th align="left">Investigation</th><th align="left">Result</th><th align="left">Unit</th><th align="left">Reference</th></tr></thead><tbody>${rows}</tbody></table>`
+      : '';
+
+    const section = (label: string, value: string): string =>
+      value
+        ? `<div class="report-section"><b>${label}:</b> ${value}</div>`
+        : '';
+    const extras =
+      section('Interpretation', escapeHtml(toText(v.interpretation))) +
+      section('Useful For', escapeHtml(toText(v.useful_for))) +
+      section('Limitations', escapeHtml(toText(v.limitations))) +
+      section('References', escapeHtml(toText(v.references))) +
+      section('Note', escapeHtml(toText(v.sample_note)));
+
+    return `<div class="report-test"><div class="report-test-title"><b>${testName}</b></div>${table}${extras}</div>`;
+  }
+
+  /**
    * Print All (order-console's "Lab All Report" action, PDF templates
    * integration checklist item 3). Generates each of the order's reports as
    * its OWN complete, independent single-report PDF (via {@link print} —
@@ -1998,6 +2304,30 @@ export class LabReportService {
     orderItemIds?: string[],
   ): Promise<Buffer> {
     const activeBranchId = this.requireBranch(branchId);
+
+    // If the caller picked a `lab_all_report` template, render the whole order
+    // as ONE continuous Latte document (per-test iteration + page headers/breaks
+    // handled inside the template) instead of merging N single-report PDFs.
+    if (templateId) {
+      const type = await this.pdfReportTemplateService.getType(
+        templateId,
+        tenantId,
+      );
+      if (type === 'lab_all_report') {
+        const context = await this.buildAllReportsContext(
+          orderId,
+          tenantId,
+          branchId,
+          orderItemIds,
+        );
+        return this.pdfReportTemplateService.generateLattePdf(
+          templateId,
+          tenantId,
+          context,
+        );
+      }
+    }
+
     const reportRows = await this.prisma.labReport.findMany({
       where: {
         tenantId,
