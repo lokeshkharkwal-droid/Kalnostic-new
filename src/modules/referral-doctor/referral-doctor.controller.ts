@@ -64,9 +64,14 @@ export class ReferralDoctorController {
   @Get()
   findAll(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Query() query: ListReferralDoctorsDto,
   ) {
-    return this.referralDoctorService.findAllForTenant(tenantId, query);
+    return this.referralDoctorService.findAllForTenant(
+      tenantId,
+      profile.branchId,
+      query,
+    );
   }
 
   /**

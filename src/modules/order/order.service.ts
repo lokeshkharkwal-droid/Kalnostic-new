@@ -2132,6 +2132,10 @@ export class OrderService {
         payment_collected_by: paymentCollectedBy,
         status: order.status,
         payment_status: order.paymentStatus,
+        // Alias for the classic old-template tag name (`{bill_status}`) —
+        // same value as `payment_status`, kept separate so authors of
+        // pre-existing bill_print templates don't need to re-author them.
+        bill_status: order.paymentStatus,
         branch_name: order.branch?.name ?? '',
         gross_amount: totals.gross,
         discount_amount: totals.discount,

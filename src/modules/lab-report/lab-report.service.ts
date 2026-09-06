@@ -14,8 +14,6 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   genderLabel,
-  salutationLabel,
-  patientAgeDisplay,
   sampleSourceLabel,
   toBranchLocalInstant,
   formatReportDateTime,
@@ -1692,6 +1690,7 @@ export class LabReportService {
               lastName: true,
               signatoryDesignation: true,
               registrationCouncil: true,
+              signatureImagePath: true,
               isNablAuthorized: true,
               isCapCertified: true,
               isIsoCertified: true,
@@ -1861,6 +1860,7 @@ export class LabReportService {
             sampleGroupLabel: true,
             containerType: true,
             barcode: true,
+            orderIdBarcode: true,
           },
         },
       },
@@ -1943,6 +1943,10 @@ export class LabReportService {
       observed2: v.observed2 ?? '',
       unit: v.unit ?? '',
       methodology: v.methodology ?? '',
+      // Alias for the classic old-template tag name (`{method_name}`) — same
+      // value as `methodology`, kept separate so pre-existing lab_report
+      // templates authored against that tag don't need to be re-authored.
+      method_name: v.methodology ?? '',
       reference_display: v.referenceDisplay ?? '',
       group_name: groupNameByParamId.get(v.resultParamId) ?? '',
     }));
@@ -1957,8 +1961,8 @@ export class LabReportService {
         patient_name: [patient.firstName, patient.middleName, patient.lastName]
           .filter(Boolean)
           .join(' '),
-        patient_salutation: salutationLabel(patient.salutation),
-        patient_age: patientAgeDisplay(patient.age, patient.ageType),
+        patient_salutation: patient.salutation ?? '',
+        patient_age: patient.age ?? '',
         patient_gender: genderLabel(patient.gender),
         patient_um_id: patient.umId ?? '',
         patient_mobile: patient.mobile ?? '',
@@ -2020,19 +2024,6 @@ export class LabReportService {
         order_id_barcode: order.orderIdBarcode ?? '',
         order_id_qr_code: order.orderIdQrCode ?? '',
         sample_note: sampleNote?.body ?? '',
-      },
-      // Register images so `{{image:<id>}}` auto-renders an <img> (the
-      // renderer's dedicated image-tag path), in addition to the flat URL
-      // substitutions above: the order barcode, the patient photo, and the
-      // approving Doctor's signature.
-      images: {
-        ...(order.orderIdQrCode
-          ? { order_id_qr_code: order.orderIdQrCode }
-          : {}),
-        ...(patient.photoUrl ? { patient_image: patient.photoUrl } : {}),
-        ...(approver?.signatureImage
-          ? { report_approved_by_signature: approver.signatureImage }
-          : {}),
       },
       sections: { results },
       signatories,

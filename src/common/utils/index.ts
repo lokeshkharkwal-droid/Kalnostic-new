@@ -8,5 +8,6 @@ export * from './decimal-to-number.util';
 export * from './amount-in-words.util';
 export * from './gender-label.util';
 export * from './patient-label.util';
+export * from './salutation-label.util';
 export * from './sample-source-label.util';
 export * from './tenant-date-format.util';

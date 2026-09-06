@@ -353,13 +353,18 @@ export class ReferralPanelService {
    * List active referral panels for a tenant (offset pagination). `search` matches
    * the panel `name` or the user-supplied `panelCode` (case-insensitive);
    * `clientType` filters by billing relationship; `status` (ACTIVE/INACTIVE) maps
-   * to `isActive`; `branchId` restricts to panels scoped to that branch.
+   * to `isActive`; `branchId` restricts to panels scoped to that branch. Each row
+   * is enriched with the active branch's assigned Lab Test List / Lab Panel List
+   * (bulk-resolved in a fixed number of extra queries, never per-row).
    * @param tenantId tenant scope
+   * @param activeBranchId caller's active branch (from JWT); used to resolve the
+   *   Lab Test/Panel List assignment, distinct from the `branchId` query filter
    * @param query pagination + optional `search` (panel name / panel code),
    *   `clientType`, `status`, and `branchId` filters
    */
   async findAll(
     tenantId: string,
+    activeBranchId: string | null,
     query: ListReferralPanelsDto,
   ): Promise<PaginatedResult<ReferralPanelListItem>> {
     const page = query.page ?? 1;
@@ -392,7 +397,18 @@ export class ReferralPanelService {
       }),
       this.prisma.referralPanel.count({ where }),
     ]);
-    const data: ReferralPanelListItem[] = rows;
+    const assignments =
+      await this.listAssignmentService.getAssignmentsWithListNames(
+        tenantId,
+        activeBranchId,
+        ReferralType.PANEL,
+        rows.map((r) => r.id),
+      );
+    const data: ReferralPanelListItem[] = rows.map((r) => ({
+      ...r,
+      labTestList: assignments.get(r.id)?.labTestList ?? null,
+      labPanelList: assignments.get(r.id)?.labPanelList ?? null,
+    }));
     return { data, total, page, limit };
   }
 
