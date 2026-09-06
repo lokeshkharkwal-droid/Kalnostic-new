@@ -14,6 +14,8 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   genderLabel,
+  salutationLabel,
+  patientAgeDisplay,
   sampleSourceLabel,
   toBranchLocalInstant,
   formatReportDateTime,
@@ -1694,7 +1696,6 @@ export class LabReportService {
               isNablAuthorized: true,
               isCapCertified: true,
               isIsoCertified: true,
-              signatureImagePath: true,
             },
           })
         : Promise.resolve([]),
