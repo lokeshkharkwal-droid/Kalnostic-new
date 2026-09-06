@@ -63,9 +63,10 @@ export class ReferralPanelController {
   @Get()
   findAll(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Query() query: ListReferralPanelsDto,
   ) {
-    return this.referralPanelService.findAll(tenantId, query);
+    return this.referralPanelService.findAll(tenantId, profile.branchId, query);
   }
 
   /**

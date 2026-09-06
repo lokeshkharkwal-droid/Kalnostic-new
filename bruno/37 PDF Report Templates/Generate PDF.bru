@@ -49,4 +49,9 @@ docs {
   - `signatories` → footer `<signing_authority_tag>` blocks.
 
   In Bruno, use "Save Response → Save to file" to inspect the PDF.
+
+  Image resolution order for a `{{image:ID}}` token: this request's `images` map
+  (above) → the tenant-wide reusable-image registry (`print_template_images`,
+  which lets a token from another template resolve) → the template's own
+  `meta.images`. Header and Footer are repeated on every page of a multi-page PDF.
 }

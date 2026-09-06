@@ -34,6 +34,7 @@ import {
 import { OrderPrintType } from './dto/print-order.dto';
 import { AppointmentService } from '../appointment/appointment.service';
 import { OrderSampleService } from '../accession/accession-sample.service';
+import { BarcodeService } from '../accession/barcode.service';
 import { SlotReservationService } from '../phlebotomist-schedule/slot-reservation.service';
 import { PhlebotomistCollectionService } from '../phlebotomist-collection/phlebotomist-collection.service';
 import { RegistrationSettingsService } from '../registration-settings/registration-settings.service';
@@ -49,6 +50,7 @@ import {
   amountInWords,
   genderLabel,
   salutationLabel,
+  patientAgeDisplay,
   toBranchLocalInstant,
   formatTenantDate,
   formatTenantDateTime,
@@ -374,6 +376,7 @@ export class OrderService {
     private readonly prisma: PrismaService,
     private readonly appointmentService: AppointmentService,
     private readonly orderSamples: OrderSampleService,
+    private readonly barcodeService: BarcodeService,
     private readonly slotReservation: SlotReservationService,
     private readonly homeVisitCollections: PhlebotomistCollectionService,
     private readonly pdfReportTemplateService: PdfReportTemplateService,
@@ -720,6 +723,31 @@ export class OrderService {
             branchLabPanelListId: dto.branchLabPanelListId ?? null,
           },
         });
+        // Order-level barcode — a separate entity from sample barcodes (own
+        // per-branch counter/format; numbers may coincide with samples'). Reuses
+        // BarcodeService's Code39/JSBarcode rendering + S3 upload. Runs in-tx so a
+        // storage failure rolls the whole order create back (never a half-written
+        // order). Requires a branch (the counter is branch-level) — branchless
+        // drafts skip it.
+        if (branchId) {
+          const barcodeValue =
+            await this.barcodeService.allocateOrderNumberInTx(
+              tx,
+              tenantId,
+              branchId,
+            );
+          const barcodeImageUrl = await this.barcodeService.generateAndUpload(
+            barcodeValue,
+            tenantId,
+          );
+          await tx.order.update({
+            where: { id: order.id },
+            data: {
+              orderIdBarcode: barcodeValue,
+              orderIdQrCode: barcodeImageUrl,
+            },
+          });
+        }
         // Quotation → order conversion: when this order was created from a quote
         // and is a real conversion (any status other than QUOTE), flip the source
         // quote to CONVERTED in the SAME transaction. Any failure above rolls this
@@ -1903,7 +1931,7 @@ export class OrderService {
         .filter(Boolean)
         .join(' '),
       patient_salutation: salutationLabel(p.salutation),
-      patient_age: p.age ?? '',
+      patient_age: patientAgeDisplay(p.age, p.ageType),
       patient_gender: genderLabel(p.gender),
       patient_um_id: p.umId ?? '',
       patient_mobile: p.mobile ?? '',

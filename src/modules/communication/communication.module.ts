@@ -13,6 +13,9 @@ import { BusinessEventListener } from './business-event.listener';
 import { ExchangeClient } from './exchange/exchange.client';
 import { ShareService } from './services/share.service';
 import { AutoNotificationService } from './services/auto-notification.service';
+import { NotificationEnablementService } from './services/notification-enablement.service';
+import { ChannelSettingsController } from './channel-settings.controller';
+import { ChannelSettingsService } from './services/channel-settings.service';
 import { AppointmentReminderWorkerService } from './appointment-reminder-worker.service';
 
 /**
@@ -26,7 +29,11 @@ import { AppointmentReminderWorkerService } from './appointment-reminder-worker.
  */
 @Module({
   imports: [PrismaModule, BranchModule, TemplateModule],
-  controllers: [CommunicationController, NotificationController],
+  controllers: [
+    CommunicationController,
+    NotificationController,
+    ChannelSettingsController,
+  ],
   providers: [
     CommunicationService,
     CommunicationWorkerService,
@@ -37,6 +44,8 @@ import { AppointmentReminderWorkerService } from './appointment-reminder-worker.
     ExchangeClient,
     ShareService,
     AutoNotificationService,
+    NotificationEnablementService,
+    ChannelSettingsService,
     AppointmentReminderWorkerService,
   ],
   exports: [

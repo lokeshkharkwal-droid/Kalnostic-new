@@ -48,6 +48,9 @@ docs {
 
   ## Row shape
 
-  Each row is the referral-panel record (scalar columns only). Assigned lab
-  tests/panels are **not** embedded here — fetch them via *Get Referral Panel*.
+  Each row is the referral-panel record (scalar columns only), plus `labTestList`
+  / `labPanelList` — `{ id, name } | null` — the caller's active branch's assigned
+  Lab Test List / Lab Panel List, bulk-resolved for the whole page (not a per-row
+  lookup). The raw `branchLabTestListId` / `branchLabPanelListId` ids are still
+  only on the single-item response — see *Get Referral Panel*.
 }

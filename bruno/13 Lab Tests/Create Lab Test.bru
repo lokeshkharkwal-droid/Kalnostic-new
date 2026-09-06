@@ -108,6 +108,7 @@ body:json {
     "resultParams": [
       {
         "groupName": "CBC Parameters",
+        "groupLayout": "TABULAR",
         "parameterName": "Haemoglobin",
         "parameterCode": "HGB",
         "method": "Spectrophotometry",
@@ -267,12 +268,14 @@ docs {
     `collectionMethod`, `numberOfSamples`, `stability`, `transportTemperature`,
     `preservative`, `sampleHandlingInstructions`, `isFastingRequired`,
     `isLightProtection`, `isDefault`.
-  - **Result params[]:** `groupName`, `parameterName`, `parameterCode`, `method`,
+  - **Result params[]:** `groupName`, `groupLayout` (`TABULAR`|`SEQUENTIAL`),
+    `parameterName`, `parameterCode`, `method`,
     `reportingUnit`, `resultType`, `parameterType`, `resultEntryMode`,
     `calculationFormula` (required when `parameterType=CALCULATED`),
     `resultRoundingType`, `allowableUnits`, `decimalPlaces`, `criticalMin`,
     `criticalMax`, `reflexTests[]`, `notes`, `isNabl`, `isCap`, `sortOrder`,
-    `referenceRanges[]`, `referenceValues[]`.
+    `referenceRanges[]`, `referenceValues[]`. Per-parameter settings refs
+    `groupSettingsId`, `iconSettingsId`, `imageSettingsId` are optional UUIDs.
   
   ## Logical-reference ids (no existence check on create)
   

@@ -446,6 +446,15 @@ enum NotificationKind {
   ALERT
 }
 
+/// A business's per-(feature, channel) override of default channel enablement
+/// (ports the legacy `messaging_preferences.status` ACTIVE=1 / DONT_SEND=2). The
+/// absence of an override row means "inherit" (send); a `DONT_SEND` row suppresses
+/// that channel for that feature. Consulted by the notification enablement resolver.
+enum ChannelOverrideStatus {
+  ACTIVE
+  DONT_SEND
+}
+
 // ── Lab-test enums (UPPERCASE per project convention; values map to the raw
 //    snake_case spec, e.g. SINGLE_STEP ↔ 'single_step') ──────────────────────────
 
@@ -529,6 +538,14 @@ enum ResultRounding {
   TWO_DECIMAL
   THREE_DECIMAL
   WHOLE_NUMBER
+}
+
+/// How a result parameter group is laid out on the report — a tabular grid or a
+/// sequential (top→bottom) list. Distinct from the `groupSettingsId` reference
+/// (which points at a named GroupLayoutSetting); this is the plain display mode.
+enum ResultGroupLayout {
+  TABULAR
+  SEQUENTIAL
 }
 
 /// Gender applicability for a reference range/value. Distinct from the
@@ -1728,6 +1745,36 @@ model PdfTemplateConfig {
   @@map("pdf_template_configs")
 }
 
+/// Durable, tenant-wide registry of images uploaded through a Print template's
+/// "Add Image" action. Makes an `{{image:<id>}}` token REUSABLE across templates:
+/// the S3 object (uploaded via UploadsService) is referenced here by its `token`
+/// (the URL's last path segment, e.g. `<uuid>.png`) so a token copied from one
+/// template still resolves when pasted into another. Populated on template
+/// create/update from `meta.images`; intentionally NEVER deleted when a template
+/// is removed/edited, so an image referenced by any other template stays
+/// resolvable. `tenant_id` NULL = a SITE_ADMIN global-template image (mirrors the
+/// pdf_report_templates NULL-tenant pattern). RLS policy in prisma/rls.sql.
+model PrintTemplateImage {
+  id       String  @id @default(uuid())
+  tenantId String? @map("tenant_id") // null = SITE_ADMIN global-template image
+
+  /// The `{{image:<id>}}` token id — the uploaded object's URL last segment
+  /// (`<uuid>.<ext>`), unique per tenant.
+  token String
+  /// Fully-qualified S3 URL of the uploaded object.
+  url   String
+
+  createdBy String? @map("created_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([tenantId, token])
+  @@index([tenantId])
+  @@map("print_template_images")
+}
+
 /// A single outbound message row — serves as BOTH the async send queue and the
 /// delivery log (`status` drives the background worker, ported from Kishan's
 /// `message_queue`, and the same row is what the Communication dashboard lists).
@@ -1783,6 +1830,60 @@ model CommunicationLog {
   @@index([scheduledAt])
   @@index([deletedAt])
   @@map("communication_logs")
+}
+
+/// Per-tenant messaging channel capability (ports the legacy business channel
+/// feature flags). Tenant-scoped; `branchId` NULL = the tenant default, a branch
+/// row overrides it for that branch. Get-or-create on first read (mirrors
+/// `BranchSetting`). The ABSENCE of a row means every channel is capable — so the
+/// enablement resolver behaves exactly as before any settings are configured.
+/// One active row per (tenant, branch) is enforced by partial unique indexes in
+/// prisma/rls.sql (Postgres treats NULL branch_id as distinct).
+model BusinessChannelSetting {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id") // null = tenant default
+
+  isEmailChannelEnabled    Boolean @default(true) @map("is_email_channel_enabled")
+  isSmsChannelEnabled      Boolean @default(true) @map("is_sms_channel_enabled")
+  isWhatsappChannelEnabled Boolean @default(true) @map("is_whatsapp_channel_enabled")
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@map("business_channel_settings")
+}
+
+/// A business's per-(feature, channel) override of default channel enablement
+/// (ports the legacy `messaging_preferences.status`). Tenant-scoped, branch-level
+/// (`branchId` NULL = a tenant-wide override). The ABSENCE of a row means "inherit"
+/// (send); a `DONT_SEND` row suppresses that channel for that feature. One active
+/// override per (tenant, branch, feature, channel) is enforced by partial unique
+/// indexes in prisma/rls.sql.
+model BusinessChannelOverride {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  feature String
+  channel MessagingChannel
+  status  ChannelOverrideStatus @default(ACTIVE)
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([feature])
+  @@map("business_channel_overrides")
 }
 
 /// An in-app notification event (ported from Kishan `notification`), now
@@ -2663,17 +2764,19 @@ model LabTestResultParam {
   labTestId String  @map("lab_test_id")
 
   // Group display
-  groupName       String? @map("group_name")
-  groupLayoutId   String? @map("group_layout_id")
-  groupSettingsId String? @map("group_settings_id")
+  groupName       String?            @map("group_name")
+  groupLayout     ResultGroupLayout? @map("group_layout")
+  groupLayoutId   String?            @map("group_layout_id")
+  groupSettingsId String?            @map("group_settings_id")
 
   // Parameter identity
-  parameterName  String  @map("parameter_name")
-  parameterCode  String  @map("parameter_code")
-  method         String?
-  attachFileUrl  String? @map("attach_file_url")
-  iconSettingsId String? @map("icon_settings_id")
-  reportingUnit  String? @map("reporting_unit")
+  parameterName   String  @map("parameter_name")
+  parameterCode   String  @map("parameter_code")
+  method          String?
+  attachFileUrl   String? @map("attach_file_url")
+  iconSettingsId  String? @map("icon_settings_id")
+  imageSettingsId String? @map("image_settings_id")
+  reportingUnit   String? @map("reporting_unit")
 
   // Result behaviour
   resultType         ResultType      @map("result_type")
@@ -5655,6 +5758,11 @@ model Patient {
   age          Int?
   ageType      AgeType?      @map("age_type")
 
+  // Patient photo (S3 URL, uploaded from device or captured via webcam at
+  // registration). Persists across visits; surfaced to report templates as
+  // `{patient_image}` / `{{image:patient_image}}`.
+  photoUrl String? @map("photo_url")
+
   // ── Contact ──
   mobile                String // required
   whatsappNumber        String? @map("whatsapp_number")
@@ -5720,6 +5828,14 @@ model Patient {
   // `WHERE ... AND is_family_member = false`) — this lets them be created without
   // tripping the dedup constraint that governs primary registrations.
   isFamilyMember Boolean @default(false) @map("is_family_member")
+
+  /// Per-channel notification opt-out (ports the legacy `PatientPreferences`
+  /// `dont_send` map). Shape:
+  /// `{ channels?: MessagingChannel[]; features?: { [feature: string]: MessagingChannel[] } }`
+  /// — `channels` suppress a channel for every feature; `features[key]` suppress it
+  /// only for that FEATURE_TYPES key. NULL / absent = opted into everything
+  /// (the backward-compatible default the enablement resolver assumes).
+  notificationOptOut Json? @map("notification_opt_out")
 
   // One-to-many: a patient can have multiple medical-history records.
   medicalHistories MedicalHistory[]
@@ -6142,6 +6258,16 @@ model Order {
   // when the format is NONE. Unique per branch among active rows (enforced in the
   // service). Quotes (status QUOTE) reuse this column with their own format/counter.
   externalOrderId String?       @map("external_order_id")
+  // Order-level barcode, generated at creation from the branch's dedicated
+  // order-barcode counter/format (AccessionSetting.OrderBarcodeSettings_*, via
+  // BarcodeService.allocateOrderNumberInTx). A SEPARATE entity from sample
+  // barcodes — the two have independent counters and may share the same number.
+  // `orderIdBarcode` holds the barcode VALUE (e.g. "10001"); `orderIdQrCode`
+  // holds the S3 URL of the rendered Code39 PNG (name kept for the print-template
+  // contract — it is a barcode image, not a QR code). Both surface as the
+  // `{order_id_barcode}` / `{order_id_qr_code}` lab-report template tags.
+  orderIdBarcode  String?       @map("order_id_barcode")
+  orderIdQrCode   String?       @map("order_id_qr_code")
   status          OrderStatus   @default(DRAFT)
   orderDate       DateTime      @map("order_date") @db.Date
   orderType       OrderType     @map("order_type")
@@ -6281,6 +6407,10 @@ model Order {
   @@index([paymentStatus])
   @@index([billId])
   @@index([branchId, externalOrderId])
+  // Per-branch uniqueness of the order barcode VALUE among orders only (NULLs are
+  // distinct in Postgres). Does NOT constrain against sample barcodes, so an order
+  // and a sample may legitimately share the same number.
+  @@unique([branchId, orderIdBarcode])
   @@index([deletedAt])
   @@map("orders")
 }
@@ -8069,6 +8199,19 @@ model AccessionSetting {
   /// System-managed running counter — never accepted from the client.
   SampleBarcodeSettings_CurrentNumber Int                        @default(0) @map("sample_barcode_settings_current_number")
   SampleBarcodeSettings_LastResetAt   DateTime?                  @map("sample_barcode_settings_last_reset_at")
+
+  // ── Order Barcode Settings ──
+  // Dedicated to the ORDER-level barcode (generated at order creation). A separate
+  // entity/counter/format from the sample barcode above — order and sample numbers
+  // may coincide. Same field convention + reuses the shared BarcodeService logic.
+  OrderBarcodeSettings_Prefix        String                     @default("") @map("order_barcode_settings_prefix") @db.VarChar(24)
+  OrderBarcodeSettings_Suffix        String                     @default("") @map("order_barcode_settings_suffix") @db.VarChar(24)
+  OrderBarcodeSettings_Separator     AccessionBarcodeSeparator  @default(NONE) @map("order_barcode_settings_separator")
+  OrderBarcodeSettings_NumberLength  Int                        @default(5) @map("order_barcode_settings_number_length")
+  OrderBarcodeSettings_ResetInterval AccessionBarcodeResetCycle @default(NEVER) @map("order_barcode_settings_reset_interval")
+  /// System-managed running counter — never accepted from the client.
+  OrderBarcodeSettings_CurrentNumber Int                        @default(0) @map("order_barcode_settings_current_number")
+  OrderBarcodeSettings_LastResetAt   DateTime?                  @map("order_barcode_settings_last_reset_at")
 
   // ── Accession (TAT / acceptance-window / barcode-mapping toggles) ──
   Accession_MinimumTimeToAcceptSampleMinutes           Int @default(10) @map("accession_min_time_to_accept_sample_minutes")

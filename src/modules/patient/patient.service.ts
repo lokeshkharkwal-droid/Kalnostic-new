@@ -5,6 +5,7 @@ import {
   ExternalIdPurpose,
   Gender,
   MedicalHistory,
+  MessagingChannel,
   Patient,
   PatientDocument,
   PatientDocumentCategory,
@@ -18,6 +19,8 @@ import { PtCategoryService } from '../pt-category/pt-category.service';
 import { ExternalIdService } from '../registration-settings/external-id.service';
 import { CreatePatientDto } from './dto/create-patient.dto';
 import { UpdatePatientDto } from './dto/update-patient.dto';
+import { UpdatePatientNotificationPreferencesDto } from './dto/update-patient-notification-preferences.dto';
+import { FEATURE_TYPE_VALUES } from '../template/constants/feature-types';
 import {
   MedicalHistoryDto,
   RichMedicalHistoryDto,
@@ -46,6 +49,15 @@ import {
 
 /** Max attempts to allocate a unique UMID before giving up (collision retry). */
 const MAX_UMID_ATTEMPTS = 5;
+
+/** A patient's notification opt-out preferences, as returned by the API. */
+export interface PatientNotificationPreferencesView {
+  patientId: string;
+  /** Channels opted out of across all features. */
+  optOutChannels: MessagingChannel[];
+  /** Per-feature opt-out: `{ [FEATURE_TYPES key]: MessagingChannel[] }`. */
+  optOutFeatures: Record<string, MessagingChannel[]>;
+}
 
 /**
  * Prisma `select` for the lightweight member summary embedded in family
@@ -461,6 +473,105 @@ export class PatientService {
     } catch (e) {
       this.rethrowPatientWriteConflict(e, dto.mobile ?? '', dto.umId ?? null);
     }
+  }
+
+  /**
+   * Read a patient's notification opt-out preferences (the channels they've opted
+   * out of globally and per-feature). Absent = opted into everything.
+   * @throws PatientNotFoundException if missing
+   */
+  async getNotificationPreferences(
+    id: string,
+    tenantId: string,
+  ): Promise<PatientNotificationPreferencesView> {
+    const patient = await this.ensurePatient(id, tenantId);
+    return {
+      patientId: id,
+      ...this.normalizeOptOut(patient.notificationOptOut),
+    };
+  }
+
+  /**
+   * Replace a patient's notification opt-out preferences. Unknown feature keys and
+   * non-deliverable channels are sanitised out; empty results clear the field
+   * (NULL = opted into everything). Read by `NotificationEnablementService` to gate
+   * automatic notifications.
+   * @throws PatientNotFoundException if missing
+   */
+  async updateNotificationPreferences(
+    id: string,
+    tenantId: string,
+    dto: UpdatePatientNotificationPreferencesDto,
+    actorId?: string,
+  ): Promise<PatientNotificationPreferencesView> {
+    await this.ensurePatient(id, tenantId);
+    const channels = this.sanitizeChannels(dto.optOutChannels);
+    const features = this.sanitizeFeatureMap(dto.optOutFeatures);
+    const hasAny = channels.length > 0 || Object.keys(features).length > 0;
+    const optOut: Prisma.InputJsonValue = {
+      ...(channels.length > 0 && { channels }),
+      ...(Object.keys(features).length > 0 && { features }),
+    };
+    await this.prisma.patient.update({
+      where: { id },
+      data: {
+        notificationOptOut: hasAny ? optOut : Prisma.JsonNull,
+        updatedBy: actorId ?? null,
+      },
+    });
+    return {
+      patientId: id,
+      optOutChannels: channels,
+      optOutFeatures: features,
+    };
+  }
+
+  /** Normalise a stored opt-out JSON value into the API view shape. */
+  private normalizeOptOut(
+    raw: Prisma.JsonValue | null,
+  ): Omit<PatientNotificationPreferencesView, 'patientId'> {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      return { optOutChannels: [], optOutFeatures: {} };
+    }
+    const obj = raw as {
+      channels?: unknown;
+      features?: Record<string, unknown>;
+    };
+    return {
+      optOutChannels: this.sanitizeChannels(obj.channels),
+      optOutFeatures: this.sanitizeFeatureMap(obj.features),
+    };
+  }
+
+  /** Keep only valid deliverable channels (Email/SMS/WhatsApp), de-duplicated. */
+  private sanitizeChannels(candidates: unknown): MessagingChannel[] {
+    const deliverable: MessagingChannel[] = [
+      MessagingChannel.EMAIL,
+      MessagingChannel.SMS,
+      MessagingChannel.WHATSAPP,
+    ];
+    if (!Array.isArray(candidates)) return [];
+    const out = new Set<MessagingChannel>();
+    for (const c of candidates) {
+      if (typeof c === 'string' && (deliverable as string[]).includes(c)) {
+        out.add(c as MessagingChannel);
+      }
+    }
+    return [...out];
+  }
+
+  /** Keep only known FEATURE_TYPES keys mapped to valid deliverable channels. */
+  private sanitizeFeatureMap(raw: unknown): Record<string, MessagingChannel[]> {
+    const out: Record<string, MessagingChannel[]> = {};
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+    for (const [feature, channels] of Object.entries(
+      raw as Record<string, unknown>,
+    )) {
+      if (!FEATURE_TYPE_VALUES.includes(feature)) continue;
+      const clean = this.sanitizeChannels(channels);
+      if (clean.length > 0) out[feature] = clean;
+    }
+    return out;
   }
 
   /**

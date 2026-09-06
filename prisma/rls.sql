@@ -1040,6 +1040,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS ptc_tenant_slot_active_unique
   ON pdf_template_configs (tenant_id, slot_key)
   WHERE deleted_at IS NULL AND branch_id IS NULL;
 
+-- ── print_template_images ─────────────────────────────────────────────────────
+-- Durable, tenant-wide registry that makes a Print template's `{{image:<id>}}`
+-- token reusable across templates. Tenant rows isolate by tenant_id; SITE_ADMIN
+-- global-template images (tenant_id NULL) are readable by everyone and writable
+-- only by a GUC-less SiteAdmin connection (mirrors the pdf_report_templates
+-- pattern above).
+ALTER TABLE print_template_images ENABLE ROW LEVEL SECURITY;
+ALTER TABLE print_template_images FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS pti_tenant_isolation ON print_template_images;
+CREATE POLICY pti_tenant_isolation ON print_template_images
+  USING (tenant_id = current_tenant_id() OR tenant_id IS NULL)
+  WITH CHECK (
+    tenant_id = current_tenant_id()
+    OR (tenant_id IS NULL AND current_tenant_id() IS NULL)
+  );
+
 -- ── branch_lab_tests ──────────────────────────────────────────────────────────
 ALTER TABLE branch_lab_tests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE branch_lab_tests FORCE ROW LEVEL SECURITY;
@@ -1975,3 +1991,33 @@ DROP POLICY IF EXISTS notification_targets_tenant_isolation ON notification_targ
 CREATE POLICY notification_targets_tenant_isolation ON notification_targets
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── business_channel_settings ─────────────────────────────────────────────────
+-- Per-tenant messaging channel capability. Never global, so plain tenant isolation.
+ALTER TABLE business_channel_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE business_channel_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS business_channel_settings_tenant_isolation ON business_channel_settings;
+CREATE POLICY business_channel_settings_tenant_isolation ON business_channel_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+-- branch_id is nullable: the single tenant-level default row vs one per branch.
+-- @@unique can't guard the tenant-level row (Postgres treats NULLs as distinct),
+-- so enforce one-per-scope with paired partial indexes.
+CREATE UNIQUE INDEX IF NOT EXISTS business_channel_settings_tenant_level_unique
+  ON business_channel_settings (tenant_id) WHERE branch_id IS NULL AND deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS business_channel_settings_branch_level_unique
+  ON business_channel_settings (tenant_id, branch_id) WHERE branch_id IS NOT NULL AND deleted_at IS NULL;
+
+-- ── business_channel_overrides ────────────────────────────────────────────────
+-- Per-(feature, channel) override rows. Never global, so plain tenant isolation.
+ALTER TABLE business_channel_overrides ENABLE ROW LEVEL SECURITY;
+ALTER TABLE business_channel_overrides FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS business_channel_overrides_tenant_isolation ON business_channel_overrides;
+CREATE POLICY business_channel_overrides_tenant_isolation ON business_channel_overrides
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+-- One active override per scope+feature+channel; branch_id nullable (see above).
+CREATE UNIQUE INDEX IF NOT EXISTS business_channel_overrides_tenant_level_unique
+  ON business_channel_overrides (tenant_id, feature, channel) WHERE branch_id IS NULL AND deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS business_channel_overrides_branch_level_unique
+  ON business_channel_overrides (tenant_id, branch_id, feature, channel) WHERE branch_id IS NOT NULL AND deleted_at IS NULL;

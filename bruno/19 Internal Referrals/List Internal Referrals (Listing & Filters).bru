@@ -48,7 +48,10 @@ docs {
   ## Row shape (trimmed listing projection)
 
   Each row contains ONLY: `id`, `employeeId`, `firstName`, `lastName`, `fullName`,
-  `mobileNumber`, `email`, `isCommissionApplicable`, `isIncludedInPayroll`, and
-  `status`. Fetch the full record (all fields + assigned lab tests/panels) via
-  "Get Internal Referral".
+  `mobileNumber`, `email`, `isCommissionApplicable`, `isIncludedInPayroll`,
+  `status`, and `labTestList` / `labPanelList` — `{ id, name } | null` — the
+  caller's active branch's assigned Lab Test List / Lab Panel List, bulk-resolved
+  for the whole page (not a per-row lookup). Fetch the full record (all fields +
+  the raw `branchLabTestListId`/`branchLabPanelListId`) via "Get Internal
+  Referral".
 }

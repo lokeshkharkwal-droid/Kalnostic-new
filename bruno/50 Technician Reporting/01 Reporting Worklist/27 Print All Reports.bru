@@ -30,44 +30,48 @@ tests {
 }
 
 docs {
-  Print All (order-console's "Lab All Report" action). Renders ONE
-  `lab_all_report`-type template, flattening every one of the order's lab
-  reports' result rows into a single `sections.results` array so the body
-  reads as one continuous report, test by test. Streams the rendered PDF
-  directly (`Content-Type: application/pdf`).
+  Print All (order-console's "Lab All Report" action). Streams the rendered PDF
+  directly (`Content-Type: application/pdf`). Declared before the `:id` routes
+  on the controller (same convention as `tat/summary`), so `order` in the URL is
+  never captured as a report id.
 
-  Declared before the `:id` routes on the controller (same convention as
-  `tat/summary`), so `order` in the URL is never captured as a report id.
+  ## Two render paths (by selected template type)
+
+  - **`lab_all_report` template →** the whole order is rendered as ONE
+    continuous document by the **Latte engine** (`LatteReportRenderService`).
+    The template iterates every test itself (`{foreach $report_tests->tests as
+    $r}`) and manages its own per-test page headers/breaks. See
+    `buildAllReportsContext` in `lab-report.service.ts`.
+  - **any other template (or none) →** each report is rendered as its own
+    single-report PDF (same path as `26 Print Report`) and the PDFs are merged
+    with `pdf-lib` — the legacy fallback.
 
   ## Body
 
-  - `templateId` — optional. Omit to use the tenant's single active
-    `lab_all_report` template. Required if more than one exists.
-  - No `type` field — this action's type is always `lab_all_report`.
+  - `templateId` — optional. When it is a `lab_all_report` template the Latte
+    path is used; otherwise the per-report merge runs. Omit to use the tenant's
+    single active `lab_report` template for the merge fallback.
+  - `orderItemIds` — optional array; restrict to these order items' reports.
+
+  ## Latte render context (`lab_all_report`)
+
+  - `report_tests.tests[]` — one entry per test/report on the order, each with
+    `body_html` (its result table + content sections, built from the
+    single-report context), `sample_collected_date`, `sample_received_date`,
+    `report_prepared_on` (that report's own approval time,
+    `DD-MM-YYYY hh:mm AM/PM`), `lab_test_id`, and `tests[].display_test_sample`.
+  - `report_tests.groups[]` — the department-grouped section; currently empty
+    (all reports flow through `tests[]`, which templates iterate identically).
+  - `header_fields` — shared order/patient header block: `patient.{salutation,
+    full_name}`, `client_age`, `client_gender` (M/F), `client_phone`,
+    `client_uhid`, `external_order_id`, `sample_source_label`, `refer_by_name`,
+    `referring_panel_name`, `order_date_time`, `order_id_barcode`.
 
   ## Resolution & errors
 
-  - 404 `ORDER_REPORTS_NOT_FOUND` — the order has no `LabReport` rows at all
-    (wrong id, or no item has reached ACCEPTED yet).
-  - 404 `NO_ACTIVE_PRINT_TEMPLATE` — no active `lab_all_report` template
-    exists for the tenant.
-  - 409 `AMBIGUOUS_PRINT_TEMPLATE` — more than one active `lab_all_report`
-    template and no `templateId` given.
-
-  ## Render context
-
-  `variables` — taken from the FIRST report's context (order/patient data is
-  identical across every report on the same order, so this is safe): same
-  field set as `26 Print Report`'s `lab_report` variables.
-
-  `sections.results` — flattened across every report on the order. Each row
-  carries its own `test_name` (re-injected per row, on top of the single-print
-  row shape) plus `parameter_name`, `observed1`, `observed2`, `unit`,
-  `methodology`, `reference_display`. A report with zero result rows still
-  gets ONE placeholder row (`test_name` set, everything else `""`) so it isn't
-  silently dropped from the consolidated document — e.g. an order item whose
-  report was never entered.
-
-  `signatories` — taken from the first report's signatories only (same
-  conditional-empty-array rule as `26 Print Report`).
+  - 404 `ORDER_REPORTS_NOT_FOUND` — the order (or the selected items) has no
+    `LabReport` rows (wrong id, or no item has reached ACCEPTED yet).
+  - 404 `NO_ACTIVE_PRINT_TEMPLATE` / 409 `AMBIGUOUS_PRINT_TEMPLATE` — merge
+    fallback only, when no `templateId` is given and zero / multiple active
+    `lab_report` templates exist.
 }

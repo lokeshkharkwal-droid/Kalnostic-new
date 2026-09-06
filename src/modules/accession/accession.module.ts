@@ -59,6 +59,6 @@ import { BarcodeService } from './barcode.service';
     AccessionDashboardService,
     BarcodeService,
   ],
-  exports: [OrderSampleService],
+  exports: [OrderSampleService, BarcodeService],
 })
 export class AccessionModule {}
