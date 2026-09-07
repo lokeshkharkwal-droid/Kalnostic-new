@@ -113,10 +113,14 @@ export class PrismaService
    *
    * @param tenantId the active tenant (from the JWT `tenant_id`)
    * @param work callback receiving the transaction-scoped Prisma client
+   * @param options optional `$transaction` overrides (e.g. a longer
+   * `timeout` for a bulk write like Excel import) — omit for the default
+   * `{ maxWait: 2000, timeout: 5000 }` every other caller relies on.
    */
   async withTenant<T>(
     tenantId: string,
     work: (tx: Prisma.TransactionClient) => Promise<T>,
+    options?: { maxWait?: number; timeout?: number },
   ): Promise<T> {
     return this.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`;
@@ -124,7 +128,7 @@ export class PrismaService
         { ...tenantContext.getStore(), tenantId, rlsTxActive: true },
         () => work(tx),
       );
-    });
+    }, options);
   }
 
   /**
