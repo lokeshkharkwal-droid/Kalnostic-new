@@ -1931,6 +1931,11 @@ export class OrderService {
         .filter(Boolean)
         .join(' '),
       patient_salutation: salutationLabel(p.salutation),
+      // `client_salutation` is a legacy-template alias for the patient's
+      // salutation — "client" and "patient" are the same party on order
+      // documents. Kept as a distinct key so authors of pre-existing templates
+      // that used `{client_salutation}` don't have to re-author them.
+      client_salutation: salutationLabel(p.salutation),
       patient_age: patientAgeDisplay(p.age, p.ageType),
       patient_gender: genderLabel(p.gender),
       patient_um_id: p.umId ?? '',
@@ -1946,17 +1951,27 @@ export class OrderService {
     };
   }
 
-  /** Common referral `{variables}` shared by every order document. */
+  /**
+   * Common referral `{variables}` shared by every order document.
+   *
+   * Both fields fall back to a sensible walk-in default rather than an empty
+   * string, matching the legacy print behaviour: a direct patient with no
+   * referring doctor reads as `Self`, and no referring panel reads as
+   * `Walk-in`. This keeps `{referred_by}`/`{referral_panel}` meaningful on
+   * every order document instead of rendering blank.
+   */
   private referralVariables(
     order: OrderWithRelations,
   ): Record<string, unknown> {
+    const referredBy = order.referredByDoctor
+      ? [order.referredByDoctor.firstName, order.referredByDoctor.lastName]
+          .filter(Boolean)
+          .join(' ')
+          .trim()
+      : '';
     return {
-      referred_by: order.referredByDoctor
-        ? [order.referredByDoctor.firstName, order.referredByDoctor.lastName]
-            .filter(Boolean)
-            .join(' ')
-        : '',
-      referral_panel: order.referralPanel?.name ?? '',
+      referred_by: referredBy || 'Self',
+      referral_panel: order.referralPanel?.name ?? 'Walk-in',
     };
   }
 
@@ -2032,6 +2047,20 @@ export class OrderService {
     });
   }
 
+  /**
+   * Flat `{panel_tests_name}` token — every panel's constituent sub-tests
+   * across the whole order, comma-joined into one string (empty when the order
+   * has no panels). Derived from {@link itemRowsWithPanelTests} rows so the
+   * flat token and the per-row `sections.items[].panel_tests_name` stay in
+   * sync. Shared by every order document that lists items.
+   */
+  private panelTestsNameFlat(rows: Array<Record<string, unknown>>): string {
+    return rows
+      .map((row) => row.panel_tests_name)
+      .filter((name): name is string => Boolean(name))
+      .join(', ');
+  }
+
   /** Summed bill totals across the active payment ledger (minor units). */
   private billTotals(order: OrderWithRelations): {
     gross: number;
@@ -2073,6 +2102,7 @@ export class OrderService {
     tenantId: string,
   ): Promise<GeneratePdfDto> {
     const { dateFormat } = await this.tenantService.getLocale(tenantId);
+    const itemRows = await this.itemRowsWithPanelTests(order);
     return {
       variables: {
         order_code: order.orderCode,
@@ -2082,10 +2112,11 @@ export class OrderService {
         status: order.status,
         branch_name: order.branch?.name ?? '',
         item_count: order.items.length,
+        panel_tests_name: this.panelTestsNameFlat(itemRows),
         ...this.patientVariables(order, dateFormat),
         ...this.referralVariables(order),
       },
-      sections: { items: this.itemRows(order) },
+      sections: { items: itemRows },
     };
   }
 
@@ -2113,16 +2144,25 @@ export class OrderService {
       dateFormat,
       timeFormat,
     );
-    // Who collected the bill — the earliest payment row's `collectedBy` (same
-    // "first payment" convention as `bill_date_time` above), resolved to a
-    // display name. Rows written before this field existed have no value, so
-    // this is only populated going forward — no retroactive backfill possible.
-    const collectorNameById = await this.resolveActorNames([
-      order.payments[0]?.collectedBy,
-    ]);
-    const paymentCollectedBy = order.payments[0]?.collectedBy
-      ? (collectorNameById.get(order.payments[0].collectedBy) ?? '')
+    // Who collected the bill — the first payment-ledger row that actually
+    // recorded a collector (rows written before `collectedBy` existed, or the
+    // zero-value rows of a "Generate Bill = No" order, carry null, so scanning
+    // for the first non-null is more reliable than blindly reading
+    // `payments[0]`). Falls back to the order's creator so the tag still
+    // resolves for older orders whose payments never captured a collector.
+    const collectorId =
+      order.payments.find((p) => p.collectedBy)?.collectedBy ??
+      order.createdBy ??
+      null;
+    const collectorNameById = await this.resolveActorNames([collectorId]);
+    const paymentCollectedBy = collectorId
+      ? (collectorNameById.get(collectorId) ?? '')
       : '';
+    // Item rows resolved once — reused for the flat `{panel_tests_name}` token
+    // (a comma-joined list of every panel's constituent sub-tests across the
+    // order) and for the `sections.items` repeat block below.
+    const itemRows = await this.itemRowsWithPanelTests(order);
+    const panelTestsName = this.panelTestsNameFlat(itemRows);
     return {
       variables: {
         bill_id: order.billId ?? order.orderCode,
@@ -2130,6 +2170,7 @@ export class OrderService {
         order_date: formatTenantDate(order.orderDate, dateFormat),
         bill_date_time: billDateTime,
         payment_collected_by: paymentCollectedBy,
+        panel_tests_name: panelTestsName,
         status: order.status,
         payment_status: order.paymentStatus,
         // Alias for the classic old-template tag name (`{bill_status}`) —
@@ -2148,7 +2189,7 @@ export class OrderService {
         ...this.referralVariables(order),
       },
       sections: {
-        items: await this.itemRowsWithPanelTests(order),
+        items: itemRows,
         payments: order.payments.map((pd) => ({
           date: formatTenantDateTime(
             toBranchLocalInstant(pd.paymentDate ?? order.createdAt, timezone),
@@ -2201,6 +2242,7 @@ export class OrderService {
         order_date: formatTenantDate(order.orderDate, dateFormat),
         clinical_notes: order.orderNotes ?? '',
         branch_name: order.branch?.name ?? '',
+        panel_tests_name: this.panelTestsNameFlat(testRows),
         ...this.patientVariables(order, dateFormat),
         ...this.referralVariables(order),
       },
@@ -2217,6 +2259,7 @@ export class OrderService {
   ): Promise<GeneratePdfDto> {
     const totals = this.billTotals(order);
     const { dateFormat } = await this.tenantService.getLocale(tenantId);
+    const itemRows = await this.itemRowsWithPanelTests(order);
     return {
       variables: {
         quote_id: order.orderCode,
@@ -2229,10 +2272,11 @@ export class OrderService {
         gross_amount: totals.gross,
         discount_amount: totals.discount,
         net_amount: totals.net,
+        panel_tests_name: this.panelTestsNameFlat(itemRows),
         ...this.patientVariables(order, dateFormat),
         ...this.referralVariables(order),
       },
-      sections: { items: this.itemRows(order) },
+      sections: { items: itemRows },
     };
   }
 
