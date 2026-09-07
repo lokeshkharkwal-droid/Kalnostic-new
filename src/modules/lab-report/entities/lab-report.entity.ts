@@ -5,6 +5,7 @@ import {
   LabReportStatus,
   MultiStepProcessType,
   MultiStepStage,
+  ParameterType,
   PaymentStatus,
   Prisma,
   ResultType,
@@ -85,6 +86,21 @@ export interface LabReportResultParam {
   reportingUnit: string | null;
   method: string | null;
   sortOrder: number;
+  /**
+   * Whether this parameter is dynamic/calculated. `CALCULATED` params derive
+   * their value from `calculationFormula` (over other params' entered values)
+   * and are shown disabled + auto-computed on the result-entry grid.
+   */
+  parameterType: ParameterType;
+  /**
+   * The calculation formula (parameter codes + `+ - * / ( )`), when this is a
+   * calculated parameter with a formula defined; otherwise null. The frontend
+   * uses it for a live preview; the backend re-evaluates it authoritatively on
+   * save (see `LabReportService.upsertResultValues`).
+   */
+  calculationFormula: string | null;
+  /** Decimal places for formatting a computed value (mirrors the param config). */
+  decimalPlaces: number;
 }
 
 /** Full detail response: the report plus its (possibly all-null) content
@@ -386,7 +402,12 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
     // Falls through to the pre-breakdown PANEL/TEST/DIRECT resolution below
     // for every other row, including a grandfathered old-style panel report.
     test: row.memberBranchLabTestId
-      ? { id: row.memberBranchLabTestId, name: '', kind: 'TEST', resultType: null }
+      ? {
+          id: row.memberBranchLabTestId,
+          name: '',
+          kind: 'TEST',
+          resultType: null,
+        }
       : branchLabTest
         ? {
             id: branchLabTest.id,

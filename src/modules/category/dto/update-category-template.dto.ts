@@ -4,6 +4,7 @@ import {
   IsArray,
   IsBoolean,
   IsEnum,
+  IsIn,
   IsOptional,
   IsString,
   IsUUID,
@@ -11,6 +12,7 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { MODULE_MAPPING_BRANCH_TYPES } from '../../../common/constants/module-mapping.constant';
 
 /**
  * Partial update for a SITE_ADMIN category template — explicit optional fields
@@ -55,7 +57,7 @@ export class UpdateCategoryTemplateDto {
 
   @IsArray()
   @IsOptional()
-  @IsEnum(BranchType, { each: true })
+  @IsIn(MODULE_MAPPING_BRANCH_TYPES, { each: true })
   @ArrayUnique()
   moduleMapping?: BranchType[];
 }

@@ -21,6 +21,10 @@ import {
   formatReportDateTime,
   formatTenantDate,
   formatTenantDateTime,
+  buildEvaluationOrder,
+  evaluateFormula,
+  formatCalculatedValue,
+  type FormulaParam,
 } from '../../common/utils';
 import { TenantService } from '../tenant/tenant.service';
 import {
@@ -1338,6 +1342,9 @@ export class LabReportService {
         reportingUnit: true,
         method: true,
         sortOrder: true,
+        parameterType: true,
+        calculationFormula: true,
+        decimalPlaces: true,
       },
       orderBy: { sortOrder: 'asc' },
     });
@@ -1482,9 +1489,10 @@ export class LabReportService {
     actorId: string,
   ) {
     const activeBranchId = this.requireBranch(branchId);
-    await this.requireReport(id, tenantId, activeBranchId);
+    const report = await this.requireReport(id, tenantId, activeBranchId);
 
     await this.prisma.withTenant(tenantId, async (tx) => {
+      const now = new Date();
       for (const value of dto.values) {
         await tx.labReportResultValue.upsert({
           where: {
@@ -1504,7 +1512,7 @@ export class LabReportService {
             referenceRangeId: value.referenceRangeId,
             referenceDisplay: value.referenceDisplay,
             source: ResultValueSource.MANUAL,
-            enteredAt: new Date(),
+            enteredAt: now,
             enteredBy: actorId,
           },
           update: {
@@ -1515,7 +1523,7 @@ export class LabReportService {
             referenceRangeId: value.referenceRangeId,
             referenceDisplay: value.referenceDisplay,
             source: ResultValueSource.MANUAL,
-            enteredAt: new Date(),
+            enteredAt: now,
             enteredBy: actorId,
             // The upsert's `where` matches by the labReportId+resultParamId
             // unique key regardless of deletedAt, so a slot that was ever
@@ -1527,6 +1535,27 @@ export class LabReportService {
           },
         });
       }
+
+      // Authoritative recompute of dynamic/calculated parameters. Any calculated
+      // parameter NOT flagged as a manual override in this payload is re-derived
+      // from its formula over the report's current values and stored with
+      // source = CALCULATED (chains evaluate in dependency order).
+      if (report.labTestId) {
+        const overriddenParamIds = new Set(
+          dto.values
+            .filter((v) => v.isManualOverride)
+            .map((v) => v.resultParamId),
+        );
+        await this.recomputeCalculatedValues(
+          tx,
+          id,
+          tenantId,
+          report.labTestId,
+          overriddenParamIds,
+          actorId,
+          now,
+        );
+      }
     });
 
     // findByIdForApi (flat shape), not findById (raw nested) — this is an
@@ -1537,6 +1566,123 @@ export class LabReportService {
     // dormant/harmless — fixed anyway so a future consumer doesn't inherit
     // the same silent-blank-fields bug.
     return this.findByIdForApi(id, tenantId, activeBranchId);
+  }
+
+  /**
+   * Re-derive every dynamic/calculated parameter of a report from its formula
+   * and persist the result with `source = CALCULATED`. Runs inside the caller's
+   * tenant transaction, AFTER the incoming (measured/override) values are saved,
+   * so it evaluates against the report's freshest values.
+   *
+   * Evaluation is in dependency order (a calculated parameter may reference
+   * another calculated parameter). A parameter listed in `overriddenParamIds` is
+   * left untouched (its manual override "sticks") but still feeds downstream
+   * formulas. A formula that cannot be computed yet (a blank/non-numeric input,
+   * or division by zero) blanks the slot rather than failing the save, so
+   * partial result entry stays allowed.
+   *
+   * @param tx the active tenant-scoped Prisma transaction client.
+   * @param labReportId the report whose values are being (re)computed.
+   * @param tenantId the tenant that owns the report.
+   * @param labTestId the report's source lab test (defines the parameters/formulas).
+   * @param overriddenParamIds parameter ids the technician manually overrode this save.
+   * @param actorId the acting user (recorded as `enteredBy`).
+   * @param now the timestamp to stamp on written rows.
+   */
+  private async recomputeCalculatedValues(
+    tx: Prisma.TransactionClient,
+    labReportId: string,
+    tenantId: string,
+    labTestId: string,
+    overriddenParamIds: Set<string>,
+    actorId: string,
+    now: Date,
+  ): Promise<void> {
+    const params = await tx.labTestResultParam.findMany({
+      where: { labTestId, deletedAt: null },
+      select: {
+        id: true,
+        parameterCode: true,
+        parameterType: true,
+        resultType: true,
+        calculationFormula: true,
+        decimalPlaces: true,
+      },
+    });
+
+    const formulaParams: FormulaParam[] = params.map((p) => ({
+      code: p.parameterCode,
+      isCalculated:
+        p.parameterType === 'CALCULATED' ||
+        p.resultType === 'CALCULATED' ||
+        !!p.calculationFormula?.trim(),
+      formula: p.calculationFormula,
+    }));
+    const ordered = buildEvaluationOrder(formulaParams);
+    // A cycle should have been rejected at config time; skip defensively.
+    if (!ordered.ok || ordered.order.length === 0) return;
+
+    const paramByCode = new Map(params.map((p) => [p.parameterCode, p]));
+
+    // Seed the value map from the report's current stored values (measured +
+    // any already-computed values), keyed by parameter code.
+    const existing = await tx.labReportResultValue.findMany({
+      where: { labReportId, tenantId, deletedAt: null },
+      select: { resultParamId: true, observed1: true },
+    });
+    const existingByParamId = new Map(
+      existing.map((v) => [v.resultParamId, v]),
+    );
+    const paramCodeById = new Map(params.map((p) => [p.id, p.parameterCode]));
+    const values: Record<string, number | null> = {};
+    for (const p of params) values[p.parameterCode] = null;
+    for (const v of existing) {
+      const code = paramCodeById.get(v.resultParamId);
+      if (!code) continue;
+      const raw = v.observed1?.trim();
+      const num = raw ? Number(raw) : NaN;
+      values[code] = Number.isFinite(num) ? num : null;
+    }
+
+    for (const code of ordered.order) {
+      const param = paramByCode.get(code);
+      if (!param || !param.calculationFormula) continue;
+      // Respect a manual override: keep the stored value and let it feed
+      // downstream formulas (its numeric value is already in `values`).
+      if (overriddenParamIds.has(param.id)) continue;
+
+      const result = evaluateFormula(param.calculationFormula, values);
+      const computed = result.ok
+        ? formatCalculatedValue(result.value, param.decimalPlaces)
+        : null;
+      values[code] = result.ok ? result.value : null;
+
+      // Skip creating an empty row that never existed — only blank an existing
+      // slot (e.g. a source value was cleared) so partial entry stays clean.
+      if (computed === null && !existingByParamId.has(param.id)) continue;
+
+      await tx.labReportResultValue.upsert({
+        where: {
+          labReportId_resultParamId: { labReportId, resultParamId: param.id },
+        },
+        create: {
+          tenantId,
+          labReportId,
+          resultParamId: param.id,
+          observed1: computed ?? undefined,
+          source: ResultValueSource.CALCULATED,
+          enteredAt: now,
+          enteredBy: actorId,
+        },
+        update: {
+          observed1: computed,
+          source: ResultValueSource.CALCULATED,
+          enteredAt: now,
+          enteredBy: actorId,
+          deletedAt: null,
+        },
+      });
+    }
   }
 
   /**

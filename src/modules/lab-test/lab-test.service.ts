@@ -26,7 +26,10 @@ import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
-import { ValidationException } from '../../common/exceptions/kaltros.exception';
+import {
+  KaltrosException,
+  ValidationException,
+} from '../../common/exceptions/kaltros.exception';
 import { MasterDataService } from '../master-data/master-data.service';
 import { CreateLabTestDto } from './dto/create-lab-test.dto';
 import { UpdateLabTestDto } from './dto/update-lab-test.dto';
@@ -82,13 +85,17 @@ import {
 import { ImportLabTestTemplatesDto } from './dto/import-lab-test-templates.dto';
 import { SyncLabTestTemplatesDto } from './dto/sync-lab-test-templates.dto';
 import {
+  CircularFormulaDependencyException,
+  InvalidFormulaException,
   LabTestCodeConflictException,
   LabTestImportValidationException,
   LabTestNameConflictException,
   LabTestNotFoundException,
   LabTestParamCodeConflictException,
   LabTestSampleRequiredException,
+  UnknownFormulaReferenceException,
 } from './exceptions/lab-test.exceptions';
+import { FormulaParam, validateFormulaSet } from '../../common/utils/formula';
 
 /** Result of a bulk edit: how many lab tests were updated. */
 export interface BulkEditResult {
@@ -268,6 +275,7 @@ export class LabTestService {
       mandatorySubcatId: dto.mandatorySubcatId,
     });
     (dto.resultParams ?? []).forEach((p) => this.assertParam(p));
+    this.assertFormulaSet(dto.resultParams ?? []);
 
     const { samples, resultParams, ...scalars } = dto;
     let createdId: string;
@@ -1143,6 +1151,7 @@ export class LabTestService {
       mandatorySubcatId: dto.mandatorySubcatId,
     });
     (dto.resultParams ?? []).forEach((p) => this.assertParam(p));
+    this.assertFormulaSet(dto.resultParams ?? []);
 
     const { samples, resultParams, ...scalars } = dto;
     const now = new Date();
@@ -1692,6 +1701,7 @@ export class LabTestService {
       repeatIntervalUnit: dto.repeatIntervalUnit ?? null,
     });
     (dto.resultParams ?? []).forEach((p) => this.assertParam(p));
+    this.assertFormulaSet(dto.resultParams ?? []);
 
     const { samples, resultParams, ...scalars } = dto;
     let createdId: string;
@@ -1833,6 +1843,7 @@ export class LabTestService {
         dto.repeatIntervalUnit ?? existing.repeatIntervalUnit ?? null,
     });
     (dto.resultParams ?? []).forEach((p) => this.assertParam(p));
+    this.assertFormulaSet(dto.resultParams ?? []);
 
     const { samples, resultParams, ...scalars } = dto;
     const now = new Date();
@@ -2573,8 +2584,11 @@ export class LabTestService {
     // (from `FIELD_TO_COLUMN_LABEL`) when the error is attributable to one
     // column; omitted for cross-field/structural errors (e.g. "at least one
     // sample is required") that don't name a single column.
-    const skipDetails: { rowLabel: string; column?: string; message: string }[] =
-      [];
+    const skipDetails: {
+      rowLabel: string;
+      column?: string;
+      message: string;
+    }[] = [];
 
     // ── 1. Locate the header row. The reference file's row 1 is entirely
     //        blank and row 2 carries the headers — so the header row is
@@ -2739,7 +2753,10 @@ export class LabTestService {
       const ownTestCode = span.rows[0]!.v[COL.testCode] ?? '';
       for (const row of span.rows.slice(1)) {
         const rowCode = row.v[COL.testCode] ?? '';
-        if (rowCode !== '' && rowCode.toLowerCase() !== ownTestCode.toLowerCase()) {
+        if (
+          rowCode !== '' &&
+          rowCode.toLowerCase() !== ownTestCode.toLowerCase()
+        ) {
           recordError(
             span.rowLabel,
             `Row ${row.rowNum}'s Test Code '${rowCode}' does not match this test's own Test Code '${ownTestCode}' — Test Name may be missing on what was meant to be a new test's row`,
@@ -2791,12 +2808,36 @@ export class LabTestService {
     //        the authority for that) — it's purely an additional, earlier
     //        summary surfaced to the caller. ────────────────────────────────
     const unresolvedClassifications = this.collectUnresolvedClassifications([
-      { column: 'Department', raw: assembled.map((a) => a.dto.departmentId), nameToId: deptNameToId },
-      { column: 'Mandatory for  Department', raw: assembled.map((a) => a.dto.mandatoryDeptId), nameToId: deptNameToId },
-      { column: 'Category', raw: assembled.map((a) => a.dto.categoryId), nameToId: catNameToId },
-      { column: 'Mandatory for Category', raw: assembled.map((a) => a.dto.mandatoryCatId), nameToId: catNameToId },
-      { column: 'Sub Category', raw: assembled.map((a) => a.dto.subCategoryId), nameToId: subcatNameToId },
-      { column: 'Mandatory for Sub-Category', raw: assembled.map((a) => a.dto.mandatorySubcatId), nameToId: subcatNameToId },
+      {
+        column: 'Department',
+        raw: assembled.map((a) => a.dto.departmentId),
+        nameToId: deptNameToId,
+      },
+      {
+        column: 'Mandatory for  Department',
+        raw: assembled.map((a) => a.dto.mandatoryDeptId),
+        nameToId: deptNameToId,
+      },
+      {
+        column: 'Category',
+        raw: assembled.map((a) => a.dto.categoryId),
+        nameToId: catNameToId,
+      },
+      {
+        column: 'Mandatory for Category',
+        raw: assembled.map((a) => a.dto.mandatoryCatId),
+        nameToId: catNameToId,
+      },
+      {
+        column: 'Sub Category',
+        raw: assembled.map((a) => a.dto.subCategoryId),
+        nameToId: subcatNameToId,
+      },
+      {
+        column: 'Mandatory for Sub-Category',
+        raw: assembled.map((a) => a.dto.mandatorySubcatId),
+        nameToId: subcatNameToId,
+      },
     ]);
     for (const { dto, span } of assembled) {
       const nameErrors: { column: string; message: string }[] = [];
@@ -3047,6 +3088,9 @@ export class LabTestService {
       const { samples, resultParams, rowLabel: _rowLabel, ...scalars } = dto;
       const cleanSamples = this.cleanImportSampleDtos(samples);
       const cleanParams = this.cleanImportParamDtos(resultParams);
+      // Validate any calculated-parameter formulas across this test's sheet rows
+      // (a failure records this row as skipped via the batch retry + conflictReason).
+      this.assertFormulaSet(cleanParams ?? []);
       if (matchedId) {
         await tx.labTest.update({ where: { id: matchedId }, data: scalars });
         const where = { labTestId: matchedId, tenantId, deletedAt: null };
@@ -4004,12 +4048,7 @@ export class LabTestService {
           'abnormalFlagLogic',
           v[COL.rangeFlag] ?? '',
         ) as AbnormalFlag | undefined;
-        this.assertImportRangeQuiet(
-          range,
-          range.rowLabel,
-          errors,
-          skipDetails,
-        );
+        this.assertImportRangeQuiet(range, range.rowLabel, errors, skipDetails);
         current.referenceRanges = current.referenceRanges ?? [];
         current.referenceRanges.push(range);
       }
@@ -4586,6 +4625,42 @@ export class LabTestService {
     (p.referenceRanges ?? []).forEach((r) => this.assertRange(r));
   }
 
+  /**
+   * Validate the calculated-parameter formulas across a test's whole parameter
+   * set: syntax, that every referenced code exists in this set and is not the
+   * parameter itself, and that the formulas contain no dependency cycle. A
+   * calculated parameter with no formula is skipped (a formula is optional even
+   * when parameterType is CALCULATED — see {@link assertParam}). References are
+   * scoped to this test only.
+   *
+   * @param params the full result-parameter set being persisted for the test.
+   * @throws InvalidFormulaException on a syntax error or self-reference.
+   * @throws UnknownFormulaReferenceException when a referenced code is unknown.
+   * @throws CircularFormulaDependencyException on a dependency cycle.
+   */
+  private assertFormulaSet(params: LabTestResultParamDto[]): void {
+    const formulaParams: FormulaParam[] = params.map((p) => ({
+      code: p.parameterCode,
+      isCalculated:
+        p.parameterType === ParameterType.CALCULATED ||
+        p.resultType === ResultType.CALCULATED ||
+        !!p.calculationFormula?.trim(),
+      formula: p.calculationFormula,
+    }));
+    const result = validateFormulaSet(formulaParams);
+    if (result.ok) return;
+    switch (result.kind) {
+      case 'SYNTAX':
+        throw new InvalidFormulaException(result.code, 'syntax');
+      case 'SELF_REF':
+        throw new InvalidFormulaException(result.code, 'self');
+      case 'UNKNOWN_REF':
+        throw new UnknownFormulaReferenceException(result.code, result.ref);
+      case 'CYCLE':
+        throw new CircularFormulaDependencyException(result.cycle);
+    }
+  }
+
   /** Validate a numeric reference range's bounds. */
   private assertRange(r: LabTestReferenceRangeDto): void {
     if (
@@ -4654,6 +4729,11 @@ export class LabTestService {
     testName: string,
     testCode: string,
   ): string {
+    // Surface a precise formula-validation message (INVALID_FORMULA, etc.) rather
+    // than the generic fallback when a calculated-parameter formula is rejected.
+    if (e instanceof KaltrosException) {
+      return e.message;
+    }
     if (
       e instanceof Prisma.PrismaClientKnownRequestError &&
       e.code === 'P2002'
