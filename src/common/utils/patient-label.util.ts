@@ -1,4 +1,29 @@
-import { AgeType } from '@prisma/client';
+import { AgeType, Salutation } from '@prisma/client';
+
+/**
+ * Human-readable label for a patient's `Salutation`, for display in print
+ * templates (`{patient_salutation}`) instead of the raw SCREAMING enum (`MR`).
+ * `undefined`/`null` (never set) renders as `''` (no salutation prefix).
+ * Mirrors `genderLabel`'s pattern (`gender-label.util.ts`).
+ */
+export function salutationLabel(
+  salutation: Salutation | null | undefined,
+): string {
+  switch (salutation) {
+    case Salutation.DR:
+      return 'Dr.';
+    case Salutation.MR:
+      return 'Mr.';
+    case Salutation.MRS:
+      return 'Mrs.';
+    case Salutation.MS:
+      return 'Ms.';
+    case Salutation.PROF:
+      return 'Prof.';
+    default:
+      return '';
+  }
+}
 
 /**
  * Patient age with its unit for print templates (`{patient_age}`) — e.g.
