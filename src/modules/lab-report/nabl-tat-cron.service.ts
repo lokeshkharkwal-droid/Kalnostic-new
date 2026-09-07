@@ -131,7 +131,10 @@ export class NablTatCronService {
             where: { deletedAt: null },
             include: {
               orderItem: {
-                include: { branchLabTest: true, labReport: true },
+                include: {
+                  branchLabTest: true,
+                  labReports: { where: { deletedAt: null } },
+                },
               },
             },
           },
@@ -147,31 +150,38 @@ export class NablTatCronService {
           : undefined;
         if (!branch) continue;
         for (const t of sample.tests) {
-          const report = t.orderItem?.labReport;
           const cfg = t.orderItem?.branchLabTest;
-          if (!report || !cfg) continue;
-          if (report.status === LabReportStatus.APPROVED) continue;
-          if (!cfg.processingTimeFrom || !cfg.processingTimeTo) continue;
-          if (candidates.has(report.id)) continue;
-          candidates.set(report.id, {
-            reportId: report.id,
-            report: {
-              isNablTat: report.isNablTat,
-              tatStartAt: report.tatStartAt,
-              tatIsRunning: report.tatIsRunning,
-              tatLastTickAt: report.tatLastTickAt,
-              tatNetMinutes: report.tatNetMinutes,
-            },
-            cfg: {
-              processingTimeFrom: cfg.processingTimeFrom,
-              processingTimeTo: cfg.processingTimeTo,
-              scheduleDays: cfg.scheduleDays,
-              tatMaxValue: cfg.tatMaxValue,
-              tatMaxUnit: cfg.tatMaxUnit,
-            },
-            branchOpen: openByBranch.get(branch.id) ?? false,
-            timezone: branch.timezone,
-          });
+          // `cfg` (branchLabTest) is only ever set for a non-panel item — a
+          // panel OrderItem has branchLabTest null, so this loop already only
+          // ever processes non-panel items, which have at most one report.
+          // Still iterate `labReports` rather than assume a single entry, in
+          // case that invariant ever changes.
+          if (!cfg || !cfg.processingTimeFrom || !cfg.processingTimeTo) {
+            continue;
+          }
+          for (const report of t.orderItem?.labReports ?? []) {
+            if (report.status === LabReportStatus.APPROVED) continue;
+            if (candidates.has(report.id)) continue;
+            candidates.set(report.id, {
+              reportId: report.id,
+              report: {
+                isNablTat: report.isNablTat,
+                tatStartAt: report.tatStartAt,
+                tatIsRunning: report.tatIsRunning,
+                tatLastTickAt: report.tatLastTickAt,
+                tatNetMinutes: report.tatNetMinutes,
+              },
+              cfg: {
+                processingTimeFrom: cfg.processingTimeFrom,
+                processingTimeTo: cfg.processingTimeTo,
+                scheduleDays: cfg.scheduleDays,
+                tatMaxValue: cfg.tatMaxValue,
+                tatMaxUnit: cfg.tatMaxUnit,
+              },
+              branchOpen: openByBranch.get(branch.id) ?? false,
+              timezone: branch.timezone,
+            });
+          }
         }
       }
 
