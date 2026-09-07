@@ -64,7 +64,7 @@ const ORDER_INCLUDE = {
         },
       },
       branchLabPanel: { select: { id: true, panelName: true } },
-      labReport: true,
+      labReports: { where: { deletedAt: null } },
     },
   },
 } satisfies Prisma.OrderInclude;
@@ -238,7 +238,11 @@ export class EmiService {
             ) {
               continue;
             }
-            const report = item.labReport;
+            // `item.branchLabTestId` is set (checked above), so this is never
+            // a panel item — panel items are excluded by the DB CHECK
+            // constraint that makes `branchLabTestId`/`branchLabPanelId`
+            // mutually exclusive, so `labReports` here has at most one entry.
+            const report = item.labReports[0];
             const fillable =
               !report ||
               (FILLABLE_STATUSES.has(report.status) && !report.isLocked);
@@ -420,106 +424,110 @@ export class EmiService {
         const log: EmiReportLog[] = [];
         let updatedCount = 0;
 
+        // Each item now carries one report (non-panel/grandfathered-panel) or
+        // several (one per member test, for a panel created after the
+        // per-member-test breakdown shipped) — loop every report, not just
+        // the first, so a multi-report panel item still gets one log line
+        // and one fill attempt per member test instead of silently only
+        // handling the first.
         for (const item of order.items) {
-          const report = item.labReport;
-          if (!report) {
-            continue; // no reporting row yet (sample not accepted) → nothing to fill
-          }
-          const reportName =
-            item.branchLabTest?.testName ??
-            item.branchLabPanel?.panelName ??
-            '';
-          const base: EmiReportLog = {
-            report_id: report.id,
-            report_name: reportName,
-            status: report.status,
-            before_report_status: report.status,
-            fill_status: '',
-            available_branches: ctx.branchIds,
-            branch_id: order.branchId,
-          };
+          for (const report of item.labReports) {
+            const reportName =
+              item.branchLabTest?.testName ??
+              item.branchLabPanel?.panelName ??
+              '';
+            const base: EmiReportLog = {
+              report_id: report.id,
+              report_name: reportName,
+              status: report.status,
+              before_report_status: report.status,
+              fill_status: '',
+              available_branches: ctx.branchIds,
+              branch_id: order.branchId,
+            };
 
-          // Not fillable (terminal status / locked).
-          if (!FILLABLE_STATUSES.has(report.status) || report.isLocked) {
-            log.push({
-              ...base,
-              fill_status: 'Not filled due to report status is not pending.',
-            });
-            continue;
-          }
+            // Not fillable (terminal status / locked).
+            if (!FILLABLE_STATUSES.has(report.status) || report.isLocked) {
+              log.push({
+                ...base,
+                fill_status: 'Not filled due to report status is not pending.',
+              });
+              continue;
+            }
 
-          // Not one of the adapter's prefered (mapped) tests.
-          if (
-            !item.branchLabTestId ||
-            !ctx.mappedTestIds.has(item.branchLabTestId)
-          ) {
-            log.push({
-              ...base,
-              fill_status: `${reportName} Not in prefered test list`,
-            });
-            continue;
-          }
+            // Not one of the adapter's prefered (mapped) tests.
+            if (
+              !item.branchLabTestId ||
+              !ctx.mappedTestIds.has(item.branchLabTestId)
+            ) {
+              log.push({
+                ...base,
+                fill_status: `${reportName} Not in prefered test list`,
+              });
+              continue;
+            }
 
-          const params = await this.resolveParams(tx, report.labTestId, item);
-          const matches = this.matchValues(
-            params,
-            submitted,
-            item.branchLabTest,
-          );
-          if (matches.length === 0) {
-            log.push({
-              ...base,
-              fill_status: 'No matching result value for this report',
-            });
-            continue;
-          }
+            const params = await this.resolveParams(tx, report.labTestId, item);
+            const matches = this.matchValues(
+              params,
+              submitted,
+              item.branchLabTest,
+            );
+            if (matches.length === 0) {
+              log.push({
+                ...base,
+                fill_status: 'No matching result value for this report',
+              });
+              continue;
+            }
 
-          for (const match of matches) {
-            await tx.labReportResultValue.upsert({
-              where: {
-                labReportId_resultParamId: {
+            for (const match of matches) {
+              await tx.labReportResultValue.upsert({
+                where: {
+                  labReportId_resultParamId: {
+                    labReportId: report.id,
+                    resultParamId: match.resultParamId,
+                  },
+                },
+                create: {
+                  tenantId: adapter.tenantId,
                   labReportId: report.id,
                   resultParamId: match.resultParamId,
+                  observed1: match.value,
+                  unit: match.unit,
+                  source: ResultValueSource.ADAPTER,
+                  enteredAt,
+                  enteredBy: adapter.id,
                 },
-              },
-              create: {
-                tenantId: adapter.tenantId,
-                labReportId: report.id,
-                resultParamId: match.resultParamId,
-                observed1: match.value,
-                unit: match.unit,
-                source: ResultValueSource.ADAPTER,
-                enteredAt,
-                enteredBy: adapter.id,
-              },
-              update: {
-                observed1: match.value,
-                unit: match.unit,
-                source: ResultValueSource.ADAPTER,
-                enteredAt,
-                enteredBy: adapter.id,
-                deletedAt: null,
+                update: {
+                  observed1: match.value,
+                  unit: match.unit,
+                  source: ResultValueSource.ADAPTER,
+                  enteredAt,
+                  enteredBy: adapter.id,
+                  deletedAt: null,
+                },
+              });
+            }
+
+            await tx.labReport.update({
+              where: { id: report.id },
+              data: {
+                status: LabReportStatus.SAVED,
+                savedAt: now,
+                savedBy: adapter.id,
               },
             });
-          }
 
-          await tx.labReport.update({
-            where: { id: report.id },
-            data: {
+            updatedCount += 1;
+            filledReportIds.push(report.id);
+            filledOrderCode = order.orderCode;
+            log.push({
+              ...base,
               status: LabReportStatus.SAVED,
-              savedAt: now,
-              savedBy: adapter.id,
-            },
-          });
-
-          updatedCount += 1;
-          filledReportIds.push(report.id);
-          filledOrderCode = order.orderCode;
-          log.push({
-            ...base,
-            status: LabReportStatus.SAVED,
-            fill_status: 'Report filled',
-          });
+              fill_status: 'Report filled',
+            });
+          }
         }
 
         const reportLog = {

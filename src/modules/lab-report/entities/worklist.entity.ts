@@ -101,6 +101,10 @@ export interface WorklistReportContext {
     orderCode: string;
     orderDate: Date;
     orderTime: string | null;
+    /** When the order was actually placed (DB-guaranteed, `@default(now())`)
+     * — used as this worklist's "Order creation date & time" display instead
+     * of `orderTime`, which is a manually-typed, optional backdating field. */
+    createdAt: Date;
     billingType: BillingType;
     paymentStatus: PaymentStatus;
   } | null;
@@ -170,6 +174,7 @@ export function toWorklistReportContext(
           orderCode: order.orderCode,
           orderDate: order.orderDate,
           orderTime: order.orderTime,
+          createdAt: order.createdAt,
           billingType: order.billingType,
           paymentStatus: order.paymentStatus,
         }

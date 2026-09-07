@@ -1,0 +1,58 @@
+meta {
+  name: 30 Create Test Patient
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/patients
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+headers {
+  content-type: application/json
+}
+
+script:pre-request {
+  // Unique mobile/email/umId each run (phone/email are globally unique; umId is
+  // required because this branch's Registration Setting has no auto UMID format).
+  const rnd = String(Math.floor(100000000 + Math.random() * 899999999));
+  const stamp = String(Date.now());
+  bru.setEnvVar("rndMobile", "9" + rnd.slice(0, 9));
+  bru.setEnvVar("rndEmail", "tagtest" + stamp + "@example.com");
+  bru.setEnvVar("rndUmid", "UM" + stamp);
+}
+
+body:json {
+  {
+    "salutation": "MR",
+    "firstName": "TagTest",
+    "lastName": "Patient",
+    "gender": "MALE",
+    "age": 30,
+    "ageType": "YEARS",
+    "umId": "{{rndUmid}}",
+    "mobile": "{{rndMobile}}",
+    "email": "{{rndEmail}}",
+    "whatsappNumber": "{{rndMobile}}"
+  }
+}
+
+script:post-response {
+  const d = res.getBody() && res.getBody().data;
+  if (d && d.id) bru.setEnvVar("npatientId", d.id);
+}
+
+docs {
+  Creates a fresh patient in priya's tenant WITH email + mobile + whatsapp, so
+  the EMAIL/SMS/WhatsApp notifications have an address and a CommunicationLog row
+  is created. salutation=MR exercises {client_salutation}. Captures {{npatientId}}.
+  Mobile/email are randomised per run to avoid the global-unique constraint.
+  If you'd rather target an existing patient, set {{npatientId}} manually and
+  skip this request (ensure that patient has an email).
+}

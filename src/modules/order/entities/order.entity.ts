@@ -129,30 +129,56 @@ const REPORT_APPROVED_STATUSES: readonly LabReportStatus[] = [
 
 /**
  * Derive an order's {@link OrderReportStatus} from the reporting state of its
- * tests. Each active item (test) is 1:1 with a `LabReport`; a test with no
- * report yet, or whose report has not reached `RESULT_DONE`, is treated as
- * "not yet reported" (the accession stages Accept/Acquire/Store fall here).
+ * tests, counted per **report** (not per billed line/`OrderItem`). Each
+ * active item now has one OR SEVERAL `LabReport`s — a non-panel/
+ * grandfathered-panel item still has exactly one, but a panel item created
+ * after the per-member-test breakdown shipped has one per member test.
  *
- * - `APPROVED` — every test reached Approved/Published.
- * - `COMPLETED` — every test reached Result Done, but not all are Approved.
- * - `PARTIALLY_COMPLETED` — at least one test reached Result Done, but not all did.
- * - `PENDING` — no test reached Result Done (or the order has no items).
+ * Counting per report (not per item) means a panel's member tests can move
+ * the order into `PARTIALLY_COMPLETED` as each one individually finishes,
+ * the same way separate standalone tests on a multi-item order already did —
+ * previously an item only counted as "done" once EVERY one of its reports
+ * was, so a partially-finished panel stayed invisible as `PENDING` right up
+ * until its very last member test finished.
  *
- * @param items the order's active items, each with its optional `labReport.status`
+ * An item with zero reports yet (not accepted in Accession, so no `LabReport`
+ * exists) still blocks `COMPLETED`/`APPROVED` — it's treated as one
+ * not-yet-done unit in the denominator, same as before this change, so an
+ * order can't read "Completed" while one of its items hasn't even reached
+ * Accession's Accept step. It contributes nothing to `doneCount`, only to the
+ * total, mirroring `REPORT_DONE_STATUSES`'s all-or-nothing per-unit rule.
+ *
+ * - `APPROVED` — every report on the order reached Approved/Published, and
+ *   every item has at least one report.
+ * - `COMPLETED` — every report reached Result Done (same item-coverage rule),
+ *   but not all are Approved.
+ * - `PARTIALLY_COMPLETED` — at least one report reached Result Done, but not
+ *   every report/item has.
+ * - `PENDING` — no report reached Result Done (or the order has no items/reports).
+ *
+ * @param items the order's active items, each with its `labReports[].status`
  */
 export function deriveReportStatus(
-  items: { labReport: { status: LabReportStatus } | null }[],
+  items: { labReports: { status: LabReportStatus }[] }[],
 ): OrderReportStatus {
   if (items.length === 0) return 'PENDING';
-  let doneCount = 0;
-  let approvedCount = 0;
-  for (const item of items) {
-    const status = item.labReport?.status;
-    if (status && REPORT_DONE_STATUSES.includes(status)) doneCount++;
-    if (status && REPORT_APPROVED_STATUSES.includes(status)) approvedCount++;
-  }
-  if (approvedCount === items.length) return 'APPROVED';
-  if (doneCount === items.length) return 'COMPLETED';
+  // Total "units": every report that exists, PLUS one placeholder unit for
+  // each item that has none yet (not accepted) — so a not-yet-accepted item
+  // still counts toward the denominator without contributing a done/approved
+  // report, exactly like before this change.
+  const totalUnits = items.reduce(
+    (n, item) => n + Math.max(item.labReports.length, 1),
+    0,
+  );
+  const reports = items.flatMap((item) => item.labReports);
+  const doneCount = reports.filter((r) =>
+    REPORT_DONE_STATUSES.includes(r.status),
+  ).length;
+  const approvedCount = reports.filter((r) =>
+    REPORT_APPROVED_STATUSES.includes(r.status),
+  ).length;
+  if (approvedCount === totalUnits) return 'APPROVED';
+  if (doneCount === totalUnits) return 'COMPLETED';
   if (doneCount >= 1) return 'PARTIALLY_COMPLETED';
   return 'PENDING';
 }
@@ -394,10 +420,12 @@ export const ORDER_LIST_INCLUDE = {
       branchLabPanel: {
         select: { id: true, panelName: true, panelCode: true },
       },
-      // Reporting progress of this test's report (1:1 LabReport, created lazily
-      // once a linked sample is accepted). Absent until then — that's a
-      // "not yet reported" test. Drives the order-level `reportStatus`.
-      labReport: { select: { status: true } },
+      // Reporting progress of this test's report(s) — one LabReport for a
+      // non-panel/grandfathered-panel item, or several (one per member test)
+      // for a panel item created after the per-member-test breakdown shipped.
+      // Created lazily once a linked sample is accepted; empty until then —
+      // that's a "not yet reported" test. Drives the order-level `reportStatus`.
+      labReports: { where: { deletedAt: null }, select: { status: true } },
     },
   },
   diagnostics: {

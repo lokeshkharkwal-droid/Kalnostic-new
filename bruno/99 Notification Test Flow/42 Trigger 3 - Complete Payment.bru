@@ -1,0 +1,38 @@
+meta {
+  name: 42 Trigger 3 - Complete Payment
+  type: http
+  seq: 17
+}
+
+post {
+  url: {{baseUrl}}/payments
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+headers {
+  content-type: application/json
+}
+
+body:json {
+  {
+    "orderId": "{{norderId}}",
+    "paidAmount": 500,
+    "paymentMode": "UPI"
+  }
+}
+
+docs {
+  ▶ Fires `payment.received` → complete_payment_for_lab_order_inform_patient.
+  Pays the remaining 500 (running total 1000 = net), so the order becomes fully
+  PAID and the COMPLETE feature is selected. Expect {amount} = 500.00,
+  balance_amount = 0.00.
+
+  Same tenant-wide resolution note as request 41 applies (payment templates are
+  resolved at tenant level; edit them as a business_admin to render the tag body
+  on a tenant that already has its own templates).
+}

@@ -459,9 +459,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS lab_test_param_code_siteadmin_unique
   ON lab_test_result_params (lab_test_id, parameter_code)
   WHERE deleted_at IS NULL AND tenant_id IS NULL;
 
+-- chk_lab_test_param_calc_formula intentionally removed (2026-09-05): a
+-- Calculated parameter no longer requires a formula to be saved, in Add Test,
+-- Import, or the database. Kept as a DROP-only line so re-running this file
+-- against a database that still has the old constraint cleans it up.
 ALTER TABLE lab_test_result_params DROP CONSTRAINT IF EXISTS chk_lab_test_param_calc_formula;
-ALTER TABLE lab_test_result_params ADD CONSTRAINT chk_lab_test_param_calc_formula
-  CHECK (parameter_type != 'CALCULATED' OR calculation_formula IS NOT NULL);
 ALTER TABLE lab_test_result_params DROP CONSTRAINT IF EXISTS chk_lab_test_param_decimals;
 ALTER TABLE lab_test_result_params ADD CONSTRAINT chk_lab_test_param_decimals
   CHECK (decimal_places BETWEEN 0 AND 6);

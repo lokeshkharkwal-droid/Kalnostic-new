@@ -3098,10 +3098,12 @@ export class OrderService {
       }
     }
     if (query.reportStatus) {
-      // Per-test reporting progress, mirrored from `deriveReportStatus`. A test
-      // has "reached done" once its LabReport is RESULT_DONE/APPROVED/PUBLISHED,
-      // and "reached approved" at APPROVED/PUBLISHED. Expressed as some/none over
-      // active items (not `every`, which can't exclude soft-deleted items).
+      // Per-REPORT reporting progress, mirrored from the report-counting
+      // `deriveReportStatus` (not per-item — a panel item now has one
+      // LabReport per member test, and a single member test finishing should
+      // be visible as PARTIALLY_COMPLETED, the same way a separate standalone
+      // test finishing already was, rather than requiring every member test
+      // on that one panel item to finish first).
       const doneStatuses: LabReportStatus[] = [
         LabReportStatus.RESULT_DONE,
         LabReportStatus.APPROVED,
@@ -3111,39 +3113,56 @@ export class OrderService {
         LabReportStatus.APPROVED,
         LabReportStatus.PUBLISHED,
       ];
-      // An active item that has NOT reached done: no report yet, or report below done.
+      // An active item that has NOT reached done: no report yet, or at least
+      // one of its (possibly several, for a panel) reports is below done.
       const notReachedDone: Prisma.OrderItemWhereInput = {
         deletedAt: null,
         OR: [
-          { labReport: { is: null } },
-          { labReport: { is: { status: { notIn: doneStatuses } } } },
+          { labReports: { none: {} } },
+          { labReports: { some: { status: { notIn: doneStatuses } } } },
         ],
       };
       // An active item that has NOT reached approved.
       const notApproved: Prisma.OrderItemWhereInput = {
         deletedAt: null,
         OR: [
-          { labReport: { is: null } },
-          { labReport: { is: { status: { notIn: approvedStatuses } } } },
+          { labReports: { none: {} } },
+          { labReports: { some: { status: { notIn: approvedStatuses } } } },
         ],
       };
+      // An active item that HAS reached done: at least one report exists, and
+      // every one of them is done (mirrors `deriveReportStatus`'s COMPLETED/
+      // APPROVED "every report on the order" rule, applied one item at a time
+      // — equivalent when checked across ALL items via `none: notReachedDone`).
       const reachedDone: Prisma.OrderItemWhereInput = {
         deletedAt: null,
-        labReport: { is: { status: { in: doneStatuses } } },
+        labReports: { some: {} },
+        NOT: { labReports: { some: { status: { notIn: doneStatuses } } } },
+      };
+      // An active item with AT LEAST ONE done report — not requiring every
+      // report on the item to be done. This is the piece `reachedDone` above
+      // doesn't cover: it lets a single finished member test of a
+      // multi-member panel item register as "some progress exists" for
+      // PARTIALLY_COMPLETED, without that item needing to be fully done.
+      const hasADoneReport: Prisma.OrderItemWhereInput = {
+        deletedAt: null,
+        labReports: { some: { status: { in: doneStatuses } } },
       };
       switch (query.reportStatus) {
         case 'PENDING':
-          // Has items, none has reached done.
+          // Has items, and no item has even one done report.
           and.push({ items: { some: { deletedAt: null } } });
-          and.push({ items: { none: reachedDone } });
+          and.push({ items: { none: hasADoneReport } });
           break;
         case 'PARTIALLY_COMPLETED':
-          // At least one reached done and at least one has not.
-          and.push({ items: { some: reachedDone } });
+          // At least one report anywhere is done, and at least one item has
+          // not fully finished yet (either no report, or a not-fully-done
+          // panel item, or an entirely untouched item).
+          and.push({ items: { some: hasADoneReport } });
           and.push({ items: { some: notReachedDone } });
           break;
         case 'COMPLETED':
-          // Every active item reached done, but not all are approved.
+          // Every active item fully reached done, but not all are approved.
           and.push({ items: { some: { deletedAt: null } } });
           and.push({ items: { none: notReachedDone } });
           and.push({ items: { some: notApproved } });
