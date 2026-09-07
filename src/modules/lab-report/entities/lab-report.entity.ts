@@ -177,11 +177,25 @@ export interface LabReportWorklistRow {
    * service can resolve result types with one batched query per page. */
   labTestId: string | null;
 
+  /** `LabReport.memberBranchLabTestId` — set when this row is one member
+   * test's report from a panel order item created after the per-member-test
+   * breakdown shipped (a `BranchLabTest.id`, logical ref). Null for a
+   * non-panel report, or a grandfathered pre-breakdown panel report. Not
+   * itself a display field — the lookup key `attachMemberTestNames` uses to
+   * resolve `test.name`/`kind` for a panel-member row (same batched-lookup
+   * treatment as `branchId`/`departmentId` above). */
+  memberBranchLabTestId: string | null;
+
   order: {
     id: string;
     orderCode: string;
     orderDate: Date;
     orderTime: string | null;
+    /** When the order was actually placed (DB-guaranteed, `@default(now())`)
+     * — used as the worklist's "Order creation date & time" display instead
+     * of `orderTime`, which is a manually-typed, optional backdating field
+     * (often left blank) rather than a real creation timestamp. */
+    createdAt: Date;
     billingType: BillingType;
     paymentStatus: PaymentStatus;
   } | null;
@@ -317,6 +331,7 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
     department: null,
 
     labTestId: row.labTestId,
+    memberBranchLabTestId: row.memberBranchLabTestId,
 
     order: order
       ? {
@@ -324,6 +339,7 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
           orderCode: order.orderCode,
           orderDate: order.orderDate,
           orderTime: order.orderTime,
+          createdAt: order.createdAt,
           billingType: order.billingType,
           paymentStatus: order.paymentStatus,
         }
@@ -363,28 +379,36 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
       ? { id: referralPanel.id, name: referralPanel.name }
       : null,
 
-    test: branchLabTest
-      ? {
-          id: branchLabTest.id,
-          name: branchLabTest.testName,
-          kind: 'TEST',
-          resultType: null,
-        }
-      : branchLabPanel
+    // A panel-member row (`memberBranchLabTestId` set) displays as its own
+    // TEST, not as the parent PANEL — placeholder name here, filled in by
+    // `attachMemberTestNames` (a real DB lookup, same batched treatment as
+    // `branch`/`department` above; `toWorklistRow` itself makes no queries).
+    // Falls through to the pre-breakdown PANEL/TEST/DIRECT resolution below
+    // for every other row, including a grandfathered old-style panel report.
+    test: row.memberBranchLabTestId
+      ? { id: row.memberBranchLabTestId, name: '', kind: 'TEST', resultType: null }
+      : branchLabTest
         ? {
-            id: branchLabPanel.id,
-            name: branchLabPanel.panelName,
-            kind: 'PANEL',
+            id: branchLabTest.id,
+            name: branchLabTest.testName,
+            kind: 'TEST',
             resultType: null,
           }
-        : row.orderItem?.direct
+        : branchLabPanel
           ? {
-              id: row.orderItem.id,
-              name: row.orderItem.direct,
-              kind: 'DIRECT',
+              id: branchLabPanel.id,
+              name: branchLabPanel.panelName,
+              kind: 'PANEL',
               resultType: null,
             }
-          : null,
+          : row.orderItem?.direct
+            ? {
+                id: row.orderItem.id,
+                name: row.orderItem.direct,
+                kind: 'DIRECT',
+                resultType: null,
+              }
+            : null,
 
     orderItemId: row.orderItemId,
     sampleStatuses: [],
