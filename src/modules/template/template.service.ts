@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import {
   ApplicableBranchType,
   MessageType,
@@ -50,6 +50,8 @@ export interface TemplateLookupRow {
  */
 @Injectable()
 export class TemplateService {
+  private readonly logger = new Logger(TemplateService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly branchService: BranchService,
@@ -313,7 +315,12 @@ export class TemplateService {
   }
 
   /**
-   * Update a global (SITE_ADMIN) template.
+   * Update a global (SITE_ADMIN) template, then AUTO RE-SYNC its content to every
+   * tenant clone (`clonedFromId = id`) so businesses that already enabled it pick
+   * up the edit — clones are otherwise a one-time snapshot (see
+   * {@link cloneToTenant}) that delivery prefers over the global. Only the
+   * CONTENT / delivery-format fields are propagated; the tenant keeps control of
+   * its own activation flags (`isActive`/`isDefault`/`isEnabled`/`level`/scope).
    * @param id template id
    * @param dto partial update
    * @param actorId siteadmin id for the audit trail (optional)
@@ -329,7 +336,80 @@ export class TemplateService {
     if (actorId !== undefined) {
       data.updatedBy = actorId;
     }
-    return this.prisma.template.update({ where: { id }, data });
+    const updated = await this.prisma.template.update({ where: { id }, data });
+    await this.syncClonesFromGlobal(id, dto, actorId);
+    return updated;
+  }
+
+  /**
+   * Propagate a global template's edited CONTENT to all of its tenant clones.
+   * Clones are RLS-scoped rows across many tenants and the connection role has no
+   * RLS bypass, so this enumerates tenants and runs one scoped `updateMany` per
+   * tenant inside `withTenant` (most affect 0 rows; global edits are infrequent
+   * admin actions). Best-effort per tenant — a single tenant's failure is logged
+   * and does not block the others or the (already-committed) global update. Only
+   * content/format keys present in the DTO are copied; `isActive`/`isDefault`/
+   * `isEnabled`/`level` and scope (`tenantId`/`branchId`/`clonedFromId`) are NOT
+   * touched so each tenant keeps its own enablement.
+   */
+  private async syncClonesFromGlobal(
+    globalId: string,
+    dto: UpdateTemplateDto,
+    actorId?: string,
+  ): Promise<void> {
+    const data: Prisma.TemplateUpdateManyMutationInput = {};
+    if (dto.preference !== undefined) data.preference = dto.preference;
+    if (dto.feature !== undefined) data.feature = dto.feature;
+    if (dto.displayTitle !== undefined) data.displayTitle = dto.displayTitle;
+    if (dto.messageType !== undefined) data.messageType = dto.messageType;
+    if (dto.specificApplication !== undefined) {
+      data.specificApplication = dto.specificApplication;
+    }
+    if (dto.applicableBranchType !== undefined) {
+      data.applicableBranchType = dto.applicableBranchType;
+    }
+    if (dto.entityId !== undefined) data.entityId = dto.entityId;
+    if (dto.entityType !== undefined) data.entityType = dto.entityType;
+    if (dto.smsTemplateId !== undefined) data.smsTemplateId = dto.smsTemplateId;
+    if (dto.smsSenderId !== undefined) data.smsSenderId = dto.smsSenderId;
+    if (dto.smsType !== undefined) data.smsType = dto.smsType;
+    if (dto.template !== undefined) data.template = dto.template;
+    if (dto.templateType !== undefined) data.templateType = dto.templateType;
+    if (dto.templateCategory !== undefined) {
+      data.templateCategory = dto.templateCategory;
+    }
+    if (dto.fileName !== undefined) data.fileName = dto.fileName;
+
+    // Nothing content-ish changed (e.g. only activation flags were edited).
+    if (Object.keys(data).length === 0) return;
+    if (actorId !== undefined) data.updatedBy = actorId;
+
+    const tenants = await this.prisma.tenant.findMany({
+      where: { deletedAt: null },
+      select: { id: true },
+    });
+    let synced = 0;
+    for (const { id: tenantId } of tenants) {
+      try {
+        const res = await this.prisma.withTenant(tenantId, (tx) =>
+          tx.template.updateMany({
+            where: { clonedFromId: globalId, tenantId, deletedAt: null },
+            data,
+          }),
+        );
+        synced += res.count;
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.error(
+          `Clone re-sync failed for global ${globalId} in tenant ${tenantId}: ${message}`,
+        );
+      }
+    }
+    if (synced > 0) {
+      this.logger.log(
+        `Re-synced ${synced} tenant clone(s) from global template ${globalId}`,
+      );
+    }
   }
 
   /**
@@ -545,10 +625,16 @@ export class TemplateService {
     if (filters.preference) where.preference = filters.preference;
     if (filters.feature) where.feature = filters.feature;
     if (filters.messageType) where.messageType = filters.messageType;
-    // `not` on a nullable column also matches NULL rows in Prisma, so
-    // untyped templates are correctly kept in the non-marketing tabs.
+    // Exclude one message type while KEEPING untyped (NULL) rows. Prisma's
+    // `{ not: value }` compiles to `message_type <> value`, and in SQL
+    // `NULL <> value` is UNKNOWN — so a bare `not` silently drops every
+    // template with no message type (the editor leaves it optional). The
+    // explicit OR restores those NULL rows to the SMS/Email/WhatsApp tabs.
     if (filters.messageTypeNot) {
-      where.messageType = { not: filters.messageTypeNot };
+      where.OR = [
+        { messageType: { not: filters.messageTypeNot } },
+        { messageType: null },
+      ];
     }
     if (filters.clonedFromIds?.length) {
       where.clonedFromId = { in: filters.clonedFromIds };
