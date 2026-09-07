@@ -1,28 +1,40 @@
 #!/usr/bin/env bash
-# Deploy kalnostics-new (NestJS backend) on this server: pull, build, verify, restart.
+# Deploy kalnostics-new (NestJS backend) on this server: pull, build, migrate, restart.
 #
 # Same rationale as kaltros-fe/scripts/deploy.sh: this droplet is low on RAM
 # and a build can be OOM-killed partway through, leaving dist/ incomplete.
 # This script keeps the last known-good dist/ around and only ever leaves a
 # verified build in place.
 #
-# DB migrations are opt-in (--with-migrations) and are NOT rolled back
-# automatically — a schema change can't be undone by restoring an old dist/,
-# so treat that step as a deliberate, separate decision each deploy.
+# DB migrations ALWAYS run before restart — there is no --with-migrations
+# opt-out anymore. A backend restarted on a stale schema 500s on every
+# endpoint touching a migrated table/column (2026-09-06 incident: 7 unapplied
+# migrations took down /orders, /accession/settings, etc. for who knows how
+# long because a deploy skipped this step). Migrations are NOT rolled back
+# automatically if a later step fails, so a failed migration aborts the
+# deploy outright — pm2 is never restarted onto a half-migrated schema.
+#
+# Migrations run with an OWNER-level credential (MIGRATE_DATABASE_URL from
+# .env.migrate, chmod 600, gitignored, never read by the app itself) because
+# the app's own DATABASE_URL (kalnostics_app) is an intentionally
+# least-privileged, non-owner role for RLS (see .env.example) — it has no
+# CREATE on schema public and doesn't own the tables, so it cannot run DDL.
 set -euo pipefail
 
 REPO_DIR="/opt/kalnostics/kalnostics-new"
 BRANCH="main"
-RUN_MIGRATIONS=false
 for arg in "$@"; do
   case "$arg" in
-    --with-migrations) RUN_MIGRATIONS=true ;;
+    --with-migrations)
+      echo "NOTE: --with-migrations is a no-op now — migrations always run. Ignoring." >&2
+      ;;
     *) BRANCH="$arg" ;;
   esac
 done
 PM2_APP="kalnostics-backend"
 DIST="$REPO_DIR/dist"
 DIST_BAK="$REPO_DIR/dist.bak"
+MIGRATE_ENV_FILE="$REPO_DIR/.env.migrate"
 
 cd "$REPO_DIR"
 
@@ -72,15 +84,29 @@ if [[ ! -f "$DIST/src/main.js" ]]; then
   exit 1
 fi
 
-if [[ "$RUN_MIGRATIONS" == true ]]; then
-  echo "==> Applying database migrations (prisma migrate deploy)"
-  echo "    NOTE: migrations are not rolled back automatically if a later step fails." >&2
-  pnpm exec prisma migrate deploy
-else
-  echo "==> Skipping migrations (pass --with-migrations to apply pending prisma migrations)"
+echo "==> Applying database migrations (prisma migrate deploy)"
+if [[ ! -f "$MIGRATE_ENV_FILE" ]]; then
+  echo "ERROR: $MIGRATE_ENV_FILE not found — refusing to deploy without applying migrations." >&2
+  echo "    Create it (chmod 600) with:  MIGRATE_DATABASE_URL=<owner-role connection string>" >&2
+  restore_backup
+  exit 1
+fi
+# shellcheck disable=SC1090
+set -a; source "$MIGRATE_ENV_FILE"; set +a
+if [[ -z "${MIGRATE_DATABASE_URL:-}" ]]; then
+  echo "ERROR: MIGRATE_DATABASE_URL is not set in $MIGRATE_ENV_FILE." >&2
+  restore_backup
+  exit 1
+fi
+if ! DATABASE_URL="$MIGRATE_DATABASE_URL" pnpm exec prisma migrate deploy; then
+  echo "ERROR: migration failed — aborting deploy WITHOUT restarting pm2." >&2
+  echo "    The running app is untouched (still the old dist/). Resolve the migration" >&2
+  echo "    (https://pris.ly/d/migrate-resolve) before retrying the deploy." >&2
+  restore_backup
+  exit 1
 fi
 
-echo "==> Build verified. Restarting pm2 app: $PM2_APP"
+echo "==> Build verified, migrations applied. Restarting pm2 app: $PM2_APP"
 pm2 restart "$PM2_APP"
 
 echo "==> Health-checking the app"
@@ -96,9 +122,8 @@ done
 
 if [[ "$ok" != true ]]; then
   echo "ERROR: app did not come up healthy after restart — rolling back dist/." >&2
-  if [[ "$RUN_MIGRATIONS" == true ]]; then
-    echo "    WARNING: migrations were applied above and are still in place — check DB/code compatibility manually." >&2
-  fi
+  echo "    WARNING: migrations were already applied above and are NOT rolled back —" >&2
+  echo "    check DB/code compatibility manually before redeploying." >&2
   restore_backup
   pm2 restart "$PM2_APP"
   exit 1

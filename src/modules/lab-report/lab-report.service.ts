@@ -2026,6 +2026,16 @@ export class LabReportService {
         order_id_qr_code: order.orderIdQrCode ?? '',
         sample_note: sampleNote?.body ?? '',
       },
+      // Backs the `{{image:ID}}` tokens for the same three image-valued
+      // fields above — `TemplateRenderService.interpolateImages` resolves
+      // those tokens against this map only (never against `variables`), so
+      // without these entries the tags render blank regardless of template
+      // or environment.
+      images: {
+        report_approved_by_signature: approver?.signatureImage ?? '',
+        patient_image: patient.photoUrl ?? '',
+        order_id_qr_code: order.orderIdQrCode ?? '',
+      },
       sections: { results },
       signatories,
     };
