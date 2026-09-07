@@ -1,0 +1,34 @@
+meta {
+  name: 43 Discover Lab Report
+  type: http
+  seq: 18
+}
+
+get {
+  url: {{baseUrl}}/lab-reports?patientId={{npatientId}}&limit=20
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  const d = res.getBody() && res.getBody().data;
+  const rows = (d && (d.data || d)) || [];
+  // Prefer a report that is APPROVED (ready to publish), else the first one.
+  const approved = rows.find && rows.find((r) => r.status === 'APPROVED');
+  const pick = approved || (rows[0] || null);
+  if (pick && pick.id) bru.setEnvVar("nlabReportId", pick.id);
+}
+
+docs {
+  Finds a LabReport for the test patient and captures {{nlabReportId}}.
+
+  NOTE: the free-text ("direct") order created above has NO lab reports, so this
+  list will be EMPTY for that order. To test scenarios 4 & 5 you need an order
+  with REAL catalogue lab tests whose reports have been taken through the
+  reporting workflow (results → save → submit → validate → approve). Point this
+  at such an order/patient, e.g. change the query to
+  `?orderId=<an-order-with-reports>&status=APPROVED`, then run request 44.
+}

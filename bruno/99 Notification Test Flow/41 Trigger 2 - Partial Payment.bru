@@ -1,0 +1,40 @@
+meta {
+  name: 41 Trigger 2 - Partial Payment
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{baseUrl}}/payments
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+headers {
+  content-type: application/json
+}
+
+body:json {
+  {
+    "orderId": "{{norderId}}",
+    "paidAmount": 400,
+    "paymentMode": "CASH"
+  }
+}
+
+docs {
+  ▶ Fires `payment.received` → partial_payment_for_lab_order_inform_patient.
+  Pays 400 (running total 500 of 1000), so the order stays partially paid and
+  the PARTIAL feature is selected. Expect {amount} = 400.00,
+  balance_amount = 500.00.
+
+  NOTE (tenants that already have their own templates, e.g. priya): payment
+  events dispatch tenant-wide (branchId = null), so they resolve to the tenant's
+  existing tenant-level template, NOT the branch-level clone from request 24.
+  To make THIS template render the tag body you must edit the tenant-level
+  partial-payment template as a business_admin (see folder docs).
+}

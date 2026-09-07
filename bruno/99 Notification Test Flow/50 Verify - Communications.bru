@@ -1,0 +1,29 @@
+meta {
+  name: 50 Verify - Communications
+  type: http
+  seq: 20
+}
+
+get {
+  url: {{baseUrl}}/communications?page=1&limit=25
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  ✅ VERIFY. Lists the tenant's CommunicationLog rows (most recent first). Each
+  triggered notification created a row per deliverable channel; for EMAIL the
+  resolved HTML is stored verbatim in the `body` field, so you can read every
+  `label: value` line and confirm which tags resolved (and which are correctly
+  blank — password, and phlebo_detail unless it was a home-visit order).
+
+  The row is created even if the outbound Exchange gateway is not configured
+  (status stays PENDING), so this works for pure tag verification. WhatsApp rows
+  instead carry a positional `templateParams` array.
+
+  Tip: eyeball the newest 5 rows — one each for create-order, partial payment,
+  complete payment, report published, order completed.
+}

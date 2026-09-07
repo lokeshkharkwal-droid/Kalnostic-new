@@ -1,0 +1,19 @@
+meta {
+  name: 22 Enable-Clone - Order Completed
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/templates/global/{{tplGlobalOrderCompletedId}}/clone
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Clones the global order-completed template into priya's tenant. Idempotent.
+}

@@ -1,0 +1,19 @@
+meta {
+  name: 23 Enable-Clone - Complete Payment
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/templates/global/{{tplGlobalCompletePaymentId}}/clone
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Clones the global complete-payment template into priya's tenant. Idempotent.
+}
