@@ -90,6 +90,7 @@ import { FinancePaymentsModule } from './modules/finance-payments/finance-paymen
 import { CommunicationModule } from './modules/communication/communication.module';
 import { EmiModule } from './modules/emi/emi.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
+import { B2bModuleGuard } from './common/guards/b2b-module.guard';
 
 /**
  * Root application module. Wires global infrastructure (config, events,
@@ -203,6 +204,11 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     // Global business authentication. SiteAdmin routes use @Public() + their
     // own SiteAdminPermissionGuard instead.
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    // Endpoint allow-list for B2B Referring Panel sessions (no-op for every other
+    // role). Declared after JwtAuthGuard so `req.user` is populated. The per-panel
+    // data scope itself is stashed by TenantContextInterceptor (guards run before
+    // interceptors, so the AsyncLocalStorage store only exists at that stage).
+    { provide: APP_GUARD, useClass: B2bModuleGuard },
     // Establishes the per-request tenant context (AsyncLocalStorage) from the
     // JWT so the Prisma RLS extension can scope queries. Runs after the guard.
     { provide: APP_INTERCEPTOR, useClass: TenantContextInterceptor },
