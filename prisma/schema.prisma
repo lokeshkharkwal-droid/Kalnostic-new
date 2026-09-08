@@ -1411,6 +1411,11 @@ model UserBranchProfile {
   revokedAt  DateTime? @map("revoked_at")
   revokedBy  String?   @map("revoked_by")
 
+  // B2B Referral Panel login: the panel this profile's user is scoped to.
+  // Non-null only for `b2b_referring_panel` profiles; null for all others.
+  referralPanelId String?        @map("referral_panel_id")
+  referralPanel   ReferralPanel? @relation(fields: [referralPanelId], references: [id])
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -1419,6 +1424,7 @@ model UserBranchProfile {
   @@index([personId])
   @@index([branchId])
   @@index([authRoleId])
+  @@index([referralPanelId])
   @@map("user_branch_profiles")
 }
 
@@ -4024,6 +4030,8 @@ model ReferralPanel {
 
   /// Orders billed to this referral (B2B) panel.
   orders Order[]
+  /// The dedicated B2B login profile(s) scoped to this panel (1:1 in practice).
+  userProfiles UserBranchProfile[]
 
   /// Source referring_panels.id from the legacy EzHealthTrack MySQL database,
   /// kept for idempotent data migration + traceability. Unique per tenant among
