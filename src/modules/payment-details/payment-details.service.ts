@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { OrderStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
+import { getReferralPanelId } from '../../prisma/tenant-context';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import {
   derivePaymentStatus,
@@ -31,6 +33,21 @@ import {
  * filter `{ tenantId, deletedAt: null }`; writes run in `withTenant`
  * transactions. Payments can also be created inline via the order create API.
  */
+/**
+ * Force a B2B panel filter onto a PaymentDetails `where` via the parent order.
+ * @param where the Prisma PaymentDetailsWhereInput being built (mutated in place)
+ * @param panelId the active B2B panel id, or undefined for non-B2B sessions
+ */
+export function applyB2bPaymentOrderScope(
+  where: Record<string, unknown>,
+  panelId: string | undefined,
+): void {
+  if (!panelId) return;
+  const order = (where.order as Record<string, unknown> | undefined) ?? {};
+  order.referralPanelId = panelId;
+  where.order = order;
+}
+
 @Injectable()
 export class PaymentDetailsService {
   constructor(
@@ -203,6 +220,18 @@ export class PaymentDetailsService {
     if (!row) {
       throw new PaymentDetailsNotFoundException(id);
     }
+    // B2B Referral Panel isolation: the payment's parent order must belong to the
+    // active panel (blocks reading another panel's payment by id).
+    const panelId = getReferralPanelId();
+    if (panelId) {
+      const parent = await this.prisma.order.findFirst({
+        where: { id: row.orderId, tenantId, deletedAt: null },
+        select: { referralPanelId: true },
+      });
+      if (!parent || parent.referralPanelId !== panelId) {
+        throw new ReferralPanelAccessDeniedException('payment', id);
+      }
+    }
     return mapPaymentDetails(row);
   }
 
@@ -225,6 +254,8 @@ export class PaymentDetailsService {
     if (query.orderId) {
       where.orderId = query.orderId;
     }
+    // B2B Referral Panel isolation: constrain to the panel's orders.
+    applyB2bPaymentOrderScope(where as Record<string, unknown>, getReferralPanelId());
     const [data, total] = await Promise.all([
       this.prisma.paymentDetails.findMany({
         where,
