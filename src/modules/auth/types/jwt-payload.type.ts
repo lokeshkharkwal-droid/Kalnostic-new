@@ -26,6 +26,12 @@ export interface JwtPayload {
   is_patient: boolean;
   /** Platform MRN — null if never registered as a patient. */
   platform_mrn: string | null;
+  /**
+   * The referral panel this session is scoped to — set only when
+   * `active_profile_key === 'b2b_referring_panel'`, null otherwise. Drives the
+   * B2B data-isolation guard.
+   */
+  referral_panel_id: string | null;
   /** Standard JWT — issued at (Unix seconds). */
   iat?: number;
   /** Standard JWT — expiry (Unix seconds). */
