@@ -2932,6 +2932,8 @@ export class LabTestService {
           categoryId: instance.categoryId,
           subCategoryId: instance.subCategoryId,
           mandatoryDeptId: instance.mandatoryDeptId,
+          mandatoryCatId: instance.mandatoryCatId,
+          mandatorySubcatId: instance.mandatorySubcatId,
         });
         this.assertImportSamples(instance.samples);
         for (const p of instance.resultParams ?? []) {
@@ -4643,7 +4645,6 @@ export class LabTestService {
       code: p.parameterCode,
       isCalculated:
         p.parameterType === ParameterType.CALCULATED ||
-        p.resultType === ResultType.CALCULATED ||
         !!p.calculationFormula?.trim(),
       formula: p.calculationFormula,
     }));

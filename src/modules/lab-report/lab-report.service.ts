@@ -871,7 +871,8 @@ export class LabReportService {
    * Resolves the real Accession sample-lifecycle status (and sample id, for
    * the Sample Overview action — ACCESSION.docx §A.10.4/§B.9's already-built
    * `GET /accession/samples/:id`, reused as-is rather than duplicated here)
-   * for the worklist's Sample Status column — the client's requirement that
+   * for the worklist's Sample Status column, plus the sample's barcode for
+   * the worklist's Barcode column — the client's requirement that
    * "the technician should be able to see all the statuses from both
    * modules" (view-only; this attaches no permission to change them —
    * enforcement is a separate, not-yet-built piece; see the module's own
@@ -909,26 +910,27 @@ export class LabReportService {
       select: {
         orderItemId: true,
         labTestId: true,
-        sample: { select: { id: true, status: true } },
+        sample: { select: { id: true, status: true, barcode: true } },
       },
     });
 
     // Group by orderItemId first (every sample of the item — the fallback for
     // a non-panel/grandfathered row), and separately by
     // (orderItemId, labTestId) for the precise per-member-test scoping.
-    const byOrderItem = new Map<string, Map<string, SampleStatus>>();
-    const byOrderItemAndTest = new Map<string, Map<string, SampleStatus>>();
+    type SampleInfo = { status: SampleStatus; barcode: string | null };
+    const byOrderItem = new Map<string, Map<string, SampleInfo>>();
+    const byOrderItemAndTest = new Map<string, Map<string, SampleInfo>>();
     for (const { orderItemId, labTestId, sample } of sampleTests) {
-      const item =
-        byOrderItem.get(orderItemId) ?? new Map<string, SampleStatus>();
-      item.set(sample.id, sample.status);
+      const info: SampleInfo = { status: sample.status, barcode: sample.barcode };
+      const item = byOrderItem.get(orderItemId) ?? new Map<string, SampleInfo>();
+      item.set(sample.id, info);
       byOrderItem.set(orderItemId, item);
 
       if (labTestId) {
         const key = `${orderItemId}:${labTestId}`;
         const scoped =
-          byOrderItemAndTest.get(key) ?? new Map<string, SampleStatus>();
-        scoped.set(sample.id, sample.status);
+          byOrderItemAndTest.get(key) ?? new Map<string, SampleInfo>();
+        scoped.set(sample.id, info);
         byOrderItemAndTest.set(key, scoped);
       }
     }
@@ -942,7 +944,8 @@ export class LabReportService {
       return {
         ...row,
         sampleIds: entries.map(([sampleId]) => sampleId),
-        sampleStatuses: entries.map(([, status]) => status),
+        sampleStatuses: entries.map(([, info]) => info.status),
+        sampleBarcodes: entries.map(([, info]) => info.barcode),
       };
     });
   }
@@ -1002,6 +1005,26 @@ export class LabReportService {
       statuses.map((s, i) => [s, counts[i]]),
     ) as Record<LabReportStatus, number>;
 
+    // Source pill counts (ALL/IN_HOUSE/OUTSOURCE) — same idea as the status
+    // counts above: strip the source-related filters (the pill itself, plus
+    // the standalone "Outsource" checkbox, since both set isOutsourced) so
+    // the In-House/Outsource split reflects every OTHER active filter, not
+    // whichever source pill happens to be selected right now.
+    const sourceBaseWhere = this.buildListWhere(tenantId, resolvedBranchId, {
+      ...filters,
+      status: undefined,
+      source: undefined,
+      outsource: undefined,
+    });
+    const [inHouse, outsource] = await Promise.all([
+      this.prisma.labReport.count({
+        where: { ...sourceBaseWhere, isOutsourced: false },
+      }),
+      this.prisma.labReport.count({
+        where: { ...sourceBaseWhere, isOutsourced: true },
+      }),
+    ]);
+
     return {
       all,
       pending: byStatus.PENDING,
@@ -1013,6 +1036,7 @@ export class LabReportService {
       published: byStatus.PUBLISHED,
       errorReported: byStatus.ERROR_REPORTED,
       resultRejected: byStatus.RESULT_REJECTED,
+      bySource: { inHouse, outsource },
     };
   }
 
@@ -1613,9 +1637,7 @@ export class LabReportService {
     const formulaParams: FormulaParam[] = params.map((p) => ({
       code: p.parameterCode,
       isCalculated:
-        p.parameterType === 'CALCULATED' ||
-        p.resultType === 'CALCULATED' ||
-        !!p.calculationFormula?.trim(),
+        p.parameterType === 'CALCULATED' || !!p.calculationFormula?.trim(),
       formula: p.calculationFormula,
     }));
     const ordered = buildEvaluationOrder(formulaParams);

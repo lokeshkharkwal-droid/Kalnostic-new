@@ -525,7 +525,7 @@ enum ReportType {
 enum ResultType {
   QUANTITATIVE
   QUALITATIVE
-  CALCULATED
+  SEMI_QUANTITATIVE
 }
 
 /// Whether a parameter is measured directly or computed from a formula.
