@@ -1,0 +1,22 @@
+meta {
+  name: Get Referral Panel User
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/referral-panels/{{referralPanelId}}/user
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Fetch the referral panel's dedicated B2B login user, or `null` if none exists
+  yet. Drives the create-vs-edit state of the "Create Referral Panel User" button
+  on the branch-admin referral page. Uses `referralPanelId` captured by a Create
+  Referral Panel request.
+}

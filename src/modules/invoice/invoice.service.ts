@@ -7,6 +7,8 @@ import {
   Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
+import { getReferralPanelId } from '../../prisma/tenant-context';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { OrderService } from '../order/order.service';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
@@ -61,6 +63,37 @@ interface ResolvedParty {
  * {@link OrderService} (via DI, rule #3) so an invoice's amount matches the
  * Outstanding report exactly. Completion rule = "Invoice Amount Only".
  */
+/**
+ * Force a B2B panel filter onto an invoice `where`: only B2B-party invoices for
+ * this panel.
+ * @param where the Prisma InvoiceWhereInput being built (mutated in place)
+ * @param panelId the active B2B panel id, or undefined for non-B2B sessions
+ */
+export function applyB2bInvoiceScope(
+  where: Record<string, unknown>,
+  panelId: string | undefined,
+): void {
+  if (panelId) {
+    where.partyType = InvoicePartyType.B2B;
+    where.partyId = panelId;
+  }
+}
+
+/**
+ * Assert an invoice is a B2B-party invoice billing the active panel.
+ * @param invoice fetched invoice (needs `id`, `partyType`, `partyId`)
+ * @param panelId the active B2B panel id, or undefined for non-B2B sessions
+ */
+export function assertInvoicePanelOwnership(
+  invoice: { id: string; partyType: InvoicePartyType; partyId: string | null },
+  panelId: string | undefined,
+): void {
+  if (!panelId) return;
+  if (invoice.partyType !== InvoicePartyType.B2B || invoice.partyId !== panelId) {
+    throw new ReferralPanelAccessDeniedException('invoice', invoice.id);
+  }
+}
+
 @Injectable()
 export class InvoiceService {
   constructor(
@@ -315,6 +348,8 @@ export class InvoiceService {
     if (!invoice) {
       throw new InvoiceNotFoundException(id);
     }
+    // B2B Referral Panel isolation: block reading another panel's invoice by id.
+    assertInvoicePanelOwnership(invoice, getReferralPanelId());
     return invoice;
   }
 
@@ -694,6 +729,9 @@ export class InvoiceService {
     if (branchId) where.branchId = branchId;
     if (query.invoiceType) where.partyType = query.invoiceType;
     if (query.partyId) where.partyId = query.partyId;
+    // B2B Referral Panel isolation: force partyType=B2B + this panel (overrides
+    // any client-supplied invoiceType/partyId for a B2B session).
+    applyB2bInvoiceScope(where as Record<string, unknown>, getReferralPanelId());
     if (query.paymentStatus) where.paymentStatus = query.paymentStatus;
     if (query.dueStatus) where.dueStatus = query.dueStatus;
     if (query.dateFrom || query.dateTo) {

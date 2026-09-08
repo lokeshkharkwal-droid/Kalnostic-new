@@ -3,9 +3,11 @@ import { PrismaModule } from '../../prisma/prisma.module';
 import { BranchModule } from '../branch/branch.module';
 import { ReferralListModule } from '../referral-list/referral-list.module';
 import { ReferralPanelSettingsModule } from '../referral-panel-settings/referral-panel-settings.module';
+import { UsersModule } from '../users/users.module';
 import { ReferralPanelController } from './referral-panel.controller';
 import { ReferralPanelOptionsController } from './referral-panel-options.controller';
 import { ReferralPanelService } from './referral-panel.service';
+import { ReferralPanelUserService } from './referral-panel-user.service';
 
 /**
  * Referral-panel feature module. Tenant-scoped, tenant-level (CLAUDE.md §4.6).
@@ -21,9 +23,10 @@ import { ReferralPanelService } from './referral-panel.service';
     BranchModule,
     ReferralListModule,
     ReferralPanelSettingsModule,
+    UsersModule,
   ],
   controllers: [ReferralPanelOptionsController, ReferralPanelController],
-  providers: [ReferralPanelService],
+  providers: [ReferralPanelService, ReferralPanelUserService],
   exports: [ReferralPanelService],
 })
 export class ReferralPanelModule {}

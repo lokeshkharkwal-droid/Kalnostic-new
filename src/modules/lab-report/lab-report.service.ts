@@ -12,6 +12,8 @@ import {
   SampleStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
+import { getReferralPanelId } from '../../prisma/tenant-context';
 import {
   genderLabel,
   salutationLabel,
@@ -114,6 +116,37 @@ import { TatService } from './tat.service';
  * once a sample is accepted — see `ensureCreatedForAcceptedItem` — not at raw
  * order/order-item creation.
  */
+/**
+ * Force a B2B panel filter onto a LabReport `where` via orderItem.order.
+ * @param where the Prisma LabReportWhereInput being built (mutated in place)
+ * @param panelId the active B2B panel id, or undefined for non-B2B sessions
+ */
+export function applyB2bLabReportScope(
+  where: Record<string, unknown>,
+  panelId: string | undefined,
+): void {
+  if (!panelId) return;
+  const orderItem = (where.orderItem as Record<string, unknown> | undefined) ?? {};
+  const order = (orderItem.order as Record<string, unknown> | undefined) ?? {};
+  order.referralPanelId = panelId;
+  orderItem.order = order;
+  where.orderItem = orderItem;
+}
+
+/**
+ * Assert a report traces (orderItem → order) to the active B2B panel.
+ * @param report fetched report (needs `id` + `orderItem.order.referralPanelId`)
+ * @param panelId the active B2B panel id, or undefined for non-B2B sessions
+ */
+export function assertLabReportPanelOwnership(
+  report: { id: string; orderItem: { order: { referralPanelId: string | null } } },
+  panelId: string | undefined,
+): void {
+  if (panelId && report.orderItem.order.referralPanelId !== panelId) {
+    throw new ReferralPanelAccessDeniedException('lab-report', report.id);
+  }
+}
+
 @Injectable()
 export class LabReportService {
   constructor(
@@ -425,6 +458,10 @@ export class LabReportService {
       ];
     }
     if (Object.keys(orderItem).length > 0) where.orderItem = orderItem;
+
+    // B2B Referral Panel isolation: constrain reports to the panel's orders
+    // (nested via orderItem.order). Runs last so it merges with any filters above.
+    applyB2bLabReportScope(where as Record<string, unknown>, getReferralPanelId());
 
     // Source pill (ALL/IN_HOUSE/OUTSOURCE) is wired above via LabReport.isOutsourced.
     // Home Collection is wired above via OrderDiagnostics.isHomeVisit (a
@@ -871,7 +908,8 @@ export class LabReportService {
    * Resolves the real Accession sample-lifecycle status (and sample id, for
    * the Sample Overview action — ACCESSION.docx §A.10.4/§B.9's already-built
    * `GET /accession/samples/:id`, reused as-is rather than duplicated here)
-   * for the worklist's Sample Status column — the client's requirement that
+   * for the worklist's Sample Status column, plus the sample's barcode for
+   * the worklist's Barcode column — the client's requirement that
    * "the technician should be able to see all the statuses from both
    * modules" (view-only; this attaches no permission to change them —
    * enforcement is a separate, not-yet-built piece; see the module's own
@@ -909,26 +947,27 @@ export class LabReportService {
       select: {
         orderItemId: true,
         labTestId: true,
-        sample: { select: { id: true, status: true } },
+        sample: { select: { id: true, status: true, barcode: true } },
       },
     });
 
     // Group by orderItemId first (every sample of the item — the fallback for
     // a non-panel/grandfathered row), and separately by
     // (orderItemId, labTestId) for the precise per-member-test scoping.
-    const byOrderItem = new Map<string, Map<string, SampleStatus>>();
-    const byOrderItemAndTest = new Map<string, Map<string, SampleStatus>>();
+    type SampleInfo = { status: SampleStatus; barcode: string | null };
+    const byOrderItem = new Map<string, Map<string, SampleInfo>>();
+    const byOrderItemAndTest = new Map<string, Map<string, SampleInfo>>();
     for (const { orderItemId, labTestId, sample } of sampleTests) {
-      const item =
-        byOrderItem.get(orderItemId) ?? new Map<string, SampleStatus>();
-      item.set(sample.id, sample.status);
+      const info: SampleInfo = { status: sample.status, barcode: sample.barcode };
+      const item = byOrderItem.get(orderItemId) ?? new Map<string, SampleInfo>();
+      item.set(sample.id, info);
       byOrderItem.set(orderItemId, item);
 
       if (labTestId) {
         const key = `${orderItemId}:${labTestId}`;
         const scoped =
-          byOrderItemAndTest.get(key) ?? new Map<string, SampleStatus>();
-        scoped.set(sample.id, sample.status);
+          byOrderItemAndTest.get(key) ?? new Map<string, SampleInfo>();
+        scoped.set(sample.id, info);
         byOrderItemAndTest.set(key, scoped);
       }
     }
@@ -942,7 +981,8 @@ export class LabReportService {
       return {
         ...row,
         sampleIds: entries.map(([sampleId]) => sampleId),
-        sampleStatuses: entries.map(([, status]) => status),
+        sampleStatuses: entries.map(([, info]) => info.status),
+        sampleBarcodes: entries.map(([, info]) => info.barcode),
       };
     });
   }
@@ -1002,6 +1042,26 @@ export class LabReportService {
       statuses.map((s, i) => [s, counts[i]]),
     ) as Record<LabReportStatus, number>;
 
+    // Source pill counts (ALL/IN_HOUSE/OUTSOURCE) — same idea as the status
+    // counts above: strip the source-related filters (the pill itself, plus
+    // the standalone "Outsource" checkbox, since both set isOutsourced) so
+    // the In-House/Outsource split reflects every OTHER active filter, not
+    // whichever source pill happens to be selected right now.
+    const sourceBaseWhere = this.buildListWhere(tenantId, resolvedBranchId, {
+      ...filters,
+      status: undefined,
+      source: undefined,
+      outsource: undefined,
+    });
+    const [inHouse, outsource] = await Promise.all([
+      this.prisma.labReport.count({
+        where: { ...sourceBaseWhere, isOutsourced: false },
+      }),
+      this.prisma.labReport.count({
+        where: { ...sourceBaseWhere, isOutsourced: true },
+      }),
+    ]);
+
     return {
       all,
       pending: byStatus.PENDING,
@@ -1013,6 +1073,7 @@ export class LabReportService {
       published: byStatus.PUBLISHED,
       errorReported: byStatus.ERROR_REPORTED,
       resultRejected: byStatus.RESULT_REJECTED,
+      bySource: { inHouse, outsource },
     };
   }
 
@@ -1109,6 +1170,14 @@ export class LabReportService {
       include: LAB_REPORT_DETAIL_INCLUDE,
     });
     if (!report) throw new LabReportNotFoundException(id);
+    // B2B Referral Panel isolation: block reading another panel's report by id.
+    assertLabReportPanelOwnership(
+      report as {
+        id: string;
+        orderItem: { order: { referralPanelId: string | null } };
+      },
+      getReferralPanelId(),
+    );
 
     const [contentSections, resultParams] = await Promise.all([
       this.getContentSections(tenantId, report.labTestId),
@@ -1613,9 +1682,7 @@ export class LabReportService {
     const formulaParams: FormulaParam[] = params.map((p) => ({
       code: p.parameterCode,
       isCalculated:
-        p.parameterType === 'CALCULATED' ||
-        p.resultType === 'CALCULATED' ||
-        !!p.calculationFormula?.trim(),
+        p.parameterType === 'CALCULATED' || !!p.calculationFormula?.trim(),
       formula: p.calculationFormula,
     }));
     const ordered = buildEvaluationOrder(formulaParams);
