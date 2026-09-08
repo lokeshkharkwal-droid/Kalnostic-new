@@ -183,12 +183,23 @@ export class LabReportService {
    * entry, or a branch-only test with no tenant `LabTest` source) — those
    * reports simply have no catalogue-driven content sections/reference ranges
    * to resolve against.
+   *
+   * `onlyMemberLabTestId` (from `OrderSampleTest.labTestId`) scopes a PANEL
+   * item's report creation to the one member test the just-accepted sample
+   * physically serves — each panel member test has its own independent
+   * `OrderSample`, so without this, accepting one member's sample would
+   * create reports for every member in the panel at once, including members
+   * whose own sample is still uncollected. Left `null`/omitted for a non-panel
+   * item (no effect there) or a caller with no per-sample member test to
+   * scope to — in which case every member's report is created, matching the
+   * historical behaviour.
    */
   async ensureCreatedForAcceptedItem(
     tenantId: string,
     orderItemId: string,
     tx?: Prisma.TransactionClient,
     acceptedBy?: string | null,
+    onlyMemberLabTestId?: string | null,
   ): Promise<void> {
     if (tx) {
       await this.createReportForAcceptedItem(
@@ -196,6 +207,7 @@ export class LabReportService {
         tenantId,
         orderItemId,
         acceptedBy,
+        onlyMemberLabTestId,
       );
       return;
     }
@@ -205,6 +217,7 @@ export class LabReportService {
         tenantId,
         orderItemId,
         acceptedBy,
+        onlyMemberLabTestId,
       ),
     );
   }
@@ -246,6 +259,7 @@ export class LabReportService {
     tenantId: string,
     orderItemId: string,
     acceptedBy?: string | null,
+    onlyMemberLabTestId?: string | null,
   ): Promise<void> {
     const orderItem = await tx.orderItem.findFirst({
       where: { id: orderItemId, tenantId, deletedAt: null },
@@ -300,10 +314,19 @@ export class LabReportService {
       // idempotency guarantee moves from the DB's old single-column @unique
       // to this explicit check, since (orderItemId, memberBranchLabTestId) is
       // now the composite unique key.
-      const memberTests = await this.panelMemberBranchLabTests(
+      let memberTests = await this.panelMemberBranchLabTests(
         tx,
         orderItem.branchLabPanelId,
       );
+      // Scope to the one member test the accepted sample actually serves —
+      // each panel member has its own independent OrderSample, so creating
+      // reports for the other members here would be premature (their own
+      // sample hasn't been accepted yet).
+      if (onlyMemberLabTestId) {
+        memberTests = memberTests.filter(
+          (m) => m.sourceLabTestId === onlyMemberLabTestId,
+        );
+      }
       for (const member of memberTests) {
         if (existingMemberIds.has(member.id)) continue;
         await createOne(member.sourceLabTestId, member.id);
