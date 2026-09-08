@@ -194,6 +194,13 @@ export class FinancePaymentsService {
     tenantId: string,
     query: FinancePaymentsSummaryQueryDto,
   ): Promise<FinancePaymentsSummary> {
+    // B2B Referral Panel isolation: the summary cards/counts/totals must be
+    // scoped to the active panel too (mirrors findAll). Both base-where builders
+    // already honour query.referralPanelId.
+    const panelId = getReferralPanelId();
+    if (panelId) {
+      query.referralPanelId = panelId;
+    }
     await this.assertBranch(tenantId, query.branchId);
 
     const useDirect = query.type !== 'INVOICE';

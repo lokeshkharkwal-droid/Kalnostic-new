@@ -202,6 +202,18 @@ describe('B2B referral-panel isolation (e2e)', () => {
     expect(res.status).toBe(403);
   });
 
+  it('allows the print-template endpoints (so printing works)', async () => {
+    if (!ready) return;
+    const list = await request(app.getHttpServer())
+      .get('/api/v1/pdf-report-templates?type=bill_print&status=ACTIVE')
+      .set(auth());
+    expect(list.status).toBe(200);
+    const config = await request(app.getHttpServer())
+      .get('/api/v1/pdf-report-templates/config')
+      .set(auth());
+    expect(config.status).toBe(200);
+  });
+
   it('403s on a real disallowed module endpoint (B2bModuleGuard)', async () => {
     if (!ready) return;
     // Must target a route that actually exists — NestJS global guards only run on
