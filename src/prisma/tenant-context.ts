@@ -19,6 +19,12 @@ export interface TenantContextStore {
    * of opening another transaction.
    */
   rlsTxActive?: boolean;
+  /**
+   * The referral panel the current request is scoped to — set by `B2bScopeGuard`
+   * only for B2B Referring Panel sessions. Read by order/invoice/payment/report
+   * services to force per-panel isolation.
+   */
+  referralPanelId?: string;
 }
 
 /** The shared async-context store for the current request's tenant. */
@@ -27,4 +33,9 @@ export const tenantContext = new AsyncLocalStorage<TenantContextStore>();
 /** The active tenant id for the current async context, if any. */
 export function getTenantId(): string | undefined {
   return tenantContext.getStore()?.tenantId;
+}
+
+/** The referral panel id for the current async context, if any (B2B sessions). */
+export function getReferralPanelId(): string | undefined {
+  return tenantContext.getStore()?.referralPanelId;
 }

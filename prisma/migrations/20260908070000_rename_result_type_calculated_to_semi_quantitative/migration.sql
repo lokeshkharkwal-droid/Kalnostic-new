@@ -1,0 +1,15 @@
+-- `ResultType.CALCULATED` was never a real, reachable value: the Add Test UI's
+-- Result Type dropdown only ever offered Quantitative/Qualitative/
+-- Semi-quantitative, and "Semi-quantitative" was silently mapped to the same
+-- backend value as Quantitative (see labTestMapping.ts RESULT_TYPE map) —
+-- meaning a Semi-Quantitative test was indistinguishable from a true
+-- Quantitative one and always redisplayed as "Quantitative" after saving.
+-- `CALCULATED` itself was only reachable via the Excel import column mapper,
+-- had zero real rows in production (`labTestResultParam.resultType` groupBy
+-- confirmed 0 CALCULATED, 1240 QUANTITATIVE, 18 QUALITATIVE), and every
+-- backend check for it (`assertFormulaSet` in lab-test.service.ts and
+-- lab-report.service.ts) was already a dead defensive OR-branch alongside the
+-- real signal (`parameterType === CALCULATED` / a non-empty formula).
+-- Renaming the enum value directly to `SEMI_QUANTITATIVE` gives
+-- Semi-Quantitative a real, distinct, correctly round-tripping backend value.
+ALTER TYPE "ResultType" RENAME VALUE 'CALCULATED' TO 'SEMI_QUANTITATIVE';

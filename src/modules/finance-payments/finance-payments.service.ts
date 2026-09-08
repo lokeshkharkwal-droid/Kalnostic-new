@@ -8,6 +8,7 @@ import {
   Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { getReferralPanelId } from '../../prisma/tenant-context';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { toNum } from '../../common/utils/decimal-to-number.util';
 import { roundToTwoDecimalPlaces } from '../../common/utils/round-to-two-decimal-places.util';
@@ -112,6 +113,13 @@ export class FinancePaymentsService {
   ): Promise<PaginatedResult<PaymentLedgerItem>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
+    // B2B Referral Panel isolation: a B2B session may only ever see its own
+    // panel's ledger, regardless of any client-supplied filter. Both
+    // directBaseWhere and invoiceBaseWhere already honour query.referralPanelId.
+    const panelId = getReferralPanelId();
+    if (panelId) {
+      query.referralPanelId = panelId;
+    }
     await this.assertBranch(tenantId, query.branchId);
 
     const useDirect = query.type !== 'INVOICE';

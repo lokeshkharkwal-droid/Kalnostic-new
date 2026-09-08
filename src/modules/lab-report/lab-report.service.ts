@@ -12,6 +12,8 @@ import {
   SampleStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
+import { getReferralPanelId } from '../../prisma/tenant-context';
 import {
   genderLabel,
   salutationLabel,
@@ -114,6 +116,37 @@ import { TatService } from './tat.service';
  * once a sample is accepted — see `ensureCreatedForAcceptedItem` — not at raw
  * order/order-item creation.
  */
+/**
+ * Force a B2B panel filter onto a LabReport `where` via orderItem.order.
+ * @param where the Prisma LabReportWhereInput being built (mutated in place)
+ * @param panelId the active B2B panel id, or undefined for non-B2B sessions
+ */
+export function applyB2bLabReportScope(
+  where: Record<string, unknown>,
+  panelId: string | undefined,
+): void {
+  if (!panelId) return;
+  const orderItem = (where.orderItem as Record<string, unknown> | undefined) ?? {};
+  const order = (orderItem.order as Record<string, unknown> | undefined) ?? {};
+  order.referralPanelId = panelId;
+  orderItem.order = order;
+  where.orderItem = orderItem;
+}
+
+/**
+ * Assert a report traces (orderItem → order) to the active B2B panel.
+ * @param report fetched report (needs `id` + `orderItem.order.referralPanelId`)
+ * @param panelId the active B2B panel id, or undefined for non-B2B sessions
+ */
+export function assertLabReportPanelOwnership(
+  report: { id: string; orderItem: { order: { referralPanelId: string | null } } },
+  panelId: string | undefined,
+): void {
+  if (panelId && report.orderItem.order.referralPanelId !== panelId) {
+    throw new ReferralPanelAccessDeniedException('lab-report', report.id);
+  }
+}
+
 @Injectable()
 export class LabReportService {
   constructor(
@@ -150,12 +183,23 @@ export class LabReportService {
    * entry, or a branch-only test with no tenant `LabTest` source) — those
    * reports simply have no catalogue-driven content sections/reference ranges
    * to resolve against.
+   *
+   * `onlyMemberLabTestId` (from `OrderSampleTest.labTestId`) scopes a PANEL
+   * item's report creation to the one member test the just-accepted sample
+   * physically serves — each panel member test has its own independent
+   * `OrderSample`, so without this, accepting one member's sample would
+   * create reports for every member in the panel at once, including members
+   * whose own sample is still uncollected. Left `null`/omitted for a non-panel
+   * item (no effect there) or a caller with no per-sample member test to
+   * scope to — in which case every member's report is created, matching the
+   * historical behaviour.
    */
   async ensureCreatedForAcceptedItem(
     tenantId: string,
     orderItemId: string,
     tx?: Prisma.TransactionClient,
     acceptedBy?: string | null,
+    onlyMemberLabTestId?: string | null,
   ): Promise<void> {
     if (tx) {
       await this.createReportForAcceptedItem(
@@ -163,6 +207,7 @@ export class LabReportService {
         tenantId,
         orderItemId,
         acceptedBy,
+        onlyMemberLabTestId,
       );
       return;
     }
@@ -172,6 +217,7 @@ export class LabReportService {
         tenantId,
         orderItemId,
         acceptedBy,
+        onlyMemberLabTestId,
       ),
     );
   }
@@ -213,6 +259,7 @@ export class LabReportService {
     tenantId: string,
     orderItemId: string,
     acceptedBy?: string | null,
+    onlyMemberLabTestId?: string | null,
   ): Promise<void> {
     const orderItem = await tx.orderItem.findFirst({
       where: { id: orderItemId, tenantId, deletedAt: null },
@@ -267,10 +314,19 @@ export class LabReportService {
       // idempotency guarantee moves from the DB's old single-column @unique
       // to this explicit check, since (orderItemId, memberBranchLabTestId) is
       // now the composite unique key.
-      const memberTests = await this.panelMemberBranchLabTests(
+      let memberTests = await this.panelMemberBranchLabTests(
         tx,
         orderItem.branchLabPanelId,
       );
+      // Scope to the one member test the accepted sample actually serves —
+      // each panel member has its own independent OrderSample, so creating
+      // reports for the other members here would be premature (their own
+      // sample hasn't been accepted yet).
+      if (onlyMemberLabTestId) {
+        memberTests = memberTests.filter(
+          (m) => m.sourceLabTestId === onlyMemberLabTestId,
+        );
+      }
       for (const member of memberTests) {
         if (existingMemberIds.has(member.id)) continue;
         await createOne(member.sourceLabTestId, member.id);
@@ -425,6 +481,10 @@ export class LabReportService {
       ];
     }
     if (Object.keys(orderItem).length > 0) where.orderItem = orderItem;
+
+    // B2B Referral Panel isolation: constrain reports to the panel's orders
+    // (nested via orderItem.order). Runs last so it merges with any filters above.
+    applyB2bLabReportScope(where as Record<string, unknown>, getReferralPanelId());
 
     // Source pill (ALL/IN_HOUSE/OUTSOURCE) is wired above via LabReport.isOutsourced.
     // Home Collection is wired above via OrderDiagnostics.isHomeVisit (a
@@ -871,7 +931,8 @@ export class LabReportService {
    * Resolves the real Accession sample-lifecycle status (and sample id, for
    * the Sample Overview action — ACCESSION.docx §A.10.4/§B.9's already-built
    * `GET /accession/samples/:id`, reused as-is rather than duplicated here)
-   * for the worklist's Sample Status column — the client's requirement that
+   * for the worklist's Sample Status column, plus the sample's barcode for
+   * the worklist's Barcode column — the client's requirement that
    * "the technician should be able to see all the statuses from both
    * modules" (view-only; this attaches no permission to change them —
    * enforcement is a separate, not-yet-built piece; see the module's own
@@ -909,26 +970,27 @@ export class LabReportService {
       select: {
         orderItemId: true,
         labTestId: true,
-        sample: { select: { id: true, status: true } },
+        sample: { select: { id: true, status: true, barcode: true } },
       },
     });
 
     // Group by orderItemId first (every sample of the item — the fallback for
     // a non-panel/grandfathered row), and separately by
     // (orderItemId, labTestId) for the precise per-member-test scoping.
-    const byOrderItem = new Map<string, Map<string, SampleStatus>>();
-    const byOrderItemAndTest = new Map<string, Map<string, SampleStatus>>();
+    type SampleInfo = { status: SampleStatus; barcode: string | null };
+    const byOrderItem = new Map<string, Map<string, SampleInfo>>();
+    const byOrderItemAndTest = new Map<string, Map<string, SampleInfo>>();
     for (const { orderItemId, labTestId, sample } of sampleTests) {
-      const item =
-        byOrderItem.get(orderItemId) ?? new Map<string, SampleStatus>();
-      item.set(sample.id, sample.status);
+      const info: SampleInfo = { status: sample.status, barcode: sample.barcode };
+      const item = byOrderItem.get(orderItemId) ?? new Map<string, SampleInfo>();
+      item.set(sample.id, info);
       byOrderItem.set(orderItemId, item);
 
       if (labTestId) {
         const key = `${orderItemId}:${labTestId}`;
         const scoped =
-          byOrderItemAndTest.get(key) ?? new Map<string, SampleStatus>();
-        scoped.set(sample.id, sample.status);
+          byOrderItemAndTest.get(key) ?? new Map<string, SampleInfo>();
+        scoped.set(sample.id, info);
         byOrderItemAndTest.set(key, scoped);
       }
     }
@@ -942,7 +1004,8 @@ export class LabReportService {
       return {
         ...row,
         sampleIds: entries.map(([sampleId]) => sampleId),
-        sampleStatuses: entries.map(([, status]) => status),
+        sampleStatuses: entries.map(([, info]) => info.status),
+        sampleBarcodes: entries.map(([, info]) => info.barcode),
       };
     });
   }
@@ -1002,6 +1065,26 @@ export class LabReportService {
       statuses.map((s, i) => [s, counts[i]]),
     ) as Record<LabReportStatus, number>;
 
+    // Source pill counts (ALL/IN_HOUSE/OUTSOURCE) — same idea as the status
+    // counts above: strip the source-related filters (the pill itself, plus
+    // the standalone "Outsource" checkbox, since both set isOutsourced) so
+    // the In-House/Outsource split reflects every OTHER active filter, not
+    // whichever source pill happens to be selected right now.
+    const sourceBaseWhere = this.buildListWhere(tenantId, resolvedBranchId, {
+      ...filters,
+      status: undefined,
+      source: undefined,
+      outsource: undefined,
+    });
+    const [inHouse, outsource] = await Promise.all([
+      this.prisma.labReport.count({
+        where: { ...sourceBaseWhere, isOutsourced: false },
+      }),
+      this.prisma.labReport.count({
+        where: { ...sourceBaseWhere, isOutsourced: true },
+      }),
+    ]);
+
     return {
       all,
       pending: byStatus.PENDING,
@@ -1013,6 +1096,7 @@ export class LabReportService {
       published: byStatus.PUBLISHED,
       errorReported: byStatus.ERROR_REPORTED,
       resultRejected: byStatus.RESULT_REJECTED,
+      bySource: { inHouse, outsource },
     };
   }
 
@@ -1109,6 +1193,14 @@ export class LabReportService {
       include: LAB_REPORT_DETAIL_INCLUDE,
     });
     if (!report) throw new LabReportNotFoundException(id);
+    // B2B Referral Panel isolation: block reading another panel's report by id.
+    assertLabReportPanelOwnership(
+      report as {
+        id: string;
+        orderItem: { order: { referralPanelId: string | null } };
+      },
+      getReferralPanelId(),
+    );
 
     const [contentSections, resultParams] = await Promise.all([
       this.getContentSections(tenantId, report.labTestId),
@@ -1613,9 +1705,7 @@ export class LabReportService {
     const formulaParams: FormulaParam[] = params.map((p) => ({
       code: p.parameterCode,
       isCalculated:
-        p.parameterType === 'CALCULATED' ||
-        p.resultType === 'CALCULATED' ||
-        !!p.calculationFormula?.trim(),
+        p.parameterType === 'CALCULATED' || !!p.calculationFormula?.trim(),
       formula: p.calculationFormula,
     }));
     const ordered = buildEvaluationOrder(formulaParams);

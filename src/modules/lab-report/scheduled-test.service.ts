@@ -65,7 +65,7 @@ export class ScheduledTestService {
     }
 
     return this.prisma
-      .$transaction(async (tx) => {
+      .withTenant(tenantId, async (tx) => {
         const scheduled = await tx.scheduledTest.create({
           data: {
             tenantId,
@@ -153,7 +153,7 @@ export class ScheduledTestService {
       );
     }
 
-    const result = await this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.withTenant(tenantId, async (tx) => {
       const updated = await tx.scheduledTest.update({
         where: { id },
         data: {
@@ -206,7 +206,7 @@ export class ScheduledTestService {
     });
     if (!entry) throw new WorklistEntryNotFoundException('scheduled_test', id);
 
-    const updated = await this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.withTenant(tenantId, async (tx) => {
       const updatedEntry = await tx.scheduledTest.update({
         where: { id },
         data: { status: dto.status },

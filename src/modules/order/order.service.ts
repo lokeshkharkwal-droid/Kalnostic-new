@@ -25,6 +25,8 @@ import {
   TransferKind,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
+import { getReferralPanelId } from '../../prisma/tenant-context';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
 import {
   ShareService,
@@ -369,6 +371,32 @@ const SHARE_KINDS: Record<ShareKind, ShareKindConfig> = {
     }),
   },
 };
+
+/**
+ * Force a B2B referral-panel filter onto an order `where` clause.
+ * @param where the Prisma OrderWhereInput being built (mutated in place)
+ * @param panelId the active B2B panel id, or undefined for non-B2B sessions
+ */
+export function applyB2bOrderScope(
+  where: Record<string, unknown>,
+  panelId: string | undefined,
+): void {
+  if (panelId) where.referralPanelId = panelId;
+}
+
+/**
+ * Assert an order belongs to the active B2B panel (blocks URL/ID manipulation).
+ * @param order the fetched order (needs `id` + `referralPanelId`)
+ * @param panelId the active B2B panel id, or undefined for non-B2B sessions
+ */
+export function assertOrderPanelOwnership(
+  order: { id: string; referralPanelId: string | null },
+  panelId: string | undefined,
+): void {
+  if (panelId && order.referralPanelId !== panelId) {
+    throw new ReferralPanelAccessDeniedException('order', order.id);
+  }
+}
 
 @Injectable()
 export class OrderService {
@@ -1619,6 +1647,8 @@ export class OrderService {
     if (!order) {
       throw new OrderNotFoundException(id);
     }
+    // B2B Referral Panel isolation: block reading another panel's order by id.
+    assertOrderPanelOwnership(order, getReferralPanelId());
     // Invoice-lock status: exposed on every composed-order response (get-one,
     // create, update, cancel, …), all of which funnel through here.
     const invoiceCodes = await this.invoicedOrderCodes(tenantId, [id]);
@@ -2842,6 +2872,9 @@ export class OrderService {
     // active branch (null active branch = tenant-wide for tenant-level profiles).
     const branchId = query.branchId ?? activeBranchId;
     if (branchId) where.branchId = branchId;
+
+    // B2B Referral Panel isolation: force the panel filter for B2B sessions.
+    applyB2bOrderScope(where as Record<string, unknown>, getReferralPanelId());
 
     // Quote ID takes precedence over the generic search. A bare `search`
     // matches the order code OR any of the patient's name / mobile / UMID.

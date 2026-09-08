@@ -30,6 +30,29 @@ import {
 const MAX_FAILED_ATTEMPTS = 10;
 const LOCK_DURATION_MINUTES = 15;
 
+/**
+ * Resolve the `referral_panel_id` JWT claim: the panel id of the active profile
+ * when (and only when) that profile's role is `b2b_referring_panel`.
+ * @param profiles the person's active branch profiles (with role relation)
+ * @param activeBranchId the resolved active branch id (null for tenant-level)
+ * @param activeProfileKey the resolved active role key
+ */
+export function resolveReferralPanelClaim(
+  profiles: Array<{
+    branchId: string | null;
+    authRole: { key: string } | null;
+    referralPanelId: string | null;
+  }>,
+  activeBranchId: string | null,
+  activeProfileKey: string | null,
+): string | null {
+  if (activeProfileKey !== 'b2b_referring_panel') return null;
+  const active = profiles.find(
+    (p) => p.branchId === activeBranchId && p.authRole?.key === activeProfileKey,
+  );
+  return active?.referralPanelId ?? null;
+}
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -425,6 +448,11 @@ export class AuthService {
       profiles: profileEntries,
       is_patient: person?.isPatient ?? false,
       platform_mrn: person?.platformMrn ?? null,
+      referral_panel_id: resolveReferralPanelClaim(
+        allProfiles,
+        effectiveBranchId,
+        effectiveProfileKey,
+      ),
     };
   }
 

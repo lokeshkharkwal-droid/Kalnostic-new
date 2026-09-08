@@ -72,6 +72,13 @@ const REFERRAL_ORDER: string[] = [
 const PERMISSION_SPEC: Record<string, SectionSpec[]> = {
   registration: [
     {
+      // B2B Referral Panel navigation: `view_order_console` is granted to the
+      // b2b_referring_panel baseline; `view_full_module` is held by full-module
+      // roles and used to hide the other registration sidebar items from B2B.
+      label: 'Panel Navigation',
+      permissions: ['View Order Console', 'View Full Module'],
+    },
+    {
       label: 'Create Order / Patient Details',
       permissions: [
         'Allow create order',
@@ -246,6 +253,11 @@ const PERMISSION_SPEC: Record<string, SectionSpec[]> = {
   ],
 
   lab_operations: [
+    {
+      // B2B Referral Panel navigation (see registration Panel Navigation note).
+      label: 'Panel Navigation',
+      permissions: ['View Reporting', 'View Full Module'],
+    },
     {
       label: 'Reporting',
       permissions: [
@@ -546,6 +558,11 @@ const PERMISSION_SPEC: Record<string, SectionSpec[]> = {
   ],
 
   finance: [
+    {
+      // B2B Referral Panel navigation (see registration Panel Navigation note).
+      label: 'Panel Navigation',
+      permissions: ['View Billing', 'View Invoices', 'View Payments', 'View Full Module'],
+    },
     {
       label: 'Financial Reports',
       permissions: [
@@ -1231,6 +1248,14 @@ function expandModulePermissions(moduleKeys: string[]): string[] {
 export interface RoleTemplate {
   permissions: string[];
   modules: string[];
+  /**
+   * True when `permissions` is a deliberately curated subset rather than the
+   * full expansion of `modules` (e.g. `b2b_referring_panel`). Consumers that
+   * derive a user's effective permissions from their assigned modules (e.g.
+   * `UsersService.resolveEffectiveModules`) must respect this baseline
+   * instead of re-expanding the full module catalogue.
+   */
+  curated?: boolean;
 }
 
 /** The predefined role templates, keyed by role (profile) key. */
@@ -1251,3 +1276,27 @@ export function roleBaselinePermissions(roleKey: string): Set<string> {
 export function roleTemplateModules(roleKey: string): string[] {
   return ROLE_TEMPLATES[roleKey as ProfileKey]?.modules ?? [];
 }
+
+/**
+ * The five sidebar/navigation permission keys a B2B Referring Panel user holds.
+ * These map 1:1 to the panel's allowed screens: Order Console, Billing, Invoices,
+ * Payments, Reporting. The B2B role's baseline is exactly this set (NOT the full
+ * expansion of its three modules), which is what lets the permission-driven
+ * sidebar hide every sibling item. Keys must match the frontend constants.
+ */
+export const B2B_PANEL_PERMISSION_KEYS: readonly string[] = [
+  'registration:panel_navigation__view_order_console',
+  'finance:panel_navigation__view_billing',
+  'finance:panel_navigation__view_invoices',
+  'finance:panel_navigation__view_payments',
+  'lab_operations:panel_navigation__view_reporting',
+] as const;
+
+// Override the auto-computed template for the B2B role: keep its three linked
+// modules (so `moduleAllowed` resolves), but restrict the baseline to exactly the
+// five allowed navigation keys instead of the full module expansion.
+(ROLE_TEMPLATES as Record<string, RoleTemplate>)['b2b_referring_panel'] = {
+  modules: ['registration', 'finance', 'lab_operations'],
+  permissions: [...B2B_PANEL_PERMISSION_KEYS],
+  curated: true,
+};
