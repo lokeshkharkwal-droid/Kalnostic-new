@@ -174,10 +174,13 @@ describe('B2B referral-panel isolation (e2e)', () => {
     expect(res.status).toBe(403);
   });
 
-  it('403s on a disallowed module endpoint (B2bModuleGuard)', async () => {
+  it('403s on a real disallowed module endpoint (B2bModuleGuard)', async () => {
     if (!ready) return;
+    // Must target a route that actually exists — NestJS global guards only run on
+    // matched routes (a non-existent path 404s before the guard). /patients is a
+    // real endpoint outside the B2B allow-list.
     const res = await request(app.getHttpServer())
-      .get('/api/v1/inventory')
+      .get('/api/v1/patients')
       .set(auth());
     expect(res.status).toBe(403);
   });
