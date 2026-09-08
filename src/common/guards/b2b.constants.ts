@@ -18,7 +18,6 @@ export const B2B_ALLOWED_PATH_PREFIXES: readonly string[] = [
   '/payments', //         order payments (billing)
   '/finance/payments', // Finance → Payments ledger
   '/lab-reports', //      Technician → Reporting
-  '/referral-panels', //  panel self-read (options/detail)
 ] as const;
 
 /**
