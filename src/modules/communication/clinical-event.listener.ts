@@ -31,6 +31,7 @@ interface LabReportPublishedEvent {
 /** `payment.received` — emitted by PaymentDetailsService.create. */
 interface PaymentReceivedEvent {
   tenantId: string;
+  branchId: string | null;
   orderId: string;
   amount: number;
   paymentMode: string | null;
@@ -256,7 +257,10 @@ export class ClinicalEventListener {
       ? 'complete_payment_for_lab_order_inform_patient'
       : 'partial_payment_for_lab_order_inform_patient';
     const base = await this.buildOrderVariables(e.tenantId, e.orderId);
-    await this.auto.dispatchToPatient(e.tenantId, null, patientId, {
+    // Resolve at the order's branch scope (branch → tenant → global), exactly
+    // like `order.created` — otherwise a branch-level activated template is
+    // skipped and the payment falls back to a different tenant/global default.
+    await this.auto.dispatchToPatient(e.tenantId, e.branchId, patientId, {
       feature,
       verb: 'payment_received',
       subject: `Payment received ${orderCode ? `for ${orderCode}` : ''}`.trim(),

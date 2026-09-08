@@ -59,7 +59,9 @@ const BRANCH_TEST_DROP_KEYS = [
   'masterDataId',
   'source',
   // Master Data provenance columns that don't exist on BranchLabTest — must be
-  // dropped or Prisma rejects them as unknown args on create/update.
+  // dropped or Prisma rejects them as unknown args on create/update. (Most
+  // master-only columns are now also filtered by the BranchLabTest scalar-field
+  // whitelist in extractScalars; these stay listed as documentation.)
   'clonedFromId',
   'templateSyncedAt',
   'sourceMasterLabTestId',
@@ -828,13 +830,25 @@ export class BranchLabTestService {
     scalars: Record<string, unknown>;
     configSnapshot: Prisma.InputJsonValue;
   } {
-    const copy: Record<string, unknown> = { ...source };
     const configSnapshot = {
-      samples: copy.samples,
-      resultParams: copy.resultParams,
+      samples: (source as Record<string, unknown>).samples,
+      resultParams: (source as Record<string, unknown>).resultParams,
     } as unknown as Prisma.InputJsonValue;
-    for (const key of BRANCH_TEST_DROP_KEYS) {
-      delete copy[key];
+    // Whitelist to columns that actually exist on BranchLabTest. LabTest has
+    // gained fields BranchLabTest does not mirror (e.g. `approvalWorkflow`,
+    // `isOutsource`, `isBillOnlyTest`) — copying those verbatim makes Prisma
+    // reject the create/update with "Unknown argument …". Filtering against the
+    // BranchLabTest scalar-field set drops any such master-only column
+    // automatically, so future LabTest additions can't break import/sync. The
+    // identity/scope/timestamp columns are set fresh by the caller and are
+    // excluded via BRANCH_TEST_DROP_KEYS.
+    const validFields = new Set<string>(
+      Object.keys(Prisma.BranchLabTestScalarFieldEnum),
+    );
+    const dropKeys = new Set<string>(BRANCH_TEST_DROP_KEYS);
+    const copy: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(source)) {
+      if (validFields.has(key) && !dropKeys.has(key)) copy[key] = value;
     }
     return { scalars: copy, configSnapshot };
   }

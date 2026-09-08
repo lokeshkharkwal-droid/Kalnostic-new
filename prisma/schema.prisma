@@ -7147,6 +7147,7 @@ model LabReport {
 enum ResultValueSource {
   MANUAL
   ADAPTER
+  CALCULATED
 }
 
 /// One entered/transferred value per result parameter per report. `resultParamId`

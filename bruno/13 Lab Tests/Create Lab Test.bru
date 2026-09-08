@@ -172,6 +172,22 @@ body:json {
       },
       {
         "groupName": "CBC Parameters",
+        "parameterName": "Red Blood Cell Count",
+        "parameterCode": "RBC",
+        "method": "Flow Cytometry",
+        "reportingUnit": "10^6/uL",
+        "resultType": "QUANTITATIVE",
+        "parameterType": "MEASURED",
+        "resultEntryMode": "MANUAL",
+        "resultRoundingType": "TWO_DECIMAL",
+        "decimalPlaces": 2,
+        "reflexTests": [],
+        "isNabl": false,
+        "isCap": false,
+        "sortOrder": 3
+      },
+      {
+        "groupName": "CBC Parameters",
         "parameterName": "Mean Corpuscular Haemoglobin",
         "parameterCode": "MCH",
         "method": "Calculated",
@@ -186,7 +202,7 @@ body:json {
         "reflexTests": [],
         "isNabl": false,
         "isCap": false,
-        "sortOrder": 3,
+        "sortOrder": 4,
         "referenceRanges": [
           {
             "gender": "ALL",
@@ -271,7 +287,8 @@ docs {
   - **Result params[]:** `groupName`, `groupLayout` (`TABULAR`|`SEQUENTIAL`),
     `parameterName`, `parameterCode`, `method`,
     `reportingUnit`, `resultType`, `parameterType`, `resultEntryMode`,
-    `calculationFormula` (required when `parameterType=CALCULATED`),
+    `calculationFormula` (optional even when `parameterType=CALCULATED`; when
+    set it is validated — see "Calculated parameter formulas" below),
     `resultRoundingType`, `allowableUnits`, `decimalPlaces`, `criticalMin`,
     `criticalMax`, `reflexTests[]`, `notes`, `isNabl`, `isCap`, `sortOrder`,
     `referenceRanges[]`, `referenceValues[]`. Per-parameter settings refs
@@ -287,6 +304,19 @@ docs {
   groupLayoutId, groupSettingsId, iconSettingsId, sampleNameId) are likewise
   optional logical refs — omit until those modules exist.
   
+  ## Calculated parameter formulas (dynamic parameters)
+
+  A result param with `parameterType=CALCULATED` may carry a `calculationFormula`
+  — an infix expression over **other parameter codes of this same test** and the
+  operators `+ - * / ( )` (e.g. `(HGB * 10) / RBC`). The formula is optional even
+  for a CALCULATED param (it can be saved and filled in later). When present it is
+  validated across the whole test's parameter set:
+  - `422 INVALID_FORMULA` — bad syntax, or a parameter references itself.
+  - `422 UNKNOWN_FORMULA_REFERENCE` — references a `parameterCode` not in this test.
+  - `422 CIRCULAR_FORMULA_DEPENDENCY` — the calculated params form a dependency cycle.
+  At result-entry time the value is auto-computed from the other entered values
+  (see Technician Reporting → Upsert Result Values); it is not entered by hand.
+
   ## Reflex tests
   
   Each result param may carry `reflexTests: [{ id, name }]`. The whole array is
@@ -316,7 +346,6 @@ docs {
   - `isMandatoryTest: true` requires `mandatoryDeptId` (422).
   - `isRepeatIntervalRestriction: true` requires `repeatIntervalValue` +
     `repeatIntervalUnit` (422).
-  - A `CALCULATED` parameter requires `calculationFormula` (422).
   - Per result param: `criticalMin ≤ criticalMax` (422).
   - Per range: `lowerLimit ≤ upperLimit`, `criticalMin ≤ lowerLimit`,
     `criticalMax ≥ upperLimit`, `ageFrom ≤ ageTo` (422).

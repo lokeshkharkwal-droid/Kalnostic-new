@@ -184,6 +184,7 @@ export class PaymentDetailsService {
     // Handled by ClinicalEventListener; never blocks payment recording.
     void this.eventEmitter.emitAsync('payment.received', {
       tenantId,
+      branchId: order.branchId,
       orderId: dto.orderId,
       amount: dto.paidAmount ?? 0,
       paymentMode: dto.paymentMode ?? null,
