@@ -31,6 +31,7 @@ import { AuthRoleService } from '../auth-role/auth-role.service';
 import {
   MODULE_PERMISSION_CATALOG,
   roleTemplateModules,
+  B2B_PANEL_PERMISSION_KEYS,
 } from '../permissions/constants/module-permissions.constant';
 import {
   isValidModuleKey,
@@ -1605,6 +1606,15 @@ export class UsersService {
         ? assignedModules
         : roleTemplateModules(roleKey),
     );
+    // B2B Referring Panel: a curated baseline (only its five navigation keys),
+    // NOT the full expansion of its three modules. The module keys still drive
+    // module-level access (so the Registration/Finance/Technician tabs show), but
+    // the fine-grained permissions are restricted to the five allowed screens so
+    // the permission-driven sidebar hides every sibling item. Without this the
+    // baseline would grant every permission of the three modules.
+    if (roleKey === 'b2b_referring_panel') {
+      return { moduleKeys, permissions: new Set(B2B_PANEL_PERMISSION_KEYS) };
+    }
     const permissions = new Set<string>();
     for (const entry of MODULE_PERMISSION_CATALOG) {
       if (moduleKeys.has(entry.moduleKey)) {

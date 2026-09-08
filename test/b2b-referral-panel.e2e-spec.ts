@@ -149,6 +149,29 @@ describe('B2B referral-panel isolation (e2e)', () => {
     expect(payload.referral_panel_id).toBe(panelId);
   });
 
+  it('resolves ONLY the five curated permissions (drives the sidebar)', async () => {
+    if (!ready) return;
+    const res = await request(app.getHttpServer())
+      .get(`/api/v1/users/manage/me/permissions?branchId=${branchId}`)
+      .set(auth());
+    expect(res.status).toBe(200);
+    const allowed: string[] = res.body?.data?.allowed ?? [];
+    const curated = [
+      'registration:panel_navigation__view_order_console',
+      'finance:panel_navigation__view_billing',
+      'finance:panel_navigation__view_invoices',
+      'finance:panel_navigation__view_payments',
+      'lab_operations:panel_navigation__view_reporting',
+    ];
+    // No allowed key may fall outside the curated five — this is exactly what was
+    // broken (the baseline used to expand to every key of the three modules,
+    // including the sibling *__view_full_module keys the sidebar hides on).
+    expect(allowed.filter((k) => !curated.includes(k))).toEqual([]);
+    expect(allowed).not.toContain(
+      'registration:panel_navigation__view_full_module',
+    );
+  });
+
   it('only ever returns this panel’s orders from /orders', async () => {
     if (!ready) return;
     const res = await request(app.getHttpServer())
