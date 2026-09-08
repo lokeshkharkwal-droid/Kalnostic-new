@@ -71,6 +71,24 @@ const BRANCH_TEST_DROP_KEYS = [
   'deletedAt',
   'samples',
   'resultParams',
+  // `LabTest.approvalWorkflow` (added 2026-09-06) has no counterpart on
+  // BranchLabTest — the existing `approvalWorkflowId` field is a different,
+  // older concept (a nullable logical ref, matching pdfSettingsId/
+  // imageSettingsId), not this new enum. Without this drop, Prisma rejected
+  // every import/sync as an "Unknown argument `approvalWorkflow`" — every
+  // test in every tenant was blocked from being imported into a branch's Lab
+  // Test List. Bug fixed 2026-09-07; revisit if/when a real branch-level
+  // approval-workflow field is added.
+  'approvalWorkflow',
+  // Same problem, same fix, for 4 more LabTest-only columns added the same
+  // week (2026-09-04 to 09-06) with no BranchLabTest counterpart at all.
+  // Confirmed via schema.prisma: none of the 4 appear anywhere in the
+  // BranchLabTest model. Revisit if/when Branch Lab Test gains its own
+  // copies of these flags.
+  'isOutsource',
+  'isBillOnlyTest',
+  'isSampleFlow',
+  'isOverrideAllowed',
 ];
 
 /**
