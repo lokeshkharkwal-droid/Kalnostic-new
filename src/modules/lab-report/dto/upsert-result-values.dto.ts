@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsOptional,
   IsString,
   IsUUID,
@@ -43,6 +44,17 @@ export class ResultValueItemDto {
   @IsOptional()
   @IsString()
   referenceDisplay?: string;
+
+  /**
+   * For a dynamic/calculated parameter: `true` when the technician has manually
+   * overridden the auto-computed value. An overridden value is stored with
+   * `source = MANUAL` and is NOT recomputed on save (the override "sticks" until
+   * reset). When omitted/false for a calculated parameter, the backend
+   * recomputes the value from its formula and stores it with `source = CALCULATED`.
+   */
+  @IsOptional()
+  @IsBoolean()
+  isManualOverride?: boolean;
 }
 
 /** Bulk upsert body for `PATCH /lab-reports/:id/results`. Does not change status. */

@@ -4,7 +4,7 @@ import {
   ArrayUnique,
   IsArray,
   IsBoolean,
-  IsEnum,
+  IsIn,
   IsOptional,
   IsString,
   Matches,
@@ -12,6 +12,7 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
+import { MODULE_MAPPING_BRANCH_TYPES } from '../../../common/constants/module-mapping.constant';
 import { DepartmentPersonMappingDto } from './department-person-mapping.dto';
 
 export class CreateDepartmentDto {
@@ -43,9 +44,10 @@ export class CreateDepartmentDto {
   @IsOptional()
   isActive?: boolean;
 
-  // "Module mapping" — reuses the same enum as Branch.branchType.
+  // "Module mapping" — a curated subset of Branch.branchType. Only the seven
+  // supported modules are accepted (see MODULE_MAPPING_BRANCH_TYPES).
   @IsArray()
-  @IsEnum(BranchType, { each: true })
+  @IsIn(MODULE_MAPPING_BRANCH_TYPES, { each: true })
   @ArrayUnique()
   moduleMapping: BranchType[];
 

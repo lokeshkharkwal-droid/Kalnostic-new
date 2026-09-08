@@ -28,9 +28,10 @@ import { ReflexTestRefDto } from './reflex-test-ref.dto';
 /**
  * A result parameter for a lab test, embedded under the create/update payload.
  * Embeds its own reference ranges/values. Context/parent ids are not accepted
- * from the client. `parameterCode` is unique per test (partial unique index);
- * `calculationFormula` is required when `parameterType` is `CALCULATED`
- * (validated in `LabTestService` + a CHECK in prisma/rls.sql).
+ * from the client. `parameterCode` is unique per test (partial unique index).
+ * `calculationFormula` is not required even when `parameterType` is
+ * `CALCULATED` — a Calculated parameter may be saved without a formula
+ * filled in yet (see `LabTestService.assertParam`/`assertImportParam`).
  */
 export class LabTestResultParamDto {
   // Group display
@@ -44,8 +45,12 @@ export class LabTestResultParamDto {
   @IsOptional()
   groupLayout?: ResultGroupLayout;
 
-  @IsUUID()
+  /** Plain text, not an id — "Tabular Layout" or "Sequential Layout"; no
+   * catalogue exists for this field (unlike `groupSettingsId` below). Field
+   * name kept as `groupLayoutId` to match the existing DB column. */
+  @IsString()
   @IsOptional()
+  @MaxLength(255)
   groupLayoutId?: string;
 
   @IsUUID()

@@ -1,7 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { OnEvent } from '@nestjs/event-emitter';
 import { LabReportStatus, RecipientType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  toNum,
+  formatTenantDate,
+  formatTenantTime,
+  toBranchLocalInstant,
+} from '../../common/utils';
 import { AutoNotificationService } from './services/auto-notification.service';
 
 /** `order.created` — emitted by OrderService.create after the order commits. */
@@ -24,6 +31,7 @@ interface LabReportPublishedEvent {
 /** `payment.received` — emitted by PaymentDetailsService.create. */
 interface PaymentReceivedEvent {
   tenantId: string;
+  branchId: string | null;
   orderId: string;
   amount: number;
   paymentMode: string | null;
@@ -96,6 +104,7 @@ export class ClinicalEventListener {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auto: AutoNotificationService,
+    private readonly config: ConfigService,
   ) {}
 
   /**
@@ -107,6 +116,7 @@ export class ClinicalEventListener {
   async onOrderCreated(e: OrderCreatedEvent): Promise<void> {
     if (!e.patientId) return;
     const code = e.orderCode ?? e.orderId;
+    const base = await this.buildOrderVariables(e.tenantId, e.orderId);
 
     // Detect a home-visit-with-phlebotomist order.
     const diag = await this.prisma.withTenant(e.tenantId, (tx) =>
@@ -134,6 +144,7 @@ export class ClinicalEventListener {
         subject:
           `Home collection scheduled ${e.orderCode ? `(${e.orderCode})` : ''}`.trim(),
         variables: {
+          ...base,
           order_code: code,
           order_number: code,
           phlebotomist_name: phlebName,
@@ -149,7 +160,7 @@ export class ClinicalEventListener {
       feature: 'lab_create_order_inform_patient',
       verb: 'order_created',
       subject: `Order ${e.orderCode ?? ''} received`.trim(),
-      variables: { order_code: code, order_number: code },
+      variables: { ...base, order_code: code, order_number: code },
       fallbackHtml: (name) =>
         `<p>Dear ${name},</p><p>Your order <strong>${code}</strong> has been received and is being processed.</p><p>Thank you.</p>`,
     });
@@ -204,13 +215,14 @@ export class ClinicalEventListener {
     const order = link?.order;
     if (!order?.patientId) return;
     const orderCode = order.orderCode ?? '';
+    const base = await this.buildOrderVariables(e.tenantId, order.id);
 
     await this.auto.dispatchToPatient(e.tenantId, e.branchId, order.patientId, {
       feature: 'lab_order_report_published_inform_patient',
       verb: 'report_ready',
       subject:
         `Your lab report is ready ${orderCode ? `(${orderCode})` : ''}`.trim(),
-      variables: { order_code: orderCode, order_number: orderCode },
+      variables: { ...base, order_code: orderCode, order_number: orderCode },
       fallbackHtml: (name) =>
         `<p>Dear ${name},</p><p>Your lab report${orderCode ? ` for order <strong>${orderCode}</strong>` : ''} is ready. Please contact the lab or log in to view it.</p>`,
     });
@@ -244,11 +256,22 @@ export class ClinicalEventListener {
     const feature = isComplete
       ? 'complete_payment_for_lab_order_inform_patient'
       : 'partial_payment_for_lab_order_inform_patient';
-    await this.auto.dispatchToPatient(e.tenantId, null, patientId, {
+    const base = await this.buildOrderVariables(e.tenantId, e.orderId);
+    // Resolve at the order's branch scope (branch → tenant → global), exactly
+    // like `order.created` — otherwise a branch-level activated template is
+    // skipped and the payment falls back to a different tenant/global default.
+    await this.auto.dispatchToPatient(e.tenantId, e.branchId, patientId, {
       feature,
       verb: 'payment_received',
       subject: `Payment received ${orderCode ? `for ${orderCode}` : ''}`.trim(),
-      variables: { amount, order_code: orderCode, order_number: orderCode },
+      // `amount` is THIS payment's value; `net_amount`/`balance_amount` (from
+      // `base`) are the order-level totals/outstanding after it was applied.
+      variables: {
+        ...base,
+        amount,
+        order_code: orderCode,
+        order_number: orderCode,
+      },
       fallbackHtml: (name) =>
         `<p>Dear ${name},</p><p>We have received your payment of <strong>${amount}</strong>${orderCode ? ` towards order <strong>${orderCode}</strong>` : ''}.${isComplete ? '' : ' A balance may remain on this order.'} Thank you.</p>`,
     });
@@ -264,16 +287,19 @@ export class ClinicalEventListener {
       e.refundAmount && e.refundAmount > 0
         ? ` A refund of ${currency} ${e.refundAmount.toFixed(2)} will be processed.`
         : '';
+    const base = await this.buildOrderVariables(e.tenantId, e.orderId);
     await this.auto.dispatchToPatient(e.tenantId, e.branchId, e.patientId, {
       feature: 'order_cancelled_inform_patient',
       verb: 'order_cancelled',
       subject: `Order ${e.orderCode ?? ''} cancelled`.trim(),
       variables: {
+        ...base,
         order_code: code,
         order_number: code,
-        ...(e.refundAmount
-          ? { amount: e.refundAmount.toFixed(2), currency }
-          : {}),
+        // Refund amount/currency come from the event (authoritative for this
+        // cancellation); a non-empty event currency overrides the tenant default.
+        ...(e.refundAmount ? { amount: e.refundAmount.toFixed(2) } : {}),
+        ...(currency ? { currency } : {}),
       },
       fallbackHtml: (name) =>
         `<p>Dear ${name},</p><p>Your order <strong>${code}</strong> has been cancelled.${refundLine}</p>`,
@@ -287,11 +313,18 @@ export class ClinicalEventListener {
     const code = e.orderCode ?? e.orderId;
     const currency = e.currency ?? '';
     const amount = e.refundAmount.toFixed(2);
+    const base = await this.buildOrderVariables(e.tenantId, e.orderId);
     await this.auto.dispatchToPatient(e.tenantId, e.branchId, e.patientId, {
       feature: 'lab_order_report_refund_inform_patient',
       verb: 'order_refunded',
       subject: `Refund processed ${code ? `for ${code}` : ''}`.trim(),
-      variables: { amount, currency, order_code: code, order_number: code },
+      variables: {
+        ...base,
+        amount,
+        order_code: code,
+        order_number: code,
+        ...(currency ? { currency } : {}),
+      },
       fallbackHtml: (name) =>
         `<p>Dear ${name},</p><p>A refund of <strong>${currency} ${amount}</strong>${code ? ` for order <strong>${code}</strong>` : ''} has been processed. Thank you.</p>`,
     });
@@ -313,6 +346,120 @@ export class ClinicalEventListener {
   private formatWhen(d: string | Date): string {
     const dt = typeof d === 'string' ? new Date(d) : d;
     return `${dt.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+  }
+
+  /**
+   * Rich `{tag}` → value map shared by the order-scoped patient notifications
+   * (create-order, complete/partial payment, report published, order completed,
+   * cancellation, refund). Fetches the order's tests/panels,
+   * totals, branch and phlebotomist plus the tenant's branding/locale and the
+   * configured frontend URL, so template bodies (especially WhatsApp, whose
+   * placeholders are sent as POSITIONAL params — an unresolved tag becomes a
+   * blank slot) resolve to real values. Best-effort: any field that can't be
+   * resolved is an empty string, never a leaked literal `{tag}`. Returns `{}`
+   * when the order is gone. Runs inside `withTenant` for RLS on the order read;
+   * the tenant row is platform-level (no tenant scope).
+   */
+  private async buildOrderVariables(
+    tenantId: string,
+    orderId: string,
+  ): Promise<Record<string, string>> {
+    const [order, tenant] = await Promise.all([
+      this.prisma.withTenant(tenantId, (tx) =>
+        tx.order.findFirst({
+          where: { id: orderId, tenantId },
+          select: {
+            orderCode: true,
+            billId: true,
+            branch: { select: { name: true, shortName: true, phone: true } },
+            items: {
+              where: { deletedAt: null },
+              select: {
+                direct: true,
+                branchLabTest: { select: { testName: true } },
+                branchLabPanel: { select: { panelName: true } },
+              },
+            },
+            payments: {
+              where: { deletedAt: null },
+              select: { totalAmount: true, netAmount: true, paidAmount: true },
+            },
+            diagnostics: {
+              select: {
+                phlebotomist: {
+                  select: { firstName: true, lastName: true, phone: true },
+                },
+              },
+            },
+          },
+        }),
+      ),
+      this.prisma.tenant.findFirst({
+        where: { id: tenantId },
+        select: { name: true, shortName: true, settings: true },
+      }),
+    ]);
+    if (!order) return {};
+
+    const settings = (tenant?.settings ?? {}) as {
+      currency?: string;
+      date_format?: string;
+      time_format?: string;
+      timezone?: string;
+    };
+    // `{date}`/`{time}` = the notification's transaction moment in the tenant's
+    // timezone (correct for both a fresh order and a just-received payment, and
+    // works even when the order carries no wall-clock `orderTime`).
+    const localNow = toBranchLocalInstant(new Date(), settings.timezone);
+    const net = order.payments.reduce((s, p) => s + toNum(p.netAmount), 0);
+    const paid = order.payments.reduce((s, p) => s + toNum(p.paidAmount), 0);
+    const gross = order.payments.reduce((s, p) => s + toNum(p.totalAmount), 0);
+    const testList = order.items
+      .map(
+        (it) =>
+          it.branchLabTest?.testName ??
+          it.branchLabPanel?.panelName ??
+          it.direct ??
+          '',
+      )
+      .filter(Boolean)
+      .join(', ');
+    const phleb = order.diagnostics?.phlebotomist;
+    const phlebDetail = phleb
+      ? `${[phleb.firstName, phleb.lastName].filter(Boolean).join(' ').trim()}${
+          phleb.phone ? ` (${phleb.phone})` : ''
+        }`.trim()
+      : '';
+    const frontendUrl = this.config.get<string>('exchange.frontendUrl') ?? '';
+    const code = order.orderCode ?? orderId;
+
+    return {
+      order_code: code,
+      order_number: code,
+      bill_id: order.billId ?? '',
+      test_list: testList,
+      gross_amount: gross.toFixed(2),
+      net_amount: net.toFixed(2),
+      balance_amount: (net - paid).toFixed(2),
+      currency: settings.currency ?? 'INR',
+      lab: order.branch?.name ?? tenant?.name ?? '',
+      branch_short_name: order.branch?.shortName ?? tenant?.shortName ?? '',
+      branch_phone_number: order.branch?.phone ?? '',
+      phlebo_detail: phlebDetail,
+      date: formatTenantDate(localNow, settings.date_format ?? 'DD/MM/YYYY'),
+      time: formatTenantTime(localNow, settings.time_format ?? '12h'),
+      web_title: tenant?.name ?? '',
+      weburl: frontendUrl,
+      // No patient report route is wired for these order/payment events, so the
+      // report link and short link fall back to the portal landing (never blank
+      // when FRONTEND_URL is set). The report-published event owns the real
+      // per-report URL.
+      publish_report_url: frontendUrl,
+      short_link: frontendUrl,
+      // No credential is issued in these flows — kept as an explicit empty string
+      // so a template referencing it renders blank, not a literal `{password}`.
+      password: '',
+    };
   }
 
   /**
@@ -349,13 +496,14 @@ export class ClinicalEventListener {
         },
       );
       if (!shouldNotify) return;
+      const base = await this.buildOrderVariables(tenantId, orderId);
 
       await this.auto.dispatchToPatient(tenantId, branchId, patientId, {
         feature: 'lab_order_completed_inform_patient',
         verb: 'order_completed',
         subject:
           `Your order is complete ${orderCode ? `(${orderCode})` : ''}`.trim(),
-        variables: { order_code: orderCode, order_number: orderCode },
+        variables: { ...base, order_code: orderCode, order_number: orderCode },
         fallbackHtml: (name) =>
           `<p>Dear ${name},</p><p>All tests for your order${orderCode ? ` <strong>${orderCode}</strong>` : ''} are complete and reports are available.</p><p>Thank you.</p>`,
       });

@@ -1,4 +1,4 @@
-import { salutationLabel, patientAgeDisplay } from './patient-label.util';
+import { patientAgeDisplay, salutationLabel } from './patient-label.util';
 
 describe('salutationLabel', () => {
   it('maps each salutation enum to a properly-cased label', () => {

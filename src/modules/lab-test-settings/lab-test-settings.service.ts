@@ -12,11 +12,31 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
-import { CreateImageSettingDto } from './dto/create-image-setting.dto';
+import {
+  CreateImageSettingDto,
+  IMG_DISPLAY_POSITIONS,
+  IMG_LAYOUTS,
+  IMG_ALIGNMENTS,
+  IMG_SIZES,
+  IMG_PAGE_BREAKS,
+  IMG_HEADER_RETENTIONS,
+  IMG_REPLACEMENT_MODES,
+} from './dto/create-image-setting.dto';
 import { UpdateImageSettingDto } from './dto/update-image-setting.dto';
-import { CreatePdfSettingDto } from './dto/create-pdf-setting.dto';
+import {
+  CreatePdfSettingDto,
+  PDF_MODES,
+  PDF_PLACEMENTS,
+  PDF_SCALE_MODES,
+  PDF_PAGE_BREAKS,
+} from './dto/create-pdf-setting.dto';
 import { UpdatePdfSettingDto } from './dto/update-pdf-setting.dto';
-import { CreateGroupLayoutSettingDto } from './dto/create-group-layout-setting.dto';
+import {
+  CreateGroupLayoutSettingDto,
+  GROUP_LAYOUT_ALIGNMENTS,
+  GROUP_LAYOUT_COLUMN_LAYOUTS,
+  GROUP_LAYOUT_DISPLAY_STYLES,
+} from './dto/create-group-layout-setting.dto';
 import { UpdateGroupLayoutSettingDto } from './dto/update-group-layout-setting.dto';
 import { CreateIconSettingDto } from './dto/create-icon-setting.dto';
 import { UpdateIconSettingDto } from './dto/update-icon-setting.dto';
@@ -735,5 +755,132 @@ export class LabTestSettingsService {
       icons.push({ iconUrl, ...config });
     }
     return icons;
+  }
+
+  // ── Excel-import resolve-or-create helpers ──────────────────────────────
+  // A Lab Test Excel row only ever supplies a plain text NAME for these
+  // fields — never the several other required fields these models have
+  // (display position, layout, alignment, etc. — see the DTOs). When the
+  // name matches an existing active setting, reuse it; otherwise create a
+  // new one using the FIRST option of each required field's allowed list as
+  // a deliberately-chosen default, so a bare name is always importable and
+  // the row round-trips (re-exporting the created test shows this same name).
+  // Icon Settings is excluded — it requires real uploaded image files, which
+  // an Excel cell can never supply — see `resolveIconSettingByName`.
+
+  /**
+   * Resolve an Image Setting by name for Excel import: reuse an existing
+   * active tenant (+branch, if scoped) row with this name, or create one
+   * with default field values.
+   * @param tenantId owning tenant
+   * @param name the Excel cell's plain text value
+   * @param branchId active branch (Branch Admin) to scope/stamp, or
+   *   null/omitted for tenant-wide (Business Admin)
+   */
+  async resolveOrCreateImageSettingByName(
+    tenantId: string,
+    name: string,
+    branchId?: string | null,
+  ): Promise<LabImageSetting> {
+    const existing = await this.prisma.labImageSetting.findFirst({
+      where: { tenantId, name, deletedAt: null, ...(branchId && { branchId }) },
+    });
+    if (existing) return existing;
+    return this.create(
+      tenantId,
+      {
+        name,
+        displayPosition: IMG_DISPLAY_POSITIONS[0]!,
+        layout: IMG_LAYOUTS[0]!,
+        alignment: IMG_ALIGNMENTS[0]!,
+        imageSize: IMG_SIZES[0]!,
+        pageBreakControl: IMG_PAGE_BREAKS[0]!,
+        headerRetention: IMG_HEADER_RETENTIONS[0]!,
+        replacementMode: IMG_REPLACEMENT_MODES[0]!,
+      },
+      branchId,
+    );
+  }
+
+  /**
+   * Resolve a PDF Setting by name for Excel import: reuse an existing active
+   * tenant (+branch, if scoped) row with this name, or create one with
+   * default field values.
+   * @param tenantId owning tenant
+   * @param name the Excel cell's plain text value
+   * @param branchId active branch (Branch Admin) to scope/stamp, or
+   *   null/omitted for tenant-wide (Business Admin)
+   */
+  async resolveOrCreatePdfSettingByName(
+    tenantId: string,
+    name: string,
+    branchId?: string | null,
+  ): Promise<LabPdfSetting> {
+    const existing = await this.prisma.labPdfSetting.findFirst({
+      where: { tenantId, name, deletedAt: null, ...(branchId && { branchId }) },
+    });
+    if (existing) return existing;
+    return this.createPdfSetting(
+      tenantId,
+      {
+        name,
+        pdfMode: PDF_MODES[0]!,
+        placement: PDF_PLACEMENTS[0]!,
+        scaleMode: PDF_SCALE_MODES[0]!,
+        pageBreakControl: PDF_PAGE_BREAKS[0]!,
+      },
+      branchId,
+    );
+  }
+
+  /**
+   * Resolve a Group Layout Setting by name for Excel import: reuse an
+   * existing active tenant (+branch, if scoped) row with this name, or
+   * create one with default field values.
+   * @param tenantId owning tenant
+   * @param name the Excel cell's plain text value
+   * @param branchId active branch (Branch Admin) to scope/stamp, or
+   *   null/omitted for tenant-wide (Business Admin)
+   */
+  async resolveOrCreateGroupLayoutSettingByName(
+    tenantId: string,
+    name: string,
+    branchId?: string | null,
+  ): Promise<LabGroupLayoutSetting> {
+    const existing = await this.prisma.labGroupLayoutSetting.findFirst({
+      where: { tenantId, name, deletedAt: null, ...(branchId && { branchId }) },
+    });
+    if (existing) return existing;
+    return this.createGroupLayoutSetting(
+      tenantId,
+      {
+        name,
+        nameAlignment: GROUP_LAYOUT_ALIGNMENTS[0]!,
+        columnLayout: GROUP_LAYOUT_COLUMN_LAYOUTS[0]!,
+        resultAlignment: GROUP_LAYOUT_ALIGNMENTS[0]!,
+        displayStyle: GROUP_LAYOUT_DISPLAY_STYLES[0]!,
+      },
+      branchId,
+    );
+  }
+
+  /**
+   * Look up an Icon Setting by name for Excel import — lookup only, never
+   * auto-created (an Icon Setting requires real uploaded image files, which
+   * an Excel cell cannot supply).
+   * @param tenantId owning tenant
+   * @param name the Excel cell's plain text value
+   * @param branchId active branch (Branch Admin) to scope, or null/omitted
+   *   for tenant-wide (Business Admin)
+   * @returns the matching active icon setting, or null if none exists yet
+   */
+  async findIconSettingByName(
+    tenantId: string,
+    name: string,
+    branchId?: string | null,
+  ): Promise<LabIconSetting | null> {
+    return this.prisma.labIconSetting.findFirst({
+      where: { tenantId, name, deletedAt: null, ...(branchId && { branchId }) },
+    });
   }
 }

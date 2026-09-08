@@ -1,0 +1,41 @@
+meta {
+  name: 02 Business Login (priya)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+}
+
+body:json {
+  {
+    "identifier": "{{businessIdentifier}}",
+    "password": "{{BUSINESS_PASSWORD}}"
+  }
+}
+
+vars:pre-request {
+  businessIdentifier: priya@email.com
+  BUSINESS_PASSWORD: Password@123
+}
+
+script:post-response {
+  const d = res.getBody() && res.getBody().data;
+  if (d && d.accessToken) {
+    bru.setEnvVar("businessAccessToken", d.accessToken);
+  }
+}
+
+docs {
+  Business login ('jwt') for priya@email.com. No tenantSlug needed — a staff
+  person falls back to their ownerTenantId, and the token carries the active
+  branch/profile used for all tenant-scoped requests below.
+  Set BUSINESS_PASSWORD in the NotificationTest environment (never hard-coded).
+}

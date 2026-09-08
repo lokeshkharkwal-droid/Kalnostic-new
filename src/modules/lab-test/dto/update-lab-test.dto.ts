@@ -1,4 +1,5 @@
 import {
+  ApprovalWorkflow,
   DayOfWeek,
   ProcessMethod,
   RepeatIntervalUnit,
@@ -109,9 +110,9 @@ export class UpdateLabTestDto {
   @IsOptional()
   isEnableCms?: boolean;
 
-  @IsUUID()
+  @IsEnum(ApprovalWorkflow)
   @IsOptional()
-  approvalWorkflowId?: string;
+  approvalWorkflow?: ApprovalWorkflow;
 
   @IsInt()
   @Min(0)
@@ -274,6 +275,18 @@ export class UpdateLabTestDto {
 
   @IsBoolean()
   @IsOptional()
+  isOutsource?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  isBillOnlyTest?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  isSampleFlow?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
   isMandatoryTest?: boolean;
 
   @IsUUID()
@@ -300,6 +313,10 @@ export class UpdateLabTestDto {
   @IsEnum(RepeatIntervalUnit)
   @IsOptional()
   repeatIntervalUnit?: RepeatIntervalUnit;
+
+  @IsBoolean()
+  @IsOptional()
+  isOverrideAllowed?: boolean;
 
   @IsBoolean()
   @IsOptional()

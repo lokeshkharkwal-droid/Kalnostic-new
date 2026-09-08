@@ -1,6 +1,7 @@
 import {
   AbnormalFlag,
   AgeUnit,
+  ApprovalWorkflow,
   ContainerType,
   DayOfWeek,
   ParameterType,
@@ -34,18 +35,23 @@ import {
 export const HH_MM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 /**
- * ONE flat worksheet, 120 columns, based on the reference file
+ * ONE flat worksheet, 123 columns, based on the reference file
  * `IMPORT & EXPORT - IMPORT & EXPORT.csv` (header text/order/typos copied
- * verbatim — "Conatiner Type", "imgae settings", "reflex test" are the real
- * column names, not mistakes to fix) PLUS 3 columns the reference file didn't
- * have: "Mandatory Department" (right after "Mandatory Test"), "Repeat
- * Interval Value" and "Repeat Interval Unit" (right after "Repeat Interval
- * Restriction"). Those 3 were added because `assertCoreInvariants` requires
- * them whenever the paired boolean flag is true, and the original 117-column
- * format had no column to satisfy that — setting "Mandatory Test"/"Repeat
- * Interval Restriction" to Yes via Excel was a dead end otherwise (confirmed
- * by a real user hitting exactly this in testing). A test spans one or more
- * physical rows: the Test-level scalar columns (this DTO's own fields,
+ * verbatim — "imgae settings", "reflex test" are the real column names, not
+ * mistakes to fix; "Conatiner Type" was a copied typo, now corrected to
+ * "Container Type") PLUS 7 columns the reference file didn't have:
+ * "Mandatory for  Department", "Mandatory for Category", "Mandatory for
+ * Sub-Category" (right after "Mandatory Test"), "Repeat Interval Value",
+ * "Repeat Interval Unit", "Override Allowed" (right after "Repeat Interval
+ * Restriction"). The Mandatory-for-* and Repeat Interval Value/Unit columns
+ * were added because `assertCoreInvariants` requires them whenever the
+ * paired boolean flag is true, and the original 117-column format had no
+ * column to satisfy that — setting "Mandatory Test"/"Repeat Interval
+ * Restriction" to Yes via Excel was a dead end otherwise (confirmed by a
+ * real user hitting exactly this in testing). "Override Allowed" (backed by
+ * `LabTest.isOverrideAllowed`) is a manual bypass of the repeat-interval
+ * restriction, optional and defaulting to false. A test spans one or
+ * more physical rows: the Test-level scalar columns (this DTO's own fields,
  * everything up to and including `isActive`/Notes) are populated ONLY on the
  * test's FIRST row — every continuation row leaves them blank, which is how
  * the parser groups rows back into one test (see `groupTestRowSpans` in
@@ -97,11 +103,9 @@ export class ImportXlsxTestRowDto {
   @IsOptional()
   processMethod?: ProcessMethod;
 
-  /** Free-text logical ref (no lookup table exists yet). */
-  @IsString()
+  @IsEnum(ApprovalWorkflow)
   @IsOptional()
-  @MaxLength(255)
-  approvalWorkflowId?: string;
+  approvalWorkflow?: ApprovalWorkflow;
 
   @IsBoolean()
   @IsOptional()
@@ -109,12 +113,26 @@ export class ImportXlsxTestRowDto {
 
   /** Which department this test is mandatory for. Required (by
    * `assertCoreInvariants`) when `isMandatoryTest` is true — resolved from
-   * the "Mandatory Department" column's department NAME to an id the same
-   * way `departmentId` is (see `namesToIds`/`resolveOptionalNameField` in
-   * `importXlsx`). */
+   * the "Mandatory for  Department" column's department NAME to an id the
+   * same way `departmentId` is (see `namesToIds`/`resolveOptionalNameField`
+   * in `importXlsx`). */
   @IsString()
   @IsOptional()
   mandatoryDeptId?: string;
+
+  /** Which category this test is mandatory for — resolved from the
+   * "Mandatory for Category" column's category NAME to an id, same pattern
+   * as `mandatoryDeptId`. */
+  @IsString()
+  @IsOptional()
+  mandatoryCatId?: string;
+
+  /** Which sub-category this test is mandatory for — resolved from the
+   * "Mandatory for Sub-Category" column's sub-category NAME to an id, same
+   * pattern as `mandatoryDeptId`. */
+  @IsString()
+  @IsOptional()
+  mandatorySubcatId?: string;
 
   @IsBoolean()
   @IsOptional()
@@ -130,6 +148,12 @@ export class ImportXlsxTestRowDto {
   @IsEnum(RepeatIntervalUnit)
   @IsOptional()
   repeatIntervalUnit?: RepeatIntervalUnit;
+
+  /** Manual bypass of the repeat-interval restriction. Optional; defaults to
+   * false (no override) when blank. */
+  @IsBoolean()
+  @IsOptional()
+  isOverrideAllowed?: boolean;
 
   @IsBoolean()
   @IsOptional()
@@ -296,9 +320,13 @@ export class ImportXlsxTestRowDto {
   @IsOptional()
   reportingTimeTo?: string;
 
-  // `Bill Only Test` / `Outsource` / `Sample Flow` have no matching DB field
-  // on LabTest (verified against prisma/schema.prisma) — export-only,
-  // ignored on import. Not modelled here.
+  // `Bill Only Test` / `Sample Flow` / `Outsource` all gained real columns
+  // (isBillOnlyTest/isSampleFlow/isOutsource, 2026-09-06) and are modelled
+  // below — previously UI-only toggles with no backing field.
+
+  @IsBoolean()
+  @IsOptional()
+  isBillOnlyTest?: boolean;
 
   @IsBoolean()
   @IsOptional()
@@ -306,7 +334,15 @@ export class ImportXlsxTestRowDto {
 
   @IsBoolean()
   @IsOptional()
+  isOutsource?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
   isPreferenceTest?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  isSampleFlow?: boolean;
 
   @IsBoolean()
   @IsOptional()
@@ -353,11 +389,14 @@ export class ImportXlsxSampleRowDto {
   @IsOptional()
   rowLabel?: string;
 
-  /** Free-text logical ref (no lookup table exists yet). */
+  /** Human-readable sample name typed/selected in the sheet (e.g. "Blood
+   * (EDTA)") — the real target column. No sample-types catalogue exists yet,
+   * so there is no id to resolve this to; `sampleNameId` (a future logical
+   * ref) is intentionally left unset on import. */
   @IsString()
   @IsOptional()
-  @MaxLength(255)
-  sampleNameId?: string;
+  @MaxLength(100)
+  sampleName?: string;
 
   @IsString()
   @IsOptional()
@@ -415,11 +454,26 @@ export class ImportXlsxSampleRowDto {
   isDefault?: boolean;
 }
 
+/** One echoed "Parameter Name" cell from a Reference Range/Value block that
+ * disagreed with the parameter it was positioned under (see
+ * `buildParamsForSpan`'s doc comment) — import-only bookkeeping, never sent
+ * to Prisma (see `cleanImportParamDtos`). */
+export class ImportXlsxMismatchedEchoDto {
+  block: 'Reference Range' | 'Reference Value';
+  echoName: string;
+}
+
 /** One Result Parameter "block" — contiguous rows, first-row-only fields. */
 export class ImportXlsxResultParamRowDto {
   @IsString()
   @IsOptional()
   rowLabel?: string;
+
+  /** Import-only bookkeeping — see `ImportXlsxMismatchedEchoDto`. Not
+   * validated (arbitrary internal shape) and stripped before the Prisma
+   * write by `cleanImportParamDtos`. */
+  @IsOptional()
+  mismatchedEchoNames?: ImportXlsxMismatchedEchoDto[];
 
   @IsString()
   @IsOptional()
@@ -483,9 +537,10 @@ export class ImportXlsxResultParamRowDto {
   @MaxLength(255)
   iconSettingsId?: string;
 
-  // `imgae settings` (sic) has no matching per-parameter DB field on
-  // LabTestResultParam (verified against prisma/schema.prisma) — export-only,
-  // ignored on import. Not modelled here.
+  // `imgae settings` (sic) gained a matching per-parameter DB field
+  // (imageSettingsId, added 2026-09-06) but Excel import still has no
+  // name->id resolution built for it — export-only, ignored on import for
+  // now. Not modelled here (separate task from the live Add Test UI fix).
 
   /**
    * `reflex test` — semicolon-separated NAMES (e.g. "FT3; FT4"). The DB
@@ -637,20 +692,21 @@ export class ImportXlsxReferenceValueRowDto {
   abnormalFlagLogic?: AbnormalFlag;
 }
 
-// ── Single worksheet: name + full 120-column header list, in order ─────────
+// ── Single worksheet: name + full 123-column header list, in order ─────────
 
 /** The one worksheet name the uploaded workbook must contain. */
 export const XLSX_SHEET_NAME = 'Lab Tests' as const;
 
 /**
- * The full 120-column header list: the reference file's 117 columns, EXACT
+ * The full 123-column header list: the reference file's 117 columns, EXACT
  * text/order from `IMPORT & EXPORT - IMPORT & EXPORT.csv` (row 2 — row 1 is
- * blank), plus 3 columns added on top ("Mandatory Department", "Repeat
- * Interval Value", "Repeat Interval Unit" — see the doc comment on
- * `ImportXlsxTestRowDto` for why). Typos ("Conatiner Type", "imgae
- * settings") and the lowercase/uppercase mix ("reporting unit" vs "GENDER")
- * are copied verbatim from the reference file — they are the real contract,
- * not mistakes.
+ * blank), plus 6 columns added on top ("Mandatory for  Department",
+ * "Mandatory for Category", "Mandatory for Sub-Category", "Repeat Interval
+ * Value", "Repeat Interval Unit", "Override Allowed" — see the doc comment
+ * on `ImportXlsxTestRowDto` for why). Typos ("imgae settings") and the
+ * lowercase/uppercase mix ("reporting unit" vs "GENDER") are copied verbatim
+ * from the reference file — they are the real contract, not mistakes.
+ * "Conatiner Type" was a copied typo, now corrected to "Container Type".
  */
 export const XLSX_COLUMNS = [
   'Test Name',
@@ -663,10 +719,13 @@ export const XLSX_COLUMNS = [
   'Process Method',
   'Approval Workflow',
   'Mandatory Test',
-  'Mandatory Department',
+  'Mandatory for  Department',
+  'Mandatory for Category',
+  'Mandatory for Sub-Category',
   'Repeat Interval Restriction',
   'Repeat Interval Value',
   'Repeat Interval Unit',
+  'Override Allowed',
   'Hide in Order Screen',
   'Clinical Tags',
   'ICD Code',
@@ -709,7 +768,7 @@ export const XLSX_COLUMNS = [
   'Test Status',
   'Sample Name',
   'Sample Type',
-  'Conatiner Type',
+  'Container Type',
   'Sample Size',
   'collection method',
   'number of samples',
@@ -797,11 +856,15 @@ export const VERSION_CONTROL_COLUMNS = [
 export const BOOLEAN_FIELDS = new Set<string>([
   'isMandatoryTest',
   'isRepeatIntervalRestriction',
+  'isOverrideAllowed',
   'isHideInOrderScreen',
   'isEnableCms',
   'isAllowPriceOverride',
   'isAllowDiscounts',
   'isPreferenceTest',
+  'isOutsource',
+  'isBillOnlyTest',
+  'isSampleFlow',
   'isFastingRequired',
   'isLightProtection',
   'isDefault',
@@ -841,7 +904,6 @@ export const NUMERIC_FIELDS = new Set<string>([
 /** Semicolon-separated free-text-list fields (e.g. "Hormones; Thyroid"). */
 export const SEMICOLON_LIST_FIELDS = new Set<string>([
   'clinicalTags',
-  'scheduleDays',
 ]);
 
 /** `Test Status` column: "Active"/"Inactive" ↔ `isActive` boolean. */
@@ -872,6 +934,13 @@ export const DAY_ENUM_TO_LABEL: Record<string, string> = Object.fromEntries(
  */
 export const ENUM_LABEL_FIELDS: Record<string, Record<string, string>> = {
   processMethod: { 'Single Step': 'SINGLE_STEP', 'Multi Step': 'MULTI_STEP' },
+  // Matches the FE's hardcoded APPROVAL_WORKFLOW_OPTIONS exactly (`utils/index.ts`).
+  approvalWorkflow: {
+    'Single Approval': 'SINGLE_APPROVAL',
+    'Dual Approval': 'DUAL_APPROVAL',
+    'Auto Approve': 'AUTO_APPROVE',
+    'Pathologist Review': 'PATHOLOGIST_REVIEW',
+  },
   samplePriorityType: { Routine: 'ROUTINE', Urgent: 'URGENT', Stat: 'STAT' },
   tatMinUnit: { Minutes: 'MINUTES', Hours: 'HOURS', Days: 'DAYS' },
   tatMaxUnit: { Minutes: 'MINUTES', Hours: 'HOURS', Days: 'DAYS' },
@@ -902,7 +971,11 @@ export const ENUM_LABEL_FIELDS: Record<string, Record<string, string>> = {
     '3 Decimal': 'THREE_DECIMAL',
     'Whole Number': 'WHOLE_NUMBER',
   },
-  gender: { All: 'ALL', Male: 'MALE', Female: 'FEMALE' },
+  // `Both` accepted as a synonym for `All` — real-world reference files (e.g.
+  // MASTER DATA.xlsx) commonly say "Both" meaning "applies to both sexes",
+  // which is exactly what `ALL` already means (see `genderMatches()` in
+  // `lab-report/utils/reference-range.util.ts`: "ALL matches everyone").
+  gender: { All: 'ALL', Both: 'ALL', Male: 'MALE', Female: 'FEMALE' },
   ageFromUnit: {
     Days: 'DAYS',
     Day: 'DAYS',
@@ -935,27 +1008,115 @@ export const ENUM_LABEL_FIELDS: Record<string, Record<string, string>> = {
   containerType: {
     'Edta Tube Purple Top': 'EDTA_TUBE_PURPLE_TOP',
     'Plain Tube Red Top': 'PLAIN_TUBE_RED_TOP',
+    'Sst Tube Yellow Top': 'SST_TUBE_YELLOW_TOP',
+    'Citrate Tube Blue Top': 'CITRATE_TUBE_BLUE_TOP',
     'Fluoride Tube Grey Top': 'FLUORIDE_TUBE_GREY_TOP',
+    'Heparin Tube Green Top': 'HEPARIN_TUBE_GREEN_TOP',
     'Urine Container': 'URINE_CONTAINER',
+    'Stool Container': 'STOOL_CONTAINER',
+    Swab: 'SWAB',
     'Sterile Container': 'STERILE_CONTAINER',
+    Other: 'OTHER',
+
+    // Added for the "New UI Improvements" SAMPLE tab requirement — canonical
+    // labels for the 35 new ContainerType enum values, title-cased the same
+    // way as the 11 above (matches this sheet's own export format).
+    'Urine 24h Container No Preservative': 'URINE_24H_CONTAINER_NO_PRESERVATIVE',
+    'Urine 24h Container Acetic Acid': 'URINE_24H_CONTAINER_ACETIC_ACID',
+    'Urine 24h Container Hydrochloric Acid': 'URINE_24H_CONTAINER_HYDROCHLORIC_ACID',
+    'Urine 24h Container Boric Acid': 'URINE_24H_CONTAINER_BORIC_ACID',
+    'Urine 24h Container Diazolidinyl Urea': 'URINE_24H_CONTAINER_DIAZOLIDINYL_UREA',
+    'Urine 24h Container Sodium Carbonate': 'URINE_24H_CONTAINER_SODIUM_CARBONATE',
+    'Anaerobic Transport Vial': 'ANAEROBIC_TRANSPORT_VIAL',
+    'Blood Culture Bottle Aerobic': 'BLOOD_CULTURE_BOTTLE_AEROBIC',
+    'Blood Culture Bottle Anaerobic': 'BLOOD_CULTURE_BOTTLE_ANAEROBIC',
+    'Blood Culture Bottle Pediatric': 'BLOOD_CULTURE_BOTTLE_PEDIATRIC',
+    'Clean Paper Envelope Packet': 'CLEAN_PAPER_ENVELOPE_PACKET',
+    'Culture Plate Broth Vial': 'CULTURE_PLATE_BROTH_VIAL',
+    'Glass Slides With Fixative Slide Jar': 'GLASS_SLIDES_WITH_FIXATIVE_SLIDE_JAR',
+    'K2 K3 Edta Tube Lavender Top': 'K2_K3_EDTA_TUBE_LAVENDER_TOP',
+    'Liquid Based Cytology Vial': 'LIQUID_BASED_CYTOLOGY_VIAL',
+    'Lithium Heparin Tube Green Top': 'LITHIUM_HEPARIN_TUBE_GREEN_TOP',
+    'Plain Clot Activator Tube Red Top': 'PLAIN_CLOT_ACTIVATOR_TUBE_RED_TOP',
+    'Ppt Plasma Prep Tube Pearl White Top': 'PPT_PLASMA_PREP_TUBE_PEARL_WHITE_TOP',
+    'Royal Blue Trace Element Tube': 'ROYAL_BLUE_TRACE_ELEMENT_TUBE',
+    'Sst Tube With Gel Gold Top': 'SST_TUBE_WITH_GEL_GOLD_TOP',
+    'Sodium Citrate Tube 32pct Light Blue Top': 'SODIUM_CITRATE_TUBE_32PCT_LIGHT_BLUE_TOP',
+    'Sodium Citrate Tube 38pct Esr Black Top': 'SODIUM_CITRATE_TUBE_38PCT_ESR_BLACK_TOP',
+    'Sodium Fluoride Oxalate Tube Grey Top': 'SODIUM_FLUORIDE_OXALATE_TUBE_GREY_TOP',
+    'Sodium Heparin Tube Green Top': 'SODIUM_HEPARIN_TUBE_GREEN_TOP',
+    'Sterile Container Neutral Buffered Formalin': 'STERILE_CONTAINER_NEUTRAL_BUFFERED_FORMALIN',
+    'Sterile Container Glutaraldehyde': 'STERILE_CONTAINER_GLUTARALDEHYDE',
+    'Sterile Container Cary Blair Medium': 'STERILE_CONTAINER_CARY_BLAIR_MEDIUM',
+    'Sterile Container Michels Zeus Medium': 'STERILE_CONTAINER_MICHELS_ZEUS_MEDIUM',
+    'Sterile Container Normal Saline Fresh': 'STERILE_CONTAINER_NORMAL_SALINE_FRESH',
+    'Sterile Dry Swab Container': 'STERILE_DRY_SWAB_CONTAINER',
+    'Sterile Universal Wide Mouth Container': 'STERILE_UNIVERSAL_WIDE_MOUTH_CONTAINER',
+    'Sweat Collection Device Macroduct': 'SWEAT_COLLECTION_DEVICE_MACRODUCT',
+    'Swab Tube Amies Stuart Medium': 'SWAB_TUBE_AMIES_STUART_MEDIUM',
+    'Swab Tube Viral Transport Medium': 'SWAB_TUBE_VIRAL_TRANSPORT_MEDIUM',
+    'Whatman 903 Filter Paper Card': 'WHATMAN_903_FILTER_PAPER_CARD',
+
+    // TEMPORARY aliases for MASTER DATA.xlsx's real-world container
+    // descriptions — re-added 2026-09-05, to be REMOVED before committing/
+    // pushing this change. `ContainerType` has no real per-tenant catalogue
+    // (confirmed nowhere in this codebase, SiteAdmin, the prior Kishan
+    // implementation, or the legacy PHP system); these 14 free-text
+    // descriptions are lossily collapsed onto the closest of the 11 fixed
+    // enum values purely to keep this file importable in the meantime. The
+    // agreed permanent fix is a real enum migration adding new values (see
+    // Gap-ContainerType-No-Real-Catalogue.md), not this mapping — do not
+    // extend this list further without checking with the user first.
+    'K2/K3 EDTA Tube (Lavender)': 'EDTA_TUBE_PURPLE_TOP',
+    'Plain/Clot Activator Tube (Red)': 'PLAIN_TUBE_RED_TOP',
+    'Serum Separator Tube / SST with Gel (Gold)': 'SST_TUBE_YELLOW_TOP',
+    'Sodium Citrate Tube 3.2% (Light Blue)': 'CITRATE_TUBE_BLUE_TOP',
+    'Sodium Fluoride/Potassium Oxalate Tube (Grey)': 'FLUORIDE_TUBE_GREY_TOP',
+    'Lithium/Sodium Heparin Tube (Green)': 'HEPARIN_TUBE_GREEN_TOP',
+    '24-Hour Urine Container (2–3 L)': 'URINE_CONTAINER',
+    'Wide-mouth Urine Container (Non-sterile)': 'URINE_CONTAINER',
+    'Sterile Universal Container': 'STERILE_CONTAINER',
+    'Sterile Wide-mouth Container': 'STERILE_CONTAINER',
+    'Cary-Blair Transport Vial': 'SWAB',
+    'Formalin Container (10% Neutral Buffered Formalin)': 'OTHER',
+    'Amniocentesis Sterile Syringe/Container': 'OTHER',
+    'Dried Blood Spot(DBS)': 'OTHER',
   },
 };
 
 /**
- * Raw enum member (`SINGLE_STEP`) → the Excel display label a user actually
- * typed (`Single Step`) — the reverse of `ENUM_LABEL_FIELDS`, flattened
- * across all fields into one lookup (enum member names don't collide across
- * Prisma enums here). An `@IsEnum` failure's default class-validator message
- * lists valid values by their raw enum members (e.g. "must be one of the
- * following values: SINGLE_STEP, MULTI_STEP") — `LabTestService.
- * humanizeValidationMessage` uses this to show the labels the user actually
- * sees in the sheet instead.
+ * DTO field name → raw enum member (`SINGLE_STEP`) → the Excel display label
+ * a user actually typed (`Single Step`) — the reverse of `ENUM_LABEL_FIELDS`,
+ * kept PER FIELD (not flattened into one global value→label lookup) because
+ * several fields legitimately share the same underlying enum values under
+ * DIFFERENT alias sets (e.g. `ageFromUnit`'s `DAYS`→"Day" vs `tatMinUnit`'s
+ * `DAYS`→"Days") — a single flattened map would let one field's alias
+ * silently overwrite another's real label.
+ *
+ * WITHIN one field, several labels can also alias the same value (e.g.
+ * `gender`'s `All`/`Both` both → `ALL`; `ageFromUnit`'s `Years`/`Yrs`/`Yr`
+ * all → `YEARS`) — every field in `ENUM_LABEL_FIELDS` declares its CANONICAL
+ * label first and aliases after, so only the FIRST label seen per value is
+ * kept here (an alias declared later never overwrites it), ensuring the
+ * error message always shows the canonical label a user should type, not
+ * whichever alias happened to be declared last.
+ *
+ * An `@IsEnum` failure's default class-validator message lists valid values
+ * by their raw enum members (e.g. "must be one of the following values:
+ * SINGLE_STEP, MULTI_STEP") — `LabTestService.humanizeValidationMessage`
+ * uses this, keyed by the failing field, to show the labels the user
+ * actually sees in the sheet instead.
  */
-export const ENUM_VALUE_TO_LABEL: Record<string, string> = Object.fromEntries(
-  Object.values(ENUM_LABEL_FIELDS).flatMap((labelToValue) =>
-    Object.entries(labelToValue).map(([label, value]) => [value, label]),
-  ),
-);
+export const ENUM_VALUE_TO_LABEL: Record<string, Record<string, string>> =
+  Object.fromEntries(
+    Object.entries(ENUM_LABEL_FIELDS).map(([field, labelToValue]) => {
+      const valueToLabel: Record<string, string> = {};
+      for (const [label, value] of Object.entries(labelToValue)) {
+        if (!(value in valueToLabel)) valueToLabel[value] = label;
+      }
+      return [field, valueToLabel];
+    }),
+  );
 
 /**
  * DTO field name → the Excel column header a user actually sees. Every
@@ -983,12 +1144,15 @@ export const FIELD_TO_COLUMN_LABEL: Record<string, string> = {
   categoryId: 'Category',
   subCategoryId: 'Sub Category',
   processMethod: 'Process Method',
-  approvalWorkflowId: 'Approval Workflow',
+  approvalWorkflow: 'Approval Workflow',
   isMandatoryTest: 'Mandatory Test',
-  mandatoryDeptId: 'Mandatory Department',
+  mandatoryDeptId: 'Mandatory for  Department',
+  mandatoryCatId: 'Mandatory for Category',
+  mandatorySubcatId: 'Mandatory for Sub-Category',
   isRepeatIntervalRestriction: 'Repeat Interval Restriction',
   repeatIntervalValue: 'Repeat Interval Value',
   repeatIntervalUnit: 'Repeat Interval Unit',
+  isOverrideAllowed: 'Override Allowed',
   isHideInOrderScreen: 'Hide in Order Screen',
   clinicalTags: 'Clinical Tags',
   icdCode: 'ICD Code',
@@ -1023,8 +1187,11 @@ export const FIELD_TO_COLUMN_LABEL: Record<string, string> = {
   approvalDurationMaxUnit: 'Approval Time Maximum Unit',
   reportingTimeFrom: 'Reporting Time From',
   reportingTimeTo: 'Reporting Time To',
+  isBillOnlyTest: 'Bill Only Test',
   isAllowDiscounts: 'Allow Discounts',
   isPreferenceTest: 'Preference Test',
+  isOutsource: 'Outsource',
+  isSampleFlow: 'Sample Flow',
   isActive: 'Test Status',
   usefulFor: 'USEFUL FOR',
   interpretationOfResults: 'INTERPRETATION OF RESULTS',
@@ -1034,9 +1201,9 @@ export const FIELD_TO_COLUMN_LABEL: Record<string, string> = {
   samples: 'Sample block',
   resultParams: 'Result Parameter block',
   // Sample fields
-  sampleNameId: 'Sample Name',
+  sampleName: 'Sample Name',
   sampleType: 'Sample Type',
-  containerType: 'Conatiner Type',
+  containerType: 'Container Type',
   sampleSize: 'Sample Size',
   collectionMethod: 'collection method',
   numberOfSamples: 'number of samples',

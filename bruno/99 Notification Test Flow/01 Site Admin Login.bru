@@ -1,0 +1,40 @@
+meta {
+  name: 01 Site Admin Login
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+}
+
+body:json {
+  {
+    "email": "{{siteAdminEmail}}",
+    "password": "{{SITEADMIN_PASSWORD}}"
+  }
+}
+
+vars:pre-request {
+  SITEADMIN_PASSWORD: SuperSecret1
+}
+
+script:post-response {
+  const d = res.getBody() && res.getBody().data;
+  if (d && d.accessToken) {
+    bru.setEnvVar("siteAdminToken", d.accessToken);
+  }
+}
+
+docs {
+  Email-only Site Admin login ('jwt-siteadmin'). Token (8h) is captured into
+  {{siteAdminToken}} and used by the "Create Global" requests.
+  Set SITEADMIN_PASSWORD in the NotificationTest environment (seeded default:
+  SuperSecret1 for admin@kalnostics.com).
+}

@@ -1,4 +1,5 @@
 import {
+  ApprovalWorkflow,
   DayOfWeek,
   ProcessMethod,
   RepeatIntervalUnit,
@@ -114,9 +115,9 @@ export class ImportLabTestRowDto {
   @IsOptional()
   isEnableCms?: boolean;
 
-  @IsUUID()
+  @IsEnum(ApprovalWorkflow)
   @IsOptional()
-  approvalWorkflowId?: string;
+  approvalWorkflow?: ApprovalWorkflow;
 
   @IsInt()
   @Min(0)

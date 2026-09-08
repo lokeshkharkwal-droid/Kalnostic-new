@@ -1,4 +1,5 @@
 import {
+  ApprovalWorkflow,
   DayOfWeek,
   ProcessMethod,
   RepeatIntervalUnit,
@@ -99,9 +100,9 @@ export class BulkEditLabTestItemDto {
   @IsOptional()
   isEnableCms?: boolean;
 
-  @IsUUID()
+  @IsEnum(ApprovalWorkflow)
   @IsOptional()
-  approvalWorkflowId?: string;
+  approvalWorkflow?: ApprovalWorkflow;
 
   @IsInt()
   @Min(0)

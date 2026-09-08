@@ -19,6 +19,12 @@ import {
   sampleSourceLabel,
   toBranchLocalInstant,
   formatReportDateTime,
+  formatTenantDate,
+  formatTenantDateTime,
+  buildEvaluationOrder,
+  evaluateFormula,
+  formatCalculatedValue,
+  type FormulaParam,
 } from '../../common/utils';
 import { TenantService } from '../tenant/tenant.service';
 import {
@@ -170,42 +176,113 @@ export class LabReportService {
     );
   }
 
+  /**
+   * The constituent `BranchLabTest`s of a panel, resolved via the
+   * `BranchLabPanelTest` junction (a raw FK, no Prisma relation, so tests are
+   * fetched in a second query) in the panel's own member-test `sortOrder`.
+   * Mirrors {@link getResultParams}'s existing panel-fallback resolution —
+   * kept as the single source of truth for "what are this panel's member
+   * tests" rather than duplicating a slightly different version.
+   */
+  private async panelMemberBranchLabTests(
+    tx: Prisma.TransactionClient,
+    branchLabPanelId: string,
+  ): Promise<{ id: string; sourceLabTestId: string | null }[]> {
+    const panelTests = await tx.branchLabPanelTest.findMany({
+      where: { branchLabPanelId, deletedAt: null },
+      select: { branchLabTestId: true },
+      orderBy: { sortOrder: 'asc' },
+    });
+    const branchLabTestIds = panelTests.map((t) => t.branchLabTestId);
+    if (branchLabTestIds.length === 0) return [];
+
+    const branchLabTests = await tx.branchLabTest.findMany({
+      where: { id: { in: branchLabTestIds }, deletedAt: null },
+      select: { id: true, sourceLabTestId: true },
+    });
+    const byId = new Map(branchLabTests.map((t) => [t.id, t]));
+    // Preserve the panel's own member-test sortOrder (branchLabTests above
+    // has no guaranteed order matching branchLabTestIds).
+    return branchLabTestIds
+      .map((id) => byId.get(id))
+      .filter((t): t is { id: string; sourceLabTestId: string | null } => !!t);
+  }
+
   private async createReportForAcceptedItem(
     tx: Prisma.TransactionClient,
     tenantId: string,
     orderItemId: string,
     acceptedBy?: string | null,
   ): Promise<void> {
-    const existing = await tx.labReport.findUnique({ where: { orderItemId } });
-    if (existing) return;
-
     const orderItem = await tx.orderItem.findFirst({
       where: { id: orderItemId, tenantId, deletedAt: null },
-      include: { branchLabTest: true },
+      include: { branchLabTest: true, branchLabPanel: true },
     });
     if (!orderItem) return;
 
-    const labTestId = orderItem.branchLabTest?.sourceLabTestId ?? null;
+    // Batch the "does a report already exist" check once per call rather than
+    // once per member test, since this may be invoked once per OrderSampleTest
+    // row sharing this orderItemId (i.e. potentially once per member test per
+    // linked sample) — a single query up front avoids repeated round-trips.
+    const existingReports = await tx.labReport.findMany({
+      where: { orderItemId, deletedAt: null },
+      select: { memberBranchLabTestId: true },
+    });
+    const existingMemberIds = new Set(
+      existingReports.map((r) => r.memberBranchLabTestId),
+    );
 
-    const report = await tx.labReport.create({
-      data: {
-        tenantId,
-        branchId: orderItem.branchId,
-        orderItemId,
-        labTestId,
-        status: LabReportStatus.PENDING,
-        isOutsourced: orderItem.outsourceCenterId !== null,
-      },
-    });
-    await tx.labReportHistory.create({
-      data: {
-        tenantId,
-        labReportId: report.id,
-        toStatus: LabReportStatus.PENDING,
-        action: 'sample_accepted',
-        actorId: acceptedBy ?? orderItem.collectedBy ?? 'system',
-      },
-    });
+    const actorId = acceptedBy ?? orderItem.collectedBy ?? 'system';
+
+    const createOne = async (
+      labTestId: string | null,
+      memberBranchLabTestId: string | null,
+    ): Promise<void> => {
+      const report = await tx.labReport.create({
+        data: {
+          tenantId,
+          branchId: orderItem.branchId,
+          orderItemId,
+          memberBranchLabTestId,
+          labTestId,
+          status: LabReportStatus.PENDING,
+          isOutsourced: orderItem.outsourceCenterId !== null,
+        },
+      });
+      await tx.labReportHistory.create({
+        data: {
+          tenantId,
+          labReportId: report.id,
+          toStatus: LabReportStatus.PENDING,
+          action: 'sample_accepted',
+          actorId,
+        },
+      });
+    };
+
+    if (orderItem.branchLabPanelId) {
+      // Panel item: one LabReport per member test, each independently
+      // progressing through the reporting lifecycle (see LabReport's own doc
+      // comment). Skip any member test that already has a report — the
+      // idempotency guarantee moves from the DB's old single-column @unique
+      // to this explicit check, since (orderItemId, memberBranchLabTestId) is
+      // now the composite unique key.
+      const memberTests = await this.panelMemberBranchLabTests(
+        tx,
+        orderItem.branchLabPanelId,
+      );
+      for (const member of memberTests) {
+        if (existingMemberIds.has(member.id)) continue;
+        await createOne(member.sourceLabTestId, member.id);
+      }
+      return;
+    }
+
+    // Non-panel item (a standalone test, or a `direct` free-text entry):
+    // unchanged behaviour — exactly one report, memberBranchLabTestId null.
+    if (existingMemberIds.has(null)) return;
+    const labTestId = orderItem.branchLabTest?.sourceLabTestId ?? null;
+    await createOne(labTestId, null);
   }
 
   // ── Worklist ────────────────────────────────────────────────────────────
@@ -384,6 +461,7 @@ export class LabReportService {
     let worklistRows = rows.map(toWorklistRow);
     worklistRows = await this.attachBranchNames(tenantId, worklistRows);
     worklistRows = await this.attachDepartmentNames(tenantId, worklistRows);
+    worklistRows = await this.attachMemberTestNames(worklistRows);
     worklistRows = await this.attachResultTypes(worklistRows);
     worklistRows = await this.attachSampleStatuses(tenantId, worklistRows);
 
@@ -474,6 +552,40 @@ export class LabReportService {
           ? { id: row.departmentId, name: nameById.get(row.departmentId)! }
           : null,
     }));
+  }
+
+  /**
+   * Fills in `test.name` (and, incidentally, keeps `test.kind: 'TEST'`) for a
+   * panel-member row — `toWorklistRow` can only stamp a placeholder empty
+   * name for `memberBranchLabTestId`, since resolving it to a real
+   * `BranchLabTest.testName` needs an actual query (a logical ref, no Prisma
+   * relation — same treatment as `attachBranchNames`/`attachDepartmentNames`
+   * above). No-op for every non-panel-member row (the common case).
+   */
+  private async attachMemberTestNames(
+    rows: LabReportWorklistRow[],
+  ): Promise<LabReportWorklistRow[]> {
+    const memberIds = [
+      ...new Set(
+        rows
+          .map((r) => r.memberBranchLabTestId)
+          .filter((id): id is string => id !== null),
+      ),
+    ];
+    if (memberIds.length === 0) return rows;
+
+    const branchLabTests = await this.prisma.branchLabTest.findMany({
+      where: { id: { in: memberIds }, deletedAt: null },
+      select: { id: true, testName: true },
+    });
+    const nameById = new Map(branchLabTests.map((t) => [t.id, t.testName]));
+
+    return rows.map((row) => {
+      if (!row.memberBranchLabTestId || !row.test) return row;
+      const name = nameById.get(row.memberBranchLabTestId);
+      if (name === undefined) return row;
+      return { ...row, test: { ...row.test, name } };
+    });
   }
 
   /**
@@ -771,6 +883,19 @@ export class LabReportService {
    * (sampleId, status) pair so two different samples sharing a status don't
    * silently drop one id. One batched query per page, same shape as the
    * other `attach*` resolvers above.
+   *
+   * Since the per-member-test breakdown, several rows can share one
+   * `orderItemId` (a panel's member tests, each its own `LabReport`) — a plain
+   * `orderItemId`-only lookup would then attach EVERY member test's samples to
+   * EVERY row (e.g. a 2-member panel showing "ACCEPTED, ACCEPTED" on both
+   * rows instead of one status each). Scoped by `(orderItemId, labTestId)`
+   * instead: `OrderSampleTest.labTestId` and `LabReport.labTestId` are both
+   * the tenant-master `LabTest.id` (see `OrderSampleService.collectTestUnits`'s
+   * `sourceLabTestId` snapshot), so they line up 1:1 per member test. A
+   * non-panel or grandfathered-panel row still gets every sample for its
+   * `orderItemId` (its `labTestId` is either the item's own single test, or
+   * null for a grandfathered panel — in both cases every linked sample is
+   * legitimately "this row's", same as before this change).
    */
   private async attachSampleStatuses(
     tenantId: string,
@@ -783,20 +908,36 @@ export class LabReportService {
       where: { orderItemId: { in: orderItemIds }, tenantId, deletedAt: null },
       select: {
         orderItemId: true,
+        labTestId: true,
         sample: { select: { id: true, status: true } },
       },
     });
 
-    const samplesByOrderItem = new Map<string, Map<string, SampleStatus>>();
-    for (const { orderItemId, sample } of sampleTests) {
-      const bySampleId =
-        samplesByOrderItem.get(orderItemId) ?? new Map<string, SampleStatus>();
-      bySampleId.set(sample.id, sample.status);
-      samplesByOrderItem.set(orderItemId, bySampleId);
+    // Group by orderItemId first (every sample of the item — the fallback for
+    // a non-panel/grandfathered row), and separately by
+    // (orderItemId, labTestId) for the precise per-member-test scoping.
+    const byOrderItem = new Map<string, Map<string, SampleStatus>>();
+    const byOrderItemAndTest = new Map<string, Map<string, SampleStatus>>();
+    for (const { orderItemId, labTestId, sample } of sampleTests) {
+      const item =
+        byOrderItem.get(orderItemId) ?? new Map<string, SampleStatus>();
+      item.set(sample.id, sample.status);
+      byOrderItem.set(orderItemId, item);
+
+      if (labTestId) {
+        const key = `${orderItemId}:${labTestId}`;
+        const scoped =
+          byOrderItemAndTest.get(key) ?? new Map<string, SampleStatus>();
+        scoped.set(sample.id, sample.status);
+        byOrderItemAndTest.set(key, scoped);
+      }
     }
 
     return rows.map((row) => {
-      const bySampleId = samplesByOrderItem.get(row.orderItemId);
+      const bySampleId =
+        row.memberBranchLabTestId && row.labTestId
+          ? byOrderItemAndTest.get(`${row.orderItemId}:${row.labTestId}`)
+          : byOrderItem.get(row.orderItemId);
       const entries = bySampleId ? [...bySampleId.entries()] : [];
       return {
         ...row,
@@ -1005,6 +1146,7 @@ export class LabReportService {
     worklistRow = (
       await this.attachDepartmentNames(tenantId, [worklistRow])
     )[0]!;
+    worklistRow = (await this.attachMemberTestNames([worklistRow]))[0]!;
     worklistRow = (await this.attachResultTypes([worklistRow]))[0]!;
     worklistRow = (await this.attachMultiStepProcess([worklistRow]))[0]!;
 
@@ -1134,15 +1276,23 @@ export class LabReportService {
    */
   /**
    * Resolve a report's result-parameter definitions. `LabReport.labTestId` is
-   * only set for a single-test report — a panel report leaves it null (per
-   * its own doc comment), so for a panel this instead walks
-   * `BranchLabPanel` -> its constituent `BranchLabPanelTest`s ->
-   * `BranchLabTest.sourceLabTestId` to collect every member test's params
-   * (concatenated in the panel's own test `sortOrder`, per test). Without
-   * this fallback, every panel report would show zero result parameters
-   * regardless of how much result data actually exists (the Report View
-   * modal and Print/Download are both driven by this list, not by
-   * `resultValues` directly).
+   * now populated for every new-style report — a non-panel report via
+   * `OrderItem.branchLabTestId`, and (since the per-member-test breakdown)
+   * a panel-member report via its own `memberBranchLabTestId` — so the
+   * `if (labTestId) ...` branch below covers both cases identically to a
+   * standalone test.
+   *
+   * The `branchLabPanelId` fallback below only still fires for a
+   * **grandfathered** report: one created before the per-member-test
+   * breakdown shipped, where `labTestId` was never set for a panel (per the
+   * `LabReport` model's own doc comment) and the whole panel's parameters
+   * were flattened into one report. It walks `BranchLabPanel` -> its
+   * constituent `BranchLabPanelTest`s -> `BranchLabTest.sourceLabTestId` to
+   * collect every member test's params (concatenated in the panel's own test
+   * `sortOrder`, per test). Kept, not removed, so those older reports keep
+   * rendering correctly in the Report View modal and Print/Download (both
+   * driven by this list, not by `resultValues` directly) — new panel reports
+   * never reach this branch.
    */
   private async getResultParams(
     labTestId: string | null,
@@ -1192,6 +1342,9 @@ export class LabReportService {
         reportingUnit: true,
         method: true,
         sortOrder: true,
+        parameterType: true,
+        calculationFormula: true,
+        decimalPlaces: true,
       },
       orderBy: { sortOrder: 'asc' },
     });
@@ -1336,9 +1489,10 @@ export class LabReportService {
     actorId: string,
   ) {
     const activeBranchId = this.requireBranch(branchId);
-    await this.requireReport(id, tenantId, activeBranchId);
+    const report = await this.requireReport(id, tenantId, activeBranchId);
 
     await this.prisma.withTenant(tenantId, async (tx) => {
+      const now = new Date();
       for (const value of dto.values) {
         await tx.labReportResultValue.upsert({
           where: {
@@ -1358,7 +1512,7 @@ export class LabReportService {
             referenceRangeId: value.referenceRangeId,
             referenceDisplay: value.referenceDisplay,
             source: ResultValueSource.MANUAL,
-            enteredAt: new Date(),
+            enteredAt: now,
             enteredBy: actorId,
           },
           update: {
@@ -1369,7 +1523,7 @@ export class LabReportService {
             referenceRangeId: value.referenceRangeId,
             referenceDisplay: value.referenceDisplay,
             source: ResultValueSource.MANUAL,
-            enteredAt: new Date(),
+            enteredAt: now,
             enteredBy: actorId,
             // The upsert's `where` matches by the labReportId+resultParamId
             // unique key regardless of deletedAt, so a slot that was ever
@@ -1381,6 +1535,27 @@ export class LabReportService {
           },
         });
       }
+
+      // Authoritative recompute of dynamic/calculated parameters. Any calculated
+      // parameter NOT flagged as a manual override in this payload is re-derived
+      // from its formula over the report's current values and stored with
+      // source = CALCULATED (chains evaluate in dependency order).
+      if (report.labTestId) {
+        const overriddenParamIds = new Set(
+          dto.values
+            .filter((v) => v.isManualOverride)
+            .map((v) => v.resultParamId),
+        );
+        await this.recomputeCalculatedValues(
+          tx,
+          id,
+          tenantId,
+          report.labTestId,
+          overriddenParamIds,
+          actorId,
+          now,
+        );
+      }
     });
 
     // findByIdForApi (flat shape), not findById (raw nested) — this is an
@@ -1391,6 +1566,123 @@ export class LabReportService {
     // dormant/harmless — fixed anyway so a future consumer doesn't inherit
     // the same silent-blank-fields bug.
     return this.findByIdForApi(id, tenantId, activeBranchId);
+  }
+
+  /**
+   * Re-derive every dynamic/calculated parameter of a report from its formula
+   * and persist the result with `source = CALCULATED`. Runs inside the caller's
+   * tenant transaction, AFTER the incoming (measured/override) values are saved,
+   * so it evaluates against the report's freshest values.
+   *
+   * Evaluation is in dependency order (a calculated parameter may reference
+   * another calculated parameter). A parameter listed in `overriddenParamIds` is
+   * left untouched (its manual override "sticks") but still feeds downstream
+   * formulas. A formula that cannot be computed yet (a blank/non-numeric input,
+   * or division by zero) blanks the slot rather than failing the save, so
+   * partial result entry stays allowed.
+   *
+   * @param tx the active tenant-scoped Prisma transaction client.
+   * @param labReportId the report whose values are being (re)computed.
+   * @param tenantId the tenant that owns the report.
+   * @param labTestId the report's source lab test (defines the parameters/formulas).
+   * @param overriddenParamIds parameter ids the technician manually overrode this save.
+   * @param actorId the acting user (recorded as `enteredBy`).
+   * @param now the timestamp to stamp on written rows.
+   */
+  private async recomputeCalculatedValues(
+    tx: Prisma.TransactionClient,
+    labReportId: string,
+    tenantId: string,
+    labTestId: string,
+    overriddenParamIds: Set<string>,
+    actorId: string,
+    now: Date,
+  ): Promise<void> {
+    const params = await tx.labTestResultParam.findMany({
+      where: { labTestId, deletedAt: null },
+      select: {
+        id: true,
+        parameterCode: true,
+        parameterType: true,
+        resultType: true,
+        calculationFormula: true,
+        decimalPlaces: true,
+      },
+    });
+
+    const formulaParams: FormulaParam[] = params.map((p) => ({
+      code: p.parameterCode,
+      isCalculated:
+        p.parameterType === 'CALCULATED' ||
+        p.resultType === 'CALCULATED' ||
+        !!p.calculationFormula?.trim(),
+      formula: p.calculationFormula,
+    }));
+    const ordered = buildEvaluationOrder(formulaParams);
+    // A cycle should have been rejected at config time; skip defensively.
+    if (!ordered.ok || ordered.order.length === 0) return;
+
+    const paramByCode = new Map(params.map((p) => [p.parameterCode, p]));
+
+    // Seed the value map from the report's current stored values (measured +
+    // any already-computed values), keyed by parameter code.
+    const existing = await tx.labReportResultValue.findMany({
+      where: { labReportId, tenantId, deletedAt: null },
+      select: { resultParamId: true, observed1: true },
+    });
+    const existingByParamId = new Map(
+      existing.map((v) => [v.resultParamId, v]),
+    );
+    const paramCodeById = new Map(params.map((p) => [p.id, p.parameterCode]));
+    const values: Record<string, number | null> = {};
+    for (const p of params) values[p.parameterCode] = null;
+    for (const v of existing) {
+      const code = paramCodeById.get(v.resultParamId);
+      if (!code) continue;
+      const raw = v.observed1?.trim();
+      const num = raw ? Number(raw) : NaN;
+      values[code] = Number.isFinite(num) ? num : null;
+    }
+
+    for (const code of ordered.order) {
+      const param = paramByCode.get(code);
+      if (!param || !param.calculationFormula) continue;
+      // Respect a manual override: keep the stored value and let it feed
+      // downstream formulas (its numeric value is already in `values`).
+      if (overriddenParamIds.has(param.id)) continue;
+
+      const result = evaluateFormula(param.calculationFormula, values);
+      const computed = result.ok
+        ? formatCalculatedValue(result.value, param.decimalPlaces)
+        : null;
+      values[code] = result.ok ? result.value : null;
+
+      // Skip creating an empty row that never existed — only blank an existing
+      // slot (e.g. a source value was cleared) so partial entry stays clean.
+      if (computed === null && !existingByParamId.has(param.id)) continue;
+
+      await tx.labReportResultValue.upsert({
+        where: {
+          labReportId_resultParamId: { labReportId, resultParamId: param.id },
+        },
+        create: {
+          tenantId,
+          labReportId,
+          resultParamId: param.id,
+          observed1: computed ?? undefined,
+          source: ResultValueSource.CALCULATED,
+          enteredAt: now,
+          enteredBy: actorId,
+        },
+        update: {
+          observed1: computed,
+          source: ResultValueSource.CALCULATED,
+          enteredAt: now,
+          enteredBy: actorId,
+          deletedAt: null,
+        },
+      });
+    }
   }
 
   /**
@@ -1844,7 +2136,8 @@ export class LabReportService {
 
     const signatories = await this.resolveStoredSignatories(report, tenantId);
     const approver = await this.resolveApprovingDoctor(report, tenantId);
-    const { timezone } = await this.tenantService.getLocale(tenantId);
+    const { timezone, dateFormat, timeFormat } =
+      await this.tenantService.getLocale(tenantId);
 
     // The sample this report's test was drawn from — `OrderSampleTest`/
     // `OrderSample` are raw FKs (no Prisma relation field on `LabReport`),
@@ -1893,8 +2186,17 @@ export class LabReportService {
     const lastReportPreparedOn = latestApproved._max.approvedAt ?? null;
 
     // Most recent SAMPLE-category note (append-only log — latest wins).
+    // Scoped across the order's sibling LabReports (same convention as
+    // createNote/findNotes — Sample Notes are order-wide, visible to every
+    // technician who opens the order, not scoped to whichever single test's
+    // report they happened to open), not just this one report's id.
+    const siblingIds = await this.siblingReportIds(
+      id,
+      tenantId,
+      this.requireBranch(branchId),
+    );
     const sampleNote = await this.prisma.labReportNote.findFirst({
-      where: { labReportId: report.id, category: 'SAMPLE' },
+      where: { labReportId: { in: siblingIds }, category: 'SAMPLE' },
       orderBy: { createdAt: 'desc' },
       select: { body: true },
     });
@@ -1915,6 +2217,7 @@ export class LabReportService {
               parameterName: true,
               groupName: true,
               sortOrder: true,
+              notes: true,
             },
           });
     const paramNameById = new Map(
@@ -1925,6 +2228,12 @@ export class LabReportService {
     );
     const sortOrderByParamId = new Map(
       resultParams.map((p) => [p.id, p.sortOrder]),
+    );
+    // `{result_note}` — a per-result-parameter free-text note from the Lab
+    // Test catalog (LabTestResultParam.notes), distinct from `sample_note`
+    // (a per-order, append-only Sample Notes log entry).
+    const notesByParamId = new Map(
+      resultParams.map((p) => [p.id, p.notes ?? '']),
     );
 
     // `resultValues` (the include on `LAB_REPORT_DETAIL_INCLUDE`) carries no
@@ -1950,15 +2259,38 @@ export class LabReportService {
       method_name: v.methodology ?? '',
       reference_display: v.referenceDisplay ?? '',
       group_name: groupNameByParamId.get(v.resultParamId) ?? '',
+      result_note: notesByParamId.get(v.resultParamId) ?? '',
     }));
 
     return {
       variables: {
         order_code: order.orderCode,
-        order_date: formatReportDateTime(
-          toBranchLocalInstant(order.orderDate, timezone),
-        ),
+        order_date: formatTenantDate(order.orderDate, dateFormat),
+        // Combines the date-only `orderDate` with the separately-captured
+        // `orderTime` ("HH:mm") into one date+time display value. Both
+        // fields are already branch-local wall-clock values entered by the
+        // operator — no `toBranchLocalInstant` conversion (that's only for
+        // real UTC instants like `collectedAt`/`approvedAt`).
+        order_date_time: (() => {
+          const [hours, minutes] = (order.orderTime ?? '00:00')
+            .split(':')
+            .map((n) => Number(n) || 0);
+          const combined = new Date(
+            Date.UTC(
+              order.orderDate.getUTCFullYear(),
+              order.orderDate.getUTCMonth(),
+              order.orderDate.getUTCDate(),
+              hours,
+              minutes,
+            ),
+          );
+          return formatTenantDateTime(combined, dateFormat, timeFormat);
+        })(),
         order_external_id: order.externalOrderId ?? '',
+        // Alias for the classic old-template tag name (`{external_order_id}`)
+        // — same value as `order_external_id`, kept separate so authors of
+        // pre-existing lab_report templates don't need to re-author them.
+        external_order_id: order.externalOrderId ?? '',
         patient_name: [patient.firstName, patient.middleName, patient.lastName]
           .filter(Boolean)
           .join(' '),

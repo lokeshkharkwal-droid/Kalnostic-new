@@ -181,6 +181,7 @@ export class LabTestController {
    * as an id.
    */
   @Post('import-xlsx')
+  @RequirePermission(PERMISSION_KEYS.BA_MD_ALLOW_IMPORT_TESTS)
   @Audit({
     module: AuditModule.LAB_TEST,
     action: AuditAction.UPDATE,
