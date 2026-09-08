@@ -12,6 +12,8 @@ import {
   SampleStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
+import { getReferralPanelId } from '../../prisma/tenant-context';
 import {
   genderLabel,
   salutationLabel,
@@ -114,6 +116,37 @@ import { TatService } from './tat.service';
  * once a sample is accepted — see `ensureCreatedForAcceptedItem` — not at raw
  * order/order-item creation.
  */
+/**
+ * Force a B2B panel filter onto a LabReport `where` via orderItem.order.
+ * @param where the Prisma LabReportWhereInput being built (mutated in place)
+ * @param panelId the active B2B panel id, or undefined for non-B2B sessions
+ */
+export function applyB2bLabReportScope(
+  where: Record<string, unknown>,
+  panelId: string | undefined,
+): void {
+  if (!panelId) return;
+  const orderItem = (where.orderItem as Record<string, unknown> | undefined) ?? {};
+  const order = (orderItem.order as Record<string, unknown> | undefined) ?? {};
+  order.referralPanelId = panelId;
+  orderItem.order = order;
+  where.orderItem = orderItem;
+}
+
+/**
+ * Assert a report traces (orderItem → order) to the active B2B panel.
+ * @param report fetched report (needs `id` + `orderItem.order.referralPanelId`)
+ * @param panelId the active B2B panel id, or undefined for non-B2B sessions
+ */
+export function assertLabReportPanelOwnership(
+  report: { id: string; orderItem: { order: { referralPanelId: string | null } } },
+  panelId: string | undefined,
+): void {
+  if (panelId && report.orderItem.order.referralPanelId !== panelId) {
+    throw new ReferralPanelAccessDeniedException('lab-report', report.id);
+  }
+}
+
 @Injectable()
 export class LabReportService {
   constructor(
@@ -425,6 +458,10 @@ export class LabReportService {
       ];
     }
     if (Object.keys(orderItem).length > 0) where.orderItem = orderItem;
+
+    // B2B Referral Panel isolation: constrain reports to the panel's orders
+    // (nested via orderItem.order). Runs last so it merges with any filters above.
+    applyB2bLabReportScope(where as Record<string, unknown>, getReferralPanelId());
 
     // Source pill (ALL/IN_HOUSE/OUTSOURCE) is wired above via LabReport.isOutsourced.
     // Home Collection is wired above via OrderDiagnostics.isHomeVisit (a
@@ -1109,6 +1146,14 @@ export class LabReportService {
       include: LAB_REPORT_DETAIL_INCLUDE,
     });
     if (!report) throw new LabReportNotFoundException(id);
+    // B2B Referral Panel isolation: block reading another panel's report by id.
+    assertLabReportPanelOwnership(
+      report as {
+        id: string;
+        orderItem: { order: { referralPanelId: string | null } };
+      },
+      getReferralPanelId(),
+    );
 
     const [contentSections, resultParams] = await Promise.all([
       this.getContentSections(tenantId, report.labTestId),
