@@ -31,7 +31,7 @@ import { AuthRoleService } from '../auth-role/auth-role.service';
 import {
   MODULE_PERMISSION_CATALOG,
   roleTemplateModules,
-  B2B_PANEL_PERMISSION_KEYS,
+  B2B_BASELINE_PERMISSION_KEYS,
 } from '../permissions/constants/module-permissions.constant';
 import {
   isValidModuleKey,
@@ -1613,7 +1613,7 @@ export class UsersService {
     // the permission-driven sidebar hides every sibling item. Without this the
     // baseline would grant every permission of the three modules.
     if (roleKey === 'b2b_referring_panel') {
-      return { moduleKeys, permissions: new Set(B2B_PANEL_PERMISSION_KEYS) };
+      return { moduleKeys, permissions: new Set(B2B_BASELINE_PERMISSION_KEYS) };
     }
     const permissions = new Set<string>();
     for (const entry of MODULE_PERMISSION_CATALOG) {

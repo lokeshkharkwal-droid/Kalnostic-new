@@ -1,12 +1,14 @@
 import { Injectable } from '@nestjs/common';
-import { StaffStatus, UserType } from '@prisma/client';
+import { Prisma, StaffStatus, UserType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   ConflictException,
   NotFoundException,
 } from '../../common/exceptions/kaltros.exception';
 import { UsersService } from '../users/users.service';
+import { PasswordService } from '../security/password.service';
 import { CreateReferralPanelUserDto } from './dto/create-referral-panel-user.dto';
+import { UpdateReferralPanelUserDto } from './dto/update-referral-panel-user.dto';
 
 /** The fixed role + modules assigned to every referral-panel login. */
 const B2B_ROLE_KEY = 'b2b_referring_panel';
@@ -55,6 +57,7 @@ export class ReferralPanelUserService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly usersService: UsersService,
+    private readonly passwordService: PasswordService,
   ) {}
 
   /**
@@ -165,17 +168,165 @@ export class ReferralPanelUserService {
   ): Promise<{
     id: string;
     personId: string;
-    person: { firstName: string; email: string | null; phone: string | null } | null;
+    employeeName: string;
+    username: string | null;
+    dateOfBirth: string | null;
+    gender: string | null;
+    email: string | null;
+    mobileNumber: string | null;
+    address: string | null;
   } | null> {
     const profile = await this.prisma.userBranchProfile.findFirst({
       where: { tenantId, referralPanelId: panelId, deletedAt: null },
       select: { id: true, personId: true },
     });
     if (!profile) return null;
-    const person = await this.prisma.person.findFirst({
-      where: { id: profile.personId },
-      select: { firstName: true, email: true, phone: true },
+    const [person, creds] = await Promise.all([
+      this.prisma.person.findFirst({
+        where: { id: profile.personId },
+        select: {
+          firstName: true,
+          dateOfBirth: true,
+          gender: true,
+          email: true,
+          phone: true,
+          address: true,
+        },
+      }),
+      this.prisma.personCredentials.findFirst({
+        where: { personId: profile.personId },
+        select: { systemUsername: true },
+      }),
+    ]);
+    return {
+      id: profile.id,
+      personId: profile.personId,
+      employeeName: person?.firstName ?? '',
+      username: creds?.systemUsername ?? null,
+      dateOfBirth: person?.dateOfBirth
+        ? person.dateOfBirth.toISOString().slice(0, 10)
+        : null,
+      gender: person?.gender ?? null,
+      email: person?.email ?? null,
+      mobileNumber: person?.phone ?? null,
+      address: typeof person?.address === 'string' ? person.address : null,
+    };
+  }
+
+  /**
+   * Update the panel's B2B login (the eight editable personal/login fields).
+   * Branch, role, modules and status are never touched. Phone / email / username
+   * are validated for global uniqueness (excluding the user itself); a new
+   * password is hashed. All writes run in one transaction.
+   * @param tenantId caller's tenant (from JWT)
+   * @param panelId the referral panel id (from the route)
+   * @param dto the changed fields (all optional)
+   */
+  async update(
+    tenantId: string,
+    panelId: string,
+    dto: UpdateReferralPanelUserDto,
+  ): Promise<{ personId: string }> {
+    const profile = await this.prisma.userBranchProfile.findFirst({
+      where: { tenantId, referralPanelId: panelId, deletedAt: null },
+      select: { personId: true },
     });
-    return { id: profile.id, personId: profile.personId, person };
+    if (!profile) {
+      throw new NotFoundException('referral-panel-user', panelId);
+    }
+    const personId = profile.personId;
+
+    if (dto.mobileNumber) await this.assertPhoneUnique(dto.mobileNumber, personId);
+    if (dto.email) await this.assertEmailUnique(dto.email, personId);
+    if (dto.username) await this.assertUsernameUnique(dto.username, personId);
+    const passwordHash = dto.password
+      ? await this.passwordService.hash(dto.password)
+      : null;
+
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      const personData: Prisma.PersonUpdateInput = {};
+      if (dto.employeeName !== undefined) personData.firstName = dto.employeeName;
+      if (dto.dateOfBirth !== undefined)
+        personData.dateOfBirth = new Date(dto.dateOfBirth);
+      if (dto.gender !== undefined) personData.gender = dto.gender;
+      if (dto.email !== undefined) personData.email = dto.email;
+      if (dto.mobileNumber !== undefined) personData.phone = dto.mobileNumber;
+      if (dto.address !== undefined)
+        personData.address = dto.address as Prisma.InputJsonValue;
+      if (Object.keys(personData).length > 0) {
+        await tx.person.update({ where: { id: personId }, data: personData });
+      }
+
+      const credData: Prisma.PersonCredentialsUpdateInput = {};
+      if (dto.username !== undefined) credData.systemUsername = dto.username;
+      if (dto.email !== undefined) credData.email = dto.email;
+      if (dto.mobileNumber !== undefined) credData.phone = dto.mobileNumber;
+      if (passwordHash) {
+        credData.passwordHash = passwordHash;
+        credData.isTempPassword = false;
+      }
+      if (Object.keys(credData).length > 0) {
+        await tx.personCredentials.update({
+          where: { personId },
+          data: credData,
+        });
+      }
+    });
+
+    return { personId };
+  }
+
+  /** Reject a phone already used by another person (global de-duplication key). */
+  private async assertPhoneUnique(
+    phone: string,
+    exceptPersonId: string,
+  ): Promise<void> {
+    const clash = await this.prisma.person.findFirst({
+      where: { phone, id: { not: exceptPersonId }, deletedAt: null },
+      select: { id: true },
+    });
+    if (clash) {
+      throw new ConflictException(
+        'MOBILE_ALREADY_IN_USE',
+        'This mobile number is already registered to another user.',
+        { phone },
+      );
+    }
+  }
+
+  /** Reject an email already used by another person (global de-duplication key). */
+  private async assertEmailUnique(
+    email: string,
+    exceptPersonId: string,
+  ): Promise<void> {
+    const clash = await this.prisma.person.findFirst({
+      where: { email, id: { not: exceptPersonId }, deletedAt: null },
+      select: { id: true },
+    });
+    if (clash) {
+      throw new ConflictException(
+        'EMAIL_ALREADY_IN_USE',
+        'This email is already registered to another user.',
+        { email },
+      );
+    }
+  }
+
+  /** Reject a username already used by another person's credentials. */
+  private async assertUsernameUnique(
+    username: string,
+    exceptPersonId: string,
+  ): Promise<void> {
+    const clash = await this.prisma.personCredentials.findFirst({
+      where: { systemUsername: username, personId: { not: exceptPersonId } },
+      select: { personId: true },
+    });
+    if (clash) {
+      throw new ConflictException(
+        'USERNAME_ALREADY_IN_USE',
+        'This username is already taken.',
+        { username },
+      );
+    }
   }
 }

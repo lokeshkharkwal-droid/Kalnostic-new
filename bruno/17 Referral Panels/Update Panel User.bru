@@ -1,0 +1,33 @@
+meta {
+  name: Update Panel User
+  type: http
+  seq: 12
+}
+
+patch {
+  url: {{baseUrl}}/referral-panels/{{referralPanelId}}/user
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "employeeName": "Panel One Updated",
+    "mobileNumber": "9800000099",
+    "address": "New address line",
+    "password": "NewPassw0rd!"
+  }
+}
+
+docs {
+  Update the referral panel's B2B login user. Only the eight editable
+  personal/login fields may change (employeeName, username, dateOfBirth, gender,
+  email, mobileNumber, password, address); branch, role, modules and status stay
+  server-controlled. Phone/email/username are validated for global uniqueness
+  (409 MOBILE_ALREADY_IN_USE / EMAIL_ALREADY_IN_USE / USERNAME_ALREADY_IN_USE); a
+  new password is bcrypt-hashed. Requires the BR_REF_UPDATE_PANEL permission.
+}

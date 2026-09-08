@@ -1284,10 +1284,38 @@ export const B2B_PANEL_PERMISSION_KEYS: readonly string[] = [
   'lab_operations:panel_navigation__view_reporting',
 ] as const;
 
+/**
+ * Page-access (view/list) keys the B2B-allowed screens guard on, so those pages
+ * actually render for a B2B user. These are the keys the frontend pages check —
+ * distinct from the sidebar nav keys above (which only drive sidebar visibility).
+ * View-only by design: NO create/update/cancel/refund/mark/approve action keys,
+ * so a B2B panel is a read-only viewer of these areas (billing actions are
+ * disabled and reporting is Print-only, handled in the UI).
+ */
+const B2B_VIEW_PERMISSION_KEYS: readonly string[] = [
+  'registration:order_console__view_only',
+  'finance:invoice__list_view_only',
+  'finance:payments__list_view_only',
+  // Reporting worklist status tabs (view the lists) — action keys excluded.
+  ...MODULE_PERMISSION_CATALOG.filter((e) =>
+    e.permissionKey.startsWith('lab_operations:reporting__access_to_'),
+  ).map((e) => e.permissionKey),
+];
+
+/**
+ * The complete curated baseline for a B2B Referring Panel user: the five sidebar
+ * nav keys + the view/list keys that make the pages render. This is what
+ * `getMyPermissions` resolves for the role (see UsersService.resolveEffectiveModules).
+ */
+export const B2B_BASELINE_PERMISSION_KEYS: readonly string[] = [
+  ...B2B_PANEL_PERMISSION_KEYS,
+  ...B2B_VIEW_PERMISSION_KEYS,
+];
+
 // Override the auto-computed template for the B2B role: keep its three linked
-// modules (so `moduleAllowed` resolves), but restrict the baseline to exactly the
-// five allowed navigation keys instead of the full module expansion.
+// modules (so `moduleAllowed` resolves), but restrict the baseline to the curated
+// view-only set instead of the full module expansion.
 (ROLE_TEMPLATES as Record<string, RoleTemplate>)['b2b_referring_panel'] = {
   modules: ['registration', 'finance', 'lab_operations'],
-  permissions: [...B2B_PANEL_PERMISSION_KEYS],
+  permissions: [...B2B_BASELINE_PERMISSION_KEYS],
 };

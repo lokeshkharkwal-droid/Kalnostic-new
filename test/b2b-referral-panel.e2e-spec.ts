@@ -30,6 +30,7 @@ import { PrismaService } from './../src/prisma/prisma.service';
 import { HttpExceptionFilter } from './../src/common/filters';
 import { ResponseInterceptor } from './../src/common/interceptors';
 import { ReferralPanelUserService } from './../src/modules/referral-panel/referral-panel-user.service';
+import { B2B_BASELINE_PERMISSION_KEYS } from './../src/modules/permissions/constants/module-permissions.constant';
 
 /**
  * End-to-end proof of B2B Referral Panel data isolation.
@@ -156,20 +157,24 @@ describe('B2B referral-panel isolation (e2e)', () => {
       .set(auth());
     expect(res.status).toBe(200);
     const allowed: string[] = res.body?.data?.allowed ?? [];
-    const curated = [
-      'registration:panel_navigation__view_order_console',
-      'finance:panel_navigation__view_billing',
-      'finance:panel_navigation__view_invoices',
-      'finance:panel_navigation__view_payments',
-      'lab_operations:panel_navigation__view_reporting',
-    ];
-    // No allowed key may fall outside the curated five — this is exactly what was
-    // broken (the baseline used to expand to every key of the three modules,
-    // including the sibling *__view_full_module keys the sidebar hides on).
-    expect(allowed.filter((k) => !curated.includes(k))).toEqual([]);
-    expect(allowed).not.toContain(
+    const baseline = new Set(B2B_BASELINE_PERMISSION_KEYS);
+    // No allowed key may fall outside the curated view-only baseline — this is
+    // exactly what was broken (the baseline used to expand to every key of the
+    // three modules, including the sibling *__view_full_module keys and every
+    // create/cancel/edit action key).
+    expect(allowed.filter((k) => !baseline.has(k))).toEqual([]);
+    // Must never grant a sibling full-module key or any write/action key.
+    for (const forbidden of [
       'registration:panel_navigation__view_full_module',
-    );
+      'finance:panel_navigation__view_full_module',
+      'lab_operations:panel_navigation__view_full_module',
+      'finance:invoice__cancel_invoice',
+      'finance:payments__edit_direct_order_payment',
+      'lab_operations:reporting__mark_as_error_reported',
+      'registration:order_console__update_in_the_order_console',
+    ]) {
+      expect(allowed).not.toContain(forbidden);
+    }
   });
 
   it('only ever returns this panel’s orders from /orders', async () => {

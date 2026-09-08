@@ -17,6 +17,7 @@ import { ReferralPanelService } from './referral-panel.service';
 import { ReferralPanelUserService } from './referral-panel-user.service';
 import { CreateReferralPanelDto } from './dto/create-referral-panel.dto';
 import { CreateReferralPanelUserDto } from './dto/create-referral-panel-user.dto';
+import { UpdateReferralPanelUserDto } from './dto/update-referral-panel-user.dto';
 import { UpdateReferralPanelDto } from './dto/update-referral-panel.dto';
 import { ListReferralPanelsDto } from './dto/list-referral-panels.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
@@ -163,5 +164,22 @@ export class ReferralPanelController {
     @CurrentUser('person_id') actorId: string,
   ) {
     return this.referralPanelUserService.create(tenantId, id, dto, actorId);
+  }
+
+  /**
+   * Update the referral panel's B2B login user (the eight editable personal/login
+   * fields only). Branch, role, modules and status stay server-controlled.
+   * @param id the referral panel id
+   * @param dto the changed fields
+   * @param tenantId the caller's tenant (from JWT)
+   */
+  @RequirePermission(PERMISSION_KEYS.BR_REF_UPDATE_PANEL)
+  @Patch(':id/user')
+  updatePanelUser(
+    @Param('id') id: string,
+    @Body() dto: UpdateReferralPanelUserDto,
+    @CurrentTenant() tenantId: string,
+  ) {
+    return this.referralPanelUserService.update(tenantId, id, dto);
   }
 }
