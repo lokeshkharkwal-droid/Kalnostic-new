@@ -30,6 +30,8 @@ import {
 import { AuthRoleService } from '../auth-role/auth-role.service';
 import {
   MODULE_PERMISSION_CATALOG,
+  ROLE_TEMPLATES,
+  roleBaselinePermissions,
   roleTemplateModules,
 } from '../permissions/constants/module-permissions.constant';
 import {
@@ -1592,6 +1594,12 @@ export class UsersService {
    * role→module config (e.g. `doctor`) still works: access follows the per-user
    * module selection, not the (empty) role baseline.
    *
+   * Exception: a role whose `ROLE_TEMPLATES` entry is marked `curated` (e.g.
+   * `b2b_referring_panel`) has a deliberately restricted baseline — narrower
+   * than its linked modules' full catalogue — so those roles grant exactly
+   * their curated permission keys (still gated to the user's assigned
+   * modules), not every permission in those modules.
+   *
    * @param roleKey the role held at the branch
    * @param assignedModules `UserBranchProfile.enabledModules` for the profile
    * @returns the effective module-key set and the permission keys they grant
@@ -1605,6 +1613,15 @@ export class UsersService {
         ? assignedModules
         : roleTemplateModules(roleKey),
     );
+    if (ROLE_TEMPLATES[roleKey as ProfileKey]?.curated) {
+      const permissions = new Set(
+        [...roleBaselinePermissions(roleKey)].filter((key) => {
+          const moduleKey = this.moduleOfPermission(key);
+          return moduleKey !== null && moduleKeys.has(moduleKey);
+        }),
+      );
+      return { moduleKeys, permissions };
+    }
     const permissions = new Set<string>();
     for (const entry of MODULE_PERMISSION_CATALOG) {
       if (moduleKeys.has(entry.moduleKey)) {

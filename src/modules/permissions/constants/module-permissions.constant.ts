@@ -1248,6 +1248,14 @@ function expandModulePermissions(moduleKeys: string[]): string[] {
 export interface RoleTemplate {
   permissions: string[];
   modules: string[];
+  /**
+   * True when `permissions` is a deliberately curated subset rather than the
+   * full expansion of `modules` (e.g. `b2b_referring_panel`). Consumers that
+   * derive a user's effective permissions from their assigned modules (e.g.
+   * `UsersService.resolveEffectiveModules`) must respect this baseline
+   * instead of re-expanding the full module catalogue.
+   */
+  curated?: boolean;
 }
 
 /** The predefined role templates, keyed by role (profile) key. */
@@ -1290,4 +1298,5 @@ export const B2B_PANEL_PERMISSION_KEYS: readonly string[] = [
 (ROLE_TEMPLATES as Record<string, RoleTemplate>)['b2b_referring_panel'] = {
   modules: ['registration', 'finance', 'lab_operations'],
   permissions: [...B2B_PANEL_PERMISSION_KEYS],
+  curated: true,
 };

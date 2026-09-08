@@ -30,6 +30,7 @@ import { PrismaService } from './../src/prisma/prisma.service';
 import { HttpExceptionFilter } from './../src/common/filters';
 import { ResponseInterceptor } from './../src/common/interceptors';
 import { ReferralPanelUserService } from './../src/modules/referral-panel/referral-panel-user.service';
+import { B2B_PANEL_PERMISSION_KEYS } from './../src/modules/permissions/constants/module-permissions.constant';
 
 /**
  * End-to-end proof of B2B Referral Panel data isolation.
@@ -183,5 +184,18 @@ describe('B2B referral-panel isolation (e2e)', () => {
       .get('/api/v1/patients')
       .set(auth());
     expect(res.status).toBe(403);
+  });
+
+  it('exposes exactly the five curated navigation permissions (not the full module expansion)', async () => {
+    if (!ready) return;
+    const res = await request(app.getHttpServer())
+      .get('/api/v1/users/manage/me/permissions')
+      .query({ branchId })
+      .set(auth());
+    expect(res.status).toBe(200);
+    const allowed: string[] = res.body?.data?.allowed ?? [];
+    expect([...allowed].sort()).toEqual(
+      [...B2B_PANEL_PERMISSION_KEYS].sort(),
+    );
   });
 });
