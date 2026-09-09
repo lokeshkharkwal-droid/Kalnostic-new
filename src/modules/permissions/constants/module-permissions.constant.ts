@@ -421,6 +421,10 @@ const PERMISSION_SPEC: Record<string, SectionSpec[]> = {
       ],
     },
     {
+      label: 'Lab Test Master Setting',
+      permissions: ['Update lab test master setting'],
+    },
+    {
       label: 'Templates',
       permissions: [
         'Add SMS template',
@@ -931,6 +935,9 @@ export const PERMISSION_KEYS = {
   BA_LTS_ADD_GROUP: 'business_admin:lab_test_settings__add_group_layout',
   BA_LTS_EDIT_GROUP: 'business_admin:lab_test_settings__edit_group_layout',
   BA_LTS_DELETE_GROUP: 'business_admin:lab_test_settings__delete_group_layout',
+
+  BA_SETTINGS_LAB_TEST_MASTER_UPDATE:
+    'business_admin:lab_test_master_setting__update_lab_test_master_setting',
 
   BA_TPL_ADD_SMS: 'business_admin:templates__add_sms_template',
   BA_TPL_EDIT_SMS: 'business_admin:templates__edit_sms_template',
