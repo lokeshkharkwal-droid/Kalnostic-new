@@ -312,6 +312,7 @@ enum AuditModule {
   REGISTRATION_SETTINGS
   TECHNICIAN_SETTINGS
   COMMUNICATION // Outbound messaging (Email/SMS/WhatsApp) + in-app notifications
+  LAB_TEST_FIELD_PERMISSIONS
 }
 
 /// Type of controlled document managed by the document module.
@@ -5392,6 +5393,23 @@ model ConsoleSetting {
 
   @@index([tenantId])
   @@map("console_settings")
+}
+
+/// Tenant-wide allow/deny map for Lab Test Master Data fields ("Lab Test
+/// Master Setting"). `config` is `{ [section]: { [field]: boolean } }`; a
+/// missing section/field resolves to `true` (Allowed) so newly-added fields
+/// default to Allowed without a migration. Single row per tenant.
+model LabTestFieldPermissionSetting {
+  id       String @id @default(uuid())
+  tenantId String @unique @map("tenant_id")
+
+  config Json @default("{}") @map("config")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@map("lab_test_field_permission_settings")
 }
 
 /// Tenant-level report settings for Registration — report header/branding,
