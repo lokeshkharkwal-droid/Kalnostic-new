@@ -126,7 +126,8 @@ export function applyB2bLabReportScope(
   panelId: string | undefined,
 ): void {
   if (!panelId) return;
-  const orderItem = (where.orderItem as Record<string, unknown> | undefined) ?? {};
+  const orderItem =
+    (where.orderItem as Record<string, unknown> | undefined) ?? {};
   const order = (orderItem.order as Record<string, unknown> | undefined) ?? {};
   order.referralPanelId = panelId;
   orderItem.order = order;
@@ -139,7 +140,10 @@ export function applyB2bLabReportScope(
  * @param panelId the active B2B panel id, or undefined for non-B2B sessions
  */
 export function assertLabReportPanelOwnership(
-  report: { id: string; orderItem: { order: { referralPanelId: string | null } } },
+  report: {
+    id: string;
+    orderItem: { order: { referralPanelId: string | null } };
+  },
   panelId: string | undefined,
 ): void {
   if (panelId && report.orderItem.order.referralPanelId !== panelId) {
@@ -461,7 +465,7 @@ export class LabReportService {
 
     // B2B Referral Panel isolation: constrain reports to the panel's orders
     // (nested via orderItem.order). Runs last so it merges with any filters above.
-    applyB2bLabReportScope(where as Record<string, unknown>, getReferralPanelId());
+    applyB2bLabReportScope(where, getReferralPanelId());
 
     // Source pill (ALL/IN_HOUSE/OUTSOURCE) is wired above via LabReport.isOutsourced.
     // Home Collection is wired above via OrderDiagnostics.isHomeVisit (a
@@ -1147,13 +1151,7 @@ export class LabReportService {
     });
     if (!report) throw new LabReportNotFoundException(id);
     // B2B Referral Panel isolation: block reading another panel's report by id.
-    assertLabReportPanelOwnership(
-      report as {
-        id: string;
-        orderItem: { order: { referralPanelId: string | null } };
-      },
-      getReferralPanelId(),
-    );
+    assertLabReportPanelOwnership(report, getReferralPanelId());
 
     const [contentSections, resultParams] = await Promise.all([
       this.getContentSections(tenantId, report.labTestId),

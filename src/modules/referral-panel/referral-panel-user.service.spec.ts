@@ -18,9 +18,9 @@ describe('referral-panel-user guards', () => {
   });
 
   it('rejects when a b2b user already exists for the panel', () => {
-    expect(() =>
-      assertNoExistingB2bUser('p1', { id: 'existing' }),
-    ).toThrow(ConflictException);
+    expect(() => assertNoExistingB2bUser('p1', { id: 'existing' })).toThrow(
+      ConflictException,
+    );
   });
 
   it('accepts when no b2b user exists yet', () => {

@@ -2874,7 +2874,7 @@ export class OrderService {
     if (branchId) where.branchId = branchId;
 
     // B2B Referral Panel isolation: force the panel filter for B2B sessions.
-    applyB2bOrderScope(where as Record<string, unknown>, getReferralPanelId());
+    applyB2bOrderScope(where, getReferralPanelId());
 
     // Quote ID takes precedence over the generic search. A bare `search`
     // matches the order code OR any of the patient's name / mobile / UMID.

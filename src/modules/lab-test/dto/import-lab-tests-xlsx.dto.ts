@@ -902,9 +902,7 @@ export const NUMERIC_FIELDS = new Set<string>([
 ]);
 
 /** Semicolon-separated free-text-list fields (e.g. "Hormones; Thyroid"). */
-export const SEMICOLON_LIST_FIELDS = new Set<string>([
-  'clinicalTags',
-]);
+export const SEMICOLON_LIST_FIELDS = new Set<string>(['clinicalTags']);
 
 /** `Test Status` column: "Active"/"Inactive" ↔ `isActive` boolean. */
 export const STATUS_LABEL_TO_ACTIVE: Record<string, boolean> = {
@@ -1021,37 +1019,51 @@ export const ENUM_LABEL_FIELDS: Record<string, Record<string, string>> = {
     // Added for the "New UI Improvements" SAMPLE tab requirement — canonical
     // labels for the 35 new ContainerType enum values, title-cased the same
     // way as the 11 above (matches this sheet's own export format).
-    'Urine 24h Container No Preservative': 'URINE_24H_CONTAINER_NO_PRESERVATIVE',
+    'Urine 24h Container No Preservative':
+      'URINE_24H_CONTAINER_NO_PRESERVATIVE',
     'Urine 24h Container Acetic Acid': 'URINE_24H_CONTAINER_ACETIC_ACID',
-    'Urine 24h Container Hydrochloric Acid': 'URINE_24H_CONTAINER_HYDROCHLORIC_ACID',
+    'Urine 24h Container Hydrochloric Acid':
+      'URINE_24H_CONTAINER_HYDROCHLORIC_ACID',
     'Urine 24h Container Boric Acid': 'URINE_24H_CONTAINER_BORIC_ACID',
-    'Urine 24h Container Diazolidinyl Urea': 'URINE_24H_CONTAINER_DIAZOLIDINYL_UREA',
-    'Urine 24h Container Sodium Carbonate': 'URINE_24H_CONTAINER_SODIUM_CARBONATE',
+    'Urine 24h Container Diazolidinyl Urea':
+      'URINE_24H_CONTAINER_DIAZOLIDINYL_UREA',
+    'Urine 24h Container Sodium Carbonate':
+      'URINE_24H_CONTAINER_SODIUM_CARBONATE',
     'Anaerobic Transport Vial': 'ANAEROBIC_TRANSPORT_VIAL',
     'Blood Culture Bottle Aerobic': 'BLOOD_CULTURE_BOTTLE_AEROBIC',
     'Blood Culture Bottle Anaerobic': 'BLOOD_CULTURE_BOTTLE_ANAEROBIC',
     'Blood Culture Bottle Pediatric': 'BLOOD_CULTURE_BOTTLE_PEDIATRIC',
     'Clean Paper Envelope Packet': 'CLEAN_PAPER_ENVELOPE_PACKET',
     'Culture Plate Broth Vial': 'CULTURE_PLATE_BROTH_VIAL',
-    'Glass Slides With Fixative Slide Jar': 'GLASS_SLIDES_WITH_FIXATIVE_SLIDE_JAR',
+    'Glass Slides With Fixative Slide Jar':
+      'GLASS_SLIDES_WITH_FIXATIVE_SLIDE_JAR',
     'K2 K3 Edta Tube Lavender Top': 'K2_K3_EDTA_TUBE_LAVENDER_TOP',
     'Liquid Based Cytology Vial': 'LIQUID_BASED_CYTOLOGY_VIAL',
     'Lithium Heparin Tube Green Top': 'LITHIUM_HEPARIN_TUBE_GREEN_TOP',
     'Plain Clot Activator Tube Red Top': 'PLAIN_CLOT_ACTIVATOR_TUBE_RED_TOP',
-    'Ppt Plasma Prep Tube Pearl White Top': 'PPT_PLASMA_PREP_TUBE_PEARL_WHITE_TOP',
+    'Ppt Plasma Prep Tube Pearl White Top':
+      'PPT_PLASMA_PREP_TUBE_PEARL_WHITE_TOP',
     'Royal Blue Trace Element Tube': 'ROYAL_BLUE_TRACE_ELEMENT_TUBE',
     'Sst Tube With Gel Gold Top': 'SST_TUBE_WITH_GEL_GOLD_TOP',
-    'Sodium Citrate Tube 32pct Light Blue Top': 'SODIUM_CITRATE_TUBE_32PCT_LIGHT_BLUE_TOP',
-    'Sodium Citrate Tube 38pct Esr Black Top': 'SODIUM_CITRATE_TUBE_38PCT_ESR_BLACK_TOP',
-    'Sodium Fluoride Oxalate Tube Grey Top': 'SODIUM_FLUORIDE_OXALATE_TUBE_GREY_TOP',
+    'Sodium Citrate Tube 32pct Light Blue Top':
+      'SODIUM_CITRATE_TUBE_32PCT_LIGHT_BLUE_TOP',
+    'Sodium Citrate Tube 38pct Esr Black Top':
+      'SODIUM_CITRATE_TUBE_38PCT_ESR_BLACK_TOP',
+    'Sodium Fluoride Oxalate Tube Grey Top':
+      'SODIUM_FLUORIDE_OXALATE_TUBE_GREY_TOP',
     'Sodium Heparin Tube Green Top': 'SODIUM_HEPARIN_TUBE_GREEN_TOP',
-    'Sterile Container Neutral Buffered Formalin': 'STERILE_CONTAINER_NEUTRAL_BUFFERED_FORMALIN',
+    'Sterile Container Neutral Buffered Formalin':
+      'STERILE_CONTAINER_NEUTRAL_BUFFERED_FORMALIN',
     'Sterile Container Glutaraldehyde': 'STERILE_CONTAINER_GLUTARALDEHYDE',
-    'Sterile Container Cary Blair Medium': 'STERILE_CONTAINER_CARY_BLAIR_MEDIUM',
-    'Sterile Container Michels Zeus Medium': 'STERILE_CONTAINER_MICHELS_ZEUS_MEDIUM',
-    'Sterile Container Normal Saline Fresh': 'STERILE_CONTAINER_NORMAL_SALINE_FRESH',
+    'Sterile Container Cary Blair Medium':
+      'STERILE_CONTAINER_CARY_BLAIR_MEDIUM',
+    'Sterile Container Michels Zeus Medium':
+      'STERILE_CONTAINER_MICHELS_ZEUS_MEDIUM',
+    'Sterile Container Normal Saline Fresh':
+      'STERILE_CONTAINER_NORMAL_SALINE_FRESH',
     'Sterile Dry Swab Container': 'STERILE_DRY_SWAB_CONTAINER',
-    'Sterile Universal Wide Mouth Container': 'STERILE_UNIVERSAL_WIDE_MOUTH_CONTAINER',
+    'Sterile Universal Wide Mouth Container':
+      'STERILE_UNIVERSAL_WIDE_MOUTH_CONTAINER',
     'Sweat Collection Device Macroduct': 'SWEAT_COLLECTION_DEVICE_MACRODUCT',
     'Swab Tube Amies Stuart Medium': 'SWAB_TUBE_AMIES_STUART_MEDIUM',
     'Swab Tube Viral Transport Medium': 'SWAB_TUBE_VIRAL_TRANSPORT_MEDIUM',
@@ -1107,16 +1119,18 @@ export const ENUM_LABEL_FIELDS: Record<string, Record<string, string>> = {
  * uses this, keyed by the failing field, to show the labels the user
  * actually sees in the sheet instead.
  */
-export const ENUM_VALUE_TO_LABEL: Record<string, Record<string, string>> =
-  Object.fromEntries(
-    Object.entries(ENUM_LABEL_FIELDS).map(([field, labelToValue]) => {
-      const valueToLabel: Record<string, string> = {};
-      for (const [label, value] of Object.entries(labelToValue)) {
-        if (!(value in valueToLabel)) valueToLabel[value] = label;
-      }
-      return [field, valueToLabel];
-    }),
-  );
+export const ENUM_VALUE_TO_LABEL: Record<
+  string,
+  Record<string, string>
+> = Object.fromEntries(
+  Object.entries(ENUM_LABEL_FIELDS).map(([field, labelToValue]) => {
+    const valueToLabel: Record<string, string> = {};
+    for (const [label, value] of Object.entries(labelToValue)) {
+      if (!(value in valueToLabel)) valueToLabel[value] = label;
+    }
+    return [field, valueToLabel];
+  }),
+);
 
 /**
  * DTO field name → the Excel column header a user actually sees. Every

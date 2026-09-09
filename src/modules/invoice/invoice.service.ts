@@ -89,7 +89,10 @@ export function assertInvoicePanelOwnership(
   panelId: string | undefined,
 ): void {
   if (!panelId) return;
-  if (invoice.partyType !== InvoicePartyType.B2B || invoice.partyId !== panelId) {
+  if (
+    invoice.partyType !== InvoicePartyType.B2B ||
+    invoice.partyId !== panelId
+  ) {
     throw new ReferralPanelAccessDeniedException('invoice', invoice.id);
   }
 }
@@ -731,7 +734,7 @@ export class InvoiceService {
     if (query.partyId) where.partyId = query.partyId;
     // B2B Referral Panel isolation: force partyType=B2B + this panel (overrides
     // any client-supplied invoiceType/partyId for a B2B session).
-    applyB2bInvoiceScope(where as Record<string, unknown>, getReferralPanelId());
+    applyB2bInvoiceScope(where, getReferralPanelId());
     if (query.paymentStatus) where.paymentStatus = query.paymentStatus;
     if (query.dueStatus) where.dueStatus = query.dueStatus;
     if (query.dateFrom || query.dateTo) {

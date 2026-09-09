@@ -67,7 +67,9 @@ describe('B2B referral-panel isolation (e2e)', () => {
       }).compile();
       app = moduleRef.createNestApplication();
       // Replicate main.ts global setup so DTO validation + envelopes behave as prod.
-      app.setGlobalPrefix('api/v1', { exclude: ['emi/orders', 'emi/submitResult'] });
+      app.setGlobalPrefix('api/v1', {
+        exclude: ['emi/orders', 'emi/submitResult'],
+      });
       app.useGlobalPipes(
         new ValidationPipe({
           whitelist: true,
@@ -117,7 +119,7 @@ describe('B2B referral-panel isolation (e2e)', () => {
           employeeName: 'E2E Panel User',
           username,
           dateOfBirth: '1990-01-01',
-          gender: 'MALE' as never,
+          gender: 'MALE',
           email: `${username}@example.com`,
           mobileNumber: `9${Math.floor(100000000 + Math.random() * 899999999)}`,
           password,
@@ -183,7 +185,8 @@ describe('B2B referral-panel isolation (e2e)', () => {
       .get('/api/v1/orders')
       .set(auth());
     expect(res.status).toBe(200);
-    const rows: Array<{ referralPanelId?: string | null }> = res.body?.data ?? [];
+    const rows: Array<{ referralPanelId?: string | null }> =
+      res.body?.data ?? [];
     for (const row of rows) {
       expect(row.referralPanelId ?? null).toBe(panelId);
     }

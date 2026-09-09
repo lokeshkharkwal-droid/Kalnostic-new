@@ -15,10 +15,7 @@ describe('b2b_referring_panel profile', () => {
 
   it('is branch-level (allowed at DIAGNOSTIC, not tenant-level)', () => {
     expect(
-      isProfileValidForBranch(
-        'b2b_referring_panel' as never,
-        BranchType.DIAGNOSTIC,
-      ),
+      isProfileValidForBranch('b2b_referring_panel', BranchType.DIAGNOSTIC),
     ).toBe(true);
   });
 });

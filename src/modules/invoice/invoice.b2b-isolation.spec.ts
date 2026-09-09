@@ -25,7 +25,11 @@ describe('invoice b2b isolation helpers', () => {
   it('throws when the invoice is not a B2B-party invoice at all', () => {
     expect(() =>
       assertInvoicePanelOwnership(
-        { id: 'i1', partyType: InvoicePartyType.REFERRED_BY, partyId: 'panel-3' },
+        {
+          id: 'i1',
+          partyType: InvoicePartyType.REFERRED_BY,
+          partyId: 'panel-3',
+        },
         'panel-3',
       ),
     ).toThrow(ReferralPanelAccessDeniedException);

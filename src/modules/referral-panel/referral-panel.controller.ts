@@ -134,10 +134,7 @@ export class ReferralPanelController {
    * @param tenantId the caller's tenant (from JWT)
    */
   @Get(':id/user')
-  getPanelUser(
-    @Param('id') id: string,
-    @CurrentTenant() tenantId: string,
-  ) {
+  getPanelUser(@Param('id') id: string, @CurrentTenant() tenantId: string) {
     return this.referralPanelUserService.getForPanel(tenantId, id);
   }
 

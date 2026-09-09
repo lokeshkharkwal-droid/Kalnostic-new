@@ -10,7 +10,9 @@ function ctx(user: unknown) {
 }
 
 /** A CallHandler whose handle() captures the active store when subscribed. */
-function capturingHandler(capture: (s: TenantContextStore | undefined) => void) {
+function capturingHandler(
+  capture: (s: TenantContextStore | undefined) => void,
+) {
   return {
     handle: () =>
       new Observable((sub) => {

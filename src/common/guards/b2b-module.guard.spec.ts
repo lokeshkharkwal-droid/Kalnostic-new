@@ -11,7 +11,10 @@ function ctx(user: unknown, url: string) {
 
 describe('B2bModuleGuard', () => {
   const guard = new B2bModuleGuard();
-  const b2b = { active_profile_key: 'b2b_referring_panel', referral_panel_id: 'p1' };
+  const b2b = {
+    active_profile_key: 'b2b_referring_panel',
+    referral_panel_id: 'p1',
+  };
 
   it('lets non-B2B users through any path', () => {
     expect(
@@ -27,11 +30,17 @@ describe('B2bModuleGuard', () => {
     expect(guard.canActivate(ctx(b2b, '/api/v1/lab-reports/abc'))).toBe(true);
     // Printing: template picker/config + label render.
     expect(
-      guard.canActivate(ctx(b2b, '/api/v1/pdf-report-templates?type=bill_print&status=ACTIVE')),
+      guard.canActivate(
+        ctx(b2b, '/api/v1/pdf-report-templates?type=bill_print&status=ACTIVE'),
+      ),
     ).toBe(true);
-    expect(guard.canActivate(ctx(b2b, '/api/v1/pdf-report-templates/config'))).toBe(true);
     expect(
-      guard.canActivate(ctx(b2b, '/api/v1/accession/order-samples/print-labels')),
+      guard.canActivate(ctx(b2b, '/api/v1/pdf-report-templates/config')),
+    ).toBe(true);
+    expect(
+      guard.canActivate(
+        ctx(b2b, '/api/v1/accession/order-samples/print-labels'),
+      ),
     ).toBe(true);
   });
 

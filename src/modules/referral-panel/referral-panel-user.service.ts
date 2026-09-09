@@ -108,7 +108,11 @@ export class ReferralPanelUserService {
         roleKey: B2B_ROLE_KEY,
         status: StaffStatus.ACTIVE,
         branches: [
-          { branchId: panel.branchId!, role: B2B_ROLE_KEY, status: StaffStatus.ACTIVE },
+          {
+            branchId: panel.branchId!,
+            role: B2B_ROLE_KEY,
+            status: StaffStatus.ACTIVE,
+          },
         ],
       },
       createdBy,
@@ -236,7 +240,8 @@ export class ReferralPanelUserService {
     }
     const personId = profile.personId;
 
-    if (dto.mobileNumber) await this.assertPhoneUnique(dto.mobileNumber, personId);
+    if (dto.mobileNumber)
+      await this.assertPhoneUnique(dto.mobileNumber, personId);
     if (dto.email) await this.assertEmailUnique(dto.email, personId);
     if (dto.username) await this.assertUsernameUnique(dto.username, personId);
     const passwordHash = dto.password
@@ -245,14 +250,14 @@ export class ReferralPanelUserService {
 
     await this.prisma.withTenant(tenantId, async (tx) => {
       const personData: Prisma.PersonUpdateInput = {};
-      if (dto.employeeName !== undefined) personData.firstName = dto.employeeName;
+      if (dto.employeeName !== undefined)
+        personData.firstName = dto.employeeName;
       if (dto.dateOfBirth !== undefined)
         personData.dateOfBirth = new Date(dto.dateOfBirth);
       if (dto.gender !== undefined) personData.gender = dto.gender;
       if (dto.email !== undefined) personData.email = dto.email;
       if (dto.mobileNumber !== undefined) personData.phone = dto.mobileNumber;
-      if (dto.address !== undefined)
-        personData.address = dto.address as Prisma.InputJsonValue;
+      if (dto.address !== undefined) personData.address = dto.address;
       if (Object.keys(personData).length > 0) {
         await tx.person.update({ where: { id: personId }, data: personData });
       }

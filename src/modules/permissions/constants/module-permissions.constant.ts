@@ -561,7 +561,12 @@ const PERMISSION_SPEC: Record<string, SectionSpec[]> = {
     {
       // B2B Referral Panel navigation (see registration Panel Navigation note).
       label: 'Panel Navigation',
-      permissions: ['View Billing', 'View Invoices', 'View Payments', 'View Full Module'],
+      permissions: [
+        'View Billing',
+        'View Invoices',
+        'View Payments',
+        'View Full Module',
+      ],
     },
     {
       label: 'Financial Reports',
