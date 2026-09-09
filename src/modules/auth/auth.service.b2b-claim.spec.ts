@@ -7,7 +7,11 @@ describe('resolveReferralPanelClaim', () => {
       authRole: { key: 'b2b_referring_panel' },
       referralPanelId: 'panel-9',
     },
-    { branchId: 'br1', authRole: { key: 'receptionist' }, referralPanelId: null },
+    {
+      branchId: 'br1',
+      authRole: { key: 'receptionist' },
+      referralPanelId: null,
+    },
   ];
 
   it('returns the panel id when the active profile is the B2B role', () => {
@@ -17,7 +21,9 @@ describe('resolveReferralPanelClaim', () => {
   });
 
   it('returns null for a non-B2B active profile', () => {
-    expect(resolveReferralPanelClaim(profiles, 'br1', 'receptionist')).toBeNull();
+    expect(
+      resolveReferralPanelClaim(profiles, 'br1', 'receptionist'),
+    ).toBeNull();
   });
 
   it('returns null when there is no active profile', () => {

@@ -1040,6 +1040,11 @@ model Person {
   /// Home-visit collections assigned to this staff Person (the phlebotomist).
   homeVisitCollections HomeVisitCollection[] @relation("HomeVisitCollectionPhlebotomist")
 
+  /// Per-tenant `Patient` projections that share this platform identity. A person
+  /// registered as a patient at more than one business has one Patient row per
+  /// tenant, all pointing here — the basis for cross-tenant patient reuse.
+  patients Patient[]
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -2859,6 +2864,11 @@ model LabTestResultParam {
   resultRoundingType ResultRounding  @default(TWO_DECIMAL) @map("result_rounding_type")
   allowableUnits     String?         @map("allowable_units")
   decimalPlaces      Int             @default(2) @map("decimal_places")
+
+  // Suggested values a user can pick from when entering this parameter's
+  // result (one per line in the UI), and a default to pre-fill with.
+  resultSuggestions String[] @default([]) @map("result_suggestions")
+  defaultValue      String?  @map("default_value")
 
   // Result-level critical bounds (separate from per-reference-range criticals)
   criticalMin Decimal? @map("critical_min") @db.Decimal(10, 4)
@@ -5942,6 +5952,15 @@ model Patient {
   familyLinks    PatientFamilyLink[] @relation("FamilyAnchor")
   familyMemberOf PatientFamilyLink[] @relation("FamilyMember")
 
+  // Shared cross-tenant identity. Links this per-tenant projection to the
+  // platform-level `Person` (globally-unique phone). Two tenants that register
+  // the same human point their Patient rows at the SAME Person, so an order can
+  // reuse an existing identity without duplicating it. NULL for family members
+  // (who may share a phone — Person.phone is globally unique) and for legacy
+  // rows not yet backfilled (scripts/backfill-patient-persons.ts).
+  personId String? @map("person_id")
+  person   Person? @relation(fields: [personId], references: [id])
+
   createdBy String? @map("created_by")
   updatedBy String? @map("updated_by")
 
@@ -5959,6 +5978,7 @@ model Patient {
   @@index([branchId])
   @@index([isActive])
   @@index([ptCategoryId])
+  @@index([personId])
   @@index([legacyPatientId])
   @@index([deletedAt])
   @@map("patients")

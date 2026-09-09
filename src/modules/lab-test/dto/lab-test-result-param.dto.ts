@@ -115,6 +115,19 @@ export class LabTestResultParamDto {
   @MaxLength(255)
   allowableUnits?: string;
 
+  /** Suggested values shown to the user entering this parameter's result (one
+   * per line in the UI). */
+  @IsArray()
+  @IsOptional()
+  @IsString({ each: true })
+  resultSuggestions?: string[];
+
+  /** Pre-filled value for this parameter's result — can be one of
+   * `resultSuggestions` or any custom text. */
+  @IsString()
+  @IsOptional()
+  defaultValue?: string;
+
   @IsInt()
   @Min(0)
   @Max(6)

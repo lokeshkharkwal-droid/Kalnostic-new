@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { randomBytes } from 'crypto';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   ExternalIdFormat,
@@ -30,6 +31,7 @@ import { CreateFamilyMemberDto } from './dto/create-family-member.dto';
 import { CreatePatientDocumentDto } from './dto/create-patient-document.dto';
 import { UpdatePatientDocumentDto } from './dto/update-patient-document.dto';
 import {
+  CrossTenantLookupResult,
   FamilyMemberResult,
   FamilyMemberSummary,
   PatientWithFamily,
@@ -38,14 +40,27 @@ import {
 import {
   FamilyLinkNotFoundException,
   MedicalHistoryNotFoundException,
+  PatientCrossTenantExistsException,
   PatientDocumentNotFoundException,
   PatientMobileConflictException,
   PatientNotFoundException,
   PatientUmIdConflictException,
   PatientUmIdRequiredException,
   PatientWriteConflictException,
+  PersonNotFoundException,
   UmIdGenerationConflictException,
 } from './exceptions/patient.exceptions';
+import { isValidPhone, normalizePhone } from '../../common/utils/phone.util';
+
+/**
+ * How the created `Patient` should connect to the shared platform `Person`:
+ * link to an existing one, create a fresh one from the patient's own fields, or
+ * skip identity backing entirely (family members / migrated / non-phone rows).
+ */
+type PersonLink =
+  | { mode: 'existing'; personId: string }
+  | { mode: 'create'; phone: string }
+  | { mode: 'none' };
 
 /** Max attempts to allocate a unique UMID before giving up (collision retry). */
 const MAX_UMID_ATTEMPTS = 5;
@@ -166,6 +181,216 @@ export class PatientService {
     ctx: PatientWriteContext,
   ): Promise<PatientWithHistory> {
     await this.validatePtCategory(tenantId, ctx.branchId, dto.ptCategoryId);
+    const personLink = await this.resolvePersonLinkForCreate(
+      tenantId,
+      dto,
+      ctx,
+    );
+    return this.createWithAllocatedUmId(tenantId, dto, ctx, personLink);
+  }
+
+  /**
+   * Look up a patient's mobile number across ALL tenants via the globally-unique
+   * `Person.phone` (the shared cross-tenant identity). The number is normalized
+   * and matched exactly. When a match is found, the full identity + owning
+   * business are returned so an operator can confirm reusing it during order
+   * creation (`existsInCurrentTenant` flags the case where the caller's tenant
+   * already has this patient and should just select it). Reads only the
+   * non-RLS `persons`/`tenants` tables plus a scoped `patients` existence check,
+   * so no tenant isolation is bypassed.
+   * @param tenantId caller's tenant (for the `existsInCurrentTenant` check)
+   * @param phone the raw mobile number to look up
+   * @returns `{ match }` — the cross-tenant identity, or `null` when none
+   */
+  async crossTenantLookup(
+    tenantId: string,
+    phone: string,
+  ): Promise<CrossTenantLookupResult> {
+    const normalized = normalizePhone(phone);
+    if (!isValidPhone(normalized)) {
+      return { match: null };
+    }
+    const person = await this.prisma.person.findFirst({
+      where: { phone: normalized, deletedAt: null },
+    });
+    if (!person) {
+      return { match: null };
+    }
+    const local = await this.prisma.patient.findFirst({
+      where: {
+        tenantId,
+        deletedAt: null,
+        OR: [{ personId: person.id }, { mobile: normalized }],
+      },
+      select: { id: true },
+    });
+    const ownerTenant = person.ownerTenantId
+      ? await this.prisma.tenant.findFirst({
+          where: { id: person.ownerTenantId },
+          select: {
+            id: true,
+            name: true,
+            shortName: true,
+            email: true,
+            phone: true,
+            logoUrl: true,
+          },
+        })
+      : null;
+    return {
+      match: {
+        person: {
+          id: person.id,
+          platformMrn: person.platformMrn,
+          salutation: person.salutation,
+          firstName: person.firstName,
+          middleName: person.middleName,
+          lastName: person.lastName,
+          gender: person.gender,
+          bloodGroup: person.bloodGroup,
+          dateOfBirth: person.dateOfBirth,
+          phone: person.phone,
+          email: person.email,
+          address: person.address,
+          aadhaarNumber: person.aadhaarNumber,
+          panNumber: person.panNumber,
+          emergencyContactName: person.emergencyContactName,
+          emergencyContactNumber: person.emergencyContactNumber,
+        },
+        ownerTenant,
+        existsInCurrentTenant: !!local,
+      },
+    };
+  }
+
+  /**
+   * Reuse an existing cross-tenant identity in the caller's tenant. Given the
+   * shared `Person` (surfaced by {@link crossTenantLookup}), create the caller
+   * tenant's own `Patient` projection linked to it — copying identity fields from
+   * the `Person`, allocating a fresh UMID like a normal registration, and marking
+   * the person as a patient. Idempotent: if the tenant already has an active
+   * patient for this identity it is returned unchanged (never duplicated).
+   * @param tenantId caller's tenant (from the JWT)
+   * @param personId the shared platform identity to reuse
+   * @param ctx registration branch + acting person from the JWT
+   * @returns the caller-tenant patient projection (with medical histories)
+   * @throws PersonNotFoundException if no such person (or it has no phone)
+   */
+  async importFromPerson(
+    tenantId: string,
+    personId: string,
+    ctx: PatientWriteContext,
+  ): Promise<PatientWithHistory> {
+    const person = await this.prisma.person.findFirst({
+      where: { id: personId, deletedAt: null },
+    });
+    if (!person || !person.phone) {
+      throw new PersonNotFoundException(personId);
+    }
+    const existing = await this.prisma.patient.findFirst({
+      where: { tenantId, personId, deletedAt: null },
+      include: {
+        medicalHistories: {
+          where: { deletedAt: null },
+          orderBy: { createdAt: 'desc' },
+        },
+        ...PatientService.PT_CATEGORY_INCLUDE,
+      },
+    });
+    if (existing) {
+      return existing;
+    }
+    const dto: CreatePatientDto = {
+      firstName: person.firstName,
+      ...(person.middleName ? { middleName: person.middleName } : {}),
+      ...(person.lastName ? { lastName: person.lastName } : {}),
+      ...(person.gender ? { gender: person.gender } : {}),
+      ...(person.bloodGroup ? { bloodGroup: person.bloodGroup } : {}),
+      ...(person.dateOfBirth
+        ? { dateOfBirth: person.dateOfBirth.toISOString() }
+        : {}),
+      mobile: person.phone,
+      ...(person.email ? { email: person.email } : {}),
+      ...(person.aadhaarNumber ? { aadhaarNumber: person.aadhaarNumber } : {}),
+      ...(person.panNumber ? { panNumber: person.panNumber } : {}),
+      ...(person.emergencyContactName
+        ? { emergencyContactName: person.emergencyContactName }
+        : {}),
+      ...(person.emergencyContactNumber
+        ? { emergencyContactMobileNumber: person.emergencyContactNumber }
+        : {}),
+      // Fallback UMID for branches with a manual (NONE) id format — a reused
+      // identity has no operator-entered UMID. Ignored when the branch
+      // auto-generates PAT ids (that path allocates its own).
+      umId: `PAT-IMP-${randomBytes(4).toString('hex').toUpperCase()}`,
+    };
+    return this.createWithAllocatedUmId(tenantId, dto, ctx, {
+      mode: 'existing',
+      personId,
+    });
+  }
+
+  /**
+   * Decide how a new patient connects to the shared `Person` identity and enforce
+   * the cross-tenant rule. Family members, migrated rows, and non-mobile values
+   * are never identity-backed. Otherwise: if a `Person` already owns this mobile
+   * and the caller's tenant already has it → a normal same-tenant mobile
+   * conflict; if it exists only in OTHER tenants → reject so the caller must
+   * confirm+import instead of creating a duplicate; if it's brand new → back it
+   * with a freshly-created `Person`.
+   * @throws PatientMobileConflictException if the mobile is already in this tenant
+   * @throws PatientCrossTenantExistsException if it belongs to another tenant
+   */
+  private async resolvePersonLinkForCreate(
+    tenantId: string,
+    dto: CreatePatientDto,
+    ctx: PatientWriteContext,
+  ): Promise<PersonLink> {
+    const normalized = normalizePhone(dto.mobile);
+    const identityBacked =
+      !ctx.isFamilyMember &&
+      ctx.legacyPatientId == null &&
+      isValidPhone(normalized);
+    if (!identityBacked) {
+      return { mode: 'none' };
+    }
+    const existing = await this.prisma.person.findFirst({
+      where: { phone: normalized, deletedAt: null },
+      select: { id: true },
+    });
+    if (!existing) {
+      return { mode: 'create', phone: normalized };
+    }
+    const localActive = await this.prisma.patient.findFirst({
+      where: {
+        tenantId,
+        deletedAt: null,
+        isFamilyMember: false,
+        OR: [
+          { personId: existing.id },
+          { mobile: dto.mobile },
+          { mobile: normalized },
+        ],
+      },
+      select: { id: true },
+    });
+    if (localActive) {
+      throw new PatientMobileConflictException(dto.mobile);
+    }
+    throw new PatientCrossTenantExistsException(existing.id);
+  }
+
+  /**
+   * Resolve the branch's UMID format and insert the patient with a valid UMID,
+   * retrying auto-generated ids on collision. Shared by normal registration and
+   * cross-tenant import; the `personLink` controls identity backing.
+   */
+  private async createWithAllocatedUmId(
+    tenantId: string,
+    dto: CreatePatientDto,
+    ctx: PatientWriteContext,
+    personLink: PersonLink,
+  ): Promise<PatientWithHistory> {
     const manualUmId = dto.umId?.trim() || null;
 
     // Resolve the branch's configured patient-id format. No branch → manual.
@@ -183,7 +408,13 @@ export class PatientService {
         throw new PatientUmIdRequiredException();
       }
       try {
-        return await this.createPatientRow(tenantId, dto, ctx, manualUmId);
+        return await this.createPatientRow(
+          tenantId,
+          dto,
+          ctx,
+          manualUmId,
+          personLink,
+        );
       } catch (e) {
         this.rethrowPatientWriteConflict(e, dto.mobile, manualUmId);
       }
@@ -199,7 +430,13 @@ export class PatientService {
         ExternalIdPurpose.PATIENT,
       );
       try {
-        return await this.createPatientRow(tenantId, dto, ctx, value);
+        return await this.createPatientRow(
+          tenantId,
+          dto,
+          ctx,
+          value,
+          personLink,
+        );
       } catch (e) {
         if (this.isUmIdConflict(e)) {
           continue; // collision → next allocated number
@@ -215,17 +452,27 @@ export class PatientService {
 
   /**
    * Insert a patient (+ optional medical histories) with the resolved UMID, in
-   * one `withTenant` transaction. Throws raw Prisma errors — the caller maps
-   * unique-violation P2002s to typed conflicts (mobile vs UMID).
+   * one `withTenant` transaction. Also resolves the shared `Person` identity per
+   * `personLink` (link existing / create new / none) inside the same transaction
+   * so the patient and its platform identity commit atomically. Throws raw Prisma
+   * errors — the caller maps unique-violation P2002s to typed conflicts.
    */
   private async createPatientRow(
     tenantId: string,
     dto: CreatePatientDto,
     ctx: PatientWriteContext,
     umId: string | null,
+    personLink: PersonLink = { mode: 'none' },
   ): Promise<PatientWithHistory> {
     const { medicalHistories, dateOfBirth, ...patientFields } = dto;
     return this.prisma.withTenant(tenantId, async (tx) => {
+      const personId = await this.resolvePersonId(
+        tx,
+        tenantId,
+        dto,
+        dateOfBirth ? new Date(dateOfBirth) : null,
+        personLink,
+      );
       const patient = await tx.patient.create({
         data: {
           ...patientFields,
@@ -233,6 +480,7 @@ export class PatientService {
           dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
           tenantId,
           branchId: ctx.branchId,
+          personId,
           ...(ctx.isFamilyMember !== undefined
             ? { isFamilyMember: ctx.isFamilyMember }
             : {}),
@@ -262,6 +510,60 @@ export class PatientService {
       });
       return { ...patient, medicalHistories: histories };
     });
+  }
+
+  /**
+   * Resolve the shared `Person` id for a patient being inserted, within the
+   * caller transaction (`persons` is a platform-level, non-RLS table). Links to
+   * an existing person (marking it a patient), creates a fresh person from the
+   * patient's own identity fields, or returns `null` when identity backing is
+   * skipped (family members / migrated / non-mobile rows).
+   */
+  private async resolvePersonId(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    dto: CreatePatientDto,
+    dateOfBirth: Date | null,
+    personLink: PersonLink,
+  ): Promise<string | null> {
+    if (personLink.mode === 'none') {
+      return null;
+    }
+    if (personLink.mode === 'existing') {
+      await tx.person.update({
+        where: { id: personLink.personId },
+        data: { isPatient: true },
+      });
+      return personLink.personId;
+    }
+    const person = await tx.person.create({
+      data: {
+        platformMrn: this.generatePlatformMrn(),
+        salutation: dto.salutation ?? null,
+        firstName: dto.firstName,
+        middleName: dto.middleName ?? null,
+        lastName: dto.lastName ?? null,
+        gender: dto.gender ?? null,
+        bloodGroup: dto.bloodGroup ?? null,
+        dateOfBirth,
+        phone: personLink.phone,
+        email: dto.email ?? null,
+        aadhaarNumber: dto.aadhaarNumber ?? null,
+        panNumber: dto.panNumber ?? null,
+        emergencyContactName: dto.emergencyContactName ?? null,
+        emergencyContactNumber: dto.emergencyContactMobileNumber ?? null,
+        ownerTenantId: tenantId,
+        isPatient: true,
+      },
+    });
+    return person.id;
+  }
+
+  /** Generate a globally-unique platform MRN: `KAL-YYYYMMDD-XXXXXXXX`. */
+  private generatePlatformMrn(): string {
+    const now = new Date();
+    const ymd = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    return `KAL-${ymd}-${randomBytes(4).toString('hex').toUpperCase()}`;
   }
 
   /**
