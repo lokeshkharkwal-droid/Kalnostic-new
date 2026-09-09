@@ -777,29 +777,44 @@ export class LabPanelService {
       tenantId,
       branchId,
     );
-    return this.prisma.withTenant(tenantId, async (tx) => {
-      const t = await this.labTestService.syncTestsIntoBranch(tx, {
-        tenantId,
-        branchId,
-        tenantMasterDataId: tenantMd.id,
-        branchMasterDataId: branchMd.id,
-        actorId,
-      });
-      const p = await this.syncPanelsIntoBranch(
-        tx,
-        {
+    return this.prisma.withTenant(
+      tenantId,
+      async (tx) => {
+        const t = await this.labTestService.syncTestsIntoBranch(tx, {
           tenantId,
           branchId,
           tenantMasterDataId: tenantMd.id,
           branchMasterDataId: branchMd.id,
-        },
-        t.testIdMap,
-      );
-      return {
-        tests: { created: t.created, updated: t.updated, deleted: t.deleted },
-        panels: { created: p.created, updated: p.updated, deleted: p.deleted },
-      };
-    });
+          actorId,
+        });
+        const p = await this.syncPanelsIntoBranch(
+          tx,
+          {
+            tenantId,
+            branchId,
+            tenantMasterDataId: tenantMd.id,
+            branchMasterDataId: branchMd.id,
+          },
+          t.testIdMap,
+        );
+        return {
+          tests: { created: t.created, updated: t.updated, deleted: t.deleted },
+          panels: {
+            created: p.created,
+            updated: p.updated,
+            deleted: p.deleted,
+          },
+        };
+      },
+      // Per-test/panel loop (update-or-clone + child-table rebuild) over a
+      // full catalogue can run well past Prisma's default 5s transaction
+      // timeout; panels can't sync in a separate transaction from tests
+      // (they need the complete in-memory testIdMap), so the whole sync must
+      // stay atomic — widen the bound instead of splitting it. Same bound as
+      // India location sync (location-sync.service.ts), another bulk,
+      // all-or-nothing seed/sync of comparable scale.
+      { timeout: 60_000, maxWait: 15_000 },
+    );
   }
 
   /**

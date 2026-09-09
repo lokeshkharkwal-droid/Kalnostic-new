@@ -2865,6 +2865,11 @@ model LabTestResultParam {
   allowableUnits     String?         @map("allowable_units")
   decimalPlaces      Int             @default(2) @map("decimal_places")
 
+  // Suggested values a user can pick from when entering this parameter's
+  // result (one per line in the UI), and a default to pre-fill with.
+  resultSuggestions String[] @default([]) @map("result_suggestions")
+  defaultValue      String?  @map("default_value")
+
   // Result-level critical bounds (separate from per-reference-range criticals)
   criticalMin Decimal? @map("critical_min") @db.Decimal(10, 4)
   criticalMax Decimal? @map("critical_max") @db.Decimal(10, 4)

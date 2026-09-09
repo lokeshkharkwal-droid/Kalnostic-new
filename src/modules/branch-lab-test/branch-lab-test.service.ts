@@ -459,6 +459,16 @@ export class BranchLabTestService {
    * (`priceMsrp`, minor units); `sampleType`/`isFasting` come from the first sample
    * in `configSnapshot` — both feed the form's Diagnostic Items table. Supports a
    * case-insensitive `search` on testName.
+   *
+   * `preferredOnly` narrows to `isPreferenceTest: true` when set AND no
+   * `search` term is given — used by the Create-Order picker, whose unsearched
+   * view should default to the branch's curated "preferred" tests rather than
+   * the full catalogue; typing a search term lifts the narrowing so any test
+   * can still be found by name. This endpoint is shared by several other
+   * pickers (finance report filters, accession, lab adapters, order console)
+   * that must keep seeing the full catalogue, so the narrowing is opt-in, not
+   * a change in the default — omitting `preferredOnly` reproduces the prior
+   * unfiltered behaviour exactly.
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT profile)
    * @param filters optional search + offset pagination
@@ -472,6 +482,7 @@ export class BranchLabTestService {
       page?: number;
       limit?: number;
       listId?: string;
+      preferredOnly?: boolean;
     } = {},
   ): Promise<
     Array<BranchLabTestOption> | PaginatedResult<BranchLabTestOption>
@@ -488,6 +499,8 @@ export class BranchLabTestService {
     const term = filters.search?.trim();
     if (term) {
       where.testName = { contains: term, mode: 'insensitive' };
+    } else if (filters.preferredOnly) {
+      where.isPreferenceTest = true;
     }
 
     const select = {

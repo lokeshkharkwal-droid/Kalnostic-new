@@ -1435,6 +1435,8 @@ export class LabReportService {
         parameterType: true,
         calculationFormula: true,
         decimalPlaces: true,
+        resultSuggestions: true,
+        defaultValue: true,
       },
       orderBy: { sortOrder: 'asc' },
     });

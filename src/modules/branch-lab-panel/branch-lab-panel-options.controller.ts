@@ -45,6 +45,7 @@ export class BranchLabPanelOptionsController {
         page: query.page,
         limit: query.limit,
         listId: query.listId,
+        preferredOnly: query.preferredOnly,
       },
     );
   }

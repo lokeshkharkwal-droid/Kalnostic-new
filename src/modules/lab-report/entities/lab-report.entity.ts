@@ -101,6 +101,10 @@ export interface LabReportResultParam {
   calculationFormula: string | null;
   /** Decimal places for formatting a computed value (mirrors the param config). */
   decimalPlaces: number;
+  /** Suggested values for this parameter's Observed 1 field (typeahead). */
+  resultSuggestions: string[];
+  /** Pre-fills Observed 1 when the technician hasn't entered a value yet. */
+  defaultValue: string | null;
 }
 
 /** Full detail response: the report plus its (possibly all-null) content
