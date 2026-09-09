@@ -536,6 +536,16 @@ export class BranchLabPanelService {
    * always `null`, and `isFasting` reflects the panel's `isFastingRequired`. Both
    * feed the form's Diagnostic Items table. Supports a case-insensitive `search`
    * on panelName.
+   *
+   * `preferredOnly` narrows to `isPreference: true` when set AND no `search`
+   * term is given — used by the Create-Order picker, whose unsearched view
+   * should default to the branch's curated "preferred" panels rather than the
+   * full catalogue; typing a search term lifts the narrowing so any panel can
+   * still be found by name. This endpoint is shared by several other pickers
+   * (finance report filters, accession, lab adapters, order console) that
+   * must keep seeing the full catalogue, so the narrowing is opt-in, not a
+   * change in the default — omitting `preferredOnly` reproduces the prior
+   * unfiltered behaviour exactly.
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT profile)
    * @param filters optional search + offset pagination
@@ -549,6 +559,7 @@ export class BranchLabPanelService {
       page?: number;
       limit?: number;
       listId?: string;
+      preferredOnly?: boolean;
     } = {},
   ): Promise<
     Array<BranchLabPanelOption> | PaginatedResult<BranchLabPanelOption>
@@ -565,6 +576,8 @@ export class BranchLabPanelService {
     const term = filters.search?.trim();
     if (term) {
       where.panelName = { contains: term, mode: 'insensitive' };
+    } else if (filters.preferredOnly) {
+      where.isPreference = true;
     }
 
     const select = {

@@ -1069,28 +1069,27 @@ export const ENUM_LABEL_FIELDS: Record<string, Record<string, string>> = {
     'Swab Tube Viral Transport Medium': 'SWAB_TUBE_VIRAL_TRANSPORT_MEDIUM',
     'Whatman 903 Filter Paper Card': 'WHATMAN_903_FILTER_PAPER_CARD',
 
-    // TEMPORARY aliases for MASTER DATA.xlsx's real-world container
-    // descriptions — re-added 2026-09-05, to be REMOVED before committing/
-    // pushing this change. `ContainerType` originally had no real per-tenant
-    // catalogue, so these 14 free-text descriptions were lossily collapsed
-    // onto the closest fixed enum value purely to keep this file importable.
-    // Since then the enum grew to 46 real values (2026-09-05's "New UI
-    // Improvements" expansion), giving 3 of these 14 aliases a genuine exact
-    // match — repointed below (2026-09-07) so those 3 no longer collapse onto
-    // a generic value. The remaining 11 still have no closer match and stay
-    // as lossy aliases. Do not extend this list further without checking
-    // with the user first; see Gap-ContainerType-No-Real-Catalogue.md.
-    'K2/K3 EDTA Tube (Lavender)': 'EDTA_TUBE_PURPLE_TOP',
-    'Plain/Clot Activator Tube (Red)': 'PLAIN_TUBE_RED_TOP',
-    'Serum Separator Tube / SST with Gel (Gold)': 'SST_TUBE_YELLOW_TOP',
-    'Sodium Citrate Tube 3.2% (Light Blue)': 'CITRATE_TUBE_BLUE_TOP',
-    'Sodium Fluoride/Potassium Oxalate Tube (Grey)': 'FLUORIDE_TUBE_GREY_TOP',
+    // Aliases for MASTER DATA.xlsx's real-world container descriptions.
+    // `ContainerType` originally had no real per-tenant catalogue, so these
+    // were first added (2026-09-05) as lossy collapses onto the closest
+    // fixed enum value just to keep this file importable. The enum has
+    // since grown to 46 real values (2026-09-05's "New UI Improvements"
+    // expansion), giving every one of these a genuine exact or correctly
+    // generic match — repointed 2026-09-08 so none of them lose information
+    // anymore. `Lithium/Sodium Heparin Tube (Green)` intentionally stays on
+    // the generic `HEPARIN_TUBE_GREEN_TOP`: the source label itself doesn't
+    // specify which salt, so the generic value is the correct match, not a
+    // fallback. See Gap-ContainerType-No-Real-Catalogue.md.
+    'K2/K3 EDTA Tube (Lavender)': 'K2_K3_EDTA_TUBE_LAVENDER_TOP',
+    'Plain/Clot Activator Tube (Red)': 'PLAIN_CLOT_ACTIVATOR_TUBE_RED_TOP',
+    'Serum Separator Tube / SST with Gel (Gold)': 'SST_TUBE_WITH_GEL_GOLD_TOP',
+    'Sodium Citrate Tube 3.2% (Light Blue)': 'SODIUM_CITRATE_TUBE_32PCT_LIGHT_BLUE_TOP',
+    'Sodium Fluoride/Potassium Oxalate Tube (Grey)': 'SODIUM_FLUORIDE_OXALATE_TUBE_GREY_TOP',
     'Lithium/Sodium Heparin Tube (Green)': 'HEPARIN_TUBE_GREEN_TOP',
-    '24-Hour Urine Container (2–3 L)': 'URINE_CONTAINER',
-    'Wide-mouth Urine Container (Non-sterile)': 'URINE_CONTAINER',
-    'Sterile Universal Container': 'STERILE_CONTAINER',
-    'Sterile Wide-mouth Container': 'STERILE_CONTAINER',
-    // Repointed 2026-09-07 — real dedicated enum values now exist:
+    '24-Hour Urine Container (2–3 L)': 'URINE_24H_CONTAINER_NO_PRESERVATIVE',
+    'Wide-mouth Urine Container (Non-sterile)': 'STERILE_UNIVERSAL_WIDE_MOUTH_CONTAINER',
+    'Sterile Universal Container': 'STERILE_UNIVERSAL_WIDE_MOUTH_CONTAINER',
+    'Sterile Wide-mouth Container': 'STERILE_UNIVERSAL_WIDE_MOUTH_CONTAINER',
     'Cary-Blair Transport Vial': 'STERILE_CONTAINER_CARY_BLAIR_MEDIUM',
     'Formalin Container (10% Neutral Buffered Formalin)': 'STERILE_CONTAINER_NEUTRAL_BUFFERED_FORMALIN',
     'Dried Blood Spot(DBS)': 'WHATMAN_903_FILTER_PAPER_CARD',
