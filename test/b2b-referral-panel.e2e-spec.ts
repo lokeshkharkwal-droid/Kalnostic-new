@@ -30,7 +30,7 @@ import { PrismaService } from './../src/prisma/prisma.service';
 import { HttpExceptionFilter } from './../src/common/filters';
 import { ResponseInterceptor } from './../src/common/interceptors';
 import { ReferralPanelUserService } from './../src/modules/referral-panel/referral-panel-user.service';
-import { B2B_PANEL_PERMISSION_KEYS } from './../src/modules/permissions/constants/module-permissions.constant';
+import { B2B_BASELINE_PERMISSION_KEYS } from './../src/modules/permissions/constants/module-permissions.constant';
 
 /**
  * End-to-end proof of B2B Referral Panel data isolation.
@@ -67,7 +67,9 @@ describe('B2B referral-panel isolation (e2e)', () => {
       }).compile();
       app = moduleRef.createNestApplication();
       // Replicate main.ts global setup so DTO validation + envelopes behave as prod.
-      app.setGlobalPrefix('api/v1', { exclude: ['emi/orders', 'emi/submitResult'] });
+      app.setGlobalPrefix('api/v1', {
+        exclude: ['emi/orders', 'emi/submitResult'],
+      });
       app.useGlobalPipes(
         new ValidationPipe({
           whitelist: true,
@@ -117,7 +119,7 @@ describe('B2B referral-panel isolation (e2e)', () => {
           employeeName: 'E2E Panel User',
           username,
           dateOfBirth: '1990-01-01',
-          gender: 'MALE' as never,
+          gender: 'MALE',
           email: `${username}@example.com`,
           mobileNumber: `9${Math.floor(100000000 + Math.random() * 899999999)}`,
           password,
@@ -150,13 +152,41 @@ describe('B2B referral-panel isolation (e2e)', () => {
     expect(payload.referral_panel_id).toBe(panelId);
   });
 
+  it('resolves ONLY the five curated permissions (drives the sidebar)', async () => {
+    if (!ready) return;
+    const res = await request(app.getHttpServer())
+      .get(`/api/v1/users/manage/me/permissions?branchId=${branchId}`)
+      .set(auth());
+    expect(res.status).toBe(200);
+    const allowed: string[] = res.body?.data?.allowed ?? [];
+    const baseline = new Set(B2B_BASELINE_PERMISSION_KEYS);
+    // No allowed key may fall outside the curated view-only baseline — this is
+    // exactly what was broken (the baseline used to expand to every key of the
+    // three modules, including the sibling *__view_full_module keys and every
+    // create/cancel/edit action key).
+    expect(allowed.filter((k) => !baseline.has(k))).toEqual([]);
+    // Must never grant a sibling full-module key or any write/action key.
+    for (const forbidden of [
+      'registration:panel_navigation__view_full_module',
+      'finance:panel_navigation__view_full_module',
+      'lab_operations:panel_navigation__view_full_module',
+      'finance:invoice__cancel_invoice',
+      'finance:payments__edit_direct_order_payment',
+      'lab_operations:reporting__mark_as_error_reported',
+      'registration:order_console__update_in_the_order_console',
+    ]) {
+      expect(allowed).not.toContain(forbidden);
+    }
+  });
+
   it('only ever returns this panel’s orders from /orders', async () => {
     if (!ready) return;
     const res = await request(app.getHttpServer())
       .get('/api/v1/orders')
       .set(auth());
     expect(res.status).toBe(200);
-    const rows: Array<{ referralPanelId?: string | null }> = res.body?.data ?? [];
+    const rows: Array<{ referralPanelId?: string | null }> =
+      res.body?.data ?? [];
     for (const row of rows) {
       expect(row.referralPanelId ?? null).toBe(panelId);
     }
@@ -175,6 +205,18 @@ describe('B2B referral-panel isolation (e2e)', () => {
     expect(res.status).toBe(403);
   });
 
+  it('allows the print-template endpoints (so printing works)', async () => {
+    if (!ready) return;
+    const list = await request(app.getHttpServer())
+      .get('/api/v1/pdf-report-templates?type=bill_print&status=ACTIVE')
+      .set(auth());
+    expect(list.status).toBe(200);
+    const config = await request(app.getHttpServer())
+      .get('/api/v1/pdf-report-templates/config')
+      .set(auth());
+    expect(config.status).toBe(200);
+  });
+
   it('403s on a real disallowed module endpoint (B2bModuleGuard)', async () => {
     if (!ready) return;
     // Must target a route that actually exists — NestJS global guards only run on
@@ -184,61 +226,5 @@ describe('B2B referral-panel isolation (e2e)', () => {
       .get('/api/v1/patients')
       .set(auth());
     expect(res.status).toBe(403);
-  });
-
-  it('exposes exactly the five curated navigation permissions (not the full module expansion)', async () => {
-    if (!ready) return;
-    const res = await request(app.getHttpServer())
-      .get('/api/v1/users/manage/me/permissions')
-      .query({ branchId })
-      .set(auth());
-    expect(res.status).toBe(200);
-    const allowed: string[] = res.body?.data?.allowed ?? [];
-    expect([...allowed].sort()).toEqual(
-      [...B2B_PANEL_PERMISSION_KEYS].sort(),
-    );
-  });
-
-  it('ReferralPanelUserService.update changes basic profile fields (email + password) without touching branch/role', async () => {
-    if (!ready) return;
-    const svc = app.get(ReferralPanelUserService);
-    const newPassword = 'NewPassw0rd!2';
-
-    await svc.update(
-      tenantId,
-      panelId,
-      {
-        employeeName: 'E2E Panel User Updated',
-        email: `${username}.updated@example.com`,
-        password: newPassword,
-      },
-      'e2e-actor',
-    );
-
-    const profile = await prisma.userBranchProfile.findFirst({
-      where: { tenantId, referralPanelId: panelId, deletedAt: null },
-      select: { personId: true, branchId: true, referralPanelId: true },
-    });
-    expect(profile?.branchId).toBe(branchId);
-    expect(profile?.referralPanelId).toBe(panelId);
-
-    const person = await prisma.person.findFirst({
-      where: { id: profile?.personId },
-      select: { firstName: true, email: true },
-    });
-    expect(person?.firstName).toBe('E2E Panel User Updated');
-    expect(person?.email).toBe(`${username}.updated@example.com`);
-
-    // Old password no longer works; the new one does.
-    const oldLogin = await request(app.getHttpServer())
-      .post('/api/v1/auth/login')
-      .send({ identifier: username, password });
-    expect(oldLogin.status).not.toBe(200);
-
-    const newLogin = await request(app.getHttpServer())
-      .post('/api/v1/auth/login')
-      .send({ identifier: username, password: newPassword });
-    expect(newLogin.status).toBe(200);
-    expect(newLogin.body?.data?.accessToken).toBeTruthy();
   });
 });

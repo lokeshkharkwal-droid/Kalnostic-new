@@ -1,0 +1,59 @@
+meta {
+  name: Cross-Tenant Lookup
+  type: http
+  seq: 21
+}
+
+get {
+  url: {{baseUrl}}/patients/cross-tenant-lookup?phone=9876543210
+  body: none
+  auth: bearer
+}
+
+params:query {
+  phone: 9876543210
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.match && data.match.person && data.match.person.id) {
+    bru.setEnvVar("crossTenantPersonId", data.match.person.id);
+  }
+}
+
+docs {
+  Look up a mobile number across ALL tenants via the shared, platform-level
+  `Person` identity (globally-unique phone). Used by order creation when no
+  existing patient is selected, to detect a patient already registered at another
+  business BEFORE a duplicate is created. Captures `crossTenantPersonId` from the
+  match (for the Import From Person request).
+
+  ## Query
+
+  - `phone` (required) — the raw mobile number. Normalized server-side (non-digits
+    stripped, trailing 10 digits kept) and matched EXACTLY (not fuzzy), which
+    limits enumeration. Only valid 10-digit numbers (first digit 6-9) are looked
+    up; anything else returns `{ match: null }`.
+
+  ## Response `data`
+
+  - `{ "match": null }` — no cross-tenant identity for that number.
+  - `{ "match": { person, ownerTenant, existsInCurrentTenant } }`:
+    - `person` — the shared identity (full details, by design): `id`,
+      `platformMrn`, name parts, `gender`, `bloodGroup`, `dateOfBirth`, `phone`,
+      `email`, `address`, `aadhaarNumber`, `panNumber`, emergency contact.
+    - `ownerTenant` — the business that first registered the person
+      (`id`, `name`, `shortName`, `email`, `phone`, `logoUrl`), or `null`.
+    - `existsInCurrentTenant` — `true` when the caller's tenant already has this
+      patient (the operator should just select it; no import needed).
+
+  ## Notes
+
+  - Reads only the non-RLS `persons`/`tenants` tables plus a tenant-scoped
+    `patients` existence check — no tenant isolation is bypassed.
+  - Available to any authenticated business user (no extra permission).
+}

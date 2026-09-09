@@ -17,8 +17,8 @@ import { ReferralPanelService } from './referral-panel.service';
 import { ReferralPanelUserService } from './referral-panel-user.service';
 import { CreateReferralPanelDto } from './dto/create-referral-panel.dto';
 import { CreateReferralPanelUserDto } from './dto/create-referral-panel-user.dto';
-import { UpdateReferralPanelDto } from './dto/update-referral-panel.dto';
 import { UpdateReferralPanelUserDto } from './dto/update-referral-panel-user.dto';
+import { UpdateReferralPanelDto } from './dto/update-referral-panel.dto';
 import { ListReferralPanelsDto } from './dto/list-referral-panels.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
@@ -134,10 +134,7 @@ export class ReferralPanelController {
    * @param tenantId the caller's tenant (from JWT)
    */
   @Get(':id/user')
-  getPanelUser(
-    @Param('id') id: string,
-    @CurrentTenant() tenantId: string,
-  ) {
+  getPanelUser(@Param('id') id: string, @CurrentTenant() tenantId: string) {
     return this.referralPanelUserService.getForPanel(tenantId, id);
   }
 
@@ -167,28 +164,19 @@ export class ReferralPanelController {
   }
 
   /**
-   * Update the referral panel's dedicated B2B login user's basic profile
-   * fields. Branch, role, permissions/modules, status and `username` are never
-   * editable via this route — only the same personal fields the create form
-   * offers.
+   * Update the referral panel's B2B login user (the eight editable personal/login
+   * fields only). Branch, role, modules and status stay server-controlled.
    * @param id the referral panel id
-   * @param dto the fields to update
+   * @param dto the changed fields
    * @param tenantId the caller's tenant (from JWT)
-   * @param actorId the acting user (from JWT) — used as updatedBy
    */
-  @Patch(':id/user')
   @RequirePermission(PERMISSION_KEYS.BR_REF_UPDATE_PANEL)
-  @Audit({
-    module: AuditModule.REFERRAL_PANEL,
-    action: AuditAction.UPDATE,
-    description: 'Updated a referral panel login user',
-  })
+  @Patch(':id/user')
   updatePanelUser(
     @Param('id') id: string,
     @Body() dto: UpdateReferralPanelUserDto,
     @CurrentTenant() tenantId: string,
-    @CurrentUser('person_id') actorId: string,
   ) {
-    return this.referralPanelUserService.update(tenantId, id, dto, actorId);
+    return this.referralPanelUserService.update(tenantId, id, dto);
   }
 }

@@ -56,3 +56,51 @@ export interface FamilyMemberResult {
 export type PatientWithFamily = Patient & {
   familyMembers?: FamilyMemberSummary[];
 };
+
+/**
+ * The shared platform identity + owning business surfaced by
+ * `GET /patients/cross-tenant-lookup` when a mobile number belongs to a patient
+ * in another tenant. Full patient details are exposed by design so the operator
+ * can confirm the match before reusing the identity.
+ */
+export interface CrossTenantPatientMatch {
+  /** The shared platform-level identity (globally-unique phone). */
+  person: {
+    id: string;
+    platformMrn: string;
+    salutation: string | null;
+    firstName: string;
+    middleName: string | null;
+    lastName: string | null;
+    gender: string | null;
+    bloodGroup: string | null;
+    dateOfBirth: Date | null;
+    phone: string | null;
+    email: string | null;
+    address: unknown;
+    aadhaarNumber: string | null;
+    panNumber: string | null;
+    emergencyContactName: string | null;
+    emergencyContactNumber: string | null;
+  };
+  /** The business that first registered this person (owns their basic details). */
+  ownerTenant: {
+    id: string;
+    name: string;
+    shortName: string | null;
+    email: string | null;
+    phone: string | null;
+    logoUrl: string | null;
+  } | null;
+  /**
+   * True when the caller's tenant already has an active patient linked to this
+   * identity — the operator should just select that existing patient instead of
+   * importing (no confirmation/import needed).
+   */
+  existsInCurrentTenant: boolean;
+}
+
+/** Result of `GET /patients/cross-tenant-lookup`: a match, or `null` when none. */
+export interface CrossTenantLookupResult {
+  match: CrossTenantPatientMatch | null;
+}

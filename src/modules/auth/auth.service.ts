@@ -48,7 +48,8 @@ export function resolveReferralPanelClaim(
 ): string | null {
   if (activeProfileKey !== 'b2b_referring_panel') return null;
   const active = profiles.find(
-    (p) => p.branchId === activeBranchId && p.authRole?.key === activeProfileKey,
+    (p) =>
+      p.branchId === activeBranchId && p.authRole?.key === activeProfileKey,
   );
   return active?.referralPanelId ?? null;
 }

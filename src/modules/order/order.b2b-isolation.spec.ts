@@ -1,7 +1,4 @@
-import {
-  applyB2bOrderScope,
-  assertOrderPanelOwnership,
-} from './order.service';
+import { applyB2bOrderScope, assertOrderPanelOwnership } from './order.service';
 import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
 
 describe('order b2b isolation helpers', () => {
@@ -19,7 +16,10 @@ describe('order b2b isolation helpers', () => {
 
   it('throws when an order belongs to another panel', () => {
     expect(() =>
-      assertOrderPanelOwnership({ id: 'o1', referralPanelId: 'other' }, 'panel-3'),
+      assertOrderPanelOwnership(
+        { id: 'o1', referralPanelId: 'other' },
+        'panel-3',
+      ),
     ).toThrow(ReferralPanelAccessDeniedException);
   });
 
@@ -34,7 +34,10 @@ describe('order b2b isolation helpers', () => {
 
   it('is a no-op ownership check when no panel scope is active', () => {
     expect(() =>
-      assertOrderPanelOwnership({ id: 'o1', referralPanelId: 'anything' }, undefined),
+      assertOrderPanelOwnership(
+        { id: 'o1', referralPanelId: 'anything' },
+        undefined,
+      ),
     ).not.toThrow();
   });
 });

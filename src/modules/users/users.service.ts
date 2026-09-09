@@ -30,9 +30,8 @@ import {
 import { AuthRoleService } from '../auth-role/auth-role.service';
 import {
   MODULE_PERMISSION_CATALOG,
-  ROLE_TEMPLATES,
-  roleBaselinePermissions,
   roleTemplateModules,
+  B2B_BASELINE_PERMISSION_KEYS,
 } from '../permissions/constants/module-permissions.constant';
 import {
   isValidModuleKey,
@@ -1594,12 +1593,6 @@ export class UsersService {
    * role→module config (e.g. `doctor`) still works: access follows the per-user
    * module selection, not the (empty) role baseline.
    *
-   * Exception: a role whose `ROLE_TEMPLATES` entry is marked `curated` (e.g.
-   * `b2b_referring_panel`) has a deliberately restricted baseline — narrower
-   * than its linked modules' full catalogue — so those roles grant exactly
-   * their curated permission keys (still gated to the user's assigned
-   * modules), not every permission in those modules.
-   *
    * @param roleKey the role held at the branch
    * @param assignedModules `UserBranchProfile.enabledModules` for the profile
    * @returns the effective module-key set and the permission keys they grant
@@ -1613,14 +1606,14 @@ export class UsersService {
         ? assignedModules
         : roleTemplateModules(roleKey),
     );
-    if (ROLE_TEMPLATES[roleKey as ProfileKey]?.curated) {
-      const permissions = new Set(
-        [...roleBaselinePermissions(roleKey)].filter((key) => {
-          const moduleKey = this.moduleOfPermission(key);
-          return moduleKey !== null && moduleKeys.has(moduleKey);
-        }),
-      );
-      return { moduleKeys, permissions };
+    // B2B Referring Panel: a curated baseline (only its five navigation keys),
+    // NOT the full expansion of its three modules. The module keys still drive
+    // module-level access (so the Registration/Finance/Technician tabs show), but
+    // the fine-grained permissions are restricted to the five allowed screens so
+    // the permission-driven sidebar hides every sibling item. Without this the
+    // baseline would grant every permission of the three modules.
+    if (roleKey === 'b2b_referring_panel') {
+      return { moduleKeys, permissions: new Set(B2B_BASELINE_PERMISSION_KEYS) };
     }
     const permissions = new Set<string>();
     for (const entry of MODULE_PERMISSION_CATALOG) {

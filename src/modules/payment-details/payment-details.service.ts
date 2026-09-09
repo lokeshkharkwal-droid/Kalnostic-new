@@ -255,7 +255,7 @@ export class PaymentDetailsService {
       where.orderId = query.orderId;
     }
     // B2B Referral Panel isolation: constrain to the panel's orders.
-    applyB2bPaymentOrderScope(where as Record<string, unknown>, getReferralPanelId());
+    applyB2bPaymentOrderScope(where, getReferralPanelId());
     const [data, total] = await Promise.all([
       this.prisma.paymentDetails.findMany({
         where,

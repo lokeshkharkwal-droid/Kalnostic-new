@@ -41,6 +41,31 @@ export class PatientWriteConflictException extends KaltrosException {
   }
 }
 
+/**
+ * 409 — the mobile number already belongs to a patient in a DIFFERENT tenant
+ * (resolved via the globally-unique `Person.phone`). A new patient must NOT be
+ * created on that number here; the caller must instead confirm and reuse the
+ * existing identity via `POST /patients/import-from-person`. Carries the shared
+ * `personId` so the frontend can drive the confirmation → import flow.
+ */
+export class PatientCrossTenantExistsException extends KaltrosException {
+  constructor(personId: string) {
+    super(
+      'PATIENT_EXISTS_IN_OTHER_TENANT',
+      'This mobile number belongs to a patient registered at another business',
+      { personId },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/** 404 — no platform-level `Person` exists for the given id (import source). */
+export class PersonNotFoundException extends KaltrosException {
+  constructor(id: string) {
+    super('PERSON_NOT_FOUND', 'Person not found', { id }, HttpStatus.NOT_FOUND);
+  }
+}
+
 /** 400 — a UMID is required (the branch's patient id format is NONE / manual). */
 export class PatientUmIdRequiredException extends KaltrosException {
   constructor() {

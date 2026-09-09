@@ -43,6 +43,7 @@ import { ExternalReferralModule } from './modules/external-referral/external-ref
 import { InternalReferralModule } from './modules/internal-referral/internal-referral.module';
 import { MachineModule } from './modules/machine/machine.module';
 import { LabTestSettingsModule } from './modules/lab-test-settings/lab-test-settings.module';
+import { LabTestFieldPermissionsModule } from './modules/lab-test-field-permissions/lab-test-field-permissions.module';
 import { DocumentModule } from './modules/document/document.module';
 import { TemplateModule } from './modules/template/template.module';
 import { PdfReportTemplateModule } from './modules/pdf-report-template/pdf-report-template.module';
@@ -153,6 +154,7 @@ import { B2bModuleGuard } from './common/guards/b2b-module.guard';
     InternalReferralModule,
     MachineModule,
     LabTestSettingsModule,
+    LabTestFieldPermissionsModule,
     DocumentModule,
     TemplateModule,
     PdfReportTemplateModule,

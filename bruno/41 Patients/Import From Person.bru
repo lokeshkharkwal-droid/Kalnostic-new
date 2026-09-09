@@ -1,0 +1,65 @@
+meta {
+  name: Import From Person
+  type: http
+  seq: 22
+}
+
+post {
+  url: {{baseUrl}}/patients/import-from-person
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "personId": "{{crossTenantPersonId}}"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("patientId", data.id);
+}
+
+docs {
+  Reuse a patient that exists at another business: create the caller tenant's own
+  `Patient` projection linked to the shared `Person` identity (surfaced by
+  Cross-Tenant Lookup). The order then uses the returned `id` as its `patientId`.
+  Captures `patientId` from the response.
+
+  ## Body
+
+  - `personId` (required, UUID) — the shared platform identity to reuse. The
+    server re-derives every patient field from the `Person`; the client supplies
+    only the id.
+
+  ## Behaviour
+
+  - IDEMPOTENT — if the caller's tenant already has an active patient for this
+    identity, that patient is returned unchanged (the identity is NEVER
+    duplicated).
+  - Otherwise a new patient projection is created in the caller's tenant: identity
+    fields copied from the `Person`, `branchId` from the active profile, a fresh
+    UMID allocated exactly like a normal registration, and the `Person` marked as
+    a patient. Audit-logged as a cross-tenant reuse.
+
+  ## Errors
+
+  - `404 PERSON_NOT_FOUND` — no such person (or it has no phone).
+
+  ## Related
+
+  - A plain `POST /patients` on a mobile that belongs to another tenant is
+    rejected with `409 PATIENT_EXISTS_IN_OTHER_TENANT` (carrying `personId` in its
+    server-side context) — callers must route through this import instead of
+    creating a duplicate. The same mobile may still be used for a family member
+    (`POST /patients/:id/family-members`).
+}

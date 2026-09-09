@@ -421,6 +421,10 @@ const PERMISSION_SPEC: Record<string, SectionSpec[]> = {
       ],
     },
     {
+      label: 'Lab Test Master Setting',
+      permissions: ['Update lab test master setting'],
+    },
+    {
       label: 'Templates',
       permissions: [
         'Add SMS template',
@@ -561,7 +565,12 @@ const PERMISSION_SPEC: Record<string, SectionSpec[]> = {
     {
       // B2B Referral Panel navigation (see registration Panel Navigation note).
       label: 'Panel Navigation',
-      permissions: ['View Billing', 'View Invoices', 'View Payments', 'View Full Module'],
+      permissions: [
+        'View Billing',
+        'View Invoices',
+        'View Payments',
+        'View Full Module',
+      ],
     },
     {
       label: 'Financial Reports',
@@ -927,6 +936,9 @@ export const PERMISSION_KEYS = {
   BA_LTS_EDIT_GROUP: 'business_admin:lab_test_settings__edit_group_layout',
   BA_LTS_DELETE_GROUP: 'business_admin:lab_test_settings__delete_group_layout',
 
+  BA_SETTINGS_LAB_TEST_MASTER_UPDATE:
+    'business_admin:lab_test_master_setting__update_lab_test_master_setting',
+
   BA_TPL_ADD_SMS: 'business_admin:templates__add_sms_template',
   BA_TPL_EDIT_SMS: 'business_admin:templates__edit_sms_template',
   BA_TPL_DELETE_SMS: 'business_admin:templates__delete_sms_template',
@@ -1248,14 +1260,6 @@ function expandModulePermissions(moduleKeys: string[]): string[] {
 export interface RoleTemplate {
   permissions: string[];
   modules: string[];
-  /**
-   * True when `permissions` is a deliberately curated subset rather than the
-   * full expansion of `modules` (e.g. `b2b_referring_panel`). Consumers that
-   * derive a user's effective permissions from their assigned modules (e.g.
-   * `UsersService.resolveEffectiveModules`) must respect this baseline
-   * instead of re-expanding the full module catalogue.
-   */
-  curated?: boolean;
 }
 
 /** The predefined role templates, keyed by role (profile) key. */
@@ -1278,22 +1282,11 @@ export function roleTemplateModules(roleKey: string): string[] {
 }
 
 /**
- * The permission keys a B2B Referring Panel user holds. These map 1:1 to the
- * panel's allowed screens: Order Console, Billing, Invoices, Payments,
- * Reporting. The B2B role's baseline is exactly this set (NOT the full
+ * The five sidebar/navigation permission keys a B2B Referring Panel user holds.
+ * These map 1:1 to the panel's allowed screens: Order Console, Billing, Invoices,
+ * Payments, Reporting. The B2B role's baseline is exactly this set (NOT the full
  * expansion of its three modules), which is what lets the permission-driven
  * sidebar hide every sibling item. Keys must match the frontend constants.
- *
- * Five keys gate the sidebar (`panel_navigation__*`, nav-only — they do NOT
- * gate the page content itself). Three more are the page-level "view" keys
- * Order Console / Payments / Invoices independently check before rendering
- * their content (see `OrderConsoleScreen.tsx`, `finance/Payments/index.tsx`,
- * `finance/Invoices/index.tsx`) — without these, the sidebar item shows but
- * the page itself renders "you don't have permission". Billing and Reporting
- * have no such page-level gate, so no extra key is needed for those two.
- * Order Console is deliberately view-only for B2B (no
- * `create_order_patient_details__allow_create_order`) — B2B can see orders,
- * not place them.
  */
 export const B2B_PANEL_PERMISSION_KEYS: readonly string[] = [
   'registration:panel_navigation__view_order_console',
@@ -1301,16 +1294,40 @@ export const B2B_PANEL_PERMISSION_KEYS: readonly string[] = [
   'finance:panel_navigation__view_invoices',
   'finance:panel_navigation__view_payments',
   'lab_operations:panel_navigation__view_reporting',
-  'registration:order_console__view_only',
-  'finance:payments__list_view_only',
-  'finance:invoice__list_view_only',
 ] as const;
 
+/**
+ * Page-access (view/list) keys the B2B-allowed screens guard on, so those pages
+ * actually render for a B2B user. These are the keys the frontend pages check —
+ * distinct from the sidebar nav keys above (which only drive sidebar visibility).
+ * View-only by design: NO create/update/cancel/refund/mark/approve action keys,
+ * so a B2B panel is a read-only viewer of these areas (billing actions are
+ * disabled and reporting is Print-only, handled in the UI).
+ */
+const B2B_VIEW_PERMISSION_KEYS: readonly string[] = [
+  'registration:order_console__view_only',
+  'finance:invoice__list_view_only',
+  'finance:payments__list_view_only',
+  // Reporting worklist status tabs (view the lists) — action keys excluded.
+  ...MODULE_PERMISSION_CATALOG.filter((e) =>
+    e.permissionKey.startsWith('lab_operations:reporting__access_to_'),
+  ).map((e) => e.permissionKey),
+];
+
+/**
+ * The complete curated baseline for a B2B Referring Panel user: the five sidebar
+ * nav keys + the view/list keys that make the pages render. This is what
+ * `getMyPermissions` resolves for the role (see UsersService.resolveEffectiveModules).
+ */
+export const B2B_BASELINE_PERMISSION_KEYS: readonly string[] = [
+  ...B2B_PANEL_PERMISSION_KEYS,
+  ...B2B_VIEW_PERMISSION_KEYS,
+];
+
 // Override the auto-computed template for the B2B role: keep its three linked
-// modules (so `moduleAllowed` resolves), but restrict the baseline to exactly the
-// five allowed navigation keys instead of the full module expansion.
+// modules (so `moduleAllowed` resolves), but restrict the baseline to the curated
+// view-only set instead of the full module expansion.
 (ROLE_TEMPLATES as Record<string, RoleTemplate>)['b2b_referring_panel'] = {
   modules: ['registration', 'finance', 'lab_operations'],
-  permissions: [...B2B_PANEL_PERMISSION_KEYS],
-  curated: true,
+  permissions: [...B2B_BASELINE_PERMISSION_KEYS],
 };
