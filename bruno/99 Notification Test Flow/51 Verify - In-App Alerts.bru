@@ -1,0 +1,22 @@
+meta {
+  name: 51 Verify - In-App Alerts
+  type: http
+  seq: 21
+}
+
+get {
+  url: {{baseUrl}}/notifications/alerts
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  ✅ VERIFY (in-app). Lists in-app (IAM) alerts. Each event also raises an
+  in-app notification targeted at the patient; its body is rendered from the IAM
+  template if one exists, else the built-in fallback HTML. (For a fully rendered
+  in-app body with every tag, also create IAM-channel templates — duplicate the
+  "Create Global" requests with `preference: IAM`.)
+}

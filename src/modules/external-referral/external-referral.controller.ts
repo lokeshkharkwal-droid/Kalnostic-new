@@ -65,9 +65,14 @@ export class ExternalReferralController {
   @Get()
   findAll(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Query() query: ListExternalReferralsDto,
   ) {
-    return this.externalReferralService.findAllForTenant(tenantId, query);
+    return this.externalReferralService.findAllForTenant(
+      tenantId,
+      profile.branchId,
+      query,
+    );
   }
 
   /**

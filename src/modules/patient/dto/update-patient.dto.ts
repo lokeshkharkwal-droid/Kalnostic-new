@@ -80,6 +80,14 @@ export class UpdatePatientDto {
   @IsOptional()
   ageType?: AgeType;
 
+  /** Patient photo (S3 URL — device upload or webcam capture). `null` clears
+   *  it. Surfaced to report templates as `{patient_image}`. */
+  @IsOptional()
+  @ValidateIf((_o, value) => value !== null)
+  @IsString()
+  @MaxLength(2048)
+  photoUrl?: string | null;
+
   // ── Contact ──
   @IsString()
   @IsOptional()

@@ -46,6 +46,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS branches_tenant_code_active_unique
   ON branches (tenant_id, code) WHERE deleted_at IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS branches_tenant_name_active_unique
   ON branches (tenant_id, name) WHERE deleted_at IS NULL;
+-- Per-tenant uniqueness for the legacy EzHealthTrack BUSINESS_ID, among ACTIVE
+-- rows with a legacy id set, so the data migration is idempotent (a re-run finds
+-- the existing branch instead of duplicating it).
+CREATE UNIQUE INDEX IF NOT EXISTS branches_tenant_legacy_id_active_unique
+  ON branches (tenant_id, legacy_branch_id) WHERE deleted_at IS NULL AND legacy_branch_id IS NOT NULL;
 
 -- ── tenant_main_branch ──────────────────────────────────────────────────────────
 ALTER TABLE tenant_main_branch ENABLE ROW LEVEL SECURITY;
@@ -330,6 +335,14 @@ CREATE POLICY audit_logs_tenant_isolation ON audit_logs
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── adapter_logs ──────────────────────────────────────────────────────────────
+ALTER TABLE adapter_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE adapter_logs FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS adapter_logs_tenant_isolation ON adapter_logs;
+CREATE POLICY adapter_logs_tenant_isolation ON adapter_logs
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- ── master_data ─────────────────────────────────────────────────────────────────
 ALTER TABLE master_data ENABLE ROW LEVEL SECURITY;
 ALTER TABLE master_data FORCE ROW LEVEL SECURITY;
@@ -446,9 +459,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS lab_test_param_code_siteadmin_unique
   ON lab_test_result_params (lab_test_id, parameter_code)
   WHERE deleted_at IS NULL AND tenant_id IS NULL;
 
+-- chk_lab_test_param_calc_formula intentionally removed (2026-09-05): a
+-- Calculated parameter no longer requires a formula to be saved, in Add Test,
+-- Import, or the database. Kept as a DROP-only line so re-running this file
+-- against a database that still has the old constraint cleans it up.
 ALTER TABLE lab_test_result_params DROP CONSTRAINT IF EXISTS chk_lab_test_param_calc_formula;
-ALTER TABLE lab_test_result_params ADD CONSTRAINT chk_lab_test_param_calc_formula
-  CHECK (parameter_type != 'CALCULATED' OR calculation_formula IS NOT NULL);
 ALTER TABLE lab_test_result_params DROP CONSTRAINT IF EXISTS chk_lab_test_param_decimals;
 ALTER TABLE lab_test_result_params ADD CONSTRAINT chk_lab_test_param_decimals
   CHECK (decimal_places BETWEEN 0 AND 6);
@@ -639,6 +654,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS referral_panels_tenant_name_active_unique
 CREATE UNIQUE INDEX IF NOT EXISTS referral_panels_tenant_panel_code_active_unique
   ON referral_panels (tenant_id, panel_code)
   WHERE deleted_at IS NULL AND panel_code IS NOT NULL;
+-- Per-tenant + per-branch uniqueness for the legacy EzHealthTrack
+-- referring_panels.id, among ACTIVE rows with a legacy id set. A legacy
+-- business-level panel maps to ONE ReferralPanel PER branch it's associated with
+-- (branch link derived from referring_panel_price_detail.branch_id), or stays
+-- tenant-level (branch_id NULL) when it has no branch mapping — so the key
+-- includes branch_id. NULLS NOT DISTINCT makes the tenant-level (NULL branch)
+-- case idempotent too. Keeps the data migration re-runnable without duplicates.
+CREATE UNIQUE INDEX IF NOT EXISTS referral_panels_tenant_legacy_id_active_unique
+  ON referral_panels (tenant_id, legacy_id, branch_id) NULLS NOT DISTINCT
+  WHERE deleted_at IS NULL AND legacy_id IS NOT NULL;
 
 -- ── referral_panel_lab_tests ──────────────────────────────────────────────────
 ALTER TABLE referral_panel_lab_tests ENABLE ROW LEVEL SECURITY;
@@ -1017,6 +1042,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS ptc_tenant_slot_active_unique
   ON pdf_template_configs (tenant_id, slot_key)
   WHERE deleted_at IS NULL AND branch_id IS NULL;
 
+-- ── print_template_images ─────────────────────────────────────────────────────
+-- Durable, tenant-wide registry that makes a Print template's `{{image:<id>}}`
+-- token reusable across templates. Tenant rows isolate by tenant_id; SITE_ADMIN
+-- global-template images (tenant_id NULL) are readable by everyone and writable
+-- only by a GUC-less SiteAdmin connection (mirrors the pdf_report_templates
+-- pattern above).
+ALTER TABLE print_template_images ENABLE ROW LEVEL SECURITY;
+ALTER TABLE print_template_images FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS pti_tenant_isolation ON print_template_images;
+CREATE POLICY pti_tenant_isolation ON print_template_images
+  USING (tenant_id = current_tenant_id() OR tenant_id IS NULL)
+  WITH CHECK (
+    tenant_id = current_tenant_id()
+    OR (tenant_id IS NULL AND current_tenant_id() IS NULL)
+  );
+
 -- ── branch_lab_tests ──────────────────────────────────────────────────────────
 ALTER TABLE branch_lab_tests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE branch_lab_tests FORCE ROW LEVEL SECURITY;
@@ -1163,6 +1204,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS patients_tenant_mobile_active_unique
 -- fails if pre-existing active patients share a um_id — dedupe first.
 CREATE UNIQUE INDEX IF NOT EXISTS patients_um_id_global_unique
   ON patients (um_id) WHERE um_id IS NOT NULL AND deleted_at IS NULL;
+
+-- Per-tenant uniqueness for the legacy EzHealthTrack PATIENT_ID, among ACTIVE
+-- rows with a legacy id set, so the data migration is idempotent (a re-run finds
+-- the existing patient instead of duplicating it).
+CREATE UNIQUE INDEX IF NOT EXISTS patients_tenant_legacy_id_active_unique
+  ON patients (tenant_id, legacy_patient_id) WHERE deleted_at IS NULL AND legacy_patient_id IS NOT NULL;
 
 -- ── medical_histories ───────────────────────────────────────────────────────────
 ALTER TABLE medical_histories ENABLE ROW LEVEL SECURITY;
@@ -1324,6 +1371,14 @@ ALTER TABLE console_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE console_settings FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS console_settings_tenant_isolation ON console_settings;
 CREATE POLICY console_settings_tenant_isolation ON console_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── lab_test_field_permission_settings ──────────────────────────────────────────
+ALTER TABLE lab_test_field_permission_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lab_test_field_permission_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lab_test_field_permission_settings_tenant_isolation ON lab_test_field_permission_settings;
+CREATE POLICY lab_test_field_permission_settings_tenant_isolation ON lab_test_field_permission_settings
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
@@ -1946,3 +2001,33 @@ DROP POLICY IF EXISTS notification_targets_tenant_isolation ON notification_targ
 CREATE POLICY notification_targets_tenant_isolation ON notification_targets
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── business_channel_settings ─────────────────────────────────────────────────
+-- Per-tenant messaging channel capability. Never global, so plain tenant isolation.
+ALTER TABLE business_channel_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE business_channel_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS business_channel_settings_tenant_isolation ON business_channel_settings;
+CREATE POLICY business_channel_settings_tenant_isolation ON business_channel_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+-- branch_id is nullable: the single tenant-level default row vs one per branch.
+-- @@unique can't guard the tenant-level row (Postgres treats NULLs as distinct),
+-- so enforce one-per-scope with paired partial indexes.
+CREATE UNIQUE INDEX IF NOT EXISTS business_channel_settings_tenant_level_unique
+  ON business_channel_settings (tenant_id) WHERE branch_id IS NULL AND deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS business_channel_settings_branch_level_unique
+  ON business_channel_settings (tenant_id, branch_id) WHERE branch_id IS NOT NULL AND deleted_at IS NULL;
+
+-- ── business_channel_overrides ────────────────────────────────────────────────
+-- Per-(feature, channel) override rows. Never global, so plain tenant isolation.
+ALTER TABLE business_channel_overrides ENABLE ROW LEVEL SECURITY;
+ALTER TABLE business_channel_overrides FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS business_channel_overrides_tenant_isolation ON business_channel_overrides;
+CREATE POLICY business_channel_overrides_tenant_isolation ON business_channel_overrides
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+-- One active override per scope+feature+channel; branch_id nullable (see above).
+CREATE UNIQUE INDEX IF NOT EXISTS business_channel_overrides_tenant_level_unique
+  ON business_channel_overrides (tenant_id, feature, channel) WHERE branch_id IS NULL AND deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS business_channel_overrides_branch_level_unique
+  ON business_channel_overrides (tenant_id, branch_id, feature, channel) WHERE branch_id IS NOT NULL AND deleted_at IS NULL;

@@ -1,0 +1,53 @@
+meta {
+  name: Get Lab Test Field Permissions
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/business-admin/lab-test-field-permissions
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("has Basic Details section", function () {
+    expect(res.getBody().data.config["Basic Details"]).to.be.an("object");
+  });
+  test("Test Name defaults to Allowed", function () {
+    expect(res.getBody().data.config["Basic Details"]["Test Name"]).to.equal(true);
+  });
+}
+
+docs {
+  Effective Lab Test Master Setting field permissions for the caller's tenant
+  (tenant id taken from JWT) — stored overrides merged over the Allowed
+  defaults, so every known section/field is always present in the response.
+
+  No permission required beyond being an authenticated business user.
+
+  ## Response shape
+  ```json
+  {
+    "config": {
+      "Basic Details": { "Test Name": true, "Department": true, ... },
+      "Pricing": { "Price MSRP": true, ... },
+      "TAT": { ... },
+      "Flags": { ... },
+      "Sample": { ... },
+      "Results": { ... },
+      "Reference Range": { ... },
+      "Reference Value": { ... },
+      "Version Control": { ... }
+    }
+  }
+  ```
+  `true` = Allowed, `false` = Denied.
+}

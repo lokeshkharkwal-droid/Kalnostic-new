@@ -5,6 +5,7 @@ import {
   IsArray,
   IsBoolean,
   IsEnum,
+  IsIn,
   IsOptional,
   IsString,
   IsUUID,
@@ -13,6 +14,7 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
+import { MODULE_MAPPING_BRANCH_TYPES } from '../../../common/constants/module-mapping.constant';
 import { SubCategoryPersonMappingDto } from './sub-category-person-mapping.dto';
 
 /**
@@ -66,7 +68,7 @@ export class UpdateSubCategoryDto {
 
   @IsArray()
   @IsOptional()
-  @IsEnum(BranchType, { each: true })
+  @IsIn(MODULE_MAPPING_BRANCH_TYPES, { each: true })
   @ArrayUnique()
   moduleMapping?: BranchType[];
 

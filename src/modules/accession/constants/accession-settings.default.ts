@@ -118,6 +118,14 @@ export interface AccessionTypedSettings {
   SampleBarcodeSettings_CurrentNumber: number;
   SampleBarcodeSettings_LastResetAt: Date | null;
 
+  OrderBarcodeSettings_Prefix: string;
+  OrderBarcodeSettings_Suffix: string;
+  OrderBarcodeSettings_Separator: AccessionBarcodeSeparator;
+  OrderBarcodeSettings_NumberLength: number;
+  OrderBarcodeSettings_ResetInterval: AccessionBarcodeResetCycle;
+  OrderBarcodeSettings_CurrentNumber: number;
+  OrderBarcodeSettings_LastResetAt: Date | null;
+
   Accession_MinimumTimeToAcceptSampleMinutes: number;
   Accession_MaximumTimeToAcceptSampleMinutes: number;
   Accession_WarningThresholdMinutes: number;
@@ -143,6 +151,14 @@ export const DEFAULT_ACCESSION_TYPED_SETTINGS: AccessionTypedSettings = {
   SampleBarcodeSettings_ResetInterval: AccessionBarcodeResetCycle.NEVER,
   SampleBarcodeSettings_CurrentNumber: 0,
   SampleBarcodeSettings_LastResetAt: null,
+
+  OrderBarcodeSettings_Prefix: '',
+  OrderBarcodeSettings_Suffix: '',
+  OrderBarcodeSettings_Separator: AccessionBarcodeSeparator.NONE,
+  OrderBarcodeSettings_NumberLength: 5,
+  OrderBarcodeSettings_ResetInterval: AccessionBarcodeResetCycle.NEVER,
+  OrderBarcodeSettings_CurrentNumber: 0,
+  OrderBarcodeSettings_LastResetAt: null,
 
   Accession_MinimumTimeToAcceptSampleMinutes: 10,
   Accession_MaximumTimeToAcceptSampleMinutes: 20,

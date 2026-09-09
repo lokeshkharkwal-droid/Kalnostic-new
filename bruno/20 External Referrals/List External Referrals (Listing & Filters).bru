@@ -49,6 +49,9 @@ docs {
   ## Row shape (trimmed listing projection)
 
   Each row contains ONLY: `id`, `name`, `organisationName`, `referralCode`,
-  `mobileNumber`, `email`, `isCommissionApplicable`, and `status`. Fetch the full
-  record (all fields + assigned lab tests/panels) via "Get External Referral".
+  `mobileNumber`, `email`, `isCommissionApplicable`, `status`, and `labTestList` /
+  `labPanelList` — `{ id, name } | null` — the caller's active branch's assigned
+  Lab Test List / Lab Panel List, bulk-resolved for the whole page (not a per-row
+  lookup). Fetch the full record (all fields + the raw
+  `branchLabTestListId`/`branchLabPanelListId`) via "Get External Referral".
 }

@@ -80,10 +80,11 @@ docs {
   - `departmentId` — for `INDEPENDENT` it must be OMITTED (sending one →
     400 `INDEPENDENT_CATEGORY_DEPARTMENT`). See the "Under Department" request
     for the linked variant.
-  - `moduleMapping` — REQUIRED array using the same enum as `branchType`:
-    `DIAGNOSTIC`, `RADIOLOGY`, `OPD`, `IPD`, `PHARMACY`, `INVENTORY`,
-    `BLOOD_BANK`, `FRANCHISE`, `COMBINED`, `ASSISTANT`, `ACCESSION`,
-    `TECHNICIAN`. Must be unique (no duplicates).
+  - `moduleMapping` — REQUIRED array of supported modules (a curated subset of
+    the `branchType` enum): `DIAGNOSTIC`, `OPD`, `IPD`, `RADIOLOGY`,
+    `INVENTORY`, `PHARMACY`, `BLOOD_BANK`. Any other value (e.g. `FRANCHISE`,
+    `COMBINED`, `ASSISTANT`, `ACCESSION`, `TECHNICIAN`, `COLLECTION_CENTER`) →
+    400. Must be unique (no duplicates).
   - `personMappings` — optional array; each entry:
     - `personId` (UUID of an existing person),
     - `position` — one of `HOD`, `SPECIALIST`, `CONSULTANT`, `MANAGER`,

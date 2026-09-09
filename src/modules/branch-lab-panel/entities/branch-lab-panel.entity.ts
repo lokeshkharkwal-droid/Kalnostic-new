@@ -28,8 +28,12 @@ export interface BranchLabPanelImportResult {
   skipped: number;
 }
 
-/** Result of a sync: how many copies were re-snapshotted vs skipped (source gone). */
+/**
+ * Result of a sync: how many copies were re-snapshotted, how many were soft-deleted
+ * because their source no longer exists, and how many were skipped (no source ref).
+ */
 export interface BranchLabPanelSyncResult {
   synced: number;
+  deleted: number;
   skipped: number;
 }

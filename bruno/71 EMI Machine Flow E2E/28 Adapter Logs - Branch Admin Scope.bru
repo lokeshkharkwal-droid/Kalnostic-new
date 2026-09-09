@@ -1,0 +1,66 @@
+meta {
+  name: 28 Adapter Logs - Branch Admin Scope
+  type: http
+  seq: 28
+}
+
+get {
+  url: {{baseUrl}}/adapter-logs?limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  limit: 20
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+script:post-response {
+  const b = res.getBody();
+  if (b && b.success && Array.isArray(b.data)) {
+    const row = b.data.find((r) => r.action === "SUBMIT_RESULT");
+    if (row) bru.setVar("adapterLogId", row.id);
+  }
+}
+
+tests {
+  test("branch-scoped read returns (paginated envelope)", function () {
+    expect(res.getStatus()).to.equal(200);
+    const b = res.getBody();
+    expect(b.success).to.equal(true);
+    expect(b.data).to.be.an("array");
+  });
+  test("BRANCH-SCOPED: every row is locked to the operator's own branch", function () {
+    const rows = res.getBody().data;
+    rows.forEach((r) =>
+      expect(r.branchId, "each row's branchId").to.equal(bru.getVar("branchId")),
+    );
+  });
+  test("both EMI calls of this run are visible to the branch user", function () {
+    const rows = res.getBody().data;
+    const actions = rows
+      .filter((r) => r.token === bru.getVar("flowAdapterToken"))
+      .map((r) => r.action);
+    expect(actions).to.include.members(["ORDERS", "SUBMIT_RESULT"]);
+  });
+}
+
+docs {
+  **Scope 1 — Branch Admin (branch-scoped).** Reads `GET /adapter-logs` with the
+  **branch-scoped operator token** (`operatorToken`, a `receptionist` — a
+  non-`business_admin` profile). The backend **locks the query to the token's
+  `active_branch_id`** (`where.branchId = profile.branchId`), so this user sees
+  **only their own branch's** rows. A Branch Admin behaves identically.
+
+  Asserts every returned row is attributed to this run's `branchId` (proving the
+  branch lock) and that both EMI calls from steps 26/27 — `ORDERS` and
+  `SUBMIT_RESULT` — are present (their `branchId` = the order's branch).
+  Captures `adapterLogId`.
+
+  > Because a branch read filters `branchId = <that branch>`, tenant-level rows
+  > (`branchId = null`, e.g. an EMI call whose specimen matched no order) do NOT
+  > appear here — only in the Business Admin / Site Admin scopes below.
+}

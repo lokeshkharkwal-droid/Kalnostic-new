@@ -1,0 +1,36 @@
+meta {
+  name: Get Adapter Log (Business)
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/adapter-logs/{{adapterLogId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", () => {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the full row with request/response", () => {
+    const b = res.getBody();
+    expect(b.success).to.equal(true);
+    expect(b.data).to.have.property("id");
+    expect(b.data).to.have.property("request");
+    expect(b.data).to.have.property("response");
+    expect(b.data).to.have.property("statusCode");
+  });
+}
+
+docs {
+  Fetch one adapter log by id (scoped to the caller's tenant). Returns 404
+  `ADAPTER_LOG_NOT_FOUND` if it does not exist in this tenant. Set `adapterLogId`
+  from an id returned by **List Adapter Logs (Business)** (its post-response
+  script captures the first row automatically).
+}

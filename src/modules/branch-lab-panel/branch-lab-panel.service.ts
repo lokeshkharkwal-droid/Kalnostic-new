@@ -304,7 +304,7 @@ export class BranchLabPanelService {
     }
     const copies = await this.prisma.branchLabPanel.findMany({
       where,
-      select: { id: true, sourceLabPanelId: true },
+      select: { id: true, sourceLabPanelId: true, isDefault: true },
     });
 
     const branchTestBySource = await this.loadBranchTestMap(
@@ -320,6 +320,11 @@ export class BranchLabPanelService {
       id: string;
       data: Prisma.BranchLabPanelUncheckedUpdateInput;
       members: MemberPlan[];
+    }[] = [];
+    const toDelete: {
+      id: string;
+      isDefault: boolean;
+      sourceLabPanelId: string | null;
     }[] = [];
     let skipped = 0;
 
@@ -351,14 +356,16 @@ export class BranchLabPanelService {
         });
       } catch (e) {
         if (e instanceof LabPanelNotFoundException) {
-          skipped += 1;
+          // Source has been soft-deleted at Master Data — the branch's copy is
+          // stale and no longer orderable, so it is removed rather than skipped.
+          toDelete.push(copy);
           continue;
         }
         throw e;
       }
     }
 
-    if (plans.length) {
+    if (plans.length || toDelete.length) {
       try {
         await this.prisma.withTenant(tenantId, async (tx) => {
           await this.persistNewTests(tx, newTests, branchTestBySource);
@@ -385,13 +392,41 @@ export class BranchLabPanelService {
               branchTestBySource,
             );
           }
+          for (const d of toDelete) {
+            const now = new Date();
+            await tx.branchLabPanelTest.updateMany({
+              where: { branchLabPanelId: d.id, tenantId, deletedAt: null },
+              data: { deletedAt: now },
+            });
+            await tx.branchLabPanel.update({
+              where: { id: d.id },
+              data: { deletedAt: now },
+            });
+            if (d.isDefault && d.sourceLabPanelId) {
+              const sibling = await tx.branchLabPanel.findFirst({
+                where: {
+                  tenantId,
+                  branchId,
+                  sourceLabPanelId: d.sourceLabPanelId,
+                  deletedAt: null,
+                },
+                orderBy: { createdAt: 'asc' },
+              });
+              if (sibling) {
+                await tx.branchLabPanel.update({
+                  where: { id: sibling.id },
+                  data: { isDefault: true },
+                });
+              }
+            }
+          }
         });
       } catch (e) {
         this.rethrowConflict(e);
         throw e;
       }
     }
-    return { synced: plans.length, skipped };
+    return { synced: plans.length, deleted: toDelete.length, skipped };
   }
 
   /**
@@ -501,6 +536,16 @@ export class BranchLabPanelService {
    * always `null`, and `isFasting` reflects the panel's `isFastingRequired`. Both
    * feed the form's Diagnostic Items table. Supports a case-insensitive `search`
    * on panelName.
+   *
+   * `preferredOnly` narrows to `isPreference: true` when set AND no `search`
+   * term is given — used by the Create-Order picker, whose unsearched view
+   * should default to the branch's curated "preferred" panels rather than the
+   * full catalogue; typing a search term lifts the narrowing so any panel can
+   * still be found by name. This endpoint is shared by several other pickers
+   * (finance report filters, accession, lab adapters, order console) that
+   * must keep seeing the full catalogue, so the narrowing is opt-in, not a
+   * change in the default — omitting `preferredOnly` reproduces the prior
+   * unfiltered behaviour exactly.
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT profile)
    * @param filters optional search + offset pagination
@@ -514,6 +559,7 @@ export class BranchLabPanelService {
       page?: number;
       limit?: number;
       listId?: string;
+      preferredOnly?: boolean;
     } = {},
   ): Promise<
     Array<BranchLabPanelOption> | PaginatedResult<BranchLabPanelOption>
@@ -530,6 +576,8 @@ export class BranchLabPanelService {
     const term = filters.search?.trim();
     if (term) {
       where.panelName = { contains: term, mode: 'insensitive' };
+    } else if (filters.preferredOnly) {
+      where.isPreference = true;
     }
 
     const select = {

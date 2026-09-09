@@ -6,6 +6,7 @@ import { LabTestModule } from '../lab-test/lab-test.module';
 import { CommunicationModule } from '../communication/communication.module';
 import { TemplateModule } from '../template/template.module';
 import { PermissionsModule } from '../permissions/permissions.module';
+import { TenantModule } from '../tenant/tenant.module';
 import { LabReportController } from './lab-report.controller';
 import { LabReportService } from './lab-report.service';
 import { LabReportAttachmentController } from './lab-report-attachment.controller';
@@ -56,6 +57,7 @@ import { NablTatCronService } from './nabl-tat-cron.service';
     CommunicationModule,
     TemplateModule,
     PermissionsModule,
+    TenantModule,
   ],
   controllers: [
     LabReportController,

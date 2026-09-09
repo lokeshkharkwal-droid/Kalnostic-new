@@ -1,0 +1,40 @@
+meta {
+  name: Create Referral Panel User
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/referral-panels/{{referralPanelId}}/user
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "employeeName": "Panel One",
+    "username": "panel.one",
+    "dateOfBirth": "1990-01-01",
+    "gender": "MALE",
+    "email": "panel.one@example.com",
+    "mobileNumber": "9800000001",
+    "password": "Passw0rd!"
+  }
+}
+
+docs {
+  Create the referral panel's dedicated B2B ("B2B Referring Panel") login user.
+  Branch (from the panel), role (b2b_referring_panel), modules
+  (registration/finance/lab_operations), default module (registration) and status
+  (ACTIVE) are all assigned server-side — only personal + login fields are taken
+  from the body.
+
+  1:1 per panel — returns 409 `REFERRAL_PANEL_USER_EXISTS` if a login already
+  exists, and 409 `REFERRAL_PANEL_HAS_NO_BRANCH` if the panel has no branch set.
+  Requires the `BR_REF_ADD_PANEL` permission. Uses `referralPanelId` captured by a
+  Create Referral Panel request.
+}

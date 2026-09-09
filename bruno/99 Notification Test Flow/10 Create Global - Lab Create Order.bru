@@ -1,0 +1,44 @@
+meta {
+  name: 10 Create Global - Lab Create Order
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/templates
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+headers {
+  content-type: application/json
+}
+
+body:json {
+  {
+    "preference": "EMAIL",
+    "feature": "lab_create_order_inform_patient",
+    "displayTitle": "TAGTEST - Lab Create Order",
+    "messageType": "TRANSACTIONAL",
+    "level": "ADMIN",
+    "isActive": true,
+    "isDefault": true,
+    "template": "<h3>{web_title} — Tag Test (Create Order)</h3><p>Dear {patient_name},</p><ul><li>order_code: {order_code}</li><li>order_number: {order_number}</li><li>bill_id: {bill_id}</li><li>test_list: {test_list}</li><li>gross_amount: {currency} {gross_amount}</li><li>net_amount: {currency} {net_amount}</li><li>balance_amount: {currency} {balance_amount}</li><li>amount (this txn): {currency} {amount}</li><li>currency: {currency}</li><li>lab: {lab}</li><li>branch_short_name: {branch_short_name}</li><li>branch_phone_number: {branch_phone_number}</li><li>phlebo_detail: {phlebo_detail}</li><li>phlebotomist_name: {phlebotomist_name}</li><li>collection_at: {collection_at}</li><li>date: {date}</li><li>time: {time}</li><li>weburl: {weburl}</li><li>publish_report_url: {publish_report_url}</li><li>short_link: {short_link}</li><li>password: {password}</li></ul><p>— {web_title} Team</p>"
+  }
+}
+
+script:post-response {
+  const d = res.getBody() && res.getBody().data;
+  if (d && d.id) bru.setEnvVar("tplGlobalLabCreateId", d.id);
+}
+
+docs {
+  Creates the SITE_ADMIN global (tenant_id NULL) EMAIL template for
+  lab_create_order_inform_patient. The body prints every supported placeholder
+  as `label: {tag}`. resolveForDelivery falls back to this global if the tenant
+  has no own copy — request 20 clones it into priya's tenant to "enable" it.
+}

@@ -1,0 +1,76 @@
+meta {
+  name: List Adapter Logs (Business)
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/adapter-logs?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~action: SUBMIT_RESULT
+  ~status: SUCCESS
+  ~search: TKN
+  ~branchId: 00000000-0000-0000-0000-000000000000
+  ~from: 2026-09-01
+  ~to: 2026-09-30
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  businessAccessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwZXJzb25faWQiOiJiMmYyMWQzMS01MjA3LTRiOTctODZiMS03MTZjM2JkMzQ2ZDYiLCJ0ZW5hbnRfaWQiOiJjNzE2ZDA2NC1mMDYwLTQ5ZDktODMxNC0yYWY3MDA0MzIzY2YiLCJhY3RpdmVfYnJhbmNoX2lkIjoiMzU3YjI2NjgtZDhjYS00MmNhLTgyZWUtM2Q0ZWU3NGZlN2M5IiwiYWN0aXZlX2JyYW5jaF90eXBlIjoiRElBR05PU1RJQyIsImFjdGl2ZV9wcm9maWxlX2tleSI6InJlY2VwdGlvbmlzdCIsImlzX3BhdGllbnRfY29udGV4dCI6ZmFsc2UsInByb2ZpbGVzIjpbeyJicmFuY2hfaWQiOiIzNTdiMjY2OC1kOGNhLTQyY2EtODJlZS0zZDRlZTc0ZmU3YzkiLCJicmFuY2hfbmFtZSI6IkVNSSBGbG93IENlbnRlciA0NDM3OTkiLCJicmFuY2hfdHlwZSI6IkRJQUdOT1NUSUMiLCJwcm9maWxlX2tleSI6InJlY2VwdGlvbmlzdCIsInByb2ZpbGVfbGFiZWwiOiJSZWNlcHRpb25pc3QiLCJpc19kZWZhdWx0Ijp0cnVlfV0sImlzX3BhdGllbnQiOmZhbHNlLCJwbGF0Zm9ybV9tcm4iOiJLQUwtMjAyNjA5MDMtNTdGOTAxNkYiLCJpYXQiOjE3ODg0NjA2ODAsImV4cCI6MTc4ODQ2MTU4MH0.Pz0miMGHn8GknS2ZnAybHD7hTvPaT6JwHUH2l5m7oj4
+}
+
+script:post-response {
+  const body = res.getBody();
+  if (body && body.success && Array.isArray(body.data) && body.data.length) {
+    // Capture the first row id for "Get Adapter Log (Business)".
+    bru.setVar("adapterLogId", body.data[0].id);
+  }
+}
+
+tests {
+  test("200 OK", () => {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("paginated envelope with data array", () => {
+    const b = res.getBody();
+    expect(b.success).to.equal(true);
+    expect(b.data).to.be.an("array");
+    expect(b.meta).to.have.property("totalPages");
+  });
+}
+
+docs {
+  Paginated adapter logs for the caller's context, newest first. Pagination info
+  (`total / page / limit / totalPages`) is lifted into `meta`.
+  
+  **Scope is derived from the token's active profile — you do NOT send a role:**
+  - `business_admin` (tenant-level) → every branch in the tenant. May narrow to
+    one branch via the `branchId` query param.
+  - any branch-scoped profile (e.g. `branch_admin`) → **locked to its own
+    branch**; a client-supplied `branchId` is ignored.
+  
+  Use **04 Business Auth → Login** (business_admin) then optionally **Switch
+  Profile** (`branch_admin` + `branchId`) to flip between the two scopes.
+  
+  All query params are optional (`~`-prefixed ones are disabled examples):
+  - `page` (>=1, default 1) / `limit` (1-100, default 20) — pagination.
+  - `action` — `ORDERS`, `SUBMIT_RESULT`, or `OTHER`.
+  - `status` — exact textual status (e.g. `SUCCESS`, `FAILED`).
+  - `branchId` — narrow to one branch (honoured only for `business_admin`).
+  - `from` / `to` — inclusive `createdAt` bounds (ISO-8601 date or datetime).
+  - `search` — case-insensitive substring over token / status / source IP.
+  
+  Each item carries: `token`, `action`, `status`, `statusCode`,
+  `sourceIpAddress`, `request`, `response`, `createdAt`, `branchId`, `tenantId`.
+  Captures `adapterLogId` (first row) for **Get Adapter Log (Business)**.
+}

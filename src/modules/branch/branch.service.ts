@@ -68,6 +68,9 @@ export class BranchService {
    * @param dto validated branch payload (no `code` — it is generated here)
    * @param setBy person id of the actor, recorded on the main-branch pointer
    *   when auto-assignment fires (optional audit trail)
+   * @param options.legacyBranchId source EzHealthTrack BUSINESS_ID, stored on the
+   *   branch for idempotent data migration + traceability (migration tooling only;
+   *   never client-supplied)
    * @returns the created branch
    * @throws BranchNameConflictException if the name is already used by an
    *   active branch in this tenant
@@ -80,6 +83,7 @@ export class BranchService {
     tenantId: string,
     dto: CreateBranchDto,
     setBy?: string,
+    options?: { legacyBranchId?: number | null },
   ): Promise<Branch> {
     const receivingBranchIds = dto.receivingBranchIds ?? [];
     if (receivingBranchIds.length > 0) {
@@ -130,6 +134,7 @@ export class BranchService {
             gstNo: dto.gstNo ?? null,
             licenseNo: dto.licenseNo ?? null,
             remarks: dto.remarks ?? null,
+            legacyBranchId: options?.legacyBranchId ?? null,
           },
         });
 

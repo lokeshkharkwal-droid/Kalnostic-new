@@ -44,6 +44,7 @@ params:query {
   ~branchLabTestId: {{branchLabTestId}}
   ~branchLabPanelId: {{branchLabPanelId}}
   ~sampleStatus: PENDING
+  ~reportStatus: PENDING
   ~isHomeVisit: false
   ~isOutsource: false
   ~isUrgent: false
@@ -62,7 +63,10 @@ docs {
   `refundChargeTotal`) and the order's `refundStatus`
   (`NONE | PARTIALLY_REFUNDED | FULLY_REFUNDED`, so a refunded order's Status folds
   to "Refunded" rather than "Not Paid"), the
-  active-item count (`itemCount`), the collected-item count (`collectedItemCount`)
+  active-item count (`itemCount`), the collected-item count (`collectedItemCount`),
+  the order-level `reportStatus`
+  (`PENDING | PARTIALLY_COMPLETED | COMPLETED | APPROVED`, the Order Console's
+  "Order Status", derived per-test from each item's LabReport)
   and the `effectiveQuotationStatus`. Each row also carries `hasInvoice` (boolean)
   and `invoiceCode` — true when an invoice has been generated for the order (an
   active `InvoiceSourceOrder` link exists), which locks the order against update
@@ -138,6 +142,12 @@ docs {
   - `branchLabTestId` / `branchLabPanelId` — matches orders containing that item.
   - `sampleStatus` — `PENDING` (no items collected) | `PARTIAL` (some collected) |
     `COLLECTED` (all collected), derived from each item's `collectedAt`.
+  - `reportStatus` — `PENDING` | `PARTIALLY_COMPLETED` | `COMPLETED` | `APPROVED`,
+    the order-level "Order Status" derived per-test from each item's LabReport: a
+    test is "reported" once its report reaches `RESULT_DONE` (and "approved" at
+    `APPROVED`/`PUBLISHED`). `APPROVED` = every test approved; `COMPLETED` = every
+    test reported but not all approved; `PARTIALLY_COMPLETED` = some but not all
+    tests reported; `PENDING` = no test reported yet.
   - `isHomeVisit` — `OrderDiagnostics.isHomeVisit`.
   - `isOutsource` — `true` → diagnostics `sampleSource=SUPPLIED`, `false` → `IN_HOUSE`.
   - `isUrgent` — `Order.isUrgentBill`.

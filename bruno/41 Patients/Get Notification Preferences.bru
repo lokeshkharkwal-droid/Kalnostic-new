@@ -1,0 +1,27 @@
+meta {
+  name: Get Notification Preferences
+  type: http
+  seq: 20
+}
+
+get {
+  url: {{baseUrl}}/patients/{{patientId}}/notification-preferences
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Read a patient's notification opt-out preferences — the channels they've opted
+  out of globally (`optOutChannels`) and per feature (`optOutFeatures`). Absent
+  preferences = opted into everything (the resolver's backward-compatible default).
+  Scoped to the caller's tenant.
+
+  ## Response `data`
+  - `patientId`.
+  - `optOutChannels[]`: `EMAIL` | `SMS` | `WHATSAPP`.
+  - `optOutFeatures`: `{ [FEATURE_TYPES key]: MessagingChannel[] }`.
+}

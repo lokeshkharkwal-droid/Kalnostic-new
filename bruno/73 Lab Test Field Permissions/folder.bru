@@ -1,0 +1,35 @@
+meta {
+  name: 73 Lab Test Field Permissions
+  seq: 73
+}
+
+docs {
+  # Lab Test Field Permissions ("Lab Test Master Setting")
+
+  Business Settings › **Lab Test Master Setting** — a tenant-wide Allow/Deny
+  map for every field on the Lab Test Master Data experience (Basic Details,
+  Pricing, TAT, Flags, Sample, Results, Reference Range, Reference Value,
+  Version Control). Single source of truth consumed by three surfaces on the
+  Lab Test Master Data page (`/business-admin/lab-config/master-data`):
+
+  - The **Customize Fields** sidebar — a Denied field never appears in the
+    Field Name list.
+  - The **listing table's columns** — a Denied field's column is hidden.
+  - The **Add/Edit Test form** — a Denied field is not rendered.
+
+  Single row per tenant (`lab_test_field_permission_settings`, unique on
+  `tenant_id`), stored as `config: { [section]: { [field]: boolean } }`. Every
+  field defaults to **Allowed** (`true`) — a tenant only stores the fields it
+  has denied; anything omitted (including a brand-new field added to a future
+  release) resolves to Allowed.
+
+  - **GET `/business-admin/lab-test-field-permissions`** — open read (any
+    authenticated business user); always returns the complete map (defaults
+    merged with any saved overrides).
+  - **PUT `/business-admin/lab-test-field-permissions`** — merges the given
+    `config` into the tenant's stored overrides. Requires
+    `business_admin:lab_test_master_setting__update_lab_test_master_setting`;
+    audited under `AuditModule.LAB_TEST_FIELD_PERMISSIONS`.
+
+  Select the **Local** environment before running any request.
+}

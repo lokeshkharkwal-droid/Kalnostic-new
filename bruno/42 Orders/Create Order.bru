@@ -134,6 +134,12 @@ tests {
   test("generated an order code", function () {
     expect(res.getBody().data.orderCode).to.match(/^ORD-\d{5}$/);
   });
+  test("generated an order barcode value + image URL", function () {
+    const d = res.getBody().data;
+    // Value string (default format = digits from 10001); image is an S3 URL.
+    expect(d.orderIdBarcode, "orderIdBarcode value").to.be.a("string").and.not.empty;
+    expect(d.orderIdQrCode, "orderIdQrCode url").to.match(/^https?:\/\/.+/);
+  });
 }
 
 docs {
@@ -168,6 +174,16 @@ docs {
     `Tenant.diagnosticBillCounter`) when a `diagnostics` section is present; it is
     stored permanently and returned in the response. Non-diagnostic orders have a
     null `billId`. It is searchable via the orders/billing `search` param.
+  - `orderIdBarcode` / `orderIdQrCode` are **system-generated at creation** for any
+    order that has a branch (all statuses; branchless drafts skip it):
+    `orderIdBarcode` holds the barcode **value** (from the branch's dedicated
+    Order Barcode Settings counter/format — a separate entity from sample
+    barcodes, so their numbers may coincide) and `orderIdQrCode` holds the **S3
+    URL** of the rendered Code39 barcode image (the name is kept for the
+    print-template contract — it is a barcode image, not a QR code). Both surface
+    as the `{order_id_barcode}` / `{order_id_qr_code}` lab-report template tags
+    (the latter also as `{{image:order_id_qr_code}}`). The image is uploaded to S3
+    inside the create transaction, so an S3 failure rolls the whole order back.
   - `orderTime` — optional time-of-day (`"HH:mm"`), stored separately from the
     DATE-only `orderDate` so the form's Order Time round-trips on edit.
   - `isBillGenerated` — Generate Bill (defaults `false`). When `false` the order is

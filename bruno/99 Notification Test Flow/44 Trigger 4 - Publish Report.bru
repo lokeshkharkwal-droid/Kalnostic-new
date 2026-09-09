@@ -1,0 +1,34 @@
+meta {
+  name: 44 Trigger 4 - Publish Report
+  type: http
+  seq: 19
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/{{nlabReportId}}/publish
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  ▶ Fires `lab-report.published` → lab_order_report_published_inform_patient
+    ("Lab Report Completed"). AND, if this is the LAST report on the order to be
+    published, ALSO fires lab_order_completed_inform_patient ("Lab Order
+    Completed") — i.e. this single request can cover BOTH scenarios 4 and 5.
+
+  PREREQUISITE: {{nlabReportId}} must be a report that has reached APPROVED (the
+  publish transition is results → save → submit → validate → approve → publish).
+  If publish returns a state error, approve it first:
+      POST {{baseUrl}}/lab-reports/{{nlabReportId}}/approve
+  and, if needed, the earlier transitions (save/submit/validate) — those require
+  entered result values (PATCH /lab-reports/:id/results) and are data-specific,
+  so run them in the app/technician UI or add them here for your test order.
+
+  To fire "Lab Order Completed" (scenario 5) explicitly, publish EVERY report on
+  the order — the completion notification fires once, when the last one flips to
+  PUBLISHED.
+}

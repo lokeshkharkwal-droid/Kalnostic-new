@@ -4,6 +4,7 @@ import {
   IsArray,
   IsBoolean,
   IsEnum,
+  IsIn,
   IsOptional,
   IsString,
   IsUUID,
@@ -12,6 +13,7 @@ import {
   MinLength,
   ValidateIf,
 } from 'class-validator';
+import { MODULE_MAPPING_BRANCH_TYPES } from '../../../common/constants/module-mapping.constant';
 
 /**
  * Payload for `POST /siteadmin/sub-categories` — a SITE_ADMIN global
@@ -65,9 +67,10 @@ export class CreateSubCategoryTemplateDto {
   @IsUUID()
   categoryId?: string;
 
-  // "Module mapping" — reuses the same enum as Branch.branchType.
+  // "Module mapping" — a curated subset of Branch.branchType. Only the seven
+  // supported modules are accepted (see MODULE_MAPPING_BRANCH_TYPES).
   @IsArray()
-  @IsEnum(BranchType, { each: true })
+  @IsIn(MODULE_MAPPING_BRANCH_TYPES, { each: true })
   @ArrayUnique()
   moduleMapping: BranchType[];
 }

@@ -33,6 +33,11 @@ body:json {
     "SampleBarcodeSettings_Separator": "HYPHEN",
     "SampleBarcodeSettings_NumberLength": 6,
     "SampleBarcodeSettings_ResetInterval": "NEVER",
+    "OrderBarcodeSettings_Prefix": "OBC",
+    "OrderBarcodeSettings_Suffix": "",
+    "OrderBarcodeSettings_Separator": "HYPHEN",
+    "OrderBarcodeSettings_NumberLength": 5,
+    "OrderBarcodeSettings_ResetInterval": "NEVER",
     "Accession_MinimumTimeToAcceptSampleMinutes": 10,
     "Accession_MaximumTimeToAcceptSampleMinutes": 20,
     "Accession_WarningThresholdMinutes": 10,
@@ -57,6 +62,11 @@ tests {
     const d = res.getBody().data;
     expect(d.SampleBarcodeSettings_Preview).to.equal("SBC-000001-AM");
   });
+  test("order barcode preview reflects the saved order-barcode config", function () {
+    const d = res.getBody().data;
+    // Order barcodes floor at 10001, so the first preview is OBC-10001.
+    expect(d.OrderBarcodeSettings_Preview).to.equal("OBC-10001");
+  });
 }
 
 docs {
@@ -64,8 +74,13 @@ docs {
   field is optional. Master-data lists (`MasterData_*`) are merged with the
   branch's previously-saved lists — an omitted list keeps its last-saved
   value, it does not revert to the module default. Typed columns
-  (`SampleBarcodeSettings_*`, `Accession_*`) are patched individually; an
-  omitted one keeps its current stored value.
+  (`SampleBarcodeSettings_*`, `OrderBarcodeSettings_*`, `Accession_*`) are
+  patched individually; an omitted one keeps its current stored value.
+
+  `OrderBarcodeSettings_*` configure the order-level barcode generated at order
+  creation — a separate entity/counter/format from the sample barcode (order and
+  sample numbers may coincide); do not send its `_CurrentNumber`/`_LastResetAt`
+  (system-managed). Its read-only `OrderBarcodeSettings_Preview` floors at 10001.
 
   Do **not** send `SampleBarcodeSettings_CurrentNumber` or
   `SampleBarcodeSettings_LastResetAt` — both are system-managed and rejected

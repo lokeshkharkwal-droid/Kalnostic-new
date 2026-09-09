@@ -1,7 +1,9 @@
 import {
+  AdapterAction,
   MessageType,
   MessagingChannel,
   MessagingLevel,
+  Prisma,
   PrismaClient,
   SiteAdminRole,
   SmsType,
@@ -391,7 +393,8 @@ async function seedShareTemplates(): Promise<void> {
       preference: MessagingChannel.IAM,
       feature: 'order_bill_as_attachment',
       displayTitle: 'Order Bill (In-App)',
-      template: 'Bill {bill_id} shared for order {order_code} ({patient_name}).',
+      template:
+        'Bill {bill_id} shared for order {order_code} ({patient_name}).',
     },
     // ── Lab Quotation (Quotations) ──
     {
@@ -483,12 +486,157 @@ async function seedShareTemplates(): Promise<void> {
   );
 }
 
+/**
+ * Seed demo EMI adapter-log rows so the Adapter Logs screens (Site Admin,
+ * Business Admin, Branch Admin) render real data. Idempotent per tenant: skips
+ * any tenant that already has adapter logs.
+ *
+ * `adapter_logs` has FORCE ROW LEVEL SECURITY (prisma/rls.sql), so each insert
+ * runs inside a transaction with the `app.current_tenant_id` GUC set — mirroring
+ * `PrismaService.withTenant`. Attaches logs to the tenant's branches (and one
+ * tenant-level row with `branchId = null`) so the branch-scoped view has data.
+ * If no tenants exist yet, logs and skips.
+ */
+async function seedAdapterLogs(): Promise<void> {
+  const tenants = await prisma.tenant.findMany({
+    where: { deletedAt: null },
+    select: { id: true, name: true },
+    take: 3,
+  });
+
+  if (tenants.length === 0) {
+    console.log('  ↳ no tenants found — skipping adapter-log seed');
+    return;
+  }
+
+  /** Build a small, varied set of adapter-log rows for one tenant. */
+  const buildRows = (
+    tenantId: string,
+    branchIds: (string | null)[],
+  ): Prisma.AdapterLogCreateManyInput[] => {
+    const pick = (i: number) => branchIds[i % branchIds.length] ?? null;
+    const now = Date.now();
+    const at = (minsAgo: number) => new Date(now - minsAgo * 60_000);
+
+    return [
+      {
+        tenantId,
+        branchId: pick(0),
+        token: 'TKN-9F2A7C',
+        action: AdapterAction.ORDERS,
+        status: 'SUCCESS',
+        statusCode: 200,
+        sourceIpAddress: '203.0.113.24',
+        request: JSON.stringify({ specimen_id: 'ORD-100245' }, null, 2),
+        response: JSON.stringify(
+          { specimen_id: 'ORD-100245', tests: ['CBC', 'LFT'], status: 'ok' },
+          null,
+          2,
+        ),
+        createdAt: at(6),
+      },
+      {
+        tenantId,
+        branchId: pick(1),
+        token: 'TKN-4B81E0',
+        action: AdapterAction.SUBMIT_RESULT,
+        status: 'SUCCESS',
+        statusCode: 200,
+        sourceIpAddress: '203.0.113.24',
+        request: JSON.stringify(
+          {
+            specimen_id: 'ORD-100245',
+            test_results: [{ code: 'HGB', value: '13.4', unit: 'g/dL' }],
+          },
+          null,
+          2,
+        ),
+        response: JSON.stringify(
+          { emi_status: '1', message: 'accepted' },
+          null,
+          2,
+        ),
+        createdAt: at(4),
+      },
+      {
+        tenantId,
+        branchId: pick(2),
+        token: 'TKN-77C1AA',
+        action: AdapterAction.SUBMIT_RESULT,
+        status: 'FAILED',
+        statusCode: 422,
+        sourceIpAddress: '198.51.100.10',
+        request: JSON.stringify(
+          { specimen_id: 'ORD-999999', test_results: [] },
+          null,
+          2,
+        ),
+        response: JSON.stringify(
+          {
+            emi_status: '0',
+            update_test_status: '0',
+            error: 'order not found',
+          },
+          null,
+          2,
+        ),
+        createdAt: at(3),
+      },
+      {
+        tenantId,
+        branchId: null, // tenant-level row (visible to business admin, not branch)
+        token: 'TKN-12FE90',
+        action: AdapterAction.ORDERS,
+        status: 'FAILED',
+        statusCode: 500,
+        sourceIpAddress: '192.0.2.55',
+        request: JSON.stringify({ specimen_id: 'ORD-100301' }, null, 2),
+        response: JSON.stringify({ error: 'adapter timeout' }, null, 2),
+        createdAt: at(1),
+      },
+    ];
+  };
+
+  for (const tenant of tenants) {
+    // Count is scoped explicitly by tenantId (not via the RLS GUC) so it stays
+    // correct even when the seed connects as a superuser that bypasses RLS.
+    const existing = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenant.id}, true)`;
+      return tx.adapterLog.count({ where: { tenantId: tenant.id } });
+    });
+    if (existing > 0) {
+      console.log(
+        `  ↳ ${tenant.name}: ${existing} adapter log(s) already present — skipping`,
+      );
+      continue;
+    }
+
+    const branches = await prisma.branch.findMany({
+      where: { tenantId: tenant.id, deletedAt: null },
+      select: { id: true },
+      take: 3,
+    });
+    const branchIds: (string | null)[] =
+      branches.length > 0 ? branches.map((b) => b.id) : [null];
+
+    const created = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenant.id}, true)`;
+      const { count } = await tx.adapterLog.createMany({
+        data: buildRows(tenant.id, branchIds),
+      });
+      return count;
+    });
+    console.log(`  ↳ ${tenant.name}: seeded ${created} adapter log(s)`);
+  }
+}
+
 async function main() {
   await seedSiteAdmin();
   await seedSystemRoles();
   await seedGlobalMessagingTemplates();
   await seedShareTemplates();
   await seedPrintTemplates(prisma);
+  await seedAdapterLogs();
 }
 
 main()

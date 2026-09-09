@@ -108,6 +108,38 @@ export class SaveAccessionSettingsDto {
   @IsEnum(AccessionBarcodeResetCycle)
   SampleBarcodeSettings_ResetInterval?: AccessionBarcodeResetCycle;
 
+  // ── Order Barcode Settings (separate entity/counter from sample barcode) ──
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(24)
+  @Matches(/^[A-Za-z0-9]*$/, {
+    message: 'OrderBarcodeSettings_Prefix may only contain letters and digits',
+  })
+  OrderBarcodeSettings_Prefix?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(24)
+  @Matches(/^[A-Za-z0-9]*$/, {
+    message: 'OrderBarcodeSettings_Suffix may only contain letters and digits',
+  })
+  OrderBarcodeSettings_Suffix?: string;
+
+  @IsOptional()
+  @IsEnum(AccessionBarcodeSeparator)
+  OrderBarcodeSettings_Separator?: AccessionBarcodeSeparator;
+
+  @IsOptional()
+  @IsInt()
+  @Min(4)
+  @Max(10)
+  OrderBarcodeSettings_NumberLength?: number;
+
+  @IsOptional()
+  @IsEnum(AccessionBarcodeResetCycle)
+  OrderBarcodeSettings_ResetInterval?: AccessionBarcodeResetCycle;
+
   // ── Accession (TAT / acceptance-window / barcode-mapping toggles) ──
 
   @IsOptional()

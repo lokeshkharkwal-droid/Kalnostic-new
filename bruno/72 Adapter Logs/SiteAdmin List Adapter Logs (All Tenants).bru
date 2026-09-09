@@ -1,0 +1,61 @@
+meta {
+  name: SiteAdmin List Adapter Logs (All Tenants)
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/adapter-logs?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~tenantId: 00000000-0000-0000-0000-000000000000
+  ~action: SUBMIT_RESULT
+  ~status: SUCCESS
+  ~search: TKN
+  ~branchId: 00000000-0000-0000-0000-000000000000
+  ~from: 2026-09-01
+  ~to: 2026-09-30
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+tests {
+  test("200 OK", () => {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("cross-tenant rows carry tenantName", () => {
+    const b = res.getBody();
+    expect(b.success).to.equal(true);
+    expect(b.data).to.be.an("array");
+    if (b.data.length) expect(b.data[0]).to.have.property("tenantName");
+  });
+}
+
+docs {
+  SiteAdmin cross-tenant adapter-log view: adapter logs across **ALL** businesses
+  (or a single one via `tenantId`), newest first, each enriched with the owning
+  business name (`tenantName`). Pagination info is lifted into `meta`.
+
+  Auth: SiteAdmin token, permission `adapter-logs:read` (operations_admin and
+  above). Run **01 SiteAdmin Auth → Login** first to capture `siteAdminToken`.
+
+  All query params are optional (`~`-prefixed ones are disabled examples):
+  - `page` (>=1, default 1) / `limit` (1-100, default 20) — pagination.
+  - `tenantId` — restrict to a single business/tenant (omit for all businesses).
+  - `action` — `ORDERS`, `SUBMIT_RESULT`, or `OTHER`.
+  - `status` — exact textual status (e.g. `SUCCESS`, `FAILED`).
+  - `branchId` — restrict to a single branch.
+  - `from` / `to` — inclusive `createdAt` bounds (ISO-8601 date or datetime).
+  - `search` — case-insensitive substring over token / status / source IP.
+
+  Each item carries the full row plus `tenantName`: `token`, `action`, `status`,
+  `statusCode`, `sourceIpAddress`, `request`, `response`, `createdAt`,
+  `branchId`, `tenantId`, `tenantName`.
+}

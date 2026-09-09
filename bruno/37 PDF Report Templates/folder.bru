@@ -2,3 +2,35 @@ meta {
   name: 37 PDF Report Templates
   seq: 42
 }
+
+docs {
+  # PDF Report Templates
+
+  Classic HTML-`meta` templates (Header / Body / Footer) rendered to PDF via
+  Puppeteer. Two cross-cutting behaviours to note:
+
+  ## Reusable image tags (across templates)
+  Images added through "Add Image" upload to S3 and their `{{image:<id>}}` token
+  is stored in the template's `meta.images`. On **Create / Update** every
+  `meta.images` entry is also written to a durable, tenant-wide registry
+  (`print_template_images`). At **generate** time, any `{{image:<id>}}` token that
+  is referenced in the header/body/footer but missing from the template's own
+  `meta.images` is resolved from that registry. Net effect: a token copied from
+  one template renders the same image when pasted into ANOTHER template
+  (Header, Body, or Footer). Registry rows are never removed when a template is
+  deleted/edited, so an image referenced elsewhere stays resolvable. There is no
+  separate upload endpoint — reuse rides on the existing `POST /uploads/attachment`
+  flow. Global (SITE_ADMIN) templates use the same mechanism with `tenant_id NULL`.
+  Precedence at render: runtime `context.images` > registry > template `meta.images`.
+
+  ## Repeating header/footer on every page (pinned to the edges)
+  The Header and Footer are rendered via Puppeteer's native page header/footer
+  (`displayHeaderFooter`), so they repeat on EVERY page of a multi-page report and
+  are pinned to the physical TOP and BOTTOM edges — even on a short/last page whose
+  body doesn't fill it. The `meta.margin_top` / `meta.margin_bottom` values reserve
+  the bands the header/footer occupy, so the body never overlaps them. Because
+  Chromium renders these bands in an isolated context, each header/footer template
+  carries its own `<style>` (base + `custom_css`) and an explicit font size, and
+  images use absolute (S3) URLs. Size the top/bottom margins to fit your
+  header/footer height (letterhead convention) or tall content will be clipped.
+}

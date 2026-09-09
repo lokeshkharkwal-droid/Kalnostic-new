@@ -1,0 +1,882 @@
+{
+  "generatedAt": "2026-09-04T08:53:06.079Z",
+  "tenant": "92f6e838-3779-4a74-a823-c1a8e50e2248",
+  "patientId": "12b5d807-6ad4-462c-9145-c59047e7cdd9",
+  "inbox": {
+    "email": "lokesh.kharkwal@kalnostic.com",
+    "mobile": "9634834856"
+  },
+  "steps": [
+    {
+      "key": "patient_profile_update",
+      "note": "patient 12b5d807-6ad4-462c-9145-c59047e7cdd9 repointed to inbox + patient.updated emitted"
+    },
+    {
+      "key": "_setup",
+      "note": "paid order ORD-00065 (7e8e3a45-be53-428e-b418-320fe1708916); partial order ORD-00066"
+    },
+    {
+      "key": "lab_create_order_inform_patient",
+      "note": "order.created emitted"
+    },
+    {
+      "key": "order_cancelled_inform_patient",
+      "note": "order.cancelled emitted (with refund)"
+    },
+    {
+      "key": "lab_order_report_refund_inform_patient",
+      "note": "order.refunded emitted"
+    },
+    {
+      "key": "lab_move_appointment",
+      "note": "appointment.moved emitted"
+    },
+    {
+      "key": "complete_payment_for_lab_order_inform_patient",
+      "note": "payment.received on PAID order ORD-00065"
+    },
+    {
+      "key": "partial_payment_for_lab_order_inform_patient",
+      "note": "payment.received on PARTIALLY_PAID order ORD-00066"
+    },
+    {
+      "key": "lab_order_report_published_inform_patient",
+      "note": "lab-report.published emitted for orderItem 9ab83bfa-7a29-45a9-a2e0-4f4ae6860a7e"
+    },
+    {
+      "key": "lab_order_completed_inform_patient",
+      "note": "completion fires only if ALL reports on the order are PUBLISHED (checked by listener)"
+    },
+    {
+      "key": "lab_create_order_with_phlebotomist_inform_patient",
+      "note": "SKIPPED: no home-visit order with phlebotomist in tenant"
+    },
+    {
+      "key": "lab_report_sample_error_inform_referring_panel",
+      "note": "accession.sample.error emitted for B2B order b8539ad5-a0c9-4058-bded-3ee13b7618f3 (recipient=panel)"
+    },
+    {
+      "key": "lab_report_sample_repeat_inform_referring_panel",
+      "note": "accession.sample.repeat emitted (recipient=panel)"
+    },
+    {
+      "key": "appointment_reminder_inform_patient",
+      "note": "cron-only (AppointmentReminderWorkerService); not event-driven — see remarks"
+    },
+    {
+      "key": "appointment_reminder_inform_doctor",
+      "note": "cron-only (AppointmentReminderWorkerService); not event-driven — see remarks"
+    },
+    {
+      "key": "business_registration_complete",
+      "note": "business.registration.completed emitted → inbox"
+    },
+    {
+      "key": "business_details_update",
+      "note": "business.details.updated emitted → inbox"
+    },
+    {
+      "key": "business_status_suspend",
+      "note": "business.status.suspended emitted → inbox"
+    },
+    {
+      "key": "business_status_unsuspend",
+      "note": "business.status.unsuspended emitted → inbox"
+    },
+    {
+      "key": "staff_in_app",
+      "note": "users.user.created/status.changed/branch.assignment.updated emitted (in-app only)"
+    },
+    {
+      "key": "order_bill_as_attachment",
+      "note": "share-all invoked OK"
+    },
+    {
+      "key": "lab_quotation_as_attachment",
+      "note": "share-all invoked OK"
+    },
+    {
+      "key": "lab_create_appointment_inform_patient",
+      "note": "share-all invoked OK"
+    },
+    {
+      "key": "order_invoice_as_attachment",
+      "note": "share-all invoked OK"
+    },
+    {
+      "key": "console_lab_report_as_attachment",
+      "note": "share-all invoked OK"
+    }
+  ],
+  "shareResults": {
+    "order_bill_as_attachment": {
+      "orderId": "7e8e3a45-be53-428e-b418-320fe1708916",
+      "results": [
+        {
+          "channel": "EMAIL",
+          "status": "QUEUED",
+          "logId": "b88496a0-9443-4834-ad58-19e1b6a355c0"
+        },
+        {
+          "channel": "WHATSAPP",
+          "status": "QUEUED",
+          "logId": "573c721c-7187-41e8-b9d6-0bfdcd0a0218"
+        },
+        {
+          "channel": "IAM",
+          "status": "QUEUED",
+          "logId": "59570b76-a9ef-4101-9a4f-46888e6a40f4"
+        }
+      ]
+    },
+    "lab_quotation_as_attachment": {
+      "orderId": "7e8e3a45-be53-428e-b418-320fe1708916",
+      "results": [
+        {
+          "channel": "EMAIL",
+          "status": "QUEUED",
+          "logId": "9ec29ae0-f380-413c-98d2-af360250091d"
+        },
+        {
+          "channel": "WHATSAPP",
+          "status": "QUEUED",
+          "logId": "9e34bdaf-9b67-4195-999f-edf6d38f65ad"
+        },
+        {
+          "channel": "IAM",
+          "status": "QUEUED",
+          "logId": "d27f20c5-7d57-4880-a887-3d00ef448b47"
+        }
+      ]
+    },
+    "lab_create_appointment_inform_patient": {
+      "orderId": "7e8e3a45-be53-428e-b418-320fe1708916",
+      "results": [
+        {
+          "channel": "SMS",
+          "status": "QUEUED",
+          "logId": "0a4f05ab-f790-47b9-9347-e02c422f002a"
+        },
+        {
+          "channel": "EMAIL",
+          "status": "QUEUED",
+          "logId": "0a0c7db5-866e-4620-bceb-7d439b45826c"
+        },
+        {
+          "channel": "WHATSAPP",
+          "status": "QUEUED",
+          "logId": "afbb653a-18e4-477d-9f3e-b6f4a30bf44e"
+        },
+        {
+          "channel": "IAM",
+          "status": "QUEUED",
+          "logId": "99e28a76-3183-41fa-ac06-6a8205c81285"
+        }
+      ]
+    },
+    "order_invoice_as_attachment": {
+      "orderId": "7e8e3a45-be53-428e-b418-320fe1708916",
+      "results": [
+        {
+          "channel": "EMAIL",
+          "status": "QUEUED",
+          "logId": "5737777a-35d8-4033-8ccb-f91fac4e70ed"
+        },
+        {
+          "channel": "WHATSAPP",
+          "status": "QUEUED",
+          "logId": "ebefb4f2-9777-407e-a599-afe3b8ab146b"
+        },
+        {
+          "channel": "IAM",
+          "status": "QUEUED",
+          "logId": "4fa365ae-08e5-41cb-b926-53bf3b65cf31"
+        }
+      ]
+    },
+    "console_lab_report_as_attachment": {
+      "orderId": "7e8e3a45-be53-428e-b418-320fe1708916",
+      "results": [
+        {
+          "channel": "EMAIL",
+          "status": "FAILED",
+          "reason": "Order Reports Not Found Exception"
+        },
+        {
+          "channel": "SMS",
+          "status": "QUEUED",
+          "logId": "3f68baf1-5f51-4b2e-97d3-a63a318153d0"
+        },
+        {
+          "channel": "WHATSAPP",
+          "status": "FAILED",
+          "reason": "Order Reports Not Found Exception"
+        },
+        {
+          "channel": "IAM",
+          "status": "QUEUED",
+          "logId": "f6c47581-5bea-4668-a7d8-bff2b43e52ae"
+        }
+      ]
+    }
+  },
+  "notifications": [
+    {
+      "id": "c1ad5933-8521-41f6-90a8-803922f35147",
+      "verb": "patient_profile_update",
+      "subject": "Your profile has been updated",
+      "body": "[[TPL:patient_profile_update:IAM]] Patient Profile Update - Inform Patient: order {order_code} ({order_number}), amount {amount} {currency}, at {aptTimeFmt}. Hi Anjali Upadhya."
+    },
+    {
+      "id": "24706a50-83fc-4302-8c65-af83a6a95f1f",
+      "verb": "order_created",
+      "subject": "Order ORD-00065 received",
+      "body": "[[TPL:lab_create_order_inform_patient:IAM]] Order Created - Inform Patient: order ORD-00065 (ORD-00065), amount {amount} {currency}, at {aptTimeFmt}. Hi Anjali Upadhya."
+    },
+    {
+      "id": "087a0937-3c52-4d1e-afa8-db03cf01e24c",
+      "verb": "order_cancelled",
+      "subject": "Order ORD-00065 cancelled",
+      "body": "[[TPL:order_cancelled_inform_patient:IAM]] Order Cancelled - Inform Patient: order ORD-00065 (ORD-00065), amount 100.00 INR, at {aptTimeFmt}. Hi Anjali Upadhya."
+    },
+    {
+      "id": "01f89c2a-fe02-4839-83ec-639c628fe5ed",
+      "verb": "order_refunded",
+      "subject": "Refund processed for ORD-00065",
+      "body": "[[TPL:lab_order_report_refund_inform_patient:IAM]] Lab Order Report Refund - Inform Patient: order ORD-00065 (ORD-00065), amount 100.00 INR, at {aptTimeFmt}. Hi Anjali Upadhya."
+    },
+    {
+      "id": "9c5c2ed5-bd5f-40ef-9c3a-9adb08a68204",
+      "verb": "appointment_moved",
+      "subject": "Your appointment has been rescheduled",
+      "body": "[[TPL:lab_move_appointment:IAM]] Lab Move Appointment - Inform Patient: order ORD-00065 (ORD-00065), amount {amount} {currency}, at 2026-09-06 08:52 UTC. Hi Anjali Upadhya."
+    },
+    {
+      "id": "9a5dd4e7-9399-4ca7-a782-b1e5ab47e57b",
+      "verb": "payment_received",
+      "subject": "Payment received for ORD-00065",
+      "body": "[[TPL:complete_payment_for_lab_order_inform_patient:IAM]] Complete Payment for Order - Inform Patient: order ORD-00065 (ORD-00065), amount 500.00 {currency}, at {aptTimeFmt}. Hi Anjali Upadhya."
+    },
+    {
+      "id": "6eed2000-fc4e-4720-bd39-ddb7bcbb2ff4",
+      "verb": "payment_received",
+      "subject": "Payment received for ORD-00066",
+      "body": "[[TPL:partial_payment_for_lab_order_inform_patient:IAM]] Partial Payment for Order - Inform Patient: order ORD-00066 (ORD-00066), amount 100.00 {currency}, at {aptTimeFmt}. Hi Anjali Upadhya."
+    },
+    {
+      "id": "4d2d2ebe-c079-4708-87f3-acbdccbac59a",
+      "verb": "report_ready",
+      "subject": "Your lab report is ready (ORD-00001)",
+      "body": "[[TPL:lab_order_report_published_inform_patient:IAM]] Lab Order Report Published - Inform Patient: order ORD-00001 (ORD-00001), amount {amount} {currency}, at {aptTimeFmt}. Hi Anjali Upadhya."
+    },
+    {
+      "id": "5a282e4f-f7e8-4674-9ff6-224901982146",
+      "verb": "account_created",
+      "subject": "Welcome to Kalnostics",
+      "body": "Your staff account (USR-00003) has been created."
+    },
+    {
+      "id": "cdaa42d3-8b96-4f80-913f-8056983c1728",
+      "verb": "account_status_changed",
+      "subject": "Account status updated",
+      "body": "Your account status is now ACTIVE."
+    },
+    {
+      "id": "17c171f5-8f51-4b7e-acca-1135bb3acdf7",
+      "verb": "branch_assignment_updated",
+      "subject": "Branch assignment updated",
+      "body": "Your branch assignment has been updated."
+    },
+    {
+      "id": "59570b76-a9ef-4101-9a4f-46888e6a40f4",
+      "verb": "bill_shared",
+      "subject": "Order Bill as Attachment",
+      "body": "[[TPL:order_bill_as_attachment:IAM]] Order Bill as Attachment: order ORD-00065 ({order_number}), amount {amount} {currency}, at {aptTimeFmt}. Hi Anjali Upadhya."
+    },
+    {
+      "id": "d27f20c5-7d57-4880-a887-3d00ef448b47",
+      "verb": "quotation_shared",
+      "subject": "Lab Quotation as Attachment",
+      "body": "[[TPL:lab_quotation_as_attachment:IAM]] Lab Quotation as Attachment: order ORD-00065 ({order_number}), amount {amount} {currency}, at {aptTimeFmt}. Hi Anjali Upadhya."
+    },
+    {
+      "id": "99e28a76-3183-41fa-ac06-6a8205c81285",
+      "verb": "appointment_shared",
+      "subject": "Lab Create Appointment - Inform Patient",
+      "body": "[[TPL:lab_create_appointment_inform_patient:IAM]] Lab Create Appointment - Inform Patient: order ORD-00065 ({order_number}), amount {amount} {currency}, at {aptTimeFmt}. Hi Anjali Upadhya."
+    },
+    {
+      "id": "4fa365ae-08e5-41cb-b926-53bf3b65cf31",
+      "verb": "trf_shared",
+      "subject": "order invoice as attachment",
+      "body": "[[TPL:order_invoice_as_attachment:IAM]] order invoice as attachment: order ORD-00065 ({order_number}), amount {amount} {currency}, at {aptTimeFmt}. Hi Anjali Upadhya."
+    },
+    {
+      "id": "f6c47581-5bea-4668-a7d8-bff2b43e52ae",
+      "verb": "lab_report_shared",
+      "subject": "Console � Lab Report In-App",
+      "body": "Dear Anjali Upadhya, your lab report for order ORD-00065 is ready. Please check your reports in the app."
+    }
+  ],
+  "communicationLogs": [
+    {
+      "feature": "patient_profile_update",
+      "channel": "EMAIL",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "lokesh.kharkwal@kalnostic.com",
+      "templateTitle": "Patient Profile Update - Inform Patient",
+      "templateFeature": "patient_profile_update",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37320",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "patient_profile_update",
+      "channel": "SMS",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "9634834856",
+      "templateTitle": "Patient Profile Update - Inform Patient",
+      "templateFeature": "patient_profile_update",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37321",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "patient_profile_update",
+      "channel": "WHATSAPP",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "9634834856",
+      "templateTitle": "Patient Profile Update - Inform Patient",
+      "templateFeature": "patient_profile_update",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37322",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "lab_create_order_inform_patient",
+      "channel": "EMAIL",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "lokesh.kharkwal@kalnostic.com",
+      "templateTitle": "Order Created - Inform Patient",
+      "templateFeature": "lab_create_order_inform_patient",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37323",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "lab_create_order_inform_patient",
+      "channel": "SMS",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "9634834856",
+      "templateTitle": "Order Created - Inform Patient",
+      "templateFeature": "lab_create_order_inform_patient",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37324",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "lab_create_order_inform_patient",
+      "channel": "WHATSAPP",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "9634834856",
+      "templateTitle": "Order Created - Inform Patient",
+      "templateFeature": "lab_create_order_inform_patient",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37325",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "order_cancelled_inform_patient",
+      "channel": "EMAIL",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "lokesh.kharkwal@kalnostic.com",
+      "templateTitle": "Order Cancelled - Inform Patient",
+      "templateFeature": "order_cancelled_inform_patient",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37326",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "order_cancelled_inform_patient",
+      "channel": "SMS",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "9634834856",
+      "templateTitle": "Order Cancelled - Inform Patient",
+      "templateFeature": "order_cancelled_inform_patient",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37327",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "order_cancelled_inform_patient",
+      "channel": "WHATSAPP",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "9634834856",
+      "templateTitle": "Order Cancelled - Inform Patient",
+      "templateFeature": "order_cancelled_inform_patient",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37328",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "lab_order_report_refund_inform_patient",
+      "channel": "EMAIL",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "lokesh.kharkwal@kalnostic.com",
+      "templateTitle": "Lab Order Report Refund - Inform Patient",
+      "templateFeature": "lab_order_report_refund_inform_patient",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37329",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "lab_order_report_refund_inform_patient",
+      "channel": "SMS",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "9634834856",
+      "templateTitle": "Lab Order Report Refund - Inform Patient",
+      "templateFeature": "lab_order_report_refund_inform_patient",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37330",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "lab_order_report_refund_inform_patient",
+      "channel": "WHATSAPP",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "9634834856",
+      "templateTitle": "Lab Order Report Refund - Inform Patient",
+      "templateFeature": "lab_order_report_refund_inform_patient",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37331",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "lab_move_appointment",
+      "channel": "EMAIL",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "lokesh.kharkwal@kalnostic.com",
+      "templateTitle": "Lab Move Appointment - Inform Patient",
+      "templateFeature": "lab_move_appointment",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37332",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "lab_move_appointment",
+      "channel": "SMS",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "9634834856",
+      "templateTitle": "Lab Move Appointment - Inform Patient",
+      "templateFeature": "lab_move_appointment",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37333",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "lab_move_appointment",
+      "channel": "WHATSAPP",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "9634834856",
+      "templateTitle": "Lab Move Appointment - Inform Patient",
+      "templateFeature": "lab_move_appointment",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37334",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "complete_payment_for_lab_order_inform_patient",
+      "channel": "EMAIL",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "lokesh.kharkwal@kalnostic.com",
+      "templateTitle": "Complete Payment for Order - Inform Patient",
+      "templateFeature": "complete_payment_for_lab_order_inform_patient",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37335",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "complete_payment_for_lab_order_inform_patient",
+      "channel": "SMS",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "9634834856",
+      "templateTitle": "Complete Payment for Order - Inform Patient",
+      "templateFeature": "complete_payment_for_lab_order_inform_patient",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37336",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "complete_payment_for_lab_order_inform_patient",
+      "channel": "WHATSAPP",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "9634834856",
+      "templateTitle": "Complete Payment for Order - Inform Patient",
+      "templateFeature": "complete_payment_for_lab_order_inform_patient",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37337",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "partial_payment_for_lab_order_inform_patient",
+      "channel": "EMAIL",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "lokesh.kharkwal@kalnostic.com",
+      "templateTitle": "Partial Payment for Order - Inform Patient",
+      "templateFeature": "partial_payment_for_lab_order_inform_patient",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37338",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "partial_payment_for_lab_order_inform_patient",
+      "channel": "SMS",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "9634834856",
+      "templateTitle": "Partial Payment for Order - Inform Patient",
+      "templateFeature": "partial_payment_for_lab_order_inform_patient",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37339",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "partial_payment_for_lab_order_inform_patient",
+      "channel": "WHATSAPP",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "9634834856",
+      "templateTitle": "Partial Payment for Order - Inform Patient",
+      "templateFeature": "partial_payment_for_lab_order_inform_patient",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37340",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "lab_order_report_published_inform_patient",
+      "channel": "EMAIL",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "lokesh.kharkwal@kalnostic.com",
+      "templateTitle": "Lab Order Report Published - Inform Patient",
+      "templateFeature": "lab_order_report_published_inform_patient",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37341",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "lab_order_report_published_inform_patient",
+      "channel": "SMS",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "9634834856",
+      "templateTitle": "Lab Order Report Published - Inform Patient",
+      "templateFeature": "lab_order_report_published_inform_patient",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37342",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "lab_order_report_published_inform_patient",
+      "channel": "WHATSAPP",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "9634834856",
+      "templateTitle": "Lab Order Report Published - Inform Patient",
+      "templateFeature": "lab_order_report_published_inform_patient",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37343",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "business_registration_complete",
+      "channel": "EMAIL",
+      "status": "SENT",
+      "recipientType": "CUSTOM",
+      "toAddress": "lokesh.kharkwal@kalnostic.com",
+      "templateTitle": "Business Registration Complete",
+      "templateFeature": "business_registration_complete",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37344",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "business_registration_complete",
+      "channel": "SMS",
+      "status": "SENT",
+      "recipientType": "CUSTOM",
+      "toAddress": "9634834856",
+      "templateTitle": "Business Registration Complete",
+      "templateFeature": "business_registration_complete",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37345",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "business_registration_complete",
+      "channel": "WHATSAPP",
+      "status": "SENT",
+      "recipientType": "CUSTOM",
+      "toAddress": "9634834856",
+      "templateTitle": "Business Registration Complete",
+      "templateFeature": "business_registration_complete",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37346",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "business_details_update",
+      "channel": "EMAIL",
+      "status": "SENT",
+      "recipientType": "CUSTOM",
+      "toAddress": "lokesh.kharkwal@kalnostic.com",
+      "templateTitle": "Business Details Updated",
+      "templateFeature": "business_details_update",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37347",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "business_details_update",
+      "channel": "SMS",
+      "status": "SENT",
+      "recipientType": "CUSTOM",
+      "toAddress": "9634834856",
+      "templateTitle": "Business Details Updated",
+      "templateFeature": "business_details_update",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37348",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "business_status_suspend",
+      "channel": "EMAIL",
+      "status": "SENT",
+      "recipientType": "CUSTOM",
+      "toAddress": "lokesh.kharkwal@kalnostic.com",
+      "templateTitle": "Business Status Suspended",
+      "templateFeature": "business_status_suspend",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37349",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "business_status_suspend",
+      "channel": "SMS",
+      "status": "SENT",
+      "recipientType": "CUSTOM",
+      "toAddress": "9634834856",
+      "templateTitle": "Business Status Suspended",
+      "templateFeature": "business_status_suspend",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37350",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "business_status_unsuspend",
+      "channel": "EMAIL",
+      "status": "SENT",
+      "recipientType": "CUSTOM",
+      "toAddress": "lokesh.kharkwal@kalnostic.com",
+      "templateTitle": "Business Status Unsuspended",
+      "templateFeature": "business_status_unsuspend",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37351",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "business_status_unsuspend",
+      "channel": "SMS",
+      "status": "SENT",
+      "recipientType": "CUSTOM",
+      "toAddress": "9634834856",
+      "templateTitle": "Business Status Unsuspended",
+      "templateFeature": "business_status_unsuspend",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37352",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "order_bill_as_attachment",
+      "channel": "EMAIL",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "lokesh.kharkwal@kalnostic.com",
+      "templateTitle": "Order Bill as Attachment",
+      "templateFeature": "order_bill_as_attachment",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37353",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "order_bill_as_attachment",
+      "channel": "WHATSAPP",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "9634834856",
+      "templateTitle": "Order Bill (WhatsApp)",
+      "templateFeature": "order_bill_as_attachment",
+      "isAmnTemplate": false,
+      "markerMatched": false,
+      "exchangeId": "37354",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "lab_quotation_as_attachment",
+      "channel": "EMAIL",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "lokesh.kharkwal@kalnostic.com",
+      "templateTitle": "Lab Quotation as Attachment",
+      "templateFeature": "lab_quotation_as_attachment",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37355",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "lab_quotation_as_attachment",
+      "channel": "WHATSAPP",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "9634834856",
+      "templateTitle": "Lab Quotation as Attachment",
+      "templateFeature": "lab_quotation_as_attachment",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37356",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "lab_create_appointment_inform_patient",
+      "channel": "SMS",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "9634834856",
+      "templateTitle": "Lab Create Appointment - Inform Patient",
+      "templateFeature": "lab_create_appointment_inform_patient",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37357",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "lab_create_appointment_inform_patient",
+      "channel": "EMAIL",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "lokesh.kharkwal@kalnostic.com",
+      "templateTitle": "Lab Create Appointment - Inform Patient",
+      "templateFeature": "lab_create_appointment_inform_patient",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37358",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "lab_create_appointment_inform_patient",
+      "channel": "WHATSAPP",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "9634834856",
+      "templateTitle": "Lab Create Appointment - Inform Patient",
+      "templateFeature": "lab_create_appointment_inform_patient",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37359",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "order_invoice_as_attachment",
+      "channel": "EMAIL",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "lokesh.kharkwal@kalnostic.com",
+      "templateTitle": "order invoice as attachment",
+      "templateFeature": "order_invoice_as_attachment",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37360",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "order_invoice_as_attachment",
+      "channel": "WHATSAPP",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "9634834856",
+      "templateTitle": "order invoice as attachment",
+      "templateFeature": "order_invoice_as_attachment",
+      "isAmnTemplate": true,
+      "markerMatched": true,
+      "exchangeId": "37361",
+      "statusMessage": "Delivered via Exchange gateway"
+    },
+    {
+      "feature": "console_lab_report_as_attachment",
+      "channel": "SMS",
+      "status": "SENT",
+      "recipientType": "PATIENT",
+      "toAddress": "9634834856",
+      "templateTitle": "Console Share — SMS",
+      "templateFeature": "console_lab_report_as_attachment",
+      "isAmnTemplate": false,
+      "markerMatched": false,
+      "exchangeId": "37362",
+      "statusMessage": "Delivered via Exchange gateway"
+    }
+  ]
+}

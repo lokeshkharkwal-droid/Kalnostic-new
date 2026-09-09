@@ -84,11 +84,12 @@ export const PDF_DISPLAY_PROFILES = [
 export type PdfDisplayProfile = (typeof PDF_DISPLAY_PROFILES)[number];
 
 /**
- * Default meta values (spec "Default" columns). Empty-string defaults are
- * represented as `''`. Applied by the service, so a persisted template always
- * has a complete, predictable meta shape.
+ * String-valued meta defaults (spec "Default" columns). Empty-string defaults
+ * are represented as `''`. These drive the string keys of `PdfTemplateMeta`;
+ * non-string meta (e.g. the `images` registry) is added in
+ * `PDF_TEMPLATE_META_DEFAULTS` below.
  */
-export const PDF_TEMPLATE_META_DEFAULTS = {
+const PDF_TEMPLATE_META_STRING_DEFAULTS = {
   // General
   orientation: 'P',
   page_size: 'A4',
@@ -101,6 +102,8 @@ export const PDF_TEMPLATE_META_DEFAULTS = {
   margin_header: '5',
   margin_footer: '5',
   watermark_text: '',
+  /** Uploaded watermark image URL (takes precedence over `watermark_text`). */
+  watermark_image: '',
   template_version: '',
   custom_css: '',
   // Header
@@ -116,10 +119,25 @@ export const PDF_TEMPLATE_META_DEFAULTS = {
 } as const;
 
 /**
- * Fully-populated meta shape (all keys present as strings). The service always
- * persists a complete meta by merging the client's partial `meta` over
- * `PDF_TEMPLATE_META_DEFAULTS`, so readers/renderers can rely on every key.
+ * Default meta values. Applied by the service, so a persisted template always
+ * has a complete, predictable meta shape. Adds the non-string `images` registry
+ * (token id → resolved URL) on top of the string defaults.
+ */
+export const PDF_TEMPLATE_META_DEFAULTS = {
+  ...PDF_TEMPLATE_META_STRING_DEFAULTS,
+  /** Uploaded-image registry: `{{image:<id>}}` token id → resolved URL. */
+  images: {} as Record<string, string>,
+};
+
+/**
+ * Fully-populated meta shape. The service always persists a complete meta by
+ * merging the client's partial `meta` over `PDF_TEMPLATE_META_DEFAULTS`, so
+ * readers/renderers can rely on every key. All spec fields are strings except
+ * the `images` registry.
  */
 export type PdfTemplateMeta = {
-  [K in keyof typeof PDF_TEMPLATE_META_DEFAULTS]: string;
+  [K in keyof typeof PDF_TEMPLATE_META_STRING_DEFAULTS]: string;
+} & {
+  /** Uploaded-image registry: `{{image:<id>}}` token id → resolved URL. */
+  images: Record<string, string>;
 };

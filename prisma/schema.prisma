@@ -312,6 +312,7 @@ enum AuditModule {
   REGISTRATION_SETTINGS
   TECHNICIAN_SETTINGS
   COMMUNICATION // Outbound messaging (Email/SMS/WhatsApp) + in-app notifications
+  LAB_TEST_FIELD_PERMISSIONS
 }
 
 /// Type of controlled document managed by the document module.
@@ -446,6 +447,15 @@ enum NotificationKind {
   ALERT
 }
 
+/// A business's per-(feature, channel) override of default channel enablement
+/// (ports the legacy `messaging_preferences.status` ACTIVE=1 / DONT_SEND=2). The
+/// absence of an override row means "inherit" (send); a `DONT_SEND` row suppresses
+/// that channel for that feature. Consulted by the notification enablement resolver.
+enum ChannelOverrideStatus {
+  ACTIVE
+  DONT_SEND
+}
+
 // ── Lab-test enums (UPPERCASE per project convention; values map to the raw
 //    snake_case spec, e.g. SINGLE_STEP ↔ 'single_step') ──────────────────────────
 
@@ -469,6 +479,15 @@ enum SamplePriority {
   ROUTINE
   URGENT
   STAT
+}
+
+/// Report approval workflow — the exact 4 options previously hardcoded
+/// client-side with no backing field (added 2026-09-06).
+enum ApprovalWorkflow {
+  SINGLE_APPROVAL
+  DUAL_APPROVAL
+  AUTO_APPROVE
+  PATHOLOGIST_REVIEW
 }
 
 /// Unit for turnaround / processing time windows.
@@ -507,7 +526,7 @@ enum ReportType {
 enum ResultType {
   QUANTITATIVE
   QUALITATIVE
-  CALCULATED
+  SEMI_QUANTITATIVE
 }
 
 /// Whether a parameter is measured directly or computed from a formula.
@@ -529,6 +548,14 @@ enum ResultRounding {
   TWO_DECIMAL
   THREE_DECIMAL
   WHOLE_NUMBER
+}
+
+/// How a result parameter group is laid out on the report — a tabular grid or a
+/// sequential (top→bottom) list. Distinct from the `groupSettingsId` reference
+/// (which points at a named GroupLayoutSetting); this is the plain display mode.
+enum ResultGroupLayout {
+  TABULAR
+  SEQUENTIAL
 }
 
 /// Gender applicability for a reference range/value. Distinct from the
@@ -571,6 +598,44 @@ enum ContainerType {
   SWAB
   STERILE_CONTAINER
   OTHER
+
+  // Added for the "New UI Improvements" SAMPLE tab requirement — additive only,
+  // the 11 values above are retained unchanged so existing rows keep working.
+  URINE_24H_CONTAINER_NO_PRESERVATIVE
+  URINE_24H_CONTAINER_ACETIC_ACID
+  URINE_24H_CONTAINER_HYDROCHLORIC_ACID
+  URINE_24H_CONTAINER_BORIC_ACID
+  URINE_24H_CONTAINER_DIAZOLIDINYL_UREA
+  URINE_24H_CONTAINER_SODIUM_CARBONATE
+  ANAEROBIC_TRANSPORT_VIAL
+  BLOOD_CULTURE_BOTTLE_AEROBIC
+  BLOOD_CULTURE_BOTTLE_ANAEROBIC
+  BLOOD_CULTURE_BOTTLE_PEDIATRIC
+  CLEAN_PAPER_ENVELOPE_PACKET
+  CULTURE_PLATE_BROTH_VIAL
+  GLASS_SLIDES_WITH_FIXATIVE_SLIDE_JAR
+  K2_K3_EDTA_TUBE_LAVENDER_TOP
+  LIQUID_BASED_CYTOLOGY_VIAL
+  LITHIUM_HEPARIN_TUBE_GREEN_TOP
+  PLAIN_CLOT_ACTIVATOR_TUBE_RED_TOP
+  PPT_PLASMA_PREP_TUBE_PEARL_WHITE_TOP
+  ROYAL_BLUE_TRACE_ELEMENT_TUBE
+  SST_TUBE_WITH_GEL_GOLD_TOP
+  SODIUM_CITRATE_TUBE_32PCT_LIGHT_BLUE_TOP
+  SODIUM_CITRATE_TUBE_38PCT_ESR_BLACK_TOP
+  SODIUM_FLUORIDE_OXALATE_TUBE_GREY_TOP
+  SODIUM_HEPARIN_TUBE_GREEN_TOP
+  STERILE_CONTAINER_NEUTRAL_BUFFERED_FORMALIN
+  STERILE_CONTAINER_GLUTARALDEHYDE
+  STERILE_CONTAINER_CARY_BLAIR_MEDIUM
+  STERILE_CONTAINER_MICHELS_ZEUS_MEDIUM
+  STERILE_CONTAINER_NORMAL_SALINE_FRESH
+  STERILE_DRY_SWAB_CONTAINER
+  STERILE_UNIVERSAL_WIDE_MOUTH_CONTAINER
+  SWEAT_COLLECTION_DEVICE_MACRODUCT
+  SWAB_TUBE_AMIES_STUART_MEDIUM
+  SWAB_TUBE_VIRAL_TRANSPORT_MEDIUM
+  WHATMAN_903_FILTER_PAPER_CARD
 }
 
 // ── Doctor enums (UPPERCASE per project convention) ─────────────────────────────
@@ -797,30 +862,34 @@ model Tenant {
   configuration TenantConfiguration? // site URLs / branding / limits / theme
   setting       TenantSetting? // referral / payment / commission / wallet rules
 
-  isActive               Boolean @default(true) @map("is_active")
-  mrnCounter             Int     @default(0) @map("mrn_counter") // per-tenant sequential patient MRN
-  mrnPrefix              String? @map("mrn_prefix")
-  branchCounter          Int     @default(0) @map("branch_counter") // per-tenant sequential branch code
-  staffCounter           Int     @default(0) @map("staff_counter") // per-tenant sequential staff user code (USR-00001)
-  departmentCounter      Int     @default(0) @map("department_counter") // per-tenant sequential department code
-  categoryCounter        Int     @default(0) @map("category_counter") // per-tenant sequential category code
-  subCategoryCounter     Int     @default(0) @map("sub_category_counter") // per-tenant sequential sub-category code
-  outsourceCenterCounter Int     @default(0) @map("outsource_center_counter") // per-tenant sequential outsource-center code
+  isActive               Boolean               @default(true) @map("is_active")
+  mrnCounter             Int                   @default(0) @map("mrn_counter") // per-tenant sequential patient MRN
+  mrnPrefix              String?               @map("mrn_prefix")
+  branchCounter          Int                   @default(0) @map("branch_counter") // per-tenant sequential branch code
+  staffCounter           Int                   @default(0) @map("staff_counter") // per-tenant sequential staff user code (USR-00001)
+  departmentCounter      Int                   @default(0) @map("department_counter") // per-tenant sequential department code
+  categoryCounter        Int                   @default(0) @map("category_counter") // per-tenant sequential category code
+  subCategoryCounter     Int                   @default(0) @map("sub_category_counter") // per-tenant sequential sub-category code
+  outsourceCenterCounter Int                   @default(0) @map("outsource_center_counter") // per-tenant sequential outsource-center code
   // Accession "Group Settings" — tenant-wide, business-admin-only. Defaults to
   // DEPARTMENT_SAMPLE_NAME so every existing tenant's behavior is unchanged the
   // moment this column exists (that mode already matches today's hardcoded
   // physical-sample grouping — see AccessionGroupingMode's doc comment).
   groupingMode           AccessionGroupingMode @default(DEPARTMENT_SAMPLE_NAME) @map("grouping_mode")
-  referralPanelCounter   Int     @default(0) @map("referral_panel_counter") // per-tenant sequential referral-panel code
-  orderCounter           Int     @default(0) @map("order_counter") // per-tenant sequential order code (ORD-00001)
-  appointmentCounter     Int     @default(0) @map("appointment_counter") // per-tenant sequential appointment code (APT-00001)
-  diagnosticBillCounter  Int     @default(0) @map("diagnostic_bill_counter") // per-tenant sequential diagnostic bill id (DIG-001)
-  accessionCounter       Int     @default(0) @map("accession_counter") // per-tenant sequential accession number (ACC-00001)
-  leadCounter            Int     @default(0) @map("lead_counter") // per-tenant sequential sales lead code (LD-YYYY-00001)
-  tripCounter            Int     @default(0) @map("trip_counter") // per-tenant sequential sales trip code (TRP-00001)
-  followUpCounter        Int     @default(0) @map("follow_up_counter") // per-tenant sequential sales follow-up code (FU-00001)
-  createdBy              String? @map("created_by") // SiteAdmin user id (creator)
-  updatedBy              String? @map("updated_by") // SiteAdmin user id (last editor)
+  referralPanelCounter   Int                   @default(0) @map("referral_panel_counter") // per-tenant sequential referral-panel code
+  orderCounter           Int                   @default(0) @map("order_counter") // per-tenant sequential order code (ORD-00001)
+  appointmentCounter     Int                   @default(0) @map("appointment_counter") // per-tenant sequential appointment code (APT-00001)
+  diagnosticBillCounter  Int                   @default(0) @map("diagnostic_bill_counter") // per-tenant sequential diagnostic bill id (DIG-001)
+  accessionCounter       Int                   @default(0) @map("accession_counter") // per-tenant sequential accession number (ACC-00001)
+  leadCounter            Int                   @default(0) @map("lead_counter") // per-tenant sequential sales lead code (LD-YYYY-00001)
+  tripCounter            Int                   @default(0) @map("trip_counter") // per-tenant sequential sales trip code (TRP-00001)
+  followUpCounter        Int                   @default(0) @map("follow_up_counter") // per-tenant sequential sales follow-up code (FU-00001)
+  createdBy              String?               @map("created_by") // SiteAdmin user id (creator)
+  updatedBy              String?               @map("updated_by") // SiteAdmin user id (last editor)
+
+  /// Source BUSINESS_ID from the legacy EzHealthTrack MySQL database, kept for
+  /// idempotent data migration + traceability. Null for natively-created tenants.
+  legacyTenantId Int? @unique @map("legacy_tenant_id")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -970,6 +1039,11 @@ model Person {
 
   /// Home-visit collections assigned to this staff Person (the phlebotomist).
   homeVisitCollections HomeVisitCollection[] @relation("HomeVisitCollectionPhlebotomist")
+
+  /// Per-tenant `Patient` projections that share this platform identity. A person
+  /// registered as a patient at more than one business has one Patient row per
+  /// tenant, all pointing here — the basis for cross-tenant patient reuse.
+  patients Patient[]
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -1230,6 +1304,12 @@ model Branch {
   licenseNo String? @map("license_no")
   remarks   String?
 
+  /// Source BUSINESS_ID (child business) from the legacy EzHealthTrack MySQL
+  /// database, kept for idempotent data migration + traceability. Unique per
+  /// tenant among active rows (partial unique index in prisma/rls.sql). Null for
+  /// natively-created branches.
+  legacyBranchId Int? @map("legacy_branch_id")
+
   // Doctors scoped to this branch (managed via DoctorsService).
   doctors Doctor[]
 
@@ -1241,6 +1321,7 @@ model Branch {
   deletedAt DateTime? @map("deleted_at")
 
   @@index([tenantId])
+  @@index([legacyBranchId])
   @@index([deletedAt])
   @@map("branches")
 }
@@ -1336,6 +1417,11 @@ model UserBranchProfile {
   revokedAt  DateTime? @map("revoked_at")
   revokedBy  String?   @map("revoked_by")
 
+  // B2B Referral Panel login: the panel this profile's user is scoped to.
+  // Non-null only for `b2b_referring_panel` profiles; null for all others.
+  referralPanelId String?        @map("referral_panel_id")
+  referralPanel   ReferralPanel? @relation(fields: [referralPanelId], references: [id])
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -1344,6 +1430,7 @@ model UserBranchProfile {
   @@index([personId])
   @@index([branchId])
   @@index([authRoleId])
+  @@index([referralPanelId])
   @@map("user_branch_profiles")
 }
 
@@ -1717,6 +1804,36 @@ model PdfTemplateConfig {
   @@map("pdf_template_configs")
 }
 
+/// Durable, tenant-wide registry of images uploaded through a Print template's
+/// "Add Image" action. Makes an `{{image:<id>}}` token REUSABLE across templates:
+/// the S3 object (uploaded via UploadsService) is referenced here by its `token`
+/// (the URL's last path segment, e.g. `<uuid>.png`) so a token copied from one
+/// template still resolves when pasted into another. Populated on template
+/// create/update from `meta.images`; intentionally NEVER deleted when a template
+/// is removed/edited, so an image referenced by any other template stays
+/// resolvable. `tenant_id` NULL = a SITE_ADMIN global-template image (mirrors the
+/// pdf_report_templates NULL-tenant pattern). RLS policy in prisma/rls.sql.
+model PrintTemplateImage {
+  id       String  @id @default(uuid())
+  tenantId String? @map("tenant_id") // null = SITE_ADMIN global-template image
+
+  /// The `{{image:<id>}}` token id — the uploaded object's URL last segment
+  /// (`<uuid>.<ext>`), unique per tenant.
+  token String
+  /// Fully-qualified S3 URL of the uploaded object.
+  url   String
+
+  createdBy String? @map("created_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([tenantId, token])
+  @@index([tenantId])
+  @@map("print_template_images")
+}
+
 /// A single outbound message row — serves as BOTH the async send queue and the
 /// delivery log (`status` drives the background worker, ported from Kishan's
 /// `message_queue`, and the same row is what the Communication dashboard lists).
@@ -1732,7 +1849,7 @@ model CommunicationLog {
   status  CommunicationStatus @default(PENDING)
 
   /// FEATURE_TYPES key when the send is event-driven; null for ad-hoc compose.
-  feature String?
+  feature    String?
   /// Resolved Template.id when a template drove the body; null for free-text.
   templateId String? @map("template_id")
 
@@ -1750,7 +1867,7 @@ model CommunicationLog {
 
   retry         Int     @default(0)
   maxRetry      Int     @default(3) @map("max_retry")
-  statusMessage String? @db.Text @map("status_message") // Exchange response / error text
+  statusMessage String? @map("status_message") @db.Text // Exchange response / error text
   exchangeId    String? @map("exchange_id") // Exchange response `id` (isOk)
 
   scheduledAt  DateTime? @map("scheduled_at") // null = send ASAP
@@ -1774,6 +1891,60 @@ model CommunicationLog {
   @@map("communication_logs")
 }
 
+/// Per-tenant messaging channel capability (ports the legacy business channel
+/// feature flags). Tenant-scoped; `branchId` NULL = the tenant default, a branch
+/// row overrides it for that branch. Get-or-create on first read (mirrors
+/// `BranchSetting`). The ABSENCE of a row means every channel is capable — so the
+/// enablement resolver behaves exactly as before any settings are configured.
+/// One active row per (tenant, branch) is enforced by partial unique indexes in
+/// prisma/rls.sql (Postgres treats NULL branch_id as distinct).
+model BusinessChannelSetting {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id") // null = tenant default
+
+  isEmailChannelEnabled    Boolean @default(true) @map("is_email_channel_enabled")
+  isSmsChannelEnabled      Boolean @default(true) @map("is_sms_channel_enabled")
+  isWhatsappChannelEnabled Boolean @default(true) @map("is_whatsapp_channel_enabled")
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@map("business_channel_settings")
+}
+
+/// A business's per-(feature, channel) override of default channel enablement
+/// (ports the legacy `messaging_preferences.status`). Tenant-scoped, branch-level
+/// (`branchId` NULL = a tenant-wide override). The ABSENCE of a row means "inherit"
+/// (send); a `DONT_SEND` row suppresses that channel for that feature. One active
+/// override per (tenant, branch, feature, channel) is enforced by partial unique
+/// indexes in prisma/rls.sql.
+model BusinessChannelOverride {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  feature String
+  channel MessagingChannel
+  status  ChannelOverrideStatus @default(ACTIVE)
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([feature])
+  @@map("business_channel_overrides")
+}
+
 /// An in-app notification event (ported from Kishan `notification`), now
 /// tenant-scoped + branch-level so RLS holds. A MESSAGE is conversational
 /// (targets can reply, forming a thread via `contextId`); an ALERT is
@@ -1786,8 +1957,8 @@ model Notification {
 
   kind        NotificationKind
   verb        String // 'message' | 'reply_message' | ...
-  contextId   String? @map("context_id") // thread root notification id (reply chain)
-  contextType String? @map("context_type") // 'notification' for replies
+  contextId   String?          @map("context_id") // thread root notification id (reply chain)
+  contextType String?          @map("context_type") // 'notification' for replies
 
   subject String? @db.Text
   body    String  @db.Text
@@ -2369,6 +2540,49 @@ model SiteAdminAuditLog {
   @@map("siteadmin_audit_logs")
 }
 
+/// Which EMI adapter operation an `AdapterLog` row records. `ORDERS` is the
+/// order-download call (`/emi/orders?specimen_id=…`), `SUBMIT_RESULT` is the
+/// result-upload call (`/emi/submitResult`); `OTHER` covers anything else the
+/// adapter layer logs.
+enum AdapterAction {
+  ORDERS
+  SUBMIT_RESULT
+  OTHER
+}
+
+/// A single EMI adapter transaction log line — one row per call the lab adapter
+/// makes to the `emi/orders` / `emi/submitResult` endpoints, with the raw
+/// request/response retained for investigation. Tenant-scoped + branch-level
+/// (CLAUDE.md §4.6): `tenantId` (and `branchId` when the call is tied to a
+/// location) come from the authenticating adapter context, never a request body.
+/// Append-only in practice — read via the `/adapter-logs` (business) and
+/// `/siteadmin/adapter-logs` (cross-tenant) endpoints. RLS policy in prisma/rls.sql.
+model AdapterLog {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id") // null = tenant-level / not location-bound
+
+  token           String? // adapter/session token echoed by the machine
+  action          AdapterAction @default(OTHER)
+  status          String? // textual status shown in the table (e.g. "SUCCESS")
+  statusCode      Int?          @map("status_code") // HTTP status code (detail view)
+  sourceIpAddress String?       @map("source_ip_address") // caller IP
+
+  request  String? @db.Text // raw request payload, verbatim
+  response String? @db.Text // raw response payload, verbatim
+
+  createdAt DateTime  @default(now()) @map("created_at") // the "Date & Time"
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([action])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@map("adapter_logs")
+}
+
 /// A master-data container for a branch. Tenant-scoped + branch-level. A non-main
 /// branch may have several; the main branch is capped at one (its auto-created
 /// default). The first master data is auto-created on branch creation (named after
@@ -2401,8 +2615,10 @@ model MasterData {
 /// are unique per master data among active rows (partial unique indexes in
 /// prisma/rls.sql). CHECK constraints (price ordering, conditional-required
 /// fields) also live in prisma/rls.sql. Cross-entity ids (department, category,
-/// report template, pdf/image settings, approval workflow, mandatory dept/cat) are
+/// report template, pdf/image settings, mandatory dept/cat) are
 /// nullable logical references (no Prisma relation) until those modules exist.
+/// `approvalWorkflow` is a real enum (added 2026-09-06) — the exact 4 options
+/// previously hardcoded client-side with no backing field.
 model LabTest {
   id           String  @id @default(uuid())
   // NULL for SITE_ADMIN global templates; set for TENANT rows (CLAUDE.md §4.2).
@@ -2442,16 +2658,16 @@ model LabTest {
   subCategory   SubCategory? @relation("LabTestSubcat", fields: [subCategoryId], references: [id])
 
   // Basic config
-  processMethod      ProcessMethod  @default(SINGLE_STEP) @map("process_method")
-  icdCode            String?        @map("icd_code")
-  loincCode          String?        @map("loinc_code")
-  clinicalTags       String[]       @map("clinical_tags")
-  reportTemplateId   String?        @map("report_template_id")
-  samplePriorityType SamplePriority @default(ROUTINE) @map("sample_priority_type")
-  pdfSettingsId      String?        @map("pdf_settings_id")
-  imageSettingsId    String?        @map("image_settings_id")
-  isEnableCms        Boolean        @default(true) @map("is_enable_cms")
-  approvalWorkflowId String?        @map("approval_workflow_id")
+  processMethod      ProcessMethod     @default(SINGLE_STEP) @map("process_method")
+  icdCode            String?           @map("icd_code")
+  loincCode          String?           @map("loinc_code")
+  clinicalTags       String[]          @map("clinical_tags")
+  reportTemplateId   String?           @map("report_template_id")
+  samplePriorityType SamplePriority    @default(ROUTINE) @map("sample_priority_type")
+  pdfSettingsId      String?           @map("pdf_settings_id")
+  imageSettingsId    String?           @map("image_settings_id")
+  isEnableCms        Boolean           @default(true) @map("is_enable_cms")
+  approvalWorkflow   ApprovalWorkflow? @map("approval_workflow")
 
   // Pricing (integer minor units)
   priceMsrp            Int     @default(0) @map("price_msrp")
@@ -2512,6 +2728,18 @@ model LabTest {
   // Flags
   isHideInOrderScreen Boolean @default(false) @map("is_hide_in_order_screen")
   isPreferenceTest    Boolean @default(false) @map("is_preference_test")
+  /// Whether this test is routed to a third-party outsource center rather
+  /// than processed in-house. Excel "Outsource" column — previously a
+  /// UI-only toggle with no backing field (added 2026-09-06).
+  isOutsource         Boolean @default(false) @map("is_outsource")
+  /// Whether this test can only be billed, not actually performed in-house.
+  /// Excel "Bill Only Test" column — previously a UI-only toggle with no
+  /// backing field (added 2026-09-06).
+  isBillOnlyTest      Boolean @default(false) @map("is_bill_only_test")
+  /// Whether this test participates in the sample-flow/routing pipeline.
+  /// Excel "Sample Flow" column — previously a UI-only toggle with no
+  /// backing field (added 2026-09-06).
+  isSampleFlow        Boolean @default(false) @map("is_sample_flow")
   isMandatoryTest     Boolean @default(false) @map("is_mandatory_test")
 
   // Mandatory-test classification — real relations to the catalogue tables
@@ -2526,6 +2754,11 @@ model LabTest {
   isRepeatIntervalRestriction Boolean             @default(false) @map("is_repeat_interval_restriction")
   repeatIntervalValue         Int?                @map("repeat_interval_value")
   repeatIntervalUnit          RepeatIntervalUnit? @map("repeat_interval_unit")
+  /// Manual bypass of the repeat-interval restriction, allowed by whoever is
+  /// placing the order. Only meaningful when `isRepeatIntervalRestriction` is
+  /// true; defaults to false (no override) otherwise. Excel "Override Allowed"
+  /// column — read/write on the xlsx import/export path.
+  isOverrideAllowed           Boolean             @default(false) @map("is_override_allowed")
 
   // Active/inactive status (distinct from soft delete; NULL deletedAt = not deleted)
   isActive Boolean @default(true) @map("is_active")
@@ -2609,17 +2842,19 @@ model LabTestResultParam {
   labTestId String  @map("lab_test_id")
 
   // Group display
-  groupName       String? @map("group_name")
-  groupLayoutId   String? @map("group_layout_id")
-  groupSettingsId String? @map("group_settings_id")
+  groupName       String?            @map("group_name")
+  groupLayout     ResultGroupLayout? @map("group_layout")
+  groupLayoutId   String?            @map("group_layout_id")
+  groupSettingsId String?            @map("group_settings_id")
 
   // Parameter identity
-  parameterName  String  @map("parameter_name")
-  parameterCode  String  @map("parameter_code")
-  method         String?
-  attachFileUrl  String? @map("attach_file_url")
-  iconSettingsId String? @map("icon_settings_id")
-  reportingUnit  String? @map("reporting_unit")
+  parameterName   String  @map("parameter_name")
+  parameterCode   String  @map("parameter_code")
+  method          String?
+  attachFileUrl   String? @map("attach_file_url")
+  iconSettingsId  String? @map("icon_settings_id")
+  imageSettingsId String? @map("image_settings_id")
+  reportingUnit   String? @map("reporting_unit")
 
   // Result behaviour
   resultType         ResultType      @map("result_type")
@@ -2629,6 +2864,11 @@ model LabTestResultParam {
   resultRoundingType ResultRounding  @default(TWO_DECIMAL) @map("result_rounding_type")
   allowableUnits     String?         @map("allowable_units")
   decimalPlaces      Int             @default(2) @map("decimal_places")
+
+  // Suggested values a user can pick from when entering this parameter's
+  // result (one per line in the UI), and a default to pre-fill with.
+  resultSuggestions String[] @default([]) @map("result_suggestions")
+  defaultValue      String?  @map("default_value")
 
   // Result-level critical bounds (separate from per-reference-range criticals)
   criticalMin Decimal? @map("critical_min") @db.Decimal(10, 4)
@@ -3801,6 +4041,14 @@ model ReferralPanel {
 
   /// Orders billed to this referral (B2B) panel.
   orders Order[]
+  /// The dedicated B2B login profile(s) scoped to this panel (1:1 in practice).
+  userProfiles UserBranchProfile[]
+
+  /// Source referring_panels.id from the legacy EzHealthTrack MySQL database,
+  /// kept for idempotent data migration + traceability. Unique per tenant among
+  /// active rows (partial unique index in prisma/rls.sql). Null for
+  /// natively-created panels.
+  legacyId Int? @map("legacy_id")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -3809,6 +4057,7 @@ model ReferralPanel {
   @@index([tenantId])
   @@index([branchId])
   @@index([referralPanelSettingsId])
+  @@index([legacyId])
   @@index([deletedAt])
   @@map("referral_panels")
 }
@@ -5156,6 +5405,23 @@ model ConsoleSetting {
   @@map("console_settings")
 }
 
+/// Tenant-wide allow/deny map for Lab Test Master Data fields ("Lab Test
+/// Master Setting"). `config` is `{ [section]: { [field]: boolean } }`; a
+/// missing section/field resolves to `true` (Allowed) so newly-added fields
+/// default to Allowed without a migration. Single row per tenant.
+model LabTestFieldPermissionSetting {
+  id       String @id @default(uuid())
+  tenantId String @unique @map("tenant_id")
+
+  config Json @default("{}") @map("config")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@map("lab_test_field_permission_settings")
+}
+
 /// Tenant-level report settings for Registration — report header/branding,
 /// signatures, and delivery/publishing policy applied to generated PDF
 /// reports. The row is created on first access so the frontend always
@@ -5594,6 +5860,11 @@ model Patient {
   age          Int?
   ageType      AgeType?      @map("age_type")
 
+  // Patient photo (S3 URL, uploaded from device or captured via webcam at
+  // registration). Persists across visits; surfaced to report templates as
+  // `{patient_image}` / `{{image:patient_image}}`.
+  photoUrl String? @map("photo_url")
+
   // ── Contact ──
   mobile                String // required
   whatsappNumber        String? @map("whatsapp_number")
@@ -5660,6 +5931,14 @@ model Patient {
   // tripping the dedup constraint that governs primary registrations.
   isFamilyMember Boolean @default(false) @map("is_family_member")
 
+  /// Per-channel notification opt-out (ports the legacy `PatientPreferences`
+  /// `dont_send` map). Shape:
+  /// `{ channels?: MessagingChannel[]; features?: { [feature: string]: MessagingChannel[] } }`
+  /// — `channels` suppress a channel for every feature; `features[key]` suppress it
+  /// only for that FEATURE_TYPES key. NULL / absent = opted into everything
+  /// (the backward-compatible default the enablement resolver assumes).
+  notificationOptOut Json? @map("notification_opt_out")
+
   // One-to-many: a patient can have multiple medical-history records.
   medicalHistories MedicalHistory[]
 
@@ -5673,8 +5952,23 @@ model Patient {
   familyLinks    PatientFamilyLink[] @relation("FamilyAnchor")
   familyMemberOf PatientFamilyLink[] @relation("FamilyMember")
 
+  // Shared cross-tenant identity. Links this per-tenant projection to the
+  // platform-level `Person` (globally-unique phone). Two tenants that register
+  // the same human point their Patient rows at the SAME Person, so an order can
+  // reuse an existing identity without duplicating it. NULL for family members
+  // (who may share a phone — Person.phone is globally unique) and for legacy
+  // rows not yet backfilled (scripts/backfill-patient-persons.ts).
+  personId String? @map("person_id")
+  person   Person? @relation(fields: [personId], references: [id])
+
   createdBy String? @map("created_by")
   updatedBy String? @map("updated_by")
+
+  /// Source PATIENT_ID from the legacy EzHealthTrack MySQL database, kept for
+  /// idempotent data migration + traceability. Unique per tenant among active
+  /// rows (partial unique index in prisma/rls.sql). Null for natively-created
+  /// patients.
+  legacyPatientId Int? @map("legacy_patient_id")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -5684,6 +5978,8 @@ model Patient {
   @@index([branchId])
   @@index([isActive])
   @@index([ptCategoryId])
+  @@index([personId])
+  @@index([legacyPatientId])
   @@index([deletedAt])
   @@map("patients")
 }
@@ -6074,6 +6370,16 @@ model Order {
   // when the format is NONE. Unique per branch among active rows (enforced in the
   // service). Quotes (status QUOTE) reuse this column with their own format/counter.
   externalOrderId String?       @map("external_order_id")
+  // Order-level barcode, generated at creation from the branch's dedicated
+  // order-barcode counter/format (AccessionSetting.OrderBarcodeSettings_*, via
+  // BarcodeService.allocateOrderNumberInTx). A SEPARATE entity from sample
+  // barcodes — the two have independent counters and may share the same number.
+  // `orderIdBarcode` holds the barcode VALUE (e.g. "10001"); `orderIdQrCode`
+  // holds the S3 URL of the rendered Code39 PNG (name kept for the print-template
+  // contract — it is a barcode image, not a QR code). Both surface as the
+  // `{order_id_barcode}` / `{order_id_qr_code}` lab-report template tags.
+  orderIdBarcode  String?       @map("order_id_barcode")
+  orderIdQrCode   String?       @map("order_id_qr_code")
   status          OrderStatus   @default(DRAFT)
   orderDate       DateTime      @map("order_date") @db.Date
   orderType       OrderType     @map("order_type")
@@ -6110,7 +6416,7 @@ model Order {
   // cancelled (0 = none). Deducted from the order's effective paid amount;
   // caps the refundable amount on a cancel-with-refund (max refundable = paid
   // − cancellationCharge).
-  cancellationCharge Decimal @default(0) @db.Decimal(12, 2) @map("cancellation_charge")
+  cancellationCharge Decimal @default(0) @map("cancellation_charge") @db.Decimal(12, 2)
 
   // Set once when the "order completed" notification has been dispatched (all
   // report-bearing items published), so completion notifies the patient exactly
@@ -6213,6 +6519,10 @@ model Order {
   @@index([paymentStatus])
   @@index([billId])
   @@index([branchId, externalOrderId])
+  // Per-branch uniqueness of the order barcode VALUE among orders only (NULLs are
+  // distinct in Postgres). Does NOT constrain against sample barcodes, so an order
+  // and a sample may legitimately share the same number.
+  @@unique([branchId, orderIdBarcode])
   @@index([deletedAt])
   @@map("orders")
 }
@@ -6623,7 +6933,7 @@ model OrderItem {
   /// order-level aggregate still lives on PaymentDetails.orderDiscount for
   /// list rollups. Always the computed amount regardless of how the discount
   /// was entered — see discountMode/discountValue for the original input.
-  discount Decimal @default(0) @db.Decimal(12, 2) @map("discount")
+  discount Decimal @default(0) @map("discount") @db.Decimal(12, 2)
 
   /// How the technician entered this line's discount — a percentage of the
   /// line's price, or a direct amount. NULL for rows created before this field
@@ -6660,11 +6970,14 @@ model OrderItem {
   outsourceCenterId String?          @map("outsource_center_id")
   outsourceCenter   OutsourceCenter? @relation(fields: [outsourceCenterId], references: [id])
 
-  /// Technician Reporting lifecycle (1:1). Created by
+  /// Technician Reporting lifecycle. One row for a non-panel item, or a
+  /// grandfathered pre-breakdown panel item; several rows (one per member
+  /// test) for a panel item created after the per-member-test breakdown
+  /// shipped — see `LabReport`'s own doc comment. Created by
   /// LabReportService.ensureCreatedForAcceptedItem, triggered by Accession's
-  /// own sample lifecycle reaching ACCEPTED (see LabReport doc comment) —
-  /// absent until then, so a not-yet-accepted item has no report row at all.
-  labReport LabReport?
+  /// own sample lifecycle reaching ACCEPTED — empty until then, so a
+  /// not-yet-accepted item has no report rows at all.
+  labReports LabReport[]
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -6720,23 +7033,42 @@ enum LabReportStatus {
 
 /// One row per test-line-within-an-order that has entered the Reporting
 /// workflow. Distinct from `OrderItem` (the billed catalogue line) — a panel
-/// order item's several parameters are tracked as child `LabReportResultValue`
-/// rows, not as multiple `LabReport` rows; the whole panel/test line advances
-/// through the lifecycle together (LABORATORY.docx §2.2 applies status changes
-/// to "the report", not to individual parameters).
+/// order item now yields one `LabReport` per member test (`memberBranchLabTestId`
+/// set to that member's `BranchLabTest.id`), each independently advancing
+/// through the lifecycle (LABORATORY.docx §2.2's status-change rule applies per
+/// member test now, not to the whole panel line). `memberBranchLabTestId` is
+/// null for a non-panel report, and also null for a panel report created
+/// before this per-member-test breakdown shipped — those older rows are
+/// permanently grandfathered as a single combined row (their several
+/// parameters stay tracked as flattened `LabReportResultValue` children of
+/// that one row); distinguishing "old panel" from "non-panel" in that null
+/// case requires checking `OrderItem.branchLabPanelId` is set, not just this
+/// field alone.
 ///
 /// `labTestId` is a denormalized snapshot of the tenant-level `LabTest` this
-/// report's catalogue entry originated from, resolved at creation time via the
-/// logical chain `OrderItem.branchLabTestId -> BranchLabTest.sourceLabTestId`.
-/// Nullable: a branch-only test (no tenant `LabTest` source) has no result-param
-/// catalogue to resolve against.
+/// report's catalogue entry originated from — for a non-panel report, resolved
+/// via `OrderItem.branchLabTestId -> BranchLabTest.sourceLabTestId`; for a
+/// (new-style) panel-member report, via `memberBranchLabTestId ->
+/// BranchLabTest.sourceLabTestId`. Nullable: a branch-only test (no tenant
+/// `LabTest` source) has no result-param catalogue to resolve against, and a
+/// grandfathered old-style panel report never had a single `labTestId` to
+/// begin with.
 model LabReport {
   id       String  @id @default(uuid())
   tenantId String  @map("tenant_id")
   branchId String? @map("branch_id")
 
-  orderItemId String    @unique @map("order_item_id")
+  orderItemId String    @map("order_item_id")
   orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  /// Which panel member test this report is for (a `BranchLabTest.id`, logical
+  /// ref — no Prisma relation, matching `BranchLabTest`'s own no-relation
+  /// provenance convention). Null for a non-panel report or a grandfathered
+  /// pre-breakdown panel report — see the model doc comment above for how to
+  /// tell those two null cases apart. Together with `orderItemId`, this now
+  /// keys uniqueness (see `@@unique` below) instead of `orderItemId` alone,
+  /// since one panel `OrderItem` can back several `LabReport` rows.
+  memberBranchLabTestId String? @map("member_branch_lab_test_id")
 
   labTestId String? @map("lab_test_id")
 
@@ -6835,10 +7167,19 @@ model LabReport {
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
+  /// Composite, not single-column: one panel `OrderItem` can now back several
+  /// `LabReport` rows (one per member test). Postgres treats each NULL
+  /// `memberBranchLabTestId` as distinct, so this does NOT by itself stop two
+  /// non-panel reports sharing an `orderItemId` from both existing — that
+  /// guarantee is enforced in application code by `createReportForAcceptedItem`'s
+  /// idempotency check, not the database, for the null case specifically.
+  @@unique([orderItemId, memberBranchLabTestId])
+  @@index([orderItemId])
   @@index([tenantId])
   @@index([branchId])
   @@index([status])
   @@index([labTestId])
+  @@index([memberBranchLabTestId])
   @@index([isOutsourced])
   @@index([tatBand])
   @@index([deletedAt])
@@ -6852,6 +7193,7 @@ model LabReport {
 enum ResultValueSource {
   MANUAL
   ADAPTER
+  CALCULATED
 }
 
 /// One entered/transferred value per result parameter per report. `resultParamId`
@@ -7447,38 +7789,44 @@ model PaymentDetails {
   orderId String @map("order_id")
   order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
-  totalAmount            Decimal     @default(0) @db.Decimal(12, 2) @map("total_amount")
-  orderDiscount          Decimal     @default(0) @db.Decimal(12, 2) @map("order_discount")
+  totalAmount            Decimal     @default(0) @map("total_amount") @db.Decimal(12, 2)
+  orderDiscount          Decimal     @default(0) @map("order_discount") @db.Decimal(12, 2)
   /// Total discount applied to the order = every per-line item discount PLUS the
   /// order-level `orderDiscount` above, in rupees (up to 2 decimal places). A
   /// denormalized runtime rollup (`totalAmount - netAmount`) stored for bill
   /// display/reporting; the item-level (`OrderItem.discount`) and order-level
   /// (`orderDiscount`) discounts remain their own separate columns.
-  netDiscount            Decimal     @default(0) @db.Decimal(12, 2) @map("net_discount")
-  visitingCharges        Decimal     @default(0) @db.Decimal(12, 2) @map("visiting_charges")
-  netAmount              Decimal     @default(0) @db.Decimal(12, 2) @map("net_amount")
-  deductFromWallet       Decimal     @default(0) @db.Decimal(12, 2) @map("deduct_from_wallet")
-  deductFromPoints       Decimal     @default(0) @db.Decimal(12, 2) @map("deduct_from_points")
+  netDiscount            Decimal     @default(0) @map("net_discount") @db.Decimal(12, 2)
+  visitingCharges        Decimal     @default(0) @map("visiting_charges") @db.Decimal(12, 2)
+  netAmount              Decimal     @default(0) @map("net_amount") @db.Decimal(12, 2)
+  deductFromWallet       Decimal     @default(0) @map("deduct_from_wallet") @db.Decimal(12, 2)
+  deductFromPoints       Decimal     @default(0) @map("deduct_from_points") @db.Decimal(12, 2)
   hasClearedPreviousDues Boolean     @default(false) @map("has_cleared_previous_dues")
-  tdsDeduction           Decimal     @default(0) @db.Decimal(12, 2) @map("tds_deduction")
-  payableAmount          Decimal     @default(0) @db.Decimal(12, 2) @map("payable_amount")
-  paidAmount             Decimal     @default(0) @db.Decimal(12, 2) @map("paid_amount")
-  remainingBalance       Decimal     @default(0) @db.Decimal(12, 2) @map("remaining_balance")
+  tdsDeduction           Decimal     @default(0) @map("tds_deduction") @db.Decimal(12, 2)
+  payableAmount          Decimal     @default(0) @map("payable_amount") @db.Decimal(12, 2)
+  paidAmount             Decimal     @default(0) @map("paid_amount") @db.Decimal(12, 2)
+  remainingBalance       Decimal     @default(0) @map("remaining_balance") @db.Decimal(12, 2)
   paymentMode            PaymentMode @default(CASH) @map("payment_mode")
   paymentDate            DateTime?   @map("payment_date")
   reference              String?     @map("reference")
   notes                  String?
+
+  /// The staff `Person` who collected/recorded this payment (logical ref, no
+  /// FK — same no-FK-on-personId convention as `OrderSample.collectedBy`).
+  /// Null on rows written before this field existed (no retroactive backfill
+  /// possible — historical payments never captured who collected them).
+  collectedBy String? @map("collected_by")
 
   /// Ledger entry kind. PAYMENT (default) = money collected (`paidAmount`).
   /// REFUND = money returned to the patient (`refundAmount`, `paidAmount` stays 0).
   entryType    PaymentEntryType @default(PAYMENT) @map("entry_type")
   /// For REFUND rows: amount returned to the patient (rupees, up to 2 decimal
   /// places). 0 on PAYMENT rows.
-  refundAmount Decimal          @default(0) @db.Decimal(12, 2) @map("refund_amount")
+  refundAmount Decimal          @default(0) @map("refund_amount") @db.Decimal(12, 2)
   /// For REFUND rows created via a standalone "Refund Without Cancellation":
   /// fee retained by the lab out of the refund (rupees, up to 2 decimal places).
   /// 0 otherwise.
-  refundCharge Decimal          @default(0) @db.Decimal(12, 2) @map("refund_charge")
+  refundCharge Decimal          @default(0) @map("refund_charge") @db.Decimal(12, 2)
 
   // Settlement links that consolidated this collected payment (back-relation).
   // A payment may back multiple active links (partial re-settlement); it is
@@ -7741,7 +8089,7 @@ model OrderSample {
   labTestSampleId String  @map("lab_test_sample_id")
   departmentId    String? @map("department_id")
 
-  accessionNo String  @map("accession_no")
+  accessionNo    String  @map("accession_no")
   // `barcode` is the barcode VALUE/ID (system-sequential from 10001, shared across
   // a grouping bucket); `orderIdBarcode` is the S3 URL of the rendered Code 39
   // image asset. Both are set together by barcode assignment.
@@ -7995,6 +8343,19 @@ model AccessionSetting {
   /// System-managed running counter — never accepted from the client.
   SampleBarcodeSettings_CurrentNumber Int                        @default(0) @map("sample_barcode_settings_current_number")
   SampleBarcodeSettings_LastResetAt   DateTime?                  @map("sample_barcode_settings_last_reset_at")
+
+  // ── Order Barcode Settings ──
+  // Dedicated to the ORDER-level barcode (generated at order creation). A separate
+  // entity/counter/format from the sample barcode above — order and sample numbers
+  // may coincide. Same field convention + reuses the shared BarcodeService logic.
+  OrderBarcodeSettings_Prefix        String                     @default("") @map("order_barcode_settings_prefix") @db.VarChar(24)
+  OrderBarcodeSettings_Suffix        String                     @default("") @map("order_barcode_settings_suffix") @db.VarChar(24)
+  OrderBarcodeSettings_Separator     AccessionBarcodeSeparator  @default(NONE) @map("order_barcode_settings_separator")
+  OrderBarcodeSettings_NumberLength  Int                        @default(5) @map("order_barcode_settings_number_length")
+  OrderBarcodeSettings_ResetInterval AccessionBarcodeResetCycle @default(NEVER) @map("order_barcode_settings_reset_interval")
+  /// System-managed running counter — never accepted from the client.
+  OrderBarcodeSettings_CurrentNumber Int                        @default(0) @map("order_barcode_settings_current_number")
+  OrderBarcodeSettings_LastResetAt   DateTime?                  @map("order_barcode_settings_last_reset_at")
 
   // ── Accession (TAT / acceptance-window / barcode-mapping toggles) ──
   Accession_MinimumTimeToAcceptSampleMinutes           Int @default(10) @map("accession_min_time_to_accept_sample_minutes")

@@ -1,0 +1,89 @@
+meta {
+  name: 99 Notification Test Flow
+  seq: 99
+}
+
+docs {
+  # Notification Test Flow
+
+  End-to-end automation for the patient notification templates. Run the
+  requests top-to-bottom (they capture ids into env vars as they go):
+
+    Auth → Create global templates (Site Admin) → Enable/clone for the
+    business (priya) → Enable channels → Create test data → Trigger the 5
+    events → Verify the resolved notifications.
+
+  ## Select the environment
+  Pick the **NotificationTest** environment before running, and set the two
+  secret vars (never stored in the collection):
+    - BUSINESS_PASSWORD   → password for priya@email.com
+    - SITEADMIN_PASSWORD  → Site Admin password (seeded default: SuperSecret1)
+
+  ## What it creates
+  One diagnostic EMAIL template per feature, whose body prints EVERY supported
+  placeholder as `label: {tag}` so you can confirm each one resolves:
+
+    - lab_create_order_inform_patient            (Lab Create Order)
+    - lab_order_report_published_inform_patient  (Lab Report Completed / Published)
+    - lab_order_completed_inform_patient         (Lab Order Completed)
+    - complete_payment_for_lab_order_inform_patient
+    - partial_payment_for_lab_order_inform_patient
+
+  EMAIL is used because the resolved body is stored verbatim on the
+  CommunicationLog row (viewable in "50 Verify — Communications") even if the
+  outbound Exchange gateway is not configured. To also test WhatsApp, duplicate
+  the "Create Global" requests with `preference: WHATSAPP` plus `templateType`
+  and `templateCategory` (WhatsApp renders params positionally, so it is harder
+  to eyeball — EMAIL is the clean verification path).
+
+  ## Triggers
+    1. Create Order        → POST /orders (status ORDER)      → lab_create_order
+    2. Partial Payment     → POST /payments (part of balance)  → partial_payment
+    3. Complete Payment    → POST /payments (clears balance)   → complete_payment
+    4. Publish Lab Report  → POST /lab-reports/:id/publish      → report published
+    5. Complete Order      → publish ALL reports on the order   → order completed
+
+  Scenarios 4 & 5 need an order with REAL catalogue lab tests whose reports have
+  been taken through the reporting workflow to at least APPROVED. The free-text
+  "direct" order created here has no reports, so those two requests include
+  discovery + notes (see their docs).
+
+  ## IMPORTANT — template precedence (read this)
+  Delivery resolves the most-specific ACTIVE template, in order:
+      (1) tenant + branch   →   (2) tenant + null (tenant-level)   →   (3) global
+  and the notification dispatch passes a branch for some events but NOT others:
+      - order.created, lab-report.published, order.completed → dispatch WITH the
+        event's branch, so a BRANCH-LEVEL template (the clone from requests
+        20-24, created in priya's active branch) WINS.
+      - payment.received (partial & complete) → dispatch with branch = null, so
+        only tenant-level / global templates are considered.
+
+  Consequence on a tenant that ALREADY has its own templates (priya's does — it
+  has tenant-level, isDefault templates for every feature/channel):
+      - Create Order / Report Published / Order Completed → the branch clone
+        wins → your tag body renders.  ✅
+      - Partial / Complete Payment → resolve tenant-wide to the tenant's
+        EXISTING tenant-level template, which the SITE_ADMIN global cannot beat.
+        priya only has branch-level (doctor) profiles, so she CANNOT edit the
+        tenant-level payment templates.  ⚠️
+
+  On a FRESH tenant (no own templates) all five resolve straight from the
+  SITE_ADMIN globals — nothing shadows them. ✅
+
+  ### To render the tag body for the 2 payment events on an existing tenant
+  Sign in as a BUSINESS_ADMIN (a tenant-level, branch = null profile) of that
+  tenant and either:
+    a) PATCH the tenant-level partial/complete payment templates' `template`
+       field to the diagnostic body (GET /templates?preference=EMAIL then
+       PATCH /templates/:id), or
+    b) create tenant-level templates (POST /templates from a business_admin
+       session so branchId is null) with isDefault=true.
+  A branch-scoped session (like priya's) cannot do either — findById/list scope
+  by the caller's branch, and payment dispatch ignores branch templates.
+
+  ## Verifying (works even with no live gateway)
+  Each triggered event writes a CommunicationLog row PER channel with the
+  RESOLVED body already substituted (EMAIL) or positional templateParams
+  (WhatsApp) — inspect them in "50 Verify - Communications". The outbound
+  Exchange gateway does not need to be configured to verify tag resolution.
+}

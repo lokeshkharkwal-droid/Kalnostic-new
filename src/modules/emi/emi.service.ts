@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
+  AdapterAction,
   LabAdapter,
   LabReportStatus,
   OrderStatus,
@@ -8,6 +9,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UploadsService } from '../uploads/uploads.service';
+import { AdapterLogsService } from '../adapter-logs/adapter-logs.service';
 import {
   SubmitResultBody,
   EmiTestResult,
@@ -62,7 +64,7 @@ const ORDER_INCLUDE = {
         },
       },
       branchLabPanel: { select: { id: true, panelName: true } },
-      labReport: true,
+      labReports: { where: { deletedAt: null } },
     },
   },
 } satisfies Prisma.OrderInclude;
@@ -109,7 +111,53 @@ export class EmiService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly uploads: UploadsService,
+    private readonly adapterLogs: AdapterLogsService,
   ) {}
+
+  /**
+   * Record a lightweight `adapter_logs` transaction row for one EMI call so it
+   * surfaces in the Adapter Logs support listing (Site Admin / Business Admin /
+   * Branch Admin). Fire-and-forget via {@link AdapterLogsService.record}; never
+   * blocks or fails the machine response. The legacy `s` code maps to the
+   * numeric `statusCode` and a textual `status` (`SUCCESS` for 200/199, else
+   * `FAILED`). The request payload is stored compactly (no base64 supplements)
+   * and both payloads are length-capped.
+   * @param adapter the authenticating adapter (tenant + token)
+   * @param action which EMI operation (`ORDERS` / `SUBMIT_RESULT`)
+   * @param sourceIp caller IP
+   * @param request compact request summary (already stringified)
+   * @param envelope the legacy `{ s, m, … }` response returned to the machine
+   * @param branchId the resolved order's branch (null when not location-bound)
+   */
+  private recordAdapterLog(
+    adapter: LabAdapter,
+    action: AdapterAction,
+    sourceIp: string | null,
+    request: string,
+    envelope: { s?: string } | null | undefined,
+    branchId: string | null,
+  ): void {
+    const s = envelope?.s;
+    const code = s !== undefined ? Number(s) : NaN;
+    const ok = s === EMI.OK || s === EMI.EMPTY;
+    this.adapterLogs.record({
+      tenantId: adapter.tenantId,
+      branchId,
+      token: adapter.token,
+      action,
+      status: ok ? 'SUCCESS' : 'FAILED',
+      statusCode: Number.isFinite(code) ? code : null,
+      sourceIpAddress: sourceIp,
+      request: this.capPayload(request),
+      response: this.capPayload(JSON.stringify(envelope ?? {})),
+    });
+  }
+
+  /** Cap a stored request/response payload so a huge machine body can't bloat the log row. */
+  private capPayload(text: string): string {
+    const MAX = 8000;
+    return text.length > MAX ? `${text.slice(0, MAX)}… [truncated]` : text;
+  }
 
   /**
    * Resolve the authenticating adapter from the raw `TOKEN` header value. Because
@@ -152,78 +200,98 @@ export class EmiService {
   async getOrders(
     adapter: LabAdapter,
     specimenId: string | undefined,
+    sourceIp: string | null = null,
   ): Promise<EmiOrdersResponse> {
     const code = specimenId?.trim();
-    if (!code) {
-      return { s: EMI.BAD_REQUEST, m: 'Missing specimen id' };
-    }
+    let branchId: string | null = null;
 
-    return this.prisma.withTenant(adapter.tenantId, async (tx) => {
-      const ctx = await this.resolveContext(tx, adapter);
-      const order = await this.findOrder(tx, adapter.tenantId, code, ctx);
-      if (!order) {
-        return { s: EMI.BAD_REQUEST, m: 'Specimen id not found' };
-      }
+    const envelope: EmiOrdersResponse = !code
+      ? { s: EMI.BAD_REQUEST, m: 'Missing specimen id' }
+      : await this.prisma.withTenant(adapter.tenantId, async (tx) => {
+          const ctx = await this.resolveContext(tx, adapter);
+          const order = await this.findOrder(tx, adapter.tenantId, code, ctx);
+          if (!order) {
+            return { s: EMI.BAD_REQUEST, m: 'Specimen id not found' };
+          }
+          branchId = order.branchId;
 
-      const tenant = await tx.tenant.findUnique({
-        where: { id: adapter.tenantId },
-        select: { name: true },
-      });
+          const tenant = await tx.tenant.findUnique({
+            where: { id: adapter.tenantId },
+            select: { name: true },
+          });
 
-      // ut_ids: for each mapped + still-fillable test on this order, the test's
-      // display NAME plus each of its result-parameter NAMES (deduped) — the
-      // legacy `getFormattedOrder` shape the analyzers are calibrated against
-      // (they send these same strings back as `universal_test_id` on submit).
-      const utIds: string[] = [];
-      const pushUnique = (name: string | null | undefined): void => {
-        const v = name?.trim();
-        if (v && !utIds.includes(v)) {
-          utIds.push(v);
-        }
-      };
-      for (const item of order.items) {
-        if (
-          !item.branchLabTestId ||
-          !ctx.mappedTestIds.has(item.branchLabTestId)
-        ) {
-          continue;
-        }
-        const report = item.labReport;
-        const fillable =
-          !report || (FILLABLE_STATUSES.has(report.status) && !report.isLocked);
-        if (!fillable) {
-          continue;
-        }
-        pushUnique(item.branchLabTest?.testName);
-        const labTestId =
-          report?.labTestId ?? item.branchLabTest?.sourceLabTestId ?? null;
-        const params = await this.resolveParams(tx, labTestId, item);
-        for (const p of params) {
-          pushUnique(p.parameterName);
-        }
-      }
+          // ut_ids: for each mapped + still-fillable test on this order, the test's
+          // display NAME plus each of its result-parameter NAMES (deduped) — the
+          // legacy `getFormattedOrder` shape the analyzers are calibrated against
+          // (they send these same strings back as `universal_test_id` on submit).
+          const utIds: string[] = [];
+          const pushUnique = (name: string | null | undefined): void => {
+            const v = name?.trim();
+            if (v && !utIds.includes(v)) {
+              utIds.push(v);
+            }
+          };
+          for (const item of order.items) {
+            if (
+              !item.branchLabTestId ||
+              !ctx.mappedTestIds.has(item.branchLabTestId)
+            ) {
+              continue;
+            }
+            // `item.branchLabTestId` is set (checked above), so this is never
+            // a panel item — panel items are excluded by the DB CHECK
+            // constraint that makes `branchLabTestId`/`branchLabPanelId`
+            // mutually exclusive, so `labReports` here has at most one entry.
+            const report = item.labReports[0];
+            const fillable =
+              !report ||
+              (FILLABLE_STATUSES.has(report.status) && !report.isLocked);
+            if (!fillable) {
+              continue;
+            }
+            pushUnique(item.branchLabTest?.testName);
+            const labTestId =
+              report?.labTestId ?? item.branchLabTest?.sourceLabTestId ?? null;
+            const params = await this.resolveParams(tx, labTestId, item);
+            for (const p of params) {
+              pushUnique(p.parameterName);
+            }
+          }
 
-      const doctor = order.referredByDoctor;
-      const doctorName = doctor
-        ? [doctor.firstName, doctor.lastName].filter(Boolean).join(' ').trim()
-        : '';
+          const doctor = order.referredByDoctor;
+          const doctorName = doctor
+            ? [doctor.firstName, doctor.lastName]
+                .filter(Boolean)
+                .join(' ')
+                .trim()
+            : '';
 
-      const row: EmiOrderRow = {
-        specimen_id: code,
-        order_date: toEpochSeconds(order.orderDate),
-        patient_id: order.patient.umId ?? order.patient.id,
-        patient_name: order.patient.firstName,
-        patient_surname: order.patient.lastName ?? '',
-        birth_date: toEpochSeconds(order.patient.dateOfBirth),
-        patient_gender: genderInitial(order.patient.gender),
-        admission_number: order.orderCode,
-        sender_organization: tenant?.name ?? '',
-        sender_doctor: doctorName,
-        ut_ids: utIds,
-      };
+          const row: EmiOrderRow = {
+            specimen_id: code,
+            order_date: toEpochSeconds(order.orderDate),
+            patient_id: order.patient.umId ?? order.patient.id,
+            patient_name: order.patient.firstName,
+            patient_surname: order.patient.lastName ?? '',
+            birth_date: toEpochSeconds(order.patient.dateOfBirth),
+            patient_gender: genderInitial(order.patient.gender),
+            admission_number: order.orderCode,
+            sender_organization: tenant?.name ?? '',
+            sender_doctor: doctorName,
+            ut_ids: utIds,
+          };
 
-      return { s: EMI.OK, orders: [row] };
-    });
+          return { s: EMI.OK, orders: [row] };
+        });
+
+    this.recordAdapterLog(
+      adapter,
+      AdapterAction.ORDERS,
+      sourceIp,
+      JSON.stringify({ specimen_id: code ?? specimenId ?? null }),
+      envelope,
+      branchId,
+    );
+    return envelope;
   }
 
   /**
@@ -256,6 +324,7 @@ export class EmiService {
     // 5s timeout would roll back the fill).
     const filledReportIds: string[] = [];
     let filledOrderCode = '';
+    let loggedBranchId: string | null = null;
 
     const envelope = await this.prisma.withTenant(
       adapter.tenantId,
@@ -265,6 +334,7 @@ export class EmiService {
         const order = code
           ? await this.findOrder(tx, adapter.tenantId, code, ctx)
           : null;
+        loggedBranchId = order?.branchId ?? null;
 
         // Common audit-row writer (one row per submission).
         const writeAudit = (
@@ -354,106 +424,110 @@ export class EmiService {
         const log: EmiReportLog[] = [];
         let updatedCount = 0;
 
+        // Each item now carries one report (non-panel/grandfathered-panel) or
+        // several (one per member test, for a panel created after the
+        // per-member-test breakdown shipped) — loop every report, not just
+        // the first, so a multi-report panel item still gets one log line
+        // and one fill attempt per member test instead of silently only
+        // handling the first.
         for (const item of order.items) {
-          const report = item.labReport;
-          if (!report) {
-            continue; // no reporting row yet (sample not accepted) → nothing to fill
-          }
-          const reportName =
-            item.branchLabTest?.testName ??
-            item.branchLabPanel?.panelName ??
-            '';
-          const base: EmiReportLog = {
-            report_id: report.id,
-            report_name: reportName,
-            status: report.status,
-            before_report_status: report.status,
-            fill_status: '',
-            available_branches: ctx.branchIds,
-            branch_id: order.branchId,
-          };
+          for (const report of item.labReports) {
+            const reportName =
+              item.branchLabTest?.testName ??
+              item.branchLabPanel?.panelName ??
+              '';
+            const base: EmiReportLog = {
+              report_id: report.id,
+              report_name: reportName,
+              status: report.status,
+              before_report_status: report.status,
+              fill_status: '',
+              available_branches: ctx.branchIds,
+              branch_id: order.branchId,
+            };
 
-          // Not fillable (terminal status / locked).
-          if (!FILLABLE_STATUSES.has(report.status) || report.isLocked) {
-            log.push({
-              ...base,
-              fill_status: 'Not filled due to report status is not pending.',
-            });
-            continue;
-          }
+            // Not fillable (terminal status / locked).
+            if (!FILLABLE_STATUSES.has(report.status) || report.isLocked) {
+              log.push({
+                ...base,
+                fill_status: 'Not filled due to report status is not pending.',
+              });
+              continue;
+            }
 
-          // Not one of the adapter's prefered (mapped) tests.
-          if (
-            !item.branchLabTestId ||
-            !ctx.mappedTestIds.has(item.branchLabTestId)
-          ) {
-            log.push({
-              ...base,
-              fill_status: `${reportName} Not in prefered test list`,
-            });
-            continue;
-          }
+            // Not one of the adapter's prefered (mapped) tests.
+            if (
+              !item.branchLabTestId ||
+              !ctx.mappedTestIds.has(item.branchLabTestId)
+            ) {
+              log.push({
+                ...base,
+                fill_status: `${reportName} Not in prefered test list`,
+              });
+              continue;
+            }
 
-          const params = await this.resolveParams(tx, report.labTestId, item);
-          const matches = this.matchValues(
-            params,
-            submitted,
-            item.branchLabTest,
-          );
-          if (matches.length === 0) {
-            log.push({
-              ...base,
-              fill_status: 'No matching result value for this report',
-            });
-            continue;
-          }
+            const params = await this.resolveParams(tx, report.labTestId, item);
+            const matches = this.matchValues(
+              params,
+              submitted,
+              item.branchLabTest,
+            );
+            if (matches.length === 0) {
+              log.push({
+                ...base,
+                fill_status: 'No matching result value for this report',
+              });
+              continue;
+            }
 
-          for (const match of matches) {
-            await tx.labReportResultValue.upsert({
-              where: {
-                labReportId_resultParamId: {
+            for (const match of matches) {
+              await tx.labReportResultValue.upsert({
+                where: {
+                  labReportId_resultParamId: {
+                    labReportId: report.id,
+                    resultParamId: match.resultParamId,
+                  },
+                },
+                create: {
+                  tenantId: adapter.tenantId,
                   labReportId: report.id,
                   resultParamId: match.resultParamId,
+                  observed1: match.value,
+                  unit: match.unit,
+                  source: ResultValueSource.ADAPTER,
+                  enteredAt,
+                  enteredBy: adapter.id,
                 },
-              },
-              create: {
-                tenantId: adapter.tenantId,
-                labReportId: report.id,
-                resultParamId: match.resultParamId,
-                observed1: match.value,
-                unit: match.unit,
-                source: ResultValueSource.ADAPTER,
-                enteredAt,
-                enteredBy: adapter.id,
-              },
-              update: {
-                observed1: match.value,
-                unit: match.unit,
-                source: ResultValueSource.ADAPTER,
-                enteredAt,
-                enteredBy: adapter.id,
-                deletedAt: null,
+                update: {
+                  observed1: match.value,
+                  unit: match.unit,
+                  source: ResultValueSource.ADAPTER,
+                  enteredAt,
+                  enteredBy: adapter.id,
+                  deletedAt: null,
+                },
+              });
+            }
+
+            await tx.labReport.update({
+              where: { id: report.id },
+              data: {
+                status: LabReportStatus.SAVED,
+                savedAt: now,
+                savedBy: adapter.id,
               },
             });
-          }
 
-          await tx.labReport.update({
-            where: { id: report.id },
-            data: {
+            updatedCount += 1;
+            filledReportIds.push(report.id);
+            filledOrderCode = order.orderCode;
+            log.push({
+              ...base,
               status: LabReportStatus.SAVED,
-              savedAt: now,
-              savedBy: adapter.id,
-            },
-          });
-
-          updatedCount += 1;
-          filledReportIds.push(report.id);
-          filledOrderCode = order.orderCode;
-          log.push({
-            ...base,
-            status: LabReportStatus.SAVED,
-            fill_status: 'Report filled',
-          });
+              fill_status: 'Report filled',
+            });
+          }
         }
 
         const reportLog = {
@@ -503,6 +577,18 @@ export class EmiService {
         supplements,
       );
     }
+
+    this.recordAdapterLog(
+      adapter,
+      AdapterAction.SUBMIT_RESULT,
+      sourceIp,
+      JSON.stringify({
+        tube_no: body.tube_no ?? null,
+        test_results: testResults,
+      }),
+      envelope,
+      loggedBranchId,
+    );
     return envelope;
   }
 

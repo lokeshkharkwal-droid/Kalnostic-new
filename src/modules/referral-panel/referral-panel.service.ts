@@ -191,6 +191,9 @@ export class ReferralPanelService {
    * @param branchId active branch from the JWT (null → no list assignment written)
    * @param actorId person id recorded as created-by on the list assignment (or null)
    * @param dto validated payload (no `code`/`tenantId` — set here / from context)
+   * @param options.legacyId source EzHealthTrack referring_panels.id, stored for
+   *   idempotent data migration + traceability (migration tooling only; never
+   *   client-supplied)
    * @returns the created panel, with the resolved list assignment (enriched)
    * @throws InvalidCommissionConfigException on a commission/incentive invariant
    * @throws ReferralPanelNameConflictException / ReferralPanelCodeConflictException
@@ -200,6 +203,7 @@ export class ReferralPanelService {
     branchId: string | null,
     actorId: string | null,
     dto: CreateReferralPanelDto,
+    options?: { legacyId?: number | null },
   ): Promise<ReferralPanelEntity> {
     const commissionEff: CommissionEffective = {
       isCommissionApplicable: dto.isCommissionApplicable ?? false,
@@ -282,6 +286,7 @@ export class ReferralPanelService {
           fileName: dto.fileName ?? null,
           fileUrl: dto.fileUrl ?? null,
           remarks: dto.remarks ?? null,
+          legacyId: options?.legacyId ?? null,
         };
 
         const panel = await tx.referralPanel.create({ data });
@@ -348,13 +353,18 @@ export class ReferralPanelService {
    * List active referral panels for a tenant (offset pagination). `search` matches
    * the panel `name` or the user-supplied `panelCode` (case-insensitive);
    * `clientType` filters by billing relationship; `status` (ACTIVE/INACTIVE) maps
-   * to `isActive`; `branchId` restricts to panels scoped to that branch.
+   * to `isActive`; `branchId` restricts to panels scoped to that branch. Each row
+   * is enriched with the active branch's assigned Lab Test List / Lab Panel List
+   * (bulk-resolved in a fixed number of extra queries, never per-row).
    * @param tenantId tenant scope
+   * @param activeBranchId caller's active branch (from JWT); used to resolve the
+   *   Lab Test/Panel List assignment, distinct from the `branchId` query filter
    * @param query pagination + optional `search` (panel name / panel code),
    *   `clientType`, `status`, and `branchId` filters
    */
   async findAll(
     tenantId: string,
+    activeBranchId: string | null,
     query: ListReferralPanelsDto,
   ): Promise<PaginatedResult<ReferralPanelListItem>> {
     const page = query.page ?? 1;
@@ -387,7 +397,18 @@ export class ReferralPanelService {
       }),
       this.prisma.referralPanel.count({ where }),
     ]);
-    const data: ReferralPanelListItem[] = rows;
+    const assignments =
+      await this.listAssignmentService.getAssignmentsWithListNames(
+        tenantId,
+        activeBranchId,
+        ReferralType.PANEL,
+        rows.map((r) => r.id),
+      );
+    const data: ReferralPanelListItem[] = rows.map((r) => ({
+      ...r,
+      labTestList: assignments.get(r.id)?.labTestList ?? null,
+      labPanelList: assignments.get(r.id)?.labPanelList ?? null,
+    }));
     return { data, total, page, limit };
   }
 

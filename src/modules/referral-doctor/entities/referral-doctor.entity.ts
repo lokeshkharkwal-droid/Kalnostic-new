@@ -115,4 +115,8 @@ export interface ReferralDoctorListItem {
   tds: number | null;
   paymentCycle: PaymentCycle;
   status: ReferralDoctorStatus;
+  /** Active branch's assigned Lab Test List, bulk-resolved (never per-row). */
+  labTestList: ClassificationRef | null;
+  /** Active branch's assigned Lab Panel List, bulk-resolved (never per-row). */
+  labPanelList: ClassificationRef | null;
 }

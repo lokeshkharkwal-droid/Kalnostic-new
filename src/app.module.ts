@@ -13,6 +13,7 @@ import {
   TenantContextInterceptor,
 } from './common/interceptors';
 import { AuditModule } from './modules/audit/audit.module';
+import { AdapterLogsModule } from './modules/adapter-logs/adapter-logs.module';
 import { BranchModule } from './modules/branch/branch.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { BranchCatalogueModule } from './modules/branch-catalogue/branch-catalogue.module';
@@ -42,6 +43,7 @@ import { ExternalReferralModule } from './modules/external-referral/external-ref
 import { InternalReferralModule } from './modules/internal-referral/internal-referral.module';
 import { MachineModule } from './modules/machine/machine.module';
 import { LabTestSettingsModule } from './modules/lab-test-settings/lab-test-settings.module';
+import { LabTestFieldPermissionsModule } from './modules/lab-test-field-permissions/lab-test-field-permissions.module';
 import { DocumentModule } from './modules/document/document.module';
 import { TemplateModule } from './modules/template/template.module';
 import { PdfReportTemplateModule } from './modules/pdf-report-template/pdf-report-template.module';
@@ -89,6 +91,7 @@ import { FinancePaymentsModule } from './modules/finance-payments/finance-paymen
 import { CommunicationModule } from './modules/communication/communication.module';
 import { EmiModule } from './modules/emi/emi.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
+import { B2bModuleGuard } from './common/guards/b2b-module.guard';
 
 /**
  * Root application module. Wires global infrastructure (config, events,
@@ -121,6 +124,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 
     // Feature + infrastructure modules.
     AuditModule,
+    AdapterLogsModule,
     BranchModule,
     DashboardModule,
     BranchCatalogueModule,
@@ -150,6 +154,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     InternalReferralModule,
     MachineModule,
     LabTestSettingsModule,
+    LabTestFieldPermissionsModule,
     DocumentModule,
     TemplateModule,
     PdfReportTemplateModule,
@@ -201,6 +206,11 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
     // Global business authentication. SiteAdmin routes use @Public() + their
     // own SiteAdminPermissionGuard instead.
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    // Endpoint allow-list for B2B Referring Panel sessions (no-op for every other
+    // role). Declared after JwtAuthGuard so `req.user` is populated. The per-panel
+    // data scope itself is stashed by TenantContextInterceptor (guards run before
+    // interceptors, so the AsyncLocalStorage store only exists at that stage).
+    { provide: APP_GUARD, useClass: B2bModuleGuard },
     // Establishes the per-request tenant context (AsyncLocalStorage) from the
     // JWT so the Prisma RLS extension can scope queries. Runs after the guard.
     { provide: APP_INTERCEPTOR, useClass: TenantContextInterceptor },

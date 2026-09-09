@@ -1,0 +1,22 @@
+meta {
+  name: 20 Enable-Clone - Lab Create Order
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/templates/global/{{tplGlobalLabCreateId}}/clone
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Clones the global lab_create_order template into priya's tenant+branch
+  (the "enable for Business Admin" step). Idempotent — matches on clonedFromId,
+  so re-running won't duplicate. Delivery works even without this (global
+  fallback), but this makes the tenant own an active copy.
+}

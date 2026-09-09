@@ -7,7 +7,6 @@ import {
   Patch,
   Post,
   Query,
-  UseGuards,
 } from '@nestjs/common';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { SubCategoryService } from './sub-category.service';
@@ -16,8 +15,6 @@ import { UpdateSubCategoryDto } from './dto/update-sub-category.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { ListSubCategoryQueryDto } from './dto/list-sub-category-query.dto';
 import { Audit } from '../../common/decorators/audit.decorator';
-import { ProfileGuard } from '../auth/guards/profile.guard';
-import { RequireProfile } from '../auth/decorators/require-profile.decorator';
 
 /**
  * Sub-category endpoints (business-authenticated; tenant comes from the JWT).
@@ -29,11 +26,9 @@ export class SubCategoryController {
 
   /**
    * Create a sub-category in the caller's tenant. Tenant-level only — there is
-   * no provision to add sub-categories at branch level (business_admin only).
+   * no provision to add sub-categories at branch level.
    */
   @Post()
-  @UseGuards(ProfileGuard)
-  @RequireProfile('business_admin')
   @Audit({
     module: AuditModule.SUB_CATEGORY,
     action: AuditAction.CREATE,

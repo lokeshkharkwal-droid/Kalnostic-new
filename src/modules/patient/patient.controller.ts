@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -16,7 +17,10 @@ import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.con
 import { PatientService } from './patient.service';
 import { CreatePatientDto } from './dto/create-patient.dto';
 import { UpdatePatientDto } from './dto/update-patient.dto';
+import { UpdatePatientNotificationPreferencesDto } from './dto/update-patient-notification-preferences.dto';
 import { ListPatientQueryDto } from './dto/list-patient-query.dto';
+import { CrossTenantLookupQueryDto } from './dto/cross-tenant-lookup-query.dto';
+import { ImportCrossTenantPatientDto } from './dto/import-cross-tenant-patient.dto';
 import { Audit } from '../../common/decorators/audit.decorator';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -99,6 +103,43 @@ export class PatientController {
     return this.patientService.getStats(tenantId, profile.branchId);
   }
 
+  /**
+   * Look up a mobile number across ALL tenants via the shared `Person` identity.
+   * Used by order creation when no existing patient is selected, to detect a
+   * patient already registered at another business before a duplicate is created.
+   * Declared before `:id` so the static path isn't captured as a patient id.
+   */
+  @Get('cross-tenant-lookup')
+  crossTenantLookup(
+    @CurrentTenant() tenantId: string,
+    @Query() query: CrossTenantLookupQueryDto,
+  ) {
+    return this.patientService.crossTenantLookup(tenantId, query.phone);
+  }
+
+  /**
+   * Reuse a patient that exists in another tenant: create the caller tenant's own
+   * patient projection linked to the shared identity (idempotent — never
+   * duplicated). Called after the operator confirms the cross-tenant match.
+   */
+  @Post('import-from-person')
+  @Audit({
+    module: AuditModule.PATIENT,
+    action: AuditAction.CREATE,
+    description: 'Reused a cross-tenant patient identity',
+  })
+  importFromPerson(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Body() dto: ImportCrossTenantPatientDto,
+  ) {
+    return this.patientService.importFromPerson(tenantId, dto.personId, {
+      branchId: profile.branchId,
+      actorId: personId,
+    });
+  }
+
   /** Fetch one patient (with active medical-history records). */
   @Get(':id')
   findOne(@CurrentTenant() tenantId: string, @Param('id') id: string) {
@@ -124,6 +165,41 @@ export class PatientController {
       branchId: profile.branchId,
       actorId: personId,
     });
+  }
+
+  /**
+   * Read a patient's notification opt-out preferences (channels they've opted out
+   * of globally + per feature). Used by the Patient Detail preferences UI and by
+   * patient self-service.
+   */
+  @Get(':id/notification-preferences')
+  getNotificationPreferences(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+  ) {
+    return this.patientService.getNotificationPreferences(id, tenantId);
+  }
+
+  /** Replace a patient's notification opt-out preferences. */
+  @Put(':id/notification-preferences')
+  @RequirePermission(PERMISSION_KEYS.REG_UPDATE_PATIENT_DETAILS)
+  @Audit({
+    module: AuditModule.PATIENT,
+    action: AuditAction.UPDATE,
+    description: 'Updated patient notification preferences',
+  })
+  updateNotificationPreferences(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+    @Param('id') id: string,
+    @Body() dto: UpdatePatientNotificationPreferencesDto,
+  ) {
+    return this.patientService.updateNotificationPreferences(
+      id,
+      tenantId,
+      dto,
+      personId,
+    );
   }
 
   /** Soft-delete a patient (and its medical-history records). */

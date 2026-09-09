@@ -123,6 +123,79 @@ export class BarcodeService {
   }
 
   /**
+   * Allocate the next sequential ORDER barcode VALUE for a branch, inside an
+   * existing (already tenant-scoped) transaction. The order barcode is a
+   * **separate entity** from the sample barcode: it advances its own
+   * `AccessionSetting.OrderBarcodeSettings_CurrentNumber` counter with its own
+   * `OrderBarcodeSettings_*` prefix/suffix/separator/number-length/reset-cycle,
+   * and clashes are skipped only against **other orders** (`Order.orderIdBarcode`)
+   * — never against samples, so an order and a sample may legitimately share the
+   * same number. Mirrors {@link allocateNumberInTx} otherwise (10001 floor, same
+   * atomic `{ increment }` row-lock concurrency guarantee via the settings row).
+   * @param tx active Prisma transaction client (already tenant-scoped)
+   * @param tenantId tenant scope
+   * @param branchId active branch (the order-barcode counter is branch-level)
+   * @returns the formatted order barcode value (e.g. `10001`)
+   */
+  async allocateOrderNumberInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    branchId: string,
+  ): Promise<string> {
+    const now = new Date();
+    const row =
+      (await tx.accessionSetting.findFirst({
+        where: { tenantId, branchId, deletedAt: null },
+      })) ??
+      (await tx.accessionSetting.create({ data: { tenantId, branchId } }));
+
+    const didReset = this.shouldReset(
+      row.OrderBarcodeSettings_ResetInterval,
+      row.OrderBarcodeSettings_LastResetAt,
+      now,
+    );
+
+    // Floor the counter (and stamp the reset) before advancing, so the first
+    // emitted value is 10001. This `update` also takes the row lock that
+    // serialises concurrent allocations.
+    const base = didReset ? 0 : row.OrderBarcodeSettings_CurrentNumber;
+    await tx.accessionSetting.update({
+      where: { id: row.id },
+      data: {
+        OrderBarcodeSettings_CurrentNumber: Math.max(
+          base,
+          BARCODE_NUMBER_FLOOR,
+        ),
+        OrderBarcodeSettings_LastResetAt: didReset
+          ? now
+          : (row.OrderBarcodeSettings_LastResetAt ?? now),
+      },
+    });
+
+    // Advance one at a time, skipping any value already taken by another order in
+    // the tenant, until an unused order barcode is found.
+    for (;;) {
+      const advanced = await tx.accessionSetting.update({
+        where: { id: row.id },
+        data: { OrderBarcodeSettings_CurrentNumber: { increment: 1 } },
+        select: { OrderBarcodeSettings_CurrentNumber: true },
+      });
+      const value = this.compose({
+        prefix: row.OrderBarcodeSettings_Prefix,
+        separator: row.OrderBarcodeSettings_Separator,
+        number: advanced.OrderBarcodeSettings_CurrentNumber,
+        numberLength: row.OrderBarcodeSettings_NumberLength,
+        suffix: row.OrderBarcodeSettings_Suffix,
+      });
+      const clash = await tx.order.findFirst({
+        where: { tenantId, orderIdBarcode: value, deletedAt: null },
+        select: { id: true },
+      });
+      if (!clash) return value;
+    }
+  }
+
+  /**
    * Render a barcode value as a Code 39 PNG and upload it to S3.
    * @param value the barcode value/id to encode (e.g. `10001`)
    * @param tenantId owning tenant (namespaces the S3 key)

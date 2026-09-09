@@ -1,4 +1,5 @@
 import {
+  LabReportStatus,
   OrderStatus,
   PaymentStatus,
   Prisma,
@@ -10,13 +11,17 @@ import { roundToTwoDecimalPlaces } from '../../../common/utils';
 /**
  * Derive an order's {@link PaymentStatus} from its payment ledger totals — the
  * summed `netAmount` and `paidAmount` across active `PaymentDetails` rows.
- * `NOT_PAID` when nothing is paid, `PAID` once the paid amount covers the net,
- * otherwise `PARTIALLY_PAID`. Kept as a pure helper so the order create and the
- * payment-details writes agree on the stored value (and the FE mapper mirrors it).
+ * `PAID` when nothing is owed (`net <= 0` — a fully-discounted or zero-value
+ * order has nothing left to collect, regardless of `paid`), `NOT_PAID` when
+ * something is owed and nothing has been paid, `PAID` once the paid amount
+ * covers the net, otherwise `PARTIALLY_PAID`. Kept as a pure helper so the
+ * order create and the payment-details writes agree on the stored value (and
+ * the FE mapper's `deriveStatus` mirrors it — see `mapBill.ts`).
  * @param net summed net amount
  * @param paid summed paid amount
  */
 export function derivePaymentStatus(net: number, paid: number): PaymentStatus {
+  if (net <= 0) return PaymentStatus.PAID;
   if (paid <= 0) return PaymentStatus.NOT_PAID;
   if (paid >= net) return PaymentStatus.PAID;
   return PaymentStatus.PARTIALLY_PAID;
@@ -99,6 +104,86 @@ export function deriveRefundStatus(
 }
 
 /**
+ * Order-level reporting progress, derived per-test from each item's `LabReport`.
+ * Ordered `PENDING < PARTIALLY_COMPLETED < COMPLETED < APPROVED`. This is the
+ * "Order Status" the Order Console renders (and can filter by).
+ */
+export type OrderReportStatus =
+  | 'PENDING'
+  | 'PARTIALLY_COMPLETED'
+  | 'COMPLETED'
+  | 'APPROVED';
+
+/** Report statuses that count a test as having reached "Result Done". */
+const REPORT_DONE_STATUSES: readonly LabReportStatus[] = [
+  LabReportStatus.RESULT_DONE,
+  LabReportStatus.APPROVED,
+  LabReportStatus.PUBLISHED,
+];
+
+/** Report statuses that count a test as "Approved" (published implies approved). */
+const REPORT_APPROVED_STATUSES: readonly LabReportStatus[] = [
+  LabReportStatus.APPROVED,
+  LabReportStatus.PUBLISHED,
+];
+
+/**
+ * Derive an order's {@link OrderReportStatus} from the reporting state of its
+ * tests, counted per **report** (not per billed line/`OrderItem`). Each
+ * active item now has one OR SEVERAL `LabReport`s — a non-panel/
+ * grandfathered-panel item still has exactly one, but a panel item created
+ * after the per-member-test breakdown shipped has one per member test.
+ *
+ * Counting per report (not per item) means a panel's member tests can move
+ * the order into `PARTIALLY_COMPLETED` as each one individually finishes,
+ * the same way separate standalone tests on a multi-item order already did —
+ * previously an item only counted as "done" once EVERY one of its reports
+ * was, so a partially-finished panel stayed invisible as `PENDING` right up
+ * until its very last member test finished.
+ *
+ * An item with zero reports yet (not accepted in Accession, so no `LabReport`
+ * exists) still blocks `COMPLETED`/`APPROVED` — it's treated as one
+ * not-yet-done unit in the denominator, same as before this change, so an
+ * order can't read "Completed" while one of its items hasn't even reached
+ * Accession's Accept step. It contributes nothing to `doneCount`, only to the
+ * total, mirroring `REPORT_DONE_STATUSES`'s all-or-nothing per-unit rule.
+ *
+ * - `APPROVED` — every report on the order reached Approved/Published, and
+ *   every item has at least one report.
+ * - `COMPLETED` — every report reached Result Done (same item-coverage rule),
+ *   but not all are Approved.
+ * - `PARTIALLY_COMPLETED` — at least one report reached Result Done, but not
+ *   every report/item has.
+ * - `PENDING` — no report reached Result Done (or the order has no items/reports).
+ *
+ * @param items the order's active items, each with its `labReports[].status`
+ */
+export function deriveReportStatus(
+  items: { labReports: { status: LabReportStatus }[] }[],
+): OrderReportStatus {
+  if (items.length === 0) return 'PENDING';
+  // Total "units": every report that exists, PLUS one placeholder unit for
+  // each item that has none yet (not accepted) — so a not-yet-accepted item
+  // still counts toward the denominator without contributing a done/approved
+  // report, exactly like before this change.
+  const totalUnits = items.reduce(
+    (n, item) => n + Math.max(item.labReports.length, 1),
+    0,
+  );
+  const reports = items.flatMap((item) => item.labReports);
+  const doneCount = reports.filter((r) =>
+    REPORT_DONE_STATUSES.includes(r.status),
+  ).length;
+  const approvedCount = reports.filter((r) =>
+    REPORT_APPROVED_STATUSES.includes(r.status),
+  ).length;
+  if (approvedCount === totalUnits) return 'APPROVED';
+  if (doneCount === totalUnits) return 'COMPLETED';
+  if (doneCount >= 1) return 'PARTIALLY_COMPLETED';
+  return 'PENDING';
+}
+
+/**
  * Prisma `include` for a fully-composed order read: patient ref, the referral
  * refs (referral doctor / panel and internal / external referral records),
  * catalogue items (active only, with their resolved test/panel — `direct` items
@@ -117,6 +202,7 @@ export const ORDER_INCLUDE = {
       mobile: true,
       gender: true,
       age: true,
+      ageType: true,
       dateOfBirth: true,
       bloodGroup: true,
       email: true,
@@ -334,6 +420,12 @@ export const ORDER_LIST_INCLUDE = {
       branchLabPanel: {
         select: { id: true, panelName: true, panelCode: true },
       },
+      // Reporting progress of this test's report(s) — one LabReport for a
+      // non-panel/grandfathered-panel item, or several (one per member test)
+      // for a panel item created after the per-member-test breakdown shipped.
+      // Created lazily once a linked sample is accepted; empty until then —
+      // that's a "not yet reported" test. Drives the order-level `reportStatus`.
+      labReports: { where: { deletedAt: null }, select: { status: true } },
     },
   },
   diagnostics: {
@@ -499,6 +591,11 @@ export type OrderListRow = Prisma.OrderGetPayload<{
   itemCount: number;
   /** Count of the order's active items with a `collectedAt` timestamp. */
   collectedItemCount: number;
+  /**
+   * Order-level reporting progress, derived per-test from each item's LabReport
+   * ({@link deriveReportStatus}). This is the Order Console's "Order Status".
+   */
+  reportStatus: OrderReportStatus;
   grossAmount: number;
   discountAmount: number;
   netAmount: number;

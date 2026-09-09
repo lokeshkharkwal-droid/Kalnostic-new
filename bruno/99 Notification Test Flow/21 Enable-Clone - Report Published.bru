@@ -1,0 +1,19 @@
+meta {
+  name: 21 Enable-Clone - Report Published
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/templates/global/{{tplGlobalReportPublishedId}}/clone
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Clones the global report-published template into priya's tenant. Idempotent.
+}

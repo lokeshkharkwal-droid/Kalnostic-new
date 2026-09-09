@@ -1,0 +1,43 @@
+meta {
+  name: Update Notification Preferences
+  type: http
+  seq: 21
+}
+
+put {
+  url: {{baseUrl}}/patients/{{patientId}}/notification-preferences
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "optOutChannels": ["SMS"],
+    "optOutFeatures": {
+      "lab_order_report_published_inform_patient": ["WHATSAPP"]
+    }
+  }
+}
+
+docs {
+  Replace a patient's notification opt-out preferences (a full write). Unknown
+  feature keys and non-deliverable channels are sanitised out server-side; an
+  empty result clears the field (opted into everything). Scoped to the caller's
+  tenant.
+
+  Read by `NotificationEnablementService` to gate AUTOMATIC notifications: a
+  channel here is dropped for that patient (globally via `optOutChannels`, or for
+  the specific feature via `optOutFeatures`). Returns the normalised preferences.
+
+  ## Fields (all optional)
+  - `optOutChannels[]`: `EMAIL` | `SMS` | `WHATSAPP` (opt out for all features).
+  - `optOutFeatures`: `{ [FEATURE_TYPES key]: MessagingChannel[] }` (per-feature).
+}

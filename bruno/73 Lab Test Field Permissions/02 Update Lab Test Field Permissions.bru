@@ -1,0 +1,61 @@
+meta {
+  name: Update Lab Test Field Permissions
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{baseUrl}}/business-admin/lab-test-field-permissions
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "config": {
+      "Basic Details": {
+        "Department": false
+      }
+    }
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("Department is now Denied", function () {
+    expect(res.getBody().data.config["Basic Details"]["Department"]).to.equal(false);
+  });
+  test("other Basic Details fields untouched", function () {
+    expect(res.getBody().data.config["Basic Details"]["Test Name"]).to.equal(true);
+  });
+}
+
+docs {
+  🔒 **RBAC:** requires `business_admin:lab_test_master_setting__update_lab_test_master_setting` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+
+  Merge the given `config` into the caller's tenant Lab Test Master Setting
+  overrides (tenant id taken from JWT) and return the fully-resolved map.
+
+  ## Required fields
+  - `config` — `{ [section]: { [field]: boolean } }`. Only the sections/fields
+    being changed need to be included — everything else keeps its current
+    value. Unknown section/field names and non-boolean values are ignored.
+
+  ## Sections & fields
+  `Basic Details`, `Pricing`, `TAT`, `Flags`, `Sample`, `Results`,
+  `Reference Range`, `Reference Value`, `Version Control` — see
+  `GET Lab Test Field Permissions` for the full field list per section.
+
+  Audited under `AuditModule.LAB_TEST_FIELD_PERMISSIONS`
+  (`AuditAction.UPDATE`).
+}

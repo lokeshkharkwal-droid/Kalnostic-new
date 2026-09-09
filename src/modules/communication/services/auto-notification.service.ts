@@ -8,6 +8,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { CommunicationService } from '../communication.service';
 import { NotificationService } from '../notification.service';
 import { TemplateService } from '../../template/template.service';
+import { NotificationEnablementService } from './notification-enablement.service';
 
 /** A recipient's pre-resolved contact for an automatic notification. */
 export interface RecipientContact {
@@ -85,6 +86,7 @@ export class AutoNotificationService {
     private readonly communication: CommunicationService,
     private readonly notifications: NotificationService,
     private readonly templates: TemplateService,
+    private readonly enablement: NotificationEnablementService,
   ) {}
 
   /**
@@ -158,7 +160,22 @@ export class AutoNotificationService {
         );
       }
 
-      for (const channel of spec.channels ?? DELIVERABLE_CHANNELS) {
+      // Gate the requested channels through business capability + override +
+      // per-patient opt-out. Patient opt-out applies only when the recipient is a
+      // patient (their id is `recipientId`). With nothing configured this returns
+      // the requested channels unchanged (backward-compatible).
+      const requested = spec.channels ?? DELIVERABLE_CHANNELS;
+      const enabled = await this.enablement.resolveEnabledChannels(
+        tenantId,
+        branchId,
+        spec.feature,
+        requested,
+        recipient.recipientType === RecipientType.PATIENT
+          ? (recipient.recipientId ?? null)
+          : null,
+      );
+
+      for (const channel of enabled) {
         await this.dispatchChannel(
           tenantId,
           branchId,

@@ -1,0 +1,59 @@
+meta {
+  name: 40 Trigger 1 - Create Order
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+headers {
+  content-type: application/json
+}
+
+script:pre-request {
+  bru.setEnvVar("today", new Date().toISOString().slice(0, 10));
+}
+
+body:json {
+  {
+    "status": "ORDER",
+    "orderDate": "{{today}}",
+    "orderType": "WALK_IN",
+    "billingType": "CASH_CLIENT",
+    "patientId": "{{npatientId}}",
+    "items": [
+      { "direct": "CBC (Complete Blood Count)" },
+      { "direct": "Lipid Profile" }
+    ],
+    "payments": [
+      { "totalAmount": 1000, "netAmount": 1000, "paidAmount": 100, "paymentMode": "CASH" }
+    ]
+  }
+}
+
+script:post-response {
+  const d = res.getBody() && res.getBody().data;
+  if (d && d.id) bru.setEnvVar("norderId", d.id);
+}
+
+docs {
+  ▶ Fires `order.created` → lab_create_order_inform_patient.
+  Creates a real (status ORDER) order for the test patient with two free-text
+  ("direct") tests, net 1000, paid 100 (the tenant's registration rule requires
+  at least 5% collected up-front), leaving a 900 balance for the next two
+  requests to drive partial -> complete. Captures {{norderId}}.
+
+  Resolved tags to expect: test_list = "CBC (Complete Blood Count), Lipid
+  Profile", net_amount = 1000.00, balance_amount = 900.00, lab / branch_* /
+  currency / web_title / weburl / date / time. `{amount}` is blank here (no
+  single payment event). If creation is rejected by registration settings,
+  adjust the body (e.g. raise the up-front paidAmount) to your tenant's rules.
+}

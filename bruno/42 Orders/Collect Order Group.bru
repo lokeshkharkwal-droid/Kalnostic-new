@@ -1,0 +1,55 @@
+meta {
+  name: Collect Order Group
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/orders/{{orderId}}/collect-group
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "sampleIds": ["{{orderSampleId}}"],
+    "print": false
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("order returned", function () {
+    expect(res.getBody().data).to.have.property("id");
+  });
+}
+
+docs {
+  Collect a whole **group** of the order's accession samples at once — the
+  group-wise counterpart of `Collect Order Item`, backing the Product Overview
+  modal's grouped Test Details (Collect / Collect & Print on a group's flat
+  `sampleIds`).
+
+  Body:
+
+  - `sampleIds[]` (required, non-empty UUIDs) — a group's accession sample ids
+    (from `44 Get Order Grouped Samples` → `groups[].sampleIds`).
+  - `print` (optional) — mirrors "Collect & Print": also assign a barcode to any
+    sample in the group that lacks one (`BAR-#####-A`).
+
+  Every collectable sample in the set (NEW / HOLD / REPEAT) is transitioned to
+  COLLECTED in one tenant-scoped transaction (an `AccessionStatusHistory` row is
+  appended), and — because a sample is one physical tube shared by several tests —
+  every sibling order item on a transitioned sample is stamped
+  `collectedAt`/`collectedBy` too. Returns the refreshed, fully-composed order.
+
+  Idempotent: samples already past NEW/HOLD/REPEAT are skipped (no
+  `INVALID_SAMPLE_TRANSITION`); a repeat call on an all-collected group is a
+  no-op. 404 `ORDER_NOT_FOUND` if the order is missing/other-tenant.
+}

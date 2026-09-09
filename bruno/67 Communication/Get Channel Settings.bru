@@ -1,0 +1,31 @@
+meta {
+  name: Get Channel Settings
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/communication/channel-settings
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Read the business's messaging channel capability + per-feature overrides for the
+  active scope (tenant default when the JWT has no active branch, else that branch).
+  Tenant + branch come from the JWT — never the body (CLAUDE.md §4.7).
+
+  These flags/overrides gate which channels AUTOMATIC notifications actually send
+  over (`NotificationEnablementService`). When nothing is configured the read
+  synthesises defaults — every channel enabled, no overrides — which is exactly the
+  backward-compatible behaviour (send over every requested channel).
+
+  ## Response `data`
+  - `branchId`: the scope (null = tenant default).
+  - `isEmailChannelEnabled` / `isSmsChannelEnabled` / `isWhatsappChannelEnabled`.
+  - `overrides[]`: `{ feature, channel, status }` (status `ACTIVE` | `DONT_SEND`).
+}

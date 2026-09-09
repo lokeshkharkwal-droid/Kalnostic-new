@@ -1,4 +1,5 @@
 import { InternalReferralStatus, Prisma } from '@prisma/client';
+import { LabListRef } from '../../referral-list/entities/referral-list.entity';
 
 /**
  * One slab-based commission row as stored in `InternalReferral.commissionSlabs`
@@ -71,8 +72,15 @@ export type InternalReferralListRow = Prisma.InternalReferralGetPayload<{
   select: typeof INTERNAL_REFERRAL_LIST_SELECT;
 }>;
 
-/** The list endpoint response: the selected columns for one internal referral. */
-export type InternalReferralListItem = InternalReferralListRow;
+/**
+ * The list endpoint response: the selected columns for one internal referral,
+ * plus the active branch's assigned Lab Test List / Lab Panel List, bulk-resolved
+ * by `ReferralListAssignmentService.getAssignmentsWithListNames` (never per-row).
+ */
+export type InternalReferralListItem = InternalReferralListRow & {
+  labTestList: LabListRef | null;
+  labPanelList: LabListRef | null;
+};
 
 /** Re-export for convenience at call sites. */
 export type { InternalReferralStatus };

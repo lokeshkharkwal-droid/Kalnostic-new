@@ -74,10 +74,11 @@ docs {
     409 `DEPARTMENT_SHORT_NAME_CONFLICT` otherwise. Editable (see Update).
   - `description` — optional, ≤ 2000 chars.
   - `isActive` — optional, defaults `true`.
-  - `moduleMapping` — REQUIRED array using the same enum as `branchType`:
-    `DIAGNOSTIC`, `RADIOLOGY`, `OPD`, `IPD`, `PHARMACY`, `INVENTORY`,
-    `BLOOD_BANK`, `FRANCHISE`, `COMBINED`, `ASSISTANT`, `ACCESSION`,
-    `TECHNICIAN`. Must be unique (no duplicates).
+  - `moduleMapping` — REQUIRED array of supported modules (a curated subset of
+    the `branchType` enum): `DIAGNOSTIC`, `OPD`, `IPD`, `RADIOLOGY`,
+    `INVENTORY`, `PHARMACY`, `BLOOD_BANK`. Any other value (e.g. `FRANCHISE`,
+    `COMBINED`, `ASSISTANT`, `ACCESSION`, `TECHNICIAN`, `COLLECTION_CENTER`) →
+    400. Must be unique (no duplicates).
   - `personMappings` — optional array; each entry:
     - `personId` (UUID of an existing person),
     - `position` — one of `HOD`, `SPECIALIST`, `CONSULTANT`, `MANAGER`,

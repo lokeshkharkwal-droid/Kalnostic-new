@@ -1,5 +1,6 @@
 import {
   AbnormalFlag,
+  ApprovalWorkflow,
   ContainerType,
   LabTest,
   LabTestReferenceRange,
@@ -97,8 +98,7 @@ export interface LabTestBasicDetailsRow {
   categoryName: string | null;
   subCategoryName: string | null;
   processMethod: ProcessMethod;
-  /** "Approval" — logical ref to a (not-yet-built) approval-workflow module. */
-  approvalWorkflowId: string | null;
+  approvalWorkflow: ApprovalWorkflow | null;
   isMandatoryTest: boolean;
   samplePriorityType: SamplePriority;
   icdCode: string | null;
@@ -155,6 +155,9 @@ export interface LabTestFlagsRow {
   isEnableCms: boolean;
   /** "Reference test" maps to the preference-test flag. */
   isPreferenceTest: boolean;
+  isOutsource: boolean;
+  isBillOnlyTest: boolean;
+  isSampleFlow: boolean;
   isActive: boolean;
 }
 
@@ -362,8 +365,12 @@ export type LabTestExportParam = Omit<LabTestResultParam, 'reflexTests'> & {
  */
 export type LabTestExportTest = LabTest & {
   departmentName: string | null;
-  /** Resolved name of `mandatoryDeptId` — the "Mandatory Department" xlsx column. */
+  /** Resolved name of `mandatoryDeptId` — the "Mandatory for  Department" xlsx column. */
   mandatoryDeptName: string | null;
+  /** Resolved name of `mandatoryCatId` — the "Mandatory for Category" xlsx column. */
+  mandatoryCatName: string | null;
+  /** Resolved name of `mandatorySubcatId` — the "Mandatory for Sub-Category" xlsx column. */
+  mandatorySubcatName: string | null;
   categoryName: string | null;
   subCategoryName: string | null;
   samples: LabTestSample[];
@@ -375,12 +382,21 @@ export interface LabTestExportPayload {
   tests: LabTestExportTest[];
 }
 
+/** One reason a test's row-span was skipped. `column` is the exact Excel
+ * column label (e.g. "Price MSRP", "Mandatory for Category") when the error
+ * is attributable to one column; omitted for cross-field/structural errors
+ * (e.g. "at least one sample is required") that don't name a single column. */
+export interface ImportXlsxSkippedError {
+  column?: string;
+  message: string;
+}
+
 /** One test's row-span that failed validation and was skipped (not saved). */
 export interface ImportXlsxSkippedTest {
   /** e.g. "Row 3" or "Rows 3-8" — the failed test's row-span in the sheet. */
   rowLabel: string;
-  /** Every reason this specific test was skipped, in plain Excel-column terms. */
-  errors: string[];
+  /** Every reason this specific test was skipped. */
+  errors: ImportXlsxSkippedError[];
 }
 
 /**
@@ -391,8 +407,26 @@ export interface ImportXlsxSkippedTest {
  * same file is still created/updated. `skipped` is empty on a fully clean
  * import.
  */
+/** One Department/Category/Sub-Category name that appeared somewhere in the
+ * uploaded file but doesn't match any existing tenant record — grouped once
+ * per distinct (column, name) pair, not repeated per row, so the user gets
+ * one upfront list of everything to create before re-uploading, instead of
+ * discovering each one only after fixing the last. */
+export interface ImportXlsxUnresolvedClassification {
+  /** The exact Excel column this name appeared in, e.g. "Department",
+   * "Mandatory for Category". */
+  column: string;
+  /** The exact text typed in the sheet (not normalized), so the user can see
+   * precisely what they wrote. */
+  name: string;
+}
+
 export interface ImportXlsxResult {
   created: number;
   updated: number;
   skipped: ImportXlsxSkippedTest[];
+  /** Every distinct Department/Category/Sub-Category name referenced in the
+   * file that doesn't exist yet, deduplicated across the whole file. Empty
+   * when every classification name in the file resolved successfully. */
+  unresolvedClassifications: ImportXlsxUnresolvedClassification[];
 }

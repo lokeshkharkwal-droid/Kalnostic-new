@@ -12,10 +12,15 @@ docs {
   persist that URL string into their own `attachmentUrl` field (e.g. finance
   **Receive Invoice Payment** and **Settle Settlement**).
 
-  Endpoint:
-  - `POST /uploads/attachment` — upload one file (multipart `file`), returns `{ url }`.
+  Endpoints:
+  - `POST /uploads/attachment` — business-authenticated; upload one file
+    (multipart `file`), returns `{ url }`.
+  - `POST /siteadmin/uploads/attachment` — SiteAdmin-authenticated (images only);
+    for global PDF-template images/watermarks. Stored under a fixed
+    `global/pdf-templates` namespace (no tenant). Returns `{ url }`.
 
   Requires `AWS_REGION` / `AWS_BUCKET` / `AWS_ACCESS_KEY` / `AWS_SECRET_KEY` in the
   server env; otherwise 500 `UPLOAD_NOT_CONFIGURED`. Run **Business Auth → Login**
-  first so `businessAccessToken` is populated.
+  (business route) or **SiteAdmin Auth → Login** (siteadmin route) first so the
+  matching access token is populated.
 }

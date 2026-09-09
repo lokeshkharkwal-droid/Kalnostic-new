@@ -1,0 +1,34 @@
+meta {
+  name: 25 Enable Channels
+  type: http
+  seq: 13
+}
+
+put {
+  url: {{baseUrl}}/communication/channel-settings
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+headers {
+  content-type: application/json
+}
+
+body:json {
+  {
+    "isEmailChannelEnabled": true,
+    "isSmsChannelEnabled": true,
+    "isWhatsappChannelEnabled": true
+  }
+}
+
+docs {
+  Enables Email/SMS/WhatsApp capability for priya's tenant/branch. This is
+  OPTIONAL — channel gating is opt-out (with nothing configured, all requested
+  channels are allowed). Included so the setup is explicit. (IAM/in-app is not
+  gated here and always fires when a template/fallback exists.)
+}

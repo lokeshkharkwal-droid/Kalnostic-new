@@ -1,0 +1,110 @@
+[
+  {
+    "feature": "lab_create_order_with_phlebotomist_inform_patient",
+    "channel": "EMAIL",
+    "status": "SENT",
+    "toAddress": "lokesh.kharkwal@kalnostic.com",
+    "templateTitle": "Lab Create Order with Phlebotomist - Inform Patient",
+    "templateFeature": "lab_create_order_with_phlebotomist_inform_patient",
+    "isAmn": true,
+    "markerMatched": true,
+    "exchangeId": "37363",
+    "statusMessage": "Delivered via Exchange gateway"
+  },
+  {
+    "feature": "lab_create_order_with_phlebotomist_inform_patient",
+    "channel": "SMS",
+    "status": "SENT",
+    "toAddress": "9634834856",
+    "templateTitle": "Lab Create Order with Phlebotomist - Inform Patient",
+    "templateFeature": "lab_create_order_with_phlebotomist_inform_patient",
+    "isAmn": true,
+    "markerMatched": true,
+    "exchangeId": "37364",
+    "statusMessage": "Delivered via Exchange gateway"
+  },
+  {
+    "feature": "lab_create_order_with_phlebotomist_inform_patient",
+    "channel": "WHATSAPP",
+    "status": "SENT",
+    "toAddress": "9634834856",
+    "templateTitle": "Lab Create Order with Phlebotomist - Inform Patient",
+    "templateFeature": "lab_create_order_with_phlebotomist_inform_patient",
+    "isAmn": true,
+    "markerMatched": true,
+    "exchangeId": "37365",
+    "statusMessage": "Delivered via Exchange gateway"
+  },
+  {
+    "feature": "lab_report_sample_error_inform_referring_panel",
+    "channel": "EMAIL",
+    "status": "SENT",
+    "toAddress": "lokesh.kharkwal@kalnostic.com",
+    "templateTitle": "Lab Report Sample Error - Inform Referring Panel",
+    "templateFeature": "lab_report_sample_error_inform_referring_panel",
+    "isAmn": true,
+    "markerMatched": true,
+    "exchangeId": "37366",
+    "statusMessage": "Delivered via Exchange gateway"
+  },
+  {
+    "feature": "lab_report_sample_error_inform_referring_panel",
+    "channel": "SMS",
+    "status": "SENT",
+    "toAddress": "9634834856",
+    "templateTitle": "Lab Report Sample Error - Inform Referring Panel",
+    "templateFeature": "lab_report_sample_error_inform_referring_panel",
+    "isAmn": true,
+    "markerMatched": true,
+    "exchangeId": "37367",
+    "statusMessage": "Delivered via Exchange gateway"
+  },
+  {
+    "feature": "lab_report_sample_error_inform_referring_panel",
+    "channel": "WHATSAPP",
+    "status": "SENT",
+    "toAddress": "9634834856",
+    "templateTitle": "Lab Report Sample Error - Inform Referring Panel",
+    "templateFeature": "lab_report_sample_error_inform_referring_panel",
+    "isAmn": true,
+    "markerMatched": true,
+    "exchangeId": "37368",
+    "statusMessage": "Delivered via Exchange gateway"
+  },
+  {
+    "feature": "lab_report_sample_repeat_inform_referring_panel",
+    "channel": "EMAIL",
+    "status": "SENT",
+    "toAddress": "lokesh.kharkwal@kalnostic.com",
+    "templateTitle": "Lab Report Sample Repeat - Inform Referring Panel",
+    "templateFeature": "lab_report_sample_repeat_inform_referring_panel",
+    "isAmn": true,
+    "markerMatched": true,
+    "exchangeId": "37369",
+    "statusMessage": "Delivered via Exchange gateway"
+  },
+  {
+    "feature": "lab_report_sample_repeat_inform_referring_panel",
+    "channel": "SMS",
+    "status": "SENT",
+    "toAddress": "9634834856",
+    "templateTitle": "Lab Report Sample Repeat - Inform Referring Panel",
+    "templateFeature": "lab_report_sample_repeat_inform_referring_panel",
+    "isAmn": true,
+    "markerMatched": true,
+    "exchangeId": "37370",
+    "statusMessage": "Delivered via Exchange gateway"
+  },
+  {
+    "feature": "lab_report_sample_repeat_inform_referring_panel",
+    "channel": "WHATSAPP",
+    "status": "SENT",
+    "toAddress": "9634834856",
+    "templateTitle": "Lab Report Sample Repeat - Inform Referring Panel",
+    "templateFeature": "lab_report_sample_repeat_inform_referring_panel",
+    "isAmn": true,
+    "markerMatched": true,
+    "exchangeId": "37371",
+    "statusMessage": "Delivered via Exchange gateway"
+  }
+]

@@ -8,6 +8,7 @@ import {
   ExternalIdFormat,
   ExternalIdPurpose,
   InvoicePaymentStatus,
+  LabReportStatus,
   MessagingChannel,
   Order,
   OrderDateType,
@@ -24,6 +25,8 @@ import {
   TransferKind,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
+import { getReferralPanelId } from '../../prisma/tenant-context';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
 import {
   ShareService,
@@ -33,10 +36,12 @@ import {
 import { OrderPrintType } from './dto/print-order.dto';
 import { AppointmentService } from '../appointment/appointment.service';
 import { OrderSampleService } from '../accession/accession-sample.service';
+import { BarcodeService } from '../accession/barcode.service';
 import { SlotReservationService } from '../phlebotomist-schedule/slot-reservation.service';
 import { PhlebotomistCollectionService } from '../phlebotomist-collection/phlebotomist-collection.service';
 import { RegistrationSettingsService } from '../registration-settings/registration-settings.service';
 import { ExternalIdService } from '../registration-settings/external-id.service';
+import { TenantService } from '../tenant/tenant.service';
 import type { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import {
@@ -45,6 +50,12 @@ import {
   toNum,
   roundToTwoDecimalPlaces,
   amountInWords,
+  genderLabel,
+  salutationLabel,
+  patientAgeDisplay,
+  toBranchLocalInstant,
+  formatTenantDate,
+  formatTenantDateTime,
 } from '../../common/utils';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
@@ -75,6 +86,7 @@ import {
   resolveBillGenerated,
   computeEffectivePaid,
   deriveRefundStatus,
+  deriveReportStatus,
 } from './entities/order.entity';
 import { BillingGroupBy } from './dto/billing-grouped-query.dto';
 import { BillingDimension } from './dto/billing-query.dto';
@@ -360,12 +372,39 @@ const SHARE_KINDS: Record<ShareKind, ShareKindConfig> = {
   },
 };
 
+/**
+ * Force a B2B referral-panel filter onto an order `where` clause.
+ * @param where the Prisma OrderWhereInput being built (mutated in place)
+ * @param panelId the active B2B panel id, or undefined for non-B2B sessions
+ */
+export function applyB2bOrderScope(
+  where: Record<string, unknown>,
+  panelId: string | undefined,
+): void {
+  if (panelId) where.referralPanelId = panelId;
+}
+
+/**
+ * Assert an order belongs to the active B2B panel (blocks URL/ID manipulation).
+ * @param order the fetched order (needs `id` + `referralPanelId`)
+ * @param panelId the active B2B panel id, or undefined for non-B2B sessions
+ */
+export function assertOrderPanelOwnership(
+  order: { id: string; referralPanelId: string | null },
+  panelId: string | undefined,
+): void {
+  if (panelId && order.referralPanelId !== panelId) {
+    throw new ReferralPanelAccessDeniedException('order', order.id);
+  }
+}
+
 @Injectable()
 export class OrderService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly appointmentService: AppointmentService,
     private readonly orderSamples: OrderSampleService,
+    private readonly barcodeService: BarcodeService,
     private readonly slotReservation: SlotReservationService,
     private readonly homeVisitCollections: PhlebotomistCollectionService,
     private readonly pdfReportTemplateService: PdfReportTemplateService,
@@ -373,6 +412,7 @@ export class OrderService {
     private readonly externalIdService: ExternalIdService,
     private readonly eventEmitter: EventEmitter2,
     private readonly shareService: ShareService,
+    private readonly tenantService: TenantService,
   ) {}
 
   /**
@@ -711,6 +751,31 @@ export class OrderService {
             branchLabPanelListId: dto.branchLabPanelListId ?? null,
           },
         });
+        // Order-level barcode — a separate entity from sample barcodes (own
+        // per-branch counter/format; numbers may coincide with samples'). Reuses
+        // BarcodeService's Code39/JSBarcode rendering + S3 upload. Runs in-tx so a
+        // storage failure rolls the whole order create back (never a half-written
+        // order). Requires a branch (the counter is branch-level) — branchless
+        // drafts skip it.
+        if (branchId) {
+          const barcodeValue =
+            await this.barcodeService.allocateOrderNumberInTx(
+              tx,
+              tenantId,
+              branchId,
+            );
+          const barcodeImageUrl = await this.barcodeService.generateAndUpload(
+            barcodeValue,
+            tenantId,
+          );
+          await tx.order.update({
+            where: { id: order.id },
+            data: {
+              orderIdBarcode: barcodeValue,
+              orderIdQrCode: barcodeImageUrl,
+            },
+          });
+        }
         // Quotation → order conversion: when this order was created from a quote
         // and is a real conversion (any status other than QUOTE), flip the source
         // quote to CONVERTED in the SAME transaction. Any failure above rolls this
@@ -821,6 +886,10 @@ export class OrderService {
                   }
                 : {}),
               paymentDate: p.paymentDate ? new Date(p.paymentDate) : null,
+              // Who actually collected/recorded this payment — the logged-in
+              // actor, never client-submitted (no `collectedBy` field exists on
+              // `OrderPaymentDto`).
+              collectedBy: personId,
             })),
           });
         }
@@ -843,6 +912,7 @@ export class OrderService {
             orderCode,
             this.settlementPaymentMode(dto.payments),
             new Date(dto.orderDate),
+            personId,
           );
         }
         // Reserve the phlebotomist slot for a home-visit appointment (atomic
@@ -1495,6 +1565,7 @@ export class OrderService {
     newOrderCode: string,
     paymentMode: PaymentMode,
     paymentDate: Date,
+    personId: string | null,
   ): Promise<void> {
     if (amount <= 0) return;
     const orders = await tx.order.findMany({
@@ -1536,6 +1607,7 @@ export class OrderService {
           hasClearedPreviousDues: true,
           paymentMode,
           paymentDate,
+          collectedBy: personId,
           reference: newOrderCode,
           notes: `Previous dues settled via order ${newOrderCode}`,
         },
@@ -1575,6 +1647,8 @@ export class OrderService {
     if (!order) {
       throw new OrderNotFoundException(id);
     }
+    // B2B Referral Panel isolation: block reading another panel's order by id.
+    assertOrderPanelOwnership(order, getReferralPanelId());
     // Invoice-lock status: exposed on every composed-order response (get-one,
     // create, update, cancel, …), all of which funnel through here.
     const invoiceCodes = await this.invoicedOrderCodes(tenantId, [id]);
@@ -1811,7 +1885,7 @@ export class OrderService {
         }
       }
     }
-    const context = await this.buildPrintContext(order, type);
+    const context = await this.buildPrintContext(order, type, tenantId);
     const resolvedTemplateId =
       templateId ?? (await this.resolvePrintTemplateId(tenantId, type));
     return this.pdfReportTemplateService.generatePdf(
@@ -1853,52 +1927,81 @@ export class OrderService {
   private async buildPrintContext(
     order: OrderWithRelations,
     type: OrderPrintType,
+    tenantId: string,
   ): Promise<GeneratePdfDto> {
     switch (type) {
       case 'order_print':
-        return this.buildOrderPrintContext(order);
+        return this.buildOrderPrintContext(order, tenantId);
       case 'bill_print':
-        return this.buildBillContext(order);
+        return this.buildBillContext(order, tenantId);
       case 'accounts_biling':
-        return this.buildAccountsBillingContext(order);
+        return this.buildAccountsBillingContext(order, tenantId);
       case 'trf_print':
-        return this.buildTrfContext(order);
+        return this.buildTrfContext(order, tenantId);
       case 'lab_quotation_print':
-        return this.buildQuotationContext(order);
+        return this.buildQuotationContext(order, tenantId);
       case 'order_barcode_print':
-        return this.buildOrderBarcodeContext(order);
+        return this.buildOrderBarcodeContext(order, tenantId);
     }
   }
 
-  /** Common patient `{variables}` shared by every order document. */
-  private patientVariables(order: OrderWithRelations): Record<string, unknown> {
+  /**
+   * Common patient `{variables}` shared by every order document.
+   * @param dateFormat the tenant's configured date format, for `patient_dob`
+   * — the caller already has this from its own `tenantService.getLocale`
+   * call, so it's passed in rather than re-fetched here.
+   */
+  private patientVariables(
+    order: OrderWithRelations,
+    dateFormat: string,
+  ): Record<string, unknown> {
     const p = order.patient;
     return {
       patient_name: [p.firstName, p.middleName, p.lastName]
         .filter(Boolean)
         .join(' '),
-      patient_salutation: p.salutation ?? '',
-      patient_age: p.age ?? '',
-      patient_gender: p.gender ?? '',
+      patient_salutation: salutationLabel(p.salutation),
+      // `client_salutation` is a legacy-template alias for the patient's
+      // salutation — "client" and "patient" are the same party on order
+      // documents. Kept as a distinct key so authors of pre-existing templates
+      // that used `{client_salutation}` don't have to re-author them.
+      client_salutation: salutationLabel(p.salutation),
+      patient_age: patientAgeDisplay(p.age, p.ageType),
+      patient_gender: genderLabel(p.gender),
       patient_um_id: p.umId ?? '',
       patient_mobile: p.mobile ?? '',
       patient_email: p.email ?? '',
       patient_blood_group: p.bloodGroup ?? '',
       patient_address1: p.addressLine1 ?? '',
+      // `dateOfBirth` is `@db.Date` (no time component) — same treatment as
+      // `order_date`, no timezone conversion needed.
+      patient_dob: p.dateOfBirth
+        ? formatTenantDate(p.dateOfBirth, dateFormat)
+        : '',
     };
   }
 
-  /** Common referral `{variables}` shared by every order document. */
+  /**
+   * Common referral `{variables}` shared by every order document.
+   *
+   * Both fields fall back to a sensible walk-in default rather than an empty
+   * string, matching the legacy print behaviour: a direct patient with no
+   * referring doctor reads as `Self`, and no referring panel reads as
+   * `Walk-in`. This keeps `{referred_by}`/`{referral_panel}` meaningful on
+   * every order document instead of rendering blank.
+   */
   private referralVariables(
     order: OrderWithRelations,
   ): Record<string, unknown> {
+    const referredBy = order.referredByDoctor
+      ? [order.referredByDoctor.firstName, order.referredByDoctor.lastName]
+          .filter(Boolean)
+          .join(' ')
+          .trim()
+      : '';
     return {
-      referred_by: order.referredByDoctor
-        ? [order.referredByDoctor.firstName, order.referredByDoctor.lastName]
-            .filter(Boolean)
-            .join(' ')
-        : '',
-      referral_panel: order.referralPanel?.name ?? '',
+      referred_by: referredBy || 'Self',
+      referral_panel: order.referralPanel?.name ?? 'Walk-in',
     };
   }
 
@@ -1974,6 +2077,20 @@ export class OrderService {
     });
   }
 
+  /**
+   * Flat `{panel_tests_name}` token — every panel's constituent sub-tests
+   * across the whole order, comma-joined into one string (empty when the order
+   * has no panels). Derived from {@link itemRowsWithPanelTests} rows so the
+   * flat token and the per-row `sections.items[].panel_tests_name` stay in
+   * sync. Shared by every order document that lists items.
+   */
+  private panelTestsNameFlat(rows: Array<Record<string, unknown>>): string {
+    return rows
+      .map((row) => row.panel_tests_name)
+      .filter((name): name is string => Boolean(name))
+      .join(', ');
+  }
+
   /** Summed bill totals across the active payment ledger (minor units). */
   private billTotals(order: OrderWithRelations): {
     gross: number;
@@ -1990,11 +2107,6 @@ export class OrderService {
     const net = sum((p) => p.netAmount);
     const paid = sum((p) => p.paidAmount);
     return { gross, discount, net, paid, balance: net - paid };
-  }
-
-  /** Format a DATE-only value as `YYYY-MM-DD` (empty when null). */
-  private dateOnly(value: Date | null | undefined): string {
-    return value ? value.toISOString().slice(0, 10) : '';
   }
 
   /**
@@ -2015,39 +2127,86 @@ export class OrderService {
   }
 
   /** `order_print` — order slip: header, patient, referral, item list. */
-  private buildOrderPrintContext(order: OrderWithRelations): GeneratePdfDto {
+  private async buildOrderPrintContext(
+    order: OrderWithRelations,
+    tenantId: string,
+  ): Promise<GeneratePdfDto> {
+    const { dateFormat } = await this.tenantService.getLocale(tenantId);
+    const itemRows = await this.itemRowsWithPanelTests(order);
     return {
       variables: {
         order_code: order.orderCode,
         bill_id: order.billId ?? '',
-        order_date: this.dateOnly(order.orderDate),
+        order_date: formatTenantDate(order.orderDate, dateFormat),
         order_time: order.orderTime ?? '',
         status: order.status,
         branch_name: order.branch?.name ?? '',
         item_count: order.items.length,
-        ...this.patientVariables(order),
+        panel_tests_name: this.panelTestsNameFlat(itemRows),
+        ...this.patientVariables(order, dateFormat),
         ...this.referralVariables(order),
       },
-      sections: { items: this.itemRows(order) },
+      sections: { items: itemRows },
     };
   }
 
   /** `bill_print` — patient bill: amounts + item list + payment history. */
   private async buildBillContext(
     order: OrderWithRelations,
+    tenantId: string,
   ): Promise<GeneratePdfDto> {
     const totals = this.billTotals(order);
     const discountPercentage =
       totals.gross > 0
         ? roundToTwoDecimalPlaces((totals.discount / totals.gross) * 100)
         : 0;
+    const { timezone, dateFormat, timeFormat } =
+      await this.tenantService.getLocale(tenantId);
+    // The bill's own date/time is when it was actually generated — the
+    // earliest payment ledger row's `paymentDate` (`order.payments` is
+    // ordered `createdAt: 'asc'`, see `ORDER_INCLUDE`), which carries real
+    // time-of-day precision unlike `orderDate` (`@db.Date`, scheduled/entered
+    // service date, no time). Falls back to the order's own row-creation
+    // timestamp for a "Generate Bill = No" order with an empty ledger.
+    const billInstant = order.payments[0]?.paymentDate ?? order.createdAt;
+    const billDateTime = formatTenantDateTime(
+      toBranchLocalInstant(billInstant, timezone),
+      dateFormat,
+      timeFormat,
+    );
+    // Who collected the bill — the first payment-ledger row that actually
+    // recorded a collector (rows written before `collectedBy` existed, or the
+    // zero-value rows of a "Generate Bill = No" order, carry null, so scanning
+    // for the first non-null is more reliable than blindly reading
+    // `payments[0]`). Falls back to the order's creator so the tag still
+    // resolves for older orders whose payments never captured a collector.
+    const collectorId =
+      order.payments.find((p) => p.collectedBy)?.collectedBy ??
+      order.createdBy ??
+      null;
+    const collectorNameById = await this.resolveActorNames([collectorId]);
+    const paymentCollectedBy = collectorId
+      ? (collectorNameById.get(collectorId) ?? '')
+      : '';
+    // Item rows resolved once — reused for the flat `{panel_tests_name}` token
+    // (a comma-joined list of every panel's constituent sub-tests across the
+    // order) and for the `sections.items` repeat block below.
+    const itemRows = await this.itemRowsWithPanelTests(order);
+    const panelTestsName = this.panelTestsNameFlat(itemRows);
     return {
       variables: {
         bill_id: order.billId ?? order.orderCode,
         order_code: order.orderCode,
-        order_date: this.dateOnly(order.orderDate),
+        order_date: formatTenantDate(order.orderDate, dateFormat),
+        bill_date_time: billDateTime,
+        payment_collected_by: paymentCollectedBy,
+        panel_tests_name: panelTestsName,
         status: order.status,
         payment_status: order.paymentStatus,
+        // Alias for the classic old-template tag name (`{bill_status}`) —
+        // same value as `payment_status`, kept separate so authors of
+        // pre-existing bill_print templates don't need to re-author them.
+        bill_status: order.paymentStatus,
         branch_name: order.branch?.name ?? '',
         gross_amount: totals.gross,
         discount_amount: totals.discount,
@@ -2056,13 +2215,17 @@ export class OrderService {
         total_amount_in_words: amountInWords(totals.net),
         paid_amount: totals.paid,
         balance_amount: totals.balance,
-        ...this.patientVariables(order),
+        ...this.patientVariables(order, dateFormat),
         ...this.referralVariables(order),
       },
       sections: {
-        items: await this.itemRowsWithPanelTests(order),
+        items: itemRows,
         payments: order.payments.map((pd) => ({
-          date: this.dateOnly(pd.paymentDate),
+          date: formatTenantDateTime(
+            toBranchLocalInstant(pd.paymentDate ?? order.createdAt, timezone),
+            dateFormat,
+            timeFormat,
+          ),
           mode: pd.paymentMode,
           reference: pd.reference ?? '',
           amount: pd.paidAmount,
@@ -2078,8 +2241,9 @@ export class OrderService {
    */
   private async buildAccountsBillingContext(
     order: OrderWithRelations,
+    tenantId: string,
   ): Promise<GeneratePdfDto> {
-    const bill = await this.buildBillContext(order);
+    const bill = await this.buildBillContext(order, tenantId);
     const panel = order.referralPanel;
     return {
       variables: {
@@ -2095,16 +2259,21 @@ export class OrderService {
   }
 
   /** `trf_print` — Test Requisition Form: requested tests + clinical notes. */
-  private async buildTrfContext(order: OrderWithRelations): Promise<GeneratePdfDto> {
+  private async buildTrfContext(
+    order: OrderWithRelations,
+    tenantId: string,
+  ): Promise<GeneratePdfDto> {
     const testRows = await this.itemRowsWithPanelTests(order);
+    const { dateFormat } = await this.tenantService.getLocale(tenantId);
     return {
       variables: {
         trf_ref: order.billId ?? order.orderCode,
         order_code: order.orderCode,
-        order_date: this.dateOnly(order.orderDate),
+        order_date: formatTenantDate(order.orderDate, dateFormat),
         clinical_notes: order.orderNotes ?? '',
         branch_name: order.branch?.name ?? '',
-        ...this.patientVariables(order),
+        panel_tests_name: this.panelTestsNameFlat(testRows),
+        ...this.patientVariables(order, dateFormat),
         ...this.referralVariables(order),
       },
       sections: {
@@ -2114,22 +2283,30 @@ export class OrderService {
   }
 
   /** `lab_quotation_print` — the quotation: items + totals + validity. */
-  private buildQuotationContext(order: OrderWithRelations): GeneratePdfDto {
+  private async buildQuotationContext(
+    order: OrderWithRelations,
+    tenantId: string,
+  ): Promise<GeneratePdfDto> {
     const totals = this.billTotals(order);
+    const { dateFormat } = await this.tenantService.getLocale(tenantId);
+    const itemRows = await this.itemRowsWithPanelTests(order);
     return {
       variables: {
         quote_id: order.orderCode,
-        quote_date: this.dateOnly(order.orderDate),
-        valid_till: this.dateOnly(order.quotationValidTill),
+        quote_date: formatTenantDate(order.orderDate, dateFormat),
+        valid_till: order.quotationValidTill
+          ? formatTenantDate(order.quotationValidTill, dateFormat)
+          : '',
         status: order.quotationStatus ?? '',
         branch_name: order.branch?.name ?? '',
         gross_amount: totals.gross,
         discount_amount: totals.discount,
         net_amount: totals.net,
-        ...this.patientVariables(order),
+        panel_tests_name: this.panelTestsNameFlat(itemRows),
+        ...this.patientVariables(order, dateFormat),
         ...this.referralVariables(order),
       },
-      sections: { items: this.itemRows(order) },
+      sections: { items: itemRows },
     };
   }
 
@@ -2141,12 +2318,16 @@ export class OrderService {
    * familiar merge fields; this is a distinct type from that per-sample label
    * (see `ORDER_PRINT_TYPES` doc comment).
    */
-  private buildOrderBarcodeContext(order: OrderWithRelations): GeneratePdfDto {
+  private async buildOrderBarcodeContext(
+    order: OrderWithRelations,
+    tenantId: string,
+  ): Promise<GeneratePdfDto> {
+    const { dateFormat } = await this.tenantService.getLocale(tenantId);
     return {
       variables: {
         order_code: order.orderCode,
         barcode: order.orderCode,
-        order_date: this.dateOnly(order.orderDate),
+        order_date: formatTenantDate(order.orderDate, dateFormat),
         branch_name: order.branch?.name ?? '',
         test_names: order.items
           .map(
@@ -2158,7 +2339,7 @@ export class OrderService {
           )
           .filter(Boolean)
           .join(', '),
-        ...this.patientVariables(order),
+        ...this.patientVariables(order, dateFormat),
       },
     };
   }
@@ -2692,6 +2873,9 @@ export class OrderService {
     const branchId = query.branchId ?? activeBranchId;
     if (branchId) where.branchId = branchId;
 
+    // B2B Referral Panel isolation: force the panel filter for B2B sessions.
+    applyB2bOrderScope(where, getReferralPanelId());
+
     // Quote ID takes precedence over the generic search. A bare `search`
     // matches the order code OR any of the patient's name / mobile / UMID.
     const quoteId = query.quoteId?.trim();
@@ -2946,6 +3130,83 @@ export class OrderService {
           break;
       }
     }
+    if (query.reportStatus) {
+      // Per-REPORT reporting progress, mirrored from the report-counting
+      // `deriveReportStatus` (not per-item — a panel item now has one
+      // LabReport per member test, and a single member test finishing should
+      // be visible as PARTIALLY_COMPLETED, the same way a separate standalone
+      // test finishing already was, rather than requiring every member test
+      // on that one panel item to finish first).
+      const doneStatuses: LabReportStatus[] = [
+        LabReportStatus.RESULT_DONE,
+        LabReportStatus.APPROVED,
+        LabReportStatus.PUBLISHED,
+      ];
+      const approvedStatuses: LabReportStatus[] = [
+        LabReportStatus.APPROVED,
+        LabReportStatus.PUBLISHED,
+      ];
+      // An active item that has NOT reached done: no report yet, or at least
+      // one of its (possibly several, for a panel) reports is below done.
+      const notReachedDone: Prisma.OrderItemWhereInput = {
+        deletedAt: null,
+        OR: [
+          { labReports: { none: {} } },
+          { labReports: { some: { status: { notIn: doneStatuses } } } },
+        ],
+      };
+      // An active item that has NOT reached approved.
+      const notApproved: Prisma.OrderItemWhereInput = {
+        deletedAt: null,
+        OR: [
+          { labReports: { none: {} } },
+          { labReports: { some: { status: { notIn: approvedStatuses } } } },
+        ],
+      };
+      // An active item that HAS reached done: at least one report exists, and
+      // every one of them is done (mirrors `deriveReportStatus`'s COMPLETED/
+      // APPROVED "every report on the order" rule, applied one item at a time
+      // — equivalent when checked across ALL items via `none: notReachedDone`).
+      const reachedDone: Prisma.OrderItemWhereInput = {
+        deletedAt: null,
+        labReports: { some: {} },
+        NOT: { labReports: { some: { status: { notIn: doneStatuses } } } },
+      };
+      // An active item with AT LEAST ONE done report — not requiring every
+      // report on the item to be done. This is the piece `reachedDone` above
+      // doesn't cover: it lets a single finished member test of a
+      // multi-member panel item register as "some progress exists" for
+      // PARTIALLY_COMPLETED, without that item needing to be fully done.
+      const hasADoneReport: Prisma.OrderItemWhereInput = {
+        deletedAt: null,
+        labReports: { some: { status: { in: doneStatuses } } },
+      };
+      switch (query.reportStatus) {
+        case 'PENDING':
+          // Has items, and no item has even one done report.
+          and.push({ items: { some: { deletedAt: null } } });
+          and.push({ items: { none: hasADoneReport } });
+          break;
+        case 'PARTIALLY_COMPLETED':
+          // At least one report anywhere is done, and at least one item has
+          // not fully finished yet (either no report, or a not-fully-done
+          // panel item, or an entirely untouched item).
+          and.push({ items: { some: hasADoneReport } });
+          and.push({ items: { some: notReachedDone } });
+          break;
+        case 'COMPLETED':
+          // Every active item fully reached done, but not all are approved.
+          and.push({ items: { some: { deletedAt: null } } });
+          and.push({ items: { none: notReachedDone } });
+          and.push({ items: { some: notApproved } });
+          break;
+        case 'APPROVED':
+          // Has items, none is unapproved.
+          and.push({ items: { some: { deletedAt: null } } });
+          and.push({ items: { none: notApproved } });
+          break;
+      }
+    }
 
     // Patient name / mobile via the to-one patient relation filter.
     const patientName = query.patientName?.trim();
@@ -3128,6 +3389,8 @@ export class OrderService {
         ...r,
         itemCount: count?.total ?? 0,
         collectedItemCount: count?.collected ?? 0,
+        // Order-level "Order Status": derived per-test from each item's LabReport.
+        reportStatus: deriveReportStatus(r.items),
         grossAmount,
         discountAmount,
         netAmount,
@@ -5318,6 +5581,11 @@ export class OrderService {
                   }
                 : {}),
               paymentDate: p.paymentDate ? new Date(p.paymentDate) : null,
+              // The whole ledger is soft-deleted + recreated on every payments
+              // patch (no per-row identity survives), so the current editor
+              // becomes the recorded collector for the resulting rows — same
+              // as every other row-replace field here (no partial-row history).
+              collectedBy: personId,
             })),
           });
         }
@@ -5392,6 +5660,7 @@ export class OrderService {
           existing.orderCode,
           this.settlementPaymentMode(dto.payments),
           dto.orderDate ? new Date(dto.orderDate) : new Date(),
+          personId,
         );
       }
     });
@@ -5475,6 +5744,39 @@ export class OrderService {
         { print: !!opts.print },
       );
     });
+    return this.findById(orderId, tenantId);
+  }
+
+  /**
+   * Collect a whole **group** of the order's accession samples in one shot — the
+   * group-wise counterpart of {@link collectItem}, backing the Product Overview
+   * modal's grouped Test Details (Collect / Collect & Print on a group's flat
+   * `sampleIds`). Every collectable sample in the set is transitioned to
+   * COLLECTED and its sibling order items stamped collected, all in one
+   * `withTenant` transaction (`OrderSampleService.collectSamplesInTx`). Idempotent
+   * — already-collected samples are skipped. `print` also assigns a barcode to any
+   * sample that lacks one.
+   * @param orderId the order the samples belong to (validated against the tenant)
+   * @param sampleIds the group's accession sample ids to collect
+   * @param tenantId tenant scope (from JWT)
+   * @param actorId acting person id (recorded as `collectedBy`), may be null
+   * @param opts `print` also assigns a barcode to the collected sample(s)
+   * @returns the fully-composed order after the update
+   * @throws OrderNotFoundException if the order is missing/soft-deleted/other tenant
+   */
+  async collectGroup(
+    orderId: string,
+    sampleIds: string[],
+    tenantId: string,
+    actorId: string | null,
+    opts: { print?: boolean } = {},
+  ): Promise<OrderWithRelations> {
+    await this.findById(orderId, tenantId);
+    await this.prisma.withTenant(tenantId, (tx) =>
+      this.orderSamples.collectSamplesInTx(tx, tenantId, actorId, sampleIds, {
+        print: !!opts.print,
+      }),
+    );
     return this.findById(orderId, tenantId);
   }
 
@@ -5652,6 +5954,7 @@ export class OrderService {
             paymentDate: dto.refund.paymentDate
               ? new Date(dto.refund.paymentDate)
               : new Date(),
+            collectedBy: actorId,
           },
         });
         newRefundSum += dto.refund.amount;
@@ -5827,6 +6130,7 @@ export class OrderService {
           paymentMode: dto.paymentMode,
           reference: dto.reference ?? null,
           paymentDate: dto.paymentDate ? new Date(dto.paymentDate) : new Date(),
+          collectedBy: actorId,
         },
       });
 

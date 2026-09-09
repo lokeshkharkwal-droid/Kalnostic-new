@@ -17,8 +17,7 @@ headers {
 body:json {
   {
     "identifier": "{{operatorLoginIdentifier}}",
-    "password": "{{operatorPassword}}",
-    "tenantSlug": "{{tenantSlug}}"
+    "password": "{{operatorPassword}}"
   }
 }
 
@@ -29,7 +28,7 @@ script:post-response {
 
 docs {
   **Step 5 (of workflow) — Log in as the newly created user.**
-
+  
   Uses `operatorLoginIdentifier` (from step 04) + the known `operatorPassword`.
   The operator's default profile is a branch-level `receptionist` at the new
   branch, so the token carries `active_branch_id = branchId` — a **branch-scoped**

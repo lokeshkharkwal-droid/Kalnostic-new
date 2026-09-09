@@ -14,7 +14,10 @@ import { RequirePermission } from '../permissions/decorators/require-permission.
 import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { ReferralPanelService } from './referral-panel.service';
+import { ReferralPanelUserService } from './referral-panel-user.service';
 import { CreateReferralPanelDto } from './dto/create-referral-panel.dto';
+import { CreateReferralPanelUserDto } from './dto/create-referral-panel-user.dto';
+import { UpdateReferralPanelUserDto } from './dto/update-referral-panel-user.dto';
 import { UpdateReferralPanelDto } from './dto/update-referral-panel.dto';
 import { ListReferralPanelsDto } from './dto/list-referral-panels.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
@@ -30,7 +33,10 @@ import { Audit } from '../../common/decorators/audit.decorator';
 @Controller('referral-panels')
 @UseGuards(PermissionGuard)
 export class ReferralPanelController {
-  constructor(private readonly referralPanelService: ReferralPanelService) {}
+  constructor(
+    private readonly referralPanelService: ReferralPanelService,
+    private readonly referralPanelUserService: ReferralPanelUserService,
+  ) {}
 
   /**
    * Create a referral panel with its assigned lab tests/panels.
@@ -63,9 +69,10 @@ export class ReferralPanelController {
   @Get()
   findAll(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Query() query: ListReferralPanelsDto,
   ) {
-    return this.referralPanelService.findAll(tenantId, query);
+    return this.referralPanelService.findAll(tenantId, profile.branchId, query);
   }
 
   /**
@@ -118,5 +125,58 @@ export class ReferralPanelController {
   })
   remove(@CurrentTenant() tenantId: string, @Param('id') id: string) {
     return this.referralPanelService.remove(id, tenantId);
+  }
+
+  /**
+   * Fetch the referral panel's dedicated B2B login user, if one exists (drives
+   * the create/edit state of the "Create Referral Panel User" button).
+   * @param id the referral panel id
+   * @param tenantId the caller's tenant (from JWT)
+   */
+  @Get(':id/user')
+  getPanelUser(@Param('id') id: string, @CurrentTenant() tenantId: string) {
+    return this.referralPanelUserService.getForPanel(tenantId, id);
+  }
+
+  /**
+   * Create the referral panel's dedicated B2B login user (1:1). Branch, role,
+   * modules and status are server-assigned; only personal/login fields are taken
+   * from the body.
+   * @param id the referral panel id
+   * @param dto personal + login fields
+   * @param tenantId the caller's tenant (from JWT)
+   * @param actorId the acting user (from JWT) — used as createdBy
+   */
+  @Post(':id/user')
+  @RequirePermission(PERMISSION_KEYS.BR_REF_ADD_PANEL)
+  @Audit({
+    module: AuditModule.REFERRAL_PANEL,
+    action: AuditAction.CREATE,
+    description: 'Created a referral panel login user',
+  })
+  createPanelUser(
+    @Param('id') id: string,
+    @Body() dto: CreateReferralPanelUserDto,
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') actorId: string,
+  ) {
+    return this.referralPanelUserService.create(tenantId, id, dto, actorId);
+  }
+
+  /**
+   * Update the referral panel's B2B login user (the eight editable personal/login
+   * fields only). Branch, role, modules and status stay server-controlled.
+   * @param id the referral panel id
+   * @param dto the changed fields
+   * @param tenantId the caller's tenant (from JWT)
+   */
+  @RequirePermission(PERMISSION_KEYS.BR_REF_UPDATE_PANEL)
+  @Patch(':id/user')
+  updatePanelUser(
+    @Param('id') id: string,
+    @Body() dto: UpdateReferralPanelUserDto,
+    @CurrentTenant() tenantId: string,
+  ) {
+    return this.referralPanelUserService.update(tenantId, id, dto);
   }
 }

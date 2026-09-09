@@ -63,6 +63,9 @@ export const ROLE_MODULE_ACCESS: Record<ProfileKey, string[]> = {
   radiology_assistant: [],
   nursing_staff: [],
   nursing_incharge: [],
+  // B2B Referral Panel login — the three modules whose screens the panel may see.
+  // The baseline is narrowed to five navigation keys in module-permissions.constant.ts.
+  b2b_referring_panel: ['registration', 'finance', 'lab_operations'],
 };
 
 /**

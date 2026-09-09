@@ -158,6 +158,12 @@ describe('LabTestService.syncTestsIntoBranch', () => {
       deleteMany: jest.Mock;
       updateMany: jest.Mock;
     };
+    branchLabTestList: { findFirst: jest.Mock };
+    branchLabTest: {
+      findMany: jest.Mock;
+      update: jest.Mock;
+      findFirst: jest.Mock;
+    };
   };
   let masterDataMock: { findById: jest.Mock };
   let service: LabTestService;
@@ -193,6 +199,14 @@ describe('LabTestService.syncTestsIntoBranch', () => {
         createMany: jest.fn(),
         deleteMany: jest.fn(),
         updateMany: jest.fn(),
+      },
+      // Branch Lab Test List cascade: no default (Walk-in) list by default, so
+      // `cascadeDeleteBranchLabTestCopies` no-ops unless a test opts in.
+      branchLabTestList: { findFirst: jest.fn().mockResolvedValue(null) },
+      branchLabTest: {
+        findMany: jest.fn().mockResolvedValue([]),
+        update: jest.fn().mockResolvedValue({}),
+        findFirst: jest.fn().mockResolvedValue(null),
       },
     };
     masterDataMock = { findById: jest.fn() };
@@ -271,6 +285,52 @@ describe('LabTestService.syncTestsIntoBranch', () => {
         data: { deletedAt: expect.any(Date) },
       });
     }
+  });
+
+  it('also soft-deletes the branch Lab Test List copy of an orphaned branch test, promoting a duplicate sibling to default', async () => {
+    const orphan = test({
+      id: 'orphan-1',
+      testCode: 'GONE',
+      sourceMasterLabTestId: 'deleted-tenant-test',
+    });
+    prismaMock.labTest.findMany
+      .mockResolvedValueOnce([]) // sourceTests: nothing active tenant-side
+      .mockResolvedValueOnce([orphan]); // branchTests
+    prismaMock.branchLabTestList.findFirst.mockResolvedValueOnce({
+      id: 'walk-in-list',
+    });
+    const copy = {
+      id: 'branch-copy-1',
+      isDefault: true,
+      sourceLabTestId: 'orphan-1',
+    };
+    prismaMock.branchLabTest.findMany.mockResolvedValueOnce([copy]);
+    const sibling = { id: 'branch-copy-dup', isDefault: false };
+    prismaMock.branchLabTest.findFirst.mockResolvedValueOnce(sibling);
+
+    const result = await service.syncTestsIntoBranch(
+      prismaMock as unknown as Prisma.TransactionClient,
+      baseParams,
+    );
+
+    expect(result).toMatchObject({ created: 0, updated: 0, deleted: 1 });
+    expect(prismaMock.branchLabTest.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          listId: 'walk-in-list',
+          isDuplicate: false,
+          sourceLabTestId: { in: ['orphan-1'] },
+        }),
+      }),
+    );
+    expect(prismaMock.branchLabTest.update).toHaveBeenCalledWith({
+      where: { id: 'branch-copy-1' },
+      data: { deletedAt: expect.any(Date) },
+    });
+    expect(prismaMock.branchLabTest.update).toHaveBeenCalledWith({
+      where: { id: 'branch-copy-dup' },
+      data: { isDefault: true },
+    });
   });
 
   it('never touches a branch test that was never synced from the tenant (sourceMasterLabTestId null)', async () => {

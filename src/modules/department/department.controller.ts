@@ -7,7 +7,6 @@ import {
   Patch,
   Post,
   Query,
-  UseGuards,
 } from '@nestjs/common';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { DepartmentService } from './department.service';
@@ -16,8 +15,6 @@ import { UpdateDepartmentDto } from './dto/update-department.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { ListDepartmentQueryDto } from './dto/list-department-query.dto';
 import { Audit } from '../../common/decorators/audit.decorator';
-import { ProfileGuard } from '../auth/guards/profile.guard';
-import { RequireProfile } from '../auth/decorators/require-profile.decorator';
 
 /**
  * Department endpoints (business-authenticated; tenant comes from the JWT).
@@ -29,11 +26,9 @@ export class DepartmentController {
 
   /**
    * Create a department in the caller's tenant. Tenant-level only — there is no
-   * provision to add departments at branch level (business_admin only).
+   * provision to add departments at branch level.
    */
   @Post()
-  @UseGuards(ProfileGuard)
-  @RequireProfile('business_admin')
   @Audit({
     module: AuditModule.DEPARTMENT,
     action: AuditAction.CREATE,

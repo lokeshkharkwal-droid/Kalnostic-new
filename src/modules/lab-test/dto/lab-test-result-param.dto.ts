@@ -1,6 +1,7 @@
 import {
   ParameterType,
   ResultEntryMode,
+  ResultGroupLayout,
   ResultRounding,
   ResultType,
 } from '@prisma/client';
@@ -27,9 +28,10 @@ import { ReflexTestRefDto } from './reflex-test-ref.dto';
 /**
  * A result parameter for a lab test, embedded under the create/update payload.
  * Embeds its own reference ranges/values. Context/parent ids are not accepted
- * from the client. `parameterCode` is unique per test (partial unique index);
- * `calculationFormula` is required when `parameterType` is `CALCULATED`
- * (validated in `LabTestService` + a CHECK in prisma/rls.sql).
+ * from the client. `parameterCode` is unique per test (partial unique index).
+ * `calculationFormula` is not required even when `parameterType` is
+ * `CALCULATED` — a Calculated parameter may be saved without a formula
+ * filled in yet (see `LabTestService.assertParam`/`assertImportParam`).
  */
 export class LabTestResultParamDto {
   // Group display
@@ -38,8 +40,17 @@ export class LabTestResultParamDto {
   @MaxLength(255)
   groupName?: string;
 
-  @IsUUID()
+  /** Plain display mode (Tabular vs Sequential). Distinct from groupLayoutId. */
+  @IsEnum(ResultGroupLayout)
   @IsOptional()
+  groupLayout?: ResultGroupLayout;
+
+  /** Plain text, not an id — "Tabular Layout" or "Sequential Layout"; no
+   * catalogue exists for this field (unlike `groupSettingsId` below). Field
+   * name kept as `groupLayoutId` to match the existing DB column. */
+  @IsString()
+  @IsOptional()
+  @MaxLength(255)
   groupLayoutId?: string;
 
   @IsUUID()
@@ -70,6 +81,10 @@ export class LabTestResultParamDto {
   @IsOptional()
   iconSettingsId?: string;
 
+  @IsUUID()
+  @IsOptional()
+  imageSettingsId?: string;
+
   @IsString()
   @IsOptional()
   @MaxLength(100)
@@ -99,6 +114,19 @@ export class LabTestResultParamDto {
   @IsOptional()
   @MaxLength(255)
   allowableUnits?: string;
+
+  /** Suggested values shown to the user entering this parameter's result (one
+   * per line in the UI). */
+  @IsArray()
+  @IsOptional()
+  @IsString({ each: true })
+  resultSuggestions?: string[];
+
+  /** Pre-filled value for this parameter's result — can be one of
+   * `resultSuggestions` or any custom text. */
+  @IsString()
+  @IsOptional()
+  defaultValue?: string;
 
   @IsInt()
   @Min(0)

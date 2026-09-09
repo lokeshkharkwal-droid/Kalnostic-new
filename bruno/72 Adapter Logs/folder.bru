@@ -1,0 +1,77 @@
+meta {
+  name: 72 Adapter Logs
+  seq: 72
+}
+
+docs {
+  # Adapter Logs
+
+  EMI adapter transaction logs — one row per call the lab adapter makes to
+  `emi/orders` / `emi/submitResult`, with the raw request/response retained for
+  investigation. Tenant-scoped + branch-level (`adapter_logs` table). Read-only.
+
+  Table columns (all UIs): **Source IP · Status · Action · Token · Date & Time**.
+  Row **View** shows: **Request · Response · Action · Status Code · Source IP Address**.
+
+  ## Two endpoints, three scopes
+
+  | Endpoint | Auth | Who / scope |
+  | --- | --- | --- |
+  | `GET /adapter-logs` | business `{{businessAccessToken}}` | **Business Admin** → every branch in the tenant; **Branch Admin** (any non-`business_admin` profile) → **only its own branch** |
+  | `GET /adapter-logs/:id` | business | one row, tenant-scoped |
+  | `GET /siteadmin/adapter-logs` | siteadmin `{{siteAdminToken}}` (`adapter-logs:read`, operations_admin+) | **Site Admin** → ALL tenants, or one via `?tenantId=` |
+
+  The business endpoint derives scope from the **token's active profile** — you
+  never send a role. Get the right token first, then run the list request:
+
+  ### 1. Site Admin (all tenants)
+  Run **01 SiteAdmin Auth → Login** (`admin@kalnostics.com` / `SuperSecret1`) →
+  captures `siteAdminToken`. Then run **SiteAdmin List Adapter Logs (All
+  Tenants)**. Add `tenantId` (or run the **Single Tenant** request) to narrow.
+
+  ### 2. Business Admin (tenant-wide)
+  Run **04 Business Auth → Login** as the tenant admin (a `business_admin`) →
+  captures `businessAccessToken`. Then run **List Adapter Logs (Business)** — it
+  returns rows across all branches of the tenant (including tenant-level rows
+  where `branchId` is null).
+
+  ### 3. Branch Admin (branch-scoped)
+  After the business login, run **04 Business Auth → Switch Profile** with
+  `{ "profileKey": "branch_admin", "branchId": "{{branchId}}" }` → the
+  `businessAccessToken` is now branch-scoped. Re-run **List Adapter Logs
+  (Business)** — it returns **only that branch's** rows; the tenant-level
+  (`branchId: null`) rows are excluded.
+
+  ## How EMI activity reaches the listing (read / submit → row)
+  The machine-facing EMI endpoints write an `adapter_logs` row on **every** call
+  (fire-and-forget — never blocks the machine response), so reading orders or
+  submitting results is reflected in this listing:
+
+  - `GET {{emiBaseUrl}}/emi/orders?specimen_id={{orderCode}}` → one
+    `action = ORDERS` row.
+  - `GET {{emiBaseUrl}}/emi/submitResult` → one `action = SUBMIT_RESULT` row.
+
+  The legacy `s` code maps to `statusCode` and a textual `status` (`SUCCESS` for
+  200/199, else `FAILED`); the row also captures `token`, `sourceIpAddress`,
+  `request` (compact) and `response`. `branchId` is the resolved order's branch —
+  a real order shows in the **Branch Admin** view too; an unmatched specimen/tube
+  logs with `branchId = null` (Business Admin / Site Admin only).
+
+  **See the round-trip in sequence:** folder **71 EMI Machine Flow E2E** now runs
+  it end-to-end — after the machine calls (**26** `GET /emi/orders`, **27**
+  `GET /emi/submitResult`), steps **28 + 29** list `GET /adapter-logs` and assert
+  both calls appear (as the branch-scoped operator). The standalone EMI request
+  reference lives in folder **70 EMI Machine Interface**.
+
+  ## Seeded demo data
+  `prisma/seed.ts` inserts 4 rows per tenant (actions `ORDERS` / `SUBMIT_RESULT`,
+  varied status / statusCode / IP; 3 branch-level + 1 tenant-level). Re-seed with
+  `pnpm prisma db seed` (idempotent per tenant).
+
+  ## Testing via the UI
+  - **Site Admin FE**  → `/support/adapter-logs` (sidebar: Support → Adapter Logs)
+  - **Kaltros Business Admin** → `/business-admin/support/adapter-logs`
+  - **Kaltros Branch Admin**   → `/branch-admin/support/adapter-logs`
+
+  Select the **Local** environment before running any request.
+}

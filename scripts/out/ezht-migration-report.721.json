@@ -1,0 +1,30 @@
+{
+  "legacyTenantId": 721,
+  "newTenantId": "2f3b072e-af31-47e6-a064-f7f0342528d1",
+  "tenant": {
+    "created": false,
+    "skipped": true
+  },
+  "branches": {
+    "created": 0,
+    "skipped": 11
+  },
+  "patients": {
+    "created": 0,
+    "skipped": 3,
+    "familyBypass": [],
+    "missingMobile": [],
+    "errors": []
+  },
+  "panels": {
+    "created": 0,
+    "skipped": 1,
+    "errors": []
+  },
+  "family": {
+    "created": 0,
+    "skipped": 0,
+    "unresolved": [],
+    "errors": []
+  }
+}

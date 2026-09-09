@@ -1,0 +1,62 @@
+meta {
+  name: 44 Get Order Grouped Samples (Overview)
+  type: http
+  seq: 44
+}
+
+get {
+  url: {{baseUrl}}/accession/order-samples/order/{{orderId}}/grouped
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("single order group (or null when no samples)", function () {
+    const d = res.getBody().data;
+    if (d) {
+      expect(d).to.have.property("orderId");
+      expect(d).to.have.property("groupingMode");
+      expect(d).to.have.property("groups");
+      expect(d).to.have.property("sampleIds");
+      if (d.groups.length) {
+        expect(d.groups[0]).to.have.property("barcode");
+        expect(d.groups[0]).to.have.property("sampleIds");
+      }
+    }
+  });
+}
+
+docs {
+  Grouped accession samples for a **single order** — the same order-first
+  grouping `40 List Grouped Samples` produces (keyed on the tenant's current
+  grouping mode via `GET/PUT /tenant/accession-settings/grouping-mode`), but
+  scoped to ONE order id instead of a page of orders. Powers the Product Overview
+  modal's grouped Test Details on `/registration/create`, so its groups /
+  barcodes / action-scope mirror `/accession/inhouse-orders` exactly.
+
+  Scoped by tenant + order id only (no branch filter): the modal always targets a
+  specific order the caller just created/opened.
+
+  ## Returns
+
+  A single `InHouseOrderGroup` (same shape as one element of `40`'s `data[]`):
+
+  - `orderId` + `order` — the order id and its header context (patient, referral).
+  - `groupingMode` — the tenant's current mode (FE layout hint).
+  - `sampleIds[]` — all sample ids in the order.
+  - `groups[]` — the final (barcode) groups within the order; each carries
+    `groupKey`, `barcode` (or null → "No barcode"), `department`, `sampleLabel`,
+    `samples[]` (each with `tatStatus` + `departmentName`) and the flat
+    `sampleIds[]` a group action targets.
+
+  Resolves to **`null`** when the order has no generated samples yet (e.g. a
+  DRAFT / non-diagnostic order) — the FE then falls back to its flat per-item
+  table. The group's `sampleIds` feed `POST /orders/:id/collect-group`.
+}

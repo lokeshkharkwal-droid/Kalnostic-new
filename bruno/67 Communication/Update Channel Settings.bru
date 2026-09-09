@@ -1,0 +1,39 @@
+meta {
+  name: Update Channel Settings
+  type: http
+  seq: 11
+}
+
+put {
+  url: {{baseUrl}}/communication/channel-settings
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "isSmsChannelEnabled": false
+  }
+}
+
+docs {
+  Partially update the business's messaging channel capability for the active
+  scope. Only supplied flags change; a missing settings row is created with
+  defaults (all channels enabled) on first write. Tenant + branch come from the
+  JWT — never the body (CLAUDE.md §4.7).
+
+  Setting a flag to `false` suppresses that channel for EVERY automatic
+  notification in the scope (business capability gate). Returns the full settings
+  view (same shape as **Get Channel Settings**).
+
+  ## Fields (all optional)
+  - `isEmailChannelEnabled`, `isSmsChannelEnabled`, `isWhatsappChannelEnabled`.
+}

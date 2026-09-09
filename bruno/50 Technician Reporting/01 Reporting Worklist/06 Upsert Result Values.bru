@@ -35,5 +35,14 @@ docs {
   Does NOT change the report's status — call Save or Submit afterward. One
   row per `resultParamId`; re-sending the same id updates it in place.
 
+  Dynamic/calculated parameters (`parameterType = CALCULATED` on the test's
+  result params) are re-evaluated authoritatively from their formula AFTER this
+  upsert, over the report's current values, and stored with `source = CALCULATED`
+  (dependency chains evaluate in order). To keep a manual override on a
+  calculated parameter, send it with `"isManualOverride": true` — it is then
+  stored with `source = MANUAL` and left out of the recompute until reset.
+  A formula that can't be computed yet (blank/non-numeric input, division by
+  zero) blanks that slot rather than failing the save.
+
   404 `LAB_REPORT_NOT_FOUND`. 409 `LAB_REPORT_LOCKED` if the report is locked.
 }

@@ -7,7 +7,6 @@ import {
   Patch,
   Post,
   Query,
-  UseGuards,
 } from '@nestjs/common';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { CategoryService } from './category.service';
@@ -16,8 +15,6 @@ import { UpdateCategoryDto } from './dto/update-category.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { ListCategoryQueryDto } from './dto/list-category-query.dto';
 import { Audit } from '../../common/decorators/audit.decorator';
-import { ProfileGuard } from '../auth/guards/profile.guard';
-import { RequireProfile } from '../auth/decorators/require-profile.decorator';
 
 /**
  * Category endpoints (business-authenticated; tenant comes from the JWT). The
@@ -29,11 +26,9 @@ export class CategoryController {
 
   /**
    * Create a category in the caller's tenant. Tenant-level only — there is no
-   * provision to add categories at branch level (business_admin only).
+   * provision to add categories at branch level.
    */
   @Post()
-  @UseGuards(ProfileGuard)
-  @RequireProfile('business_admin')
   @Audit({
     module: AuditModule.CATEGORY,
     action: AuditAction.CREATE,

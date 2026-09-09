@@ -15,8 +15,8 @@ export class TenantLocaleController {
 
   /**
    * Return the caller tenant's locale (time zone + currency + date format +
-   * language) so the frontend can render UTC timestamps in business-local time
-   * and format money with the configured currency.
+   * time format + language) so the frontend can render UTC timestamps in
+   * business-local time and format money with the configured currency.
    */
   @Get('locale')
   getLocale(@CurrentTenant() tenantId: string) {

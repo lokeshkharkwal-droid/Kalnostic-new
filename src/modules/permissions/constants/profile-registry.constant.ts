@@ -39,6 +39,8 @@ export const PROFILE_REGISTRY = [
   'radiology_assistant',
   'nursing_staff',
   'nursing_incharge',
+  // ── B2B Referral Panel login ──
+  'b2b_referring_panel',
 ] as const;
 
 export type ProfileKey = (typeof PROFILE_REGISTRY)[number];
@@ -78,6 +80,7 @@ export const PROFILE_LABELS: Record<ProfileKey, string> = {
   radiology_assistant: 'Radiology Assistant',
   nursing_staff: 'Nursing Staff',
   nursing_incharge: 'Nursing Incharge',
+  b2b_referring_panel: 'B2B Referring Panel',
 };
 
 /**
@@ -202,6 +205,20 @@ export const PROFILE_BRANCH_MATRIX: Record<ProfileKey, BranchType[]> = {
   radiology_assistant: [BranchType.RADIOLOGY, BranchType.COMBINED],
   nursing_staff: [BranchType.OPD, BranchType.IPD, BranchType.COMBINED],
   nursing_incharge: [BranchType.OPD, BranchType.IPD, BranchType.COMBINED],
+  // B2B Referral Panel login — branch-level; allowed on the broad set of branch
+  // types a referral panel can attach to (same list as branch_admin).
+  b2b_referring_panel: [
+    BranchType.DIAGNOSTIC,
+    BranchType.RADIOLOGY,
+    BranchType.OPD,
+    BranchType.IPD,
+    BranchType.PHARMACY,
+    BranchType.INVENTORY,
+    BranchType.BLOOD_BANK,
+    BranchType.FRANCHISE,
+    BranchType.COMBINED,
+    BranchType.COLLECTION_CENTER,
+  ],
 };
 
 /**

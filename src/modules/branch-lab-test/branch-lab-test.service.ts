@@ -59,7 +59,9 @@ const BRANCH_TEST_DROP_KEYS = [
   'masterDataId',
   'source',
   // Master Data provenance columns that don't exist on BranchLabTest — must be
-  // dropped or Prisma rejects them as unknown args on create/update.
+  // dropped or Prisma rejects them as unknown args on create/update. (Most
+  // master-only columns are now also filtered by the BranchLabTest scalar-field
+  // whitelist in extractScalars; these stay listed as documentation.)
   'clonedFromId',
   'templateSyncedAt',
   'sourceMasterLabTestId',
@@ -69,6 +71,24 @@ const BRANCH_TEST_DROP_KEYS = [
   'deletedAt',
   'samples',
   'resultParams',
+  // `LabTest.approvalWorkflow` (added 2026-09-06) has no counterpart on
+  // BranchLabTest — the existing `approvalWorkflowId` field is a different,
+  // older concept (a nullable logical ref, matching pdfSettingsId/
+  // imageSettingsId), not this new enum. Without this drop, Prisma rejected
+  // every import/sync as an "Unknown argument `approvalWorkflow`" — every
+  // test in every tenant was blocked from being imported into a branch's Lab
+  // Test List. Bug fixed 2026-09-07; revisit if/when a real branch-level
+  // approval-workflow field is added.
+  'approvalWorkflow',
+  // Same problem, same fix, for 4 more LabTest-only columns added the same
+  // week (2026-09-04 to 09-06) with no BranchLabTest counterpart at all.
+  // Confirmed via schema.prisma: none of the 4 appear anywhere in the
+  // BranchLabTest model. Revisit if/when Branch Lab Test gains its own
+  // copies of these flags.
+  'isOutsource',
+  'isBillOnlyTest',
+  'isSampleFlow',
+  'isOverrideAllowed',
 ];
 
 /**
@@ -246,12 +266,17 @@ export class BranchLabTestService {
     }
     const copies = await this.prisma.branchLabTest.findMany({
       where,
-      select: { id: true, sourceLabTestId: true },
+      select: { id: true, sourceLabTestId: true, isDefault: true },
     });
 
     const updates: {
       id: string;
       data: Prisma.BranchLabTestUncheckedUpdateInput;
+    }[] = [];
+    const toDelete: {
+      id: string;
+      isDefault: boolean;
+      sourceLabTestId: string | null;
     }[] = [];
     let skipped = 0;
     for (const copy of copies) {
@@ -271,14 +296,16 @@ export class BranchLabTestService {
         });
       } catch (e) {
         if (e instanceof LabTestNotFoundException) {
-          skipped += 1;
+          // Source has been soft-deleted at Master Data — the branch's copy is
+          // stale and no longer orderable, so it is removed rather than skipped.
+          toDelete.push(copy);
           continue;
         }
         throw e;
       }
     }
 
-    if (updates.length) {
+    if (updates.length || toDelete.length) {
       try {
         await this.prisma.withTenant(tenantId, async (tx) => {
           for (const u of updates) {
@@ -287,13 +314,36 @@ export class BranchLabTestService {
               data: u.data,
             });
           }
+          for (const d of toDelete) {
+            await tx.branchLabTest.update({
+              where: { id: d.id },
+              data: { deletedAt: new Date() },
+            });
+            if (d.isDefault && d.sourceLabTestId) {
+              const sibling = await tx.branchLabTest.findFirst({
+                where: {
+                  tenantId,
+                  branchId,
+                  sourceLabTestId: d.sourceLabTestId,
+                  deletedAt: null,
+                },
+                orderBy: { createdAt: 'asc' },
+              });
+              if (sibling) {
+                await tx.branchLabTest.update({
+                  where: { id: sibling.id },
+                  data: { isDefault: true },
+                });
+              }
+            }
+          }
         });
       } catch (e) {
         this.rethrowConflict(e);
         throw e;
       }
     }
-    return { synced: updates.length, skipped };
+    return { synced: updates.length, deleted: toDelete.length, skipped };
   }
 
   /**
@@ -409,6 +459,16 @@ export class BranchLabTestService {
    * (`priceMsrp`, minor units); `sampleType`/`isFasting` come from the first sample
    * in `configSnapshot` — both feed the form's Diagnostic Items table. Supports a
    * case-insensitive `search` on testName.
+   *
+   * `preferredOnly` narrows to `isPreferenceTest: true` when set AND no
+   * `search` term is given — used by the Create-Order picker, whose unsearched
+   * view should default to the branch's curated "preferred" tests rather than
+   * the full catalogue; typing a search term lifts the narrowing so any test
+   * can still be found by name. This endpoint is shared by several other
+   * pickers (finance report filters, accession, lab adapters, order console)
+   * that must keep seeing the full catalogue, so the narrowing is opt-in, not
+   * a change in the default — omitting `preferredOnly` reproduces the prior
+   * unfiltered behaviour exactly.
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT profile)
    * @param filters optional search + offset pagination
@@ -422,6 +482,7 @@ export class BranchLabTestService {
       page?: number;
       limit?: number;
       listId?: string;
+      preferredOnly?: boolean;
     } = {},
   ): Promise<
     Array<BranchLabTestOption> | PaginatedResult<BranchLabTestOption>
@@ -438,6 +499,8 @@ export class BranchLabTestService {
     const term = filters.search?.trim();
     if (term) {
       where.testName = { contains: term, mode: 'insensitive' };
+    } else if (filters.preferredOnly) {
+      where.isPreferenceTest = true;
     }
 
     const select = {
@@ -798,13 +861,25 @@ export class BranchLabTestService {
     scalars: Record<string, unknown>;
     configSnapshot: Prisma.InputJsonValue;
   } {
-    const copy: Record<string, unknown> = { ...source };
     const configSnapshot = {
-      samples: copy.samples,
-      resultParams: copy.resultParams,
+      samples: (source as Record<string, unknown>).samples,
+      resultParams: (source as Record<string, unknown>).resultParams,
     } as unknown as Prisma.InputJsonValue;
-    for (const key of BRANCH_TEST_DROP_KEYS) {
-      delete copy[key];
+    // Whitelist to columns that actually exist on BranchLabTest. LabTest has
+    // gained fields BranchLabTest does not mirror (e.g. `approvalWorkflow`,
+    // `isOutsource`, `isBillOnlyTest`) — copying those verbatim makes Prisma
+    // reject the create/update with "Unknown argument …". Filtering against the
+    // BranchLabTest scalar-field set drops any such master-only column
+    // automatically, so future LabTest additions can't break import/sync. The
+    // identity/scope/timestamp columns are set fresh by the caller and are
+    // excluded via BRANCH_TEST_DROP_KEYS.
+    const validFields = new Set<string>(
+      Object.keys(Prisma.BranchLabTestScalarFieldEnum),
+    );
+    const dropKeys = new Set<string>(BRANCH_TEST_DROP_KEYS);
+    const copy: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(source)) {
+      if (validFields.has(key) && !dropKeys.has(key)) copy[key] = value;
     }
     return { scalars: copy, configSnapshot };
   }

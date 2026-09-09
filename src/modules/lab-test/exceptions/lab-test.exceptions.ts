@@ -66,6 +66,54 @@ export class LabTestParamCodeConflictException extends KaltrosException {
 }
 
 /**
+ * 422 — a calculated parameter's `calculationFormula` is syntactically invalid
+ * (does not tokenize/parse), or references itself. `reason` distinguishes the
+ * two so the client message is specific.
+ */
+export class InvalidFormulaException extends KaltrosException {
+  constructor(parameterCode: string, reason: 'syntax' | 'self' = 'syntax') {
+    super(
+      'INVALID_FORMULA',
+      reason === 'self'
+        ? 'A calculated parameter cannot reference itself in its formula'
+        : 'The calculation formula is invalid',
+      { parameterCode, reason },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — a calculated parameter's formula references a parameter code that does
+ * not exist in this lab test.
+ */
+export class UnknownFormulaReferenceException extends KaltrosException {
+  constructor(parameterCode: string, ref: string) {
+    super(
+      'UNKNOWN_FORMULA_REFERENCE',
+      `The calculation formula references an unknown parameter "${ref}"`,
+      { parameterCode, ref },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — the calculated parameters form a circular dependency (e.g. A depends on
+ * B and B depends on A), which cannot be evaluated.
+ */
+export class CircularFormulaDependencyException extends KaltrosException {
+  constructor(cycle: string[]) {
+    super(
+      'CIRCULAR_FORMULA_DEPENDENCY',
+      `The calculation formulas form a circular dependency: ${cycle.join(' → ')}`,
+      { cycle },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
  * 422 — a bulk import was rejected because one or more rows failed validation.
  * The per-row, row-numbered messages are surfaced to the client as the envelope
  * `message` array (the global filter/interceptor pass `string[]` through verbatim,

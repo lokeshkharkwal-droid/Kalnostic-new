@@ -1,0 +1,40 @@
+meta {
+  name: SiteAdmin List Adapter Logs (Single Tenant)
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/adapter-logs?page=1&limit=20&tenantId={{tenantId}}
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  tenantId: {{tenantId}}
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+tests {
+  test("200 OK", () => {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("every row belongs to the requested tenant", () => {
+    const b = res.getBody();
+    expect(b.success).to.equal(true);
+    expect(b.data).to.be.an("array");
+    b.data.forEach((r) => expect(r.tenantId).to.equal(bru.getVar("tenantId")));
+  });
+}
+
+docs {
+  SiteAdmin adapter-log view narrowed to a **single business** via `tenantId`.
+  Exact offset pagination on that tenant alone. Set `tenantId` (captured by
+  **Tenants → Create Tenant**, or paste a real tenant id). Same optional filters
+  as the all-tenants request.
+}
