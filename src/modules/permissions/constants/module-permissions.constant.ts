@@ -1278,11 +1278,22 @@ export function roleTemplateModules(roleKey: string): string[] {
 }
 
 /**
- * The five sidebar/navigation permission keys a B2B Referring Panel user holds.
- * These map 1:1 to the panel's allowed screens: Order Console, Billing, Invoices,
- * Payments, Reporting. The B2B role's baseline is exactly this set (NOT the full
+ * The permission keys a B2B Referring Panel user holds. These map 1:1 to the
+ * panel's allowed screens: Order Console, Billing, Invoices, Payments,
+ * Reporting. The B2B role's baseline is exactly this set (NOT the full
  * expansion of its three modules), which is what lets the permission-driven
  * sidebar hide every sibling item. Keys must match the frontend constants.
+ *
+ * Five keys gate the sidebar (`panel_navigation__*`, nav-only — they do NOT
+ * gate the page content itself). Three more are the page-level "view" keys
+ * Order Console / Payments / Invoices independently check before rendering
+ * their content (see `OrderConsoleScreen.tsx`, `finance/Payments/index.tsx`,
+ * `finance/Invoices/index.tsx`) — without these, the sidebar item shows but
+ * the page itself renders "you don't have permission". Billing and Reporting
+ * have no such page-level gate, so no extra key is needed for those two.
+ * Order Console is deliberately view-only for B2B (no
+ * `create_order_patient_details__allow_create_order`) — B2B can see orders,
+ * not place them.
  */
 export const B2B_PANEL_PERMISSION_KEYS: readonly string[] = [
   'registration:panel_navigation__view_order_console',
@@ -1290,6 +1301,9 @@ export const B2B_PANEL_PERMISSION_KEYS: readonly string[] = [
   'finance:panel_navigation__view_invoices',
   'finance:panel_navigation__view_payments',
   'lab_operations:panel_navigation__view_reporting',
+  'registration:order_console__view_only',
+  'finance:payments__list_view_only',
+  'finance:invoice__list_view_only',
 ] as const;
 
 // Override the auto-computed template for the B2B role: keep its three linked

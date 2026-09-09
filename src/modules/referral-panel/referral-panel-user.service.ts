@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { StaffStatus, UserType } from '@prisma/client';
+import { Gender, Prisma, StaffStatus, UserType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   ConflictException,
@@ -7,6 +7,7 @@ import {
 } from '../../common/exceptions/kaltros.exception';
 import { UsersService } from '../users/users.service';
 import { CreateReferralPanelUserDto } from './dto/create-referral-panel-user.dto';
+import { UpdateReferralPanelUserDto } from './dto/update-referral-panel-user.dto';
 
 /** The fixed role + modules assigned to every referral-panel login. */
 const B2B_ROLE_KEY = 'b2b_referring_panel';
@@ -165,7 +166,14 @@ export class ReferralPanelUserService {
   ): Promise<{
     id: string;
     personId: string;
-    person: { firstName: string; email: string | null; phone: string | null } | null;
+    person: {
+      firstName: string;
+      email: string | null;
+      phone: string | null;
+      dateOfBirth: Date | null;
+      gender: Gender | null;
+      address: Prisma.JsonValue | null;
+    } | null;
   } | null> {
     const profile = await this.prisma.userBranchProfile.findFirst({
       where: { tenantId, referralPanelId: panelId, deletedAt: null },
@@ -174,8 +182,71 @@ export class ReferralPanelUserService {
     if (!profile) return null;
     const person = await this.prisma.person.findFirst({
       where: { id: profile.personId },
-      select: { firstName: true, email: true, phone: true },
+      select: {
+        firstName: true,
+        email: true,
+        phone: true,
+        dateOfBirth: true,
+        gender: true,
+        address: true,
+      },
     });
     return { id: profile.id, personId: profile.personId, person };
+  }
+
+  /**
+   * Update the panel's B2B login's basic profile fields. Branch, role,
+   * permissions/modules and `username` are never touched — only the same
+   * personal fields the create form offers. Delegates to
+   * `UsersService.updateUser` for every field it already supports (deliberately
+   * omitting `roleKey`/`status`/`userType` so it never touches
+   * `TenantStaffMembership`), and separately updates `email` directly (immutable
+   * in `UpdateUserDto` for every other user type, but safe here since a B2B
+   * login authenticates by `username`, not `email`).
+   * @param tenantId caller's tenant (from JWT)
+   * @param panelId the referral panel id (from the route)
+   * @param dto the fields to update
+   * @param updatedBy the acting person id
+   */
+  async update(
+    tenantId: string,
+    panelId: string,
+    dto: UpdateReferralPanelUserDto,
+    updatedBy: string,
+  ): Promise<{ personId: string }> {
+    const panel = await this.prisma.referralPanel.findFirst({
+      where: { id: panelId, tenantId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!panel) throw new NotFoundException('referral-panel', panelId);
+
+    const profile = await this.prisma.userBranchProfile.findFirst({
+      where: { tenantId, referralPanelId: panelId, deletedAt: null },
+      select: { personId: true },
+    });
+    if (!profile) throw new NotFoundException('referral-panel-user', panelId);
+
+    await this.usersService.updateUser(
+      profile.personId,
+      tenantId,
+      {
+        employeeName: dto.employeeName,
+        dateOfBirth: dto.dateOfBirth,
+        gender: dto.gender,
+        mobileNumber: dto.mobileNumber,
+        address: dto.address,
+        password: dto.password,
+      },
+      updatedBy,
+    );
+
+    if (dto.email !== undefined) {
+      await this.prisma.person.update({
+        where: { id: profile.personId },
+        data: { email: dto.email },
+      });
+    }
+
+    return { personId: profile.personId };
   }
 }

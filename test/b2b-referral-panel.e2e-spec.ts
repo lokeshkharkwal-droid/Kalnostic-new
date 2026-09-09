@@ -198,4 +198,47 @@ describe('B2B referral-panel isolation (e2e)', () => {
       [...B2B_PANEL_PERMISSION_KEYS].sort(),
     );
   });
+
+  it('ReferralPanelUserService.update changes basic profile fields (email + password) without touching branch/role', async () => {
+    if (!ready) return;
+    const svc = app.get(ReferralPanelUserService);
+    const newPassword = 'NewPassw0rd!2';
+
+    await svc.update(
+      tenantId,
+      panelId,
+      {
+        employeeName: 'E2E Panel User Updated',
+        email: `${username}.updated@example.com`,
+        password: newPassword,
+      },
+      'e2e-actor',
+    );
+
+    const profile = await prisma.userBranchProfile.findFirst({
+      where: { tenantId, referralPanelId: panelId, deletedAt: null },
+      select: { personId: true, branchId: true, referralPanelId: true },
+    });
+    expect(profile?.branchId).toBe(branchId);
+    expect(profile?.referralPanelId).toBe(panelId);
+
+    const person = await prisma.person.findFirst({
+      where: { id: profile?.personId },
+      select: { firstName: true, email: true },
+    });
+    expect(person?.firstName).toBe('E2E Panel User Updated');
+    expect(person?.email).toBe(`${username}.updated@example.com`);
+
+    // Old password no longer works; the new one does.
+    const oldLogin = await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({ identifier: username, password });
+    expect(oldLogin.status).not.toBe(200);
+
+    const newLogin = await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({ identifier: username, password: newPassword });
+    expect(newLogin.status).toBe(200);
+    expect(newLogin.body?.data?.accessToken).toBeTruthy();
+  });
 });

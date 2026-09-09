@@ -194,6 +194,12 @@ export class FinancePaymentsService {
     tenantId: string,
     query: FinancePaymentsSummaryQueryDto,
   ): Promise<FinancePaymentsSummary> {
+    // B2B Referral Panel isolation: a B2B session may only ever see its own
+    // panel's ledger, regardless of any client-supplied filter (mirrors findAll()).
+    const panelId = getReferralPanelId();
+    if (panelId) {
+      query.referralPanelId = panelId;
+    }
     await this.assertBranch(tenantId, query.branchId);
 
     const useDirect = query.type !== 'INVOICE';

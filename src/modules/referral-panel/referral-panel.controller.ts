@@ -18,6 +18,7 @@ import { ReferralPanelUserService } from './referral-panel-user.service';
 import { CreateReferralPanelDto } from './dto/create-referral-panel.dto';
 import { CreateReferralPanelUserDto } from './dto/create-referral-panel-user.dto';
 import { UpdateReferralPanelDto } from './dto/update-referral-panel.dto';
+import { UpdateReferralPanelUserDto } from './dto/update-referral-panel-user.dto';
 import { ListReferralPanelsDto } from './dto/list-referral-panels.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
@@ -163,5 +164,31 @@ export class ReferralPanelController {
     @CurrentUser('person_id') actorId: string,
   ) {
     return this.referralPanelUserService.create(tenantId, id, dto, actorId);
+  }
+
+  /**
+   * Update the referral panel's dedicated B2B login user's basic profile
+   * fields. Branch, role, permissions/modules, status and `username` are never
+   * editable via this route — only the same personal fields the create form
+   * offers.
+   * @param id the referral panel id
+   * @param dto the fields to update
+   * @param tenantId the caller's tenant (from JWT)
+   * @param actorId the acting user (from JWT) — used as updatedBy
+   */
+  @Patch(':id/user')
+  @RequirePermission(PERMISSION_KEYS.BR_REF_UPDATE_PANEL)
+  @Audit({
+    module: AuditModule.REFERRAL_PANEL,
+    action: AuditAction.UPDATE,
+    description: 'Updated a referral panel login user',
+  })
+  updatePanelUser(
+    @Param('id') id: string,
+    @Body() dto: UpdateReferralPanelUserDto,
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') actorId: string,
+  ) {
+    return this.referralPanelUserService.update(tenantId, id, dto, actorId);
   }
 }
