@@ -1,0 +1,51 @@
+meta {
+  name: Update Referral Panel User
+  type: http
+  seq: 12
+}
+
+patch {
+  url: {{baseUrl}}/referral-panels/{{referralPanelId}}/user
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "employeeName": "Panel One Updated",
+    "email": "panel.one.updated@example.com",
+    "mobileNumber": "9800000002",
+    "address": "12 New Street"
+  }
+}
+
+docs {
+  🔒 **RBAC:** requires `branch_admin:referrals__update_referral_panel`
+  (`PERMISSION_KEYS.BR_REF_UPDATE_PANEL`) — the same permission `Update Referral
+  Panel` requires.
+
+  Update the referral panel's dedicated B2B ("B2B Referring Panel") login
+  user's basic profile fields. All fields are optional (partial update).
+
+  **Immutable / never accepted here** — branch, role, permissions/modules,
+  status, and `username` (the login identifier) are all server-controlled and
+  cannot be changed via this route. Unlike the regular staff `Update User`
+  endpoint, `email` IS editable here, since a B2B login authenticates by
+  `username`, not `email`.
+
+  Sending `password` sets a new password immediately (bcrypt-hashed); omit it
+  to leave the current password unchanged.
+
+  Returns 404 `referral-panel` if the panel doesn't exist, or 404
+  `referral-panel-user` if the panel has no login user yet (use *Create
+  Referral Panel User* first). Uses `referralPanelId` captured by a *Create
+  Referral Panel* request.
+}

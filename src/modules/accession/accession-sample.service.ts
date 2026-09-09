@@ -1729,6 +1729,19 @@ export class OrderSampleService {
    * which creates a new `OrderSample` directly rather than transitioning
    * an existing one through `transitionIds`) — can call it too, keeping one
    * single place that knows how to create LabReports for an accepted sample.
+   *
+   * Bug fix: for a PANEL order item, `OrderSampleTest.labTestId` records
+   * which specific (panel-expanded) member test THIS sample serves — passed
+   * through to `ensureCreatedForAcceptedItem` so it creates a report for only
+   * that one member. Previously this wasn't passed at all, so accepting any
+   * ONE of a panel's several member-test samples (each member test gets its
+   * own independent `OrderSample` — see the panel-restructure doc comment on
+   * `LabReport`) created LabReports for EVERY member test in the panel at
+   * once, including members whose own sample was still NEW/uncollected —
+   * those reports then sat at PENDING (or were progressed further) with no
+   * physical sample ever accepted for them. Confirmed live 2026-09-08: a
+   * panel order with 3 member tests, only 1 sample accepted, produced 3
+   * LabReports instead of 1.
    */
   async ensureLabReportsForAcceptedSample(
     tx: Prisma.TransactionClient,
@@ -1738,14 +1751,15 @@ export class OrderSampleService {
   ): Promise<void> {
     const sampleTests = await tx.orderSampleTest.findMany({
       where: { sampleId, tenantId, deletedAt: null },
-      select: { orderItemId: true },
+      select: { orderItemId: true, labTestId: true },
     });
-    for (const { orderItemId } of sampleTests) {
+    for (const { orderItemId, labTestId } of sampleTests) {
       await this.labReportService.ensureCreatedForAcceptedItem(
         tenantId,
         orderItemId,
         tx,
         acceptedBy,
+        labTestId,
       );
     }
   }

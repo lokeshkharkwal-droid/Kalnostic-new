@@ -276,6 +276,14 @@ export interface LabReportWorklistRow {
    */
   sampleIds: string[];
 
+  /** The `OrderSample.barcode`(s) linked to this row, in the same order as
+   * `sampleIds`/`sampleStatuses` (index-paired) — the physical tube/container
+   * barcode, shared across every test drawn from the same sample. Null entry
+   * where a linked sample hasn't been barcoded yet (Accession's "Assign
+   * Barcode" step). Empty array under the same (rare/defensive) condition as
+   * `sampleStatuses`. */
+  sampleBarcodes: (string | null)[];
+
   /** Whether this test has been assigned to a multi-step process
    * (LABORATORY.docx §5.7 — Histopathology/Bone Marrow/Cytology/IHC, tracked
    * through Grossing→Sectioning→Staining→Reporting), and if so, which
@@ -434,6 +442,7 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
     orderItemId: row.orderItemId,
     sampleStatuses: [],
     sampleIds: [],
+    sampleBarcodes: [],
     tat: null,
 
     multiStepProcessType: null,
@@ -453,6 +462,7 @@ export interface LabReportStatusCounts {
   published: number;
   errorReported: number;
   resultRejected: number;
+  bySource: { inHouse: number; outsource: number };
 }
 
 /** The transition matrix from LABORATORY.docx §2.2 — one entry per gated action. */
