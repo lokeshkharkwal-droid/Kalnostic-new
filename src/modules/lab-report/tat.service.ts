@@ -7,6 +7,7 @@ import {
   TatUnit,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { getReferralPanelId } from '../../prisma/tenant-context';
 import {
   classifyTat,
   evaluateTat,
@@ -698,6 +699,13 @@ export class TatService {
       approvedAt:
         filters.dateFrom || filters.dateTo ? approvedAt : { not: null },
     };
+
+    // B2B Referral Panel isolation: constrain the analytics to the panel's own
+    // reports (nested via orderItem.order), same as the worklist.
+    const panelId = getReferralPanelId();
+    if (panelId) {
+      where.orderItem = { order: { referralPanelId: panelId } };
+    }
 
     const grouped = await this.prisma.labReport.groupBy({
       by: ['tatBand'],

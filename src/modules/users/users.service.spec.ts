@@ -43,7 +43,7 @@ describe('UsersService — resolveEffectiveModules', () => {
       }
     ).resolveEffectiveModules(roleKey, assignedModules);
 
-  it('grants a curated role (b2b_referring_panel) exactly its 5 curated keys, not the full module expansion', () => {
+  it('grants a curated role (b2b_referring_panel) exactly its 8 curated keys, not the full module expansion', () => {
     const { permissions } = resolve('b2b_referring_panel', [
       'registration',
       'finance',
@@ -56,11 +56,20 @@ describe('UsersService — resolveEffectiveModules', () => {
         'finance:panel_navigation__view_payments',
         'lab_operations:panel_navigation__view_reporting',
         'registration:panel_navigation__view_order_console',
+        'registration:order_console__view_only',
+        'finance:payments__list_view_only',
+        'finance:invoice__list_view_only',
       ].sort(),
     );
     // Regression guard: a sibling nav key in an assigned module must NOT leak in.
     expect(
       permissions.has('registration:panel_navigation__view_full_module'),
+    ).toBe(false);
+    // Order Console stays view-only — no order-creation permission leaks in.
+    expect(
+      permissions.has(
+        'registration:create_order_patient_details__allow_create_order',
+      ),
     ).toBe(false);
   });
 
@@ -71,6 +80,8 @@ describe('UsersService — resolveEffectiveModules', () => {
         'finance:panel_navigation__view_billing',
         'finance:panel_navigation__view_invoices',
         'finance:panel_navigation__view_payments',
+        'finance:payments__list_view_only',
+        'finance:invoice__list_view_only',
       ].sort(),
     );
   });
