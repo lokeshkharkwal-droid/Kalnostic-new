@@ -141,12 +141,26 @@ const REPORT_APPROVED_STATUSES: readonly LabReportStatus[] = [
  * was, so a partially-finished panel stayed invisible as `PENDING` right up
  * until its very last member test finished.
  *
+ * A panel item's `LabReport`s are created LAZILY, one per member test, only
+ * as each member's sample is individually accepted at Accession — so
+ * `item.labReports.length` alone understates a panel's true size while
+ * accession is still in progress (e.g. 1 of 4 members accepted+approved
+ * reads as "1 of 1 done"). `panelMemberCounts` (the panel's real, current
+ * member-test count, from `BranchLabPanelTest` — no Prisma relation exists
+ * between `BranchLabPanel`/`BranchLabPanelTest`, batch-resolved by the
+ * caller) is used instead for a panel item's expected unit count, UNLESS
+ * that item carries a "grandfathered" pre-breakdown combined report
+ * (`memberBranchLabTestId === null`) — current report-creation code can
+ * never produce that shape for a new item, so it's a closed, historical
+ * state: such an item keeps the old "whatever reports exist today is the
+ * whole story" rule instead, to avoid regressing already-working legacy
+ * panels into a target they can never reach.
+ *
  * An item with zero reports yet (not accepted in Accession, so no `LabReport`
- * exists) still blocks `COMPLETED`/`APPROVED` — it's treated as one
- * not-yet-done unit in the denominator, same as before this change, so an
- * order can't read "Completed" while one of its items hasn't even reached
- * Accession's Accept step. It contributes nothing to `doneCount`, only to the
- * total, mirroring `REPORT_DONE_STATUSES`'s all-or-nothing per-unit rule.
+ * exists) still blocks `COMPLETED`/`APPROVED` — it's treated as one (or, for
+ * a panel, `panelMemberCounts`-many) not-yet-done unit(s) in the denominator.
+ * It contributes nothing to `doneCount`, only to the total, mirroring
+ * `REPORT_DONE_STATUSES`'s all-or-nothing per-unit rule.
  *
  * - `APPROVED` — every report on the order reached Approved/Published, and
  *   every item has at least one report.
@@ -156,20 +170,37 @@ const REPORT_APPROVED_STATUSES: readonly LabReportStatus[] = [
  *   every report/item has.
  * - `PENDING` — no report reached Result Done (or the order has no items/reports).
  *
- * @param items the order's active items, each with its `labReports[].status`
+ * @param items the order's active items, each with its `branchLabPanel` ref
+ *   (if any) and `labReports[].status`/`memberBranchLabTestId`
+ * @param panelMemberCounts each referenced panel's true, current member-test
+ *   count (`branchLabPanelId` -> count), batch-resolved by the caller
  */
 export function deriveReportStatus(
-  items: { labReports: { status: LabReportStatus }[] }[],
+  items: {
+    branchLabPanel: { id: string } | null;
+    labReports: {
+      status: LabReportStatus;
+      memberBranchLabTestId: string | null;
+    }[];
+  }[],
+  panelMemberCounts: Map<string, number>,
 ): OrderReportStatus {
   if (items.length === 0) return 'PENDING';
-  // Total "units": every report that exists, PLUS one placeholder unit for
-  // each item that has none yet (not accepted) — so a not-yet-accepted item
-  // still counts toward the denominator without contributing a done/approved
-  // report, exactly like before this change.
-  const totalUnits = items.reduce(
-    (n, item) => n + Math.max(item.labReports.length, 1),
-    0,
-  );
+  // Total "units" expected per item: a panel item's true member-test count
+  // (never less than however many reports already exist, in case the
+  // panel's catalogue membership later drifted smaller), or 1 for a
+  // non-panel item / a grandfathered single-combined-report panel item.
+  const expectedUnits = (item: (typeof items)[number]): number => {
+    const hasGrandfatheredReport = item.labReports.some(
+      (r) => r.memberBranchLabTestId === null,
+    );
+    if (item.branchLabPanel && !hasGrandfatheredReport) {
+      const panelCount = panelMemberCounts.get(item.branchLabPanel.id) ?? 0;
+      return Math.max(panelCount, item.labReports.length, 1);
+    }
+    return Math.max(item.labReports.length, 1);
+  };
+  const totalUnits = items.reduce((n, item) => n + expectedUnits(item), 0);
   const reports = items.flatMap((item) => item.labReports);
   const doneCount = reports.filter((r) =>
     REPORT_DONE_STATUSES.includes(r.status),
@@ -425,7 +456,12 @@ export const ORDER_LIST_INCLUDE = {
       // for a panel item created after the per-member-test breakdown shipped.
       // Created lazily once a linked sample is accepted; empty until then —
       // that's a "not yet reported" test. Drives the order-level `reportStatus`.
-      labReports: { where: { deletedAt: null }, select: { status: true } },
+      // `memberBranchLabTestId` (null on a non-panel or grandfathered report)
+      // lets `deriveReportStatus` tell those apart from a per-member report.
+      labReports: {
+        where: { deletedAt: null },
+        select: { status: true, memberBranchLabTestId: true },
+      },
     },
   },
   diagnostics: {
