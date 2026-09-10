@@ -1,4 +1,10 @@
-import { IsBoolean, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import {
+  IsBoolean,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+} from 'class-validator';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 import { ToBoolean } from '../../../common/decorators/to-boolean.decorator';
 

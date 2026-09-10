@@ -24,9 +24,6 @@ const SEPARATOR_TOKENS: Record<AccessionBarcodeSeparator, string> = {
  */
 const BARCODE_NUMBER_FLOOR = 10000;
 
-/** S3 key sub-folder under which rendered barcode images are stored. */
-const BARCODE_FOLDER = 'barcodes';
-
 /**
  * Barcode value allocation + Code 39 image rendering/storage for accession
  * samples. Owns two concerns:
@@ -210,7 +207,6 @@ export class BarcodeService {
       'image/png',
       '.png',
       tenantId,
-      BARCODE_FOLDER,
     );
     return url;
   }

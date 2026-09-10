@@ -1,10 +1,10 @@
-import { IsOptional, IsString, Matches, MaxLength } from 'class-validator';
-
 /**
  * Constraints for the generic attachment upload (`POST /uploads/attachment`).
- * The file arrives via the multipart `file` field; an optional `folder` field
- * namespaces the S3 key. Allowed types + size are enforced by the controller's
- * multer `FileInterceptor`.
+ * The file arrives via the multipart `file` field. Allowed types + size are
+ * enforced by the controller's multer `FileInterceptor`; the stored object keeps
+ * the file's original (sanitised) name plus a short unique suffix under a
+ * date-partitioned, tenant-scoped key
+ * (`{env}/{tenantId}/{YYYY}/{MM}/{DD}/{filename}`).
  */
 
 /**
@@ -29,25 +29,6 @@ export const ALLOWED_ATTACHMENT_MIME_TYPES = [
 
 /** Hard cap for an uploaded attachment: 10 MB. */
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
-
-/**
- * Optional multipart body for `POST /uploads/attachment` (the file itself
- * arrives via the `file` field). `folder` namespaces the S3 key per feature.
- */
-export class UploadAttachmentDto {
-  /**
-   * Optional S3 key sub-folder (e.g. "signatures", "patient-documents").
-   * Restricted to a safe slug to prevent path traversal / odd keys.
-   */
-  @IsOptional()
-  @IsString()
-  @MaxLength(64)
-  @Matches(/^[a-z0-9][a-z0-9-_]*$/, {
-    message:
-      'folder may contain lowercase letters, digits, dash and underscore only',
-  })
-  folder?: string;
-}
 
 /** Shape returned by the upload endpoint — the stored file's public URL. */
 export interface UploadAttachmentResult {

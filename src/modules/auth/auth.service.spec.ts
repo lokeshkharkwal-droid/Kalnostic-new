@@ -63,6 +63,9 @@ describe('AuthService — switchProfile / refresh context', () => {
       update: jest.fn(),
       create: jest.fn(),
     },
+    // buildJwtPayload / login wrap their RLS-scoped reads in runWithTenant; the
+    // helper just runs its callback (no tenant GUC to set under a mocked client).
+    runWithTenant: jest.fn((_tenantId: string, cb: () => unknown) => cb()),
   };
   const jwtMock = { sign: jest.fn() };
   const usersServiceMock = { getPersonProfiles: jest.fn() };

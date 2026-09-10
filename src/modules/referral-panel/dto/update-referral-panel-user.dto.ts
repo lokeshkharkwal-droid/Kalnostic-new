@@ -64,5 +64,5 @@ export class UpdateReferralPanelUserDto {
   @IsOptional()
   @IsString()
   @MaxLength(300)
-   address?: string;
+  address?: string;
 }

@@ -35,13 +35,21 @@ export const envValidationSchema = Joi.object({
     .integer()
     .min(1)
     .default(10 * 1024 * 1024),
-  // S3 attachment uploads (POST /uploads/attachment). All optional so the app
-  // still boots without them; the endpoint throws UPLOAD_NOT_CONFIGURED if a
-  // required var is missing when an upload is actually attempted.
-  AWS_REGION: Joi.string().default('ap-southeast-1'),
-  AWS_BUCKET: Joi.string().allow('').optional(),
-  AWS_ACCESS_KEY: Joi.string().allow('').optional(),
-  AWS_SECRET_KEY: Joi.string().allow('').optional(),
+  // DigitalOcean Spaces attachment uploads (POST /uploads/attachment). All
+  // optional so the app still boots without them; the endpoint throws
+  // UPLOAD_NOT_CONFIGURED if a required var is missing when an upload is actually
+  // attempted. Spaces is S3-compatible and driven via the AWS S3 SDK.
+  SPACES_REGION: Joi.string().default('sgp1'),
+  SPACES_BUCKET: Joi.string().allow('').optional(),
+  SPACES_ACCESS_KEY: Joi.string().allow('').optional(),
+  SPACES_SECRET_KEY: Joi.string().allow('').optional(),
+  // The Spaces regional endpoint, e.g. `https://sgp1.digitaloceanspaces.com`.
+  // Required for uploads (it is what points the S3 client at Spaces).
+  SPACES_ENDPOINT: Joi.string().uri().allow('').optional(),
+  // Public base URL used to build the returned object URL. Blank = derived
+  // automatically (path-style: `{endpoint}/{bucket}/{key}`). Set to a CDN /
+  // custom-domain base whose root maps to the bucket when serving via a CDN.
+  SPACES_PUBLIC_BASE_URL: Joi.string().uri().allow('').optional(),
   // When true, PrismaService sets app.current_tenant_id per request so Postgres
   // RLS (prisma/rls.sql) enforces tenant isolation. Requires a non-owner DB role
   // and rls.sql applied. Default false — isolation then relies on where-clauses.

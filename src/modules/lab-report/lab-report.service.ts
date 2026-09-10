@@ -985,8 +985,12 @@ export class LabReportService {
     const byOrderItem = new Map<string, Map<string, SampleInfo>>();
     const byOrderItemAndTest = new Map<string, Map<string, SampleInfo>>();
     for (const { orderItemId, labTestId, sample } of sampleTests) {
-      const info: SampleInfo = { status: sample.status, barcode: sample.barcode };
-      const item = byOrderItem.get(orderItemId) ?? new Map<string, SampleInfo>();
+      const info: SampleInfo = {
+        status: sample.status,
+        barcode: sample.barcode,
+      };
+      const item =
+        byOrderItem.get(orderItemId) ?? new Map<string, SampleInfo>();
       item.set(sample.id, info);
       byOrderItem.set(orderItemId, item);
 
