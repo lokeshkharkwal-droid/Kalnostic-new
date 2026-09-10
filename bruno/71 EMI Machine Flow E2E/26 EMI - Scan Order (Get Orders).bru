@@ -5,13 +5,13 @@ meta {
 }
 
 get {
-  url: {{emiBaseUrl}}/emi/orders?specimen_id={{orderCode}}
+  url: {{emiBaseUrl}}/emi/orders?specimen_id={{sampleBarcode}}
   body: none
   auth: none
 }
 
 params:query {
-  specimen_id: {{orderCode}}
+  specimen_id: {{sampleBarcode}}
 }
 
 headers {
@@ -32,7 +32,7 @@ tests {
   });
   test("order carries patient + pending tests", function () {
     const o = res.body.orders[0];
-    expect(o.specimen_id).to.equal(bru.getVar("orderCode"));
+    expect(o.specimen_id).to.equal(bru.getVar("sampleBarcode"));
     expect(o).to.have.property("patient_name");
     expect(o.ut_ids).to.be.an("array");
   });
@@ -43,12 +43,16 @@ docs {
   after scanning the specimen: `GET /emi/orders` at the **root** (`{{emiBaseUrl}}`,
   NOT `/api/v1`), authenticated by the **`TOKEN`** header carrying
   **`flowAdapterToken`** (step 25) — not the business JWT. `specimen_id` is the
-  order's **`orderCode`** (captured in step 20), since our backend has no separate
-  barcode/specimen id.
+  scanned **sample barcode** (`OrderSample.barcode`, captured as `sampleBarcode`
+  in step 21). The backend resolves the barcode → its accession **sample group** →
+  the parent order, and scopes the returned tests to that group (mirrors the legacy
+  `OrderSpecimenGroup` specimen-id lookup).
 
   Returns the flat legacy envelope
   `{ "s": "200", "orders": [{ specimen_id, order_date, patient_id, patient_name,
   patient_surname, birth_date, patient_gender, admission_number,
-  sender_organization, sender_doctor, ut_ids }] }`. `ut_ids` lists the `testCode`s
-  of this order's tests that are mapped to the adapter and still fillable.
+  sender_organization, sender_doctor, ut_ids }] }`. `specimen_id` echoes the
+  scanned barcode; `admission_number` carries the order's `orderCode`. `ut_ids`
+  lists the tests **in the scanned sample group** that are mapped to the adapter
+  and still fillable (plus each test's result-parameter names).
 }

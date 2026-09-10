@@ -72,6 +72,17 @@ const ORDER_INCLUDE = {
 type EmiOrder = Prisma.OrderGetPayload<{ include: typeof ORDER_INCLUDE }>;
 
 /**
+ * An order resolved from a scanned **sample barcode**, together with the set of
+ * `OrderItem.id`s carried by that barcode's sample group. `selectedItemIds` scopes
+ * the exposed/fillable tests to just the scanned specimen group (mirrors the
+ * legacy `OrderSpecimenGroup` → `getUniqueTestIdsFromSpecimenProducts` narrowing).
+ */
+interface ResolvedSampleOrder {
+  order: EmiOrder;
+  selectedItemIds: Set<string>;
+}
+
+/**
  * The adapter's resolved integration context: which branches it serves and which
  * branch lab tests it reports (its "prefered tests").
  */
@@ -191,10 +202,13 @@ export class EmiService {
 
   /**
    * `GET /emi/orders` — return the order + patient + pending-test info for a
-   * scanned id. In our system the scanned `specimen_id` is the order's
-   * `orderCode`.
+   * scanned **sample barcode**. In our system the scanned `specimen_id` is the
+   * accession sample's `OrderSample.barcode`; the order and the scanned group's
+   * tests are derived from it (mirrors the legacy `OrderSpecimenGroup` specimen-id
+   * lookup — the tests are scoped to the scanned specimen group, not the whole
+   * order).
    * @param adapter the authenticated adapter (tenant + branch scope)
-   * @param specimenId the scanned id (= `Order.orderCode`)
+   * @param specimenId the scanned id (= `OrderSample.barcode`)
    * @returns the legacy `{ s, orders: [...] }` envelope
    */
   async getOrders(
@@ -209,10 +223,16 @@ export class EmiService {
       ? { s: EMI.BAD_REQUEST, m: 'Missing specimen id' }
       : await this.prisma.withTenant(adapter.tenantId, async (tx) => {
           const ctx = await this.resolveContext(tx, adapter);
-          const order = await this.findOrder(tx, adapter.tenantId, code, ctx);
-          if (!order) {
+          const resolved = await this.findOrderByBarcode(
+            tx,
+            adapter.tenantId,
+            code,
+            ctx,
+          );
+          if (!resolved) {
             return { s: EMI.BAD_REQUEST, m: 'Specimen id not found' };
           }
+          const { order, selectedItemIds } = resolved;
           branchId = order.branchId;
 
           const tenant = await tx.tenant.findUnique({
@@ -234,7 +254,8 @@ export class EmiService {
           for (const item of order.items) {
             if (
               !item.branchLabTestId ||
-              !ctx.mappedTestIds.has(item.branchLabTestId)
+              !ctx.mappedTestIds.has(item.branchLabTestId) ||
+              !selectedItemIds.has(item.id)
             ) {
               continue;
             }
@@ -330,10 +351,14 @@ export class EmiService {
       adapter.tenantId,
       async (tx) => {
         const ctx = await this.resolveContext(tx, adapter);
+        // `tube_no` is the scanned sample barcode (the analyzer echoes back the
+        // same specimen id it received from `/emi/orders`).
         const code = body.tube_no?.trim() ?? '';
-        const order = code
-          ? await this.findOrder(tx, adapter.tenantId, code, ctx)
+        const resolved = code
+          ? await this.findOrderByBarcode(tx, adapter.tenantId, code, ctx)
           : null;
+        const order = resolved?.order ?? null;
+        const selectedItemIds = resolved?.selectedItemIds ?? new Set<string>();
         loggedBranchId = order?.branchId ?? null;
 
         // Common audit-row writer (one row per submission).
@@ -455,10 +480,14 @@ export class EmiService {
               continue;
             }
 
-            // Not one of the adapter's prefered (mapped) tests.
+            // Not one of the adapter's prefered (mapped) tests, or not part of
+            // the scanned specimen group. (Legacy narrows `preferedTest` to the
+            // scanned group's tests, so a non-group test lands in this same
+            // "Not in prefered test list" branch.)
             if (
               !item.branchLabTestId ||
-              !ctx.mappedTestIds.has(item.branchLabTestId)
+              !ctx.mappedTestIds.has(item.branchLabTestId) ||
+              !selectedItemIds.has(item.id)
             ) {
               log.push({
                 ...base,
@@ -715,24 +744,73 @@ export class EmiService {
     };
   }
 
-  /** Find an order by `orderCode`, tenant-scoped and within the adapter's branches. */
-  private async findOrder(
+  /**
+   * Resolve an order from a scanned **sample barcode** (the specimen id the
+   * analyzer sends), tenant-scoped and within the adapter's branches. Mirrors the
+   * legacy `OrderSpecimenGroup::getFranchiseLatestGroupBySpecimenId`: the barcode
+   * identifies a sample group — one-or-more `OrderSample` rows sharing that
+   * `barcode` (Accession assigns one shared barcode per grouping bucket) — from
+   * which the parent order and the specific order items carried by the group are
+   * derived. Samples never group across orders, so the most-recent sample's order
+   * is taken and only that order's items are collected into `selectedItemIds`.
+   * @param tx active Prisma transaction client (already tenant-scoped)
+   * @param tenantId tenant scope
+   * @param barcode the scanned sample barcode (= `OrderSample.barcode`)
+   * @param ctx the adapter's resolved branch scope
+   * @returns the order + the set of `OrderItem.id`s in the scanned group, or
+   *   `null` when no active sample carries the barcode in the adapter's scope
+   */
+  private async findOrderByBarcode(
     tx: Prisma.TransactionClient,
     tenantId: string,
-    orderCode: string,
+    barcode: string,
     ctx: AdapterContext,
-  ): Promise<EmiOrder | null> {
-    const where: Prisma.OrderWhereInput = {
-      orderCode,
+  ): Promise<ResolvedSampleOrder | null> {
+    const where: Prisma.OrderSampleWhereInput = {
+      barcode,
       tenantId,
       deletedAt: null,
     };
     if (ctx.branchIds.length > 0) {
-      // Include tenant-level (null-branch) orders too, but restrict located
-      // orders to the adapter's branches.
+      // Include tenant-level (null-branch) samples too, but restrict located
+      // samples to the adapter's branches.
       where.OR = [{ branchId: { in: ctx.branchIds } }, { branchId: null }];
     }
-    return tx.order.findFirst({ where, include: ORDER_INCLUDE });
+    const samples = await tx.orderSample.findMany({
+      where,
+      select: {
+        orderId: true,
+        tests: { where: { deletedAt: null }, select: { orderItemId: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (samples.length === 0) {
+      return null;
+    }
+
+    // A barcode belongs to one order's sample group (Accession never groups
+    // across orders — Critical Rule #1); take the most-recent sample's order and
+    // collect the order items carried by every sample of that order sharing this
+    // barcode.
+    const orderId = samples[0]!.orderId;
+    const selectedItemIds = new Set<string>();
+    for (const sample of samples) {
+      if (sample.orderId !== orderId) {
+        continue;
+      }
+      for (const test of sample.tests) {
+        selectedItemIds.add(test.orderItemId);
+      }
+    }
+
+    const order = await tx.order.findFirst({
+      where: { id: orderId, tenantId, deletedAt: null },
+      include: ORDER_INCLUDE,
+    });
+    if (!order) {
+      return null;
+    }
+    return { order, selectedItemIds };
   }
 
   /**

@@ -20,8 +20,8 @@ body:text {
     "specimen_type": "",
     "tube_information_id": "e9b6927a-f2e0-4898-910b-d892b45d8de1",
     "equipment_id": "11111112",
-    "tube_no": "{{orderCode}}",
-    "original_tube_no": "{{orderCode}}",
+    "tube_no": "{{sampleBarcode}}",
+    "original_tube_no": "{{sampleBarcode}}",
     "result_date": "1668583670356",
     "sent": "",
     "sent_date": "",
@@ -71,7 +71,10 @@ docs {
   Auth is the **`TOKEN`** header (`flowAdapterToken`).
 
   Key fields, all auto-filled from earlier steps:
-  - `tube_no` = **`orderCode`** (the scanned id).
+  - `tube_no` = **`sampleBarcode`** (`OrderSample.barcode`, captured in step 21) —
+    the same specimen id the analyzer received from step 26. The backend resolves
+    it → the sample group → the order, and only fills reports for tests in that
+    scanned group.
   - `test_results[0].universal_test_id` = **`emiParamCode`** (`HGB`) — matches the
     result parameter created on the lab test in step 14, so the value fills that
     parameter. `test_result` = `emiResultValue`, `unit` = `emiParamUnit`.

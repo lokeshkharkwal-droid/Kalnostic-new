@@ -50,7 +50,7 @@ export interface SubmitResultBody {
   specimen_type?: string;
   tube_information_id?: string;
   equipment_id?: string;
-  /** Specimen/tube id — in our system this is the order's `orderCode`. */
+  /** Specimen/tube id — in our system this is the accession sample's `OrderSample.barcode`. */
   tube_no?: string;
   original_tube_no?: string;
   result_date?: string;

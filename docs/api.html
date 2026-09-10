@@ -2796,21 +2796,26 @@ accession state machine — guarded, never destructive) and the linked appointme
 only a host change. These routes are <strong>served at the root</strong> (NOT under <code>/api/v1</code>),
 authenticated by a <code>TOKEN</code> header carrying an active <code>LabAdapter.token</code> (never the business
 JWT), and return the <strong>flat legacy envelope</strong> <code>{ s, m, … }</code> (NOT
-<code>{ success, data, meta }</code>). The scanned <code>specimen_id</code>/<code>tube_no</code> maps to the
-order's <code>orderCode</code> (there is no barcode/specimen table here). Auth errors:
+<code>{ success, data, meta }</code>). The scanned <code>specimen_id</code>/<code>tube_no</code> maps to an
+accession sample's <code>OrderSample.barcode</code>; the backend resolves it → the sample group → the parent
+order, and scopes the tests to that group (mirrors the legacy <code>OrderSpecimenGroup</code> specimen lookup).
+Auth errors:
 <code>{ "s": "400", "m": "Missing Auth token" }</code>, <code>{ "s": "403", "m": "Invalid authorization" }</code>.
 Every submission is persisted as an <code>AdapterResult</code> audit row.</div>
 
 <div class="ep" id="emi-orders">
-  <div><span class="m get">GET</span><span class="path">/emi/orders?specimen_id=&lt;orderCode&gt;</span></div>
+  <div><span class="m get">GET</span><span class="path">/emi/orders?specimen_id=&lt;barcode&gt;</span></div>
   <div class="tags"><span class="tag pub">TOKEN header</span></div>
-  <p>Order + patient + pending-test info for a scanned id. Returns
+  <p>Order + patient + pending-test info for a scanned <strong>sample barcode</strong>
+  (<code>OrderSample.barcode</code>). Returns
   <code>{ s: "200", orders: [{ specimen_id, order_date, patient_id, patient_name, patient_surname,
-  birth_date, patient_gender, admission_number, sender_organization, sender_doctor, ut_ids }] }</code>.
-  Dates are Unix <strong>seconds</strong> (0 when absent). For each of the order's tests that are mapped to
-  this adapter and still fillable, <code>ut_ids</code> lists the test's <strong>display name plus each of its
-  result-parameter names</strong> (deduped) — the legacy <code>getFormattedOrder</code> shape the analyzers are
-  calibrated against (sent back as <code>universal_test_id</code> on submit). Unknown order →
+  birth_date, patient_gender, admission_number, sender_organization, sender_doctor, ut_ids }] }</code>
+  (<code>specimen_id</code> echoes the scanned barcode; <code>admission_number</code> carries the
+  <code>orderCode</code>). Dates are Unix <strong>seconds</strong> (0 when absent). For each test
+  <strong>in the scanned sample group</strong> that is mapped to this adapter and still fillable,
+  <code>ut_ids</code> lists the test's <strong>display name plus each of its result-parameter names</strong>
+  (deduped) — the legacy <code>getFormattedOrder</code> shape the analyzers are calibrated against (sent back
+  as <code>universal_test_id</code> on submit). No sample with that barcode →
   <code>{ "s": "400", "m": "Specimen id not found" }</code>.</p>
 </div>
 <div class="ep" id="emi-submit">
@@ -2819,9 +2824,11 @@ Every submission is persisted as an <code>AdapterResult</code> audit row.</div>
   <p>Fill the machine's result values onto the order's reports. <strong>GET with a JSON body under
   <code>Content-Type: text/plain</code></strong> (legacy quirk — the server reads the raw body and skips the
   global ValidationPipe, so extra machine fields are accepted). Mirrors legacy
-  <code>processAdapterResult</code>: only <strong>fillable</strong> reports (status PENDING/PARTIAL_PENDING/SAVED,
-  not locked) belonging to the adapter's mapped tests are filled — the value is stored with
-  <code>source = ADAPTER</code> and the report moves to <code>SAVED</code>; reports are never auto-approved. Each
+  <code>processAdapterResult</code>: <code>tube_no</code> is the sample <strong>barcode</strong> (resolved → sample
+  group → order); only <strong>fillable</strong> reports (status PENDING/PARTIAL_PENDING/SAVED, not locked)
+  belonging to the adapter's mapped tests <strong>and part of the scanned sample group</strong> are filled —
+  the value is stored with <code>source = ADAPTER</code> and the report moves to <code>SAVED</code>; reports
+  are never auto-approved. Each
   <code>test_results[]</code> entry's <code>universal_test_id</code> is matched to <code>BranchLabTest.testCode</code>
   then <code>test_name</code> (single-parameter tests fill on a test-level match). Success →
   <code>{ s: "200", m: "Result updated successfully", emi_status: "Complete", test_status: "&lt;n&gt; test updated",
@@ -2836,7 +2843,7 @@ Every submission is persisted as an <code>AdapterResult</code> audit row.</div>
   <code>adapter_results</code> audit row. The parser tolerates the analyzers' slightly-malformed JSON (empty
   array slots <code>},,{</code>, trailing commas).</p>
   <pre>TOKEN: &lt;adapter token&gt;
-{ "tube_no": "ORD-00051", "result_date": "1668583670356",
+{ "tube_no": "10028", "result_date": "1668583670356",
   "test_results": [ { "universal_test_id": "1234", "test_result": "10.24", "unit": "mg/dL",
                       "test_name": "site admin -01" } ],
   "test_result_suplement": [ { "type": "WBC", "format": "Base64", "data": "data:image/bmp;base64,…" } ],
