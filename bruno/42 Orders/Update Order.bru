@@ -74,10 +74,12 @@ docs {
   Each element of `items[]` MAY carry an `id` field (the existing `OrderItem`'s
   UUID, returned by `GET /orders/:id` in `items[].id`):
 
-  - **Include `id`** — the matching existing item is **kept** (preserved as-is;
-    other fields on the same object are currently ignored on keep, so re-send the
-    `branchLabTestId`/`branchLabPanelId` for clarity but the row is identified by
-    `id`).
+  - **Include `id`** — the matching existing item row is **kept** (not removed and
+    recreated, so its accession samples / reports stay linked). The row is
+    identified by `id`; its mutable fields are refreshed from the payload
+    (`discount`, `discountMode`, `discountValue`, `outsourceCenterId`, and — for a
+    `direct` line — `unitPrice`; catalogue prices are re-resolved server-side).
+    Re-send the `branchLabTestId`/`branchLabPanelId` for clarity.
   - **Omit `id`** — the element is treated as a **new** item to add; the server
     creates a fresh `OrderItem` row from its fields (`branchLabTestId`,
     `branchLabPanelId`, or `direct` + optional `outsourceCenterId`, `discount`,
