@@ -755,26 +755,32 @@ Inside the `withTenant` tx, replace the old item block with keep/add/remove writ
 
 - [ ] **Step 5: Replace the sample-generation call with the reconcile**
 
-Where `update()` currently calls `generateForOrderInTx` (~5622-5631), branch on whether items were diffed. For an item-changing update use the reconcile; for a status-only finalization (no `items` in the patch) keep the first-time generation:
+Where `update()` currently calls `generateForOrderInTx` (~5622-5631), branch on whether the order **already had samples**. Reconcile only applies to an order that was already accessioned; a first-time finalization generates the whole (final) item set:
 
 ```ts
       const hasDiagnostics = Boolean(dto.diagnostics ?? existing?.diagnostics);
       if (this.shouldGenerateSamples(effectiveStatus, hasDiagnostics)) {
-        if (dto.items !== undefined && itemDiff) {
-          // First finalization still needs base generation; then reconcile the delta.
-          await this.orderSamples.generateForOrderInTx(tx, tenantId, branchId, personId, id);
+        const alreadyAccessioned =
+          (await tx.orderSample.count({ where: { orderId: id, tenantId, deletedAt: null } })) > 0;
+        if (alreadyAccessioned && dto.items !== undefined && itemDiff) {
+          // Order was already accessioned and its item set changed → reconcile the
+          // delta (void removed tests' samples, generate the newly-added ones).
           await this.orderSamples.reconcileForOrderInTx(tx, tenantId, branchId, personId, id, {
             addedItemIds,
             removedItemIds: itemDiff.removeIds,
             now,
           });
         } else {
+          // First-time generation for the whole (final) item set. Idempotent: it
+          // early-returns if samples somehow already exist. On a first finalization
+          // the "added" items are simply part of the order now, so generating the
+          // whole order covers them — do NOT also reconcile (that would double-create).
           await this.orderSamples.generateForOrderInTx(tx, tenantId, branchId, personId, id);
         }
       }
 ```
 
-> `generateForOrderInTx` is idempotent (early-returns when samples already exist), so calling it before `reconcileForOrderInTx` is safe: on a first finalization it creates the base set and reconcile's add-list is already covered; on an existing order it no-ops and reconcile does the real work. Added items created in Step 4 are new rows, so reconcile's `buildSamplesForItems` generates exactly their samples (they are not in the pre-existing set).
+> **Why not call both:** on a first finalization (`alreadyAccessioned === false`), `generateForOrderInTx` builds samples for every current item — including the just-added ones — so calling `reconcileForOrderInTx` afterwards would generate the added items' samples a second time. On an already-accessioned order, `generateForOrderInTx` would no-op anyway, so we skip straight to reconcile. The `alreadyAccessioned` count is read fresh inside the tx **before** any reconcile writes, so it reflects the pre-update state.
 
 - [ ] **Step 6: Confirm `paymentStatus` recompute already covers the new net**
 
