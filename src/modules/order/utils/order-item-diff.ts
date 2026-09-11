@@ -61,12 +61,21 @@ export const BLOCKING_REPORT_STATUSES: readonly LabReportStatus[] = [
 ];
 
 /**
+ * O(1) membership view of {@link BLOCKING_REPORT_STATUSES}, derived from it so the
+ * two never drift. Mirrors the `ReadonlySet<LabReportStatus>` status-set pattern
+ * used elsewhere (e.g. `accession/constants/tat.constant.ts`).
+ */
+const BLOCKING_REPORT_STATUS_SET: ReadonlySet<LabReportStatus> = new Set(
+  BLOCKING_REPORT_STATUSES,
+);
+
+/**
  * Whether a test (with the given report statuses across its LabReports) may still
  * be removed. True when none of its reports has reached a blocking status.
  * @param reportStatuses the statuses of every LabReport for the test being removed
  */
 export function isTestDeletable(reportStatuses: LabReportStatus[]): boolean {
-  return !reportStatuses.some((s) => BLOCKING_REPORT_STATUSES.includes(s));
+  return !reportStatuses.some((s) => BLOCKING_REPORT_STATUS_SET.has(s));
 }
 
 /**

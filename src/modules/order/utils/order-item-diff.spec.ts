@@ -36,7 +36,11 @@ describe('isTestDeletable', () => {
   });
   it('blocks removal once any report is SAVED or beyond', () => {
     expect(isTestDeletable([LabReportStatus.PENDING, LabReportStatus.SAVED])).toBe(false);
+    expect(isTestDeletable([LabReportStatus.VALIDATION_PENDING])).toBe(false);
+    expect(isTestDeletable([LabReportStatus.RESULT_DONE])).toBe(false);
     expect(isTestDeletable([LabReportStatus.APPROVED])).toBe(false);
+    expect(isTestDeletable([LabReportStatus.PUBLISHED])).toBe(false);
+    expect(isTestDeletable([LabReportStatus.ERROR_REPORTED])).toBe(false);
     expect(isTestDeletable([LabReportStatus.RESULT_REJECTED])).toBe(false);
   });
 });
