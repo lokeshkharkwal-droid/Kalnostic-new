@@ -1,4 +1,4 @@
-import { PaymentMode } from '@prisma/client';
+import { DiscountMode, PaymentMode } from '@prisma/client';
 import {
   IsBoolean,
   IsDateString,
@@ -35,6 +35,31 @@ export class OrderPaymentDto {
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   orderDiscount?: number;
+
+  /**
+   * How the order-level discount was originally entered — `PERCENT` (a
+   * percentage of the item total) or `AMOUNT` (a fixed rupee value). Stored
+   * alongside `orderDiscount` (the computed rupee amount) so the discount can
+   * be re-derived against a new item total if tests are added or removed.
+   * Mirrors `OrderItem.discountMode`. Omitted when there is no order-level
+   * discount or the discount was entered as a flat amount without an explicit
+   * mode.
+   */
+  @IsOptional()
+  @IsEnum(DiscountMode)
+  orderDiscountMode?: DiscountMode;
+
+  /**
+   * The raw number the user typed for the order-level discount: the percentage
+   * (e.g. `10` for 10 %) when `orderDiscountMode` is `PERCENT`, or the rupee
+   * amount when `AMOUNT`. Stored so the frontend can re-display the original
+   * input and recompute the computed `orderDiscount` against a changed item
+   * total. Mirrors `OrderItem.discountValue`. Must be ≥ 0 when provided.
+   */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  orderDiscountValue?: number;
 
   /**
    * Total discount applied across the order (every per-line item discount plus

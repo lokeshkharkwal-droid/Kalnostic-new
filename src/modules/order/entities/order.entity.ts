@@ -504,6 +504,8 @@ export const ORDER_LIST_INCLUDE = {
       id: true,
       totalAmount: true,
       orderDiscount: true,
+      orderDiscountMode: true,
+      orderDiscountValue: true,
       netAmount: true,
       paidAmount: true,
       tdsDeduction: true,
