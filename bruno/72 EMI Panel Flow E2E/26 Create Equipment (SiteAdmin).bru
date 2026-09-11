@@ -1,0 +1,45 @@
+meta {
+  name: 26 Create Equipment (SiteAdmin)
+  type: http
+  seq: 24
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/equipment
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "name": "EMI Panel Analyzers {{panelRunId}}",
+    "code": "erba-h560-panel-{{panelRunId}}",
+    "description": "Auto-created by the EMI Panel Flow E2E"
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.id) bru.setVar("equipmentId", data.id);
+}
+
+tests {
+  test("equipment created", function () {
+    expect(res.getStatus()).to.equal(201);
+    expect(res.body.data).to.have.property("id");
+  });
+}
+
+docs {
+  **Register the machine (1/2) — global equipment.** The lab adapter references a
+  platform-level (SiteAdmin) `Equipment`, so create one first with `siteAdminToken`
+  (step 01). `code` becomes the adapter's `adapter_code`. Captures **`equipmentId`**.
+}

@@ -1,0 +1,35 @@
+meta {
+  name: 16 Import Lab Tests into Branch
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/branch-lab-tests/import
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "labTestIds": ["{{labTestIdA}}", "{{labTestIdB}}"]
+  }
+}
+
+docs {
+  **Catalogue 16 — Import BOTH member lab tests into the branch** (the default
+  Walk-in list). Deep-copies each master-data lab test (with its result parameter)
+  into the branch as a branch-owned snapshot. Doing this BEFORE the panel import
+  matters: the panel import (step 20) **reuses** these two branch lab tests as its
+  members (matched by source id), so the panel's `memberBranchLabTestId`s equal the
+  `branchLabTestIdA`/`branchLabTestIdB` resolved next — the exact ids the adapter
+  is mapped on in step 27. The two branch lab test ids are resolved in 17/18.
+}

@@ -1,0 +1,60 @@
+meta {
+  name: 19 Create Lab Panel (2 Tests)
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/lab-panels
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "panelName": "EMI Panel CBC Duo {{panelRunId}}",
+    "panelCode": "EPCBC-{{panelRunId}}",
+    "reportType": "COMBINED",
+    "turnaroundPriority": "ROUTINE",
+    "isActive": true,
+    "priceMsrp": 900,
+    "priceMaximum": 800,
+    "priceMinimum": 600,
+    "tatMinValue": 1,
+    "tatMinUnit": "HOURS",
+    "tatMaxValue": 2,
+    "tatMaxUnit": "HOURS",
+    "tests": [
+      { "labTestId": "{{labTestIdA}}", "sortOrder": 0 },
+      { "labTestId": "{{labTestIdB}}", "sortOrder": 1 }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.id) bru.setVar("labPanelId", data.id);
+}
+
+tests {
+  test("panel created with two member tests", function () {
+    expect(res.getStatus()).to.equal(201);
+    expect(res.body.data).to.have.property("id");
+  });
+}
+
+docs {
+  **Panel 19 — Create the lab panel of the two member tests** (in the branch's
+  master data, as Business Admin). `tests[]` references the two **master-data**
+  LabTest ids (`labTestIdA`, `labTestIdB`) created in 14/15. `panelCode` is unique
+  per master data. Captures **`labPanelId`** (the master-data panel, imported into
+  the branch next).
+}

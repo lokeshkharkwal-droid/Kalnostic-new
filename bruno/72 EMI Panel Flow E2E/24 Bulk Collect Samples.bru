@@ -1,0 +1,40 @@
+meta {
+  name: 24 Bulk Collect Samples
+  type: http
+  seq: 21
+}
+
+post {
+  url: {{baseUrl}}/accession/order-samples/bulk/collect
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "ids": ["{{sampleIdA}}", "{{sampleIdB}}"],
+    "tubeType": "EDTA (Purple)",
+    "notes": "Collected at front desk (panel)"
+  }
+}
+
+tests {
+  test("both samples collected", function () {
+    expect([200, 201]).to.include(res.getStatus());
+  });
+}
+
+docs {
+  **Accession 24 — Bulk collect both member samples** (NEW → COLLECTED). Uses the
+  bulk endpoint with both `sampleIdA`/`sampleIdB` so a single request advances the
+  whole panel group. Requires `accession:in_house_order__collect_the_sample`
+  (granted in step 08).
+}

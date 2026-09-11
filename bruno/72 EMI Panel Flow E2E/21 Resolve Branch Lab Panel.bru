@@ -1,0 +1,39 @@
+meta {
+  name: 21 Resolve Branch Lab Panel
+  type: http
+  seq: 18
+}
+
+get {
+  url: {{baseUrl}}/branch-lab-panels/options?search=EMI Panel CBC Duo {{panelRunId}}&page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  search: EMI Panel CBC Duo {{panelRunId}}
+  page: 1
+  limit: 10
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.length && data[0].id) bru.setVar("branchLabPanelId", data[0].id);
+}
+
+tests {
+  test("branch panel resolved", function () {
+    const data = res.body && res.body.data;
+    expect(data).to.be.an("array").with.length.of.at.least(1);
+  });
+}
+
+docs {
+  **Panel 21 — Resolve the branch lab panel id** for the order (and for reading the
+  panel's reports later). `search` matches this run's unique panel name. Captures
+  **`branchLabPanelId`**.
+}

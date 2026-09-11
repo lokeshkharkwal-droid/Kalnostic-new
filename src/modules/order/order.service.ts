@@ -8,7 +8,6 @@ import {
   ExternalIdFormat,
   ExternalIdPurpose,
   InvoicePaymentStatus,
-  LabReportStatus,
   MessagingChannel,
   Order,
   OrderDateType,
@@ -2078,6 +2077,31 @@ export class OrderService {
   }
 
   /**
+   * Each referenced panel's true, current member-test count (`branchLabPanelId`
+   * -> count), for {@link deriveReportStatus}'s expected-unit denominator.
+   * `BranchLabPanel`/`BranchLabPanelTest` have no Prisma relation (raw FK
+   * only), so this is batch-resolved with a second query rather than joined
+   * via `include` — same pattern as {@link itemRowsWithPanelTests} above.
+   */
+  private async panelMemberCounts(
+    panelIds: string[],
+  ): Promise<Map<string, number>> {
+    const counts = new Map<string, number>();
+    if (panelIds.length === 0) return counts;
+    const memberRows = await this.prisma.branchLabPanelTest.findMany({
+      where: { branchLabPanelId: { in: panelIds }, deletedAt: null },
+      select: { branchLabPanelId: true },
+    });
+    for (const row of memberRows) {
+      counts.set(
+        row.branchLabPanelId,
+        (counts.get(row.branchLabPanelId) ?? 0) + 1,
+      );
+    }
+    return counts;
+  }
+
+  /**
    * Flat `{panel_tests_name}` token — every panel's constituent sub-tests
    * across the whole order, comma-joined into one string (empty when the order
    * has no panels). Derived from {@link itemRowsWithPanelTests} rows so the
@@ -3131,81 +3155,49 @@ export class OrderService {
       }
     }
     if (query.reportStatus) {
-      // Per-REPORT reporting progress, mirrored from the report-counting
-      // `deriveReportStatus` (not per-item — a panel item now has one
-      // LabReport per member test, and a single member test finishing should
-      // be visible as PARTIALLY_COMPLETED, the same way a separate standalone
-      // test finishing already was, rather than requiring every member test
-      // on that one panel item to finish first).
-      const doneStatuses: LabReportStatus[] = [
-        LabReportStatus.RESULT_DONE,
-        LabReportStatus.APPROVED,
-        LabReportStatus.PUBLISHED,
+      // Reuses `deriveReportStatus` — the same function that computes the
+      // displayed "Order Status" — instead of re-expressing its rule as a
+      // second, hand-synced set of Prisma where-clauses (which is how this
+      // filter previously drifted out of sync with a panel item's true
+      // member-test count; see `deriveReportStatus`'s doc comment). Runs
+      // against whatever `where`/`and` conditions are already assembled at
+      // this point (tenant/branch/B2B scope/search) — it doesn't need the
+      // filters built further below (patientName, quotationStatus): pushing
+      // one more `id: { in: ... }` onto `and` still composes correctly with
+      // those once `buildOrderWhere` ANDs everything together at the end.
+      const candidates = await this.prisma.order.findMany({
+        where: and.length ? { ...where, AND: and } : where,
+        select: {
+          id: true,
+          items: {
+            where: { deletedAt: null },
+            select: {
+              branchLabPanel: { select: { id: true } },
+              labReports: {
+                where: { deletedAt: null },
+                select: { status: true, memberBranchLabTestId: true },
+              },
+            },
+          },
+        },
+      });
+      const reportStatusPanelIds = [
+        ...new Set(
+          candidates
+            .flatMap((c) => c.items.map((it) => it.branchLabPanel?.id))
+            .filter((id): id is string => id != null),
+        ),
       ];
-      const approvedStatuses: LabReportStatus[] = [
-        LabReportStatus.APPROVED,
-        LabReportStatus.PUBLISHED,
-      ];
-      // An active item that has NOT reached done: no report yet, or at least
-      // one of its (possibly several, for a panel) reports is below done.
-      const notReachedDone: Prisma.OrderItemWhereInput = {
-        deletedAt: null,
-        OR: [
-          { labReports: { none: {} } },
-          { labReports: { some: { status: { notIn: doneStatuses } } } },
-        ],
-      };
-      // An active item that has NOT reached approved.
-      const notApproved: Prisma.OrderItemWhereInput = {
-        deletedAt: null,
-        OR: [
-          { labReports: { none: {} } },
-          { labReports: { some: { status: { notIn: approvedStatuses } } } },
-        ],
-      };
-      // An active item that HAS reached done: at least one report exists, and
-      // every one of them is done (mirrors `deriveReportStatus`'s COMPLETED/
-      // APPROVED "every report on the order" rule, applied one item at a time
-      // — equivalent when checked across ALL items via `none: notReachedDone`).
-      const reachedDone: Prisma.OrderItemWhereInput = {
-        deletedAt: null,
-        labReports: { some: {} },
-        NOT: { labReports: { some: { status: { notIn: doneStatuses } } } },
-      };
-      // An active item with AT LEAST ONE done report — not requiring every
-      // report on the item to be done. This is the piece `reachedDone` above
-      // doesn't cover: it lets a single finished member test of a
-      // multi-member panel item register as "some progress exists" for
-      // PARTIALLY_COMPLETED, without that item needing to be fully done.
-      const hasADoneReport: Prisma.OrderItemWhereInput = {
-        deletedAt: null,
-        labReports: { some: { status: { in: doneStatuses } } },
-      };
-      switch (query.reportStatus) {
-        case 'PENDING':
-          // Has items, and no item has even one done report.
-          and.push({ items: { some: { deletedAt: null } } });
-          and.push({ items: { none: hasADoneReport } });
-          break;
-        case 'PARTIALLY_COMPLETED':
-          // At least one report anywhere is done, and at least one item has
-          // not fully finished yet (either no report, or a not-fully-done
-          // panel item, or an entirely untouched item).
-          and.push({ items: { some: hasADoneReport } });
-          and.push({ items: { some: notReachedDone } });
-          break;
-        case 'COMPLETED':
-          // Every active item fully reached done, but not all are approved.
-          and.push({ items: { some: { deletedAt: null } } });
-          and.push({ items: { none: notReachedDone } });
-          and.push({ items: { some: notApproved } });
-          break;
-        case 'APPROVED':
-          // Has items, none is unapproved.
-          and.push({ items: { some: { deletedAt: null } } });
-          and.push({ items: { none: notApproved } });
-          break;
-      }
+      const reportStatusPanelCounts =
+        await this.panelMemberCounts(reportStatusPanelIds);
+      const matchedIds = candidates
+        .filter(
+          (c) =>
+            deriveReportStatus(c.items, reportStatusPanelCounts) ===
+            query.reportStatus,
+        )
+        .map((c) => c.id);
+      and.push({ id: { in: matchedIds } });
     }
 
     // Patient name / mobile via the to-one patient relation filter.
@@ -3330,6 +3322,14 @@ export class OrderService {
     ]);
 
     const orderIds = rows.map((r) => r.id);
+    const panelIds = [
+      ...new Set(
+        rows
+          .flatMap((r) => r.items.map((it) => it.branchLabPanel?.id))
+          .filter((id): id is string => id != null),
+      ),
+    ];
+    const panelMemberCounts = await this.panelMemberCounts(panelIds);
     const [counts, invoiceCodes] = await Promise.all([
       this.countItemsByOrder(tenantId, orderIds),
       this.invoicedOrderCodes(tenantId, orderIds),
@@ -3390,7 +3390,7 @@ export class OrderService {
         itemCount: count?.total ?? 0,
         collectedItemCount: count?.collected ?? 0,
         // Order-level "Order Status": derived per-test from each item's LabReport.
-        reportStatus: deriveReportStatus(r.items),
+        reportStatus: deriveReportStatus(r.items, panelMemberCounts),
         grossAmount,
         discountAmount,
         netAmount,

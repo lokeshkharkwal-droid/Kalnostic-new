@@ -1,0 +1,42 @@
+meta {
+  name: 25 Bulk Accept Samples (creates reports)
+  type: http
+  seq: 22
+}
+
+post {
+  url: {{baseUrl}}/accession/order-samples/bulk/accept
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "ids": ["{{sampleIdA}}", "{{sampleIdB}}"],
+    "sampleCondition": "Good",
+    "notes": "Accepted for processing (panel)"
+  }
+}
+
+tests {
+  test("both samples accepted", function () {
+    expect([200, 201]).to.include(res.getStatus());
+  });
+}
+
+docs {
+  **Accession 25 — Bulk accept both member samples** (COLLECTED → ACCEPTED). This
+  is the step that makes the panel machine-ready: accepting each member sample
+  **auto-creates its Technician `LabReport` (status PENDING)**, tagged with that
+  member's `memberBranchLabTestId`. Two members → **two reports**, both filled by
+  the machine in step 29. Requires `accession:in_house_order__accept_the_sample`
+  (granted in step 08).
+}

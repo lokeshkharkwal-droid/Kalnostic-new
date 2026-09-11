@@ -8,17 +8,20 @@ import { TenantService } from '../tenant/tenant.service';
 import { BarcodeService } from './barcode.service';
 
 /**
- * Unit coverage for `samplesOfPanel` (private, exercised via an `as unknown`
- * cast — see auth.service.spec.ts for the same pattern). The regression guard:
- * a panel order item has no `branchLabTest` of its own, so before this method
- * existed `generateForOrderInTx` always created its accession sample with
- * `sampleType`/`containerType: null`. This asserts the fixed behaviour reads
- * the panel's constituent tests' `configSnapshot.samples` instead.
+ * Unit coverage for the panel sample-resolution helpers (all private, exercised
+ * via an `as unknown` cast — see auth.service.spec.ts for the same pattern).
+ *
+ * A panel order item has no `branchLabTest` of its own, so `generateForOrderInTx`
+ * expands it into its constituent tests (`panelConstituentTests`) and resolves
+ * each test's required samples (`samplesForTest` → `samplesOf`), producing one
+ * `OrderSample` per (test × sample). These guard the query filters (`deletedAt`)
+ * and the live-rows/snapshot fallback that feed that expansion.
  */
-describe('OrderSampleService — samplesOfPanel', () => {
+describe('OrderSampleService — panel sample resolution', () => {
   const txMock = {
     branchLabPanelTest: { findMany: jest.fn() },
     branchLabTest: { findMany: jest.fn() },
+    labTestSample: { findMany: jest.fn() },
   };
 
   let service: OrderSampleService;
@@ -36,19 +39,21 @@ describe('OrderSampleService — samplesOfPanel', () => {
     );
   });
 
-  /** Calls the private method under test without touching its access modifier. */
-  const samplesOfPanel = (branchLabPanelId: string) =>
+  // ── panelConstituentTests ──────────────────────────────────────────────────
+
+  /** Calls the private `panelConstituentTests` without touching its modifier. */
+  const panelConstituentTests = (branchLabPanelId: string) =>
     (
       service as unknown as {
-        samplesOfPanel: (
+        panelConstituentTests: (
           tx: typeof txMock,
           tenantId: string,
           branchLabPanelId: string,
         ) => Promise<
-          Array<{ sampleType: string | null; containerType: string | null }>
+          Array<{ sourceLabTestId: string | null; testName: string | null }>
         >;
       }
-    ).samplesOfPanel(txMock, 't1', branchLabPanelId);
+    ).panelConstituentTests(txMock, 't1', branchLabPanelId);
 
   /** The `where` clause of the most recent `branchLabPanelTest.findMany()` call. */
   const lastPanelTestWhere = (): { deletedAt: unknown } => {
@@ -69,83 +74,29 @@ describe('OrderSampleService — samplesOfPanel', () => {
     return last[0].where;
   };
 
-  const snapshotWith = (
-    samples: Array<{ sampleType: string; containerType: string }>,
-  ) => ({ samples, resultParams: [] });
-
-  it("resolves the sample/container type from the panel's single test", async () => {
+  it("returns the panel's constituent tests", async () => {
     txMock.branchLabPanelTest.findMany.mockResolvedValue([
       { branchLabTestId: 'test-cbc' },
     ]);
-    txMock.branchLabTest.findMany.mockResolvedValue([
+    const tests = [
       {
-        configSnapshot: snapshotWith([
-          { sampleType: 'Blood', containerType: 'EDTA_TUBE_PURPLE_TOP' },
-        ]),
+        testName: 'CBC',
+        departmentId: 'dep-1',
+        sourceLabTestId: 'src-cbc',
+        configSnapshot: { samples: [], resultParams: [] },
       },
-    ]);
+    ];
+    txMock.branchLabTest.findMany.mockResolvedValue(tests);
 
-    const result = await samplesOfPanel('panel-1');
+    const result = await panelConstituentTests('panel-1');
 
-    expect(result).toEqual([
-      { sampleType: 'Blood', containerType: 'EDTA_TUBE_PURPLE_TOP' },
-    ]);
-  });
-
-  it('dedupes multiple tests that share the same tube type', async () => {
-    txMock.branchLabPanelTest.findMany.mockResolvedValue([
-      { branchLabTestId: 'test-a' },
-      { branchLabTestId: 'test-b' },
-    ]);
-    txMock.branchLabTest.findMany.mockResolvedValue([
-      {
-        configSnapshot: snapshotWith([
-          { sampleType: 'Blood', containerType: 'EDTA_TUBE_PURPLE_TOP' },
-        ]),
-      },
-      {
-        configSnapshot: snapshotWith([
-          { sampleType: 'Blood', containerType: 'EDTA_TUBE_PURPLE_TOP' },
-        ]),
-      },
-    ]);
-
-    const result = await samplesOfPanel('panel-1');
-
-    expect(result).toHaveLength(1);
-  });
-
-  it('unions distinct tube types when tests need different tubes', async () => {
-    txMock.branchLabPanelTest.findMany.mockResolvedValue([
-      { branchLabTestId: 'test-cbc' },
-      { branchLabTestId: 'test-lft' },
-    ]);
-    txMock.branchLabTest.findMany.mockResolvedValue([
-      {
-        configSnapshot: snapshotWith([
-          { sampleType: 'Blood', containerType: 'EDTA_TUBE_PURPLE_TOP' },
-        ]),
-      },
-      {
-        configSnapshot: snapshotWith([
-          { sampleType: 'Serum', containerType: 'PLAIN_TUBE_RED_TOP' },
-        ]),
-      },
-    ]);
-
-    const result = await samplesOfPanel('panel-1');
-
-    expect(result).toEqual([
-      { sampleType: 'Blood', containerType: 'EDTA_TUBE_PURPLE_TOP' },
-      { sampleType: 'Serum', containerType: 'PLAIN_TUBE_RED_TOP' },
-    ]);
+    expect(result).toEqual(tests);
   });
 
   it('excludes soft-deleted panel-test links (deletedAt filter passed to the query)', async () => {
     txMock.branchLabPanelTest.findMany.mockResolvedValue([]);
-    txMock.branchLabTest.findMany.mockResolvedValue([]);
 
-    await samplesOfPanel('panel-1');
+    await panelConstituentTests('panel-1');
 
     expect(lastPanelTestWhere().deletedAt).toBeNull();
   });
@@ -156,28 +107,86 @@ describe('OrderSampleService — samplesOfPanel', () => {
     ]);
     txMock.branchLabTest.findMany.mockResolvedValue([]);
 
-    await samplesOfPanel('panel-1');
+    await panelConstituentTests('panel-1');
 
     expect(lastLabTestWhere().deletedAt).toBeNull();
   });
 
-  it('returns an empty list when the panel has no active tests', async () => {
+  it('returns an empty list and skips the test query when the panel has no active links', async () => {
     txMock.branchLabPanelTest.findMany.mockResolvedValue([]);
 
-    const result = await samplesOfPanel('panel-1');
+    const result = await panelConstituentTests('panel-1');
 
     expect(result).toEqual([]);
     expect(txMock.branchLabTest.findMany).not.toHaveBeenCalled();
   });
 
-  it('returns an empty list when the linked tests have no configSnapshot.samples', async () => {
-    txMock.branchLabPanelTest.findMany.mockResolvedValue([
-      { branchLabTestId: 'test-a' },
-    ]);
-    txMock.branchLabTest.findMany.mockResolvedValue([{ configSnapshot: {} }]);
+  // ── samplesForTest / samplesOf ─────────────────────────────────────────────
 
-    const result = await samplesOfPanel('panel-1');
+  /** Calls the private `samplesForTest` without touching its modifier. */
+  const samplesForTest = (sourceLabTestId: string | null, snapshot: unknown) =>
+    (
+      service as unknown as {
+        samplesForTest: (
+          tx: typeof txMock,
+          tenantId: string,
+          sourceLabTestId: string | null,
+          snapshot: unknown,
+        ) => Promise<Array<{ sampleType?: string; containerType?: string }>>;
+      }
+    ).samplesForTest(txMock, 't1', sourceLabTestId, snapshot);
 
-    expect(result).toEqual([]);
+  const snapshotWith = (
+    samples: Array<{ sampleType: string; containerType: string }>,
+  ) => ({ samples, resultParams: [] });
+
+  it('reads the live LabTestSample rows for the source test (deletedAt filtered)', async () => {
+    const live = [
+      { id: 's1', sampleType: 'Blood', containerType: 'EDTA_TUBE_PURPLE_TOP' },
+    ];
+    txMock.labTestSample.findMany.mockResolvedValue(live);
+
+    const result = await samplesForTest(
+      'src-cbc',
+      snapshotWith([
+        { sampleType: 'Serum', containerType: 'PLAIN_TUBE_RED_TOP' },
+      ]),
+    );
+
+    expect(result).toEqual(live);
+    const calls = txMock.labTestSample.findMany.mock.calls as unknown as Array<
+      [{ where: { deletedAt: unknown } }]
+    >;
+    expect(calls[0]?.[0].where.deletedAt).toBeNull();
+  });
+
+  it('falls back to configSnapshot.samples when there are no live rows', async () => {
+    txMock.labTestSample.findMany.mockResolvedValue([]);
+    const snapSamples = [
+      { sampleType: 'Serum', containerType: 'PLAIN_TUBE_RED_TOP' },
+    ];
+
+    const result = await samplesForTest('src-cbc', snapshotWith(snapSamples));
+
+    expect(result).toEqual(snapSamples);
+  });
+
+  it('uses the snapshot directly when there is no source test id', async () => {
+    const snapSamples = [
+      { sampleType: 'Blood', containerType: 'EDTA_TUBE_PURPLE_TOP' },
+    ];
+
+    const result = await samplesForTest(null, snapshotWith(snapSamples));
+
+    expect(result).toEqual(snapSamples);
+    expect(txMock.labTestSample.findMany).not.toHaveBeenCalled();
+  });
+
+  it('returns an empty list when neither live rows nor snapshot samples exist', async () => {
+    txMock.labTestSample.findMany.mockResolvedValue([]);
+
+    expect(await samplesForTest('src-cbc', {})).toEqual([]);
+    expect(await samplesForTest('src-cbc', undefined)).toEqual([]);
+    expect(await samplesForTest(null, undefined)).toEqual([]);
   });
 });

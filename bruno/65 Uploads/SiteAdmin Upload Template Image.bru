@@ -26,18 +26,22 @@ script:post-response {
 docs {
   Upload one **image** for a global (SiteAdmin, tenant-less) PDF template and get
   its public S3 URL. Form field name is **`file`**. Images are stored under the
-  fixed `global/pdf-templates` namespace (SiteAdmin templates carry no tenant).
+  legacy **ezhealthtrack** key layout `{env}/global/{YYYY}/{MM}/{DD}/{filename}`
+  (`global` takes the tenant position since SiteAdmin templates carry no tenant),
+  keeping the file's **original (sanitised) name** plus a short unique suffix
+  (e.g. `logo_a1b2c3.png`).
 
   Accepted types: JPG/JPEG/PNG/WEBP/GIF/SVG only. Max **10 MB**, otherwise 422
-  `INVALID_UPLOAD_FILE`. Returns
-  `{ "url": "https://s3-<region>.amazonaws.com/<bucket>/<key>" }`.
+  `INVALID_UPLOAD_FILE`. Returns `{ "url": "<public-base>/<bucket>/<key>" }`
+  (path-style; stored on DigitalOcean Spaces, or a CDN base via
+  `SPACES_PUBLIC_BASE_URL`).
 
   The SiteAdmin PDF-template editor derives an image **id** from the last path
-  segment of that URL (e.g. `a1b2…-uuid.png`), stores `id → url` in the
-  template's `meta.images`, and hands the user a `{{image:<id>}}` token to paste
-  into header/body/footer HTML. For a watermark, the URL is stored directly in
-  `meta.watermark_image`. See **SiteAdmin PDF Report Templates → Update PDF
-  Report Template**.
+  segment of that URL (original filename + suffix, e.g. `logo_a1b2c3.png`),
+  stores `id → url` in the template's `meta.images`, and hands the user a
+  `{{image:<id>}}` token to paste into header/body/footer HTML. For a watermark,
+  the URL is stored directly in `meta.watermark_image`. See **SiteAdmin PDF
+  Report Templates → Update PDF Report Template**.
 
   Auth is the SiteAdmin token (requires `master-data:write`). Run **SiteAdmin
   Auth → Login** first so `{{siteAdminToken}}` is set. 500

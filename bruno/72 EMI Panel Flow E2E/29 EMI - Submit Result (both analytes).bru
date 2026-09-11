@@ -1,0 +1,91 @@
+meta {
+  name: 29 EMI - Submit Result (both analytes)
+  type: http
+  seq: 26
+}
+
+get {
+  url: {{emiBaseUrl}}/emi/submitResult
+  body: text
+  auth: none
+}
+
+headers {
+  TOKEN: {{flowAdapterToken}}
+  Content-Type: text/plain
+}
+
+body:text {
+  {
+    "specimen_type": "",
+    "tube_information_id": "e9b6927a-f2e0-4898-910b-d892b45d8de1",
+    "equipment_id": "11111112",
+    "tube_no": "{{sampleBarcode}}",
+    "original_tube_no": "{{sampleBarcode}}",
+    "result_date": "1668583670356",
+    "sent": "",
+    "sent_date": "",
+    "status": "-1",
+    "local_db_status": "1",
+    "test_results": [
+      {
+        "test_result_id": "b0a69d67-4434-44f0-b1e5-cf43f83bc536",
+        "test_result": "{{emiResultValueA}}",
+        "test_name": "{{emiParamNameA}}",
+        "display_name": "{{emiParamNameA}}",
+        "universal_test_id": "{{emiParamCodeA}}",
+        "unit": "{{emiParamUnitA}}",
+        "result_type": "",
+        "specimen_types": []
+      },
+      {
+        "test_result_id": "c1b70e78-5545-55a1-c2f6-df54e94cd647",
+        "test_result": "{{emiResultValueB}}",
+        "test_name": "{{emiParamNameB}}",
+        "display_name": "{{emiParamNameB}}",
+        "universal_test_id": "{{emiParamCodeB}}",
+        "unit": "{{emiParamUnitB}}",
+        "result_type": "",
+        "specimen_types": []
+      }
+    ],
+    "comment": "auto from analyzer (EMI Panel E2E)",
+    "token_id": "{{flowAdapterToken}}",
+    "adapter_id": "14",
+    "adapter_code": "erba-h560"
+  }
+}
+
+script:post-response {
+  const b = res.body;
+  if (b && b.report_log && b.report_log.log && b.report_log.log.length) {
+    const filled = b.report_log.log.filter((l) => l.fill_status === "Report filled");
+    bru.setVar("emiFilledCount", String(filled.length));
+  }
+}
+
+tests {
+  test("result accepted (legacy s=200)", function () {
+    expect(res.body.s).to.equal("200");
+  });
+  test("PANEL: BOTH member reports filled from one submit", function () {
+    expect(res.body.m).to.equal("Result updated successfully");
+    expect(res.body.test_status).to.match(/2 test updated/);
+    const filled = res.body.report_log.log.filter((l) => l.fill_status === "Report filled");
+    expect(filled.length, "reports filled").to.equal(2);
+  });
+}
+
+docs {
+  **Machine step 2 — submit BOTH analyte results.** A **GET** to `/emi/submitResult`
+  with a JSON body under `Content-Type: text/plain` (legacy quirk); auth is the
+  **`TOKEN`** header. `tube_no` is the shared panel **`sampleBarcode`** — the same
+  specimen id the analyzer received in step 28.
+  
+  `test_results[]` carries **two** entries, one per member: `universal_test_id`
+  `{{emiParamCodeA}}` / `{{emiParamCodeB}}` match the parameter codes on the two
+  member tests, so each value fills its member report. Both member reports are
+  fillable (PENDING, from step 25) and adapter-mapped, so both are written with
+  **`source = ADAPTER`** and moved to **`SAVED`** → `test_status: "2 test updated"`
+  with two `fill_status: "Report filled"` log lines. Captures `emiFilledCount`.
+}
