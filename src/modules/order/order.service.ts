@@ -6297,13 +6297,19 @@ export class OrderService {
       const refundSum = toNum(agg._sum.refundAmount);
       const refundChargeSum = toNum(agg._sum.refundCharge);
 
-      // Refundable = current effective paid (respects any cancellation charge and
-      // prior refunds).
-      const refundable = computeEffectivePaid(
+      // Refund-without-cancellation may only return the OVERPAID surplus — the
+      // effective paid beyond what the (current) order still owes (`netSum`).
+      // Refunding below the net owed would leave an active order underpaid; that
+      // is a cancellation, not a refund. When a paid test is removed the net
+      // shrinks, exposing exactly that test's value as the refundable surplus.
+      const effectivePaidNow = computeEffectivePaid(
         paidSum,
         toNum(existing.cancellationCharge),
         refundSum,
         refundChargeSum,
+      );
+      const refundable = roundToTwoDecimalPlaces(
+        Math.max(0, effectivePaidNow - netSum),
       );
       if (refundable <= 0) {
         throw new NothingToRefundException(id);
