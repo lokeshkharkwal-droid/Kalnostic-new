@@ -20,6 +20,15 @@ import { roundToTwoDecimalPlacesTransform } from '../../../common/utils';
  * from context — never the body.
  */
 export class OrderItemDto {
+  /**
+   * The existing OrderItem id on an update — present for a line that already
+   * exists on the order (kept), omitted for a newly added line. On create it is
+   * always omitted. Used by `OrderService.update` to diff keep/add/remove.
+   */
+  @IsOptional()
+  @IsUUID()
+  id?: string;
+
   /** The branch lab test this line represents (mutually exclusive with panel/direct). */
   @IsOptional()
   @IsUUID()
