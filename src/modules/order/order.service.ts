@@ -5057,14 +5057,21 @@ export class OrderService {
   }
 
   /**
-   * Update an order. Scalars (incl. `status`) are patched; when `items` is
-   * provided the whole set is replaced; a provided section object is upserted.
-   * All in one transaction.
+   * Update an order. Scalars (incl. `status`) are patched; a provided section
+   * object is upserted. When `items` is provided the set is **diff-applied** by
+   * stable `OrderItem.id`: removed items are soft-deleted (and their accession
+   * samples voided / non-final reports soft-deleted via the accession reconcile),
+   * kept items have their mutable fields updated, and new items are created (and
+   * accessioned when the order is already accessioned). Removing a test whose
+   * report is already filled/generated is rejected. A recomputed net that drops
+   * below the amount already paid is allowed — the surplus becomes a refundable
+   * (negative) balance settled via the manual refund action. All in one transaction.
    * @param id order id
    * @param tenantId tenant scope
    * @param dto partial update
    * @throws OrderNotFoundException / reference 422s
    * @throws OrderAlreadyInvoicedException (409) if an invoice exists for the order
+   * @throws TestNotDeletableAfterReportException (422) removing a test whose report is filled/generated
    */
   async update(
     id: string,
@@ -5606,7 +5613,7 @@ export class OrderService {
           const addPrices = await this.loadItemUnitPrices(
             tenantId,
             branchId,
-            itemDiff.add as OrderItemDto[],
+            itemDiff.add,
           );
           for (const raw of itemDiff.add) {
             const i = raw as OrderItemDto;
