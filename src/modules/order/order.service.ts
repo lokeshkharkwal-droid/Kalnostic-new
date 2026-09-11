@@ -88,6 +88,7 @@ import {
   deriveRefundStatus,
   deriveReportStatus,
 } from './entities/order.entity';
+import { computeBillingTotals } from './utils/billing-totals';
 import { BillingGroupBy } from './dto/billing-grouped-query.dto';
 import { BillingDimension } from './dto/billing-query.dto';
 import {
@@ -3343,15 +3344,27 @@ export class OrderService {
       this.invoicedOrderCodes(tenantId, orderIds),
     ]);
     const data: OrderListRow[] = rows.map((r) => {
-      const grossAmount = r.payments.reduce(
-        (s, p) => s + toNum(p.totalAmount),
-        0,
+      // Authoritative gross/discount/net: derived from the persisted item prices
+      // and the persisted order-discount mode/value so that a PERCENT discount
+      // is recomputed against the *current* item total (not a stale frozen amount).
+      // Legacy orders (no mode/value) retain the previous Σ-payment behaviour.
+      const {
+        gross: grossAmount,
+        discount: discountAmount,
+        net: netAmount,
+      } = computeBillingTotals(
+        r.payments.map((p) => ({
+          totalAmount: toNum(p.totalAmount),
+          orderDiscount: toNum(p.orderDiscount),
+          netAmount: toNum(p.netAmount),
+          orderDiscountMode: p.orderDiscountMode ?? null,
+          orderDiscountValue: p.orderDiscountValue != null ? toNum(p.orderDiscountValue) : null,
+        })),
+        r.items.map((it) => ({
+          unitPrice: toNum(it.unitPrice),
+          discount: toNum(it.discount),
+        })),
       );
-      const discountAmount = r.payments.reduce(
-        (s, p) => s + toNum(p.orderDiscount),
-        0,
-      );
-      const netAmount = r.payments.reduce((s, p) => s + toNum(p.netAmount), 0);
       const paidAmount = r.payments.reduce(
         (s, p) => s + toNum(p.paidAmount),
         0,
@@ -3530,9 +3543,25 @@ export class OrderService {
     order: BillingOrder,
     report: BillingReport,
   ): BillingFigures {
-    let gross = 0;
-    let discount = 0;
-    let net = 0;
+    // Authoritative gross/discount/net via the shared helper — recomputes a
+    // PERCENT order discount against the current item total, fixing a frozen
+    // stale amount. Legacy orders (no persisted mode/value) are unchanged.
+    const totals = computeBillingTotals(
+      order.payments.map((p) => ({
+        totalAmount: toNum(p.totalAmount),
+        orderDiscount: toNum(p.orderDiscount),
+        netAmount: toNum(p.netAmount),
+        orderDiscountMode: p.orderDiscountMode ?? null,
+        orderDiscountValue:
+          p.orderDiscountValue != null ? toNum(p.orderDiscountValue) : null,
+      })),
+      order.items.map((it) => ({
+        unitPrice: toNum(it.unitPrice),
+        discount: toNum(it.discount),
+      })),
+    );
+
+    // Payment-mode bucketing and per-row ledger sums — unchanged.
     let tds = 0;
     let cash = 0;
     let upi = 0;
@@ -3542,9 +3571,6 @@ export class OrderService {
     let wallet = 0;
     let refundAmount = 0;
     for (const p of order.payments) {
-      gross += toNum(p.totalAmount);
-      discount += toNum(p.orderDiscount);
-      net += toNum(p.netAmount);
       tds += toNum(p.tdsDeduction);
       // REFUND rows carry `refundAmount` (0 on PAYMENT rows) — Σ = total refunded.
       refundAmount += toNum(p.refundAmount);
@@ -3570,26 +3596,14 @@ export class OrderService {
           break;
       }
     }
-    // The "Discount" figure = order-level discount + every per-line-item
-    // discount. Line discounts are already folded into `netAmount`
-    // (net = totalAmount − Σ itemDiscount − orderDiscount), so surfacing them
-    // here keeps `gross − discount === net` and stops genuinely-discounted
-    // orders from showing a ₹0 discount.
-    for (const it of order.items) discount += toNum(it.discount);
     const receipts = cash + upi + bankTransfer + debitCard + creditCard;
     const paid = report === 'collection' ? receipts : receipts + wallet;
-    // Gross is DERIVED as net + discount (not raw Σ totalAmount): the ledger
-    // guarantees net = totalAmount − discount, so for valid data this equals
-    // Σ totalAmount, while keeping `gross ≥ net` and `gross − discount === net`
-    // and matching the per-line gross allocation (item-dimension tabs = the "all"
-    // tab). Guards against inconsistent ledgers where netAmount > totalAmount.
-    gross = net + discount;
     return {
-      gross: roundToTwoDecimalPlaces(gross),
-      discount: roundToTwoDecimalPlaces(discount),
-      net: roundToTwoDecimalPlaces(net),
+      gross: totals.gross,
+      discount: totals.discount,
+      net: totals.net,
       paid: roundToTwoDecimalPlaces(paid),
-      due: roundToTwoDecimalPlaces(Math.max(0, net - paid)),
+      due: roundToTwoDecimalPlaces(Math.max(0, totals.net - paid)),
       tds: roundToTwoDecimalPlaces(tds),
       cash: roundToTwoDecimalPlaces(cash),
       upi: roundToTwoDecimalPlaces(upi),
