@@ -1,0 +1,54 @@
+meta {
+  name: 23 List Accession Samples
+  type: http
+  seq: 20
+}
+
+get {
+  url: {{baseUrl}}/accession/order-samples?orderId={{orderId}}&page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  orderId: {{orderId}}
+  page: 1
+  limit: 20
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.length) {
+    if (data[0] && data[0].id) bru.setVar("sampleIdA", data[0].id);
+    if (data[1] && data[1].id) bru.setVar("sampleIdB", data[1].id);
+    // Both member samples share Blood/EDTA, so under the default Dept+Sample
+    // grouping they carry ONE barcode — the specimen id the analyzer scans.
+    if (data[0] && data[0].barcode) bru.setVar("sampleBarcode", data[0].barcode);
+  }
+}
+
+tests {
+  test("the panel generated two samples (one per member test)", function () {
+    const rows = res.body.data;
+    expect(rows).to.be.an("array").with.length.of.at.least(2);
+  });
+  test("both member samples share one barcode (single scan covers both)", function () {
+    const rows = res.body.data;
+    expect(rows[0].barcode, "sample 0 barcode").to.be.a("string").and.not.empty;
+    expect(rows[1].barcode).to.equal(rows[0].barcode);
+  });
+}
+
+docs {
+  **Accession 23 — List the panel's accession samples.** A panel of two member
+  tests generates **two** `OrderSample` rows (one per member). Because both members
+  use the same Blood/EDTA sample, the grouping-aware barcode assignment gives them
+  **one shared barcode** (default `DEPARTMENT_SAMPLE_NAME` grouping) — that single
+  barcode is what the machine scans, and the fix makes it resolve to BOTH members.
+  Captures **`sampleIdA`**, **`sampleIdB`** (both collected + accepted next) and
+  **`sampleBarcode`** (the specimen id for steps 28/29).
+}

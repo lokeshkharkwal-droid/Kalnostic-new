@@ -1,0 +1,72 @@
+meta {
+  name: 04 Create Branch
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/branches
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "name": "EMI Panel Center {{panelRunId}}",
+    "branchType": "DIAGNOSTIC",
+    "shortName": "EMPC",
+    "status": "ACTIVE",
+    "addressLine": "42 MG Road",
+    "city": "Pune",
+    "state": "Maharashtra",
+    "pincode": "411001",
+    "phone": "+919822000061",
+    "email": "emipanel.branch.{{panelRunId}}@acme.test",
+    "openingTime": "00:00",
+    "closingTime": "23:59",
+    "dailyCapacity": 200,
+    "operationalDays": ["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"],
+    "modules": [
+      { "moduleKey": "registration", "isEnabled": true },
+      { "moduleKey": "accession", "isEnabled": true },
+      { "moduleKey": "lab_operations", "isEnabled": true },
+      { "moduleKey": "finance", "isEnabled": true },
+      { "moduleKey": "phlebotomist", "isEnabled": true },
+      { "moduleKey": "branch_admin", "isEnabled": true },
+      { "moduleKey": "business_admin", "isEnabled": true }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.id) {
+    bru.setVar("branchId", data.id);
+    if (data.code) bru.setVar("branchCode", data.code);
+  }
+}
+
+docs {
+  **Bootstrap 4 — Create the branch with EVERY module the UI walkthrough needs.**
+
+  Enables `registration`, `accession`, `lab_operations` (**Technician / Laboratory**),
+  `finance`, `phlebotomist`, `branch_admin` and `business_admin` inline. A module
+  is only visible in the UI when it is **enabled on the branch AND the logged-in
+  user has an allowed permission in it** (`GET /users/manage/me/permissions` →
+  `moduleAllowed`) — this step covers the first half; step 08 grants the operator
+  permissions in each so all of them appear in the nav.
+
+  `tenantId` comes from the JWT; `code` is system-generated. Captures **`branchId`**.
+
+  > `business_admin` / `branch_admin` are admin-console modules (normally tied to
+  > those roles). Enabling them here + granting the operator a permission in each
+  > (step 08) is what surfaces them for a single exploratory login.
+}

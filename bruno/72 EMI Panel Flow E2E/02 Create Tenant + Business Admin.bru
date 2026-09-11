@@ -1,0 +1,59 @@
+meta {
+  name: 02 Create Tenant + Business Admin
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/tenants
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "name": "EMI Panel Business {{panelRunId}}",
+    "adminFirstName": "Panel",
+    "adminLastName": "Admin {{panelRunId}}",
+    "adminPhone": "{{panelAdminPhone}}",
+    "adminPassword": "{{bootstrapAdminPassword}}",
+    "adminEmail": "emipanel.bizadmin.{{panelRunId}}@acme.test",
+    "email": "emipanel.contact.{{panelRunId}}@acme.test",
+    "shortName": "EMIP",
+    "mrnPrefix": "EP",
+    "settings": {
+      "timezone": "Asia/Kolkata",
+      "currency": "INR",
+      "date_format": "DD/MM/YYYY",
+      "language": "en"
+    }
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data) {
+    if (data.id) bru.setVar("tenantId", data.id);
+    if (data.slug) bru.setVar("tenantSlug", data.slug);
+  }
+  // The admin password is CHOSEN by us at create time; the phone we sent is the
+  // login identifier — wire both into step 03 so login is automated.
+  bru.setVar("adminIdentifier", bru.getVar("panelAdminPhone"));
+  bru.setVar("adminPassword", bru.getVar("bootstrapAdminPassword"));
+}
+
+docs {
+  **Bootstrap 2 — Create the tenant AND its first business admin** (as SiteAdmin).
+  `adminPhone` is a **10-digit** national mobile (also the login identifier), and
+  `adminPassword` is chosen here (min 8, ≥1 upper, ≥1 digit). The post-response
+  captures `tenantSlug` and wires `adminIdentifier` + `adminPassword` into step 03.
+  Phone / emails are unique per run. Captures **`tenantId`**, **`tenantSlug`**.
+}

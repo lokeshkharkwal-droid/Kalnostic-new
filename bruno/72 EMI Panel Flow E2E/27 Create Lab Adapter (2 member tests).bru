@@ -1,0 +1,56 @@
+meta {
+  name: 27 Create Lab Adapter (2 member tests)
+  type: http
+  seq: 24
+}
+
+post {
+  url: {{baseUrl}}/lab-adapters
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "name": "EMI Panel Bridgedd {{panelRunId}}",
+    "equipmentId": "{{equipmentId}}",
+    "branchIds": ["{{branchId}}"],
+    "labTestIds": ["{{branchLabTestIdA}}", "{{branchLabTestIdB}}"],
+    "isActive": true
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data) {
+    if (data.id) bru.setVar("labAdapterId", data.id);
+    if (data.token) bru.setVar("flowAdapterToken", data.token);
+  }
+}
+
+tests {
+  test("adapter created with a token", function () {
+    expect(res.getStatus()).to.equal(201);
+    expect(res.body.data).to.have.property("token");
+    expect(res.body.data.token).to.be.a("string").and.not.empty;
+  });
+}
+
+docs {
+  **Register the machine (2/2) — the lab adapter, mapping BOTH panel members.**
+  A tenant-level bridge created with `businessAdminToken`, referencing the global
+  `equipmentId` (step 26), assigned to this run's `branchId`, and mapping **both**
+  member branch lab tests (`branchLabTestIdA` + `branchLabTestIdB`) as prefered
+  tests. These are the ids the panel's per-member reports carry as
+  `memberBranchLabTestId`, so `/emi/orders` exposes both and `/emi/submitResult`
+  fills both. Captures the system-generated **`flowAdapterToken`** (the machine's
+  `TOKEN` header).
+}

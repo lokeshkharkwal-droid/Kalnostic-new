@@ -1,0 +1,57 @@
+meta {
+  name: 35 Verify - Report Detail 2 (Both Values Landed)
+  type: http
+  seq: 32
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/{{labReportId2}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+script:post-response {
+  const data = res.body && res.body.data;
+  const values = (data && data.resultValues) || [];
+  const adapterValue = values.find((v) => v.source === "ADAPTER");
+  if (adapterValue) bru.setVar("emiObserved2", String(adapterValue.observed1));
+}
+
+tests {
+  test("report detail loads", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.body.data).to.have.property("resultValues");
+  });
+  test("member report 2 has an ADAPTER-sourced value", function () {
+    const values = res.body.data.resultValues || [];
+    const adapterValue = values.find((v) => v.source === "ADAPTER");
+    expect(adapterValue, "a resultValue with source ADAPTER").to.exist;
+  });
+  test("report 2 is SAVED, not auto-approved", function () {
+    expect(res.body.data.status).to.equal("SAVED");
+  });
+  test("PANEL: BOTH member values landed (13.5 and 7.2)", function () {
+    const got = [bru.getVar("emiObserved1"), bru.getVar("emiObserved2")].sort();
+    const expected = [
+      bru.getVar("emiResultValueA"),
+      bru.getVar("emiResultValueB"),
+    ].sort();
+    expect(got).to.deep.equal(expected);
+  });
+}
+
+docs {
+  **Verify (3/3) — second member report + the full-panel assertion.** Confirms the
+  second member report also carries an **`ADAPTER`** value and is **`SAVED`**, then
+  proves the round-trip end-to-end: the two values filled across the panel's member
+  reports (`emiObserved1` + `emiObserved2`) equal **both** submitted analytes
+  (`{{emiResultValueA}}` + `{{emiResultValueB}}`).
+  
+  This closes the loop for a panel: **one panel order → one shared barcode → both
+  member tests in `ut_ids` → one submit fills both member reports**, all auto-chained
+  with no manual copy/paste — the panel counterpart of flow 71.
+}

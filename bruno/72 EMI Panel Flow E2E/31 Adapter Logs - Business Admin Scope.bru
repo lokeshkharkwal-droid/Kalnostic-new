@@ -1,0 +1,43 @@
+meta {
+  name: 31 Adapter Logs - Business Admin Scope
+  type: http
+  seq: 28
+}
+
+get {
+  url: {{baseUrl}}/adapter-logs?limit=50
+  body: none
+  auth: bearer
+}
+
+params:query {
+  limit: 50
+  ~branchId: {{branchId}}
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+tests {
+  test("tenant-wide read returns (paginated envelope)", function () {
+    expect(res.getStatus()).to.equal(200);
+    const b = res.getBody();
+    expect(b.success).to.equal(true);
+    expect(b.data).to.be.an("array");
+  });
+  test("TENANT-SCOPED: both EMI calls are visible tenant-wide", function () {
+    const rows = res.getBody().data;
+    const actions = rows
+      .filter((r) => r.token === bru.getVar("flowAdapterToken"))
+      .map((r) => r.action);
+    expect(actions).to.include.members(["ORDERS", "SUBMIT_RESULT"]);
+  });
+}
+
+docs {
+  **Scope 2 — Business Admin (tenant-scoped / all branches).** Same endpoint as
+  step 30 but with the tenant-level **`business_admin` token**: no branch lock, so
+  every branch in the tenant is visible (optionally narrow with `?branchId=`, the
+  `~`-disabled example). Asserts both panel EMI calls of this run are visible.
+}

@@ -1,0 +1,73 @@
+meta {
+  name: 08 Assign Operator Permissions
+  type: http
+  seq: 7
+}
+
+put {
+  url: {{baseUrl}}/users/manage/{{operatorUserId}}/branch-permissions
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "branchId": "{{branchId}}",
+    "items": [
+      { "moduleKey": "registration", "permissionKey": "registration:create_order_patient_details__allow_create_order", "allowed": true },
+      { "moduleKey": "registration", "permissionKey": "registration:create_order_patient_details__create_patient", "allowed": true },
+  
+      { "moduleKey": "accession", "permissionKey": "accession:in_house_order__collect_the_sample", "allowed": true },
+      { "moduleKey": "accession", "permissionKey": "accession:in_house_order__accept_the_sample", "allowed": true },
+  
+      { "moduleKey": "lab_operations", "permissionKey": "lab_operations:reporting__access_to_pending", "allowed": true },
+      { "moduleKey": "lab_operations", "permissionKey": "lab_operations:reporting__access_to_saved", "allowed": true },
+      { "moduleKey": "lab_operations", "permissionKey": "lab_operations:reporting__access_to_enter_result", "allowed": true },
+  
+      { "moduleKey": "finance", "permissionKey": "finance:financial_reports__view_billing_reports", "allowed": true },
+      { "moduleKey": "finance", "permissionKey": "finance:invoice__list_view_only", "allowed": true },
+  
+      { "moduleKey": "branch_admin", "permissionKey": "branch_admin:lab_test_list__add_lab_test_list", "allowed": true },
+      { "moduleKey": "branch_admin", "permissionKey": "branch_admin:lab_panel_list__add_lab_panel_list", "allowed": true },
+  
+      { "moduleKey": "business_admin", "permissionKey": "business_admin:master_data__add_test", "allowed": true },
+      { "moduleKey": "business_admin", "permissionKey": "business_admin:master_data__update_test", "allowed": true }
+    ]
+  }
+}
+
+docs {
+  **Bootstrap 8 — Grant the operator a permission in EVERY module so the UI shows
+  them all.** `PUT /users/manage/:id/branch-permissions` **replaces** the
+  (user + branch) permission overrides with the set below.
+  
+  Module visibility rule: the FE reveals a module only when it is enabled on the
+  branch (step 04) **and** the user has ≥1 *allowed* permission in it
+  (`GET /users/manage/me/permissions` → `moduleAllowed`; the resolver adds any
+  module with an allow-override to the visibility gate). So one allowed key per
+  module is enough to make it appear in the nav. This grants a representative,
+  usable set across every requested module:
+  - **registration** — create order + create patient
+  - **accession** — collect + accept (also RBAC-required by the bulk collect/accept
+    in steps 24/25, so these must stay)
+  - **lab_operations** (**Technician**) — access pending/saved + enter result
+  - **finance** — billing reports + invoice list
+  - **branch_admin** — lab test/panel list management
+  - **business_admin** — master-data add/update test
+  
+  Every `permissionKey` is a real catalogue key (`GET /users/manage/permission-catalog`);
+  the endpoint rejects a key that doesn't belong to its `moduleKey` or a module the
+  branch hasn't enabled — hence step 04 enables all of them first.
+  
+  > This surfaces the `business_admin` / `branch_admin` consoles for the operator's
+  > single branch login purely for exploration; those consoles are normally scoped
+  > to their own roles/profiles.
+}

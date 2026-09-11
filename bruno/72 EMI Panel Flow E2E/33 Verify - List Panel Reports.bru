@@ -1,0 +1,50 @@
+meta {
+  name: 33 Verify - List Panel Reports
+  type: http
+  seq: 30
+}
+
+get {
+  url: {{baseUrl}}/lab-reports?branchLabPanelId={{branchLabPanelId}}&page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  branchLabPanelId: {{branchLabPanelId}}
+  page: 1
+  limit: 10
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.length) {
+    if (data[0] && data[0].id) bru.setVar("labReportId1", data[0].id);
+    if (data[1] && data[1].id) bru.setVar("labReportId2", data[1].id);
+  }
+}
+
+tests {
+  test("the panel produced two member reports", function () {
+    const rows = res.body.data;
+    expect(rows).to.be.an("array").with.length.of.at.least(2);
+  });
+  test("both member reports are now SAVED (machine-filled)", function () {
+    const rows = res.body.data;
+    expect(rows[0].status).to.equal("SAVED");
+    expect(rows[1].status).to.equal("SAVED");
+  });
+}
+
+docs {
+  **Verify (1/3) — the panel's reports, from the app side.** Lists the technician
+  reports for this run's **`branchLabPanelId`** — the two member reports of the
+  panel (the `?branchLabTestId=` filter would miss them, since a panel `OrderItem`
+  has no `branchLabTestId`; the panel filter is the correct lens). The machine
+  submission moved BOTH from `PENDING` to **`SAVED`**, which this asserts. Captures
+  **`labReportId1`** / **`labReportId2`** for the detail reads next.
+}
