@@ -247,7 +247,50 @@ describe('OrderSampleService — reconcileForOrderInTx (remove path)', () => {
         data: expect.objectContaining({ deletedAt: now }),
       }),
     );
-    // removed items' reports soft-deleted
-    expect((tx.labReport.updateMany as jest.Mock)).toHaveBeenCalled();
+    // removed items' reports soft-deleted (scoped to the removed items + tenant)
+    expect((tx.labReport.updateMany as jest.Mock)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ orderItemId: { in: ['R1'] }, tenantId: 'ten1', deletedAt: null }),
+        data: expect.objectContaining({ deletedAt: now }),
+      }),
+    );
+  });
+
+  it('generates samples for added items and touches nothing on the remove side', async () => {
+    const now = new Date('2026-09-11T00:00:00Z');
+    const addedItems = [{ id: 'A1', branchLabTest: { id: 'blt1' }, branchLabPanel: null }];
+    const tx = {
+      orderSample: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn() },
+      orderSampleTest: { updateMany: jest.fn(), deleteMany: jest.fn() },
+      labReport: { updateMany: jest.fn() },
+      orderItem: { findMany: jest.fn().mockResolvedValue(addedItems) },
+    } as unknown as import('@prisma/client').Prisma.TransactionClient;
+
+    const service = makeService();
+    // Stub the (already-tested) sample builder so this test isolates the ADD branch.
+    const buildSpy = jest
+      .spyOn(service as unknown as { buildSamplesForItems: (...a: unknown[]) => Promise<void> }, 'buildSamplesForItems')
+      .mockResolvedValue(undefined);
+
+    await (service as unknown as {
+      reconcileForOrderInTx: (
+        tx: unknown, t: string, b: string | null, p: string | null, o: string,
+        opts: { addedItemIds: string[]; removedItemIds: string[]; now: Date },
+      ) => Promise<void>;
+    }).reconcileForOrderInTx(tx, 'ten1', 'br1', 'per1', 'ord1', {
+      addedItemIds: ['A1'], removedItemIds: [], now,
+    });
+
+    // ADD path loads the added items (scoped) and builds their samples.
+    expect((tx.orderItem.findMany as jest.Mock)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: { in: ['A1'] }, orderId: 'ord1', tenantId: 'ten1', deletedAt: null }),
+      }),
+    );
+    expect(buildSpy).toHaveBeenCalledWith(tx, 'ten1', 'br1', 'per1', 'ord1', addedItems);
+    // No removals -> remove-side writes untouched.
+    expect((tx.orderSample.findMany as jest.Mock)).not.toHaveBeenCalled();
+    expect((tx.orderSample.update as jest.Mock)).not.toHaveBeenCalled();
+    expect((tx.labReport.updateMany as jest.Mock)).not.toHaveBeenCalled();
   });
 });
