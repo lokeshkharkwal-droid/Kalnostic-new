@@ -186,7 +186,34 @@ export class OrderSampleService {
       include: { branchLabTest: true, branchLabPanel: true },
     });
     if (items.length === 0) return;
+    await this.buildSamplesForItems(tx, tenantId, branchId, personId, orderId, items);
+  }
 
+  /**
+   * Build + persist the OrderSample rows (with tests link, NEW history, and
+   * grouping-aware barcodes) for a specific set of the order's items, inside an
+   * existing tenant-scoped transaction. Shared by first-time generation
+   * ({@link generateForOrderInTx}) and update reconcile
+   * ({@link reconcileForOrderInTx}).
+   * @param tx active Prisma transaction client (already tenant-scoped)
+   * @param tenantId tenant scope
+   * @param branchId active branch (origin + processing branch; may be null)
+   * @param personId acting person id (created/updated/changed by)
+   * @param orderId the order these items belong to
+   * @param items the order items (with branchLabTest/branchLabPanel included) to expand
+   */
+  private async buildSamplesForItems(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    branchId: string | null,
+    personId: string | null,
+    orderId: string,
+    items: Array<
+      Prisma.OrderItemGetPayload<{
+        include: { branchLabTest: true; branchLabPanel: true };
+      }>
+    >,
+  ): Promise<void> {
     // Flatten the order into (test × sample) units — panels expanded to tests.
     const units: SampleUnit[] = [];
     for (const item of items) {
