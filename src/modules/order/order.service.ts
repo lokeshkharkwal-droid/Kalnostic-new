@@ -8,6 +8,7 @@ import {
   ExternalIdFormat,
   ExternalIdPurpose,
   InvoicePaymentStatus,
+  LabReportStatus,
   MessagingChannel,
   Order,
   OrderDateType,
@@ -222,6 +223,7 @@ import {
   BillCopyPrintNotAllowedForUnpaidException,
   AppointmentPaymentRequiredException,
   PaymentWithoutBillGeneratedException,
+  TestNotDeletableAfterReportException,
 } from './exceptions/order.exceptions';
 import type { RegistrationSetting } from '@prisma/client';
 // Reused so an inline order-payment overpayment raises the SAME
@@ -231,6 +233,12 @@ import {
   PaymentOverpaymentException,
   PaymentCollectionByOtherUserNotAllowedException,
 } from '../payment-details/exceptions/payment-details.exceptions';
+import {
+  diffOrderItems,
+  isTestDeletable,
+  isDisallowedOverpayment,
+  type IncomingOrderItem,
+} from './utils/order-item-diff';
 
 /**
  * The minimal payment shape the discount/TDS + partial-billing validators read —
@@ -5206,9 +5214,25 @@ export class OrderService {
     const payPaid = roundToTwoDecimalPlaces(
       (dto.payments ?? []).reduce((s, p) => s + (p.paidAmount ?? 0), 0),
     );
-    // Same overpayment guard as create, but only when the ledger is part of
-    // this patch (an update without `payments` leaves the stored totals alone).
-    if (dto.payments !== undefined && payPaid > payNet) {
+    // Same overpayment guard as create, but relaxed: a surplus arising from the
+    // order's net dropping below what was *already* paid (e.g. a test removed
+    // whose payment was already collected) is allowed — it becomes a refundable
+    // negative balance. Only collecting MORE than both net and the prior paid is
+    // rejected as a genuine overpayment.
+    const storedPaidAgg =
+      dto.payments !== undefined
+        ? await this.prisma.paymentDetails.aggregate({
+            where: { orderId: id, tenantId, deletedAt: null },
+            _sum: { paidAmount: true },
+          })
+        : null;
+    const storedPaidTotal = roundToTwoDecimalPlaces(
+      toNum(storedPaidAgg?._sum.paidAmount),
+    );
+    if (
+      dto.payments !== undefined &&
+      isDisallowedOverpayment(payPaid, payNet, storedPaidTotal)
+    ) {
       throw new PaymentOverpaymentException(payNet, payPaid);
     }
     // Generate Bill = No (either set by this patch or already stored): the order
@@ -5382,7 +5406,59 @@ export class OrderService {
     // finalize an order/quote. Any supplied value is still persisted and
     // uniqueness-checked below.
 
+    // Item diff (keep/add/remove) + deletion-eligibility guard — only when the
+    // patch replaces items. Uses stable OrderItem ids sent by the FE.
+    let itemDiff: ReturnType<typeof diffOrderItems> | null = null;
+    if (dto.items !== undefined) {
+      const liveItems = await this.prisma.orderItem.findMany({
+        where: { orderId: id, tenantId, deletedAt: null },
+        select: { id: true },
+      });
+      itemDiff = diffOrderItems(
+        liveItems.map((i) => i.id),
+        dto.items as IncomingOrderItem[],
+      );
+      if (itemDiff.removeIds.length > 0) {
+        const reports = await this.prisma.labReport.findMany({
+          where: {
+            orderItemId: { in: itemDiff.removeIds },
+            tenantId,
+            deletedAt: null,
+          },
+          select: { orderItemId: true, status: true },
+        });
+        const byItem = new Map<string, LabReportStatus[]>();
+        for (const r of reports) {
+          const list = byItem.get(r.orderItemId) ?? [];
+          list.push(r.status);
+          byItem.set(r.orderItemId, list);
+        }
+        for (const removedId of itemDiff.removeIds) {
+          if (!isTestDeletable(byItem.get(removedId) ?? [])) {
+            const li = await this.prisma.orderItem.findFirst({
+              where: { id: removedId, tenantId },
+              select: {
+                branchLabTest: { select: { testName: true } },
+                branchLabPanel: { select: { panelName: true } },
+                direct: true,
+              },
+            });
+            const name =
+              li?.branchLabTest?.testName ??
+              li?.branchLabPanel?.panelName ??
+              li?.direct ??
+              null;
+            throw new TestNotDeletableAfterReportException(removedId, name);
+          }
+        }
+      }
+    }
+
     await this.prisma.withTenant(tenantId, async (tx) => {
+      // Collects the ids of newly-created order items so the sample reconciler
+      // knows which items to add samples for when the order is already accessioned.
+      const addedItemIds: string[] = [];
+
       // Resolve the external-id value to persist (undefined = leave untouched).
       let externalOrderIdUpdate: string | null | undefined;
       if (branchId) {
@@ -5488,36 +5564,74 @@ export class OrderService {
         },
       });
 
-      if (dto.items !== undefined) {
-        await tx.orderItem.updateMany({
-          where: { orderId: id, tenantId, deletedAt: null },
-          data: { deletedAt: now },
-        });
-        if (dto.items.length) {
-          const itemPrices = await this.loadItemUnitPrices(
-            tenantId,
-            branchId,
-            dto.items,
-          );
-          await tx.orderItem.createMany({
-            data: dto.items.map((i) => ({
-              tenantId,
-              branchId,
+      if (dto.items !== undefined && itemDiff) {
+        // Soft-delete only the items that were genuinely removed (not all of
+        // them then re-create, which would destroy accession linkage).
+        if (itemDiff.removeIds.length > 0) {
+          await tx.orderItem.updateMany({
+            where: {
+              id: { in: itemDiff.removeIds },
               orderId: id,
-              branchLabTestId: i.branchLabTestId ?? null,
-              branchLabPanelId: i.branchLabPanelId ?? null,
-              direct: i.direct ?? null,
+              tenantId,
+              deletedAt: null,
+            },
+            data: { deletedAt: now },
+          });
+        }
+        // Update kept items (price may have changed if the list was re-priced).
+        const keepPrices = await this.loadItemUnitPrices(
+          tenantId,
+          branchId,
+          itemDiff.keep.map((k) => k.incoming as OrderItemDto),
+        );
+        for (const { id: itemId, incoming } of itemDiff.keep) {
+          const i = incoming as OrderItemDto;
+          await tx.orderItem.update({
+            where: { id: itemId },
+            data: {
               unitPrice: i.direct
                 ? (i.unitPrice ?? 0)
-                : (itemPrices.get(
+                : (keepPrices.get(
                     i.branchLabTestId ?? i.branchLabPanelId ?? '',
                   ) ?? 0),
               discount: i.discount ?? 0,
               discountMode: i.discountMode ?? null,
               discountValue: i.discountValue ?? null,
               outsourceCenterId: i.outsourceCenterId ?? null,
-            })),
+            },
           });
+        }
+        // Create newly-added items and collect their ids for sample reconcile.
+        if (itemDiff.add.length > 0) {
+          const addPrices = await this.loadItemUnitPrices(
+            tenantId,
+            branchId,
+            itemDiff.add as OrderItemDto[],
+          );
+          for (const raw of itemDiff.add) {
+            const i = raw as OrderItemDto;
+            const created = await tx.orderItem.create({
+              select: { id: true },
+              data: {
+                tenantId,
+                branchId,
+                orderId: id,
+                branchLabTestId: i.branchLabTestId ?? null,
+                branchLabPanelId: i.branchLabPanelId ?? null,
+                direct: i.direct ?? null,
+                unitPrice: i.direct
+                  ? (i.unitPrice ?? 0)
+                  : (addPrices.get(
+                      i.branchLabTestId ?? i.branchLabPanelId ?? '',
+                    ) ?? 0),
+                discount: i.discount ?? 0,
+                discountMode: i.discountMode ?? null,
+                discountValue: i.discountValue ?? null,
+                outsourceCenterId: i.outsourceCenterId ?? null,
+              },
+            });
+            addedItemIds.push(created.id);
+          }
         }
       }
 
@@ -5616,18 +5730,43 @@ export class OrderService {
         }
       }
 
-      // Generate accession samples once the order is confirmed as a diagnostic
-      // order (e.g. a DRAFT/QUOTE flipped to ORDER/APPOINTMENT). Idempotent —
-      // skips if this order already has samples.
+      // Generate / reconcile accession samples once the order is confirmed as a
+      // diagnostic order (e.g. a DRAFT/QUOTE flipped to ORDER/APPOINTMENT).
+      // - First-time (no samples yet): generate the full item set (idempotent).
+      // - Already accessioned + items changed: reconcile only the delta (add new
+      //   samples for added items, tombstone samples for removed ones).
       const hasDiagnostics = Boolean(dto.diagnostics ?? existing?.diagnostics);
       if (this.shouldGenerateSamples(effectiveStatus, hasDiagnostics)) {
-        await this.orderSamples.generateForOrderInTx(
-          tx,
-          tenantId,
-          branchId,
-          personId,
-          id,
-        );
+        const alreadyAccessioned =
+          (await tx.orderSample.count({
+            where: { orderId: id, tenantId, deletedAt: null },
+          })) > 0;
+        if (alreadyAccessioned && dto.items !== undefined && itemDiff) {
+          // Already accessioned + item set changed -> reconcile the delta only.
+          await this.orderSamples.reconcileForOrderInTx(
+            tx,
+            tenantId,
+            branchId,
+            personId,
+            id,
+            {
+              addedItemIds,
+              removedItemIds: itemDiff.removeIds,
+              now,
+            },
+          );
+        } else {
+          // First-time generation for the whole final item set (idempotent). Do
+          // NOT also reconcile here — the added items are already part of the
+          // order, so generating the whole order covers them.
+          await this.orderSamples.generateForOrderInTx(
+            tx,
+            tenantId,
+            branchId,
+            personId,
+            id,
+          );
+        }
       }
       // Create the home-visit Collection Schedule record if this update confirms a
       // home-visit order (e.g. DRAFT → ORDER/APPOINTMENT). Idempotent + guarded, so
