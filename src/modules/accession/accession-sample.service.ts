@@ -393,6 +393,104 @@ export class OrderSampleService {
   }
 
   /**
+   * Reconcile an order's accession samples with an item-set change made during an
+   * order update, inside an existing tenant-scoped transaction. Added items get
+   * fresh samples; removed items have their exclusively-linked samples voided
+   * (soft-deleted + CANCELLED) while samples shared with a surviving test keep the
+   * sample and drop only the removed test's OrderSampleTest link (soft-delete);
+   * the removed items' LabReports are soft-deleted. Kept items are untouched.
+   * @param tx active Prisma transaction client (already tenant-scoped)
+   * @param tenantId tenant scope
+   * @param branchId active branch (from JWT profile; may be null)
+   * @param personId acting person id (recorded as changedBy / updatedBy)
+   * @param orderId the order being updated
+   * @param opts.addedItemIds newly created OrderItem ids on this update
+   * @param opts.removedItemIds OrderItem ids soft-deleted on this update
+   * @param opts.now the update transaction timestamp (single source of truth)
+   */
+  async reconcileForOrderInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    branchId: string | null,
+    personId: string | null,
+    orderId: string,
+    opts: { addedItemIds: string[]; removedItemIds: string[]; now: Date },
+  ): Promise<void> {
+    const { addedItemIds, removedItemIds, now } = opts;
+
+    if (removedItemIds.length > 0) {
+      const removedSet = new Set(removedItemIds);
+
+      // Find all active samples for this order that are linked to at least one
+      // removed item — load their active test links so we can classify them.
+      const samples = await tx.orderSample.findMany({
+        where: {
+          orderId,
+          tenantId,
+          deletedAt: null,
+          tests: { some: { orderItemId: { in: removedItemIds }, deletedAt: null } },
+        },
+        select: {
+          id: true,
+          tests: {
+            where: { deletedAt: null },
+            select: { id: true, orderItemId: true },
+          },
+        },
+      });
+
+      for (const sample of samples) {
+        const removedLinks = sample.tests.filter((l) => removedSet.has(l.orderItemId));
+        const survivingLinks = sample.tests.filter((l) => !removedSet.has(l.orderItemId));
+
+        if (survivingLinks.length === 0) {
+          // Sample is exclusively tied to removed items — void it.
+          await tx.orderSample.update({
+            where: { id: sample.id },
+            data: {
+              deletedAt: now,
+              status: SampleStatus.CANCELLED,
+              updatedBy: personId,
+              statusHistory: {
+                create: {
+                  tenantId,
+                  branchId,
+                  action: 'cancel',
+                  toStatus: SampleStatus.CANCELLED,
+                  changedBy: personId,
+                },
+              },
+            },
+          });
+        } else {
+          // Sample is shared — keep it, just soft-delete the removed tests' links.
+          await tx.orderSampleTest.updateMany({
+            where: { id: { in: removedLinks.map((l) => l.id) } },
+            data: { deletedAt: now },
+          });
+        }
+      }
+
+      // Soft-delete all LabReports belonging to the removed order items.
+      // A deletion guard upstream ensures none are past PENDING/PARTIAL_PENDING.
+      await tx.labReport.updateMany({
+        where: { orderItemId: { in: removedItemIds }, tenantId, deletedAt: null },
+        data: { deletedAt: now },
+      });
+    }
+
+    if (addedItemIds.length > 0) {
+      const items = await tx.orderItem.findMany({
+        where: { id: { in: addedItemIds }, orderId, tenantId, deletedAt: null },
+        include: { branchLabTest: true, branchLabPanel: true },
+      });
+      if (items.length > 0) {
+        await this.buildSamplesForItems(tx, tenantId, branchId, personId, orderId, items);
+      }
+    }
+  }
+
+  /**
    * Collect the accession sample(s) carrying a given order item, inside an
    * existing (already tenant-scoped) transaction — the bridge that lets the
    * Order Overview "Collect / Collect & Print" action drive the real sample

@@ -190,3 +190,64 @@ describe('OrderSampleService — panel sample resolution', () => {
     expect(await samplesForTest(null, undefined)).toEqual([]);
   });
 });
+
+describe('OrderSampleService — reconcileForOrderInTx (remove path)', () => {
+  function makeService() {
+    return new OrderSampleService(
+      {} as unknown as PrismaService,
+      {} as unknown as AccessionSettingsService,
+      {} as unknown as LabReportService,
+      {} as unknown as PdfReportTemplateService,
+      {} as unknown as EventEmitter2,
+      {} as unknown as TenantService,
+      {} as unknown as BarcodeService,
+    );
+  }
+
+  it('voids a sample linked only to removed items and drops shared links', async () => {
+    const now = new Date('2026-09-11T00:00:00Z');
+    const tx = {
+      orderSample: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 'S1', tests: [{ id: 'l1', orderItemId: 'R1' }] },
+          { id: 'S2', tests: [{ id: 'l2', orderItemId: 'R1' }, { id: 'l3', orderItemId: 'K1' }] },
+        ]),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      orderSampleTest: { updateMany: jest.fn().mockResolvedValue({ count: 1 }), deleteMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      labReport: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+      orderItem: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as import('@prisma/client').Prisma.TransactionClient;
+
+    const service = makeService();
+    await (service as unknown as {
+      reconcileForOrderInTx: (
+        tx: unknown, t: string, b: string | null, p: string | null, o: string,
+        opts: { addedItemIds: string[]; removedItemIds: string[]; now: Date },
+      ) => Promise<void>;
+    }).reconcileForOrderInTx(tx, 'ten1', 'br1', 'per1', 'ord1', {
+      addedItemIds: [], removedItemIds: ['R1'], now,
+    });
+
+    // S1 exclusive to R1 -> voided (soft-deleted + CANCELLED)
+    expect((tx.orderSample.update as jest.Mock)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'S1' },
+        data: expect.objectContaining({ deletedAt: now, status: 'CANCELLED' }),
+      }),
+    );
+    // S2 shared -> NOT voided
+    expect((tx.orderSample.update as jest.Mock)).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'S2' } }),
+    );
+    // OrderSampleTest has deletedAt -> soft-delete the removed link (l2)
+    expect((tx.orderSampleTest.updateMany as jest.Mock)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: { in: ['l2'] } },
+        data: expect.objectContaining({ deletedAt: now }),
+      }),
+    );
+    // removed items' reports soft-deleted
+    expect((tx.labReport.updateMany as jest.Mock)).toHaveBeenCalled();
+  });
+});
