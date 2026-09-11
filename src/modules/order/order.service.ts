@@ -5673,11 +5673,17 @@ export class OrderService {
       }
 
       // Replace the payment ledger wholesale when provided: soft-delete the
-      // current rows and recreate from the patch (mirrors the item-set replace).
-      // Safe to soft-delete + recreate — payment_details has no child unique key.
+      // current PAYMENT rows and recreate from the patch (mirrors the item-set
+      // replace). REFUND (and any other non-PAYMENT) rows are intentionally
+      // preserved so a post-refund update does not wipe the refund history.
       if (dto.payments !== undefined) {
         await tx.paymentDetails.updateMany({
-          where: { orderId: id, tenantId, deletedAt: null },
+          where: {
+            orderId: id,
+            tenantId,
+            deletedAt: null,
+            entryType: PaymentEntryType.PAYMENT,
+          },
           data: { deletedAt: now },
         });
         if (dto.payments.length) {
@@ -5710,6 +5716,49 @@ export class OrderService {
             })),
           });
         }
+      }
+
+      // The order-level paymentStatus set earlier used only the incoming PAYMENT
+      // rows. Now that the ledger is rebuilt (PAYMENT replaced, REFUND rows
+      // preserved), recompute paymentStatus AND refundStatus from the EFFECTIVE
+      // ledger so a refunded-then-edited order keeps its refund state and balance.
+      if (dto.payments !== undefined) {
+        const ledger = await tx.paymentDetails.aggregate({
+          where: { orderId: id, tenantId, deletedAt: null },
+          _sum: {
+            paidAmount: true,
+            netAmount: true,
+            refundAmount: true,
+            refundCharge: true,
+          },
+        });
+        const orderRow = await tx.order.findUnique({
+          where: { id },
+          select: { cancellationCharge: true },
+        });
+        const paidSum = toNum(ledger._sum.paidAmount);
+        const netSum = toNum(ledger._sum.netAmount);
+        const refundSum = toNum(ledger._sum.refundAmount);
+        const refundChargeSum = toNum(ledger._sum.refundCharge);
+        const cancellationCharge = toNum(orderRow?.cancellationCharge);
+        const effectivePaid = computeEffectivePaid(
+          paidSum,
+          cancellationCharge,
+          refundSum,
+          refundChargeSum,
+        );
+        await tx.order.update({
+          where: { id },
+          data: {
+            paymentStatus: derivePaymentStatus(netSum, effectivePaid),
+            refundStatus: deriveRefundStatus(
+              paidSum,
+              cancellationCharge,
+              refundSum,
+              refundChargeSum,
+            ),
+          },
+        });
       }
 
       // Re-point the phlebotomist slot reservation when the booking changed
