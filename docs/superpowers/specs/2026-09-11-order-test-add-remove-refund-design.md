@@ -110,8 +110,12 @@ every REMOVE item (and, for a removed panel line, every member test):
   throw a new **`TestNotDeletableAfterReportException`** (HTTP 422) naming the
   test. Removal is allowed while the report is absent / `PENDING` /
   `PARTIAL_PENDING`.
-- **Decision (default, confirm before build):** `ERROR_REPORTED` and
-  `RESULT_REJECTED` are treated as **blocked** (results had been entered).
+- **Decision (confirmed 2026-09-11):** `ERROR_REPORTED` and `RESULT_REJECTED`
+  are **blocked** (results had been entered) — removal not allowed.
+- **Granularity:** the guard is **per removed test**, not per order. An order
+  containing a report-locked test is still fully editable/savable; only an
+  attempt to *remove* that specific test is rejected (all-or-nothing on that
+  save). This is distinct from the order-level invoice-lock.
 
 Verified status flows (do not assume):
 - `LabReportStatus`: `PENDING → PARTIAL_PENDING → SAVED → VALIDATION_PENDING →
@@ -239,8 +243,11 @@ and refund-only menu; settle the refund and confirm the balance clears.
   (per the "always create a Prisma migration" rule).
 - No data backfill: existing orders are unaffected until next updated.
 
-## 7. Open questions (confirm before/at implementation)
+## 7. Open questions
 
-1. `ERROR_REPORTED` / `RESULT_REJECTED` → blocked (default) or deletable?
-2. Does `LabReport` already have a soft-delete field, or do we add one / hard-
-   delete pending reports on removal? (Resolve during planning.)
+1. ~~`ERROR_REPORTED` / `RESULT_REJECTED` → blocked or deletable?~~
+   **Resolved 2026-09-11: blocked.**
+2. ~~Does `LabReport` have a soft-delete field?~~ **Resolved: yes,
+   `LabReport.deletedAt` exists (`schema.prisma:7168`); no migration needed.**
+
+All open questions resolved.
