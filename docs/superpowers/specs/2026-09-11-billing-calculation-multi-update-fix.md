@@ -108,6 +108,35 @@ item prices are already server-resolved by `loadItemUnitPrices` on create/update
   issue a refund, then edit again → confirm all six columns stay correct at each step on
   both billing screens.
 
+## 6a. As-built (refinement discovered during implementation)
+
+The codebase already had `orderLevelFigures()` (used by Finance reports + invoicing)
+that folds line discounts into Discount and derives `gross = net + discount`. The
+Billings list bypassed it with a cruder `Σ payments` rollup that omitted line
+discounts — which was itself the Discount-column bug. So rather than a brand-new
+"stamp on write" calculator, the fix centralised on a shared pure helper and reused
+the existing figures function:
+
+- **`src/modules/order/utils/billing-totals.ts` — `computeBillingTotals(payments, items)`**
+  returns `{ gross, discount, net }`. It recomputes the order-level discount from the
+  persisted `(orderDiscountMode, orderDiscountValue)` against the current item total,
+  then **delta-corrects** the stored net: `net = ΣnetAmount + storedOrderDiscount −
+  recomputed`. This corrects a frozen % without needing charges (they're already inside
+  `Σ netAmount`). Legacy orders (null mode) → `recomputed = stored`, so behaviour is
+  byte-identical to before (Finance reports unchanged).
+- Both the **Billings list rollup** and **`orderLevelFigures`** call this one helper, so
+  Billings and Finance are consistent by construction. `ORDER_LIST_INCLUDE.items` gained
+  `unitPrice`/`discount` so the list can see line discounts.
+- **Gross is unchanged for legacy orders** (ledger invariant `totalAmount = netAmount +
+  orderDiscount + Σ lineDiscount` ⇒ `net + discount = Σ totalAmount`); the **Discount**
+  column now correctly includes line discounts for all orders.
+- Part 1 (preserve REFUND rows + recompute payment/refund status) shipped first
+  (commit `4c4adc9`).
+
+Commits: Part 1 `4c4adc9`; Part 2 `c6d9960` (persist mode/value + migration),
+`f9718c4` (shared helper + both call sites), FE `d2d5a0e` (round-trip mode/value +
+ignore REFUND rows in the payment form).
+
 ## 7. Open items to confirm during implementation
 1. The order-level discount **base** (item total vs. item-total-after-line-discounts) —
    match `lines.orderDiscountBase` exactly.
