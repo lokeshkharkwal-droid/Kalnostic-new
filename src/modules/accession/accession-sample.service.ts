@@ -186,7 +186,14 @@ export class OrderSampleService {
       include: { branchLabTest: true, branchLabPanel: true },
     });
     if (items.length === 0) return;
-    await this.buildSamplesForItems(tx, tenantId, branchId, personId, orderId, items);
+    await this.buildSamplesForItems(
+      tx,
+      tenantId,
+      branchId,
+      personId,
+      orderId,
+      items,
+    );
   }
 
   /**
@@ -428,7 +435,9 @@ export class OrderSampleService {
           orderId,
           tenantId,
           deletedAt: null,
-          tests: { some: { orderItemId: { in: removedItemIds }, deletedAt: null } },
+          tests: {
+            some: { orderItemId: { in: removedItemIds }, deletedAt: null },
+          },
         },
         select: {
           id: true,
@@ -440,8 +449,12 @@ export class OrderSampleService {
       });
 
       for (const sample of samples) {
-        const removedLinks = sample.tests.filter((l) => removedSet.has(l.orderItemId));
-        const survivingLinks = sample.tests.filter((l) => !removedSet.has(l.orderItemId));
+        const removedLinks = sample.tests.filter((l) =>
+          removedSet.has(l.orderItemId),
+        );
+        const survivingLinks = sample.tests.filter(
+          (l) => !removedSet.has(l.orderItemId),
+        );
 
         if (survivingLinks.length === 0) {
           // Sample is exclusively tied to removed items — void it.
@@ -474,7 +487,11 @@ export class OrderSampleService {
       // Soft-delete all LabReports belonging to the removed order items.
       // A deletion guard upstream ensures none are past PENDING/PARTIAL_PENDING.
       await tx.labReport.updateMany({
-        where: { orderItemId: { in: removedItemIds }, tenantId, deletedAt: null },
+        where: {
+          orderItemId: { in: removedItemIds },
+          tenantId,
+          deletedAt: null,
+        },
         data: { deletedAt: now },
       });
     }
@@ -485,7 +502,14 @@ export class OrderSampleService {
         include: { branchLabTest: true, branchLabPanel: true },
       });
       if (items.length > 0) {
-        await this.buildSamplesForItems(tx, tenantId, branchId, personId, orderId, items);
+        await this.buildSamplesForItems(
+          tx,
+          tenantId,
+          branchId,
+          personId,
+          orderId,
+          items,
+        );
       }
     }
   }

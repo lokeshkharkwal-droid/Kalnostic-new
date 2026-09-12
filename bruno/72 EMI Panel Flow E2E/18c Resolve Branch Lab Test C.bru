@@ -1,0 +1,34 @@
+meta {
+  name: 18c Resolve Branch Lab Test C
+  type: http
+  seq: 15
+}
+
+get {
+  url: {{baseUrl}}/branch-lab-tests/options?search=EMI Panel CBC Indices {{panelRunId}}&page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  search: EMI Panel CBC Indices {{panelRunId}}
+  page: 1
+  limit: 10
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.length && data[0].id) bru.setVar("branchLabTestIdC", data[0].id);
+}
+
+docs {
+  **Catalogue 18c — Resolve branch lab test C** (the multi-parameter member;
+  `search` matches this run's test C name). This id is the panel's third member and
+  the adapter's third mapped test, and it is what the member report carries as
+  `memberBranchLabTestId` — used in step 33 to locate the multi-parameter report.
+  Captures **`branchLabTestIdC`**.
+}

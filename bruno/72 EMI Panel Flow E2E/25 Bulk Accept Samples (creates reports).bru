@@ -20,9 +20,10 @@ auth:bearer {
 
 body:json {
   {
-    "ids": ["{{sampleIdA}}", "{{sampleIdB}}"],
+    "ids": ["{{sampleIdA}}", "{{sampleIdB}}", "{{sampleIdC}}"],
     "sampleCondition": "Good",
-    "notes": "Accepted for processing (panel)"
+    "notes": "Accepted for processing (panel)",
+    "skipInvalid": true
   }
 }
 
@@ -33,10 +34,14 @@ tests {
 }
 
 docs {
-  **Accession 25 — Bulk accept both member samples** (COLLECTED → ACCEPTED). This
-  is the step that makes the panel machine-ready: accepting each member sample
+  **Accession 25 — Bulk accept all three member samples** (COLLECTED → ACCEPTED).
+  This is the step that makes the panel machine-ready: accepting each member sample
   **auto-creates its Technician `LabReport` (status PENDING)**, tagged with that
-  member's `memberBranchLabTestId`. Two members → **two reports**, both filled by
-  the machine in step 29. Requires `accession:in_house_order__accept_the_sample`
-  (granted in step 08).
+  member's `memberBranchLabTestId`. Three members → **three reports**, all filled by
+  the machine in step 29 (including three parameters on test C's report). Requires
+  `accession:in_house_order__accept_the_sample` (granted in step 08).
+
+  `accept` is legal only from `COLLECTED`/`HALT`; `skipInvalid: true` skips samples
+  not in an acceptable state (e.g. already accepted on a GUI re-run) instead of
+  failing the whole batch with `422 INVALID_SAMPLE_TRANSITION`.
 }

@@ -12,7 +12,7 @@ describe('diffOrderItems', () => {
     const incoming: IncomingOrderItem[] = [
       { id: 'a', branchLabTestId: 't1' }, // keep
       { id: 'b', branchLabTestId: 't2' }, // keep
-      { branchLabTestId: 't9' },          // add (no id)
+      { branchLabTestId: 't9' }, // add (no id)
     ]; // 'c' absent -> remove
     const diff = diffOrderItems(existing, incoming);
     expect(diff.keep.map((k) => k.id).sort()).toEqual(['a', 'b']);
@@ -22,7 +22,10 @@ describe('diffOrderItems', () => {
   });
 
   it('ignores an incoming id that is not an existing live item (treats as add)', () => {
-    const diff = diffOrderItems(['a'], [{ id: 'ghost', branchLabTestId: 't1' }]);
+    const diff = diffOrderItems(
+      ['a'],
+      [{ id: 'ghost', branchLabTestId: 't1' }],
+    );
     expect(diff.keep).toHaveLength(0);
     expect(diff.add).toHaveLength(1);
     expect(diff.removeIds).toEqual(['a']);
@@ -32,10 +35,17 @@ describe('diffOrderItems', () => {
 describe('isTestDeletable', () => {
   it('allows removal when no report or only pending reports', () => {
     expect(isTestDeletable([])).toBe(true);
-    expect(isTestDeletable([LabReportStatus.PENDING, LabReportStatus.PARTIAL_PENDING])).toBe(true);
+    expect(
+      isTestDeletable([
+        LabReportStatus.PENDING,
+        LabReportStatus.PARTIAL_PENDING,
+      ]),
+    ).toBe(true);
   });
   it('blocks removal once any report is SAVED or beyond', () => {
-    expect(isTestDeletable([LabReportStatus.PENDING, LabReportStatus.SAVED])).toBe(false);
+    expect(
+      isTestDeletable([LabReportStatus.PENDING, LabReportStatus.SAVED]),
+    ).toBe(false);
     expect(isTestDeletable([LabReportStatus.VALIDATION_PENDING])).toBe(false);
     expect(isTestDeletable([LabReportStatus.RESULT_DONE])).toBe(false);
     expect(isTestDeletable([LabReportStatus.APPROVED])).toBe(false);

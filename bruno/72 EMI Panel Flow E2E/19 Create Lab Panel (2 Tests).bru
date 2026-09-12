@@ -1,5 +1,5 @@
 meta {
-  name: 19 Create Lab Panel (2 Tests)
+  name: 19 Create Lab Panel (3 Tests)
   type: http
   seq: 16
 }
@@ -34,7 +34,8 @@ body:json {
     "tatMaxUnit": "HOURS",
     "tests": [
       { "labTestId": "{{labTestIdA}}", "sortOrder": 0 },
-      { "labTestId": "{{labTestIdB}}", "sortOrder": 1 }
+      { "labTestId": "{{labTestIdB}}", "sortOrder": 1 },
+      { "labTestId": "{{labTestIdC}}", "sortOrder": 2 }
     ]
   }
 }
@@ -45,16 +46,16 @@ script:post-response {
 }
 
 tests {
-  test("panel created with two member tests", function () {
+  test("panel created with three member tests", function () {
     expect(res.getStatus()).to.equal(201);
     expect(res.body.data).to.have.property("id");
   });
 }
 
 docs {
-  **Panel 19 — Create the lab panel of the two member tests** (in the branch's
-  master data, as Business Admin). `tests[]` references the two **master-data**
-  LabTest ids (`labTestIdA`, `labTestIdB`) created in 14/15. `panelCode` is unique
-  per master data. Captures **`labPanelId`** (the master-data panel, imported into
-  the branch next).
+  **Panel 19 — Create the lab panel of the three member tests** (in the branch's
+  master data, as Business Admin). `tests[]` references the three **master-data**
+  LabTest ids (`labTestIdA`, `labTestIdB`, `labTestIdC`) created in 14/15/15c —
+  where **C is the multi-parameter test**. `panelCode` is unique per master data.
+  Captures **`labPanelId`** (the master-data panel, imported into the branch next).
 }
