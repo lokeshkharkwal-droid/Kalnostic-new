@@ -1,0 +1,36 @@
+meta {
+  name: 03 Business Admin Login
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "identifier": "{{adminIdentifier}}",
+    "password": "{{adminPassword}}"
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.accessToken) {
+    bru.setVar("businessAdminToken", data.accessToken);
+    if (data.refreshToken) bru.setVar("businessAdminRefreshToken", data.refreshToken);
+  }
+}
+
+docs {
+  **Bootstrap 3 — Log in as the Business Admin** using the `adminIdentifier` /
+  `adminPassword` captured from step 02. Captures **`businessAdminToken`** for the
+  tenant-level setup (branch, schedule, users, lab tests, panel, adapter).
+}

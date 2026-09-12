@@ -1,0 +1,32 @@
+meta {
+  name: 18 Resolve Branch Lab Test B
+  type: http
+  seq: 15
+}
+
+get {
+  url: {{baseUrl}}/branch-lab-tests/options?search=EMI Panel WBC {{panelRunId}}&page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  search: EMI Panel WBC {{panelRunId}}
+  page: 1
+  limit: 10
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.length && data[0].id) bru.setVar("branchLabTestIdB", data[0].id);
+}
+
+docs {
+  **Catalogue 18 — Resolve branch lab test B** (`search` matches this run's test B
+  name). The panel's second member and the adapter's second mapped test. Captures
+  **`branchLabTestIdB`**.
+}

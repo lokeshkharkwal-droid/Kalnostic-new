@@ -1,0 +1,67 @@
+meta {
+  name: 35c Verify Multi-Param Report (C - all 3 params filled)
+  type: http
+  seq: 33
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/{{labReportIdC}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+script:post-response {
+  const data = res.body && res.body.data;
+  const values = (data && data.resultValues) || [];
+  const adapterValues = values.filter((v) => v.source === "ADAPTER");
+  bru.setVar("emiMultiParamCount", String(adapterValues.length));
+}
+
+tests {
+  test("report detail loads", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.body.data).to.have.property("resultValues");
+  });
+  test("MULTI-PARAM: all three parameters filled on the ONE report, source ADAPTER", function () {
+    const adapterValues = (res.body.data.resultValues || []).filter(
+      (v) => v.source === "ADAPTER",
+    );
+    expect(adapterValues.length, "ADAPTER result values on test C").to.equal(3);
+  });
+  test("MULTI-PARAM: the three submitted values all landed", function () {
+    const got = (res.body.data.resultValues || [])
+      .filter((v) => v.source === "ADAPTER")
+      .map((v) => String(v.observed1))
+      .sort();
+    const expected = [
+      bru.getVar("emiResultValueC1"),
+      bru.getVar("emiResultValueC2"),
+      bru.getVar("emiResultValueC3"),
+    ].sort();
+    expect(got).to.deep.equal(expected);
+  });
+  test("multi-param report is SAVED, not auto-approved", function () {
+    expect(res.body.data.status).to.equal("SAVED");
+  });
+}
+
+docs {
+  **Verify (multi-parameter) — the whole point of this addition.** Fetches the
+  detail of member test C's report (`labReportIdC`, located in step 33 by its
+  `memberBranchLabTestId`) and proves `/emi/submitResult` handles a test with
+  **multiple result parameters**:
+  - `resultValues[]` contains **exactly three** entries with **`source: "ADAPTER"`**
+    — one per parameter (`RBC Count` / `Hematocrit` / `MCV`), all on the **single**
+    member report.
+  - their `observed1` values equal the three submitted analytes
+    (`{{emiResultValueC1}}` / `{{emiResultValueC2}}` / `{{emiResultValueC3}}`).
+  - the report is **`SAVED`** (never auto-approved).
+
+  This confirms the backend resolves *all* of a test's `LabTestResultParam`s and
+  matches each independently against the machine's `test_results[]` by
+  `universal_test_id` / `test_name` — so one report can carry many analyte values.
+}

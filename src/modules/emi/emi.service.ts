@@ -72,6 +72,26 @@ const ORDER_INCLUDE = {
 type EmiOrder = Prisma.OrderGetPayload<{ include: typeof ORDER_INCLUDE }>;
 
 /**
+ * An order resolved from a scanned **sample barcode**, together with the tests
+ * carried by that barcode's sample group. `selectedItems` scopes the
+ * exposed/fillable tests to just the scanned specimen group (mirrors the legacy
+ * `OrderSpecimenGroup` → `getUniqueTestIdsFromSpecimenProducts` narrowing).
+ *
+ * Keyed by `OrderItem.id` → the set of member `labTestId`s (each a
+ * `LabTest.id`/`sourceLabTestId`, as accession records on `OrderSampleTest.labTestId`)
+ * carried by the scanned barcode. For a standalone test that is its single source
+ * id; for a **panel** item — one `OrderItem` backing several member-test reports —
+ * it is the subset of member tests the scanned barcode covers, which narrows the
+ * panel's reports to just the scanned specimen group. A set containing `null`
+ * means no member-level id was recorded, so fall back to whole-item matching
+ * (legacy behaviour).
+ */
+interface ResolvedSampleOrder {
+  order: EmiOrder;
+  selectedItems: Map<string, Set<string | null>>;
+}
+
+/**
  * The adapter's resolved integration context: which branches it serves and which
  * branch lab tests it reports (its "prefered tests").
  */
@@ -191,10 +211,13 @@ export class EmiService {
 
   /**
    * `GET /emi/orders` — return the order + patient + pending-test info for a
-   * scanned id. In our system the scanned `specimen_id` is the order's
-   * `orderCode`.
+   * scanned **sample barcode**. In our system the scanned `specimen_id` is the
+   * accession sample's `OrderSample.barcode`; the order and the scanned group's
+   * tests are derived from it (mirrors the legacy `OrderSpecimenGroup` specimen-id
+   * lookup — the tests are scoped to the scanned specimen group, not the whole
+   * order).
    * @param adapter the authenticated adapter (tenant + branch scope)
-   * @param specimenId the scanned id (= `Order.orderCode`)
+   * @param specimenId the scanned id (= `OrderSample.barcode`)
    * @returns the legacy `{ s, orders: [...] }` envelope
    */
   async getOrders(
@@ -209,10 +232,16 @@ export class EmiService {
       ? { s: EMI.BAD_REQUEST, m: 'Missing specimen id' }
       : await this.prisma.withTenant(adapter.tenantId, async (tx) => {
           const ctx = await this.resolveContext(tx, adapter);
-          const order = await this.findOrder(tx, adapter.tenantId, code, ctx);
-          if (!order) {
+          const resolved = await this.findOrderByBarcode(
+            tx,
+            adapter.tenantId,
+            code,
+            ctx,
+          );
+          if (!resolved) {
             return { s: EMI.BAD_REQUEST, m: 'Specimen id not found' };
           }
+          const { order, selectedItems } = resolved;
           branchId = order.branchId;
 
           const tenant = await tx.tenant.findUnique({
@@ -232,29 +261,48 @@ export class EmiService {
             }
           };
           for (const item of order.items) {
-            if (
-              !item.branchLabTestId ||
-              !ctx.mappedTestIds.has(item.branchLabTestId)
-            ) {
-              continue;
+            const members = selectedItems.get(item.id);
+            if (!members) {
+              continue; // this item isn't part of the scanned sample group
             }
-            // `item.branchLabTestId` is set (checked above), so this is never
-            // a panel item — panel items are excluded by the DB CHECK
-            // constraint that makes `branchLabTestId`/`branchLabPanelId`
-            // mutually exclusive, so `labReports` here has at most one entry.
-            const report = item.labReports[0];
-            const fillable =
-              !report ||
-              (FILLABLE_STATUSES.has(report.status) && !report.isLocked);
-            if (!fillable) {
-              continue;
-            }
-            pushUnique(item.branchLabTest?.testName);
-            const labTestId =
-              report?.labTestId ?? item.branchLabTest?.sourceLabTestId ?? null;
-            const params = await this.resolveParams(tx, labTestId, item);
-            for (const p of params) {
-              pushUnique(p.parameterName);
+            // A panel is a single OrderItem (`branchLabPanelId` set,
+            // `branchLabTestId` null) whose member tests live on its reports as
+            // `memberBranchLabTestId` (each a `BranchLabTest.id` — the key the
+            // adapter is mapped on). Resolve per report so panel members are
+            // expanded. A standalone item not yet accepted has no report, so fall
+            // back to a single reportless unit to preserve the legacy
+            // "pending test" behaviour (a panel pre-acceptance has no mapped id
+            // there and contributes nothing, as before).
+            const reports =
+              item.labReports.length > 0 ? item.labReports : [null];
+            for (const report of reports) {
+              const mappedTestId =
+                report?.memberBranchLabTestId ?? item.branchLabTestId;
+              if (!mappedTestId || !ctx.mappedTestIds.has(mappedTestId)) {
+                continue;
+              }
+              if (report && !this.reportInScannedGroup(members, report)) {
+                continue;
+              }
+              const fillable =
+                !report ||
+                (FILLABLE_STATUSES.has(report.status) && !report.isLocked);
+              if (!fillable) {
+                continue;
+              }
+              // Panel member has no `item.branchLabTest`; its display name is the
+              // mapped test's name (`preferedTest`, keyed by BranchLabTest.id).
+              pushUnique(
+                item.branchLabTest?.testName ?? ctx.preferedTest[mappedTestId],
+              );
+              const labTestId =
+                report?.labTestId ??
+                item.branchLabTest?.sourceLabTestId ??
+                null;
+              const params = await this.resolveParams(tx, labTestId, item);
+              for (const p of params) {
+                pushUnique(p.parameterName);
+              }
             }
           }
 
@@ -330,10 +378,15 @@ export class EmiService {
       adapter.tenantId,
       async (tx) => {
         const ctx = await this.resolveContext(tx, adapter);
+        // `tube_no` is the scanned sample barcode (the analyzer echoes back the
+        // same specimen id it received from `/emi/orders`).
         const code = body.tube_no?.trim() ?? '';
-        const order = code
-          ? await this.findOrder(tx, adapter.tenantId, code, ctx)
+        const resolved = code
+          ? await this.findOrderByBarcode(tx, adapter.tenantId, code, ctx)
           : null;
+        const order = resolved?.order ?? null;
+        const selectedItems =
+          resolved?.selectedItems ?? new Map<string, Set<string | null>>();
         loggedBranchId = order?.branchId ?? null;
 
         // Common audit-row writer (one row per submission).
@@ -431,9 +484,18 @@ export class EmiService {
         // and one fill attempt per member test instead of silently only
         // handling the first.
         for (const item of order.items) {
+          const members = selectedItems.get(item.id);
           for (const report of item.labReports) {
+            // For a panel member report, `memberBranchLabTestId` is the mapped
+            // BranchLabTest id; for a standalone report it's null and the item's
+            // own `branchLabTestId` applies.
+            const mappedTestId =
+              report.memberBranchLabTestId ?? item.branchLabTestId;
+            const memberName =
+              mappedTestId != null ? ctx.preferedTest[mappedTestId] : undefined;
             const reportName =
               item.branchLabTest?.testName ??
+              memberName ??
               item.branchLabPanel?.panelName ??
               '';
             const base: EmiReportLog = {
@@ -455,10 +517,15 @@ export class EmiService {
               continue;
             }
 
-            // Not one of the adapter's prefered (mapped) tests.
+            // Not one of the adapter's prefered (mapped) tests, or not part of
+            // the scanned specimen group. (Legacy narrows `preferedTest` to the
+            // scanned group's tests, so a non-group test lands in this same
+            // "Not in prefered test list" branch.)
             if (
-              !item.branchLabTestId ||
-              !ctx.mappedTestIds.has(item.branchLabTestId)
+              !mappedTestId ||
+              !ctx.mappedTestIds.has(mappedTestId) ||
+              !members ||
+              !this.reportInScannedGroup(members, report)
             ) {
               log.push({
                 ...base,
@@ -468,11 +535,14 @@ export class EmiService {
             }
 
             const params = await this.resolveParams(tx, report.labTestId, item);
-            const matches = this.matchValues(
-              params,
-              submitted,
-              item.branchLabTest,
-            );
+            // A panel member has no `item.branchLabTest`; give matchValues the
+            // member's name so the single-analyte name fallback still works.
+            const testForMatch =
+              item.branchLabTest ??
+              (memberName
+                ? { testCode: memberName, testName: memberName }
+                : null);
+            const matches = this.matchValues(params, submitted, testForMatch);
             if (matches.length === 0) {
               log.push({
                 ...base,
@@ -621,7 +691,6 @@ export class EmiService {
           decoded.contentType,
           decoded.ext,
           adapter.tenantId,
-          'emi-histograms',
         );
         uploaded.push({ type, url, ext: decoded.ext });
       } catch (e) {
@@ -715,24 +784,99 @@ export class EmiService {
     };
   }
 
-  /** Find an order by `orderCode`, tenant-scoped and within the adapter's branches. */
-  private async findOrder(
+  /**
+   * Resolve an order from a scanned **sample barcode** (the specimen id the
+   * analyzer sends), tenant-scoped and within the adapter's branches. Mirrors the
+   * legacy `OrderSpecimenGroup::getFranchiseLatestGroupBySpecimenId`: the barcode
+   * identifies a sample group — one-or-more `OrderSample` rows sharing that
+   * `barcode` (Accession assigns one shared barcode per grouping bucket) — from
+   * which the parent order and the specific order items carried by the group are
+   * derived. Samples never group across orders, so the most-recent sample's order
+   * is taken and only that order's items are collected into `selectedItemIds`.
+   * @param tx active Prisma transaction client (already tenant-scoped)
+   * @param tenantId tenant scope
+   * @param barcode the scanned sample barcode (= `OrderSample.barcode`)
+   * @param ctx the adapter's resolved branch scope
+   * @returns the order + the per-item member `labTestId` sets carried by the
+   *   scanned group (see {@link ResolvedSampleOrder}), or `null` when no active
+   *   sample carries the barcode in the adapter's scope
+   */
+  private async findOrderByBarcode(
     tx: Prisma.TransactionClient,
     tenantId: string,
-    orderCode: string,
+    barcode: string,
     ctx: AdapterContext,
-  ): Promise<EmiOrder | null> {
-    const where: Prisma.OrderWhereInput = {
-      orderCode,
+  ): Promise<ResolvedSampleOrder | null> {
+    const where: Prisma.OrderSampleWhereInput = {
+      barcode,
       tenantId,
       deletedAt: null,
     };
     if (ctx.branchIds.length > 0) {
-      // Include tenant-level (null-branch) orders too, but restrict located
-      // orders to the adapter's branches.
+      // Include tenant-level (null-branch) samples too, but restrict located
+      // samples to the adapter's branches.
       where.OR = [{ branchId: { in: ctx.branchIds } }, { branchId: null }];
     }
-    return tx.order.findFirst({ where, include: ORDER_INCLUDE });
+    const samples = await tx.orderSample.findMany({
+      where,
+      select: {
+        orderId: true,
+        tests: {
+          where: { deletedAt: null },
+          select: { orderItemId: true, labTestId: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (samples.length === 0) {
+      return null;
+    }
+
+    // A barcode belongs to one order's sample group (Accession never groups
+    // across orders — Critical Rule #1); take the most-recent sample's order and
+    // collect, per order item, the member `labTestId`s carried by every sample of
+    // that order sharing this barcode. The per-item member set is what narrows a
+    // panel (one OrderItem, many member-test reports) to just the scanned tests.
+    const orderId = samples[0]!.orderId;
+    const selectedItems = new Map<string, Set<string | null>>();
+    for (const sample of samples) {
+      if (sample.orderId !== orderId) {
+        continue;
+      }
+      for (const test of sample.tests) {
+        const members =
+          selectedItems.get(test.orderItemId) ?? new Set<string | null>();
+        members.add(test.labTestId);
+        selectedItems.set(test.orderItemId, members);
+      }
+    }
+
+    const order = await tx.order.findFirst({
+      where: { id: orderId, tenantId, deletedAt: null },
+      include: ORDER_INCLUDE,
+    });
+    if (!order) {
+      return null;
+    }
+    return { order, selectedItems };
+  }
+
+  /**
+   * Whether a report belongs to the scanned barcode's sample group. A panel
+   * `OrderItem` backs several reports (one per member test); the scanned barcode
+   * carries only a subset of members, recorded as their `labTestId`s (source ids)
+   * on `OrderSampleTest`. A report matches when its `labTestId` is in that set.
+   * When no member id was recorded (the set holds `null` — a standalone or legacy
+   * sample), don't narrow: the whole item is in scope (legacy behaviour).
+   */
+  private reportInScannedGroup(
+    members: Set<string | null>,
+    report: { labTestId: string | null },
+  ): boolean {
+    if (members.has(null)) {
+      return true;
+    }
+    return report.labTestId != null && members.has(report.labTestId);
   }
 
   /**

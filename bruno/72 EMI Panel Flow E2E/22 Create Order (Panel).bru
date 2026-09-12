@@ -1,0 +1,62 @@
+meta {
+  name: 22 Create Order (Panel)
+  type: http
+  seq: 19
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "orderDate": "{{orderDate}}",
+    "orderType": "WALK_IN",
+    "billingType": "CASH_CLIENT",
+    "patientId": "{{patientId}}",
+    "status": "ORDER",
+    "items": [
+      { "branchLabPanelId": "{{branchLabPanelId}}" }
+    ],
+    "diagnostics": {
+      "isHomeVisit": false
+    }
+  }
+}
+
+script:pre-request {
+  bru.setVar("orderDate", new Date().toISOString().slice(0, 10));
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data) {
+    if (data.id) bru.setVar("orderId", data.id);
+    if (data.orderCode) bru.setVar("orderCode", data.orderCode);
+  }
+}
+
+tests {
+  test("order created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  **Order 22 — Create the order with the PANEL as its single item.** The item uses
+  `branchLabPanelId` (not `branchLabTestId`), so the backend expands the panel into
+  its member tests and generates **one accession sample per member** in the same
+  transaction (in-center, `isHomeVisit: false`). Two members → two samples that
+  (sharing Blood/EDTA) get **one shared barcode**. Captures **`orderId`** and
+  **`orderCode`**.
+}

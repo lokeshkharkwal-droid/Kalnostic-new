@@ -1,0 +1,41 @@
+meta {
+  name: 34 Verify - Report A (single param HGB)
+  type: http
+  seq: 31
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/{{labReportIdA}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+tests {
+  test("report detail loads", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.body.data).to.have.property("resultValues");
+  });
+  test("member A (single-param) has ONE ADAPTER value = {{emiResultValueA}}", function () {
+    const adapterValues = (res.body.data.resultValues || []).filter(
+      (v) => v.source === "ADAPTER",
+    );
+    expect(adapterValues.length, "ADAPTER values on A").to.equal(1);
+    expect(String(adapterValues[0].observed1)).to.equal(
+      bru.getVar("emiResultValueA"),
+    );
+  });
+  test("report A is SAVED, not auto-approved", function () {
+    expect(res.body.data.status).to.equal("SAVED");
+  });
+}
+
+docs {
+  **Verify (2/4) — single-parameter member A (`HGB`).** Confirms the analyzer's
+  value reached member A's report with **`source: "ADAPTER"`**, exactly **one**
+  result value equal to `{{emiResultValueA}}`, and the report is **`SAVED`** (never
+  auto-approved). Report resolved by `memberBranchLabTestId` in step 33.
+}

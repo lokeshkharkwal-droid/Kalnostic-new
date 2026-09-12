@@ -34,12 +34,9 @@ const ALLOWED_IMAGE_MIME_TYPES = [
 /**
  * S3 key namespace for tenant-less (SiteAdmin, global) uploads. SiteAdmin PDF
  * templates carry no tenant, so their images live under this fixed namespace
- * instead of a real tenant id.
+ * (in the `tenantId` position of the key) instead of a real tenant id.
  */
 const GLOBAL_UPLOAD_NAMESPACE = 'global';
-
-/** S3 key sub-folder for PDF-template images. */
-const PDF_TEMPLATE_FOLDER = 'pdf-templates';
 
 /**
  * SiteAdmin image upload for global PDF templates
@@ -60,7 +57,8 @@ export class SiteAdminUploadsController {
   /**
    * Upload a single image (multipart `file` field) to S3 and return its public
    * URL. Accepts common image types up to 10 MB. Stored under the global
-   * `pdf-templates` namespace (SiteAdmin templates have no tenant).
+   * namespace (SiteAdmin templates have no tenant), i.e.
+   * `{env}/global/{YYYY}/{MM}/{DD}/{filename}`.
    *
    * @returns `{ url }` — store this string (or the id derived from it) in the
    *   template's `meta.images` / `meta.watermark_image`.
@@ -90,10 +88,6 @@ export class SiteAdminUploadsController {
     if (!file) {
       throw new InvalidUploadFileException('No file was uploaded');
     }
-    return this.uploadsService.uploadAttachment(
-      file,
-      GLOBAL_UPLOAD_NAMESPACE,
-      PDF_TEMPLATE_FOLDER,
-    );
+    return this.uploadsService.uploadAttachment(file, GLOBAL_UPLOAD_NAMESPACE);
   }
 }

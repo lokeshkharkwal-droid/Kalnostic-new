@@ -1,0 +1,42 @@
+meta {
+  name: 20 Import Lab Panel into Branch
+  type: http
+  seq: 17
+}
+
+post {
+  url: {{baseUrl}}/branch-lab-panels/import
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "labPanelIds": ["{{labPanelId}}"]
+  }
+}
+
+tests {
+  test("panel imported into the branch", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  **Panel 20 — Import the panel into the active branch** (the default Walk-in
+  panel list). The panel is deep-copied as a branch-owned snapshot; its member
+  tests are materialized into the branch's Walk-in **test** list — and because
+  those two tests were already imported in step 16, the import **reuses** them
+  rather than creating duplicates. So the branch panel's members point at
+  `branchLabTestIdA`/`branchLabTestIdB`, which is exactly what the per-member
+  `LabReport.memberBranchLabTestId` will carry after acceptance (step 25) and what
+  the adapter maps (step 27). The `branchLabPanelId` is resolved in step 21.
+}

@@ -35,16 +35,19 @@ docs {
     standard `{ success, data, meta }` wrapper.
 
   ## Query params
-  - `specimen_id` (required) — the scanned id. **In our system this is the
-    order's `orderCode`** (e.g. `ORD-00051`); the legacy barcode/specimen table
-    does not exist here.
+  - `specimen_id` (required) — the scanned **sample barcode**. **In our system this
+    is the accession sample's `OrderSample.barcode`** (e.g. `10001`), assigned on
+    the Accession screen. The backend resolves it → its **sample group** (the
+    `OrderSample` rows sharing that barcode) → the parent order, and scopes the
+    returned tests to the tests carried by that group (mirrors the legacy
+    `OrderSpecimenGroup` specimen-id lookup — legacy never used the order id here).
 
   ## Success (200)
   ```json
   {
     "s": "200",
     "orders": [{
-      "specimen_id": "ORD-00051",
+      "specimen_id": "10001",
       "order_date": 1787529600,
       "patient_id": "<umId or patient id>",
       "patient_name": "Anjali",
@@ -58,15 +61,16 @@ docs {
     }]
   }
   ```
-  For each of the order's tests that are mapped to this adapter AND still fillable,
-  `ut_ids` lists the test's **display name plus each of its result-parameter
-  names** (deduped) — the legacy `getFormattedOrder` shape the analyzers are
-  calibrated against (they send these same strings back as `universal_test_id` on
-  submit). Dates are Unix **seconds** (0 when absent).
+  `specimen_id` echoes the scanned barcode; `admission_number` carries the order's
+  `orderCode`. For each test **in the scanned sample group** that is mapped to this
+  adapter AND still fillable, `ut_ids` lists the test's **display name plus each of
+  its result-parameter names** (deduped) — the legacy `getFormattedOrder` shape the
+  analyzers are calibrated against (they send these same strings back as
+  `universal_test_id` on submit). Dates are Unix **seconds** (0 when absent).
 
   ## Error envelopes
   - `{ "s": "400", "m": "Missing Auth token" }` — no `TOKEN` header.
   - `{ "s": "403", "m": "Invalid authorization" }` — unknown/inactive token.
-  - `{ "s": "400", "m": "Specimen id not found" }` — no order with that
-    `orderCode` in the adapter's tenant/branches.
+  - `{ "s": "400", "m": "Specimen id not found" }` — no active accession sample
+    carries that barcode in the adapter's tenant/branches.
 }

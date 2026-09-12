@@ -23,7 +23,9 @@ describe('b2b_referring_panel curated baseline', () => {
     // The baseline is exactly the curated set: five nav keys + the page/list
     // view keys (incl. the reporting worklist status tabs) — never the full
     // per-module expansion.
-    expect([...baseline].sort()).toEqual([...B2B_BASELINE_PERMISSION_KEYS].sort());
+    expect([...baseline].sort()).toEqual(
+      [...B2B_BASELINE_PERMISSION_KEYS].sort(),
+    );
     // The five sidebar nav keys are present.
     for (const key of B2B_PANEL_PERMISSION_KEYS) {
       expect(baseline.has(key)).toBe(true);

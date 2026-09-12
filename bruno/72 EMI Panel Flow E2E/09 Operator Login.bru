@@ -1,0 +1,35 @@
+meta {
+  name: 09 Operator Login
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "identifier": "{{operatorLoginIdentifier}}",
+    "password": "{{operatorPassword}}"
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.accessToken) bru.setVar("operatorToken", data.accessToken);
+}
+
+docs {
+  **Bootstrap 9 — Log in as the operator.** Uses `operatorLoginIdentifier` (step
+  06) + the known `operatorPassword`. The operator's default profile is a
+  branch-level `receptionist`, so the token is **branch-scoped**
+  (`active_branch_id = branchId`). Captures **`operatorToken`**, used for every
+  branch-scoped request below (import, order, accession, report reads).
+}

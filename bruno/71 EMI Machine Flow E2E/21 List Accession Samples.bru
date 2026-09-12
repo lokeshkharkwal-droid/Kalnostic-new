@@ -25,11 +25,15 @@ script:post-response {
   if (data && data.length && data[0].id) {
     bru.setVar("sampleId", data[0].id);
     if (data[0].accessionNo) bru.setVar("accessionNo", data[0].accessionNo);
+    // The barcode auto-assigned at order creation (shared across the sample
+    // group) — this is the specimen id the analyzer scans in step 26/27.
+    if (data[0].barcode) bru.setVar("sampleBarcode", data[0].barcode);
   }
 }
 
 docs {
   **TAT 1 — Find the accession sample** generated for the order (status `NEW`).
   Captures **`sampleId`** (and `accessionNo`) from the first row — the sample we
-  collect + accept next.
+  collect + accept next. Also captures **`sampleBarcode`** (`OrderSample.barcode`),
+  the specimen id the EMI machine scans in steps 26–27.
 }

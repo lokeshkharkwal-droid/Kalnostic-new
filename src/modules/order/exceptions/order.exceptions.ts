@@ -773,3 +773,19 @@ export class BillCopyPrintNotAllowedForUnpaidException extends KaltrosException 
     );
   }
 }
+
+/**
+ * 422 — a test cannot be removed from an order because its report has already
+ * been filled/generated (LabReport at SAVED or beyond). `testName` is the
+ * offending line for the client message; `orderItemId` is logged in context.
+ */
+export class TestNotDeletableAfterReportException extends KaltrosException {
+  constructor(orderItemId: string, testName: string | null) {
+    super(
+      'TEST_NOT_DELETABLE_AFTER_REPORT',
+      `The test "${testName ?? 'selected test'}" cannot be removed because its report is already filled or generated`,
+      { orderItemId, testName },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}

@@ -1083,15 +1083,19 @@ export const ENUM_LABEL_FIELDS: Record<string, Record<string, string>> = {
     'K2/K3 EDTA Tube (Lavender)': 'K2_K3_EDTA_TUBE_LAVENDER_TOP',
     'Plain/Clot Activator Tube (Red)': 'PLAIN_CLOT_ACTIVATOR_TUBE_RED_TOP',
     'Serum Separator Tube / SST with Gel (Gold)': 'SST_TUBE_WITH_GEL_GOLD_TOP',
-    'Sodium Citrate Tube 3.2% (Light Blue)': 'SODIUM_CITRATE_TUBE_32PCT_LIGHT_BLUE_TOP',
-    'Sodium Fluoride/Potassium Oxalate Tube (Grey)': 'SODIUM_FLUORIDE_OXALATE_TUBE_GREY_TOP',
+    'Sodium Citrate Tube 3.2% (Light Blue)':
+      'SODIUM_CITRATE_TUBE_32PCT_LIGHT_BLUE_TOP',
+    'Sodium Fluoride/Potassium Oxalate Tube (Grey)':
+      'SODIUM_FLUORIDE_OXALATE_TUBE_GREY_TOP',
     'Lithium/Sodium Heparin Tube (Green)': 'HEPARIN_TUBE_GREEN_TOP',
     '24-Hour Urine Container (2–3 L)': 'URINE_24H_CONTAINER_NO_PRESERVATIVE',
-    'Wide-mouth Urine Container (Non-sterile)': 'STERILE_UNIVERSAL_WIDE_MOUTH_CONTAINER',
+    'Wide-mouth Urine Container (Non-sterile)':
+      'STERILE_UNIVERSAL_WIDE_MOUTH_CONTAINER',
     'Sterile Universal Container': 'STERILE_UNIVERSAL_WIDE_MOUTH_CONTAINER',
     'Sterile Wide-mouth Container': 'STERILE_UNIVERSAL_WIDE_MOUTH_CONTAINER',
     'Cary-Blair Transport Vial': 'STERILE_CONTAINER_CARY_BLAIR_MEDIUM',
-    'Formalin Container (10% Neutral Buffered Formalin)': 'STERILE_CONTAINER_NEUTRAL_BUFFERED_FORMALIN',
+    'Formalin Container (10% Neutral Buffered Formalin)':
+      'STERILE_CONTAINER_NEUTRAL_BUFFERED_FORMALIN',
     'Dried Blood Spot(DBS)': 'WHATMAN_903_FILTER_PAPER_CARD',
     // Still no closer match than the generic catch-all:
     'Amniocentesis Sterile Syringe/Container': 'OTHER',

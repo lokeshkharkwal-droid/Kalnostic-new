@@ -1,0 +1,93 @@
+meta {
+  name: 15c Create Lab Test C (CBC Indices - 3 params)
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/lab-tests
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "testName": "EMI Panel CBC Indices {{panelRunId}}",
+    "testDisplayName": "CBCIDX",
+    "testCode": "EPCBCIDX-{{panelRunId}}",
+    "processMethod": "SINGLE_STEP",
+    "samplePriorityType": "ROUTINE",
+    "priceMsrp": 400,
+    "priceMaximum": 400,
+    "priceMinimum": 200,
+    "isActive": true,
+    "tatMinValue": 30,
+    "tatMinUnit": "MINUTES",
+    "tatMaxValue": 60,
+    "tatMaxUnit": "MINUTES",
+    "scheduleDays": ["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"],
+    "scheduleFrom": "00:00",
+    "scheduleTo": "23:59",
+    "procTimeMinValue": 10,
+    "procTimeMinUnit": "MINUTES",
+    "procTimeMaxValue": 30,
+    "procTimeMaxUnit": "MINUTES",
+    "samples": [
+      { "sampleType": "Blood", "containerType": "EDTA_TUBE_PURPLE_TOP", "isDefault": true }
+    ],
+    "resultParams": [
+      {
+        "parameterName": "{{emiParamNameC1}}",
+        "parameterCode": "{{emiParamCodeC1}}",
+        "resultType": "QUANTITATIVE",
+        "reportingUnit": "{{emiParamUnitC1}}",
+        "sortOrder": 0
+      },
+      {
+        "parameterName": "{{emiParamNameC2}}",
+        "parameterCode": "{{emiParamCodeC2}}",
+        "resultType": "QUANTITATIVE",
+        "reportingUnit": "{{emiParamUnitC2}}",
+        "sortOrder": 1
+      },
+      {
+        "parameterName": "{{emiParamNameC3}}",
+        "parameterCode": "{{emiParamCodeC3}}",
+        "resultType": "QUANTITATIVE",
+        "reportingUnit": "{{emiParamUnitC3}}",
+        "sortOrder": 2
+      }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.id) bru.setVar("labTestIdC", data.id);
+}
+
+tests {
+  test("multi-parameter lab test created", function () {
+    expect(res.getStatus()).to.equal(201);
+    expect(res.body.data).to.have.property("id");
+  });
+}
+
+docs {
+  **Catalogue 15c — Panel member test C, a MULTI-PARAMETER test (CBC Indices).**
+  Unlike tests A and B (one result parameter each), this test has **three**
+  `resultParams`: `{{emiParamCodeC1}}` / `{{emiParamCodeC2}}` / `{{emiParamCodeC3}}`
+  (`RBC Count` / `Hematocrit` / `MCV`). One `LabReport` is created for this member,
+  and `/emi/submitResult` must fill **all three parameters on that single report**
+  from three `test_results[]` entries (step 29) — the multi-parameter case this
+  flow exercises. Same Blood/EDTA sample as A/B, so it joins the one shared panel
+  barcode. Captures **`labTestIdC`** (referenced by the panel in step 19).
+}

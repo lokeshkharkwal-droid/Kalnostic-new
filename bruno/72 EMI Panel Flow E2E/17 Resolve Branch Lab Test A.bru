@@ -1,0 +1,32 @@
+meta {
+  name: 17 Resolve Branch Lab Test A
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{baseUrl}}/branch-lab-tests/options?search=EMI Panel Hemoglobin {{panelRunId}}&page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  search: EMI Panel Hemoglobin {{panelRunId}}
+  page: 1
+  limit: 10
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.length && data[0].id) bru.setVar("branchLabTestIdA", data[0].id);
+}
+
+docs {
+  **Catalogue 17 — Resolve branch lab test A** (`search` matches this run's test A
+  name). This id is one of the panel's members and one of the adapter's mapped
+  tests. Captures **`branchLabTestIdA`**.
+}

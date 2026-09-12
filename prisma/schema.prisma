@@ -7791,6 +7791,13 @@ model PaymentDetails {
 
   totalAmount            Decimal     @default(0) @map("total_amount") @db.Decimal(12, 2)
   orderDiscount          Decimal     @default(0) @map("order_discount") @db.Decimal(12, 2)
+  /// The order-level discount's ORIGINAL input — how it was entered
+  /// (`PERCENT`/`AMOUNT`) and the raw number the user typed — kept alongside the
+  /// computed `orderDiscount` amount so a percentage discount can be recomputed
+  /// against a new item total when the order is edited (add/remove tests). Mirrors
+  /// `OrderItem.discountMode`/`discountValue`.
+  orderDiscountMode  DiscountMode? @map("order_discount_mode")
+  orderDiscountValue Float?        @map("order_discount_value")
   /// Total discount applied to the order = every per-line item discount PLUS the
   /// order-level `orderDiscount` above, in rupees (up to 2 decimal places). A
   /// denormalized runtime rollup (`totalAmount - netAmount`) stored for bill
