@@ -26,6 +26,7 @@ body:json {
     "isBillGenerated": true,
     "orderNotes": "Rescheduled collection",
     "items": [
+      { "id": "{{existingOrderItemId}}", "branchLabTestId": "{{branchLabTestId}}" },
       { "branchLabPanelId": "{{branchLabPanelId}}" }
     ],
     "opd": {
@@ -52,6 +53,7 @@ body:json {
 
 vars:pre-request {
   orderId: 70f7fd0c-e902-4832-aa2c-841398df5d2d
+  existingOrderItemId: 00000000-0000-0000-0000-000000000000
 }
 
 tests {
@@ -62,25 +64,69 @@ tests {
 
 docs {
   Update an order (scoped to the caller's tenant). Scalar fields (incl. `status`)
-  are patched. When `items` is supplied the whole set is REPLACED (old active rows
-  soft-deleted, the new set created) — each item accepts the same fields as
-  Create Order, including `outsourceCenterId` (see that request's docs). When a
+  are patched. When `items` is supplied the list is **diff-applied by stable
+  `OrderItem.id`** — see the "items[] diff semantics" section below. When a
   section object (`diagnostics`/`opd`/`radiology`) is supplied it is upserted
   (created if absent, else replaced).
+
+  ## items[] diff semantics (id-based keep / add / remove)
+
+  Each element of `items[]` MAY carry an `id` field (the existing `OrderItem`'s
+  UUID, returned by `GET /orders/:id` in `items[].id`):
+
+  - **Include `id`** — the matching existing item row is **kept** (not removed and
+    recreated, so its accession samples / reports stay linked). The row is
+    identified by `id`; its mutable fields are refreshed from the payload
+    (`discount`, `discountMode`, `discountValue`, `outsourceCenterId`, and — for a
+    `direct` line — `unitPrice`; catalogue prices are re-resolved server-side).
+    Re-send the `branchLabTestId`/`branchLabPanelId` for clarity.
+  - **Omit `id`** — the element is treated as a **new** item to add; the server
+    creates a fresh `OrderItem` row from its fields (`branchLabTestId`,
+    `branchLabPanelId`, or `direct` + optional `outsourceCenterId`, `discount`,
+    `unitPrice` — same rules as Create Order).
+  - **Existing item whose `id` is absent from the payload** — the server
+    **removes** it (soft-deletes the row). Only items whose `id` explicitly appears
+    in the request are kept; all others are dropped.
+
+  **Removing a test whose report has already been filled or generated is blocked:**
+  if any item being removed has an associated `LabReport` that has been filled or
+  generated (report is not in its initial empty state), the request is rejected with
+  422 `TEST_NOT_DELETABLE_AFTER_REPORT`. The entire update rolls back — no items are
+  added, removed, or reordered, and the order is left unchanged.
+
+  **Refundable-surplus on removal:** removing paid tests can cause the recomputed
+  order net (`netAmount`) to drop below the amount already paid. This is intentional
+  and **allowed** — the surplus becomes a refundable negative balance (the order's
+  effective balance goes negative). This no longer triggers `PAYMENT_OVERPAYMENT`.
+  Use `POST /orders/:id/refund` to process the refund separately.
+
+  Each item accepts the same fields as Create Order (`branchLabTestId`,
+  `branchLabPanelId`, `direct`, `outsourceCenterId`, `discount`, `discountMode`,
+  `discountValue`, `unitPrice`) — see that request's docs for validation rules.
+
+  ## Sections
+
   The `opd` section carries optional `departmentId` and `categoryId` (both →
   422 `ORDER_DEPARTMENT_NOT_FOUND` / `ORDER_CATEGORY_NOT_FOUND` on a bad ref);
   the `radiology` section carries optional `radiologistDepartmentId` and
   `radiologistCategoryId`.
   `quotationStatus` (`DRAFT`/`CONVERTED`/`EXPIRED`) and `quotationValidTill`
   (ISO date) are patchable for quotes; omit them to leave existing values intact.
+
+  ## payments[]
+
   When `payments` is supplied the whole ledger is REPLACED (old rows soft-deleted,
   the new set created) and the order's `paymentStatus` is recomputed from the new
   rows (summed `paidAmount` vs `netAmount`); omit `payments` to leave the ledger
   and status untouched. One row per payment method (split → multiple rows), each
   with its own `paidAmount`/`paymentMode`/`reference`; order-level billing lives on
-  the first row. Overpayment is rejected — a supplied ledger whose summed
-  `paidAmount` exceeds the summed `netAmount` is refused with 422
-  `PAYMENT_OVERPAYMENT` and the patch rolls back. `patientId` is not editable.
+  the first row. Overpayment is rejected — a supplied `payments[]` ledger whose
+  summed `paidAmount` exceeds the (post-edit) summed `netAmount` is refused with 422
+  `PAYMENT_OVERPAYMENT` and the patch rolls back. Note: this check is against the
+  explicitly supplied ledger only — if items are removed and the net drops below the
+  already-paid amount without a new `payments[]`, the surplus becomes a refundable
+  negative balance (no `PAYMENT_OVERPAYMENT`; use `POST /orders/:id/refund`).
+  `patientId` is not editable.
 
   ## Invoice lock
 

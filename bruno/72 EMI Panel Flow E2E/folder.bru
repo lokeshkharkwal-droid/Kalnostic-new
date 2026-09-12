@@ -8,21 +8,27 @@ script:pre-request {
   // EMI PANEL Flow E2E — folder-level setup (runs before every request here).
   //
   // Same shape as "71 EMI Machine Flow E2E", but the order carries a LAB PANEL
-  // with TWO member tests instead of a single standalone test. This exercises the
-  // panel path of the EMI endpoints: a panel is one OrderItem (branchLabPanelId
-  // set, branchLabTestId NULL) whose member tests live on the per-member
-  // LabReport rows as `memberBranchLabTestId` — the key the adapter is mapped on.
+  // with THREE member tests instead of a single standalone test. This exercises
+  // the panel path of the EMI endpoints AND the multi-parameter path: a panel is
+  // one OrderItem (branchLabPanelId set, branchLabTestId NULL) whose member tests
+  // live on the per-member LabReport rows as `memberBranchLabTestId` (the key the
+  // adapter is mapped on). Two members are single-parameter tests (A: HGB, B: WBC)
+  // and one is a MULTI-PARAMETER test (C: RBC + HCT + MCV on a single report).
   //
   //   bootstrap (siteadmin → tenant → branch → operator) →
-  //   catalogue: TWO lab tests (each WITH a result parameter) → import both →
-  //   build a PANEL of the two → import the panel into the branch →
+  //   catalogue: THREE lab tests — A/B one result parameter each, C with THREE
+  //     result parameters → import all three →
+  //   build a PANEL of the three → import the panel into the branch →
   //   order the panel → accession bulk-collect + bulk-ACCEPT (creates one report
   //     per member test) →
   //   register the machine (siteadmin equipment + business lab adapter mapping
-  //     BOTH member branch lab tests → token) →
-  //   MACHINE scan (/emi/orders): ut_ids carry BOTH members from the single panel
-  //     barcode → MACHINE submit (/emi/submitResult) fills BOTH member reports →
-  //   verify both values landed (source = ADAPTER, status = SAVED).
+  //     ALL THREE member branch lab tests → token) →
+  //   MACHINE scan (/emi/orders): ut_ids carry every member + every parameter from
+  //     the single panel barcode → MACHINE submit (/emi/submitResult) with FIVE
+  //     test_results entries fills all three member reports (three parameters on
+  //     test C's one report) →
+  //   verify every value landed (source = ADAPTER, status = SAVED), including all
+  //     three parameters on the multi-parameter report.
   //
   // Every id/token is captured by each request's post-response via
   // bru.setVar(...) — nothing is copied by hand. Just Run Folder, or click Next.
@@ -58,8 +64,31 @@ script:pre-request {
   if (!bru.getVar("emiParamUnitB"))   bru.setVar("emiParamUnitB", "10^3/uL");
   if (!bru.getVar("emiResultValueB")) bru.setVar("emiResultValueB", "7.2");
 
-  // One-time per-run unique suffix + derived unique mobiles (namespaced `panel*`
-  // so this flow never clobbers flow 71's vars if both are run in one session).
+  // Member test C is a MULTI-PARAMETER test: three analytes on ONE report. Each
+  // `emiParamCodeC*` is sent as a `universal_test_id` and matches a `parameterCode`
+  // created on test C (step 15c); `/emi/submitResult` fills all three onto the one
+  // member report — the multi-parameter case this flow verifies.
+  if (!bru.getVar("emiParamCodeC1"))   bru.setVar("emiParamCodeC1", "RBC");
+  if (!bru.getVar("emiParamNameC1"))   bru.setVar("emiParamNameC1", "RBC Count");
+  if (!bru.getVar("emiParamUnitC1"))   bru.setVar("emiParamUnitC1", "10^6/uL");
+  if (!bru.getVar("emiResultValueC1")) bru.setVar("emiResultValueC1", "4.9");
+
+  if (!bru.getVar("emiParamCodeC2"))   bru.setVar("emiParamCodeC2", "HCT");
+  if (!bru.getVar("emiParamNameC2"))   bru.setVar("emiParamNameC2", "Hematocrit");
+  if (!bru.getVar("emiParamUnitC2"))   bru.setVar("emiParamUnitC2", "%");
+  if (!bru.getVar("emiResultValueC2")) bru.setVar("emiResultValueC2", "42");
+
+  if (!bru.getVar("emiParamCodeC3"))   bru.setVar("emiParamCodeC3", "MCV");
+  if (!bru.getVar("emiParamNameC3"))   bru.setVar("emiParamNameC3", "MCV");
+  if (!bru.getVar("emiParamUnitC3"))   bru.setVar("emiParamUnitC3", "fL");
+  if (!bru.getVar("emiResultValueC3")) bru.setVar("emiResultValueC3", "88");
+
+  // Per-run unique suffix + derived mobiles (namespaced `panel*` so this flow
+  // never clobbers flow 71's vars if both run in one session). Step 01's
+  // pre-request FORCE-regenerates these at the start of every full-folder run, so
+  // each run gets brand-new data (no re-run collisions / stale sample ids). This
+  // guarded block is only a FALLBACK — it fires when a later request is run on its
+  // own without step 01 having set the id first.
   if (!bru.getVar("panelRunId")) {
     const n = String(Date.now());
     bru.setVar("panelRunId", n.slice(-6));
@@ -71,13 +100,15 @@ script:pre-request {
 }
 
 docs {
-  # EMI Panel Flow E2E — the analyzer integration, with a 2-test lab panel
+  # EMI Panel Flow E2E — analyzer integration with a 3-test panel (incl. a multi-parameter test)
 
   A sibling of **71 EMI Machine Flow E2E**. It reproduces the exact same
   lab-analyzer round-trip (same `TOKEN` header, GET-with-`text/plain`-body, flat
-  `{ s, m, … }` responses), but the order carries a **lab panel of two member
-  tests** instead of one standalone test. This proves the EMI endpoints resolve a
-  scanned **panel** barcode down to its member tests.
+  `{ s, m, … }` responses), but the order carries a **lab panel of three member
+  tests** — two single-parameter (A: `HGB`, B: `WBC`) and one **multi-parameter**
+  (C: `RBC` + `HCT` + `MCV`). It proves the EMI endpoints (a) resolve a scanned
+  **panel** barcode down to its member tests, and (b) fill a **test that has
+  multiple result parameters** — all its parameters onto that one member report.
 
   ## Why a panel is different
   A panel is stored as **one `OrderItem`** with `branchLabPanelId` set and
@@ -87,6 +118,16 @@ docs {
   mapped on those **member** branch lab tests — so `/emi/orders` must expand the
   panel and `/emi/submitResult` must fill each member report.
 
+  ## How multiple parameters are handled
+  For each member report, `/emi/submitResult` resolves **all** of the test's
+  `LabTestResultParam`s and matches each independently against the machine's
+  `test_results[]` (by `universal_test_id` / `test_name` / `display_name` →
+  `parameterCode` / `parameterName`), writing one `LabReportResultValue` per
+  matched parameter. So member test C's single report carries **three** analyte
+  values from three `test_results[]` entries. (The test-name fallback that lets a
+  machine send the *test* id instead of a parameter id applies only to
+  single-parameter tests — a multi-parameter test must identify each parameter.)
+
   ## How to run
   Select this folder and **Run Folder**, or click **Next**. Each request captures
   the ids/tokens the next one needs via `bru.setVar(...)`. A `panelRunId` is
@@ -95,37 +136,40 @@ docs {
 
   ## Flow
   **Bootstrap:** 01 SiteAdmin login → 02 create tenant + business admin → 03
-  business-admin login → 04 branch (enables `accession`) → 05 operating schedule →
+  business-admin login → 04 branch (enables all modules) → 05 operating schedule →
   06 operator user → 08 grant the operator collect + accept → 09 operator login.
 
-  **Catalogue + panel:** 12 patient → 13 resolve branch master data → **14/15 two
-  lab tests**, each created by the Business Admin WITH a `resultParams` entry
-  (`HGB`, `WBC`) so its report is fillable → **16 import BOTH into the branch**
-  (walk-in list) → 17/18 resolve `branchLabTestIdA` / `branchLabTestIdB` → **19
-  create a lab panel of the two tests** → **20 import the panel into the branch**
-  (its members REUSE the two branch lab tests imported in 16) → 21 resolve
-  `branchLabPanelId`.
+  **Catalogue + panel:** 12 patient → 13 resolve branch master data → **14/15
+  single-parameter tests A (`HGB`) and B (`WBC`)** → **15c multi-parameter test C
+  (`RBC`+`HCT`+`MCV`)**, all created by the Business Admin WITH `resultParams` so
+  each report is fillable → **16 import all three into the branch** (walk-in list)
+  → 17/18/18c resolve `branchLabTestIdA` / `…IdB` / `…IdC` → **19 create a lab
+  panel of the three tests** → **20 import the panel into the branch** (its members
+  REUSE the branch lab tests imported in 16) → 21 resolve `branchLabPanelId`.
 
   **Order + accept:** 22 create the order with the **panel** as its single item →
-  23 list accession samples (**two** samples — one per member — sharing **one
+  23 list accession samples (**three** samples — one per member — sharing **one
   barcode** under the default Dept+Sample grouping) → **24 bulk-collect** →
-  **25 bulk-accept** (creates the two member `LabReport`s, PENDING).
+  **25 bulk-accept** (creates the three member `LabReport`s, PENDING).
 
-  **Register the machine:** 26 SiteAdmin equipment → **27 lab adapter mapping
-  BOTH member branch lab tests** → captures `flowAdapterToken`.
+  **Register the machine:** 26 SiteAdmin equipment → **27 lab adapter mapping ALL
+  THREE member branch lab tests** → captures `flowAdapterToken`.
 
   **Machine talks to us:** **28 `GET /emi/orders`** — one scan of the panel
-  barcode returns `ut_ids` carrying **both** members (`Hemoglobin` + `WBC Count`
-  and their test names) → **29 `GET /emi/submitResult`** submits **both** analyte
-  values in one call.
+  barcode returns `ut_ids` carrying every member test name plus every parameter
+  name (including C's three) → **29 `GET /emi/submitResult`** submits **five**
+  analyte values (A, B, and C's three) in one call.
 
   **Logged (three scopes):** 30 branch / 31 business / 32 site-admin adapter-logs
   reads — the same as flow 71.
 
-  **Verify both members filled:** 33 list the panel's reports
-  (`?branchLabPanelId=`) — **two** reports, both `SAVED` → 34/35 each report's
-  detail carries an `ADAPTER`-sourced value (`13.5` and `7.2`).
+  **Verify every value filled:** 33 list the panel's reports (`?branchLabPanelId=`)
+  — **three** reports, all `SAVED`, ids resolved by `memberBranchLabTestId` → 34/35
+  the single-parameter reports A/B each carry their `ADAPTER` value (`13.5` / `7.2`)
+  → **35c the multi-parameter report C carries all three** `ADAPTER` values
+  (`4.9` / `42` / `88`) on one report.
 
-  > This is the panel counterpart of the single-test flow 71: **one panel barcode
-  > → both member tests in `ut_ids` → both member reports filled from one submit.**
+  > Panel + multi-parameter counterpart of flow 71: **one panel barcode → every
+  > member test AND every parameter in `ut_ids` → one submit fills all three member
+  > reports, including three parameters on the multi-parameter report.**
 }

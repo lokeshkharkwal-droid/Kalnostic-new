@@ -447,6 +447,10 @@ export const ORDER_LIST_INCLUDE = {
     select: {
       id: true,
       direct: true,
+      // Pricing fields needed for authoritative gross/discount/net computation
+      // in both the Billings list and Finance reports (computeBillingTotals).
+      unitPrice: true,
+      discount: true,
       branchLabTest: { select: { id: true, testName: true, testCode: true } },
       branchLabPanel: {
         select: { id: true, panelName: true, panelCode: true },
@@ -504,6 +508,8 @@ export const ORDER_LIST_INCLUDE = {
       id: true,
       totalAmount: true,
       orderDiscount: true,
+      orderDiscountMode: true,
+      orderDiscountValue: true,
       netAmount: true,
       paidAmount: true,
       tdsDeduction: true,

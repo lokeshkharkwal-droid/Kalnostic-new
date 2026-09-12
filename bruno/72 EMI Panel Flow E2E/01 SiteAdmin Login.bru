@@ -21,6 +21,28 @@ body:json {
   }
 }
 
+vars:pre-request {
+  siteAdminEmail: admin@kalnostics.com
+  siteAdminPassword: SuperSecret1
+}
+
+script:pre-request {
+  // FRESH per-run identity. Step 01 is the first request in a full-folder run, so
+  // regenerating here (unconditionally) gives every run a brand-new `panelRunId`
+  // and derived mobiles — a new tenant, equipment, patient, order and NEW samples
+  // each time. This is what makes re-running the folder in the Bruno GUI safe:
+  // nothing collides on unique fields (tenant/equipment/panel/test codes, umId)
+  // and no state-changing step ever targets stale, already-transitioned samples.
+  // Subsequent requests reuse this value — the folder-level pre-request only
+  // generates it when unset (fallback for running a later request on its own).
+  const n = String(Date.now());
+  bru.setVar("panelRunId", n.slice(-6));
+  // 10-digit national mobiles (^\d{10}$) — distinct prefixes from flow 71.
+  bru.setVar("panelAdminPhone",     "93" + n.slice(-8));
+  bru.setVar("panelOperatorMobile", "92" + n.slice(-8));
+  bru.setVar("panelPatientMobile",  "91" + n.slice(-8));
+}
+
 script:post-response {
   const data = res.body && res.body.success && res.body.data;
   if (data && data.accessToken) bru.setVar("siteAdminToken", data.accessToken);
@@ -31,4 +53,9 @@ docs {
   (`admin@kalnostics.com` / `SuperSecret1`, from `prisma/seed.ts`) — the only
   credentials this flow assumes exist. Captures **`siteAdminToken`** (8h), used to
   create the tenant + business admin next, and the equipment in step 26.
+  
+  Its **pre-request script force-regenerates `panelRunId`** (and the derived
+  mobiles) at the start of every run, so re-running the whole folder always creates
+  fresh data — new tenant/equipment/patient/order and new `NEW` samples — with no
+  collisions or stale ids. Always start a run from here (Run Folder / step 01).
 }

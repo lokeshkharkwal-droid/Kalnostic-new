@@ -7,7 +7,7 @@ import { TatStatus } from '../constants/tat.constant';
  * list table columns need (PDF §A.6); `tests` carries the per-sample test names.
  */
 export const SAMPLE_LIST_INCLUDE = {
-  tests: true,
+  tests: { where: { deletedAt: null } },
   order: {
     select: {
       id: true,
@@ -32,6 +32,7 @@ export const SAMPLE_LIST_INCLUDE = {
  */
 export const SAMPLE_INCLUDE = {
   tests: {
+    where: { deletedAt: null },
     include: {
       orderItem: {
         select: {
