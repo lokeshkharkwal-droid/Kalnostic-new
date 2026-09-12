@@ -8,6 +8,7 @@ import {
   ExternalIdFormat,
   ExternalIdPurpose,
   InvoicePaymentStatus,
+  LabReportStatus,
   MessagingChannel,
   Order,
   OrderDateType,
@@ -87,6 +88,7 @@ import {
   deriveRefundStatus,
   deriveReportStatus,
 } from './entities/order.entity';
+import { computeBillingTotals } from './utils/billing-totals';
 import { BillingGroupBy } from './dto/billing-grouped-query.dto';
 import { BillingDimension } from './dto/billing-query.dto';
 import {
@@ -222,6 +224,7 @@ import {
   BillCopyPrintNotAllowedForUnpaidException,
   AppointmentPaymentRequiredException,
   PaymentWithoutBillGeneratedException,
+  TestNotDeletableAfterReportException,
 } from './exceptions/order.exceptions';
 import type { RegistrationSetting } from '@prisma/client';
 // Reused so an inline order-payment overpayment raises the SAME
@@ -231,6 +234,12 @@ import {
   PaymentOverpaymentException,
   PaymentCollectionByOtherUserNotAllowedException,
 } from '../payment-details/exceptions/payment-details.exceptions';
+import {
+  diffOrderItems,
+  isTestDeletable,
+  isDisallowedOverpayment,
+  type IncomingOrderItem,
+} from './utils/order-item-diff';
 
 /**
  * The minimal payment shape the discount/TDS + partial-billing validators read —
@@ -3335,15 +3344,27 @@ export class OrderService {
       this.invoicedOrderCodes(tenantId, orderIds),
     ]);
     const data: OrderListRow[] = rows.map((r) => {
-      const grossAmount = r.payments.reduce(
-        (s, p) => s + toNum(p.totalAmount),
-        0,
+      // Authoritative gross/discount/net: derived from the persisted item prices
+      // and the persisted order-discount mode/value so that a PERCENT discount
+      // is recomputed against the *current* item total (not a stale frozen amount).
+      // Legacy orders (no mode/value) retain the previous Σ-payment behaviour.
+      const {
+        gross: grossAmount,
+        discount: discountAmount,
+        net: netAmount,
+      } = computeBillingTotals(
+        r.payments.map((p) => ({
+          totalAmount: toNum(p.totalAmount),
+          orderDiscount: toNum(p.orderDiscount),
+          netAmount: toNum(p.netAmount),
+          orderDiscountMode: p.orderDiscountMode ?? null,
+          orderDiscountValue: p.orderDiscountValue != null ? toNum(p.orderDiscountValue) : null,
+        })),
+        r.items.map((it) => ({
+          unitPrice: toNum(it.unitPrice),
+          discount: toNum(it.discount),
+        })),
       );
-      const discountAmount = r.payments.reduce(
-        (s, p) => s + toNum(p.orderDiscount),
-        0,
-      );
-      const netAmount = r.payments.reduce((s, p) => s + toNum(p.netAmount), 0);
       const paidAmount = r.payments.reduce(
         (s, p) => s + toNum(p.paidAmount),
         0,
@@ -3522,9 +3543,25 @@ export class OrderService {
     order: BillingOrder,
     report: BillingReport,
   ): BillingFigures {
-    let gross = 0;
-    let discount = 0;
-    let net = 0;
+    // Authoritative gross/discount/net via the shared helper — recomputes a
+    // PERCENT order discount against the current item total, fixing a frozen
+    // stale amount. Legacy orders (no persisted mode/value) are unchanged.
+    const totals = computeBillingTotals(
+      order.payments.map((p) => ({
+        totalAmount: toNum(p.totalAmount),
+        orderDiscount: toNum(p.orderDiscount),
+        netAmount: toNum(p.netAmount),
+        orderDiscountMode: p.orderDiscountMode ?? null,
+        orderDiscountValue:
+          p.orderDiscountValue != null ? toNum(p.orderDiscountValue) : null,
+      })),
+      order.items.map((it) => ({
+        unitPrice: toNum(it.unitPrice),
+        discount: toNum(it.discount),
+      })),
+    );
+
+    // Payment-mode bucketing and per-row ledger sums — unchanged.
     let tds = 0;
     let cash = 0;
     let upi = 0;
@@ -3534,9 +3571,6 @@ export class OrderService {
     let wallet = 0;
     let refundAmount = 0;
     for (const p of order.payments) {
-      gross += toNum(p.totalAmount);
-      discount += toNum(p.orderDiscount);
-      net += toNum(p.netAmount);
       tds += toNum(p.tdsDeduction);
       // REFUND rows carry `refundAmount` (0 on PAYMENT rows) — Σ = total refunded.
       refundAmount += toNum(p.refundAmount);
@@ -3562,26 +3596,14 @@ export class OrderService {
           break;
       }
     }
-    // The "Discount" figure = order-level discount + every per-line-item
-    // discount. Line discounts are already folded into `netAmount`
-    // (net = totalAmount − Σ itemDiscount − orderDiscount), so surfacing them
-    // here keeps `gross − discount === net` and stops genuinely-discounted
-    // orders from showing a ₹0 discount.
-    for (const it of order.items) discount += toNum(it.discount);
     const receipts = cash + upi + bankTransfer + debitCard + creditCard;
     const paid = report === 'collection' ? receipts : receipts + wallet;
-    // Gross is DERIVED as net + discount (not raw Σ totalAmount): the ledger
-    // guarantees net = totalAmount − discount, so for valid data this equals
-    // Σ totalAmount, while keeping `gross ≥ net` and `gross − discount === net`
-    // and matching the per-line gross allocation (item-dimension tabs = the "all"
-    // tab). Guards against inconsistent ledgers where netAmount > totalAmount.
-    gross = net + discount;
     return {
-      gross: roundToTwoDecimalPlaces(gross),
-      discount: roundToTwoDecimalPlaces(discount),
-      net: roundToTwoDecimalPlaces(net),
+      gross: totals.gross,
+      discount: totals.discount,
+      net: totals.net,
       paid: roundToTwoDecimalPlaces(paid),
-      due: roundToTwoDecimalPlaces(Math.max(0, net - paid)),
+      due: roundToTwoDecimalPlaces(Math.max(0, totals.net - paid)),
       tds: roundToTwoDecimalPlaces(tds),
       cash: roundToTwoDecimalPlaces(cash),
       upi: roundToTwoDecimalPlaces(upi),
@@ -5049,14 +5071,21 @@ export class OrderService {
   }
 
   /**
-   * Update an order. Scalars (incl. `status`) are patched; when `items` is
-   * provided the whole set is replaced; a provided section object is upserted.
-   * All in one transaction.
+   * Update an order. Scalars (incl. `status`) are patched; a provided section
+   * object is upserted. When `items` is provided the set is **diff-applied** by
+   * stable `OrderItem.id`: removed items are soft-deleted (and their accession
+   * samples voided / non-final reports soft-deleted via the accession reconcile),
+   * kept items have their mutable fields updated, and new items are created (and
+   * accessioned when the order is already accessioned). Removing a test whose
+   * report is already filled/generated is rejected. A recomputed net that drops
+   * below the amount already paid is allowed — the surplus becomes a refundable
+   * (negative) balance settled via the manual refund action. All in one transaction.
    * @param id order id
    * @param tenantId tenant scope
    * @param dto partial update
    * @throws OrderNotFoundException / reference 422s
    * @throws OrderAlreadyInvoicedException (409) if an invoice exists for the order
+   * @throws TestNotDeletableAfterReportException (422) removing a test whose report is filled/generated
    */
   async update(
     id: string,
@@ -5206,9 +5235,25 @@ export class OrderService {
     const payPaid = roundToTwoDecimalPlaces(
       (dto.payments ?? []).reduce((s, p) => s + (p.paidAmount ?? 0), 0),
     );
-    // Same overpayment guard as create, but only when the ledger is part of
-    // this patch (an update without `payments` leaves the stored totals alone).
-    if (dto.payments !== undefined && payPaid > payNet) {
+    // Same overpayment guard as create, but relaxed: a surplus arising from the
+    // order's net dropping below what was *already* paid (e.g. a test removed
+    // whose payment was already collected) is allowed — it becomes a refundable
+    // negative balance. Only collecting MORE than both net and the prior paid is
+    // rejected as a genuine overpayment.
+    const storedPaidAgg =
+      dto.payments !== undefined
+        ? await this.prisma.paymentDetails.aggregate({
+            where: { orderId: id, tenantId, deletedAt: null },
+            _sum: { paidAmount: true },
+          })
+        : null;
+    const storedPaidTotal = roundToTwoDecimalPlaces(
+      toNum(storedPaidAgg?._sum.paidAmount),
+    );
+    if (
+      dto.payments !== undefined &&
+      isDisallowedOverpayment(payPaid, payNet, storedPaidTotal)
+    ) {
       throw new PaymentOverpaymentException(payNet, payPaid);
     }
     // Generate Bill = No (either set by this patch or already stored): the order
@@ -5382,7 +5427,59 @@ export class OrderService {
     // finalize an order/quote. Any supplied value is still persisted and
     // uniqueness-checked below.
 
+    // Item diff (keep/add/remove) + deletion-eligibility guard — only when the
+    // patch replaces items. Uses stable OrderItem ids sent by the FE.
+    let itemDiff: ReturnType<typeof diffOrderItems> | null = null;
+    if (dto.items !== undefined) {
+      const liveItems = await this.prisma.orderItem.findMany({
+        where: { orderId: id, tenantId, deletedAt: null },
+        select: { id: true },
+      });
+      itemDiff = diffOrderItems(
+        liveItems.map((i) => i.id),
+        dto.items as IncomingOrderItem[],
+      );
+      if (itemDiff.removeIds.length > 0) {
+        const reports = await this.prisma.labReport.findMany({
+          where: {
+            orderItemId: { in: itemDiff.removeIds },
+            tenantId,
+            deletedAt: null,
+          },
+          select: { orderItemId: true, status: true },
+        });
+        const byItem = new Map<string, LabReportStatus[]>();
+        for (const r of reports) {
+          const list = byItem.get(r.orderItemId) ?? [];
+          list.push(r.status);
+          byItem.set(r.orderItemId, list);
+        }
+        for (const removedId of itemDiff.removeIds) {
+          if (!isTestDeletable(byItem.get(removedId) ?? [])) {
+            const li = await this.prisma.orderItem.findFirst({
+              where: { id: removedId, tenantId },
+              select: {
+                branchLabTest: { select: { testName: true } },
+                branchLabPanel: { select: { panelName: true } },
+                direct: true,
+              },
+            });
+            const name =
+              li?.branchLabTest?.testName ??
+              li?.branchLabPanel?.panelName ??
+              li?.direct ??
+              null;
+            throw new TestNotDeletableAfterReportException(removedId, name);
+          }
+        }
+      }
+    }
+
     await this.prisma.withTenant(tenantId, async (tx) => {
+      // Collects the ids of newly-created order items so the sample reconciler
+      // knows which items to add samples for when the order is already accessioned.
+      const addedItemIds: string[] = [];
+
       // Resolve the external-id value to persist (undefined = leave untouched).
       let externalOrderIdUpdate: string | null | undefined;
       if (branchId) {
@@ -5488,36 +5585,74 @@ export class OrderService {
         },
       });
 
-      if (dto.items !== undefined) {
-        await tx.orderItem.updateMany({
-          where: { orderId: id, tenantId, deletedAt: null },
-          data: { deletedAt: now },
-        });
-        if (dto.items.length) {
-          const itemPrices = await this.loadItemUnitPrices(
-            tenantId,
-            branchId,
-            dto.items,
-          );
-          await tx.orderItem.createMany({
-            data: dto.items.map((i) => ({
-              tenantId,
-              branchId,
+      if (dto.items !== undefined && itemDiff) {
+        // Soft-delete only the items that were genuinely removed (not all of
+        // them then re-create, which would destroy accession linkage).
+        if (itemDiff.removeIds.length > 0) {
+          await tx.orderItem.updateMany({
+            where: {
+              id: { in: itemDiff.removeIds },
               orderId: id,
-              branchLabTestId: i.branchLabTestId ?? null,
-              branchLabPanelId: i.branchLabPanelId ?? null,
-              direct: i.direct ?? null,
+              tenantId,
+              deletedAt: null,
+            },
+            data: { deletedAt: now },
+          });
+        }
+        // Update kept items (price may have changed if the list was re-priced).
+        const keepPrices = await this.loadItemUnitPrices(
+          tenantId,
+          branchId,
+          itemDiff.keep.map((k) => k.incoming as OrderItemDto),
+        );
+        for (const { id: itemId, incoming } of itemDiff.keep) {
+          const i = incoming as OrderItemDto;
+          await tx.orderItem.update({
+            where: { id: itemId },
+            data: {
               unitPrice: i.direct
                 ? (i.unitPrice ?? 0)
-                : (itemPrices.get(
+                : (keepPrices.get(
                     i.branchLabTestId ?? i.branchLabPanelId ?? '',
                   ) ?? 0),
               discount: i.discount ?? 0,
               discountMode: i.discountMode ?? null,
               discountValue: i.discountValue ?? null,
               outsourceCenterId: i.outsourceCenterId ?? null,
-            })),
+            },
           });
+        }
+        // Create newly-added items and collect their ids for sample reconcile.
+        if (itemDiff.add.length > 0) {
+          const addPrices = await this.loadItemUnitPrices(
+            tenantId,
+            branchId,
+            itemDiff.add,
+          );
+          for (const raw of itemDiff.add) {
+            const i = raw as OrderItemDto;
+            const created = await tx.orderItem.create({
+              select: { id: true },
+              data: {
+                tenantId,
+                branchId,
+                orderId: id,
+                branchLabTestId: i.branchLabTestId ?? null,
+                branchLabPanelId: i.branchLabPanelId ?? null,
+                direct: i.direct ?? null,
+                unitPrice: i.direct
+                  ? (i.unitPrice ?? 0)
+                  : (addPrices.get(
+                      i.branchLabTestId ?? i.branchLabPanelId ?? '',
+                    ) ?? 0),
+                discount: i.discount ?? 0,
+                discountMode: i.discountMode ?? null,
+                discountValue: i.discountValue ?? null,
+                outsourceCenterId: i.outsourceCenterId ?? null,
+              },
+            });
+            addedItemIds.push(created.id);
+          }
         }
       }
 
@@ -5552,11 +5687,17 @@ export class OrderService {
       }
 
       // Replace the payment ledger wholesale when provided: soft-delete the
-      // current rows and recreate from the patch (mirrors the item-set replace).
-      // Safe to soft-delete + recreate — payment_details has no child unique key.
+      // current PAYMENT rows and recreate from the patch (mirrors the item-set
+      // replace). REFUND (and any other non-PAYMENT) rows are intentionally
+      // preserved so a post-refund update does not wipe the refund history.
       if (dto.payments !== undefined) {
         await tx.paymentDetails.updateMany({
-          where: { orderId: id, tenantId, deletedAt: null },
+          where: {
+            orderId: id,
+            tenantId,
+            deletedAt: null,
+            entryType: PaymentEntryType.PAYMENT,
+          },
           data: { deletedAt: now },
         });
         if (dto.payments.length) {
@@ -5591,6 +5732,49 @@ export class OrderService {
         }
       }
 
+      // The order-level paymentStatus set earlier used only the incoming PAYMENT
+      // rows. Now that the ledger is rebuilt (PAYMENT replaced, REFUND rows
+      // preserved), recompute paymentStatus AND refundStatus from the EFFECTIVE
+      // ledger so a refunded-then-edited order keeps its refund state and balance.
+      if (dto.payments !== undefined) {
+        const ledger = await tx.paymentDetails.aggregate({
+          where: { orderId: id, tenantId, deletedAt: null },
+          _sum: {
+            paidAmount: true,
+            netAmount: true,
+            refundAmount: true,
+            refundCharge: true,
+          },
+        });
+        const orderRow = await tx.order.findUnique({
+          where: { id },
+          select: { cancellationCharge: true },
+        });
+        const paidSum = toNum(ledger._sum.paidAmount);
+        const netSum = toNum(ledger._sum.netAmount);
+        const refundSum = toNum(ledger._sum.refundAmount);
+        const refundChargeSum = toNum(ledger._sum.refundCharge);
+        const cancellationCharge = toNum(orderRow?.cancellationCharge);
+        const effectivePaid = computeEffectivePaid(
+          paidSum,
+          cancellationCharge,
+          refundSum,
+          refundChargeSum,
+        );
+        await tx.order.update({
+          where: { id },
+          data: {
+            paymentStatus: derivePaymentStatus(netSum, effectivePaid),
+            refundStatus: deriveRefundStatus(
+              paidSum,
+              cancellationCharge,
+              refundSum,
+              refundChargeSum,
+            ),
+          },
+        });
+      }
+
       // Re-point the phlebotomist slot reservation when the booking changed
       // (reschedule / phlebotomist swap / home-visit toggle / status flip). Skip
       // when nothing about the booking changed so we don't re-validate (and
@@ -5616,18 +5800,43 @@ export class OrderService {
         }
       }
 
-      // Generate accession samples once the order is confirmed as a diagnostic
-      // order (e.g. a DRAFT/QUOTE flipped to ORDER/APPOINTMENT). Idempotent —
-      // skips if this order already has samples.
+      // Generate / reconcile accession samples once the order is confirmed as a
+      // diagnostic order (e.g. a DRAFT/QUOTE flipped to ORDER/APPOINTMENT).
+      // - First-time (no samples yet): generate the full item set (idempotent).
+      // - Already accessioned + items changed: reconcile only the delta (add new
+      //   samples for added items, tombstone samples for removed ones).
       const hasDiagnostics = Boolean(dto.diagnostics ?? existing?.diagnostics);
       if (this.shouldGenerateSamples(effectiveStatus, hasDiagnostics)) {
-        await this.orderSamples.generateForOrderInTx(
-          tx,
-          tenantId,
-          branchId,
-          personId,
-          id,
-        );
+        const alreadyAccessioned =
+          (await tx.orderSample.count({
+            where: { orderId: id, tenantId, deletedAt: null },
+          })) > 0;
+        if (alreadyAccessioned && dto.items !== undefined && itemDiff) {
+          // Already accessioned + item set changed -> reconcile the delta only.
+          await this.orderSamples.reconcileForOrderInTx(
+            tx,
+            tenantId,
+            branchId,
+            personId,
+            id,
+            {
+              addedItemIds,
+              removedItemIds: itemDiff.removeIds,
+              now,
+            },
+          );
+        } else {
+          // First-time generation for the whole final item set (idempotent). Do
+          // NOT also reconcile here — the added items are already part of the
+          // order, so generating the whole order covers them.
+          await this.orderSamples.generateForOrderInTx(
+            tx,
+            tenantId,
+            branchId,
+            personId,
+            id,
+          );
+        }
       }
       // Create the home-visit Collection Schedule record if this update confirms a
       // home-visit order (e.g. DRAFT → ORDER/APPOINTMENT). Idempotent + guarded, so
@@ -6088,13 +6297,19 @@ export class OrderService {
       const refundSum = toNum(agg._sum.refundAmount);
       const refundChargeSum = toNum(agg._sum.refundCharge);
 
-      // Refundable = current effective paid (respects any cancellation charge and
-      // prior refunds).
-      const refundable = computeEffectivePaid(
+      // Refund-without-cancellation may only return the OVERPAID surplus — the
+      // effective paid beyond what the (current) order still owes (`netSum`).
+      // Refunding below the net owed would leave an active order underpaid; that
+      // is a cancellation, not a refund. When a paid test is removed the net
+      // shrinks, exposing exactly that test's value as the refundable surplus.
+      const effectivePaidNow = computeEffectivePaid(
         paidSum,
         toNum(existing.cancellationCharge),
         refundSum,
         refundChargeSum,
+      );
+      const refundable = roundToTwoDecimalPlaces(
+        Math.max(0, effectivePaidNow - netSum),
       );
       if (refundable <= 0) {
         throw new NothingToRefundException(id);

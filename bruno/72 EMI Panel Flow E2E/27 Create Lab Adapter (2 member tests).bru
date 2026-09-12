@@ -1,5 +1,5 @@
 meta {
-  name: 27 Create Lab Adapter (2 member tests)
+  name: 27 Create Lab Adapter (3 member tests)
   type: http
   seq: 24
 }
@@ -23,7 +23,7 @@ body:json {
     "name": "EMI Panel Bridgedd {{panelRunId}}",
     "equipmentId": "{{equipmentId}}",
     "branchIds": ["{{branchId}}"],
-    "labTestIds": ["{{branchLabTestIdA}}", "{{branchLabTestIdB}}"],
+    "labTestIds": ["{{branchLabTestIdA}}", "{{branchLabTestIdB}}", "{{branchLabTestIdC}}"],
     "isActive": true
   }
 }
@@ -45,12 +45,12 @@ tests {
 }
 
 docs {
-  **Register the machine (2/2) — the lab adapter, mapping BOTH panel members.**
+  **Register the machine (2/2) — the lab adapter, mapping ALL THREE panel members.**
   A tenant-level bridge created with `businessAdminToken`, referencing the global
-  `equipmentId` (step 26), assigned to this run's `branchId`, and mapping **both**
-  member branch lab tests (`branchLabTestIdA` + `branchLabTestIdB`) as prefered
-  tests. These are the ids the panel's per-member reports carry as
-  `memberBranchLabTestId`, so `/emi/orders` exposes both and `/emi/submitResult`
-  fills both. Captures the system-generated **`flowAdapterToken`** (the machine's
-  `TOKEN` header).
+  `equipmentId` (step 26), assigned to this run's `branchId`, and mapping **all
+  three** member branch lab tests (`branchLabTestIdA` + `branchLabTestIdB` +
+  `branchLabTestIdC`) as prefered tests. These are the ids the panel's per-member
+  reports carry as `memberBranchLabTestId`, so `/emi/orders` exposes all of them and
+  `/emi/submitResult` fills all three (three parameters on member C). Captures the
+  system-generated **`flowAdapterToken`** (the machine's `TOKEN` header).
 }

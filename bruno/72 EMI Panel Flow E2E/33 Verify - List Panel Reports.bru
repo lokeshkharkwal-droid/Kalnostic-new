@@ -21,30 +21,42 @@ auth:bearer {
 }
 
 script:post-response {
-  const data = res.body && res.body.success && res.body.data;
-  if (data && data.length) {
-    if (data[0] && data[0].id) bru.setVar("labReportId1", data[0].id);
-    if (data[1] && data[1].id) bru.setVar("labReportId2", data[1].id);
-  }
+  const rows = (res.body && res.body.success && res.body.data) || [];
+  // Locate each member report by its `memberBranchLabTestId` (a BranchLabTest.id),
+  // so the detail reads are deterministic rather than positional.
+  const byMember = (id) => rows.find((r) => r.memberBranchLabTestId === id);
+  const rA = byMember(bru.getVar("branchLabTestIdA"));
+  const rB = byMember(bru.getVar("branchLabTestIdB"));
+  const rC = byMember(bru.getVar("branchLabTestIdC"));
+  if (rA) bru.setVar("labReportIdA", rA.id);
+  if (rB) bru.setVar("labReportIdB", rB.id);
+  if (rC) bru.setVar("labReportIdC", rC.id);
 }
 
 tests {
-  test("the panel produced two member reports", function () {
+  test("the panel produced three member reports", function () {
     const rows = res.body.data;
-    expect(rows).to.be.an("array").with.length.of.at.least(2);
+    expect(rows).to.be.an("array").with.length.of.at.least(3);
   });
-  test("both member reports are now SAVED (machine-filled)", function () {
-    const rows = res.body.data;
-    expect(rows[0].status).to.equal("SAVED");
-    expect(rows[1].status).to.equal("SAVED");
+  test("all three member reports are now SAVED (machine-filled)", function () {
+    const rows = res.body.data.slice(0, 3);
+    rows.forEach((r) => expect(r.status, "report status").to.equal("SAVED"));
+  });
+  test("the multi-parameter member report (C) is present", function () {
+    const rC = res.body.data.find(
+      (r) => r.memberBranchLabTestId === bru.getVar("branchLabTestIdC"),
+    );
+    expect(rC, "member C report").to.exist;
   });
 }
 
 docs {
-  **Verify (1/3) — the panel's reports, from the app side.** Lists the technician
-  reports for this run's **`branchLabPanelId`** — the two member reports of the
+  **Verify (1/4) — the panel's reports, from the app side.** Lists the technician
+  reports for this run's **`branchLabPanelId`** — the three member reports of the
   panel (the `?branchLabTestId=` filter would miss them, since a panel `OrderItem`
   has no `branchLabTestId`; the panel filter is the correct lens). The machine
-  submission moved BOTH from `PENDING` to **`SAVED`**, which this asserts. Captures
-  **`labReportId1`** / **`labReportId2`** for the detail reads next.
+  submission moved all three from `PENDING` to **`SAVED`**, which this asserts.
+  Captures **`labReportIdA`** / **`labReportIdB`** / **`labReportIdC`** by matching
+  each row's `memberBranchLabTestId` — so the detail reads (34/35/35c) target the
+  right member regardless of list order.
 }

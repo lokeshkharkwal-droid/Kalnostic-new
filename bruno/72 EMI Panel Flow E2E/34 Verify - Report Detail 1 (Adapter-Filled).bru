@@ -1,11 +1,11 @@
 meta {
-  name: 34 Verify - Report Detail 1 (Adapter-Filled)
+  name: 34 Verify - Report A (single param HGB)
   type: http
   seq: 31
 }
 
 get {
-  url: {{baseUrl}}/lab-reports/{{labReportId1}}
+  url: {{baseUrl}}/lab-reports/{{labReportIdA}}
   body: none
   auth: bearer
 }
@@ -14,31 +14,28 @@ auth:bearer {
   token: {{operatorToken}}
 }
 
-script:post-response {
-  const data = res.body && res.body.data;
-  const values = (data && data.resultValues) || [];
-  const adapterValue = values.find((v) => v.source === "ADAPTER");
-  if (adapterValue) bru.setVar("emiObserved1", String(adapterValue.observed1));
-}
-
 tests {
   test("report detail loads", function () {
     expect(res.getStatus()).to.equal(200);
     expect(res.body.data).to.have.property("resultValues");
   });
-  test("member report 1 has an ADAPTER-sourced value", function () {
-    const values = res.body.data.resultValues || [];
-    const adapterValue = values.find((v) => v.source === "ADAPTER");
-    expect(adapterValue, "a resultValue with source ADAPTER").to.exist;
+  test("member A (single-param) has ONE ADAPTER value = {{emiResultValueA}}", function () {
+    const adapterValues = (res.body.data.resultValues || []).filter(
+      (v) => v.source === "ADAPTER",
+    );
+    expect(adapterValues.length, "ADAPTER values on A").to.equal(1);
+    expect(String(adapterValues[0].observed1)).to.equal(
+      bru.getVar("emiResultValueA"),
+    );
   });
-  test("report 1 is SAVED, not auto-approved", function () {
+  test("report A is SAVED, not auto-approved", function () {
     expect(res.body.data.status).to.equal("SAVED");
   });
 }
 
 docs {
-  **Verify (2/3) — first member report detail.** Confirms the analyzer's value
-  reached one of the panel's member reports with **`source: "ADAPTER"`** and the
-  report is **`SAVED`** (never auto-approved). Captures **`emiObserved1`** (the
-  filled value) so step 35 can assert BOTH member values landed.
+  **Verify (2/4) — single-parameter member A (`HGB`).** Confirms the analyzer's
+  value reached member A's report with **`source: "ADAPTER"`**, exactly **one**
+  result value equal to `{{emiResultValueA}}`, and the report is **`SAVED`** (never
+  auto-approved). Report resolved by `memberBranchLabTestId` in step 33.
 }

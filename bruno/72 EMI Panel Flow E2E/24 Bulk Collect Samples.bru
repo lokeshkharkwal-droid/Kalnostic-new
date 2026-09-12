@@ -20,9 +20,10 @@ auth:bearer {
 
 body:json {
   {
-    "ids": ["{{sampleIdA}}", "{{sampleIdB}}"],
+    "ids": ["{{sampleIdA}}", "{{sampleIdB}}", "{{sampleIdC}}"],
     "tubeType": "EDTA (Purple)",
-    "notes": "Collected at front desk (panel)"
+    "notes": "Collected at front desk (panel)",
+    "skipInvalid": true
   }
 }
 
@@ -33,8 +34,17 @@ tests {
 }
 
 docs {
-  **Accession 24 — Bulk collect both member samples** (NEW → COLLECTED). Uses the
-  bulk endpoint with both `sampleIdA`/`sampleIdB` so a single request advances the
-  whole panel group. Requires `accession:in_house_order__collect_the_sample`
-  (granted in step 08).
+  **Accession 24 — Bulk collect all three member samples** (NEW → COLLECTED). Uses
+  the bulk endpoint with `sampleIdA`/`sampleIdB`/`sampleIdC` so a single request
+  advances the whole panel group. Requires
+  `accession:in_house_order__collect_the_sample` (granted in step 08).
+
+  `collect` is legal only from `NEW`/`HOLD`/`REPEAT`; on a fresh run all three are
+  `NEW`. `skipInvalid: true` makes the batch skip any sample that is NOT in a
+  collectable state instead of failing the whole request with
+  `422 INVALID_SAMPLE_TRANSITION` — this matters when the flow is re-run in the
+  Bruno GUI, where `sampleIdA/B/C` persist and may point to samples already
+  collected/accepted by a previous run. The real cure is to run the folder
+  **top-to-bottom** so step 22 creates a fresh order (new `NEW` samples) right
+  before this step.
 }

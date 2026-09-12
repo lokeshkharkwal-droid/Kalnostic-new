@@ -36,10 +36,16 @@ tests {
     expect(o).to.have.property("patient_name");
     expect(o.ut_ids).to.be.an("array");
   });
-  test("PANEL: one barcode → BOTH member tests appear in ut_ids", function () {
+  test("PANEL: one barcode → ALL member tests appear in ut_ids", function () {
     const utIds = res.body.orders[0].ut_ids;
     expect(utIds, "member A param name").to.include(bru.getVar("emiParamNameA"));
     expect(utIds, "member B param name").to.include(bru.getVar("emiParamNameB"));
+  });
+  test("MULTI-PARAM: all three parameters of test C appear in ut_ids", function () {
+    const utIds = res.body.orders[0].ut_ids;
+    expect(utIds, "C param 1").to.include(bru.getVar("emiParamNameC1"));
+    expect(utIds, "C param 2").to.include(bru.getVar("emiParamNameC2"));
+    expect(utIds, "C param 3").to.include(bru.getVar("emiParamNameC3"));
   });
 }
 
@@ -48,10 +54,12 @@ docs {
   (`{{emiBaseUrl}}`), authenticated by the **`TOKEN`** header (`flowAdapterToken`).
   `specimen_id` is the shared **panel barcode** (`sampleBarcode`, step 23).
   
-  The key panel assertion: the returned `ut_ids` carry **both** member tests —
-  their test names AND their result-parameter names (`{{emiParamNameA}}` +
-  `{{emiParamNameB}}`) — even though the order has a single panel `OrderItem`. This
-  is the behaviour the fix restored: the backend expands the panel to its member
-  tests (via each report's `memberBranchLabTestId`) and scopes them to the scanned
-  sample group. Captures `emiUtIds`.
+  The key assertions: the returned `ut_ids` carry **every** member test — their
+  test names AND their result-parameter names — even though the order has a single
+  panel `OrderItem`. That includes **all three parameters of the multi-parameter
+  member C** (`{{emiParamNameC1}}` + `{{emiParamNameC2}}` + `{{emiParamNameC3}}`),
+  proving the backend lists every parameter of every mapped member. This is the
+  behaviour the fix restored: it expands the panel to its member tests (via each
+  report's `memberBranchLabTestId`), resolves each member's parameters, and scopes
+  them to the scanned sample group. Captures `emiUtIds`.
 }

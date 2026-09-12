@@ -1,5 +1,5 @@
 meta {
-  name: 29 EMI - Submit Result (both analytes)
+  name: 29 EMI - Submit Result (all analytes)
   type: http
   seq: 26
 }
@@ -47,6 +47,36 @@ body:text {
         "unit": "{{emiParamUnitB}}",
         "result_type": "",
         "specimen_types": []
+      },
+      {
+        "test_result_id": "d2c81f89-6656-66b2-d3a7-e065fa5de758",
+        "test_result": "{{emiResultValueC1}}",
+        "test_name": "{{emiParamNameC1}}",
+        "display_name": "{{emiParamNameC1}}",
+        "universal_test_id": "{{emiParamCodeC1}}",
+        "unit": "{{emiParamUnitC1}}",
+        "result_type": "",
+        "specimen_types": []
+      },
+      {
+        "test_result_id": "e3d92a9a-7767-77c3-e4b8-f176ab6ef869",
+        "test_result": "{{emiResultValueC2}}",
+        "test_name": "{{emiParamNameC2}}",
+        "display_name": "{{emiParamNameC2}}",
+        "universal_test_id": "{{emiParamCodeC2}}",
+        "unit": "{{emiParamUnitC2}}",
+        "result_type": "",
+        "specimen_types": []
+      },
+      {
+        "test_result_id": "f4ea3bab-8878-88d4-f5c9-a287bc7fa97a",
+        "test_result": "{{emiResultValueC3}}",
+        "test_name": "{{emiParamNameC3}}",
+        "display_name": "{{emiParamNameC3}}",
+        "universal_test_id": "{{emiParamCodeC3}}",
+        "unit": "{{emiParamUnitC3}}",
+        "result_type": "",
+        "specimen_types": []
       }
     ],
     "comment": "auto from analyzer (EMI Panel E2E)",
@@ -68,24 +98,28 @@ tests {
   test("result accepted (legacy s=200)", function () {
     expect(res.body.s).to.equal("200");
   });
-  test("PANEL: BOTH member reports filled from one submit", function () {
+  test("PANEL: all THREE member reports filled from one submit", function () {
     expect(res.body.m).to.equal("Result updated successfully");
-    expect(res.body.test_status).to.match(/2 test updated/);
+    expect(res.body.test_status).to.match(/3 test updated/);
     const filled = res.body.report_log.log.filter((l) => l.fill_status === "Report filled");
-    expect(filled.length, "reports filled").to.equal(2);
+    expect(filled.length, "reports filled").to.equal(3);
   });
 }
 
 docs {
-  **Machine step 2 — submit BOTH analyte results.** A **GET** to `/emi/submitResult`
+  **Machine step 2 — submit ALL analyte results.** A **GET** to `/emi/submitResult`
   with a JSON body under `Content-Type: text/plain` (legacy quirk); auth is the
   **`TOKEN`** header. `tube_no` is the shared panel **`sampleBarcode`** — the same
   specimen id the analyzer received in step 28.
-  
-  `test_results[]` carries **two** entries, one per member: `universal_test_id`
-  `{{emiParamCodeA}}` / `{{emiParamCodeB}}` match the parameter codes on the two
-  member tests, so each value fills its member report. Both member reports are
-  fillable (PENDING, from step 25) and adapter-mapped, so both are written with
-  **`source = ADAPTER`** and moved to **`SAVED`** → `test_status: "2 test updated"`
-  with two `fill_status: "Report filled"` log lines. Captures `emiFilledCount`.
+
+  `test_results[]` carries **five** entries: one for member A (`{{emiParamCodeA}}`),
+  one for member B (`{{emiParamCodeB}}`), and **three for the multi-parameter member
+  C** (`{{emiParamCodeC1}}` / `{{emiParamCodeC2}}` / `{{emiParamCodeC3}}`). Each
+  `universal_test_id` matches a parameter code on its member test, so the backend —
+  which resolves *all* of a report's params and matches each independently — writes
+  one value for A, one for B, and **all three onto C's single report**. Every member
+  report is fillable (PENDING, from step 25) and adapter-mapped, so all are written
+  with **`source = ADAPTER`** and moved to **`SAVED`** → `test_status: "3 test
+  updated"` with three `fill_status: "Report filled"` log lines (one per report —
+  the count is of reports, not parameters). Captures `emiFilledCount`.
 }
