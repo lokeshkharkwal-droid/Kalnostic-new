@@ -810,10 +810,19 @@ export class LabPanelService {
       // full catalogue can run well past Prisma's default 5s transaction
       // timeout; panels can't sync in a separate transaction from tests
       // (they need the complete in-memory testIdMap), so the whole sync must
-      // stay atomic — widen the bound instead of splitting it. Same bound as
-      // India location sync (location-sync.service.ts), another bulk,
-      // all-or-nothing seed/sync of comparable scale.
-      { timeout: 60_000, maxWait: 15_000 },
+      // stay atomic — widen the bound instead of splitting it.
+      //
+      // 60s (the original bound, matching India location sync's comparable
+      // bulk seed/sync) turned out to be too tight once the tenant catalogue
+      // grew past ~1400 tests: confirmed live 2026-09-10 — importing the full
+      // catalogue into a BRAND-NEW branch (0 existing tests, so every single
+      // test must be freshly cloned rather than just updated, the heaviest
+      // case) ran past 60s and failed with a Prisma transaction-timeout,
+      // surfaced to the user as a generic 500. Widened well past the
+      // observed failure point to leave real headroom as the catalogue
+      // keeps growing, rather than re-tuning this again at the next size
+      // milestone.
+      { timeout: 300_000, maxWait: 15_000 },
     );
   }
 

@@ -891,6 +891,22 @@ model Tenant {
   /// idempotent data migration + traceability. Null for natively-created tenants.
   legacyTenantId Int? @unique @map("legacy_tenant_id")
 
+  /// Integer id sent to the Exchange server as `peer_tenant_id` so per-tenant
+  /// message counts continue. Equals `legacyTenantId` for migrated tenants; a
+  /// fresh value from the `exchange_tenant_id` PlatformCounter for native ones.
+  exchangeTenantId Int? @unique @map("exchange_tenant_id")
+
+  /// When this tenant was registered as a client on the external Exchange server
+  /// (POST /clients). NULL = not yet registered — this is the idempotency guard
+  /// for the SiteAdmin register-exchange flow.
+  exchangeRegisteredAt DateTime? @map("exchange_registered_at")
+  /// Client id returned by the Exchange on successful registration
+  /// (`data.original.id`). NULL until registered.
+  exchangeClientId String? @map("exchange_client_id")
+  /// Raw `data.original` payload from the Exchange registration response, kept
+  /// for traceability. NULL until registered.
+  exchangeRegistrationMeta Json? @map("exchange_registration_meta")
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -901,6 +917,17 @@ model Tenant {
   @@index([areaId])
   @@index([deletedAt])
   @@map("tenants")
+}
+
+/// Platform-level (no tenantId, no RLS) monotonic counters spanning all tenants.
+/// One row per logical sequence, keyed by `key`. `value` = last-assigned value.
+/// Used by ExchangeTenantIdService to allocate `Tenant.exchangeTenantId`.
+model PlatformCounter {
+  key       String   @id
+  value     Int      @default(0)
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("platform_counters")
 }
 
 /// Business Configuration — a 1:1 platform-level extension of a Tenant holding
@@ -7072,6 +7099,20 @@ model LabReport {
 
   labTestId String? @map("lab_test_id")
 
+  /// Per-report overrides of the test's Notes content (Master Data > Add Test
+  /// > Notes: Useful For / Interpretation / Limitations / Remarks /
+  /// References). NULL (the default for every field on every report) means
+  /// "inherit the test's configured default" — `LabReportService
+  /// .getContentSections` falls back to the linked `LabTest`'s own column
+  /// whenever the matching field here is null. Setting one of these fields
+  /// edits ONLY this report; it must never write back to `LabTest` — that
+  /// would silently change what every other order of the same test shows.
+  usefulFor               String? @map("useful_for")
+  interpretationOfResults String? @map("interpretation_of_results")
+  limitations             String?
+  remarks                 String?
+  references              String?
+
   status LabReportStatus @default(PENDING)
 
   savedAt     DateTime? @map("saved_at")
@@ -8462,13 +8503,17 @@ model TechnicianSetting {
   authoritySignatures Int    @default(1) @map("authority_signatures")
   signatoryBasis      String @default("department") @map("signatory_basis")
 
-  /// Whether the Test Entry screen's "Useful For" / "Interpretation" content
-  /// sections are technician-editable, independent of each other. Both
-  /// default false (matches the pre-existing hardcoded behavior: only
-  /// "Remarks" was ever editable, these two — along with Limitations/
-  /// References, which stay permanently read-only — were not).
+  /// Whether each of the Test Entry screen's 5 Notes content sections is
+  /// technician-editable, independent of each other. All default false.
+  /// Editing any of these (when its toggle allows it) writes a per-report
+  /// override on `LabReport` itself — it never mutates the shared `LabTest`
+  /// master, so a technician's edit only affects this one report (see
+  /// `LabReportService.updateContentSections`).
   isUsefulForEditable      Boolean @default(false) @map("is_useful_for_editable")
   isInterpretationEditable Boolean @default(false) @map("is_interpretation_editable")
+  isLimitationsEditable    Boolean @default(false) @map("is_limitations_editable")
+  isRemarksEditable        Boolean @default(false) @map("is_remarks_editable")
+  isReferencesEditable     Boolean @default(false) @map("is_references_editable")
 
   /// Configurable reason options for the "Adjust TAT" audit-log dropdown
   /// (Turnaround Time Details modal). Soft-validated (frontend-populated
