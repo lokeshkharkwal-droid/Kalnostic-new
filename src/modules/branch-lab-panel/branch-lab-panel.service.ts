@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { BranchLabPanel, Prisma } from '@prisma/client';
+import { BranchLabPanel, Prisma, TatUnit } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
@@ -41,6 +41,10 @@ export interface BranchLabPanelOption {
   price: number;
   sampleType: string | null;
   isFasting: boolean;
+  tatMinValue: number | null;
+  tatMinUnit: TatUnit | null;
+  tatMaxValue: number | null;
+  tatMaxUnit: TatUnit | null;
 }
 
 /** A resolved panel member: the source test id + its ordering/removable flags. */
@@ -585,6 +589,10 @@ export class BranchLabPanelService {
       panelName: true,
       listPrice: true,
       isFastingRequired: true,
+      tatMinValue: true,
+      tatMinUnit: true,
+      tatMaxValue: true,
+      tatMaxUnit: true,
     } as const;
     const orderBy = { panelName: 'asc' } as const;
     const toOption = (r: {
@@ -592,12 +600,20 @@ export class BranchLabPanelService {
       panelName: string;
       listPrice: number;
       isFastingRequired: boolean;
+      tatMinValue: number | null;
+      tatMinUnit: TatUnit | null;
+      tatMaxValue: number | null;
+      tatMaxUnit: TatUnit | null;
     }): BranchLabPanelOption => ({
       id: r.id,
       name: r.panelName,
       price: r.listPrice,
       sampleType: null,
       isFasting: r.isFastingRequired,
+      tatMinValue: r.tatMinValue,
+      tatMinUnit: r.tatMinUnit,
+      tatMaxValue: r.tatMaxValue,
+      tatMaxUnit: r.tatMaxUnit,
     });
 
     if (filters.page === undefined) {

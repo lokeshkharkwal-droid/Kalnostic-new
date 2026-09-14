@@ -1,0 +1,54 @@
+meta {
+  name: 31 Update Content Sections
+  type: http
+  seq: 31
+}
+
+patch {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/content-sections
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "usefulFor": "Screening for kidney function.",
+    "interpretation": "Elevated values may indicate impaired renal function.",
+    "limitations": "Not valid in hemolyzed samples.",
+    "remarks": "Repeat if result is borderline.",
+    "references": "Tietz Textbook of Clinical Chemistry, 6th Ed."
+  }
+}
+
+docs {
+  Persist a technician's edit to one or more of the Test Entry screen's 5
+  Notes sections (LABORATORY.docx §4.5): `usefulFor`, `interpretation`,
+  `limitations`, `remarks`, `references`. All 5 fields are optional in the
+  body — send only the ones you're changing, or all 5 unconditionally (a
+  field whose branch toggle is off is silently ignored, not rejected).
+
+  Each field is a PER-REPORT override, stored on THIS `LabReport` row only.
+  It never writes to the shared `LabTest` master (Master Data > Add Test >
+  Notes) — editing here affects only this one patient's report, not every
+  other order of the same test.
+
+  Editability is gated per field by the branch's TechnicianSetting toggles
+  (`isUsefulForEditable` / `isInterpretationEditable` / `isLimitationsEditable`
+  / `isRemarksEditable` / `isReferencesEditable`), all default `false`. See
+  "Technician Settings" module to enable them.
+
+  Response is the same shape `GET /lab-reports/:id`'s `contentSections`
+  returns — each field is this report's just-saved override (if its toggle
+  allowed the write) falling back to the `LabTest` master's default
+  otherwise.
+
+  Values may be rich-text HTML (Master Data's Notes editor produces HTML) —
+  `@MaxLength(20000)` per field to accommodate markup, not just plain text.
+
+  404 `LAB_REPORT_NOT_FOUND` if missing/other-tenant/other-branch. 409
+  `LAB_REPORT_LOCKED` if the report is locked.
+}

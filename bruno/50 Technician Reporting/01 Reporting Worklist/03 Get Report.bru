@@ -20,10 +20,17 @@ docs {
   and multi-step process if assigned.
 
   Response also includes `contentSections` (§4.5) — `{ usefulFor,
-  interpretation, limitations, references }`, read-only, sourced from the
-  linked `LabTest` master. All null when the report has no linked LabTest
-  (a panel item, a direct/free-text entry, or a branch-only test with no
-  tenant catalogue source).
+  interpretation, limitations, remarks, references }`. Each field resolves as
+  this REPORT's own saved override (if a technician has ever set one via
+  `PATCH .../content-sections`) falling back to the linked `LabTest` master's
+  configured default otherwise (Master Data > Add Test > Notes — rich
+  text/HTML). Editing here writes to this report only — the shared `LabTest`
+  master is never mutated by a technician's edit here, so other orders of the
+  same test are unaffected. All 5 fields are editable, each independently
+  gated by the branch's TechnicianSetting `is<Field>Editable` toggle (all
+  default false). All null when the report has no override saved AND no
+  linked LabTest (a panel item, a direct/free-text entry, or a branch-only
+  test with no tenant catalogue source).
 
   404 `LAB_REPORT_NOT_FOUND` if missing/other-tenant/other-branch.
 }
