@@ -52,17 +52,23 @@ export type LabReportDetail = Prisma.LabReportGetPayload<{
 }>;
 
 /**
- * The Test Entry screen's read-only content sections (LABORATORY.docx §4.5),
- * sourced from the tenant-level `LabTest` master (via `LabReport.labTestId` —
- * a logical ref, no Prisma relation, so this is resolved with a separate
- * query rather than an `include`). All null when the report has no linked
- * `LabTest` (a panel item, a direct/free-text entry, or a branch-only test
- * with no tenant catalogue source).
+ * The Test Entry screen's content sections (LABORATORY.docx §4.5): Useful
+ * For / Interpretation / Limitations / Remarks / References. Each field
+ * resolves as `LabReport`'s own column ?? the linked `LabTest`'s configured
+ * default (via `LabReport.labTestId` — a logical ref, no Prisma relation, so
+ * this is resolved with a separate query rather than an `include`). A report
+ * with no edits of its own here shows the test's defaults; editing a field
+ * (`updateContentSections`) writes to THIS report only, never back to
+ * `LabTest` — the shared master is never mutated by a technician's edit. All
+ * null when the report has no linked `LabTest` at all (a panel item, a
+ * direct/free-text entry, or a branch-only test with no tenant catalogue
+ * source) AND no override was ever saved on the report itself.
  */
 export interface LabReportContentSections {
   usefulFor: string | null;
   interpretation: string | null;
   limitations: string | null;
+  remarks: string | null;
   references: string | null;
 }
 
@@ -105,6 +111,11 @@ export interface LabReportResultParam {
   resultSuggestions: string[];
   /** Pre-fills Observed 1 when the technician hasn't entered a value yet. */
   defaultValue: string | null;
+  /** Admin-configured section this parameter belongs to on the Test Entry
+   * grid (e.g. "Chemical Examination", "Microscopic Examination") — purely
+   * organizational, groups rows into collapsible sections. Null/empty groups
+   * into an "Ungrouped" section on the frontend. */
+  groupName: string | null;
 }
 
 /** Full detail response: the report plus its (possibly all-null) content

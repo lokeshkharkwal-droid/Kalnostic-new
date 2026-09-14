@@ -57,7 +57,6 @@ import {
 } from '../pdf-report-template/services/pdf-document.util';
 import type { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
 import { TechnicianSettingsService } from '../technician-settings/technician-settings.service';
-import { LabTestService } from '../lab-test/lab-test.service';
 import { UpdateContentSectionsDto } from './dto/update-content-sections.dto';
 import {
   GeneratePdfDto,
@@ -92,6 +91,7 @@ import {
   LabReportNotesRequiredException,
   LabReportNotFoundException,
   LabTestCatalogueMissingException,
+  InvalidResultParamException,
   UnlockNotPermittedException,
   NoActivePrintTemplateException,
   AmbiguousPrintTemplateException,
@@ -158,7 +158,6 @@ export class LabReportService {
     private readonly pdfReportTemplateService: PdfReportTemplateService,
     private readonly tatService: TatService,
     private readonly technicianSettingsService: TechnicianSettingsService,
-    private readonly labTestService: LabTestService,
     private readonly eventEmitter: EventEmitter2,
     private readonly shareService: ShareService,
     private readonly tenantService: TenantService,
@@ -985,8 +984,12 @@ export class LabReportService {
     const byOrderItem = new Map<string, Map<string, SampleInfo>>();
     const byOrderItemAndTest = new Map<string, Map<string, SampleInfo>>();
     for (const { orderItemId, labTestId, sample } of sampleTests) {
-      const info: SampleInfo = { status: sample.status, barcode: sample.barcode };
-      const item = byOrderItem.get(orderItemId) ?? new Map<string, SampleInfo>();
+      const info: SampleInfo = {
+        status: sample.status,
+        barcode: sample.barcode,
+      };
+      const item =
+        byOrderItem.get(orderItemId) ?? new Map<string, SampleInfo>();
       item.set(sample.id, info);
       byOrderItem.set(orderItemId, item);
 
@@ -1201,7 +1204,13 @@ export class LabReportService {
     assertLabReportPanelOwnership(report, getReferralPanelId());
 
     const [contentSections, resultParams] = await Promise.all([
-      this.getContentSections(tenantId, report.labTestId),
+      this.getContentSections(tenantId, report.labTestId, {
+        usefulFor: report.usefulFor,
+        interpretationOfResults: report.interpretationOfResults,
+        limitations: report.limitations,
+        remarks: report.remarks,
+        references: report.references,
+      }),
       this.getResultParams(report.labTestId, report.orderItem.branchLabPanelId),
     ]);
     return { ...report, contentSections, resultParams };
@@ -1252,61 +1261,66 @@ export class LabReportService {
   }
 
   /**
-   * Resolve the Test Entry screen's read-only content sections
-   * (LABORATORY.docx §4.5) from the tenant-level `LabTest` master.
-   * `labTestId` is a logical ref (no Prisma relation) so this is a separate
-   * lookup, not an `include`. All-null when there's no linked LabTest (a
-   * panel item, a direct/free-text entry, or a branch-only test with no
-   * tenant catalogue source).
+   * Resolve the Test Entry screen's content sections (LABORATORY.docx §4.5):
+   * each field is the report's OWN override (if a technician has saved one)
+   * falling back to the linked `LabTest`'s configured default otherwise.
+   * `labTestId` is a logical ref (no Prisma relation) so the master lookup is
+   * a separate query, not an `include`. All-null when the report has no
+   * override saved AND no linked `LabTest` (a panel item, a direct/free-text
+   * entry, or a branch-only test with no tenant catalogue source).
    */
   private async getContentSections(
     tenantId: string,
     labTestId: string | null,
+    reportOverrides: {
+      usefulFor: string | null;
+      interpretationOfResults: string | null;
+      limitations: string | null;
+      remarks: string | null;
+      references: string | null;
+    },
   ): Promise<LabReportContentSections> {
-    const empty: LabReportContentSections = {
-      usefulFor: null,
-      interpretation: null,
-      limitations: null,
-      references: null,
-    };
-    if (!labTestId) return empty;
-
     // `LabTest.tenantId` is nullable (NULL for SITE_ADMIN global templates).
     // The id is already the specific tenant-owned row resolved from
     // BranchLabTest.sourceLabTestId at report-creation time, so match on id
     // alone rather than risk excluding it with an overly strict tenant filter.
-    const labTest = await this.prisma.labTest.findFirst({
-      where: { id: labTestId, deletedAt: null },
-      select: {
-        usefulFor: true,
-        interpretationOfResults: true,
-        limitations: true,
-        references: true,
-      },
-    });
-    if (!labTest) return empty;
+    const labTest = labTestId
+      ? await this.prisma.labTest.findFirst({
+          where: { id: labTestId, deletedAt: null },
+          select: {
+            usefulFor: true,
+            interpretationOfResults: true,
+            limitations: true,
+            remarks: true,
+            references: true,
+          },
+        })
+      : null;
 
     return {
-      usefulFor: labTest.usefulFor,
-      interpretation: labTest.interpretationOfResults,
-      limitations: labTest.limitations,
-      references: labTest.references,
+      usefulFor: reportOverrides.usefulFor ?? labTest?.usefulFor ?? null,
+      interpretation:
+        reportOverrides.interpretationOfResults ??
+        labTest?.interpretationOfResults ??
+        null,
+      limitations: reportOverrides.limitations ?? labTest?.limitations ?? null,
+      remarks: reportOverrides.remarks ?? labTest?.remarks ?? null,
+      references: reportOverrides.references ?? labTest?.references ?? null,
     };
   }
 
   /**
    * Persists a technician's edit to "Useful For"/"Interpretation" — gated
-   * per-field by the branch's `TechnicianSetting.isUsefulForEditable`/
-   * `isInterpretationEditable` (both default false; LABORATORY.docx §4.5
-   * describes these as normally read-only, Admin-configured content). Writes
-   * straight through to the underlying master `LabTest` record (the same one
-   * `getContentSections` reads from) via `LabTestService.update` — this is a
-   * shared-record edit, not a per-report override: it affects every other
-   * order that uses this same test, by design (confirmed with the user).
-   * Silently no-ops a field that's present in the DTO but whose setting is
-   * off, rather than rejecting the whole request — lets the frontend send
-   * both fields unconditionally without needing to know which one is
-   * currently allowed.
+   * per-field by the branch's `TechnicianSetting.is<Field>Editable` toggles
+   * (all 5 default false; LABORATORY.docx §4.5 describes these sections as
+   * normally read-only, Admin-configured content). Writes go to THIS
+   * `LabReport` row's own columns only — never to the shared `LabTest`
+   * master `getContentSections` falls back to — so an edit here affects only
+   * this one report, not every other order of the same test. Silently
+   * no-ops a field that's present in the DTO but whose setting is off,
+   * rather than rejecting the whole request — lets the frontend send all 5
+   * fields unconditionally without needing to know which are currently
+   * allowed.
    */
   async updateContentSections(
     id: string,
@@ -1316,43 +1330,59 @@ export class LabReportService {
   ): Promise<LabReportContentSections> {
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.requireReport(id, tenantId, activeBranchId);
-    if (!report.labTestId) {
-      return {
-        usefulFor: null,
-        interpretation: null,
-        limitations: null,
-        references: null,
-      };
-    }
 
     const settings = await this.technicianSettingsService.getForBranch(
       tenantId,
       activeBranchId,
     );
-    const patch: { usefulFor?: string; interpretationOfResults?: string } = {};
+    const patch: {
+      usefulFor?: string;
+      interpretationOfResults?: string;
+      limitations?: string;
+      remarks?: string;
+      references?: string;
+    } = {};
     if (settings.isUsefulForEditable && dto.usefulFor !== undefined) {
       patch.usefulFor = dto.usefulFor;
     }
     if (settings.isInterpretationEditable && dto.interpretation !== undefined) {
       patch.interpretationOfResults = dto.interpretation;
     }
-
-    if (Object.keys(patch).length > 0) {
-      const labTest = await this.prisma.labTest.findFirst({
-        where: { id: report.labTestId, deletedAt: null },
-        select: { masterDataId: true },
-      });
-      if (labTest?.masterDataId) {
-        await this.labTestService.update(
-          labTest.masterDataId,
-          report.labTestId,
-          tenantId,
-          patch,
-        );
-      }
+    if (settings.isLimitationsEditable && dto.limitations !== undefined) {
+      patch.limitations = dto.limitations;
+    }
+    if (settings.isRemarksEditable && dto.remarks !== undefined) {
+      patch.remarks = dto.remarks;
+    }
+    if (settings.isReferencesEditable && dto.references !== undefined) {
+      patch.references = dto.references;
     }
 
-    return this.getContentSections(tenantId, report.labTestId);
+    if (Object.keys(patch).length > 0) {
+      await this.prisma.labReport.update({
+        where: { id: report.id },
+        data: patch,
+      });
+    }
+
+    const updated = await this.prisma.labReport.findFirstOrThrow({
+      where: { id: report.id },
+      select: {
+        labTestId: true,
+        usefulFor: true,
+        interpretationOfResults: true,
+        limitations: true,
+        remarks: true,
+        references: true,
+      },
+    });
+    return this.getContentSections(tenantId, updated.labTestId, {
+      usefulFor: updated.usefulFor,
+      interpretationOfResults: updated.interpretationOfResults,
+      limitations: updated.limitations,
+      remarks: updated.remarks,
+      references: updated.references,
+    });
   }
 
   /**
@@ -1437,6 +1467,7 @@ export class LabReportService {
         decimalPlaces: true,
         resultSuggestions: true,
         defaultValue: true,
+        groupName: true,
       },
       orderBy: { sortOrder: 'asc' },
     });
@@ -1582,6 +1613,28 @@ export class LabReportService {
   ) {
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.requireReport(id, tenantId, activeBranchId);
+
+    // Reject any submitted resultParamId that isn't actually one of this
+    // report's own parameters (e.g. a stray/mistaken id from a different lab
+    // test) — without this, the upsert below would silently create a
+    // LabReportResultValue row for an unrelated test's parameter.
+    const orderItem = await this.prisma.orderItem.findUnique({
+      where: { id: report.orderItemId },
+      select: { branchLabPanelId: true },
+    });
+    const validParamIds = new Set(
+      (
+        await this.getResultParams(
+          report.labTestId,
+          orderItem?.branchLabPanelId ?? null,
+        )
+      ).map((p) => p.id),
+    );
+    for (const value of dto.values) {
+      if (!validParamIds.has(value.resultParamId)) {
+        throw new InvalidResultParamException(id, value.resultParamId);
+      }
+    }
 
     await this.prisma.withTenant(tenantId, async (tx) => {
       const now = new Date();
@@ -1808,7 +1861,11 @@ export class LabReportService {
     const methods = new Set<string>();
     if (param.method) methods.add(param.method);
 
-    if (param.resultType === 'QUALITATIVE') {
+    // Bug fix: gated on QUALITATIVE only — SEMI_QUANTITATIVE also has no
+    // LabTestReferenceRange rows (only LabTestReferenceValue, e.g. Protein/
+    // Albumin's "Negative"), so it fell into the `else` branch below and
+    // always came back empty, same root cause as resolveReferenceRange.
+    if (param.resultType === 'QUALITATIVE' || param.resultType === 'SEMI_QUANTITATIVE') {
       const values = await this.prisma.labTestReferenceValue.findMany({
         where: { paramId: param.id, deletedAt: null, method: { not: null } },
         select: { method: true },
@@ -1864,7 +1921,13 @@ export class LabReportService {
       ? patientAgeInDays(patient.age, patient.ageType ?? 'YEARS')
       : null;
 
-    if (param.resultType === 'QUALITATIVE') {
+    // Bug fix: this used to gate on QUALITATIVE only, so a SEMI_QUANTITATIVE
+    // param (which also has no numeric LabTestReferenceRange — only a
+    // LabTestReferenceValue "expected normal" label, e.g. "Negative" for
+    // Protein/Albumin) fell through to the numeric-range branch below,
+    // matched nothing, and silently resolved to null forever. Both non-
+    // numeric result types share the same reference-value lookup.
+    if (param.resultType === 'QUALITATIVE' || param.resultType === 'SEMI_QUANTITATIVE') {
       const candidates = await this.prisma.labTestReferenceValue.findMany({
         where: {
           paramId: param.id,

@@ -1,0 +1,70 @@
+meta {
+  name: 14 Create Lab Test A (Hemoglobin)
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/lab-tests
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "testName": "EMI Panel Hemoglobin {{panelRunId}}",
+    "testDisplayName": "HGB",
+    "testCode": "EPHGB-{{panelRunId}}",
+    "processMethod": "SINGLE_STEP",
+    "samplePriorityType": "ROUTINE",
+    "priceMsrp": 300,
+    "priceMaximum": 300,
+    "priceMinimum": 150,
+    "isActive": true,
+    "tatMinValue": 30,
+    "tatMinUnit": "MINUTES",
+    "tatMaxValue": 60,
+    "tatMaxUnit": "MINUTES",
+    "scheduleDays": ["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"],
+    "scheduleFrom": "00:00",
+    "scheduleTo": "23:59",
+    "procTimeMinValue": 10,
+    "procTimeMinUnit": "MINUTES",
+    "procTimeMaxValue": 30,
+    "procTimeMaxUnit": "MINUTES",
+    "samples": [
+      { "sampleType": "Blood", "containerType": "EDTA_TUBE_PURPLE_TOP", "isDefault": true }
+    ],
+    "resultParams": [
+      {
+        "parameterName": "{{emiParamNameA}}",
+        "parameterCode": "{{emiParamCodeA}}",
+        "resultType": "QUANTITATIVE",
+        "reportingUnit": "{{emiParamUnitA}}",
+        "sortOrder": 0
+      }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.id) bru.setVar("labTestIdA", data.id);
+}
+
+docs {
+  **Catalogue 14 — Panel member test A (Hemoglobin / `HGB`).** Created by the
+  Business Admin (bypasses master-data RBAC), WITH a single `resultParams` entry
+  (`{{emiParamNameA}}` / `{{emiParamCodeA}}`) so its report is fillable, and a
+  **Blood / EDTA** sample. Using the same sample type as test B makes both member
+  samples share ONE barcode (default Dept+Sample grouping). Captures
+  **`labTestIdA`** (the master-data LabTest id, referenced by the panel in step 19).
+}

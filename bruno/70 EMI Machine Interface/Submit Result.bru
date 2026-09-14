@@ -81,7 +81,8 @@ docs {
     auth, **flat `{ s, m, … }` response** — same as Get Orders.
 
   ## Key payload fields
-  - `tube_no` / `original_tube_no` — the specimen id = the order's **`orderCode`**.
+  - `tube_no` / `original_tube_no` — the specimen id = the accession sample's
+    **`OrderSample.barcode`** (the same id the machine received from Get Orders).
   - `test_results[]` — one per analyte:
     - `universal_test_id` — matched to our `BranchLabTest.testCode` first, then to
       `test_name`/`display_name`; for a single-parameter test the value fills that
@@ -93,10 +94,13 @@ docs {
     retained on the `AdapterResult` audit row.
 
   ## Fill behaviour (mirrors legacy `processAdapterResult`)
-  - Order resolved from `tube_no` (`orderCode`) within the adapter's tenant +
-    branches. Only reports that are **fillable** (status PENDING / PARTIAL_PENDING
-    / SAVED and not locked) and belong to the adapter's **prefered** (mapped)
-    tests are filled. Filled values are stored with `source = ADAPTER`; the report
+  - Order resolved from `tube_no` (the sample **barcode**) → its sample group →
+    the parent order, within the adapter's tenant + branches. Only reports that are
+    **fillable** (status PENDING / PARTIAL_PENDING / SAVED and not locked), belong
+    to the adapter's **prefered** (mapped) tests, **and are part of the scanned
+    sample group** are filled (a test outside the group falls into the same
+    "Not in prefered test list" skip, matching the legacy group-narrowed
+    `preferedTest`). Filled values are stored with `source = ADAPTER`; the report
     moves to `SAVED`. Reports are **never auto-approved/published** — human
     sign-off is unchanged. Every call writes an `AdapterResult` audit row.
 
@@ -123,7 +127,8 @@ docs {
   ```
 
   ## Other outcomes (still `s: "200"`, legacy semantics)
-  - `test_status: "Order not found."` — no order matched `tube_no`.
+  - `test_status: "Order not found."` — no active accession sample matched the
+    `tube_no` barcode.
   - `test_status: "Test already marked as complete"` — order is CANCELLED/closed.
   - `test_status: "No test result submitted"` — empty `test_results`.
   - `test_status: "no test match found for requested token"` — nothing fillable

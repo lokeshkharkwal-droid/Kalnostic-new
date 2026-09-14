@@ -34,8 +34,8 @@ export class EmiController {
   constructor(private readonly emiService: EmiService) {}
 
   /**
-   * `GET /emi/orders?specimen_id=<orderCode>` — order + patient + pending tests
-   * for a scanned id.
+   * `GET /emi/orders?specimen_id=<barcode>` — order + patient + pending tests
+   * for a scanned sample barcode (the accession sample's `OrderSample.barcode`).
    */
   @Get('orders')
   async orders(@Req() req: Request, @Res() res: Response): Promise<void> {

@@ -1,0 +1,41 @@
+meta {
+  name: 35 Verify - Report B (single param WBC)
+  type: http
+  seq: 32
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/{{labReportIdB}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+tests {
+  test("report detail loads", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.body.data).to.have.property("resultValues");
+  });
+  test("member B (single-param) has ONE ADAPTER value = {{emiResultValueB}}", function () {
+    const adapterValues = (res.body.data.resultValues || []).filter(
+      (v) => v.source === "ADAPTER",
+    );
+    expect(adapterValues.length, "ADAPTER values on B").to.equal(1);
+    expect(String(adapterValues[0].observed1)).to.equal(
+      bru.getVar("emiResultValueB"),
+    );
+  });
+  test("report B is SAVED, not auto-approved", function () {
+    expect(res.body.data.status).to.equal("SAVED");
+  });
+}
+
+docs {
+  **Verify (3/4) — single-parameter member B (`WBC`).** Same as step 34 for the
+  second single-parameter member: exactly **one** `ADAPTER` value equal to
+  `{{emiResultValueB}}`, report **`SAVED`**. The multi-parameter member C is checked
+  in step 35c, which is where the three-parameters-on-one-report assertion lives.
+}

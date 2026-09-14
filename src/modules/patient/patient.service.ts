@@ -40,7 +40,6 @@ import {
 import {
   FamilyLinkNotFoundException,
   MedicalHistoryNotFoundException,
-  PatientCrossTenantExistsException,
   PatientDocumentNotFoundException,
   PatientMobileConflictException,
   PatientNotFoundException,
@@ -331,15 +330,15 @@ export class PatientService {
   }
 
   /**
-   * Decide how a new patient connects to the shared `Person` identity and enforce
-   * the cross-tenant rule. Family members, migrated rows, and non-mobile values
-   * are never identity-backed. Otherwise: if a `Person` already owns this mobile
-   * and the caller's tenant already has it → a normal same-tenant mobile
-   * conflict; if it exists only in OTHER tenants → reject so the caller must
-   * confirm+import instead of creating a duplicate; if it's brand new → back it
-   * with a freshly-created `Person`.
+   * Decide how a new patient connects to the shared `Person` identity. Family
+   * members, migrated rows, and non-mobile values are never identity-backed.
+   * Otherwise: if a `Person` already owns this mobile and the caller's tenant
+   * already has it → a normal same-tenant mobile conflict; if it exists only in
+   * OTHER tenants → transparently link to that shared identity (no cross-tenant
+   * prompt; the owning tenant's basic details are left untouched, only
+   * `isPatient` is flagged); if it's brand new → back it with a freshly-created
+   * `Person`.
    * @throws PatientMobileConflictException if the mobile is already in this tenant
-   * @throws PatientCrossTenantExistsException if it belongs to another tenant
    */
   private async resolvePersonLinkForCreate(
     tenantId: string,
@@ -377,7 +376,12 @@ export class PatientService {
     if (localActive) {
       throw new PatientMobileConflictException(dto.mobile);
     }
-    throw new PatientCrossTenantExistsException(existing.id);
+    // The mobile belongs to a Person registered only at OTHER tenants. Rather
+    // than blocking registration / Create Order with a cross-tenant prompt,
+    // link this new patient to the shared platform identity. `resolvePersonId`
+    // only flags `isPatient` on it — the owning tenant's basic details are never
+    // edited (CLAUDE.md §4.4) — so isolation is preserved.
+    return { mode: 'existing', personId: existing.id };
   }
 
   /**

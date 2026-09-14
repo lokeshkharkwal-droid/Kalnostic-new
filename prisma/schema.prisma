@@ -7072,6 +7072,20 @@ model LabReport {
 
   labTestId String? @map("lab_test_id")
 
+  /// Per-report overrides of the test's Notes content (Master Data > Add Test
+  /// > Notes: Useful For / Interpretation / Limitations / Remarks /
+  /// References). NULL (the default for every field on every report) means
+  /// "inherit the test's configured default" — `LabReportService
+  /// .getContentSections` falls back to the linked `LabTest`'s own column
+  /// whenever the matching field here is null. Setting one of these fields
+  /// edits ONLY this report; it must never write back to `LabTest` — that
+  /// would silently change what every other order of the same test shows.
+  usefulFor               String? @map("useful_for")
+  interpretationOfResults String? @map("interpretation_of_results")
+  limitations             String?
+  remarks                 String?
+  references              String?
+
   status LabReportStatus @default(PENDING)
 
   savedAt     DateTime? @map("saved_at")
@@ -7791,6 +7805,13 @@ model PaymentDetails {
 
   totalAmount            Decimal     @default(0) @map("total_amount") @db.Decimal(12, 2)
   orderDiscount          Decimal     @default(0) @map("order_discount") @db.Decimal(12, 2)
+  /// The order-level discount's ORIGINAL input — how it was entered
+  /// (`PERCENT`/`AMOUNT`) and the raw number the user typed — kept alongside the
+  /// computed `orderDiscount` amount so a percentage discount can be recomputed
+  /// against a new item total when the order is edited (add/remove tests). Mirrors
+  /// `OrderItem.discountMode`/`discountValue`.
+  orderDiscountMode  DiscountMode? @map("order_discount_mode")
+  orderDiscountValue Float?        @map("order_discount_value")
   /// Total discount applied to the order = every per-line item discount PLUS the
   /// order-level `orderDiscount` above, in rupees (up to 2 decimal places). A
   /// denormalized runtime rollup (`totalAmount - netAmount`) stored for bill
@@ -8455,13 +8476,17 @@ model TechnicianSetting {
   authoritySignatures Int    @default(1) @map("authority_signatures")
   signatoryBasis      String @default("department") @map("signatory_basis")
 
-  /// Whether the Test Entry screen's "Useful For" / "Interpretation" content
-  /// sections are technician-editable, independent of each other. Both
-  /// default false (matches the pre-existing hardcoded behavior: only
-  /// "Remarks" was ever editable, these two — along with Limitations/
-  /// References, which stay permanently read-only — were not).
+  /// Whether each of the Test Entry screen's 5 Notes content sections is
+  /// technician-editable, independent of each other. All default false.
+  /// Editing any of these (when its toggle allows it) writes a per-report
+  /// override on `LabReport` itself — it never mutates the shared `LabTest`
+  /// master, so a technician's edit only affects this one report (see
+  /// `LabReportService.updateContentSections`).
   isUsefulForEditable      Boolean @default(false) @map("is_useful_for_editable")
   isInterpretationEditable Boolean @default(false) @map("is_interpretation_editable")
+  isLimitationsEditable    Boolean @default(false) @map("is_limitations_editable")
+  isRemarksEditable        Boolean @default(false) @map("is_remarks_editable")
+  isReferencesEditable     Boolean @default(false) @map("is_references_editable")
 
   /// Configurable reason options for the "Adjust TAT" audit-log dropdown
   /// (Turnaround Time Details modal). Soft-validated (frontend-populated
