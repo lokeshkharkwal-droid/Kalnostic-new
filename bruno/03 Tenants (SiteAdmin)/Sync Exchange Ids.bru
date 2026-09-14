@@ -1,0 +1,41 @@
+meta {
+  name: Sync Exchange Ids
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/tenants/sync-exchange-ids
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Assign a stable integer `exchangeTenantId` to every tenant that is missing one,
+  so the external Exchange server can continue per-tenant message/notification
+  counts (it keys counts on the integer `peer_tenant_id`). SiteAdmin only —
+  requires `system:config` (super_owner). No request body.
+
+  Behaviour (single transaction, idempotent):
+  - Seeds the global counter to
+    `GREATEST(counter, MAX(legacyTenantId), MAX(exchangeTenantId))`.
+  - Migrated tenants (a `legacyTenantId` is present) get
+    `exchangeTenantId = legacyTenantId` — their id is never invented.
+  - Native tenants (no `legacyTenantId`) get the next value in the sequence,
+    starting at `MAX(legacyTenantId) + 1`.
+  - Existing `exchangeTenantId` values are NEVER changed; only NULL rows are
+    touched. Safe to call repeatedly — a second call is a no-op.
+
+  This is the callable equivalent of the `pnpm sync:tenant-exchange-id` script.
+  Run it once after migrating tenants; new tenants get their id automatically on
+  create, so routine use is not required.
+
+  Returns in `data`:
+  - `floor` — the high-water mark the counter was seeded to.
+  - `migrated` — count of migrated tenants whose id was mirrored from legacy.
+  - `native` — count of native tenants that received a freshly-allocated id.
+}

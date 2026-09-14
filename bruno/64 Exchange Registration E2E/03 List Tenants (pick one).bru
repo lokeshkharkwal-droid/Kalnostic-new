@@ -1,0 +1,30 @@
+meta {
+  name: 03 List Tenants (pick one)
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/tenants?page=1&limit=1
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+script:post-response {
+  const rows = res.getBody() && res.getBody().data;
+  if (Array.isArray(rows) && rows.length > 0) {
+    bru.setVar("flowExchangeTenantId", rows[0].id);
+    bru.setVar("flowExchangeTenantName", rows[0].name);
+  }
+}
+
+docs {
+  Step 3. Pick a tenant to register — grabs the first tenant from the list and
+  captures `flowExchangeTenantId` (+ `flowExchangeTenantName`) for the next
+  steps. Requires `business:read`. Swap the `limit`/`search` query or set
+  `flowExchangeTenantId` manually to target a specific business.
+}

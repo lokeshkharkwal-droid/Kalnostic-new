@@ -1,0 +1,34 @@
+meta {
+  name: Register Tenant With Exchange
+  type: http
+  seq: 18
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/tenants/{{tenantId}}/register-exchange
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Register ONE tenant as a client on the external Exchange server (`POST /clients`).
+  SiteAdmin only — requires `business:create` (operations_admin+). No request body;
+  the tenant is identified by the `:id` path param (`{{tenantId}}`).
+
+  Idempotent: if the tenant is already registered (`exchangeRegisteredAt` set) the
+  call is a no-op returning `status: "already_registered"`. Reuses the tenant's
+  `exchangeTenantId` as `peer_tenant_id` (never creates a new id).
+
+  Errors:
+  - 404 `TENANT_NOT_FOUND` — no such tenant.
+  - 409 `EXCHANGE_TENANT_ID_MISSING` — tenant has no `exchangeTenantId`; run
+    `sync-exchange-ids` first.
+  - 502 `EXCHANGE_REGISTRATION_FAILED` — the Exchange server rejected the call.
+
+  Returns in `data`: `{ tenantId, exchangeTenantId, status, exchangeClientId }`
+  where `status` is `registered` or `already_registered`.
+}

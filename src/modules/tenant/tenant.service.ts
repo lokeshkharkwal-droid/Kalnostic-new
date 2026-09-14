@@ -28,6 +28,7 @@ import {
   PersonEmailTakenException,
   PersonPhoneTakenException,
 } from '../users/exceptions/users.exceptions';
+import { ExchangeTenantIdService } from './exchange-tenant-id.service';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
 import { UpdateTenantConfigurationDto } from './dto/update-tenant-configuration.dto';
@@ -81,6 +82,7 @@ export class TenantService {
     private readonly cityService: CityService,
     private readonly areaService: AreaService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly exchangeTenantIdService: ExchangeTenantIdService,
   ) {}
 
   /**
@@ -222,6 +224,13 @@ export class TenantService {
 
     try {
       const tenant = await this.prisma.$transaction(async (tx) => {
+        // Migrated tenants keep their legacy id; native tenants get the next
+        // value from the global Exchange counter — atomically, inside this tx.
+        const exchangeTenantId =
+          await this.exchangeTenantIdService.resolveForCreate(
+            tx,
+            options?.legacyTenantId ?? null,
+          );
         const created = await tx.tenant.create({
           data: {
             name: dto.name,
@@ -244,6 +253,7 @@ export class TenantService {
             isActive: true,
             createdBy,
             legacyTenantId: options?.legacyTenantId ?? null,
+            exchangeTenantId,
           },
         });
 

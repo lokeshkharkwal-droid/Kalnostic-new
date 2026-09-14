@@ -4,10 +4,12 @@ import { SecurityModule } from '../security/security.module';
 import { AuthRoleModule } from '../auth-role/auth-role.module';
 import { BranchModule } from '../branch/branch.module';
 import { LocationModule } from '../location/location.module';
+import { ExchangeModule } from '../communication/exchange/exchange.module';
 import { TenantController } from './tenant.controller';
 import { TenantLocaleController } from './tenant-locale.controller';
 import { TenantAccessionSettingsController } from './tenant-accession-settings.controller';
 import { TenantService } from './tenant.service';
+import { ExchangeTenantIdService } from './exchange-tenant-id.service';
 
 /**
  * Tenant feature module. Exports `TenantService` so the auth module can resolve
@@ -23,13 +25,14 @@ import { TenantService } from './tenant.service';
     AuthRoleModule,
     BranchModule,
     LocationModule,
+    ExchangeModule,
   ],
   controllers: [
     TenantController,
     TenantLocaleController,
     TenantAccessionSettingsController,
   ],
-  providers: [TenantService],
-  exports: [TenantService],
+  providers: [TenantService, ExchangeTenantIdService],
+  exports: [TenantService, ExchangeTenantIdService],
 })
 export class TenantModule {}

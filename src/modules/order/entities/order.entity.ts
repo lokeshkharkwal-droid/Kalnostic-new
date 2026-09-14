@@ -275,10 +275,22 @@ export const ORDER_INCLUDE = {
     where: { deletedAt: null },
     include: {
       branchLabTest: {
-        select: { id: true, testName: true, testCode: true, priceMsrp: true },
+        select: {
+          id: true,
+          testName: true,
+          testCode: true,
+          priceMsrp: true,
+          listPrice: true,
+        },
       },
       branchLabPanel: {
-        select: { id: true, panelName: true, panelCode: true, priceMsrp: true },
+        select: {
+          id: true,
+          panelName: true,
+          panelCode: true,
+          priceMsrp: true,
+          listPrice: true,
+        },
       },
     },
   },
@@ -351,6 +363,18 @@ export type OrderWithRelations = Prisma.OrderGetPayload<{
   hasInvoice: boolean;
   /** The invoice number of the active invoice linked to this order, if any. */
   invoiceCode: string | null;
+  /**
+   * Authoritative billing rollups (minor units) — the SAME derivation the
+   * Billings list exposes (`findAll` → `billingRollups` → `computeBillingTotals`):
+   * a PERCENT order-discount is recomputed against the current item total so
+   * these never go stale relative to the items. Consumers (e.g. the Order
+   * Overview) must read these instead of summing the raw payment ledger.
+   */
+  grossAmount: number;
+  discountAmount: number;
+  netAmount: number;
+  /** Money actually collected across the active payment ledger (Σ paidAmount). */
+  paidAmount: number;
 };
 
 /**
