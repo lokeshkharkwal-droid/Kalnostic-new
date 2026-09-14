@@ -140,6 +140,34 @@ export class PatientController {
     });
   }
 
+  /**
+   * Register a patient as the precursor to a quotation (Create Quotation flow).
+   * Identical to `POST /patients`, except on a branch configured for manual
+   * (NONE) UMIDs a system-generated fallback UMID is used instead of requiring
+   * one from the caller — a quotation's patient doesn't need a permanent UMID
+   * yet. Requires the same permission as normal patient registration.
+   */
+  @Post('for-quotation')
+  @RequirePermission(PERMISSION_KEYS.REG_CREATE_PATIENT)
+  @Audit({
+    module: AuditModule.PATIENT,
+    action: AuditAction.CREATE,
+    description: 'Registered a patient (quotation)',
+  })
+  createForQuotation(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Body() dto: CreatePatientDto,
+  ) {
+    return this.patientService.create(
+      tenantId,
+      dto,
+      { branchId: profile.branchId, actorId: personId },
+      { allowAutoUmId: true },
+    );
+  }
+
   /** Fetch one patient (with active medical-history records). */
   @Get(':id')
   findOne(@CurrentTenant() tenantId: string, @Param('id') id: string) {
