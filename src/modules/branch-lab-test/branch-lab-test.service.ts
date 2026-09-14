@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { BranchLabTest, Prisma } from '@prisma/client';
+import { BranchLabTest, DayOfWeek, Prisma, TatUnit } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
@@ -36,6 +36,13 @@ export interface BranchLabTestOption {
   price: number;
   sampleType: string | null;
   isFasting: boolean;
+  scheduleDays: DayOfWeek[];
+  scheduleFrom: string | null;
+  scheduleTo: string | null;
+  tatMinValue: number | null;
+  tatMinUnit: TatUnit | null;
+  tatMaxValue: number | null;
+  tatMaxUnit: TatUnit | null;
 }
 
 /** The scope/actor a source Master Data test is materialized into. */
@@ -508,6 +515,13 @@ export class BranchLabTestService {
       testName: true,
       listPrice: true,
       configSnapshot: true,
+      scheduleDays: true,
+      scheduleFrom: true,
+      scheduleTo: true,
+      tatMinValue: true,
+      tatMinUnit: true,
+      tatMaxValue: true,
+      tatMaxUnit: true,
     } as const;
     const orderBy = { testName: 'asc' } as const;
     const toOption = (r: {
@@ -515,6 +529,13 @@ export class BranchLabTestService {
       testName: string;
       listPrice: number;
       configSnapshot: Prisma.JsonValue;
+      scheduleDays: DayOfWeek[];
+      scheduleFrom: string | null;
+      scheduleTo: string | null;
+      tatMinValue: number | null;
+      tatMinUnit: TatUnit | null;
+      tatMaxValue: number | null;
+      tatMaxUnit: TatUnit | null;
     }): BranchLabTestOption => {
       const sample = (
         r.configSnapshot as unknown as BranchLabTestConfigSnapshot
@@ -525,6 +546,13 @@ export class BranchLabTestService {
         price: r.listPrice,
         sampleType: sample?.sampleType ?? null,
         isFasting: sample?.isFastingRequired ?? false,
+        scheduleDays: r.scheduleDays,
+        scheduleFrom: r.scheduleFrom,
+        scheduleTo: r.scheduleTo,
+        tatMinValue: r.tatMinValue,
+        tatMinUnit: r.tatMinUnit,
+        tatMaxValue: r.tatMaxValue,
+        tatMaxUnit: r.tatMaxUnit,
       };
     };
 
