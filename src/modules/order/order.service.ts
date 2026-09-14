@@ -1660,8 +1660,19 @@ export class OrderService {
     // Invoice-lock status: exposed on every composed-order response (get-one,
     // create, update, cancel, …), all of which funnel through here.
     const invoiceCodes = await this.invoicedOrderCodes(tenantId, [id]);
+    // Authoritative billing rollups — the SAME derivation the Billings list uses
+    // (`findAll` → `billingRollups`), so the detail response (and thus the Order
+    // Overview) always matches the list. Without these, consumers fall back to a
+    // raw Σ of the payment ledger, which goes stale relative to the items after a
+    // test is added/removed.
+    const { grossAmount, discountAmount, netAmount, paidAmount } =
+      this.billingRollups(order.payments, order.items);
     return {
       ...order,
+      grossAmount,
+      discountAmount,
+      netAmount,
+      paidAmount,
       hasInvoice: invoiceCodes.has(id),
       invoiceCode: invoiceCodes.get(id) ?? null,
     };
@@ -2140,6 +2151,56 @@ export class OrderService {
     const net = sum((p) => p.netAmount);
     const paid = sum((p) => p.paidAmount);
     return { gross, discount, net, paid, balance: net - paid };
+  }
+
+  /**
+   * Authoritative billing rollups for one order — the SINGLE derivation shared
+   * by the Billings list (`findAll`) and every composed get/create/update/cancel
+   * response (`findById`), so the list row and the detail response can never
+   * diverge. `gross`/`discount`/`net` come from {@link computeBillingTotals},
+   * which recomputes a PERCENT order-discount against the *current* item total
+   * (correcting a net frozen on a now-stale ledger after tests are added/removed);
+   * `paidAmount` is the money actually collected across the ledger.
+   * @param payments the order's active payment rows (Decimal money fields)
+   * @param items the order's active item rows (Decimal money fields)
+   */
+  private billingRollups(
+    payments: Array<{
+      totalAmount: Prisma.Decimal;
+      orderDiscount: Prisma.Decimal;
+      netAmount: Prisma.Decimal;
+      orderDiscountMode: DiscountMode | null;
+      orderDiscountValue: number | null;
+      paidAmount: Prisma.Decimal;
+    }>,
+    items: Array<{ unitPrice: number; discount: Prisma.Decimal }>,
+  ): {
+    grossAmount: number;
+    discountAmount: number;
+    netAmount: number;
+    paidAmount: number;
+  } {
+    const { gross, discount, net } = computeBillingTotals(
+      payments.map((p) => ({
+        totalAmount: toNum(p.totalAmount),
+        orderDiscount: toNum(p.orderDiscount),
+        netAmount: toNum(p.netAmount),
+        orderDiscountMode: p.orderDiscountMode ?? null,
+        orderDiscountValue:
+          p.orderDiscountValue != null ? toNum(p.orderDiscountValue) : null,
+      })),
+      items.map((it) => ({
+        unitPrice: toNum(it.unitPrice),
+        discount: toNum(it.discount),
+      })),
+    );
+    const paidAmount = payments.reduce((s, p) => s + toNum(p.paidAmount), 0);
+    return {
+      grossAmount: gross,
+      discountAmount: discount,
+      netAmount: net,
+      paidAmount,
+    };
   }
 
   /**
@@ -3344,31 +3405,14 @@ export class OrderService {
       this.invoicedOrderCodes(tenantId, orderIds),
     ]);
     const data: OrderListRow[] = rows.map((r) => {
-      // Authoritative gross/discount/net: derived from the persisted item prices
-      // and the persisted order-discount mode/value so that a PERCENT discount
-      // is recomputed against the *current* item total (not a stale frozen amount).
-      // Legacy orders (no mode/value) retain the previous Σ-payment behaviour.
-      const {
-        gross: grossAmount,
-        discount: discountAmount,
-        net: netAmount,
-      } = computeBillingTotals(
-        r.payments.map((p) => ({
-          totalAmount: toNum(p.totalAmount),
-          orderDiscount: toNum(p.orderDiscount),
-          netAmount: toNum(p.netAmount),
-          orderDiscountMode: p.orderDiscountMode ?? null,
-          orderDiscountValue: p.orderDiscountValue != null ? toNum(p.orderDiscountValue) : null,
-        })),
-        r.items.map((it) => ({
-          unitPrice: toNum(it.unitPrice),
-          discount: toNum(it.discount),
-        })),
-      );
-      const paidAmount = r.payments.reduce(
-        (s, p) => s + toNum(p.paidAmount),
-        0,
-      );
+      // Authoritative gross/discount/net/paid via the shared rollup helper —
+      // derived from the persisted item prices and the persisted order-discount
+      // mode/value so that a PERCENT discount is recomputed against the *current*
+      // item total (not a stale frozen amount). Legacy orders (no mode/value)
+      // retain the previous Σ-payment behaviour. Detail responses share this
+      // exact derivation (see `findById`), so the list and detail never diverge.
+      const { grossAmount, discountAmount, netAmount, paidAmount } =
+        this.billingRollups(r.payments, r.items);
       const tdsAmount = r.payments.reduce(
         (s, p) => s + toNum(p.tdsDeduction),
         0,

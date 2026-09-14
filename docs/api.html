@@ -119,6 +119,9 @@
   <a href="#tenant-get">GET /siteadmin/tenants/:id</a>
   <a href="#tenant-update">PATCH /siteadmin/tenants/:id</a>
   <a href="#tenant-admin">GET /siteadmin/tenants/:id/admin</a>
+  <a href="#tenant-sync-exchange-ids">POST /siteadmin/tenants/sync-exchange-ids</a>
+  <a href="#tenant-register-exchange">POST /siteadmin/tenants/register-exchange</a>
+  <a href="#tenant-register-exchange-one">POST /siteadmin/tenants/:id/register-exchange</a>
   <a href="#tenant-adminpw">POST .../admin/reset-password</a>
   <a href="#tenant-suspend">PATCH .../:id/suspend</a>
   <a href="#tenant-reactivate">PATCH .../:id/reactivate</a>
@@ -462,6 +465,11 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>POST /siteadmin/tenants/:id/admin/reset-password</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:create</code> · OPERATIONS_ADMIN+</td></tr>
   <tr><td>PATCH /siteadmin/tenants/:id/suspend</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:suspend</code> · OPERATIONS_ADMIN+</td></tr>
   <tr><td>PATCH /siteadmin/tenants/:id/reactivate</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:reactivate</code> · OPERATIONS_ADMIN+</td></tr>
+  <tr><td>POST /siteadmin/tenants/sync-exchange-ids</td><td>SiteAdmin JWT</td><td><b>required</b> <code>system:config</code> · SUPER_OWNER</td></tr>
+  <tr><td>POST /siteadmin/tenants/register-exchange</td><td>SiteAdmin JWT</td><td><b>required</b> <code>system:config</code> · SUPER_OWNER</td></tr>
+  <tr><td>POST /siteadmin/tenants/:id/register-exchange</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:create</code> · OPERATIONS_ADMIN+</td></tr>
+  <tr><td>GET /siteadmin/tenants/:id/exchange-status</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:read</code> · OPERATIONS_ADMIN+</td></tr>
+  <tr><td>GET /siteadmin/tenants/:id/exchange-usage</td><td>SiteAdmin JWT</td><td><b>required</b> <code>business:read</code> · OPERATIONS_ADMIN+</td></tr>
   <tr><td>POST /siteadmin/lab-tests</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template)</td></tr>
   <tr><td>GET /siteadmin/lab-tests</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global templates)</td></tr>
   <tr><td>GET /siteadmin/lab-tests/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global template)</td></tr>

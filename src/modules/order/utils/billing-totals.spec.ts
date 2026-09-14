@@ -70,10 +70,7 @@ function item(unitPrice: number, discount = 0): BillingItemRow {
 describe('computeBillingTotals — legacy (no mode/value)', () => {
   it('basic single-payment, no line discounts', () => {
     // gross = net + discount = 800 + 100 = 900 ✓
-    const result = computeBillingTotals(
-      [pay(900, 100, 800)],
-      [item(900)],
-    );
+    const result = computeBillingTotals([pay(900, 100, 800)], [item(900)]);
     expect(result.net).toBe(800);
     expect(result.discount).toBe(100);
     expect(result.gross).toBe(900);
@@ -87,8 +84,8 @@ describe('computeBillingTotals — legacy (no mode/value)', () => {
       [item(1000, 50)], // unitPrice 1000 but we have line discount 50
     );
     expect(result.discount).toBe(150); // 100 orderDiscount + 50 lineDiscount
-    expect(result.net).toBe(800);    // unchanged — Σ netAmount (already includes line discount)
-    expect(result.gross).toBe(950);  // net + discount
+    expect(result.net).toBe(800); // unchanged — Σ netAmount (already includes line discount)
+    expect(result.gross).toBe(950); // net + discount
   });
 
   it('multi-payment rows are summed', () => {
@@ -104,10 +101,7 @@ describe('computeBillingTotals — legacy (no mode/value)', () => {
   });
 
   it('zero-value order (fully discounted)', () => {
-    const result = computeBillingTotals(
-      [pay(500, 500, 0)],
-      [item(500)],
-    );
+    const result = computeBillingTotals([pay(500, 500, 0)], [item(500)]);
     expect(result.net).toBe(0);
     expect(result.discount).toBe(500);
     expect(result.gross).toBe(500);
@@ -131,9 +125,9 @@ describe('computeBillingTotals — PERCENT recomputation', () => {
       ],
       [item(700)], // items total 700 (one test removed)
     );
-    expect(result.discount).toBe(70);   // recomputed: 10% of 700
-    expect(result.net).toBe(630);       // 600 + (100 − 70)
-    expect(result.gross).toBe(700);     // net + discount = 630 + 70
+    expect(result.discount).toBe(70); // recomputed: 10% of 700
+    expect(result.net).toBe(630); // 600 + (100 − 70)
+    expect(result.gross).toBe(700); // net + discount = 630 + 70
   });
 
   it('PERCENT discount with line discounts included in total discount', () => {
@@ -152,7 +146,7 @@ describe('computeBillingTotals — PERCENT recomputation', () => {
       ],
       [item(700, 50)],
     );
-    expect(result.discount).toBe(120);  // 50 line + 70 order
+    expect(result.discount).toBe(120); // 50 line + 70 order
     expect(result.net).toBe(630);
     expect(result.gross).toBe(750);
   });

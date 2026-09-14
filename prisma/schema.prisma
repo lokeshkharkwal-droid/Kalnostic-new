@@ -891,6 +891,22 @@ model Tenant {
   /// idempotent data migration + traceability. Null for natively-created tenants.
   legacyTenantId Int? @unique @map("legacy_tenant_id")
 
+  /// Integer id sent to the Exchange server as `peer_tenant_id` so per-tenant
+  /// message counts continue. Equals `legacyTenantId` for migrated tenants; a
+  /// fresh value from the `exchange_tenant_id` PlatformCounter for native ones.
+  exchangeTenantId Int? @unique @map("exchange_tenant_id")
+
+  /// When this tenant was registered as a client on the external Exchange server
+  /// (POST /clients). NULL = not yet registered — this is the idempotency guard
+  /// for the SiteAdmin register-exchange flow.
+  exchangeRegisteredAt DateTime? @map("exchange_registered_at")
+  /// Client id returned by the Exchange on successful registration
+  /// (`data.original.id`). NULL until registered.
+  exchangeClientId String? @map("exchange_client_id")
+  /// Raw `data.original` payload from the Exchange registration response, kept
+  /// for traceability. NULL until registered.
+  exchangeRegistrationMeta Json? @map("exchange_registration_meta")
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -901,6 +917,17 @@ model Tenant {
   @@index([areaId])
   @@index([deletedAt])
   @@map("tenants")
+}
+
+/// Platform-level (no tenantId, no RLS) monotonic counters spanning all tenants.
+/// One row per logical sequence, keyed by `key`. `value` = last-assigned value.
+/// Used by ExchangeTenantIdService to allocate `Tenant.exchangeTenantId`.
+model PlatformCounter {
+  key       String   @id
+  value     Int      @default(0)
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("platform_counters")
 }
 
 /// Business Configuration — a 1:1 platform-level extension of a Tenant holding

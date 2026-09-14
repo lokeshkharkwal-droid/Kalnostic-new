@@ -1,0 +1,22 @@
+meta {
+  name: 05 Exchange Status
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/tenants/{{flowExchangeTenantId}}/exchange-status
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Step 5. Read the tenant's client record on the Exchange
+  (`GET /clients/show?business_id=<exchangeTenantId>`). Requires `business:read`.
+  Returns the Exchange's `data.original` record in `data`, or `null` if the
+  Exchange has no client for this tenant yet.
+}
