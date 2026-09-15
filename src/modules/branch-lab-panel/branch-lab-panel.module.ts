@@ -6,6 +6,7 @@ import { LabTestModule } from '../lab-test/lab-test.module';
 import { BranchLabTestModule } from '../branch-lab-test/branch-lab-test.module';
 import { BranchLabTestListModule } from '../branch-lab-test-list/branch-lab-test-list.module';
 import { BranchLabPanelListModule } from '../branch-lab-panel-list/branch-lab-panel-list.module';
+import { BranchModule } from '../branch/branch.module';
 import { BranchLabPanelController } from './branch-lab-panel.controller';
 import { BranchLabPanelOptionsController } from './branch-lab-panel-options.controller';
 import { BranchLabPanelService } from './branch-lab-panel.service';
@@ -16,7 +17,9 @@ import { BranchLabPanelService } from './branch-lab-panel.service';
  * branch's Lab Test List (via `BranchLabTestService`). Imports `MasterDataModule`
  * (resolve the branch's master data), `LabPanelModule`/`LabTestModule` (compose
  * source panels + tests), and `BranchLabTestModule` (materialize member-test
- * copies) — all via DI (rule #3). One-way dependencies, so no cycle.
+ * copies) — all via DI (rule #3). One-way dependencies, so no cycle. Imports
+ * `BranchModule` so the controller's Business Admin read route can validate a
+ * caller-supplied `branchId` belongs to the tenant.
  */
 @Module({
   imports: [
@@ -27,6 +30,7 @@ import { BranchLabPanelService } from './branch-lab-panel.service';
     BranchLabTestModule,
     BranchLabTestListModule,
     BranchLabPanelListModule,
+    BranchModule,
   ],
   controllers: [BranchLabPanelOptionsController, BranchLabPanelController],
   providers: [BranchLabPanelService],

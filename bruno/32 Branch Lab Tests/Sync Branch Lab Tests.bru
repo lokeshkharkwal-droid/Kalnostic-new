@@ -19,7 +19,9 @@ auth:bearer {
 }
 
 body:json {
-  {}
+  {
+    "listId": "{{branchLabTestListId}}"
+  }
 }
 
 tests {
@@ -34,8 +36,14 @@ tests {
 }
 
 docs {
-  Re-snapshot branch lab tests from their source Master Data tests. Send `{}` to
-  sync **all** copies, or `{ "branchLabTestIds": ["<id>", ...] }` to sync a subset.
+  Re-snapshot branch lab tests from their source Master Data tests, scoped to
+  one pricing list. Send `{}` to sync **all** copies in the target list, or
+  add `"branchLabTestIds": ["<id>", ...]` to sync a subset.
+
+  `listId` (optional) targets a specific `BranchLabTestList` — must belong to
+  the caller's branch (404 `BRANCH_LAB_TEST_LIST_NOT_FOUND` otherwise). Omit
+  it to sync the branch's default **Walk-in** list, which is always ensured to
+  exist first regardless of which list `listId` targets.
 
   **Overwrite semantics:** each copy's parent fields **and** its clinical
   `configSnapshot` (samples, result params, reference ranges/values) are replaced

@@ -106,8 +106,9 @@ export class BranchLabPanelService {
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT)
    * @param actorId person id recorded as created/updated-by (or null)
-   * @param dto the source lab-panel ids to import
+   * @param dto the source lab-panel ids to import, plus an optional target `listId`
    * @throws MasterDataNotMappedToBranchException if the branch has no master data
+   * @throws BranchLabPanelListNotFoundException if `dto.listId` doesn't belong to this branch
    */
   async importFromMasterData(
     tenantId: string,
@@ -119,13 +120,21 @@ export class BranchLabPanelService {
       branchId,
       tenantId,
     );
-    // Import lands in the branch's default (Walk-in) panel list; member tests are
-    // materialized into the default (Walk-in) test list (Phase 1).
-    const walkInPanel = await this.panelListService.getOrCreateDefaultList(
+    // The default (Walk-in) panel list is always ensured first, same as tests.
+    const defaultPanelList = await this.panelListService.getOrCreateDefaultList(
       tenantId,
       branchId,
       actorId,
     );
+    // Panel lands in the given list, or the just-ensured default (Walk-in)
+    // list when omitted.
+    const targetPanelList = dto.listId
+      ? await this.panelListService.findById(dto.listId, tenantId, branchId)
+      : defaultPanelList;
+    // Member tests always materialize into the (Walk-in) test list, regardless
+    // of which panel list the panel itself lands in — panel lists and test
+    // lists are separate, unmapped list types, so there is no other test list
+    // to target.
     const walkInTest = await this.testListService.getOrCreateDefaultList(
       tenantId,
       branchId,
@@ -141,13 +150,14 @@ export class BranchLabPanelService {
       select: { id: true },
     });
     const validIds = validPanels.map((p) => p.id);
-    // Existing Walk-in panels for these sources are UPDATED (re-snapshot + rebuild
-    // members); new ones are ADDED — never duplicated (Phase 1).
+    // Existing panels in the target list for these sources are UPDATED
+    // (re-snapshot + rebuild members); new ones are ADDED — never duplicated
+    // (Phase 1).
     const existing = await this.prisma.branchLabPanel.findMany({
       where: {
         tenantId,
         branchId,
-        listId: walkInPanel.id,
+        listId: targetPanelList.id,
         deletedAt: null,
         sourceLabPanelId: { in: validIds },
       },
@@ -206,7 +216,7 @@ export class BranchLabPanelService {
             tenantId,
             branchId,
             sourceMasterDataId: masterData.id,
-            listId: walkInPanel.id,
+            listId: targetPanelList.id,
             actorId,
           }),
           members,
@@ -269,8 +279,10 @@ export class BranchLabPanelService {
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT)
    * @param actorId person id recorded as updated-by (or null)
-   * @param dto optional subset of branch-lab-panel ids to sync (omit = all)
+   * @param dto optional subset of branch-lab-panel ids to sync (omit = all) and
+   *   an optional target `listId` (omit = the default Walk-in panel list)
    * @throws MasterDataNotMappedToBranchException if the branch has no master data
+   * @throws BranchLabPanelListNotFoundException if `dto.listId` doesn't belong to this branch
    */
   async syncFromMasterData(
     tenantId: string,
@@ -282,13 +294,17 @@ export class BranchLabPanelService {
       branchId,
       tenantId,
     );
-    // Sync only refreshes the default (Walk-in) panel list — the one connected to
-    // Master Data. Non-default lists are managed independently.
-    const walkInPanel = await this.panelListService.getOrCreateDefaultList(
+    // The default (Walk-in) panel list is always ensured first, same as import.
+    const defaultPanelList = await this.panelListService.getOrCreateDefaultList(
       tenantId,
       branchId,
       actorId,
     );
+    const targetPanelList = dto.listId
+      ? await this.panelListService.findById(dto.listId, tenantId, branchId)
+      : defaultPanelList;
+    // Member tests always refresh into the (Walk-in) test list — see the same
+    // note in importFromMasterData.
     const walkInTest = await this.testListService.getOrCreateDefaultList(
       tenantId,
       branchId,
@@ -297,7 +313,7 @@ export class BranchLabPanelService {
     const where: Prisma.BranchLabPanelWhereInput = {
       tenantId,
       branchId,
-      listId: walkInPanel.id,
+      listId: targetPanelList.id,
       deletedAt: null,
       // Only imported originals are re-snapshotted; user duplicates keep their edits.
       isDuplicate: false,
@@ -470,14 +486,60 @@ export class BranchLabPanelService {
       }),
       this.prisma.branchLabPanel.count({ where }),
     ]);
-    const sampleSummaries = await this.resolveSampleSummaries(
-      data.map((p) => p.id),
-    );
+    const [sampleSummaries, deptNames, catNames] = await Promise.all([
+      this.resolveSampleSummaries(data.map((p) => p.id)),
+      this.resolveClassificationNames(
+        'department',
+        tenantId,
+        data.map((p) => p.departmentId),
+      ),
+      this.resolveClassificationNames(
+        'category',
+        tenantId,
+        data.map((p) => p.categoryId),
+      ),
+    ]);
     const enriched: BranchLabPanelListRow[] = data.map((p) => ({
       ...p,
       sampleSummary: sampleSummaries.get(p.id) ?? null,
+      departmentName: this.nameOfClassification(deptNames, p.departmentId),
+      categoryName: this.nameOfClassification(catNames, p.categoryId),
     }));
     return { data: enriched, total, page, limit };
+  }
+
+  /**
+   * Resolve a set of classification ids to a `id → name` map (tenant-scoped).
+   * Mirrors `BranchLabTestService`'s private helper of the same shape.
+   */
+  private async resolveClassificationNames(
+    model: 'department' | 'category',
+    tenantId: string,
+    idsRaw: (string | null)[],
+  ): Promise<Map<string, string>> {
+    const ids = [...new Set(idsRaw.filter((x): x is string => Boolean(x)))];
+    const map = new Map<string, string>();
+    if (ids.length === 0) {
+      return map;
+    }
+    const where = { id: { in: ids }, tenantId };
+    const select = { id: true, name: true };
+    const rows =
+      model === 'department'
+        ? await this.prisma.department.findMany({ where, select })
+        : await this.prisma.category.findMany({ where, select });
+    for (const r of rows) {
+      map.set(r.id, r.name);
+    }
+    return map;
+  }
+
+  /** Look up a resolved classification name by (possibly null) id. */
+  private nameOfClassification(
+    map: Map<string, string>,
+    id: string | null,
+  ): string | null {
+    return id ? (map.get(id) ?? null) : null;
   }
 
   /**

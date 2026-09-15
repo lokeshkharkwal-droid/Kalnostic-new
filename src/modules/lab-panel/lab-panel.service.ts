@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { DataSource, LabPanel, Prisma } from '@prisma/client';
+import { DataSource, LabPanel, LabPanelTest, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
@@ -16,6 +16,7 @@ import { LabPanelTestDto } from './dto/lab-panel-test.dto';
 import {
   ClassificationRef,
   LabPanelListRow,
+  LabPanelTestWithDetails,
   LabPanelWithRefs,
   LabPanelWithTests,
 } from './entities/lab-panel.entity';
@@ -154,7 +155,8 @@ export class LabPanelService {
     if (!withRefs) {
       throw new LabPanelNotFoundException(panelId);
     }
-    return { ...withRefs, tests };
+    const testsWithDetails = await this.attachTestDetails(tenantId, tests);
+    return { ...withRefs, tests: testsWithDetails };
   }
 
   /**
@@ -710,7 +712,13 @@ export class LabPanelService {
       where: { labPanelId: panelId, tenantId: null, deletedAt: null },
       orderBy: { sortOrder: 'asc' },
     });
-    return { ...panel, category: null, department: null, tests };
+    const testsWithDetails = await this.attachTestDetails(null, tests);
+    return {
+      ...panel,
+      category: null,
+      department: null,
+      tests: testsWithDetails,
+    };
   }
 
   /**
@@ -1391,6 +1399,68 @@ export class LabPanelService {
     id: string | null,
   ): ClassificationRef | null {
     return id ? (map.get(id) ?? null) : null;
+  }
+
+  /**
+   * Enrich a panel's included-test rows with their referenced `LabTest`'s
+   * display/pricing details (batched, no N+1). `labTestId` is a logical
+   * reference (no Prisma relation), so a test that no longer resolves (e.g.
+   * hard-deleted) falls back to `null` fields rather than dropping the row —
+   * the panel composition itself is preserved even if a referenced test is
+   * gone.
+   */
+  private async attachTestDetails(
+    tenantId: string | null,
+    tests: LabPanelTest[],
+  ): Promise<LabPanelTestWithDetails[]> {
+    if (tests.length === 0) {
+      return [];
+    }
+    const ids = [...new Set(tests.map((t) => t.labTestId))];
+    const [labTests, samples] = await Promise.all([
+      this.prisma.labTest.findMany({
+        where: { id: { in: ids }, tenantId },
+        select: {
+          id: true,
+          testName: true,
+          testCode: true,
+          priceMsrp: true,
+          priceOriginal: true,
+          priceMinimum: true,
+          priceMaximum: true,
+          discountCapPct: true,
+        },
+      }),
+      // `LabTestSample` has no Prisma relation back to `LabTest` (logical ref
+      // only, same as `LabPanelTest.labTestId`) — resolved as a second batched
+      // query, preferring each test's default sample when it has one.
+      this.prisma.labTestSample.findMany({
+        where: { labTestId: { in: ids }, tenantId, deletedAt: null },
+        orderBy: { isDefault: 'desc' },
+        select: { labTestId: true, sampleType: true },
+      }),
+    ]);
+    const testMap = new Map(labTests.map((r) => [r.id, r]));
+    const sampleMap = new Map<string, string | null>();
+    for (const s of samples) {
+      if (!sampleMap.has(s.labTestId)) {
+        sampleMap.set(s.labTestId, s.sampleType);
+      }
+    }
+    return tests.map((t) => {
+      const src = testMap.get(t.labTestId);
+      return {
+        ...t,
+        testName: src?.testName ?? null,
+        testCode: src?.testCode ?? null,
+        sampleType: sampleMap.get(t.labTestId) ?? null,
+        priceMsrp: src?.priceMsrp ?? null,
+        priceOriginal: src?.priceOriginal ?? null,
+        priceMinimum: src?.priceMinimum ?? null,
+        priceMaximum: src?.priceMaximum ?? null,
+        discountCapPct: src?.discountCapPct ?? null,
+      };
+    });
   }
 
   /**
