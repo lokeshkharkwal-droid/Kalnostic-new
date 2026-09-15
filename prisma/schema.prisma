@@ -239,6 +239,7 @@ enum ShiftName {
   AFTERNOON
   EVENING
   NIGHT
+  DAY_SHIFT
 }
 
 /// Which functional area an audit event belongs to (the "Module" column).

@@ -383,9 +383,11 @@ export class DashboardService {
       FRIDAY: 'Friday',
       SATURDAY: 'Saturday',
     };
-    const shiftKey: Record<
-      ShiftName,
-      'morningShift' | 'afternoonShift' | 'eveningShift' | 'nightShift'
+    const shiftKey: Partial<
+      Record<
+        ShiftName,
+        'morningShift' | 'afternoonShift' | 'eveningShift' | 'nightShift'
+      >
     > = {
       MORNING: 'morningShift',
       AFTERNOON: 'afternoonShift',
@@ -405,12 +407,14 @@ export class DashboardService {
       for (const shift of shifts) {
         if (!shift.activeDays.includes(day)) continue;
         row.status = 'Open';
+        const key = shiftKey[shift.shiftName];
+        if (!key) continue; // shift types without a dedicated dashboard column (e.g. DAY_SHIFT) don't populate a cell here
         const timeRange = `${this.formatClockTime(shift.startTime)} - ${this.formatClockTime(shift.endTime)}`;
         const breakRange =
           shift.breakStartTime && shift.breakEndTime
             ? ` (Break: ${this.formatClockTime(shift.breakStartTime)} - ${this.formatClockTime(shift.breakEndTime)})`
             : '';
-        row[shiftKey[shift.shiftName]] = `${timeRange}${breakRange}`;
+        row[key] = `${timeRange}${breakRange}`;
       }
       return row;
     });
