@@ -33,7 +33,10 @@ import {
 import { MasterDataService } from '../master-data/master-data.service';
 import { CreateLabTestDto } from './dto/create-lab-test.dto';
 import { UpdateLabTestDto } from './dto/update-lab-test.dto';
-import { ListLabTestsDto } from './dto/list-lab-tests.dto';
+import {
+  BrowseLabTestTemplatesDto,
+  ListLabTestsDto,
+} from './dto/list-lab-tests.dto';
 import { LabTestResultParamDto } from './dto/lab-test-result-param.dto';
 import { LabTestReferenceRangeDto } from './dto/lab-test-reference-range.dto';
 import { AddLabTestVersionDto } from './dto/add-lab-test-version.dto';
@@ -592,19 +595,115 @@ export class LabTestService {
     const limit = query.limit ?? 20;
 
     const where = await this.buildListWhere(masterDataId, tenantId, query);
+    const sort = this.buildListOrderBy(query.sortBy, query.sortOrder);
+
+    // Derived sorts (child-row counts) can't be expressed as a Prisma `orderBy`,
+    // so sort the whole filtered set by the computed value first, then paginate.
+    if (sort.kind === 'derived') {
+      const tests = await this.sortByChildCount(
+        where,
+        tenantId,
+        sort.field,
+        sort.dir,
+        page,
+        limit,
+      );
+      const total = await this.prisma.labTest.count({ where });
+      const data = await this.projectListRows(view, tenantId, tests);
+      return { data, total, page, limit };
+    }
 
     const [tests, total] = await Promise.all([
       this.prisma.labTest.findMany({
         where,
         skip: (page - 1) * limit,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy: sort.orderBy,
       }),
       this.prisma.labTest.count({ where }),
     ]);
 
     const data = await this.projectListRows(view, tenantId, tests);
     return { data, total, page, limit };
+  }
+
+  /**
+   * Resolve a listing `sortBy`/`sortOrder` (`1` asc / `-1` desc) into either a
+   * Prisma `orderBy` (scalar column or the `department` relation name) or a
+   * `derived` marker for child-count sorts handled in-memory. Falls back to
+   * `createdAt desc` when no sort is requested.
+   */
+  private buildListOrderBy(
+    sortBy: ListLabTestsDto['sortBy'],
+    sortOrder: ListLabTestsDto['sortOrder'],
+  ):
+    | { kind: 'prisma'; orderBy: Prisma.LabTestOrderByWithRelationInput }
+    | {
+        kind: 'derived';
+        field: 'parametersCount' | 'samplesCount';
+        dir: 'asc' | 'desc';
+      } {
+    const dir: 'asc' | 'desc' = sortOrder === -1 ? 'desc' : 'asc';
+    if (!sortBy) {
+      return { kind: 'prisma', orderBy: { createdAt: 'desc' } };
+    }
+    if (sortBy === 'departmentName') {
+      return { kind: 'prisma', orderBy: { department: { name: dir } } };
+    }
+    if (sortBy === 'parametersCount' || sortBy === 'samplesCount') {
+      return { kind: 'derived', field: sortBy, dir };
+    }
+    return { kind: 'prisma', orderBy: { [sortBy]: dir } };
+  }
+
+  /**
+   * Sort the whole filtered set of lab tests by an active child-row count
+   * (`parametersCount` → result params, `samplesCount` → samples), then return
+   * the requested page's rows in sorted order. Ties break by newest-first so
+   * paging is stable. Runs before pagination so the count order is global.
+   */
+  private async sortByChildCount(
+    where: Prisma.LabTestWhereInput,
+    tenantId: string | null,
+    field: 'parametersCount' | 'samplesCount',
+    dir: 'asc' | 'desc',
+    page: number,
+    limit: number,
+  ): Promise<LabTest[]> {
+    const all = await this.prisma.labTest.findMany({
+      where,
+      select: { id: true, createdAt: true },
+    });
+    if (all.length === 0) {
+      return [];
+    }
+    const counts = await this.countByTest(
+      field === 'samplesCount' ? 'labTestSample' : 'labTestResultParam',
+      tenantId,
+      all.map((t) => t.id),
+    );
+    const factor = dir === 'asc' ? 1 : -1;
+    const pageIds = all
+      .map((t) => ({
+        id: t.id,
+        createdAt: t.createdAt,
+        value: counts.get(t.id) ?? 0,
+      }))
+      .sort((a, b) =>
+        a.value !== b.value
+          ? (a.value - b.value) * factor
+          : b.createdAt.getTime() - a.createdAt.getTime(),
+      )
+      .slice((page - 1) * limit, page * limit)
+      .map((x) => x.id);
+
+    const rows = await this.prisma.labTest.findMany({
+      where: { id: { in: pageIds } },
+    });
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    return pageIds
+      .map((id) => byId.get(id))
+      .filter((r): r is LabTest => r !== undefined);
   }
 
   // ── Listing projection ────────────────────────────────────────────────────────
@@ -1869,7 +1968,7 @@ export class LabTestService {
    * @param query view + search + status + pagination
    */
   async findAllTemplates(
-    query: ListLabTestsDto = {},
+    query: BrowseLabTestTemplatesDto = {},
     tenantId?: string,
   ): Promise<PaginatedResult<ImportableTemplateRow>> {
     const view = query.view ?? LabTestListView.DEFAULT;

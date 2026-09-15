@@ -1865,7 +1865,10 @@ export class LabReportService {
     // LabTestReferenceRange rows (only LabTestReferenceValue, e.g. Protein/
     // Albumin's "Negative"), so it fell into the `else` branch below and
     // always came back empty, same root cause as resolveReferenceRange.
-    if (param.resultType === 'QUALITATIVE' || param.resultType === 'SEMI_QUANTITATIVE') {
+    if (
+      param.resultType === 'QUALITATIVE' ||
+      param.resultType === 'SEMI_QUANTITATIVE'
+    ) {
       const values = await this.prisma.labTestReferenceValue.findMany({
         where: { paramId: param.id, deletedAt: null, method: { not: null } },
         select: { method: true },
@@ -1927,7 +1930,10 @@ export class LabReportService {
     // Protein/Albumin) fell through to the numeric-range branch below,
     // matched nothing, and silently resolved to null forever. Both non-
     // numeric result types share the same reference-value lookup.
-    if (param.resultType === 'QUALITATIVE' || param.resultType === 'SEMI_QUANTITATIVE') {
+    if (
+      param.resultType === 'QUALITATIVE' ||
+      param.resultType === 'SEMI_QUANTITATIVE'
+    ) {
       const candidates = await this.prisma.labTestReferenceValue.findMany({
         where: {
           paramId: param.id,

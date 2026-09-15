@@ -69,6 +69,16 @@ export const BRANCH_MODULES: Readonly<Record<string, readonly string[]>> = {
     'branch_admin',
     'business_admin',
   ],
-  COLLECTION_CENTER: [],
+  COLLECTION_CENTER: [
+    'registration',
+    'accession',
+    'lab_operations',
+    'finance',
+    'phlebotomist',
+    'inventory',
+    'sales',
+    'branch_admin',
+    'business_admin',
+  ],
   BLOOD_BANK: [],
 };
