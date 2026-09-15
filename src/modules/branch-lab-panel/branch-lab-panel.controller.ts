@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { BranchLabPanelService } from './branch-lab-panel.service';
+import { BranchService } from '../branch/branch.service';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
@@ -19,6 +20,7 @@ import { Audit } from '../../common/decorators/audit.decorator';
 import { ImportBranchLabPanelsDto } from './dto/import-branch-lab-panels.dto';
 import { SyncBranchLabPanelsDto } from './dto/sync-branch-lab-panels.dto';
 import { ListBranchLabPanelsQueryDto } from './dto/list-branch-lab-panels-query.dto';
+import { ListBranchLabPanelsForBranchQueryDto } from './dto/list-branch-lab-panels-for-branch-query.dto';
 import { UpdateBranchLabPanelDto } from './dto/update-branch-lab-panel.dto';
 import { BulkEditBranchLabPanelsDto } from './dto/bulk-edit-branch-lab-panels.dto';
 import { SetBranchLabPanelActiveDto } from './dto/set-branch-lab-panel-active.dto';
@@ -33,7 +35,10 @@ import { ActiveBranchRequiredException } from '../branch-lab-test/exceptions/bra
  */
 @Controller('branch-lab-panels')
 export class BranchLabPanelController {
-  constructor(private readonly branchLabPanelService: BranchLabPanelService) {}
+  constructor(
+    private readonly branchLabPanelService: BranchLabPanelService,
+    private readonly branchService: BranchService,
+  ) {}
 
   /** Resolve the active branch id from the JWT profile, or fail with a 400. */
   private requireBranch(profile: ActiveProfile): string {
@@ -174,6 +179,22 @@ export class BranchLabPanelController {
       this.requireBranch(profile),
       query,
     );
+  }
+
+  /**
+   * List a specific branch's Lab Panel List rows for a caller with no active
+   * branch of their own (Business Admin, viewing a branch they picked).
+   * `branchId` is verified to belong to the caller's tenant first. Declared
+   * before `:id` so it isn't matched as one.
+   */
+  @Get('by-branch')
+  async findAllForBranch(
+    @CurrentTenant() tenantId: string,
+    @Query() query: ListBranchLabPanelsForBranchQueryDto,
+  ) {
+    await this.branchService.findById(query.branchId, tenantId);
+    const { branchId, ...rest } = query;
+    return this.branchLabPanelService.findAll(tenantId, branchId, rest);
   }
 
   /**

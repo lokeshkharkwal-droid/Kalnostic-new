@@ -128,9 +128,10 @@ export class BranchLabTestService {
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT)
    * @param actorId person id recorded as created/updated-by (or null)
-   * @param dto the source lab-test ids to import
+   * @param dto the source lab-test ids to import, plus an optional target `listId`
    * @returns counts of copied vs skipped tests
    * @throws MasterDataNotMappedToBranchException if the branch has no master data
+   * @throws BranchLabTestListNotFoundException if `dto.listId` doesn't belong to this branch
    */
   async importFromMasterData(
     tenantId: string,
@@ -142,13 +143,20 @@ export class BranchLabTestService {
       branchId,
       tenantId,
     );
-    // Import always lands in the branch's default (Walk-in) list — created here on
-    // the very first import (Phase 1).
-    const walkIn = await this.listService.getOrCreateDefaultList(
+    // The default (Walk-in) list is always ensured first — every existing
+    // master-data-driven flow (Import/Sync/New List) bootstraps it as a side
+    // effect, regardless of which list is actually being targeted here.
+    const defaultList = await this.listService.getOrCreateDefaultList(
       tenantId,
       branchId,
       actorId,
     );
+    // Import lands in the given list, or the just-ensured default (Walk-in)
+    // list when omitted. `findById` validates the given id belongs to this
+    // branch (throws otherwise).
+    const targetList = dto.listId
+      ? await this.listService.findById(dto.listId, tenantId, branchId)
+      : defaultList;
     const validSources = await this.prisma.labTest.findMany({
       where: {
         id: { in: dto.labTestIds },
@@ -159,13 +167,14 @@ export class BranchLabTestService {
       select: { id: true },
     });
     const validIds = validSources.map((s) => s.id);
-    // Existing Walk-in rows for these sources are UPDATED (re-snapshot); new ones
-    // are ADDED — never duplicated (Phase 1: update existing / add new / no dup).
+    // Existing rows in the target list for these sources are UPDATED
+    // (re-snapshot); new ones are ADDED — never duplicated (Phase 1: update
+    // existing / add new / no dup).
     const existing = await this.prisma.branchLabTest.findMany({
       where: {
         tenantId,
         branchId,
-        listId: walkIn.id,
+        listId: targetList.id,
         deletedAt: null,
         sourceLabTestId: { in: validIds },
       },
@@ -199,7 +208,7 @@ export class BranchLabTestService {
             tenantId,
             branchId,
             sourceMasterDataId: masterData.id,
-            listId: walkIn.id,
+            listId: targetList.id,
             actorId,
           }),
         );
@@ -237,9 +246,11 @@ export class BranchLabTestService {
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT)
    * @param actorId person id recorded as updated-by (or null)
-   * @param dto optional subset of branch-lab-test ids to sync (omit = all)
+   * @param dto optional subset of branch-lab-test ids to sync (omit = all) and
+   *   an optional target `listId` (omit = the default Walk-in list)
    * @returns counts of synced vs skipped copies
    * @throws MasterDataNotMappedToBranchException if the branch has no master data
+   * @throws BranchLabTestListNotFoundException if `dto.listId` doesn't belong to this branch
    */
   async syncFromMasterData(
     tenantId: string,
@@ -251,17 +262,19 @@ export class BranchLabTestService {
       branchId,
       tenantId,
     );
-    // Sync only refreshes the default (Walk-in) list — the one connected to Master
-    // Data. Non-default pricing lists are managed independently of master data.
-    const walkIn = await this.listService.getOrCreateDefaultList(
+    // The default (Walk-in) list is always ensured first, same as import.
+    const defaultList = await this.listService.getOrCreateDefaultList(
       tenantId,
       branchId,
       actorId,
     );
+    const targetList = dto.listId
+      ? await this.listService.findById(dto.listId, tenantId, branchId)
+      : defaultList;
     const where: Prisma.BranchLabTestWhereInput = {
       tenantId,
       branchId,
-      listId: walkIn.id,
+      listId: targetList.id,
       deletedAt: null,
       // Only imported originals are re-snapshotted; user duplicates keep their
       // independent edits (agreed sync contract).

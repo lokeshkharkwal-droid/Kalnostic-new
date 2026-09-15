@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { BranchLabTestService } from './branch-lab-test.service';
+import { BranchService } from '../branch/branch.service';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
@@ -19,6 +20,7 @@ import { Audit } from '../../common/decorators/audit.decorator';
 import { ImportBranchLabTestsDto } from './dto/import-branch-lab-tests.dto';
 import { SyncBranchLabTestsDto } from './dto/sync-branch-lab-tests.dto';
 import { ListBranchLabTestsQueryDto } from './dto/list-branch-lab-tests-query.dto';
+import { ListBranchLabTestsForBranchQueryDto } from './dto/list-branch-lab-tests-for-branch-query.dto';
 import { UpdateBranchLabTestDto } from './dto/update-branch-lab-test.dto';
 import { BulkEditBranchLabTestsDto } from './dto/bulk-edit-branch-lab-tests.dto';
 import { SetBranchLabTestActiveDto } from './dto/set-branch-lab-test-active.dto';
@@ -33,7 +35,10 @@ import { ActiveBranchRequiredException } from './exceptions/branch-lab-test.exce
  */
 @Controller('branch-lab-tests')
 export class BranchLabTestController {
-  constructor(private readonly branchLabTestService: BranchLabTestService) {}
+  constructor(
+    private readonly branchLabTestService: BranchLabTestService,
+    private readonly branchService: BranchService,
+  ) {}
 
   /** Resolve the active branch id from the JWT profile, or fail with a 400. */
   private requireBranch(profile: ActiveProfile): string {
@@ -174,6 +179,22 @@ export class BranchLabTestController {
       this.requireBranch(profile),
       query,
     );
+  }
+
+  /**
+   * List a specific branch's Lab Test List rows for a caller with no active
+   * branch of their own (Business Admin, viewing a branch they picked).
+   * `branchId` is verified to belong to the caller's tenant first. Declared
+   * before `:id` so it isn't matched as one.
+   */
+  @Get('by-branch')
+  async findAllForBranch(
+    @CurrentTenant() tenantId: string,
+    @Query() query: ListBranchLabTestsForBranchQueryDto,
+  ) {
+    await this.branchService.findById(query.branchId, tenantId);
+    const { branchId, ...rest } = query;
+    return this.branchLabTestService.findAll(tenantId, branchId, rest);
   }
 
   /**

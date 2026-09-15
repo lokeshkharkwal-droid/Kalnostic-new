@@ -22,7 +22,8 @@ body:json {
   {
     "labPanelIds": [
       "00000000-0000-0000-0000-000000000000"
-    ]
+    ],
+    "listId": "{{branchLabPanelListId}}"
   }
 }
 
@@ -39,12 +40,19 @@ tests {
 }
 
 docs {
-  Persist-import Master Data lab panels into the **active branch's default Walk-in
-  Lab Panel List** (auto-created on the first import). Each panel is deep-copied as
-  an independent snapshot with `listId` = Walk-in and `listPrice` = MSRP; its
-  member tests are materialized into the Walk-in Lab Test List (existing copies of
-  the same source test are reused), so `BranchLabPanelTest` rows reference
-  branch-owned `BranchLabTest` ids.
+  Persist-import Master Data lab panels into a branch pricing list. Each panel
+  is deep-copied as an independent snapshot with `listId` = the target list
+  and `listPrice` = MSRP; its member tests are always materialized into the
+  branch's default **Walk-in Lab Test List** (existing copies of the same
+  source test are reused) regardless of which panel list the panel itself
+  lands in — panel lists and test lists are separate, unmapped list types, so
+  there is no other test list to target — so `BranchLabPanelTest` rows always
+  reference branch-owned `BranchLabTest` ids from Walk-in.
+
+  `listId` (optional) targets a specific `BranchLabPanelList` — must belong to
+  the caller's branch (404 `BRANCH_LAB_PANEL_LIST_NOT_FOUND` otherwise). Omit
+  it to import into the branch's default **Walk-in** panel list, which is
+  always ensured to exist first regardless of which list `listId` targets.
 
   Tenant + active branch come from the JWT. Re-import UPDATES an already-present
   panel (re-snapshot + rebuild members) and ADDS new ones — never duplicates; ids
