@@ -4,6 +4,7 @@ import {
   ArrayUnique,
   IsArray,
   IsEnum,
+  IsOptional,
   Matches,
 } from 'class-validator';
 
@@ -28,10 +29,12 @@ export class ShiftDto {
   endTime: string;
 
   @Matches(HH_MM, { message: 'breakStartTime must be a 24h HH:mm time' })
-  breakStartTime: string;
+  @IsOptional()
+  breakStartTime?: string;
 
   @Matches(HH_MM, { message: 'breakEndTime must be a 24h HH:mm time' })
-  breakEndTime: string;
+  @IsOptional()
+  breakEndTime?: string;
 
   /** Days of the week this shift runs on (at least one, no duplicates). */
   @IsArray()
