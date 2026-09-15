@@ -2,7 +2,7 @@ import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { LabTestService } from './lab-test.service';
 import { LabTestOptionsQueryDto } from './dto/lab-test-options-query.dto';
-import { ListLabTestsDto } from './dto/list-lab-tests.dto';
+import { BrowseLabTestTemplatesDto } from './dto/list-lab-tests.dto';
 import { CloneLabTestTemplateDto } from './dto/clone-lab-test-template.dto';
 import { ImportLabTestTemplatesDto } from './dto/import-lab-test-templates.dto';
 import { SyncLabTestTemplatesDto } from './dto/sync-lab-test-templates.dto';
@@ -49,7 +49,7 @@ export class LabTestOptionsController {
   @Get('templates')
   findTemplates(
     @CurrentTenant() tenantId: string,
-    @Query() query: ListLabTestsDto,
+    @Query() query: BrowseLabTestTemplatesDto,
   ) {
     return this.labTestService.findAllTemplates(query, tenantId);
   }

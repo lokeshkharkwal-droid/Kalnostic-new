@@ -285,18 +285,149 @@ export class LabPanelService {
     if (query.departmentId) where.departmentId = query.departmentId;
     if (query.status) where.isActive = query.status === 'ACTIVE';
 
+    const sort = this.buildListOrderBy(query.sortBy, query.sortOrder);
+
+    // Derived sorts (category name / included-test count) can't be expressed as a
+    // Prisma `orderBy`, so sort the whole filtered set by the computed value
+    // first, then paginate.
+    if (sort.kind === 'derived') {
+      const panels = await this.sortByDerived(
+        where,
+        tenantId,
+        sort.field,
+        sort.dir,
+        page,
+        limit,
+      );
+      const total = await this.prisma.labPanel.count({ where });
+      const data = await this.projectListRows(tenantId, panels);
+      return { data, total, page, limit };
+    }
+
     const [panels, total] = await Promise.all([
       this.prisma.labPanel.findMany({
         where,
         skip: (page - 1) * limit,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy: sort.orderBy,
       }),
       this.prisma.labPanel.count({ where }),
     ]);
 
     const data = await this.projectListRows(tenantId, panels);
     return { data, total, page, limit };
+  }
+
+  /**
+   * Resolve a listing `sortBy`/`sortOrder` (`1` asc / `-1` desc) into either a
+   * Prisma `orderBy` (scalar column) or a `derived` marker for the category-name
+   * / test-count sorts handled in-memory. Falls back to `createdAt desc` when no
+   * sort is requested.
+   */
+  private buildListOrderBy(
+    sortBy: ListLabPanelsDto['sortBy'],
+    sortOrder: ListLabPanelsDto['sortOrder'],
+  ):
+    | { kind: 'prisma'; orderBy: Prisma.LabPanelOrderByWithRelationInput }
+    | {
+        kind: 'derived';
+        field: 'panelCategory' | 'testsCount';
+        dir: 'asc' | 'desc';
+      } {
+    const dir: 'asc' | 'desc' = sortOrder === -1 ? 'desc' : 'asc';
+    if (!sortBy) {
+      return { kind: 'prisma', orderBy: { createdAt: 'desc' } };
+    }
+    if (sortBy === 'panelCategory' || sortBy === 'testsCount') {
+      return { kind: 'derived', field: sortBy, dir };
+    }
+    // `homeCollectionAvailable` is exposed under the model's `isHomeCollection`.
+    const column =
+      sortBy === 'homeCollectionAvailable' ? 'isHomeCollection' : sortBy;
+    return { kind: 'prisma', orderBy: { [column]: dir } };
+  }
+
+  /**
+   * Sort the whole filtered set of panels by a derived value — the resolved
+   * category name (`panelCategory`) or the active included-test count
+   * (`testsCount`) — then return the requested page's rows in sorted order.
+   * Null/empty category names sink to the bottom (matching the grid); ties break
+   * by newest-first so paging is stable. Runs before pagination so the order is
+   * global.
+   */
+  private async sortByDerived(
+    where: Prisma.LabPanelWhereInput,
+    tenantId: string,
+    field: 'panelCategory' | 'testsCount',
+    dir: 'asc' | 'desc',
+    page: number,
+    limit: number,
+  ): Promise<LabPanel[]> {
+    const all = await this.prisma.labPanel.findMany({
+      where,
+      select: { id: true, categoryId: true, createdAt: true },
+    });
+    if (all.length === 0) {
+      return [];
+    }
+    const factor = dir === 'asc' ? 1 : -1;
+
+    let pageIds: string[];
+    if (field === 'testsCount') {
+      const counts = await this.countTestsByPanel(
+        tenantId,
+        all.map((p) => p.id),
+      );
+      pageIds = all
+        .map((p) => ({
+          id: p.id,
+          createdAt: p.createdAt,
+          value: counts.get(p.id) ?? 0,
+        }))
+        .sort((a, b) =>
+          a.value !== b.value
+            ? (a.value - b.value) * factor
+            : b.createdAt.getTime() - a.createdAt.getTime(),
+        )
+        .slice((page - 1) * limit, page * limit)
+        .map((x) => x.id);
+    } else {
+      const cats = await this.resolveRefs(
+        'category',
+        tenantId,
+        all.map((p) => p.categoryId),
+      );
+      pageIds = all
+        .map((p) => ({
+          id: p.id,
+          createdAt: p.createdAt,
+          value: this.refOf(cats, p.categoryId)?.name ?? '',
+        }))
+        .sort((a, b) => {
+          // Empty names always sink to the bottom, regardless of direction.
+          if (!a.value && !b.value)
+            return b.createdAt.getTime() - a.createdAt.getTime();
+          if (!a.value) return 1;
+          if (!b.value) return -1;
+          const cmp = a.value.localeCompare(b.value, undefined, {
+            numeric: true,
+            sensitivity: 'base',
+          });
+          return cmp !== 0
+            ? cmp * factor
+            : b.createdAt.getTime() - a.createdAt.getTime();
+        })
+        .slice((page - 1) * limit, page * limit)
+        .map((x) => x.id);
+    }
+
+    const rows = await this.prisma.labPanel.findMany({
+      where: { id: { in: pageIds } },
+    });
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    return pageIds
+      .map((id) => byId.get(id))
+      .filter((r): r is LabPanel => r !== undefined);
   }
 
   /**

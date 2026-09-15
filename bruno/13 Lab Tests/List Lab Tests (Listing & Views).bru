@@ -20,6 +20,8 @@ params:query {
   ~subCategoryId: 
   ~sampleType: Serum
   ~status: ACTIVE
+  ~sortBy: priceMsrp
+  ~sortOrder: -1
 }
 
 auth:bearer {
@@ -49,6 +51,22 @@ docs {
   - `status` — `ACTIVE` | `INACTIVE` (maps to the `isActive` flag). Soft-deleted
     tests are always excluded regardless of `status`.
   - `page` / `limit` — standard pagination (limit capped at 100).
+
+  ## Sorting (applied **before** pagination, so the whole result set is ordered)
+
+  - `sortBy` + `sortOrder` — `sortOrder` is `1` (ascending) or `-1` (descending).
+    Omit both to keep the default (`createdAt` desc). An unsupported `sortBy` →
+    400 `VALIDATION_ERROR` (allowlisted server-side, never passed raw to the DB).
+  - Allowed `sortBy` keys: `testName`, `testCode`, `aka`, `processMethod`,
+    `icdCode`, `loincCode`, `samplePriorityType`, `isMandatoryTest`, `priceMsrp`,
+    `priceMinimum`, `priceMaximum`, `priceOriginal`, `franchisePrice`,
+    `emergencyPrice`, `discountCapPct`, `tatMinValue`, `tatMaxValue`,
+    `isAllowPriceOverride`, `isAllowDiscounts`, `isHideInOrderScreen`,
+    `isEnableCms`, `isPreferenceTest`, `usefulFor`, `isActive`, `departmentName`
+    (sorted via the `department` relation name), `parametersCount`,
+    `samplesCount` (derived active-child-row counts — the full set is sorted then
+    paginated). The `DEFAULT` view's **`defaultSample`** column is intentionally
+    **not** sortable.
   
   > The disabled (`~`) query params above are examples — enable the ones you
   > want. Don't send an empty `status`/`view` (an empty enum value → 400
