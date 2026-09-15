@@ -11,8 +11,8 @@ export interface ScheduleShift {
   shiftName: ShiftName;
   startTime: string;
   endTime: string;
-  breakStartTime: string;
-  breakEndTime: string;
+  breakStartTime?: string;
+  breakEndTime?: string;
   activeDays: DayOfWeek[];
 }
 

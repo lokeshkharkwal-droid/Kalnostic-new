@@ -360,8 +360,8 @@ export class DashboardService {
       shiftName: ShiftName;
       startTime: string;
       endTime: string;
-      breakStartTime: string;
-      breakEndTime: string;
+      breakStartTime?: string;
+      breakEndTime?: string;
       activeDays: DayOfWeek[];
     }>;
 
@@ -405,9 +405,12 @@ export class DashboardService {
       for (const shift of shifts) {
         if (!shift.activeDays.includes(day)) continue;
         row.status = 'Open';
-        row[shiftKey[shift.shiftName]] =
-          `${this.formatClockTime(shift.startTime)} - ${this.formatClockTime(shift.endTime)} ` +
-          `(Break: ${this.formatClockTime(shift.breakStartTime)} - ${this.formatClockTime(shift.breakEndTime)})`;
+        const timeRange = `${this.formatClockTime(shift.startTime)} - ${this.formatClockTime(shift.endTime)}`;
+        const breakRange =
+          shift.breakStartTime && shift.breakEndTime
+            ? ` (Break: ${this.formatClockTime(shift.breakStartTime)} - ${this.formatClockTime(shift.breakEndTime)})`
+            : '';
+        row[shiftKey[shift.shiftName]] = `${timeRange}${breakRange}`;
       }
       return row;
     });
