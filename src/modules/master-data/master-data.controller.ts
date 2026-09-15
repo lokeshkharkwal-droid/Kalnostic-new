@@ -77,6 +77,12 @@ export class MasterDataController {
       query.page ?? 1,
       query.limit ?? 20,
       query.search,
+      {
+        department: query.department,
+        category: query.category,
+        subCategory: query.subCategory,
+      },
+      query.excludeListId,
     );
   }
 
@@ -95,6 +101,11 @@ export class MasterDataController {
       query.page ?? 1,
       query.limit ?? 20,
       query.search,
+      {
+        department: query.department,
+        category: query.category,
+      },
+      query.excludeListId,
     );
   }
 

@@ -8,9 +8,10 @@ import {
 
 /**
  * Sync payload. `branchLabTestIds` optionally restricts the re-snapshot to a
- * subset of the branch's Lab Test List; omit it to sync every copy. Sync reloads
- * each copy's source Master Data test (via `sourceLabTestId`) and OVERWRITES the
- * copy's fields and clinical snapshot — branch-level edits are discarded.
+ * subset of the branch's Lab Test List; omit it to sync every copy in the
+ * target list. Sync reloads each copy's source Master Data test (via
+ * `sourceLabTestId`) and OVERWRITES the copy's fields and clinical snapshot —
+ * branch-level edits are discarded.
  */
 export class SyncBranchLabTestsDto {
   @IsOptional()
@@ -19,4 +20,13 @@ export class SyncBranchLabTestsDto {
   @ArrayUnique()
   @IsUUID('4', { each: true })
   branchLabTestIds?: string[];
+
+  /**
+   * Pricing list to sync. Omitted = the branch's default (Walk-in) list —
+   * always ensured to exist first, regardless of `listId`. Must belong to
+   * the caller's branch.
+   */
+  @IsOptional()
+  @IsUUID()
+  listId?: string;
 }
