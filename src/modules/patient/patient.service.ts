@@ -64,6 +64,22 @@ type PersonLink =
 /** Max attempts to allocate a unique UMID before giving up (collision retry). */
 const MAX_UMID_ATTEMPTS = 5;
 
+/**
+ * Server-controlled creation options — never derived from client input. Only
+ * trusted call sites (e.g. the quotation patient-creation route) may set
+ * `allowAutoUmId`; the generic `POST /patients` route never does, so the
+ * manual-UMID requirement can't be bypassed by a client-supplied flag.
+ */
+interface CreatePatientOptions {
+  /**
+   * When true, a branch configured for manual (NONE) UMIDs gets a
+   * system-generated fallback UMID (`PAT-QT-<hex>`) instead of requiring one
+   * from the caller. Used for patients created as a precursor to a quotation,
+   * where a permanent UMID isn't required yet.
+   */
+  allowAutoUmId?: boolean;
+}
+
 /** A patient's notification opt-out preferences, as returned by the API. */
 export interface PatientNotificationPreferencesView {
   patientId: string;
@@ -178,6 +194,7 @@ export class PatientService {
     tenantId: string,
     dto: CreatePatientDto,
     ctx: PatientWriteContext,
+    options?: CreatePatientOptions,
   ): Promise<PatientWithHistory> {
     await this.validatePtCategory(tenantId, ctx.branchId, dto.ptCategoryId);
     const personLink = await this.resolvePersonLinkForCreate(
@@ -185,7 +202,13 @@ export class PatientService {
       dto,
       ctx,
     );
-    return this.createWithAllocatedUmId(tenantId, dto, ctx, personLink);
+    return this.createWithAllocatedUmId(
+      tenantId,
+      dto,
+      ctx,
+      personLink,
+      options,
+    );
   }
 
   /**
@@ -394,6 +417,7 @@ export class PatientService {
     dto: CreatePatientDto,
     ctx: PatientWriteContext,
     personLink: PersonLink,
+    options?: CreatePatientOptions,
   ): Promise<PatientWithHistory> {
     const manualUmId = dto.umId?.trim() || null;
 
@@ -406,33 +430,64 @@ export class PatientService {
         )
       : ExternalIdFormat.NONE;
 
-    // Manual (NONE) — UMID is required and stored exactly as entered.
+    // Manual (NONE) — UMID is required and stored exactly as entered, unless a
+    // trusted caller opted into an auto-generated fallback (see
+    // `CreatePatientOptions.allowAutoUmId`).
     if (format === ExternalIdFormat.NONE) {
-      if (!manualUmId) {
+      if (manualUmId) {
+        try {
+          return await this.createPatientRow(
+            tenantId,
+            dto,
+            ctx,
+            manualUmId,
+            personLink,
+          );
+        } catch (e) {
+          this.rethrowPatientWriteConflict(e, dto.mobile, manualUmId);
+        }
+      }
+      if (!options?.allowAutoUmId) {
         throw new PatientUmIdRequiredException();
       }
-      try {
-        return await this.createPatientRow(
-          tenantId,
-          dto,
-          ctx,
-          manualUmId,
-          personLink,
-        );
-      } catch (e) {
-        this.rethrowPatientWriteConflict(e, dto.mobile, manualUmId);
-      }
+      return this.createWithGeneratedUmId(
+        tenantId,
+        dto,
+        ctx,
+        personLink,
+        () => `PAT-QT-${randomBytes(4).toString('hex').toUpperCase()}`,
+      );
     }
 
     // Auto (PAT+format) — allocate a committed, globally-unique UMID and retry
     // on collision, drawing a fresh sequence each attempt (see ExternalIdService).
     const branchId = ctx.branchId!;
+    return this.createWithGeneratedUmId(tenantId, dto, ctx, personLink, () =>
+      this.externalIdService
+        .generateCommittedForBranch(
+          tenantId,
+          branchId,
+          ExternalIdPurpose.PATIENT,
+        )
+        .then(({ value }) => value),
+    );
+  }
+
+  /**
+   * Shared retry loop for a system-generated UMID: draw a fresh id via
+   * `nextUmId` and attempt the insert, retrying with a new id on a UMID
+   * collision (up to `MAX_UMID_ATTEMPTS`). Used both for branch-auto-format ids
+   * (`ExternalIdService`) and for the manual-format fallback id.
+   */
+  private async createWithGeneratedUmId(
+    tenantId: string,
+    dto: CreatePatientDto,
+    ctx: PatientWriteContext,
+    personLink: PersonLink,
+    nextUmId: () => string | null | Promise<string | null>,
+  ): Promise<PatientWithHistory> {
     for (let attempt = 0; attempt < MAX_UMID_ATTEMPTS; attempt++) {
-      const { value } = await this.externalIdService.generateCommittedForBranch(
-        tenantId,
-        branchId,
-        ExternalIdPurpose.PATIENT,
-      );
+      const value = await nextUmId();
       try {
         return await this.createPatientRow(
           tenantId,
@@ -443,7 +498,7 @@ export class PatientService {
         );
       } catch (e) {
         if (this.isUmIdConflict(e)) {
-          continue; // collision → next allocated number
+          continue; // collision → next allocated/generated id
         }
         if (this.isMobileConflict(e)) {
           throw new PatientMobileConflictException(dto.mobile);
