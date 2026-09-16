@@ -1,4 +1,4 @@
-import { ArrayUnique, IsArray, IsUUID } from 'class-validator';
+import { ArrayUnique, IsArray, IsOptional, IsUUID } from 'class-validator';
 
 /**
  * Body for replacing the full set of sample-receiving branches mapped to a
@@ -12,4 +12,12 @@ export class SetCollectionMappingsDto {
   @ArrayUnique()
   @IsUUID('4', { each: true })
   receivingBranchIds: string[];
+
+  // The default sample-receiving branch. Must be one of `receivingBranchIds`.
+  // Required when `receivingBranchIds` is non-empty (a Collection Center's
+  // receivers must have exactly one default); omit only when clearing all
+  // mappings (empty array).
+  @IsUUID('4')
+  @IsOptional()
+  defaultReceivingBranchId?: string;
 }

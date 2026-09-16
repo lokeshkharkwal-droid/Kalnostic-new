@@ -6,10 +6,13 @@ export type BranchLabPanelEntity = BranchLabPanel;
 /**
  * A `findAll()` list row, denormalised with a human-readable sample summary
  * aggregated across the panel's member tests (panels have no `configSnapshot`
- * of their own — samples live on each member `BranchLabTest`).
+ * of their own — samples live on each member `BranchLabTest`), plus resolved
+ * department/category names (panels have no sub-category, unlike LabTest).
  */
 export interface BranchLabPanelListRow extends BranchLabPanel {
   sampleSummary: string | null;
+  departmentName: string | null;
+  categoryName: string | null;
 }
 
 /** A branch lab panel composed with its included branch-test rows (get-one shape). */
