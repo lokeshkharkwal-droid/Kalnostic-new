@@ -24,6 +24,22 @@ interface BranchCreatedEvent {
 /** Fixed name of the tenant-level Tenant Master Data singleton. */
 export const TENANT_MASTER_DATA_NAME = 'Tenant Master Data';
 
+/** A {@link LabTest} row enriched with its resolved classification names, as
+ * returned by {@link MasterDataService.getImportableLabTests}. */
+export type ImportableLabTestRow = LabTest & {
+  departmentName: string | null;
+  categoryName: string | null;
+  subCategoryName: string | null;
+};
+
+/** A {@link LabPanel} row enriched with its resolved classification names, as
+ * returned by {@link MasterDataService.getImportableLabPanels}. Panels have no
+ * sub-category (unlike LabTest). */
+export type ImportableLabPanelRow = LabPanel & {
+  departmentName: string | null;
+  categoryName: string | null;
+};
+
 /**
  * Master-data management. Tenant-scoped + branch-level (CLAUDE.md §4.6). Every
  * query carries `tenantId` (defence in depth on top of RLS, §4.3) and filters
@@ -253,6 +269,15 @@ export class MasterDataService {
    * @param page 1-based page (default 1)
    * @param limit page size (default 20)
    * @param search optional case-insensitive match on `testName`/`testCode`
+   * @param classificationFilters optional case-insensitive match on the test's
+   *   department/category/sub-category name (each independent — all given
+   *   filters must match, AND'd with `search`)
+   * @param excludeListId when given, tests already present in this
+   *   `BranchLabTestList` (matched via `BranchLabTest.sourceLabTestId`) are
+   *   excluded server-side — the "Available to Add" / "Already in this list"
+   *   split then needs no client-side dedup and no full up-front fetch of the
+   *   existing list to stay correct, so that side can go back to plain
+   *   lazy/scroll-triggered pagination.
    * @throws MasterDataNotMappedToBranchException if the branch has no master data
    */
   async getImportableLabTests(
@@ -261,19 +286,54 @@ export class MasterDataService {
     page = 1,
     limit = 20,
     search?: string,
-  ): Promise<PaginatedResult<LabTest>> {
+    classificationFilters: {
+      department?: string;
+      category?: string;
+      subCategory?: string;
+    } = {},
+    excludeListId?: string,
+  ): Promise<PaginatedResult<ImportableLabTestRow>> {
     const masterData = await this.findByBranch(branchId, tenantId);
     const where: Prisma.LabTestWhereInput = {
       masterDataId: masterData.id,
       tenantId,
       deletedAt: null,
     };
+    if (excludeListId) {
+      const existing = await this.prisma.branchLabTest.findMany({
+        where: {
+          tenantId,
+          listId: excludeListId,
+          deletedAt: null,
+          sourceLabTestId: { not: null },
+        },
+        select: { sourceLabTestId: true },
+      });
+      const existingIds = existing
+        .map((r) => r.sourceLabTestId)
+        .filter((x): x is string => Boolean(x));
+      if (existingIds.length > 0) {
+        where.id = { notIn: existingIds };
+      }
+    }
     const term = search?.trim();
     if (term) {
       where.OR = [
         { testName: { contains: term, mode: 'insensitive' } },
         { testCode: { contains: term, mode: 'insensitive' } },
       ];
+    }
+    const dept = classificationFilters.department?.trim();
+    if (dept) {
+      where.department = { name: { contains: dept, mode: 'insensitive' } };
+    }
+    const cat = classificationFilters.category?.trim();
+    if (cat) {
+      where.category = { name: { contains: cat, mode: 'insensitive' } };
+    }
+    const subCat = classificationFilters.subCategory?.trim();
+    if (subCat) {
+      where.subCategory = { name: { contains: subCat, mode: 'insensitive' } };
     }
     const data = await this.prisma.labTest.findMany({
       where,
@@ -282,7 +342,67 @@ export class MasterDataService {
       orderBy: { testName: 'asc' },
     });
     const total = await this.prisma.labTest.count({ where });
-    return { data, total, page, limit };
+    const [deptNames, catNames, subCatNames] = await Promise.all([
+      this.resolveClassificationNames(
+        'department',
+        tenantId,
+        data.map((t) => t.departmentId),
+      ),
+      this.resolveClassificationNames(
+        'category',
+        tenantId,
+        data.map((t) => t.categoryId),
+      ),
+      this.resolveClassificationNames(
+        'subCategory',
+        tenantId,
+        data.map((t) => t.subCategoryId),
+      ),
+    ]);
+    const enriched: ImportableLabTestRow[] = data.map((t) => ({
+      ...t,
+      departmentName: this.nameOfClassification(deptNames, t.departmentId),
+      categoryName: this.nameOfClassification(catNames, t.categoryId),
+      subCategoryName: this.nameOfClassification(subCatNames, t.subCategoryId),
+    }));
+    return { data: enriched, total, page, limit };
+  }
+
+  /**
+   * Resolve a set of classification ids to a `id → name` map (tenant-scoped).
+   * Mirrors `BranchLabTestService`'s private helper of the same shape — used
+   * to denormalise department/category/sub-category names into import rows.
+   */
+  private async resolveClassificationNames(
+    model: 'department' | 'category' | 'subCategory',
+    tenantId: string,
+    idsRaw: (string | null)[],
+  ): Promise<Map<string, string>> {
+    const ids = [...new Set(idsRaw.filter((x): x is string => Boolean(x)))];
+    const map = new Map<string, string>();
+    if (ids.length === 0) {
+      return map;
+    }
+    const where = { id: { in: ids }, tenantId };
+    const select = { id: true, name: true };
+    const rows =
+      model === 'department'
+        ? await this.prisma.department.findMany({ where, select })
+        : model === 'category'
+          ? await this.prisma.category.findMany({ where, select })
+          : await this.prisma.subCategory.findMany({ where, select });
+    for (const r of rows) {
+      map.set(r.id, r.name);
+    }
+    return map;
+  }
+
+  /** Look up a resolved classification name by (possibly null) id. */
+  private nameOfClassification(
+    map: Map<string, string>,
+    id: string | null,
+  ): string | null {
+    return id ? (map.get(id) ?? null) : null;
   }
 
   /**
@@ -294,6 +414,12 @@ export class MasterDataService {
    * @param page 1-based page (default 1)
    * @param limit page size (default 20)
    * @param search optional case-insensitive match on `panelName`/`panelCode`
+   * @param classificationFilters optional case-insensitive match on the panel's
+   *   department/category name (each independent — all given filters must
+   *   match, AND'd with `search`). Panels have no sub-category.
+   * @param excludeListId when given, panels already present in this
+   *   `BranchLabPanelList` (matched via `BranchLabPanel.sourceLabPanelId`) are
+   *   excluded server-side.
    * @throws MasterDataNotMappedToBranchException if the branch has no master data
    */
   async getImportableLabPanels(
@@ -302,19 +428,57 @@ export class MasterDataService {
     page = 1,
     limit = 20,
     search?: string,
-  ): Promise<PaginatedResult<LabPanel>> {
+    classificationFilters: { department?: string; category?: string } = {},
+    excludeListId?: string,
+  ): Promise<PaginatedResult<ImportableLabPanelRow>> {
     const masterData = await this.findByBranch(branchId, tenantId);
     const where: Prisma.LabPanelWhereInput = {
       masterDataId: masterData.id,
       tenantId,
       deletedAt: null,
     };
+    if (excludeListId) {
+      const existing = await this.prisma.branchLabPanel.findMany({
+        where: {
+          tenantId,
+          listId: excludeListId,
+          deletedAt: null,
+          sourceLabPanelId: { not: null },
+        },
+        select: { sourceLabPanelId: true },
+      });
+      const existingIds = existing
+        .map((r) => r.sourceLabPanelId)
+        .filter((x): x is string => Boolean(x));
+      if (existingIds.length > 0) {
+        where.id = { notIn: existingIds };
+      }
+    }
     const term = search?.trim();
     if (term) {
       where.OR = [
         { panelName: { contains: term, mode: 'insensitive' } },
         { panelCode: { contains: term, mode: 'insensitive' } },
       ];
+    }
+    // LabPanel's departmentId/categoryId are logical refs only (no Prisma
+    // relation, unlike LabTest) — resolve matching ids first, then filter on
+    // the plain id column.
+    const dept = classificationFilters.department?.trim();
+    if (dept) {
+      const rows = await this.prisma.department.findMany({
+        where: { tenantId, name: { contains: dept, mode: 'insensitive' } },
+        select: { id: true },
+      });
+      where.departmentId = { in: rows.map((r) => r.id) };
+    }
+    const cat = classificationFilters.category?.trim();
+    if (cat) {
+      const rows = await this.prisma.category.findMany({
+        where: { tenantId, name: { contains: cat, mode: 'insensitive' } },
+        select: { id: true },
+      });
+      where.categoryId = { in: rows.map((r) => r.id) };
     }
     const data = await this.prisma.labPanel.findMany({
       where,
@@ -323,7 +487,24 @@ export class MasterDataService {
       orderBy: { panelName: 'asc' },
     });
     const total = await this.prisma.labPanel.count({ where });
-    return { data, total, page, limit };
+    const [deptNames, catNames] = await Promise.all([
+      this.resolveClassificationNames(
+        'department',
+        tenantId,
+        data.map((p) => p.departmentId),
+      ),
+      this.resolveClassificationNames(
+        'category',
+        tenantId,
+        data.map((p) => p.categoryId),
+      ),
+    ]);
+    const enriched: ImportableLabPanelRow[] = data.map((p) => ({
+      ...p,
+      departmentName: this.nameOfClassification(deptNames, p.departmentId),
+      categoryName: this.nameOfClassification(catNames, p.categoryId),
+    }));
+    return { data: enriched, total, page, limit };
   }
 
   /**
