@@ -264,6 +264,7 @@ export class BranchController {
       tenantId,
       id,
       dto.receivingBranchIds,
+      dto.defaultReceivingBranchId,
       personId,
     );
   }

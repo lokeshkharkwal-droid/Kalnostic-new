@@ -955,6 +955,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS ccm_center_receiver_active_unique
   ON collection_center_mappings (collection_center_id, receiving_branch_id)
   WHERE deleted_at IS NULL;
 
+-- At most ONE active default receiving branch per collection center. Enforces
+-- "never multiple defaults" at the DB level (defence in depth on top of the
+-- service, which clears existing defaults before setting a new one).
+CREATE UNIQUE INDEX IF NOT EXISTS ccm_center_default_active_unique
+  ON collection_center_mappings (collection_center_id)
+  WHERE deleted_at IS NULL AND is_default = true;
+
 -- ── documents ─────────────────────────────────────────────────────────────────
 ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE documents FORCE ROW LEVEL SECURITY;

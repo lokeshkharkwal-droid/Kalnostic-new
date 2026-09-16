@@ -377,10 +377,11 @@ export class TenantService {
    * falls back to the platform default (§7 fallback) rather than being returned
    * to the client.
    * @param tenantId caller's tenant (from the business JWT)
-   * @returns `{ timezone, currency, dateFormat, timeFormat, language }`
+   * @returns `{ businessName, timezone, currency, dateFormat, timeFormat, language }`
    * @throws TenantNotFoundException if the tenant is missing/soft-deleted
    */
   async getLocale(tenantId: string): Promise<{
+    businessName: string;
     timezone: string;
     currency: string;
     dateFormat: string;
@@ -411,6 +412,7 @@ export class TenantService {
     }
 
     return {
+      businessName: tenant.name,
       timezone: merged.timezone,
       currency: merged.currency,
       dateFormat: merged.date_format,

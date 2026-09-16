@@ -51,6 +51,7 @@ body:json {
     "receivingBranchIds": [
       "{{branchId}}"
     ],
+    "defaultReceivingBranchId": "{{branchId}}",
     "modules": [
       { "moduleKey": "accession", "isEnabled": true },
       { "moduleKey": "sales", "isEnabled": true },
@@ -99,6 +100,9 @@ docs {
   - `receivingBranchIds` (optional) — UUIDs of sample-receiving branches to map.
     Only valid when `branchType` is `COLLECTION_CENTER`; each receiver is validated
     (non-CC receivers rejected). The branch + mappings are created atomically.
+  - `defaultReceivingBranchId` (required when `receivingBranchIds` is non-empty) —
+    the default receiver; must be one of `receivingBranchIds`. Marked `isDefault`
+    on its mapping (exactly one default per center). Missing/non-member → 400.
   - `modules` (optional) — enable/disable system modules at the new branch in the
     same request (no separate `PUT /branches/:id/modules` call needed). Each item:
     `{ moduleKey, isEnabled? }`. `moduleKey` must be a known system module — one of:

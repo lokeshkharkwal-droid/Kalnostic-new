@@ -1542,12 +1542,18 @@ model BranchModule {
 /// processing. Tenant-scoped (CLAUDE.md §4.6). Both ids are logical FKs to
 /// `branches` (validated in BranchService, mirroring BranchModule). One active
 /// mapping per (collection_center, receiving_branch) — partial unique index in
-/// prisma/rls.sql. RLS policy in prisma/rls.sql.
+/// prisma/rls.sql. Exactly one active mapping per center may be flagged
+/// `isDefault` — a second partial unique index in prisma/rls.sql
+/// (`ccm_center_default_active_unique`) enforces "at most one default" at the
+/// database level. RLS policy in prisma/rls.sql.
 model CollectionCenterMapping {
-  id                 String @id @default(uuid())
-  tenantId           String @map("tenant_id")
-  collectionCenterId String @map("collection_center_id")
-  receivingBranchId  String @map("receiving_branch_id")
+  id                 String  @id @default(uuid())
+  tenantId           String  @map("tenant_id")
+  collectionCenterId String  @map("collection_center_id")
+  receivingBranchId  String  @map("receiving_branch_id")
+  /// The center's default sample-receiving branch. At most one active mapping
+  /// per center is `true` (partial unique index in prisma/rls.sql).
+  isDefault          Boolean @default(false) @map("is_default")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
