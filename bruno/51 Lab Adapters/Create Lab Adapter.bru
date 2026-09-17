@@ -67,6 +67,14 @@ docs {
   - `labTestIds` (optional, uuid[]) — branch-lab-test ids from
     `GET /branch-lab-tests/options` (active branch). Every id must reference an
     active branch lab test of the tenant → 422 `LAB_ADAPTER_LAB_TEST_NOT_FOUND`.
+    **Auto-map:** when `labTestIds` is empty/omitted, the equipment's SITE_ADMIN
+    mapped tests (see *Get Equipment Lab Tests*) are auto-mapped **per branch** —
+    for each selected branch, every active default-variant `BranchLabTest` whose
+    `(testCode, testName)` matches one of the equipment's tests is mapped. A test
+    mapped to the equipment but absent at a branch is skipped for that branch; each
+    branch therefore only gets its own available subset (no duplicates). A non-empty
+    `labTestIds` preserves the manual selection and skips auto-mapping. This is the
+    **create** flow only — `PATCH` replaces sets explicitly.
   - `isActive` (optional, default true).
 
   `token` is **system-generated** — never send it. `tenantId` comes from the JWT,

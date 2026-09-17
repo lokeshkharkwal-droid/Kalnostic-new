@@ -42,4 +42,10 @@ export type ReferralPanelEntity = ReferralPanel & {
 export type ReferralPanelListItem = ReferralPanel & {
   labTestList: LabListRef | null;
   labPanelList: LabListRef | null;
+  /**
+   * `true` when at least one active-workflow order references this panel, so the
+   * client disables its Delete action (it may still be deactivated). Resolved in
+   * bulk by `ReferralUsageService.findActiveReferralIds` (never per-row).
+   */
+  hasActiveOrder: boolean;
 };

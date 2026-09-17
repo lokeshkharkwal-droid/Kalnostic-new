@@ -1,7 +1,7 @@
 meta {
   name: 29 EMI - Submit Result (all analytes)
   type: http
-  seq: 26
+  seq: 28
 }
 
 get {
@@ -111,7 +111,7 @@ docs {
   with a JSON body under `Content-Type: text/plain` (legacy quirk); auth is the
   **`TOKEN`** header. `tube_no` is the shared panel **`sampleBarcode`** — the same
   specimen id the analyzer received in step 28.
-
+  
   `test_results[]` carries **five** entries: one for member A (`{{emiParamCodeA}}`),
   one for member B (`{{emiParamCodeB}}`), and **three for the multi-parameter member
   C** (`{{emiParamCodeC1}}` / `{{emiParamCodeC2}}` / `{{emiParamCodeC3}}`). Each

@@ -31,4 +31,10 @@ docs {
   active qualifications, experiences, and assigned lab tests/panels, in one
   transaction. Scoped to the caller's tenant. 404 `REFERRAL_DOCTOR_NOT_FOUND` if
   missing, already soft-deleted, or owned by another tenant.
+
+  **409 `REFERRAL_DOCTOR_IN_USE`** — deletion is blocked when the doctor is used by
+  an order still in an active accessioning/technician-stage workflow (a non-cancelled
+  order with a sample still being collected/processed, or a lab report not yet published). Deactivate the doctor
+  instead (`PATCH` with `status: INACTIVE`). Historical / fully-published / cancelled
+  orders do **not** block deletion.
 }

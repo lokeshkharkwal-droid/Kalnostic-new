@@ -14,6 +14,22 @@ export class InternalReferralNotFoundException extends KaltrosException {
 }
 
 /**
+ * 409 — the internal referral cannot be deleted because it is used by an order
+ * that is still in an active accessioning/technician-stage workflow. The referral
+ * may be deactivated instead.
+ */
+export class InternalReferralInUseException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'INTERNAL_REFERRAL_IN_USE',
+      'This internal referral cannot be deleted because it is used by an active order',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
  * 422 — the supplied `employeeId` does not reference an active staff member of this
  * tenant.
  */

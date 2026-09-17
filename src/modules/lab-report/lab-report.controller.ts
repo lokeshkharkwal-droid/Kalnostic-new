@@ -86,17 +86,28 @@ export class LabReportController {
   getCounts(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
     @Query() query: ListLabReportsDto,
   ) {
-    return this.labReportService.getCounts(tenantId, profile.branchId, query);
+    return this.labReportService.getCounts(
+      tenantId,
+      profile.branchId,
+      query,
+      personId,
+    );
   }
 
   @Get('options')
   getOptions(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
   ) {
-    return this.labReportService.getOptions(tenantId, profile.branchId);
+    return this.labReportService.getOptions(
+      tenantId,
+      profile.branchId,
+      personId,
+    );
   }
 
   /**
@@ -117,9 +128,15 @@ export class LabReportController {
   findAll(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
     @Query() query: ListLabReportsDto,
   ) {
-    return this.labReportService.findAll(tenantId, profile.branchId, query);
+    return this.labReportService.findAll(
+      tenantId,
+      profile.branchId,
+      query,
+      personId,
+    );
   }
 
   /**

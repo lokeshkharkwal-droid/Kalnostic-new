@@ -29,6 +29,7 @@ import {
   type FormulaParam,
 } from '../../common/utils';
 import { TenantService } from '../tenant/tenant.service';
+import { UserDepartmentScopeService } from '../department/user-department-scope.service';
 import {
   ShareService,
   type ShareRecipient,
@@ -161,6 +162,7 @@ export class LabReportService {
     private readonly eventEmitter: EventEmitter2,
     private readonly shareService: ShareService,
     private readonly tenantService: TenantService,
+    private readonly userDepartmentScope: UserDepartmentScopeService,
   ) {}
 
   private readonly logger = new Logger(LabReportService.name);
@@ -369,6 +371,7 @@ export class LabReportService {
     tenantId: string,
     branchId: string,
     filters: ListLabReportsDto,
+    scopeIds: string[],
   ): Prisma.LabReportWhereInput {
     const where: Prisma.LabReportWhereInput = {
       tenantId,
@@ -483,7 +486,13 @@ export class LabReportService {
         },
       ];
     }
-    if (Object.keys(orderItem).length > 0) where.orderItem = orderItem;
+    // Department visibility scope (mandatory, not a user filter): a report is
+    // visible when its test/panel's department is unassigned (NULL → everyone) or
+    // one of the caller's mapped departments. Attached via `orderItem.AND` so it
+    // composes with the search `orderItem.OR` above without clobbering it, and is
+    // applied before pagination/counts. Always present, so `orderItem` is set.
+    orderItem.AND = [this.departmentScopeForOrderItem(scopeIds)];
+    where.orderItem = orderItem;
 
     // B2B Referral Panel isolation: constrain reports to the panel's orders
     // (nested via orderItem.order). Runs last so it merges with any filters above.
@@ -496,13 +505,48 @@ export class LabReportService {
     return where;
   }
 
+  /**
+   * The department-visibility condition for a report's order item. A report maps
+   * to exactly one order item, which is EITHER a branch lab test OR a branch lab
+   * panel (the other relation is null), so only the matching pair of branches can
+   * apply — giving correct per-item department resolution. Unassigned tests/panels
+   * (NULL department) are visible to all; an empty scope (user with no department)
+   * therefore sees only unassigned items.
+   * @param scopeIds the caller's department ids (see UserDepartmentScopeService)
+   */
+  private departmentScopeForOrderItem(
+    scopeIds: string[],
+  ): Prisma.OrderItemWhereInput {
+    const or: Prisma.OrderItemWhereInput[] = [
+      { branchLabTest: { is: { departmentId: null } } },
+      { branchLabPanel: { is: { departmentId: null } } },
+    ];
+    if (scopeIds.length > 0) {
+      or.push(
+        { branchLabTest: { is: { departmentId: { in: scopeIds } } } },
+        { branchLabPanel: { is: { departmentId: { in: scopeIds } } } },
+      );
+    }
+    return { OR: or };
+  }
+
   async findAll(
     tenantId: string,
     branchId: string | null,
     filters: ListLabReportsDto,
+    personId: string,
   ) {
     const resolvedBranchId = this.resolveBranch(branchId, filters);
-    const where = this.buildListWhere(tenantId, resolvedBranchId, filters);
+    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
+      tenantId,
+      personId,
+    );
+    const where = this.buildListWhere(
+      tenantId,
+      resolvedBranchId,
+      filters,
+      scopeIds,
+    );
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 25;
 
@@ -1053,12 +1097,19 @@ export class LabReportService {
     tenantId: string,
     branchId: string | null,
     filters: ListLabReportsDto,
+    personId: string,
   ): Promise<LabReportStatusCounts> {
     const resolvedBranchId = this.resolveBranch(branchId, filters);
-    const baseWhere = this.buildListWhere(tenantId, resolvedBranchId, {
-      ...filters,
-      status: undefined,
-    });
+    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
+      tenantId,
+      personId,
+    );
+    const baseWhere = this.buildListWhere(
+      tenantId,
+      resolvedBranchId,
+      { ...filters, status: undefined },
+      scopeIds,
+    );
 
     const statuses = Object.values(LabReportStatus);
     const counts = await Promise.all(
@@ -1077,12 +1128,17 @@ export class LabReportService {
     // the standalone "Outsource" checkbox, since both set isOutsourced) so
     // the In-House/Outsource split reflects every OTHER active filter, not
     // whichever source pill happens to be selected right now.
-    const sourceBaseWhere = this.buildListWhere(tenantId, resolvedBranchId, {
-      ...filters,
-      status: undefined,
-      source: undefined,
-      outsource: undefined,
-    });
+    const sourceBaseWhere = this.buildListWhere(
+      tenantId,
+      resolvedBranchId,
+      {
+        ...filters,
+        status: undefined,
+        source: undefined,
+        outsource: undefined,
+      },
+      scopeIds,
+    );
     const [inHouse, outsource] = await Promise.all([
       this.prisma.labReport.count({
         where: { ...sourceBaseWhere, isOutsourced: false },
@@ -1116,8 +1172,19 @@ export class LabReportService {
   async getOptions(
     tenantId: string,
     branchId: string | null,
+    personId: string,
   ): Promise<LabReportOptions> {
     const activeBranchId = this.requireBranch(branchId);
+    // Scope the Lab Test / Lab Panel filter dropdowns to the caller's departments
+    // (unassigned tests/panels stay visible to all), matching the worklist itself.
+    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
+      tenantId,
+      personId,
+    );
+    const deptScope =
+      scopeIds.length > 0
+        ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
+        : { departmentId: null };
 
     const [
       branches,
@@ -1153,6 +1220,7 @@ export class LabReportService {
           branchId: activeBranchId,
           isActive: true,
           deletedAt: null,
+          ...deptScope,
         },
         select: { id: true, testName: true },
         orderBy: { testName: 'asc' },
@@ -1163,6 +1231,7 @@ export class LabReportService {
           branchId: activeBranchId,
           isActive: true,
           deletedAt: null,
+          ...deptScope,
         },
         select: { id: true, panelName: true },
         orderBy: { panelName: 'asc' },

@@ -1,0 +1,62 @@
+meta {
+  name: 01 Business Login
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "identifier": "{{refFlowIdentifier}}",
+    "password": "{{refFlowPassword}}",
+    "tenantSlug": "{{refFlowTenantSlug}}"
+  }
+}
+
+vars:pre-request {
+  refFlowIdentifier: 9999999999
+  refFlowPassword: Verify@123
+  refFlowTenantSlug: demo-diagnostics
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.accessToken) {
+    bru.setVar("businessAccessToken", data.accessToken);
+    try {
+      const claims = JSON.parse(atob(data.accessToken.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+      if (claims.tenant_id) bru.setVar("tenantId", claims.tenant_id);
+      if (claims.active_branch_id) bru.setVar("branchId", claims.active_branch_id);
+    } catch (e) { /* token not decodable in this runtime */ }
+  }
+  if (data && data.refreshToken) bru.setVar("businessRefreshToken", data.refreshToken);
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns an access token", function () {
+    expect(res.getBody().data.accessToken).to.be.a("string");
+  });
+}
+
+docs {
+  Step 1 — authenticate as a business user and capture `businessAccessToken` +
+  `tenantId`. The `refFlow*` pre-request vars default to a demo tenant login;
+  override them (or the environment) with your own credentials. `tenantSlug` sets
+  the tenant context for staff login.
+
+  Steps 01–08 only need this tenant-level token. To exercise the delete guard
+  (steps 09–13) you also need a branch-scoped context — run **02 Switch to Branch
+  Profile** next.
+}

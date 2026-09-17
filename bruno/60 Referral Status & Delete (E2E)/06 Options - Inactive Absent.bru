@@ -1,0 +1,37 @@
+meta {
+  name: 06 Options - Inactive Absent
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/external-referrals/options?limit=100
+  body: none
+  auth: bearer
+}
+
+params:query {
+  limit: 100
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("INACTIVE referral is NOT selectable (absent from options)", function () {
+    const data = res.getBody().data;
+    const arr = Array.isArray(data) ? data : (data.data || []);
+    expect(arr.some((o) => o.id === bru.getVar("flowReferralId"))).to.equal(false);
+  });
+}
+
+docs {
+  Step 6 — the key **server-side enforcement**: once Inactive, the referral is
+  excluded from the options feed, so it can't be picked for a new order in
+  `/registration/create` — regardless of any client-side hiding. Contrast with the
+  next step: the full listing still shows it (as Inactive), so it can be reactivated.
+}

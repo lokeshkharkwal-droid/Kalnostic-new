@@ -3,6 +3,7 @@ import { PrismaModule } from '../../prisma/prisma.module';
 import { BranchModule } from '../branch/branch.module';
 import { ReferralListModule } from '../referral-list/referral-list.module';
 import { ReferralPanelSettingsModule } from '../referral-panel-settings/referral-panel-settings.module';
+import { ReferralUsageModule } from '../referral-usage/referral-usage.module';
 import { UsersModule } from '../users/users.module';
 import { SecurityModule } from '../security/security.module';
 import { ReferralPanelController } from './referral-panel.controller';
@@ -24,6 +25,7 @@ import { ReferralPanelUserService } from './referral-panel-user.service';
     BranchModule,
     ReferralListModule,
     ReferralPanelSettingsModule,
+    ReferralUsageModule,
     UsersModule,
     SecurityModule,
   ],

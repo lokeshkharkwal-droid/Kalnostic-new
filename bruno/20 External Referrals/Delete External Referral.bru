@@ -31,4 +31,10 @@ docs {
   active assigned lab tests/panels, in one transaction. Scoped to the caller's
   tenant. 404 `EXTERNAL_REFERRAL_NOT_FOUND` if missing, already soft-deleted, or
   owned by another tenant.
+
+  **409 `EXTERNAL_REFERRAL_IN_USE`** — deletion is blocked when the referral is used
+  by an order still in an active accessioning/technician-stage workflow (a
+  non-cancelled order with a sample still being collected/processed, or a lab report not yet published). Deactivate
+  the referral instead (`PATCH` with `status: INACTIVE`). Historical /
+  fully-published / cancelled orders do **not** block deletion.
 }

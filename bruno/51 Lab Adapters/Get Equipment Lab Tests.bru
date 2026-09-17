@@ -1,0 +1,48 @@
+meta {
+  name: Get Equipment Lab Tests
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/equipment/{{equipmentId}}/lab-tests
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the equipment's mapped lab tests", function () {
+    expect(res.getBody().data).to.be.an("array");
+  });
+}
+
+docs {
+  The `{ id, testName, testCode }[]` lab tests mapped to an **equipment** in Site
+  Admin (`EquipmentLabTest`). This is a **business** route (global JwtAuthGuard) on
+  the SiteAdmin-owned Equipment module — equipment is platform-level and has no
+  RLS, so a business token can read the global mapping. 404 `EQUIPMENT_NOT_FOUND`
+  if the equipment is missing or soft-deleted.
+
+  Used by the **Add Lab Adapter** form to (a) display an equipment's tests once it
+  is selected, and (b) drive per-branch **auto-mapping** on create — see *Create
+  Lab Adapter*.
+
+  **Sample response — 200**
+  ```json
+  {
+    "success": true,
+    "data": [
+      { "id": "3f1a…", "testName": "Complete Blood Count", "testCode": "CBC" },
+      { "id": "9c2b…", "testName": "Lipid Profile", "testCode": "LIP" }
+    ],
+    "meta": { "timestamp": "2026-07-21T09:00:00.000Z" }
+  }
+  ```
+}
