@@ -173,6 +173,19 @@ export class EquipmentService {
   }
 
   /**
+   * Resolve just an equipment's mapped SITE_ADMIN lab tests (in mapping order) —
+   * the lightweight `{ id, testName, testCode }[]` projection, without the parent
+   * equipment scalars. Used by the business `GET /equipment/:id/lab-tests` read so
+   * the Lab Adapter form can show (and auto-map from) the equipment's tests.
+   * @param id equipment id
+   * @throws EquipmentNotFoundException if missing or soft-deleted
+   */
+  async findLabTests(id: string): Promise<EquipmentLabTest[]> {
+    const { labTests } = await this.findById(id);
+    return labTests;
+  }
+
+  /**
    * Update an equipment. Provided scalar fields are patched; when `labTestIds` is
    * provided the whole mapping set is replaced (old active mappings soft-deleted,
    * the new set created) in one transaction.

@@ -1,0 +1,39 @@
+meta {
+  name: 08 Reactivate (Toggle Active)
+  type: http
+  seq: 8
+}
+
+patch {
+  url: {{baseUrl}}/external-referrals/{{flowReferralId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "ACTIVE"
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("status is ACTIVE again", function () {
+    expect(res.getBody().data.status).to.equal("ACTIVE");
+  });
+}
+
+docs {
+  Step 8 — reactivate (`Inactive → Active`). The next step confirms it becomes
+  selectable again. (For **Referral Panel** the body is `{ "isActive": true }`.)
+}

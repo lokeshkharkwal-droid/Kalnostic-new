@@ -1,0 +1,35 @@
+meta {
+  name: 09 Options - Active Present Again
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/external-referrals/options?limit=100
+  body: none
+  auth: bearer
+}
+
+params:query {
+  limit: 100
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("reactivated referral is selectable again", function () {
+    const data = res.getBody().data;
+    const arr = Array.isArray(data) ? data : (data.data || []);
+    expect(arr.some((o) => o.id === bru.getVar("flowReferralId"))).to.equal(true);
+  });
+}
+
+docs {
+  Step 9 — reactivating restores selectability: the referral reappears in the options
+  feed, so it can be chosen for new orders again.
+}

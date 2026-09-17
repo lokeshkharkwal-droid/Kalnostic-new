@@ -13,6 +13,22 @@ export class ReferralPanelNotFoundException extends KaltrosException {
   }
 }
 
+/**
+ * 409 — the referral panel cannot be deleted because it is used by an order that
+ * is still in an active accessioning/technician-stage workflow. The panel may be
+ * deactivated instead.
+ */
+export class ReferralPanelInUseException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'REFERRAL_PANEL_IN_USE',
+      'This referral panel cannot be deleted because it is used by an active order',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
 /** 409 — another active referral panel in this tenant already uses this name. */
 export class ReferralPanelNameConflictException extends KaltrosException {
   constructor(name: string) {

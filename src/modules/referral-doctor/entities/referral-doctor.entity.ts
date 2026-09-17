@@ -119,4 +119,10 @@ export interface ReferralDoctorListItem {
   labTestList: ClassificationRef | null;
   /** Active branch's assigned Lab Panel List, bulk-resolved (never per-row). */
   labPanelList: ClassificationRef | null;
+  /**
+   * `true` when at least one active-workflow order references this doctor, so the
+   * client disables its Delete action (it may still be deactivated). Resolved in
+   * bulk by `ReferralUsageService.findActiveReferralIds` (never per-row).
+   */
+  hasActiveOrder: boolean;
 }

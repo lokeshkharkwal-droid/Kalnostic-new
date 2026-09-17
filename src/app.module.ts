@@ -41,6 +41,7 @@ import { DoctorsModule } from './modules/doctors/doctors.module';
 import { ReferralDoctorModule } from './modules/referral-doctor/referral-doctor.module';
 import { ExternalReferralModule } from './modules/external-referral/external-referral.module';
 import { InternalReferralModule } from './modules/internal-referral/internal-referral.module';
+import { ReferralUsageModule } from './modules/referral-usage/referral-usage.module';
 import { MachineModule } from './modules/machine/machine.module';
 import { LabTestSettingsModule } from './modules/lab-test-settings/lab-test-settings.module';
 import { LabTestFieldPermissionsModule } from './modules/lab-test-field-permissions/lab-test-field-permissions.module';
@@ -152,6 +153,7 @@ import { B2bModuleGuard } from './common/guards/b2b-module.guard';
     ReferralDoctorModule,
     ExternalReferralModule,
     InternalReferralModule,
+    ReferralUsageModule,
     MachineModule,
     LabTestSettingsModule,
     LabTestFieldPermissionsModule,

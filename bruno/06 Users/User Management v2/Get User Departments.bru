@@ -1,0 +1,34 @@
+meta {
+  name: Get User Departments
+  type: http
+  seq: 21
+}
+
+get {
+  url: {{baseUrl}}/users/manage/{{manageUserId}}/departments
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  manageUserId: 204f8ce7-17e0-4251-b575-5f1b6255c8f8
+}
+
+docs {
+  List the departments a staff user is currently assigned to (tenant-wide).
+
+  Returns `{ departments: { id, name, isDefault }[], defaultDepartmentId }`.
+  Each entry carries the department `name` so the picker can render the
+  already-selected departments (as chips) without re-fetching the catalogue.
+  The mapping is stored on the shared `department_person_mappings` table,
+  filtered to this person's `type = USER`, tenant-level (`branch_id = NULL`)
+  rows whose department is still active; `defaultDepartmentId` is the one
+  flagged `is_default = true`.
+
+  Used to pre-select the "Assign Departments" modal on the Users list.
+  404 STAFF_MEMBERSHIP_NOT_FOUND if the person is not a staff member.
+}

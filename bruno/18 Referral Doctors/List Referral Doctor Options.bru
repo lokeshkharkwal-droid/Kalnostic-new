@@ -23,7 +23,8 @@ auth:bearer {
 
 docs {
   Lightweight `{ id, name }` options for the Referring Doctor selector. Tenant-scoped,
-  non-deleted referral doctors ordered by first name; `name` is `firstName lastName`.
+  non-deleted, **ACTIVE-only** referral doctors ordered by first name (inactive doctors are
+  excluded so they can't be selected for a new order); `name` is `firstName lastName`.
   `search` matches the first name (case-insensitive). `branchId` restricts to a single
   branch (strict — records with no branch are excluded). Omit `page` for the full array;
   supply `page` for a `{ data, total, page, limit }` envelope.

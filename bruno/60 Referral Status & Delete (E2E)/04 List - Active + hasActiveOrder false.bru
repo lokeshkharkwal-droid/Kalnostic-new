@@ -1,0 +1,39 @@
+meta {
+  name: 04 List - Active + hasActiveOrder false
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/external-referrals?limit=100&search=E2E Referral Flow
+  body: none
+  auth: bearer
+}
+
+params:query {
+  limit: 100
+  search: E2E Referral Flow
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("row present, status ACTIVE, hasActiveOrder false", function () {
+    const row = (res.getBody().data || []).find((r) => r.id === bru.getVar("flowReferralId"));
+    expect(row, "referral row").to.be.an("object");
+    expect(row.status).to.equal("ACTIVE");
+    expect(row.hasActiveOrder).to.equal(false);
+  });
+}
+
+docs {
+  Step 4 — the full listing row. Confirms the new `hasActiveOrder` field is present
+  and `false` (no order references this referral yet), so the frontend keeps the
+  Delete action enabled. When an active order exists it becomes `true` and the client
+  disables Delete (and the server returns 409 on a delete attempt — see folder docs).
+}

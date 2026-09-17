@@ -31,7 +31,17 @@ export const UPDATE_TEST_STATUS = {
   MISSING_VALUES: '1',
   ALREADY_COMPLETE: '2',
   TOKEN_MISMATCH: '3',
+  NOT_ACCEPTED: '4',
 } as const;
+
+/**
+ * Message returned when a result submission (or an order lookup) targets a sample
+ * that Accession has not yet **accepted**. The LIS mirrors the Accession gate:
+ * results may only be filled onto a sample that has passed acceptance, never one
+ * that is merely Collected.
+ */
+export const NOT_ACCEPTED_MESSAGE =
+  'This sample is not accepted in the Accession module.';
 
 /** One order row returned by `GET /emi/orders`. */
 export interface EmiOrderRow {

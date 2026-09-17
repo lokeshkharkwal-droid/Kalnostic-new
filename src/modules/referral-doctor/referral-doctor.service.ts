@@ -17,6 +17,7 @@ import { SubCategoryService } from '../sub-category/sub-category.service';
 import { ReferralListAssignmentService } from '../referral-list/referral-list-assignment.service';
 import { ReferralListAssignmentView } from '../referral-list/entities/referral-list.entity';
 import { ReferralPanelSettingsService } from '../referral-panel-settings/referral-panel-settings.service';
+import { ReferralUsageService } from '../referral-usage/referral-usage.service';
 import { CreateReferralDoctorDto } from './dto/create-referral-doctor.dto';
 import { UpdateReferralDoctorDto } from './dto/update-referral-doctor.dto';
 import { ListReferralDoctorsDto } from './dto/list-referral-doctors.dto';
@@ -34,6 +35,7 @@ import {
 } from './entities/referral-doctor.entity';
 import {
   InvalidCommissionConfigException,
+  ReferralDoctorInUseException,
   ReferralDoctorNotFoundException,
 } from './exceptions/referral-doctor.exceptions';
 
@@ -84,6 +86,7 @@ export class ReferralDoctorService {
     private readonly referralPanelSettingsService: ReferralPanelSettingsService,
     private readonly branchService: BranchService,
     private readonly listAssignmentService: ReferralListAssignmentService,
+    private readonly referralUsage: ReferralUsageService,
   ) {}
 
   /**
@@ -111,6 +114,9 @@ export class ReferralDoctorService {
     const where: Prisma.ReferralDoctorWhereInput = {
       tenantId,
       deletedAt: null,
+      // Only active doctors are selectable for new orders (server-side
+      // enforcement — inactive ones never reach the create-order dropdown).
+      status: ReferralDoctorStatus.ACTIVE,
     };
     if (filters.branchId) {
       where.branchId = filters.branchId;
@@ -371,8 +377,15 @@ export class ReferralDoctorService {
         ReferralType.DOCTOR,
         rows.map((r) => r.id),
       );
+    const activeIds = await this.referralUsage.findActiveReferralIds(
+      tenantId,
+      'referredByDoctorId',
+      rows.map((r) => r.id),
+    );
     return {
-      data: rows.map((r) => this.toListItem(r, assignments.get(r.id))),
+      data: rows.map((r) =>
+        this.toListItem(r, assignments.get(r.id), activeIds.has(r.id)),
+      ),
       total,
       page,
       limit,
@@ -552,6 +565,15 @@ export class ReferralDoctorService {
    */
   async remove(id: string, tenantId: string): Promise<ReferralDoctorDetail> {
     await this.findById(id, tenantId);
+    if (
+      await this.referralUsage.hasActiveOrder(
+        tenantId,
+        'referredByDoctorId',
+        id,
+      )
+    ) {
+      throw new ReferralDoctorInUseException(id);
+    }
     const now = new Date();
     const scope = { referralDoctorId: id, tenantId, deletedAt: null };
     await this.prisma.withTenant(tenantId, async (tx) => {
@@ -897,6 +919,7 @@ export class ReferralDoctorService {
   private toListItem(
     row: ReferralDoctorListRow,
     assignment?: ReferralListAssignmentView,
+    hasActiveOrder = false,
   ): ReferralDoctorListItem {
     return {
       id: row.id,
@@ -917,6 +940,7 @@ export class ReferralDoctorService {
       status: row.status,
       labTestList: assignment?.labTestList ?? null,
       labPanelList: assignment?.labPanelList ?? null,
+      hasActiveOrder,
     };
   }
 

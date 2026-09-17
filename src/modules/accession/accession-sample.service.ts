@@ -16,6 +16,7 @@ import { PaginatedResult, paginated } from '../../common/dto/response.dto';
 import { toBranchLocalInstant, formatTenantDate } from '../../common/utils';
 import { TenantService } from '../tenant/tenant.service';
 import { LabReportService } from '../lab-report/lab-report.service';
+import { UserDepartmentScopeService } from '../department/user-department-scope.service';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
 import type { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
 import type { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
@@ -146,6 +147,7 @@ export class OrderSampleService {
     private readonly eventEmitter: EventEmitter2,
     private readonly tenantService: TenantService,
     private readonly barcodeService: BarcodeService,
+    private readonly userDepartmentScope: UserDepartmentScopeService,
   ) {}
 
   // ── Sample generation (order → accession) ─────────────────────────────────
@@ -676,13 +678,25 @@ export class OrderSampleService {
     tenantId: string,
     branchId: string | null,
     query: ListSamplesDto,
+    personId: string,
   ): Promise<PaginatedResult<OrderSampleListItem>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const nowMs = Date.now();
     const tat = await this.tatThresholds(tenantId, branchId);
+    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
+      tenantId,
+      personId,
+    );
 
-    const where = this.buildSampleWhere(tenantId, branchId, query, tat, nowMs);
+    const where = this.buildSampleWhere(
+      tenantId,
+      branchId,
+      query,
+      tat,
+      nowMs,
+      scopeIds,
+    );
 
     // withTenant (not array-form $transaction) so the RLS tenant GUC is set for
     // both queries — array-form bypasses the per-op RLS extension and returns
@@ -725,12 +739,24 @@ export class OrderSampleService {
     tenantId: string,
     branchId: string | null,
     query: ListSamplesDto,
+    personId: string,
   ): Promise<PaginatedResult<InHouseOrderGroup>> {
     const page = query.page ?? 1;
     const limit = 10; // group-aware pagination: 10 orders per page
     const nowMs = Date.now();
     const tat = await this.tatThresholds(tenantId, branchId);
-    const where = this.buildSampleWhere(tenantId, branchId, query, tat, nowMs);
+    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
+      tenantId,
+      personId,
+    );
+    const where = this.buildSampleWhere(
+      tenantId,
+      branchId,
+      query,
+      tat,
+      nowMs,
+      scopeIds,
+    );
 
     const { orderIds, total, rows, mode } = await this.prisma.withTenant(
       tenantId,
@@ -954,11 +980,19 @@ export class OrderSampleService {
   async summary(
     tenantId: string,
     branchId: string | null,
+    personId: string,
   ): Promise<AccessionSummary> {
+    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
+      tenantId,
+      personId,
+    );
     const where: Prisma.OrderSampleWhereInput = {
       tenantId,
       branchId,
       deletedAt: null,
+      // Same mandatory department-visibility scope as the list, so the status
+      // tab + TAT bar counts always match the rows the user can actually see.
+      AND: [this.departmentScopeForSamples(scopeIds)],
     };
     const grouped = await this.prisma.orderSample.groupBy({
       by: ['status'],
@@ -1980,6 +2014,7 @@ export class OrderSampleService {
     query: ListSamplesDto,
     tat: TatThresholds,
     nowMs: number,
+    scopeIds: string[],
   ): Prisma.OrderSampleWhereInput {
     const where: Prisma.OrderSampleWhereInput = {
       tenantId,
@@ -2054,9 +2089,29 @@ export class OrderSampleService {
     }
     this.applyOrderMode(query.orderMode, order, and);
 
+    // Department visibility scope (mandatory, not a user filter): a sample is
+    // visible when its department is unassigned (NULL → everyone) or one of the
+    // caller's mapped departments. Pushed into `and` so it never clobbers the
+    // search/urgent/outsource conditions and is applied before pagination.
+    and.push(this.departmentScopeForSamples(scopeIds));
+
     if (Object.keys(order).length > 0) where.order = order;
     if (and.length > 0) where.AND = and;
     return where;
+  }
+
+  /**
+   * The department-visibility condition for `OrderSample.departmentId` (a
+   * denormalized, indexed snapshot): unassigned rows (NULL) are visible to all;
+   * an empty scope (user with no department) therefore sees only unassigned rows.
+   * @param scopeIds the caller's department ids (see UserDepartmentScopeService)
+   */
+  private departmentScopeForSamples(
+    scopeIds: string[],
+  ): Prisma.OrderSampleWhereInput {
+    return scopeIds.length > 0
+      ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
+      : { departmentId: null };
   }
 
   /** Translate the §A.3 "Order Mode" filter into order/sample conditions. */

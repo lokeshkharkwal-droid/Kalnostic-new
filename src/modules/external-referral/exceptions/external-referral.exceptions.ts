@@ -14,6 +14,22 @@ export class ExternalReferralNotFoundException extends KaltrosException {
 }
 
 /**
+ * 409 — the external referral cannot be deleted because it is used by an order
+ * that is still in an active accessioning/technician-stage workflow. The referral
+ * may be deactivated instead.
+ */
+export class ExternalReferralInUseException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'EXTERNAL_REFERRAL_IN_USE',
+      'This external referral cannot be deleted because it is used by an active order',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
  * 422 — one or more assigned `labTestId`s do not reference an active lab test in
  * this tenant.
  */

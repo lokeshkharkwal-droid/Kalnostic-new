@@ -28,6 +28,7 @@ import { CreateUserDto, AssignBranchesDto } from './dto/create-user.dto';
 import { CreateQuickStaffDto } from './dto/create-quick-staff.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateBranchAssignmentDto } from './dto/update-branch-assignment.dto';
+import { AssignDepartmentsDto } from './dto/assign-departments.dto';
 import { UpdateBranchPermissionsDto } from './dto/update-branch-permissions.dto';
 import { ListUsersQueryDto } from './dto/list-users-query.dto';
 import { MyPermissionsQueryDto } from './dto/my-permissions-query.dto';
@@ -295,6 +296,30 @@ export class UserManagementController {
       branchId,
       actorId,
     );
+  }
+
+  /** List the departments the user is assigned to (tenant-wide). */
+  @Get(':id/departments')
+  getDepartmentAssignments(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+  ) {
+    return this.usersService.getDepartmentAssignments(tenantId, id);
+  }
+
+  /** Assign (replace) the user's department set, marking one as default. */
+  @Post(':id/departments')
+  @Audit({
+    module: AuditModule.USER,
+    action: AuditAction.UPDATE,
+    description: 'Assigned departments to a staff user',
+  })
+  assignDepartments(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+    @Body() dto: AssignDepartmentsDto,
+  ) {
+    return this.usersService.assignDepartments(tenantId, id, dto);
   }
 
   /** Global deactivate (tenant-wide). */

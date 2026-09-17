@@ -1,0 +1,44 @@
+meta {
+  name: 60 Referral Status & Delete (E2E)
+  seq: 60
+}
+
+docs {
+  End-to-end flow for the **referral Active/Inactive toggle + delete-in-use guard**
+  (applies to all four referral types — this flow uses **External Referral** as the
+  representative; Panel/Doctor/Internal behave identically, except **Referral Panel**
+  toggles `isActive` instead of `status`).
+
+  Run the requests **in order** (01 → 11). Fully self-contained — needs only a valid
+  business login on `{{baseUrl}}`. What it proves:
+
+  - Toggling a referral **Inactive** (`PATCH … { status: INACTIVE }`) is persisted
+    and **non-destructive** — the record stays in the full listing (step 07) but
+    disappears from `GET /external-referrals/options` (step 06), the endpoint that
+    feeds the `/registration/create` dropdowns. Reactivating restores it (steps 08–09).
+  - Each list row carries **`hasActiveOrder`** (step 04) — `true` when the referral is
+    used by an order still in an active accessioning/technician-stage workflow.
+  - With no active order, delete succeeds (step 10) and the record 404s (step 11).
+
+  ## Delete-in-use guard (409) — behaviour reference
+
+  When the referral **is** used by an active-workflow order — a non-cancelled order
+  (`status ≠ CANCELLED`, not soft-deleted) that is still mid-workflow: **either** a
+  sample in an in-flight accessioning state (`NEW`/`COLLECTED`/`HOLD`/`REPEAT`/`HALT`/
+  `SENT_INTERNAL`/`FORWARD_EXTERNAL`/`OUTSOURCED`) **or** a lab report not yet
+  `PUBLISHED` — the list row reports `hasActiveOrder: true` and:
+
+      DELETE {{baseUrl}}/external-referrals/{{id}}
+      → 409  { "success": false,
+               "error": { "code": "EXTERNAL_REFERRAL_IN_USE",
+                          "message": "This external referral cannot be deleted because it is used by an active order" } }
+
+  Per type the code is `REFERRAL_PANEL_IN_USE` / `REFERRAL_DOCTOR_IN_USE` /
+  `INTERNAL_REFERRAL_IN_USE`. Deactivate instead (`PATCH { status: INACTIVE }`).
+  Cancelling the order (or publishing all its reports) clears `hasActiveOrder` and the
+  delete then succeeds. **To reproduce:** attach `{{flowReferralId}}` to an order via
+  the **47 Order Flow (E2E)** setup (add `"externalReferralId": "{{flowReferralId}}"`
+  to *25 Create Order*), then run *10 Delete* — it returns 409 until you cancel the order.
+
+  Captured var: `flowReferralId`.
+}

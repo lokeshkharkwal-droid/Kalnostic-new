@@ -122,6 +122,34 @@ export const COLLECTABLE_SAMPLE_STATUSES: readonly SampleStatus[] = Object.keys(
 ) as SampleStatus[];
 
 /**
+ * The sample statuses on which a result may legitimately be entered — the sample
+ * has been **accepted** by Accession AND is currently in an active, still-in-hand
+ * processing state. Used by the LIS/machine (EMI) result gate so a downstream
+ * result submission mirrors the Accession → Technician Reporting rule instead of
+ * relying on frontend visibility alone.
+ *
+ * This is an **allowlist** (a status not listed here is treated as non-reportable,
+ * so a future `SampleStatus` fails closed):
+ * - `ACCEPTED` / `ACQUIRED` — accepted and being worked on.
+ * - `STORED`, `SENT_INTERNAL`, `FORWARD_EXTERNAL`, `OUTSOURCED` — accepted and
+ *   still live in the workflow (stored for later, or handed to another
+ *   branch/partner that reports against it).
+ *
+ * Deliberately **excluded** even though the sample was once accepted:
+ * `HALT` (paused), `ERROR` (flagged erroneous), `REPEAT` (needs re-collection),
+ * `DISCARDED` / `RETURNED` (terminal — the specimen is gone). Also excluded (never
+ * accepted): `NEW`, `COLLECTED`, `HOLD`, `CANCELLED`.
+ */
+export const REPORTABLE_SAMPLE_STATUSES: ReadonlySet<SampleStatus> = new Set([
+  SampleStatus.ACCEPTED,
+  SampleStatus.ACQUIRED,
+  SampleStatus.STORED,
+  SampleStatus.SENT_INTERNAL,
+  SampleStatus.FORWARD_EXTERNAL,
+  SampleStatus.OUTSOURCED,
+]);
+
+/**
  * The **forced** target status for an action, independent of the sample's current
  * status. Used by group-level status actions ("direct status override" — every
  * sample in the group is set to exactly the action's status, regardless of its

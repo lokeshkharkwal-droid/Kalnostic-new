@@ -62,8 +62,23 @@ export class LabAdapterService {
   ): Promise<LabAdapterWithRelations> {
     await this.assertEquipmentRef(dto.equipmentId);
     await this.assertBranchRefs(tenantId, dto.branchIds);
-    const labTestIds = dto.labTestIds ?? [];
-    await this.assertBranchLabTestRefs(tenantId, labTestIds);
+    // When the user picks tests manually, use their explicit selection (validated
+    // as before). When they leave Lab Tests empty, auto-map the equipment's
+    // SITE_ADMIN tests that are also available at each selected branch — resolved
+    // per branch, so each branch only gets its own available subset. The resolved
+    // ids are self-generated `BranchLabTest` ids, so they need no re-validation.
+    const manualIds = dto.labTestIds ?? [];
+    let labTestIds: string[];
+    if (manualIds.length) {
+      await this.assertBranchLabTestRefs(tenantId, manualIds);
+      labTestIds = manualIds;
+    } else {
+      labTestIds = await this.resolveEquipmentTestsForBranches(
+        tenantId,
+        dto.equipmentId,
+        dto.branchIds,
+      );
+    }
 
     const token = this.generateToken();
     let createdId: string;
@@ -336,6 +351,77 @@ export class LabAdapterService {
       const missing = unique.filter((id) => !foundIds.has(id));
       throw new LabAdapterLabTestNotFoundException(missing);
     }
+  }
+
+  /**
+   * Auto-resolve the branch lab tests to map when the user creates an adapter
+   * without picking any tests manually — the **Equipment-mapped tests ∩ Branch Lab
+   * Test List** rule. The equipment's SITE_ADMIN-mapped tests decide *which* tests
+   * belong to the instrument; each selected branch's Lab Test List decides
+   * *whether* a test is available there. A branch test matches an equipment test
+   * when their **Test Name + Test Code** agree (compared case-insensitively and
+   * trimmed, since casing/whitespace can drift between the template and the branch
+   * copy). Matching is scoped to each branch's default (Walk-in) list so a test
+   * resolves to exactly one orderable row (no duplicate mappings across pricing
+   * lists). The result is naturally per-branch (each `BranchLabTest` carries its
+   * own `branchId`): a test mapped to the equipment but absent at a branch is
+   * skipped for that branch. Returns an empty list when the equipment has no mapped
+   * tests, no branch has a list yet, or nothing matches (the adapter is then
+   * created with no tests, as before).
+   * @param tenantId tenant scope (from JWT)
+   * @param equipmentId the selected global equipment
+   * @param branchIds the branches the adapter is assigned to
+   */
+  private async resolveEquipmentTestsForBranches(
+    tenantId: string,
+    equipmentId: string,
+    branchIds: string[],
+  ): Promise<string[]> {
+    if (!branchIds.length) {
+      return [];
+    }
+    const equipment = await this.equipmentService.findById(equipmentId);
+    if (!equipment.labTests.length) {
+      return [];
+    }
+    // Match on Test Name + Test Code together, compared **case-insensitively and
+    // trimmed** — both are copied from the Site Admin template into the branch
+    // list, but casing / surrounding whitespace can drift and a case-sensitive DB
+    // `IN` would silently drop real matches. Scope to each branch's default
+    // (Walk-in) list (below) so a test resolves to exactly one orderable row.
+    const norm = (v: string | null): string => (v ?? '').trim().toLowerCase();
+    const key = (testCode: string | null, testName: string): string =>
+      `${testCode ?? ''} ${testName}`;
+    const wanted = new Set(
+      equipment.labTests.map((t) => key(norm(t.testCode), norm(t.testName))),
+    );
+    const defaultLists = await this.prisma.branchLabTestList.findMany({
+      where: {
+        tenantId,
+        branchId: { in: branchIds },
+        isDefault: true,
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+    const listIds = defaultLists.map((l) => l.id);
+    if (!listIds.length) {
+      return [];
+    }
+    const candidates = await this.prisma.branchLabTest.findMany({
+      where: {
+        tenantId,
+        branchId: { in: branchIds },
+        listId: { in: listIds },
+        isActive: true,
+        isDefault: true,
+        deletedAt: null,
+      },
+      select: { id: true, testCode: true, testName: true },
+    });
+    return candidates
+      .filter((c) => wanted.has(key(norm(c.testCode), norm(c.testName))))
+      .map((c) => c.id);
   }
 
   /** Insert an adapter's branch-assignment rows (no-op for an empty list). */

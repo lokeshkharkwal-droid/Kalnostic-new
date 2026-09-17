@@ -1,0 +1,29 @@
+meta {
+  name: 11 Get - 404 After Delete
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/external-referrals/{{flowReferralId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("404 Not Found", function () {
+    expect(res.getStatus()).to.equal(404);
+  });
+  test("error code EXTERNAL_REFERRAL_NOT_FOUND", function () {
+    expect(res.getBody().error.code).to.equal("EXTERNAL_REFERRAL_NOT_FOUND");
+  });
+}
+
+docs {
+  Step 11 — the soft-deleted referral is gone: fetching it returns 404
+  `EXTERNAL_REFERRAL_NOT_FOUND` (single-item GET filters `deletedAt: null`).
+}
