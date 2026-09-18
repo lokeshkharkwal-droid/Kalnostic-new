@@ -143,24 +143,155 @@ export class BranchLabTestService {
       branchId,
       tenantId,
     );
-    // The default (Walk-in) list is always ensured first — every existing
-    // master-data-driven flow (Import/Sync/New List) bootstraps it as a side
-    // effect, regardless of which list is actually being targeted here.
+    const targetList = await this.resolveTargetList(
+      tenantId,
+      branchId,
+      actorId,
+      dto.listId,
+    );
+    const plan = await this.buildImportPlan(
+      masterData.id,
+      tenantId,
+      branchId,
+      targetList.id,
+      actorId,
+      dto.labTestIds,
+    );
+    await this.writeImportPlan(tenantId, plan.toCreate, plan.toUpdate);
+    return {
+      copied: plan.toCreate.length,
+      updated: plan.toUpdate.length,
+      skipped: plan.skipped,
+    };
+  }
+
+  /**
+   * Import every Master Data lab test matching the given search/classification
+   * filters (server-resolved — no client-supplied id list) into the active
+   * branch's Lab Test List. Mirrors {@link importFromMasterData}'s create/update
+   * semantics exactly; the only difference is *which* ids are targeted and that
+   * writes commit in fixed-size batches (not one transaction) so a "select all"
+   * spanning thousands of rows can't become a single all-or-nothing write —
+   * failures are isolated to their own batch (same pattern as `LabTestService.
+   * importXlsx`'s `WRITE_BATCH_SIZE`).
+   * @param tenantId tenant scope (from JWT)
+   * @param branchId active branch (from JWT)
+   * @param actorId person id recorded as created/updated-by (or null)
+   * @param dto the search/classification filters (mirrors the import-picker's
+   *   "Available to Add" query) plus an optional target `listId`
+   * @returns counts of copied vs updated tests (no "skipped" — every matched id
+   *   is by definition a real Master Data test)
+   * @throws MasterDataNotMappedToBranchException if the branch has no master data
+   * @throws BranchLabTestListNotFoundException if `dto.listId` doesn't belong to this branch
+   */
+  async importFromMasterDataByFilter(
+    tenantId: string,
+    branchId: string,
+    actorId: string | null,
+    dto: {
+      search?: string;
+      department?: string;
+      category?: string;
+      subCategory?: string;
+      listId?: string;
+    },
+  ): Promise<BranchLabTestImportResult> {
+    const masterData = await this.masterDataService.findByBranch(
+      branchId,
+      tenantId,
+    );
+    const targetList = await this.resolveTargetList(
+      tenantId,
+      branchId,
+      actorId,
+      dto.listId,
+    );
+    // Same matching logic as the "Available to Add" listing endpoint — exclude
+    // sources already copied into this exact target list.
+    const where = await this.masterDataService.buildImportableLabTestWhere(
+      masterData.id,
+      tenantId,
+      dto.search,
+      {
+        department: dto.department,
+        category: dto.category,
+        subCategory: dto.subCategory,
+      },
+      targetList.id,
+    );
+    const matches = await this.prisma.labTest.findMany({
+      where,
+      select: { id: true },
+    });
+    const ids = matches.map((m) => m.id);
+
+    let copied = 0;
+    let updated = 0;
+    const WRITE_BATCH_SIZE = 25;
+    for (let i = 0; i < ids.length; i += WRITE_BATCH_SIZE) {
+      const batchIds = ids.slice(i, i + WRITE_BATCH_SIZE);
+      const plan = await this.buildImportPlan(
+        masterData.id,
+        tenantId,
+        branchId,
+        targetList.id,
+        actorId,
+        batchIds,
+      );
+      await this.writeImportPlan(tenantId, plan.toCreate, plan.toUpdate);
+      copied += plan.toCreate.length;
+      updated += plan.toUpdate.length;
+    }
+    return { copied, updated, skipped: 0 };
+  }
+
+  /**
+   * Resolve the list an import/sync should target: the default (Walk-in) list
+   * is always ensured to exist first (every master-data-driven flow bootstraps
+   * it as a side effect), then the given `listId` is used if present —
+   * `findById` validates it belongs to this branch (throws otherwise) — or the
+   * just-ensured default list otherwise.
+   */
+  private async resolveTargetList(
+    tenantId: string,
+    branchId: string,
+    actorId: string | null,
+    listId?: string,
+  ) {
     const defaultList = await this.listService.getOrCreateDefaultList(
       tenantId,
       branchId,
       actorId,
     );
-    // Import lands in the given list, or the just-ensured default (Walk-in)
-    // list when omitted. `findById` validates the given id belongs to this
-    // branch (throws otherwise).
-    const targetList = dto.listId
-      ? await this.listService.findById(dto.listId, tenantId, branchId)
+    return listId
+      ? await this.listService.findById(listId, tenantId, branchId)
       : defaultList;
+  }
+
+  /**
+   * Resolve a set of Master Data lab-test ids into create/update payloads for
+   * the target list: a source already copied into it (matched by
+   * `sourceLabTestId`) is re-snapshotted (UPDATE); a new one is materialized
+   * (CREATE). Shared by {@link importFromMasterData} (client-picked ids) and
+   * {@link importFromMasterDataByFilter} (server-resolved ids, processed batch
+   * by batch) so both stay byte-for-byte identical in their copy semantics.
+   */
+  private async buildImportPlan(
+    masterDataId: string,
+    tenantId: string,
+    branchId: string,
+    targetListId: string,
+    actorId: string | null,
+    candidateIds: string[],
+  ): Promise<{
+    toCreate: Prisma.BranchLabTestUncheckedCreateInput[];
+    toUpdate: { id: string; data: Prisma.BranchLabTestUncheckedUpdateInput }[];
+    skipped: number;
+  }> {
     const validSources = await this.prisma.labTest.findMany({
       where: {
-        id: { in: dto.labTestIds },
-        masterDataId: masterData.id,
+        id: { in: candidateIds },
+        masterDataId,
         tenantId,
         deletedAt: null,
       },
@@ -174,7 +305,7 @@ export class BranchLabTestService {
       where: {
         tenantId,
         branchId,
-        listId: targetList.id,
+        listId: targetListId,
         deletedAt: null,
         sourceLabTestId: { in: validIds },
       },
@@ -189,10 +320,10 @@ export class BranchLabTestService {
       id: string;
       data: Prisma.BranchLabTestUncheckedUpdateInput;
     }[] = [];
-    const skipped = dto.labTestIds.length - validIds.length;
+    const skipped = candidateIds.length - validIds.length;
     for (const id of validIds) {
       const source = await this.labTestService.findById(
-        masterData.id,
+        masterDataId,
         id,
         tenantId,
       );
@@ -207,33 +338,39 @@ export class BranchLabTestService {
           this.buildImportData(source, {
             tenantId,
             branchId,
-            sourceMasterDataId: masterData.id,
-            listId: targetList.id,
+            sourceMasterDataId: masterDataId,
+            listId: targetListId,
             actorId,
           }),
         );
       }
     }
+    return { toCreate, toUpdate, skipped };
+  }
 
-    if (toCreate.length || toUpdate.length) {
-      try {
-        await this.prisma.withTenant(tenantId, async (tx) => {
-          for (const data of toCreate) {
-            await tx.branchLabTest.create({ data });
-          }
-          for (const u of toUpdate) {
-            await tx.branchLabTest.update({
-              where: { id: u.id },
-              data: u.data,
-            });
-          }
-        });
-      } catch (e) {
-        this.rethrowConflict(e);
-        throw e;
-      }
+  /** Apply a resolved create/update plan in one transaction. */
+  private async writeImportPlan(
+    tenantId: string,
+    toCreate: Prisma.BranchLabTestUncheckedCreateInput[],
+    toUpdate: { id: string; data: Prisma.BranchLabTestUncheckedUpdateInput }[],
+  ): Promise<void> {
+    if (!toCreate.length && !toUpdate.length) return;
+    try {
+      await this.prisma.withTenant(tenantId, async (tx) => {
+        for (const data of toCreate) {
+          await tx.branchLabTest.create({ data });
+        }
+        for (const u of toUpdate) {
+          await tx.branchLabTest.update({
+            where: { id: u.id },
+            data: u.data,
+          });
+        }
+      });
+    } catch (e) {
+      this.rethrowConflict(e);
+      throw e;
     }
-    return { copied: toCreate.length, updated: toUpdate.length, skipped };
   }
 
   /**

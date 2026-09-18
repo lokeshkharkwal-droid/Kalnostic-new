@@ -37,6 +37,7 @@ import { UploadsModule } from './modules/uploads/uploads.module';
 import { AttachmentsModule } from './modules/attachments/attachments.module';
 import { ReferralPanelModule } from './modules/referral-panel/referral-panel.module';
 import { ReferralPanelSettingsModule } from './modules/referral-panel-settings/referral-panel-settings.module';
+import { OverallResultTemplateModule } from './modules/overall-result-template/overall-result-template.module';
 import { DoctorsModule } from './modules/doctors/doctors.module';
 import { ReferralDoctorModule } from './modules/referral-doctor/referral-doctor.module';
 import { ExternalReferralModule } from './modules/external-referral/external-referral.module';
@@ -149,6 +150,7 @@ import { B2bModuleGuard } from './common/guards/b2b-module.guard';
     AttachmentsModule,
     ReferralPanelModule,
     ReferralPanelSettingsModule,
+    OverallResultTemplateModule,
     DoctorsModule,
     ReferralDoctorModule,
     ExternalReferralModule,

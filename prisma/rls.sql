@@ -859,6 +859,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS referral_panel_settings_name_active_unique
   ON referral_panel_settings (tenant_id, setting_name)
   WHERE deleted_at IS NULL;
 
+-- ── overall_result_templates ──────────────────────────────────────────────────
+ALTER TABLE overall_result_templates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE overall_result_templates FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS overall_result_templates_tenant_isolation ON overall_result_templates;
+CREATE POLICY overall_result_templates_tenant_isolation ON overall_result_templates
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- `name` unique per tenant among ACTIVE rows (a value freed by a soft-delete
+-- can be reused). Prisma can't express a partial unique index.
+CREATE UNIQUE INDEX IF NOT EXISTS overall_result_templates_name_active_unique
+  ON overall_result_templates (tenant_id, name)
+  WHERE deleted_at IS NULL;
+
 -- ── tenant_staff_memberships ──────────────────────────────────────────────────
 ALTER TABLE tenant_staff_memberships ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tenant_staff_memberships FORCE ROW LEVEL SECURITY;

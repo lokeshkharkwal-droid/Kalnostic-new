@@ -1,0 +1,65 @@
+meta {
+  name: Create Overall Result Template
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/overall-result-templates
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "MRI RIGHT ARM",
+    "groupName": "MRI RIGHT ARM",
+    "content": "<p>Findings are within normal limits.</p>",
+    "status": "ACTIVE"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("overallResultTemplateId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("echoes the submitted name", function () {
+    expect(res.getBody().data.name).to.equal("MRI RIGHT ARM");
+  });
+}
+
+docs {
+  🔒 **RBAC:** requires `business_admin:overall_result_template__add_overall_result` — enforced by `PermissionGuard` (`@RequirePermission`). The `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) always succeeds here.
+
+  Create an Overall Result template in the caller's tenant (tenant id taken
+  from the JWT). Tenant-level — this is Business Admin master data, not
+  branch-scoped. Captures `overallResultTemplateId`.
+
+  ## Fields
+
+  - `name` — REQUIRED, 1-255 chars. Unique among active templates in the
+    tenant (409 `OVERALL_RESULT_TEMPLATE_NAME_CONFLICT` otherwise; a name
+    freed by soft-deleting a template can be reused).
+  - `groupName` — REQUIRED, 1-255 chars, free text. Not validated against any
+    catalogue (matches the same convention as
+    `LabTestResultParam.groupName`). Multiple templates may share one
+    `groupName`. Associating a template with a lab test's result-parameter
+    group at report time is **not implemented yet** — this is phase 1
+    (settings CRUD only).
+  - `content` — REQUIRED, the rich-text body as an HTML string (authored via
+    the frontend's Tiptap editor).
+  - `status` — optional, `ACTIVE` | `INACTIVE`, defaults `ACTIVE`.
+}

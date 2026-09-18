@@ -5,7 +5,7 @@ import {
   ResultRounding,
   ResultType,
 } from '@prisma/client';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
   IsBoolean,
@@ -151,6 +151,20 @@ export class LabTestResultParamDto {
   @ValidateNested({ each: true })
   @Type(() => ReflexTestRefDto)
   reflexTests?: ReflexTestRefDto[];
+
+  /** Overall Result template group names this parameter is linked to
+   * (free-text, matched by string equality against
+   * `OverallResultTemplate.groupName` — not validated against a catalogue
+   * here, same convention as `groupName` above). De-duplicated on write so
+   * the same group name can't be tagged onto a parameter more than once. */
+  @IsArray()
+  @IsOptional()
+  @IsString({ each: true })
+  @MaxLength(255, { each: true })
+  @Transform(({ value }: { value: unknown }) =>
+    Array.isArray(value) ? Array.from(new Set(value)) : value,
+  )
+  overallResultGroups?: string[];
 
   // Meta
   @IsString()
