@@ -289,6 +289,7 @@ export class BranchService {
       excludeBranchType?: BranchType;
       search?: string;
       moduleKey?: string;
+      excludeCurrentBranchId?: string;
       page?: number;
       limit?: number;
     } = {},
@@ -319,6 +320,11 @@ export class BranchService {
         select: { branchId: true },
       });
       where.id = { in: enabledBranchIds.map((row) => row.branchId) };
+    }
+    // Exclude the caller's own active branch (e.g. Accession transfer picker).
+    // Uses `NOT` so it composes with any `where.id` the `moduleKey` filter set.
+    if (filters.excludeCurrentBranchId) {
+      where.NOT = { id: filters.excludeCurrentBranchId };
     }
 
     // Legacy mode: no `page` → return the full list unchanged.
