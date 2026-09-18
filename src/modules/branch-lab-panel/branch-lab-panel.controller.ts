@@ -18,6 +18,7 @@ import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
 import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
 import { ImportBranchLabPanelsDto } from './dto/import-branch-lab-panels.dto';
+import { ImportBranchLabPanelsByFilterDto } from './dto/import-branch-lab-panels-by-filter.dto';
 import { SyncBranchLabPanelsDto } from './dto/sync-branch-lab-panels.dto';
 import { ListBranchLabPanelsQueryDto } from './dto/list-branch-lab-panels-query.dto';
 import { ListBranchLabPanelsForBranchQueryDto } from './dto/list-branch-lab-panels-for-branch-query.dto';
@@ -64,6 +65,31 @@ export class BranchLabPanelController {
     @Body() dto: ImportBranchLabPanelsDto,
   ) {
     return this.branchLabPanelService.importFromMasterData(
+      tenantId,
+      this.requireBranch(profile),
+      personId,
+      dto,
+    );
+  }
+
+  /**
+   * Persist-import every Master Data lab panel matching the given search/
+   * classification filters into the active branch's list ("select all" —
+   * no client-supplied id list; the backend resolves the matches itself).
+   */
+  @Post('import-by-filter')
+  @Audit({
+    module: AuditModule.LAB_PANEL,
+    action: AuditAction.CREATE,
+    description: 'Imported lab panels into branch list by filter',
+  })
+  importByFilter(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Body() dto: ImportBranchLabPanelsByFilterDto,
+  ) {
+    return this.branchLabPanelService.importFromMasterDataByFilter(
       tenantId,
       this.requireBranch(profile),
       personId,

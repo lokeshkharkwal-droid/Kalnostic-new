@@ -580,7 +580,12 @@ export class OrderSampleService {
     tenantId: string,
     personId: string | null,
     sampleIds: string[],
-    opts: { print: boolean },
+    opts: {
+      print: boolean;
+      tubeType?: string;
+      notes?: string;
+      attachmentUrl?: string;
+    },
   ): Promise<void> {
     if (sampleIds.length === 0) return;
     const samples = await tx.orderSample.findMany({
@@ -615,7 +620,12 @@ export class OrderSampleService {
     personId: string | null,
     sampleId: string,
     now: Date,
-    opts: { print: boolean },
+    opts: {
+      print: boolean;
+      tubeType?: string;
+      notes?: string;
+      attachmentUrl?: string;
+    },
   ): Promise<void> {
     await this.transitionInTx(
       tx,
@@ -627,7 +637,10 @@ export class OrderSampleService {
         data: {
           collectedAt: now,
           collectedBy: personId,
+          // A tube type chosen in the Collect modal wins; otherwise derive it
+          // from the sample's container/sample type (unchanged behaviour).
           tubeType:
+            opts.tubeType ??
             sample.tubeType ??
             sample.containerType ??
             sample.sampleType ??
@@ -640,6 +653,7 @@ export class OrderSampleService {
             : {}),
         },
       }),
+      { notes: opts.notes, attachmentUrl: opts.attachmentUrl },
     );
 
     // A tube is drawn once → every test it carries is collected together.

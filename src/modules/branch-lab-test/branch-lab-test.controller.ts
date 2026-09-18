@@ -18,6 +18,7 @@ import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
 import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
 import { ImportBranchLabTestsDto } from './dto/import-branch-lab-tests.dto';
+import { ImportBranchLabTestsByFilterDto } from './dto/import-branch-lab-tests-by-filter.dto';
 import { SyncBranchLabTestsDto } from './dto/sync-branch-lab-tests.dto';
 import { ListBranchLabTestsQueryDto } from './dto/list-branch-lab-tests-query.dto';
 import { ListBranchLabTestsForBranchQueryDto } from './dto/list-branch-lab-tests-for-branch-query.dto';
@@ -64,6 +65,31 @@ export class BranchLabTestController {
     @Body() dto: ImportBranchLabTestsDto,
   ) {
     return this.branchLabTestService.importFromMasterData(
+      tenantId,
+      this.requireBranch(profile),
+      personId,
+      dto,
+    );
+  }
+
+  /**
+   * Persist-import every Master Data lab test matching the given search/
+   * classification filters into the active branch's list ("select all" —
+   * no client-supplied id list; the backend resolves the matches itself).
+   */
+  @Post('import-by-filter')
+  @Audit({
+    module: AuditModule.LAB_TEST,
+    action: AuditAction.CREATE,
+    description: 'Imported lab tests into branch list by filter',
+  })
+  importByFilter(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Body() dto: ImportBranchLabTestsByFilterDto,
+  ) {
+    return this.branchLabTestService.importFromMasterDataByFilter(
       tenantId,
       this.requireBranch(profile),
       personId,

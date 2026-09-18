@@ -1,0 +1,25 @@
+meta {
+  name: Delete Overall Result Template
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/overall-result-templates/{{overallResultTemplateId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  🔒 **RBAC:** requires `business_admin:overall_result_template__delete_overall_result`.
+
+  Soft-deletes the template (`deletedAt` set; row preserved). Its `name`
+  becomes reusable by a new active template. 404
+  `OVERALL_RESULT_TEMPLATE_NOT_FOUND` if already deleted/missing.
+
+  Uses `overallResultTemplateId` captured by *Create Overall Result Template*.
+}

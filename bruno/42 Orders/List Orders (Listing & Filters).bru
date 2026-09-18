@@ -48,6 +48,7 @@ params:query {
   ~isHomeVisit: false
   ~isOutsource: false
   ~isUrgent: false
+  ~hideUnpaidAppointments: true
 }
 
 auth:bearer {
@@ -151,4 +152,12 @@ docs {
   - `isHomeVisit` — `OrderDiagnostics.isHomeVisit`.
   - `isOutsource` — `true` → diagnostics `sampleSource=SUPPLIED`, `false` → `IN_HOUSE`.
   - `isUrgent` — `Order.isUrgentBill`.
+  - `hideUnpaidAppointments` — `true` excludes appointment-only orders on which
+    nothing has actually been collected (rows where `status = APPOINTMENT` AND the
+    payment ledger has no `PAYMENT` entry with a positive amount). Keyed on the
+    ledger, not `paymentStatus`, because an appointment saved without generating a
+    bill is forced to `paymentStatus = PAID` while ₹0 was collected. The Billing
+    screen sends this so a freshly-created, unpaid appointment does not surface as
+    a bill until a payment (> 0) is made; an appointment with a payment and every
+    non-appointment order are unaffected.
 }

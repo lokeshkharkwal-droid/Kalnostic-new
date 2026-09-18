@@ -314,6 +314,7 @@ enum AuditModule {
   TECHNICIAN_SETTINGS
   COMMUNICATION // Outbound messaging (Email/SMS/WhatsApp) + in-app notifications
   LAB_TEST_FIELD_PERMISSIONS
+  OVERALL_RESULT_TEMPLATE
 }
 
 /// Type of controlled document managed by the document module.
@@ -2867,7 +2868,9 @@ model LabTestSample {
 
 /// A result parameter for a lab test. `parameterCode` is unique per test among
 /// active rows (partial unique index in prisma/rls.sql). `reflexTests` is a JSON
-/// snapshot of { id, name } objects. Settings/layout/icon ids are nullable logical refs.
+/// snapshot of { id, name } objects. `overallResultGroups` is a free-text array
+/// of Overall Result template group names (string equality, no FK). Settings/
+/// layout/icon ids are nullable logical refs.
 model LabTestResultParam {
   id        String  @id @default(uuid())
   // NULL when the parent lab test is a SITE_ADMIN template.
@@ -2911,6 +2914,13 @@ model LabTestResultParam {
   // Reflex tests — JSON snapshot of { id, name } objects (the FE sends and the
   // API returns this verbatim; not a relational/FK list).
   reflexTests Json @default("[]") @map("reflex_tests")
+
+  // Overall Result groups this parameter is linked to — a list of
+  // `OverallResultTemplate.groupName` values (free-text, matched by string
+  // equality; no FK/relation, same convention as `groupName` above). A
+  // parameter may link to several groups; a group name may be linked to many
+  // parameters across many tests.
+  overallResultGroups String[] @default([]) @map("overall_result_groups")
 
   // Meta
   notes     String?
@@ -3000,6 +3010,43 @@ model LabTestReferenceValue {
   @@index([paramId])
   @@index([deletedAt])
   @@map("lab_test_reference_values")
+}
+
+/// A reusable, tenant-wide "Overall Result" content template (Business Admin
+/// master data), e.g. a canned narrative certificate/summary for a class of
+/// results. `groupName` is a free-text label matching the same convention as
+/// `LabTestResultParam.groupName` (string equality, no FK/lookup table) so a
+/// template can later be associated with any test whose result-parameter group
+/// shares this name — multiple templates may share one `groupName`. `content` is
+/// the Tiptap-authored HTML body. `name` is unique per tenant among active rows
+/// (partial unique index in prisma/rls.sql). The report-time consumption
+/// (attaching a template to a LabReport) is not implemented yet — this model
+/// only backs the Business Admin settings CRUD screen for phase 1.
+model OverallResultTemplate {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+
+  name      String
+  groupName String                     @map("group_name")
+  content   String                     @db.Text
+  status    OverallResultTemplateStatus @default(ACTIVE)
+
+  createdBy String? @map("created_by")
+  updatedBy String? @map("updated_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([groupName])
+  @@index([deletedAt])
+  @@map("overall_result_templates")
+}
+
+enum OverallResultTemplateStatus {
+  ACTIVE
+  INACTIVE
 }
 
 /// A lab-panel configuration inside a master data (tenant-scoped + branch-level;
@@ -7120,6 +7167,21 @@ model LabReport {
   remarks                 String?
   references              String?
 
+  /// The Overall Result content applied to this report, snapshotted from an
+  /// `OverallResultTemplate` chosen by the technician (Technician Settings'
+  /// `isOverallResultEditable` gates whether it can be applied/edited at
+  /// all). Unlike the 5 Notes fields above, this has NO `LabTest`-level
+  /// fallback — a report with no template applied simply has no Overall
+  /// Result, since `LabTest` carries no default for it. `overallResultTemplateId`
+  /// is a logical reference only (no FK, matching this schema's convention for
+  /// cross-module ids resolved app-side) recording which template was applied,
+  /// so the UI can show which one is active; `overallResultContent` is the
+  /// actual (technician-editable-after-apply) HTML snapshot that reports
+  /// render from — editing it never writes back to the source
+  /// `OverallResultTemplate`.
+  overallResultTemplateId String? @map("overall_result_template_id")
+  overallResultContent    String? @db.Text @map("overall_result_content")
+
   status LabReportStatus @default(PENDING)
 
   savedAt     DateTime? @map("saved_at")
@@ -8521,6 +8583,13 @@ model TechnicianSetting {
   isLimitationsEditable    Boolean @default(false) @map("is_limitations_editable")
   isRemarksEditable        Boolean @default(false) @map("is_remarks_editable")
   isReferencesEditable     Boolean @default(false) @map("is_references_editable")
+
+  /// Gates whether a technician can apply/edit an Overall Result template on
+  /// the Test Entry screen (see `LabReportService.updateOverallResult`).
+  /// Unlike the 5 toggles above, this doesn't gate a per-report override of a
+  /// `LabTest` master field — Overall Result has no such master value, it is
+  /// always sourced from an `OverallResultTemplate` the technician picks.
+  isOverallResultEditable Boolean @default(false) @map("is_overall_result_editable")
 
   /// Configurable reason options for the "Adjust TAT" audit-log dropdown
   /// (Turnaround Time Details modal). Soft-validated (frontend-populated

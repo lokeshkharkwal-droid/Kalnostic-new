@@ -120,30 +120,201 @@ export class BranchLabPanelService {
       branchId,
       tenantId,
     );
-    // The default (Walk-in) panel list is always ensured first, same as tests.
+    const { targetPanelList, walkInTest } = await this.resolveImportTargets(
+      tenantId,
+      branchId,
+      actorId,
+      dto.listId,
+    );
+    const branchTestBySource = await this.loadBranchTestMap(
+      tenantId,
+      branchId,
+      walkInTest.id,
+    );
+    const plan = await this.buildPanelImportPlan(
+      masterData.id,
+      tenantId,
+      branchId,
+      targetPanelList.id,
+      walkInTest.id,
+      actorId,
+      dto.labPanelIds,
+      branchTestBySource,
+    );
+    await this.writePanelImportPlan(
+      tenantId,
+      branchId,
+      plan.panelsToCreate,
+      plan.panelsToUpdate,
+      plan.newTests,
+      branchTestBySource,
+    );
+    return {
+      copied: plan.panelsToCreate.length,
+      updated: plan.panelsToUpdate.length,
+      skipped: plan.skipped,
+    };
+  }
+
+  /**
+   * Import every Master Data lab panel matching the given search/
+   * classification filters (server-resolved — no client-supplied id list)
+   * into the active branch's Lab Panel List. Mirrors {@link importFromMasterData}'s
+   * create/update/member-materialization semantics exactly; writes commit in
+   * fixed-size batches (not one transaction) so a "select all" spanning
+   * thousands of panels can't become a single all-or-nothing write — same
+   * pattern as `BranchLabTestService.importFromMasterDataByFilter`. The
+   * member-test dedup map (`branchTestBySource`) is threaded across every
+   * batch so a test materialized in an earlier batch is reused, never
+   * recreated, by a later one.
+   * @param tenantId tenant scope (from JWT)
+   * @param branchId active branch (from JWT)
+   * @param actorId person id recorded as created/updated-by (or null)
+   * @param dto the search/classification filters (mirrors the import-picker's
+   *   "Available to Add" query) plus an optional target `listId`
+   * @returns counts of copied vs updated panels (no "skipped" — every matched
+   *   id is by definition a real Master Data panel)
+   * @throws MasterDataNotMappedToBranchException if the branch has no master data
+   * @throws BranchLabPanelListNotFoundException if `dto.listId` doesn't belong to this branch
+   */
+  async importFromMasterDataByFilter(
+    tenantId: string,
+    branchId: string,
+    actorId: string | null,
+    dto: {
+      search?: string;
+      department?: string;
+      category?: string;
+      listId?: string;
+    },
+  ): Promise<BranchLabPanelImportResult> {
+    const masterData = await this.masterDataService.findByBranch(
+      branchId,
+      tenantId,
+    );
+    const { targetPanelList, walkInTest } = await this.resolveImportTargets(
+      tenantId,
+      branchId,
+      actorId,
+      dto.listId,
+    );
+    const where = await this.masterDataService.buildImportableLabPanelWhere(
+      masterData.id,
+      tenantId,
+      dto.search,
+      { department: dto.department, category: dto.category },
+      targetPanelList.id,
+    );
+    const matches = await this.prisma.labPanel.findMany({
+      where,
+      select: { id: true },
+    });
+    const ids = matches.map((m) => m.id);
+
+    // Threaded across every batch so a member test materialized in an
+    // earlier batch is found (not recreated) by a later one.
+    const branchTestBySource = await this.loadBranchTestMap(
+      tenantId,
+      branchId,
+      walkInTest.id,
+    );
+
+    let copied = 0;
+    let updated = 0;
+    const WRITE_BATCH_SIZE = 25;
+    for (let i = 0; i < ids.length; i += WRITE_BATCH_SIZE) {
+      const batchIds = ids.slice(i, i + WRITE_BATCH_SIZE);
+      const plan = await this.buildPanelImportPlan(
+        masterData.id,
+        tenantId,
+        branchId,
+        targetPanelList.id,
+        walkInTest.id,
+        actorId,
+        batchIds,
+        branchTestBySource,
+      );
+      await this.writePanelImportPlan(
+        tenantId,
+        branchId,
+        plan.panelsToCreate,
+        plan.panelsToUpdate,
+        plan.newTests,
+        branchTestBySource,
+      );
+      copied += plan.panelsToCreate.length;
+      updated += plan.panelsToUpdate.length;
+    }
+    return { copied, updated, skipped: 0 };
+  }
+
+  /**
+   * Resolve the panel list + member-test list an import/sync should target.
+   * The default (Walk-in) panel list is always ensured first, same as tests;
+   * `listId` (if given) is validated to belong to this branch, else the
+   * just-ensured default is used. Member tests always materialize into the
+   * (Walk-in) test list regardless of which panel list the panel itself
+   * lands in — panel lists and test lists are separate, unmapped list types.
+   */
+  private async resolveImportTargets(
+    tenantId: string,
+    branchId: string,
+    actorId: string | null,
+    listId?: string,
+  ) {
     const defaultPanelList = await this.panelListService.getOrCreateDefaultList(
       tenantId,
       branchId,
       actorId,
     );
-    // Panel lands in the given list, or the just-ensured default (Walk-in)
-    // list when omitted.
-    const targetPanelList = dto.listId
-      ? await this.panelListService.findById(dto.listId, tenantId, branchId)
+    const targetPanelList = listId
+      ? await this.panelListService.findById(listId, tenantId, branchId)
       : defaultPanelList;
-    // Member tests always materialize into the (Walk-in) test list, regardless
-    // of which panel list the panel itself lands in — panel lists and test
-    // lists are separate, unmapped list types, so there is no other test list
-    // to target.
     const walkInTest = await this.testListService.getOrCreateDefaultList(
       tenantId,
       branchId,
       actorId,
     );
+    return { targetPanelList, walkInTest };
+  }
+
+  /**
+   * Resolve a set of Master Data lab-panel ids into create/update plans for
+   * the target list (mirrors {@link BranchLabTestService}'s
+   * `buildImportPlan`): a source already copied into it (matched by
+   * `sourceLabPanelId`) is re-snapshotted (UPDATE); a new one is materialized
+   * (CREATE). Also queues any not-yet-copied member tests into `newTests` (not
+   * yet created — that happens in {@link writePanelImportPlan}, inside the
+   * write transaction). Shared by {@link importFromMasterData} (client-picked
+   * ids) and {@link importFromMasterDataByFilter} (server-resolved ids,
+   * processed batch by batch) so both stay identical in their copy semantics.
+   */
+  private async buildPanelImportPlan(
+    masterDataId: string,
+    tenantId: string,
+    branchId: string,
+    targetPanelListId: string,
+    walkInTestListId: string,
+    actorId: string | null,
+    candidateIds: string[],
+    branchTestBySource: Map<string, string>,
+  ): Promise<{
+    panelsToCreate: {
+      data: Prisma.BranchLabPanelUncheckedCreateInput;
+      members: MemberPlan[];
+    }[];
+    panelsToUpdate: {
+      id: string;
+      data: Prisma.BranchLabPanelUncheckedUpdateInput;
+      members: MemberPlan[];
+    }[];
+    newTests: Map<string, Prisma.BranchLabTestUncheckedCreateInput>;
+    skipped: number;
+  }> {
     const validPanels = await this.prisma.labPanel.findMany({
       where: {
-        id: { in: dto.labPanelIds },
-        masterDataId: masterData.id,
+        id: { in: candidateIds },
+        masterDataId,
         tenantId,
         deletedAt: null,
       },
@@ -157,7 +328,7 @@ export class BranchLabPanelService {
       where: {
         tenantId,
         branchId,
-        listId: targetPanelList.id,
+        listId: targetPanelListId,
         deletedAt: null,
         sourceLabPanelId: { in: validIds },
       },
@@ -167,11 +338,6 @@ export class BranchLabPanelService {
       existing.map((p) => [p.sourceLabPanelId, p.id] as const),
     );
 
-    const branchTestBySource = await this.loadBranchTestMap(
-      tenantId,
-      branchId,
-      walkInTest.id,
-    );
     const newTests = new Map<
       string,
       Prisma.BranchLabTestUncheckedCreateInput
@@ -185,23 +351,23 @@ export class BranchLabPanelService {
       data: Prisma.BranchLabPanelUncheckedUpdateInput;
       members: MemberPlan[];
     }[] = [];
-    const skipped = dto.labPanelIds.length - validIds.length;
+    const skipped = candidateIds.length - validIds.length;
 
     for (const id of validIds) {
       const panel = await this.labPanelService.findById(
-        masterData.id,
+        masterDataId,
         id,
         tenantId,
       );
       const members = await this.planMembers(
-        masterData.id,
+        masterDataId,
         tenantId,
         branchId,
         actorId,
         panel,
         branchTestBySource,
         newTests,
-        walkInTest.id,
+        walkInTestListId,
       );
       const existingId = existingBySource.get(id);
       if (existingId) {
@@ -215,18 +381,34 @@ export class BranchLabPanelService {
           data: this.buildPanelImportData(panel, {
             tenantId,
             branchId,
-            sourceMasterDataId: masterData.id,
-            listId: targetPanelList.id,
+            sourceMasterDataId: masterDataId,
+            listId: targetPanelListId,
             actorId,
           }),
           members,
         });
       }
     }
+    return { panelsToCreate, panelsToUpdate, newTests, skipped };
+  }
 
-    if (!panelsToCreate.length && !panelsToUpdate.length) {
-      return { copied: 0, updated: 0, skipped };
-    }
+  /** Apply a resolved panel create/update plan (+ queued member tests) in one transaction. */
+  private async writePanelImportPlan(
+    tenantId: string,
+    branchId: string,
+    panelsToCreate: {
+      data: Prisma.BranchLabPanelUncheckedCreateInput;
+      members: MemberPlan[];
+    }[],
+    panelsToUpdate: {
+      id: string;
+      data: Prisma.BranchLabPanelUncheckedUpdateInput;
+      members: MemberPlan[];
+    }[],
+    newTests: Map<string, Prisma.BranchLabTestUncheckedCreateInput>,
+    branchTestBySource: Map<string, string>,
+  ): Promise<void> {
+    if (!panelsToCreate.length && !panelsToUpdate.length) return;
     try {
       await this.prisma.withTenant(tenantId, async (tx) => {
         await this.persistNewTests(tx, newTests, branchTestBySource);
@@ -264,11 +446,6 @@ export class BranchLabPanelService {
       this.rethrowConflict(e);
       throw e;
     }
-    return {
-      copied: panelsToCreate.length,
-      updated: panelsToUpdate.length,
-      skipped,
-    };
   }
 
   /**

@@ -183,6 +183,8 @@
   <a href="#phleb-collections">Collection Schedule</a>
   <a href="#phleb-collections-summary">Dashboard summary</a>
   <a href="#phleb-collections-reports">Reports</a>
+  <h3>Overall Result Templates</h3>
+  <a href="#overall-result-templates">Templates (CRUD) + Technician apply/edit</a>
 </nav>
 <main>
 
@@ -2866,6 +2868,96 @@ Every submission is persisted as an <code>AdapterResult</code> audit row.</div>
   <code>{ kind: "image"|"document"|"file", fileUrl, fileName, notes? }</code> against the report.
   <code>GET</code> lists them (newest first), <strong>including the analyzer histogram images</strong> the EMI
   submit flow attaches. <code>GET</code> is open; create/delete require the technician-notes permission.</p>
+</div>
+
+<h2 id="overall-result-templates">Overall Result Templates <span style="font-size:13px;color:var(--muted)">(Business Admin content library → Technician apply/edit)</span></h2>
+<div class="note">Tenant-scoped content-template library owned by Business Admin
+(<code>/overall-result-templates</code>), consumed by Technician Reporting on the Test Entry
+screen's "Overall Result" section. Templates are matched to a report by <b>free-text
+group-name equality</b> — <code>LabTestResultParam.overallResultGroups: string[]</code> vs.
+<code>OverallResultTemplate.groupName</code> — with <b>no FK</b> on either side, the same
+convention this codebase already uses for <code>groupName</code>/<code>reflexTests</code>.
+Renaming a template's <code>groupName</code> silently stops it matching any parameter still
+tagged with the old name — there is no cascade or reference-count warning.</div>
+
+<div class="ep" id="ort-create">
+  <div><span class="m post">POST</span><span class="path">/api/v1/overall-result-templates</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Create a template: <code>{ name, groupName, content, status? }</code> (<code>status</code>
+  defaults <code>ACTIVE</code>). <code>content</code> is rich-text HTML (Tiptap editor on the
+  frontend), sanitized on render, not on write. <span class="pill">409
+  OVERALL_RESULT_TEMPLATE_NAME_CONFLICT</span> if <code>name</code> already exists (active rows,
+  this tenant). Requires the Technician/Laboratory module's write permission — a technician-only
+  token is rejected with <span class="pill">403</span>.</p>
+</div>
+
+<div class="ep" id="ort-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/overall-result-templates?page=1&amp;limit=20&amp;search=&amp;groupNames=&amp;status=ACTIVE</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Paginated, filterable list. <code>search</code> matches <code>name</code> (case-insensitive).
+  <code>groupNames</code> is a comma-separated list — this is exactly what the Technician picker
+  calls with the report's own tests' <code>overallResultGroups</code> to narrow the dropdown to
+  compatible templates only; an empty/missing <code>groupNames</code> is NOT treated as "all" by
+  the frontend (it renders "No compatible templates configured" instead of listing everything).
+  Read access is open to any authenticated business user whose tenant has the module enabled —
+  there is no separate business-admin-only read gate, by design (a technician needs to browse
+  templates to apply one).</p>
+</div>
+
+<div class="ep" id="ort-group-names">
+  <div><span class="m get">GET</span><span class="path">/api/v1/overall-result-templates/group-names?page=1&amp;limit=20&amp;search=</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Distinct, paginated <code>groupName</code> values across this tenant's templates — the
+  picklist Master Data's "Add Test" / "Add Result Params" screen offers when tagging a parameter's
+  <code>overallResultGroups</code> (no catalogue validation on that write — any string is
+  accepted, matched later purely by equality).</p>
+</div>
+
+<div class="ep" id="ort-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/overall-result-templates/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p><span class="pill">404 OVERALL_RESULT_TEMPLATE_NOT_FOUND</span> if missing or another
+  tenant's.</p>
+</div>
+
+<div class="ep" id="ort-update">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/overall-result-templates/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Partial update — any of <code>name</code>/<code>groupName</code>/<code>content</code>/<code>status</code>.
+  Renaming <code>groupName</code> takes effect immediately for every future template lookup by
+  the old name — already-applied reports are unaffected (their content was snapshotted at apply
+  time, see below), but a parameter still tagged with the old group name will stop matching this
+  template right away, with no warning surfaced anywhere.</p>
+</div>
+
+<div class="ep" id="ort-delete">
+  <div><span class="m delete">DELETE</span><span class="path">/api/v1/overall-result-templates/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Soft delete (<code>deletedAt</code>). A report that already applied this template keeps its
+  snapshotted <code>overallResultContent</code> — deleting the template does not retroactively
+  blank existing reports, it only removes the template from future pickers.</p>
+</div>
+
+<div class="ep" id="ort-apply">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/lab-reports/:id/overall-result</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Apply a template to a report, or edit its already-applied content — <b>two mutually
+  exclusive actions</b> on one endpoint, picked by which single field is sent:</p>
+  <pre>// apply — server resolves the template's CURRENT content itself, never trusts a client string
+{ "templateId": "ort-uuid" }
+
+// edit — overwrites content in place; templateId is left untouched
+{ "content": "&lt;p&gt;Overall result: Normal.&lt;/p&gt;" }</pre>
+  <p>Sending <b>both</b> fields, or <b>neither</b>, → <span class="pill">400 VALIDATION_ERROR</span>.
+  Gated by <code>TechnicianSetting.isOverallResultEditable</code> (default <code>false</code>) —
+  when off this is a <b>silent no-op</b> (200, unchanged data returned), not a rejection.
+  <span class="pill">404 LAB_REPORT_NOT_FOUND</span> /
+  <span class="pill">409 LAB_REPORT_LOCKED</span> apply as usual. Requires
+  <code>LAB_EDIT_REPORT</code> (stricter than this section's own read-only routes above).</p>
+  <p>⚠️ <b>Known gap</b>: unlike every other mutating action on a <code>LabReport</code>, this
+  endpoint does not check <code>LabReportStatus</code> — a <code>PUBLISHED</code> report's overall
+  result can still be edited through this route (the lock check above is the only lifecycle guard
+  currently enforced here). Tracked, not yet fixed.</p>
 </div>
 
 <p style="margin:40px 0 10px;color:var(--muted);font-size:13px">

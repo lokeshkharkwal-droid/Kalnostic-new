@@ -1,11 +1,13 @@
 import { SampleStatus } from '@prisma/client';
 
 /**
- * The accession sample state machine, built verbatim from PDF §A.9 ("Sample
- * Lifecycle — Status Transitions"). Each action maps the CURRENT status to the
- * status it moves the sample into. `SampleService.transition` (Phase 1) validates
- * that an action is legal from the sample's current status using this matrix
- * before mutating anything.
+ * The accession sample state machine. Originally built verbatim from PDF §A.9
+ * ("Sample Lifecycle — Status Transitions"); COLLECTED/ACCEPTED/ACQUIRED/HALT
+ * were subsequently revised per manager instruction (2026-09-17) to diverge
+ * from §A.9 — see git history for the exact correction. Each action maps the
+ * CURRENT status to the status it moves the sample into.
+ * `SampleService.transition` (Phase 1) validates that an action is legal from
+ * the sample's current status using this matrix before mutating anything.
  *
  * `retrieve` is the universal undo (PDF §A.7/§A.10.19): available at ALL statuses,
  * it reverts the sample to its `previousStatus`. The explicit transfer-return
@@ -40,23 +42,27 @@ export const SAMPLE_TRANSITIONS: Readonly<
     [SampleStatus.HOLD]: SampleStatus.COLLECTED,
     [SampleStatus.REPEAT]: SampleStatus.COLLECTED,
   },
-  // Accept — receive & accept at the processing lab (also resumes a HALT).
+  // Accept — receive & accept at the processing lab (also resumes a HALT
+  // or an ACQUIRED sample back into active processing).
   accept: {
     [SampleStatus.COLLECTED]: SampleStatus.ACCEPTED,
     [SampleStatus.HALT]: SampleStatus.ACCEPTED,
+    [SampleStatus.ACQUIRED]: SampleStatus.ACCEPTED,
   },
-  // Acquire — physically acquired by the lab technician.
+  // Acquire — physically acquired by the lab technician. Per manager
+  // correction (2026-09-17): fires from COLLECTED, not ACCEPTED.
   acquire: {
-    [SampleStatus.ACCEPTED]: SampleStatus.ACQUIRED,
+    [SampleStatus.COLLECTED]: SampleStatus.ACQUIRED,
   },
   // Hault — pause processing (quality/volume issue).
   halt: {
     [SampleStatus.COLLECTED]: SampleStatus.HALT,
-    [SampleStatus.ACQUIRED]: SampleStatus.HALT,
   },
   // Error — flag the sample erroneous.
   error: {
     [SampleStatus.HALT]: SampleStatus.ERROR,
+    [SampleStatus.COLLECTED]: SampleStatus.ERROR,
+    [SampleStatus.ACQUIRED]: SampleStatus.ERROR,
   },
   // Hold — defer collection / processing.
   hold: {
@@ -65,6 +71,8 @@ export const SAMPLE_TRANSITIONS: Readonly<
   },
   // Repeat — flag for re-collection (QC/quality failure).
   repeat: {
+    [SampleStatus.COLLECTED]: SampleStatus.REPEAT,
+    [SampleStatus.ACCEPTED]: SampleStatus.REPEAT,
     [SampleStatus.ACQUIRED]: SampleStatus.REPEAT,
     [SampleStatus.HALT]: SampleStatus.REPEAT,
     [SampleStatus.ERROR]: SampleStatus.REPEAT,
@@ -72,6 +80,8 @@ export const SAMPLE_TRANSITIONS: Readonly<
   // Store — store in freezer/rack.
   store: {
     [SampleStatus.ACCEPTED]: SampleStatus.STORED,
+    [SampleStatus.ACQUIRED]: SampleStatus.STORED,
+    [SampleStatus.HALT]: SampleStatus.STORED,
   },
   // Discard — discard using a defined method.
   discard: {
@@ -80,6 +90,8 @@ export const SAMPLE_TRANSITIONS: Readonly<
   // Return — return to field/patient/collector.
   return: {
     [SampleStatus.ACCEPTED]: SampleStatus.RETURNED,
+    [SampleStatus.ACQUIRED]: SampleStatus.RETURNED,
+    [SampleStatus.HALT]: SampleStatus.RETURNED,
     [SampleStatus.ERROR]: SampleStatus.RETURNED,
     [SampleStatus.STORED]: SampleStatus.RETURNED,
   },

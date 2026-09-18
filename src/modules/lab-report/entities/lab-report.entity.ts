@@ -73,6 +73,21 @@ export interface LabReportContentSections {
 }
 
 /**
+ * The Test Entry screen's Overall Result section — a technician-applied
+ * `OverallResultTemplate` snapshot. Unlike `LabReportContentSections`, there
+ * is NO `LabTest`-level fallback: `LabTest` carries no default Overall
+ * Result, so a report with no template ever applied simply has both fields
+ * null. `templateId` is a logical reference (no Prisma relation) recording
+ * which template produced `content`, purely so the UI can show which one is
+ * currently active — editing `content` after applying never writes back to
+ * the source `OverallResultTemplate`.
+ */
+export interface LabReportOverallResult {
+  templateId: string | null;
+  content: string | null;
+}
+
+/**
  * One entry-grid row's *definition* (LABORATORY.docx §4.3) — what parameters
  * this test has, independent of whether any value has been entered yet.
  * `LabReportResultValue` rows only exist once a technician has saved at
@@ -116,6 +131,14 @@ export interface LabReportResultParam {
    * organizational, groups rows into collapsible sections. Null/empty groups
    * into an "Ungrouped" section on the frontend. */
   groupName: string | null;
+  /** `OverallResultTemplate.groupName` values this parameter is tagged
+   * compatible with (Master Data > Add Multiple Results > Configure >
+   * "Overall Result" tab). Matched by plain string equality — no FK/relation.
+   * Drives which Overall Result templates the Technician Dashboard offers for
+   * a report whose test has this parameter (see `OverallResultTemplateService
+   * .findAll`'s `groupName`/`groupNames` filter). Empty array = this
+   * parameter isn't tagged into any Overall Result group. */
+  overallResultGroups: string[];
 }
 
 /** Full detail response: the report plus its (possibly all-null) content
@@ -126,6 +149,7 @@ export interface LabReportResultParam {
  * instead (flattened, see `LabReportService.findByIdForApi`). */
 export type LabReportDetailWithContent = LabReportDetail & {
   contentSections: LabReportContentSections;
+  overallResult: LabReportOverallResult;
   resultParams: LabReportResultParam[];
 };
 
@@ -142,6 +166,7 @@ export type LabReportDetailApiResponse = LabReportWorklistRow &
     'resultValues' | 'notes' | 'attachments' | 'multiStepProcess'
   > & {
     contentSections: LabReportContentSections;
+    overallResult: LabReportOverallResult;
     resultParams: LabReportResultParam[];
   };
 

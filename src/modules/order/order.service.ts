@@ -3025,6 +3025,30 @@ export class OrderService {
     if (query.appointmentStatus) {
       where.appointment = { is: { status: query.appointmentStatus } };
     }
+    // Billing scope: drop appointment-only orders on which nothing has actually
+    // been collected, so a freshly-created, unpaid appointment does not appear as
+    // a bill. "Nothing paid" is keyed on the payment ledger (no PAYMENT entry
+    // with a positive amount), NOT on `paymentStatus`: an appointment saved
+    // without generating a bill is forced to `paymentStatus = PAID` (the no-bill
+    // rule) even though ₹0 was collected, so a `paymentStatus`-based test would
+    // wrongly keep it. Only the exact pair (status = APPOINTMENT AND paid = 0) is
+    // excluded; a paid appointment (any positive PAYMENT entry) and every
+    // non-appointment order stay visible. Pushed to `and[]` so it composes with
+    // any status/payment filter without clobbering it.
+    if (query.hideUnpaidAppointments) {
+      and.push({
+        NOT: {
+          status: OrderStatus.APPOINTMENT,
+          payments: {
+            none: {
+              deletedAt: null,
+              entryType: PaymentEntryType.PAYMENT,
+              paidAmount: { gt: 0 },
+            },
+          },
+        },
+      });
+    }
     if (query.orderType) where.orderType = query.orderType;
     if (query.billingType) where.billingType = query.billingType;
     if (query.patientId) where.patientId = query.patientId;
@@ -6022,12 +6046,20 @@ export class OrderService {
     sampleIds: string[],
     tenantId: string,
     actorId: string | null,
-    opts: { print?: boolean } = {},
+    opts: {
+      print?: boolean;
+      tubeType?: string;
+      notes?: string;
+      attachmentUrl?: string;
+    } = {},
   ): Promise<OrderWithRelations> {
     await this.findById(orderId, tenantId);
     await this.prisma.withTenant(tenantId, (tx) =>
       this.orderSamples.collectSamplesInTx(tx, tenantId, actorId, sampleIds, {
         print: !!opts.print,
+        tubeType: opts.tubeType,
+        notes: opts.notes,
+        attachmentUrl: opts.attachmentUrl,
       }),
     );
     return this.findById(orderId, tenantId);
