@@ -13,6 +13,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
+import { ValidationException } from '../../common/exceptions/kaltros.exception';
 import { getReferralPanelId } from '../../prisma/tenant-context';
 import {
   genderLabel,
@@ -59,6 +60,8 @@ import {
 import type { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
 import { TechnicianSettingsService } from '../technician-settings/technician-settings.service';
 import { UpdateContentSectionsDto } from './dto/update-content-sections.dto';
+import { UpdateOverallResultDto } from './dto/update-overall-result.dto';
+import { OverallResultTemplateService } from '../overall-result-template/overall-result-template.service';
 import {
   GeneratePdfDto,
   SigningAuthorityDto,
@@ -70,6 +73,7 @@ import {
   LabReportContentSections,
   LabReportDetailApiResponse,
   LabReportDetailWithContent,
+  LabReportOverallResult,
   LabReportResultParam,
   LabReportSignatoryCandidate,
   LabReportSignatoryCandidatesResponse,
@@ -162,6 +166,7 @@ export class LabReportService {
     private readonly eventEmitter: EventEmitter2,
     private readonly shareService: ShareService,
     private readonly tenantService: TenantService,
+    private readonly overallResultTemplateService: OverallResultTemplateService,
     private readonly userDepartmentScope: UserDepartmentScopeService,
   ) {}
 
@@ -1282,7 +1287,14 @@ export class LabReportService {
       }),
       this.getResultParams(report.labTestId, report.orderItem.branchLabPanelId),
     ]);
-    return { ...report, contentSections, resultParams };
+    // No LabTest-level fallback for Overall Result (unlike contentSections
+    // above) — these two columns live directly on the report, so no separate
+    // lookup is needed.
+    const overallResult: LabReportOverallResult = {
+      templateId: report.overallResultTemplateId,
+      content: report.overallResultContent,
+    };
+    return { ...report, contentSections, overallResult, resultParams };
   }
 
   /**
@@ -1325,6 +1337,7 @@ export class LabReportService {
       attachments: report.attachments,
       multiStepProcess: report.multiStepProcess,
       contentSections: report.contentSections,
+      overallResult: report.overallResult,
       resultParams: report.resultParams,
     };
   }
@@ -1455,6 +1468,79 @@ export class LabReportService {
   }
 
   /**
+   * Apply an Overall Result template to a report, or edit its already-applied
+   * content in place — see `UpdateOverallResultDto`'s doc comment for how the
+   * two actions are distinguished. Gated by `TechnicianSetting
+   * .isOverallResultEditable` (default false); a no-op (returns the report's
+   * current, unchanged overall result) when the toggle is off, same
+   * "silently ignore rather than reject" convention as `updateContentSections`.
+   * @throws OverallResultTemplateNotFoundException if `templateId` doesn't
+   *   resolve to an active template in this tenant
+   * @throws ValidationException if neither, or both, of `templateId`/`content`
+   *   are sent — exactly one is required
+   */
+  async updateOverallResult(
+    id: string,
+    tenantId: string,
+    branchId: string | null,
+    dto: UpdateOverallResultDto,
+  ): Promise<LabReportOverallResult> {
+    const activeBranchId = this.requireBranch(branchId);
+    const report = await this.requireReport(id, tenantId, activeBranchId);
+
+    const settings = await this.technicianSettingsService.getForBranch(
+      tenantId,
+      activeBranchId,
+    );
+    if (!settings.isOverallResultEditable) {
+      return {
+        templateId: report.overallResultTemplateId,
+        content: report.overallResultContent,
+      };
+    }
+
+    if (dto.templateId === undefined && dto.content === undefined) {
+      throw new ValidationException(
+        'Either templateId (to apply a template) or content (to edit) is required',
+      );
+    }
+    if (dto.templateId !== undefined && dto.content !== undefined) {
+      throw new ValidationException(
+        'Send only one of templateId (to apply a template) or content (to edit), not both',
+      );
+    }
+
+    const patch: {
+      overallResultTemplateId?: string;
+      overallResultContent?: string;
+    } = {};
+    if (dto.templateId !== undefined) {
+      // Apply: resolve the template server-side — never trust client-supplied
+      // content for what a named template currently contains.
+      const template = await this.overallResultTemplateService.findById(
+        dto.templateId,
+        tenantId,
+      );
+      patch.overallResultTemplateId = template.id;
+      patch.overallResultContent = template.content;
+    } else if (dto.content !== undefined) {
+      // Edit: leave overallResultTemplateId untouched so the UI still shows
+      // which template this report started from.
+      patch.overallResultContent = dto.content;
+    }
+
+    const updated = await this.prisma.labReport.update({
+      where: { id: report.id },
+      data: patch,
+      select: { overallResultTemplateId: true, overallResultContent: true },
+    });
+    return {
+      templateId: updated.overallResultTemplateId,
+      content: updated.overallResultContent,
+    };
+  }
+
+  /**
    * Resolve the Test Entry screen's result-entry grid *row definitions*
    * (LABORATORY.docx §4.3) from `LabTestResultParam` — what parameters this
    * test has, independent of whether any value has been entered yet (a
@@ -1537,6 +1623,7 @@ export class LabReportService {
         resultSuggestions: true,
         defaultValue: true,
         groupName: true,
+        overallResultGroups: true,
       },
       orderBy: { sortOrder: 'asc' },
     });

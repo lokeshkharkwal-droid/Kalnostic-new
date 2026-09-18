@@ -1,0 +1,77 @@
+meta {
+  name: 32 Update Overall Result
+  type: http
+  seq: 32
+}
+
+patch {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/overall-result
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "templateId": "{{overallResultTemplateId}}"
+  }
+}
+
+docs {
+  Apply an Overall Result template to a report, or edit its already-applied
+  content in place — two mutually exclusive actions on the same endpoint,
+  distinguished by which single field is sent:
+
+  - `templateId` only (apply): the server resolves the named
+    `OverallResultTemplate`'s CURRENT `content` itself — it never trusts a
+    client-supplied content string for an apply — and snapshots that content
+    onto this report, alongside `templateId` (so the UI can show which
+    template is active). 404 `OVERALL_RESULT_TEMPLATE_NOT_FOUND` if the id
+    doesn't resolve to an active template in this tenant.
+
+    ```json
+    { "templateId": "{{overallResultTemplateId}}" }
+    ```
+
+  - `content` only (edit): overwrites the report's `overallResultContent`
+    in place (post-apply technician edits, e.g. filling in a value the
+    template left blank). `overallResultTemplateId` is left untouched, so
+    the UI still shows which template this report started from even after
+    the edited content diverges from that template's own current text.
+
+    ```json
+    { "content": "<p>Overall result: Normal.</p>" }
+    ```
+
+  Sending BOTH `templateId` and `content` in the same request, or NEITHER,
+  is rejected with 400 `VALIDATION_ERROR` — exactly one of the two is
+  required per call.
+
+  Gated by `TechnicianSetting.isOverallResultEditable` (default `false`,
+  see "Technician Settings" module). When the toggle is off, this is a
+  **silent no-op**: the request succeeds (200) but returns the report's
+  current, unchanged overall result — it does NOT reject the request. Turn
+  the toggle on first if a write doesn't seem to be taking effect.
+
+  Response shape: `{ "templateId": string | null, "content": string | null }`
+  — the report's overall result state after the write (or after the no-op,
+  if the toggle is off).
+
+  ⚠️ Known gap (tracked, not yet fixed): unlike every other mutating action
+  on this report, this endpoint does NOT check `LabReportStatus` — a
+  PUBLISHED report's overall result can still be edited through this route.
+  The only guard that applies is the lock check below. Do not rely on
+  publish-immutability for this one field yet.
+
+  404 `LAB_REPORT_NOT_FOUND` if missing/other-tenant/other-branch. 409
+  `LAB_REPORT_LOCKED` if the report is locked (`lock()`'d via
+  `POST /lab-reports/:id/lock`) — this is the only lifecycle gate currently
+  enforced here.
+
+  Requires `LAB_EDIT_REPORT` (unlike this module's read-only
+  `GET /overall-result-templates*` routes, which are open to any
+  authenticated business user with the Technician module enabled).
+}
