@@ -56,6 +56,7 @@ import {
 } from './dto/notes-attachments.dto';
 import { ApproveReportDto } from './dto/approve-report.dto';
 import { UpdateContentSectionsDto } from './dto/update-content-sections.dto';
+import { UpdateOverallResultDto } from './dto/update-overall-result.dto';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
 import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
@@ -441,6 +442,33 @@ export class LabReportController {
     @Body() dto: UpdateContentSectionsDto,
   ) {
     return this.labReportService.updateContentSections(
+      id,
+      tenantId,
+      profile.branchId,
+      dto,
+    );
+  }
+
+  /**
+   * Apply an Overall Result template to a report, or edit its already-
+   * applied content — gated by `TechnicianSetting.isOverallResultEditable`
+   * (default false). See `UpdateOverallResultDto`'s doc comment for how the
+   * two actions are distinguished.
+   */
+  @Patch(':id/overall-result')
+  @RequirePermission(PERMISSION_KEYS.LAB_EDIT_REPORT)
+  @Audit({
+    module: AuditModule.LAB_REPORT,
+    action: AuditAction.UPDATE,
+    description: "Updated a lab report's overall result",
+  })
+  updateOverallResult(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+    @Body() dto: UpdateOverallResultDto,
+  ) {
+    return this.labReportService.updateOverallResult(
       id,
       tenantId,
       profile.branchId,

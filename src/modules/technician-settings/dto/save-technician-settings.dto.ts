@@ -90,6 +90,10 @@ export class SaveTechnicianSettingsDto {
   @IsBoolean()
   isReferencesEditable?: boolean;
 
+  @IsOptional()
+  @IsBoolean()
+  isOverallResultEditable?: boolean;
+
   /** Reason options for the "Adjust TAT" audit-log dropdown. */
   @IsOptional()
   @IsArray()

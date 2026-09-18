@@ -280,11 +280,15 @@ export class MasterDataService {
    *   lazy/scroll-triggered pagination.
    * @throws MasterDataNotMappedToBranchException if the branch has no master data
    */
-  async getImportableLabTests(
-    branchId: string,
+  /**
+   * Build the `LabTest` `where` clause shared by {@link getImportableLabTests}
+   * (paginated listing) and `BranchLabTestService.importFromMasterDataByFilter`
+   * (bulk "select all" import) — both must match the identical set of rows, so
+   * the filter logic lives in exactly one place.
+   */
+  async buildImportableLabTestWhere(
+    masterDataId: string,
     tenantId: string,
-    page = 1,
-    limit = 20,
     search?: string,
     classificationFilters: {
       department?: string;
@@ -292,10 +296,9 @@ export class MasterDataService {
       subCategory?: string;
     } = {},
     excludeListId?: string,
-  ): Promise<PaginatedResult<ImportableLabTestRow>> {
-    const masterData = await this.findByBranch(branchId, tenantId);
+  ): Promise<Prisma.LabTestWhereInput> {
     const where: Prisma.LabTestWhereInput = {
-      masterDataId: masterData.id,
+      masterDataId,
       tenantId,
       deletedAt: null,
     };
@@ -335,6 +338,30 @@ export class MasterDataService {
     if (subCat) {
       where.subCategory = { name: { contains: subCat, mode: 'insensitive' } };
     }
+    return where;
+  }
+
+  async getImportableLabTests(
+    branchId: string,
+    tenantId: string,
+    page = 1,
+    limit = 20,
+    search?: string,
+    classificationFilters: {
+      department?: string;
+      category?: string;
+      subCategory?: string;
+    } = {},
+    excludeListId?: string,
+  ): Promise<PaginatedResult<ImportableLabTestRow>> {
+    const masterData = await this.findByBranch(branchId, tenantId);
+    const where = await this.buildImportableLabTestWhere(
+      masterData.id,
+      tenantId,
+      search,
+      classificationFilters,
+      excludeListId,
+    );
     const data = await this.prisma.labTest.findMany({
       where,
       skip: (page - 1) * limit,
@@ -422,18 +449,21 @@ export class MasterDataService {
    *   excluded server-side.
    * @throws MasterDataNotMappedToBranchException if the branch has no master data
    */
-  async getImportableLabPanels(
-    branchId: string,
+  /**
+   * Build the `LabPanel` `where` clause shared by {@link getImportableLabPanels}
+   * (paginated listing) and `BranchLabPanelService.importFromMasterDataByFilter`
+   * (bulk "select all" import) — both must match the identical set of rows, so
+   * the filter logic lives in exactly one place.
+   */
+  async buildImportableLabPanelWhere(
+    masterDataId: string,
     tenantId: string,
-    page = 1,
-    limit = 20,
     search?: string,
     classificationFilters: { department?: string; category?: string } = {},
     excludeListId?: string,
-  ): Promise<PaginatedResult<ImportableLabPanelRow>> {
-    const masterData = await this.findByBranch(branchId, tenantId);
+  ): Promise<Prisma.LabPanelWhereInput> {
     const where: Prisma.LabPanelWhereInput = {
-      masterDataId: masterData.id,
+      masterDataId,
       tenantId,
       deletedAt: null,
     };
@@ -480,6 +510,26 @@ export class MasterDataService {
       });
       where.categoryId = { in: rows.map((r) => r.id) };
     }
+    return where;
+  }
+
+  async getImportableLabPanels(
+    branchId: string,
+    tenantId: string,
+    page = 1,
+    limit = 20,
+    search?: string,
+    classificationFilters: { department?: string; category?: string } = {},
+    excludeListId?: string,
+  ): Promise<PaginatedResult<ImportableLabPanelRow>> {
+    const masterData = await this.findByBranch(branchId, tenantId);
+    const where = await this.buildImportableLabPanelWhere(
+      masterData.id,
+      tenantId,
+      search,
+      classificationFilters,
+      excludeListId,
+    );
     const data = await this.prisma.labPanel.findMany({
       where,
       skip: (page - 1) * limit,
