@@ -98,6 +98,13 @@ docs {
   edge margins (`margin_header` / `margin_footer`), `watermark_text`,
   `template_version`, and `custom_css`.
 
+  `page_size` accepts any key in `PDF_PAGE_SIZES` — the full ISO A/B/C series
+  (`A0`–`A12`, `B0`–`B12`, `C0`–`C12`, `C76`), the custom barcode sizes
+  (`CB1` = 100×25 mm, `CB2` = 50×25 mm), plus `Letter`/`Legal` (default `A4`).
+  The generated PDF uses the exact millimetre dimensions of the selected size
+  (`orientation: "L"` swaps width/height), not an A4 page — imported from the
+  legacy ezhealthtrack mPDF page-size table.
+
   Each section also carries a display title + HTML: `header_name`/`header_html`,
   `body_name`/`body_html` (+ `associate_body_image`), `footer_name`/`footer_html`.
 
