@@ -15,6 +15,10 @@ import {
  * that whole set is **replaced** (old active rows soft-deleted, the new set
  * created). Omitting a set leaves it untouched. `token` is immutable; `tenantId`
  * comes from context, never the body.
+ *
+ * `labTestIds` mirrors create: a non-empty array is a manual override, while an
+ * **empty array** re-runs the equipment→branch auto-map against the effective
+ * equipment + branches (so changing either on edit re-derives the mapped tests).
  */
 export class UpdateLabAdapterDto {
   @IsOptional()

@@ -62,23 +62,16 @@ export class LabAdapterService {
   ): Promise<LabAdapterWithRelations> {
     await this.assertEquipmentRef(dto.equipmentId);
     await this.assertBranchRefs(tenantId, dto.branchIds);
-    // When the user picks tests manually, use their explicit selection (validated
-    // as before). When they leave Lab Tests empty, auto-map the equipment's
-    // SITE_ADMIN tests that are also available at each selected branch — resolved
-    // per branch, so each branch only gets its own available subset. The resolved
-    // ids are self-generated `BranchLabTest` ids, so they need no re-validation.
-    const manualIds = dto.labTestIds ?? [];
-    let labTestIds: string[];
-    if (manualIds.length) {
-      await this.assertBranchLabTestRefs(tenantId, manualIds);
-      labTestIds = manualIds;
-    } else {
-      labTestIds = await this.resolveEquipmentTestsForBranches(
-        tenantId,
-        dto.equipmentId,
-        dto.branchIds,
-      );
-    }
+    // Resolve the lab-test set to map: an explicit manual selection is used as-is
+    // (validated), while an empty selection auto-maps the equipment's SITE_ADMIN
+    // tests that exist at each selected branch (see `resolveLabTestIds`). Update
+    // reuses the exact same resolver so both flows behave identically.
+    const labTestIds = await this.resolveLabTestIds(
+      tenantId,
+      dto.equipmentId,
+      dto.branchIds,
+      dto.labTestIds ?? [],
+    );
 
     const token = this.generateToken();
     let createdId: string;
@@ -182,6 +175,15 @@ export class LabAdapterService {
    * `labTestIds` is provided that whole set is replaced (old active rows
    * soft-deleted, the new set created) in one transaction. References are
    * validated first.
+   *
+   * Lab-test resolution mirrors {@link create} exactly (the shared
+   * {@link resolveLabTestIds} helper): a non-empty `labTestIds` is a manual
+   * override used as-is; an **empty** `labTestIds` re-runs the equipment→branch
+   * auto-map against the **effective** equipment and branches — the values newly
+   * supplied in this update, falling back to the persisted ones. This is what
+   * makes changing the equipment, the branches, or both on edit re-derive the
+   * mapped tests the same way create does. Omitting `labTestIds` entirely leaves
+   * the existing mappings untouched.
    * @param id adapter id
    * @param tenantId tenant scope (from JWT)
    * @param actorId person id recorded as updated-by (or null)
@@ -197,15 +199,28 @@ export class LabAdapterService {
     actorId: string | null,
     dto: UpdateLabAdapterDto,
   ): Promise<LabAdapterWithRelations> {
-    await this.findCoreById(id, tenantId);
+    const existing = await this.findCoreById(id, tenantId);
     if (dto.equipmentId !== undefined) {
       await this.assertEquipmentRef(dto.equipmentId);
     }
     if (dto.branchIds !== undefined) {
       await this.assertBranchRefs(tenantId, dto.branchIds);
     }
+
+    // Resolve the lab-test set to write (only when the caller sends `labTestIds`)
+    // using the same rule as create, against the *effective* equipment + branches
+    // so an equipment/branch change on edit re-derives the mapping.
+    let resolvedTestIds: string[] | undefined;
     if (dto.labTestIds !== undefined) {
-      await this.assertBranchLabTestRefs(tenantId, dto.labTestIds);
+      const effectiveEquipmentId = dto.equipmentId ?? existing.equipmentId;
+      const effectiveBranchIds =
+        dto.branchIds ?? (await this.resolveBranchIds(tenantId, id));
+      resolvedTestIds = await this.resolveLabTestIds(
+        tenantId,
+        effectiveEquipmentId,
+        effectiveBranchIds,
+        dto.labTestIds,
+      );
     }
 
     const data: Prisma.LabAdapterUpdateInput = { updatedBy: actorId };
@@ -230,12 +245,12 @@ export class LabAdapterService {
           });
           await this.createBranchRows(tx, tenantId, id, dto.branchIds);
         }
-        if (dto.labTestIds !== undefined) {
+        if (resolvedTestIds !== undefined) {
           await tx.labAdapterTest.updateMany({
             where: { labAdapterId: id, tenantId, deletedAt: null },
             data: { deletedAt: now },
           });
-          await this.createTestRows(tx, tenantId, id, dto.labTestIds);
+          await this.createTestRows(tx, tenantId, id, resolvedTestIds);
         }
       });
     } catch (e) {
@@ -351,6 +366,48 @@ export class LabAdapterService {
       const missing = unique.filter((id) => !foundIds.has(id));
       throw new LabAdapterLabTestNotFoundException(missing);
     }
+  }
+
+  /**
+   * Resolve the branch lab tests to map — the single rule shared by create and
+   * update so both behave identically. When `manualIds` is non-empty it is the
+   * user's explicit override: validated and returned as-is. When it is empty the
+   * equipment→branch auto-map runs ({@link resolveEquipmentTestsForBranches}):
+   * the equipment's SITE_ADMIN tests that also exist at each selected branch,
+   * matched on Test Name + Test Code.
+   * @param tenantId tenant scope (from JWT)
+   * @param equipmentId the effective equipment (new value, else persisted)
+   * @param branchIds the effective branches (new set, else persisted)
+   * @param manualIds the caller's lab-test selection (`[]` = auto-map)
+   * @throws LabAdapterLabTestNotFoundException if a manual id is invalid
+   */
+  private async resolveLabTestIds(
+    tenantId: string,
+    equipmentId: string,
+    branchIds: string[],
+    manualIds: string[],
+  ): Promise<string[]> {
+    if (manualIds.length) {
+      await this.assertBranchLabTestRefs(tenantId, manualIds);
+      return manualIds;
+    }
+    return this.resolveEquipmentTestsForBranches(
+      tenantId,
+      equipmentId,
+      branchIds,
+    );
+  }
+
+  /** Resolve an adapter's active branch ids (no names), tenant-scoped. */
+  private async resolveBranchIds(
+    tenantId: string,
+    labAdapterId: string,
+  ): Promise<string[]> {
+    const rows = await this.prisma.labAdapterBranch.findMany({
+      where: { labAdapterId, tenantId, deletedAt: null },
+      select: { branchId: true },
+    });
+    return rows.map((r) => r.branchId);
   }
 
   /**

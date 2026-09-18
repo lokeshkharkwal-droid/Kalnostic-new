@@ -43,7 +43,14 @@ docs {
   - `name` — new unique name → 409 `LAB_ADAPTER_NAME_CONFLICT` on a clash.
   - `equipmentId` — new equipment ref → 422 `LAB_ADAPTER_EQUIPMENT_NOT_FOUND`.
   - `branchIds` — replacement branch set → 422 `LAB_ADAPTER_BRANCH_NOT_FOUND`.
-  - `labTestIds` — replacement lab-test set → 422 `LAB_ADAPTER_LAB_TEST_NOT_FOUND`.
+  - `labTestIds` — replacement lab-test set. Mirrors create: a **non-empty** array
+    is a manual override → 422 `LAB_ADAPTER_LAB_TEST_NOT_FOUND` on a bad id; an
+    **empty** array re-runs the equipment→branch auto-map (the equipment's
+    SITE_ADMIN tests that exist at each selected branch, matched on Test Name +
+    Test Code) against the **effective** equipment + branches — the values sent in
+    this request, else the persisted ones. So changing the equipment, the branches,
+    or both and sending `labTestIds: []` re-derives the mapping exactly like create.
+    Omit `labTestIds` entirely to leave the existing mappings untouched.
   - `isActive` — enable/disable.
 
   404 `LAB_ADAPTER_NOT_FOUND` if the adapter is missing/other tenant.
