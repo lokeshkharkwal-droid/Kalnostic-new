@@ -76,6 +76,12 @@ export const SAMPLE_TRANSITIONS: Readonly<
     [SampleStatus.ACQUIRED]: SampleStatus.REPEAT,
     [SampleStatus.HALT]: SampleStatus.REPEAT,
     [SampleStatus.ERROR]: SampleStatus.REPEAT,
+    // A sample rejected at the receiving/partner/outsource station can be
+    // flagged for re-collection without first being retrieved back to
+    // ACCEPTED (manager correction, 2026-09-18).
+    [SampleStatus.SENT_INTERNAL]: SampleStatus.REPEAT,
+    [SampleStatus.FORWARD_EXTERNAL]: SampleStatus.REPEAT,
+    [SampleStatus.OUTSOURCED]: SampleStatus.REPEAT,
   },
   // Store — store in freezer/rack.
   store: {
@@ -100,6 +106,7 @@ export const SAMPLE_TRANSITIONS: Readonly<
     [SampleStatus.NEW]: SampleStatus.CANCELLED,
     [SampleStatus.COLLECTED]: SampleStatus.CANCELLED,
     [SampleStatus.HOLD]: SampleStatus.CANCELLED,
+    [SampleStatus.REPEAT]: SampleStatus.CANCELLED,
   },
   // Send — Internal Transfer (branch↔branch).
   send: {
