@@ -52,10 +52,11 @@ import {
   amountInWords,
   genderLabel,
   salutationLabel,
-  patientAgeDisplay,
+  patientFullAgeDisplay,
   toBranchLocalInstant,
   formatTenantDate,
   formatTenantDateTime,
+  formatOrderDateTime,
 } from '../../common/utils';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
@@ -1985,7 +1986,15 @@ export class OrderService {
       // documents. Kept as a distinct key so authors of pre-existing templates
       // that used `{client_salutation}` don't have to re-author them.
       client_salutation: salutationLabel(p.salutation),
-      patient_age: patientAgeDisplay(p.age, p.ageType),
+      // Full age (Years, Months, Days) from DOB when known; single-unit
+      // (age/ageType) fallback otherwise. Shared by every order-document type
+      // (bill, TRF, quotation, order slip, …) so `{patient_age}` reads the same
+      // everywhere.
+      patient_age: patientFullAgeDisplay(
+        p.dateOfBirth ?? null,
+        p.age,
+        p.ageType,
+      ),
       patient_gender: genderLabel(p.gender),
       patient_um_id: p.umId ?? '',
       patient_mobile: p.mobile ?? '',
@@ -2292,6 +2301,14 @@ export class OrderService {
         bill_id: order.billId ?? order.orderCode,
         order_code: order.orderCode,
         order_date: formatTenantDate(order.orderDate, dateFormat),
+        // Order date + operator-entered order time, e.g. `21/09/2026 01:30 PM`
+        // (distinct from `bill_date_time`, which is when the bill was generated).
+        order_date_time: formatOrderDateTime(
+          order.orderDate,
+          order.orderTime,
+          dateFormat,
+          timeFormat,
+        ),
         bill_date_time: billDateTime,
         payment_collected_by: paymentCollectedBy,
         panel_tests_name: panelTestsName,
@@ -2358,12 +2375,20 @@ export class OrderService {
     tenantId: string,
   ): Promise<GeneratePdfDto> {
     const testRows = await this.itemRowsWithPanelTests(order);
-    const { dateFormat } = await this.tenantService.getLocale(tenantId);
+    const { dateFormat, timeFormat } =
+      await this.tenantService.getLocale(tenantId);
     return {
       variables: {
         trf_ref: order.billId ?? order.orderCode,
         order_code: order.orderCode,
         order_date: formatTenantDate(order.orderDate, dateFormat),
+        // Order date + operator-entered order time, e.g. `21/09/2026 01:30 PM`.
+        order_date_time: formatOrderDateTime(
+          order.orderDate,
+          order.orderTime,
+          dateFormat,
+          timeFormat,
+        ),
         clinical_notes: order.orderNotes ?? '',
         branch_name: order.branch?.name ?? '',
         panel_tests_name: this.panelTestsNameFlat(testRows),

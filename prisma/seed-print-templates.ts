@@ -166,11 +166,12 @@ ${PATIENT_LINE}
       '',
       `<div class="label">
 <div class="barcode">*{barcode}*</div>
-<div><b>{patient_name}</b> ({patient_age}/{patient_gender})</div>
+<div><b>{patient_name}</b> ({patient_age} · {patient_gender})</div>
 <div class="muted">UHID: {patient_um_id}</div>
 <div>{order_code} / {accession_no}</div>
-<div class="muted">{sample_type} {sample_group_label}</div>
-<div class="muted">Tests: {tests}</div>
+<div class="muted">Dept: {department_name}</div>
+<div class="muted">{sample_type} {container_type}</div>
+<div class="muted">Tests: {test_names}</div>
 <div class="muted">Collected: {collected_at}</div>
 </div>`,
       '',
@@ -183,9 +184,11 @@ ${PATIENT_LINE}
       '',
       `{{#each labels}}<div class="label">
 <div class="barcode">*{barcode}*</div>
-<div><b>{patient_name}</b> ({patient_age}/{patient_gender})</div>
+<div><b>{patient_name}</b> ({patient_age} · {patient_gender})</div>
 <div>{order_code} / {accession_no}</div>
-<div class="muted">{sample_type} — Tests: {tests}</div>
+<div class="muted">Dept: {department_name}</div>
+<div class="muted">{sample_type} — Tests: {test_names}</div>
+<div class="muted">Collected: {collected_at}</div>
 </div>{{/each}}`,
       '',
     ),

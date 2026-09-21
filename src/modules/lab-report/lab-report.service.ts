@@ -18,12 +18,12 @@ import { getReferralPanelId } from '../../prisma/tenant-context';
 import {
   genderLabel,
   salutationLabel,
-  patientAgeDisplay,
+  patientFullAgeDisplay,
   sampleSourceLabel,
   toBranchLocalInstant,
   formatReportDateTime,
   formatTenantDate,
-  formatTenantDateTime,
+  formatOrderDateTime,
   buildEvaluationOrder,
   evaluateFormula,
   formatCalculatedValue,
@@ -2582,25 +2582,14 @@ export class LabReportService {
         order_code: order.orderCode,
         order_date: formatTenantDate(order.orderDate, dateFormat),
         // Combines the date-only `orderDate` with the separately-captured
-        // `orderTime` ("HH:mm") into one date+time display value. Both
-        // fields are already branch-local wall-clock values entered by the
-        // operator — no `toBranchLocalInstant` conversion (that's only for
-        // real UTC instants like `collectedAt`/`approvedAt`).
-        order_date_time: (() => {
-          const [hours, minutes] = (order.orderTime ?? '00:00')
-            .split(':')
-            .map((n) => Number(n) || 0);
-          const combined = new Date(
-            Date.UTC(
-              order.orderDate.getUTCFullYear(),
-              order.orderDate.getUTCMonth(),
-              order.orderDate.getUTCDate(),
-              hours,
-              minutes,
-            ),
-          );
-          return formatTenantDateTime(combined, dateFormat, timeFormat);
-        })(),
+        // `orderTime` ("HH:mm") into one date+time display value, matching the
+        // `{collected_at}` label format (shared `formatOrderDateTime` helper).
+        order_date_time: formatOrderDateTime(
+          order.orderDate,
+          order.orderTime,
+          dateFormat,
+          timeFormat,
+        ),
         order_external_id: order.externalOrderId ?? '',
         // Alias for the classic old-template tag name (`{external_order_id}`)
         // — same value as `order_external_id`, kept separate so authors of
@@ -2610,7 +2599,13 @@ export class LabReportService {
           .filter(Boolean)
           .join(' '),
         patient_salutation: patient.salutation ?? '',
-        patient_age: patient.age ?? '',
+        // Full age (Years, Months, Days) from DOB; single-unit (age/ageType)
+        // fallback when DOB is absent.
+        patient_age: patientFullAgeDisplay(
+          patient.dateOfBirth ?? null,
+          patient.age,
+          patient.ageType,
+        ),
         patient_gender: genderLabel(patient.gender),
         patient_um_id: patient.umId ?? '',
         patient_mobile: patient.mobile ?? '',
@@ -2788,7 +2783,8 @@ export class LabReportService {
       throw new OrderReportsNotFoundException(orderId);
     }
 
-    const { timezone } = await this.tenantService.getLocale(tenantId);
+    const { timezone, dateFormat, timeFormat } =
+      await this.tenantService.getLocale(tenantId);
 
     // Order/patient/diagnostics/referral for the shared header block.
     const order = await this.prisma.order.findFirst({
@@ -2819,7 +2815,11 @@ export class LabReportService {
           patient.lastName,
         ]),
       },
-      client_age: patientAgeDisplay(patient.age, patient.ageType),
+      client_age: patientFullAgeDisplay(
+        patient.dateOfBirth ?? null,
+        patient.age,
+        patient.ageType,
+      ),
       // Raw M/F/O code (templates test `client_gender == 'M'`).
       client_gender: patient.gender
         ? String(patient.gender).charAt(0).toUpperCase()
@@ -2837,8 +2837,14 @@ export class LabReportService {
           ])
         : ' -- ',
       referring_panel_name: order.referralPanel?.name ?? ' -- ',
-      order_date_time: formatReportDateTime(
-        toBranchLocalInstant(order.orderDate, timezone),
+      // Order date + operator-entered order time (combines `orderDate` +
+      // `orderTime`, matching `{collected_at}`); the previous version formatted
+      // the date-only `orderDate` alone, so the time always read `12:00 AM`.
+      order_date_time: formatOrderDateTime(
+        order.orderDate,
+        order.orderTime,
+        dateFormat,
+        timeFormat,
       ),
       // Barcode IMAGE url (templates use it as `<img src=…>`).
       order_id_barcode: order.orderIdQrCode ?? '',
@@ -2954,15 +2960,17 @@ export class LabReportService {
   ): Promise<Buffer> {
     const activeBranchId = this.requireBranch(branchId);
 
-    // If the caller picked a `lab_all_report` template, render the whole order
-    // as ONE continuous Latte document (per-test iteration + page headers/breaks
+    // If the caller picked a `lab_all_report` (or the patient-facing
+    // `patient_lab_all_report`) template, render the whole order as ONE
+    // continuous Latte document (per-test iteration + page headers/breaks
     // handled inside the template) instead of merging N single-report PDFs.
+    // Both types share the exact same all-reports context + Latte renderer.
     if (templateId) {
       const type = await this.pdfReportTemplateService.getType(
         templateId,
         tenantId,
       );
-      if (type === 'lab_all_report') {
+      if (type === 'lab_all_report' || type === 'patient_lab_all_report') {
         const context = await this.buildAllReportsContext(
           orderId,
           tenantId,

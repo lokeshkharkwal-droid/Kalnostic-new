@@ -86,6 +86,38 @@ export function formatTenantDateTime(
 }
 
 /**
+ * Combine an order's date-only `orderDate` (`@db.Date`, stored at midnight) with
+ * its operator-entered `orderTime` (`"HH:mm"`) into one `"<date> <time>"` display
+ * value — e.g. `21/09/2026 01:30 PM` — for the `{order_date_time}` tag. Uses the
+ * same `<date> <space> <time>` layout as the `{collected_at}` label so the two
+ * date-time tags read identically (date per tenant `dateFormat`; time per tenant
+ * `12h`/`24h`). Both inputs are already branch-local wall-clock values entered by
+ * the operator, so — unlike real UTC instants (`collectedAt`) — no
+ * `toBranchLocalInstant` conversion is applied. A missing/malformed `orderTime`
+ * falls back to `00:00`.
+ */
+export function formatOrderDateTime(
+  orderDate: Date,
+  orderTime: string | null | undefined,
+  dateFormat: string,
+  timeFormat: string,
+): string {
+  const [hours, minutes] = (orderTime ?? '00:00')
+    .split(':')
+    .map((n) => Number(n) || 0);
+  const combined = new Date(
+    Date.UTC(
+      orderDate.getUTCFullYear(),
+      orderDate.getUTCMonth(),
+      orderDate.getUTCDate(),
+      hours,
+      minutes,
+    ),
+  );
+  return `${formatTenantDate(combined, dateFormat)} ${formatTenantTime(combined, timeFormat)}`;
+}
+
+/**
  * Fixed lab-report date-time stamp: `DD-MM-YYYY hh:mm AM/PM` (e.g.
  * `05-09-2026 03:30 PM`). Unlike {@link formatTenantDateTime} this ignores the
  * tenant's `date_format`/`time_format` and always emits the report layout the

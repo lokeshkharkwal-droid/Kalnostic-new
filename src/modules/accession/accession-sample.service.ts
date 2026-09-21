@@ -13,7 +13,12 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
-import { toBranchLocalInstant, formatTenantDate } from '../../common/utils';
+import {
+  toBranchLocalInstant,
+  formatTenantDate,
+  formatTenantTime,
+  patientFullAgeDisplay,
+} from '../../common/utils';
 import { TenantService } from '../tenant/tenant.service';
 import { LabReportService } from '../lab-report/lab-report.service';
 import { UserDepartmentScopeService } from '../department/user-department-scope.service';
@@ -1264,10 +1269,10 @@ export class OrderSampleService {
     const samples = await Promise.all(
       ids.map((id) => this.findById(id, tenantId)),
     );
-    const { timezone, dateFormat } =
+    const { timezone, dateFormat, timeFormat } =
       await this.tenantService.getLocale(tenantId);
     const labels = samples.map((s) =>
-      this.buildLabelVariables(s, timezone, dateFormat),
+      this.buildLabelVariables(s, timezone, dateFormat, timeFormat),
     );
     const combined: GeneratePdfDto = { sections: { labels } };
 
@@ -1309,9 +1314,10 @@ export class OrderSampleService {
 
   /** Flat `{variable}` values for one sample's label. */
   private buildLabelVariables(
-    sample: OrderSampleWithRelations,
+    sample: OrderSampleDetail,
     timezone: string,
     dateFormat: string,
+    timeFormat: string,
   ): Record<string, unknown> {
     const patient = sample.order?.patient;
     return {
@@ -1326,9 +1332,18 @@ export class OrderSampleService {
             .filter(Boolean)
             .join(' ')
         : '',
-      patient_age: patient?.age ?? '',
+      // Full age (Years, Months, Days) from DOB when known; single-unit
+      // (age/ageType) fallback otherwise.
+      patient_age: patientFullAgeDisplay(
+        patient?.dateOfBirth ?? null,
+        patient?.age ?? null,
+        patient?.ageType ?? null,
+      ),
       patient_gender: patient?.gender ?? '',
       patient_um_id: patient?.umId ?? '',
+      // Distinct department name(s) of the sample's tests, comma-joined
+      // (resolved by `withDepartments` — a sample can span departments).
+      department_name: sample.departmentLabel ?? '',
       order_code: sample.order?.orderCode ?? '',
       test_names: sample.tests
         .map((t) => t.testName)
@@ -1337,24 +1352,34 @@ export class OrderSampleService {
       sample_type: sample.sampleType ?? '',
       container_type: sample.containerType ?? '',
       priority: sample.priority,
+      // Collection date AND time, e.g. `21/09/2026 01:30 PM` (date + space +
+      // tenant 12h/24h time). Blank when the sample has no collection time.
       collected_at: sample.collectedAt
-        ? formatTenantDate(
+        ? `${formatTenantDate(
             toBranchLocalInstant(sample.collectedAt, timezone),
             dateFormat,
-          )
+          )} ${formatTenantTime(
+            toBranchLocalInstant(sample.collectedAt, timezone),
+            timeFormat,
+          )}`
         : '',
     };
   }
 
   /** Render context for a single-sample label print. */
   private async buildLabelContext(
-    sample: OrderSampleWithRelations,
+    sample: OrderSampleDetail,
     tenantId: string,
   ): Promise<GeneratePdfDto> {
-    const { timezone, dateFormat } =
+    const { timezone, dateFormat, timeFormat } =
       await this.tenantService.getLocale(tenantId);
     return {
-      variables: this.buildLabelVariables(sample, timezone, dateFormat),
+      variables: this.buildLabelVariables(
+        sample,
+        timezone,
+        dateFormat,
+        timeFormat,
+      ),
     };
   }
 
