@@ -425,6 +425,14 @@ const PERMISSION_SPEC: Record<string, SectionSpec[]> = {
       permissions: ['Update lab test master setting'],
     },
     {
+      label: 'Overall Result Template',
+      permissions: [
+        'Add overall result',
+        'Edit overall result',
+        'Delete overall result',
+      ],
+    },
+    {
       label: 'Templates',
       permissions: [
         'Add SMS template',
