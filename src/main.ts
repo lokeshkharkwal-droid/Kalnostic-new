@@ -1,6 +1,7 @@
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import compression from 'compression';
 import helmet from 'helmet';
 import type { NextFunction, Request, Response } from 'express';
@@ -13,8 +14,21 @@ import { ResponseInterceptor } from './common/interceptors';
  * cross-cutting concerns before listening for requests.
  */
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const config = app.get(ConfigService);
+
+  // ── Body size limit ──
+  // Express's default JSON body limit (100kb) is too small for legitimate
+  // rich-text HTML payloads (e.g. a long Overall Result / Notes section
+  // pasted from Word/Excel) — the body-parser rejects the request with a
+  // raw (non-HttpException) PayloadTooLargeError BEFORE routing/DTO
+  // validation ever runs, which the global HttpExceptionFilter can only
+  // render as a generic 500 "An unexpected error occurred." rather than a
+  // real 413/validation message. Raise it to something generous enough for
+  // rich-text fields (DTOs still enforce their own, tighter per-field
+  // MaxLength on top of this).
+  app.useBodyParser('json', { limit: '5mb' });
+  app.useBodyParser('urlencoded', { limit: '5mb', extended: true });
 
   // ── CORS ──
   // Allow browser-based frontends to call this API.
