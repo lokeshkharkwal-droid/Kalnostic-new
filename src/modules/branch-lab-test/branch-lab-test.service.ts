@@ -462,16 +462,38 @@ export class BranchLabTestService {
       }
     }
 
-    if (updates.length || toDelete.length) {
+    // Committed in fixed-size batches (not one transaction) — the same fix
+    // `importFromMasterDataByFilter` already applies (see its doc comment):
+    // a "Sync all" spanning hundreds/thousands of copies previously ran as a
+    // single `withTenant` transaction and could exceed Prisma's 5s default
+    // timeout, rolling back every update with a generic 500 and leaving the
+    // branch's samples/config silently stale (nothing partially synced).
+    // Batching bounds each transaction's size and isolates a failure to its
+    // own batch instead of discarding the whole sync.
+    const SYNC_BATCH_SIZE = 25;
+    for (let i = 0; i < updates.length; i += SYNC_BATCH_SIZE) {
+      const batch = updates.slice(i, i + SYNC_BATCH_SIZE);
+      if (batch.length === 0) continue;
       try {
         await this.prisma.withTenant(tenantId, async (tx) => {
-          for (const u of updates) {
+          for (const u of batch) {
             await tx.branchLabTest.update({
               where: { id: u.id },
               data: u.data,
             });
           }
-          for (const d of toDelete) {
+        });
+      } catch (e) {
+        this.rethrowConflict(e);
+        throw e;
+      }
+    }
+    for (let i = 0; i < toDelete.length; i += SYNC_BATCH_SIZE) {
+      const batch = toDelete.slice(i, i + SYNC_BATCH_SIZE);
+      if (batch.length === 0) continue;
+      try {
+        await this.prisma.withTenant(tenantId, async (tx) => {
+          for (const d of batch) {
             await tx.branchLabTest.update({
               where: { id: d.id },
               data: { deletedAt: new Date() },
