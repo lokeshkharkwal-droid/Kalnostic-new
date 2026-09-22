@@ -2110,10 +2110,28 @@ export class OrderSampleService {
 
     const and: Prisma.OrderSampleWhereInput[] = [];
     if (query.search) {
+      const s = query.search;
       and.push({
         OR: [
-          { accessionNo: { contains: query.search, mode: 'insensitive' } },
-          { barcode: { contains: query.search, mode: 'insensitive' } },
+          { accessionNo: { contains: s, mode: 'insensitive' } },
+          { barcode: { contains: s, mode: 'insensitive' } },
+          {
+            order: {
+              is: {
+                patient: {
+                  is: {
+                    OR: [
+                      { firstName: { contains: s, mode: 'insensitive' } },
+                      { middleName: { contains: s, mode: 'insensitive' } },
+                      { lastName: { contains: s, mode: 'insensitive' } },
+                      { umId: { contains: s, mode: 'insensitive' } },
+                      { mobile: { contains: s, mode: 'insensitive' } },
+                    ],
+                  },
+                },
+              },
+            },
+          },
         ],
       });
     }

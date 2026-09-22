@@ -1280,24 +1280,30 @@ export class LabReportService {
     // B2B Referral Panel isolation: block reading another panel's report by id.
     assertLabReportPanelOwnership(report, getReferralPanelId());
 
-    const [contentSections, resultParams] = await Promise.all([
-      this.getContentSections(tenantId, report.labTestId, {
-        usefulFor: report.usefulFor,
-        interpretationOfResults: report.interpretationOfResults,
-        limitations: report.limitations,
-        remarks: report.remarks,
-        references: report.references,
-      }),
-      this.getResultParams(report.labTestId, report.orderItem.branchLabPanelId),
-    ]);
-    // No LabTest-level fallback for Overall Result (unlike contentSections
-    // above) — these two columns live directly on the report, so no separate
-    // lookup is needed.
-    const overallResult: LabReportOverallResult = {
-      templateId: report.overallResultTemplateId,
-      content: report.overallResultContent,
-    };
-    return { ...report, contentSections, overallResult, resultParams };
+    const [contentSections, resultParams, overallResultRows] =
+      await Promise.all([
+        this.getContentSections(tenantId, report.labTestId, {
+          usefulFor: report.usefulFor,
+          interpretationOfResults: report.interpretationOfResults,
+          limitations: report.limitations,
+          remarks: report.remarks,
+          references: report.references,
+        }),
+        this.getResultParams(
+          report.labTestId,
+          report.orderItem.branchLabPanelId,
+        ),
+        // No LabTest-level fallback for Overall Result (unlike contentSections
+        // above) — one row per result parameter that has a template/content
+        // applied, from the dedicated per-parameter table (not columns on this
+        // report itself — see LabReportOverallResult's model doc comment).
+        this.prisma.labReportOverallResult.findMany({
+          where: { labReportId: id, tenantId },
+          select: { resultParamId: true, templateId: true, content: true },
+        }),
+      ]);
+    const overallResults: LabReportOverallResult[] = overallResultRows;
+    return { ...report, contentSections, overallResults, resultParams };
   }
 
   /**
@@ -1340,7 +1346,7 @@ export class LabReportService {
       attachments: report.attachments,
       multiStepProcess: report.multiStepProcess,
       contentSections: report.contentSections,
-      overallResult: report.overallResult,
+      overallResults: report.overallResults,
       resultParams: report.resultParams,
     };
   }
@@ -1471,34 +1477,55 @@ export class LabReportService {
   }
 
   /**
-   * Apply an Overall Result template to a report, or edit its already-applied
-   * content in place — see `UpdateOverallResultDto`'s doc comment for how the
-   * two actions are distinguished. Gated by `TechnicianSetting
-   * .isOverallResultEditable` (default false); a no-op (returns the report's
-   * current, unchanged overall result) when the toggle is off, same
-   * "silently ignore rather than reject" convention as `updateContentSections`.
+   * Apply an Overall Result template to ONE result parameter on a report, or
+   * edit that parameter's already-applied content in place — see
+   * `UpdateOverallResultDto`'s doc comment for how the two actions are
+   * distinguished. Each parameter holds its own independent applied result
+   * (`LabReportOverallResult`, keyed by `(labReportId, resultParamId)`) — this
+   * never touches any other parameter's row on the same report. Gated by
+   * `TechnicianSetting.isOverallResultEditable` (default false); a no-op
+   * (returns this parameter's current, unchanged overall result) when the
+   * toggle is off, same "silently ignore rather than reject" convention as
+   * `updateContentSections`.
+   * @param resultParamId which result parameter this applies to — MUST be one
+   *   of this report's own result parameters (validated via
+   *   `assertResultParamBelongsToReport`, added 2026-09-22 after a smoke test
+   *   found any arbitrary UUID would silently create its own orphaned row
+   *   with no corresponding entry in `resultParams`, unlike every other
+   *   logical-ref id in this schema, which is always at least scoped to a
+   *   real relationship even without an FK)
    * @throws OverallResultTemplateNotFoundException if `templateId` doesn't
    *   resolve to an active template in this tenant
    * @throws ValidationException if neither, or both, of `templateId`/`content`
-   *   are sent — exactly one is required
+   *   are sent — exactly one is required, or if `resultParamId` doesn't
+   *   belong to this report's test
    */
   async updateOverallResult(
     id: string,
     tenantId: string,
     branchId: string | null,
+    resultParamId: string,
     dto: UpdateOverallResultDto,
   ): Promise<LabReportOverallResult> {
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.requireReport(id, tenantId, activeBranchId);
+    await this.assertResultParamBelongsToReport(report, resultParamId);
 
     const settings = await this.technicianSettingsService.getForBranch(
       tenantId,
       activeBranchId,
     );
+    const existing = await this.prisma.labReportOverallResult.findUnique({
+      where: {
+        labReportId_resultParamId: { labReportId: report.id, resultParamId },
+      },
+      select: { templateId: true, content: true },
+    });
     if (!settings.isOverallResultEditable) {
       return {
-        templateId: report.overallResultTemplateId,
-        content: report.overallResultContent,
+        resultParamId,
+        templateId: existing?.templateId ?? null,
+        content: existing?.content ?? null,
       };
     }
 
@@ -1513,10 +1540,8 @@ export class LabReportService {
       );
     }
 
-    const patch: {
-      overallResultTemplateId?: string;
-      overallResultContent?: string;
-    } = {};
+    let templateId = existing?.templateId ?? null;
+    let content = existing?.content ?? null;
     if (dto.templateId !== undefined) {
       // Apply: resolve the template server-side — never trust client-supplied
       // content for what a named template currently contains.
@@ -1524,22 +1549,32 @@ export class LabReportService {
         dto.templateId,
         tenantId,
       );
-      patch.overallResultTemplateId = template.id;
-      patch.overallResultContent = template.content;
+      templateId = template.id;
+      content = template.content;
     } else if (dto.content !== undefined) {
-      // Edit: leave overallResultTemplateId untouched so the UI still shows
-      // which template this report started from.
-      patch.overallResultContent = dto.content;
+      // Edit: leave templateId untouched so the UI still shows which
+      // template this parameter started from.
+      content = dto.content;
     }
 
-    const updated = await this.prisma.labReport.update({
-      where: { id: report.id },
-      data: patch,
-      select: { overallResultTemplateId: true, overallResultContent: true },
+    const updated = await this.prisma.labReportOverallResult.upsert({
+      where: {
+        labReportId_resultParamId: { labReportId: report.id, resultParamId },
+      },
+      create: {
+        tenantId,
+        labReportId: report.id,
+        resultParamId,
+        templateId,
+        content,
+      },
+      update: { templateId, content },
+      select: { templateId: true, content: true },
     });
     return {
-      templateId: updated.overallResultTemplateId,
-      content: updated.overallResultContent,
+      resultParamId,
+      templateId: updated.templateId,
+      content: updated.content,
     };
   }
 
@@ -1649,6 +1684,38 @@ export class LabReportService {
     if (!hasSample) throw new LabReportSampleMissingException(id);
 
     return report;
+  }
+
+  /**
+   * Guard for `updateOverallResult`: confirm `resultParamId` is actually one
+   * of this report's own result parameters (reuses `getResultParams`, the
+   * same lookup `findById` uses to build the Test Entry grid — handles both
+   * a direct `labTestId` and a panel-member report resolved via
+   * `orderItem.branchLabPanelId`). Without this, any arbitrary UUID would
+   * silently create its own row in `LabReportOverallResult` with no
+   * corresponding parameter to attach it to (found via smoke test,
+   * 2026-09-22) — every other logical-ref id in this schema is still scoped
+   * to a real relationship even without an FK; this one wasn't.
+   * @throws ValidationException if `resultParamId` doesn't belong to this
+   *   report's test/panel
+   */
+  private async assertResultParamBelongsToReport(
+    report: { id: string; labTestId: string | null; orderItemId: string },
+    resultParamId: string,
+  ): Promise<void> {
+    const orderItem = await this.prisma.orderItem.findUnique({
+      where: { id: report.orderItemId },
+      select: { branchLabPanelId: true },
+    });
+    const params = await this.getResultParams(
+      report.labTestId,
+      orderItem?.branchLabPanelId,
+    );
+    if (!params.some((p) => p.id === resultParamId)) {
+      throw new ValidationException(
+        `resultParamId does not belong to this report's test`,
+      );
+    }
   }
 
   /**

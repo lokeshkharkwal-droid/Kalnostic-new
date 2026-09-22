@@ -7167,21 +7167,6 @@ model LabReport {
   remarks                 String?
   references              String?
 
-  /// The Overall Result content applied to this report, snapshotted from an
-  /// `OverallResultTemplate` chosen by the technician (Technician Settings'
-  /// `isOverallResultEditable` gates whether it can be applied/edited at
-  /// all). Unlike the 5 Notes fields above, this has NO `LabTest`-level
-  /// fallback — a report with no template applied simply has no Overall
-  /// Result, since `LabTest` carries no default for it. `overallResultTemplateId`
-  /// is a logical reference only (no FK, matching this schema's convention for
-  /// cross-module ids resolved app-side) recording which template was applied,
-  /// so the UI can show which one is active; `overallResultContent` is the
-  /// actual (technician-editable-after-apply) HTML snapshot that reports
-  /// render from — editing it never writes back to the source
-  /// `OverallResultTemplate`.
-  overallResultTemplateId String? @map("overall_result_template_id")
-  overallResultContent    String? @db.Text @map("overall_result_content")
-
   status LabReportStatus @default(PENDING)
 
   savedAt     DateTime? @map("saved_at")
@@ -7261,6 +7246,7 @@ model LabReport {
   isOutsourced Boolean @default(false) @map("is_outsourced")
 
   resultValues     LabReportResultValue[]
+  overallResults   LabReportOverallResult[]
   notes            LabReportNote[]
   attachments      LabReportAttachment[]
   history          LabReportHistory[]
@@ -7349,6 +7335,44 @@ model LabReportResultValue {
   @@index([labReportId])
   @@index([resultParamId])
   @@map("lab_report_result_values")
+}
+
+/// The Overall Result template/content applied to ONE result parameter on
+/// ONE report — per-PARAMETER, not per-report (a test can have several
+/// parameters, e.g. Bilirubin/SGOT/SGPT under Liver Function Test, each
+/// independently tagged into its own `LabTestResultParam.overallResultGroups`
+/// and each capable of holding its own separately-applied result). Replaces
+/// the earlier `LabReport.overallResultTemplateId`/`overallResultContent`
+/// columns (removed in this same migration), which wrongly modeled this as
+/// one-per-report: applying a template from one parameter's row silently
+/// overwrote whatever another parameter's row had applied, since both wrote
+/// the same two columns. `resultParamId` is a logical ref to
+/// `LabTestResultParam` (mirrors `LabReportResultValue.resultParamId` — no
+/// FK, joined app-side). `templateId` is a logical reference (no FK,
+/// matching `OverallResultTemplate`'s existing cross-module convention)
+/// recording which template was applied, purely so the UI can show which one
+/// is currently active; `content` is the actual (technician-editable-after-
+/// apply) HTML snapshot the report renders from — editing it never writes
+/// back to the source `OverallResultTemplate`. Gated by `TechnicianSetting
+/// .isOverallResultEditable` (see `LabReportService.updateOverallResult`).
+model LabReportOverallResult {
+  id          String    @id @default(uuid())
+  tenantId    String    @map("tenant_id")
+  labReportId String    @map("lab_report_id")
+  labReport   LabReport @relation(fields: [labReportId], references: [id], onDelete: Cascade)
+
+  resultParamId String  @map("result_param_id")
+  templateId    String? @map("template_id")
+  content       String? @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([labReportId, resultParamId])
+  @@index([tenantId])
+  @@index([labReportId])
+  @@index([resultParamId])
+  @@map("lab_report_overall_results")
 }
 
 /// Which per-test action a note belongs to (LABORATORY.docx §4.2, §5). ORDER /
