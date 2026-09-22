@@ -248,19 +248,32 @@ function ageFromDob(
   return { age: days, ageType: AgeType.DAYS };
 }
 
+/** S3 base for legacy system files: `s3_base_url` + `files_bucket` from the
+ *  legacy app params (params.production.php). Override with LEGACY_S3_FILES_BASE_URL. */
+const LEGACY_S3_FILES_BASE_URL =
+  str(process.env.LEGACY_S3_FILES_BASE_URL) ??
+  'https://s3-ap-southeast-1.amazonaws.com/user.stock.files';
+
 /**
- * Build a patient photoUrl from the legacy `PATIENT_PHOTO` (a bare filename such
- * as `abc.jpg`). Already-absolute URLs pass through; a bare filename is prefixed
- * with `LEGACY_PATIENT_PHOTO_BASE_URL` when that env var is set, otherwise the
- * raw filename is preserved so the reference is not lost.
+ * Build a fully-qualified patient photo URL. Legacy `PATIENT_PHOTO` stores only a
+ * `system_files.attachment_id` (+extension); the real S3 object key is that row's
+ * `disk_path` (resolved via the LEFT JOIN in the detail query). The public URL is
+ * `<s3_base_url>/<files_bucket>/<disk_path>` — e.g.
+ * `https://s3-ap-southeast-1.amazonaws.com/user.stock.files/prod/423/2025/03/19/<id>.png`.
+ * Falls back to an already-absolute PATIENT_PHOTO value; otherwise undefined (no
+ * usable photo / no matching system_files row).
  */
-function buildPhotoUrl(raw: unknown): string | undefined {
-  const file = str(raw);
-  if (!file) return undefined;
-  if (/^https?:\/\//i.test(file)) return file;
-  const base = str(process.env.LEGACY_PATIENT_PHOTO_BASE_URL);
-  if (base) return `${base.replace(/\/+$/, '')}/${file.replace(/^\/+/, '')}`;
-  return file;
+function buildPhotoUrl(diskPath: unknown, rawPhoto: unknown): string | undefined {
+  const path = str(diskPath);
+  // Only a real S3 object key (a path with folders, e.g. prod/423/…/id.png) yields
+  // a working URL. The `offline` sentinel means the bytes live in
+  // system_files.file_data (not S3), so it can't be turned into a URL — skip it.
+  if (path && path.includes('/') && !/^offline\b/i.test(path)) {
+    return `${LEGACY_S3_FILES_BASE_URL.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`;
+  }
+  const file = str(rawPhoto);
+  if (file && /^https?:\/\//i.test(file)) return file; // already a URL
+  return undefined; // no S3-backed system_files row → can't form a working URL
 }
 
 /** Pull the first `{num}` / `{email}` out of a legacy JSON-array text column. */
@@ -759,9 +772,14 @@ async function migratePatients(
               ppi.PATIENT_DOB, ppi.PATIENT_GENDER, ppi.PATIENT_ADDRESS1, ppi.PATIENT_ADDRESS2,
               ppi.PATIENT_ZIP, ppi.PATIENT_AADHAR_NUMBER, ppi.PATIENT_PASSPORT_NUMBER,
               ppi.PATIENT_CONTRY, ppi.PATIENT_STATE, ppi.PATIENT_CITY, ppi.PATIENT_AREA,
-              ppi.PATIENT_PHOTO
+              ppi.PATIENT_PHOTO, sf.disk_path AS PATIENT_PHOTO_DISK_PATH
          FROM patientregister pr
          LEFT JOIN patient_personal_info ppi ON ppi.PATIENT_ID = pr.PATIENT_ID
+         -- Resolve the profile photo's real S3 key: PATIENT_PHOTO holds only the
+         -- system_files.attachment_id (+ extension), and the object key lives in
+         -- system_files.disk_path (e.g. prod/{tenant}/{yyyy}/{mm}/{dd}/{id}.png).
+         LEFT JOIN system_files sf
+                ON sf.attachment_id = SUBSTRING_INDEX(ppi.PATIENT_PHOTO, '.', 1)
         WHERE pr.PATIENT_ID IN (${placeholders})`,
       chunk,
     );
@@ -865,9 +883,9 @@ async function migratePatients(
       dateOfBirth: dob,
       age: ageInfo?.age,
       ageType: ageInfo?.ageType,
-      // Patient profile photo ← legacy patient_personal_info.PATIENT_PHOTO (a bare
-      // filename); prefix with LEGACY_PATIENT_PHOTO_BASE_URL when set to form a URL.
-      photoUrl: buildPhotoUrl(row.PATIENT_PHOTO),
+      // Patient profile photo → full S3 URL, resolved from system_files.disk_path
+      // (PATIENT_PHOTO is only the attachment_id). See buildPhotoUrl.
+      photoUrl: buildPhotoUrl(row.PATIENT_PHOTO_DISK_PATH, row.PATIENT_PHOTO),
       whatsappNumber: str(row.whatsapp_number) ?? undefined,
       email: email && EMAIL.test(email) ? email : undefined,
       // Geo columns are numeric ids in legacy (resolve → name) but may be plain
