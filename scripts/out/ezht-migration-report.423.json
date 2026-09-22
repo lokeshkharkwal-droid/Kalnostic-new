@@ -10,8 +10,8 @@
     "skipped": 4
   },
   "patients": {
-    "created": 253,
-    "skipped": 28,
+    "created": 1,
+    "skipped": 281,
     "familyBypass": [],
     "missingMobile": [],
     "errors": []
