@@ -74,15 +74,20 @@ export interface LabReportContentSections {
 
 /**
  * The Test Entry screen's Overall Result section — a technician-applied
- * `OverallResultTemplate` snapshot. Unlike `LabReportContentSections`, there
- * is NO `LabTest`-level fallback: `LabTest` carries no default Overall
- * Result, so a report with no template ever applied simply has both fields
- * null. `templateId` is a logical reference (no Prisma relation) recording
- * which template produced `content`, purely so the UI can show which one is
+ * `OverallResultTemplate` snapshot for ONE result parameter on this report
+ * (a test can have several parameters, each independently tagged into its
+ * own Overall Result group and each capable of holding its own separately-
+ * applied result — see `LabReportOverallResultRow` model doc comment).
+ * Unlike `LabReportContentSections`, there is NO `LabTest`-level fallback:
+ * `LabTest` carries no default Overall Result, so a parameter with no
+ * template ever applied simply has no entry in the `overallResults` array.
+ * `templateId` is a logical reference (no Prisma relation) recording which
+ * template produced `content`, purely so the UI can show which one is
  * currently active — editing `content` after applying never writes back to
  * the source `OverallResultTemplate`.
  */
 export interface LabReportOverallResult {
+  resultParamId: string;
   templateId: string | null;
   content: string | null;
 }
@@ -149,7 +154,10 @@ export interface LabReportResultParam {
  * instead (flattened, see `LabReportService.findByIdForApi`). */
 export type LabReportDetailWithContent = LabReportDetail & {
   contentSections: LabReportContentSections;
-  overallResult: LabReportOverallResult;
+  /** One entry per result parameter that has an Overall Result applied —
+   * NOT one per report (see `LabReportOverallResult`'s doc comment). A
+   * parameter with nothing applied simply has no entry here. */
+  overallResults: LabReportOverallResult[];
   resultParams: LabReportResultParam[];
 };
 
@@ -166,7 +174,7 @@ export type LabReportDetailApiResponse = LabReportWorklistRow &
     'resultValues' | 'notes' | 'attachments' | 'multiStepProcess'
   > & {
     contentSections: LabReportContentSections;
-    overallResult: LabReportOverallResult;
+    overallResults: LabReportOverallResult[];
     resultParams: LabReportResultParam[];
   };
 
