@@ -8,6 +8,7 @@ import { PermissionsModule } from '../permissions/permissions.module';
 import { TenantModule } from '../tenant/tenant.module';
 import { OverallResultTemplateModule } from '../overall-result-template/overall-result-template.module';
 import { UserDepartmentScopeModule } from '../department/user-department-scope.module';
+import { ReferralCreditModule } from '../referral-credit/referral-credit.module';
 import { LabReportController } from './lab-report.controller';
 import { LabReportService } from './lab-report.service';
 import { LabReportAttachmentController } from './lab-report-attachment.controller';
@@ -60,6 +61,7 @@ import { NablTatCronService } from './nabl-tat-cron.service';
     TenantModule,
     OverallResultTemplateModule,
     UserDepartmentScopeModule,
+    ReferralCreditModule,
   ],
   controllers: [
     LabReportController,
