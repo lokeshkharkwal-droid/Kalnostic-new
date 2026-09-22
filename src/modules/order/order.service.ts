@@ -41,6 +41,8 @@ import { SlotReservationService } from '../phlebotomist-schedule/slot-reservatio
 import { PhlebotomistCollectionService } from '../phlebotomist-collection/phlebotomist-collection.service';
 import { RegistrationSettingsService } from '../registration-settings/registration-settings.service';
 import { ExternalIdService } from '../registration-settings/external-id.service';
+import { ReferralCreditService } from '../referral-credit/referral-credit.service';
+import { CommunicationRecipientNotAllowedException } from '../referral-credit/referral-credit.exceptions';
 import { TenantService } from '../tenant/tenant.service';
 import type { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
 import { PaginatedResult } from '../../common/dto/response.dto';
@@ -422,6 +424,7 @@ export class OrderService {
     private readonly eventEmitter: EventEmitter2,
     private readonly shareService: ShareService,
     private readonly tenantService: TenantService,
+    private readonly referralCredit: ReferralCreditService,
   ) {}
 
   /**
@@ -494,6 +497,18 @@ export class OrderService {
     await this.assertPatient(tenantId, dto.patientId);
     await this.assertItems(tenantId, dto.items);
     await this.assertReferrals(tenantId, dto);
+    // Referral Panel Settings credit gate (Section 4): block a NEW finalized
+    // order when a linked referral (B2B panel / doctor / internal / external) on
+    // a Cash/Postpaid setting has hit its Credit Limit or Credit Allowed Days.
+    // Only bites for status = ORDER; DRAFT/QUOTE/APPOINTMENT are exempt.
+    if (dto.status === OrderStatus.ORDER) {
+      await this.referralCredit.assertOrderCreationAllowed(tenantId, {
+        referredByDoctorId: dto.referredByDoctorId,
+        referralPanelId: dto.referralPanelId,
+        internalReferralId: dto.internalReferralId,
+        externalReferralId: dto.externalReferralId,
+      });
+    }
     if (dto.diagnostics) {
       await this.assertDiagnostics(tenantId, dto.diagnostics);
     }
@@ -2658,6 +2673,31 @@ export class OrderService {
   }
 
   /**
+   * Gate a bill share against the order's referral communication policy
+   * (Referral Panel Settings → Send Bills to Patient / Send Bills to B2B). A
+   * no-op for orders with no referral setting (the policy allows everything).
+   * @throws CommunicationRecipientNotAllowedException when that recipient is disabled
+   */
+  private async assertBillRecipientAllowed(
+    tenantId: string,
+    orderId: string,
+    recipientType: ShareRecipientType,
+  ): Promise<void> {
+    const policy = await this.referralCredit.resolveOrderCommunicationPolicy(
+      tenantId,
+      orderId,
+    );
+    const allowed =
+      recipientType === 'PANEL' ? policy.billToB2b : policy.billToPatient;
+    if (!allowed) {
+      throw new CommunicationRecipientNotAllowedException(
+        'bill',
+        recipientType === 'PANEL' ? 'B2B panel' : 'patient',
+      );
+    }
+  }
+
+  /**
    * Single-channel share: queue the kind's document to one recipient over one
    * deliverable channel, using the tenant's ACTIVATED template for the kind's
    * feature. Email/WhatsApp attach the kind's PDF (if any); SMS is text-only.
@@ -2692,6 +2732,15 @@ export class OrderService {
         },
       );
       return [];
+    }
+
+    // Referral Panel Settings — honor Send Bills to Patient / B2B on bill shares.
+    if (kind === 'bill') {
+      await this.assertBillRecipientAllowed(
+        tenantId,
+        orderId,
+        dto.recipientType ?? 'PATIENT',
+      );
     }
 
     const recipient = cfg.allowPanel
@@ -2739,6 +2788,11 @@ export class OrderService {
     const variables = cfg.variables(ctx);
     const attachmentName = cfg.attachmentName?.(ctx);
     const selected = dto.recipientType ?? 'PATIENT';
+
+    // Referral Panel Settings — honor Send Bills to Patient / B2B on bill shares.
+    if (kind === 'bill') {
+      await this.assertBillRecipientAllowed(tenantId, orderId, selected);
+    }
 
     // Which recipient(s) each channel is sent to (and which one edits apply to).
     const targets: { recipient: ShareRecipient; matches: boolean }[] = [];

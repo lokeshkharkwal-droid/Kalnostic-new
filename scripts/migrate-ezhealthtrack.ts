@@ -42,6 +42,7 @@ import {
   type RowDataPacket,
 } from 'mysql2/promise';
 import {
+  AgeType,
   BranchType,
   Gender,
   ReferralClientType,
@@ -211,6 +212,57 @@ function mapDob(legacy: unknown): string | undefined {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * Derive age + ageType from a (already-normalised, YYYY-MM-DD) DOB. Legacy has no
+ * age column — only DOB — but the target keeps `age`/`ageType` as stored fields,
+ * so we compute them: whole years when ≥1 year old, else whole months when ≥1
+ * month, else days. Returns undefined when there is no usable DOB.
+ */
+function ageFromDob(
+  dobIso: string | undefined,
+): { age: number; ageType: AgeType } | undefined {
+  if (!dobIso) return undefined;
+  const dob = new Date(dobIso);
+  if (Number.isNaN(dob.getTime())) return undefined;
+  const now = new Date();
+  if (dob.getTime() > now.getTime()) return undefined; // future DOB → ignore
+
+  let years = now.getUTCFullYear() - dob.getUTCFullYear();
+  const beforeBirthdayThisYear =
+    now.getUTCMonth() < dob.getUTCMonth() ||
+    (now.getUTCMonth() === dob.getUTCMonth() &&
+      now.getUTCDate() < dob.getUTCDate());
+  if (beforeBirthdayThisYear) years -= 1;
+  if (years >= 1) return { age: years, ageType: AgeType.YEARS };
+
+  let months =
+    (now.getUTCFullYear() - dob.getUTCFullYear()) * 12 +
+    (now.getUTCMonth() - dob.getUTCMonth());
+  if (now.getUTCDate() < dob.getUTCDate()) months -= 1;
+  if (months >= 1) return { age: months, ageType: AgeType.MONTHS };
+
+  const days = Math.max(
+    0,
+    Math.floor((now.getTime() - dob.getTime()) / 86_400_000),
+  );
+  return { age: days, ageType: AgeType.DAYS };
+}
+
+/**
+ * Build a patient photoUrl from the legacy `PATIENT_PHOTO` (a bare filename such
+ * as `abc.jpg`). Already-absolute URLs pass through; a bare filename is prefixed
+ * with `LEGACY_PATIENT_PHOTO_BASE_URL` when that env var is set, otherwise the
+ * raw filename is preserved so the reference is not lost.
+ */
+function buildPhotoUrl(raw: unknown): string | undefined {
+  const file = str(raw);
+  if (!file) return undefined;
+  if (/^https?:\/\//i.test(file)) return file;
+  const base = str(process.env.LEGACY_PATIENT_PHOTO_BASE_URL);
+  if (base) return `${base.replace(/\/+$/, '')}/${file.replace(/^\/+/, '')}`;
+  return file;
+}
+
 /** Pull the first `{num}` / `{email}` out of a legacy JSON-array text column. */
 function firstFromJsonArray(raw: unknown, key: 'num' | 'email'): string | null {
   const s = str(raw);
@@ -318,9 +370,10 @@ async function main(): Promise<void> {
     );
 
     // ── Stage 3: Patients ────────────────────────────────────────────────────
-    // Family members are flagged at creation time (see loadFamilyMemberLegacyIds)
-    // so shared-mobile households are handled deterministically.
-    const memberLegacyIds = await loadFamilyMemberLegacyIds(mysql, legacyTenantId);
+    // Family members are flagged at creation time and, when they have no mobile
+    // of their own, inherit the anchor's number (see loadFamilyMembers) so that
+    // every member of a primary patient is imported — even a shared-mobile one.
+    const familyMembers = await loadFamilyMembers(mysql, legacyTenantId);
     await migratePatients(
       mysql,
       prisma,
@@ -331,7 +384,7 @@ async function main(): Promise<void> {
       mainBranchId,
       missingMobilePolicy,
       patientLimit,
-      memberLegacyIds,
+      familyMembers,
       report,
     );
 
@@ -556,34 +609,61 @@ async function resolveMainBranchId(
   return first.done ? null : first.value;
 }
 
+/** A family MEMBER's anchor: the primary patient it hangs off, and that
+ *  primary's mobile (usable ≥4-char, or null). */
+interface FamilyMemberInfo {
+  anchorLegacyId: number;
+  anchorMobile: string | null;
+}
+
 /**
- * Legacy PATIENT_IDs that are family MEMBERS for this tenant — i.e. they appear
- * as `patient_family.FAMILY_MEMBER_PATIENT_ID` on an active row whose anchor
- * belongs to the tenant. Used to flag them `isFamilyMember` at CREATION time, so
- * that in a shared-mobile household the anchor (never a member) is the record
- * that holds the number and stays off the family flag — deterministically,
- * regardless of the order patients are processed in.
+ * Map every legacy family MEMBER for this tenant → its anchor (the primary
+ * patient it hangs off) and that anchor's mobile. A member is any
+ * `patient_family.FAMILY_MEMBER_PATIENT_ID` on an active row whose anchor
+ * belongs to the tenant. This drives three things:
+ *   1. flagging members `isFamilyMember` at CREATION so they are EXCLUDED from
+ *      the per-tenant active-mobile unique index (they may share the anchor's
+ *      number);
+ *   2. letting a member with NO mobile of its own INHERIT the anchor's number
+ *      (via `anchorMobile`) instead of being dropped by the missing-mobile skip;
+ *   3. giving a member with no `user_patient_relation` row of its own a branch
+ *      to fall back to (the anchor's) when it is unioned into the patient set.
+ * A member with several anchors keeps the first (earliest `PATIENT_FAMILY_ID`)
+ * anchor, and fills its `anchorMobile` from the first anchor with a usable number.
  */
-async function loadFamilyMemberLegacyIds(
+async function loadFamilyMembers(
   mysql: Connection,
   legacyTenantId: number,
-): Promise<Set<number>> {
+): Promise<Map<number, FamilyMemberInfo>> {
   const [rows] = await mysql.query<LegacyRow[]>(
-    `SELECT DISTINCT pf.FAMILY_MEMBER_PATIENT_ID AS m
+    `SELECT pf.PATIENT_ID AS anchor,
+            pf.FAMILY_MEMBER_PATIENT_ID AS member,
+            anchor.PATIENT_MOBILE_NUMBER AS anchorMobile
        FROM patient_family pf
+       JOIN patientregister anchor ON anchor.PATIENT_ID = pf.PATIENT_ID
       WHERE pf.FLAG = 0
         AND pf.FAMILY_MEMBER_PATIENT_ID IS NOT NULL
         AND pf.PATIENT_ID IN (
           SELECT DISTINCT patient_id FROM user_patient_relation WHERE tenant_id = ?
-        )`,
+        )
+      ORDER BY pf.PATIENT_FAMILY_ID`,
     [legacyTenantId],
   );
-  const set = new Set<number>();
+  const map = new Map<number, FamilyMemberInfo>();
   for (const r of rows) {
-    const m = intOrNull(r.m);
-    if (m !== null) set.add(m);
+    const member = intOrNull(r.member);
+    const anchor = intOrNull(r.anchor);
+    if (member === null || anchor === null) continue;
+    const am = str(r.anchorMobile);
+    const usable = am && am.length >= 4 ? am : null;
+    const existing = map.get(member);
+    if (!existing) {
+      map.set(member, { anchorLegacyId: anchor, anchorMobile: usable });
+    } else if (existing.anchorMobile === null && usable) {
+      existing.anchorMobile = usable; // fill mobile from a later anchor
+    }
   }
-  return set;
+  return map;
 }
 
 /** Migrate patients owned by the tenant (resolved via user_patient_relation). */
@@ -597,7 +677,7 @@ async function migratePatients(
   mainBranchId: string | null,
   missingMobilePolicy: 'skip' | 'placeholder',
   patientLimit: number | null,
-  memberLegacyIds: Set<number>,
+  familyMembers: Map<number, FamilyMemberInfo>,
   report: RunReport,
 ): Promise<void> {
   // Ownership + branch: a patient can have several user_patient_relation rows —
@@ -627,6 +707,19 @@ async function migratePatients(
     if (mapped) {
       branchByPatient.set(pid, mapped);
       hasBranch.add(pid);
+    }
+  }
+  // Union in EVERY family member, even one with no `user_patient_relation` row
+  // of its own for this tenant — otherwise a member seen only via patient_family
+  // would never enter the patient loop and its relationship would be lost. Each
+  // such member inherits the anchor's registration branch.
+  for (const [memberId, info] of familyMembers) {
+    if (!branchByPatient.has(memberId)) {
+      patientIds.push(memberId);
+      branchByPatient.set(
+        memberId,
+        branchByPatient.get(info.anchorLegacyId) || mainBranchId || '',
+      );
     }
   }
   if (patientIds.length === 0) {
@@ -665,7 +758,8 @@ async function migratePatients(
               pr.whatsapp_number, pr.pan_number,
               ppi.PATIENT_DOB, ppi.PATIENT_GENDER, ppi.PATIENT_ADDRESS1, ppi.PATIENT_ADDRESS2,
               ppi.PATIENT_ZIP, ppi.PATIENT_AADHAR_NUMBER, ppi.PATIENT_PASSPORT_NUMBER,
-              ppi.PATIENT_CONTRY, ppi.PATIENT_STATE, ppi.PATIENT_CITY, ppi.PATIENT_AREA
+              ppi.PATIENT_CONTRY, ppi.PATIENT_STATE, ppi.PATIENT_CITY, ppi.PATIENT_AREA,
+              ppi.PATIENT_PHOTO
          FROM patientregister pr
          LEFT JOIN patient_personal_info ppi ON ppi.PATIENT_ID = pr.PATIENT_ID
         WHERE pr.PATIENT_ID IN (${placeholders})`,
@@ -728,15 +822,25 @@ async function migratePatients(
       continue;
     }
     const firstName = str(row.PATIENT_FIRST_NAME) ?? 'Unknown';
+    const isMember = familyMembers.has(legacyPatientId);
     let mobile = str(row.PATIENT_MOBILE_NUMBER);
     if (!mobile || mobile.length < 4) {
-      if (missingMobilePolicy === 'skip') {
+      // Family member with no mobile of its own → inherit the anchor's number.
+      // It is created with isFamilyMember=true (below), so reusing the anchor's
+      // number does NOT trip the active-mobile unique index (rls.sql).
+      const inherited = isMember
+        ? (familyMembers.get(legacyPatientId)?.anchorMobile ?? null)
+        : null;
+      if (inherited) {
+        mobile = inherited;
+      } else if (missingMobilePolicy === 'skip') {
         report.patients.missingMobile.push({ legacyPatientId, name: firstName });
         continue;
+      } else {
+        // placeholder → a synthetic, marked as family member to bypass the
+        // per-tenant active-mobile unique index.
+        mobile = `EZHT-${legacyPatientId}`;
       }
-      // placeholder → a synthetic, marked as family member to bypass the
-      // per-tenant active-mobile unique index.
-      mobile = `EZHT-${legacyPatientId}`;
     }
 
     const email = str(row.PATIENT_EMAIL);
@@ -744,6 +848,10 @@ async function migratePatients(
     const pan = str(row.pan_number);
     const zip = str(row.PATIENT_ZIP);
     const fields = fieldsByPatient.get(legacyPatientId) ?? {};
+    // Legacy stores only DOB (no age column); derive age + ageType so the patient
+    // record carries an age even though the target keeps them as stored columns.
+    const dob = mapDob(row.PATIENT_DOB);
+    const ageInfo = ageFromDob(dob);
 
     const dto: CreatePatientDto = {
       salutation: mapSalutation(row.salutation),
@@ -754,13 +862,21 @@ async function migratePatients(
       // Globally-unique manual UMID (branches have no auto-format post-migration).
       umId: `EZHT-${legacyTenantId}-${legacyPatientId}`,
       gender: mapGender(row.PATIENT_GENDER),
-      dateOfBirth: mapDob(row.PATIENT_DOB),
+      dateOfBirth: dob,
+      age: ageInfo?.age,
+      ageType: ageInfo?.ageType,
+      // Patient profile photo ← legacy patient_personal_info.PATIENT_PHOTO (a bare
+      // filename); prefix with LEGACY_PATIENT_PHOTO_BASE_URL when set to form a URL.
+      photoUrl: buildPhotoUrl(row.PATIENT_PHOTO),
       whatsappNumber: str(row.whatsapp_number) ?? undefined,
       email: email && EMAIL.test(email) ? email : undefined,
-      country: countryMap.get(intOrNull(row.PATIENT_CONTRY) ?? -1) ?? undefined,
-      state: stateMap.get(intOrNull(row.PATIENT_STATE) ?? -1) ?? undefined,
-      city: cityMap.get(intOrNull(row.PATIENT_CITY) ?? -1) ?? undefined,
-      area: areaMap.get(intOrNull(row.PATIENT_AREA) ?? -1) ?? undefined,
+      // Geo columns are numeric ids in legacy (resolve → name) but may be plain
+      // names in some data (pass through) — resolveGeoValue handles both, matching
+      // the referral-panel path.
+      country: resolveGeoValue(row.PATIENT_CONTRY, countryMap),
+      state: resolveGeoValue(row.PATIENT_STATE, stateMap),
+      city: resolveGeoValue(row.PATIENT_CITY, cityMap),
+      area: resolveGeoValue(row.PATIENT_AREA, areaMap),
       addressLine1: str(row.PATIENT_ADDRESS1) ?? undefined,
       addressLine2: str(row.PATIENT_ADDRESS2) ?? undefined,
       pincode: zip && zip !== '0' ? zip : undefined,
@@ -777,12 +893,11 @@ async function migratePatients(
 
     const branchId = branchByPatient.get(legacyPatientId) || mainBranchId || null;
     const isPlaceholder = mobile.startsWith('EZHT-');
-    // Flag known family members up front so a household sharing one mobile is
-    // handled deterministically: the anchor (never in memberLegacyIds) keeps the
-    // number and stays off the family flag; members are exempt from the unique
-    // index. The mobile-conflict retry below remains a safety net for genuinely
-    // duplicate PRIMARY registrations that share a number without a family link.
-    const isMember = memberLegacyIds.has(legacyPatientId);
+    // `isMember` (computed above) flags known family members so a household
+    // sharing one mobile is handled deterministically: the anchor (never in
+    // familyMembers) keeps the number and stays off the family flag; members are
+    // exempt from the unique index. The mobile-conflict retry below remains a
+    // safety net for duplicate PRIMARY registrations that share a number.
     try {
       await prisma.runWithTenant(newTenantId, () =>
         patientService.create(newTenantId, dto, {

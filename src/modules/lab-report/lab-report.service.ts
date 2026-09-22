@@ -31,6 +31,8 @@ import {
 } from '../../common/utils';
 import { TenantService } from '../tenant/tenant.service';
 import { UserDepartmentScopeService } from '../department/user-department-scope.service';
+import { ReferralCreditService } from '../referral-credit/referral-credit.service';
+import { CommunicationRecipientNotAllowedException } from '../referral-credit/referral-credit.exceptions';
 import {
   ShareService,
   type ShareRecipient,
@@ -168,6 +170,7 @@ export class LabReportService {
     private readonly tenantService: TenantService,
     private readonly overallResultTemplateService: OverallResultTemplateService,
     private readonly userDepartmentScope: UserDepartmentScopeService,
+    private readonly referralCredit: ReferralCreditService,
   ) {}
 
   private readonly logger = new Logger(LabReportService.name);
@@ -2702,6 +2705,8 @@ export class LabReportService {
     templateId?: string,
     type: 'lab_report' | 'lab_panel' = 'lab_report',
   ): Promise<Buffer> {
+    // Referral Panel Settings — Restrict Report Access (Credit Limit/Days).
+    await this.referralCredit.assertReportAccessAllowedByReportId(tenantId, id);
     const context = await this.buildPrintContext(id, tenantId, branchId);
     const resolvedTemplateId =
       templateId ?? (await this.resolvePrintTemplateId(tenantId, type));
@@ -2959,6 +2964,11 @@ export class LabReportService {
     orderItemIds?: string[],
   ): Promise<Buffer> {
     const activeBranchId = this.requireBranch(branchId);
+    // Referral Panel Settings — Restrict Report Access (Credit Limit/Days).
+    await this.referralCredit.assertReportAccessAllowedByOrderId(
+      tenantId,
+      orderId,
+    );
 
     // If the caller picked a `lab_all_report` (or the patient-facing
     // `patient_lab_all_report`) template, render the whole order as ONE
@@ -3049,6 +3059,15 @@ export class LabReportService {
       await this.dispatchIamShare(ctx, tenantId, branchId, actorId);
       return [];
     }
+    // Referral Panel Settings — deliverable report shares go to the patient, so
+    // honor Send Reports to Patient. IAM (staff) above is unaffected.
+    const policy = await this.referralCredit.resolveOrderCommunicationPolicy(
+      tenantId,
+      orderId,
+    );
+    if (!policy.reportToPatient) {
+      throw new CommunicationRecipientNotAllowedException('report', 'patient');
+    }
     return this.dispatchDeliverableShare(
       ctx,
       tenantId,
@@ -3099,11 +3118,29 @@ export class LabReportService {
 
     const results: ShareChannelResult[] = [];
 
+    // Referral Panel Settings — the deliverable channels (Email/SMS/WhatsApp)
+    // send the report to the patient, so honor Send Reports to Patient. When
+    // disabled they are reported SKIPPED; the in-app (IAM) staff notification
+    // below still fires.
+    const policy = await this.referralCredit.resolveOrderCommunicationPolicy(
+      tenantId,
+      orderId,
+    );
+
     for (const channel of [
       MessagingChannel.EMAIL,
       MessagingChannel.SMS,
       MessagingChannel.WHATSAPP,
     ]) {
+      if (!policy.reportToPatient) {
+        results.push({
+          channel,
+          status: 'SKIPPED',
+          reason:
+            'Sending reports to the patient is disabled in Referral Panel Settings',
+        });
+        continue;
+      }
       try {
         const logs = await this.dispatchDeliverableShare(
           ctx,
