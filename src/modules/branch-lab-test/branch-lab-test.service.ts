@@ -436,29 +436,53 @@ export class BranchLabTestService {
       sourceLabTestId: string | null;
     }[] = [];
     let skipped = 0;
-    for (const copy of copies) {
+    const resolvable = copies.filter((copy) => {
       if (!copy.sourceLabTestId) {
         skipped += 1;
-        continue;
+        return false;
       }
-      try {
-        const source = await this.labTestService.findById(
-          masterData.id,
-          copy.sourceLabTestId,
-          tenantId,
-        );
-        updates.push({
-          id: copy.id,
-          data: this.buildSyncData(source, actorId),
-        });
-      } catch (e) {
-        if (e instanceof LabTestNotFoundException) {
-          // Source has been soft-deleted at Master Data — the branch's copy is
-          // stale and no longer orderable, so it is removed rather than skipped.
+      return true;
+    });
+    // Resolved in parallel chunks (read-only — no transaction, so no
+    // transaction-timeout risk from the concurrency itself), not one
+    // `await` per copy in a sequential loop. A branch with thousands of
+    // copies (each resolve is 5 queries — see LabTestService.findById /
+    // composeWithChildren) previously took tens of seconds here ALONE,
+    // before a single write ever ran, which is what actually timed out
+    // "Sync all" — the write-side batching added 2026-09-21 never touched
+    // this resolve step, which had no batching or parallelism at all.
+    const RESOLVE_CHUNK_SIZE = 25;
+    for (let i = 0; i < resolvable.length; i += RESOLVE_CHUNK_SIZE) {
+      const chunk = resolvable.slice(i, i + RESOLVE_CHUNK_SIZE);
+      const results = await Promise.all(
+        chunk.map(async (copy) => {
+          try {
+            const source = await this.labTestService.findById(
+              masterData.id,
+              copy.sourceLabTestId!,
+              tenantId,
+            );
+            return { copy, source };
+          } catch (e) {
+            if (e instanceof LabTestNotFoundException) {
+              // Source has been soft-deleted at Master Data — the branch's
+              // copy is stale and no longer orderable, so it is removed
+              // rather than skipped.
+              return { copy, source: null };
+            }
+            throw e;
+          }
+        }),
+      );
+      for (const { copy, source } of results) {
+        if (source) {
+          updates.push({
+            id: copy.id,
+            data: this.buildSyncData(source, actorId),
+          });
+        } else {
           toDelete.push(copy);
-          continue;
         }
-        throw e;
       }
     }
 
