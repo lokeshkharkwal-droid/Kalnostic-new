@@ -2939,21 +2939,38 @@ tagged with the old name — there is no cascade or reference-count warning.</di
 </div>
 
 <div class="ep" id="ort-apply">
-  <div><span class="m patch">PATCH</span><span class="path">/api/v1/lab-reports/:id/overall-result</span></div>
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/lab-reports/:id/overall-result/:resultParamId</span></div>
   <div class="tags"><span class="tag biz">business JWT</span></div>
-  <p>Apply a template to a report, or edit its already-applied content — <b>two mutually
-  exclusive actions</b> on one endpoint, picked by which single field is sent:</p>
+  <p>Apply a template to ONE result parameter on a report, or edit that parameter's
+  already-applied content — <b>two mutually exclusive actions</b> on one endpoint, picked by
+  which single field is sent:</p>
   <pre>// apply — server resolves the template's CURRENT content itself, never trusts a client string
 { "templateId": "ort-uuid" }
 
 // edit — overwrites content in place; templateId is left untouched
 { "content": "&lt;p&gt;Overall result: Normal.&lt;/p&gt;" }</pre>
+  <p>⚠️ <b>Changed 2026-09-22</b>: now per-parameter, not per-report. <code>resultParamId</code>
+  (a <code>LabTestResultParam.id</code>) is a required path segment. A test with several
+  parameters, each tagged into its own Overall Result group, can each hold a <b>different</b>
+  applied template/content — calling this for one <code>resultParamId</code> never touches any
+  other parameter's applied result on the same report (stored in the dedicated
+  <code>LabReportOverallResult</code> table, keyed by <code>(labReportId, resultParamId)</code>,
+  replacing the old single-slot <code>LabReport.overallResultTemplateId/Content</code> columns).</p>
   <p>Sending <b>both</b> fields, or <b>neither</b>, → <span class="pill">400 VALIDATION_ERROR</span>.
   Gated by <code>TechnicianSetting.isOverallResultEditable</code> (default <code>false</code>) —
   when off this is a <b>silent no-op</b> (200, unchanged data returned), not a rejection.
+  Response: <code>{ resultParamId, templateId, content }</code> — a real
+  <code>resultParamId</code> with nothing ever applied returns <code>templateId</code>/
+  <code>content</code> as <code>null</code>, not a 404.
   <span class="pill">404 LAB_REPORT_NOT_FOUND</span> /
   <span class="pill">409 LAB_REPORT_LOCKED</span> apply as usual. Requires
   <code>LAB_EDIT_REPORT</code> (stricter than this section's own read-only routes above).</p>
+  <p>⚠️ <b>Updated 2026-09-22</b>: <code>resultParamId</code> must belong to this report's own
+  test/panel — checked before the apply/edit body validation above. A smoke test found any
+  arbitrary UUID would silently create its own orphaned row (returned in the report's
+  <code>overallResults</code> array with no corresponding entry in <code>resultParams</code>);
+  an unrelated/non-existent id is now rejected with <span class="pill">400 VALIDATION_ERROR</span>
+  instead.</p>
   <p>⚠️ <b>Known gap</b>: unlike every other mutating action on a <code>LabReport</code>, this
   endpoint does not check <code>LabReportStatus</code> — a <code>PUBLISHED</code> report's overall
   result can still be edited through this route (the lock check above is the only lifecycle guard

@@ -450,28 +450,32 @@ export class LabReportController {
   }
 
   /**
-   * Apply an Overall Result template to a report, or edit its already-
-   * applied content — gated by `TechnicianSetting.isOverallResultEditable`
-   * (default false). See `UpdateOverallResultDto`'s doc comment for how the
-   * two actions are distinguished.
+   * Apply an Overall Result template to ONE result parameter on a report, or
+   * edit that parameter's already-applied content — gated by
+   * `TechnicianSetting.isOverallResultEditable` (default false). Each
+   * parameter holds its own independently-applied result; this never touches
+   * any other parameter's on the same report. See `UpdateOverallResultDto`'s
+   * doc comment for how the two actions (apply vs. edit) are distinguished.
    */
-  @Patch(':id/overall-result')
+  @Patch(':id/overall-result/:resultParamId')
   @RequirePermission(PERMISSION_KEYS.LAB_EDIT_REPORT)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
-    description: "Updated a lab report's overall result",
+    description: "Updated a lab report parameter's overall result",
   })
   updateOverallResult(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
     @Param('id') id: string,
+    @Param('resultParamId') resultParamId: string,
     @Body() dto: UpdateOverallResultDto,
   ) {
     return this.labReportService.updateOverallResult(
       id,
       tenantId,
       profile.branchId,
+      resultParamId,
       dto,
     );
   }
