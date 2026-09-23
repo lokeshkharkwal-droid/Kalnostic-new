@@ -12,7 +12,7 @@ import {
 import { LabTestService } from './lab-test.service';
 import { CreateLabTestDto } from './dto/create-lab-test.dto';
 import { UpdateLabTestDto } from './dto/update-lab-test.dto';
-import { ListLabTestsDto } from './dto/list-lab-tests.dto';
+import { BrowseLabTestTemplatesDto } from './dto/list-lab-tests.dto';
 import { LabTestOptionsQueryDto } from './dto/lab-test-options-query.dto';
 import { SiteAdminPermissionGuard } from '../siteadmin/guards/siteadmin-permission.guard';
 import { RequireSiteAdminPermission } from '../siteadmin/decorators/require-siteadmin-permission.decorator';
@@ -61,7 +61,7 @@ export class SiteAdminLabTestController {
    */
   @Get()
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_READ)
-  findAll(@Query() query: ListLabTestsDto) {
+  findAll(@Query() query: BrowseLabTestTemplatesDto) {
     return this.labTestService.findAllTemplates(query);
   }
 

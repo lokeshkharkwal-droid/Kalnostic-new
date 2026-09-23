@@ -1,0 +1,40 @@
+meta {
+  name: List Overall Result Group Names
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/overall-result-templates/group-names?page=1&limit=20&search=cul
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  search: cul
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Distinct, active `groupName` values in the caller's tenant, alphabetical,
+  **server-side paginated and searched** (standard `{ success, data, meta }`
+  envelope — `meta.total`/`page`/`limit`/`totalPages`, same as every other
+  list endpoint). Populates the "Overall Result" group picker in the Add
+  Multiple Results dialog's per-parameter "Configure: [Parameter]" panel,
+  where a `LabTestResultParam` links to one or more of these group names via
+  `overallResultGroups` (see Lab Tests → Create/Update Lab Test for that
+  field).
+
+  ## Query params (all optional)
+
+  - `page` (default 1), `limit` (default 20, max 100).
+  - `search` — case-insensitive substring match against the group name.
+
+  Declared before `GET /overall-result-templates/:id` so it is not matched as
+  an id.
+}

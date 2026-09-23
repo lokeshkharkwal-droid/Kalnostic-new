@@ -14,6 +14,7 @@ params:query {
   excludeBranchType: COLLECTION_CENTER
   ~branchType: DIAGNOSTIC
   ~search: main
+  ~excludeCurrentBranch: true
   ~page: 1
   ~limit: 10
 }
@@ -36,6 +37,9 @@ docs {
   When both are supplied, `branchType` (include) takes precedence.
 
   - `search` — case-insensitive match against branch `name` OR `code`.
+  - `excludeCurrentBranch` — when `true`, drop the caller's own active branch
+    (resolved from the JWT `active_branch_id`, never the client) from the list.
+    Used by the Accession Send / Assign-Center Internal Station picker.
   - `page` / `limit` — **opt-in** offset pagination. Omit `page` to get the full
     `{ id, name }[]` array (legacy; for callers needing every option). Supply
     `page` (+ optional `limit`, default 20) to get a paginated

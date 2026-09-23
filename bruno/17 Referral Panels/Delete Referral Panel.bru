@@ -25,4 +25,10 @@ docs {
   Commission)*. Run this last — once deleted, *Get* / *Update* against the same id
   return 404 `REFERRAL_PANEL_NOT_FOUND`, and the panel's name / panel code are
   freed for reuse.
+
+  **409 `REFERRAL_PANEL_IN_USE`** — deletion is blocked when the panel is used by an
+  order still in an active accessioning/technician-stage workflow (a non-cancelled
+  order with a sample still being collected/processed, or a lab report not yet published). Deactivate the panel
+  instead (`PATCH` with `isActive: false`). Historical / fully-published / cancelled
+  orders do **not** block deletion.
 }

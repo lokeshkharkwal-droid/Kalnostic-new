@@ -19,7 +19,9 @@ auth:bearer {
 }
 
 body:json {
-  {}
+  {
+    "listId": "{{branchLabPanelListId}}"
+  }
 }
 
 tests {
@@ -34,8 +36,15 @@ tests {
 }
 
 docs {
-  Re-snapshot branch lab panels from their source Master Data panels. Send `{}`
-  to sync **all** copies, or `{ "branchLabPanelIds": ["<id>", ...] }` for a subset.
+  Re-snapshot branch lab panels from their source Master Data panels, scoped
+  to one pricing list. Send `{}` to sync **all** copies in the target list, or
+  add `"branchLabPanelIds": ["<id>", ...]` for a subset.
+
+  `listId` (optional) targets a specific `BranchLabPanelList` — must belong to
+  the caller's branch (404 `BRANCH_LAB_PANEL_LIST_NOT_FOUND` otherwise). Omit
+  it to sync the branch's default **Walk-in** panel list, which is always
+  ensured to exist first regardless of which list `listId` targets. Member
+  tests are always rebuilt into the Walk-in **test** list, same as import.
 
   **Overwrite semantics:** each copy's parent fields are replaced and its member
   composition (`BranchLabPanelTest`) is **rebuilt** from the source (materializing

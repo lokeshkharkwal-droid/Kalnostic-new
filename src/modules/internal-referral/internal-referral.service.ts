@@ -16,6 +16,7 @@ import { DepartmentService } from '../department/department.service';
 import { UsersService } from '../users/users.service';
 import { ReferralListAssignmentService } from '../referral-list/referral-list-assignment.service';
 import { ReferralPanelSettingsService } from '../referral-panel-settings/referral-panel-settings.service';
+import { ReferralUsageService } from '../referral-usage/referral-usage.service';
 import { CreateInternalReferralDto } from './dto/create-internal-referral.dto';
 import { UpdateInternalReferralDto } from './dto/update-internal-referral.dto';
 import { ListInternalReferralsDto } from './dto/list-internal-referrals.dto';
@@ -29,6 +30,7 @@ import {
   InternalReferralWithRelations,
 } from './entities/internal-referral.entity';
 import {
+  InternalReferralInUseException,
   InternalReferralNotFoundException,
   InvalidCommissionConfigException,
   InvalidEmployeeRefException,
@@ -77,6 +79,7 @@ export class InternalReferralService {
     private readonly branchService: BranchService,
     private readonly departmentService: DepartmentService,
     private readonly listAssignmentService: ReferralListAssignmentService,
+    private readonly referralUsage: ReferralUsageService,
   ) {}
 
   /**
@@ -105,6 +108,9 @@ export class InternalReferralService {
     const where: Prisma.InternalReferralWhereInput = {
       tenantId,
       deletedAt: null,
+      // Only active referrals are selectable for new orders (server-side
+      // enforcement — inactive ones never reach the create-order dropdown).
+      status: InternalReferralStatus.ACTIVE,
     };
     if (filters.branchId) {
       where.branchId = filters.branchId;
@@ -368,10 +374,16 @@ export class InternalReferralService {
         ReferralType.INTERNAL,
         rows.map((r) => r.id),
       );
+    const activeIds = await this.referralUsage.findActiveReferralIds(
+      tenantId,
+      'internalReferralId',
+      rows.map((r) => r.id),
+    );
     const data: InternalReferralListItem[] = rows.map((r) => ({
       ...r,
       labTestList: assignments.get(r.id)?.labTestList ?? null,
       labPanelList: assignments.get(r.id)?.labPanelList ?? null,
+      hasActiveOrder: activeIds.has(r.id),
     }));
     return { data, total, page, limit };
   }
@@ -528,6 +540,15 @@ export class InternalReferralService {
    */
   async remove(id: string, tenantId: string): Promise<InternalReferralDetail> {
     await this.findById(id, tenantId);
+    if (
+      await this.referralUsage.hasActiveOrder(
+        tenantId,
+        'internalReferralId',
+        id,
+      )
+    ) {
+      throw new InternalReferralInUseException(id);
+    }
     const now = new Date();
     await this.prisma.withTenant(tenantId, async (tx) => {
       await tx.internalReferral.update({

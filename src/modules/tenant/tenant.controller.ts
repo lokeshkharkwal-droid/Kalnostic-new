@@ -11,6 +11,8 @@ import {
 } from '@nestjs/common';
 import { AuditAction, AuditModule, SubscriptionStatus } from '@prisma/client';
 import { TenantService } from './tenant.service';
+import { ExchangeTenantIdService } from './exchange-tenant-id.service';
+import { ExchangeRegistrationService } from '../communication/exchange/exchange-registration.service';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { SetAdminPasswordDto } from './dto/set-admin-password.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
@@ -36,7 +38,11 @@ import { Audit } from '../../common/decorators/audit.decorator';
 @Public()
 @UseGuards(SiteAdminPermissionGuard)
 export class TenantController {
-  constructor(private readonly tenantService: TenantService) {}
+  constructor(
+    private readonly tenantService: TenantService,
+    private readonly exchangeTenantIdService: ExchangeTenantIdService,
+    private readonly exchangeRegistrationService: ExchangeRegistrationService,
+  ) {}
 
   /**
    * Create a tenant + its first business-admin. The admin's login password is
@@ -75,6 +81,74 @@ export class TenantController {
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.BUSINESS_READ)
   getDashboardCounts() {
     return this.tenantService.getDashboardCounts();
+  }
+
+  /**
+   * Assign a stable integer `exchangeTenantId` to every tenant missing one, so
+   * per-tenant Exchange message counts continue (migrated tenants keep their
+   * legacy id; native tenants get the next value in the sequence). Idempotent —
+   * safe to call repeatedly; existing ids never change. Declared before `:id` so
+   * the static path is not captured by the param route.
+   */
+  @Post('sync-exchange-ids')
+  @Audit({
+    module: AuditModule.TENANT,
+    action: AuditAction.UPDATE,
+    description: 'Synced tenant Exchange ids',
+  })
+  @RequireSiteAdminPermission(SITE_ADMIN_PERM.SYSTEM_CONFIG)
+  syncExchangeIds() {
+    return this.exchangeTenantIdService.backfillAll();
+  }
+
+  /**
+   * Register every tenant that has an `exchangeTenantId` but is not yet
+   * registered as a client on the external Exchange server (the `/clients` step).
+   * Idempotent — already-registered tenants are skipped. Declared before `:id`.
+   */
+  @Post('register-exchange')
+  @Audit({
+    module: AuditModule.TENANT,
+    action: AuditAction.UPDATE,
+    description: 'Registered tenants with the Exchange',
+  })
+  @RequireSiteAdminPermission(SITE_ADMIN_PERM.SYSTEM_CONFIG)
+  registerAllExchange() {
+    return this.exchangeRegistrationService.registerAllUnregistered();
+  }
+
+  /**
+   * Register one tenant as a client on the external Exchange server. Idempotent
+   * (no-op if already registered); reuses the tenant's `exchangeTenantId` as
+   * `peer_tenant_id` — never creates a new id.
+   */
+  @Post(':id/register-exchange')
+  @Audit({
+    module: AuditModule.TENANT,
+    action: AuditAction.UPDATE,
+    description: 'Registered a business with the Exchange',
+  })
+  @RequireSiteAdminPermission(SITE_ADMIN_PERM.BUSINESS_CREATE)
+  registerExchange(@Param('id') id: string) {
+    return this.exchangeRegistrationService.registerTenant(id);
+  }
+
+  /**
+   * The tenant's current Exchange client record (`GET /clients/show`).
+   */
+  @Get(':id/exchange-status')
+  @RequireSiteAdminPermission(SITE_ADMIN_PERM.BUSINESS_READ)
+  getExchangeStatus(@Param('id') id: string) {
+    return this.exchangeRegistrationService.getStatus(id);
+  }
+
+  /**
+   * The tenant's Exchange usage/message counts (`GET /clientsbilling/show`).
+   */
+  @Get(':id/exchange-usage')
+  @RequireSiteAdminPermission(SITE_ADMIN_PERM.BUSINESS_READ)
+  getExchangeUsage(@Param('id') id: string) {
+    return this.exchangeRegistrationService.getUsage(id);
   }
 
   /**

@@ -54,10 +54,15 @@ docs {
   Each row contains ONLY: `id`, `fullName` (composed first/middle/last),
   `mobileNumber`, `email`, `department` (`{ id, name }` or `null`), `specialty`
   (the linked category `{ id, name }`, or `null`), `superSpecialty` (the linked
-  sub-category `{ id, name }`, or `null`), `isCommissionApplicable`, `status`, and
-  `labTestList` / `labPanelList` — `{ id, name } | null` — the caller's active
-  branch's assigned Lab Test List / Lab Panel List, bulk-resolved for the whole
-  page (not a per-row lookup). Fetch the full record (all fields, qualifications,
-  experiences, the raw `branchLabTestListId`/`branchLabPanelListId`, derived
-  `age`/`duration`) via "Get Referral Doctor".
+  sub-category `{ id, name }`, or `null`), `isCommissionApplicable`, `status`,
+  `hasActiveOrder`, and `labTestList` / `labPanelList` — `{ id, name } | null` — the
+  caller's active branch's assigned Lab Test List / Lab Panel List, bulk-resolved for
+  the whole page (not a per-row lookup). Fetch the full record (all fields,
+  qualifications, experiences, the raw `branchLabTestListId`/`branchLabPanelListId`,
+  derived `age`/`duration`) via "Get Referral Doctor".
+
+  - `hasActiveOrder` (boolean) — `true` when the doctor is used by an order still in
+    an active accessioning/technician-stage workflow; the client uses it to disable
+    the Delete action (deletion returns **409 `REFERRAL_DOCTOR_IN_USE`**).
+    Bulk-resolved for the whole page.
 }

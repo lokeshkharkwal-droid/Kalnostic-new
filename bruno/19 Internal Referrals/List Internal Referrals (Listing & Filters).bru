@@ -49,9 +49,14 @@ docs {
 
   Each row contains ONLY: `id`, `employeeId`, `firstName`, `lastName`, `fullName`,
   `mobileNumber`, `email`, `isCommissionApplicable`, `isIncludedInPayroll`,
-  `status`, and `labTestList` / `labPanelList` — `{ id, name } | null` — the
-  caller's active branch's assigned Lab Test List / Lab Panel List, bulk-resolved
-  for the whole page (not a per-row lookup). Fetch the full record (all fields +
-  the raw `branchLabTestListId`/`branchLabPanelListId`) via "Get Internal
+  `status`, `hasActiveOrder`, and `labTestList` / `labPanelList` — `{ id, name } |
+  null` — the caller's active branch's assigned Lab Test List / Lab Panel List,
+  bulk-resolved for the whole page (not a per-row lookup). Fetch the full record (all
+  fields + the raw `branchLabTestListId`/`branchLabPanelListId`) via "Get Internal
   Referral".
+
+  - `hasActiveOrder` (boolean) — `true` when the referral is used by an order still
+    in an active accessioning/technician-stage workflow; the client uses it to disable
+    the Delete action (deletion returns **409 `INTERNAL_REFERRAL_IN_USE`**).
+    Bulk-resolved for the whole page.
 }

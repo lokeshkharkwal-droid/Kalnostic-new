@@ -1,11 +1,13 @@
 import { SampleStatus } from '@prisma/client';
 
 /**
- * The accession sample state machine, built verbatim from PDF §A.9 ("Sample
- * Lifecycle — Status Transitions"). Each action maps the CURRENT status to the
- * status it moves the sample into. `SampleService.transition` (Phase 1) validates
- * that an action is legal from the sample's current status using this matrix
- * before mutating anything.
+ * The accession sample state machine. Originally built verbatim from PDF §A.9
+ * ("Sample Lifecycle — Status Transitions"); COLLECTED/ACCEPTED/ACQUIRED/HALT
+ * were subsequently revised per manager instruction (2026-09-17) to diverge
+ * from §A.9 — see git history for the exact correction. Each action maps the
+ * CURRENT status to the status it moves the sample into.
+ * `SampleService.transition` (Phase 1) validates that an action is legal from
+ * the sample's current status using this matrix before mutating anything.
  *
  * `retrieve` is the universal undo (PDF §A.7/§A.10.19): available at ALL statuses,
  * it reverts the sample to its `previousStatus`. The explicit transfer-return
@@ -40,23 +42,27 @@ export const SAMPLE_TRANSITIONS: Readonly<
     [SampleStatus.HOLD]: SampleStatus.COLLECTED,
     [SampleStatus.REPEAT]: SampleStatus.COLLECTED,
   },
-  // Accept — receive & accept at the processing lab (also resumes a HALT).
+  // Accept — receive & accept at the processing lab (also resumes a HALT
+  // or an ACQUIRED sample back into active processing).
   accept: {
     [SampleStatus.COLLECTED]: SampleStatus.ACCEPTED,
     [SampleStatus.HALT]: SampleStatus.ACCEPTED,
+    [SampleStatus.ACQUIRED]: SampleStatus.ACCEPTED,
   },
-  // Acquire — physically acquired by the lab technician.
+  // Acquire — physically acquired by the lab technician. Per manager
+  // correction (2026-09-17): fires from COLLECTED, not ACCEPTED.
   acquire: {
-    [SampleStatus.ACCEPTED]: SampleStatus.ACQUIRED,
+    [SampleStatus.COLLECTED]: SampleStatus.ACQUIRED,
   },
   // Hault — pause processing (quality/volume issue).
   halt: {
     [SampleStatus.COLLECTED]: SampleStatus.HALT,
-    [SampleStatus.ACQUIRED]: SampleStatus.HALT,
   },
   // Error — flag the sample erroneous.
   error: {
     [SampleStatus.HALT]: SampleStatus.ERROR,
+    [SampleStatus.COLLECTED]: SampleStatus.ERROR,
+    [SampleStatus.ACQUIRED]: SampleStatus.ERROR,
   },
   // Hold — defer collection / processing.
   hold: {
@@ -65,13 +71,23 @@ export const SAMPLE_TRANSITIONS: Readonly<
   },
   // Repeat — flag for re-collection (QC/quality failure).
   repeat: {
+    [SampleStatus.COLLECTED]: SampleStatus.REPEAT,
+    [SampleStatus.ACCEPTED]: SampleStatus.REPEAT,
     [SampleStatus.ACQUIRED]: SampleStatus.REPEAT,
     [SampleStatus.HALT]: SampleStatus.REPEAT,
     [SampleStatus.ERROR]: SampleStatus.REPEAT,
+    // A sample rejected at the receiving/partner/outsource station can be
+    // flagged for re-collection without first being retrieved back to
+    // ACCEPTED (manager correction, 2026-09-18).
+    [SampleStatus.SENT_INTERNAL]: SampleStatus.REPEAT,
+    [SampleStatus.FORWARD_EXTERNAL]: SampleStatus.REPEAT,
+    [SampleStatus.OUTSOURCED]: SampleStatus.REPEAT,
   },
   // Store — store in freezer/rack.
   store: {
     [SampleStatus.ACCEPTED]: SampleStatus.STORED,
+    [SampleStatus.ACQUIRED]: SampleStatus.STORED,
+    [SampleStatus.HALT]: SampleStatus.STORED,
   },
   // Discard — discard using a defined method.
   discard: {
@@ -80,6 +96,8 @@ export const SAMPLE_TRANSITIONS: Readonly<
   // Return — return to field/patient/collector.
   return: {
     [SampleStatus.ACCEPTED]: SampleStatus.RETURNED,
+    [SampleStatus.ACQUIRED]: SampleStatus.RETURNED,
+    [SampleStatus.HALT]: SampleStatus.RETURNED,
     [SampleStatus.ERROR]: SampleStatus.RETURNED,
     [SampleStatus.STORED]: SampleStatus.RETURNED,
   },
@@ -88,6 +106,7 @@ export const SAMPLE_TRANSITIONS: Readonly<
     [SampleStatus.NEW]: SampleStatus.CANCELLED,
     [SampleStatus.COLLECTED]: SampleStatus.CANCELLED,
     [SampleStatus.HOLD]: SampleStatus.CANCELLED,
+    [SampleStatus.REPEAT]: SampleStatus.CANCELLED,
   },
   // Send — Internal Transfer (branch↔branch).
   send: {
@@ -120,6 +139,34 @@ export const SAMPLE_TRANSITIONS: Readonly<
 export const COLLECTABLE_SAMPLE_STATUSES: readonly SampleStatus[] = Object.keys(
   SAMPLE_TRANSITIONS.collect,
 ) as SampleStatus[];
+
+/**
+ * The sample statuses on which a result may legitimately be entered — the sample
+ * has been **accepted** by Accession AND is currently in an active, still-in-hand
+ * processing state. Used by the LIS/machine (EMI) result gate so a downstream
+ * result submission mirrors the Accession → Technician Reporting rule instead of
+ * relying on frontend visibility alone.
+ *
+ * This is an **allowlist** (a status not listed here is treated as non-reportable,
+ * so a future `SampleStatus` fails closed):
+ * - `ACCEPTED` / `ACQUIRED` — accepted and being worked on.
+ * - `STORED`, `SENT_INTERNAL`, `FORWARD_EXTERNAL`, `OUTSOURCED` — accepted and
+ *   still live in the workflow (stored for later, or handed to another
+ *   branch/partner that reports against it).
+ *
+ * Deliberately **excluded** even though the sample was once accepted:
+ * `HALT` (paused), `ERROR` (flagged erroneous), `REPEAT` (needs re-collection),
+ * `DISCARDED` / `RETURNED` (terminal — the specimen is gone). Also excluded (never
+ * accepted): `NEW`, `COLLECTED`, `HOLD`, `CANCELLED`.
+ */
+export const REPORTABLE_SAMPLE_STATUSES: ReadonlySet<SampleStatus> = new Set([
+  SampleStatus.ACCEPTED,
+  SampleStatus.ACQUIRED,
+  SampleStatus.STORED,
+  SampleStatus.SENT_INTERNAL,
+  SampleStatus.FORWARD_EXTERNAL,
+  SampleStatus.OUTSOURCED,
+]);
 
 /**
  * The **forced** target status for an action, independent of the sample's current

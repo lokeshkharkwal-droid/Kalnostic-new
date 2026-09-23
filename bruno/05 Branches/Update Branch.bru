@@ -53,5 +53,8 @@ docs {
   whole sample-receiving-branch mapping set (equivalent to
   `PUT /branches/:id/collection-mappings`). Each id must be an existing,
   non-Collection-Center branch in the tenant. Sending it for a non-Collection-
-  Center branch (with a non-empty list) is rejected.
+  Center branch (with a non-empty list) is rejected. When the list is non-empty,
+  `defaultReceivingBranchId` is required and must be one of the ids (marks that
+  mapping `isDefault`, clearing any previous default); a missing/non-member
+  default returns 400.
 }

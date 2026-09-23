@@ -15,6 +15,10 @@ params:query {
   page: 1
   limit: 20
   ~search: vitamin
+  ~department: Biochemistry
+  ~category: Endocrinology
+  ~subCategory: Diabetes Monitoring
+  ~excludeListId: {{branchLabTestListId}}
 }
 
 auth:bearer {
@@ -40,8 +44,19 @@ docs {
   - `branchId` (required, UUID) — the active branch.
   - `page` / `limit` — offset pagination (default `1` / `20`, `limit` capped at 100).
   - `search` (optional) — case-insensitive `contains` match on `testName` / `testCode`.
+  - `department` / `category` / `subCategory` (optional) — case-insensitive
+    `contains` match on the test's classification names (each independent,
+    AND'd with `search` and with each other).
+  - `excludeListId` (optional, UUID) — a `BranchLabTestList` id. When given,
+    tests already present in that pricing list (matched via
+    `BranchLabTest.sourceLabTestId`) are excluded from the result — lets an
+    "Add Tests to List" picker's "Available to Add" side skip already-imported
+    rows server-side, without the client needing its own dedup logic.
 
   ### Sample success response (200)
+
+  Each row is enriched with its resolved `departmentName` / `categoryName` /
+  `subCategoryName` (null if the test has no classification set).
 
   ```json
   {
@@ -56,6 +71,9 @@ docs {
         "testCode": "VITD",
         "priceMsrp": 1200,
         "isActive": true,
+        "departmentName": "Biochemistry",
+        "categoryName": "Endocrinology",
+        "subCategoryName": "Vitamins & Minerals",
         "createdAt": "2026-07-01T09:00:00.000Z"
       }
     ],

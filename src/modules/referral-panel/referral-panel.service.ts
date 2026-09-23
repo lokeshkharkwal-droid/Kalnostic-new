@@ -13,6 +13,7 @@ import { PaginatedResult } from '../../common/dto/response.dto';
 import { BranchService } from '../branch/branch.service';
 import { ReferralListAssignmentService } from '../referral-list/referral-list-assignment.service';
 import { ReferralPanelSettingsService } from '../referral-panel-settings/referral-panel-settings.service';
+import { ReferralUsageService } from '../referral-usage/referral-usage.service';
 import { CreateReferralPanelDto } from './dto/create-referral-panel.dto';
 import { UpdateReferralPanelDto } from './dto/update-referral-panel.dto';
 import { ListReferralPanelsDto } from './dto/list-referral-panels.dto';
@@ -25,6 +26,7 @@ import {
 import {
   InvalidCommissionConfigException,
   ReferralPanelCodeConflictException,
+  ReferralPanelInUseException,
   ReferralPanelNameConflictException,
   ReferralPanelNotFoundException,
 } from './exceptions/referral-panel.exceptions';
@@ -68,6 +70,7 @@ export class ReferralPanelService {
     private readonly referralPanelSettingsService: ReferralPanelSettingsService,
     private readonly branchService: BranchService,
     private readonly listAssignmentService: ReferralListAssignmentService,
+    private readonly referralUsage: ReferralUsageService,
   ) {}
 
   /**
@@ -404,10 +407,16 @@ export class ReferralPanelService {
         ReferralType.PANEL,
         rows.map((r) => r.id),
       );
+    const activeIds = await this.referralUsage.findActiveReferralIds(
+      tenantId,
+      'referralPanelId',
+      rows.map((r) => r.id),
+    );
     const data: ReferralPanelListItem[] = rows.map((r) => ({
       ...r,
       labTestList: assignments.get(r.id)?.labTestList ?? null,
       labPanelList: assignments.get(r.id)?.labPanelList ?? null,
+      hasActiveOrder: activeIds.has(r.id),
     }));
     return { data, total, page, limit };
   }
@@ -533,6 +542,11 @@ export class ReferralPanelService {
    */
   async remove(id: string, tenantId: string): Promise<ReferralPanel> {
     await this.findById(id, tenantId);
+    if (
+      await this.referralUsage.hasActiveOrder(tenantId, 'referralPanelId', id)
+    ) {
+      throw new ReferralPanelInUseException(id);
+    }
     return this.prisma.withTenant(tenantId, async (tx) => {
       return tx.referralPanel.update({
         where: { id },

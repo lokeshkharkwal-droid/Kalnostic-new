@@ -150,7 +150,12 @@ export class PdfTemplateMetaDto {
   @IsIn(PDF_ORIENTATIONS)
   orientation?: PdfOrientation;
 
-  /** Page size (`A4`, `A5`, `A3`, `Letter`, `Legal`). Default `A4`. */
+  /**
+   * Page size — any key in `PDF_PAGE_SIZES`: the full ISO A/B/C series
+   * (`A0`–`A12`, `B0`–`B12`, `C0`–`C12`, `C76`), the custom barcode sizes
+   * (`CB1` = 100×25 mm, `CB2` = 50×25 mm), or `Letter`/`Legal`. Default `A4`.
+   * Exact dimensions are resolved from `PDF_PAGE_DIMENSIONS_MM` at render time.
+   */
   @IsOptional()
   @IsIn(PDF_PAGE_SIZES)
   page_size?: PdfPageSize;

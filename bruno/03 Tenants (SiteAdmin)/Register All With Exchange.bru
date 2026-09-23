@@ -1,0 +1,34 @@
+meta {
+  name: Register All With Exchange
+  type: http
+  seq: 17
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/tenants/register-exchange
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Register every tenant that has an `exchangeTenantId` but is not yet registered
+  as a client on the external Exchange server (the `POST /clients` step). This is
+  the prerequisite that lets the Exchange attribute per-tenant message counts.
+  SiteAdmin only — requires `system:config` (super_owner). No request body.
+
+  Idempotent: already-registered tenants (those with `exchangeRegisteredAt` set)
+  are skipped by the query. Sequential; a per-tenant failure is logged + counted
+  and does not abort the batch. Reuses each tenant's `exchangeTenantId` as
+  `peer_tenant_id` — never creates a new/conflicting id.
+
+  Run `sync-exchange-ids` first so every tenant has an `exchangeTenantId`.
+
+  Returns in `data`:
+  - `registered` — count freshly registered this run.
+  - `failed` — count that errored.
+  - `failures` — array of `{ tenantId, error }` for the failures.
+}

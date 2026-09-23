@@ -1,0 +1,41 @@
+meta {
+  name: 05 Deactivate (Toggle Inactive)
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/external-referrals/{{flowReferralId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "INACTIVE"
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("status is INACTIVE", function () {
+    expect(res.getBody().data.status).to.equal("INACTIVE");
+  });
+}
+
+docs {
+  Step 5 — the **Active → Inactive toggle**. This is the same `PATCH` the frontend
+  Status switch calls. It is non-destructive: `deletedAt` stays null and every
+  historical order keeps its referral link. (For **Referral Panel** the body is
+  `{ "isActive": false }` instead of `{ "status": "INACTIVE" }`.)
+}

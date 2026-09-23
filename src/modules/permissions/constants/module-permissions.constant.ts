@@ -425,6 +425,14 @@ const PERMISSION_SPEC: Record<string, SectionSpec[]> = {
       permissions: ['Update lab test master setting'],
     },
     {
+      label: 'Overall Result Template',
+      permissions: [
+        'Add overall result',
+        'Edit overall result',
+        'Delete overall result',
+      ],
+    },
+    {
       label: 'Templates',
       permissions: [
         'Add SMS template',
@@ -938,6 +946,11 @@ export const PERMISSION_KEYS = {
 
   BA_SETTINGS_LAB_TEST_MASTER_UPDATE:
     'business_admin:lab_test_master_setting__update_lab_test_master_setting',
+
+  BA_ORT_ADD: 'business_admin:overall_result_template__add_overall_result',
+  BA_ORT_EDIT: 'business_admin:overall_result_template__edit_overall_result',
+  BA_ORT_DELETE:
+    'business_admin:overall_result_template__delete_overall_result',
 
   BA_TPL_ADD_SMS: 'business_admin:templates__add_sms_template',
   BA_TPL_EDIT_SMS: 'business_admin:templates__edit_sms_template',

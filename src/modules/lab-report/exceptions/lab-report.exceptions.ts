@@ -177,6 +177,23 @@ export class LabTestCatalogueMissingException extends KaltrosException {
   }
 }
 
+/**
+ * 422 — `PATCH .../:id/results` was sent a `resultParamId` that isn't one of
+ * this report's own result parameters (per `getResultParams`). Without this
+ * check the upsert would silently create a `LabReportResultValue` row for a
+ * parameter belonging to a different lab test entirely.
+ */
+export class InvalidResultParamException extends KaltrosException {
+  constructor(labReportId: string, resultParamId: string) {
+    super(
+      'INVALID_RESULT_PARAM',
+      'One of the submitted results does not belong to this report’s test',
+      { labReportId, resultParamId },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
 /** 404 — a worklist entry (Re-Run/Critical Alert/Out of Range/Delta Check/Scheduled Test) was not found. */
 export class WorklistEntryNotFoundException extends KaltrosException {
   constructor(worklist: string, id: string) {

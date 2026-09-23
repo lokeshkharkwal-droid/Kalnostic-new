@@ -37,6 +37,8 @@ export interface CollectionMappingView {
   code: string;
   branchType: BranchType;
   status: BranchStatus;
+  /** Whether this is the center's default sample-receiving branch. */
+  isDefault: boolean;
 }
 
 /**
@@ -96,6 +98,8 @@ export class BranchService {
       // Validate every receiver up front (existence, tenant, active, not a CC).
       // No self-check: the new branch id is not yet known, so it cannot appear.
       await this.validateReceivingBranches(tenantId, receivingBranchIds);
+      // A Collection Center's receivers must have exactly one default.
+      this.assertValidDefault(receivingBranchIds, dto.defaultReceivingBranchId);
     }
 
     try {
@@ -140,13 +144,15 @@ export class BranchService {
 
         // Map the sample-receiving branches to this new Collection Center. All
         // ids were validated above and are unique (DTO `@ArrayUnique`), so a
-        // plain createMany is safe (no existing rows to reactivate).
+        // plain createMany is safe (no existing rows to reactivate). Exactly one
+        // mapping is flagged as the default (validated by assertValidDefault).
         if (receivingBranchIds.length > 0) {
           await tx.collectionCenterMapping.createMany({
             data: receivingBranchIds.map((receivingBranchId) => ({
               tenantId,
               collectionCenterId: branch.id,
               receivingBranchId,
+              isDefault: receivingBranchId === dto.defaultReceivingBranchId,
             })),
           });
         }
@@ -283,6 +289,7 @@ export class BranchService {
       excludeBranchType?: BranchType;
       search?: string;
       moduleKey?: string;
+      excludeCurrentBranchId?: string;
       page?: number;
       limit?: number;
     } = {},
@@ -313,6 +320,11 @@ export class BranchService {
         select: { branchId: true },
       });
       where.id = { in: enabledBranchIds.map((row) => row.branchId) };
+    }
+    // Exclude the caller's own active branch (e.g. Accession transfer picker).
+    // Uses `NOT` so it composes with any `where.id` the `moduleKey` filter set.
+    if (filters.excludeCurrentBranchId) {
+      where.NOT = { id: filters.excludeCurrentBranchId };
     }
 
     // Legacy mode: no `page` → return the full list unchanged.
@@ -490,7 +502,12 @@ export class BranchService {
           );
         }
       } else {
-        await this.setCollectionMappings(tenantId, id, dto.receivingBranchIds);
+        await this.setCollectionMappings(
+          tenantId,
+          id,
+          dto.receivingBranchIds,
+          dto.defaultReceivingBranchId,
+        );
       }
     }
     return updated;
@@ -770,16 +787,27 @@ export class BranchService {
       where: { tenantId, id: { in: receivingIds }, deletedAt: null },
     });
     const byId = new Map(branches.map((b) => [b.id, b]));
-    return mappings
-      .map((m) => byId.get(m.receivingBranchId))
-      .filter((b): b is Branch => b !== undefined)
-      .map((b) => ({
-        receivingBranchId: b.id,
-        name: b.name,
-        code: b.code,
-        branchType: b.branchType,
-        status: b.status,
-      }));
+    return (
+      mappings
+        .map((m) => {
+          const b = byId.get(m.receivingBranchId);
+          return b ? { branch: b, isDefault: m.isDefault } : undefined;
+        })
+        .filter(
+          (row): row is { branch: Branch; isDefault: boolean } =>
+            row !== undefined,
+        )
+        .map(({ branch: b, isDefault }) => ({
+          receivingBranchId: b.id,
+          name: b.name,
+          code: b.code,
+          branchType: b.branchType,
+          status: b.status,
+          isDefault,
+        }))
+        // Surface the default first for stable, predictable ordering.
+        .sort((a, b) => Number(b.isDefault) - Number(a.isDefault))
+    );
   }
 
   /**
@@ -791,10 +819,16 @@ export class BranchService {
    *
    * Each receiver is validated against the caller's tenant (CLAUDE.md §4.7): it
    * must exist and be active, must not be the Collection Center itself, and must
-   * not itself be a Collection Center.
+   * not itself be a Collection Center. When `receivingBranchIds` is non-empty a
+   * `defaultReceivingBranchId` (one of the ids) is required; the matching mapping
+   * is flagged `isDefault` and any previous default is cleared, so there is never
+   * more than one active default (also enforced by a partial unique index — see
+   * prisma/rls.sql).
    * @param tenantId tenant scope
    * @param collectionCenterId the Collection Center branch
    * @param receivingBranchIds the desired set of receiving branch ids
+   * @param defaultReceivingBranchId the id (within `receivingBranchIds`) to mark
+   *   as the default; required when the set is non-empty, omit when clearing
    * @param actorId person id of the actor (reserved for future audit trail)
    * @returns the mappings after the change
    * @throws BranchNotFoundException if the center or any receiver is missing /
@@ -802,11 +836,13 @@ export class BranchService {
    * @throws NotACollectionCenterException if the branch is not a Collection Center
    * @throws InvalidReceivingBranchException if a receiver is the center itself or
    *   is another Collection Center
+   * @throws ValidationException if the default is missing/not one of the receivers
    */
   async setCollectionMappings(
     tenantId: string,
     collectionCenterId: string,
     receivingBranchIds: string[],
+    defaultReceivingBranchId?: string,
     actorId?: string,
   ): Promise<CollectionMappingView[]> {
     void actorId;
@@ -821,6 +857,8 @@ export class BranchService {
       receivingBranchIds,
       collectionCenterId,
     );
+    // A non-empty set must nominate exactly one default from within it.
+    this.assertValidDefault(receivingBranchIds, defaultReceivingBranchId);
 
     await this.prisma.withTenant(tenantId, async (tx) => {
       // Soft-delete active mappings that are no longer in the desired set.
@@ -835,25 +873,82 @@ export class BranchService {
         data: { deletedAt: new Date() },
       });
 
-      // Upsert each desired mapping (reactivate a soft-deleted row, else create).
+      // Clear every remaining active default up front, so re-pointing the
+      // default never transiently has two `isDefault = true` rows (which the
+      // partial unique index would reject depending on upsert order below).
+      await tx.collectionCenterMapping.updateMany({
+        where: {
+          tenantId,
+          collectionCenterId,
+          deletedAt: null,
+          isDefault: true,
+        },
+        data: { isDefault: false },
+      });
+
+      // Upsert each desired mapping (reactivate a soft-deleted row, else create),
+      // setting `isDefault` explicitly so exactly one row ends up as the default.
       for (const receivingBranchId of receivingBranchIds) {
+        const isDefault = receivingBranchId === defaultReceivingBranchId;
         const existing = await tx.collectionCenterMapping.findFirst({
           where: { tenantId, collectionCenterId, receivingBranchId },
         });
         if (existing) {
           await tx.collectionCenterMapping.update({
             where: { id: existing.id },
-            data: { deletedAt: null },
+            data: { deletedAt: null, isDefault },
           });
         } else {
           await tx.collectionCenterMapping.create({
-            data: { tenantId, collectionCenterId, receivingBranchId },
+            data: {
+              tenantId,
+              collectionCenterId,
+              receivingBranchId,
+              isDefault,
+            },
           });
         }
       }
     });
 
     return this.getCollectionMappings(tenantId, collectionCenterId);
+  }
+
+  /**
+   * Assert that a set of receiving branches nominates exactly one valid default.
+   * A non-empty set must supply a `defaultReceivingBranchId` that is one of the
+   * ids; an empty set must not supply one. Guarantees "never zero and never
+   * multiple defaults" at the service layer (the DB partial unique index is the
+   * defence-in-depth backstop).
+   * @param receivingBranchIds the desired set of receiver ids
+   * @param defaultReceivingBranchId the nominated default (if any)
+   * @throws ValidationException if the default is missing, extraneous, or not one
+   *   of the receivers
+   */
+  private assertValidDefault(
+    receivingBranchIds: string[],
+    defaultReceivingBranchId?: string,
+  ): void {
+    if (receivingBranchIds.length === 0) {
+      if (defaultReceivingBranchId) {
+        throw new ValidationException(
+          'defaultReceivingBranchId cannot be set when there are no receiving branches',
+          { defaultReceivingBranchId: 'no receiving branches to default to' },
+        );
+      }
+      return;
+    }
+    if (!defaultReceivingBranchId) {
+      throw new ValidationException('A default receiving branch is required', {
+        defaultReceivingBranchId: 'required when receiving branches are set',
+      });
+    }
+    if (!receivingBranchIds.includes(defaultReceivingBranchId)) {
+      throw new ValidationException(
+        'defaultReceivingBranchId must be one of receivingBranchIds',
+        { defaultReceivingBranchId: 'must be a selected receiving branch' },
+      );
+    }
   }
 
   /**

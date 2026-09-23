@@ -1,0 +1,46 @@
+meta {
+  name: 02 Create External Referral
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/external-referrals
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "E2E Referral Flow",
+    "status": "ACTIVE"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setVar("flowReferralId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("created ACTIVE", function () {
+    expect(res.getBody().data.status).to.equal("ACTIVE");
+  });
+}
+
+docs {
+  Step 2 — create the referral under test (starts `ACTIVE`). Captures
+  `flowReferralId`. Options endpoints only surface `ACTIVE` records, and the delete
+  guard runs before soft-delete in every referral `remove()`.
+}

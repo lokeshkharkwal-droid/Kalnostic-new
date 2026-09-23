@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "AuditModule" ADD VALUE 'OVERALL_RESULT_TEMPLATE';

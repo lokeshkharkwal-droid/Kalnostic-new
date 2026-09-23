@@ -1,0 +1,25 @@
+meta {
+  name: 64 Exchange Registration E2E
+  seq: 64
+}
+
+docs {
+  End-to-end flow for the Exchange tenant-id + registration feature. Run the
+  requests top to bottom — each captures a variable the next one needs:
+
+    01 SiteAdmin Login          -> captures siteAdminToken
+    02 Sync Exchange Ids        -> assigns integer exchangeTenantId to every tenant
+    03 List Tenants (pick one)  -> captures flowExchangeTenantId / -Name of the first tenant
+    04 Register Tenant …        -> registers that tenant as a client on the Exchange
+    05 Exchange Status          -> reads the Exchange client record for that tenant
+    06 Exchange Usage           -> reads that tenant's Exchange message counts
+    07 (Alternative) Register All -> bulk-registers every not-yet-registered tenant
+
+  Prerequisites:
+  - The backend is running (default {{baseUrl}} = http://localhost:3000/api/v1).
+  - The seeded super_owner exists (admin@kalnostics.com / SuperSecret1).
+  - For steps 04-06 to actually reach the Exchange, EXCHANGE_API_URL/KEY/SECRET
+    must be configured; otherwise the Exchange calls are graceful no-ops and
+    registration returns 502 EXCHANGE_REGISTRATION_FAILED (expected on a dev box
+    with no gateway).
+}

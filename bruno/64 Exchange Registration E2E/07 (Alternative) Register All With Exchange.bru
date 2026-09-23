@@ -1,0 +1,25 @@
+meta {
+  name: 07 (Alternative) Register All With Exchange
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/tenants/register-exchange
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Step 7 (alternative to step 4). Bulk-register EVERY tenant that has an
+  `exchangeTenantId` but is not yet registered — the one-shot way to onboard all
+  migrated tenants at once. Requires `system:config` (super_owner). Idempotent:
+  already-registered tenants are skipped; per-tenant failures are counted, not
+  fatal.
+
+  Response `data`: `{ registered, failed, failures: [{ tenantId, error }] }`.
+}

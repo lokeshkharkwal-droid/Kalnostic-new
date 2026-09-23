@@ -1,0 +1,31 @@
+meta {
+  name: 02 Sync Exchange Ids
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/tenants/sync-exchange-ids
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data) bru.setVar("flowExchangeFloor", data.floor);
+}
+
+docs {
+  Step 2 (the "migration" API). Assigns a stable integer `exchangeTenantId` to
+  every tenant missing one — migrated tenants keep their legacy id, native
+  tenants get the next value in the sequence. Requires `system:config`
+  (super_owner). Idempotent: safe to re-run (a second call returns
+  `migrated: 0, native: 0`).
+
+  Response `data`: `{ floor, migrated, native }`. This must run BEFORE
+  registration so every tenant has a `peer_tenant_id`.
+}

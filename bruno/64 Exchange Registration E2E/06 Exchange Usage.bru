@@ -1,0 +1,23 @@
+meta {
+  name: 06 Exchange Usage
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/tenants/{{flowExchangeTenantId}}/exchange-usage
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Step 6. Read the tenant's Exchange message/notification usage counts
+  (`GET /clientsbilling/show?sbusiness_id=<exchangeTenantId>`). Requires
+  `business:read`. Returns the Exchange usage payload (e.g. per-month SMS /
+  email / WhatsApp counts) in `data`, or `null`. Counts are only meaningful once
+  the tenant has been registered (Step 4) and notifications have been sent.
+}

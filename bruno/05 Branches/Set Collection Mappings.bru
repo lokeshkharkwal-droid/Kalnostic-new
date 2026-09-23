@@ -23,7 +23,8 @@ body:json {
     "receivingBranchIds": [
       "{{receivingBranchIdA}}",
       "37e8cb33-9c10-4778-bc4c-20490e1c0f75"
-    ]
+    ],
+    "defaultReceivingBranchId": "{{receivingBranchIdA}}"
   }
 }
 
@@ -39,9 +40,16 @@ docs {
   Replace the full set of sample-receiving branches mapped to this Collection
   Center (PUT replaces the whole set). Mappings no longer in the array are
   soft-deleted; ids in the array are upserted (a previously removed mapping is
-  reactivated, not duplicated). Send `"receivingBranchIds": []` to clear all
-  mappings.
-  
+  reactivated, not duplicated). Send `"receivingBranchIds": []` (and omit
+  `defaultReceivingBranchId`) to clear all mappings.
+
+  `defaultReceivingBranchId` is **required** whenever `receivingBranchIds` is
+  non-empty and must be one of those ids — a Collection Center's receivers always
+  have exactly one default. The matching mapping is flagged `isDefault: true` and
+  any previous default is cleared (there is never more than one active default,
+  also enforced by a partial unique index). A missing / extraneous / non-member
+  default returns 400 `VALIDATION_ERROR`.
+
   The target branch must be of type `COLLECTION_CENTER` (else 409
   `NOT_A_COLLECTION_CENTER`). Each receiver must be an active branch in the
   tenant; it cannot be the Collection Center itself or another Collection Center

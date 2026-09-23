@@ -68,9 +68,21 @@ docs {
   analyzers are calibrated against (they send these same strings back as
   `universal_test_id` on submit). Dates are Unix **seconds** (0 when absent).
 
+  ## Accession acceptance gate (backend-enforced)
+  The order/tests are only exposed once the scanned sample group is **accepted and
+  still active** in the Accession workflow — i.e. a carrying `OrderSample` is in a
+  reportable status (`ACCEPTED`, `ACQUIRED`, `STORED`, `SENT_INTERNAL`,
+  `FORWARD_EXTERNAL`, `OUTSOURCED`). A merely *Collected* sample — or one that was
+  accepted but is now `HALT` / `ERROR` / `REPEAT` / `DISCARDED` / `RETURNED` — is
+  not surfaced to the machine workflow, the same gate the submit endpoint enforces
+  before filling results.
+
   ## Error envelopes
   - `{ "s": "400", "m": "Missing Auth token" }` — no `TOKEN` header.
   - `{ "s": "403", "m": "Invalid authorization" }` — unknown/inactive token.
   - `{ "s": "400", "m": "Specimen id not found" }` — no active accession sample
     carries that barcode in the adapter's tenant/branches.
+  - `{ "s": "400", "m": "This sample is not accepted in the Accession module." }`
+    — the barcode's sample group exists but is not in a reportable status (still
+    only Collected, or now Halted / Errored / Repeat / Discarded / Returned).
 }

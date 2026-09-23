@@ -2,11 +2,13 @@ import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { PdfReportTemplateModule } from '../pdf-report-template/pdf-report-template.module';
 import { TechnicianSettingsModule } from '../technician-settings/technician-settings.module';
-import { LabTestModule } from '../lab-test/lab-test.module';
 import { CommunicationModule } from '../communication/communication.module';
 import { TemplateModule } from '../template/template.module';
 import { PermissionsModule } from '../permissions/permissions.module';
 import { TenantModule } from '../tenant/tenant.module';
+import { OverallResultTemplateModule } from '../overall-result-template/overall-result-template.module';
+import { UserDepartmentScopeModule } from '../department/user-department-scope.module';
+import { ReferralCreditModule } from '../referral-credit/referral-credit.module';
 import { LabReportController } from './lab-report.controller';
 import { LabReportService } from './lab-report.service';
 import { LabReportAttachmentController } from './lab-report-attachment.controller';
@@ -53,11 +55,13 @@ import { NablTatCronService } from './nabl-tat-cron.service';
     PrismaModule,
     PdfReportTemplateModule,
     TechnicianSettingsModule,
-    LabTestModule,
     CommunicationModule,
     TemplateModule,
     PermissionsModule,
     TenantModule,
+    OverallResultTemplateModule,
+    UserDepartmentScopeModule,
+    ReferralCreditModule,
   ],
   controllers: [
     LabReportController,

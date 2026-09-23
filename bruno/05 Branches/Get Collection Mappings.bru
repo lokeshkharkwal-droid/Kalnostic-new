@@ -20,7 +20,8 @@ vars:pre-request {
 
 docs {
   List the sample-receiving branches mapped to this Collection Center
-  (`{ receivingBranchId, name, code, branchType, status }` per row). The branch
-  must be of type `COLLECTION_CENTER`, otherwise the call returns 409
-  `NOT_A_COLLECTION_CENTER`. Soft-deleted receiver branches are omitted.
+  (`{ receivingBranchId, name, code, branchType, status, isDefault }` per row;
+  the default receiver is sorted first). The branch must be of type
+  `COLLECTION_CENTER`, otherwise the call returns 409 `NOT_A_COLLECTION_CENTER`.
+  Soft-deleted receiver branches are omitted.
 }

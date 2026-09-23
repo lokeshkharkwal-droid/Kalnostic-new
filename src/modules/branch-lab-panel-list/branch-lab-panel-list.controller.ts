@@ -7,12 +7,14 @@ import {
   Param,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { PermissionGuard } from '../permissions/guards/permission.guard';
 import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
 import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { BranchLabPanelListService } from './branch-lab-panel-list.service';
+import { BranchService } from '../branch/branch.service';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
@@ -21,6 +23,7 @@ import { Audit } from '../../common/decorators/audit.decorator';
 import { CreateBranchLabPanelListDto } from './dto/create-branch-lab-panel-list.dto';
 import { CloneBranchLabPanelListDto } from './dto/clone-branch-lab-panel-list.dto';
 import { RenameBranchLabPanelListDto } from './dto/rename-branch-lab-panel-list.dto';
+import { ByBranchQueryDto } from './dto/by-branch-query.dto';
 import { ActiveBranchRequiredException } from '../branch-lab-test/exceptions/branch-lab-test.exceptions';
 
 /**
@@ -31,7 +34,10 @@ import { ActiveBranchRequiredException } from '../branch-lab-test/exceptions/bra
 @Controller('branch-lab-panel-lists')
 @UseGuards(PermissionGuard)
 export class BranchLabPanelListController {
-  constructor(private readonly service: BranchLabPanelListService) {}
+  constructor(
+    private readonly service: BranchLabPanelListService,
+    private readonly branchService: BranchService,
+  ) {}
 
   /** Resolve the active branch id from the JWT profile, or fail with a 400. */
   private requireBranch(profile: ActiveProfile): string {
@@ -48,6 +54,20 @@ export class BranchLabPanelListController {
     @CurrentProfile() profile: ActiveProfile,
   ) {
     return this.service.findAll(tenantId, this.requireBranch(profile));
+  }
+
+  /**
+   * List a specific branch's Lab Panel Lists for a caller with no active
+   * branch of their own (Business Admin, viewing a branch they picked).
+   * `branchId` is verified to belong to the caller's tenant first.
+   */
+  @Get('by-branch')
+  async findAllForBranch(
+    @CurrentTenant() tenantId: string,
+    @Query() query: ByBranchQueryDto,
+  ) {
+    await this.branchService.findById(query.branchId, tenantId);
+    return this.service.findAll(tenantId, query.branchId);
   }
 
   /** `{ id, name, isDefault }[]` options for the list selectors. */

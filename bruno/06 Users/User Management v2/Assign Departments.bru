@@ -1,0 +1,55 @@
+meta {
+  name: Assign Departments
+  type: http
+  seq: 22
+}
+
+post {
+  url: {{baseUrl}}/users/manage/{{manageUserId}}/departments
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "departmentIds": ["{{departmentId}}", "{{departmentId2}}"],
+    "defaultDepartmentId": "{{departmentId}}"
+  }
+}
+
+vars:pre-request {
+  manageUserId: 204f8ce7-17e0-4251-b575-5f1b6255c8f8
+  departmentId:
+  departmentId2:
+}
+
+docs {
+  Assign (replace) the set of departments a staff user belongs to (tenant-wide),
+  marking one as the user's default. Send the **full desired set** every time:
+  departments not listed are removed, new ones are added.
+
+  Storage reuses the shared `department_person_mappings` table with `type = USER`
+  and `branch_id = NULL`. The write is a **diff**, not a blunt replace:
+  - departments already mapped are updated in place (only `is_default`), so any
+    `position` / `priority` / `is_signatory` set by the Department form on a
+    shared `(person, department, USER)` row is preserved;
+  - newly-selected departments are created with a generic default position
+    (`TECHNICIAN`, `priority = 1`) — those fields aren't captured by this flow;
+  - deselected departments are soft-deleted.
+
+  At most one department is the user's default; `defaultDepartmentId` (optional)
+  must be one of `departmentIds` else 422 DEFAULT_DEPARTMENT_NOT_SELECTED. Every
+  id must be an active department of the caller's tenant else 422
+  INVALID_DEPARTMENT_ASSIGNMENT. 404 STAFF_MEMBERSHIP_NOT_FOUND if the person is
+  not a staff member. An empty `departmentIds` clears all assignments.
+
+  Returns `{ departmentIds, defaultDepartmentId }` — the persisted set.
+}

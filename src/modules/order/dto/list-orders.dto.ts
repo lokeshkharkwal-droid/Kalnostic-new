@@ -87,6 +87,22 @@ export class ListOrdersDto extends PaginationQueryDto {
   @IsEnum(AppointmentStatus)
   appointmentStatus?: AppointmentStatus;
 
+  /**
+   * `true` hides appointment-only orders on which nothing has actually been
+   * collected — i.e. excludes rows where `status = APPOINTMENT` AND the payment
+   * ledger has no `PAYMENT` entry with a positive amount (paid total = 0). This
+   * is keyed on the ledger, NOT on `paymentStatus`, because an appointment saved
+   * without generating a bill is forced to `paymentStatus = PAID` while ₹0 was
+   * collected. The Billing screen sets this so a freshly-created, unpaid
+   * appointment does not surface as a bill until the patient has paid something
+   * (> 0). Any appointment with a payment, and every non-appointment order, is
+   * unaffected.
+   */
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  hideUnpaidAppointments?: boolean;
+
   /** Quotation lifecycle filter (EXPIRED derived from `quotationValidTill`). */
   @IsOptional()
   @IsEnum(QuotationStatus)

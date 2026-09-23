@@ -67,6 +67,12 @@ export type ExternalReferralListRow = Prisma.ExternalReferralGetPayload<{
 export type ExternalReferralListItem = ExternalReferralListRow & {
   labTestList: LabListRef | null;
   labPanelList: LabListRef | null;
+  /**
+   * `true` when at least one active-workflow order references this referral, so
+   * the client disables its Delete action (it may still be deactivated). Resolved
+   * in bulk by `ReferralUsageService.findActiveReferralIds` (never per-row).
+   */
+  hasActiveOrder: boolean;
 };
 
 /** Re-export for convenience at call sites. */

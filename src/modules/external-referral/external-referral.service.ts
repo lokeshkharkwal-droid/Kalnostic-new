@@ -13,6 +13,7 @@ import { PaginatedResult } from '../../common/dto/response.dto';
 import { BranchService } from '../branch/branch.service';
 import { ReferralListAssignmentService } from '../referral-list/referral-list-assignment.service';
 import { ReferralPanelSettingsService } from '../referral-panel-settings/referral-panel-settings.service';
+import { ReferralUsageService } from '../referral-usage/referral-usage.service';
 import { CreateExternalReferralDto } from './dto/create-external-referral.dto';
 import { UpdateExternalReferralDto } from './dto/update-external-referral.dto';
 import { ListExternalReferralsDto } from './dto/list-external-referrals.dto';
@@ -24,6 +25,7 @@ import {
   ExternalReferralListItem,
 } from './entities/external-referral.entity';
 import {
+  ExternalReferralInUseException,
   ExternalReferralNotFoundException,
   InvalidCommissionConfigException,
 } from './exceptions/external-referral.exceptions';
@@ -67,6 +69,7 @@ export class ExternalReferralService {
     private readonly referralPanelSettingsService: ReferralPanelSettingsService,
     private readonly branchService: BranchService,
     private readonly listAssignmentService: ReferralListAssignmentService,
+    private readonly referralUsage: ReferralUsageService,
   ) {}
 
   /**
@@ -94,6 +97,9 @@ export class ExternalReferralService {
     const where: Prisma.ExternalReferralWhereInput = {
       tenantId,
       deletedAt: null,
+      // Only active referrals are selectable for new orders (server-side
+      // enforcement — inactive ones never reach the create-order dropdown).
+      status: ExternalReferralStatus.ACTIVE,
     };
     if (filters.branchId) {
       where.branchId = filters.branchId;
@@ -328,10 +334,16 @@ export class ExternalReferralService {
         ReferralType.EXTERNAL,
         rows.map((r) => r.id),
       );
+    const activeIds = await this.referralUsage.findActiveReferralIds(
+      tenantId,
+      'externalReferralId',
+      rows.map((r) => r.id),
+    );
     const data: ExternalReferralListItem[] = rows.map((r) => ({
       ...r,
       labTestList: assignments.get(r.id)?.labTestList ?? null,
       labPanelList: assignments.get(r.id)?.labPanelList ?? null,
+      hasActiveOrder: activeIds.has(r.id),
     }));
     return { data, total, page, limit };
   }
@@ -473,6 +485,15 @@ export class ExternalReferralService {
    */
   async remove(id: string, tenantId: string): Promise<ExternalReferralDetail> {
     await this.findById(id, tenantId);
+    if (
+      await this.referralUsage.hasActiveOrder(
+        tenantId,
+        'externalReferralId',
+        id,
+      )
+    ) {
+      throw new ExternalReferralInUseException(id);
+    }
     const now = new Date();
     await this.prisma.withTenant(tenantId, async (tx) => {
       await tx.externalReferral.update({

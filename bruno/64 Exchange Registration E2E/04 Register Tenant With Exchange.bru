@@ -1,0 +1,35 @@
+meta {
+  name: 04 Register Tenant With Exchange
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/tenants/{{flowExchangeTenantId}}/register-exchange
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.exchangeClientId) bru.setVar("flowExchangeClientId", data.exchangeClientId);
+}
+
+docs {
+  Step 4. Register the picked tenant (`{{flowExchangeTenantName}}`) as a client on
+  the Exchange server (`POST /clients`). Requires `business:create`. Reuses the
+  tenant's `exchangeTenantId` as `peer_tenant_id` — never creates a new id.
+
+  Idempotent: a second call returns `status: "already_registered"`.
+
+  Response `data`: `{ tenantId, exchangeTenantId, status, exchangeClientId }`.
+
+  Errors:
+  - 409 `EXCHANGE_TENANT_ID_MISSING` — run Step 2 (Sync Exchange Ids) first.
+  - 502 `EXCHANGE_REGISTRATION_FAILED` — Exchange unreachable/unconfigured or it
+    rejected the call (expected on a dev box with no EXCHANGE_API_* env).
+}

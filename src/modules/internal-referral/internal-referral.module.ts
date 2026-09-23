@@ -5,6 +5,7 @@ import { DepartmentModule } from '../department/department.module';
 import { UsersModule } from '../users/users.module';
 import { ReferralListModule } from '../referral-list/referral-list.module';
 import { ReferralPanelSettingsModule } from '../referral-panel-settings/referral-panel-settings.module';
+import { ReferralUsageModule } from '../referral-usage/referral-usage.module';
 import { InternalReferralController } from './internal-referral.controller';
 import { InternalReferralOptionsController } from './internal-referral-options.controller';
 import { InternalReferralService } from './internal-referral.service';
@@ -27,6 +28,7 @@ import { InternalReferralService } from './internal-referral.service';
     UsersModule,
     ReferralListModule,
     ReferralPanelSettingsModule,
+    ReferralUsageModule,
   ],
   controllers: [InternalReferralOptionsController, InternalReferralController],
   providers: [InternalReferralService],

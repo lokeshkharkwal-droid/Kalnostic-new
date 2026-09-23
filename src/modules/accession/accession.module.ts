@@ -6,6 +6,7 @@ import { PdfReportTemplateModule } from '../pdf-report-template/pdf-report-templ
 import { PermissionsModule } from '../permissions/permissions.module';
 import { TenantModule } from '../tenant/tenant.module';
 import { UploadsModule } from '../uploads/uploads.module';
+import { UserDepartmentScopeModule } from '../department/user-department-scope.module';
 import { AccessionController } from './accession.controller';
 import { SampleTransferController } from './sample-transfer.controller';
 import { AccessionSettingsController } from './accession-settings.controller';
@@ -43,6 +44,7 @@ import { BarcodeService } from './barcode.service';
     PermissionsModule,
     TenantModule,
     UploadsModule,
+    UserDepartmentScopeModule,
   ],
   controllers: [
     AccessionController,

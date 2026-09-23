@@ -49,6 +49,14 @@ export class CreateBranchDto {
   @IsOptional()
   receivingBranchIds?: string[];
 
+  // The default sample-receiving branch. Must be one of `receivingBranchIds`.
+  // Required when `receivingBranchIds` is non-empty (a Collection Center's
+  // receivers must have exactly one default); the service marks that mapping's
+  // `isDefault` flag.
+  @IsUUID('4')
+  @IsOptional()
+  defaultReceivingBranchId?: string;
+
   @IsEnum(BranchStatus)
   @IsOptional()
   status?: BranchStatus;

@@ -38,11 +38,8 @@ export function orderDiscountAmount(
   value: number,
   base: number,
 ): number {
-  const raw =
-    mode === DiscountMode.PERCENT ? (base * value) / 100 : value;
-  return roundToTwoDecimalPlaces(
-    Math.min(Math.max(raw, 0), Math.max(base, 0)),
-  );
+  const raw = mode === DiscountMode.PERCENT ? (base * value) / 100 : value;
+  return roundToTwoDecimalPlaces(Math.min(Math.max(raw, 0), Math.max(base, 0)));
 }
 
 /**
@@ -79,10 +76,7 @@ export function computeBillingTotals(
 ): { gross: number; discount: number; net: number } {
   const lineDiscount = items.reduce((s, i) => s + i.discount, 0);
   const itemsTotal = items.reduce((s, i) => s + i.unitPrice, 0);
-  const storedOrderDiscount = payments.reduce(
-    (s, p) => s + p.orderDiscount,
-    0,
-  );
+  const storedOrderDiscount = payments.reduce((s, p) => s + p.orderDiscount, 0);
   const storedNet = payments.reduce((s, p) => s + p.netAmount, 0);
 
   // Find the first payment row that carries a persisted discount mode (only the

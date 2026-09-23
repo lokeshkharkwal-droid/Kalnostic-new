@@ -64,6 +64,22 @@ type PersonLink =
 /** Max attempts to allocate a unique UMID before giving up (collision retry). */
 const MAX_UMID_ATTEMPTS = 5;
 
+/**
+ * Server-controlled creation options — never derived from client input. Only
+ * trusted call sites (e.g. the quotation patient-creation route) may set
+ * `allowAutoUmId`; the generic `POST /patients` route never does, so the
+ * manual-UMID requirement can't be bypassed by a client-supplied flag.
+ */
+interface CreatePatientOptions {
+  /**
+   * When true, a branch configured for manual (NONE) UMIDs gets a
+   * system-generated fallback UMID (`PAT-QT-<hex>`) instead of requiring one
+   * from the caller. Used for patients created as a precursor to a quotation,
+   * where a permanent UMID isn't required yet.
+   */
+  allowAutoUmId?: boolean;
+}
+
 /** A patient's notification opt-out preferences, as returned by the API. */
 export interface PatientNotificationPreferencesView {
   patientId: string;
@@ -85,6 +101,104 @@ const FAMILY_MEMBER_SELECT = {
   mobile: true,
   umId: true,
 } as const;
+
+/**
+ * Person fields selected for a family link. Extends {@link FAMILY_MEMBER_SELECT}
+ * with `gender` so the reverse (member-side) relationship can be computed;
+ * `gender` is used internally only and is stripped from the API response by
+ * {@link summarizeFamilyPerson}.
+ */
+const FAMILY_LINK_PERSON_SELECT = {
+  ...FAMILY_MEMBER_SELECT,
+  gender: true,
+} as const;
+
+/** A related person as loaded for a family link (member summary + `gender`). */
+type FamilyLinkPerson = FamilyMemberSummary['member'] & {
+  gender: Gender | null;
+};
+
+/**
+ * Invert a member→anchor relationship into how the ANCHOR relates to the MEMBER,
+ * so a family link can be shown from the member's (reverse) side. E.g. a link
+ * stored as the member being the anchor's `SON` is shown to that member as the
+ * anchor being their `FATHER`. Where the inverse is gender-specific
+ * (parent/child/sibling) the anchor's gender disambiguates; when the gender is
+ * unknown the gender-neutral form (or `OTHER`) is used.
+ * @param relationship the stored member→anchor relationship
+ * @param anchorGender the anchor patient's gender (the person being displayed)
+ * @returns the relationship of the anchor to the member
+ */
+function inverseRelationship(
+  relationship: Relationship,
+  anchorGender: Gender | null,
+): Relationship {
+  const isMale = anchorGender === Gender.MALE;
+  const isFemale = anchorGender === Gender.FEMALE;
+  switch (relationship) {
+    case Relationship.SON:
+    case Relationship.DAUGHTER:
+      // member is the anchor's child → the anchor is the member's parent
+      return isMale
+        ? Relationship.FATHER
+        : isFemale
+          ? Relationship.MOTHER
+          : Relationship.OTHER;
+    case Relationship.FATHER:
+    case Relationship.MOTHER:
+      // member is the anchor's parent → the anchor is the member's child
+      return isMale
+        ? Relationship.SON
+        : isFemale
+          ? Relationship.DAUGHTER
+          : Relationship.OTHER;
+    case Relationship.BROTHER:
+    case Relationship.SISTER:
+    case Relationship.SIBLING:
+      return isMale
+        ? Relationship.BROTHER
+        : isFemale
+          ? Relationship.SISTER
+          : Relationship.SIBLING;
+    case Relationship.SPOUSE:
+      return Relationship.SPOUSE;
+    case Relationship.SELF:
+      return Relationship.SELF;
+    case Relationship.FRIEND:
+      return Relationship.FRIEND;
+    case Relationship.GUARDIAN:
+    case Relationship.OTHER:
+    default:
+      // GUARDIAN has no reciprocal enum member (a "ward"); fall back to OTHER.
+      return Relationship.OTHER;
+  }
+}
+
+/**
+ * Flatten a family link into the API summary shape, dropping the internal-only
+ * `gender` field carried on the related person for relationship inversion.
+ * @param linkId the `PatientFamilyLink` id
+ * @param relationship the relationship to display (already inverted if needed)
+ * @param person the related person (the "other" side of the link)
+ */
+function summarizeFamilyPerson(
+  linkId: string,
+  relationship: Relationship,
+  person: FamilyLinkPerson,
+): FamilyMemberSummary {
+  return {
+    linkId,
+    relationship,
+    member: {
+      id: person.id,
+      firstName: person.firstName,
+      lastName: person.lastName,
+      age: person.age,
+      mobile: person.mobile,
+      umId: person.umId,
+    },
+  };
+}
 
 /** Context set from the JWT for a write: registration branch + acting person. */
 export interface PatientWriteContext {
@@ -178,6 +292,7 @@ export class PatientService {
     tenantId: string,
     dto: CreatePatientDto,
     ctx: PatientWriteContext,
+    options?: CreatePatientOptions,
   ): Promise<PatientWithHistory> {
     await this.validatePtCategory(tenantId, ctx.branchId, dto.ptCategoryId);
     const personLink = await this.resolvePersonLinkForCreate(
@@ -185,7 +300,13 @@ export class PatientService {
       dto,
       ctx,
     );
-    return this.createWithAllocatedUmId(tenantId, dto, ctx, personLink);
+    return this.createWithAllocatedUmId(
+      tenantId,
+      dto,
+      ctx,
+      personLink,
+      options,
+    );
   }
 
   /**
@@ -394,6 +515,7 @@ export class PatientService {
     dto: CreatePatientDto,
     ctx: PatientWriteContext,
     personLink: PersonLink,
+    options?: CreatePatientOptions,
   ): Promise<PatientWithHistory> {
     const manualUmId = dto.umId?.trim() || null;
 
@@ -406,33 +528,64 @@ export class PatientService {
         )
       : ExternalIdFormat.NONE;
 
-    // Manual (NONE) — UMID is required and stored exactly as entered.
+    // Manual (NONE) — UMID is required and stored exactly as entered, unless a
+    // trusted caller opted into an auto-generated fallback (see
+    // `CreatePatientOptions.allowAutoUmId`).
     if (format === ExternalIdFormat.NONE) {
-      if (!manualUmId) {
+      if (manualUmId) {
+        try {
+          return await this.createPatientRow(
+            tenantId,
+            dto,
+            ctx,
+            manualUmId,
+            personLink,
+          );
+        } catch (e) {
+          this.rethrowPatientWriteConflict(e, dto.mobile, manualUmId);
+        }
+      }
+      if (!options?.allowAutoUmId) {
         throw new PatientUmIdRequiredException();
       }
-      try {
-        return await this.createPatientRow(
-          tenantId,
-          dto,
-          ctx,
-          manualUmId,
-          personLink,
-        );
-      } catch (e) {
-        this.rethrowPatientWriteConflict(e, dto.mobile, manualUmId);
-      }
+      return this.createWithGeneratedUmId(
+        tenantId,
+        dto,
+        ctx,
+        personLink,
+        () => `PAT-QT-${randomBytes(4).toString('hex').toUpperCase()}`,
+      );
     }
 
     // Auto (PAT+format) — allocate a committed, globally-unique UMID and retry
     // on collision, drawing a fresh sequence each attempt (see ExternalIdService).
     const branchId = ctx.branchId!;
+    return this.createWithGeneratedUmId(tenantId, dto, ctx, personLink, () =>
+      this.externalIdService
+        .generateCommittedForBranch(
+          tenantId,
+          branchId,
+          ExternalIdPurpose.PATIENT,
+        )
+        .then(({ value }) => value),
+    );
+  }
+
+  /**
+   * Shared retry loop for a system-generated UMID: draw a fresh id via
+   * `nextUmId` and attempt the insert, retrying with a new id on a UMID
+   * collision (up to `MAX_UMID_ATTEMPTS`). Used both for branch-auto-format ids
+   * (`ExternalIdService`) and for the manual-format fallback id.
+   */
+  private async createWithGeneratedUmId(
+    tenantId: string,
+    dto: CreatePatientDto,
+    ctx: PatientWriteContext,
+    personLink: PersonLink,
+    nextUmId: () => string | null | Promise<string | null>,
+  ): Promise<PatientWithHistory> {
     for (let attempt = 0; attempt < MAX_UMID_ATTEMPTS; attempt++) {
-      const { value } = await this.externalIdService.generateCommittedForBranch(
-        tenantId,
-        branchId,
-        ExternalIdPurpose.PATIENT,
-      );
+      const value = await nextUmId();
       try {
         return await this.createPatientRow(
           tenantId,
@@ -443,7 +596,7 @@ export class PatientService {
         );
       } catch (e) {
         if (this.isUmIdConflict(e)) {
-          continue; // collision → next allocated number
+          continue; // collision → next allocated/generated id
         }
         if (this.isMobileConflict(e)) {
           throw new PatientMobileConflictException(dto.mobile);
@@ -637,11 +790,19 @@ export class PatientService {
       orderBy: { createdAt: 'desc' },
       ...(filters.includeFamily
         ? {
+            // Links are stored once (anchor → member), so load BOTH directions:
+            // `familyLinks` (patient is the anchor) and `familyMemberOf`
+            // (patient is the member). See findFamilyMembers for the rationale.
             include: {
               familyLinks: {
                 where: { deletedAt: null },
                 orderBy: { createdAt: 'desc' },
-                include: { member: { select: FAMILY_MEMBER_SELECT } },
+                include: { member: { select: FAMILY_LINK_PERSON_SELECT } },
+              },
+              familyMemberOf: {
+                where: { deletedAt: null },
+                orderBy: { createdAt: 'desc' },
+                include: { patient: { select: FAMILY_LINK_PERSON_SELECT } },
               },
             },
           }
@@ -652,21 +813,33 @@ export class PatientService {
       return { data, total, page, limit };
     }
     const withFamily: PatientWithFamily[] = data.map((p) => {
-      const { familyLinks, ...patient } = p as Patient & {
+      const { familyLinks, familyMemberOf, ...patient } = p as Patient & {
         familyLinks: Array<{
           id: string;
-          relationship: FamilyMemberSummary['relationship'];
-          member: FamilyMemberSummary['member'];
+          relationship: Relationship;
+          member: FamilyLinkPerson;
+        }>;
+        familyMemberOf: Array<{
+          id: string;
+          relationship: Relationship;
+          patient: FamilyLinkPerson;
         }>;
       };
-      return {
-        ...patient,
-        familyMembers: familyLinks.map((l) => ({
-          linkId: l.id,
-          relationship: l.relationship,
-          member: l.member,
-        })),
-      };
+      // Anchor side: relationship as stored. Member side: inverted relationship
+      // using the anchor's gender (see inverseRelationship).
+      const familyMembers: FamilyMemberSummary[] = [
+        ...familyLinks.map((l) =>
+          summarizeFamilyPerson(l.id, l.relationship, l.member),
+        ),
+        ...familyMemberOf.map((l) =>
+          summarizeFamilyPerson(
+            l.id,
+            inverseRelationship(l.relationship, l.patient.gender),
+            l.patient,
+          ),
+        ),
+      ];
+      return { ...patient, familyMembers };
     });
     return { data: withFamily, total, page, limit };
   }
@@ -1331,12 +1504,16 @@ export class PatientService {
   }
 
   /**
-   * List an anchor patient's active family members (newest first). Each entry
-   * carries the link id + relationship and a lightweight summary of the linked
-   * member patient.
+   * List a patient's active family members (newest first) in BOTH directions.
+   * A `PatientFamilyLink` is stored once (anchor → member), so this returns
+   * links where the patient is the anchor AND links where the patient is the
+   * member. For the anchor side the stored relationship is shown as-is; for the
+   * member side it is inverted (see {@link inverseRelationship}) so, e.g., the
+   * son of a father who added him sees the father as `FATHER`. Each entry carries
+   * the link id + relationship and a lightweight summary of the related patient.
    * @param tenantId tenant scope
-   * @param patientId anchor patient
-   * @throws PatientNotFoundException if the anchor patient is missing
+   * @param patientId the patient whose family is listed (either side of a link)
+   * @throws PatientNotFoundException if the patient is missing
    */
   async findFamilyMembers(
     tenantId: string,
@@ -1344,24 +1521,40 @@ export class PatientService {
   ): Promise<FamilyMemberSummary[]> {
     await this.ensurePatient(patientId, tenantId);
     const links = await this.prisma.patientFamilyLink.findMany({
-      where: { patientId, tenantId, deletedAt: null },
+      where: {
+        tenantId,
+        deletedAt: null,
+        OR: [{ patientId }, { memberId: patientId }],
+      },
       orderBy: { createdAt: 'desc' },
-      include: { member: { select: FAMILY_MEMBER_SELECT } },
+      include: {
+        patient: { select: FAMILY_LINK_PERSON_SELECT },
+        member: { select: FAMILY_LINK_PERSON_SELECT },
+      },
     });
-    return links.map((l) => ({
-      linkId: l.id,
-      relationship: l.relationship,
-      member: l.member,
-    }));
+    return links.map((l) =>
+      l.patientId === patientId
+        ? // this patient is the anchor → the member is the related person
+          summarizeFamilyPerson(l.id, l.relationship, l.member)
+        : // this patient is the member → the anchor is the related person, shown
+          // with the inverse relationship (using the anchor's gender)
+          summarizeFamilyPerson(
+            l.id,
+            inverseRelationship(l.relationship, l.patient.gender),
+            l.patient,
+          ),
+    );
   }
 
   /**
    * Unlink a family member: soft-delete the mapping row only. The member's
    * `Patient` record is left untouched (it may have its own orders / links).
+   * The link may be removed from EITHER side — the patient may be its anchor or
+   * its member — mirroring the two-way listing in {@link findFamilyMembers}.
    * @param tenantId tenant scope
-   * @param patientId anchor patient the link must belong to
+   * @param patientId a patient the link must belong to (anchor or member side)
    * @param linkId the family-link id to remove
-   * @throws FamilyLinkNotFoundException if the link is missing for this anchor
+   * @throws FamilyLinkNotFoundException if the link is missing for this patient
    */
   async removeFamilyMember(
     tenantId: string,
@@ -1369,7 +1562,12 @@ export class PatientService {
     linkId: string,
   ): Promise<{ id: string }> {
     const link = await this.prisma.patientFamilyLink.findFirst({
-      where: { id: linkId, patientId, tenantId, deletedAt: null },
+      where: {
+        id: linkId,
+        tenantId,
+        deletedAt: null,
+        OR: [{ patientId }, { memberId: patientId }],
+      },
     });
     if (!link) {
       throw new FamilyLinkNotFoundException(linkId);

@@ -1,0 +1,36 @@
+meta {
+  name: Update Overall Result Template
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/overall-result-templates/{{overallResultTemplateId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "content": "<p>Findings are within normal limits. No acute abnormality.</p>",
+    "status": "ACTIVE"
+  }
+}
+
+docs {
+  🔒 **RBAC:** requires `business_admin:overall_result_template__edit_overall_result`.
+
+  Partial update — all fields optional, same validation rules as Create.
+  `name` conflicts (409 `OVERALL_RESULT_TEMPLATE_NAME_CONFLICT`) are checked
+  against other active templates in the tenant.
+
+  Uses `overallResultTemplateId` captured by *Create Overall Result Template*.
+}

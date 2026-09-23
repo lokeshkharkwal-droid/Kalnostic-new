@@ -93,6 +93,26 @@ docs {
   - `equipment_id`, `adapter_id`, `adapter_code`, `token_id` — adapter identity,
     retained on the `AdapterResult` audit row.
 
+  ## Accession acceptance gate (backend-enforced)
+  Results may only be filled onto a sample that the **Accession module has
+  accepted AND that is still active** in the workflow — the same rule that makes a
+  sample appear in Technician Reporting, now enforced at the LIS/backend level
+  (not just via frontend visibility). The scanned `tube_no` barcode resolves to
+  its `OrderSample` group; the submission is rejected unless at least one sample in
+  the group is in a **reportable status** — `ACCEPTED`, `ACQUIRED`, `STORED`,
+  `SENT_INTERNAL`, `FORWARD_EXTERNAL`, or `OUTSOURCED`.
+
+  Rejected (no result values written) when the group is:
+  - only **`COLLECTED`** (never accepted), or `NEW` / `HOLD` / `CANCELLED`; **or**
+  - once accepted but now **`HALT`** (paused), **`ERROR`** (flagged), **`REPEAT`**
+    (needs re-collection), **`DISCARDED`** or **`RETURNED`** (specimen gone).
+
+  ```json
+  { "s": "200", "test_status": "This sample is not accepted in the Accession module." }
+  ```
+  The `AdapterResult` audit row records `update_test_status = "4"` (NOT_ACCEPTED).
+  A reportable sample proceeds normally through the fill behaviour below.
+
   ## Fill behaviour (mirrors legacy `processAdapterResult`)
   - Order resolved from `tube_no` (the sample **barcode**) → its sample group →
     the parent order, within the adapter's tenant + branches. Only reports that are

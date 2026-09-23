@@ -230,3 +230,27 @@ export class InvalidProfilePhotoException extends KaltrosException {
     );
   }
 }
+
+/** 422 — a department id in the assignment is not an active tenant department. */
+export class InvalidDepartmentAssignmentException extends KaltrosException {
+  constructor(departmentId: string) {
+    super(
+      'INVALID_DEPARTMENT_ASSIGNMENT',
+      'One or more departments are not active departments of this tenant',
+      { departmentId },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/** 422 — the chosen default department is not one of the selected departments. */
+export class DefaultDepartmentNotSelectedException extends KaltrosException {
+  constructor(departmentId: string) {
+    super(
+      'DEFAULT_DEPARTMENT_NOT_SELECTED',
+      'The default department must be one of the selected departments',
+      { departmentId },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}

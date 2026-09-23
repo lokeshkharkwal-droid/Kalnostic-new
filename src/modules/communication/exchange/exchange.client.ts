@@ -170,10 +170,7 @@ export class ExchangeClient {
     // Accept either a base URL (…/social/api/v1) or the full endpoint
     // (…/notifications) in EXCHANGE_API_URL — append the path only if absent so
     // we never post to …/notifications/notifications.
-    const base = url.replace(/\/$/, '');
-    const endpoint = base.endsWith('/notifications')
-      ? base
-      : `${base}/notifications`;
+    const endpoint = `${this.baseUrl(url)}/notifications`;
     // Fail fast: a relay that accepts the TCP connection but never responds
     // (a hung/blackholing gateway) must NOT block the queue worker's drain loop.
     // `EXCHANGE_TIMEOUT_MS` bounds every attempt (default 15s); the row simply
@@ -198,12 +195,184 @@ export class ExchangeClient {
       return null;
     }
   }
+
+  /**
+   * Normalise `EXCHANGE_API_URL` to the gateway base (…/social/api/v1). Accepts
+   * either the base or the full `…/notifications` URL and strips a trailing
+   * `/notifications` (and any trailing slash) so resource paths like `/clients`
+   * and `/notifications` can be appended cleanly.
+   * @param url the configured `EXCHANGE_API_URL`
+   */
+  private baseUrl(url: string): string {
+    return url.replace(/\/$/, '').replace(/\/notifications$/, '');
+  }
+
+  /**
+   * Register a tenant as a client on the Exchange server (`POST /clients`). This
+   * is the prerequisite that lets the Exchange attribute per-tenant message
+   * counts to `peer_tenant_id`. Mirrors the legacy `Exchange::registerBusinessExchange`
+   * envelope. Returns the parsed response, or null when unconfigured/errored.
+   * @param peer tenant context; `peer.tenantId` is the integer `exchangeTenantId`
+   * @param params the client details (name / code / contact / business id)
+   */
+  async registerClient(
+    peer: ExchangePeer,
+    params: RegisterClientParams,
+  ): Promise<ExchangeClientResponse | null> {
+    const url = this.config.get<string>('exchange.url');
+    const key = this.config.get<string>('exchange.key');
+    const secret = this.config.get<string>('exchange.secret');
+    if (!url || !key || !secret) return null;
+
+    const envelope = {
+      data: {
+        key,
+        secret,
+        peer_tenant_id: peer.tenantId,
+        peer_branch_id: peer.branchId ?? '',
+        peer_tenant_info: peer.tenantInfo ?? '',
+        peer_server_url:
+          peer.serverUrl ??
+          this.config.get<string>('exchange.frontendUrl') ??
+          '',
+        peer_branch_info: peer.branchInfo ?? '',
+        data: {
+          name: params.name,
+          code: params.code ?? '',
+          customer_email: params.customerEmail ?? '',
+          customer_phone: params.customerPhone ?? '',
+          key,
+          secret,
+          business_id: params.businessId,
+        },
+      },
+    };
+    return this.request<ExchangeClientResponse>(
+      'POST',
+      `${this.baseUrl(url)}/clients`,
+      peer.tenantId,
+      envelope,
+    );
+  }
+
+  /**
+   * Fetch a tenant's current Exchange client record (`GET /clients/show`).
+   * @param peer tenant context (`peer.tenantId` = integer `exchangeTenantId`)
+   * @param businessId the integer id the Exchange knows the client by
+   */
+  async getClientStatus(
+    peer: ExchangePeer,
+    businessId: number,
+  ): Promise<ExchangeClientResponse | null> {
+    const url = this.config.get<string>('exchange.url');
+    if (!url) return null;
+    return this.request<ExchangeClientResponse>(
+      'GET',
+      `${this.baseUrl(url)}/clients/show?business_id=${businessId}`,
+      peer.tenantId,
+    );
+  }
+
+  /**
+   * Fetch a tenant's Exchange usage/billing counts (`GET /clientsbilling/show`).
+   * @param peer tenant context (`peer.tenantId` = integer `exchangeTenantId`)
+   * @param businessId the integer id the Exchange knows the client by
+   */
+  async getClientBilling(
+    peer: ExchangePeer,
+    businessId: number,
+  ): Promise<ExchangeClientResponse | null> {
+    const url = this.config.get<string>('exchange.url');
+    if (!url) return null;
+    return this.request<ExchangeClientResponse>(
+      'GET',
+      `${this.baseUrl(url)}/clientsbilling/show?sbusiness_id=${businessId}`,
+      peer.tenantId,
+    );
+  }
+
+  /**
+   * Was a `/clients` call accepted? The Exchange returns `s === '200'` on success.
+   * @param resp a client response (or null)
+   */
+  isClientOk(resp: ExchangeClientResponse | null): boolean {
+    return !!resp && String(resp.s) === '200';
+  }
+
+  /**
+   * Shared transport for the `/clients*` endpoints: sends the signed headers,
+   * bounds the attempt by `EXCHANGE_TIMEOUT_MS`, and never throws (returns null
+   * on any transport/parse error) so callers degrade gracefully.
+   * @param method HTTP method
+   * @param endpoint fully-built URL
+   * @param peerTenantId the integer tenant id, stamped as the `peer_tenant_id` header
+   * @param body optional JSON body (POST)
+   */
+  private async request<T>(
+    method: 'GET' | 'POST',
+    endpoint: string,
+    peerTenantId: string,
+    body?: unknown,
+  ): Promise<T | null> {
+    const key = this.config.get<string>('exchange.key') ?? '';
+    const secret = this.config.get<string>('exchange.secret') ?? '';
+    const timeoutMs = this.config.get<number>('exchange.timeoutMs', 15000);
+    try {
+      const res = await fetch(endpoint, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          key,
+          secret,
+          peer_tenant_id: peerTenantId,
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      const text = await res.text();
+      try {
+        return JSON.parse(text) as T;
+      } catch {
+        return null;
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Exchange ${method} failed (${endpoint}): ${message}`);
+      return null;
+    }
+  }
 }
 
 /** Parsed Exchange gateway response. `id` present ⇒ accepted (see {@link ExchangeClient.isOk}). */
 export interface ExchangeResponse {
   id?: string | number | null;
   [key: string]: unknown;
+}
+
+/**
+ * Parsed Exchange `/clients*` response. `s === '200'` ⇒ accepted (see
+ * {@link ExchangeClient.isClientOk}); the registered/queried record is in
+ * `data.original`.
+ */
+export interface ExchangeClientResponse {
+  s?: string | number;
+  m?: string;
+  data?: { original?: Record<string, unknown> } & Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+/** `/clients` registration parameters (the inner `data` object of the envelope). */
+export interface RegisterClientParams {
+  /** Business display name. */
+  name: string;
+  /** Optional short code (legacy sends ''). */
+  code?: string;
+  /** Contact email. */
+  customerEmail?: string | null;
+  /** Contact phone. */
+  customerPhone?: string | null;
+  /** Integer id the Exchange keys the client by (= `exchangeTenantId`). */
+  businessId: number;
 }
 
 /** Base64-encoded attachment, per the Exchange contract. */

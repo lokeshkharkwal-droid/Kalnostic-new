@@ -14,6 +14,22 @@ export class ReferralDoctorNotFoundException extends KaltrosException {
 }
 
 /**
+ * 409 — the referral doctor cannot be deleted because they are used by an order
+ * that is still in an active accessioning/technician-stage workflow. The doctor
+ * may be deactivated instead.
+ */
+export class ReferralDoctorInUseException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'REFERRAL_DOCTOR_IN_USE',
+      'This referral doctor cannot be deleted because they are used by an active order',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
  * 422 — one or more assigned `labTestId`s do not reference an active lab test in
  * this tenant.
  */

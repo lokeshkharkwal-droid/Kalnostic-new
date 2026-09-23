@@ -20,4 +20,32 @@ export class ImportFromMasterDataQueryDto extends PaginationQueryDto {
   @IsString()
   @MaxLength(255)
   search?: string;
+
+  /** Case-insensitive match against the department name (tests and panels). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  department?: string;
+
+  /** Case-insensitive match against the category name (tests and panels). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  category?: string;
+
+  /** Case-insensitive match against the sub-category name (lab tests only — panels have no sub-category). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  subCategory?: string;
+
+  /**
+   * When given, tests already present in this pricing list (matched via
+   * `BranchLabTest.sourceLabTestId`/`BranchLabPanel.sourceLabPanelId`) are
+   * excluded from the result — lets an "Add Tests to List" picker's
+   * "Available to Add" side exclude already-imported rows server-side.
+   */
+  @IsOptional()
+  @IsUUID()
+  excludeListId?: string;
 }

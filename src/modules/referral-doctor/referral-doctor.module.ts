@@ -6,6 +6,7 @@ import { DepartmentModule } from '../department/department.module';
 import { SubCategoryModule } from '../sub-category/sub-category.module';
 import { ReferralListModule } from '../referral-list/referral-list.module';
 import { ReferralPanelSettingsModule } from '../referral-panel-settings/referral-panel-settings.module';
+import { ReferralUsageModule } from '../referral-usage/referral-usage.module';
 import { ReferralDoctorController } from './referral-doctor.controller';
 import { ReferralDoctorOptionsController } from './referral-doctor-options.controller';
 import { ReferralDoctorService } from './referral-doctor.service';
@@ -28,6 +29,7 @@ import { ReferralDoctorService } from './referral-doctor.service';
     SubCategoryModule,
     ReferralListModule,
     ReferralPanelSettingsModule,
+    ReferralUsageModule,
   ],
   controllers: [ReferralDoctorOptionsController, ReferralDoctorController],
   providers: [ReferralDoctorService],

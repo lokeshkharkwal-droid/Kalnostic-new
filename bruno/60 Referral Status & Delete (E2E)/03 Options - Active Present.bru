@@ -1,0 +1,36 @@
+meta {
+  name: 03 Options - Active Present
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/external-referrals/options?limit=100
+  body: none
+  auth: bearer
+}
+
+params:query {
+  limit: 100
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("ACTIVE referral is selectable (present in options)", function () {
+    const data = res.getBody().data;
+    const arr = Array.isArray(data) ? data : (data.data || []);
+    expect(arr.some((o) => o.id === bru.getVar("flowReferralId"))).to.equal(true);
+  });
+}
+
+docs {
+  Step 3 — the options feed for the `/registration/create` dropdowns. While the
+  referral is `ACTIVE` it MUST appear here. `limit` max is 100. Omit `page` for the
+  full `{id,name}[]` array; supply `page` for a paginated envelope.
+}

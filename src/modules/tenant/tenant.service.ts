@@ -28,6 +28,7 @@ import {
   PersonEmailTakenException,
   PersonPhoneTakenException,
 } from '../users/exceptions/users.exceptions';
+import { ExchangeTenantIdService } from './exchange-tenant-id.service';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
 import { UpdateTenantConfigurationDto } from './dto/update-tenant-configuration.dto';
@@ -81,6 +82,7 @@ export class TenantService {
     private readonly cityService: CityService,
     private readonly areaService: AreaService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly exchangeTenantIdService: ExchangeTenantIdService,
   ) {}
 
   /**
@@ -222,6 +224,13 @@ export class TenantService {
 
     try {
       const tenant = await this.prisma.$transaction(async (tx) => {
+        // Migrated tenants keep their legacy id; native tenants get the next
+        // value from the global Exchange counter — atomically, inside this tx.
+        const exchangeTenantId =
+          await this.exchangeTenantIdService.resolveForCreate(
+            tx,
+            options?.legacyTenantId ?? null,
+          );
         const created = await tx.tenant.create({
           data: {
             name: dto.name,
@@ -244,6 +253,7 @@ export class TenantService {
             isActive: true,
             createdBy,
             legacyTenantId: options?.legacyTenantId ?? null,
+            exchangeTenantId,
           },
         });
 
@@ -367,10 +377,11 @@ export class TenantService {
    * falls back to the platform default (§7 fallback) rather than being returned
    * to the client.
    * @param tenantId caller's tenant (from the business JWT)
-   * @returns `{ timezone, currency, dateFormat, timeFormat, language }`
+   * @returns `{ businessName, timezone, currency, dateFormat, timeFormat, language }`
    * @throws TenantNotFoundException if the tenant is missing/soft-deleted
    */
   async getLocale(tenantId: string): Promise<{
+    businessName: string;
     timezone: string;
     currency: string;
     dateFormat: string;
@@ -401,6 +412,7 @@ export class TenantService {
     }
 
     return {
+      businessName: tenant.name,
       timezone: merged.timezone,
       currency: merged.currency,
       dateFormat: merged.date_format,

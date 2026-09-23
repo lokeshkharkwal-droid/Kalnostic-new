@@ -10,7 +10,7 @@ import { NotificationService } from './notification.service';
 import { NotificationEventListener } from './notification-event.listener';
 import { ClinicalEventListener } from './clinical-event.listener';
 import { BusinessEventListener } from './business-event.listener';
-import { ExchangeClient } from './exchange/exchange.client';
+import { ExchangeModule } from './exchange/exchange.module';
 import { ShareService } from './services/share.service';
 import { AutoNotificationService } from './services/auto-notification.service';
 import { NotificationEnablementService } from './services/notification-enablement.service';
@@ -28,7 +28,7 @@ import { AppointmentReminderWorkerService } from './appointment-reminder-worker.
  * can enqueue messages / raise notifications on business events.
  */
 @Module({
-  imports: [PrismaModule, BranchModule, TemplateModule],
+  imports: [PrismaModule, BranchModule, TemplateModule, ExchangeModule],
   controllers: [
     CommunicationController,
     NotificationController,
@@ -41,7 +41,6 @@ import { AppointmentReminderWorkerService } from './appointment-reminder-worker.
     NotificationEventListener,
     ClinicalEventListener,
     BusinessEventListener,
-    ExchangeClient,
     ShareService,
     AutoNotificationService,
     NotificationEnablementService,

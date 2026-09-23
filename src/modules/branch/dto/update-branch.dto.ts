@@ -51,6 +51,13 @@ export class UpdateBranchDto {
   @IsOptional()
   receivingBranchIds?: string[];
 
+  // The default sample-receiving branch. Must be one of `receivingBranchIds`.
+  // Required when `receivingBranchIds` is non-empty; the service marks that
+  // mapping's `isDefault` flag (and clears any previous default).
+  @IsUUID('4')
+  @IsOptional()
+  defaultReceivingBranchId?: string;
+
   // NOTE: `code` is immutable and system-generated — it is intentionally NOT
   // updatable. Any `code` sent in the body is rejected by the validation pipe
   // (forbidNonWhitelisted).

@@ -1,0 +1,100 @@
+meta {
+  name: 32 Update Overall Result
+  type: http
+  seq: 32
+}
+
+patch {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/overall-result/{{resultParamId}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "templateId": "{{overallResultTemplateId}}"
+  }
+}
+
+docs {
+  Apply an Overall Result template to ONE result parameter on a report, or
+  edit that parameter's already-applied content in place — two mutually
+  exclusive actions on the same endpoint, distinguished by which single field
+  is sent.
+
+  ⚠️ Changed 2026-09-22: this is now per-PARAMETER, not per-report.
+  `resultParamId` (a `LabTestResultParam.id`) is a required path segment.
+  Each parameter on a report holds its own independently-applied result — a
+  test with several parameters (e.g. Bilirubin/SGOT/SGPT under Liver
+  Function Test), each tagged into its own Overall Result group, can each
+  have a DIFFERENT template/content applied. Calling this for one
+  `resultParamId` never touches any other parameter's applied result on the
+  same report. (Previously this endpoint had no `resultParamId` and applied
+  to the whole report — that shared, single-slot design is what this change
+  replaces; see `LabReportOverallResult` model's doc comment for why.)
+
+  - `templateId` only (apply): the server resolves the named
+    `OverallResultTemplate`'s CURRENT `content` itself — it never trusts a
+    client-supplied content string for an apply — and snapshots that content
+    for this parameter, alongside `templateId` (so the UI can show which
+    template is active for it). 404 `OVERALL_RESULT_TEMPLATE_NOT_FOUND` if
+    the id doesn't resolve to an active template in this tenant.
+
+    ```json
+    { "templateId": "{{overallResultTemplateId}}" }
+    ```
+
+  - `content` only (edit): overwrites this parameter's applied content in
+    place (post-apply technician edits, e.g. filling in a value the
+    template left blank). `templateId` is left untouched, so the UI still
+    shows which template this parameter started from even after the edited
+    content diverges from that template's own current text.
+
+    ```json
+    { "content": "<p>Overall result: Normal.</p>" }
+    ```
+
+  Sending BOTH `templateId` and `content` in the same request, or NEITHER,
+  is rejected with 400 `VALIDATION_ERROR` — exactly one of the two is
+  required per call.
+
+  Gated by `TechnicianSetting.isOverallResultEditable` (default `false`,
+  see "Technician Settings" module). When the toggle is off, this is a
+  **silent no-op**: the request succeeds (200) but returns this parameter's
+  current, unchanged overall result — it does NOT reject the request. Turn
+  the toggle on first if a write doesn't seem to be taking effect.
+
+  Response shape: `{ "resultParamId": string, "templateId": string | null,
+  "content": string | null }` — this parameter's overall result state after
+  the write (or after the no-op, if the toggle is off).
+
+  ⚠️ Updated 2026-09-22: `resultParamId` MUST be one of this report's own
+  result parameters — a smoke test found any arbitrary UUID would silently
+  create its own orphaned row (returned in `overallResults` with no
+  corresponding entry in `resultParams`). A `resultParamId` that doesn't
+  belong to this report's test/panel is now rejected with 400
+  `VALIDATION_ERROR` ("resultParamId does not belong to this report's
+  test"), checked before the apply/edit body validation above. A real
+  parameter with nothing ever applied still returns `{ "resultParamId":
+  "...", "templateId": null, "content": null }`, not a 404 — only an
+  unrelated/non-existent id is rejected.
+
+  ⚠️ Known gap (tracked, not yet fixed): unlike every other mutating action
+  on this report, this endpoint does NOT check `LabReportStatus` — a
+  PUBLISHED report's overall result can still be edited through this route.
+  The only guard that applies is the lock check below. Do not rely on
+  publish-immutability for this one field yet.
+
+  404 `LAB_REPORT_NOT_FOUND` if missing/other-tenant/other-branch. 409
+  `LAB_REPORT_LOCKED` if the report is locked (`lock()`'d via
+  `POST /lab-reports/:id/lock`) — this is the only lifecycle gate currently
+  enforced here.
+
+  Requires `LAB_EDIT_REPORT` (unlike this module's read-only
+  `GET /overall-result-templates*` routes, which are open to any
+  authenticated business user with the Technician module enabled).
+}

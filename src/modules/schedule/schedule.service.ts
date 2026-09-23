@@ -294,10 +294,12 @@ export class ScheduleService {
   // ── Validation helpers ──────────────────────────────────────────────────────
 
   /**
-   * Validate a schedule's shift set: each shift's break must fall inside its
-   * working window, and no two shifts may overlap in time *on a day they both
-   * run* (two shifts at the same clock time on disjoint days are allowed). All
-   * time checks are midnight-aware (a shift/break may wrap past 00:00).
+   * Validate a schedule's shift set: each shift's break, if provided, must
+   * fall inside its working window (an equal or blank break start/end pair
+   * means "no break"), and no two shifts may overlap in time *on a day they
+   * both run* (two shifts at the same clock time on disjoint days are
+   * allowed). All time checks are midnight-aware (a shift/break may wrap past
+   * 00:00).
    * @param shifts the shifts to validate
    * @throws InvalidShiftException on any violation
    */
@@ -313,28 +315,35 @@ export class ScheduleService {
       }
       const shiftLength = this.durationFrom(start, end); // 1..1439
 
-      // Break must lie fully within the shift window (wrap-aware).
-      const breakStart = this.toMinutes(shift.breakStartTime);
-      const breakEnd = this.toMinutes(shift.breakEndTime);
-      if (breakStart === breakEnd) {
-        throw new InvalidShiftException(
-          'A break must not start and end at the same time',
-          { shiftName: shift.shiftName },
-        );
-      }
-      const breakOffset = this.offsetFrom(start, breakStart); // 0..1439
-      const breakLength = this.durationFrom(breakStart, breakEnd);
-      if (breakOffset + breakLength > shiftLength) {
-        throw new InvalidShiftException(
-          'A break must fall entirely within its shift',
-          {
-            shiftName: shift.shiftName,
-            startTime: shift.startTime,
-            endTime: shift.endTime,
-            breakStartTime: shift.breakStartTime,
-            breakEndTime: shift.breakEndTime,
-          },
-        );
+      // Break is optional. An equal start/end pair (including both blank)
+      // means "no break" and is not validated further; a genuine break must
+      // lie fully within the shift window (wrap-aware).
+      const { breakStartTime, breakEndTime } = shift;
+      if (breakStartTime || breakEndTime) {
+        if (!breakStartTime || !breakEndTime) {
+          throw new InvalidShiftException(
+            'breakStartTime and breakEndTime must both be set',
+            { shiftName: shift.shiftName },
+          );
+        }
+        const breakStart = this.toMinutes(breakStartTime);
+        const breakEnd = this.toMinutes(breakEndTime);
+        if (breakStart !== breakEnd) {
+          const breakOffset = this.offsetFrom(start, breakStart); // 0..1439
+          const breakLength = this.durationFrom(breakStart, breakEnd);
+          if (breakOffset + breakLength > shiftLength) {
+            throw new InvalidShiftException(
+              'A break must fall entirely within its shift',
+              {
+                shiftName: shift.shiftName,
+                startTime: shift.startTime,
+                endTime: shift.endTime,
+                breakStartTime,
+                breakEndTime,
+              },
+            );
+          }
+        }
       }
     }
 

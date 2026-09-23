@@ -19,6 +19,7 @@ import {
   EMI,
   EMI_STATUS,
   UPDATE_TEST_STATUS,
+  NOT_ACCEPTED_MESSAGE,
   EmiOrderRow,
   EmiOrdersResponse,
   EmiReportLog,
@@ -31,6 +32,7 @@ import {
   parseResultDate,
   toEpochSeconds,
 } from './util/emi-format';
+import { REPORTABLE_SAMPLE_STATUSES } from '../accession/constants/sample-transitions.constant';
 
 /** Report statuses that may still be (re)filled by a machine. */
 const FILLABLE_STATUSES: ReadonlySet<LabReportStatus> = new Set([
@@ -89,6 +91,16 @@ type EmiOrder = Prisma.OrderGetPayload<{ include: typeof ORDER_INCLUDE }>;
 interface ResolvedSampleOrder {
   order: EmiOrder;
   selectedItems: Map<string, Set<string | null>>;
+  /**
+   * Whether the scanned barcode's sample group is in a state that may receive
+   * results — i.e. at least one `OrderSample` carrying the barcode is in a
+   * {@link REPORTABLE_SAMPLE_STATUSES} status (accepted by Accession AND still
+   * active in the workflow). A group that is only Collected — or that has been
+   * accepted but is now Halted / Errored / Repeat / Discarded / Returned — leaves
+   * this `false`, and the LIS must not fill results onto it (mirrors the
+   * Accession → Technician Reporting gate). See §A.9.
+   */
+  sampleReportable: boolean;
 }
 
 /**
@@ -244,6 +256,14 @@ export class EmiService {
           const { order, selectedItems } = resolved;
           branchId = order.branchId;
 
+          // Accession gate: don't expose the order/tests for result entry unless
+          // the scanned sample group is accepted AND still active (a merely
+          // Collected — or Halted/Errored/Repeat/Discarded/Returned — sample must
+          // not flow into the machine workflow). Mirrors the submit gate below.
+          if (!resolved.sampleReportable) {
+            return { s: EMI.BAD_REQUEST, m: NOT_ACCEPTED_MESSAGE };
+          }
+
           const tenant = await tx.tenant.findUnique({
             where: { id: adapter.tenantId },
             select: { name: true },
@@ -387,6 +407,7 @@ export class EmiService {
         const order = resolved?.order ?? null;
         const selectedItems =
           resolved?.selectedItems ?? new Map<string, Set<string | null>>();
+        const sampleReportable = resolved?.sampleReportable ?? false;
         loggedBranchId = order?.branchId ?? null;
 
         // Common audit-row writer (one row per submission).
@@ -450,6 +471,29 @@ export class EmiService {
             m: 'Result added successfully',
             emi_status: this.emiStatusLabel(emiCode),
             test_status: 'Test already marked as complete',
+            prefered_test: ctx.preferedTest,
+            unique_test_ids: {},
+          };
+        }
+
+        // Accession acceptance gate: results may only be filled onto a sample the
+        // Accession module has accepted AND that is still active in the workflow
+        // (REPORTABLE_SAMPLE_STATUSES). A Collected-only sample — or one that was
+        // accepted but is now Halted / Errored / Repeat / Discarded / Returned —
+        // is rejected here: the same rule that keeps it out of Technician
+        // Reporting, now enforced at the LIS/backend level instead of relying on
+        // frontend visibility alone.
+        if (!sampleReportable) {
+          await writeAudit(
+            order.id,
+            order.branchId,
+            UPDATE_TEST_STATUS.NOT_ACCEPTED,
+          );
+          return {
+            s: EMI.OK,
+            m: 'Result added successfully',
+            emi_status: this.emiStatusLabel(emiCode),
+            test_status: NOT_ACCEPTED_MESSAGE,
             prefered_test: ctx.preferedTest,
             unique_test_ids: {},
           };
@@ -821,6 +865,9 @@ export class EmiService {
       where,
       select: {
         orderId: true,
+        // `status` drives the LIS result gate — only an accepted-and-still-active
+        // sample is reportable (see `sampleReportable` below).
+        status: true,
         tests: {
           where: { deletedAt: null },
           select: { orderItemId: true, labTestId: true },
@@ -839,9 +886,17 @@ export class EmiService {
     // panel (one OrderItem, many member-test reports) to just the scanned tests.
     const orderId = samples[0]!.orderId;
     const selectedItems = new Map<string, Set<string | null>>();
+    // The scanned group is reportable when any of its samples is accepted AND
+    // still active (a REPORTABLE_SAMPLE_STATUSES status). Collected-only samples,
+    // and once-accepted samples now Halted / Errored / Repeat / Discarded /
+    // Returned, leave this false, gating result entry in the callers.
+    let sampleReportable = false;
     for (const sample of samples) {
       if (sample.orderId !== orderId) {
         continue;
+      }
+      if (REPORTABLE_SAMPLE_STATUSES.has(sample.status)) {
+        sampleReportable = true;
       }
       for (const test of sample.tests) {
         const members =
@@ -858,7 +913,7 @@ export class EmiService {
     if (!order) {
       return null;
     }
-    return { order, selectedItems };
+    return { order, selectedItems, sampleReportable };
   }
 
   /**

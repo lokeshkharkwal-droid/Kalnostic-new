@@ -6,11 +6,53 @@ import {
   IsUUID,
   MaxLength,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 import { ToBoolean } from '../../../common/decorators/to-boolean.decorator';
 import { LabTestListView } from '../entities/lab-test.entity';
 
-/** Sortable columns exposed by the template-browse listing. */
+/**
+ * Sortable columns exposed by the **listing** endpoint
+ * (`GET /master-data/:masterDataId/lab-tests/listing`). Every key the grid can
+ * sort by across its views. Scalar keys map straight to a Prisma `orderBy`;
+ * `departmentName` sorts via the `department` relation; `parametersCount` /
+ * `samplesCount` are derived (aggregated) sorts handled in the service. The
+ * grid's "Default Sample" column is intentionally **not** sortable (its value is
+ * a filtered child row Prisma `orderBy` can't express).
+ */
+export const LAB_TEST_LISTING_SORT_FIELDS = [
+  'testName',
+  'testCode',
+  'aka',
+  'processMethod',
+  'icdCode',
+  'loincCode',
+  'samplePriorityType',
+  'isMandatoryTest',
+  'priceMsrp',
+  'priceMinimum',
+  'priceMaximum',
+  'priceOriginal',
+  'franchisePrice',
+  'emergencyPrice',
+  'discountCapPct',
+  'tatMinValue',
+  'tatMaxValue',
+  'isAllowPriceOverride',
+  'isAllowDiscounts',
+  'isHideInOrderScreen',
+  'isEnableCms',
+  'isPreferenceTest',
+  'usefulFor',
+  'isActive',
+  'departmentName',
+  'parametersCount',
+  'samplesCount',
+] as const;
+export type LabTestListingSortField =
+  (typeof LAB_TEST_LISTING_SORT_FIELDS)[number];
+
+/** Sortable columns exposed by the template-browse listing (unchanged). */
 export const LAB_TEST_SORT_FIELDS = [
   'testName',
   'testCode',
@@ -20,14 +62,14 @@ export const LAB_TEST_SORT_FIELDS = [
 export type LabTestSortField = (typeof LAB_TEST_SORT_FIELDS)[number];
 
 /**
- * Query parameters for the lab-test listing endpoint
- * (`GET /master-data/:masterDataId/lab-tests/listing`). Extends the shared
- * pagination DTO. `view` selects which columns/nested data are projected;
- * `search` matches `testName`/`testCode` only (per spec); the classification
- * filters take ids (their names are resolved server-side); `status` maps to the
- * `isActive` flag. All filters optional, validated by `class-validator` only.
+ * Shared filter fields for the lab-test list/listing/template-browse endpoints:
+ * `view` selects which columns/nested data are projected; `search` matches
+ * `testName`/`testCode` only; the classification filters take ids (their names
+ * are resolved server-side); `status` maps to the `isActive` flag. All optional,
+ * validated by `class-validator` only. Sort fields live on the concrete
+ * subclasses so each endpoint keeps its own sort contract.
  */
-export class ListLabTestsDto extends PaginationQueryDto {
+class LabTestListFilterDto extends PaginationQueryDto {
   /** Column view; defaults to DEFAULT in the service when omitted. */
   @IsOptional()
   @IsEnum(LabTestListView)
@@ -64,8 +106,36 @@ export class ListLabTestsDto extends PaginationQueryDto {
   @IsOptional()
   @IsIn(['ACTIVE', 'INACTIVE'])
   status?: 'ACTIVE' | 'INACTIVE';
+}
 
-  /** Sort column (template-browse listing). Defaults to `createdAt` desc. */
+/**
+ * Query parameters for the tenant lab-test list/listing endpoints
+ * (`GET /master-data/:masterDataId/lab-tests` and `/listing`). Server-side sort
+ * is applied **before** pagination: `sortBy` is validated against
+ * {@link LAB_TEST_LISTING_SORT_FIELDS}; `sortOrder` is `1` (ascending) or `-1`
+ * (descending). Omit both to keep the default (`createdAt desc`).
+ */
+export class ListLabTestsDto extends LabTestListFilterDto {
+  /** Sort column; validated against the listing allowlist. */
+  @IsOptional()
+  @IsIn(LAB_TEST_LISTING_SORT_FIELDS)
+  sortBy?: LabTestListingSortField;
+
+  /** Sort direction: `1` ascending, `-1` descending. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsIn([1, -1])
+  sortOrder?: 1 | -1;
+}
+
+/**
+ * Query parameters for the template-browse listing
+ * (SiteAdmin `GET /siteadmin/lab-tests` and business `GET .../lab-tests/templates`).
+ * Keeps its own `sortBy` (narrow allowlist) + `sortOrder` (`asc`/`desc`) contract
+ * that the frontend template importer depends on.
+ */
+export class BrowseLabTestTemplatesDto extends LabTestListFilterDto {
+  /** Sort column (template-browse). Defaults to `createdAt` in the service. */
   @IsOptional()
   @IsIn(LAB_TEST_SORT_FIELDS)
   sortBy?: LabTestSortField;

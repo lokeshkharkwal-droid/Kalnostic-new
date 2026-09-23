@@ -1,0 +1,25 @@
+meta {
+  name: Exchange Status
+  type: http
+  seq: 19
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/tenants/{{tenantId}}/exchange-status
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Fetch the tenant's current client record on the Exchange server
+  (`GET /clients/show?business_id=<exchangeTenantId>`). SiteAdmin only — requires
+  `business:read`. The tenant is identified by the `:id` path param.
+
+  Returns in `data` the Exchange's `data.original` record (or `null` if the
+  Exchange has no client for this tenant). Errors: 404 `TENANT_NOT_FOUND`, 409
+  `EXCHANGE_TENANT_ID_MISSING`.
+}

@@ -17,7 +17,10 @@ auth:bearer {
 body:json {
   {
     "sampleIds": ["{{orderSampleId}}"],
-    "print": false
+    "print": true,
+    "tubeType": "EDTA",
+    "notes": "",
+    "attachmentUrl": ""
   }
 }
 
@@ -42,6 +45,14 @@ docs {
     (from `44 Get Order Grouped Samples` → `groups[].sampleIds`).
   - `print` (optional) — mirrors "Collect & Print": also assign a barcode to any
     sample in the group that lacks one (`BAR-#####-A`).
+  - `tubeType` (optional, ≤100 chars) — the Collect modal's Tube / Sample Type.
+    When set it is written to every collected sample; otherwise the server derives
+    it from each sample's container/sample type.
+  - `notes` (optional, ≤1000 chars) / `attachmentUrl` (optional, ≤2048 chars) —
+    recorded on each sample's `AccessionStatusHistory` row. These bring the Order
+    Overview modal's "Collect & Print" to full parity with the accession
+    `Collect & Print` action (barcode label is then printed client-side via
+    `print-label(s)`).
 
   Every collectable sample in the set (NEW / HOLD / REPEAT) is transitioned to
   COLLECTED in one tenant-scoped transaction (an `AccessionStatusHistory` row is

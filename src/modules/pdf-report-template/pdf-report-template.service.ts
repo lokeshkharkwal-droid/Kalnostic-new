@@ -23,7 +23,9 @@ import {
 } from './constants/pdf-report-template-types.constant';
 import {
   PdfTemplateMeta,
+  PdfPageSize,
   PDF_TEMPLATE_META_DEFAULTS,
+  PDF_PAGE_DIMENSIONS_MM,
 } from './constants/pdf-template-meta.constant';
 import {
   InvalidPdfReportTemplateTypeException,
@@ -730,24 +732,54 @@ export class PdfReportTemplateService {
    * page margins reserve the bands into which Chromium paints the header/footer
    * templates on every page; `displayHeaderFooter` is enabled only when the
    * template actually has header/footer content (else a plain body-only PDF).
+   *
+   * The page size is rendered by **exact millimetre `width`/`height`** rather
+   * than Puppeteer's `format`, because Chromium's `format` only knows a handful
+   * of sizes (A0–A6, Letter, Legal, …) — it can't produce the full A/B/C series
+   * or the custom barcode sizes we import from the legacy project. Notes:
+   * - `format` is forced to `undefined`: Chromium gives `format` priority over
+   *   `width`/`height`, and `PdfService.htmlToPdf` defaults `format` to `'A4'`,
+   *   which would otherwise silently override our dimensions.
+   * - Landscape swaps width/height ourselves — the `landscape` flag is ignored
+   *   once explicit dimensions are set (mirrors legacy mPDF's `<size>-L`).
    */
   private metaToPdfOptions(
     meta: PdfTemplateMeta,
     prepared: PreparedPdfHtml,
   ): PDFOptions {
-    return {
-      format: meta.page_size as PDFOptions['format'],
-      landscape: meta.orientation === 'L',
+    const landscape = meta.orientation === 'L';
+    const margin = {
+      top: `${meta.margin_top}mm`,
+      right: `${meta.margin_right}mm`,
+      bottom: `${meta.margin_bottom}mm`,
+      left: `${meta.margin_left}mm`,
+    };
+    const base: PDFOptions = {
       printBackground: true,
-      margin: {
-        top: `${meta.margin_top}mm`,
-        right: `${meta.margin_right}mm`,
-        bottom: `${meta.margin_bottom}mm`,
-        left: `${meta.margin_left}mm`,
-      },
+      margin,
       displayHeaderFooter: prepared.hasHeaderFooter,
       headerTemplate: prepared.headerTemplate,
       footerTemplate: prepared.footerTemplate,
+    };
+
+    const dims = PDF_PAGE_DIMENSIONS_MM[meta.page_size as PdfPageSize];
+    if (!dims) {
+      // Unreachable for validated input; guard against legacy/dirty meta so a
+      // stored value outside the catalogue still renders instead of crashing.
+      return {
+        ...base,
+        format: meta.page_size as PDFOptions['format'],
+        landscape,
+      };
+    }
+
+    const width = landscape ? dims.height : dims.width;
+    const height = landscape ? dims.width : dims.height;
+    return {
+      ...base,
+      format: undefined,
+      width: `${width}mm`,
+      height: `${height}mm`,
     };
   }
 

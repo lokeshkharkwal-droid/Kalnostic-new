@@ -22,7 +22,8 @@ body:json {
   {
     "labTestIds": [
       "00000000-0000-0000-0000-000000000000"
-    ]
+    ],
+    "listId": "{{branchLabTestListId}}"
   }
 }
 
@@ -39,11 +40,17 @@ tests {
 }
 
 docs {
-  Persist-import Master Data lab tests into the **active branch's default Walk-in
-  Lab Test List** (auto-created on the first import). `labTestIds` are ids of lab
-  tests in the branch's (1:1) master data. Each is deep-copied as an independent
-  snapshot (clinical children folded into `configSnapshot`) with a fresh id,
-  `sourceLabTestId` provenance, `listId` = Walk-in, and `listPrice` = MSRP.
+  Persist-import Master Data lab tests into a branch pricing list. `labTestIds`
+  are ids of lab tests in the branch's (1:1) master data. Each is deep-copied
+  as an independent snapshot (clinical children folded into `configSnapshot`)
+  with a fresh id, `sourceLabTestId` provenance, `listId` = the target list,
+  and `listPrice` = MSRP.
+
+  `listId` (optional) targets a specific `BranchLabTestList` — must belong to
+  the caller's branch (404 `BRANCH_LAB_TEST_LIST_NOT_FOUND` otherwise). Omit it
+  to import into the branch's default **Walk-in** list, which is always
+  ensured to exist first (auto-created on the very first master-data action of
+  any kind on this branch) regardless of which list `listId` targets.
 
   Tenant + active branch come from the JWT (never the body). Re-import UPDATES an
   already-present test (re-snapshot) and ADDS new ones — never duplicates; ids not

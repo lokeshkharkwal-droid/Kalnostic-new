@@ -1,7 +1,7 @@
 meta {
   name: 35c Verify Multi-Param Report (C - all 3 params filled)
   type: http
-  seq: 33
+  seq: 35
 }
 
 get {
@@ -60,7 +60,7 @@ docs {
   - their `observed1` values equal the three submitted analytes
     (`{{emiResultValueC1}}` / `{{emiResultValueC2}}` / `{{emiResultValueC3}}`).
   - the report is **`SAVED`** (never auto-approved).
-
+  
   This confirms the backend resolves *all* of a test's `LabTestResultParam`s and
   matches each independently against the machine's `test_results[]` by
   `universal_test_id` / `test_name` — so one report can carry many analyte values.

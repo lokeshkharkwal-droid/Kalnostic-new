@@ -1,0 +1,26 @@
+meta {
+  name: Exchange Usage
+  type: http
+  seq: 20
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/tenants/{{tenantId}}/exchange-usage
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Fetch the tenant's message/notification usage counts from the Exchange server
+  (`GET /clientsbilling/show?sbusiness_id=<exchangeTenantId>`). SiteAdmin only —
+  requires `business:read`. The tenant is identified by the `:id` path param.
+
+  Returns in `data` the Exchange usage payload (e.g. per-month SMS / email /
+  WhatsApp counts), or `null`. Errors: 404 `TENANT_NOT_FOUND`, 409
+  `EXCHANGE_TENANT_ID_MISSING`. Note: counts are only meaningful once the tenant
+  has been registered (see Register Tenant With Exchange).
+}

@@ -52,18 +52,44 @@ export type LabReportDetail = Prisma.LabReportGetPayload<{
 }>;
 
 /**
- * The Test Entry screen's read-only content sections (LABORATORY.docx §4.5),
- * sourced from the tenant-level `LabTest` master (via `LabReport.labTestId` —
- * a logical ref, no Prisma relation, so this is resolved with a separate
- * query rather than an `include`). All null when the report has no linked
- * `LabTest` (a panel item, a direct/free-text entry, or a branch-only test
- * with no tenant catalogue source).
+ * The Test Entry screen's content sections (LABORATORY.docx §4.5): Useful
+ * For / Interpretation / Limitations / Remarks / References. Each field
+ * resolves as `LabReport`'s own column ?? the linked `LabTest`'s configured
+ * default (via `LabReport.labTestId` — a logical ref, no Prisma relation, so
+ * this is resolved with a separate query rather than an `include`). A report
+ * with no edits of its own here shows the test's defaults; editing a field
+ * (`updateContentSections`) writes to THIS report only, never back to
+ * `LabTest` — the shared master is never mutated by a technician's edit. All
+ * null when the report has no linked `LabTest` at all (a panel item, a
+ * direct/free-text entry, or a branch-only test with no tenant catalogue
+ * source) AND no override was ever saved on the report itself.
  */
 export interface LabReportContentSections {
   usefulFor: string | null;
   interpretation: string | null;
   limitations: string | null;
+  remarks: string | null;
   references: string | null;
+}
+
+/**
+ * The Test Entry screen's Overall Result section — a technician-applied
+ * `OverallResultTemplate` snapshot for ONE result parameter on this report
+ * (a test can have several parameters, each independently tagged into its
+ * own Overall Result group and each capable of holding its own separately-
+ * applied result — see `LabReportOverallResultRow` model doc comment).
+ * Unlike `LabReportContentSections`, there is NO `LabTest`-level fallback:
+ * `LabTest` carries no default Overall Result, so a parameter with no
+ * template ever applied simply has no entry in the `overallResults` array.
+ * `templateId` is a logical reference (no Prisma relation) recording which
+ * template produced `content`, purely so the UI can show which one is
+ * currently active — editing `content` after applying never writes back to
+ * the source `OverallResultTemplate`.
+ */
+export interface LabReportOverallResult {
+  resultParamId: string;
+  templateId: string | null;
+  content: string | null;
 }
 
 /**
@@ -105,6 +131,19 @@ export interface LabReportResultParam {
   resultSuggestions: string[];
   /** Pre-fills Observed 1 when the technician hasn't entered a value yet. */
   defaultValue: string | null;
+  /** Admin-configured section this parameter belongs to on the Test Entry
+   * grid (e.g. "Chemical Examination", "Microscopic Examination") — purely
+   * organizational, groups rows into collapsible sections. Null/empty groups
+   * into an "Ungrouped" section on the frontend. */
+  groupName: string | null;
+  /** `OverallResultTemplate.groupName` values this parameter is tagged
+   * compatible with (Master Data > Add Multiple Results > Configure >
+   * "Overall Result" tab). Matched by plain string equality — no FK/relation.
+   * Drives which Overall Result templates the Technician Dashboard offers for
+   * a report whose test has this parameter (see `OverallResultTemplateService
+   * .findAll`'s `groupName`/`groupNames` filter). Empty array = this
+   * parameter isn't tagged into any Overall Result group. */
+  overallResultGroups: string[];
 }
 
 /** Full detail response: the report plus its (possibly all-null) content
@@ -115,6 +154,10 @@ export interface LabReportResultParam {
  * instead (flattened, see `LabReportService.findByIdForApi`). */
 export type LabReportDetailWithContent = LabReportDetail & {
   contentSections: LabReportContentSections;
+  /** One entry per result parameter that has an Overall Result applied —
+   * NOT one per report (see `LabReportOverallResult`'s doc comment). A
+   * parameter with nothing applied simply has no entry here. */
+  overallResults: LabReportOverallResult[];
   resultParams: LabReportResultParam[];
 };
 
@@ -131,6 +174,7 @@ export type LabReportDetailApiResponse = LabReportWorklistRow &
     'resultValues' | 'notes' | 'attachments' | 'multiStepProcess'
   > & {
     contentSections: LabReportContentSections;
+    overallResults: LabReportOverallResult[];
     resultParams: LabReportResultParam[];
   };
 

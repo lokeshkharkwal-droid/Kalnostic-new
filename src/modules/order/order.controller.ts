@@ -990,6 +990,9 @@ export class OrderController {
       personId,
       {
         print: dto.print,
+        tubeType: dto.tubeType,
+        notes: dto.notes,
+        attachmentUrl: dto.attachmentUrl,
       },
     );
   }

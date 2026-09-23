@@ -1,7 +1,7 @@
 meta {
   name: 24 Bulk Collect Samples
   type: http
-  seq: 21
+  seq: 23
 }
 
 post {
@@ -38,7 +38,7 @@ docs {
   the bulk endpoint with `sampleIdA`/`sampleIdB`/`sampleIdC` so a single request
   advances the whole panel group. Requires
   `accession:in_house_order__collect_the_sample` (granted in step 08).
-
+  
   `collect` is legal only from `NEW`/`HOLD`/`REPEAT`; on a fresh run all three are
   `NEW`. `skipInvalid: true` makes the batch skip any sample that is NOT in a
   collectable state instead of failing the whole request with

@@ -78,6 +78,22 @@ export class SaveTechnicianSettingsDto {
   @IsBoolean()
   isInterpretationEditable?: boolean;
 
+  @IsOptional()
+  @IsBoolean()
+  isLimitationsEditable?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isRemarksEditable?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isReferencesEditable?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isOverallResultEditable?: boolean;
+
   /** Reason options for the "Adjust TAT" audit-log dropdown. */
   @IsOptional()
   @IsArray()

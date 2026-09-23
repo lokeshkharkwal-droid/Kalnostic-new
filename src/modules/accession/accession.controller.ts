@@ -74,9 +74,15 @@ export class AccessionController {
   findAll(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
     @Query() query: ListSamplesDto,
   ) {
-    return this.sampleService.findAll(tenantId, profile.branchId, query);
+    return this.sampleService.findAll(
+      tenantId,
+      profile.branchId,
+      query,
+      personId,
+    );
   }
 
   /** Summary counts for the status tabs (§A.5) + TAT bar (§A.4) + total. */
@@ -84,8 +90,9 @@ export class AccessionController {
   summary(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
   ) {
-    return this.sampleService.summary(tenantId, profile.branchId);
+    return this.sampleService.summary(tenantId, profile.branchId, personId);
   }
 
   /**
@@ -97,9 +104,15 @@ export class AccessionController {
   findAllGrouped(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
     @Query() query: ListSamplesDto,
   ) {
-    return this.sampleService.findAllGrouped(tenantId, profile.branchId, query);
+    return this.sampleService.findAllGrouped(
+      tenantId,
+      profile.branchId,
+      query,
+      personId,
+    );
   }
 
   /**

@@ -1,0 +1,32 @@
+meta {
+  name: 10 Delete - Success (no active order)
+  type: http
+  seq: 10
+}
+
+delete {
+  url: {{baseUrl}}/external-referrals/{{flowReferralId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("soft-deleted (deletedAt set)", function () {
+    expect(res.getBody().data.deletedAt).to.not.equal(null);
+  });
+}
+
+docs {
+  Step 10 — with **no active order** referencing it, the delete guard passes and the
+  referral is soft-deleted (`deletedAt` set). If an active-workflow order existed,
+  this same request would instead return **409 `EXTERNAL_REFERRAL_IN_USE`** (see the
+  folder docs for how to reproduce). Historical / cancelled / fully-published orders
+  do NOT block deletion.
+}

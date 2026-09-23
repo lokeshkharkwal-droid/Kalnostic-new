@@ -1,0 +1,23 @@
+meta {
+  name: Get Overall Result Template
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/overall-result-templates/{{overallResultTemplateId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Fetch one template by id (scoped to the caller's tenant). 404
+  `OVERALL_RESULT_TEMPLATE_NOT_FOUND` if missing or soft-deleted.
+
+  Uses `overallResultTemplateId` captured by *Create Overall Result Template*.
+  Run that request first, or set the var manually.
+}

@@ -290,8 +290,8 @@ docs {
     `calculationFormula` (optional even when `parameterType=CALCULATED`; when
     set it is validated — see "Calculated parameter formulas" below),
     `resultRoundingType`, `allowableUnits`, `decimalPlaces`, `criticalMin`,
-    `criticalMax`, `reflexTests[]`, `notes`, `isNabl`, `isCap`, `sortOrder`,
-    `referenceRanges[]`, `referenceValues[]`. Per-parameter settings refs
+    `criticalMax`, `reflexTests[]`, `overallResultGroups[]`, `notes`, `isNabl`,
+    `isCap`, `sortOrder`, `referenceRanges[]`, `referenceValues[]`. Per-parameter settings refs
     `groupSettingsId`, `iconSettingsId`, `imageSettingsId` are optional UUIDs.
   
   ## Logical-reference ids (no existence check on create)
@@ -325,7 +325,19 @@ docs {
   resolve names. `id` must be a valid UUID and `name` a non-empty string, but the
   id is **not existence-checked** against lab tests. (The old bare
   `reflexTestIds: string[]` array input is no longer accepted.)
-  
+
+  ## Overall Result groups
+
+  Each result param may carry `overallResultGroups: string[]` — free-text
+  `OverallResultTemplate.groupName` values (see Business Settings → Overall
+  Result Templates → `GET /overall-result-templates/group-names` for the
+  distinct list to pick from). Matched by string equality; **not
+  FK-validated** against any catalogue on write, same convention as the
+  top-level `groupName` field. A parameter may link to several groups; a group
+  name may be linked to many parameters across many tests. This only stores
+  the link — it does not itself attach any content to a report (that
+  consumption logic is a separate, not-yet-built phase).
+
   ## Enums (UPPERCASE)
   
   `processMethod` (SINGLE_STEP|MULTI_STEP), `samplePriorityType`

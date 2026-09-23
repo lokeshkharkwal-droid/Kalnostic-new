@@ -33,7 +33,10 @@ import {
 import { MasterDataService } from '../master-data/master-data.service';
 import { CreateLabTestDto } from './dto/create-lab-test.dto';
 import { UpdateLabTestDto } from './dto/update-lab-test.dto';
-import { ListLabTestsDto } from './dto/list-lab-tests.dto';
+import {
+  BrowseLabTestTemplatesDto,
+  ListLabTestsDto,
+} from './dto/list-lab-tests.dto';
 import { LabTestResultParamDto } from './dto/lab-test-result-param.dto';
 import { LabTestReferenceRangeDto } from './dto/lab-test-reference-range.dto';
 import { AddLabTestVersionDto } from './dto/add-lab-test-version.dto';
@@ -592,19 +595,115 @@ export class LabTestService {
     const limit = query.limit ?? 20;
 
     const where = await this.buildListWhere(masterDataId, tenantId, query);
+    const sort = this.buildListOrderBy(query.sortBy, query.sortOrder);
+
+    // Derived sorts (child-row counts) can't be expressed as a Prisma `orderBy`,
+    // so sort the whole filtered set by the computed value first, then paginate.
+    if (sort.kind === 'derived') {
+      const tests = await this.sortByChildCount(
+        where,
+        tenantId,
+        sort.field,
+        sort.dir,
+        page,
+        limit,
+      );
+      const total = await this.prisma.labTest.count({ where });
+      const data = await this.projectListRows(view, tenantId, tests);
+      return { data, total, page, limit };
+    }
 
     const [tests, total] = await Promise.all([
       this.prisma.labTest.findMany({
         where,
         skip: (page - 1) * limit,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy: sort.orderBy,
       }),
       this.prisma.labTest.count({ where }),
     ]);
 
     const data = await this.projectListRows(view, tenantId, tests);
     return { data, total, page, limit };
+  }
+
+  /**
+   * Resolve a listing `sortBy`/`sortOrder` (`1` asc / `-1` desc) into either a
+   * Prisma `orderBy` (scalar column or the `department` relation name) or a
+   * `derived` marker for child-count sorts handled in-memory. Falls back to
+   * `createdAt desc` when no sort is requested.
+   */
+  private buildListOrderBy(
+    sortBy: ListLabTestsDto['sortBy'],
+    sortOrder: ListLabTestsDto['sortOrder'],
+  ):
+    | { kind: 'prisma'; orderBy: Prisma.LabTestOrderByWithRelationInput }
+    | {
+        kind: 'derived';
+        field: 'parametersCount' | 'samplesCount';
+        dir: 'asc' | 'desc';
+      } {
+    const dir: 'asc' | 'desc' = sortOrder === -1 ? 'desc' : 'asc';
+    if (!sortBy) {
+      return { kind: 'prisma', orderBy: { createdAt: 'desc' } };
+    }
+    if (sortBy === 'departmentName') {
+      return { kind: 'prisma', orderBy: { department: { name: dir } } };
+    }
+    if (sortBy === 'parametersCount' || sortBy === 'samplesCount') {
+      return { kind: 'derived', field: sortBy, dir };
+    }
+    return { kind: 'prisma', orderBy: { [sortBy]: dir } };
+  }
+
+  /**
+   * Sort the whole filtered set of lab tests by an active child-row count
+   * (`parametersCount` → result params, `samplesCount` → samples), then return
+   * the requested page's rows in sorted order. Ties break by newest-first so
+   * paging is stable. Runs before pagination so the count order is global.
+   */
+  private async sortByChildCount(
+    where: Prisma.LabTestWhereInput,
+    tenantId: string | null,
+    field: 'parametersCount' | 'samplesCount',
+    dir: 'asc' | 'desc',
+    page: number,
+    limit: number,
+  ): Promise<LabTest[]> {
+    const all = await this.prisma.labTest.findMany({
+      where,
+      select: { id: true, createdAt: true },
+    });
+    if (all.length === 0) {
+      return [];
+    }
+    const counts = await this.countByTest(
+      field === 'samplesCount' ? 'labTestSample' : 'labTestResultParam',
+      tenantId,
+      all.map((t) => t.id),
+    );
+    const factor = dir === 'asc' ? 1 : -1;
+    const pageIds = all
+      .map((t) => ({
+        id: t.id,
+        createdAt: t.createdAt,
+        value: counts.get(t.id) ?? 0,
+      }))
+      .sort((a, b) =>
+        a.value !== b.value
+          ? (a.value - b.value) * factor
+          : b.createdAt.getTime() - a.createdAt.getTime(),
+      )
+      .slice((page - 1) * limit, page * limit)
+      .map((x) => x.id);
+
+    const rows = await this.prisma.labTest.findMany({
+      where: { id: { in: pageIds } },
+    });
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    return pageIds
+      .map((id) => byId.get(id))
+      .filter((r): r is LabTest => r !== undefined);
   }
 
   // ── Listing projection ────────────────────────────────────────────────────────
@@ -1175,24 +1274,17 @@ export class LabTestService {
           );
         }
         if (resultParams !== undefined) {
-          await tx.labTestReferenceRange.updateMany({
-            where: { labTestId, tenantId, deletedAt: null },
-            data: { deletedAt: now },
-          });
-          await tx.labTestReferenceValue.updateMany({
-            where: { labTestId, tenantId, deletedAt: null },
-            data: { deletedAt: now },
-          });
-          await tx.labTestResultParam.updateMany({
-            where: { labTestId, tenantId, deletedAt: null },
-            data: { deletedAt: now },
-          });
-          await this.createParams(
+          // Match-by-`parameterCode` and patch in place (see `upsertParamsByCode`
+          // doc) — a blind soft-delete-and-recreate here would regenerate every
+          // parameter's id on each save and orphan any `LabReportResultValue`
+          // (and `CriticalAlert`/`OutOfRangeFlag`) already pointing at it.
+          await this.upsertParamsByCode(
             tx,
             tenantId,
             existing.branchId,
             labTestId,
             resultParams,
+            now,
           );
         }
       });
@@ -1350,9 +1442,13 @@ export class LabTestService {
    * Sync (update-or-create-or-delete) all active lab tests from a Tenant Master
    * Data into a Branch Master Data, keyed on `sourceMasterLabTestId` (falling
    * back to `testCode` to adopt a legacy branch row and avoid a unique
-   * collision). A matched branch test is FULLY overwritten from the tenant
-   * test (scalars + hard-deleted/rebuilt children, version bumped); an
-   * unmatched one is cloned. Runs inside the caller's transaction. Returns a
+   * collision). A matched branch test has its scalars fully overwritten from
+   * the tenant test (version bumped); its samples are rebuilt (full-replace)
+   * but its result params are matched-and-patched by `parameterCode` via
+   * `upsertTestChildren`, preserving each matched param's id (and thus any
+   * `LabReportResultValue` already saved against it) — see that method's doc.
+   * An unmatched tenant test is cloned. Runs inside the caller's transaction.
+   * Returns a
    * `tenantTestId → branchTestId` map (so panels can remap membership) plus
    * counts. A branch test whose tenant source has been soft-deleted (i.e. no
    * longer among the active `sourceTests`) is itself soft-deleted, cascading
@@ -1425,20 +1521,14 @@ export class LabTestService {
             versionHistory: history as unknown as Prisma.InputJsonValue,
           },
         });
-        // Rebuild children: hard-delete then recopy from the tenant test.
-        await tx.labTestReferenceRange.deleteMany({
-          where: { labTestId: target.id, tenantId },
-        });
-        await tx.labTestReferenceValue.deleteMany({
-          where: { labTestId: target.id, tenantId },
-        });
-        await tx.labTestResultParam.deleteMany({
-          where: { labTestId: target.id, tenantId },
-        });
+        // Rebuild samples (no natural key, full-replace); match-and-patch
+        // params by `parameterCode` instead of hard-deleting them, so an
+        // existing `LabReportResultValue.resultParamId` isn't orphaned (see
+        // `upsertTestChildren` doc).
         await tx.labTestSample.deleteMany({
           where: { labTestId: target.id, tenantId },
         });
-        await this.copyTestChildren(tx, src.id, src.tenantId, {
+        await this.upsertTestChildren(tx, src.id, src.tenantId, {
           tenantId,
           branchId,
           labTestId: target.id,
@@ -1671,6 +1761,142 @@ export class LabTestService {
     }
   }
 
+  /**
+   * Refresh an EXISTING test's children (samples, result params, and each
+   * param's reference ranges/values) from `srcTestId`, matching params by
+   * `parameterCode` (case-insensitive) and patching them in place instead of
+   * blindly deleting and recreating — same rationale as `upsertParamsByCode`:
+   * other modules hold logical (non-FK) references to `LabTestResultParam.id`
+   * (`LabReportResultValue.resultParamId`, `CriticalAlert.resultParamId`,
+   * `OutOfRangeFlag.resultParamId`), so regenerating every param's id on every
+   * sync would silently orphan any existing lab report tied to that
+   * parameter. Used by `syncTestsIntoBranch` and `syncTemplates` in place of
+   * `copyTestChildren` for a MATCHED (already-existing) target test —
+   * `copyTestChildren` is still correct for a brand-new target with nothing to
+   * preserve. Samples and reference ranges/values keep the existing
+   * full-replace contract (neither carries a natural key). Assumes the caller
+   * has already deleted the target's samples (this only recreates them) and
+   * has NOT deleted the target's params/ranges/values.
+   */
+  private async upsertTestChildren(
+    tx: Prisma.TransactionClient,
+    srcTestId: string,
+    srcTenantId: string | null,
+    target: {
+      tenantId: string | null;
+      branchId: string | null;
+      labTestId: string;
+    },
+  ): Promise<void> {
+    const { tenantId, branchId, labTestId } = target;
+    const samples = await tx.labTestSample.findMany({
+      where: { labTestId: srcTestId, tenantId: srcTenantId, deletedAt: null },
+    });
+    if (samples.length) {
+      await tx.labTestSample.createMany({
+        data: samples.map((s) => ({
+          ...this.stripMeta(s),
+          tenantId,
+          branchId,
+          labTestId,
+        })),
+      });
+    }
+
+    const existingParams = await tx.labTestResultParam.findMany({
+      where: { labTestId, tenantId, deletedAt: null },
+      select: { id: true, parameterCode: true },
+    });
+    const existingByCode = new Map(
+      existingParams.map((p) => [p.parameterCode.toLowerCase(), p.id]),
+    );
+    const matchedIds = new Set<string>();
+
+    const srcParams = await tx.labTestResultParam.findMany({
+      where: { labTestId: srcTestId, tenantId: srcTenantId, deletedAt: null },
+    });
+    for (const param of srcParams) {
+      const scalars = this.stripMeta(param);
+      const existingId = existingByCode.get(param.parameterCode.toLowerCase());
+
+      let paramId: string;
+      if (existingId) {
+        matchedIds.add(existingId);
+        await tx.labTestResultParam.update({
+          where: { id: existingId },
+          data: scalars,
+        });
+        paramId = existingId;
+        await tx.labTestReferenceRange.updateMany({
+          where: { paramId, tenantId, deletedAt: null },
+          data: { deletedAt: new Date() },
+        });
+        await tx.labTestReferenceValue.updateMany({
+          where: { paramId, tenantId, deletedAt: null },
+          data: { deletedAt: new Date() },
+        });
+      } else {
+        const created = await tx.labTestResultParam.create({
+          data: {
+            ...scalars,
+            tenantId,
+            branchId,
+            labTestId,
+          } as Prisma.LabTestResultParamUncheckedCreateInput,
+        });
+        paramId = created.id;
+      }
+
+      const ranges = await tx.labTestReferenceRange.findMany({
+        where: { paramId: param.id, tenantId: srcTenantId, deletedAt: null },
+      });
+      if (ranges.length) {
+        await tx.labTestReferenceRange.createMany({
+          data: ranges.map((r) => ({
+            ...this.stripMeta(r),
+            tenantId,
+            branchId,
+            labTestId,
+            paramId,
+          })),
+        });
+      }
+      const values = await tx.labTestReferenceValue.findMany({
+        where: { paramId: param.id, tenantId: srcTenantId, deletedAt: null },
+      });
+      if (values.length) {
+        await tx.labTestReferenceValue.createMany({
+          data: values.map((v) => ({
+            ...this.stripMeta(v),
+            tenantId,
+            branchId,
+            labTestId,
+            paramId,
+          })) as Prisma.LabTestReferenceValueCreateManyInput[],
+        });
+      }
+    }
+
+    const droppedIds = existingParams
+      .map((p) => p.id)
+      .filter((id) => !matchedIds.has(id));
+    if (droppedIds.length) {
+      const now = new Date();
+      await tx.labTestResultParam.updateMany({
+        where: { id: { in: droppedIds } },
+        data: { deletedAt: now },
+      });
+      await tx.labTestReferenceRange.updateMany({
+        where: { paramId: { in: droppedIds }, deletedAt: null },
+        data: { deletedAt: now },
+      });
+      await tx.labTestReferenceValue.updateMany({
+        where: { paramId: { in: droppedIds }, deletedAt: null },
+        data: { deletedAt: now },
+      });
+    }
+  }
+
   // ── Site Admin global templates ─────────────────────────────────────────────────
 
   /**
@@ -1742,7 +1968,7 @@ export class LabTestService {
    * @param query view + search + status + pagination
    */
   async findAllTemplates(
-    query: ListLabTestsDto = {},
+    query: BrowseLabTestTemplatesDto = {},
     tenantId?: string,
   ): Promise<PaginatedResult<ImportableTemplateRow>> {
     const view = query.view ?? LabTestListView.DEFAULT;
@@ -2051,10 +2277,12 @@ export class LabTestService {
   }
 
   /**
-   * Re-pull previously-imported lab tests from their SITE_ADMIN templates. Full
-   * overwrite: the tenant copy's scalars are replaced from the template and its
-   * children (samples, params, reference ranges/values) are hard-deleted and
-   * recreated (avoids unique-code `P2002` from soft-deleted rows). Identity
+   * Re-pull previously-imported lab tests from their SITE_ADMIN templates. The
+   * tenant copy's scalars are replaced from the template (version bumped);
+   * its samples are rebuilt (full-replace) but its result params are
+   * matched-and-patched by `parameterCode` via `upsertTestChildren`,
+   * preserving each matched param's id (and thus any `LabReportResultValue`
+   * already saved against it) — see that method's doc. Identity
    * (`id`/`tenantId`/`branchId`/`masterDataId`/`source`/`clonedFromId`) is
    * preserved, `versionHistory` is bumped, and `templateSyncedAt` is stamped.
    * Hand-created tests (`clonedFromId = null`) are never touched. Each test is
@@ -2132,20 +2360,14 @@ export class LabTestService {
               versionHistory: history as unknown as Prisma.InputJsonValue,
             },
           });
-          // Rebuild children: hard-delete then recreate from the template.
-          await tx.labTestReferenceRange.deleteMany({
-            where: { labTestId: test.id, tenantId },
-          });
-          await tx.labTestReferenceValue.deleteMany({
-            where: { labTestId: test.id, tenantId },
-          });
-          await tx.labTestResultParam.deleteMany({
-            where: { labTestId: test.id, tenantId },
-          });
+          // Rebuild samples (no natural key, full-replace); match-and-patch
+          // params by `parameterCode` instead of hard-deleting them, so an
+          // existing `LabReportResultValue.resultParamId` isn't orphaned (see
+          // `upsertTestChildren` doc).
           await tx.labTestSample.deleteMany({
             where: { labTestId: test.id, tenantId },
           });
-          await this.copyTestChildren(tx, template.id, template.tenantId, {
+          await this.upsertTestChildren(tx, template.id, template.tenantId, {
             tenantId,
             branchId: test.branchId,
             labTestId: test.id,
@@ -4326,19 +4548,20 @@ export class LabTestService {
   }
 
   /**
-   * Xlsx-import update path only: replace a test's result parameters while
+   * Shared update-path helper (used by both `LabTestService.update()` and the
+   * xlsx-import update path): replace a test's result parameters while
    * preserving the DB `id` of any parameter whose `parameterCode` (case-
    * insensitive) matches one that's already active on this test. Other
    * modules hold logical (non-FK) references to `LabTestResultParam.id` —
    * `LabReportResultValue.resultParamId`, `CriticalAlert.resultParamId`,
    * `OutOfRangeFlag.resultParamId` — so a blind delete-and-recreate on every
-   * re-import (what `createParams` does) would silently orphan any existing
-   * lab report tied to that parameter. A matched parameter's scalars are
-   * patched in place and its reference ranges/values are fully replaced
-   * (those have no natural key in the xlsx format — full-replace there
-   * matches `LabTestService.update()`'s existing contract); an unmatched
-   * uploaded code creates a new parameter; an existing active parameter
-   * whose code no longer appears in the upload is soft-deleted.
+   * save (what `createParams` does, and what this replaced in `update()`)
+   * would silently orphan any existing lab report tied to that parameter. A
+   * matched parameter's scalars are patched in place and its reference
+   * ranges/values are fully replaced (neither DTO carries a natural key for
+   * ranges/values, so full-replace is the existing, unchanged contract); an
+   * unmatched incoming code creates a new parameter; an existing active
+   * parameter whose code no longer appears in the payload is soft-deleted.
    */
   private async upsertParamsByCode(
     tx: Prisma.TransactionClient,

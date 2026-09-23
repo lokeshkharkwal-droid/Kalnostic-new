@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import {
   CommunicationLog,
   CommunicationStatus,
@@ -57,6 +57,8 @@ interface CommunicationPayload {
  */
 @Injectable()
 export class CommunicationService {
+  private readonly logger = new Logger(CommunicationService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly exchange: ExchangeClient,
@@ -269,8 +271,22 @@ export class CommunicationService {
   async dispatch(row: CommunicationLog): Promise<ExchangeResponse | null> {
     const payload = (row.payload as CommunicationPayload | null) ?? {};
     const meta = payload.exchange ?? {};
+    // The Exchange server counts messages per integer tenant id (peer_tenant_id).
+    // Resolve the tenant's stable exchangeTenantId; never fall back to the UUID,
+    // or counts land in the wrong bucket. `tenants` is platform-level (no RLS).
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: row.tenantId },
+      select: { exchangeTenantId: true },
+    });
+    if (tenant?.exchangeTenantId == null) {
+      this.logger.error(
+        `Cannot dispatch communication ${row.id}: tenant ${row.tenantId} has ` +
+          `no exchangeTenantId (run 'pnpm sync:tenant-exchange-id').`,
+      );
+      return null;
+    }
     const peer = {
-      tenantId: row.tenantId,
+      tenantId: String(tenant.exchangeTenantId),
       branchId: row.branchId ?? '',
     };
     const reqParams = {

@@ -6,6 +6,7 @@ import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-temp
 import { PrismaService } from '../../prisma/prisma.service';
 import { TenantService } from '../tenant/tenant.service';
 import { BarcodeService } from './barcode.service';
+import { UserDepartmentScopeService } from '../department/user-department-scope.service';
 
 /**
  * Unit coverage for the panel sample-resolution helpers (all private, exercised
@@ -36,6 +37,7 @@ describe('OrderSampleService — panel sample resolution', () => {
       {} as unknown as EventEmitter2,
       {} as unknown as TenantService,
       {} as unknown as BarcodeService,
+      {} as unknown as UserDepartmentScopeService,
     );
   });
 
@@ -201,6 +203,7 @@ describe('OrderSampleService — reconcileForOrderInTx (remove path)', () => {
       {} as unknown as EventEmitter2,
       {} as unknown as TenantService,
       {} as unknown as BarcodeService,
+      {} as unknown as UserDepartmentScopeService,
     );
   }
 
