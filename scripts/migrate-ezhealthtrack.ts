@@ -1,11 +1,11 @@
 /**
  * EzHealthTrack → Kalnostics-New data migration runner.
  *
- * Migrates ONE legacy tenant's Tenant → Branches → Patients → Referring Panels
+ * Migrates ONE legacy tenant's Tenant → Branches → Patients (+ family links)
  * out of the legacy EzHealthTrack MySQL database into this app's PostgreSQL,
  * REUSING the real Nest services (so DTO logic, sequential-code generation, RLS
  * tenant context and audit all behave exactly as in production). It never inserts
- * with a raw Prisma client.
+ * with a raw Prisma client. (Referring-panel import was removed per client request.)
  *
  * The run is IDEMPOTENT: every stage looks the row up by its legacy id first and
  * skips it if already migrated, so re-running only fills gaps. Provenance is kept
@@ -45,7 +45,6 @@ import {
   AgeType,
   BranchType,
   Gender,
-  ReferralClientType,
   Relationship,
   Salutation,
 } from '@prisma/client';
@@ -55,11 +54,9 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { TenantService } from '../src/modules/tenant/tenant.service';
 import { BranchService } from '../src/modules/branch/branch.service';
 import { PatientService } from '../src/modules/patient/patient.service';
-import { ReferralPanelService } from '../src/modules/referral-panel/referral-panel.service';
 import type { CreateTenantDto } from '../src/modules/tenant/dto/create-tenant.dto';
 import type { CreateBranchDto } from '../src/modules/branch/dto/create-branch.dto';
 import type { CreatePatientDto } from '../src/modules/patient/dto/create-patient.dto';
-import type { CreateReferralPanelDto } from '../src/modules/referral-panel/dto/create-referral-panel.dto';
 
 const logger = new Logger('EzhtMigration');
 
@@ -276,24 +273,6 @@ function buildPhotoUrl(diskPath: unknown, rawPhoto: unknown): string | undefined
   return undefined; // no S3-backed system_files row → can't form a working URL
 }
 
-/** Pull the first `{num}` / `{email}` out of a legacy JSON-array text column. */
-function firstFromJsonArray(raw: unknown, key: 'num' | 'email'): string | null {
-  const s = str(raw);
-  if (!s) return null;
-  try {
-    const parsed = JSON.parse(s) as Array<Record<string, unknown>>;
-    if (Array.isArray(parsed)) {
-      for (const item of parsed) {
-        const val = str(item?.[key]);
-        if (val) return val;
-      }
-    }
-  } catch {
-    // not JSON — ignore
-  }
-  return null;
-}
-
 interface RunReport {
   legacyTenantId: number;
   newTenantId: string | null;
@@ -305,11 +284,6 @@ interface RunReport {
     familyBypass: Array<{ legacyPatientId: number; mobile: string }>;
     missingMobile: Array<{ legacyPatientId: number; name: string }>;
     errors: Array<{ legacyPatientId: number; message: string }>;
-  };
-  panels: {
-    created: number;
-    skipped: number;
-    errors: Array<{ legacyId: number; message: string }>;
   };
   family: {
     created: number;
@@ -342,7 +316,6 @@ async function main(): Promise<void> {
       missingMobile: [],
       errors: [],
     },
-    panels: { created: 0, skipped: 0, errors: [] },
     family: { created: 0, skipped: 0, unresolved: [], errors: [] },
   };
 
@@ -354,7 +327,6 @@ async function main(): Promise<void> {
   const tenantService = app.get(TenantService);
   const branchService = app.get(BranchService);
   const patientService = app.get(PatientService);
-  const referralPanelService = app.get(ReferralPanelService);
 
   try {
     // ── Stage 1: Tenant ──────────────────────────────────────────────────────
@@ -411,16 +383,8 @@ async function main(): Promise<void> {
       report,
     );
 
-    // ── Stage 4: Referring panels → ReferralPanel ────────────────────────────
-    await migratePanels(
-      mysql,
-      prisma,
-      referralPanelService,
-      legacyTenantId,
-      newTenantId,
-      branchMap,
-      report,
-    );
+    // NOTE: Referring-panel import (former Stage 4) was removed at the client's
+    // request — panels are no longer migrated into the new database.
   } finally {
     await mysql.end();
     await app.close();
@@ -431,8 +395,7 @@ async function main(): Promise<void> {
     `Done. tenant=${report.tenant.created ? 'created' : 'existing'} ` +
       `branches +${report.branches.created}/skip ${report.branches.skipped} ` +
       `patients +${report.patients.created}/skip ${report.patients.skipped} ` +
-      `family +${report.family.created}/skip ${report.family.skipped} ` +
-      `panels +${report.panels.created}/skip ${report.panels.skipped}`,
+      `family +${report.family.created}/skip ${report.family.skipped}`,
   );
 }
 
@@ -889,8 +852,7 @@ async function migratePatients(
       whatsappNumber: str(row.whatsapp_number) ?? undefined,
       email: email && EMAIL.test(email) ? email : undefined,
       // Geo columns are numeric ids in legacy (resolve → name) but may be plain
-      // names in some data (pass through) — resolveGeoValue handles both, matching
-      // the referral-panel path.
+      // names in some data (pass through) — resolveGeoValue handles both.
       country: resolveGeoValue(row.PATIENT_CONTRY, countryMap),
       state: resolveGeoValue(row.PATIENT_STATE, stateMap),
       city: resolveGeoValue(row.PATIENT_CITY, cityMap),
@@ -1059,153 +1021,6 @@ async function migrateFamilyLinks(
   logger.log(
     `  family: +${report.family.created}, skip ${report.family.skipped}, ` +
       `unresolved ${report.family.unresolved.length}, errors ${report.family.errors.length}`,
-  );
-}
-
-/**
- * Migrate business-level referring_panels (parent_id = 0) → ReferralPanel,
- * BRANCH-SCOPED. A legacy panel is associated with the branches it has
- * commission/pricing rows for in `referring_panel_price_detail` (branch_id). We
- * create one `ReferralPanel` PER associated (migrated) branch, with `branchId`
- * set; a panel with no branch mapping becomes a single tenant-level row
- * (`branchId = null`). Idempotency is keyed on (legacyId, branchId).
- */
-async function migratePanels(
-  mysql: Connection,
-  prisma: PrismaService,
-  referralPanelService: ReferralPanelService,
-  legacyTenantId: number,
-  newTenantId: string,
-  branchMap: Map<number, string>,
-  report: RunReport,
-): Promise<void> {
-  const [rows] = await mysql.query<LegacyRow[]>(
-    'SELECT * FROM referring_panels WHERE tenant_id = ? AND (parent_id = 0 OR parent_id IS NULL) ORDER BY id',
-    [legacyTenantId],
-  );
-  if (rows.length === 0) {
-    logger.log('No business-level referring panels for this tenant.');
-    return;
-  }
-
-  // Panel → set of legacy branch ids it's associated with (the branch link lives
-  // in referring_panel_price_detail, NOT on the panel row itself).
-  const [mapRows] = await mysql.query<LegacyRow[]>(
-    'SELECT DISTINCT referring_panel_id AS panel, branch_id AS branch FROM referring_panel_price_detail WHERE tenant_id = ? AND branch_id > 0',
-    [legacyTenantId],
-  );
-  const branchesByPanel = new Map<number, Set<number>>();
-  for (const m of mapRows) {
-    const panel = intOrNull(m.panel);
-    const branch = intOrNull(m.branch);
-    if (panel === null || branch === null) continue;
-    if (!branchesByPanel.has(panel)) branchesByPanel.set(panel, new Set());
-    branchesByPanel.get(panel)!.add(branch);
-  }
-
-  // Panel country/state/city may be numeric geo ids — resolve to names.
-  const geoIds = (v: unknown): number[] => {
-    const n = intOrNull(v);
-    return n !== null && n > 0 ? [n] : [];
-  };
-  const pCountry = await loadGeoNames(mysql, 'country_table', 'COUNTRY_ID', 'COUNTRY_NAME', rows.flatMap((r) => geoIds(r.country)));
-  const pState = await loadGeoNames(mysql, 'state_table', 'STATE_ID', 'STATE_NAME', rows.flatMap((r) => geoIds(r.state)));
-  const pCity = await loadGeoNames(mysql, 'city_table', 'CITY_ID', 'CITY_NAME', rows.flatMap((r) => geoIds(r.city)));
-
-  // Existing migrated panels, keyed on (legacyId, branchId) for idempotency.
-  const done = await prisma.runWithTenant(newTenantId, () =>
-    prisma.referralPanel.findMany({
-      where: { tenantId: newTenantId, deletedAt: null, legacyId: { not: null } },
-      select: { legacyId: true, branchId: true },
-    }),
-  );
-  const key = (legacyId: number, branchId: string | null): string =>
-    `${legacyId}|${branchId ?? 'TENANT'}`;
-  const doneSet = new Set(done.map((p) => key(p.legacyId!, p.branchId)));
-
-  for (const rp of rows) {
-    const legacyId = intOrNull(rp.id);
-    if (legacyId === null) continue;
-    const name = str(rp.name) ?? `Panel ${legacyId}`;
-    const panelType = (str(rp.panel_type) ?? '').toLowerCase();
-    const clientType =
-      panelType === 'credit' ? ReferralClientType.POSTPAID : ReferralClientType.CASH;
-
-    // Director details — prefer the explicit director_* columns, then fall back
-    // to the panel's primary contact / phone-email JSON arrays.
-    const directorMobile =
-      str(rp.director_contact) ??
-      str(rp.primary_mobile_number) ??
-      firstFromJsonArray(rp.phone, 'num') ??
-      undefined;
-    const emailCandidate =
-      (str(rp.director_email) && EMAIL.test(str(rp.director_email)!)
-        ? str(rp.director_email)
-        : null) ??
-      (str(rp.primary_email) && EMAIL.test(str(rp.primary_email)!)
-        ? str(rp.primary_email)
-        : null) ??
-      firstFromJsonArray(rp.email, 'email');
-    const directorEmail = emailCandidate ?? undefined;
-
-    // Commission/credit config is intentionally left unconfigured here (advanced
-    // referral settings are out of scope for the first pass); the legacy values
-    // are preserved in `remarks` for later manual setup.
-    const remarks = [
-      `Migrated from EzHealthTrack (referring_panels.id=${legacyId}).`,
-      `panel_type=${str(rp.panel_type) ?? '-'}`,
-      `commission_type=${str(rp.commission_type) ?? '-'}`,
-      `commission_current=${str(rp.commission_current) ?? '-'}`,
-      `credit_limit=${str(rp.credit_limit) ?? '-'}`,
-    ].join(' ');
-
-    // Resolve the target branches: legacy branch ids (from price_detail) that map
-    // to a migrated branch. No mapping ⇒ a single tenant-level panel.
-    const legacyBranches = [...(branchesByPanel.get(legacyId) ?? new Set())];
-    const targetBranchIds: Array<string | null> = legacyBranches
-      .map((lb) => branchMap.get(lb) ?? null)
-      .filter((b): b is string => b !== null);
-    if (targetBranchIds.length === 0) targetBranchIds.push(null); // tenant-level
-
-    for (const branchId of targetBranchIds) {
-      if (doneSet.has(key(legacyId, branchId))) {
-        report.panels.skipped += 1;
-        continue;
-      }
-      const dto: CreateReferralPanelDto = {
-        name,
-        clientType,
-        branchId: branchId ?? undefined,
-        panelCode: str(rp.code) ?? undefined,
-        addressLine1: str(rp.address) ?? undefined,
-        country: resolveGeoValue(rp.country, pCountry),
-        city: resolveGeoValue(rp.city, pCity),
-        state: resolveGeoValue(rp.state, pState),
-        pincode: str(rp.zip) ?? undefined,
-        directorName: str(rp.director_name) ?? undefined,
-        directorMobile,
-        directorEmail,
-        remarks,
-      } as CreateReferralPanelDto;
-
-      try {
-        await prisma.runWithTenant(newTenantId, () =>
-          referralPanelService.create(newTenantId, branchId, null, dto, {
-            legacyId,
-          }),
-        );
-        doneSet.add(key(legacyId, branchId));
-        report.panels.created += 1;
-        logger.log(
-          `  panel ← legacy ${legacyId} ("${name}") branch=${branchId ?? 'TENANT-LEVEL'}`,
-        );
-      } catch (e) {
-        report.panels.errors.push({ legacyId, message: messageOf(e) });
-      }
-    }
-  }
-  logger.log(
-    `  panels: +${report.panels.created}, skip ${report.panels.skipped}, errors ${report.panels.errors.length}`,
   );
 }
 
