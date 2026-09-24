@@ -15,29 +15,39 @@
 //   tag        := "{" (plain-token | latte-tag | comment) "}"
 //
 //   comment       := "* … *"                       (stripped, renders empty)
-//   plain-token   := bare identifier               → data[name]; PAGENO/nb empty
+//   plain-token   := bare identifier               → data[name]; PAGENO/nb →
+//                                                    Puppeteer page-number spans
 //   latte-tag     :=
 //       "$" expr ("|" filter)*                      (variable output; HTML-escaped
-//                                                    unless |noescape is set)
-//     | "if" <cond> | "else" | "/if"                (conditional block)
+//                                                    unless |noescape is set;
+//                                                    |upper/|lower transform)
+//     | "if" <cond> | "elseif" <cond> | "else" | "/if"   (conditional block)
 //     | "foreach" $arr "as" [$k "=>"] $v | "/foreach"
+//     | "for" init ";" cond ";" incr | "/for"       (C-style counted loop)
 //     | "var" $name "=" expr                        (assign to current scope)
 //     | "define" name ("," $param)* … "/define"     (named block w/ params)
 //     | "include" name ("," argExpr)*               (render a named block)
 //
 // Expression surface (see `ExprParser`):
 //
-//   atom  := string | number | true|false|null | "$"path | identifier | "(" expr ")"
-//   unary := "!" unary | atom
-//   add   := unary (("+"|"-"|".") unary)*    ("+","-" numeric; "." string concat)
-//   cmp   := add (("=="|"!="|"<="|">="|"<"|">") add)?
-//   and   := cmp ("&&" cmp)*
-//   or    := and ("||" and)*
-//   expr  := or
+//   atom     := string | number | true|false|null | "$"path (with .prop / ->prop
+//               / [index]) | identifier | func"(" args ")" | "[" arrayLiteral "]"
+//               | "(" expr ")"
+//   unary    := ("!" | "-") unary | atom
+//   mul      := unary (("*"|"/"|"%") unary)*
+//   add      := mul (("+"|"-"|".") mul)*     ("+","-" numeric; "." string concat)
+//   cmp      := add (("=="|"!="|"<="|">="|"<"|">") add)?
+//   and      := cmp ("&&" cmp)*
+//   or       := and ("||" and)*
+//   coalesce := or ("??" or)*                 (null-coalescing)
+//   ternary  := coalesce ("?" ternary ":" ternary)?
+//   expr     := ternary
 //
-// `+`/`-`/`.` and `{define}`/`{include}` are additions over the legacy renderer
-// (which the Lab-All-Reports counting template — `{var $n = $n + 1}`,
-// `'page_header_' . $i`, `{include block-page-header, …}` — depends on).
+// Beyond the legacy renderer this supports: `elseif`, `{for}`, `* / %`, ternary
+// `?:`, null-coalescing `??`, array literals `[…]`/`['k' => v]` + index access
+// `$a[k]`, and a curated set of safe function calls (see `FUNCTIONS`). Function
+// calls are deliberately whitelisted — arbitrary calls are NOT possible, since
+// templates are tenant-authored data.
 //
 // Scope rules:
 //   A stack of frames. `{foreach}` and `{var}` mutate the top frame; reads walk
@@ -60,9 +70,15 @@ interface RenderCtx {
   defines: Map<string, DefineBlock>;
 }
 
-// {PAGENO} / {nb} are mPDF page-number tokens; Puppeteer computes page numbers
-// separately, so we emit empty strings.
-const EMPTY_TOKENS = new Set(['PAGENO', 'nb']);
+// {PAGENO} / {nb} are mPDF page-number tokens. Puppeteer computes page numbers
+// itself and only fills them into elements carrying its special classes rendered
+// inside the header/footer margin templates, so we map these tokens to those
+// spans (mirroring the advance/block renderer). In the body they stay empty —
+// Chromium substitutes the counts only within the header/footer bands.
+const PAGE_NUMBER_TOKENS: Record<string, string> = {
+  PAGENO: '<span class="pageNumber"></span>',
+  nb: '<span class="totalPages"></span>',
+};
 
 // ─── Public entry point ──────────────────────────────────────────────────────
 
@@ -132,8 +148,18 @@ type Node =
       valVar: string;
       body: Node[];
     }
+  | {
+      type: 'for';
+      init: { name: string; expr: string } | null;
+      cond: string;
+      incr: { name: string; expr: string } | null;
+      body: Node[];
+    }
   | { type: 'var'; name: string; expr: string }
   | { type: 'include'; name: string; args: string[] };
+
+/** The `if` node variant — built as a chain (each `elseif` nests in `else`). */
+type IfNode = Extract<Node, { type: 'if' }>;
 
 function parse(source: string): {
   nodes: Node[];
@@ -172,23 +198,40 @@ function parse(source: string): {
         continue;
       }
       if (head === 'if') {
-        const cond = trimmed.slice(2).trim();
-        const thenBlock = parseBlock(['else', '/if']);
-        let elseBlock: Node[] = [];
-        if (thenBlock.stopped === 'else') {
+        // Build an if / elseif* / else chain. Each `{elseif}` becomes a nested
+        // `if` in the previous branch's `else`, so the renderer's plain if-node
+        // handles the whole chain with no extra node type.
+        const rootThen = parseBlock(['elseif', 'else', '/if']);
+        const rootNode: IfNode = {
+          type: 'if',
+          cond: trimmed.slice(2).trim(),
+          then: rootThen.nodes,
+          else: [],
+        };
+        let current = rootNode;
+        let stopped = rootThen.stopped;
+        while (stopped !== null && firstWord(stopped) === 'elseif') {
+          i++; // consume the {elseif …} token
+          const branch = parseBlock(['elseif', 'else', '/if']);
+          const elifNode: IfNode = {
+            type: 'if',
+            cond: stopped.slice(6).trim(),
+            then: branch.nodes,
+            else: [],
+          };
+          current.else = [elifNode];
+          current = elifNode;
+          stopped = branch.stopped;
+        }
+        if (stopped !== null && firstWord(stopped) === 'else') {
           i++; // consume {else}
           const elseParsed = parseBlock(['/if']);
-          elseBlock = elseParsed.nodes;
+          current.else = elseParsed.nodes;
           if (elseParsed.stopped === '/if') i++; // consume {/if}
-        } else if (thenBlock.stopped === '/if') {
+        } else if (stopped === '/if') {
           i++; // consume {/if}
         }
-        nodes.push({
-          type: 'if',
-          cond,
-          then: thenBlock.nodes,
-          else: elseBlock,
-        });
+        nodes.push(rootNode);
         continue;
       }
       if (head === 'foreach') {
@@ -204,6 +247,23 @@ function parse(source: string): {
           arrExpr: parsed.arrExpr,
           keyVar: parsed.keyVar,
           valVar: parsed.valVar,
+          body: body.nodes,
+        });
+        continue;
+      }
+      if (head === 'for') {
+        const parsed = parseForHeader(trimmed.slice(3).trim());
+        if (!parsed) {
+          nodes.push({ type: 'text', value: `{${tok.value}}` });
+          continue;
+        }
+        const body = parseBlock(['/for']);
+        if (body.stopped !== null && firstWord(body.stopped) === '/for') i++;
+        nodes.push({
+          type: 'for',
+          init: parsed.init,
+          cond: parsed.cond,
+          incr: parsed.incr,
           body: body.nodes,
         });
         continue;
@@ -238,10 +298,19 @@ function parse(source: string): {
         nodes.push({ type: 'include', name, args });
         continue;
       }
+      // A lone identifier is a legacy bare token (unescaped data lookup).
       if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed)) {
         nodes.push({ type: 'token', name: trimmed });
         continue;
       }
+      // Otherwise, if it reads as an expression, output it (escaped unless
+      // |noescape). Covers {2 + 3}, {count($x)}, {$a ? b : c}, {[1,2]}, etc.
+      const { expr, filters } = splitFilters(trimmed);
+      if (looksLikeExpression(expr)) {
+        nodes.push({ type: 'out', expr, filters });
+        continue;
+      }
+      // Opaque tag (e.g. stray CSS braces) — keep it literal.
       nodes.push({ type: 'text', value: `{${tok.value}}` });
     }
     return { nodes, stopped: null };
@@ -256,12 +325,68 @@ function firstWord(s: string): string {
   return m ? m[0] : '';
 }
 
+/**
+ * Split `expr|filter|filter` into the expression and its filters. Splits only on
+ * a top-level single `|` — the logical-or operator `||`, and any `|` inside
+ * string literals or `(...)`/`[...]`, are preserved as part of the expression.
+ */
 function splitFilters(s: string): { expr: string; filters: string[] } {
-  const parts = s.split('|');
+  const parts: string[] = [];
+  let buf = '';
+  let quote: string | null = null;
+  let depth = 0;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i] ?? '';
+    if (quote) {
+      buf += ch;
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+      buf += ch;
+    } else if (ch === '(' || ch === '[') {
+      depth++;
+      buf += ch;
+    } else if (ch === ')' || ch === ']') {
+      depth--;
+      buf += ch;
+    } else if (ch === '|' && depth === 0) {
+      if (s[i + 1] === '|') {
+        buf += '||'; // logical-or operator, not a filter boundary
+        i++;
+      } else {
+        parts.push(buf);
+        buf = '';
+      }
+    } else {
+      buf += ch;
+    }
+  }
+  parts.push(buf);
   return {
     expr: (parts[0] ?? '').trim(),
-    filters: parts.slice(1).map((p) => p.trim()),
+    filters: parts
+      .slice(1)
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0),
   };
+}
+
+/**
+ * Heuristic: does this tag body (its expression part, filters already stripped)
+ * look like an expression to output — vs an opaque tag we should leave literal
+ * (e.g. stray CSS braces)? Covers `$…`, numbers, `(`/`[`/quote/`!` leads, unary
+ * minus, `name(` function calls, and the `true`/`false`/`null` literals. A lone
+ * identifier is handled earlier as a legacy bare token, so it never reaches here.
+ */
+function looksLikeExpression(expr: string): boolean {
+  if (expr === '') return false;
+  const c = expr[0] ?? '';
+  if ('$([\'"!'.includes(c)) return true;
+  if (/[0-9]/.test(c)) return true;
+  if (c === '-' && /[0-9$(]/.test(expr[1] ?? '')) return true;
+  if (/^[A-Za-z_][A-Za-z0-9_]*\s*\(/.test(expr)) return true; // function call
+  if (/^(true|false|null)\b/.test(expr)) return true;
+  return false;
 }
 
 /**
@@ -304,6 +429,69 @@ function parseForeachHeader(
   return { arrExpr, keyVar: null, valVar: m[2] };
 }
 
+/** Split on top-level `;` only (respecting quoted string literals). */
+function splitTopLevelSemis(s: string): string[] {
+  const out: string[] = [];
+  let buf = '';
+  let quote: string | null = null;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (quote) {
+      buf += ch;
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+      buf += ch;
+    } else if (ch === ';') {
+      out.push(buf);
+      buf = '';
+    } else {
+      buf += ch;
+    }
+  }
+  out.push(buf);
+  return out;
+}
+
+/**
+ * Parse one `{for}` clause into an assignment. Handles `$i = expr`, `$i++`, and
+ * `$i--`; an empty clause returns `null` (no-op init/increment).
+ */
+function parseAssignPart(s: string): { name: string; expr: string } | null {
+  const t = s.trim();
+  if (t === '') return null;
+  const inc = /^\$([A-Za-z_][A-Za-z0-9_]*)\s*(\+\+|--)$/.exec(t);
+  if (inc && inc[1]) {
+    return {
+      name: inc[1],
+      expr: `$${inc[1]} ${inc[2] === '++' ? '+' : '-'} 1`,
+    };
+  }
+  const m = /^\$([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/.exec(t);
+  if (m && m[1] && m[2]) return { name: m[1], expr: m[2].trim() };
+  return null;
+}
+
+/**
+ * Parse a C-style `for` header `init ; cond ; incr` into its three parts. Returns
+ * `null` (→ the tag renders literally) when it doesn't have exactly three
+ * `;`-separated clauses. Empty init/incr are allowed; an empty cond means "always
+ * true" (bounded by the renderer's iteration safety cap).
+ */
+function parseForHeader(s: string): {
+  init: { name: string; expr: string } | null;
+  cond: string;
+  incr: { name: string; expr: string } | null;
+} | null {
+  const parts = splitTopLevelSemis(s);
+  if (parts.length !== 3) return null;
+  return {
+    init: parseAssignPart(parts[0] ?? ''),
+    cond: (parts[1] ?? '').trim(),
+    incr: parseAssignPart(parts[2] ?? ''),
+  };
+}
+
 // ─── Renderer ────────────────────────────────────────────────────────────────
 
 function render(nodes: Node[], scopes: Scope[], ctx: RenderCtx): string {
@@ -317,7 +505,8 @@ function renderNode(n: Node, scopes: Scope[], ctx: RenderCtx): string {
     case 'text':
       return n.value;
     case 'token': {
-      if (EMPTY_TOKENS.has(n.name)) return '';
+      const pageToken = PAGE_NUMBER_TOKENS[n.name];
+      if (pageToken !== undefined) return pageToken;
       return toText(lookupScope(n.name, scopes));
     }
     case 'out': {
@@ -328,8 +517,19 @@ function renderNode(n: Node, scopes: Scope[], ctx: RenderCtx): string {
         return '';
       }
       if (v == null) return '';
-      const str = toText(v);
-      return n.filters.includes('noescape') ? str : escapeHtml(str);
+      // Apply filters left-to-right. `noescape` is special — it toggles auto-
+      // escaping off rather than transforming the value; every other filter
+      // transforms the string (unknown ones pass through unchanged).
+      let str = toText(v);
+      let escape = true;
+      for (const filter of n.filters) {
+        if (filter === 'noescape') {
+          escape = false;
+        } else {
+          str = applyFilter(filter, str);
+        }
+      }
+      return escape ? escapeHtml(str) : str;
     }
     case 'if': {
       let cond: unknown;
@@ -365,6 +565,48 @@ function renderNode(n: Node, scopes: Scope[], ctx: RenderCtx): string {
       }
       return result;
     }
+    case 'for': {
+      // Own frame at the top of the stack holds the loop counter; the init and
+      // increment assignments walk the stack (via assignVar) so a counter reused
+      // from an outer scope updates in place.
+      const frame: Scope = {};
+      const stack = [...scopes, frame];
+      if (n.init) {
+        try {
+          frame[n.init.name] = evalExpr(n.init.expr, stack);
+        } catch {
+          frame[n.init.name] = undefined;
+        }
+      }
+      let result = '';
+      let guard = 0;
+      const MAX_ITERATIONS = 100_000; // safety net against a non-terminating cond
+      for (;;) {
+        let keepGoing: boolean;
+        if (n.cond === '') {
+          keepGoing = true;
+        } else {
+          try {
+            keepGoing = isTruthy(evalExpr(n.cond, stack));
+          } catch {
+            keepGoing = false;
+          }
+        }
+        if (!keepGoing) break;
+        result += render(n.body, stack, ctx);
+        if (n.incr) {
+          let v: unknown;
+          try {
+            v = evalExpr(n.incr.expr, stack);
+          } catch {
+            v = undefined;
+          }
+          assignVar(stack, n.incr.name, v);
+        }
+        if (++guard >= MAX_ITERATIONS) break;
+      }
+      return result;
+    }
     case 'var': {
       let v: unknown;
       try {
@@ -372,20 +614,7 @@ function renderNode(n: Node, scopes: Scope[], ctx: RenderCtx): string {
       } catch {
         v = undefined;
       }
-      if (scopes.length === 0) scopes.push({});
-      let written = false;
-      for (let i = scopes.length - 1; i >= 0; i--) {
-        const frame = scopes[i];
-        if (frame && Object.prototype.hasOwnProperty.call(frame, n.name)) {
-          frame[n.name] = v;
-          written = true;
-          break;
-        }
-      }
-      if (!written) {
-        const top = scopes[scopes.length - 1];
-        if (top) top[n.name] = v;
-      }
+      assignVar(scopes, n.name, v);
       return '';
     }
     case 'include': {
@@ -422,6 +651,24 @@ function lookupScope(name: string, scopes: Scope[]): unknown {
   return undefined;
 }
 
+/**
+ * Assign `value` to `name`, updating the nearest existing frame that already
+ * declares it (so a counter mutates in place) and otherwise declaring it in the
+ * top frame. Shared by `{var}` and `{for}` increments.
+ */
+function assignVar(scopes: Scope[], name: string, value: unknown): void {
+  if (scopes.length === 0) scopes.push({});
+  for (let i = scopes.length - 1; i >= 0; i--) {
+    const frame = scopes[i];
+    if (frame && Object.prototype.hasOwnProperty.call(frame, name)) {
+      frame[name] = value;
+      return;
+    }
+  }
+  const top = scopes[scopes.length - 1];
+  if (top) top[name] = value;
+}
+
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) =>
     c === '&'
@@ -436,6 +683,24 @@ function escapeHtml(s: string): string {
   );
 }
 
+/**
+ * Apply a value-transforming Latte filter by name. Only the filters the ported
+ * lab-report templates actually use are implemented; an unknown filter passes the
+ * value through unchanged (preserving the previous silent-passthrough behaviour).
+ * `noescape` is NOT handled here — it toggles escaping in the caller, not the
+ * value. Add new filters to this switch as templates need them.
+ */
+function applyFilter(name: string, value: string): string {
+  switch (name) {
+    case 'upper':
+      return value.toUpperCase();
+    case 'lower':
+      return value.toLowerCase();
+    default:
+      return value;
+  }
+}
+
 function isTruthy(v: unknown): boolean {
   if (v == null || v === false) return false;
   if (v === '' || v === 0) return false;
@@ -447,7 +712,7 @@ function isTruthy(v: unknown): boolean {
 
 function evalExpr(src: string, scopes: Scope[]): unknown {
   const parser = new ExprParser(src, scopes);
-  const v = parser.parseOr();
+  const v = parser.parseExpr();
   parser.skipWs();
   return v;
 }
@@ -484,6 +749,37 @@ class ExprParser {
     return false;
   }
 
+  /** Lowest-precedence entry: a full expression. */
+  parseExpr(): unknown {
+    return this.parseTernary();
+  }
+
+  /**
+   * `cond ? a : b`. Right-associative. NOTE: both branches are evaluated (this is
+   * a combined parse+eval), which is safe here because no expression operation
+   * throws or has side effects — `??`/guards still short-circuit their VALUE.
+   */
+  parseTernary(): unknown {
+    const cond = this.parseCoalesce();
+    if (this.match('?')) {
+      const thenV = this.parseTernary();
+      this.match(':');
+      const elseV = this.parseTernary();
+      return isTruthy(cond) ? thenV : elseV;
+    }
+    return cond;
+  }
+
+  /** `a ?? b` — yields `a` unless it is null/undefined, else `b`. */
+  parseCoalesce(): unknown {
+    let left = this.parseOr();
+    while (this.match('??')) {
+      const right = this.parseOr();
+      if (left === null || left === undefined) left = right;
+    }
+    return left;
+  }
+
   parseOr(): unknown {
     let left = this.parseAnd();
     while (this.match('||')) {
@@ -516,17 +812,37 @@ class ExprParser {
 
   /** `+`/`-` numeric addition, `.` string concatenation. Left-associative. */
   parseAdd(): unknown {
-    let left = this.parseUnary();
+    let left = this.parseMul();
     for (;;) {
       this.skipWs();
       // A `.` immediately followed by a digit could be a decimal — but numbers
       // are parsed whole in parseNumber, so a bare `.` here is concatenation.
       if (this.match('+')) {
-        left = num(left) + num(this.parseUnary());
+        left = num(left) + num(this.parseMul());
       } else if (this.match('-')) {
-        left = num(left) - num(this.parseUnary());
+        left = num(left) - num(this.parseMul());
       } else if (this.match('.')) {
-        left = `${toText(left)}${toText(this.parseUnary())}`;
+        left = `${toText(left)}${toText(this.parseMul())}`;
+      } else {
+        break;
+      }
+    }
+    return left;
+  }
+
+  /** `*`/`/`/`%`. Division/modulo by zero yields 0 (avoids Infinity/NaN). */
+  parseMul(): unknown {
+    let left = this.parseUnary();
+    for (;;) {
+      this.skipWs();
+      if (this.match('*')) {
+        left = num(left) * num(this.parseUnary());
+      } else if (this.match('/')) {
+        const r = num(this.parseUnary());
+        left = r === 0 ? 0 : num(left) / r;
+      } else if (this.match('%')) {
+        const r = num(this.parseUnary());
+        left = r === 0 ? 0 : num(left) % r;
       } else {
         break;
       }
@@ -537,8 +853,13 @@ class ExprParser {
   parseUnary(): unknown {
     this.skipWs();
     if (this.match('!')) {
-      const v = this.parseUnary();
-      return !isTruthy(v);
+      return !isTruthy(this.parseUnary());
+    }
+    // Unary minus for non-literals (`-$x`, `-(…)`); a `-` before a digit is left
+    // to parseNumber so negative literals keep parsing as before.
+    if (this.peek() === '-' && !/[0-9]/.test(this.src[this.i + 1] ?? '')) {
+      this.i++;
+      return -num(this.parseUnary());
     }
     return this.parseAtom();
   }
@@ -548,11 +869,12 @@ class ExprParser {
     const ch = this.peek();
     if (ch === '(') {
       this.i++;
-      const v = this.parseOr();
+      const v = this.parseExpr();
       this.skipWs();
       if (this.peek() === ')') this.i++;
       return v;
     }
+    if (ch === '[') return this.parseArrayLiteral();
     if (ch === '"' || ch === "'") return this.parseString();
     if (
       /[0-9]/.test(ch) ||
@@ -569,7 +891,79 @@ class ExprParser {
     if (id === 'true') return true;
     if (id === 'false') return false;
     if (id === 'null') return null;
+    // `name(args…)` → whitelisted function call; otherwise a bare identifier read.
+    this.skipWs();
+    if (this.peek() === '(') {
+      return callFunction(id, this.parseCallArgs());
+    }
     return lookupScope(id, this.scopes);
+  }
+
+  /** Parse `( arg, arg, … )` into evaluated argument values. */
+  parseCallArgs(): unknown[] {
+    this.i++; // consume '('
+    const args: unknown[] = [];
+    this.skipWs();
+    if (this.peek() === ')') {
+      this.i++;
+      return args;
+    }
+    for (;;) {
+      args.push(this.parseExpr());
+      this.skipWs();
+      if (this.peek() === ',') {
+        this.i++;
+        continue;
+      }
+      break;
+    }
+    this.skipWs();
+    if (this.peek() === ')') this.i++;
+    return args;
+  }
+
+  /**
+   * Parse `[a, b]` (indexed) or `['k' => v, …]` (associative) literals. A `=>`
+   * anywhere makes it associative; any bare items already collected fold in under
+   * their numeric index. A trailing comma is tolerated.
+   */
+  parseArrayLiteral(): unknown {
+    this.i++; // consume '['
+    const arr: unknown[] = [];
+    const obj: Record<string, unknown> = {};
+    let isAssoc = false;
+    this.skipWs();
+    if (this.peek() === ']') {
+      this.i++;
+      return arr;
+    }
+    for (;;) {
+      const first = this.parseExpr();
+      this.skipWs();
+      if (this.match('=>')) {
+        isAssoc = true;
+        obj[toText(first)] = this.parseExpr();
+      } else {
+        arr.push(first);
+      }
+      this.skipWs();
+      if (this.peek() === ',') {
+        this.i++;
+        this.skipWs();
+        if (this.peek() === ']') break; // trailing comma
+        continue;
+      }
+      break;
+    }
+    this.skipWs();
+    if (this.peek() === ']') this.i++;
+    if (isAssoc) {
+      arr.forEach((v, idx) => {
+        if (!(String(idx) in obj)) obj[String(idx)] = v;
+      });
+      return obj;
+    }
+    return arr;
   }
 
   parseString(): string {
@@ -608,15 +1002,20 @@ class ExprParser {
     const head = this.readIdent();
     if (!head) return undefined;
     let cur: unknown = lookupScope(head, this.scopes);
-    while (!this.eof()) {
-      if (this.src.startsWith('->', this.i)) {
-        this.i += 2;
-      } else if (this.src[this.i] === '.') {
+    for (;;) {
+      if (this.src.startsWith('->', this.i) || this.src[this.i] === '.') {
+        this.i += this.src.startsWith('->', this.i) ? 2 : 1;
+        const prop = this.readIdent();
+        if (!prop) break;
+        cur = propGet(cur, prop);
+      } else if (this.src[this.i] === '[') {
+        // Dynamic index/key access: `$a[0]`, `$a['key']`, `$a[$i]`.
         this.i++;
+        const idx = this.parseExpr();
+        this.skipWs();
+        if (this.peek() === ']') this.i++;
+        cur = indexGet(cur, idx);
       } else break;
-      const prop = this.readIdent();
-      if (!prop) break;
-      cur = propGet(cur, prop);
     }
     return cur;
   }
@@ -626,6 +1025,100 @@ function propGet(obj: unknown, key: string): unknown {
   if (obj == null) return undefined;
   if (typeof obj !== 'object') return undefined;
   return (obj as Record<string, unknown>)[key];
+}
+
+/** Index into an array (numeric key) or object (string key); undefined-safe. */
+function indexGet(obj: unknown, key: unknown): unknown {
+  if (obj == null) return undefined;
+  if (Array.isArray(obj)) {
+    const n = typeof key === 'number' ? key : Number(key);
+    return Number.isInteger(n) ? obj[n] : undefined;
+  }
+  if (typeof obj === 'object') {
+    return (obj as Record<string, unknown>)[toText(key)];
+  }
+  return undefined;
+}
+
+/** Element/entry count of an array or object; 0 for scalars/null. */
+function sizeOf(x: unknown): number {
+  if (Array.isArray(x)) return x.length;
+  if (x !== null && typeof x === 'object') return Object.keys(x).length;
+  return 0;
+}
+
+/** PHP-style number_format: fixed decimals + thousands separators. */
+function numberFormat(n: number, decimals: number): string {
+  const fixed = n.toFixed(decimals >= 0 ? decimals : 0);
+  const [intPart, fracPart] = fixed.split('.');
+  const withSep = (intPart ?? '').replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return fracPart ? `${withSep}.${fracPart}` : withSep;
+}
+
+/**
+ * Curated, side-effect-free functions callable from template expressions
+ * (`count($x)`, `number_format($n, 2)`, `implode(', ', $list)`, …). This is an
+ * ALLOW-LIST: templates are tenant-authored data, so arbitrary function
+ * execution must never be possible. Any name absent here returns `undefined`
+ * (renders empty). Only add pure helpers — never anything with I/O or side
+ * effects.
+ */
+const FUNCTIONS: Record<string, (...args: unknown[]) => unknown> = {
+  count: (x) => sizeOf(x),
+  length: (x) => sizeOf(x),
+  abs: (x) => Math.abs(num(x)),
+  ceil: (x) => Math.ceil(num(x)),
+  floor: (x) => Math.floor(num(x)),
+  round: (x, p) => {
+    const f = 10 ** Math.trunc(num(p));
+    return Math.round(num(x) * f) / f;
+  },
+  min: (...a) => Math.min(...a.map(num)),
+  max: (...a) => Math.max(...a.map(num)),
+  number_format: (x, d) => numberFormat(num(x), Math.trunc(num(d))),
+  upper: (s) => toText(s).toUpperCase(),
+  lower: (s) => toText(s).toLowerCase(),
+  strtoupper: (s) => toText(s).toUpperCase(),
+  strtolower: (s) => toText(s).toLowerCase(),
+  ucfirst: (s) => {
+    const t = toText(s);
+    return t.charAt(0).toUpperCase() + t.slice(1);
+  },
+  trim: (s) => toText(s).trim(),
+  strlen: (s) => toText(s).length,
+  nl2br: (s) => toText(s).replace(/\r\n|\r|\n/g, '<br />'),
+  substr: (s, start, len) => {
+    const str = toText(s);
+    const st = Math.trunc(num(start));
+    const begin = st < 0 ? Math.max(str.length + st, 0) : st;
+    if (len === undefined) return str.slice(begin);
+    const l = Math.trunc(num(len));
+    return l < 0
+      ? str.slice(begin, str.length + l)
+      : str.slice(begin, begin + l);
+  },
+  str_replace: (search, replace, subject) =>
+    toText(subject).split(toText(search)).join(toText(replace)),
+  implode: (glue, arr) => {
+    // PHP allows implode($array) with the glue defaulting to '' — support both.
+    if (arr === undefined && Array.isArray(glue)) {
+      return glue.map(toText).join('');
+    }
+    return (Array.isArray(arr) ? arr : []).map(toText).join(toText(glue));
+  },
+  join: (glue, arr) =>
+    (Array.isArray(arr) ? arr : []).map(toText).join(toText(glue)),
+};
+
+/** Call a whitelisted function; unknown names or thrown errors → undefined. */
+function callFunction(name: string, args: unknown[]): unknown {
+  const fn = FUNCTIONS[name];
+  if (!fn) return undefined;
+  try {
+    return fn(...args);
+  } catch {
+    return undefined;
+  }
 }
 
 function cmp(op: string, a: unknown, b: unknown): boolean {
