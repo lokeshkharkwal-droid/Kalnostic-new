@@ -308,7 +308,12 @@ docs {
 
   A result param with `parameterType=CALCULATED` may carry a `calculationFormula`
   — an infix expression over **other parameter codes of this same test** and the
-  operators `+ - * / ( )` (e.g. `(HGB * 10) / RBC`). The formula is optional even
+  operators `+ - * / % ** // ( )` (e.g. `(HGB * 10) / RBC`). Beyond the four basic
+  operators these are supported: `%` modulus/remainder (`10 % 3 = 1`), `**`
+  exponentiation (`2 ** 3 = 8`; `^` is accepted as an alias), and `//` floor
+  division (`10 // 3 = 3`). `**`/`^` bind tightest and are right-associative;
+  `%` and `//` share the `* /` precedence tier; unary `-`/`+` are allowed.
+  The formula is optional even
   for a CALCULATED param (it can be saved and filled in later). When present it is
   validated across the whole test's parameter set:
   - `422 INVALID_FORMULA` — bad syntax, or a parameter references itself.

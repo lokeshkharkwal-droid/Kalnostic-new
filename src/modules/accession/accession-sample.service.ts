@@ -1987,6 +1987,42 @@ export class OrderSampleService {
   }
 
   /**
+   * Re-home the LabReports of a just-cloned transferred sample to its new
+   * (receiving) branch — the RULE 1 sibling of
+   * {@link ensureLabReportsForAcceptedSample}. On an internal branch transfer
+   * the sample's LabReport already exists at the origin branch (created during
+   * the origin accept), so `ensureLabReportsForAcceptedSample`'s idempotent
+   * create is a no-op; this moves that report to the destination branch so it
+   * surfaces in the receiving branch's Technician worklist. Iterates the
+   * cloned sample's `OrderSampleTest` rows so a panel's transferred member
+   * moves only its own report. Runs inside the transfer-accept transaction.
+   * @param tx the caller's transaction
+   * @param tenantId the current tenant
+   * @param sampleId the cloned (destination-branch) sample
+   * @param destBranchId the receiving branch to move the report(s) to
+   */
+  async rehomeLabReportsForSample(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sampleId: string,
+    destBranchId: string,
+  ): Promise<void> {
+    const sampleTests = await tx.orderSampleTest.findMany({
+      where: { sampleId, tenantId, deletedAt: null },
+      select: { orderItemId: true, labTestId: true },
+    });
+    for (const { orderItemId, labTestId } of sampleTests) {
+      await this.labReportService.rehomeReportsForAcceptedItem(
+        tx,
+        tenantId,
+        orderItemId,
+        destBranchId,
+        labTestId,
+      );
+    }
+  }
+
+  /**
    * Apply a no-status-change mutation (assign-barcode / update notes) to each id
    * in one transaction, appending a history row that keeps the current status.
    * @throws OrderSampleNotFoundException / AccessionNumberConflictException

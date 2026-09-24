@@ -639,6 +639,17 @@ export class SampleTransferService {
       cloned.id,
       personId,
     );
+
+    // The LabReport was created at the origin branch during the origin accept,
+    // so the ensure-call above is an idempotent no-op here. Move it to the
+    // receiving branch so it leaves the origin (which no longer holds the
+    // sample) and surfaces in this branch's Technician worklist.
+    await this.samples.rehomeLabReportsForSample(
+      tx,
+      tenantId,
+      cloned.id,
+      destBranch,
+    );
   }
 
   /** Validate an outsource center belongs to the caller's tenant. */
