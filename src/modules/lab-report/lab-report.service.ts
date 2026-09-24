@@ -236,6 +236,38 @@ export class LabReportService {
   }
 
   /**
+   * Re-home the LabReport(s) of an accepted order item to `destBranchId` — used
+   * when an internal branch transfer is accepted, so the report follows the
+   * sample to the branch now processing it (see
+   * `SampleTransferService.cloneIntoDestination`, RULE 1). The report was
+   * created at the origin branch during the origin accept and re-creating it is
+   * a no-op (idempotent), so it must be moved, not re-created, for the receiving
+   * branch's Technician worklist (`buildListWhere` filters on `branchId`) to
+   * show it. Scopes to the one panel member the transferred sample serves when
+   * `onlyMemberLabTestId` is given (matching `createReportForAcceptedItem`);
+   * a non-panel item has its single report (`memberBranchLabTestId` = null).
+   * @param tx the caller's transaction (runs atomically with the transfer accept)
+   * @param tenantId the current tenant
+   * @param orderItemId the order item whose report(s) move
+   * @param destBranchId the receiving branch to move the report(s) to
+   * @param onlyMemberLabTestId scope to this panel member's report only
+   */
+  async rehomeReportsForAcceptedItem(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    orderItemId: string,
+    destBranchId: string,
+    onlyMemberLabTestId?: string | null,
+  ): Promise<void> {
+    const or: Prisma.LabReportWhereInput[] = [{ memberBranchLabTestId: null }];
+    if (onlyMemberLabTestId) or.push({ labTestId: onlyMemberLabTestId });
+    await tx.labReport.updateMany({
+      where: { orderItemId, tenantId, deletedAt: null, OR: or },
+      data: { branchId: destBranchId },
+    });
+  }
+
+  /**
    * The constituent `BranchLabTest`s of a panel, resolved via the
    * `BranchLabPanelTest` junction (a raw FK, no Prisma relation, so tests are
    * fetched in a second query) in the panel's own member-test `sortOrder`.

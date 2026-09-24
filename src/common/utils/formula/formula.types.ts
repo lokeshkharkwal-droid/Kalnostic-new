@@ -2,7 +2,8 @@
  * Shared types for the dynamic/calculated-parameter formula engine.
  *
  * A formula is an infix arithmetic expression over parameter-code identifiers,
- * numeric literals and the operators `+ - * / ( )` (plus unary minus). It is used
+ * numeric literals and the operators `+ - * / % ** // ( )` (`^` is an alias for
+ * `**`, plus unary minus). It is used
  * in two places:
  *  - lab-test config: validate a parameter's `calculationFormula` (syntax,
  *    references, dependency cycles) before persisting the test.
@@ -19,7 +20,7 @@ export type FormulaEvalError =
   | 'UNKNOWN_REF' // referenced a code with no entry in the value map
   | 'MISSING_INPUT' // a referenced code has no numeric value yet (blank input)
   | 'NON_NUMERIC' // a referenced value is present but not a finite number
-  | 'DIV_ZERO'; // division (or modulo) by zero, or a non-finite result
+  | 'DIV_ZERO'; // division/modulo/floor-division by zero, or a non-finite result
 
 /** Result of {@link evaluateFormula}. */
 export type FormulaEvalResult =

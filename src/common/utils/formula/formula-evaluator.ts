@@ -2,16 +2,20 @@ import { FormulaEvalResult, MAX_FORMULA_LENGTH } from './formula.types';
 
 /**
  * Tokenizer + recursive-descent parser + evaluator for calculated-parameter
- * formulas. Grammar (standard arithmetic precedence, left-associative):
+ * formulas. Grammar (standard arithmetic precedence; `**`/`^` are
+ * right-associative, everything else left-associative):
  *
  *   expr    := term   (('+' | '-') term)*
- *   term    := factor (('*' | '/') factor)*
- *   factor  := ('-' | '+') factor | primary
+ *   term    := factor (('*' | '/' | '%' | '//') factor)*
+ *   factor  := ('-' | '+') factor | power
+ *   power   := primary (('**' | '^') factor)?
  *   primary := number | ident | '(' expr ')'
  *
- * Identifiers are parameter codes (`[A-Za-z0-9_]+` containing at least one
- * non-digit); a run that is all digits (optionally with a decimal part) is a
- * numeric literal. Everything is pure — no `eval`/`Function`.
+ * Operators: `+ - * /` plus modulus `%`, exponentiation `**` (or `^`) and
+ * floor division `//`, parentheses `( )`, and unary `+`/`-`. Identifiers are
+ * parameter codes (`[A-Za-z0-9_]+` containing at least one non-digit); a run
+ * that is all digits (optionally with a decimal part) is a numeric literal.
+ * Everything is pure — no `eval`/`Function`.
  */
 
 type TokenType = 'number' | 'ident' | 'op' | 'lparen' | 'rparen';
@@ -38,7 +42,25 @@ export function tokenize(input: string): Token[] | null {
       i++;
       continue;
     }
-    if (ch === '+' || ch === '-' || ch === '*' || ch === '/') {
+    // Two-character operators must be matched before their single-char prefixes.
+    if (ch === '*' && input[i + 1] === '*') {
+      tokens.push({ type: 'op', value: '**' });
+      i += 2;
+      continue;
+    }
+    if (ch === '/' && input[i + 1] === '/') {
+      tokens.push({ type: 'op', value: '//' });
+      i += 2;
+      continue;
+    }
+    if (
+      ch === '+' ||
+      ch === '-' ||
+      ch === '*' ||
+      ch === '/' ||
+      ch === '%' ||
+      ch === '^'
+    ) {
       tokens.push({ type: 'op', value: ch });
       i++;
       continue;
@@ -84,11 +106,12 @@ export function tokenize(input: string): Token[] | null {
 }
 
 // ── AST ──────────────────────────────────────────────────────────────────────
+type BinaryOp = '+' | '-' | '*' | '/' | '%' | '**' | '//';
 type Node =
   | { kind: 'num'; value: number }
   | { kind: 'ref'; name: string }
   | { kind: 'unary'; op: '+' | '-'; operand: Node }
-  | { kind: 'binary'; op: '+' | '-' | '*' | '/'; left: Node; right: Node };
+  | { kind: 'binary'; op: BinaryOp; left: Node; right: Node };
 
 /**
  * Parse a token list into an AST.
@@ -121,9 +144,12 @@ function parse(tokens: Token[]): Node | null {
     while (
       peek() &&
       peek()!.type === 'op' &&
-      (peek()!.value === '*' || peek()!.value === '/')
+      (peek()!.value === '*' ||
+        peek()!.value === '/' ||
+        peek()!.value === '%' ||
+        peek()!.value === '//')
     ) {
-      const op = tokens[pos++]!.value as '*' | '/';
+      const op = tokens[pos++]!.value as '*' | '/' | '%' | '//';
       const right = parseFactor();
       if (!right) return null;
       left = { kind: 'binary', op, left, right };
@@ -139,7 +165,26 @@ function parse(tokens: Token[]): Node | null {
       if (!operand) return null;
       return { kind: 'unary', op: t.value, operand };
     }
-    return parsePrimary();
+    return parsePower();
+  }
+
+  // Exponentiation binds tighter than the multiplicative operators and is
+  // right-associative (`2 ** 3 ** 2` === `2 ** (3 ** 2)`); its right operand is a
+  // factor so `2 ** -3` parses. `^` is accepted as an alias and normalised to `**`.
+  function parsePower(): Node | null {
+    const base = parsePrimary();
+    if (!base) return null;
+    if (
+      peek() &&
+      peek()!.type === 'op' &&
+      (peek()!.value === '**' || peek()!.value === '^')
+    ) {
+      pos++;
+      const exponent = parseFactor();
+      if (!exponent) return null;
+      return { kind: 'binary', op: '**', left: base, right: exponent };
+    }
+    return base;
   }
 
   function parsePrimary(): Node | null {
@@ -262,6 +307,17 @@ function evalNode(
         case '/':
           if (right.value === 0) return { ok: false, error: 'DIV_ZERO' };
           out = left.value / right.value;
+          break;
+        case '%':
+          if (right.value === 0) return { ok: false, error: 'DIV_ZERO' };
+          out = left.value % right.value;
+          break;
+        case '//':
+          if (right.value === 0) return { ok: false, error: 'DIV_ZERO' };
+          out = Math.floor(left.value / right.value);
+          break;
+        case '**':
+          out = left.value ** right.value;
           break;
       }
       if (!Number.isFinite(out)) return { ok: false, error: 'DIV_ZERO' };
