@@ -156,8 +156,8 @@ from `PDF_TEMPLATE_META_DEFAULTS`, so you only set what you want to change.
 | `orientation` | `'P'` | `'P'` portrait / `'L'` landscape. |
 | `page_size` | `'A4'` | ISO `A0`–`A12`, `B0`–`B12`, `C0`–`C12`/`C76`, barcode `CB1` (100×25mm), `CB2` (50×25mm), or `Letter`/`Legal`. |
 | `margin_left` / `margin_right` | `'15'` / `'10'` | mm (string). |
-| `margin_top` / `margin_bottom` | `'10'` / `'10'` | mm. **Reserves the band the header/footer paint into** — too small and they clip. |
-| `margin_header` / `margin_footer` | `'5'` / `'5'` | mm from the page edge to header/footer content. |
+| `margin_top` / `margin_bottom` | `'10'` / `'10'` | mm. **This IS the header/footer band height** — the header is confined to `[margin_header, margin_top]`, the footer to the band above `margin_footer`, and the body flows strictly between. Size `margin_top`/`margin_bottom` to fit your header/footer; content taller than the band is scaled (images) then clipped — it can never overflow into the body. |
+| `margin_header` / `margin_footer` | `'5'` / `'5'` | mm from the page edge to header/footer content (the gap inside the band). Must be `< margin_top` / `< margin_bottom`; a larger value is clamped. |
 | `watermark_text` | `''` | Text watermark (72pt, −30°, ~8% opacity). |
 | `watermark_image` | `''` | Image watermark URL. **Takes precedence** over `watermark_text`. |
 | `images` | `{}` | `{ id: url }` registry backing `{{image:id}}`. |
@@ -168,6 +168,15 @@ from `PDF_TEMPLATE_META_DEFAULTS`, so you only set what you want to change.
 - They render in an **isolated Chromium context** and do **not** inherit the body
   stylesheet — `custom_css` is injected into them separately, but body-only
   `<style>` blocks won't apply. Put shared styles in `custom_css`.
+- **They are confined to their band.** The renderer wraps header/footer HTML in a
+  fixed-height box (`= margin_top` / `margin_bottom`) with `overflow: hidden`,
+  anchored to the page edge by `margin_header` / `margin_footer`. Images are
+  auto-scaled (`max-width: 100%`, `max-height: band content height`,
+  `object-fit: contain`) and wide tables/long words are constrained to the content
+  width. So header content can never bleed into the body/footer regardless of page
+  size or orientation — **but** if the band is too small the excess is clipped
+  (header from the bottom, footer from the top). If your letterhead looks cut off,
+  increase `margin_top` (not `margin_header`).
 - Always give header/footer an explicit font size.
 - If both `header_html` and `footer_html` are blank, Puppeteer's
   `displayHeaderFooter` stays off and you get a clean body-only PDF (no Chromium

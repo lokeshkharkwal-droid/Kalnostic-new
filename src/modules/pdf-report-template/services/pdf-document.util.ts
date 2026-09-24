@@ -57,11 +57,102 @@ function mm(value: string, fallback: number): number {
 }
 
 /**
+ * Format a millimetre number for CSS, trimming float noise (e.g. `4.999999`).
+ */
+function mmCss(value: number): string {
+  return `${Math.round(value * 1000) / 1000}mm`;
+}
+
+/**
+ * The four page margins (mm) a template reserves for the body's frame. The
+ * top/bottom margins double as the header/footer band heights, so the PDF
+ * renderer and {@link buildPdfDocuments} MUST derive them the same way — this is
+ * the single source of truth. Empty/invalid meta values fall back to the same
+ * defaults used when building the edge templates, so the reserved space always
+ * matches the wrapper height and content can never bleed across bands.
+ */
+export function resolvePageMarginsMm(meta: PdfTemplateMeta): {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+} {
+  return {
+    top: mm(meta.margin_top, 10),
+    right: mm(meta.margin_right, 10),
+    bottom: mm(meta.margin_bottom, 10),
+    left: mm(meta.margin_left, 15),
+  };
+}
+
+/**
+ * Geometry of a header/footer band, in millimetres, derived from the page
+ * margins. This is the Puppeteer equivalent of mPDF's margin model:
+ *
+ *  - `band` — the FULL height Chromium reserves for the edge (the top/bottom page
+ *    margin: `margin_top` for the header, `margin_bottom` for the footer). Our
+ *    wrapper is sized to exactly this so it fills — and never exceeds — the space
+ *    reserved for it, so content can never bleed into the body.
+ *  - `gap` — the distance from the physical page edge to the header/footer
+ *    content (`margin_header` / `margin_footer`). Applied as padding on the
+ *    outer edge so the content sits inside the band exactly where mPDF puts it.
+ *  - `content` — the usable content height (`band − gap`); images are capped to
+ *    this so they scale down to fit the band instead of overflowing it.
+ */
+interface EdgeBand {
+  band: number;
+  gap: number;
+  content: number;
+}
+
+/**
+ * Resolve an edge band from its reserved margin and inner gap, clamping the gap
+ * so it can never exceed the reserved margin (which would yield a negative
+ * content height for a misconfigured template).
+ */
+function resolveBand(marginMm: number, gapMm: number): EdgeBand {
+  const gap = Math.min(gapMm, marginMm);
+  return { band: marginMm, gap, content: Math.max(0, marginMm - gap) };
+}
+
+/**
+ * CSS that keeps arbitrary header/footer HTML strictly inside its band,
+ * regardless of the selected page size/orientation:
+ *  - images scale down to the available width AND the band's content height,
+ *    keeping their aspect ratio (`object-fit: contain`) — never overflowing;
+ *  - tables use a fixed layout capped at the content width so wide tables can't
+ *    push past the page margins;
+ *  - long words/URLs wrap instead of forcing horizontal overflow.
+ * `content` is the band's usable height in mm (see {@link EdgeBand}).
+ */
+function edgeContentCss(
+  cls: 'pdf-header' | 'pdf-footer',
+  content: number,
+): string {
+  const maxH = mmCss(content);
+  return `
+      .${cls} img { max-width: 100%; max-height: ${maxH}; height: auto; object-fit: contain; }
+      .${cls} table { table-layout: fixed; width: 100%; max-width: 100%; border-collapse: collapse; }
+      .${cls} td, .${cls} th { overflow: hidden; word-break: break-word; overflow-wrap: break-word; }
+      .${cls} * { max-width: 100%; overflow-wrap: break-word; word-wrap: break-word; }`;
+}
+
+/**
  * Build one Puppeteer header/footer template string. It is self-contained (own
  * `<style>`, explicit font size, `print-color-adjust: exact` so backgrounds
- * render) and padded to line up with the body's left/right margins. An empty
- * fragment yields an empty band (suppresses Chromium's default date/page-number
- * chrome).
+ * render) and confined to the page's top/bottom margin band so its content can
+ * never spill into the body or the opposite edge.
+ *
+ * Structure is an OUTER wrapper sized to the FULL reserved band height (`band`,
+ * in mm) with `overflow: hidden` as the final safety net, containing an INNER
+ * content layer that is absolutely anchored to the edge (`top: gap` for the
+ * header, `bottom: gap` for the footer) and spans the body's left/right margins.
+ * Absolute anchoring (rather than flex) leaves the fragment's own layout — floats,
+ * `inline-block`, tables — completely intact, while pinning it where mPDF's
+ * `margin_header` / `margin_footer` place it: the header hangs from the top of the
+ * band, the footer sits on the bottom, so overflow is clipped away from the body.
+ * An empty fragment yields an empty band (suppresses Chromium's default date/
+ * page-number chrome).
  */
 function buildEdgeTemplate(
   cls: 'pdf-header' | 'pdf-footer',
@@ -72,14 +163,27 @@ function buildEdgeTemplate(
   fontSize: string,
   mLeft: number,
   mRight: number,
+  edge: EdgeBand,
 ): string {
+  const isHeader = cls === 'pdf-header';
+  // Anchor the content layer to the page edge (top for header, bottom for footer)
+  // with the mPDF gap; content taller than the band overflows AWAY from the body
+  // and is clipped by the wrapper, so the body-facing edge is always preserved.
+  const anchor = isHeader
+    ? `top: ${mmCss(edge.gap)};`
+    : `bottom: ${mmCss(edge.gap)};`;
   return `<style>
 ${baseCss}
 ${customCss}
+${edgeContentCss(cls, edge.content)}
 </style>
-<div class="${cls}" style="width: 100%; font-family: ${fontFamily}sans-serif; font-size: ${escapeHtml(
+<div class="${cls}" style="box-sizing: border-box; position: relative; width: 100%; height: ${mmCss(
+    edge.band,
+  )}; overflow: hidden; font-family: ${fontFamily}sans-serif; font-size: ${escapeHtml(
     fontSize,
-  )}pt; color: #1a1a1a; padding: 0 ${mRight}mm 0 ${mLeft}mm; -webkit-print-color-adjust: exact; print-color-adjust: exact;">${fragment}</div>`;
+  )}pt; color: #1a1a1a; -webkit-print-color-adjust: exact; print-color-adjust: exact;"><div class="${cls}-content" style="position: absolute; ${anchor} left: ${mmCss(
+    mLeft,
+  )}; right: ${mmCss(mRight)};">${fragment}</div></div>`;
 }
 
 /**
@@ -104,8 +208,16 @@ export function buildPdfDocuments(
 ): PreparedPdfHtml {
   const fontFamily = meta.default_font ? `${meta.default_font}, ` : '';
   const fontSize = meta.default_font_size || '10';
-  const mLeft = mm(meta.margin_left, 12);
-  const mRight = mm(meta.margin_right, 12);
+  const margins = resolvePageMarginsMm(meta);
+  const mLeft = margins.left;
+  const mRight = margins.right;
+  // Vertical bands mirror mPDF: `margin_top`/`margin_bottom` are the full space
+  // reserved for the header/footer (where the body starts/ends); `margin_header`/
+  // `margin_footer` are the gap from the page edge to the header/footer content.
+  // The band heights come from the SAME resolver `metaToPdfOptions` uses, so
+  // Chromium reserves exactly the space each edge template fills.
+  const headerBand = resolveBand(margins.top, mm(meta.margin_header, 5));
+  const footerBand = resolveBand(margins.bottom, mm(meta.margin_footer, 5));
   const customCss = meta.custom_css || '';
   // An uploaded watermark image is applied automatically and takes precedence
   // over the text watermark; fall back to text when no image is set.
@@ -161,6 +273,7 @@ ${watermark}
       fontSize,
       mLeft,
       mRight,
+      headerBand,
     ),
     footerTemplate: buildEdgeTemplate(
       'pdf-footer',
@@ -171,6 +284,7 @@ ${watermark}
       fontSize,
       mLeft,
       mRight,
+      footerBand,
     ),
     hasHeaderFooter: header.trim() !== '' || footer.trim() !== '',
   };

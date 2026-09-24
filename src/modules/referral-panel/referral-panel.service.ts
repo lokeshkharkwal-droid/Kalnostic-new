@@ -4,12 +4,17 @@ import {
   FixedCommissionCycle,
   PaymentCycle,
   Prisma,
+  ReferralClientType,
   ReferralPanel,
   ReferralPaymentMode,
   ReferralType,
 } from '@prisma/client';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
+import * as ExcelJS from 'exceljs';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
+import { KaltrosException } from '../../common/exceptions/kaltros.exception';
 import { BranchService } from '../branch/branch.service';
 import { ReferralListAssignmentService } from '../referral-list/referral-list-assignment.service';
 import { ReferralPanelSettingsService } from '../referral-panel-settings/referral-panel-settings.service';
@@ -21,15 +26,226 @@ import {
   BonusSlab,
   CommissionSlab,
   ReferralPanelEntity,
+  ReferralPanelImportResult,
+  ReferralPanelImportSkippedRow,
   ReferralPanelListItem,
 } from './entities/referral-panel.entity';
 import {
   InvalidCommissionConfigException,
   ReferralPanelCodeConflictException,
+  ReferralPanelImportFileException,
   ReferralPanelInUseException,
   ReferralPanelNameConflictException,
   ReferralPanelNotFoundException,
 } from './exceptions/referral-panel.exceptions';
+
+/** How one import column's raw cell text is coerced into its create-DTO field. */
+type ImportColumnKind =
+  | 'string'
+  | 'number'
+  | 'int'
+  | 'bool'
+  | 'status'
+  | 'clientType'
+  | 'commissionType'
+  | 'fixedCycle'
+  | 'paymentCycle'
+  | 'paymentMode';
+
+/**
+ * One bulk-import column: the create-DTO field it feeds, its coercion kind, and
+ * the accepted header labels. Headers are matched case-insensitively after
+ * normalisation (lower-cased, punctuation/`*` collapsed to spaces), so
+ * `"TDS %"`, `"Referring Panel Name*"` etc. all match. The first alias is the
+ * canonical header; earlier aliases win when several are present (e.g. an
+ * explicit `… ID` column is preferred over the human-readable `… Name` column).
+ */
+interface ImportColumnSpec {
+  field: keyof CreateReferralPanelDto;
+  kind: ImportColumnKind;
+  aliases: string[];
+}
+
+/**
+ * The scalar import columns (every column except the two slab triples, which are
+ * assembled separately into `commissionSlabs` / `bonusSlabs`). Referral panel
+ * settings, branch and both lab lists are supplied as IDs — either in a dedicated
+ * `… ID` column or in the corresponding human-readable column.
+ */
+const REFERRAL_PANEL_IMPORT_COLUMNS: readonly ImportColumnSpec[] = [
+  { field: 'panelCode', kind: 'string', aliases: ['Panel Code'] },
+  {
+    field: 'name',
+    kind: 'string',
+    aliases: ['Referring Panel Name', 'Referral Panel Name'],
+  },
+  { field: 'shortName', kind: 'string', aliases: ['Short Name'] },
+  { field: 'clientType', kind: 'clientType', aliases: ['Client Type'] },
+  {
+    field: 'referralPanelSettingsId',
+    kind: 'string',
+    aliases: [
+      'Referral Panel Settings ID',
+      'Referral Panel Settings Name',
+      'Referral Panel Setting Name',
+    ],
+  },
+  { field: 'isActive', kind: 'status', aliases: ['Status'] },
+  { field: 'addressLine1', kind: 'string', aliases: ['Address Line 1'] },
+  { field: 'addressLine2', kind: 'string', aliases: ['Address Line 2'] },
+  { field: 'city', kind: 'string', aliases: ['City'] },
+  { field: 'state', kind: 'string', aliases: ['State'] },
+  { field: 'country', kind: 'string', aliases: ['Country'] },
+  { field: 'pincode', kind: 'string', aliases: ['PIN Code', 'Pincode', 'PIN'] },
+  { field: 'gstNumber', kind: 'string', aliases: ['GST Number', 'GST'] },
+  { field: 'panNumber', kind: 'string', aliases: ['PAN Number', 'PAN'] },
+  {
+    field: 'accountHolderName',
+    kind: 'string',
+    aliases: ['Account Holder Name'],
+  },
+  { field: 'bankName', kind: 'string', aliases: ['Bank Name'] },
+  { field: 'accountNumber', kind: 'string', aliases: ['Account Number'] },
+  { field: 'ifscCode', kind: 'string', aliases: ['IFSC Code', 'IFSC'] },
+  { field: 'directorName', kind: 'string', aliases: ['Director Name'] },
+  { field: 'directorMobile', kind: 'string', aliases: ['Director Mobile'] },
+  { field: 'directorEmail', kind: 'string', aliases: ['Director Email'] },
+  {
+    field: 'accessionPersonName',
+    kind: 'string',
+    aliases: ['Accession Person Name'],
+  },
+  {
+    field: 'accessionPersonMobile',
+    kind: 'string',
+    aliases: ['Accession Person Mobile'],
+  },
+  {
+    field: 'accessionPersonEmail',
+    kind: 'string',
+    aliases: ['Accession Person Email'],
+  },
+  {
+    field: 'registrationPersonName',
+    kind: 'string',
+    aliases: ['Registration Person Name'],
+  },
+  {
+    field: 'registrationPersonMobile',
+    kind: 'string',
+    aliases: ['Registration Person Mobile'],
+  },
+  {
+    field: 'registrationPersonEmail',
+    kind: 'string',
+    aliases: ['Registration Person Email'],
+  },
+  {
+    field: 'logisticsPersonName',
+    kind: 'string',
+    aliases: ['Logistics Person Name'],
+  },
+  {
+    field: 'logisticsPersonMobile',
+    kind: 'string',
+    aliases: ['Logistics Person Mobile'],
+  },
+  {
+    field: 'logisticsPersonEmail',
+    kind: 'string',
+    aliases: ['Logistics Person Email'],
+  },
+  {
+    field: 'accountsPersonName',
+    kind: 'string',
+    aliases: ['Accounts Person Name'],
+  },
+  {
+    field: 'accountsPersonMobile',
+    kind: 'string',
+    aliases: ['Accounts Person Mobile'],
+  },
+  {
+    field: 'accountsPersonEmail',
+    kind: 'string',
+    aliases: ['Accounts Person Email'],
+  },
+  {
+    field: 'branchLabTestListId',
+    kind: 'string',
+    aliases: ['Lab Test List ID', 'Lab Test List'],
+  },
+  {
+    field: 'branchLabPanelListId',
+    kind: 'string',
+    aliases: ['Lab Panel List ID', 'Lab Panel List'],
+  },
+  {
+    field: 'isCommissionApplicable',
+    kind: 'bool',
+    aliases: ['Commission Applicable'],
+  },
+  {
+    field: 'commissionType',
+    kind: 'commissionType',
+    aliases: ['Commission Type'],
+  },
+  {
+    field: 'commissionPctLabTest',
+    kind: 'number',
+    aliases: ['Commission % on Lab Test List', 'Commission % on Lab Test'],
+  },
+  {
+    field: 'commissionPctLabPanel',
+    kind: 'number',
+    aliases: ['Commission % on Lab Panel List', 'Commission % on Lab Panel'],
+  },
+  {
+    field: 'fixedCommissionCycle',
+    kind: 'fixedCycle',
+    aliases: ['Fixed Type'],
+  },
+  { field: 'fixedAmount', kind: 'number', aliases: ['Fixed Amount'] },
+  { field: 'isTdsApplicable', kind: 'bool', aliases: ['TDS Applicable'] },
+  { field: 'tds', kind: 'int', aliases: ['TDS %', 'TDS'] },
+  { field: 'paymentCycle', kind: 'paymentCycle', aliases: ['Payment Cycle'] },
+  { field: 'paymentMode', kind: 'paymentMode', aliases: ['Payment Mode'] },
+  {
+    field: 'monthlyTargetAmount',
+    kind: 'int',
+    aliases: ['Monthly Target Amount'],
+  },
+  {
+    field: 'isIncentiveBonusApplicable',
+    kind: 'bool',
+    aliases: ['Incentive Bonus Applicable'],
+  },
+  { field: 'remarks', kind: 'string', aliases: ['Remarks'] },
+  { field: 'branchId', kind: 'string', aliases: ['Branch ID', 'Branch Id'] },
+];
+
+/** Header aliases for the single commission slab triple (one slab per row). */
+const COMMISSION_SLAB_HEADERS = {
+  from: [
+    'Slab Based - Monthly Business From',
+    'Slab Based Monthly Business From',
+  ],
+  to: ['Slab Based - Monthly Business To', 'Slab Based Monthly Business To'],
+  pct: ['Slab Based - Commission %', 'Slab Based Commission %'],
+} as const;
+
+/** Header aliases for the single incentive-bonus slab triple (one slab per row). */
+const BONUS_SLAB_HEADERS = {
+  from: [
+    'Incentive Bonus - Monthly Business From',
+    'Incentive Bonus Monthly Business From',
+  ],
+  to: [
+    'Incentive Bonus - Monthly Business To',
+    'Incentive Bonus Monthly Business To',
+  ],
+  pct: ['Incentive / Bonus %', 'Incentive Bonus %'],
+} as const;
 
 /** The effective commission settings used for validation + normalisation. */
 interface CommissionEffective {
@@ -313,6 +529,351 @@ export class ReferralPanelService {
       );
     }
     return this.findById(createdId, tenantId, branchId);
+  }
+
+  /**
+   * Bulk-create referral panels from an uploaded `.xlsx` workbook (one data row =
+   * one panel). Every column of the referral-panel template is mapped
+   * (basic/address/bank/contact fields, the Client Type / Commission Type / Fixed
+   * Type / Payment Cycle / Payment Mode enums, the commission & incentive-bonus
+   * slab triples, TDS, and the settings / branch / lab-test-list / lab-panel-list
+   * IDs). CREATE-ONLY, SKIP-AND-REPORT: each row is validated against
+   * `CreateReferralPanelDto` and then created via {@link create} (reusing all its
+   * code-generation, commission/incentive validation, settings/branch checks, and
+   * per-branch list assignment); an invalid or conflicting row is skipped and
+   * reported in the result's `skipped[]` (with its worksheet row number and
+   * reason), while every valid row still imports. Only a file-level structural
+   * failure (unreadable file / missing header row / no data rows) rejects the
+   * whole upload.
+   * @param tenantId owning tenant (from the JWT)
+   * @param actorId person id recorded as created-by on each created panel's list
+   *   assignment (from the JWT)
+   * @param buffer the uploaded workbook bytes
+   * @returns `{ total, created, skipped[] }`
+   * @throws ReferralPanelImportFileException on a file-level structural failure
+   */
+  async importXlsx(
+    tenantId: string,
+    actorId: string | null,
+    buffer: Buffer,
+  ): Promise<ReferralPanelImportResult> {
+    const workbook = new ExcelJS.Workbook();
+    try {
+      await workbook.xlsx.load(buffer as unknown as ExcelJS.Buffer);
+    } catch {
+      throw new ReferralPanelImportFileException(
+        'The uploaded file could not be read — make sure it is a valid .xlsx workbook',
+      );
+    }
+    const sheet = workbook.worksheets[0];
+    if (!sheet) {
+      throw new ReferralPanelImportFileException(
+        'The workbook has no worksheets',
+      );
+    }
+
+    // ── Locate the header row by content (the first of the first ~10 rows that
+    //    contains the "Referring Panel Name" column), then index every header
+    //    cell by its normalised label. ──────────────────────────────────────
+    const maxScanRow = Math.min(sheet.lastRow?.number ?? 1, 10);
+    const nameKeys = REFERRAL_PANEL_IMPORT_COLUMNS.find(
+      (c) => c.field === 'name',
+    )!.aliases.map((a) => this.normalizeHeader(a));
+    let headerRowNum = -1;
+    for (let r = 1; r <= maxScanRow; r++) {
+      const row = sheet.getRow(r);
+      let found = false;
+      row.eachCell((cell) => {
+        if (
+          nameKeys.includes(this.normalizeHeader(this.cellToString(cell.value)))
+        )
+          found = true;
+      });
+      if (found) {
+        headerRowNum = r;
+        break;
+      }
+    }
+    if (headerRowNum === -1) {
+      throw new ReferralPanelImportFileException(
+        `Could not find the header row (looking for a "Referring Panel Name" column in the first ${maxScanRow} rows)`,
+      );
+    }
+
+    const headerIndex = new Map<string, number>();
+    sheet.getRow(headerRowNum).eachCell((cell, colNumber) => {
+      const key = this.normalizeHeader(this.cellToString(cell.value));
+      if (key && !headerIndex.has(key)) headerIndex.set(key, colNumber);
+    });
+    const resolveCol = (aliases: readonly string[]): number | undefined => {
+      for (const alias of aliases) {
+        const col = headerIndex.get(this.normalizeHeader(alias));
+        if (col !== undefined) return col;
+      }
+      return undefined;
+    };
+
+    // The two structurally-required columns give clear, early file-level errors
+    // (without them every row would fail the same way).
+    for (const field of ['name', 'clientType'] as const) {
+      const spec = REFERRAL_PANEL_IMPORT_COLUMNS.find(
+        (c) => c.field === field,
+      )!;
+      if (resolveCol(spec.aliases) === undefined) {
+        throw new ReferralPanelImportFileException(
+          `Missing required column: ${spec.aliases[0]}`,
+        );
+      }
+    }
+
+    const scalarCols = REFERRAL_PANEL_IMPORT_COLUMNS.map((spec) => ({
+      spec,
+      col: resolveCol(spec.aliases),
+    }));
+    const commissionSlabCols = {
+      from: resolveCol(COMMISSION_SLAB_HEADERS.from),
+      to: resolveCol(COMMISSION_SLAB_HEADERS.to),
+      pct: resolveCol(COMMISSION_SLAB_HEADERS.pct),
+    };
+    const bonusSlabCols = {
+      from: resolveCol(BONUS_SLAB_HEADERS.from),
+      to: resolveCol(BONUS_SLAB_HEADERS.to),
+      pct: resolveCol(BONUS_SLAB_HEADERS.pct),
+    };
+
+    const lastRow = sheet.lastRow?.number ?? headerRowNum;
+    const skipped: ReferralPanelImportSkippedRow[] = [];
+    let total = 0;
+    let created = 0;
+
+    for (let rowNum = headerRowNum + 1; rowNum <= lastRow; rowNum++) {
+      const row = sheet.getRow(rowNum);
+      const cellAt = (col: number | undefined): string =>
+        col ? this.cellToString(row.getCell(col).value) : '';
+
+      // Skip a fully-blank spacer row (no cell has any content).
+      const hasAnyValue = scalarCols.some(({ col }) => cellAt(col) !== '');
+      if (!hasAnyValue) continue;
+      total++;
+
+      // Build a plain create-DTO-shaped object from the row's cells.
+      const obj: Record<string, unknown> = {};
+      for (const { spec, col } of scalarCols) {
+        if (col === undefined) continue;
+        const value = this.coerceImportCell(spec.kind, cellAt(col));
+        if (value !== undefined) obj[spec.field] = value;
+      }
+      const commissionSlab = this.buildImportSlab(
+        cellAt(commissionSlabCols.from),
+        cellAt(commissionSlabCols.to),
+        cellAt(commissionSlabCols.pct),
+        'commissionPct',
+      );
+      if (commissionSlab) obj.commissionSlabs = [commissionSlab];
+      const bonusSlab = this.buildImportSlab(
+        cellAt(bonusSlabCols.from),
+        cellAt(bonusSlabCols.to),
+        cellAt(bonusSlabCols.pct),
+        'bonusPct',
+      );
+      if (bonusSlab) obj.bonusSlabs = [bonusSlab];
+
+      const name = typeof obj.name === 'string' ? obj.name : null;
+      const panelCode =
+        typeof obj.panelCode === 'string' ? obj.panelCode : null;
+
+      // Validate against the create DTO (reusing its conditional rules), then
+      // create — recording any per-row failure in `skipped` and moving on.
+      const dto = plainToInstance(CreateReferralPanelDto, obj);
+      const errors = await validate(dto, {
+        whitelist: true,
+        forbidUnknownValues: false,
+      });
+      if (errors.length) {
+        skipped.push({
+          rowNumber: rowNum,
+          name,
+          panelCode,
+          reason: this.formatValidationErrors(errors),
+        });
+        continue;
+      }
+
+      try {
+        await this.create(tenantId, dto.branchId ?? null, actorId, dto);
+        created++;
+      } catch (e) {
+        skipped.push({
+          rowNumber: rowNum,
+          name,
+          panelCode,
+          reason:
+            e instanceof KaltrosException
+              ? this.extractKaltrosMessage(e)
+              : e instanceof Error
+                ? e.message
+                : 'Unexpected error while creating the panel',
+        });
+      }
+    }
+
+    return { total, created, skipped };
+  }
+
+  /**
+   * The human-readable message from a `KaltrosException` — it lives in the
+   * HttpException response body (`{ error: { message } }`), not in `Error.message`
+   * (which is the generic "Kaltros Exception"). Falls back to `e.message`.
+   */
+  private extractKaltrosMessage(e: KaltrosException): string {
+    const res = e.getResponse();
+    if (res && typeof res === 'object') {
+      const err = (res as { error?: { message?: unknown } }).error;
+      if (err && typeof err.message === 'string') return err.message;
+    }
+    return e.message;
+  }
+
+  /**
+   * Normalise a header label for tolerant matching: lower-cased, with every run
+   * of non-alphanumeric characters (spaces, `*`, `-`, `/`, `%`, `_`) collapsed to
+   * a single space and trimmed. So `"Referring Panel Name*"`, `"TDS %"`, and
+   * `"Incentive / Bonus %"` match their canonical aliases.
+   */
+  private normalizeHeader(label: string): string {
+    return label
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+  }
+
+  /** A cell's value as a trimmed string (handles ExcelJS rich-text/formula cells). */
+  private cellToString(value: ExcelJS.CellValue): string {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'object' && 'text' in (value as object)) {
+      return this.asImportString((value as { text: unknown }).text);
+    }
+    if (typeof value === 'object' && 'result' in (value as object)) {
+      return this.asImportString((value as { result: unknown }).result);
+    }
+    return this.asImportString(value);
+  }
+
+  /** Safely stringify a cell value of unknown shape (never `[object Object]`). */
+  private asImportString(value: unknown): string {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'string') return value.trim();
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return String(value);
+    }
+    if (value instanceof Date) return value.toISOString();
+    return '';
+  }
+
+  /**
+   * Coerce one raw cell string into the value expected by its create-DTO field.
+   * A blank cell yields `undefined` (the field is omitted so the DTO/service
+   * default applies). Enum kinds are normalised (upper-cased, non-alphanumerics
+   * → `_`) and accepted only when they match a real enum member; an unrecognised
+   * value is passed through verbatim so the DTO's `@IsEnum` reports it. Numeric
+   * kinds pass a parsed number through when finite, else the raw string so the
+   * DTO's `@IsNumber`/`@IsInt` reports it.
+   */
+  private coerceImportCell(kind: ImportColumnKind, raw: string): unknown {
+    const str = raw.trim();
+    if (str === '') return undefined;
+    switch (kind) {
+      case 'string':
+        return str;
+      case 'number':
+      case 'int': {
+        const n = Number(str);
+        return Number.isFinite(n) ? n : str;
+      }
+      case 'bool':
+        return ['true', 'yes', 'y', '1'].includes(str.toLowerCase());
+      case 'status': {
+        const s = str.toLowerCase();
+        if (['active', 'true', 'yes', '1'].includes(s)) return true;
+        if (['inactive', 'false', 'no', '0'].includes(s)) return false;
+        return str; // unrecognised → let @IsBoolean flag it
+      }
+      case 'clientType':
+        return this.matchEnum(str, ReferralClientType);
+      case 'commissionType':
+        return this.matchEnum(str, CommissionType);
+      case 'fixedCycle':
+        return this.matchEnum(str, FixedCommissionCycle);
+      case 'paymentCycle':
+        return this.matchEnum(str, PaymentCycle);
+      case 'paymentMode':
+        return this.matchEnum(str, ReferralPaymentMode);
+    }
+  }
+
+  /**
+   * Match a free-text cell to a member of a Prisma enum, tolerating case and
+   * separators (`"Bank Transfer"`/`"bank-transfer"` → `BANK_TRANSFER`). Returns
+   * the canonical member when matched, else the trimmed input verbatim so the
+   * DTO's `@IsEnum` reports the bad value.
+   */
+  private matchEnum(raw: string, enumObj: Record<string, string>): string {
+    const key = raw
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_');
+    const values = Object.values(enumObj);
+    return values.includes(key) ? key : raw.trim();
+  }
+
+  /**
+   * Build a single slab object from a row's three slab cells, or `undefined` when
+   * all three are blank (no slab on this row). Any non-blank cell yields a slab
+   * (with numbers parsed where possible) so a partially-filled slab is validated
+   * and reported by the DTO rather than silently dropped.
+   */
+  private buildImportSlab(
+    fromRaw: string,
+    toRaw: string,
+    pctRaw: string,
+    pctKey: 'commissionPct' | 'bonusPct',
+  ): Record<string, unknown> | undefined {
+    if (fromRaw.trim() === '' && toRaw.trim() === '' && pctRaw.trim() === '') {
+      return undefined;
+    }
+    const num = (s: string): number | string => {
+      const n = Number(s.trim());
+      return Number.isFinite(n) ? n : s.trim();
+    };
+    return {
+      monthlyBusinessFrom: num(fromRaw),
+      monthlyBusinessTo: num(toRaw),
+      [pctKey]: num(pctRaw),
+    };
+  }
+
+  /**
+   * Flatten class-validator errors (including one level of nested slab errors)
+   * into a short, human-readable reason string for the import `skipped` report.
+   */
+  private formatValidationErrors(
+    errors: import('class-validator').ValidationError[],
+  ): string {
+    const messages: string[] = [];
+    const collect = (
+      errs: import('class-validator').ValidationError[],
+      prefix: string,
+    ): void => {
+      for (const err of errs) {
+        const path = prefix ? `${prefix}.${err.property}` : err.property;
+        if (err.constraints) {
+          messages.push(...Object.values(err.constraints));
+        }
+        if (err.children?.length) collect(err.children, path);
+      }
+    };
+    collect(errors, '');
+    return messages.length ? messages.join('; ') : 'Row failed validation';
   }
 
   /**

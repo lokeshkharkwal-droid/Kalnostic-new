@@ -10,6 +10,7 @@ import {
   extractImageTokens,
   PreparedPdfHtml,
 } from './services/template-render.service';
+import { resolvePageMarginsMm } from './services/pdf-document.util';
 import { LatteReportRenderService } from './services/latte-render.service';
 import { CreatePdfReportTemplateDto } from './dto/create-pdf-report-template.dto';
 import { UpdatePdfReportTemplateDto } from './dto/update-pdf-report-template.dto';
@@ -748,11 +749,15 @@ export class PdfReportTemplateService {
     prepared: PreparedPdfHtml,
   ): PDFOptions {
     const landscape = meta.orientation === 'L';
+    // Use the shared margin resolver so the reserved header/footer bands are
+    // byte-for-byte the space the edge templates fill (see `buildPdfDocuments`);
+    // this is what keeps header/body/footer from bleeding into each other.
+    const m = resolvePageMarginsMm(meta);
     const margin = {
-      top: `${meta.margin_top}mm`,
-      right: `${meta.margin_right}mm`,
-      bottom: `${meta.margin_bottom}mm`,
-      left: `${meta.margin_left}mm`,
+      top: `${m.top}mm`,
+      right: `${m.right}mm`,
+      bottom: `${m.bottom}mm`,
+      left: `${m.left}mm`,
     };
     const base: PDFOptions = {
       printBackground: true,
