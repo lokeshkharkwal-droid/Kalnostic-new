@@ -98,3 +98,21 @@ export class InvalidCommissionConfigException extends KaltrosException {
     );
   }
 }
+
+/**
+ * 400 — the uploaded referral-panel import workbook is structurally unusable
+ * (unreadable file, missing header row / required columns, or no data rows). This
+ * is a file-level failure that rejects the whole upload; per-row problems are
+ * reported non-fatally in the import result's `skipped` array instead. `reason`
+ * carries the specific structural problem for server-side logging.
+ */
+export class ReferralPanelImportFileException extends KaltrosException {
+  constructor(reason: string) {
+    super(
+      'REFERRAL_PANEL_IMPORT_INVALID_FILE',
+      'The referral panel import file could not be processed',
+      { reason },
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+}

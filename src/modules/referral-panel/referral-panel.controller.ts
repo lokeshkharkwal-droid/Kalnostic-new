@@ -8,11 +8,15 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { PermissionGuard } from '../permissions/guards/permission.guard';
 import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
 import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { AuditAction, AuditModule } from '@prisma/client';
+import { InvalidUploadFileException } from '../uploads/exceptions/uploads.exceptions';
 import { ReferralPanelService } from './referral-panel.service';
 import { ReferralPanelUserService } from './referral-panel-user.service';
 import { CreateReferralPanelDto } from './dto/create-referral-panel.dto';
@@ -25,6 +29,10 @@ import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
 import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
+
+const XLSX_MIME_TYPE =
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+const MAX_IMPORT_XLSX_BYTES = 10 * 1024 * 1024; // 10 MB, matches the generic attachment upload cap
 
 /**
  * Referral-panel endpoints (business-authenticated; tenant comes from the JWT).
@@ -59,6 +67,49 @@ export class ReferralPanelController {
       profile.branchId,
       personId,
       dto,
+    );
+  }
+
+  /**
+   * Bulk-import referral panels from an uploaded `.xlsx` workbook (one row = one
+   * panel; every template column is mapped). CREATE-ONLY, SKIP-AND-REPORT: valid
+   * rows are created via the same logic as `POST /referral-panels`; invalid or
+   * conflicting rows are skipped and returned in the response's `skipped[]` (with
+   * row number + reason). Only a file-level structural failure rejects the whole
+   * upload. Declared before the `:id` routes so `import-xlsx` isn't matched as an
+   * id.
+   */
+  @Post('import-xlsx')
+  @RequirePermission(PERMISSION_KEYS.BR_REF_ADD_PANEL)
+  @Audit({
+    module: AuditModule.REFERRAL_PANEL,
+    action: AuditAction.CREATE,
+    description: 'Imported referral panels from an Excel workbook',
+  })
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: MAX_IMPORT_XLSX_BYTES },
+      fileFilter: (_req, file, cb) => {
+        if (file.mimetype === XLSX_MIME_TYPE) {
+          cb(null, true);
+        } else {
+          cb(new InvalidUploadFileException('Unsupported file type'), false);
+        }
+      },
+    }),
+  )
+  importXlsx(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new InvalidUploadFileException('No file was uploaded');
+    }
+    return this.referralPanelService.importXlsx(
+      tenantId,
+      personId,
+      file.buffer,
     );
   }
 
