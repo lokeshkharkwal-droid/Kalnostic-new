@@ -13,9 +13,15 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
-import { toBranchLocalInstant, formatTenantDate } from '../../common/utils';
+import {
+  toBranchLocalInstant,
+  formatTenantDate,
+  formatTenantTime,
+  patientFullAgeDisplay,
+} from '../../common/utils';
 import { TenantService } from '../tenant/tenant.service';
 import { LabReportService } from '../lab-report/lab-report.service';
+import { UserDepartmentScopeService } from '../department/user-department-scope.service';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
 import type { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
 import type { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
@@ -146,6 +152,7 @@ export class OrderSampleService {
     private readonly eventEmitter: EventEmitter2,
     private readonly tenantService: TenantService,
     private readonly barcodeService: BarcodeService,
+    private readonly userDepartmentScope: UserDepartmentScopeService,
   ) {}
 
   // ── Sample generation (order → accession) ─────────────────────────────────
@@ -578,7 +585,12 @@ export class OrderSampleService {
     tenantId: string,
     personId: string | null,
     sampleIds: string[],
-    opts: { print: boolean },
+    opts: {
+      print: boolean;
+      tubeType?: string;
+      notes?: string;
+      attachmentUrl?: string;
+    },
   ): Promise<void> {
     if (sampleIds.length === 0) return;
     const samples = await tx.orderSample.findMany({
@@ -613,7 +625,12 @@ export class OrderSampleService {
     personId: string | null,
     sampleId: string,
     now: Date,
-    opts: { print: boolean },
+    opts: {
+      print: boolean;
+      tubeType?: string;
+      notes?: string;
+      attachmentUrl?: string;
+    },
   ): Promise<void> {
     await this.transitionInTx(
       tx,
@@ -625,7 +642,10 @@ export class OrderSampleService {
         data: {
           collectedAt: now,
           collectedBy: personId,
+          // A tube type chosen in the Collect modal wins; otherwise derive it
+          // from the sample's container/sample type (unchanged behaviour).
           tubeType:
+            opts.tubeType ??
             sample.tubeType ??
             sample.containerType ??
             sample.sampleType ??
@@ -638,6 +658,7 @@ export class OrderSampleService {
             : {}),
         },
       }),
+      { notes: opts.notes, attachmentUrl: opts.attachmentUrl },
     );
 
     // A tube is drawn once → every test it carries is collected together.
@@ -676,13 +697,25 @@ export class OrderSampleService {
     tenantId: string,
     branchId: string | null,
     query: ListSamplesDto,
+    personId: string,
   ): Promise<PaginatedResult<OrderSampleListItem>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const nowMs = Date.now();
     const tat = await this.tatThresholds(tenantId, branchId);
+    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
+      tenantId,
+      personId,
+    );
 
-    const where = this.buildSampleWhere(tenantId, branchId, query, tat, nowMs);
+    const where = this.buildSampleWhere(
+      tenantId,
+      branchId,
+      query,
+      tat,
+      nowMs,
+      scopeIds,
+    );
 
     // withTenant (not array-form $transaction) so the RLS tenant GUC is set for
     // both queries — array-form bypasses the per-op RLS extension and returns
@@ -725,12 +758,24 @@ export class OrderSampleService {
     tenantId: string,
     branchId: string | null,
     query: ListSamplesDto,
+    personId: string,
   ): Promise<PaginatedResult<InHouseOrderGroup>> {
     const page = query.page ?? 1;
     const limit = 10; // group-aware pagination: 10 orders per page
     const nowMs = Date.now();
     const tat = await this.tatThresholds(tenantId, branchId);
-    const where = this.buildSampleWhere(tenantId, branchId, query, tat, nowMs);
+    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
+      tenantId,
+      personId,
+    );
+    const where = this.buildSampleWhere(
+      tenantId,
+      branchId,
+      query,
+      tat,
+      nowMs,
+      scopeIds,
+    );
 
     const { orderIds, total, rows, mode } = await this.prisma.withTenant(
       tenantId,
@@ -954,11 +999,19 @@ export class OrderSampleService {
   async summary(
     tenantId: string,
     branchId: string | null,
+    personId: string,
   ): Promise<AccessionSummary> {
+    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
+      tenantId,
+      personId,
+    );
     const where: Prisma.OrderSampleWhereInput = {
       tenantId,
       branchId,
       deletedAt: null,
+      // Same mandatory department-visibility scope as the list, so the status
+      // tab + TAT bar counts always match the rows the user can actually see.
+      AND: [this.departmentScopeForSamples(scopeIds)],
     };
     const grouped = await this.prisma.orderSample.groupBy({
       by: ['status'],
@@ -1216,10 +1269,10 @@ export class OrderSampleService {
     const samples = await Promise.all(
       ids.map((id) => this.findById(id, tenantId)),
     );
-    const { timezone, dateFormat } =
+    const { timezone, dateFormat, timeFormat } =
       await this.tenantService.getLocale(tenantId);
     const labels = samples.map((s) =>
-      this.buildLabelVariables(s, timezone, dateFormat),
+      this.buildLabelVariables(s, timezone, dateFormat, timeFormat),
     );
     const combined: GeneratePdfDto = { sections: { labels } };
 
@@ -1261,9 +1314,10 @@ export class OrderSampleService {
 
   /** Flat `{variable}` values for one sample's label. */
   private buildLabelVariables(
-    sample: OrderSampleWithRelations,
+    sample: OrderSampleDetail,
     timezone: string,
     dateFormat: string,
+    timeFormat: string,
   ): Record<string, unknown> {
     const patient = sample.order?.patient;
     return {
@@ -1278,9 +1332,18 @@ export class OrderSampleService {
             .filter(Boolean)
             .join(' ')
         : '',
-      patient_age: patient?.age ?? '',
+      // Full age (Years, Months, Days) from DOB when known; single-unit
+      // (age/ageType) fallback otherwise.
+      patient_age: patientFullAgeDisplay(
+        patient?.dateOfBirth ?? null,
+        patient?.age ?? null,
+        patient?.ageType ?? null,
+      ),
       patient_gender: patient?.gender ?? '',
       patient_um_id: patient?.umId ?? '',
+      // Distinct department name(s) of the sample's tests, comma-joined
+      // (resolved by `withDepartments` — a sample can span departments).
+      department_name: sample.departmentLabel ?? '',
       order_code: sample.order?.orderCode ?? '',
       test_names: sample.tests
         .map((t) => t.testName)
@@ -1289,24 +1352,34 @@ export class OrderSampleService {
       sample_type: sample.sampleType ?? '',
       container_type: sample.containerType ?? '',
       priority: sample.priority,
+      // Collection date AND time, e.g. `21/09/2026 01:30 PM` (date + space +
+      // tenant 12h/24h time). Blank when the sample has no collection time.
       collected_at: sample.collectedAt
-        ? formatTenantDate(
+        ? `${formatTenantDate(
             toBranchLocalInstant(sample.collectedAt, timezone),
             dateFormat,
-          )
+          )} ${formatTenantTime(
+            toBranchLocalInstant(sample.collectedAt, timezone),
+            timeFormat,
+          )}`
         : '',
     };
   }
 
   /** Render context for a single-sample label print. */
   private async buildLabelContext(
-    sample: OrderSampleWithRelations,
+    sample: OrderSampleDetail,
     tenantId: string,
   ): Promise<GeneratePdfDto> {
-    const { timezone, dateFormat } =
+    const { timezone, dateFormat, timeFormat } =
       await this.tenantService.getLocale(tenantId);
     return {
-      variables: this.buildLabelVariables(sample, timezone, dateFormat),
+      variables: this.buildLabelVariables(
+        sample,
+        timezone,
+        dateFormat,
+        timeFormat,
+      ),
     };
   }
 
@@ -1980,6 +2053,7 @@ export class OrderSampleService {
     query: ListSamplesDto,
     tat: TatThresholds,
     nowMs: number,
+    scopeIds: string[],
   ): Prisma.OrderSampleWhereInput {
     const where: Prisma.OrderSampleWhereInput = {
       tenantId,
@@ -2036,10 +2110,28 @@ export class OrderSampleService {
 
     const and: Prisma.OrderSampleWhereInput[] = [];
     if (query.search) {
+      const s = query.search;
       and.push({
         OR: [
-          { accessionNo: { contains: query.search, mode: 'insensitive' } },
-          { barcode: { contains: query.search, mode: 'insensitive' } },
+          { accessionNo: { contains: s, mode: 'insensitive' } },
+          { barcode: { contains: s, mode: 'insensitive' } },
+          {
+            order: {
+              is: {
+                patient: {
+                  is: {
+                    OR: [
+                      { firstName: { contains: s, mode: 'insensitive' } },
+                      { middleName: { contains: s, mode: 'insensitive' } },
+                      { lastName: { contains: s, mode: 'insensitive' } },
+                      { umId: { contains: s, mode: 'insensitive' } },
+                      { mobile: { contains: s, mode: 'insensitive' } },
+                    ],
+                  },
+                },
+              },
+            },
+          },
         ],
       });
     }
@@ -2054,9 +2146,29 @@ export class OrderSampleService {
     }
     this.applyOrderMode(query.orderMode, order, and);
 
+    // Department visibility scope (mandatory, not a user filter): a sample is
+    // visible when its department is unassigned (NULL → everyone) or one of the
+    // caller's mapped departments. Pushed into `and` so it never clobbers the
+    // search/urgent/outsource conditions and is applied before pagination.
+    and.push(this.departmentScopeForSamples(scopeIds));
+
     if (Object.keys(order).length > 0) where.order = order;
     if (and.length > 0) where.AND = and;
     return where;
+  }
+
+  /**
+   * The department-visibility condition for `OrderSample.departmentId` (a
+   * denormalized, indexed snapshot): unassigned rows (NULL) are visible to all;
+   * an empty scope (user with no department) therefore sees only unassigned rows.
+   * @param scopeIds the caller's department ids (see UserDepartmentScopeService)
+   */
+  private departmentScopeForSamples(
+    scopeIds: string[],
+  ): Prisma.OrderSampleWhereInput {
+    return scopeIds.length > 0
+      ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
+      : { departmentId: null };
   }
 
   /** Translate the §A.3 "Order Mode" filter into order/sample conditions. */

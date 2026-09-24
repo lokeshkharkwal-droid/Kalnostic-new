@@ -41,6 +41,8 @@ import { SlotReservationService } from '../phlebotomist-schedule/slot-reservatio
 import { PhlebotomistCollectionService } from '../phlebotomist-collection/phlebotomist-collection.service';
 import { RegistrationSettingsService } from '../registration-settings/registration-settings.service';
 import { ExternalIdService } from '../registration-settings/external-id.service';
+import { ReferralCreditService } from '../referral-credit/referral-credit.service';
+import { CommunicationRecipientNotAllowedException } from '../referral-credit/referral-credit.exceptions';
 import { TenantService } from '../tenant/tenant.service';
 import type { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
 import { PaginatedResult } from '../../common/dto/response.dto';
@@ -52,10 +54,11 @@ import {
   amountInWords,
   genderLabel,
   salutationLabel,
-  patientAgeDisplay,
+  patientFullAgeDisplay,
   toBranchLocalInstant,
   formatTenantDate,
   formatTenantDateTime,
+  formatOrderDateTime,
 } from '../../common/utils';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
@@ -421,6 +424,7 @@ export class OrderService {
     private readonly eventEmitter: EventEmitter2,
     private readonly shareService: ShareService,
     private readonly tenantService: TenantService,
+    private readonly referralCredit: ReferralCreditService,
   ) {}
 
   /**
@@ -493,6 +497,18 @@ export class OrderService {
     await this.assertPatient(tenantId, dto.patientId);
     await this.assertItems(tenantId, dto.items);
     await this.assertReferrals(tenantId, dto);
+    // Referral Panel Settings credit gate (Section 4): block a NEW finalized
+    // order when a linked referral (B2B panel / doctor / internal / external) on
+    // a Cash/Postpaid setting has hit its Credit Limit or Credit Allowed Days.
+    // Only bites for status = ORDER; DRAFT/QUOTE/APPOINTMENT are exempt.
+    if (dto.status === OrderStatus.ORDER) {
+      await this.referralCredit.assertOrderCreationAllowed(tenantId, {
+        referredByDoctorId: dto.referredByDoctorId,
+        referralPanelId: dto.referralPanelId,
+        internalReferralId: dto.internalReferralId,
+        externalReferralId: dto.externalReferralId,
+      });
+    }
     if (dto.diagnostics) {
       await this.assertDiagnostics(tenantId, dto.diagnostics);
     }
@@ -1985,7 +2001,15 @@ export class OrderService {
       // documents. Kept as a distinct key so authors of pre-existing templates
       // that used `{client_salutation}` don't have to re-author them.
       client_salutation: salutationLabel(p.salutation),
-      patient_age: patientAgeDisplay(p.age, p.ageType),
+      // Full age (Years, Months, Days) from DOB when known; single-unit
+      // (age/ageType) fallback otherwise. Shared by every order-document type
+      // (bill, TRF, quotation, order slip, …) so `{patient_age}` reads the same
+      // everywhere.
+      patient_age: patientFullAgeDisplay(
+        p.dateOfBirth ?? null,
+        p.age,
+        p.ageType,
+      ),
       patient_gender: genderLabel(p.gender),
       patient_um_id: p.umId ?? '',
       patient_mobile: p.mobile ?? '',
@@ -2292,6 +2316,14 @@ export class OrderService {
         bill_id: order.billId ?? order.orderCode,
         order_code: order.orderCode,
         order_date: formatTenantDate(order.orderDate, dateFormat),
+        // Order date + operator-entered order time, e.g. `21/09/2026 01:30 PM`
+        // (distinct from `bill_date_time`, which is when the bill was generated).
+        order_date_time: formatOrderDateTime(
+          order.orderDate,
+          order.orderTime,
+          dateFormat,
+          timeFormat,
+        ),
         bill_date_time: billDateTime,
         payment_collected_by: paymentCollectedBy,
         panel_tests_name: panelTestsName,
@@ -2358,12 +2390,20 @@ export class OrderService {
     tenantId: string,
   ): Promise<GeneratePdfDto> {
     const testRows = await this.itemRowsWithPanelTests(order);
-    const { dateFormat } = await this.tenantService.getLocale(tenantId);
+    const { dateFormat, timeFormat } =
+      await this.tenantService.getLocale(tenantId);
     return {
       variables: {
         trf_ref: order.billId ?? order.orderCode,
         order_code: order.orderCode,
         order_date: formatTenantDate(order.orderDate, dateFormat),
+        // Order date + operator-entered order time, e.g. `21/09/2026 01:30 PM`.
+        order_date_time: formatOrderDateTime(
+          order.orderDate,
+          order.orderTime,
+          dateFormat,
+          timeFormat,
+        ),
         clinical_notes: order.orderNotes ?? '',
         branch_name: order.branch?.name ?? '',
         panel_tests_name: this.panelTestsNameFlat(testRows),
@@ -2633,6 +2673,31 @@ export class OrderService {
   }
 
   /**
+   * Gate a bill share against the order's referral communication policy
+   * (Referral Panel Settings → Send Bills to Patient / Send Bills to B2B). A
+   * no-op for orders with no referral setting (the policy allows everything).
+   * @throws CommunicationRecipientNotAllowedException when that recipient is disabled
+   */
+  private async assertBillRecipientAllowed(
+    tenantId: string,
+    orderId: string,
+    recipientType: ShareRecipientType,
+  ): Promise<void> {
+    const policy = await this.referralCredit.resolveOrderCommunicationPolicy(
+      tenantId,
+      orderId,
+    );
+    const allowed =
+      recipientType === 'PANEL' ? policy.billToB2b : policy.billToPatient;
+    if (!allowed) {
+      throw new CommunicationRecipientNotAllowedException(
+        'bill',
+        recipientType === 'PANEL' ? 'B2B panel' : 'patient',
+      );
+    }
+  }
+
+  /**
    * Single-channel share: queue the kind's document to one recipient over one
    * deliverable channel, using the tenant's ACTIVATED template for the kind's
    * feature. Email/WhatsApp attach the kind's PDF (if any); SMS is text-only.
@@ -2667,6 +2732,15 @@ export class OrderService {
         },
       );
       return [];
+    }
+
+    // Referral Panel Settings — honor Send Bills to Patient / B2B on bill shares.
+    if (kind === 'bill') {
+      await this.assertBillRecipientAllowed(
+        tenantId,
+        orderId,
+        dto.recipientType ?? 'PATIENT',
+      );
     }
 
     const recipient = cfg.allowPanel
@@ -2714,6 +2788,11 @@ export class OrderService {
     const variables = cfg.variables(ctx);
     const attachmentName = cfg.attachmentName?.(ctx);
     const selected = dto.recipientType ?? 'PATIENT';
+
+    // Referral Panel Settings — honor Send Bills to Patient / B2B on bill shares.
+    if (kind === 'bill') {
+      await this.assertBillRecipientAllowed(tenantId, orderId, selected);
+    }
 
     // Which recipient(s) each channel is sent to (and which one edits apply to).
     const targets: { recipient: ShareRecipient; matches: boolean }[] = [];
@@ -3024,6 +3103,30 @@ export class OrderService {
     }
     if (query.appointmentStatus) {
       where.appointment = { is: { status: query.appointmentStatus } };
+    }
+    // Billing scope: drop appointment-only orders on which nothing has actually
+    // been collected, so a freshly-created, unpaid appointment does not appear as
+    // a bill. "Nothing paid" is keyed on the payment ledger (no PAYMENT entry
+    // with a positive amount), NOT on `paymentStatus`: an appointment saved
+    // without generating a bill is forced to `paymentStatus = PAID` (the no-bill
+    // rule) even though ₹0 was collected, so a `paymentStatus`-based test would
+    // wrongly keep it. Only the exact pair (status = APPOINTMENT AND paid = 0) is
+    // excluded; a paid appointment (any positive PAYMENT entry) and every
+    // non-appointment order stay visible. Pushed to `and[]` so it composes with
+    // any status/payment filter without clobbering it.
+    if (query.hideUnpaidAppointments) {
+      and.push({
+        NOT: {
+          status: OrderStatus.APPOINTMENT,
+          payments: {
+            none: {
+              deletedAt: null,
+              entryType: PaymentEntryType.PAYMENT,
+              paidAmount: { gt: 0 },
+            },
+          },
+        },
+      });
     }
     if (query.orderType) where.orderType = query.orderType;
     if (query.billingType) where.billingType = query.billingType;
@@ -6022,12 +6125,20 @@ export class OrderService {
     sampleIds: string[],
     tenantId: string,
     actorId: string | null,
-    opts: { print?: boolean } = {},
+    opts: {
+      print?: boolean;
+      tubeType?: string;
+      notes?: string;
+      attachmentUrl?: string;
+    } = {},
   ): Promise<OrderWithRelations> {
     await this.findById(orderId, tenantId);
     await this.prisma.withTenant(tenantId, (tx) =>
       this.orderSamples.collectSamplesInTx(tx, tenantId, actorId, sampleIds, {
         print: !!opts.print,
+        tubeType: opts.tubeType,
+        notes: opts.notes,
+        attachmentUrl: opts.attachmentUrl,
       }),
     );
     return this.findById(orderId, tenantId);

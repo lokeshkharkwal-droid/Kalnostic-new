@@ -13,22 +13,26 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
+import { ValidationException } from '../../common/exceptions/kaltros.exception';
 import { getReferralPanelId } from '../../prisma/tenant-context';
 import {
   genderLabel,
   salutationLabel,
-  patientAgeDisplay,
+  patientFullAgeDisplay,
   sampleSourceLabel,
   toBranchLocalInstant,
   formatReportDateTime,
   formatTenantDate,
-  formatTenantDateTime,
+  formatOrderDateTime,
   buildEvaluationOrder,
   evaluateFormula,
   formatCalculatedValue,
   type FormulaParam,
 } from '../../common/utils';
 import { TenantService } from '../tenant/tenant.service';
+import { UserDepartmentScopeService } from '../department/user-department-scope.service';
+import { ReferralCreditService } from '../referral-credit/referral-credit.service';
+import { CommunicationRecipientNotAllowedException } from '../referral-credit/referral-credit.exceptions';
 import {
   ShareService,
   type ShareRecipient,
@@ -58,6 +62,8 @@ import {
 import type { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
 import { TechnicianSettingsService } from '../technician-settings/technician-settings.service';
 import { UpdateContentSectionsDto } from './dto/update-content-sections.dto';
+import { UpdateOverallResultDto } from './dto/update-overall-result.dto';
+import { OverallResultTemplateService } from '../overall-result-template/overall-result-template.service';
 import {
   GeneratePdfDto,
   SigningAuthorityDto,
@@ -69,6 +75,7 @@ import {
   LabReportContentSections,
   LabReportDetailApiResponse,
   LabReportDetailWithContent,
+  LabReportOverallResult,
   LabReportResultParam,
   LabReportSignatoryCandidate,
   LabReportSignatoryCandidatesResponse,
@@ -161,6 +168,9 @@ export class LabReportService {
     private readonly eventEmitter: EventEmitter2,
     private readonly shareService: ShareService,
     private readonly tenantService: TenantService,
+    private readonly overallResultTemplateService: OverallResultTemplateService,
+    private readonly userDepartmentScope: UserDepartmentScopeService,
+    private readonly referralCredit: ReferralCreditService,
   ) {}
 
   private readonly logger = new Logger(LabReportService.name);
@@ -369,6 +379,7 @@ export class LabReportService {
     tenantId: string,
     branchId: string,
     filters: ListLabReportsDto,
+    scopeIds: string[],
   ): Prisma.LabReportWhereInput {
     const where: Prisma.LabReportWhereInput = {
       tenantId,
@@ -483,7 +494,13 @@ export class LabReportService {
         },
       ];
     }
-    if (Object.keys(orderItem).length > 0) where.orderItem = orderItem;
+    // Department visibility scope (mandatory, not a user filter): a report is
+    // visible when its test/panel's department is unassigned (NULL → everyone) or
+    // one of the caller's mapped departments. Attached via `orderItem.AND` so it
+    // composes with the search `orderItem.OR` above without clobbering it, and is
+    // applied before pagination/counts. Always present, so `orderItem` is set.
+    orderItem.AND = [this.departmentScopeForOrderItem(scopeIds)];
+    where.orderItem = orderItem;
 
     // B2B Referral Panel isolation: constrain reports to the panel's orders
     // (nested via orderItem.order). Runs last so it merges with any filters above.
@@ -496,13 +513,48 @@ export class LabReportService {
     return where;
   }
 
+  /**
+   * The department-visibility condition for a report's order item. A report maps
+   * to exactly one order item, which is EITHER a branch lab test OR a branch lab
+   * panel (the other relation is null), so only the matching pair of branches can
+   * apply — giving correct per-item department resolution. Unassigned tests/panels
+   * (NULL department) are visible to all; an empty scope (user with no department)
+   * therefore sees only unassigned items.
+   * @param scopeIds the caller's department ids (see UserDepartmentScopeService)
+   */
+  private departmentScopeForOrderItem(
+    scopeIds: string[],
+  ): Prisma.OrderItemWhereInput {
+    const or: Prisma.OrderItemWhereInput[] = [
+      { branchLabTest: { is: { departmentId: null } } },
+      { branchLabPanel: { is: { departmentId: null } } },
+    ];
+    if (scopeIds.length > 0) {
+      or.push(
+        { branchLabTest: { is: { departmentId: { in: scopeIds } } } },
+        { branchLabPanel: { is: { departmentId: { in: scopeIds } } } },
+      );
+    }
+    return { OR: or };
+  }
+
   async findAll(
     tenantId: string,
     branchId: string | null,
     filters: ListLabReportsDto,
+    personId: string,
   ) {
     const resolvedBranchId = this.resolveBranch(branchId, filters);
-    const where = this.buildListWhere(tenantId, resolvedBranchId, filters);
+    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
+      tenantId,
+      personId,
+    );
+    const where = this.buildListWhere(
+      tenantId,
+      resolvedBranchId,
+      filters,
+      scopeIds,
+    );
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 25;
 
@@ -1053,12 +1105,19 @@ export class LabReportService {
     tenantId: string,
     branchId: string | null,
     filters: ListLabReportsDto,
+    personId: string,
   ): Promise<LabReportStatusCounts> {
     const resolvedBranchId = this.resolveBranch(branchId, filters);
-    const baseWhere = this.buildListWhere(tenantId, resolvedBranchId, {
-      ...filters,
-      status: undefined,
-    });
+    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
+      tenantId,
+      personId,
+    );
+    const baseWhere = this.buildListWhere(
+      tenantId,
+      resolvedBranchId,
+      { ...filters, status: undefined },
+      scopeIds,
+    );
 
     const statuses = Object.values(LabReportStatus);
     const counts = await Promise.all(
@@ -1077,12 +1136,17 @@ export class LabReportService {
     // the standalone "Outsource" checkbox, since both set isOutsourced) so
     // the In-House/Outsource split reflects every OTHER active filter, not
     // whichever source pill happens to be selected right now.
-    const sourceBaseWhere = this.buildListWhere(tenantId, resolvedBranchId, {
-      ...filters,
-      status: undefined,
-      source: undefined,
-      outsource: undefined,
-    });
+    const sourceBaseWhere = this.buildListWhere(
+      tenantId,
+      resolvedBranchId,
+      {
+        ...filters,
+        status: undefined,
+        source: undefined,
+        outsource: undefined,
+      },
+      scopeIds,
+    );
     const [inHouse, outsource] = await Promise.all([
       this.prisma.labReport.count({
         where: { ...sourceBaseWhere, isOutsourced: false },
@@ -1116,8 +1180,19 @@ export class LabReportService {
   async getOptions(
     tenantId: string,
     branchId: string | null,
+    personId: string,
   ): Promise<LabReportOptions> {
     const activeBranchId = this.requireBranch(branchId);
+    // Scope the Lab Test / Lab Panel filter dropdowns to the caller's departments
+    // (unassigned tests/panels stay visible to all), matching the worklist itself.
+    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
+      tenantId,
+      personId,
+    );
+    const deptScope =
+      scopeIds.length > 0
+        ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
+        : { departmentId: null };
 
     const [
       branches,
@@ -1153,6 +1228,7 @@ export class LabReportService {
           branchId: activeBranchId,
           isActive: true,
           deletedAt: null,
+          ...deptScope,
         },
         select: { id: true, testName: true },
         orderBy: { testName: 'asc' },
@@ -1163,6 +1239,7 @@ export class LabReportService {
           branchId: activeBranchId,
           isActive: true,
           deletedAt: null,
+          ...deptScope,
         },
         select: { id: true, panelName: true },
         orderBy: { panelName: 'asc' },
@@ -1203,17 +1280,30 @@ export class LabReportService {
     // B2B Referral Panel isolation: block reading another panel's report by id.
     assertLabReportPanelOwnership(report, getReferralPanelId());
 
-    const [contentSections, resultParams] = await Promise.all([
-      this.getContentSections(tenantId, report.labTestId, {
-        usefulFor: report.usefulFor,
-        interpretationOfResults: report.interpretationOfResults,
-        limitations: report.limitations,
-        remarks: report.remarks,
-        references: report.references,
-      }),
-      this.getResultParams(report.labTestId, report.orderItem.branchLabPanelId),
-    ]);
-    return { ...report, contentSections, resultParams };
+    const [contentSections, resultParams, overallResultRows] =
+      await Promise.all([
+        this.getContentSections(tenantId, report.labTestId, {
+          usefulFor: report.usefulFor,
+          interpretationOfResults: report.interpretationOfResults,
+          limitations: report.limitations,
+          remarks: report.remarks,
+          references: report.references,
+        }),
+        this.getResultParams(
+          report.labTestId,
+          report.orderItem.branchLabPanelId,
+        ),
+        // No LabTest-level fallback for Overall Result (unlike contentSections
+        // above) — one row per result parameter that has a template/content
+        // applied, from the dedicated per-parameter table (not columns on this
+        // report itself — see LabReportOverallResult's model doc comment).
+        this.prisma.labReportOverallResult.findMany({
+          where: { labReportId: id, tenantId },
+          select: { resultParamId: true, templateId: true, content: true },
+        }),
+      ]);
+    const overallResults: LabReportOverallResult[] = overallResultRows;
+    return { ...report, contentSections, overallResults, resultParams };
   }
 
   /**
@@ -1256,6 +1346,7 @@ export class LabReportService {
       attachments: report.attachments,
       multiStepProcess: report.multiStepProcess,
       contentSections: report.contentSections,
+      overallResults: report.overallResults,
       resultParams: report.resultParams,
     };
   }
@@ -1386,6 +1477,108 @@ export class LabReportService {
   }
 
   /**
+   * Apply an Overall Result template to ONE result parameter on a report, or
+   * edit that parameter's already-applied content in place — see
+   * `UpdateOverallResultDto`'s doc comment for how the two actions are
+   * distinguished. Each parameter holds its own independent applied result
+   * (`LabReportOverallResult`, keyed by `(labReportId, resultParamId)`) — this
+   * never touches any other parameter's row on the same report. Gated by
+   * `TechnicianSetting.isOverallResultEditable` (default false); a no-op
+   * (returns this parameter's current, unchanged overall result) when the
+   * toggle is off, same "silently ignore rather than reject" convention as
+   * `updateContentSections`.
+   * @param resultParamId which result parameter this applies to — MUST be one
+   *   of this report's own result parameters (validated via
+   *   `assertResultParamBelongsToReport`, added 2026-09-22 after a smoke test
+   *   found any arbitrary UUID would silently create its own orphaned row
+   *   with no corresponding entry in `resultParams`, unlike every other
+   *   logical-ref id in this schema, which is always at least scoped to a
+   *   real relationship even without an FK)
+   * @throws OverallResultTemplateNotFoundException if `templateId` doesn't
+   *   resolve to an active template in this tenant
+   * @throws ValidationException if neither, or both, of `templateId`/`content`
+   *   are sent — exactly one is required, or if `resultParamId` doesn't
+   *   belong to this report's test
+   */
+  async updateOverallResult(
+    id: string,
+    tenantId: string,
+    branchId: string | null,
+    resultParamId: string,
+    dto: UpdateOverallResultDto,
+  ): Promise<LabReportOverallResult> {
+    const activeBranchId = this.requireBranch(branchId);
+    const report = await this.requireReport(id, tenantId, activeBranchId);
+    await this.assertResultParamBelongsToReport(report, resultParamId);
+
+    const settings = await this.technicianSettingsService.getForBranch(
+      tenantId,
+      activeBranchId,
+    );
+    const existing = await this.prisma.labReportOverallResult.findUnique({
+      where: {
+        labReportId_resultParamId: { labReportId: report.id, resultParamId },
+      },
+      select: { templateId: true, content: true },
+    });
+    if (!settings.isOverallResultEditable) {
+      return {
+        resultParamId,
+        templateId: existing?.templateId ?? null,
+        content: existing?.content ?? null,
+      };
+    }
+
+    if (dto.templateId === undefined && dto.content === undefined) {
+      throw new ValidationException(
+        'Either templateId (to apply a template) or content (to edit) is required',
+      );
+    }
+    if (dto.templateId !== undefined && dto.content !== undefined) {
+      throw new ValidationException(
+        'Send only one of templateId (to apply a template) or content (to edit), not both',
+      );
+    }
+
+    let templateId = existing?.templateId ?? null;
+    let content = existing?.content ?? null;
+    if (dto.templateId !== undefined) {
+      // Apply: resolve the template server-side — never trust client-supplied
+      // content for what a named template currently contains.
+      const template = await this.overallResultTemplateService.findById(
+        dto.templateId,
+        tenantId,
+      );
+      templateId = template.id;
+      content = template.content;
+    } else if (dto.content !== undefined) {
+      // Edit: leave templateId untouched so the UI still shows which
+      // template this parameter started from.
+      content = dto.content;
+    }
+
+    const updated = await this.prisma.labReportOverallResult.upsert({
+      where: {
+        labReportId_resultParamId: { labReportId: report.id, resultParamId },
+      },
+      create: {
+        tenantId,
+        labReportId: report.id,
+        resultParamId,
+        templateId,
+        content,
+      },
+      update: { templateId, content },
+      select: { templateId: true, content: true },
+    });
+    return {
+      resultParamId,
+      templateId: updated.templateId,
+      content: updated.content,
+    };
+  }
+
+  /**
    * Resolve the Test Entry screen's result-entry grid *row definitions*
    * (LABORATORY.docx §4.3) from `LabTestResultParam` — what parameters this
    * test has, independent of whether any value has been entered yet (a
@@ -1468,6 +1661,7 @@ export class LabReportService {
         resultSuggestions: true,
         defaultValue: true,
         groupName: true,
+        overallResultGroups: true,
       },
       orderBy: { sortOrder: 'asc' },
     });
@@ -1490,6 +1684,38 @@ export class LabReportService {
     if (!hasSample) throw new LabReportSampleMissingException(id);
 
     return report;
+  }
+
+  /**
+   * Guard for `updateOverallResult`: confirm `resultParamId` is actually one
+   * of this report's own result parameters (reuses `getResultParams`, the
+   * same lookup `findById` uses to build the Test Entry grid — handles both
+   * a direct `labTestId` and a panel-member report resolved via
+   * `orderItem.branchLabPanelId`). Without this, any arbitrary UUID would
+   * silently create its own row in `LabReportOverallResult` with no
+   * corresponding parameter to attach it to (found via smoke test,
+   * 2026-09-22) — every other logical-ref id in this schema is still scoped
+   * to a real relationship even without an FK; this one wasn't.
+   * @throws ValidationException if `resultParamId` doesn't belong to this
+   *   report's test/panel
+   */
+  private async assertResultParamBelongsToReport(
+    report: { id: string; labTestId: string | null; orderItemId: string },
+    resultParamId: string,
+  ): Promise<void> {
+    const orderItem = await this.prisma.orderItem.findUnique({
+      where: { id: report.orderItemId },
+      select: { branchLabPanelId: true },
+    });
+    const params = await this.getResultParams(
+      report.labTestId,
+      orderItem?.branchLabPanelId,
+    );
+    if (!params.some((p) => p.id === resultParamId)) {
+      throw new ValidationException(
+        `resultParamId does not belong to this report's test`,
+      );
+    }
   }
 
   /**
@@ -2426,25 +2652,14 @@ export class LabReportService {
         order_code: order.orderCode,
         order_date: formatTenantDate(order.orderDate, dateFormat),
         // Combines the date-only `orderDate` with the separately-captured
-        // `orderTime` ("HH:mm") into one date+time display value. Both
-        // fields are already branch-local wall-clock values entered by the
-        // operator — no `toBranchLocalInstant` conversion (that's only for
-        // real UTC instants like `collectedAt`/`approvedAt`).
-        order_date_time: (() => {
-          const [hours, minutes] = (order.orderTime ?? '00:00')
-            .split(':')
-            .map((n) => Number(n) || 0);
-          const combined = new Date(
-            Date.UTC(
-              order.orderDate.getUTCFullYear(),
-              order.orderDate.getUTCMonth(),
-              order.orderDate.getUTCDate(),
-              hours,
-              minutes,
-            ),
-          );
-          return formatTenantDateTime(combined, dateFormat, timeFormat);
-        })(),
+        // `orderTime` ("HH:mm") into one date+time display value, matching the
+        // `{collected_at}` label format (shared `formatOrderDateTime` helper).
+        order_date_time: formatOrderDateTime(
+          order.orderDate,
+          order.orderTime,
+          dateFormat,
+          timeFormat,
+        ),
         order_external_id: order.externalOrderId ?? '',
         // Alias for the classic old-template tag name (`{external_order_id}`)
         // — same value as `order_external_id`, kept separate so authors of
@@ -2454,7 +2669,13 @@ export class LabReportService {
           .filter(Boolean)
           .join(' '),
         patient_salutation: patient.salutation ?? '',
-        patient_age: patient.age ?? '',
+        // Full age (Years, Months, Days) from DOB; single-unit (age/ageType)
+        // fallback when DOB is absent.
+        patient_age: patientFullAgeDisplay(
+          patient.dateOfBirth ?? null,
+          patient.age,
+          patient.ageType,
+        ),
         patient_gender: genderLabel(patient.gender),
         patient_um_id: patient.umId ?? '',
         patient_mobile: patient.mobile ?? '',
@@ -2551,6 +2772,8 @@ export class LabReportService {
     templateId?: string,
     type: 'lab_report' | 'lab_panel' = 'lab_report',
   ): Promise<Buffer> {
+    // Referral Panel Settings — Restrict Report Access (Credit Limit/Days).
+    await this.referralCredit.assertReportAccessAllowedByReportId(tenantId, id);
     const context = await this.buildPrintContext(id, tenantId, branchId);
     const resolvedTemplateId =
       templateId ?? (await this.resolvePrintTemplateId(tenantId, type));
@@ -2632,7 +2855,8 @@ export class LabReportService {
       throw new OrderReportsNotFoundException(orderId);
     }
 
-    const { timezone } = await this.tenantService.getLocale(tenantId);
+    const { timezone, dateFormat, timeFormat } =
+      await this.tenantService.getLocale(tenantId);
 
     // Order/patient/diagnostics/referral for the shared header block.
     const order = await this.prisma.order.findFirst({
@@ -2663,7 +2887,11 @@ export class LabReportService {
           patient.lastName,
         ]),
       },
-      client_age: patientAgeDisplay(patient.age, patient.ageType),
+      client_age: patientFullAgeDisplay(
+        patient.dateOfBirth ?? null,
+        patient.age,
+        patient.ageType,
+      ),
       // Raw M/F/O code (templates test `client_gender == 'M'`).
       client_gender: patient.gender
         ? String(patient.gender).charAt(0).toUpperCase()
@@ -2681,8 +2909,14 @@ export class LabReportService {
           ])
         : ' -- ',
       referring_panel_name: order.referralPanel?.name ?? ' -- ',
-      order_date_time: formatReportDateTime(
-        toBranchLocalInstant(order.orderDate, timezone),
+      // Order date + operator-entered order time (combines `orderDate` +
+      // `orderTime`, matching `{collected_at}`); the previous version formatted
+      // the date-only `orderDate` alone, so the time always read `12:00 AM`.
+      order_date_time: formatOrderDateTime(
+        order.orderDate,
+        order.orderTime,
+        dateFormat,
+        timeFormat,
       ),
       // Barcode IMAGE url (templates use it as `<img src=…>`).
       order_id_barcode: order.orderIdQrCode ?? '',
@@ -2797,16 +3031,23 @@ export class LabReportService {
     orderItemIds?: string[],
   ): Promise<Buffer> {
     const activeBranchId = this.requireBranch(branchId);
+    // Referral Panel Settings — Restrict Report Access (Credit Limit/Days).
+    await this.referralCredit.assertReportAccessAllowedByOrderId(
+      tenantId,
+      orderId,
+    );
 
-    // If the caller picked a `lab_all_report` template, render the whole order
-    // as ONE continuous Latte document (per-test iteration + page headers/breaks
+    // If the caller picked a `lab_all_report` (or the patient-facing
+    // `patient_lab_all_report`) template, render the whole order as ONE
+    // continuous Latte document (per-test iteration + page headers/breaks
     // handled inside the template) instead of merging N single-report PDFs.
+    // Both types share the exact same all-reports context + Latte renderer.
     if (templateId) {
       const type = await this.pdfReportTemplateService.getType(
         templateId,
         tenantId,
       );
-      if (type === 'lab_all_report') {
+      if (type === 'lab_all_report' || type === 'patient_lab_all_report') {
         const context = await this.buildAllReportsContext(
           orderId,
           tenantId,
@@ -2885,6 +3126,15 @@ export class LabReportService {
       await this.dispatchIamShare(ctx, tenantId, branchId, actorId);
       return [];
     }
+    // Referral Panel Settings — deliverable report shares go to the patient, so
+    // honor Send Reports to Patient. IAM (staff) above is unaffected.
+    const policy = await this.referralCredit.resolveOrderCommunicationPolicy(
+      tenantId,
+      orderId,
+    );
+    if (!policy.reportToPatient) {
+      throw new CommunicationRecipientNotAllowedException('report', 'patient');
+    }
     return this.dispatchDeliverableShare(
       ctx,
       tenantId,
@@ -2935,11 +3185,29 @@ export class LabReportService {
 
     const results: ShareChannelResult[] = [];
 
+    // Referral Panel Settings — the deliverable channels (Email/SMS/WhatsApp)
+    // send the report to the patient, so honor Send Reports to Patient. When
+    // disabled they are reported SKIPPED; the in-app (IAM) staff notification
+    // below still fires.
+    const policy = await this.referralCredit.resolveOrderCommunicationPolicy(
+      tenantId,
+      orderId,
+    );
+
     for (const channel of [
       MessagingChannel.EMAIL,
       MessagingChannel.SMS,
       MessagingChannel.WHATSAPP,
     ]) {
+      if (!policy.reportToPatient) {
+        results.push({
+          channel,
+          status: 'SKIPPED',
+          reason:
+            'Sending reports to the patient is disabled in Referral Panel Settings',
+        });
+        continue;
+      }
       try {
         const logs = await this.dispatchDeliverableShare(
           ctx,

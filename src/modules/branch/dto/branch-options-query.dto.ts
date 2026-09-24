@@ -1,6 +1,14 @@
 import { BranchType } from '@prisma/client';
-import { IsEnum, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsBoolean,
+  IsEnum,
+  IsIn,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
+import { ToBoolean } from '../../../common/decorators/to-boolean.decorator';
 import { SYSTEM_MODULE_KEYS } from '../../permissions/constants/system-modules.constant';
 
 /**
@@ -16,6 +24,10 @@ import { SYSTEM_MODULE_KEYS } from '../../permissions/constants/system-modules.c
  *   (`BranchModule.isEnabled`). Used by the Registration/Accession dashboards'
  *   Business Admin branch selector, so the dropdown only ever lists branches
  *   where that module is actually turned on — never every tenant branch.
+ * - `excludeCurrentBranch` — when `true`, drop the caller's own active branch
+ *   (resolved server-side from the JWT `active_branch_id`, never from the client)
+ *   from the list. Used by the Accession Send / Assign-Center Internal Station
+ *   picker, which must offer every *other* tenant branch to transfer to.
  * - `page` / `limit` (inherited) — **opt-in** offset pagination. When `page` is
  *   omitted the endpoint returns the full `{ id, name }[]` array (legacy
  *   behaviour for callers that need every option); when `page` is supplied it
@@ -42,4 +54,9 @@ export class BranchOptionsQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsIn(SYSTEM_MODULE_KEYS)
   moduleKey?: string;
+
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  excludeCurrentBranch?: boolean;
 }

@@ -314,6 +314,7 @@ enum AuditModule {
   TECHNICIAN_SETTINGS
   COMMUNICATION // Outbound messaging (Email/SMS/WhatsApp) + in-app notifications
   LAB_TEST_FIELD_PERMISSIONS
+  OVERALL_RESULT_TEMPLATE
 }
 
 /// Type of controlled document managed by the document module.
@@ -1543,12 +1544,18 @@ model BranchModule {
 /// processing. Tenant-scoped (CLAUDE.md §4.6). Both ids are logical FKs to
 /// `branches` (validated in BranchService, mirroring BranchModule). One active
 /// mapping per (collection_center, receiving_branch) — partial unique index in
-/// prisma/rls.sql. RLS policy in prisma/rls.sql.
+/// prisma/rls.sql. Exactly one active mapping per center may be flagged
+/// `isDefault` — a second partial unique index in prisma/rls.sql
+/// (`ccm_center_default_active_unique`) enforces "at most one default" at the
+/// database level. RLS policy in prisma/rls.sql.
 model CollectionCenterMapping {
-  id                 String @id @default(uuid())
-  tenantId           String @map("tenant_id")
-  collectionCenterId String @map("collection_center_id")
-  receivingBranchId  String @map("receiving_branch_id")
+  id                 String  @id @default(uuid())
+  tenantId           String  @map("tenant_id")
+  collectionCenterId String  @map("collection_center_id")
+  receivingBranchId  String  @map("receiving_branch_id")
+  /// The center's default sample-receiving branch. At most one active mapping
+  /// per center is `true` (partial unique index in prisma/rls.sql).
+  isDefault          Boolean @default(false) @map("is_default")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -2861,7 +2868,9 @@ model LabTestSample {
 
 /// A result parameter for a lab test. `parameterCode` is unique per test among
 /// active rows (partial unique index in prisma/rls.sql). `reflexTests` is a JSON
-/// snapshot of { id, name } objects. Settings/layout/icon ids are nullable logical refs.
+/// snapshot of { id, name } objects. `overallResultGroups` is a free-text array
+/// of Overall Result template group names (string equality, no FK). Settings/
+/// layout/icon ids are nullable logical refs.
 model LabTestResultParam {
   id        String  @id @default(uuid())
   // NULL when the parent lab test is a SITE_ADMIN template.
@@ -2905,6 +2914,13 @@ model LabTestResultParam {
   // Reflex tests — JSON snapshot of { id, name } objects (the FE sends and the
   // API returns this verbatim; not a relational/FK list).
   reflexTests Json @default("[]") @map("reflex_tests")
+
+  // Overall Result groups this parameter is linked to — a list of
+  // `OverallResultTemplate.groupName` values (free-text, matched by string
+  // equality; no FK/relation, same convention as `groupName` above). A
+  // parameter may link to several groups; a group name may be linked to many
+  // parameters across many tests.
+  overallResultGroups String[] @default([]) @map("overall_result_groups")
 
   // Meta
   notes     String?
@@ -2994,6 +3010,43 @@ model LabTestReferenceValue {
   @@index([paramId])
   @@index([deletedAt])
   @@map("lab_test_reference_values")
+}
+
+/// A reusable, tenant-wide "Overall Result" content template (Business Admin
+/// master data), e.g. a canned narrative certificate/summary for a class of
+/// results. `groupName` is a free-text label matching the same convention as
+/// `LabTestResultParam.groupName` (string equality, no FK/lookup table) so a
+/// template can later be associated with any test whose result-parameter group
+/// shares this name — multiple templates may share one `groupName`. `content` is
+/// the Tiptap-authored HTML body. `name` is unique per tenant among active rows
+/// (partial unique index in prisma/rls.sql). The report-time consumption
+/// (attaching a template to a LabReport) is not implemented yet — this model
+/// only backs the Business Admin settings CRUD screen for phase 1.
+model OverallResultTemplate {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+
+  name      String
+  groupName String                     @map("group_name")
+  content   String                     @db.Text
+  status    OverallResultTemplateStatus @default(ACTIVE)
+
+  createdBy String? @map("created_by")
+  updatedBy String? @map("updated_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([groupName])
+  @@index([deletedAt])
+  @@map("overall_result_templates")
+}
+
+enum OverallResultTemplateStatus {
+  ACTIVE
+  INACTIVE
 }
 
 /// A lab-panel configuration inside a master data (tenant-scoped + branch-level;
@@ -7193,6 +7246,7 @@ model LabReport {
   isOutsourced Boolean @default(false) @map("is_outsourced")
 
   resultValues     LabReportResultValue[]
+  overallResults   LabReportOverallResult[]
   notes            LabReportNote[]
   attachments      LabReportAttachment[]
   history          LabReportHistory[]
@@ -7281,6 +7335,44 @@ model LabReportResultValue {
   @@index([labReportId])
   @@index([resultParamId])
   @@map("lab_report_result_values")
+}
+
+/// The Overall Result template/content applied to ONE result parameter on
+/// ONE report — per-PARAMETER, not per-report (a test can have several
+/// parameters, e.g. Bilirubin/SGOT/SGPT under Liver Function Test, each
+/// independently tagged into its own `LabTestResultParam.overallResultGroups`
+/// and each capable of holding its own separately-applied result). Replaces
+/// the earlier `LabReport.overallResultTemplateId`/`overallResultContent`
+/// columns (removed in this same migration), which wrongly modeled this as
+/// one-per-report: applying a template from one parameter's row silently
+/// overwrote whatever another parameter's row had applied, since both wrote
+/// the same two columns. `resultParamId` is a logical ref to
+/// `LabTestResultParam` (mirrors `LabReportResultValue.resultParamId` — no
+/// FK, joined app-side). `templateId` is a logical reference (no FK,
+/// matching `OverallResultTemplate`'s existing cross-module convention)
+/// recording which template was applied, purely so the UI can show which one
+/// is currently active; `content` is the actual (technician-editable-after-
+/// apply) HTML snapshot the report renders from — editing it never writes
+/// back to the source `OverallResultTemplate`. Gated by `TechnicianSetting
+/// .isOverallResultEditable` (see `LabReportService.updateOverallResult`).
+model LabReportOverallResult {
+  id          String    @id @default(uuid())
+  tenantId    String    @map("tenant_id")
+  labReportId String    @map("lab_report_id")
+  labReport   LabReport @relation(fields: [labReportId], references: [id], onDelete: Cascade)
+
+  resultParamId String  @map("result_param_id")
+  templateId    String? @map("template_id")
+  content       String? @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([labReportId, resultParamId])
+  @@index([tenantId])
+  @@index([labReportId])
+  @@index([resultParamId])
+  @@map("lab_report_overall_results")
 }
 
 /// Which per-test action a note belongs to (LABORATORY.docx §4.2, §5). ORDER /
@@ -8515,6 +8607,13 @@ model TechnicianSetting {
   isLimitationsEditable    Boolean @default(false) @map("is_limitations_editable")
   isRemarksEditable        Boolean @default(false) @map("is_remarks_editable")
   isReferencesEditable     Boolean @default(false) @map("is_references_editable")
+
+  /// Gates whether a technician can apply/edit an Overall Result template on
+  /// the Test Entry screen (see `LabReportService.updateOverallResult`).
+  /// Unlike the 5 toggles above, this doesn't gate a per-report override of a
+  /// `LabTest` master field — Overall Result has no such master value, it is
+  /// always sourced from an `OverallResultTemplate` the technician picks.
+  isOverallResultEditable Boolean @default(false) @map("is_overall_result_editable")
 
   /// Configurable reason options for the "Adjust TAT" audit-log dropdown
   /// (Turnaround Time Details modal). Soft-validated (frontend-populated

@@ -1,11 +1,11 @@
 /**
  * EzHealthTrack → Kalnostics-New data migration runner.
  *
- * Migrates ONE legacy tenant's Tenant → Branches → Patients → Referring Panels
+ * Migrates ONE legacy tenant's Tenant → Branches → Patients (+ family links)
  * out of the legacy EzHealthTrack MySQL database into this app's PostgreSQL,
  * REUSING the real Nest services (so DTO logic, sequential-code generation, RLS
  * tenant context and audit all behave exactly as in production). It never inserts
- * with a raw Prisma client.
+ * with a raw Prisma client. (Referring-panel import was removed per client request.)
  *
  * The run is IDEMPOTENT: every stage looks the row up by its legacy id first and
  * skips it if already migrated, so re-running only fills gaps. Provenance is kept
@@ -42,9 +42,9 @@ import {
   type RowDataPacket,
 } from 'mysql2/promise';
 import {
+  AgeType,
   BranchType,
   Gender,
-  ReferralClientType,
   Relationship,
   Salutation,
 } from '@prisma/client';
@@ -54,11 +54,9 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { TenantService } from '../src/modules/tenant/tenant.service';
 import { BranchService } from '../src/modules/branch/branch.service';
 import { PatientService } from '../src/modules/patient/patient.service';
-import { ReferralPanelService } from '../src/modules/referral-panel/referral-panel.service';
 import type { CreateTenantDto } from '../src/modules/tenant/dto/create-tenant.dto';
 import type { CreateBranchDto } from '../src/modules/branch/dto/create-branch.dto';
 import type { CreatePatientDto } from '../src/modules/patient/dto/create-patient.dto';
-import type { CreateReferralPanelDto } from '../src/modules/referral-panel/dto/create-referral-panel.dto';
 
 const logger = new Logger('EzhtMigration');
 
@@ -211,22 +209,68 @@ function mapDob(legacy: unknown): string | undefined {
   return d.toISOString().slice(0, 10);
 }
 
-/** Pull the first `{num}` / `{email}` out of a legacy JSON-array text column. */
-function firstFromJsonArray(raw: unknown, key: 'num' | 'email'): string | null {
-  const s = str(raw);
-  if (!s) return null;
-  try {
-    const parsed = JSON.parse(s) as Array<Record<string, unknown>>;
-    if (Array.isArray(parsed)) {
-      for (const item of parsed) {
-        const val = str(item?.[key]);
-        if (val) return val;
-      }
-    }
-  } catch {
-    // not JSON — ignore
+/**
+ * Derive age + ageType from a (already-normalised, YYYY-MM-DD) DOB. Legacy has no
+ * age column — only DOB — but the target keeps `age`/`ageType` as stored fields,
+ * so we compute them: whole years when ≥1 year old, else whole months when ≥1
+ * month, else days. Returns undefined when there is no usable DOB.
+ */
+function ageFromDob(
+  dobIso: string | undefined,
+): { age: number; ageType: AgeType } | undefined {
+  if (!dobIso) return undefined;
+  const dob = new Date(dobIso);
+  if (Number.isNaN(dob.getTime())) return undefined;
+  const now = new Date();
+  if (dob.getTime() > now.getTime()) return undefined; // future DOB → ignore
+
+  let years = now.getUTCFullYear() - dob.getUTCFullYear();
+  const beforeBirthdayThisYear =
+    now.getUTCMonth() < dob.getUTCMonth() ||
+    (now.getUTCMonth() === dob.getUTCMonth() &&
+      now.getUTCDate() < dob.getUTCDate());
+  if (beforeBirthdayThisYear) years -= 1;
+  if (years >= 1) return { age: years, ageType: AgeType.YEARS };
+
+  let months =
+    (now.getUTCFullYear() - dob.getUTCFullYear()) * 12 +
+    (now.getUTCMonth() - dob.getUTCMonth());
+  if (now.getUTCDate() < dob.getUTCDate()) months -= 1;
+  if (months >= 1) return { age: months, ageType: AgeType.MONTHS };
+
+  const days = Math.max(
+    0,
+    Math.floor((now.getTime() - dob.getTime()) / 86_400_000),
+  );
+  return { age: days, ageType: AgeType.DAYS };
+}
+
+/** S3 base for legacy system files: `s3_base_url` + `files_bucket` from the
+ *  legacy app params (params.production.php). Override with LEGACY_S3_FILES_BASE_URL. */
+const LEGACY_S3_FILES_BASE_URL =
+  str(process.env.LEGACY_S3_FILES_BASE_URL) ??
+  'https://s3-ap-southeast-1.amazonaws.com/user.stock.files';
+
+/**
+ * Build a fully-qualified patient photo URL. Legacy `PATIENT_PHOTO` stores only a
+ * `system_files.attachment_id` (+extension); the real S3 object key is that row's
+ * `disk_path` (resolved via the LEFT JOIN in the detail query). The public URL is
+ * `<s3_base_url>/<files_bucket>/<disk_path>` — e.g.
+ * `https://s3-ap-southeast-1.amazonaws.com/user.stock.files/prod/423/2025/03/19/<id>.png`.
+ * Falls back to an already-absolute PATIENT_PHOTO value; otherwise undefined (no
+ * usable photo / no matching system_files row).
+ */
+function buildPhotoUrl(diskPath: unknown, rawPhoto: unknown): string | undefined {
+  const path = str(diskPath);
+  // Only a real S3 object key (a path with folders, e.g. prod/423/…/id.png) yields
+  // a working URL. The `offline` sentinel means the bytes live in
+  // system_files.file_data (not S3), so it can't be turned into a URL — skip it.
+  if (path && path.includes('/') && !/^offline\b/i.test(path)) {
+    return `${LEGACY_S3_FILES_BASE_URL.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`;
   }
-  return null;
+  const file = str(rawPhoto);
+  if (file && /^https?:\/\//i.test(file)) return file; // already a URL
+  return undefined; // no S3-backed system_files row → can't form a working URL
 }
 
 interface RunReport {
@@ -240,11 +284,6 @@ interface RunReport {
     familyBypass: Array<{ legacyPatientId: number; mobile: string }>;
     missingMobile: Array<{ legacyPatientId: number; name: string }>;
     errors: Array<{ legacyPatientId: number; message: string }>;
-  };
-  panels: {
-    created: number;
-    skipped: number;
-    errors: Array<{ legacyId: number; message: string }>;
   };
   family: {
     created: number;
@@ -277,7 +316,6 @@ async function main(): Promise<void> {
       missingMobile: [],
       errors: [],
     },
-    panels: { created: 0, skipped: 0, errors: [] },
     family: { created: 0, skipped: 0, unresolved: [], errors: [] },
   };
 
@@ -289,7 +327,6 @@ async function main(): Promise<void> {
   const tenantService = app.get(TenantService);
   const branchService = app.get(BranchService);
   const patientService = app.get(PatientService);
-  const referralPanelService = app.get(ReferralPanelService);
 
   try {
     // ── Stage 1: Tenant ──────────────────────────────────────────────────────
@@ -318,9 +355,10 @@ async function main(): Promise<void> {
     );
 
     // ── Stage 3: Patients ────────────────────────────────────────────────────
-    // Family members are flagged at creation time (see loadFamilyMemberLegacyIds)
-    // so shared-mobile households are handled deterministically.
-    const memberLegacyIds = await loadFamilyMemberLegacyIds(mysql, legacyTenantId);
+    // Family members are flagged at creation time and, when they have no mobile
+    // of their own, inherit the anchor's number (see loadFamilyMembers) so that
+    // every member of a primary patient is imported — even a shared-mobile one.
+    const familyMembers = await loadFamilyMembers(mysql, legacyTenantId);
     await migratePatients(
       mysql,
       prisma,
@@ -331,7 +369,7 @@ async function main(): Promise<void> {
       mainBranchId,
       missingMobilePolicy,
       patientLimit,
-      memberLegacyIds,
+      familyMembers,
       report,
     );
 
@@ -345,16 +383,8 @@ async function main(): Promise<void> {
       report,
     );
 
-    // ── Stage 4: Referring panels → ReferralPanel ────────────────────────────
-    await migratePanels(
-      mysql,
-      prisma,
-      referralPanelService,
-      legacyTenantId,
-      newTenantId,
-      branchMap,
-      report,
-    );
+    // NOTE: Referring-panel import (former Stage 4) was removed at the client's
+    // request — panels are no longer migrated into the new database.
   } finally {
     await mysql.end();
     await app.close();
@@ -365,8 +395,7 @@ async function main(): Promise<void> {
     `Done. tenant=${report.tenant.created ? 'created' : 'existing'} ` +
       `branches +${report.branches.created}/skip ${report.branches.skipped} ` +
       `patients +${report.patients.created}/skip ${report.patients.skipped} ` +
-      `family +${report.family.created}/skip ${report.family.skipped} ` +
-      `panels +${report.panels.created}/skip ${report.panels.skipped}`,
+      `family +${report.family.created}/skip ${report.family.skipped}`,
   );
 }
 
@@ -556,34 +585,61 @@ async function resolveMainBranchId(
   return first.done ? null : first.value;
 }
 
+/** A family MEMBER's anchor: the primary patient it hangs off, and that
+ *  primary's mobile (usable ≥4-char, or null). */
+interface FamilyMemberInfo {
+  anchorLegacyId: number;
+  anchorMobile: string | null;
+}
+
 /**
- * Legacy PATIENT_IDs that are family MEMBERS for this tenant — i.e. they appear
- * as `patient_family.FAMILY_MEMBER_PATIENT_ID` on an active row whose anchor
- * belongs to the tenant. Used to flag them `isFamilyMember` at CREATION time, so
- * that in a shared-mobile household the anchor (never a member) is the record
- * that holds the number and stays off the family flag — deterministically,
- * regardless of the order patients are processed in.
+ * Map every legacy family MEMBER for this tenant → its anchor (the primary
+ * patient it hangs off) and that anchor's mobile. A member is any
+ * `patient_family.FAMILY_MEMBER_PATIENT_ID` on an active row whose anchor
+ * belongs to the tenant. This drives three things:
+ *   1. flagging members `isFamilyMember` at CREATION so they are EXCLUDED from
+ *      the per-tenant active-mobile unique index (they may share the anchor's
+ *      number);
+ *   2. letting a member with NO mobile of its own INHERIT the anchor's number
+ *      (via `anchorMobile`) instead of being dropped by the missing-mobile skip;
+ *   3. giving a member with no `user_patient_relation` row of its own a branch
+ *      to fall back to (the anchor's) when it is unioned into the patient set.
+ * A member with several anchors keeps the first (earliest `PATIENT_FAMILY_ID`)
+ * anchor, and fills its `anchorMobile` from the first anchor with a usable number.
  */
-async function loadFamilyMemberLegacyIds(
+async function loadFamilyMembers(
   mysql: Connection,
   legacyTenantId: number,
-): Promise<Set<number>> {
+): Promise<Map<number, FamilyMemberInfo>> {
   const [rows] = await mysql.query<LegacyRow[]>(
-    `SELECT DISTINCT pf.FAMILY_MEMBER_PATIENT_ID AS m
+    `SELECT pf.PATIENT_ID AS anchor,
+            pf.FAMILY_MEMBER_PATIENT_ID AS member,
+            anchor.PATIENT_MOBILE_NUMBER AS anchorMobile
        FROM patient_family pf
+       JOIN patientregister anchor ON anchor.PATIENT_ID = pf.PATIENT_ID
       WHERE pf.FLAG = 0
         AND pf.FAMILY_MEMBER_PATIENT_ID IS NOT NULL
         AND pf.PATIENT_ID IN (
           SELECT DISTINCT patient_id FROM user_patient_relation WHERE tenant_id = ?
-        )`,
+        )
+      ORDER BY pf.PATIENT_FAMILY_ID`,
     [legacyTenantId],
   );
-  const set = new Set<number>();
+  const map = new Map<number, FamilyMemberInfo>();
   for (const r of rows) {
-    const m = intOrNull(r.m);
-    if (m !== null) set.add(m);
+    const member = intOrNull(r.member);
+    const anchor = intOrNull(r.anchor);
+    if (member === null || anchor === null) continue;
+    const am = str(r.anchorMobile);
+    const usable = am && am.length >= 4 ? am : null;
+    const existing = map.get(member);
+    if (!existing) {
+      map.set(member, { anchorLegacyId: anchor, anchorMobile: usable });
+    } else if (existing.anchorMobile === null && usable) {
+      existing.anchorMobile = usable; // fill mobile from a later anchor
+    }
   }
-  return set;
+  return map;
 }
 
 /** Migrate patients owned by the tenant (resolved via user_patient_relation). */
@@ -597,7 +653,7 @@ async function migratePatients(
   mainBranchId: string | null,
   missingMobilePolicy: 'skip' | 'placeholder',
   patientLimit: number | null,
-  memberLegacyIds: Set<number>,
+  familyMembers: Map<number, FamilyMemberInfo>,
   report: RunReport,
 ): Promise<void> {
   // Ownership + branch: a patient can have several user_patient_relation rows —
@@ -627,6 +683,19 @@ async function migratePatients(
     if (mapped) {
       branchByPatient.set(pid, mapped);
       hasBranch.add(pid);
+    }
+  }
+  // Union in EVERY family member, even one with no `user_patient_relation` row
+  // of its own for this tenant — otherwise a member seen only via patient_family
+  // would never enter the patient loop and its relationship would be lost. Each
+  // such member inherits the anchor's registration branch.
+  for (const [memberId, info] of familyMembers) {
+    if (!branchByPatient.has(memberId)) {
+      patientIds.push(memberId);
+      branchByPatient.set(
+        memberId,
+        branchByPatient.get(info.anchorLegacyId) || mainBranchId || '',
+      );
     }
   }
   if (patientIds.length === 0) {
@@ -665,9 +734,15 @@ async function migratePatients(
               pr.whatsapp_number, pr.pan_number,
               ppi.PATIENT_DOB, ppi.PATIENT_GENDER, ppi.PATIENT_ADDRESS1, ppi.PATIENT_ADDRESS2,
               ppi.PATIENT_ZIP, ppi.PATIENT_AADHAR_NUMBER, ppi.PATIENT_PASSPORT_NUMBER,
-              ppi.PATIENT_CONTRY, ppi.PATIENT_STATE, ppi.PATIENT_CITY, ppi.PATIENT_AREA
+              ppi.PATIENT_CONTRY, ppi.PATIENT_STATE, ppi.PATIENT_CITY, ppi.PATIENT_AREA,
+              ppi.PATIENT_PHOTO, sf.disk_path AS PATIENT_PHOTO_DISK_PATH
          FROM patientregister pr
          LEFT JOIN patient_personal_info ppi ON ppi.PATIENT_ID = pr.PATIENT_ID
+         -- Resolve the profile photo's real S3 key: PATIENT_PHOTO holds only the
+         -- system_files.attachment_id (+ extension), and the object key lives in
+         -- system_files.disk_path (e.g. prod/{tenant}/{yyyy}/{mm}/{dd}/{id}.png).
+         LEFT JOIN system_files sf
+                ON sf.attachment_id = SUBSTRING_INDEX(ppi.PATIENT_PHOTO, '.', 1)
         WHERE pr.PATIENT_ID IN (${placeholders})`,
       chunk,
     );
@@ -728,15 +803,25 @@ async function migratePatients(
       continue;
     }
     const firstName = str(row.PATIENT_FIRST_NAME) ?? 'Unknown';
+    const isMember = familyMembers.has(legacyPatientId);
     let mobile = str(row.PATIENT_MOBILE_NUMBER);
     if (!mobile || mobile.length < 4) {
-      if (missingMobilePolicy === 'skip') {
+      // Family member with no mobile of its own → inherit the anchor's number.
+      // It is created with isFamilyMember=true (below), so reusing the anchor's
+      // number does NOT trip the active-mobile unique index (rls.sql).
+      const inherited = isMember
+        ? (familyMembers.get(legacyPatientId)?.anchorMobile ?? null)
+        : null;
+      if (inherited) {
+        mobile = inherited;
+      } else if (missingMobilePolicy === 'skip') {
         report.patients.missingMobile.push({ legacyPatientId, name: firstName });
         continue;
+      } else {
+        // placeholder → a synthetic, marked as family member to bypass the
+        // per-tenant active-mobile unique index.
+        mobile = `EZHT-${legacyPatientId}`;
       }
-      // placeholder → a synthetic, marked as family member to bypass the
-      // per-tenant active-mobile unique index.
-      mobile = `EZHT-${legacyPatientId}`;
     }
 
     const email = str(row.PATIENT_EMAIL);
@@ -744,6 +829,10 @@ async function migratePatients(
     const pan = str(row.pan_number);
     const zip = str(row.PATIENT_ZIP);
     const fields = fieldsByPatient.get(legacyPatientId) ?? {};
+    // Legacy stores only DOB (no age column); derive age + ageType so the patient
+    // record carries an age even though the target keeps them as stored columns.
+    const dob = mapDob(row.PATIENT_DOB);
+    const ageInfo = ageFromDob(dob);
 
     const dto: CreatePatientDto = {
       salutation: mapSalutation(row.salutation),
@@ -754,13 +843,20 @@ async function migratePatients(
       // Globally-unique manual UMID (branches have no auto-format post-migration).
       umId: `EZHT-${legacyTenantId}-${legacyPatientId}`,
       gender: mapGender(row.PATIENT_GENDER),
-      dateOfBirth: mapDob(row.PATIENT_DOB),
+      dateOfBirth: dob,
+      age: ageInfo?.age,
+      ageType: ageInfo?.ageType,
+      // Patient profile photo → full S3 URL, resolved from system_files.disk_path
+      // (PATIENT_PHOTO is only the attachment_id). See buildPhotoUrl.
+      photoUrl: buildPhotoUrl(row.PATIENT_PHOTO_DISK_PATH, row.PATIENT_PHOTO),
       whatsappNumber: str(row.whatsapp_number) ?? undefined,
       email: email && EMAIL.test(email) ? email : undefined,
-      country: countryMap.get(intOrNull(row.PATIENT_CONTRY) ?? -1) ?? undefined,
-      state: stateMap.get(intOrNull(row.PATIENT_STATE) ?? -1) ?? undefined,
-      city: cityMap.get(intOrNull(row.PATIENT_CITY) ?? -1) ?? undefined,
-      area: areaMap.get(intOrNull(row.PATIENT_AREA) ?? -1) ?? undefined,
+      // Geo columns are numeric ids in legacy (resolve → name) but may be plain
+      // names in some data (pass through) — resolveGeoValue handles both.
+      country: resolveGeoValue(row.PATIENT_CONTRY, countryMap),
+      state: resolveGeoValue(row.PATIENT_STATE, stateMap),
+      city: resolveGeoValue(row.PATIENT_CITY, cityMap),
+      area: resolveGeoValue(row.PATIENT_AREA, areaMap),
       addressLine1: str(row.PATIENT_ADDRESS1) ?? undefined,
       addressLine2: str(row.PATIENT_ADDRESS2) ?? undefined,
       pincode: zip && zip !== '0' ? zip : undefined,
@@ -777,12 +873,11 @@ async function migratePatients(
 
     const branchId = branchByPatient.get(legacyPatientId) || mainBranchId || null;
     const isPlaceholder = mobile.startsWith('EZHT-');
-    // Flag known family members up front so a household sharing one mobile is
-    // handled deterministically: the anchor (never in memberLegacyIds) keeps the
-    // number and stays off the family flag; members are exempt from the unique
-    // index. The mobile-conflict retry below remains a safety net for genuinely
-    // duplicate PRIMARY registrations that share a number without a family link.
-    const isMember = memberLegacyIds.has(legacyPatientId);
+    // `isMember` (computed above) flags known family members so a household
+    // sharing one mobile is handled deterministically: the anchor (never in
+    // familyMembers) keeps the number and stays off the family flag; members are
+    // exempt from the unique index. The mobile-conflict retry below remains a
+    // safety net for duplicate PRIMARY registrations that share a number.
     try {
       await prisma.runWithTenant(newTenantId, () =>
         patientService.create(newTenantId, dto, {
@@ -926,153 +1021,6 @@ async function migrateFamilyLinks(
   logger.log(
     `  family: +${report.family.created}, skip ${report.family.skipped}, ` +
       `unresolved ${report.family.unresolved.length}, errors ${report.family.errors.length}`,
-  );
-}
-
-/**
- * Migrate business-level referring_panels (parent_id = 0) → ReferralPanel,
- * BRANCH-SCOPED. A legacy panel is associated with the branches it has
- * commission/pricing rows for in `referring_panel_price_detail` (branch_id). We
- * create one `ReferralPanel` PER associated (migrated) branch, with `branchId`
- * set; a panel with no branch mapping becomes a single tenant-level row
- * (`branchId = null`). Idempotency is keyed on (legacyId, branchId).
- */
-async function migratePanels(
-  mysql: Connection,
-  prisma: PrismaService,
-  referralPanelService: ReferralPanelService,
-  legacyTenantId: number,
-  newTenantId: string,
-  branchMap: Map<number, string>,
-  report: RunReport,
-): Promise<void> {
-  const [rows] = await mysql.query<LegacyRow[]>(
-    'SELECT * FROM referring_panels WHERE tenant_id = ? AND (parent_id = 0 OR parent_id IS NULL) ORDER BY id',
-    [legacyTenantId],
-  );
-  if (rows.length === 0) {
-    logger.log('No business-level referring panels for this tenant.');
-    return;
-  }
-
-  // Panel → set of legacy branch ids it's associated with (the branch link lives
-  // in referring_panel_price_detail, NOT on the panel row itself).
-  const [mapRows] = await mysql.query<LegacyRow[]>(
-    'SELECT DISTINCT referring_panel_id AS panel, branch_id AS branch FROM referring_panel_price_detail WHERE tenant_id = ? AND branch_id > 0',
-    [legacyTenantId],
-  );
-  const branchesByPanel = new Map<number, Set<number>>();
-  for (const m of mapRows) {
-    const panel = intOrNull(m.panel);
-    const branch = intOrNull(m.branch);
-    if (panel === null || branch === null) continue;
-    if (!branchesByPanel.has(panel)) branchesByPanel.set(panel, new Set());
-    branchesByPanel.get(panel)!.add(branch);
-  }
-
-  // Panel country/state/city may be numeric geo ids — resolve to names.
-  const geoIds = (v: unknown): number[] => {
-    const n = intOrNull(v);
-    return n !== null && n > 0 ? [n] : [];
-  };
-  const pCountry = await loadGeoNames(mysql, 'country_table', 'COUNTRY_ID', 'COUNTRY_NAME', rows.flatMap((r) => geoIds(r.country)));
-  const pState = await loadGeoNames(mysql, 'state_table', 'STATE_ID', 'STATE_NAME', rows.flatMap((r) => geoIds(r.state)));
-  const pCity = await loadGeoNames(mysql, 'city_table', 'CITY_ID', 'CITY_NAME', rows.flatMap((r) => geoIds(r.city)));
-
-  // Existing migrated panels, keyed on (legacyId, branchId) for idempotency.
-  const done = await prisma.runWithTenant(newTenantId, () =>
-    prisma.referralPanel.findMany({
-      where: { tenantId: newTenantId, deletedAt: null, legacyId: { not: null } },
-      select: { legacyId: true, branchId: true },
-    }),
-  );
-  const key = (legacyId: number, branchId: string | null): string =>
-    `${legacyId}|${branchId ?? 'TENANT'}`;
-  const doneSet = new Set(done.map((p) => key(p.legacyId!, p.branchId)));
-
-  for (const rp of rows) {
-    const legacyId = intOrNull(rp.id);
-    if (legacyId === null) continue;
-    const name = str(rp.name) ?? `Panel ${legacyId}`;
-    const panelType = (str(rp.panel_type) ?? '').toLowerCase();
-    const clientType =
-      panelType === 'credit' ? ReferralClientType.POSTPAID : ReferralClientType.CASH;
-
-    // Director details — prefer the explicit director_* columns, then fall back
-    // to the panel's primary contact / phone-email JSON arrays.
-    const directorMobile =
-      str(rp.director_contact) ??
-      str(rp.primary_mobile_number) ??
-      firstFromJsonArray(rp.phone, 'num') ??
-      undefined;
-    const emailCandidate =
-      (str(rp.director_email) && EMAIL.test(str(rp.director_email)!)
-        ? str(rp.director_email)
-        : null) ??
-      (str(rp.primary_email) && EMAIL.test(str(rp.primary_email)!)
-        ? str(rp.primary_email)
-        : null) ??
-      firstFromJsonArray(rp.email, 'email');
-    const directorEmail = emailCandidate ?? undefined;
-
-    // Commission/credit config is intentionally left unconfigured here (advanced
-    // referral settings are out of scope for the first pass); the legacy values
-    // are preserved in `remarks` for later manual setup.
-    const remarks = [
-      `Migrated from EzHealthTrack (referring_panels.id=${legacyId}).`,
-      `panel_type=${str(rp.panel_type) ?? '-'}`,
-      `commission_type=${str(rp.commission_type) ?? '-'}`,
-      `commission_current=${str(rp.commission_current) ?? '-'}`,
-      `credit_limit=${str(rp.credit_limit) ?? '-'}`,
-    ].join(' ');
-
-    // Resolve the target branches: legacy branch ids (from price_detail) that map
-    // to a migrated branch. No mapping ⇒ a single tenant-level panel.
-    const legacyBranches = [...(branchesByPanel.get(legacyId) ?? new Set())];
-    const targetBranchIds: Array<string | null> = legacyBranches
-      .map((lb) => branchMap.get(lb) ?? null)
-      .filter((b): b is string => b !== null);
-    if (targetBranchIds.length === 0) targetBranchIds.push(null); // tenant-level
-
-    for (const branchId of targetBranchIds) {
-      if (doneSet.has(key(legacyId, branchId))) {
-        report.panels.skipped += 1;
-        continue;
-      }
-      const dto: CreateReferralPanelDto = {
-        name,
-        clientType,
-        branchId: branchId ?? undefined,
-        panelCode: str(rp.code) ?? undefined,
-        addressLine1: str(rp.address) ?? undefined,
-        country: resolveGeoValue(rp.country, pCountry),
-        city: resolveGeoValue(rp.city, pCity),
-        state: resolveGeoValue(rp.state, pState),
-        pincode: str(rp.zip) ?? undefined,
-        directorName: str(rp.director_name) ?? undefined,
-        directorMobile,
-        directorEmail,
-        remarks,
-      } as CreateReferralPanelDto;
-
-      try {
-        await prisma.runWithTenant(newTenantId, () =>
-          referralPanelService.create(newTenantId, branchId, null, dto, {
-            legacyId,
-          }),
-        );
-        doneSet.add(key(legacyId, branchId));
-        report.panels.created += 1;
-        logger.log(
-          `  panel ← legacy ${legacyId} ("${name}") branch=${branchId ?? 'TENANT-LEVEL'}`,
-        );
-      } catch (e) {
-        report.panels.errors.push({ legacyId, message: messageOf(e) });
-      }
-    }
-  }
-  logger.log(
-    `  panels: +${report.panels.created}, skip ${report.panels.skipped}, errors ${report.panels.errors.length}`,
   );
 }
 

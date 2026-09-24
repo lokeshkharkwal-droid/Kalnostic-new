@@ -6,6 +6,7 @@ import { AccessionModule } from '../accession/accession.module';
 import { PhlebotomistScheduleModule } from '../phlebotomist-schedule/phlebotomist-schedule.module';
 import { PhlebotomistCollectionModule } from '../phlebotomist-collection/phlebotomist-collection.module';
 import { RegistrationSettingsModule } from '../registration-settings/registration-settings.module';
+import { ReferralCreditModule } from '../referral-credit/referral-credit.module';
 import { CommunicationModule } from '../communication/communication.module';
 import { PermissionsModule } from '../permissions/permissions.module';
 import { TenantModule } from '../tenant/tenant.module';
@@ -34,6 +35,7 @@ import { OrderService } from './order.service';
     PhlebotomistCollectionModule,
     AccessionModule,
     RegistrationSettingsModule,
+    ReferralCreditModule,
     CommunicationModule,
     PermissionsModule,
     TenantModule,

@@ -1,0 +1,37 @@
+meta {
+  name: 07 List - Still Present as Inactive
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/external-referrals?limit=100&search=E2E Referral Flow
+  body: none
+  auth: bearer
+}
+
+params:query {
+  limit: 100
+  search: E2E Referral Flow
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("still listed, now INACTIVE (non-destructive)", function () {
+    const row = (res.getBody().data || []).find((r) => r.id === bru.getVar("flowReferralId"));
+    expect(row, "referral row").to.be.an("object");
+    expect(row.status).to.equal("INACTIVE");
+  });
+}
+
+docs {
+  Step 7 — proves deactivation is **non-destructive**: the referral is still in the
+  management listing (as Inactive), not deleted — so historical orders keep their
+  link and the record can be reactivated.
+}

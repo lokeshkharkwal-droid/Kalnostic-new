@@ -73,6 +73,26 @@ export interface LabReportContentSections {
 }
 
 /**
+ * The Test Entry screen's Overall Result section — a technician-applied
+ * `OverallResultTemplate` snapshot for ONE result parameter on this report
+ * (a test can have several parameters, each independently tagged into its
+ * own Overall Result group and each capable of holding its own separately-
+ * applied result — see `LabReportOverallResultRow` model doc comment).
+ * Unlike `LabReportContentSections`, there is NO `LabTest`-level fallback:
+ * `LabTest` carries no default Overall Result, so a parameter with no
+ * template ever applied simply has no entry in the `overallResults` array.
+ * `templateId` is a logical reference (no Prisma relation) recording which
+ * template produced `content`, purely so the UI can show which one is
+ * currently active — editing `content` after applying never writes back to
+ * the source `OverallResultTemplate`.
+ */
+export interface LabReportOverallResult {
+  resultParamId: string;
+  templateId: string | null;
+  content: string | null;
+}
+
+/**
  * One entry-grid row's *definition* (LABORATORY.docx §4.3) — what parameters
  * this test has, independent of whether any value has been entered yet.
  * `LabReportResultValue` rows only exist once a technician has saved at
@@ -116,6 +136,14 @@ export interface LabReportResultParam {
    * organizational, groups rows into collapsible sections. Null/empty groups
    * into an "Ungrouped" section on the frontend. */
   groupName: string | null;
+  /** `OverallResultTemplate.groupName` values this parameter is tagged
+   * compatible with (Master Data > Add Multiple Results > Configure >
+   * "Overall Result" tab). Matched by plain string equality — no FK/relation.
+   * Drives which Overall Result templates the Technician Dashboard offers for
+   * a report whose test has this parameter (see `OverallResultTemplateService
+   * .findAll`'s `groupName`/`groupNames` filter). Empty array = this
+   * parameter isn't tagged into any Overall Result group. */
+  overallResultGroups: string[];
 }
 
 /** Full detail response: the report plus its (possibly all-null) content
@@ -126,6 +154,10 @@ export interface LabReportResultParam {
  * instead (flattened, see `LabReportService.findByIdForApi`). */
 export type LabReportDetailWithContent = LabReportDetail & {
   contentSections: LabReportContentSections;
+  /** One entry per result parameter that has an Overall Result applied —
+   * NOT one per report (see `LabReportOverallResult`'s doc comment). A
+   * parameter with nothing applied simply has no entry here. */
+  overallResults: LabReportOverallResult[];
   resultParams: LabReportResultParam[];
 };
 
@@ -142,6 +174,7 @@ export type LabReportDetailApiResponse = LabReportWorklistRow &
     'resultValues' | 'notes' | 'attachments' | 'multiStepProcess'
   > & {
     contentSections: LabReportContentSections;
+    overallResults: LabReportOverallResult[];
     resultParams: LabReportResultParam[];
   };
 

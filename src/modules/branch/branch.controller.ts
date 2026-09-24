@@ -92,13 +92,16 @@ export class BranchController {
    * `?excludeBranchType=COLLECTION_CENTER` lists valid sample-receiving branches.
    * Optional `search` (name/code). Optional `moduleKey` restricts to branches
    * where that module is enabled (e.g. `?moduleKey=registration` for the
-   * Registration dashboard's Business Admin branch selector). Pagination is
+   * Registration dashboard's Business Admin branch selector). Optional
+   * `excludeCurrentBranch` drops the caller's own active branch (from the JWT,
+   * never the client) — used by the Accession transfer picker. Pagination is
    * opt-in: omit `page` to get the full array; pass `page` (+ optional
    * `limit`) for a paginated envelope.
    */
   @Get('options')
   findOptions(
     @CurrentTenant() tenantId: string,
+    @CurrentUser('active_branch_id') activeBranchId: string | null,
     @Query() query: BranchOptionsQueryDto,
   ) {
     return this.branchService.findOptionsForTenant(tenantId, {
@@ -106,6 +109,9 @@ export class BranchController {
       excludeBranchType: query.excludeBranchType,
       search: query.search,
       moduleKey: query.moduleKey,
+      excludeCurrentBranchId: query.excludeCurrentBranch
+        ? (activeBranchId ?? undefined)
+        : undefined,
       page: query.page,
       limit: query.limit,
     });
@@ -264,6 +270,7 @@ export class BranchController {
       tenantId,
       id,
       dto.receivingBranchIds,
+      dto.defaultReceivingBranchId,
       personId,
     );
   }

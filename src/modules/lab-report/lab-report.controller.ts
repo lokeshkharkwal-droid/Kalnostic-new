@@ -56,6 +56,7 @@ import {
 } from './dto/notes-attachments.dto';
 import { ApproveReportDto } from './dto/approve-report.dto';
 import { UpdateContentSectionsDto } from './dto/update-content-sections.dto';
+import { UpdateOverallResultDto } from './dto/update-overall-result.dto';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
 import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
@@ -86,17 +87,28 @@ export class LabReportController {
   getCounts(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
     @Query() query: ListLabReportsDto,
   ) {
-    return this.labReportService.getCounts(tenantId, profile.branchId, query);
+    return this.labReportService.getCounts(
+      tenantId,
+      profile.branchId,
+      query,
+      personId,
+    );
   }
 
   @Get('options')
   getOptions(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
   ) {
-    return this.labReportService.getOptions(tenantId, profile.branchId);
+    return this.labReportService.getOptions(
+      tenantId,
+      profile.branchId,
+      personId,
+    );
   }
 
   /**
@@ -117,9 +129,15 @@ export class LabReportController {
   findAll(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
     @Query() query: ListLabReportsDto,
   ) {
-    return this.labReportService.findAll(tenantId, profile.branchId, query);
+    return this.labReportService.findAll(
+      tenantId,
+      profile.branchId,
+      query,
+      personId,
+    );
   }
 
   /**
@@ -427,6 +445,37 @@ export class LabReportController {
       id,
       tenantId,
       profile.branchId,
+      dto,
+    );
+  }
+
+  /**
+   * Apply an Overall Result template to ONE result parameter on a report, or
+   * edit that parameter's already-applied content — gated by
+   * `TechnicianSetting.isOverallResultEditable` (default false). Each
+   * parameter holds its own independently-applied result; this never touches
+   * any other parameter's on the same report. See `UpdateOverallResultDto`'s
+   * doc comment for how the two actions (apply vs. edit) are distinguished.
+   */
+  @Patch(':id/overall-result/:resultParamId')
+  @RequirePermission(PERMISSION_KEYS.LAB_EDIT_REPORT)
+  @Audit({
+    module: AuditModule.LAB_REPORT,
+    action: AuditAction.UPDATE,
+    description: "Updated a lab report parameter's overall result",
+  })
+  updateOverallResult(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+    @Param('resultParamId') resultParamId: string,
+    @Body() dto: UpdateOverallResultDto,
+  ) {
+    return this.labReportService.updateOverallResult(
+      id,
+      tenantId,
+      profile.branchId,
+      resultParamId,
       dto,
     );
   }

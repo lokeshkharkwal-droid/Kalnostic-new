@@ -1,4 +1,10 @@
-import { ArrayNotEmpty, ArrayUnique, IsArray, IsOptional, IsUUID } from 'class-validator';
+import {
+  ArrayNotEmpty,
+  ArrayUnique,
+  IsArray,
+  IsOptional,
+  IsUUID,
+} from 'class-validator';
 
 /**
  * Persist-import payload: the ids of the Master Data lab tests (of the active
