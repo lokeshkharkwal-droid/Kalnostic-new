@@ -34,4 +34,10 @@ docs {
   `paidAmount`; `paidAmount` includes wallet). For the item-level dimensions each
   row's figures are the sum of that order's allocated matching lines.
   `Σ records === outstanding-summary` for the same filters.
+
+  Each order-level row also carries `hasInvoice` (whether an active invoice has
+  already been generated for the order) and `invoiceCode` (that invoice's number,
+  or `null`). The referral-panel views (B2B / Referred By / Internal & External
+  Referral User) use `hasInvoice` to disable the row's Create-Invoice selection so
+  a record can't be invoiced twice (the double-invoice guard is the backstop).
 }

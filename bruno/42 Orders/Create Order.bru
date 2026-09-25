@@ -63,6 +63,9 @@ body:json {
     ],
     "diagnostics": {
       "prescriptionUrl": "https://files.example.com/rx/abc.pdf",
+      "prescriptionAttachments": [
+        { "url": "https://files.example.com/rx/abc.pdf", "name": "prescription.pdf" }
+      ],
       "diagnosticPanelId": "{{diagnosticPanelId}}",
       "sampleSource": "IN_HOUSE",
       "sampleCollectionCharges": 100,
@@ -283,6 +286,12 @@ docs {
 
   - `diagnostics` — `diagnosticPanelId` → LabPanel; `phlebotomistId` →
     Phlebotomist; `sampleSource` `IN_HOUSE`|`SUPPLIED`; charges are integer minor units.
+    `prescriptionAttachments[]` — prescription / diagnostic files already uploaded
+    to S3 (via `POST /uploads/attachment`), each `{ url, name }`. They are mapped
+    to the order's patient as `PatientDocument` rows (category `DOCUMENT`, type
+    `Prescription`) **in the same transaction**, so they appear in the patient's
+    Documents section (`GET /patients/:id/documents`). `prescriptionUrl` remains a
+    legacy single-URL field on the diagnostics record.
 
   ### Home-visit slot reservation (concurrency-safe)
 

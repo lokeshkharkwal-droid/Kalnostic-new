@@ -44,6 +44,7 @@ import { ExternalIdService } from '../registration-settings/external-id.service'
 import { ReferralCreditService } from '../referral-credit/referral-credit.service';
 import { CommunicationRecipientNotAllowedException } from '../referral-credit/referral-credit.exceptions';
 import { TenantService } from '../tenant/tenant.service';
+import { PatientService } from '../patient/patient.service';
 import type { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import {
@@ -425,6 +426,7 @@ export class OrderService {
     private readonly shareService: ShareService,
     private readonly tenantService: TenantService,
     private readonly referralCredit: ReferralCreditService,
+    private readonly patientService: PatientService,
   ) {}
 
   /**
@@ -872,6 +874,23 @@ export class OrderService {
               order.id,
             ),
           });
+          // Persist any prescription / diagnostic files uploaded during order
+          // creation as the patient's own documents, so they surface in the
+          // Documents section of the patient page. Same transaction — a failure
+          // here rolls the whole order create back (rule #3: wired via DI).
+          const attachments = dto.diagnostics.prescriptionAttachments ?? [];
+          if (attachments.length) {
+            await this.patientService.createPatientDocumentsInTx(tx, {
+              tenantId,
+              branchId,
+              patientId: dto.patientId,
+              actorId: personId,
+              docs: attachments.map((a) => ({
+                name: a.name,
+                documentUrl: a.url,
+              })),
+            });
+          }
         }
         if (dto.opd) {
           await tx.orderOpd.create({
@@ -4834,6 +4853,17 @@ export class OrderService {
     // Order-level dimensions (non-collection): one row per order.
     const total = orders.length;
     const pageOrders = orders.slice((page - 1) * limit, page * limit);
+    // Outstanding report: resolve which of the page's orders already carry an
+    // active invoice, so the FE can disable their "Create Invoice" checkbox and
+    // stop a second invoice being raised for the same record. Only the page's
+    // orders are queried, so this stays cheap; other reports skip it.
+    const invoiceCodes =
+      report === 'outstanding'
+        ? await this.invoicedOrderCodes(
+            tenantId,
+            pageOrders.map((o) => o.id),
+          )
+        : new Map<string, string>();
     const data = pageOrders.map((o) => {
       const f = this.dimensionFiguresForOrder(o, dimension, report);
       return {
@@ -4851,6 +4881,8 @@ export class OrderService {
         creditCard: f.creditCard,
         refundAmount: f.refundAmount,
         cancelAmount: f.cancelAmount,
+        hasInvoice: invoiceCodes.has(o.id),
+        invoiceCode: invoiceCodes.get(o.id) ?? null,
       };
     });
     return { data, total, page, limit };
