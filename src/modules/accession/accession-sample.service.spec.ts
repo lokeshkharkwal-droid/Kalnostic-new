@@ -348,3 +348,87 @@ describe('OrderSampleService — reconcileForOrderInTx (remove path)', () => {
     expect(tx.labReport.updateMany as jest.Mock).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * `{patient_age}` on sample labels (`order_label_print` /
+ * `multiple_order_label_print`, both built by the private `buildLabelVariables`)
+ * is a single-unit age from DOB — not the full "Y Years, M Months, D Days"
+ * breakdown the order documents print.
+ */
+describe('OrderSampleService — label variables', () => {
+  const service = new OrderSampleService(
+    {} as unknown as PrismaService,
+    {} as unknown as AccessionSettingsService,
+    {} as unknown as LabReportService,
+    {} as unknown as PdfReportTemplateService,
+    {} as unknown as EventEmitter2,
+    {} as unknown as TenantService,
+    {} as unknown as BarcodeService,
+    {} as unknown as UserDepartmentScopeService,
+  );
+
+  /** `patient_age` of a label for a patient with this DOB / age snapshot. */
+  const labelAge = (
+    dateOfBirth: string | null,
+    age: number | null = null,
+    ageType: string | null = null,
+  ) =>
+    (
+      service as unknown as {
+        buildLabelVariables: (
+          sample: unknown,
+          timezone: string,
+          dateFormat: string,
+          timeFormat: string,
+        ) => Record<string, unknown>;
+      }
+    ).buildLabelVariables(
+      {
+        accessionNo: 'ACC-1',
+        tests: [],
+        collectedAt: null,
+        order: {
+          orderCode: 'ORD-1',
+          patient: {
+            firstName: 'Test',
+            dateOfBirth: dateOfBirth
+              ? new Date(`${dateOfBirth}T00:00:00Z`)
+              : null,
+            age,
+            ageType,
+          },
+        },
+      },
+      'Asia/Kolkata',
+      'DD/MM/YYYY',
+      '12h',
+    ).patient_age;
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    // 2026-09-25 01:30 IST — still the 24th in UTC.
+    jest.setSystemTime(new Date('2026-09-24T20:00:00Z'));
+  });
+
+  afterEach(() => jest.useRealTimers());
+
+  it('prints Years, Months or Days by the patient’s age', () => {
+    expect(labelAge('2001-12-12')).toBe('24 Years');
+    expect(labelAge('2026-03-20')).toBe('6 Months');
+    expect(labelAge('2026-09-10')).toBe('15 Days');
+  });
+
+  it('prefers the DOB over a stale age snapshot', () => {
+    expect(labelAge('2001-12-12', 23, 'YEARS')).toBe('24 Years');
+  });
+
+  it('counts the age up to the branch-local date, not the UTC date', () => {
+    // 31 days to the IST date (the 25th); the UTC date would give 30.
+    expect(labelAge('2026-08-25')).toBe('31 Days');
+  });
+
+  it('falls back to the age snapshot without a DOB', () => {
+    expect(labelAge(null, 6, 'MONTHS')).toBe('6 Months');
+    expect(labelAge(null)).toBe('');
+  });
+});

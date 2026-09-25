@@ -15,6 +15,7 @@ export const ORDER_PRINT_TYPES = [
   'order_print',
   'bill_print',
   'accounts_biling',
+  'referral_patient_bill_print',
   'trf_print',
   'lab_quotation_print',
   'order_barcode_print',
@@ -28,8 +29,10 @@ export class PrintOrderDto {
   /**
    * Which order document to render: `order_print` (the order slip),
    * `bill_print` (the patient bill), `accounts_biling` (the accounts/B2B billing
-   * document), `trf_print` (Test Requisition Form), `lab_quotation_print` (the
-   * quotation), or `order_barcode_print` (the order's own identifier barcode).
+   * document), `referral_patient_bill_print` (the patient bill for an order
+   * billed to a referral panel), `trf_print` (Test Requisition Form),
+   * `lab_quotation_print` (the quotation), or `order_barcode_print` (the
+   * order's own identifier barcode).
    */
   @IsIn(ORDER_PRINT_TYPES)
   type: OrderPrintType;

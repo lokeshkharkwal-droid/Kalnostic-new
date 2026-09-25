@@ -185,4 +185,32 @@ describe('TemplateRenderService — case-insensitive tokens', () => {
     );
     expect(bodyHtml).toContain('<li>CBC=300</li>');
   });
+
+  it('resolves dotted legacy tags as one flat key ({ORDER.DATE} → order.date)', () => {
+    // The referral patient bill emits `signature_name` + a flat `order.date`
+    // alias; the engine matches the dotted token literally, never as a path.
+    const { footerTemplate, bodyHtml } = service.render(
+      meta({
+        body_html: '<p>{ORDER.DATE}</p>',
+        footer_html: '<p>{SIGNATURE_NAME}</p>',
+      }),
+      {
+        variables: {
+          'order.date': '10/09/2026',
+          signature_name: 'Branch Admin',
+        },
+      },
+    );
+    expect(bodyHtml).toContain('<p>10/09/2026</p>');
+    expect(footerTemplate).toContain('<p>Branch Admin</p>');
+  });
+
+  it('leaves {ORDER.DATE}/{SIGNATURE_NAME} literal on contexts without those keys', () => {
+    // e.g. a plain bill_print context, which only carries `order_date`.
+    const { bodyHtml } = service.render(
+      meta({ body_html: '<p>{ORDER.DATE}|{SIGNATURE_NAME}</p>' }),
+      { variables: { order_date: '10/09/2026' } },
+    );
+    expect(bodyHtml).toContain('<p>{ORDER.DATE}|{SIGNATURE_NAME}</p>');
+  });
 });
