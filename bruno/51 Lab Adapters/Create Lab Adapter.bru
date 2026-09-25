@@ -24,7 +24,7 @@ body:json {
     "equipmentId": "{{equipmentId}}",
     "branchIds": ["{{branchId}}"],
     "labTestIds": ["{{branchLabTestId}}"],
-    "isActive": true
+    "status": "ONLINE"
   }
 }
 
@@ -75,7 +75,12 @@ docs {
     branch therefore only gets its own available subset (no duplicates). A non-empty
     `labTestIds` preserves the manual selection and skips auto-mapping. This is the
     **create** flow only — `PATCH` replaces sets explicitly.
-  - `isActive` (optional, default true).
+  - `status` (optional, default `ONLINE`) — one of `ONLINE` | `REPORT_ONLY` |
+    `INACTIVE`. Only `ONLINE` passes the EMI/LIS token gate
+    (`POST /emi/orders`, `/emi/submitResult`) — `REPORT_ONLY` and `INACTIVE`
+    both reject an EMI call identically (401), so a Report Only adapter is a
+    lab that still reports through this adapter manually but has no live
+    instrument submission wired.
 
   `token` is **system-generated** — never send it. `tenantId` comes from the JWT,
   never the body.
@@ -90,7 +95,7 @@ docs {
       "name": "Hematology Bridge 1",
       "token": "0f1e2d…64-hex…",
       "equipmentId": "6d0e2f4a-…",
-      "isActive": true,
+      "status": "ONLINE",
       "createdAt": "2026-07-21T09:00:00.000Z",
       "updatedAt": "2026-07-21T09:00:00.000Z",
       "deletedAt": null,

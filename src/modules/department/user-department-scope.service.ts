@@ -19,9 +19,11 @@ export class UserDepartmentScopeService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * The tenant-wide department ids a staff user is assigned to (reads the
-   * dedicated `UserDepartmentAssignment` membership table — not the signatory
-   * `DepartmentPersonMapping` rows).
+   * The department ids a staff user is assigned to: reads the dedicated
+   * `UserDepartmentAssignment` table (membership — "which departments does
+   * this user belong to", NOT the signatory `DepartmentPersonMapping` table).
+   * Tenant-level only (no branch column on this model), so every assignment
+   * applies regardless of which branch the caller is currently working at.
    * @param tenantId tenant scope (from JWT)
    * @param personId the calling user
    * @returns the user's department ids (empty when the user has no assignment)
@@ -38,6 +40,6 @@ export class UserDepartmentScopeService {
       },
       select: { departmentId: true },
     });
-    return rows.map((r) => r.departmentId);
+    return [...new Set(rows.map((r) => r.departmentId))];
   }
 }

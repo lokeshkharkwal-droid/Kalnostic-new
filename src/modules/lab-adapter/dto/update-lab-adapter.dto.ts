@@ -1,7 +1,8 @@
+import { AdapterStatus } from '@prisma/client';
 import {
   ArrayUnique,
   IsArray,
-  IsBoolean,
+  IsEnum,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -44,6 +45,6 @@ export class UpdateLabAdapterDto {
   labTestIds?: string[];
 
   @IsOptional()
-  @IsBoolean()
-  isActive?: boolean;
+  @IsEnum(AdapterStatus)
+  status?: AdapterStatus;
 }

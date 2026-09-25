@@ -1,0 +1,50 @@
+meta {
+  name: 06 List Reference Range Candidates
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/reference-range/candidates?resultParamId={{resultParamId}}
+  body: none
+  auth: bearer
+}
+
+params:query {
+  resultParamId: {{resultParamId}}
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  List every `LabTestReferenceRange` row for a Quantitative result parameter
+  that matches this report's patient (gender/age) — powers the Test Entry /
+  Patient Entry "Range" dropdown, which needs every candidate to choose from
+  (unlike Resolve Reference Range, which auto-picks one best match filtered
+  by the currently-selected Methodology).
+
+  Covers ranges both with and without an analyzer (`labAdapterId` set or
+  null). Quantitative-only: `LabTestReferenceValue`
+  (Semi-Quantitative/Qualitative) has no analyzer field, so it always returns
+  `{ candidates: [] }` for those param types.
+
+  Returns:
+  ```
+  {
+    candidates: [
+      {
+        id, labAdapterId, labAdapterName,
+        method, unit, isDefault, lowerLimit, upperLimit, referenceDisplay
+      }
+    ]
+  }
+  ```
+
+  Picking a candidate in the dropdown should set Unit/Method/Range together
+  (apply the picked row's own fields client-side), then re-submit via Upsert
+  Result Values same as Sync.
+
+  404 `LAB_TEST_CATALOGUE_MISSING` if the report has no linked LabTest.
+}
