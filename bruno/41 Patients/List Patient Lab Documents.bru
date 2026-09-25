@@ -1,0 +1,29 @@
+meta {
+  name: List Patient Lab Documents
+  type: http
+  seq: 23
+}
+
+get {
+  url: {{baseUrl}}/patients/{{patientId}}/lab-documents
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  List every lab attachment for the patient — technician-uploaded files (from
+  Technician Reporting's "Enter Test") and analyzer/LIS histogram images (from
+  the EMI submit flow) — aggregated read-only across all of the patient's orders.
+
+  This is a derived view over `LabReportAttachment` (source of truth stays in the
+  lab reports); nothing is copied or editable here. It backs the Lab panel of the
+  Patient-Details Documents section.
+
+  Each row: `{ id, kind, fileUrl, fileName, notes, orderCode, testName, source,
+  uploadedAt }`. `source` is `"LIS"` for analyzer/histogram images and
+  `"Technician"` for human uploads. Newest first. Tenant-scoped from the JWT.
+}
