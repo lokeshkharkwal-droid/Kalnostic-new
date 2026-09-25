@@ -1,0 +1,92 @@
+meta {
+  name: Import Referral Panels (Excel)
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/referral-panels/import-xlsx
+  body: multipartForm
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:multipart-form {
+  file: @file(C:\path\to\referral-panels.xlsx)
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("reports total/created/skipped", function () {
+    const data = res.getBody() && res.getBody().data;
+    expect(data).to.have.property("total");
+    expect(data).to.have.property("created");
+    expect(data).to.have.property("skipped");
+    expect(data.skipped).to.be.an("array");
+  });
+}
+
+docs {
+  Bulk-import referring panels from an uploaded `.xlsx` workbook — the bulk
+  counterpart to **Create Referral Panel**. Tenant comes from the JWT.
+
+  Form field name is **`file`**. Only
+  `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` (`.xlsx`)
+  is accepted; anything else → 422 `INVALID_UPLOAD_FILE`. Max size 10 MB.
+
+  ## Expected file format
+
+  ONE data row = ONE referral panel. The header row is located by content (the
+  first of the first ~10 rows containing a **"Referring Panel Name"** column),
+  so a blank leading row is fine. Every column of the referral-panel template is
+  mapped; headers are matched case-insensitively and tolerant of `*`, spaces and
+  punctuation (`"TDS %"`, `"Referring Panel Name*"`, `"Incentive / Bonus %"` all
+  match).
+
+  Columns:
+  - **Basic:** Panel Code, Referring Panel Name*, Short Name, Client Type*
+    (CASH/PREPAID/POSTPAID), Referral Panel Settings ID (the settings `_id`),
+    Status (ACTIVE/INACTIVE).
+  - **Address:** Address Line 1/2, City, State, Country, PIN Code, GST Number,
+    PAN Number.
+  - **Bank:** Account Holder Name, Bank Name, Account Number, IFSC Code.
+  - **Contacts (flat trios):** Director / Accession Person / Registration Person
+    / Logistics Person / Accounts Person — Name, Mobile, Email each.
+  - **Lab lists:** Lab Test List ID, Lab Panel List ID (the branch list `_id`s).
+    Applied only when a **Branch ID** is supplied on the row.
+  - **Commission:** Commission Applicable, Commission Type
+    (PERCENTAGE/SLAB_BASED/FIXED_AMOUNT), Commission % on Lab Test List,
+    Commission % on Lab Panel List, Fixed Type (ORDER_WISE/MONTHLY/QUARTERLY/
+    HALF_YEARLY/ANNUALLY), Fixed Amount, and the single slab triple
+    **Slab Based - Monthly Business From / To / Commission %**.
+  - **TDS:** TDS Applicable, TDS %.
+  - **Payment & incentive:** Payment Cycle (NA/MONTHLY/…), Payment Mode
+    (BANK_TRANSFER/CASH/CHEQUE), Monthly Target Amount, Incentive Bonus
+    Applicable, and the single bonus triple **Incentive Bonus - Monthly Business
+    From / To** + **Incentive / Bonus %**.
+  - **Other:** Remarks, Branch ID (the branch `_id` the panel belongs to).
+
+  Referral Panel Settings, Branch and both Lab Lists are supplied as **IDs**
+  (either in a dedicated `… ID` column or in the corresponding named column).
+  Each row supports ONE commission slab and ONE bonus slab.
+
+  ## Behaviour — CREATE-ONLY, SKIP-AND-REPORT
+
+  - Each row is validated against the create rules and then created via the same
+    logic as **Create Referral Panel** (system `RP-…` code, commission/incentive
+    validation, settings/branch checks, per-branch list assignment).
+  - An invalid or **duplicate** (name / panel code) row is **skipped** and
+    reported — valid rows still import. Response `201` →
+    `{ "total": <rows read>, "created": <count>,
+    "skipped": [ { "rowNumber": N, "name": ..., "panelCode": ...,
+    "reason": "<why>" }, ... ] }`. `skipped` is `[]` on a fully clean import.
+  - The ONE exception: a **file-level structural failure** (unreadable file,
+    missing "Referring Panel Name"/"Client Type" header, or no data rows)
+    rejects the whole upload as 400 `REFERRAL_PANEL_IMPORT_INVALID_FILE` with
+    nothing created.
+}

@@ -187,6 +187,16 @@ CREATE POLICY dpm_tenant_isolation ON department_person_mappings
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── user_department_assignments ───────────────────────────────────────────────────
+-- Staff → department membership ("Assign Department"), separate from the signatory
+-- department_person_mappings above. Standard tenant isolation.
+ALTER TABLE user_department_assignments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_department_assignments FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS uda_tenant_isolation ON user_department_assignments;
+CREATE POLICY uda_tenant_isolation ON user_department_assignments
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- ── categories ──────────────────────────────────────────────────────────────────
 -- Tenant rows isolate by tenant_id; SITE_ADMIN global templates (tenant_id NULL)
 -- are readable by everyone and writable only by a GUC-less SiteAdmin connection.

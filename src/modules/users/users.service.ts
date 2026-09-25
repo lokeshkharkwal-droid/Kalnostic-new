@@ -4,10 +4,8 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   AuthRole,
   Branch,
-  DepartmentPosition,
   Gender,
   Person,
-  PersonMappingType,
   Prisma,
   StaffStatus,
   TenantStaffMembership,
@@ -1417,8 +1415,8 @@ export class UsersService {
 
   /**
    * List the departments a staff user is currently assigned to (tenant-wide).
-   * Reads the shared `DepartmentPersonMapping` table filtered to this person's
-   * `type = USER`, tenant-level (`branchId = null`) rows.
+   * Reads the dedicated `UserDepartmentAssignment` membership table (distinct from
+   * the signatory `DepartmentPersonMapping`).
    * Each row carries the department's `name` so the frontend can render the
    * already-selected departments (as chips) without re-fetching the catalogue.
    * @param tenantId tenant scope (from JWT)
@@ -1435,14 +1433,12 @@ export class UsersService {
     defaultDepartmentId: string | null;
   }> {
     await this.getMembership(tenantId, personId);
-    const rows = await this.prisma.departmentPersonMapping.findMany({
+    const rows = await this.prisma.userDepartmentAssignment.findMany({
       where: {
         tenantId,
         personId,
-        type: PersonMappingType.USER,
-        branchId: null,
         deletedAt: null,
-        // Skip mappings whose department was soft-deleted — they can't be shown
+        // Skip assignments whose department was soft-deleted — they can't be shown
         // or re-selected, and the next save drops them anyway.
         department: { deletedAt: null },
       },
@@ -1466,13 +1462,12 @@ export class UsersService {
 
   /**
    * Assign (replace) the set of departments a staff user belongs to, tenant-wide.
-   * The mapping reuses the shared `DepartmentPersonMapping` table with
-   * `type = USER` and `branchId = null`. The write is a **diff**, not a blunt
-   * replace: departments already mapped are updated in place (only `isDefault`),
-   * so any `position`/`priority`/`isSignatory` set by the Department form on a
-   * shared row is preserved. Newly-selected departments are created with a
-   * generic default position; deselected ones are soft-deleted. At most one
-   * department is flagged as the user's default.
+   * Membership lives in the dedicated `UserDepartmentAssignment` table — separate
+   * from the signatory `DepartmentPersonMapping`, so assigning a department never
+   * makes a user a report signatory. The write is a **diff**, not a blunt replace:
+   * departments already assigned are left in place, newly-selected ones are
+   * created, and deselected ones are soft-deleted. At most one department is
+   * flagged as the user's default.
    * The actor trail is captured by the controller's `@Audit` decorator (this
    * junction has no `assignedBy` column, unlike `UserBranchProfile`).
    * @param tenantId tenant scope (from JWT, never the body)
@@ -1518,12 +1513,10 @@ export class UsersService {
     }
 
     await this.prisma.withTenant(tenantId, async (tx) => {
-      const existing = await tx.departmentPersonMapping.findMany({
+      const existing = await tx.userDepartmentAssignment.findMany({
         where: {
           tenantId,
           personId,
-          type: PersonMappingType.USER,
-          branchId: null,
           deletedAt: null,
         },
         select: { id: true, departmentId: true },
@@ -1533,56 +1526,46 @@ export class UsersService {
       );
       const desiredSet = new Set(desiredIds);
 
-      // Remove: mapped before but no longer selected → soft-delete.
+      // Remove: assigned before but no longer selected → soft-delete.
       const toRemove = existing.filter((r) => !desiredSet.has(r.departmentId));
       if (toRemove.length > 0) {
-        await tx.departmentPersonMapping.updateMany({
+        await tx.userDepartmentAssignment.updateMany({
           where: { id: { in: toRemove.map((r) => r.id) } },
           data: { deletedAt: new Date() },
         });
       }
 
-      // Add: newly-selected departments get a fresh USER mapping. Position and
-      // priority aren't captured by this flow, so a generic default is used;
-      // `isDefault` is set below in a single pass.
+      // Add: newly-selected departments get a fresh membership row; `isDefault`
+      // is set below in a single pass.
       const toAdd = desiredIds.filter((id) => !existingByDept.has(id));
       for (const departmentId of toAdd) {
-        await tx.departmentPersonMapping.create({
+        await tx.userDepartmentAssignment.create({
           data: {
             tenantId,
             departmentId,
             personId,
-            type: PersonMappingType.USER,
-            branchId: null,
-            position: DepartmentPosition.TECHNICIAN,
-            isSignatory: false,
-            priority: 1,
             isDefault: false,
           },
         });
       }
 
-      // Single default: clear it on all of this person's USER rows, then set it
-      // on the chosen department (its row now exists after the add pass).
-      await tx.departmentPersonMapping.updateMany({
+      // Single default: clear it on all of this person's rows, then set it on the
+      // chosen department (its row now exists after the add pass).
+      await tx.userDepartmentAssignment.updateMany({
         where: {
           tenantId,
           personId,
-          type: PersonMappingType.USER,
-          branchId: null,
           deletedAt: null,
           isDefault: true,
         },
         data: { isDefault: false },
       });
       if (defaultId) {
-        await tx.departmentPersonMapping.updateMany({
+        await tx.userDepartmentAssignment.updateMany({
           where: {
             tenantId,
             personId,
             departmentId: defaultId,
-            type: PersonMappingType.USER,
-            branchId: null,
             deletedAt: null,
           },
           data: { isDefault: true },

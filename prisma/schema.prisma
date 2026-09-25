@@ -2090,6 +2090,10 @@ model Department {
 
   personMappings DepartmentPersonMapping[]
 
+  /// Staff department memberships (the "Assign Department" flow). Distinct from
+  /// `personMappings` (report signatories) — see UserDepartmentAssignment.
+  userAssignments UserDepartmentAssignment[]
+
   /// Categories that hang off this department (CategoryType.UNDER_DEPARTMENT).
   categories Category[]
 
@@ -2161,6 +2165,34 @@ model DepartmentPersonMapping {
   @@index([branchId])
   @@index([deletedAt])
   @@map("department_person_mappings")
+}
+
+/// Staff → department membership (the "Assign Department" flow on the Users list).
+/// This is deliberately SEPARATE from DepartmentPersonMapping: membership answers
+/// "which departments does this user belong to" (drives department visibility
+/// scope), whereas DepartmentPersonMapping answers "who may sign a report"
+/// (report signatories). Keeping them in one table conflated the two — a user
+/// assigned to a department wrongly surfaced in the department form's Person
+/// Mapping / signatory list. Tenant-scoped, tenant-level only (no branch); one
+/// row per (person, department); at most one row flagged `isDefault` per person.
+model UserDepartmentAssignment {
+  id           String  @id @default(uuid())
+  tenantId     String  @map("tenant_id")
+  departmentId String  @map("department_id")
+  personId     String  @map("person_id")
+  isDefault    Boolean @default(false) @map("is_default")
+
+  department Department @relation(fields: [departmentId], references: [id])
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([departmentId])
+  @@index([personId])
+  @@index([deletedAt])
+  @@map("user_department_assignments")
 }
 
 /// A category, the same shape as a Department plus a type dimension: INDEPENDENT

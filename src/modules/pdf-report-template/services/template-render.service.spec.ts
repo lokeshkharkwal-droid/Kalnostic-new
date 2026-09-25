@@ -145,6 +145,70 @@ describe('TemplateRenderService — header/footer as repeating page templates', 
   });
 });
 
+describe('TemplateRenderService — header/footer are confined to their band', () => {
+  const service = new TemplateRenderService();
+
+  it('sizes the header band to margin_top and offsets content by margin_header', () => {
+    const { headerTemplate } = service.render(
+      meta({ header_html: 'H', margin_top: '40', margin_header: '8' }),
+      {},
+    );
+    // Outer wrapper fills the full reserved top margin (40mm) and clips overflow…
+    expect(headerTemplate).toContain('height: 40mm;');
+    expect(headerTemplate).toContain('overflow: hidden;');
+    // …and the content layer hangs from the top by the margin_header gap (8mm).
+    expect(headerTemplate).toContain('class="pdf-header-content"');
+    expect(headerTemplate).toContain('top: 8mm;');
+  });
+
+  it('anchors the footer content to the bottom by margin_footer', () => {
+    const { footerTemplate } = service.render(
+      meta({ footer_html: 'F', margin_bottom: '25', margin_footer: '6' }),
+      {},
+    );
+    expect(footerTemplate).toContain('height: 25mm;');
+    expect(footerTemplate).toContain('class="pdf-footer-content"');
+    expect(footerTemplate).toContain('bottom: 6mm;');
+  });
+
+  it('caps header/footer images to the band content height, keeping aspect ratio', () => {
+    const { headerTemplate } = service.render(
+      meta({
+        header_html: '{{image:l.png}}',
+        margin_top: '30',
+        margin_header: '5',
+      }),
+      { images: { 'l.png': 'https://cdn.example/l.png' } },
+    );
+    // Content height = margin_top - margin_header = 25mm; images scale to fit it.
+    expect(headerTemplate).toContain('.pdf-header img');
+    expect(headerTemplate).toContain('max-height: 25mm;');
+    expect(headerTemplate).toContain('object-fit: contain;');
+    expect(headerTemplate).toContain('max-width: 100%;');
+  });
+
+  it('clamps a gap larger than its reserved margin (no negative content height)', () => {
+    const { headerTemplate } = service.render(
+      // margin_header (12) > margin_top (10): gap clamps to 10, content -> 0mm.
+      meta({ header_html: 'H', margin_top: '10', margin_header: '12' }),
+      {},
+    );
+    expect(headerTemplate).toContain('height: 10mm;');
+    expect(headerTemplate).toContain('top: 10mm;');
+    expect(headerTemplate).toContain('max-height: 0mm;');
+  });
+
+  it('constrains wide tables and long words inside the header band', () => {
+    const { headerTemplate } = service.render(
+      meta({ header_html: '<table><tr><td>x</td></tr></table>' }),
+      {},
+    );
+    expect(headerTemplate).toContain('.pdf-header table');
+    expect(headerTemplate).toContain('table-layout: fixed;');
+    expect(headerTemplate).toContain('overflow-wrap: break-word;');
+  });
+});
+
 describe('TemplateRenderService — case-insensitive tokens', () => {
   const service = new TemplateRenderService();
 
