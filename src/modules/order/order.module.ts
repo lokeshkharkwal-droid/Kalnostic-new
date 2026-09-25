@@ -10,6 +10,7 @@ import { ReferralCreditModule } from '../referral-credit/referral-credit.module'
 import { CommunicationModule } from '../communication/communication.module';
 import { PermissionsModule } from '../permissions/permissions.module';
 import { TenantModule } from '../tenant/tenant.module';
+import { PatientModule } from '../patient/patient.module';
 import { OrderController } from './order.controller';
 import { OrderService } from './order.service';
 
@@ -39,6 +40,7 @@ import { OrderService } from './order.service';
     CommunicationModule,
     PermissionsModule,
     TenantModule,
+    PatientModule,
   ],
   controllers: [OrderController],
   providers: [OrderService],
