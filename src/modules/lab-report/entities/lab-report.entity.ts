@@ -112,6 +112,11 @@ export interface LabReportResultParam {
   reportingUnit: string | null;
   method: string | null;
   sortOrder: number;
+  /** When this parameter was added to the test (`LabTestResultParam.createdAt`)
+   * — the Test Entry grid orders parameters within a group by this, not by
+   * `sortOrder` (admin-configurable catalog order, a distinct concept the
+   * technician doesn't see). */
+  createdAt: Date;
   /**
    * Whether this parameter is dynamic/calculated. `CALCULATED` params derive
    * their value from `calculationFormula` (over other params' entered values)

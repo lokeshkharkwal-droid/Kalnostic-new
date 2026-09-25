@@ -3,6 +3,7 @@ import { PrismaModule } from '../../prisma/prisma.module';
 import { BranchModule } from '../branch/branch.module';
 import { EquipmentModule } from '../equipment/equipment.module';
 import { LabAdapterController } from './lab-adapter.controller';
+import { LabAdapterOptionsController } from './lab-adapter-options.controller';
 import { LabAdapterService } from './lab-adapter.service';
 
 /**
@@ -12,10 +13,12 @@ import { LabAdapterService } from './lab-adapter.service';
  * global equipment via `EquipmentService`) — both injected via DI (rule #3).
  * Branch-lab-test references are validated against the `BranchLabTest` model
  * directly through `PrismaService`, so no lab-test module import is needed.
+ * `LabAdapterOptionsController` is listed first so its static `/options` route
+ * matches before the CRUD controller's `/:id` route.
  */
 @Module({
   imports: [PrismaModule, BranchModule, EquipmentModule],
-  controllers: [LabAdapterController],
+  controllers: [LabAdapterOptionsController, LabAdapterController],
   providers: [LabAdapterService],
   exports: [LabAdapterService],
 })

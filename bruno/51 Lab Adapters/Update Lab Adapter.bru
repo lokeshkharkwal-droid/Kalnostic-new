@@ -23,7 +23,7 @@ body:json {
     "name": "Hematology Bridge 1 (updated)",
     "branchIds": ["{{branchId}}"],
     "labTestIds": ["{{branchLabTestId}}"],
-    "isActive": true
+    "status": "REPORT_ONLY"
   }
 }
 
@@ -51,7 +51,9 @@ docs {
     this request, else the persisted ones. So changing the equipment, the branches,
     or both and sending `labTestIds: []` re-derives the mapping exactly like create.
     Omit `labTestIds` entirely to leave the existing mappings untouched.
-  - `isActive` — enable/disable.
+  - `status` — one of `ONLINE` | `REPORT_ONLY` | `INACTIVE`. Only `ONLINE`
+    passes the EMI/LIS token gate; `REPORT_ONLY` and `INACTIVE` both reject an
+    EMI call identically (401).
 
   404 `LAB_ADAPTER_NOT_FOUND` if the adapter is missing/other tenant.
 }

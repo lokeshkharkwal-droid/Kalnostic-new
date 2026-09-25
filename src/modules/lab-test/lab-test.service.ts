@@ -279,6 +279,7 @@ export class LabTestService {
     });
     (dto.resultParams ?? []).forEach((p) => this.assertParam(p));
     this.assertFormulaSet(dto.resultParams ?? []);
+    await this.assertLabAdapterRefs(tenantId, dto.resultParams ?? []);
 
     const { samples, resultParams, ...scalars } = dto;
     let createdId: string;
@@ -1251,6 +1252,7 @@ export class LabTestService {
     });
     (dto.resultParams ?? []).forEach((p) => this.assertParam(p));
     this.assertFormulaSet(dto.resultParams ?? []);
+    await this.assertLabAdapterRefs(tenantId, dto.resultParams ?? []);
 
     const { samples, resultParams, ...scalars } = dto;
     const now = new Date();
@@ -4350,6 +4352,7 @@ export class LabTestService {
       );
     }
     (p.referenceRanges ?? []).forEach((r) => this.assertRange(r));
+    this.assertNoRangeOverlap(p.referenceRanges ?? [], p.parameterCode);
   }
 
   /** Validate a range row's numeric bounds without throwing (aggregate instead). */
@@ -4848,6 +4851,95 @@ export class LabTestService {
       });
     }
     (p.referenceRanges ?? []).forEach((r) => this.assertRange(r));
+    this.assertNoRangeOverlap(p.referenceRanges ?? [], p.parameterCode);
+    this.assertAdapterDefaultsPresent(p.referenceRanges ?? [], p.parameterCode);
+  }
+
+  /**
+   * Every (labAdapterId, gender, age-band) group of TWO OR MORE ranges must
+   * carry exactly one `isDefault` range — the technician-side EMI pipeline
+   * picks "the first Default-marked range of an adapter" for the patient's
+   * gender/age, so an ambiguous group with none would silently have no
+   * result mapping. A group with only one range is exempt: there's no
+   * ambiguity to resolve, since that single range is the only candidate
+   * either way. This applies identically whether `labAdapterId` is a real
+   * adapter or null (a range not scoped to any analyzer) — null is just
+   * another group value, grouped with other null-adapter ranges the same way
+   * a real adapter's ranges are grouped together. Method/Unit are
+   * deliberately NOT part of the group key (mirrors `assertNoRangeOverlap`'s
+   * partitioning minus method/unit): only one range across all methods/units
+   * on a given adapter (or none) can be Default for a given gender/age slice.
+   */
+  private assertAdapterDefaultsPresent(
+    ranges: Array<{
+      labAdapterId?: string;
+      gender?: ReferenceGender;
+      ageFrom?: number;
+      ageFromUnit?: AgeUnit;
+      ageTo?: number;
+      ageToUnit?: AgeUnit;
+      isDefault?: boolean;
+    }>,
+    parameterCode: string,
+  ): void {
+    const groups = new Map<string, typeof ranges>();
+    for (const r of ranges) {
+      const from = this.ageBoundInDays(r.ageFrom, r.ageFromUnit);
+      const to = this.ageBoundInDays(r.ageTo ?? 999, r.ageToUnit);
+      const key = `${r.labAdapterId ?? ''}\u0000${r.gender ?? ReferenceGender.ALL}\u0000${from}\u0000${to}`;
+      const group = groups.get(key);
+      if (group) group.push(r);
+      else groups.set(key, [r]);
+    }
+    for (const group of groups.values()) {
+      if (group.length > 1 && !group.some((r) => r.isDefault)) {
+        throw new ValidationException(
+          `Mark a Default range for parameter '${parameterCode}' (each analyzer, or no analyzer, requires one Default per gender/age when more than one range applies)`,
+          { parameterCode },
+        );
+      }
+    }
+  }
+
+  /**
+   * Validate that every Adapter-wise reference range's `labAdapterId` points at
+   * an active LabAdapter of the caller's tenant. Batched across the whole
+   * parameter set into one query (unlike per-range checks in `assertRange`)
+   * since this requires a DB lookup. `LabAdapterModule` isn't a NestJS
+   * dependency of this module (CLAUDE.md §2 rule 3 — no direct cross-module
+   * service injection for a single existence check); queried directly via
+   * `PrismaService`, mirroring `assertBranchLabTestRefs` in
+   * `lab-adapter.service.ts`.
+   *
+   * @param tenantId tenant scope
+   * @param params the full result-parameter set being persisted for the test.
+   * @throws ValidationException listing any id that isn't a live adapter of
+   *   this tenant.
+   */
+  private async assertLabAdapterRefs(
+    tenantId: string,
+    params: LabTestResultParamDto[],
+  ): Promise<void> {
+    const ids = new Set<string>();
+    for (const p of params) {
+      for (const r of p.referenceRanges ?? []) {
+        if (r.labAdapterId) ids.add(r.labAdapterId);
+      }
+    }
+    if (!ids.size) return;
+    const unique = [...ids];
+    const found = await this.prisma.labAdapter.findMany({
+      where: { id: { in: unique }, tenantId, deletedAt: null },
+      select: { id: true },
+    });
+    if (found.length !== unique.length) {
+      const foundIds = new Set(found.map((a) => a.id));
+      const missing = unique.filter((id) => !foundIds.has(id));
+      throw new ValidationException(
+        `labAdapterId does not reference an existing lab adapter: ${missing.join(', ')}`,
+        { labAdapterId: missing.join(', ') },
+      );
+    }
   }
 
   /**
@@ -4910,6 +5002,113 @@ export class LabTestService {
     }
     if ((r.ageFrom ?? 0) > (r.ageTo ?? 999)) {
       throw new ValidationException('ageFrom must be ≤ ageTo');
+    }
+  }
+
+  /** Age unit expressed in days, for comparing bounds given in different units. */
+  private static readonly AGE_UNIT_TO_DAYS: Record<AgeUnit, number> = {
+    [AgeUnit.DAYS]: 1,
+    [AgeUnit.MONTHS]: 30,
+    [AgeUnit.YEARS]: 365,
+  };
+
+  /** Convert an age bound to days for cross-unit comparison (approximate — see
+   * AGE_UNIT_TO_DAYS). Missing values fall back to the same open bounds
+   * assertRange/the schema default use (0 / 999 years). */
+  private ageBoundInDays(value: number | undefined, unit: AgeUnit | undefined) {
+    const days = LabTestService.AGE_UNIT_TO_DAYS[unit ?? AgeUnit.YEARS];
+    return (value ?? 0) * days;
+  }
+
+  /** Whether two Gender applicabilities can apply to the same person (ALL
+   * overlaps both MALE and FEMALE; MALE/FEMALE only overlap themselves). */
+  private gendersOverlap(a: ReferenceGender, b: ReferenceGender): boolean {
+    if (a === ReferenceGender.ALL || b === ReferenceGender.ALL) return true;
+    return a === b;
+  }
+
+  /**
+   * Reject reference ranges on the same parameter whose Gender + Age-band
+   * conditions overlap (or are identical), so a technician resolving a result
+   * never finds two ranges that both apply.
+   *
+   * Ranges with no analyzer (`labAdapterId` null): Method is deliberately NOT
+   * part of the overlap key — two such ranges for the same Gender/Age but
+   * different Method are still a real conflict for an unqualified result
+   * lookup, since nothing today resolves "which method" before applying a
+   * range. They're partitioned together as one group (the null `labAdapterId`
+   * value), separate from every real adapter's group.
+   *
+   * Ranges scoped to a real adapter: an adapter can report via more than one
+   * Method, and one Method can have more than one Unit, so two such rows only
+   * genuinely conflict when they share the exact same (labAdapterId, method,
+   * unit) AND their Gender/Age overlaps — checked as a separate partition per
+   * (labAdapterId, method, unit) group, never against the no-analyzer group or
+   * a different adapter's group.
+   */
+  private assertNoRangeOverlap(
+    ranges: Array<{
+      labAdapterId?: string;
+      method?: string;
+      unit?: string;
+      gender?: ReferenceGender;
+      ageFrom?: number;
+      ageFromUnit?: AgeUnit;
+      ageTo?: number;
+      ageToUnit?: AgeUnit;
+    }>,
+    parameterCode: string,
+  ): void {
+    const noAnalyzer = ranges.filter((r) => !r.labAdapterId);
+    this.assertNoRangeOverlapWithinGroup(noAnalyzer, parameterCode);
+
+    const adapterWise = ranges.filter((r) => !!r.labAdapterId);
+    const groups = new Map<string, typeof adapterWise>();
+    for (const r of adapterWise) {
+      const key = `${r.labAdapterId ?? ''}\u0000${r.method ?? ''}\u0000${r.unit ?? ''}`;
+      const group = groups.get(key);
+      if (group) group.push(r);
+      else groups.set(key, [r]);
+    }
+    for (const group of groups.values()) {
+      this.assertNoRangeOverlapWithinGroup(group, parameterCode);
+    }
+  }
+
+  /** Shared O(n²) Gender/Age overlap check for one already-partitioned group
+   * of ranges (either all DEFAULT rows, or all ADAPTER rows sharing the same
+   * adapter+method+unit) — see {@link assertNoRangeOverlap}. */
+  private assertNoRangeOverlapWithinGroup(
+    group: Array<{
+      gender?: ReferenceGender;
+      ageFrom?: number;
+      ageFromUnit?: AgeUnit;
+      ageTo?: number;
+      ageToUnit?: AgeUnit;
+    }>,
+    parameterCode: string,
+  ): void {
+    for (let i = 0; i < group.length; i++) {
+      const a = group[i]!;
+      const aGender = a.gender ?? ReferenceGender.ALL;
+      const aFrom = this.ageBoundInDays(a.ageFrom, a.ageFromUnit);
+      const aTo = this.ageBoundInDays(a.ageTo ?? 999, a.ageToUnit);
+      for (let j = i + 1; j < group.length; j++) {
+        const b = group[j]!;
+        const bGender = b.gender ?? ReferenceGender.ALL;
+        if (!this.gendersOverlap(aGender, bGender)) continue;
+        const bFrom = this.ageBoundInDays(b.ageFrom, b.ageFromUnit);
+        const bTo = this.ageBoundInDays(b.ageTo ?? 999, b.ageToUnit);
+        if (aFrom > bTo || bFrom > aTo) continue;
+        const isExactDuplicate =
+          aGender === bGender && aFrom === bFrom && aTo === bTo;
+        throw new ValidationException(
+          isExactDuplicate
+            ? `A similar reference range already exists for parameter '${parameterCode}'`
+            : `Overlapping reference range for parameter '${parameterCode}' (Gender/Age already covered by another range)`,
+          { parameterCode },
+        );
+      }
     }
   }
 
