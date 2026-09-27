@@ -28,12 +28,12 @@ import {
 const HH_MM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 /**
- * One per-test edit: the target `testId` plus the scalar fields to change.
+ * One per-test edit: the target `labTestId` plus the scalar fields to change.
  * Children and identity (`testName`/`testCode`) are not bulk-editable.
  */
 export class BulkEditOpdTestItemDto {
   @IsUUID()
-  testId: string;
+  labTestId: string;
 
   @IsString()
   @IsOptional()
@@ -313,7 +313,7 @@ export class BulkEditOpdTestItemDto {
 
 /**
  * Bulk edit for opd tests: an array of per-test edits, each targeting its
- * own `testId` (all scoped to the caller's tenant + the path's master data).
+ * own `labTestId` (all scoped to the caller's tenant + the path's master data).
  * All-or-nothing.
  */
 export class BulkEditOpdTestsDto {

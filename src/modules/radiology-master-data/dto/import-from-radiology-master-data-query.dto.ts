@@ -40,7 +40,7 @@ export class ImportFromRadiologyMasterDataQueryDto extends PaginationQueryDto {
 
   /**
    * When given, tests already present in this pricing list (matched via
-   * `BranchRadiologyTest.sourceTestId`/`BranchRadiologyPanel.sourcePanelId`) are
+   * `BranchRadiologyTest.sourceLabTestId`/`BranchRadiologyPanel.sourceLabPanelId`) are
    * excluded from the result.
    */
   @IsOptional()

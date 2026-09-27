@@ -71,12 +71,12 @@ const META_KEYS = [
   'tenantId',
   'branchId',
   'masterDataId',
-  'testId',
+  'labTestId',
   'paramId',
   'source',
   'clonedFromId',
   'templateSyncedAt',
-  'sourceMasterTestId',
+  'sourceMasterLabTestId',
   'createdAt',
   'updatedAt',
   'deletedAt',
@@ -200,16 +200,16 @@ export class RadiologyTestService {
   /**
    * Fetch one radiology test composed with its samples and result parameters.
    * @param masterDataId parent master data id
-   * @param testId radiology test id
+   * @param labTestId radiology test id
    * @param tenantId tenant scope
    * @throws RadiologyTestNotFoundException if missing/soft-deleted/other master data
    */
   async findById(
     masterDataId: string,
-    testId: string,
+    labTestId: string,
     tenantId: string,
   ): Promise<RadiologyTestWithChildren> {
-    const test = await this.findCoreById(testId, masterDataId, tenantId);
+    const test = await this.findCoreById(labTestId, masterDataId, tenantId);
     return this.composeWithChildren(test);
   }
 
@@ -223,23 +223,23 @@ export class RadiologyTestService {
   private async composeWithChildren(
     test: RadiologyTest,
   ): Promise<RadiologyTestWithChildren> {
-    const { id: testId, tenantId } = test;
+    const { id: labTestId, tenantId } = test;
     const [samples, params] = await Promise.all([
       this.prisma.radiologyTestSample.findMany({
-        where: { testId, tenantId, deletedAt: null },
+        where: { labTestId, tenantId, deletedAt: null },
         orderBy: { createdAt: 'asc' },
       }),
       this.prisma.radiologyTestResultParam.findMany({
-        where: { testId, tenantId, deletedAt: null },
+        where: { labTestId, tenantId, deletedAt: null },
         orderBy: { sortOrder: 'asc' },
       }),
     ]);
     const [ranges, values] = await Promise.all([
       this.prisma.radiologyTestReferenceRange.findMany({
-        where: { testId, tenantId, deletedAt: null },
+        where: { labTestId, tenantId, deletedAt: null },
       }),
       this.prisma.radiologyTestReferenceValue.findMany({
-        where: { testId, tenantId, deletedAt: null },
+        where: { labTestId, tenantId, deletedAt: null },
       }),
     ]);
     return {
@@ -435,9 +435,9 @@ export class RadiologyTestService {
     if (sampleType) {
       const sampleRows = await this.prisma.radiologyTestSample.findMany({
         where: { tenantId, sampleType, deletedAt: null },
-        select: { testId: true },
+        select: { labTestId: true },
       });
-      where.id = { in: sampleRows.map((s) => s.testId) };
+      where.id = { in: sampleRows.map((s) => s.labTestId) };
     }
     if (query.status) where.isActive = query.status === 'ACTIVE';
     return where;
@@ -910,14 +910,14 @@ export class RadiologyTestService {
     return id ? (map.get(id) ?? null) : null;
   }
 
-  /** The default sample per test (`isDefault`), keyed by `testId`. */
+  /** The default sample per test (`isDefault`), keyed by `labTestId`. */
   private async fetchDefaultSamples(
     tenantId: string | null,
     ids: string[],
   ): Promise<Map<string, RadiologyTestSample>> {
     const rows = await this.prisma.radiologyTestSample.findMany({
       where: {
-        testId: { in: ids },
+        labTestId: { in: ids },
         tenantId,
         deletedAt: null,
         isDefault: true,
@@ -925,81 +925,81 @@ export class RadiologyTestService {
     });
     const map = new Map<string, RadiologyTestSample>();
     for (const r of rows) {
-      if (!map.has(r.testId)) {
-        map.set(r.testId, r);
+      if (!map.has(r.labTestId)) {
+        map.set(r.labTestId, r);
       }
     }
     return map;
   }
 
-  /** All active samples grouped by `testId`. */
+  /** All active samples grouped by `labTestId`. */
   private async fetchSamples(
     tenantId: string | null,
     ids: string[],
   ): Promise<Map<string, RadiologyTestSample[]>> {
     const rows = await this.prisma.radiologyTestSample.findMany({
-      where: { testId: { in: ids }, tenantId, deletedAt: null },
+      where: { labTestId: { in: ids }, tenantId, deletedAt: null },
       orderBy: { createdAt: 'asc' },
     });
-    return this.groupByKey(rows, (r) => r.testId);
+    return this.groupByKey(rows, (r) => r.labTestId);
   }
 
-  /** All active result parameters grouped by `testId`. */
+  /** All active result parameters grouped by `labTestId`. */
   private async fetchParams(
     tenantId: string | null,
     ids: string[],
   ): Promise<Map<string, RadiologyTestResultParam[]>> {
     const rows = await this.prisma.radiologyTestResultParam.findMany({
-      where: { testId: { in: ids }, tenantId, deletedAt: null },
+      where: { labTestId: { in: ids }, tenantId, deletedAt: null },
       orderBy: { sortOrder: 'asc' },
     });
-    return this.groupByKey(rows, (r) => r.testId);
+    return this.groupByKey(rows, (r) => r.labTestId);
   }
 
-  /** All active reference ranges grouped by `testId`. */
+  /** All active reference ranges grouped by `labTestId`. */
   private async fetchRanges(
     tenantId: string | null,
     ids: string[],
   ): Promise<Map<string, RadiologyTestReferenceRange[]>> {
     const rows = await this.prisma.radiologyTestReferenceRange.findMany({
-      where: { testId: { in: ids }, tenantId, deletedAt: null },
+      where: { labTestId: { in: ids }, tenantId, deletedAt: null },
     });
-    return this.groupByKey(rows, (r) => r.testId);
+    return this.groupByKey(rows, (r) => r.labTestId);
   }
 
-  /** All active reference values grouped by `testId`. */
+  /** All active reference values grouped by `labTestId`. */
   private async fetchValues(
     tenantId: string | null,
     ids: string[],
   ): Promise<Map<string, RadiologyTestReferenceValue[]>> {
     const rows = await this.prisma.radiologyTestReferenceValue.findMany({
-      where: { testId: { in: ids }, tenantId, deletedAt: null },
+      where: { labTestId: { in: ids }, tenantId, deletedAt: null },
     });
-    return this.groupByKey(rows, (r) => r.testId);
+    return this.groupByKey(rows, (r) => r.labTestId);
   }
 
-  /** Count active child rows of one model per test, keyed by `testId`. */
+  /** Count active child rows of one model per test, keyed by `labTestId`. */
   private async countByTest(
     model: 'radiologyTestSample' | 'radiologyTestResultParam',
     tenantId: string | null,
     ids: string[],
   ): Promise<Map<string, number>> {
-    const where = { testId: { in: ids }, tenantId, deletedAt: null };
+    const where = { labTestId: { in: ids }, tenantId, deletedAt: null };
     const grouped =
       model === 'radiologyTestSample'
         ? await this.prisma.radiologyTestSample.groupBy({
-            by: ['testId'],
+            by: ['labTestId'],
             where,
             _count: { _all: true },
           })
         : await this.prisma.radiologyTestResultParam.groupBy({
-            by: ['testId'],
+            by: ['labTestId'],
             where,
             _count: { _all: true },
           });
     const map = new Map<string, number>();
     for (const g of grouped) {
-      map.set(g.testId, g._count._all);
+      map.set(g.labTestId, g._count._all);
     }
     return map;
   }
@@ -1049,18 +1049,18 @@ export class RadiologyTestService {
    * `resultParams` is provided, that child set is replaced (samples full-replace;
    * params matched-and-patched by `parameterCode`) in one transaction.
    * @param masterDataId parent master data id
-   * @param testId radiology test id
+   * @param labTestId radiology test id
    * @param tenantId tenant scope
    * @param dto partial update
    * @throws RadiologyTestNotFoundException / ValidationException / conflict exceptions
    */
   async update(
     masterDataId: string,
-    testId: string,
+    labTestId: string,
     tenantId: string,
     dto: UpdateRadiologyTestDto,
   ): Promise<RadiologyTestWithChildren> {
-    const existing = await this.findCoreById(testId, masterDataId, tenantId);
+    const existing = await this.findCoreById(labTestId, masterDataId, tenantId);
     if (dto.samples !== undefined && dto.samples.length < 1) {
       throw new RadiologyTestSampleRequiredException();
     }
@@ -1093,19 +1093,19 @@ export class RadiologyTestService {
     try {
       await this.prisma.withTenant(tenantId, async (tx) => {
         await tx.radiologyTest.update({
-          where: { id: testId },
+          where: { id: labTestId },
           data: scalars,
         });
         if (samples !== undefined) {
           await tx.radiologyTestSample.updateMany({
-            where: { testId, tenantId, deletedAt: null },
+            where: { labTestId, tenantId, deletedAt: null },
             data: { deletedAt: now },
           });
           await this.createSamples(
             tx,
             tenantId,
             existing.branchId,
-            testId,
+            labTestId,
             samples,
           );
         }
@@ -1114,7 +1114,7 @@ export class RadiologyTestService {
             tx,
             tenantId,
             existing.branchId,
-            testId,
+            labTestId,
             resultParams,
             now,
           );
@@ -1124,25 +1124,25 @@ export class RadiologyTestService {
       this.rethrowConflict(e, dto.testName ?? '', dto.testCode ?? '');
       throw e;
     }
-    return this.findById(masterDataId, testId, tenantId);
+    return this.findById(masterDataId, labTestId, tenantId);
   }
 
   /**
    * Soft-delete a radiology test and cascade soft-delete all children in one
    * transaction.
    * @param masterDataId parent master data id
-   * @param testId radiology test id
+   * @param labTestId radiology test id
    * @param tenantId tenant scope
    * @throws RadiologyTestNotFoundException if missing/soft-deleted/other master data
    */
   async remove(
     masterDataId: string,
-    testId: string,
+    labTestId: string,
     tenantId: string,
   ): Promise<RadiologyTest> {
-    await this.findCoreById(testId, masterDataId, tenantId);
+    await this.findCoreById(labTestId, masterDataId, tenantId);
     return this.prisma.withTenant(tenantId, (tx) =>
-      this.cascadeDeleteTest(tx, testId, tenantId, new Date()),
+      this.cascadeDeleteTest(tx, labTestId, tenantId, new Date()),
     );
   }
 
@@ -1152,11 +1152,11 @@ export class RadiologyTestService {
    */
   private async cascadeDeleteTest(
     tx: Prisma.TransactionClient,
-    testId: string,
+    labTestId: string,
     tenantId: string,
     now: Date,
   ): Promise<RadiologyTest> {
-    const where = { testId, tenantId, deletedAt: null };
+    const where = { labTestId, tenantId, deletedAt: null };
     await tx.radiologyTestReferenceRange.updateMany({
       where,
       data: { deletedAt: now },
@@ -1174,7 +1174,7 @@ export class RadiologyTestService {
       data: { deletedAt: now },
     });
     return tx.radiologyTest.update({
-      where: { id: testId },
+      where: { id: labTestId },
       data: { deletedAt: now },
     });
   }
@@ -1182,7 +1182,7 @@ export class RadiologyTestService {
   /**
    * Append a version entry to a radiology test's `versionHistory`.
    * @param masterDataId parent master data id
-   * @param testId radiology test id
+   * @param labTestId radiology test id
    * @param tenantId tenant scope
    * @param actorId person id recorded as `modifiedBy`
    * @param dto effective-from (+ optional approver)
@@ -1190,12 +1190,12 @@ export class RadiologyTestService {
    */
   async addVersion(
     masterDataId: string,
-    testId: string,
+    labTestId: string,
     tenantId: string,
     actorId: string,
     dto: AddRadiologyTestVersionDto,
   ): Promise<RadiologyTest> {
-    const test = await this.findCoreById(testId, masterDataId, tenantId);
+    const test = await this.findCoreById(labTestId, masterDataId, tenantId);
     const history = this.readVersionHistory(test.versionHistory);
     const effectiveFrom = dto.effectiveFrom.slice(0, 10);
     const open = history.find((e) => e.effectiveTo === null);
@@ -1212,7 +1212,7 @@ export class RadiologyTestService {
       approvedBy: dto.approvedBy ?? null,
     });
     return this.prisma.radiologyTest.update({
-      where: { id: testId },
+      where: { id: labTestId },
       data: { versionHistory: history as unknown as Prisma.InputJsonValue },
     });
   }
@@ -1269,12 +1269,12 @@ export class RadiologyTestService {
 
   /**
    * Sync (update-or-create-or-delete) all active radiology tests from a Tenant
-   * Master Data into a Branch Master Data, keyed on `sourceMasterTestId` (falling
+   * Master Data into a Branch Master Data, keyed on `sourceMasterLabTestId` (falling
    * back to `testCode`). Matched branch tests are fully overwritten (version bumped,
    * samples rebuilt, params matched-and-patched); unmatched tenant tests are cloned;
    * a branch test whose tenant source is gone (and which was synced, not
    * hand-created) is soft-deleted. Runs inside the caller's transaction. Returns a
-   * `tenantTestId → branchTestId` map plus counts.
+   * `tenantTestId → branchLabTestId` map plus counts.
    * @param tx caller's transaction client (already in `withTenant`)
    * @param params tenant + branch scope and both master-data ids
    */
@@ -1309,7 +1309,7 @@ export class RadiologyTestService {
     const bySource = new Map<string, RadiologyTest>();
     const byCode = new Map<string, RadiologyTest>();
     for (const t of branchTests) {
-      if (t.sourceMasterTestId) bySource.set(t.sourceMasterTestId, t);
+      if (t.sourceMasterLabTestId) bySource.set(t.sourceMasterLabTestId, t);
       byCode.set(t.testCode, t);
     }
     const sourceIds = new Set(sourceTests.map((t) => t.id));
@@ -1337,17 +1337,17 @@ export class RadiologyTestService {
           where: { id: target.id },
           data: {
             ...this.stripMeta(src),
-            sourceMasterTestId: src.id,
+            sourceMasterLabTestId: src.id,
             versionHistory: history as unknown as Prisma.InputJsonValue,
           },
         });
         await tx.radiologyTestSample.deleteMany({
-          where: { testId: target.id, tenantId },
+          where: { labTestId: target.id, tenantId },
         });
         await this.upsertTestChildren(tx, src.id, src.tenantId, {
           tenantId,
           branchId,
-          testId: target.id,
+          labTestId: target.id,
         });
         testIdMap.set(src.id, target.id);
         updated += 1;
@@ -1358,7 +1358,7 @@ export class RadiologyTestService {
           masterDataId: branchMasterDataId,
           source: DataSource.TENANT,
           actorId,
-          sourceMasterTestId: src.id,
+          sourceMasterLabTestId: src.id,
         });
         testIdMap.set(src.id, cloned.id);
         created += 1;
@@ -1367,7 +1367,7 @@ export class RadiologyTestService {
 
     const orphans = branchTests.filter(
       (t) =>
-        t.sourceMasterTestId !== null && !sourceIds.has(t.sourceMasterTestId),
+        t.sourceMasterLabTestId !== null && !sourceIds.has(t.sourceMasterLabTestId),
     );
     const now = new Date();
     let deleted = 0;
@@ -1390,7 +1390,7 @@ export class RadiologyTestService {
 
   /**
    * Soft-delete the branch's operational `BranchRadiologyTest` copies whose
-   * `sourceTestId` points at a Branch Master Data test just soft-deleted as an
+   * `sourceLabTestId` points at a Branch Master Data test just soft-deleted as an
    * orphan. Scoped to the branch's default (Walk-in) list only; excludes user
    * duplicates. Promotes a remaining sibling to default when needed. Runs inside
    * the caller's tx.
@@ -1416,21 +1416,21 @@ export class RadiologyTestService {
         listId: walkIn.id,
         deletedAt: null,
         isDuplicate: false,
-        sourceTestId: { in: orphanSourceIds },
+        sourceLabTestId: { in: orphanSourceIds },
       },
-      select: { id: true, isDefault: true, sourceTestId: true },
+      select: { id: true, isDefault: true, sourceLabTestId: true },
     });
     for (const copy of copies) {
       await tx.branchRadiologyTest.update({
         where: { id: copy.id },
         data: { deletedAt: now },
       });
-      if (copy.isDefault && copy.sourceTestId) {
+      if (copy.isDefault && copy.sourceLabTestId) {
         const sibling = await tx.branchRadiologyTest.findFirst({
           where: {
             tenantId,
             branchId,
-            sourceTestId: copy.sourceTestId,
+            sourceLabTestId: copy.sourceLabTestId,
             deletedAt: null,
           },
           orderBy: { createdAt: 'asc' },
@@ -1461,7 +1461,7 @@ export class RadiologyTestService {
       masterDataId: string | null;
       source: DataSource;
       actorId: string | null;
-      sourceMasterTestId?: string | null;
+      sourceMasterLabTestId?: string | null;
     },
   ): Promise<RadiologyTest> {
     const { tenantId, branchId, masterDataId, source, actorId } = target;
@@ -1475,7 +1475,7 @@ export class RadiologyTestService {
         masterDataId,
         source,
         clonedFromId,
-        sourceMasterTestId: target.sourceMasterTestId ?? null,
+        sourceMasterLabTestId: target.sourceMasterLabTestId ?? null,
         versionHistory: [
           this.seedVersion(actorId),
         ] as unknown as Prisma.InputJsonValue,
@@ -1485,13 +1485,13 @@ export class RadiologyTestService {
     await this.copyTestChildren(tx, src.id, srcTenantId, {
       tenantId,
       branchId,
-      testId: newTest.id,
+      labTestId: newTest.id,
     });
     return newTest;
   }
 
   /**
-   * Copy a radiology test's children from `srcTestId` onto `target.testId`,
+   * Copy a radiology test's children from `srcTestId` onto `target.labTestId`,
    * re-scoping them and stripping meta keys. Shared by the clone engine and the
    * sync path (which first hard-deletes the existing children). Assumes the correct
    * tenant transaction.
@@ -1503,12 +1503,12 @@ export class RadiologyTestService {
     target: {
       tenantId: string | null;
       branchId: string | null;
-      testId: string;
+      labTestId: string;
     },
   ): Promise<void> {
-    const { tenantId, branchId, testId } = target;
+    const { tenantId, branchId, labTestId } = target;
     const samples = await tx.radiologyTestSample.findMany({
-      where: { testId: srcTestId, tenantId: srcTenantId, deletedAt: null },
+      where: { labTestId: srcTestId, tenantId: srcTenantId, deletedAt: null },
     });
     if (samples.length) {
       await tx.radiologyTestSample.createMany({
@@ -1516,13 +1516,13 @@ export class RadiologyTestService {
           ...this.stripMeta(s),
           tenantId,
           branchId,
-          testId,
+          labTestId,
         })),
       });
     }
 
     const params = await tx.radiologyTestResultParam.findMany({
-      where: { testId: srcTestId, tenantId: srcTenantId, deletedAt: null },
+      where: { labTestId: srcTestId, tenantId: srcTenantId, deletedAt: null },
     });
     for (const param of params) {
       const newParam = await tx.radiologyTestResultParam.create({
@@ -1530,7 +1530,7 @@ export class RadiologyTestService {
           ...this.stripMeta(param),
           tenantId,
           branchId,
-          testId,
+          labTestId,
         } as Prisma.RadiologyTestResultParamUncheckedCreateInput,
       });
       const ranges = await tx.radiologyTestReferenceRange.findMany({
@@ -1542,7 +1542,7 @@ export class RadiologyTestService {
             ...this.stripMeta(r),
             tenantId,
             branchId,
-            testId,
+            labTestId,
             paramId: newParam.id,
           })),
         });
@@ -1556,7 +1556,7 @@ export class RadiologyTestService {
             ...this.stripMeta(v),
             tenantId,
             branchId,
-            testId,
+            labTestId,
             paramId: newParam.id,
           })) as Prisma.RadiologyTestReferenceValueCreateManyInput[],
         });
@@ -1578,12 +1578,12 @@ export class RadiologyTestService {
     target: {
       tenantId: string | null;
       branchId: string | null;
-      testId: string;
+      labTestId: string;
     },
   ): Promise<void> {
-    const { tenantId, branchId, testId } = target;
+    const { tenantId, branchId, labTestId } = target;
     const samples = await tx.radiologyTestSample.findMany({
-      where: { testId: srcTestId, tenantId: srcTenantId, deletedAt: null },
+      where: { labTestId: srcTestId, tenantId: srcTenantId, deletedAt: null },
     });
     if (samples.length) {
       await tx.radiologyTestSample.createMany({
@@ -1591,13 +1591,13 @@ export class RadiologyTestService {
           ...this.stripMeta(s),
           tenantId,
           branchId,
-          testId,
+          labTestId,
         })),
       });
     }
 
     const existingParams = await tx.radiologyTestResultParam.findMany({
-      where: { testId, tenantId, deletedAt: null },
+      where: { labTestId, tenantId, deletedAt: null },
       select: { id: true, parameterCode: true },
     });
     const existingByCode = new Map(
@@ -1606,7 +1606,7 @@ export class RadiologyTestService {
     const matchedIds = new Set<string>();
 
     const srcParams = await tx.radiologyTestResultParam.findMany({
-      where: { testId: srcTestId, tenantId: srcTenantId, deletedAt: null },
+      where: { labTestId: srcTestId, tenantId: srcTenantId, deletedAt: null },
     });
     for (const param of srcParams) {
       const scalars = this.stripMeta(param);
@@ -1634,7 +1634,7 @@ export class RadiologyTestService {
             ...scalars,
             tenantId,
             branchId,
-            testId,
+            labTestId,
           } as Prisma.RadiologyTestResultParamUncheckedCreateInput,
         });
         paramId = createdParam.id;
@@ -1649,7 +1649,7 @@ export class RadiologyTestService {
             ...this.stripMeta(r),
             tenantId,
             branchId,
-            testId,
+            labTestId,
             paramId,
           })),
         });
@@ -1663,7 +1663,7 @@ export class RadiologyTestService {
             ...this.stripMeta(v),
             tenantId,
             branchId,
-            testId,
+            labTestId,
             paramId,
           })) as Prisma.RadiologyTestReferenceValueCreateManyInput[],
         });
@@ -1816,25 +1816,25 @@ export class RadiologyTestService {
 
   /**
    * Fetch one SITE_ADMIN template radiology test composed with its children.
-   * @param testId template id
+   * @param labTestId template id
    * @throws RadiologyTestNotFoundException if missing/soft-deleted/not a template
    */
-  async findTemplateById(testId: string): Promise<RadiologyTestWithChildren> {
-    const test = await this.findCoreTemplateById(testId);
+  async findTemplateById(labTestId: string): Promise<RadiologyTestWithChildren> {
+    const test = await this.findCoreTemplateById(labTestId);
     return this.composeWithChildren(test);
   }
 
   /**
    * Update a SITE_ADMIN template radiology test (child-replacement semantics).
    * Classification refs stay NULL. Runs in a plain transaction.
-   * @param testId template id
+   * @param labTestId template id
    * @param dto partial update (classification refs ignored)
    */
   async updateTemplate(
-    testId: string,
+    labTestId: string,
     dto: UpdateRadiologyTestDto,
   ): Promise<RadiologyTestWithChildren> {
-    const existing = await this.findCoreTemplateById(testId);
+    const existing = await this.findCoreTemplateById(labTestId);
     this.assertCoreInvariants({
       priceMsrp: dto.priceMsrp ?? existing.priceMsrp,
       priceMaximum: dto.priceMaximum ?? existing.priceMaximum,
@@ -1856,50 +1856,50 @@ export class RadiologyTestService {
     try {
       await this.prisma.$transaction(async (tx) => {
         await tx.radiologyTest.update({
-          where: { id: testId },
+          where: { id: labTestId },
           data: { ...scalars, ...TEMPLATE_NULLED_REFS },
         });
         if (samples !== undefined) {
           await tx.radiologyTestSample.updateMany({
-            where: { testId, tenantId: null, deletedAt: null },
+            where: { labTestId, tenantId: null, deletedAt: null },
             data: { deletedAt: now },
           });
-          await this.createSamples(tx, null, null, testId, samples);
+          await this.createSamples(tx, null, null, labTestId, samples);
         }
         if (resultParams !== undefined) {
           await tx.radiologyTestReferenceRange.updateMany({
-            where: { testId, tenantId: null, deletedAt: null },
+            where: { labTestId, tenantId: null, deletedAt: null },
             data: { deletedAt: now },
           });
           await tx.radiologyTestReferenceValue.updateMany({
-            where: { testId, tenantId: null, deletedAt: null },
+            where: { labTestId, tenantId: null, deletedAt: null },
             data: { deletedAt: now },
           });
           await tx.radiologyTestResultParam.updateMany({
-            where: { testId, tenantId: null, deletedAt: null },
+            where: { labTestId, tenantId: null, deletedAt: null },
             data: { deletedAt: now },
           });
-          await this.createParams(tx, null, null, testId, resultParams);
+          await this.createParams(tx, null, null, labTestId, resultParams);
         }
       });
     } catch (e) {
       this.rethrowConflict(e, dto.testName ?? '', dto.testCode ?? '');
       throw e;
     }
-    return this.findTemplateById(testId);
+    return this.findTemplateById(labTestId);
   }
 
   /**
    * Soft-delete a SITE_ADMIN template radiology test and cascade soft-delete its
    * children, in one transaction.
-   * @param testId template id
+   * @param labTestId template id
    * @throws RadiologyTestNotFoundException if missing/soft-deleted/not a template
    */
-  async removeTemplate(testId: string): Promise<RadiologyTest> {
-    await this.findCoreTemplateById(testId);
+  async removeTemplate(labTestId: string): Promise<RadiologyTest> {
+    await this.findCoreTemplateById(labTestId);
     const now = new Date();
     return this.prisma.$transaction(async (tx) => {
-      const where = { testId, tenantId: null, deletedAt: null };
+      const where = { labTestId, tenantId: null, deletedAt: null };
       await tx.radiologyTestReferenceRange.updateMany({
         where,
         data: { deletedAt: now },
@@ -1917,7 +1917,7 @@ export class RadiologyTestService {
         data: { deletedAt: now },
       });
       return tx.radiologyTest.update({
-        where: { id: testId },
+        where: { id: labTestId },
         data: { deletedAt: now },
       });
     });
@@ -2035,7 +2035,7 @@ export class RadiologyTestService {
         });
         result.imported.push({
           templateId,
-          testId: newId,
+          labTestId: newId,
           testName: template.testName,
         });
       } catch (e) {
@@ -2094,7 +2094,7 @@ export class RadiologyTestService {
       });
       if (!template) {
         result.skipped.push({
-          testId: test.id,
+          labTestId: test.id,
           testName: test.testName,
           templateId,
           reason: 'Source template removed',
@@ -2127,22 +2127,22 @@ export class RadiologyTestService {
             },
           });
           await tx.radiologyTestSample.deleteMany({
-            where: { testId: test.id, tenantId },
+            where: { labTestId: test.id, tenantId },
           });
           await this.upsertTestChildren(tx, template.id, template.tenantId, {
             tenantId,
             branchId: test.branchId,
-            testId: test.id,
+            labTestId: test.id,
           });
         });
         result.synced.push({
-          testId: test.id,
+          labTestId: test.id,
           testName: template.testName,
           templateId,
         });
       } catch (e) {
         result.failed.push({
-          testId: test.id,
+          labTestId: test.id,
           testName: test.testName,
           templateId,
           reason: this.conflictReason(e, template.testName, template.testCode),
@@ -2185,18 +2185,18 @@ export class RadiologyTestService {
    * Fetch one active SITE_ADMIN template radiology test (core row only).
    * @throws RadiologyTestNotFoundException if missing/soft-deleted/not a template
    */
-  private async findCoreTemplateById(testId: string): Promise<RadiologyTest> {
+  private async findCoreTemplateById(labTestId: string): Promise<RadiologyTest> {
     const test = await this.prisma.radiologyTest.findFirst({
-      where: { id: testId, source: DataSource.SITE_ADMIN, deletedAt: null },
+      where: { id: labTestId, source: DataSource.SITE_ADMIN, deletedAt: null },
     });
     if (!test) {
-      throw new RadiologyTestNotFoundException(testId);
+      throw new RadiologyTestNotFoundException(labTestId);
     }
     return test;
   }
 
   /**
-   * Bulk-edit radiology tests: apply each item's scalar changes to its own `testId`
+   * Bulk-edit radiology tests: apply each item's scalar changes to its own `labTestId`
    * (all scoped to the caller's tenant + the path's master data). All-or-nothing.
    * @param masterDataId parent master data id
    * @param tenantId tenant scope
@@ -2211,20 +2211,20 @@ export class RadiologyTestService {
     await this.masterDataService.findById(masterDataId, tenantId);
 
     const items = dto.data;
-    const ids = items.map((i) => i.testId);
+    const ids = items.map((i) => i.labTestId);
     if (new Set(ids).size !== ids.length) {
-      throw new ValidationException('Duplicate testId in payload');
+      throw new ValidationException('Duplicate labTestId in payload');
     }
 
     const edits = items.map((item) => {
-      const { testId, ...changes } = item;
+      const { labTestId, ...changes } = item;
       const data = this.pickDefined(changes);
       if (Object.keys(data).length === 0) {
         throw new ValidationException(
-          `No changes provided for radiology test ${testId}`,
+          `No changes provided for radiology test ${labTestId}`,
         );
       }
-      return { testId, changes, data };
+      return { labTestId, changes, data };
     });
 
     const tests = await this.prisma.radiologyTest.findMany({
@@ -2236,8 +2236,8 @@ export class RadiologyTestService {
       throw new RadiologyTestNotFoundException(missing);
     }
 
-    for (const { testId, changes } of edits) {
-      const test = testById.get(testId)!;
+    for (const { labTestId, changes } of edits) {
+      const test = testById.get(labTestId)!;
       this.assertCoreInvariants({
         priceMsrp: changes.priceMsrp ?? test.priceMsrp,
         priceMaximum: changes.priceMaximum ?? test.priceMaximum,
@@ -2264,8 +2264,8 @@ export class RadiologyTestService {
     }
 
     await this.prisma.withTenant(tenantId, async (tx) => {
-      for (const { testId, data } of edits) {
-        await tx.radiologyTest.update({ where: { id: testId }, data });
+      for (const { labTestId, data } of edits) {
+        await tx.radiologyTest.update({ where: { id: labTestId }, data });
       }
     });
     return { updated: edits.length };
@@ -2291,15 +2291,15 @@ export class RadiologyTestService {
    * @throws RadiologyTestNotFoundException if missing/soft-deleted/other master data
    */
   private async findCoreById(
-    testId: string,
+    labTestId: string,
     masterDataId: string,
     tenantId: string,
   ): Promise<RadiologyTest> {
     const test = await this.prisma.radiologyTest.findFirst({
-      where: { id: testId, masterDataId, tenantId, deletedAt: null },
+      where: { id: labTestId, masterDataId, tenantId, deletedAt: null },
     });
     if (!test) {
-      throw new RadiologyTestNotFoundException(testId);
+      throw new RadiologyTestNotFoundException(labTestId);
     }
     return test;
   }
@@ -2312,14 +2312,14 @@ export class RadiologyTestService {
     tx: Prisma.TransactionClient,
     tenantId: string | null,
     branchId: string | null,
-    testId: string,
+    labTestId: string,
     samples: CreateRadiologyTestDto['samples'] | undefined,
   ): Promise<void> {
     if (!samples?.length) {
       return;
     }
     await tx.radiologyTestSample.createMany({
-      data: samples.map((s) => ({ ...s, tenantId, branchId, testId })),
+      data: samples.map((s) => ({ ...s, tenantId, branchId, labTestId })),
     });
   }
 
@@ -2331,7 +2331,7 @@ export class RadiologyTestService {
     tx: Prisma.TransactionClient,
     tenantId: string | null,
     branchId: string | null,
-    testId: string,
+    labTestId: string,
     params: RadiologyTestResultParamDto[] | undefined,
   ): Promise<void> {
     for (const p of params ?? []) {
@@ -2343,7 +2343,7 @@ export class RadiologyTestService {
           reflexTests: (reflexTests ?? []) as unknown as Prisma.InputJsonValue,
           tenantId,
           branchId,
-          testId,
+          labTestId,
         },
       });
       if (referenceRanges?.length) {
@@ -2352,7 +2352,7 @@ export class RadiologyTestService {
             ...r,
             tenantId,
             branchId,
-            testId,
+            labTestId,
             paramId: param.id,
           })),
         });
@@ -2363,7 +2363,7 @@ export class RadiologyTestService {
             ...v,
             tenantId,
             branchId,
-            testId,
+            labTestId,
             paramId: param.id,
           })),
         });
@@ -2383,12 +2383,12 @@ export class RadiologyTestService {
     tx: Prisma.TransactionClient,
     tenantId: string | null,
     branchId: string | null,
-    testId: string,
+    labTestId: string,
     params: RadiologyTestResultParamDto[] | undefined,
     now: Date,
   ): Promise<void> {
     const existing = await tx.radiologyTestResultParam.findMany({
-      where: { testId, tenantId, deletedAt: null },
+      where: { labTestId, tenantId, deletedAt: null },
       select: { id: true, parameterCode: true },
     });
     const existingByCode = new Map(
@@ -2429,7 +2429,7 @@ export class RadiologyTestService {
               []) as unknown as Prisma.InputJsonValue,
             tenantId,
             branchId,
-            testId,
+            labTestId,
           },
         });
         paramId = createdParam.id;
@@ -2441,7 +2441,7 @@ export class RadiologyTestService {
             ...r,
             tenantId,
             branchId,
-            testId,
+            labTestId,
             paramId,
           })),
         });
@@ -2452,7 +2452,7 @@ export class RadiologyTestService {
             ...v,
             tenantId,
             branchId,
-            testId,
+            labTestId,
             paramId,
           })),
         });

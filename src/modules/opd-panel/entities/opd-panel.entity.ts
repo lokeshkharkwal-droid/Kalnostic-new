@@ -20,7 +20,7 @@ export type OpdPanelWithRefs = OpdPanel & {
 
 /**
  * One included test, enriched with the referenced `OpdTest`'s
- * display/pricing details. `testId` is a logical reference (no Prisma relation),
+ * display/pricing details. `labTestId` is a logical reference (no Prisma relation),
  * so these fields fall back to `null` if the referenced test is unresolvable.
  */
 export type OpdPanelTestWithDetails = OpdPanelTest & {

@@ -3669,7 +3669,7 @@ model RadiologyTest {
 
   clonedFromId          String?   @map("cloned_from_id")
   templateSyncedAt      DateTime? @map("template_synced_at")
-  sourceMasterTestId    String?   @map("source_master_test_id")
+  sourceMasterLabTestId    String?   @map("source_master_test_id")
 
   // Identity
   testName        String  @map("test_name")
@@ -3780,7 +3780,7 @@ model RadiologyTest {
   @@index([isActive])
   @@index([source])
   @@index([clonedFromId])
-  @@index([sourceMasterTestId])
+  @@index([sourceMasterLabTestId])
   @@index([deletedAt])
   @@map("radiology_tests")
 }
@@ -3790,8 +3790,8 @@ model RadiologyTestSample {
   id     String  @id @default(uuid())
   tenantId String? @map("tenant_id")
   branchId String? @map("branch_id")
-  testId String  @map("test_id")
-  test   RadiologyTest @relation(fields: [testId], references: [id], onDelete: Cascade)
+  labTestId String  @map("test_id")
+  test   RadiologyTest @relation(fields: [labTestId], references: [id], onDelete: Cascade)
 
   sampleNameId               String?        @map("sample_name_id")
   sampleName                 String?        @map("sample_name")
@@ -3814,7 +3814,7 @@ model RadiologyTestSample {
 
   @@index([tenantId])
   @@index([branchId])
-  @@index([testId])
+  @@index([labTestId])
   @@index([deletedAt])
   @@map("radiology_test_samples")
 }
@@ -3824,8 +3824,8 @@ model RadiologyTestResultParam {
   id     String  @id @default(uuid())
   tenantId String? @map("tenant_id")
   branchId String? @map("branch_id")
-  testId String  @map("test_id")
-  test   RadiologyTest @relation(fields: [testId], references: [id], onDelete: Cascade)
+  labTestId String  @map("test_id")
+  test   RadiologyTest @relation(fields: [labTestId], references: [id], onDelete: Cascade)
 
   groupName       String?            @map("group_name")
   groupLayout     ResultGroupLayout? @map("group_layout")
@@ -3868,8 +3868,8 @@ model RadiologyTestResultParam {
 
   @@index([tenantId])
   @@index([branchId])
-  @@index([testId])
-  @@index([testId, sortOrder])
+  @@index([labTestId])
+  @@index([labTestId, sortOrder])
   @@index([deletedAt])
   @@map("radiology_test_result_params")
 }
@@ -3880,8 +3880,8 @@ model RadiologyTestReferenceRange {
   id     String  @id @default(uuid())
   tenantId String? @map("tenant_id")
   branchId String? @map("branch_id")
-  testId String  @map("test_id")
-  test   RadiologyTest @relation(fields: [testId], references: [id], onDelete: Cascade)
+  labTestId String  @map("test_id")
+  test   RadiologyTest @relation(fields: [labTestId], references: [id], onDelete: Cascade)
   paramId String @map("param_id")
 
   method String?
@@ -3905,7 +3905,7 @@ model RadiologyTestReferenceRange {
 
   @@index([tenantId])
   @@index([branchId])
-  @@index([testId])
+  @@index([labTestId])
   @@index([paramId])
   @@index([deletedAt])
   @@map("radiology_test_reference_ranges")
@@ -3917,8 +3917,8 @@ model RadiologyTestReferenceValue {
   id     String  @id @default(uuid())
   tenantId String? @map("tenant_id")
   branchId String? @map("branch_id")
-  testId String  @map("test_id")
-  test   RadiologyTest @relation(fields: [testId], references: [id], onDelete: Cascade)
+  labTestId String  @map("test_id")
+  test   RadiologyTest @relation(fields: [labTestId], references: [id], onDelete: Cascade)
   paramId String @map("param_id")
 
   method String?
@@ -3939,7 +3939,7 @@ model RadiologyTestReferenceValue {
 
   @@index([tenantId])
   @@index([branchId])
-  @@index([testId])
+  @@index([labTestId])
   @@index([paramId])
   @@index([deletedAt])
   @@map("radiology_test_reference_values")
@@ -3954,7 +3954,7 @@ model RadiologyPanel {
 
   source DataSource @default(TENANT)
 
-  sourceMasterPanelId String? @map("source_master_panel_id")
+  sourceMasterLabPanelId String? @map("source_master_panel_id")
 
   bannerImage String? @map("banner_image")
   panelName   String  @map("panel_name")
@@ -4005,20 +4005,20 @@ model RadiologyPanel {
   @@index([masterDataId])
   @@index([isActive])
   @@index([source])
-  @@index([sourceMasterPanelId])
+  @@index([sourceMasterLabPanelId])
   @@index([deletedAt])
   @@map("radiology_panels")
 }
 
-/// A test included in a radiology panel. Mirrors LabPanelTest. `testId` is a
+/// A test included in a radiology panel. Mirrors LabPanelTest. `labTestId` is a
 /// logical ref to a RadiologyTest.
 model RadiologyPanelTest {
   id      String  @id @default(uuid())
   tenantId String? @map("tenant_id")
   branchId String? @map("branch_id")
-  panelId String  @map("panel_id")
-  panel   RadiologyPanel @relation(fields: [panelId], references: [id], onDelete: Cascade)
-  testId  String  @map("test_id")
+  labPanelId String  @map("panel_id")
+  panel   RadiologyPanel @relation(fields: [labPanelId], references: [id], onDelete: Cascade)
+  labTestId  String  @map("test_id")
 
   sortOrder   Int     @default(0) @map("sort_order")
   isRemovable Boolean @default(true) @map("is_removable")
@@ -4030,9 +4030,9 @@ model RadiologyPanelTest {
 
   @@index([tenantId])
   @@index([branchId])
-  @@index([panelId])
-  @@index([panelId, sortOrder])
-  @@index([testId])
+  @@index([labPanelId])
+  @@index([labPanelId, sortOrder])
+  @@index([labTestId])
   @@index([deletedAt])
   @@map("radiology_panel_tests")
 }
@@ -4045,7 +4045,7 @@ model BranchRadiologyTest {
   tenantId String @map("tenant_id")
   branchId String @map("branch_id")
 
-  sourceTestId       String? @map("source_test_id")
+  sourceLabTestId       String? @map("source_test_id")
   sourceMasterDataId String? @map("source_master_data_id")
 
   listId String                    @map("list_id")
@@ -4146,7 +4146,7 @@ model BranchRadiologyTest {
 
   @@index([tenantId])
   @@index([branchId])
-  @@index([sourceTestId])
+  @@index([sourceLabTestId])
   @@index([listId])
   @@index([isActive])
   @@index([isDefault])
@@ -4160,7 +4160,7 @@ model BranchRadiologyPanel {
   tenantId String @map("tenant_id")
   branchId String @map("branch_id")
 
-  sourcePanelId      String? @map("source_panel_id")
+  sourceLabPanelId      String? @map("source_panel_id")
   sourceMasterDataId String? @map("source_master_data_id")
 
   listId String                    @map("list_id")
@@ -4219,7 +4219,7 @@ model BranchRadiologyPanel {
 
   @@index([tenantId])
   @@index([branchId])
-  @@index([sourcePanelId])
+  @@index([sourceLabPanelId])
   @@index([listId])
   @@index([isActive])
   @@index([isDefault])
@@ -4286,8 +4286,8 @@ model BranchRadiologyPanelTest {
   id               String @id @default(uuid())
   tenantId         String @map("tenant_id")
   branchId         String @map("branch_id")
-  branchPanelId    String @map("branch_panel_id")
-  branchTestId     String @map("branch_test_id")
+  branchLabPanelId    String @map("branch_panel_id")
+  branchLabTestId     String @map("branch_test_id")
 
   sortOrder   Int     @default(0) @map("sort_order")
   isRemovable Boolean @default(true) @map("is_removable")
@@ -4299,9 +4299,9 @@ model BranchRadiologyPanelTest {
 
   @@index([tenantId])
   @@index([branchId])
-  @@index([branchPanelId])
-  @@index([branchPanelId, sortOrder])
-  @@index([branchTestId])
+  @@index([branchLabPanelId])
+  @@index([branchLabPanelId, sortOrder])
+  @@index([branchLabTestId])
   @@index([deletedAt])
   @@map("branch_radiology_panel_tests")
 }
@@ -4341,7 +4341,7 @@ model OpdTest {
 
   clonedFromId          String?   @map("cloned_from_id")
   templateSyncedAt      DateTime? @map("template_synced_at")
-  sourceMasterTestId    String?   @map("source_master_test_id")
+  sourceMasterLabTestId    String?   @map("source_master_test_id")
 
   testName        String  @map("test_name")
   testDisplayName String? @map("test_display_name")
@@ -4442,7 +4442,7 @@ model OpdTest {
   @@index([isActive])
   @@index([source])
   @@index([clonedFromId])
-  @@index([sourceMasterTestId])
+  @@index([sourceMasterLabTestId])
   @@index([deletedAt])
   @@map("opd_tests")
 }
@@ -4452,8 +4452,8 @@ model OpdTestSample {
   id     String  @id @default(uuid())
   tenantId String? @map("tenant_id")
   branchId String? @map("branch_id")
-  testId String  @map("test_id")
-  test   OpdTest @relation(fields: [testId], references: [id], onDelete: Cascade)
+  labTestId String  @map("test_id")
+  test   OpdTest @relation(fields: [labTestId], references: [id], onDelete: Cascade)
 
   sampleNameId               String?        @map("sample_name_id")
   sampleName                 String?        @map("sample_name")
@@ -4476,7 +4476,7 @@ model OpdTestSample {
 
   @@index([tenantId])
   @@index([branchId])
-  @@index([testId])
+  @@index([labTestId])
   @@index([deletedAt])
   @@map("opd_test_samples")
 }
@@ -4486,8 +4486,8 @@ model OpdTestResultParam {
   id     String  @id @default(uuid())
   tenantId String? @map("tenant_id")
   branchId String? @map("branch_id")
-  testId String  @map("test_id")
-  test   OpdTest @relation(fields: [testId], references: [id], onDelete: Cascade)
+  labTestId String  @map("test_id")
+  test   OpdTest @relation(fields: [labTestId], references: [id], onDelete: Cascade)
 
   groupName       String?            @map("group_name")
   groupLayout     ResultGroupLayout? @map("group_layout")
@@ -4530,8 +4530,8 @@ model OpdTestResultParam {
 
   @@index([tenantId])
   @@index([branchId])
-  @@index([testId])
-  @@index([testId, sortOrder])
+  @@index([labTestId])
+  @@index([labTestId, sortOrder])
   @@index([deletedAt])
   @@map("opd_test_result_params")
 }
@@ -4541,8 +4541,8 @@ model OpdTestReferenceRange {
   id     String  @id @default(uuid())
   tenantId String? @map("tenant_id")
   branchId String? @map("branch_id")
-  testId String  @map("test_id")
-  test   OpdTest @relation(fields: [testId], references: [id], onDelete: Cascade)
+  labTestId String  @map("test_id")
+  test   OpdTest @relation(fields: [labTestId], references: [id], onDelete: Cascade)
   paramId String @map("param_id")
 
   method String?
@@ -4566,7 +4566,7 @@ model OpdTestReferenceRange {
 
   @@index([tenantId])
   @@index([branchId])
-  @@index([testId])
+  @@index([labTestId])
   @@index([paramId])
   @@index([deletedAt])
   @@map("opd_test_reference_ranges")
@@ -4577,8 +4577,8 @@ model OpdTestReferenceValue {
   id     String  @id @default(uuid())
   tenantId String? @map("tenant_id")
   branchId String? @map("branch_id")
-  testId String  @map("test_id")
-  test   OpdTest @relation(fields: [testId], references: [id], onDelete: Cascade)
+  labTestId String  @map("test_id")
+  test   OpdTest @relation(fields: [labTestId], references: [id], onDelete: Cascade)
   paramId String @map("param_id")
 
   method String?
@@ -4599,7 +4599,7 @@ model OpdTestReferenceValue {
 
   @@index([tenantId])
   @@index([branchId])
-  @@index([testId])
+  @@index([labTestId])
   @@index([paramId])
   @@index([deletedAt])
   @@map("opd_test_reference_values")
@@ -4614,7 +4614,7 @@ model OpdPanel {
 
   source DataSource @default(TENANT)
 
-  sourceMasterPanelId String? @map("source_master_panel_id")
+  sourceMasterLabPanelId String? @map("source_master_panel_id")
 
   bannerImage String? @map("banner_image")
   panelName   String  @map("panel_name")
@@ -4665,19 +4665,19 @@ model OpdPanel {
   @@index([masterDataId])
   @@index([isActive])
   @@index([source])
-  @@index([sourceMasterPanelId])
+  @@index([sourceMasterLabPanelId])
   @@index([deletedAt])
   @@map("opd_panels")
 }
 
-/// A test included in an OPD panel. Mirrors LabPanelTest. `testId` is a logical ref.
+/// A test included in an OPD panel. Mirrors LabPanelTest. `labTestId` is a logical ref.
 model OpdPanelTest {
   id      String  @id @default(uuid())
   tenantId String? @map("tenant_id")
   branchId String? @map("branch_id")
-  panelId String  @map("panel_id")
-  panel   OpdPanel @relation(fields: [panelId], references: [id], onDelete: Cascade)
-  testId  String  @map("test_id")
+  labPanelId String  @map("panel_id")
+  panel   OpdPanel @relation(fields: [labPanelId], references: [id], onDelete: Cascade)
+  labTestId  String  @map("test_id")
 
   sortOrder   Int     @default(0) @map("sort_order")
   isRemovable Boolean @default(true) @map("is_removable")
@@ -4689,9 +4689,9 @@ model OpdPanelTest {
 
   @@index([tenantId])
   @@index([branchId])
-  @@index([panelId])
-  @@index([panelId, sortOrder])
-  @@index([testId])
+  @@index([labPanelId])
+  @@index([labPanelId, sortOrder])
+  @@index([labTestId])
   @@index([deletedAt])
   @@map("opd_panel_tests")
 }
@@ -4702,7 +4702,7 @@ model BranchOpdTest {
   tenantId String @map("tenant_id")
   branchId String @map("branch_id")
 
-  sourceTestId       String? @map("source_test_id")
+  sourceLabTestId       String? @map("source_test_id")
   sourceMasterDataId String? @map("source_master_data_id")
 
   listId String              @map("list_id")
@@ -4803,7 +4803,7 @@ model BranchOpdTest {
 
   @@index([tenantId])
   @@index([branchId])
-  @@index([sourceTestId])
+  @@index([sourceLabTestId])
   @@index([listId])
   @@index([isActive])
   @@index([isDefault])
@@ -4817,7 +4817,7 @@ model BranchOpdPanel {
   tenantId String @map("tenant_id")
   branchId String @map("branch_id")
 
-  sourcePanelId      String? @map("source_panel_id")
+  sourceLabPanelId      String? @map("source_panel_id")
   sourceMasterDataId String? @map("source_master_data_id")
 
   listId String              @map("list_id")
@@ -4876,7 +4876,7 @@ model BranchOpdPanel {
 
   @@index([tenantId])
   @@index([branchId])
-  @@index([sourcePanelId])
+  @@index([sourceLabPanelId])
   @@index([listId])
   @@index([isActive])
   @@index([isDefault])
@@ -4943,8 +4943,8 @@ model BranchOpdPanelTest {
   id               String @id @default(uuid())
   tenantId         String @map("tenant_id")
   branchId         String @map("branch_id")
-  branchPanelId    String @map("branch_panel_id")
-  branchTestId     String @map("branch_test_id")
+  branchLabPanelId    String @map("branch_panel_id")
+  branchLabTestId     String @map("branch_test_id")
 
   sortOrder   Int     @default(0) @map("sort_order")
   isRemovable Boolean @default(true) @map("is_removable")
@@ -4956,9 +4956,9 @@ model BranchOpdPanelTest {
 
   @@index([tenantId])
   @@index([branchId])
-  @@index([branchPanelId])
-  @@index([branchPanelId, sortOrder])
-  @@index([branchTestId])
+  @@index([branchLabPanelId])
+  @@index([branchLabPanelId, sortOrder])
+  @@index([branchLabTestId])
   @@index([deletedAt])
   @@map("branch_opd_panel_tests")
 }

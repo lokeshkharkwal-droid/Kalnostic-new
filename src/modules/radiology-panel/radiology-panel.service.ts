@@ -44,7 +44,7 @@ const PANEL_META_KEYS = [
   'branchId',
   'masterDataId',
   'source',
-  'sourceMasterPanelId',
+  'sourceMasterLabPanelId',
   'createdAt',
   'updatedAt',
   'deletedAt',
@@ -77,7 +77,7 @@ export class RadiologyPanelService {
 
   /**
    * Create a radiology panel inside a master data, with its included tests. Every
-   * `testId` is validated to reference an active radiology test in the same master
+   * `labTestId` is validated to reference an active radiology test in the same master
    * data. All inserts run in one transaction.
    * @param masterDataId parent master data id
    * @param tenantId tenant scope
@@ -133,26 +133,26 @@ export class RadiologyPanelService {
   /**
    * Fetch one radiology panel composed with its included tests (ordered by sortOrder).
    * @param masterDataId parent master data id
-   * @param panelId radiology panel id
+   * @param labPanelId radiology panel id
    * @param tenantId tenant scope
    * @throws RadiologyPanelNotFoundException if missing/soft-deleted/other master data
    */
   async findById(
     masterDataId: string,
-    panelId: string,
+    labPanelId: string,
     tenantId: string,
   ): Promise<RadiologyPanelWithTests> {
-    const panel = await this.findCoreById(panelId, masterDataId, tenantId);
+    const panel = await this.findCoreById(labPanelId, masterDataId, tenantId);
     const [withRefsList, tests] = await Promise.all([
       this.attachRefs(tenantId, [panel]),
       this.prisma.radiologyPanelTest.findMany({
-        where: { panelId, tenantId, deletedAt: null },
+        where: { labPanelId, tenantId, deletedAt: null },
         orderBy: { sortOrder: 'asc' },
       }),
     ]);
     const withRefs = withRefsList[0];
     if (!withRefs) {
-      throw new RadiologyPanelNotFoundException(panelId);
+      throw new RadiologyPanelNotFoundException(labPanelId);
     }
     const testsWithDetails = await this.attachTestDetails(tenantId, tests);
     return { ...withRefs, tests: testsWithDetails };
@@ -420,23 +420,23 @@ export class RadiologyPanelService {
    * Update a radiology panel. Core fields are patched; when `tests` is provided, the
    * whole included-test set is replaced in one transaction.
    * @param masterDataId parent master data id
-   * @param panelId radiology panel id
+   * @param labPanelId radiology panel id
    * @param tenantId tenant scope
    * @param dto partial update
    */
   async update(
     masterDataId: string,
-    panelId: string,
+    labPanelId: string,
     tenantId: string,
     dto: UpdateRadiologyPanelDto,
   ): Promise<RadiologyPanelWithTests> {
-    const existing = await this.findCoreById(panelId, masterDataId, tenantId);
+    const existing = await this.findCoreById(labPanelId, masterDataId, tenantId);
 
     const testsCount =
       dto.tests !== undefined
         ? dto.tests.length
         : await this.prisma.radiologyPanelTest.count({
-            where: { panelId, tenantId, deletedAt: null },
+            where: { labPanelId, tenantId, deletedAt: null },
           });
     this.assertCoreInvariants({
       priceMsrp: dto.priceMsrp ?? existing.priceMsrp,
@@ -456,19 +456,19 @@ export class RadiologyPanelService {
     try {
       await this.prisma.withTenant(tenantId, async (tx) => {
         await tx.radiologyPanel.update({
-          where: { id: panelId },
+          where: { id: labPanelId },
           data: scalars,
         });
         if (tests !== undefined) {
           await tx.radiologyPanelTest.updateMany({
-            where: { panelId, tenantId, deletedAt: null },
+            where: { labPanelId, tenantId, deletedAt: null },
             data: { deletedAt: now },
           });
           await this.createTests(
             tx,
             tenantId,
             existing.branchId,
-            panelId,
+            labPanelId,
             tests,
           );
         }
@@ -477,12 +477,12 @@ export class RadiologyPanelService {
       this.rethrowConflict(e, dto.panelName ?? '', dto.panelCode ?? '');
       throw e;
     }
-    return this.findById(masterDataId, panelId, tenantId);
+    return this.findById(masterDataId, labPanelId, tenantId);
   }
 
   /**
    * Bulk-edit radiology panels: apply each item's scalar changes to its own
-   * `panelId` (all scoped to the caller's tenant + the path's master data).
+   * `labPanelId` (all scoped to the caller's tenant + the path's master data).
    * All-or-nothing.
    * @param masterDataId parent master data id
    * @param tenantId tenant scope
@@ -497,20 +497,20 @@ export class RadiologyPanelService {
     await this.masterDataService.findById(masterDataId, tenantId);
 
     const items = dto.data;
-    const ids = items.map((i) => i.panelId);
+    const ids = items.map((i) => i.labPanelId);
     if (new Set(ids).size !== ids.length) {
-      throw new ValidationException('Duplicate panelId in payload');
+      throw new ValidationException('Duplicate labPanelId in payload');
     }
 
     const edits = items.map((item) => {
-      const { panelId, ...changes } = item;
+      const { labPanelId, ...changes } = item;
       const data = this.pickDefined(changes);
       if (Object.keys(data).length === 0) {
         throw new ValidationException(
-          `No changes provided for panel ${panelId}`,
+          `No changes provided for panel ${labPanelId}`,
         );
       }
-      return { panelId, changes, data };
+      return { labPanelId, changes, data };
     });
 
     const panels = await this.prisma.radiologyPanel.findMany({
@@ -523,8 +523,8 @@ export class RadiologyPanelService {
     }
 
     const counts = await this.countTestsByPanel(tenantId, ids);
-    for (const { panelId, changes } of edits) {
-      const panel = panelById.get(panelId)!;
+    for (const { labPanelId, changes } of edits) {
+      const panel = panelById.get(labPanelId)!;
       this.assertCoreInvariants({
         priceMsrp: changes.priceMsrp ?? panel.priceMsrp,
         priceMaximum: changes.priceMaximum ?? panel.priceMaximum,
@@ -532,13 +532,13 @@ export class RadiologyPanelService {
         isAllowPartialBilling:
           changes.isAllowPartialBilling ?? panel.isAllowPartialBilling,
         maxTestsRemovable: changes.maxTestsRemovable ?? panel.maxTestsRemovable,
-        testsCount: counts.get(panelId) ?? 0,
+        testsCount: counts.get(labPanelId) ?? 0,
       });
     }
 
     await this.prisma.withTenant(tenantId, async (tx) => {
-      for (const { panelId, data } of edits) {
-        await tx.radiologyPanel.update({ where: { id: panelId }, data });
+      for (const { labPanelId, data } of edits) {
+        await tx.radiologyPanel.update({ where: { id: labPanelId }, data });
       }
     });
     return { updated: edits.length };
@@ -548,17 +548,17 @@ export class RadiologyPanelService {
    * Soft-delete a radiology panel and cascade soft-delete its included tests in one
    * transaction.
    * @param masterDataId parent master data id
-   * @param panelId radiology panel id
+   * @param labPanelId radiology panel id
    * @param tenantId tenant scope
    */
   async remove(
     masterDataId: string,
-    panelId: string,
+    labPanelId: string,
     tenantId: string,
   ): Promise<RadiologyPanel> {
-    await this.findCoreById(panelId, masterDataId, tenantId);
+    await this.findCoreById(labPanelId, masterDataId, tenantId);
     return this.prisma.withTenant(tenantId, (tx) =>
-      this.cascadeDeletePanel(tx, panelId, tenantId, new Date()),
+      this.cascadeDeletePanel(tx, labPanelId, tenantId, new Date()),
     );
   }
 
@@ -568,16 +568,16 @@ export class RadiologyPanelService {
    */
   private async cascadeDeletePanel(
     tx: Prisma.TransactionClient,
-    panelId: string,
+    labPanelId: string,
     tenantId: string,
     now: Date,
   ): Promise<RadiologyPanel> {
     await tx.radiologyPanelTest.updateMany({
-      where: { panelId, tenantId, deletedAt: null },
+      where: { labPanelId, tenantId, deletedAt: null },
       data: { deletedAt: now },
     });
     return tx.radiologyPanel.update({
-      where: { id: panelId },
+      where: { id: labPanelId },
       data: { deletedAt: now },
     });
   }
@@ -586,7 +586,7 @@ export class RadiologyPanelService {
 
   /**
    * Create a SITE_ADMIN global template radiology panel (no tenant/branch/master
-   * data). Forces the category/department refs NULL. Every included `testId` must
+   * data). Forces the category/department refs NULL. Every included `labTestId` must
    * reference an active SITE_ADMIN template radiology test. Runs in a plain
    * transaction.
    * @param dto validated payload (classification refs ignored)
@@ -676,13 +676,13 @@ export class RadiologyPanelService {
 
   /**
    * Fetch one SITE_ADMIN template radiology panel composed with its included tests.
-   * @param panelId template id
+   * @param labPanelId template id
    * @throws RadiologyPanelNotFoundException if missing/soft-deleted/not a template
    */
-  async findTemplateById(panelId: string): Promise<RadiologyPanelWithTests> {
-    const panel = await this.findCoreTemplateById(panelId);
+  async findTemplateById(labPanelId: string): Promise<RadiologyPanelWithTests> {
+    const panel = await this.findCoreTemplateById(labPanelId);
     const tests = await this.prisma.radiologyPanelTest.findMany({
-      where: { panelId, tenantId: null, deletedAt: null },
+      where: { labPanelId, tenantId: null, deletedAt: null },
       orderBy: { sortOrder: 'asc' },
     });
     const testsWithDetails = await this.attachTestDetails(null, tests);
@@ -698,19 +698,19 @@ export class RadiologyPanelService {
    * Update a SITE_ADMIN template radiology panel (same test-replacement semantics as
    * `update`). Classification refs stay NULL; replacement tests must be SITE_ADMIN
    * template tests. Runs in a plain transaction.
-   * @param panelId template id
+   * @param labPanelId template id
    * @param dto partial update (classification refs ignored)
    */
   async updateTemplate(
-    panelId: string,
+    labPanelId: string,
     dto: UpdateRadiologyPanelDto,
   ): Promise<RadiologyPanelWithTests> {
-    const existing = await this.findCoreTemplateById(panelId);
+    const existing = await this.findCoreTemplateById(labPanelId);
     const testsCount =
       dto.tests !== undefined
         ? dto.tests.length
         : await this.prisma.radiologyPanelTest.count({
-            where: { panelId, tenantId: null, deletedAt: null },
+            where: { labPanelId, tenantId: null, deletedAt: null },
           });
     this.assertCoreInvariants({
       priceMsrp: dto.priceMsrp ?? existing.priceMsrp,
@@ -729,40 +729,40 @@ export class RadiologyPanelService {
     try {
       await this.prisma.$transaction(async (tx) => {
         await tx.radiologyPanel.update({
-          where: { id: panelId },
+          where: { id: labPanelId },
           data: { ...scalars, categoryId: null, departmentId: null },
         });
         if (tests !== undefined) {
           await tx.radiologyPanelTest.updateMany({
-            where: { panelId, tenantId: null, deletedAt: null },
+            where: { labPanelId, tenantId: null, deletedAt: null },
             data: { deletedAt: now },
           });
-          await this.createTests(tx, null, null, panelId, tests);
+          await this.createTests(tx, null, null, labPanelId, tests);
         }
       });
     } catch (e) {
       this.rethrowConflict(e, dto.panelName ?? '', dto.panelCode ?? '');
       throw e;
     }
-    return this.findTemplateById(panelId);
+    return this.findTemplateById(labPanelId);
   }
 
   /**
    * Soft-delete a SITE_ADMIN template radiology panel and cascade soft-delete its
    * included tests, in one transaction.
-   * @param panelId template id
+   * @param labPanelId template id
    * @throws RadiologyPanelNotFoundException if missing/soft-deleted/not a template
    */
-  async removeTemplate(panelId: string): Promise<RadiologyPanel> {
-    await this.findCoreTemplateById(panelId);
+  async removeTemplate(labPanelId: string): Promise<RadiologyPanel> {
+    await this.findCoreTemplateById(labPanelId);
     const now = new Date();
     return this.prisma.$transaction(async (tx) => {
       await tx.radiologyPanelTest.updateMany({
-        where: { panelId, tenantId: null, deletedAt: null },
+        where: { labPanelId, tenantId: null, deletedAt: null },
         data: { deletedAt: now },
       });
       return tx.radiologyPanel.update({
-        where: { id: panelId },
+        where: { id: labPanelId },
         data: { deletedAt: now },
       });
     });
@@ -791,7 +791,7 @@ export class RadiologyPanelService {
     try {
       newId = await this.prisma.withTenant(tenantId, async (tx) => {
         const templateTests = await tx.radiologyPanelTest.findMany({
-          where: { panelId: templateId, tenantId: null, deletedAt: null },
+          where: { labPanelId: templateId, tenantId: null, deletedAt: null },
           orderBy: { sortOrder: 'asc' },
         });
         const panel = await tx.radiologyPanel.create({
@@ -806,25 +806,25 @@ export class RadiologyPanelService {
 
         const clonedTestIds = new Map<string, string>();
         const joinRows: {
-          testId: string;
+          labTestId: string;
           sortOrder: number;
           isRemovable: boolean;
           discountPercent: number | null;
         }[] = [];
         for (const t of templateTests) {
-          let newTestId = clonedTestIds.get(t.testId);
+          let newTestId = clonedTestIds.get(t.labTestId);
           if (!newTestId) {
             const cloned =
               await this.radiologyTestService.cloneTemplateTestWithinTx(
                 tx,
-                t.testId,
+                t.labTestId,
                 { tenantId, branchId: masterData.branchId, masterDataId },
               );
             newTestId = cloned.id;
-            clonedTestIds.set(t.testId, newTestId);
+            clonedTestIds.set(t.labTestId, newTestId);
           }
           joinRows.push({
-            testId: newTestId,
+            labTestId: newTestId,
             sortOrder: t.sortOrder,
             isRemovable: t.isRemovable,
             discountPercent: t.discountPercent,
@@ -836,7 +836,7 @@ export class RadiologyPanelService {
               ...r,
               tenantId,
               branchId: masterData.branchId,
-              panelId: panel.id,
+              labPanelId: panel.id,
             })),
           });
         }
@@ -852,7 +852,7 @@ export class RadiologyPanelService {
   /**
    * Orchestrate the **Tenant Master Data → Branch Master Data** sync ("Import
    * Master Data"). Resolves both master datas (get-or-create), then in ONE
-   * transaction syncs radiology tests (building a `tenantTestId → branchTestId`
+   * transaction syncs radiology tests (building a `tenantTestId → branchLabTestId`
    * map) and panels (remapping membership through that map). All or nothing.
    * @param tenantId tenant scope
    * @param branchId the target branch (from the JWT)
@@ -907,8 +907,8 @@ export class RadiologyPanelService {
 
   /**
    * Sync (update-or-create-or-delete) all active panels from a Tenant Master Data
-   * into a Branch Master Data, keyed on `sourceMasterPanelId` (falling back to
-   * `panelCode`). Membership `testId`s are remapped through `testIdMap` to the
+   * into a Branch Master Data, keyed on `sourceMasterLabPanelId` (falling back to
+   * `panelCode`). Membership `labTestId`s are remapped through `testIdMap` to the
    * branch test copies; members with no mapping are dropped. Runs inside the
    * caller's tx.
    */
@@ -933,7 +933,7 @@ export class RadiologyPanelService {
     const bySource = new Map<string, RadiologyPanel>();
     const byCode = new Map<string, RadiologyPanel>();
     for (const p of branchPanels) {
-      if (p.sourceMasterPanelId) bySource.set(p.sourceMasterPanelId, p);
+      if (p.sourceMasterLabPanelId) bySource.set(p.sourceMasterLabPanelId, p);
       byCode.set(p.panelCode, p);
     }
     const sourcePanelIds = new Set(sourcePanels.map((p) => p.id));
@@ -942,12 +942,12 @@ export class RadiologyPanelService {
     let updated = 0;
     for (const src of sourcePanels) {
       const members = await tx.radiologyPanelTest.findMany({
-        where: { panelId: src.id, tenantId, deletedAt: null },
+        where: { labPanelId: src.id, tenantId, deletedAt: null },
         orderBy: { sortOrder: 'asc' },
       });
       const joinRows = members
         .map((m) => ({
-          testId: testIdMap.get(m.testId),
+          labTestId: testIdMap.get(m.labTestId),
           sortOrder: m.sortOrder,
           isRemovable: m.isRemovable,
         }))
@@ -955,26 +955,26 @@ export class RadiologyPanelService {
           (
             r,
           ): r is {
-            testId: string;
+            labTestId: string;
             sortOrder: number;
             isRemovable: boolean;
-          } => Boolean(r.testId),
+          } => Boolean(r.labTestId),
         );
 
       const target = bySource.get(src.id) ?? byCode.get(src.panelCode);
-      let panelId: string;
+      let labPanelId: string;
       if (target) {
         await tx.radiologyPanel.update({
           where: { id: target.id },
           data: {
             ...this.stripMeta(src),
-            sourceMasterPanelId: src.id,
+            sourceMasterLabPanelId: src.id,
           },
         });
         await tx.radiologyPanelTest.deleteMany({
-          where: { panelId: target.id, tenantId },
+          where: { labPanelId: target.id, tenantId },
         });
-        panelId = target.id;
+        labPanelId = target.id;
         updated += 1;
       } else {
         const panel = await tx.radiologyPanel.create({
@@ -984,10 +984,10 @@ export class RadiologyPanelService {
             branchId,
             masterDataId: branchMasterDataId,
             source: DataSource.TENANT,
-            sourceMasterPanelId: src.id,
+            sourceMasterLabPanelId: src.id,
           } as Prisma.RadiologyPanelUncheckedCreateInput,
         });
-        panelId = panel.id;
+        labPanelId = panel.id;
         created += 1;
       }
       if (joinRows.length) {
@@ -996,7 +996,7 @@ export class RadiologyPanelService {
             ...r,
             tenantId,
             branchId,
-            panelId,
+            labPanelId,
           })),
         });
       }
@@ -1004,8 +1004,8 @@ export class RadiologyPanelService {
 
     const orphanPanels = branchPanels.filter(
       (p) =>
-        p.sourceMasterPanelId !== null &&
-        !sourcePanelIds.has(p.sourceMasterPanelId),
+        p.sourceMasterLabPanelId !== null &&
+        !sourcePanelIds.has(p.sourceMasterLabPanelId),
     );
     const now = new Date();
     let deleted = 0;
@@ -1028,7 +1028,7 @@ export class RadiologyPanelService {
 
   /**
    * Soft-delete the branch's operational `BranchRadiologyPanel` copies whose
-   * `sourcePanelId` points at a Branch Master Data panel just soft-deleted as an
+   * `sourceLabPanelId` points at a Branch Master Data panel just soft-deleted as an
    * orphan — cascading to their `BranchRadiologyPanelTest` join rows. Scoped to the
    * branch's default (Walk-in) panel list; excludes user duplicates. Promotes a
    * remaining sibling to default when needed. Runs inside the caller's tx.
@@ -1054,25 +1054,25 @@ export class RadiologyPanelService {
         listId: walkInPanel.id,
         deletedAt: null,
         isDuplicate: false,
-        sourcePanelId: { in: orphanSourceIds },
+        sourceLabPanelId: { in: orphanSourceIds },
       },
-      select: { id: true, isDefault: true, sourcePanelId: true },
+      select: { id: true, isDefault: true, sourceLabPanelId: true },
     });
     for (const copy of copies) {
       await tx.branchRadiologyPanelTest.updateMany({
-        where: { branchPanelId: copy.id, tenantId, deletedAt: null },
+        where: { branchLabPanelId: copy.id, tenantId, deletedAt: null },
         data: { deletedAt: now },
       });
       await tx.branchRadiologyPanel.update({
         where: { id: copy.id },
         data: { deletedAt: now },
       });
-      if (copy.isDefault && copy.sourcePanelId) {
+      if (copy.isDefault && copy.sourceLabPanelId) {
         const sibling = await tx.branchRadiologyPanel.findFirst({
           where: {
             tenantId,
             branchId,
-            sourcePanelId: copy.sourcePanelId,
+            sourceLabPanelId: copy.sourceLabPanelId,
             deletedAt: null,
           },
           orderBy: { createdAt: 'asc' },
@@ -1091,18 +1091,18 @@ export class RadiologyPanelService {
    * Fetch one active SITE_ADMIN template radiology panel (core row only).
    * @throws RadiologyPanelNotFoundException if missing/soft-deleted/not a template
    */
-  private async findCoreTemplateById(panelId: string): Promise<RadiologyPanel> {
+  private async findCoreTemplateById(labPanelId: string): Promise<RadiologyPanel> {
     const panel = await this.prisma.radiologyPanel.findFirst({
-      where: { id: panelId, source: DataSource.SITE_ADMIN, deletedAt: null },
+      where: { id: labPanelId, source: DataSource.SITE_ADMIN, deletedAt: null },
     });
     if (!panel) {
-      throw new RadiologyPanelNotFoundException(panelId);
+      throw new RadiologyPanelNotFoundException(labPanelId);
     }
     return panel;
   }
 
   /**
-   * Validate that every `testId` references an active SITE_ADMIN template radiology
+   * Validate that every `labTestId` references an active SITE_ADMIN template radiology
    * test, with no duplicates within the panel.
    * @throws ValidationException on duplicate test references
    * @throws RadiologyPanelTestNotFoundException on missing/non-template test references
@@ -1113,7 +1113,7 @@ export class RadiologyPanelService {
     if (!tests.length) {
       return;
     }
-    const ids = tests.map((t) => t.testId);
+    const ids = tests.map((t) => t.labTestId);
     const unique = new Set(ids);
     if (unique.size !== ids.length) {
       throw new ValidationException('Duplicate test references in panel');
@@ -1134,7 +1134,7 @@ export class RadiologyPanelService {
     const capById = new Map(found.map((t) => [t.id, t.discountCapPct]));
     for (const test of tests) {
       if (test.discountPercent == null) continue;
-      const cap = capById.get(test.testId) ?? 0;
+      const cap = capById.get(test.labTestId) ?? 0;
       if (test.discountPercent > cap) {
         throw new ValidationException(
           `discountPercent (${test.discountPercent}) exceeds this test's discount cap (${cap})`,
@@ -1174,15 +1174,15 @@ export class RadiologyPanelService {
    * @throws RadiologyPanelNotFoundException if missing/soft-deleted/other master data
    */
   private async findCoreById(
-    panelId: string,
+    labPanelId: string,
     masterDataId: string,
     tenantId: string,
   ): Promise<RadiologyPanel> {
     const panel = await this.prisma.radiologyPanel.findFirst({
-      where: { id: panelId, masterDataId, tenantId, deletedAt: null },
+      where: { id: labPanelId, masterDataId, tenantId, deletedAt: null },
     });
     if (!panel) {
-      throw new RadiologyPanelNotFoundException(panelId);
+      throw new RadiologyPanelNotFoundException(labPanelId);
     }
     return panel;
   }
@@ -1195,14 +1195,14 @@ export class RadiologyPanelService {
     tx: Prisma.TransactionClient,
     tenantId: string | null,
     branchId: string | null,
-    panelId: string,
+    labPanelId: string,
     tests: RadiologyPanelTestDto[],
   ): Promise<void> {
     if (!tests.length) {
       return;
     }
     await tx.radiologyPanelTest.createMany({
-      data: tests.map((t) => ({ ...t, tenantId, branchId, panelId })),
+      data: tests.map((t) => ({ ...t, tenantId, branchId, labPanelId })),
     });
   }
 
@@ -1216,7 +1216,7 @@ export class RadiologyPanelService {
   }
 
   /**
-   * Validate that every `testId` references an active radiology test in the same
+   * Validate that every `labTestId` references an active radiology test in the same
    * master data, that there are no duplicates, and that each test's
    * `discountPercent` (if set) doesn't exceed that test's own `discountCapPct`.
    * @throws ValidationException / RadiologyPanelTestNotFoundException
@@ -1229,7 +1229,7 @@ export class RadiologyPanelService {
     if (!tests.length) {
       return;
     }
-    const ids = tests.map((t) => t.testId);
+    const ids = tests.map((t) => t.labTestId);
     const unique = new Set(ids);
     if (unique.size !== ids.length) {
       throw new ValidationException('Duplicate test references in panel');
@@ -1251,7 +1251,7 @@ export class RadiologyPanelService {
     const capById = new Map(found.map((t) => [t.id, t.discountCapPct]));
     for (const test of tests) {
       if (test.discountPercent == null) continue;
-      const cap = capById.get(test.testId) ?? 0;
+      const cap = capById.get(test.labTestId) ?? 0;
       if (test.discountPercent > cap) {
         throw new ValidationException(
           `discountPercent (${test.discountPercent}) exceeds this test's discount cap (${cap})`,
@@ -1324,7 +1324,7 @@ export class RadiologyPanelService {
 
   /**
    * Enrich a panel's included-test rows with their referenced `RadiologyTest`'s
-   * display/pricing details (batched, no N+1). `testId` is a logical reference, so
+   * display/pricing details (batched, no N+1). `labTestId` is a logical reference, so
    * a test that no longer resolves falls back to `null` fields rather than dropping
    * the row.
    */
@@ -1335,7 +1335,7 @@ export class RadiologyPanelService {
     if (tests.length === 0) {
       return [];
     }
-    const ids = [...new Set(tests.map((t) => t.testId))];
+    const ids = [...new Set(tests.map((t) => t.labTestId))];
     const [radiologyTests, samples] = await Promise.all([
       this.prisma.radiologyTest.findMany({
         where: { id: { in: ids }, tenantId },
@@ -1351,25 +1351,25 @@ export class RadiologyPanelService {
         },
       }),
       this.prisma.radiologyTestSample.findMany({
-        where: { testId: { in: ids }, tenantId, deletedAt: null },
+        where: { labTestId: { in: ids }, tenantId, deletedAt: null },
         orderBy: { isDefault: 'desc' },
-        select: { testId: true, sampleType: true },
+        select: { labTestId: true, sampleType: true },
       }),
     ]);
     const testMap = new Map(radiologyTests.map((r) => [r.id, r]));
     const sampleMap = new Map<string, string | null>();
     for (const s of samples) {
-      if (!sampleMap.has(s.testId)) {
-        sampleMap.set(s.testId, s.sampleType);
+      if (!sampleMap.has(s.labTestId)) {
+        sampleMap.set(s.labTestId, s.sampleType);
       }
     }
     return tests.map((t) => {
-      const src = testMap.get(t.testId);
+      const src = testMap.get(t.labTestId);
       return {
         ...t,
         testName: src?.testName ?? null,
         testCode: src?.testCode ?? null,
-        sampleType: sampleMap.get(t.testId) ?? null,
+        sampleType: sampleMap.get(t.labTestId) ?? null,
         priceMsrp: src?.priceMsrp ?? null,
         priceOriginal: src?.priceOriginal ?? null,
         priceMinimum: src?.priceMinimum ?? null,
@@ -1380,7 +1380,7 @@ export class RadiologyPanelService {
   }
 
   /**
-   * Count active included tests per panel, keyed by `panelId`. `tenantId` is NULL
+   * Count active included tests per panel, keyed by `labPanelId`. `tenantId` is NULL
    * when counting tests of SITE_ADMIN template panels.
    */
   private async countTestsByPanel(
@@ -1392,19 +1392,19 @@ export class RadiologyPanelService {
       return map;
     }
     const grouped = await this.prisma.radiologyPanelTest.groupBy({
-      by: ['panelId'],
-      where: { panelId: { in: ids }, tenantId, deletedAt: null },
+      by: ['labPanelId'],
+      where: { labPanelId: { in: ids }, tenantId, deletedAt: null },
       _count: { _all: true },
     });
     for (const g of grouped) {
-      map.set(g.panelId, g._count._all);
+      map.set(g.labPanelId, g._count._all);
     }
     return map;
   }
 
   /** Strip undefined keys from one item's changes, yielding a Prisma update. */
   private pickDefined(
-    changes: Omit<BulkEditRadiologyPanelItemDto, 'panelId'>,
+    changes: Omit<BulkEditRadiologyPanelItemDto, 'labPanelId'>,
   ): Prisma.RadiologyPanelUpdateInput {
     const out: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(changes)) {

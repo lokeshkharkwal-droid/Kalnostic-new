@@ -251,7 +251,7 @@ export class BranchRadiologyPanelListService {
         await tx.branchRadiologyPanelTest.updateMany({
           where: {
             tenantId,
-            branchPanelId: { in: panelIds },
+            branchLabPanelId: { in: panelIds },
             deletedAt: null,
           },
           data: { deletedAt: now },
@@ -270,7 +270,7 @@ export class BranchRadiologyPanelListService {
 
   /**
    * Create a copy of a source branch panel into `listId`, then copy its active
-   * member tests to the new panel (same `branchTestId` — composition is shared).
+   * member tests to the new panel (same `branchLabTestId` — composition is shared).
    */
   private async clonePanelInto(
     tx: Tx,
@@ -298,7 +298,7 @@ export class BranchRadiologyPanelListService {
     const members = await tx.branchRadiologyPanelTest.findMany({
       where: {
         tenantId: row.tenantId,
-        branchPanelId: row.id,
+        branchLabPanelId: row.id,
         deletedAt: null,
       },
     });
@@ -307,8 +307,8 @@ export class BranchRadiologyPanelListService {
         data: {
           tenantId: m.tenantId,
           branchId: m.branchId,
-          branchPanelId: created.id,
-          branchTestId: m.branchTestId,
+          branchLabPanelId: created.id,
+          branchLabTestId: m.branchLabTestId,
           sortOrder: m.sortOrder,
           isRemovable: m.isRemovable,
         },

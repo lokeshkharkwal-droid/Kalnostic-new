@@ -71,7 +71,7 @@ const BRANCH_TEST_DROP_KEYS = [
   'source',
   'clonedFromId',
   'templateSyncedAt',
-  'sourceMasterTestId',
+  'sourceMasterLabTestId',
   'versionHistory',
   'createdAt',
   'updatedAt',
@@ -108,7 +108,7 @@ export class BranchRadiologyTestService {
   /**
    * Persist-import the selected Master Data radiology tests into the active branch's
    * Radiology Test List. Idempotent: a source already in the target list (matched by
-   * `sourceTestId`) is re-snapshotted; a new one is materialized. Copies run in one
+   * `sourceLabTestId`) is re-snapshotted; a new one is materialized. Copies run in one
    * transaction.
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT)
@@ -240,7 +240,7 @@ export class BranchRadiologyTestService {
 
   /**
    * Resolve a set of Master Data test ids into create/update payloads for the target
-   * list: a source already copied into it (matched by `sourceTestId`) is
+   * list: a source already copied into it (matched by `sourceLabTestId`) is
    * re-snapshotted (UPDATE); a new one is materialized (CREATE).
    */
   private async buildImportPlan(
@@ -274,12 +274,12 @@ export class BranchRadiologyTestService {
         branchId,
         listId: targetListId,
         deletedAt: null,
-        sourceTestId: { in: validIds },
+        sourceLabTestId: { in: validIds },
       },
-      select: { id: true, sourceTestId: true },
+      select: { id: true, sourceLabTestId: true },
     });
     const existingBySource = new Map(
-      existing.map((t) => [t.sourceTestId, t.id] as const),
+      existing.map((t) => [t.sourceLabTestId, t.id] as const),
     );
 
     const toCreate: Prisma.BranchRadiologyTestUncheckedCreateInput[] = [];
@@ -345,7 +345,7 @@ export class BranchRadiologyTestService {
 
   /**
    * Re-snapshot branch radiology tests from their source Master Data tests. Reloads
-   * each copy's source (via `sourceTestId`) and OVERWRITES the copy's parent fields
+   * each copy's source (via `sourceLabTestId`) and OVERWRITES the copy's parent fields
    * and clinical snapshot. Copies whose source is missing/soft-deleted are removed.
    * Runs in batched transactions.
    * @param tenantId tenant scope (from JWT)
@@ -378,14 +378,14 @@ export class BranchRadiologyTestService {
       listId: targetList.id,
       deletedAt: null,
       isDuplicate: false,
-      sourceTestId: { not: null },
+      sourceLabTestId: { not: null },
     };
     if (dto.branchLabTestIds?.length) {
       where.id = { in: dto.branchLabTestIds };
     }
     const copies = await this.prisma.branchRadiologyTest.findMany({
       where,
-      select: { id: true, sourceTestId: true, isDefault: true },
+      select: { id: true, sourceLabTestId: true, isDefault: true },
     });
 
     const updates: {
@@ -395,11 +395,11 @@ export class BranchRadiologyTestService {
     const toDelete: {
       id: string;
       isDefault: boolean;
-      sourceTestId: string | null;
+      sourceLabTestId: string | null;
     }[] = [];
     let skipped = 0;
     const resolvable = copies.filter((copy) => {
-      if (!copy.sourceTestId) {
+      if (!copy.sourceLabTestId) {
         skipped += 1;
         return false;
       }
@@ -413,7 +413,7 @@ export class BranchRadiologyTestService {
           try {
             const source = await this.radiologyTestService.findById(
               masterData.id,
-              copy.sourceTestId!,
+              copy.sourceLabTestId!,
               tenantId,
             );
             return { copy, source };
@@ -465,12 +465,12 @@ export class BranchRadiologyTestService {
               where: { id: d.id },
               data: { deletedAt: new Date() },
             });
-            if (d.isDefault && d.sourceTestId) {
+            if (d.isDefault && d.sourceLabTestId) {
               const sibling = await tx.branchRadiologyTest.findFirst({
                 where: {
                   tenantId,
                   branchId,
-                  sourceTestId: d.sourceTestId,
+                  sourceLabTestId: d.sourceLabTestId,
                   deletedAt: null,
                 },
                 orderBy: { createdAt: 'asc' },
@@ -829,7 +829,7 @@ export class BranchRadiologyTestService {
 
   /**
    * Duplicate a branch radiology test into an independent, editable variant in the
-   * same group (same `sourceTestId`). The copy starts as a non-default duplicate.
+   * same group (same `sourceLabTestId`). The copy starts as a non-default duplicate.
    * @throws BranchRadiologyTestNotFoundException if the source row is missing
    */
   async duplicate(
@@ -858,12 +858,12 @@ export class BranchRadiologyTestService {
   ): Promise<BranchRadiologyTest> {
     const row = await this.findById(id, tenantId, branchId);
     return this.prisma.withTenant(tenantId, async (tx) => {
-      if (row.sourceTestId) {
+      if (row.sourceLabTestId) {
         await tx.branchRadiologyTest.updateMany({
           where: {
             tenantId,
             branchId,
-            sourceTestId: row.sourceTestId,
+            sourceLabTestId: row.sourceLabTestId,
             deletedAt: null,
             isDefault: true,
             id: { not: id },
@@ -894,12 +894,12 @@ export class BranchRadiologyTestService {
         where: { id },
         data: { deletedAt: new Date() },
       });
-      if (row.isDefault && row.sourceTestId) {
+      if (row.isDefault && row.sourceLabTestId) {
         const sibling = await tx.branchRadiologyTest.findFirst({
           where: {
             tenantId,
             branchId,
-            sourceTestId: row.sourceTestId,
+            sourceLabTestId: row.sourceLabTestId,
             deletedAt: null,
           },
           orderBy: { createdAt: 'asc' },
@@ -931,7 +931,7 @@ export class BranchRadiologyTestService {
       ...scalars,
       tenantId: target.tenantId,
       branchId: target.branchId,
-      sourceTestId: source.id,
+      sourceLabTestId: source.id,
       sourceMasterDataId: target.sourceMasterDataId,
       listId: target.listId,
       listPrice: (scalars.priceMsrp as number) ?? 0,

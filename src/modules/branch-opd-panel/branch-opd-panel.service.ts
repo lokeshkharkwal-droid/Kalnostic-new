@@ -49,7 +49,7 @@ export interface BranchOpdPanelOption {
 
 /** A resolved panel member: the source test id + its ordering/removable flags. */
 interface MemberPlan {
-  sourceTestId: string;
+  sourceLabTestId: string;
   sortOrder: number;
   isRemovable: boolean;
 }
@@ -64,7 +64,7 @@ const BRANCH_PANEL_DROP_KEYS = [
   'branchId',
   'masterDataId',
   'source',
-  'sourceMasterPanelId',
+  'sourceMasterLabPanelId',
   'createdAt',
   'updatedAt',
   'deletedAt',
@@ -96,7 +96,7 @@ export class BranchOpdPanelService {
    * Persist-import the selected Master Data opd panels into the active branch's
    * Opd Panel List. Each panel's member tests are materialized as
    * `BranchOpdTest` copies (existing copies of the same source are reused).
-   * Idempotent: a panel already in the target list (matched by `sourcePanelId`) is
+   * Idempotent: a panel already in the target list (matched by `sourceLabPanelId`) is
    * re-snapshotted; a new one is materialized.
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT)
@@ -297,12 +297,12 @@ export class BranchOpdPanelService {
         branchId,
         listId: targetPanelListId,
         deletedAt: null,
-        sourcePanelId: { in: validIds },
+        sourceLabPanelId: { in: validIds },
       },
-      select: { id: true, sourcePanelId: true },
+      select: { id: true, sourceLabPanelId: true },
     });
     const existingBySource = new Map(
-      existing.map((p) => [p.sourcePanelId, p.id] as const),
+      existing.map((p) => [p.sourceLabPanelId, p.id] as const),
     );
 
     const newTests = new Map<
@@ -396,7 +396,7 @@ export class BranchOpdPanelService {
             data: p.data,
           });
           await tx.branchOpdPanelTest.updateMany({
-            where: { branchPanelId: p.id, tenantId, deletedAt: null },
+            where: { branchLabPanelId: p.id, tenantId, deletedAt: null },
             data: { deletedAt: new Date() },
           });
           await this.createJoins(
@@ -417,7 +417,7 @@ export class BranchOpdPanelService {
 
   /**
    * Re-snapshot branch opd panels from their source Master Data panels.
-   * Reloads each copy's source (via `sourcePanelId`), OVERWRITES the copy's fields,
+   * Reloads each copy's source (via `sourceLabPanelId`), OVERWRITES the copy's fields,
    * and rebuilds its member tests. Copies whose source is gone are removed.
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT)
@@ -453,14 +453,14 @@ export class BranchOpdPanelService {
       listId: targetPanelList.id,
       deletedAt: null,
       isDuplicate: false,
-      sourcePanelId: { not: null },
+      sourceLabPanelId: { not: null },
     };
     if (dto.branchLabPanelIds?.length) {
       where.id = { in: dto.branchLabPanelIds };
     }
     const copies = await this.prisma.branchOpdPanel.findMany({
       where,
-      select: { id: true, sourcePanelId: true, isDefault: true },
+      select: { id: true, sourceLabPanelId: true, isDefault: true },
     });
 
     const branchTestBySource = await this.loadBranchTestMap(
@@ -480,19 +480,19 @@ export class BranchOpdPanelService {
     const toDelete: {
       id: string;
       isDefault: boolean;
-      sourcePanelId: string | null;
+      sourceLabPanelId: string | null;
     }[] = [];
     let skipped = 0;
 
     for (const copy of copies) {
-      if (!copy.sourcePanelId) {
+      if (!copy.sourceLabPanelId) {
         skipped += 1;
         continue;
       }
       try {
         const panel = await this.opdPanelService.findById(
           masterData.id,
-          copy.sourcePanelId,
+          copy.sourceLabPanelId,
           tenantId,
         );
         const members = await this.planMembers(
@@ -530,7 +530,7 @@ export class BranchOpdPanelService {
             });
             await tx.branchOpdPanelTest.updateMany({
               where: {
-                branchPanelId: plan.id,
+                branchLabPanelId: plan.id,
                 tenantId,
                 deletedAt: null,
               },
@@ -548,19 +548,19 @@ export class BranchOpdPanelService {
           for (const d of toDelete) {
             const now = new Date();
             await tx.branchOpdPanelTest.updateMany({
-              where: { branchPanelId: d.id, tenantId, deletedAt: null },
+              where: { branchLabPanelId: d.id, tenantId, deletedAt: null },
               data: { deletedAt: now },
             });
             await tx.branchOpdPanel.update({
               where: { id: d.id },
               data: { deletedAt: now },
             });
-            if (d.isDefault && d.sourcePanelId) {
+            if (d.isDefault && d.sourceLabPanelId) {
               const sibling = await tx.branchOpdPanel.findFirst({
                 where: {
                   tenantId,
                   branchId,
-                  sourcePanelId: d.sourcePanelId,
+                  sourceLabPanelId: d.sourceLabPanelId,
                   deletedAt: null,
                 },
                 orderBy: { createdAt: 'asc' },
@@ -675,7 +675,7 @@ export class BranchOpdPanelService {
 
   /**
    * Aggregate each panel's member-test sample types into one comma-joined summary
-   * string, keyed by `branchPanelId`. Samples live on each member `BranchOpdTest`.
+   * string, keyed by `branchLabPanelId`. Samples live on each member `BranchOpdTest`.
    */
   private async resolveSampleSummaries(
     labPanelIds: string[],
@@ -685,10 +685,10 @@ export class BranchOpdPanelService {
       return map;
     }
     const memberRows = await this.prisma.branchOpdPanelTest.findMany({
-      where: { branchPanelId: { in: labPanelIds }, deletedAt: null },
-      select: { branchPanelId: true, branchTestId: true },
+      where: { branchLabPanelId: { in: labPanelIds }, deletedAt: null },
+      select: { branchLabPanelId: true, branchLabTestId: true },
     });
-    const labTestIds = [...new Set(memberRows.map((r) => r.branchTestId))];
+    const labTestIds = [...new Set(memberRows.map((r) => r.branchLabTestId))];
     if (labTestIds.length === 0) {
       return map;
     }
@@ -709,15 +709,15 @@ export class BranchOpdPanelService {
     const sampleTypesByPanelId = new Map<string, Set<string>>();
     for (const r of memberRows) {
       const set =
-        sampleTypesByPanelId.get(r.branchPanelId) ?? new Set<string>();
-      for (const st of sampleTypesByTestId.get(r.branchTestId) ?? []) {
+        sampleTypesByPanelId.get(r.branchLabPanelId) ?? new Set<string>();
+      for (const st of sampleTypesByTestId.get(r.branchLabTestId) ?? []) {
         set.add(st);
       }
-      sampleTypesByPanelId.set(r.branchPanelId, set);
+      sampleTypesByPanelId.set(r.branchLabPanelId, set);
     }
-    for (const [panelId, set] of sampleTypesByPanelId) {
+    for (const [labPanelId, set] of sampleTypesByPanelId) {
       if (set.size > 0) {
-        map.set(panelId, [...set].join(', '));
+        map.set(labPanelId, [...set].join(', '));
       }
     }
     return map;
@@ -833,7 +833,7 @@ export class BranchOpdPanelService {
       throw new BranchOpdPanelNotFoundException(id);
     }
     const tests = await this.prisma.branchOpdPanelTest.findMany({
-      where: { branchPanelId: id, tenantId, deletedAt: null },
+      where: { branchLabPanelId: id, tenantId, deletedAt: null },
       orderBy: { sortOrder: 'asc' },
     });
     return { ...panel, tests };
@@ -961,8 +961,8 @@ export class BranchOpdPanelService {
           data: panel.tests.map((t) => ({
             tenantId,
             branchId,
-            branchPanelId: created.id,
-            branchTestId: t.branchTestId,
+            branchLabPanelId: created.id,
+            branchLabTestId: t.branchLabTestId,
             sortOrder: t.sortOrder,
             isRemovable: t.isRemovable,
           })),
@@ -986,12 +986,12 @@ export class BranchOpdPanelService {
   ): Promise<BranchOpdPanel> {
     const panel = await this.findById(id, tenantId, branchId);
     return this.prisma.withTenant(tenantId, async (tx) => {
-      if (panel.sourcePanelId) {
+      if (panel.sourceLabPanelId) {
         await tx.branchOpdPanel.updateMany({
           where: {
             tenantId,
             branchId,
-            sourcePanelId: panel.sourcePanelId,
+            sourceLabPanelId: panel.sourceLabPanelId,
             deletedAt: null,
             isDefault: true,
             id: { not: id },
@@ -1020,19 +1020,19 @@ export class BranchOpdPanelService {
     const now = new Date();
     return this.prisma.withTenant(tenantId, async (tx) => {
       await tx.branchOpdPanelTest.updateMany({
-        where: { branchPanelId: id, tenantId, deletedAt: null },
+        where: { branchLabPanelId: id, tenantId, deletedAt: null },
         data: { deletedAt: now },
       });
       const deleted = await tx.branchOpdPanel.update({
         where: { id },
         data: { deletedAt: now },
       });
-      if (panel.isDefault && panel.sourcePanelId) {
+      if (panel.isDefault && panel.sourceLabPanelId) {
         const sibling = await tx.branchOpdPanel.findFirst({
           where: {
             tenantId,
             branchId,
-            sourcePanelId: panel.sourcePanelId,
+            sourceLabPanelId: panel.sourceLabPanelId,
             deletedAt: null,
           },
           orderBy: { createdAt: 'asc' },
@@ -1065,14 +1065,14 @@ export class BranchOpdPanelService {
         branchId,
         listId: testListId,
         deletedAt: null,
-        sourceTestId: { not: null },
+        sourceLabTestId: { not: null },
       },
-      select: { id: true, sourceTestId: true },
+      select: { id: true, sourceLabTestId: true },
     });
     const map = new Map<string, string>();
     for (const r of rows) {
-      if (r.sourceTestId) {
-        map.set(r.sourceTestId, r.id);
+      if (r.sourceLabTestId) {
+        map.set(r.sourceLabTestId, r.id);
       }
     }
     return map;
@@ -1096,21 +1096,21 @@ export class BranchOpdPanelService {
     const members: MemberPlan[] = [];
     for (const t of panel.tests) {
       members.push({
-        sourceTestId: t.testId,
+        sourceLabTestId: t.labTestId,
         sortOrder: t.sortOrder,
         isRemovable: t.isRemovable,
       });
-      if (branchTestBySource.has(t.testId) || newTests.has(t.testId)) {
+      if (branchTestBySource.has(t.labTestId) || newTests.has(t.labTestId)) {
         continue;
       }
       try {
         const srcTest = await this.opdTestService.findById(
           masterDataId,
-          t.testId,
+          t.labTestId,
           tenantId,
         );
         newTests.set(
-          t.testId,
+          t.labTestId,
           this.branchOpdTestService.buildImportData(srcTest, {
             tenantId,
             branchId,
@@ -1135,9 +1135,9 @@ export class BranchOpdPanelService {
     newTests: Map<string, Prisma.BranchOpdTestUncheckedCreateInput>,
     branchTestBySource: Map<string, string>,
   ): Promise<void> {
-    for (const [sourceTestId, data] of newTests) {
+    for (const [sourceLabTestId, data] of newTests) {
       const created = await tx.branchOpdTest.create({ data });
-      branchTestBySource.set(sourceTestId, created.id);
+      branchTestBySource.set(sourceLabTestId, created.id);
     }
   }
 
@@ -1146,21 +1146,21 @@ export class BranchOpdPanelService {
     tx: Prisma.TransactionClient,
     tenantId: string,
     branchId: string,
-    branchPanelId: string,
+    branchLabPanelId: string,
     members: MemberPlan[],
     branchTestBySource: Map<string, string>,
   ): Promise<void> {
     const data = members
       .map((m) => {
-        const branchTestId = branchTestBySource.get(m.sourceTestId);
-        if (!branchTestId) {
+        const branchLabTestId = branchTestBySource.get(m.sourceLabTestId);
+        if (!branchLabTestId) {
           return null;
         }
         return {
           tenantId,
           branchId,
-          branchPanelId,
-          branchTestId,
+          branchLabPanelId,
+          branchLabTestId,
           sortOrder: m.sortOrder,
           isRemovable: m.isRemovable,
         };
@@ -1187,7 +1187,7 @@ export class BranchOpdPanelService {
       ...scalars,
       tenantId: target.tenantId,
       branchId: target.branchId,
-      sourcePanelId: source.id,
+      sourceLabPanelId: source.id,
       sourceMasterDataId: target.sourceMasterDataId,
       listId: target.listId,
       listPrice: (scalars.priceMsrp as number) ?? 0,

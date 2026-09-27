@@ -8,13 +8,13 @@ import {
 } from 'class-validator';
 
 /**
- * One test included in a opd panel. `testId` references an active
+ * One test included in a opd panel. `labTestId` references an active
  * OpdTest in the same master data (validated in `OpdPanelService`).
- * `tenantId`/`branchId`/`panelId` come from context — never the body.
+ * `tenantId`/`branchId`/`labPanelId` come from context — never the body.
  */
 export class OpdPanelTestDto {
   @IsUUID()
-  testId: string;
+  labTestId: string;
 
   @IsInt()
   @Min(0)

@@ -40,7 +40,7 @@ export class ImportFromOpdMasterDataQueryDto extends PaginationQueryDto {
 
   /**
    * When given, tests already present in this pricing list (matched via
-   * `BranchOpdTest.sourceTestId`/`BranchOpdPanel.sourcePanelId`) are
+   * `BranchOpdTest.sourceLabTestId`/`BranchOpdPanel.sourceLabPanelId`) are
    * excluded from the result.
    */
   @IsOptional()

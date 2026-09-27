@@ -21,12 +21,12 @@ import {
 } from 'class-validator';
 
 /**
- * One per-panel edit: the target `panelId` plus the scalar fields to change.
+ * One per-panel edit: the target `labPanelId` plus the scalar fields to change.
  * Included `tests` (composition) and `panelName`/`panelCode` are NOT bulk-editable.
  */
 export class BulkEditRadiologyPanelItemDto {
   @IsUUID()
-  panelId: string;
+  labPanelId: string;
 
   @IsUUID()
   @IsOptional()
@@ -141,7 +141,7 @@ export class BulkEditRadiologyPanelItemDto {
 
 /**
  * Bulk edit for radiology panels: an array of per-panel edits, each targeting its
- * own `panelId` (all scoped to the caller's tenant + the path's master data).
+ * own `labPanelId` (all scoped to the caller's tenant + the path's master data).
  * All-or-nothing.
  */
 export class BulkEditRadiologyPanelsDto {

@@ -303,7 +303,7 @@ export type ImportableTemplateRow = RadiologyTestListRow & {
 /** Per-template outcome of a bulk import/sync operation. */
 export interface RadiologyTestImportOutcome {
   templateId: string;
-  testId?: string;
+  labTestId?: string;
   testName?: string;
   reason?: string;
 }
@@ -317,7 +317,7 @@ export interface RadiologyTestImportResult {
 
 /** Per-test outcome of a bulk sync operation. */
 export interface RadiologyTestSyncOutcome {
-  testId: string;
+  labTestId: string;
   testName?: string;
   templateId?: string;
   reason?: string;

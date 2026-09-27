@@ -8,13 +8,13 @@ import {
 } from 'class-validator';
 
 /**
- * One test included in a radiology panel. `testId` references an active
+ * One test included in a radiology panel. `labTestId` references an active
  * RadiologyTest in the same master data (validated in `RadiologyPanelService`).
- * `tenantId`/`branchId`/`panelId` come from context — never the body.
+ * `tenantId`/`branchId`/`labPanelId` come from context — never the body.
  */
 export class RadiologyPanelTestDto {
   @IsUUID()
-  testId: string;
+  labTestId: string;
 
   @IsInt()
   @Min(0)

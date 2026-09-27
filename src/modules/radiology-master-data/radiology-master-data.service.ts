@@ -286,12 +286,12 @@ export class RadiologyMasterDataService {
           tenantId,
           listId: excludeListId,
           deletedAt: null,
-          sourceTestId: { not: null },
+          sourceLabTestId: { not: null },
         },
-        select: { sourceTestId: true },
+        select: { sourceLabTestId: true },
       });
       const existingIds = existing
-        .map((r) => r.sourceTestId)
+        .map((r) => r.sourceLabTestId)
         .filter((x): x is string => Boolean(x));
       if (existingIds.length > 0) {
         where.id = { notIn: existingIds };
@@ -421,12 +421,12 @@ export class RadiologyMasterDataService {
           tenantId,
           listId: excludeListId,
           deletedAt: null,
-          sourcePanelId: { not: null },
+          sourceLabPanelId: { not: null },
         },
-        select: { sourcePanelId: true },
+        select: { sourceLabPanelId: true },
       });
       const existingIds = existing
-        .map((r) => r.sourcePanelId)
+        .map((r) => r.sourceLabPanelId)
         .filter((x): x is string => Boolean(x));
       if (existingIds.length > 0) {
         where.id = { notIn: existingIds };
@@ -669,7 +669,7 @@ export class RadiologyMasterDataService {
       const testIds = tests.map((t) => t.id);
       if (testIds.length) {
         const childWhere = {
-          testId: { in: testIds },
+          labTestId: { in: testIds },
           tenantId,
           deletedAt: null,
         };

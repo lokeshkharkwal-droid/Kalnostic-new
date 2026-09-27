@@ -303,7 +303,7 @@ export type ImportableTemplateRow = OpdTestListRow & {
 /** Per-template outcome of a bulk import/sync operation. */
 export interface OpdTestImportOutcome {
   templateId: string;
-  testId?: string;
+  labTestId?: string;
   testName?: string;
   reason?: string;
 }
@@ -317,7 +317,7 @@ export interface OpdTestImportResult {
 
 /** Per-test outcome of a bulk sync operation. */
 export interface OpdTestSyncOutcome {
-  testId: string;
+  labTestId: string;
   testName?: string;
   templateId?: string;
   reason?: string;

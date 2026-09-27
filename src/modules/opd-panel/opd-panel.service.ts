@@ -39,7 +39,7 @@ const PANEL_META_KEYS = [
   'branchId',
   'masterDataId',
   'source',
-  'sourceMasterPanelId',
+  'sourceMasterLabPanelId',
   'createdAt',
   'updatedAt',
   'deletedAt',
@@ -72,7 +72,7 @@ export class OpdPanelService {
 
   /**
    * Create a opd panel inside a master data, with its included tests. Every
-   * `testId` is validated to reference an active opd test in the same master
+   * `labTestId` is validated to reference an active opd test in the same master
    * data. All inserts run in one transaction.
    * @param masterDataId parent master data id
    * @param tenantId tenant scope
@@ -128,26 +128,26 @@ export class OpdPanelService {
   /**
    * Fetch one opd panel composed with its included tests (ordered by sortOrder).
    * @param masterDataId parent master data id
-   * @param panelId opd panel id
+   * @param labPanelId opd panel id
    * @param tenantId tenant scope
    * @throws OpdPanelNotFoundException if missing/soft-deleted/other master data
    */
   async findById(
     masterDataId: string,
-    panelId: string,
+    labPanelId: string,
     tenantId: string,
   ): Promise<OpdPanelWithTests> {
-    const panel = await this.findCoreById(panelId, masterDataId, tenantId);
+    const panel = await this.findCoreById(labPanelId, masterDataId, tenantId);
     const [withRefsList, tests] = await Promise.all([
       this.attachRefs(tenantId, [panel]),
       this.prisma.opdPanelTest.findMany({
-        where: { panelId, tenantId, deletedAt: null },
+        where: { labPanelId, tenantId, deletedAt: null },
         orderBy: { sortOrder: 'asc' },
       }),
     ]);
     const withRefs = withRefsList[0];
     if (!withRefs) {
-      throw new OpdPanelNotFoundException(panelId);
+      throw new OpdPanelNotFoundException(labPanelId);
     }
     const testsWithDetails = await this.attachTestDetails(tenantId, tests);
     return { ...withRefs, tests: testsWithDetails };
@@ -415,23 +415,23 @@ export class OpdPanelService {
    * Update a opd panel. Core fields are patched; when `tests` is provided, the
    * whole included-test set is replaced in one transaction.
    * @param masterDataId parent master data id
-   * @param panelId opd panel id
+   * @param labPanelId opd panel id
    * @param tenantId tenant scope
    * @param dto partial update
    */
   async update(
     masterDataId: string,
-    panelId: string,
+    labPanelId: string,
     tenantId: string,
     dto: UpdateOpdPanelDto,
   ): Promise<OpdPanelWithTests> {
-    const existing = await this.findCoreById(panelId, masterDataId, tenantId);
+    const existing = await this.findCoreById(labPanelId, masterDataId, tenantId);
 
     const testsCount =
       dto.tests !== undefined
         ? dto.tests.length
         : await this.prisma.opdPanelTest.count({
-            where: { panelId, tenantId, deletedAt: null },
+            where: { labPanelId, tenantId, deletedAt: null },
           });
     this.assertCoreInvariants({
       priceMsrp: dto.priceMsrp ?? existing.priceMsrp,
@@ -451,19 +451,19 @@ export class OpdPanelService {
     try {
       await this.prisma.withTenant(tenantId, async (tx) => {
         await tx.opdPanel.update({
-          where: { id: panelId },
+          where: { id: labPanelId },
           data: scalars,
         });
         if (tests !== undefined) {
           await tx.opdPanelTest.updateMany({
-            where: { panelId, tenantId, deletedAt: null },
+            where: { labPanelId, tenantId, deletedAt: null },
             data: { deletedAt: now },
           });
           await this.createTests(
             tx,
             tenantId,
             existing.branchId,
-            panelId,
+            labPanelId,
             tests,
           );
         }
@@ -472,12 +472,12 @@ export class OpdPanelService {
       this.rethrowConflict(e, dto.panelName ?? '', dto.panelCode ?? '');
       throw e;
     }
-    return this.findById(masterDataId, panelId, tenantId);
+    return this.findById(masterDataId, labPanelId, tenantId);
   }
 
   /**
    * Bulk-edit opd panels: apply each item's scalar changes to its own
-   * `panelId` (all scoped to the caller's tenant + the path's master data).
+   * `labPanelId` (all scoped to the caller's tenant + the path's master data).
    * All-or-nothing.
    * @param masterDataId parent master data id
    * @param tenantId tenant scope
@@ -492,20 +492,20 @@ export class OpdPanelService {
     await this.masterDataService.findById(masterDataId, tenantId);
 
     const items = dto.data;
-    const ids = items.map((i) => i.panelId);
+    const ids = items.map((i) => i.labPanelId);
     if (new Set(ids).size !== ids.length) {
-      throw new ValidationException('Duplicate panelId in payload');
+      throw new ValidationException('Duplicate labPanelId in payload');
     }
 
     const edits = items.map((item) => {
-      const { panelId, ...changes } = item;
+      const { labPanelId, ...changes } = item;
       const data = this.pickDefined(changes);
       if (Object.keys(data).length === 0) {
         throw new ValidationException(
-          `No changes provided for panel ${panelId}`,
+          `No changes provided for panel ${labPanelId}`,
         );
       }
-      return { panelId, changes, data };
+      return { labPanelId, changes, data };
     });
 
     const panels = await this.prisma.opdPanel.findMany({
@@ -518,8 +518,8 @@ export class OpdPanelService {
     }
 
     const counts = await this.countTestsByPanel(tenantId, ids);
-    for (const { panelId, changes } of edits) {
-      const panel = panelById.get(panelId)!;
+    for (const { labPanelId, changes } of edits) {
+      const panel = panelById.get(labPanelId)!;
       this.assertCoreInvariants({
         priceMsrp: changes.priceMsrp ?? panel.priceMsrp,
         priceMaximum: changes.priceMaximum ?? panel.priceMaximum,
@@ -527,13 +527,13 @@ export class OpdPanelService {
         isAllowPartialBilling:
           changes.isAllowPartialBilling ?? panel.isAllowPartialBilling,
         maxTestsRemovable: changes.maxTestsRemovable ?? panel.maxTestsRemovable,
-        testsCount: counts.get(panelId) ?? 0,
+        testsCount: counts.get(labPanelId) ?? 0,
       });
     }
 
     await this.prisma.withTenant(tenantId, async (tx) => {
-      for (const { panelId, data } of edits) {
-        await tx.opdPanel.update({ where: { id: panelId }, data });
+      for (const { labPanelId, data } of edits) {
+        await tx.opdPanel.update({ where: { id: labPanelId }, data });
       }
     });
     return { updated: edits.length };
@@ -543,17 +543,17 @@ export class OpdPanelService {
    * Soft-delete a opd panel and cascade soft-delete its included tests in one
    * transaction.
    * @param masterDataId parent master data id
-   * @param panelId opd panel id
+   * @param labPanelId opd panel id
    * @param tenantId tenant scope
    */
   async remove(
     masterDataId: string,
-    panelId: string,
+    labPanelId: string,
     tenantId: string,
   ): Promise<OpdPanel> {
-    await this.findCoreById(panelId, masterDataId, tenantId);
+    await this.findCoreById(labPanelId, masterDataId, tenantId);
     return this.prisma.withTenant(tenantId, (tx) =>
-      this.cascadeDeletePanel(tx, panelId, tenantId, new Date()),
+      this.cascadeDeletePanel(tx, labPanelId, tenantId, new Date()),
     );
   }
 
@@ -563,16 +563,16 @@ export class OpdPanelService {
    */
   private async cascadeDeletePanel(
     tx: Prisma.TransactionClient,
-    panelId: string,
+    labPanelId: string,
     tenantId: string,
     now: Date,
   ): Promise<OpdPanel> {
     await tx.opdPanelTest.updateMany({
-      where: { panelId, tenantId, deletedAt: null },
+      where: { labPanelId, tenantId, deletedAt: null },
       data: { deletedAt: now },
     });
     return tx.opdPanel.update({
-      where: { id: panelId },
+      where: { id: labPanelId },
       data: { deletedAt: now },
     });
   }
@@ -581,7 +581,7 @@ export class OpdPanelService {
 
   /**
    * Create a SITE_ADMIN global template opd panel (no tenant/branch/master
-   * data). Forces the category/department refs NULL. Every included `testId` must
+   * data). Forces the category/department refs NULL. Every included `labTestId` must
    * reference an active SITE_ADMIN template opd test. Runs in a plain
    * transaction.
    * @param dto validated payload (classification refs ignored)
@@ -669,13 +669,13 @@ export class OpdPanelService {
 
   /**
    * Fetch one SITE_ADMIN template opd panel composed with its included tests.
-   * @param panelId template id
+   * @param labPanelId template id
    * @throws OpdPanelNotFoundException if missing/soft-deleted/not a template
    */
-  async findTemplateById(panelId: string): Promise<OpdPanelWithTests> {
-    const panel = await this.findCoreTemplateById(panelId);
+  async findTemplateById(labPanelId: string): Promise<OpdPanelWithTests> {
+    const panel = await this.findCoreTemplateById(labPanelId);
     const tests = await this.prisma.opdPanelTest.findMany({
-      where: { panelId, tenantId: null, deletedAt: null },
+      where: { labPanelId, tenantId: null, deletedAt: null },
       orderBy: { sortOrder: 'asc' },
     });
     const testsWithDetails = await this.attachTestDetails(null, tests);
@@ -691,19 +691,19 @@ export class OpdPanelService {
    * Update a SITE_ADMIN template opd panel (same test-replacement semantics as
    * `update`). Classification refs stay NULL; replacement tests must be SITE_ADMIN
    * template tests. Runs in a plain transaction.
-   * @param panelId template id
+   * @param labPanelId template id
    * @param dto partial update (classification refs ignored)
    */
   async updateTemplate(
-    panelId: string,
+    labPanelId: string,
     dto: UpdateOpdPanelDto,
   ): Promise<OpdPanelWithTests> {
-    const existing = await this.findCoreTemplateById(panelId);
+    const existing = await this.findCoreTemplateById(labPanelId);
     const testsCount =
       dto.tests !== undefined
         ? dto.tests.length
         : await this.prisma.opdPanelTest.count({
-            where: { panelId, tenantId: null, deletedAt: null },
+            where: { labPanelId, tenantId: null, deletedAt: null },
           });
     this.assertCoreInvariants({
       priceMsrp: dto.priceMsrp ?? existing.priceMsrp,
@@ -722,40 +722,40 @@ export class OpdPanelService {
     try {
       await this.prisma.$transaction(async (tx) => {
         await tx.opdPanel.update({
-          where: { id: panelId },
+          where: { id: labPanelId },
           data: { ...scalars, categoryId: null, departmentId: null },
         });
         if (tests !== undefined) {
           await tx.opdPanelTest.updateMany({
-            where: { panelId, tenantId: null, deletedAt: null },
+            where: { labPanelId, tenantId: null, deletedAt: null },
             data: { deletedAt: now },
           });
-          await this.createTests(tx, null, null, panelId, tests);
+          await this.createTests(tx, null, null, labPanelId, tests);
         }
       });
     } catch (e) {
       this.rethrowConflict(e, dto.panelName ?? '', dto.panelCode ?? '');
       throw e;
     }
-    return this.findTemplateById(panelId);
+    return this.findTemplateById(labPanelId);
   }
 
   /**
    * Soft-delete a SITE_ADMIN template opd panel and cascade soft-delete its
    * included tests, in one transaction.
-   * @param panelId template id
+   * @param labPanelId template id
    * @throws OpdPanelNotFoundException if missing/soft-deleted/not a template
    */
-  async removeTemplate(panelId: string): Promise<OpdPanel> {
-    await this.findCoreTemplateById(panelId);
+  async removeTemplate(labPanelId: string): Promise<OpdPanel> {
+    await this.findCoreTemplateById(labPanelId);
     const now = new Date();
     return this.prisma.$transaction(async (tx) => {
       await tx.opdPanelTest.updateMany({
-        where: { panelId, tenantId: null, deletedAt: null },
+        where: { labPanelId, tenantId: null, deletedAt: null },
         data: { deletedAt: now },
       });
       return tx.opdPanel.update({
-        where: { id: panelId },
+        where: { id: labPanelId },
         data: { deletedAt: now },
       });
     });
@@ -784,7 +784,7 @@ export class OpdPanelService {
     try {
       newId = await this.prisma.withTenant(tenantId, async (tx) => {
         const templateTests = await tx.opdPanelTest.findMany({
-          where: { panelId: templateId, tenantId: null, deletedAt: null },
+          where: { labPanelId: templateId, tenantId: null, deletedAt: null },
           orderBy: { sortOrder: 'asc' },
         });
         const panel = await tx.opdPanel.create({
@@ -799,24 +799,24 @@ export class OpdPanelService {
 
         const clonedTestIds = new Map<string, string>();
         const joinRows: {
-          testId: string;
+          labTestId: string;
           sortOrder: number;
           isRemovable: boolean;
           discountPercent: number | null;
         }[] = [];
         for (const t of templateTests) {
-          let newTestId = clonedTestIds.get(t.testId);
+          let newTestId = clonedTestIds.get(t.labTestId);
           if (!newTestId) {
             const cloned = await this.opdTestService.cloneTemplateTestWithinTx(
               tx,
-              t.testId,
+              t.labTestId,
               { tenantId, branchId: masterData.branchId, masterDataId },
             );
             newTestId = cloned.id;
-            clonedTestIds.set(t.testId, newTestId);
+            clonedTestIds.set(t.labTestId, newTestId);
           }
           joinRows.push({
-            testId: newTestId,
+            labTestId: newTestId,
             sortOrder: t.sortOrder,
             isRemovable: t.isRemovable,
             discountPercent: t.discountPercent,
@@ -828,7 +828,7 @@ export class OpdPanelService {
               ...r,
               tenantId,
               branchId: masterData.branchId,
-              panelId: panel.id,
+              labPanelId: panel.id,
             })),
           });
         }
@@ -844,7 +844,7 @@ export class OpdPanelService {
   /**
    * Orchestrate the **Tenant Master Data → Branch Master Data** sync ("Import
    * Master Data"). Resolves both master datas (get-or-create), then in ONE
-   * transaction syncs opd tests (building a `tenantTestId → branchTestId`
+   * transaction syncs opd tests (building a `tenantTestId → branchLabTestId`
    * map) and panels (remapping membership through that map). All or nothing.
    * @param tenantId tenant scope
    * @param branchId the target branch (from the JWT)
@@ -899,8 +899,8 @@ export class OpdPanelService {
 
   /**
    * Sync (update-or-create-or-delete) all active panels from a Tenant Master Data
-   * into a Branch Master Data, keyed on `sourceMasterPanelId` (falling back to
-   * `panelCode`). Membership `testId`s are remapped through `testIdMap` to the
+   * into a Branch Master Data, keyed on `sourceMasterLabPanelId` (falling back to
+   * `panelCode`). Membership `labTestId`s are remapped through `testIdMap` to the
    * branch test copies; members with no mapping are dropped. Runs inside the
    * caller's tx.
    */
@@ -925,7 +925,7 @@ export class OpdPanelService {
     const bySource = new Map<string, OpdPanel>();
     const byCode = new Map<string, OpdPanel>();
     for (const p of branchPanels) {
-      if (p.sourceMasterPanelId) bySource.set(p.sourceMasterPanelId, p);
+      if (p.sourceMasterLabPanelId) bySource.set(p.sourceMasterLabPanelId, p);
       byCode.set(p.panelCode, p);
     }
     const sourcePanelIds = new Set(sourcePanels.map((p) => p.id));
@@ -934,12 +934,12 @@ export class OpdPanelService {
     let updated = 0;
     for (const src of sourcePanels) {
       const members = await tx.opdPanelTest.findMany({
-        where: { panelId: src.id, tenantId, deletedAt: null },
+        where: { labPanelId: src.id, tenantId, deletedAt: null },
         orderBy: { sortOrder: 'asc' },
       });
       const joinRows = members
         .map((m) => ({
-          testId: testIdMap.get(m.testId),
+          labTestId: testIdMap.get(m.labTestId),
           sortOrder: m.sortOrder,
           isRemovable: m.isRemovable,
         }))
@@ -947,26 +947,26 @@ export class OpdPanelService {
           (
             r,
           ): r is {
-            testId: string;
+            labTestId: string;
             sortOrder: number;
             isRemovable: boolean;
-          } => Boolean(r.testId),
+          } => Boolean(r.labTestId),
         );
 
       const target = bySource.get(src.id) ?? byCode.get(src.panelCode);
-      let panelId: string;
+      let labPanelId: string;
       if (target) {
         await tx.opdPanel.update({
           where: { id: target.id },
           data: {
             ...this.stripMeta(src),
-            sourceMasterPanelId: src.id,
+            sourceMasterLabPanelId: src.id,
           },
         });
         await tx.opdPanelTest.deleteMany({
-          where: { panelId: target.id, tenantId },
+          where: { labPanelId: target.id, tenantId },
         });
-        panelId = target.id;
+        labPanelId = target.id;
         updated += 1;
       } else {
         const panel = await tx.opdPanel.create({
@@ -976,10 +976,10 @@ export class OpdPanelService {
             branchId,
             masterDataId: branchMasterDataId,
             source: DataSource.TENANT,
-            sourceMasterPanelId: src.id,
+            sourceMasterLabPanelId: src.id,
           } as Prisma.OpdPanelUncheckedCreateInput,
         });
-        panelId = panel.id;
+        labPanelId = panel.id;
         created += 1;
       }
       if (joinRows.length) {
@@ -988,7 +988,7 @@ export class OpdPanelService {
             ...r,
             tenantId,
             branchId,
-            panelId,
+            labPanelId,
           })),
         });
       }
@@ -996,8 +996,8 @@ export class OpdPanelService {
 
     const orphanPanels = branchPanels.filter(
       (p) =>
-        p.sourceMasterPanelId !== null &&
-        !sourcePanelIds.has(p.sourceMasterPanelId),
+        p.sourceMasterLabPanelId !== null &&
+        !sourcePanelIds.has(p.sourceMasterLabPanelId),
     );
     const now = new Date();
     let deleted = 0;
@@ -1020,7 +1020,7 @@ export class OpdPanelService {
 
   /**
    * Soft-delete the branch's operational `BranchOpdPanel` copies whose
-   * `sourcePanelId` points at a Branch Master Data panel just soft-deleted as an
+   * `sourceLabPanelId` points at a Branch Master Data panel just soft-deleted as an
    * orphan — cascading to their `BranchOpdPanelTest` join rows. Scoped to the
    * branch's default (Walk-in) panel list; excludes user duplicates. Promotes a
    * remaining sibling to default when needed. Runs inside the caller's tx.
@@ -1046,25 +1046,25 @@ export class OpdPanelService {
         listId: walkInPanel.id,
         deletedAt: null,
         isDuplicate: false,
-        sourcePanelId: { in: orphanSourceIds },
+        sourceLabPanelId: { in: orphanSourceIds },
       },
-      select: { id: true, isDefault: true, sourcePanelId: true },
+      select: { id: true, isDefault: true, sourceLabPanelId: true },
     });
     for (const copy of copies) {
       await tx.branchOpdPanelTest.updateMany({
-        where: { branchPanelId: copy.id, tenantId, deletedAt: null },
+        where: { branchLabPanelId: copy.id, tenantId, deletedAt: null },
         data: { deletedAt: now },
       });
       await tx.branchOpdPanel.update({
         where: { id: copy.id },
         data: { deletedAt: now },
       });
-      if (copy.isDefault && copy.sourcePanelId) {
+      if (copy.isDefault && copy.sourceLabPanelId) {
         const sibling = await tx.branchOpdPanel.findFirst({
           where: {
             tenantId,
             branchId,
-            sourcePanelId: copy.sourcePanelId,
+            sourceLabPanelId: copy.sourceLabPanelId,
             deletedAt: null,
           },
           orderBy: { createdAt: 'asc' },
@@ -1083,18 +1083,18 @@ export class OpdPanelService {
    * Fetch one active SITE_ADMIN template opd panel (core row only).
    * @throws OpdPanelNotFoundException if missing/soft-deleted/not a template
    */
-  private async findCoreTemplateById(panelId: string): Promise<OpdPanel> {
+  private async findCoreTemplateById(labPanelId: string): Promise<OpdPanel> {
     const panel = await this.prisma.opdPanel.findFirst({
-      where: { id: panelId, source: DataSource.SITE_ADMIN, deletedAt: null },
+      where: { id: labPanelId, source: DataSource.SITE_ADMIN, deletedAt: null },
     });
     if (!panel) {
-      throw new OpdPanelNotFoundException(panelId);
+      throw new OpdPanelNotFoundException(labPanelId);
     }
     return panel;
   }
 
   /**
-   * Validate that every `testId` references an active SITE_ADMIN template opd
+   * Validate that every `labTestId` references an active SITE_ADMIN template opd
    * test, with no duplicates within the panel.
    * @throws ValidationException on duplicate test references
    * @throws OpdPanelTestNotFoundException on missing/non-template test references
@@ -1105,7 +1105,7 @@ export class OpdPanelService {
     if (!tests.length) {
       return;
     }
-    const ids = tests.map((t) => t.testId);
+    const ids = tests.map((t) => t.labTestId);
     const unique = new Set(ids);
     if (unique.size !== ids.length) {
       throw new ValidationException('Duplicate test references in panel');
@@ -1126,7 +1126,7 @@ export class OpdPanelService {
     const capById = new Map(found.map((t) => [t.id, t.discountCapPct]));
     for (const test of tests) {
       if (test.discountPercent == null) continue;
-      const cap = capById.get(test.testId) ?? 0;
+      const cap = capById.get(test.labTestId) ?? 0;
       if (test.discountPercent > cap) {
         throw new ValidationException(
           `discountPercent (${test.discountPercent}) exceeds this test's discount cap (${cap})`,
@@ -1166,15 +1166,15 @@ export class OpdPanelService {
    * @throws OpdPanelNotFoundException if missing/soft-deleted/other master data
    */
   private async findCoreById(
-    panelId: string,
+    labPanelId: string,
     masterDataId: string,
     tenantId: string,
   ): Promise<OpdPanel> {
     const panel = await this.prisma.opdPanel.findFirst({
-      where: { id: panelId, masterDataId, tenantId, deletedAt: null },
+      where: { id: labPanelId, masterDataId, tenantId, deletedAt: null },
     });
     if (!panel) {
-      throw new OpdPanelNotFoundException(panelId);
+      throw new OpdPanelNotFoundException(labPanelId);
     }
     return panel;
   }
@@ -1187,14 +1187,14 @@ export class OpdPanelService {
     tx: Prisma.TransactionClient,
     tenantId: string | null,
     branchId: string | null,
-    panelId: string,
+    labPanelId: string,
     tests: OpdPanelTestDto[],
   ): Promise<void> {
     if (!tests.length) {
       return;
     }
     await tx.opdPanelTest.createMany({
-      data: tests.map((t) => ({ ...t, tenantId, branchId, panelId })),
+      data: tests.map((t) => ({ ...t, tenantId, branchId, labPanelId })),
     });
   }
 
@@ -1208,7 +1208,7 @@ export class OpdPanelService {
   }
 
   /**
-   * Validate that every `testId` references an active opd test in the same
+   * Validate that every `labTestId` references an active opd test in the same
    * master data, that there are no duplicates, and that each test's
    * `discountPercent` (if set) doesn't exceed that test's own `discountCapPct`.
    * @throws ValidationException / OpdPanelTestNotFoundException
@@ -1221,7 +1221,7 @@ export class OpdPanelService {
     if (!tests.length) {
       return;
     }
-    const ids = tests.map((t) => t.testId);
+    const ids = tests.map((t) => t.labTestId);
     const unique = new Set(ids);
     if (unique.size !== ids.length) {
       throw new ValidationException('Duplicate test references in panel');
@@ -1243,7 +1243,7 @@ export class OpdPanelService {
     const capById = new Map(found.map((t) => [t.id, t.discountCapPct]));
     for (const test of tests) {
       if (test.discountPercent == null) continue;
-      const cap = capById.get(test.testId) ?? 0;
+      const cap = capById.get(test.labTestId) ?? 0;
       if (test.discountPercent > cap) {
         throw new ValidationException(
           `discountPercent (${test.discountPercent}) exceeds this test's discount cap (${cap})`,
@@ -1316,7 +1316,7 @@ export class OpdPanelService {
 
   /**
    * Enrich a panel's included-test rows with their referenced `OpdTest`'s
-   * display/pricing details (batched, no N+1). `testId` is a logical reference, so
+   * display/pricing details (batched, no N+1). `labTestId` is a logical reference, so
    * a test that no longer resolves falls back to `null` fields rather than dropping
    * the row.
    */
@@ -1327,7 +1327,7 @@ export class OpdPanelService {
     if (tests.length === 0) {
       return [];
     }
-    const ids = [...new Set(tests.map((t) => t.testId))];
+    const ids = [...new Set(tests.map((t) => t.labTestId))];
     const [opdTests, samples] = await Promise.all([
       this.prisma.opdTest.findMany({
         where: { id: { in: ids }, tenantId },
@@ -1343,25 +1343,25 @@ export class OpdPanelService {
         },
       }),
       this.prisma.opdTestSample.findMany({
-        where: { testId: { in: ids }, tenantId, deletedAt: null },
+        where: { labTestId: { in: ids }, tenantId, deletedAt: null },
         orderBy: { isDefault: 'desc' },
-        select: { testId: true, sampleType: true },
+        select: { labTestId: true, sampleType: true },
       }),
     ]);
     const testMap = new Map(opdTests.map((r) => [r.id, r]));
     const sampleMap = new Map<string, string | null>();
     for (const s of samples) {
-      if (!sampleMap.has(s.testId)) {
-        sampleMap.set(s.testId, s.sampleType);
+      if (!sampleMap.has(s.labTestId)) {
+        sampleMap.set(s.labTestId, s.sampleType);
       }
     }
     return tests.map((t) => {
-      const src = testMap.get(t.testId);
+      const src = testMap.get(t.labTestId);
       return {
         ...t,
         testName: src?.testName ?? null,
         testCode: src?.testCode ?? null,
-        sampleType: sampleMap.get(t.testId) ?? null,
+        sampleType: sampleMap.get(t.labTestId) ?? null,
         priceMsrp: src?.priceMsrp ?? null,
         priceOriginal: src?.priceOriginal ?? null,
         priceMinimum: src?.priceMinimum ?? null,
@@ -1372,7 +1372,7 @@ export class OpdPanelService {
   }
 
   /**
-   * Count active included tests per panel, keyed by `panelId`. `tenantId` is NULL
+   * Count active included tests per panel, keyed by `labPanelId`. `tenantId` is NULL
    * when counting tests of SITE_ADMIN template panels.
    */
   private async countTestsByPanel(
@@ -1384,19 +1384,19 @@ export class OpdPanelService {
       return map;
     }
     const grouped = await this.prisma.opdPanelTest.groupBy({
-      by: ['panelId'],
-      where: { panelId: { in: ids }, tenantId, deletedAt: null },
+      by: ['labPanelId'],
+      where: { labPanelId: { in: ids }, tenantId, deletedAt: null },
       _count: { _all: true },
     });
     for (const g of grouped) {
-      map.set(g.panelId, g._count._all);
+      map.set(g.labPanelId, g._count._all);
     }
     return map;
   }
 
   /** Strip undefined keys from one item's changes, yielding a Prisma update. */
   private pickDefined(
-    changes: Omit<BulkEditOpdPanelItemDto, 'panelId'>,
+    changes: Omit<BulkEditOpdPanelItemDto, 'labPanelId'>,
   ): Prisma.OpdPanelUpdateInput {
     const out: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(changes)) {
