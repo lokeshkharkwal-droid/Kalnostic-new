@@ -430,7 +430,11 @@ export class RadiologyPanelService {
     tenantId: string,
     dto: UpdateRadiologyPanelDto,
   ): Promise<RadiologyPanelWithTests> {
-    const existing = await this.findCoreById(labPanelId, masterDataId, tenantId);
+    const existing = await this.findCoreById(
+      labPanelId,
+      masterDataId,
+      tenantId,
+    );
 
     const testsCount =
       dto.tests !== undefined
@@ -1091,7 +1095,9 @@ export class RadiologyPanelService {
    * Fetch one active SITE_ADMIN template radiology panel (core row only).
    * @throws RadiologyPanelNotFoundException if missing/soft-deleted/not a template
    */
-  private async findCoreTemplateById(labPanelId: string): Promise<RadiologyPanel> {
+  private async findCoreTemplateById(
+    labPanelId: string,
+  ): Promise<RadiologyPanel> {
     const panel = await this.prisma.radiologyPanel.findFirst({
       where: { id: labPanelId, source: DataSource.SITE_ADMIN, deletedAt: null },
     });

@@ -425,7 +425,11 @@ export class OpdPanelService {
     tenantId: string,
     dto: UpdateOpdPanelDto,
   ): Promise<OpdPanelWithTests> {
-    const existing = await this.findCoreById(labPanelId, masterDataId, tenantId);
+    const existing = await this.findCoreById(
+      labPanelId,
+      masterDataId,
+      tenantId,
+    );
 
     const testsCount =
       dto.tests !== undefined

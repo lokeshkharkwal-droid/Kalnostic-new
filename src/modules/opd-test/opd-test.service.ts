@@ -1362,7 +1362,8 @@ export class OpdTestService {
 
     const orphans = branchTests.filter(
       (t) =>
-        t.sourceMasterLabTestId !== null && !sourceIds.has(t.sourceMasterLabTestId),
+        t.sourceMasterLabTestId !== null &&
+        !sourceIds.has(t.sourceMasterLabTestId),
     );
     const now = new Date();
     let deleted = 0;

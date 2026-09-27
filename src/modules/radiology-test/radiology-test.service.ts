@@ -1367,7 +1367,8 @@ export class RadiologyTestService {
 
     const orphans = branchTests.filter(
       (t) =>
-        t.sourceMasterLabTestId !== null && !sourceIds.has(t.sourceMasterLabTestId),
+        t.sourceMasterLabTestId !== null &&
+        !sourceIds.has(t.sourceMasterLabTestId),
     );
     const now = new Date();
     let deleted = 0;
@@ -1819,7 +1820,9 @@ export class RadiologyTestService {
    * @param labTestId template id
    * @throws RadiologyTestNotFoundException if missing/soft-deleted/not a template
    */
-  async findTemplateById(labTestId: string): Promise<RadiologyTestWithChildren> {
+  async findTemplateById(
+    labTestId: string,
+  ): Promise<RadiologyTestWithChildren> {
     const test = await this.findCoreTemplateById(labTestId);
     return this.composeWithChildren(test);
   }
@@ -2185,7 +2188,9 @@ export class RadiologyTestService {
    * Fetch one active SITE_ADMIN template radiology test (core row only).
    * @throws RadiologyTestNotFoundException if missing/soft-deleted/not a template
    */
-  private async findCoreTemplateById(labTestId: string): Promise<RadiologyTest> {
+  private async findCoreTemplateById(
+    labTestId: string,
+  ): Promise<RadiologyTest> {
     const test = await this.prisma.radiologyTest.findFirst({
       where: { id: labTestId, source: DataSource.SITE_ADMIN, deletedAt: null },
     });
