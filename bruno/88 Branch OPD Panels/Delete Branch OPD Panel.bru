@@ -1,0 +1,26 @@
+meta {
+  name: Delete Branch OPD Panel
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/branch-opd-panels/{{branchOPDPanelId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchOPDPanelId: 00000000-0000-0000-0000-000000000000
+}
+
+docs {
+  OPD equivalent of the lab **Delete Branch Lab Panel** endpoint (DELETE /branch-opd-panels/:id).
+  
+  Soft-delete a branch lab panel (and its member join rows). Removes it from the
+  branch's Lab Panel List; a soft-deleted panelName/panelCode is freed for re-import.
+}

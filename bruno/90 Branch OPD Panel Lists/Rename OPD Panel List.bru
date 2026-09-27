@@ -1,0 +1,35 @@
+meta {
+  name: Rename OPD Panel List
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/branch-opd-panel-lists/:id
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 00000000-0000-0000-0000-000000000000
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "B2B Corporate (2026)"
+  }
+}
+
+docs {
+  OPD equivalent of the lab **Rename Lab Panel List** endpoint (PATCH /branch-opd-panel-lists/:id).
+  
+  Rename a panel list (name unique per branch among active lists).
+}

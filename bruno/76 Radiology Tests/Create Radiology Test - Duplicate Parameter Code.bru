@@ -1,0 +1,63 @@
+meta {
+  name: Create Radiology Test - Duplicate Parameter Code
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/radiology-master-data/{{radiologyMasterDataId}}/radiology-tests
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "testName": "Param Code Clash Panel",
+    "testCode": "PCC-1",
+    "resultParams": [
+      {
+        "parameterName": "Haemoglobin",
+        "parameterCode": "HGB",
+        "resultType": "QUANTITATIVE"
+      },
+      {
+        "parameterName": "Haemoglobin (again)",
+        "parameterCode": "HGB",
+        "resultType": "QUANTITATIVE"
+      }
+    ]
+  }
+}
+
+vars:pre-request {
+  radiologyMasterDataId: a218e484-28fa-49e8-90cf-9399b5605292
+}
+
+tests {
+  test("409 Conflict", function () {
+    expect(res.getStatus()).to.equal(409);
+  });
+  test("error code is LAB_TEST_PARAM_CODE_CONFLICT", function () {
+    expect(res.getBody().error.code).to.equal("LAB_TEST_PARAM_CODE_CONFLICT");
+  });
+}
+
+docs {
+  Radiology equivalent of the lab **Create Lab Test - Duplicate Parameter Code** negative case (POST /radiology-master-data/:masterDataId/radiology-tests).
+  
+  🔒 **RBAC:** requires `business_admin:master_data__add_test` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
+  Negative case: `parameterCode` is unique **within a lab test**. This single
+  create sends two result parameters that share `HGB`; the second insert trips the
+  per-test parameter-code index → 409 `LAB_TEST_PARAM_CODE_CONFLICT`. The whole
+  transaction rolls back (no test, no params created). `testName`/`testCode` are
+  unique so the only collision is the parameter code.
+}

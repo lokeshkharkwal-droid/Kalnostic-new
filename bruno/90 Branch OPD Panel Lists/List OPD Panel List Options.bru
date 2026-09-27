@@ -1,0 +1,22 @@
+meta {
+  name: List OPD Panel List Options
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/branch-opd-panel-lists/options
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  OPD equivalent of the lab **List Lab Panel List Options** endpoint (GET /branch-opd-panel-lists/options).
+  
+  Lightweight `{ id, name, isDefault }[]` options for the referral/registration
+  list selectors — never individual panels (Phase 7).
+}

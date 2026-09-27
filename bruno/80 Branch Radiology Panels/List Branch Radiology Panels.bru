@@ -1,0 +1,30 @@
+meta {
+  name: List Branch Radiology Panels
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/branch-radiology-panels?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: Health
+  ~status: ACTIVE
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Radiology equivalent of the lab **List Branch Lab Panels** endpoint (GET /branch-radiology-panels).
+  
+  List the active branch's Lab Panel List (paginated). Optional `search`
+  (case-insensitive on panelName/panelCode) and `status` (ACTIVE | INACTIVE).
+  Scoped to the JWT tenant + active branch; soft-deleted rows are excluded.
+}

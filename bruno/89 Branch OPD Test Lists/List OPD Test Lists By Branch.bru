@@ -1,0 +1,27 @@
+meta {
+  name: List OPD Test Lists By Branch
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/branch-opd-test-lists/by-branch?branchId={{branchId}}
+  body: none
+  auth: bearer
+}
+
+params:query {
+  branchId: {{branchId}}
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  OPD equivalent of List OPD Test Lists, but reads a specific branch (GET /branch-opd-test-lists/by-branch?branchId=…) instead of the JWT's active branch.
+  
+  List all of the active branch's **Lab Test Lists** (the tabs). The default
+  Walk-in list is returned first (auto-created on the first Master-Data import).
+  Scoped to the JWT tenant + active branch.
+}

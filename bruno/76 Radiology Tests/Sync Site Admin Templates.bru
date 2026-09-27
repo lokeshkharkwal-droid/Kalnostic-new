@@ -1,0 +1,48 @@
+meta {
+  name: Sync Site Admin Templates
+  type: http
+  seq: 19
+}
+
+post {
+  url: {{baseUrl}}/radiology-tests/sync
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "radiologyMasterDataId": "{{radiologyMasterDataId}}"
+  }
+}
+
+docs {
+  Radiology equivalent of the lab **Sync Site Admin Templates** endpoint (POST /radiology-tests/sync).
+  
+  Re-pull previously-imported lab tests from their SITE_ADMIN templates. Business
+  JWT. Body: `radiologyMasterDataId` (required) + optional `radiologyTestIds` (subset; omit to
+  sync every imported test in the master data).
+
+  **Full overwrite:** each tenant copy's scalars are replaced from its template
+  and its children (samples, params, reference ranges/values) are hard-deleted
+  and recreated. Identity + provenance (`id`, `tenantId`, `branchId`,
+  `radiologyMasterDataId`, `source`, `clonedFromId`) are preserved, `versionHistory` is
+  bumped, and `templateSyncedAt` is stamped. Hand-created tests
+  (`clonedFromId = null`) are never touched. Each test syncs in its own
+  transaction. Returns:
+
+  `{ "synced":  [{radiologyTestId,testName,templateId}],
+     "skipped": [{radiologyTestId,testName,templateId,reason}],  // e.g. template removed
+     "failed":  [{radiologyTestId,testName,templateId,reason}] }`
+
+  - `radiologyMasterDataId` must belong to the caller's tenant → else 404
+    `MASTER_DATA_NOT_FOUND`.
+}

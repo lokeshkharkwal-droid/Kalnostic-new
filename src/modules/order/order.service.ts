@@ -852,12 +852,14 @@ export class OrderService {
               orderId: order.id,
               branchLabTestId: i.branchLabTestId ?? null,
               branchLabPanelId: i.branchLabPanelId ?? null,
+              branchRadiologyTestId: i.branchRadiologyTestId ?? null,
+              branchRadiologyPanelId: i.branchRadiologyPanelId ?? null,
+              branchOpdTestId: i.branchOpdTestId ?? null,
+              branchOpdPanelId: i.branchOpdPanelId ?? null,
               direct: i.direct ?? null,
               unitPrice: i.direct
                 ? (i.unitPrice ?? 0)
-                : (itemPrices.get(
-                    i.branchLabTestId ?? i.branchLabPanelId ?? '',
-                  ) ?? 0),
+                : (itemPrices.get(OrderService.itemCatalogueRefId(i)) ?? 0),
               discount: i.discount ?? 0,
               discountMode: i.discountMode ?? null,
               discountValue: i.discountValue ?? null,
@@ -1138,6 +1140,30 @@ export class OrderService {
   }
 
   /**
+   * The single catalogue reference id of an order item — the first non-null of
+   * the six branch test/panel refs (Lab, Radiology, OPD). Used as the price-map
+   * key and for per-item identity. Returns '' for a free-text `direct` line.
+   */
+  private static itemCatalogueRefId(i: {
+    branchLabTestId?: string | null;
+    branchLabPanelId?: string | null;
+    branchRadiologyTestId?: string | null;
+    branchRadiologyPanelId?: string | null;
+    branchOpdTestId?: string | null;
+    branchOpdPanelId?: string | null;
+  }): string {
+    return (
+      i.branchLabTestId ??
+      i.branchLabPanelId ??
+      i.branchRadiologyTestId ??
+      i.branchRadiologyPanelId ??
+      i.branchOpdTestId ??
+      i.branchOpdPanelId ??
+      ''
+    );
+  }
+
+  /**
    * Load the list unit price (`listPrice`) for each item's branch lab test/panel,
    * keyed by that row id, so order items can snapshot a stable `unitPrice`. Direct
    * (free-text) items and unknown ids resolve to 0. Branch-scoped.
@@ -1148,42 +1174,53 @@ export class OrderService {
   private async loadItemUnitPrices(
     tenantId: string,
     branchId: string | null,
-    items: Array<{ branchLabTestId?: string; branchLabPanelId?: string }>,
+    items: Array<{
+      branchLabTestId?: string;
+      branchLabPanelId?: string;
+      branchRadiologyTestId?: string;
+      branchRadiologyPanelId?: string;
+      branchOpdTestId?: string;
+      branchOpdPanelId?: string;
+    }>,
   ): Promise<Map<string, number>> {
     const prices = new Map<string, number>();
     if (!branchId || !items.length) {
       return prices;
     }
-    const testIds = items
-      .map((i) => i.branchLabTestId)
-      .filter((v): v is string => Boolean(v));
-    const panelIds = items
-      .map((i) => i.branchLabPanelId)
-      .filter((v): v is string => Boolean(v));
-    const [tests, panels] = await Promise.all([
-      testIds.length
-        ? this.prisma.branchLabTest.findMany({
-            where: { id: { in: testIds }, tenantId, branchId, deletedAt: null },
-            select: { id: true, listPrice: true },
-          })
-        : Promise.resolve([]),
-      panelIds.length
-        ? this.prisma.branchLabPanel.findMany({
-            where: {
-              id: { in: panelIds },
-              tenantId,
-              branchId,
-              deletedAt: null,
-            },
-            select: { id: true, listPrice: true },
-          })
-        : Promise.resolve([]),
+    const idsOf = (key: keyof (typeof items)[number]): string[] =>
+      items.map((i) => i[key]).filter((v): v is string => Boolean(v));
+    const scope = { tenantId, branchId, deletedAt: null } as const;
+    const select = { id: true, listPrice: true } as const;
+    type PriceDelegate = {
+      findMany(args: {
+        where: Record<string, unknown>;
+        select: typeof select;
+      }): Promise<Array<{ id: string; listPrice: number }>>;
+    };
+    const findPrices = (
+      delegate: PriceDelegate,
+      ids: string[],
+    ): Promise<Array<{ id: string; listPrice: number }>> =>
+      ids.length
+        ? delegate.findMany({ where: { id: { in: ids }, ...scope }, select })
+        : Promise.resolve([]);
+
+    const [labT, labP, radT, radP, opdT, opdP] = await Promise.all([
+      findPrices(this.prisma.branchLabTest, idsOf('branchLabTestId')),
+      findPrices(this.prisma.branchLabPanel, idsOf('branchLabPanelId')),
+      findPrices(
+        this.prisma.branchRadiologyTest,
+        idsOf('branchRadiologyTestId'),
+      ),
+      findPrices(
+        this.prisma.branchRadiologyPanel,
+        idsOf('branchRadiologyPanelId'),
+      ),
+      findPrices(this.prisma.branchOpdTest, idsOf('branchOpdTestId')),
+      findPrices(this.prisma.branchOpdPanel, idsOf('branchOpdPanelId')),
     ]);
-    for (const t of tests) {
-      prices.set(t.id, t.listPrice);
-    }
-    for (const p of panels) {
-      prices.set(p.id, p.listPrice);
+    for (const row of [...labT, ...labP, ...radT, ...radP, ...opdT, ...opdP]) {
+      prices.set(row.id, row.listPrice);
     }
     return prices;
   }
@@ -5523,6 +5560,10 @@ export class OrderService {
           select: {
             branchLabTestId: true,
             branchLabPanelId: true,
+            branchRadiologyTestId: true,
+            branchRadiologyPanelId: true,
+            branchOpdTestId: true,
+            branchOpdPanelId: true,
             direct: true,
             unitPrice: true,
             discount: true,
@@ -5533,6 +5574,10 @@ export class OrderService {
         effectiveItems = stored.map((s) => ({
           branchLabTestId: s.branchLabTestId ?? undefined,
           branchLabPanelId: s.branchLabPanelId ?? undefined,
+          branchRadiologyTestId: s.branchRadiologyTestId ?? undefined,
+          branchRadiologyPanelId: s.branchRadiologyPanelId ?? undefined,
+          branchOpdTestId: s.branchOpdTestId ?? undefined,
+          branchOpdPanelId: s.branchOpdPanelId ?? undefined,
           direct: s.direct ?? undefined,
           unitPrice: s.unitPrice,
           discount: toNum(s.discount),
@@ -5540,10 +5585,7 @@ export class OrderService {
           discountValue: s.discountValue ?? undefined,
         }));
         itemPrices = new Map(
-          stored.map((s) => [
-            s.branchLabTestId ?? s.branchLabPanelId ?? '',
-            s.unitPrice,
-          ]),
+          stored.map((s) => [OrderService.itemCatalogueRefId(s), s.unitPrice]),
         );
       }
 
@@ -5791,9 +5833,7 @@ export class OrderService {
             data: {
               unitPrice: i.direct
                 ? (i.unitPrice ?? 0)
-                : (keepPrices.get(
-                    i.branchLabTestId ?? i.branchLabPanelId ?? '',
-                  ) ?? 0),
+                : (keepPrices.get(OrderService.itemCatalogueRefId(i)) ?? 0),
               discount: i.discount ?? 0,
               discountMode: i.discountMode ?? null,
               discountValue: i.discountValue ?? null,
@@ -5818,12 +5858,14 @@ export class OrderService {
                 orderId: id,
                 branchLabTestId: i.branchLabTestId ?? null,
                 branchLabPanelId: i.branchLabPanelId ?? null,
+                branchRadiologyTestId: i.branchRadiologyTestId ?? null,
+                branchRadiologyPanelId: i.branchRadiologyPanelId ?? null,
+                branchOpdTestId: i.branchOpdTestId ?? null,
+                branchOpdPanelId: i.branchOpdPanelId ?? null,
                 direct: i.direct ?? null,
                 unitPrice: i.direct
                   ? (i.unitPrice ?? 0)
-                  : (addPrices.get(
-                      i.branchLabTestId ?? i.branchLabPanelId ?? '',
-                    ) ?? 0),
+                  : (addPrices.get(OrderService.itemCatalogueRefId(i)) ?? 0),
                 discount: i.discount ?? 0,
                 discountMode: i.discountMode ?? null,
                 discountValue: i.discountValue ?? null,
@@ -6666,21 +6708,35 @@ export class OrderService {
     }
     const testIds: string[] = [];
     const panelIds: string[] = [];
+    const radiologyTestIds: string[] = [];
+    const radiologyPanelIds: string[] = [];
+    const opdTestIds: string[] = [];
+    const opdPanelIds: string[] = [];
     for (const item of items) {
       const sources = [
         Boolean(item.branchLabTestId),
         Boolean(item.branchLabPanelId),
+        Boolean(item.branchRadiologyTestId),
+        Boolean(item.branchRadiologyPanelId),
+        Boolean(item.branchOpdTestId),
+        Boolean(item.branchOpdPanelId),
         Boolean(item.direct),
       ].filter(Boolean).length;
       if (sources !== 1) {
         throw new InvalidOrderItemException(
           sources === 0
-            ? 'none of branchLabTestId, branchLabPanelId or direct was provided'
-            : 'more than one of branchLabTestId, branchLabPanelId or direct was provided',
+            ? 'none of a catalogue test/panel ref or direct was provided'
+            : 'more than one catalogue test/panel ref or direct was provided',
         );
       }
       if (item.branchLabTestId) testIds.push(item.branchLabTestId);
       if (item.branchLabPanelId) panelIds.push(item.branchLabPanelId);
+      if (item.branchRadiologyTestId)
+        radiologyTestIds.push(item.branchRadiologyTestId);
+      if (item.branchRadiologyPanelId)
+        radiologyPanelIds.push(item.branchRadiologyPanelId);
+      if (item.branchOpdTestId) opdTestIds.push(item.branchOpdTestId);
+      if (item.branchOpdPanelId) opdPanelIds.push(item.branchOpdPanelId);
 
       // `unitPrice` is only meaningful for a free-text direct line — a
       // catalogue line's price is always resolved server-side from the
@@ -6716,12 +6772,70 @@ export class OrderService {
     await Promise.all([
       this.assertBranchLabTests(tenantId, testIds),
       this.assertBranchLabPanels(tenantId, panelIds),
+      this.assertBranchRefs(
+        this.prisma.branchRadiologyTest,
+        tenantId,
+        radiologyTestIds,
+        'branchRadiologyTestId',
+      ),
+      this.assertBranchRefs(
+        this.prisma.branchRadiologyPanel,
+        tenantId,
+        radiologyPanelIds,
+        'branchRadiologyPanelId',
+      ),
+      this.assertBranchRefs(
+        this.prisma.branchOpdTest,
+        tenantId,
+        opdTestIds,
+        'branchOpdTestId',
+      ),
+      this.assertBranchRefs(
+        this.prisma.branchOpdPanel,
+        tenantId,
+        opdPanelIds,
+        'branchOpdPanelId',
+      ),
     ]);
     await Promise.all(
       items
         .filter((item) => item.outsourceCenterId)
         .map((item) => this.assertOutsourceCenter(tenantId, item)),
     );
+  }
+
+  /**
+   * Generic active-row validator for a branch catalogue reference (radiology/OPD
+   * test or panel). Ensures every id is an active row in the caller's tenant.
+   * @throws InvalidOrderItemException listing the missing/foreign ids
+   */
+  private async assertBranchRefs(
+    delegate: {
+      findMany(args: {
+        where: Record<string, unknown>;
+        select: { id: true };
+      }): Promise<Array<{ id: string }>>;
+    },
+    tenantId: string,
+    ids: string[],
+    field: string,
+  ): Promise<void> {
+    const unique = [...new Set(ids)];
+    if (!unique.length) {
+      return;
+    }
+    const found = await delegate.findMany({
+      where: { id: { in: unique }, tenantId, deletedAt: null },
+      select: { id: true },
+    });
+    if (found.length !== unique.length) {
+      const foundIds = new Set(found.map((r) => r.id));
+      throw new InvalidOrderItemException(
+        `${field}: unknown or inactive id(s): ${unique
+          .filter((id) => !foundIds.has(id))
+          .join(', ')}`,
+      );
+    }
   }
 
   /**

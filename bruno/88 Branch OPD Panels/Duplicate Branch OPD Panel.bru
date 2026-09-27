@@ -1,0 +1,28 @@
+meta {
+  name: Duplicate Branch OPD Panel
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/branch-opd-panels/{{branchOPDPanelId}}/duplicate
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchOPDPanelId: 00000000-0000-0000-0000-000000000000
+}
+
+docs {
+  OPD equivalent of the lab **Duplicate Branch Lab Panel** endpoint (POST /branch-opd-panels/:id/duplicate).
+  
+  Create an independent panel variant in the same group (same `sourceLabPanelId`):
+  copies the panel + its member join rows (still referencing the same branch-test
+  copies), non-default duplicate (name suffixed " (Copy)"). Returns the new panel
+  with its member tests.
+}

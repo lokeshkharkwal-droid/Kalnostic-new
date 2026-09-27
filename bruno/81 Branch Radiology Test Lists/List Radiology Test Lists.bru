@@ -1,0 +1,23 @@
+meta {
+  name: List Radiology Test Lists
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/branch-radiology-test-lists
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Radiology equivalent of the lab **List Lab Test Lists** endpoint (GET /branch-radiology-test-lists).
+  
+  List all of the active branch's **Lab Test Lists** (the tabs). The default
+  Walk-in list is returned first (auto-created on the first Master-Data import).
+  Scoped to the JWT tenant + active branch.
+}

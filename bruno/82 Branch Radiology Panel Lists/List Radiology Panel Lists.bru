@@ -1,0 +1,22 @@
+meta {
+  name: List Radiology Panel Lists
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/branch-radiology-panel-lists
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Radiology equivalent of the lab **List Lab Panel Lists** endpoint (GET /branch-radiology-panel-lists).
+  
+  List all of the active branch's **Lab Panel Lists** (the tabs). Mirror of
+  `/branch-radiology-test-lists`. The default Walk-in list is returned first.
+}

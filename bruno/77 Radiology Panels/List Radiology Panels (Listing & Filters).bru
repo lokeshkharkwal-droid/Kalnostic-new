@@ -1,0 +1,72 @@
+meta {
+  name: List Radiology Panels (Listing & Filters)
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/radiology-master-data/{{radiologyMasterDataId}}/radiology-panels/listing?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: FBC
+  ~categoryId: 00000000-0000-0000-0000-000000000000
+  ~departmentId: 00000000-0000-0000-0000-000000000000
+  ~status: ACTIVE
+  ~sortBy: priceMsrp
+  ~sortOrder: -1
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  radiologyMasterDataId: 2db13b5e-4a25-412f-bcd9-68bcbeea9d59
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Radiology equivalent of the lab **List Lab Panels (Listing & Filters)** endpoint (GET /radiology-master-data/:masterDataId/radiology-panels/listing).
+  
+  Listing screen for a master data's lab panels. Paginated (offset; `page` /
+  `limit`, pagination lands in `meta`).
+  
+  ## Search
+  
+  - `search` — case-insensitive match against `panelName` **OR** `panelCode`.
+  
+  ## Filters (all optional — toggle the `~` to enable a query param)
+  
+  - `categoryId` — parent category (UUID).
+  - `departmentId` — parent department (UUID).
+  - `status` — `ACTIVE` | `INACTIVE` (mapped to the `isActive` flag).
+
+  ## Sorting (applied **before** pagination, so the whole result set is ordered)
+
+  - `sortBy` + `sortOrder` — `sortOrder` is `1` (ascending) or `-1` (descending).
+    Omit both to keep the default (`createdAt` desc). An unsupported `sortBy` →
+    400 `VALIDATION_ERROR` (allowlisted server-side).
+  - Allowed `sortBy` keys: `panelName`, `panelCode`, `priceOriginal`,
+    `priceMinimum`, `priceMaximum`, `priceMsrp`, `franchisePrice`,
+    `applicableAgeGroup`, `homeCollectionAvailable` (→ `isHomeCollection`),
+    `isActive`, plus the derived `panelCategory` (resolved category name) and
+    `testsCount` (included-test count) — for the derived keys the full set is
+    sorted, then paginated.
+
+  ## Row shape
+  
+  Each row is the **full panel record** (all columns) enriched with embedded
+  `category` and `department` objects — each `{ id, name }`, or `null` when the
+  panel has no category/department — plus `testsCount` (number of included tests).
+  The full included-`tests` array is not included here; fetch it via "Get Lab Panel".
+}

@@ -1,0 +1,34 @@
+meta {
+  name: List Branch Radiology Test Options
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/branch-radiology-tests/options?page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 10
+  ~search: Vitamin
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Radiology equivalent of the lab **List Branch Lab Test Options** endpoint (GET /branch-radiology-tests/options).
+  
+  Lightweight `{ id, name, price, sampleType, isFasting }` options for the
+  Create-Order lab-test picker. Returns the active branch's **active default-variant**
+  lab tests only (one orderable row per variant group), so a selected id is directly
+  usable as an order item's `branchRadiologyTestId`; `price` is the list price (`priceMsrp`,
+  minor units) and `sampleType`/`isFasting` (from the first sample in `configSnapshot`)
+  populate the Diagnostic Items table. Scoped to the JWT tenant + active branch (no
+  `branchId` in the query). `search` matches testName (case-insensitive). Omit
+  `page` for the full array; supply `page` for a `{ data, total, page, limit }` envelope.
+}

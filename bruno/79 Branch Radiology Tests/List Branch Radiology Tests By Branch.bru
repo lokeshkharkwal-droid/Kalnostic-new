@@ -1,0 +1,34 @@
+meta {
+  name: List Branch Radiology Tests By Branch
+  type: http
+  seq: 12
+}
+
+get {
+  url: {{baseUrl}}/branch-radiology-tests/by-branch?branchId={{branchId}}&page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  branchId: {{branchId}}
+  page: 1
+  limit: 20
+  ~search: Vitamin
+  ~status: ACTIVE
+  ~listId: 00000000-0000-0000-0000-000000000000
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Radiology equivalent of the branch radiology-test list, but reads a specific branch (GET /branch-radiology-tests/by-branch?branchId=…) instead of the JWT's active branch — used by business-admin views that pick a branch explicitly.
+  
+  List the active branch's Lab Test List (paginated). Optional `search`
+  (case-insensitive on testName/testCode), `status` (ACTIVE | INACTIVE), and
+  `listId` (which pricing-list tab; omitted = the branch's default Walk-in list).
+  Each row carries a `listPrice` (the effective selling price for its list).
+  Scoped to the JWT tenant + active branch; soft-deleted rows are excluded.
+}

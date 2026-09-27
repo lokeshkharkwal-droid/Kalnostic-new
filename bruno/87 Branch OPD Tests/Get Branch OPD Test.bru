@@ -1,0 +1,26 @@
+meta {
+  name: Get Branch OPD Test
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/branch-opd-tests/{{branchOPDTestId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchOPDTestId: 00000000-0000-0000-0000-000000000000
+}
+
+docs {
+  OPD equivalent of the lab **Get Branch Lab Test** endpoint (GET /branch-opd-tests/:id).
+  
+  Fetch one branch lab test with its clinical `configSnapshot`. 404
+  `BRANCH_LAB_TEST_NOT_FOUND` if missing/soft-deleted/other branch.
+}

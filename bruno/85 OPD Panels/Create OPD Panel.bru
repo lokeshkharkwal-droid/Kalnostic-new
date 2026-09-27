@@ -1,0 +1,108 @@
+meta {
+  name: Create OPD Panel
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/opd-master-data/{{opdMasterDataId}}/opd-panels
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "bannerImage": "https://files.example.com/panels/fbc-banner.png",
+    "panelName": "Full Body Checkup",
+    "panelCode": "FBC",
+    "applicableGender": "ALL",
+    "applicableAgeGroup": "ADULT",
+    "reportType": "COMBINED",
+    "turnaroundPriority": "ROUTINE",
+    "isActive": true,
+    "priceMsrp": 2500,
+    "priceMaximum": 2300,
+    "priceMinimum": 1800,
+    "priceOriginal": 3000,
+    "franchisePrice": 1500,
+    "commissionPrice": 200,
+    "tatMinValue": 6,
+    "tatMinUnit": "HOURS",
+    "tatMaxValue": 48,
+    "tatMaxUnit": "HOURS",
+    "panelInstructions": "Overnight fasting of 10-12 hours recommended.",
+    "isDisableDiscount": false,
+    "isEnableCms": true,
+    "isPreference": false,
+    "isFastingRequired": true,
+    "isShowOnlineBooking": true,
+    "isHomeCollection": true,
+    "isAllowPartialBilling": true,
+    "maxTestsRemovable": 1,
+    "tests": [
+      { "opdTestId": "{{opdTestId}}", "sortOrder": 1, "isRemovable": true }
+    ],
+    "categoryId": "8c67cbd6-3c73-4ed2-a883-9eeb7a45bc16",
+    "departmentId": "3bebbd8d-eef4-4bfa-88f3-3aff4a4a4516"
+  }
+}
+
+vars:pre-request {
+  opdMasterDataId: 2db13b5e-4a25-412f-bcd9-68bcbeea9d59
+  opdTestId: 86161c8f-5a98-41cd-8ed2-7f80fea71d8f
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("opdPanelId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  OPD equivalent of the lab **Create Lab Panel** endpoint (POST /opd-master-data/:masterDataId/opd-panels).
+  
+  🔒 **RBAC:** requires `business_admin:master_data__add_lab_panel` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
+  Create a lab panel inside a master data (tenant/branch from the JWT + the
+  path's master data). Captures `opdPanelId`. Included `tests` are created in the
+  same transaction; the response includes them, ordered by `sortOrder`.
+  
+  ## Key fields
+  
+  - `bannerImage` — optional URL/reference string (≤ 1024 chars).
+  - `panelName` (2-255) and `panelCode` (1-50) — unique **per master data** among
+    active rows → 409 `LAB_PANEL_NAME_CONFLICT` / `LAB_PANEL_CODE_CONFLICT`.
+  - `categoryId` / `departmentId` are optional logical references (UUIDs of an
+    active Category / Department in this tenant).
+  - Enums are UPPERCASE: `applicableGender` (ALL|MALE|FEMALE), `applicableAgeGroup`
+    (ALL|ADULT|PEDIATRIC|SENIOR), `reportType` (COMBINED|SEPARATE),
+    `turnaroundPriority` (ROUTINE|URGENT|STAT), `tat*Unit` (MINUTES|HOURS|DAYS).
+  - Prices are integers (minor units). `tat*Unit` defaults to `HOURS`.
+  - `tests[].opdTestId` must reference an **active lab test in the same master
+    data** → 422 `LAB_PANEL_TEST_NOT_FOUND`. A test may appear at most once.
+  
+  ## Cross-field rules (422 VALIDATION_ERROR)
+  
+  - `priceMaximum ≤ priceMsrp`, `priceMinimum ≤ priceMaximum`.
+  - `maxTestsRemovable > 0` requires `isAllowPartialBilling: true`.
+  - `maxTestsRemovable` cannot exceed the number of tests in the panel.
+  
+  `isActive` (optional, default `true`) toggles Active/Inactive — used by the
+  `status` filter on "List Lab Panels (Listing & Filters)". Soft delete
+  (`deletedAt`) is separate: deleted panels never appear regardless of `isActive`.
+  Uses `opdTestId` from Lab Tests → Create Lab Test and `opdMasterDataId` from
+  Master Data → List/Create.
+}

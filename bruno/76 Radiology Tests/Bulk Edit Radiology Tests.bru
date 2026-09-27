@@ -1,0 +1,81 @@
+meta {
+  name: Bulk Edit Radiology Tests
+  type: http
+  seq: 9
+}
+
+patch {
+  url: {{baseUrl}}/radiology-master-data/{{radiologyMasterDataId}}/radiology-tests/bulk
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "data": [
+      {
+        "radiologyTestId": "{{radiologyTestId}}",
+        "isActive": false,
+        "samplePriorityType": "STAT",
+        "priceMsrp": 750,
+        "commissionPrice": 55,
+        "reportingTimeFrom": "09:00",
+        "reportingTimeTo": "17:00",
+        "approvalDurationMinValue": 30,
+        "approvalDurationMinUnit": "MINUTES",
+        "approvalDurationMaxValue": 2,
+        "approvalDurationMaxUnit": "HOURS"
+      }
+    ]
+  }
+}
+
+vars:pre-request {
+  radiologyMasterDataId: 3bebbd8d-eef4-4bfa-88f3-3aff4a4a4516
+  radiologyTestId: 7378922b-7c34-4785-b276-191f5eac2854
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("reports updated count", function () {
+    const data = res.getBody() && res.getBody().data;
+    expect(data).to.have.property("updated");
+  });
+}
+
+docs {
+  Radiology equivalent of the lab **Bulk Edit Lab Tests** endpoint (PATCH /radiology-master-data/:masterDataId/radiology-tests/bulk).
+  
+  🔒 **RBAC:** requires `business_admin:master_data__allow_multiple_edit` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
+  Bulk-edit lab tests: `data` is an array of per-test edits, each carrying its own
+  `radiologyTestId` plus the scalar fields to change **for that test** (scoped to the
+  caller's tenant + the path's master data). Only the tests in the payload are
+  touched. Returns `{ updated: <count> }`.
+  
+  ## Rules
+  
+  - `data` — 1 to 500 items. Each item's `radiologyTestId` must resolve to an active
+    lab test in this master data; an unresolved id → 404 `LAB_TEST_NOT_FOUND`.
+  - Each item may set any subset of the test's **scalar** fields (classification,
+    pricing, TAT, schedule, flags, notes, status) — including the Reporting
+    window / Approval duration pair (`reportingTimeFrom`/`reportingTimeTo`,
+    `approvalDurationMinValue`/`MinUnit`/`MaxValue`/`MaxUnit`, SRS §5.4/§5.5).
+    `testName`/`testCode` and the
+    children (`samples`/`resultParams`) are **not** bulk-editable — use the
+    single-test update for those.
+  - **All-or-nothing**: duplicate `radiologyTestId`s, an item with no changes, or a
+    broken cross-field invariant (price ordering, mandatory-dept, repeat-interval —
+    re-checked per test against its existing values) → 422 `VALIDATION_ERROR` and
+    **nothing** is changed. Updates run in one transaction.
+}

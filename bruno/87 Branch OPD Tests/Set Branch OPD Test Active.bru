@@ -1,0 +1,36 @@
+meta {
+  name: Set Branch OPD Test Active
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{baseUrl}}/branch-opd-tests/{{branchOPDTestId}}/active
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchOPDTestId: 00000000-0000-0000-0000-000000000000
+}
+
+body:json {
+  {
+    "isActive": false
+  }
+}
+
+docs {
+  OPD equivalent of the lab **Set Branch Lab Test Active** endpoint (PATCH /branch-opd-tests/:id/active).
+  
+  Enable/disable a branch lab test in the branch's Lab Test List (`isActive`).
+  Distinct from soft delete.
+}

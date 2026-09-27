@@ -1,0 +1,22 @@
+meta {
+  name: List Radiology Panel List Options
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/branch-radiology-panel-lists/options
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Radiology equivalent of the lab **List Lab Panel List Options** endpoint (GET /branch-radiology-panel-lists/options).
+  
+  Lightweight `{ id, name, isDefault }[]` options for the referral/registration
+  list selectors — never individual panels (Phase 7).
+}

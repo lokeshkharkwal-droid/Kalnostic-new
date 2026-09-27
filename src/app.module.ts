@@ -27,6 +27,22 @@ import { BranchLabTestModule } from './modules/branch-lab-test/branch-lab-test.m
 import { BranchLabPanelModule } from './modules/branch-lab-panel/branch-lab-panel.module';
 import { BranchLabTestListModule } from './modules/branch-lab-test-list/branch-lab-test-list.module';
 import { BranchLabPanelListModule } from './modules/branch-lab-panel-list/branch-lab-panel-list.module';
+// Combined Branch Phase 1 — Radiology catalogue modules
+import { RadiologyMasterDataModule } from './modules/radiology-master-data/radiology-master-data.module';
+import { RadiologyTestModule } from './modules/radiology-test/radiology-test.module';
+import { RadiologyPanelModule } from './modules/radiology-panel/radiology-panel.module';
+import { BranchRadiologyTestModule } from './modules/branch-radiology-test/branch-radiology-test.module';
+import { BranchRadiologyPanelModule } from './modules/branch-radiology-panel/branch-radiology-panel.module';
+import { BranchRadiologyTestListModule } from './modules/branch-radiology-test-list/branch-radiology-test-list.module';
+import { BranchRadiologyPanelListModule } from './modules/branch-radiology-panel-list/branch-radiology-panel-list.module';
+// Combined Branch Phase 1 — OPD catalogue modules
+import { OpdMasterDataModule } from './modules/opd-master-data/opd-master-data.module';
+import { OpdTestModule } from './modules/opd-test/opd-test.module';
+import { OpdPanelModule } from './modules/opd-panel/opd-panel.module';
+import { BranchOpdTestModule } from './modules/branch-opd-test/branch-opd-test.module';
+import { BranchOpdPanelModule } from './modules/branch-opd-panel/branch-opd-panel.module';
+import { BranchOpdTestListModule } from './modules/branch-opd-test-list/branch-opd-test-list.module';
+import { BranchOpdPanelListModule } from './modules/branch-opd-panel-list/branch-opd-panel-list.module';
 import { ReferralListModule } from './modules/referral-list/referral-list.module';
 import { TestGroupModule } from './modules/test-group/test-group.module';
 import { EquipmentModule } from './modules/equipment/equipment.module';
@@ -140,6 +156,20 @@ import { B2bModuleGuard } from './common/guards/b2b-module.guard';
     BranchLabPanelModule,
     BranchLabTestListModule,
     BranchLabPanelListModule,
+    RadiologyMasterDataModule,
+    RadiologyTestModule,
+    RadiologyPanelModule,
+    BranchRadiologyTestModule,
+    BranchRadiologyPanelModule,
+    BranchRadiologyTestListModule,
+    BranchRadiologyPanelListModule,
+    OpdMasterDataModule,
+    OpdTestModule,
+    OpdPanelModule,
+    BranchOpdTestModule,
+    BranchOpdPanelModule,
+    BranchOpdTestListModule,
+    BranchOpdPanelListModule,
     ReferralListModule,
     TestGroupModule,
     EquipmentModule,

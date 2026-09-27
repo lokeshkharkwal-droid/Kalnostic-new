@@ -1,0 +1,26 @@
+meta {
+  name: Set Default Branch Radiology Test
+  type: http
+  seq: 9
+}
+
+patch {
+  url: {{baseUrl}}/branch-radiology-tests/{{branchRadiologyTestId}}/default
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchRadiologyTestId: 00000000-0000-0000-0000-000000000000
+}
+
+docs {
+  Radiology equivalent of the lab **Set Default Branch Lab Test** endpoint (PATCH /branch-radiology-tests/:id/default).
+  
+  Mark this row the default of its variant group (used when creating a lab order).
+  Clears `isDefault` on the group's other active rows in one transaction. No body.
+}

@@ -1,0 +1,26 @@
+meta {
+  name: Delete Branch Radiology Test
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/branch-radiology-tests/{{branchRadiologyTestId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchRadiologyTestId: 00000000-0000-0000-0000-000000000000
+}
+
+docs {
+  Radiology equivalent of the lab **Delete Branch Lab Test** endpoint (DELETE /branch-radiology-tests/:id).
+  
+  Soft-delete a branch lab test (remove it from the branch's Lab Test List). A
+  soft-deleted testName/testCode is freed for re-import.
+}

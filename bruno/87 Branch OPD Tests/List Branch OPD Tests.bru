@@ -1,0 +1,33 @@
+meta {
+  name: List Branch OPD Tests
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/branch-opd-tests?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: Vitamin
+  ~status: ACTIVE
+  ~listId: 00000000-0000-0000-0000-000000000000
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  OPD equivalent of the lab **List Branch Lab Tests** endpoint (GET /branch-opd-tests).
+  
+  List the active branch's Lab Test List (paginated). Optional `search`
+  (case-insensitive on testName/testCode), `status` (ACTIVE | INACTIVE), and
+  `listId` (which pricing-list tab; omitted = the branch's default Walk-in list).
+  Each row carries a `listPrice` (the effective selling price for its list).
+  Scoped to the JWT tenant + active branch; soft-deleted rows are excluded.
+}

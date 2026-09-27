@@ -1,0 +1,28 @@
+meta {
+  name: Duplicate Branch Radiology Panel
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/branch-radiology-panels/{{branchRadiologyPanelId}}/duplicate
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchRadiologyPanelId: 00000000-0000-0000-0000-000000000000
+}
+
+docs {
+  Radiology equivalent of the lab **Duplicate Branch Lab Panel** endpoint (POST /branch-radiology-panels/:id/duplicate).
+  
+  Create an independent panel variant in the same group (same `sourceLabPanelId`):
+  copies the panel + its member join rows (still referencing the same branch-test
+  copies), non-default duplicate (name suffixed " (Copy)"). Returns the new panel
+  with its member tests.
+}

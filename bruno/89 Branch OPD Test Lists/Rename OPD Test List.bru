@@ -1,0 +1,35 @@
+meta {
+  name: Rename OPD Test List
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/branch-opd-test-lists/:id
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 00000000-0000-0000-0000-000000000000
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "B2B Corporate (2026)"
+  }
+}
+
+docs {
+  OPD equivalent of the lab **Rename Lab Test List** endpoint (PATCH /branch-opd-test-lists/:id).
+  
+  Rename a list. `name` is unique per branch among active lists (409 on clash).
+}

@@ -1,0 +1,36 @@
+meta {
+  name: Clone Radiology Panel List
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/branch-radiology-panel-lists/:id/clone
+  body: json
+  auth: bearer
+}
+
+params:path {
+  id: 00000000-0000-0000-0000-000000000000
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Franchise Pricing"
+  }
+}
+
+docs {
+  Radiology equivalent of the lab **Clone Lab Panel List** endpoint (POST /branch-radiology-panel-lists/:id/clone).
+  
+  Deep-copy a panel list (panels + member tests, preserving `listPrice`) into a
+  new independent list.
+}

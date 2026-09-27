@@ -1,0 +1,63 @@
+meta {
+  name: Update OPD Test
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/opd-master-data/{{opdMasterDataId}}/opd-tests/{{opdTestId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "testDisplayName": "CBC (Complete Blood Count)",
+    "priceMaximum": 600,
+    "commissionPrice": 60,
+    "remarks": "Q3 price revision",
+    "reportingTimeFrom": "09:00",
+    "reportingTimeTo": "17:00",
+    "approvalDurationMinValue": 30,
+    "approvalDurationMinUnit": "MINUTES",
+    "approvalDurationMaxValue": 2,
+    "approvalDurationMaxUnit": "HOURS",
+    "branchId":"c1a13dd2-6562-446c-83ca-4f0220976134"
+  }
+}
+
+vars:pre-request {
+  opdMasterDataId: 07dc5e99-4aee-46d8-917d-d43a25745017
+  opdTestId: 3fd4f5ca-f3b3-4ac8-b86c-adab2280386a
+}
+
+docs {
+  OPD equivalent of the lab **Update Lab Test** endpoint (PATCH /opd-master-data/:masterDataId/opd-tests/:testId).
+  
+  🔒 **RBAC:** requires `business_admin:master_data__update_test` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
+  Patch a lab test's core fields (send only what changes). `versionHistory` is
+  never edited here (use Add Version).
+
+  Includes the Reporting window / Approval duration pair (SRS §5.4/§5.5):
+  `reportingTimeFrom`/`reportingTimeTo` ("HH:mm", signatory-availability
+  window) and `approvalDurationMinValue`/`MinUnit`/`MaxValue`/`MaxUnit`
+  (expected approval turnaround, value+unit — distinct from the existing
+  `approvalTimeFrom`/`approvalTimeTo` time-of-day window).
+  
+  Child sets are REPLACED when provided: include a full `samples` array and/or
+  `resultParams` array (each param with its `referenceRanges`/`referenceValues`)
+  to swap the whole set — the old active rows are soft-deleted and the new set
+  created in one transaction. Omit a child array to leave it untouched.
+  
+  Same cross-field rules and conflicts as Create (422 `VALIDATION_ERROR`, 409 on
+  name/code/parameterCode). 404 `LAB_TEST_NOT_FOUND` if missing/other tenant.
+}

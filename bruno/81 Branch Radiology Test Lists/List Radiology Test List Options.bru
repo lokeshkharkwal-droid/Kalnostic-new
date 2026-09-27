@@ -1,0 +1,22 @@
+meta {
+  name: List Radiology Test List Options
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/branch-radiology-test-lists/options
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Radiology equivalent of the lab **List Lab Test List Options** endpoint (GET /branch-radiology-test-lists/options).
+  
+  Lightweight `{ id, name, isDefault }[]` options for the referral/registration
+  list selectors — never individual tests (Phase 7).
+}

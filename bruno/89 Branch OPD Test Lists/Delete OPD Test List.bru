@@ -1,0 +1,26 @@
+meta {
+  name: Delete OPD Test List
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{baseUrl}}/branch-opd-test-lists/:id
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 00000000-0000-0000-0000-000000000000
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  OPD equivalent of the lab **Delete Lab Test List** endpoint (DELETE /branch-opd-test-lists/:id).
+  
+  Soft-delete a list and all of its test rows. The default Walk-in list cannot be
+  deleted (400 `DEFAULT_LAB_TEST_LIST_NOT_DELETABLE`).
+}

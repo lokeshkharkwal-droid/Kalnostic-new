@@ -1,0 +1,28 @@
+meta {
+  name: Get OPD Master Data
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/opd-master-data/{{opdMasterDataId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  opdMasterDataId: 3bebbd8d-eef4-4bfa-88f3-3aff4a4a4516
+}
+
+docs {
+  OPD equivalent of the lab **Get Master Data** endpoint (GET /opd-master-data/:id).
+  
+  Fetch one master data by id (scoped to the caller's tenant). 404
+  `MASTER_DATA_NOT_FOUND` if missing, soft-deleted, or owned by another tenant.
+  
+  Uses `opdMasterDataId` captured by **List Master Data**.
+}

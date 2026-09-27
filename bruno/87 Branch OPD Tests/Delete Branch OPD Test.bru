@@ -1,0 +1,26 @@
+meta {
+  name: Delete Branch OPD Test
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/branch-opd-tests/{{branchOPDTestId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchOPDTestId: 00000000-0000-0000-0000-000000000000
+}
+
+docs {
+  OPD equivalent of the lab **Delete Branch Lab Test** endpoint (DELETE /branch-opd-tests/:id).
+  
+  Soft-delete a branch lab test (remove it from the branch's Lab Test List). A
+  soft-deleted testName/testCode is freed for re-import.
+}

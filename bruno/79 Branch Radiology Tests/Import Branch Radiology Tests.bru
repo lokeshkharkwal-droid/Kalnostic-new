@@ -1,0 +1,66 @@
+meta {
+  name: Import Branch Radiology Tests
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/branch-radiology-tests/import
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "radiologyTestIds": [
+      "00000000-0000-0000-0000-000000000000"
+    ],
+    "listId": "{{branchRadiologyTestListId}}"
+  }
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("reports copied/updated/skipped", function () {
+    const data = res.getBody() && res.getBody().data;
+    expect(data).to.have.property("copied");
+    expect(data).to.have.property("updated");
+    expect(data).to.have.property("skipped");
+  });
+}
+
+docs {
+  Radiology equivalent of the lab **Import Branch Lab Tests** endpoint (POST /branch-radiology-tests/import).
+  
+  Persist-import Master Data lab tests into a branch pricing list. `radiologyTestIds`
+  are ids of lab tests in the branch's (1:1) master data. Each is deep-copied
+  as an independent snapshot (clinical children folded into `configSnapshot`)
+  with a fresh id, `sourceLabTestId` provenance, `listId` = the target list,
+  and `listPrice` = MSRP.
+
+  `listId` (optional) targets a specific `BranchLabTestList` — must belong to
+  the caller's branch (404 `BRANCH_LAB_TEST_LIST_NOT_FOUND` otherwise). Omit it
+  to import into the branch's default **Walk-in** list, which is always
+  ensured to exist first (auto-created on the very first master-data action of
+  any kind on this branch) regardless of which list `listId` targets.
+
+  Tenant + active branch come from the JWT (never the body). Re-import UPDATES an
+  already-present test (re-snapshot) and ADDS new ones — never duplicates; ids not
+  in the branch's master data are skipped → `{ copied, updated, skipped }`.
+
+  400 `ACTIVE_BRANCH_REQUIRED` if the JWT has no active branch. 404
+  `MASTER_DATA_NOT_MAPPED_TO_BRANCH` if the branch has no master data.
+
+  400 `ACTIVE_BRANCH_REQUIRED` if the JWT has no active branch. 404
+  `MASTER_DATA_NOT_MAPPED_TO_BRANCH` if the branch has no master data.
+}

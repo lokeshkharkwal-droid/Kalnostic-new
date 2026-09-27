@@ -39,6 +39,26 @@ export class OrderItemDto {
   @IsUUID()
   branchLabPanelId?: string;
 
+  /** The branch radiology test this line represents (Combined Branch — mutually exclusive with the other refs). */
+  @IsOptional()
+  @IsUUID()
+  branchRadiologyTestId?: string;
+
+  /** The branch radiology panel this line represents (mutually exclusive with the other refs). */
+  @IsOptional()
+  @IsUUID()
+  branchRadiologyPanelId?: string;
+
+  /** The branch OPD test this line represents (mutually exclusive with the other refs). */
+  @IsOptional()
+  @IsUUID()
+  branchOpdTestId?: string;
+
+  /** The branch OPD panel this line represents (mutually exclusive with the other refs). */
+  @IsOptional()
+  @IsUUID()
+  branchOpdPanelId?: string;
+
   /**
    * A free-text catalogue entry passed directly from the frontend (mutually
    * exclusive with the test/panel refs).

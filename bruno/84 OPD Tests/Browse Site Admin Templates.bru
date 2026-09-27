@@ -1,0 +1,45 @@
+meta {
+  name: Browse Site Admin Templates
+  type: http
+  seq: 15
+}
+
+get {
+  url: {{baseUrl}}/opd-tests/templates?page=1&limit=20&search=&sortBy=testName&sortOrder=asc&opdMasterDataId={{opdMasterDataId}}&notImportedOnly=false
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  search:
+  sortBy: testName
+  sortOrder: asc
+  opdMasterDataId: {{opdMasterDataId}}
+  notImportedOnly: false
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  OPD equivalent of the lab **Browse Site Admin Templates** endpoint (GET /opd-tests/templates).
+  
+  Browse SITE_ADMIN global lab-test templates (read-only) so a business can pick
+  one to import. Business JWT (no per-route RBAC yet). Returns only
+  `source = SITE_ADMIN` rows — never tenant data.
+
+  Query:
+  - `page` / `limit`, `search` (testName/testCode), `status` (`ACTIVE` | `INACTIVE`).
+  - `sortBy` (`testName` | `testCode` | `priceMsrp` | `createdAt`) + `sortOrder`
+    (`asc` | `desc`); defaults to `createdAt desc`.
+  - `opdMasterDataId` (optional, must belong to the caller's tenant): annotates each
+    row with `isImported` (an active tenant test in that master data already has
+    `clonedFromId = template.id`).
+  - `notImportedOnly=true` (with `opdMasterDataId`): hides already-imported templates.
+
+  Declared before the `:id` routes so `templates` isn't matched as an id. Import
+  chosen templates in bulk with "Import Site Admin Templates".
+}

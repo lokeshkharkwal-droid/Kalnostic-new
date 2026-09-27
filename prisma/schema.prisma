@@ -315,6 +315,8 @@ enum AuditModule {
   COMMUNICATION // Outbound messaging (Email/SMS/WhatsApp) + in-app notifications
   LAB_TEST_FIELD_PERMISSIONS
   OVERALL_RESULT_TEMPLATE
+  RADIOLOGY // Combined Branch — Radiology configuration (master data / tests / panels)
+  OPD // Combined Branch — OPD configuration (master data / tests / panels)
 }
 
 /// Type of controlled document managed by the document module.
@@ -3626,6 +3628,1339 @@ model BranchLabPanelTest {
   @@index([branchLabTestId])
   @@index([deletedAt])
   @@map("branch_lab_panel_tests")
+}
+
+// ─── Radiology catalogue ─────────────────────────────────────────────────────
+// Parallel copy of the Lab catalogue for the Radiology service (Combined Branch
+// Phase 1). Same hierarchy (MasterData → Test/Panel → Branch snapshots → Lists)
+// and workflow as Lab, but physically separate tables so Radiology data never
+// mixes with Lab or OPD. Classification ids are logical refs (no Prisma relation),
+// mirroring LabPanel/BranchLabTest.
+
+/// Radiology Master Data container — Tenant MD (branchId NULL singleton) or
+/// per-branch Branch MD. Mirrors MasterData. Tenant-scoped.
+model RadiologyMasterData {
+  id          String  @id @default(uuid())
+  tenantId    String  @map("tenant_id")
+  branchId    String? @map("branch_id")
+  name        String
+  description String?
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([deletedAt])
+  @@map("radiology_master_data")
+}
+
+/// A radiology-test configuration inside a master data. Mirrors LabTest (also
+/// covers SITE_ADMIN global templates via `source`/`clonedFromId`). Classification
+/// ids are logical refs. Tenant-scoped + branch-level.
+model RadiologyTest {
+  id           String  @id @default(uuid())
+  tenantId     String? @map("tenant_id")
+  branchId     String? @map("branch_id")
+  masterDataId String? @map("master_data_id")
+
+  source DataSource @default(TENANT)
+
+  clonedFromId          String?   @map("cloned_from_id")
+  templateSyncedAt      DateTime? @map("template_synced_at")
+  sourceMasterTestId    String?   @map("source_master_test_id")
+
+  // Identity
+  testName        String  @map("test_name")
+  testDisplayName String? @map("test_display_name")
+  testCode        String  @map("test_code")
+  aka             String?
+
+  // Classification (logical refs)
+  departmentId  String? @map("department_id")
+  categoryId    String? @map("category_id")
+  subCategoryId String? @map("sub_category_id")
+
+  // Basic config
+  processMethod      ProcessMethod     @default(SINGLE_STEP) @map("process_method")
+  icdCode            String?           @map("icd_code")
+  loincCode          String?           @map("loinc_code")
+  clinicalTags       String[]          @map("clinical_tags")
+  reportTemplateId   String?           @map("report_template_id")
+  samplePriorityType SamplePriority    @default(ROUTINE) @map("sample_priority_type")
+  pdfSettingsId      String?           @map("pdf_settings_id")
+  imageSettingsId    String?           @map("image_settings_id")
+  isEnableCms        Boolean           @default(true) @map("is_enable_cms")
+  approvalWorkflow   ApprovalWorkflow? @map("approval_workflow")
+
+  // Pricing (integer minor units)
+  priceMsrp            Int     @default(0) @map("price_msrp")
+  priceMaximum         Int     @default(0) @map("price_maximum")
+  priceMinimum         Int     @default(0) @map("price_minimum")
+  priceOriginal        Int     @default(0) @map("price_original")
+  franchisePrice       Int     @default(0) @map("franchise_price")
+  emergencyPrice       Int     @default(0) @map("emergency_price")
+  commissionPrice      Int?    @map("commission_price")
+  discountCapPct       Int     @default(0) @map("discount_cap_pct")
+  isAllowPriceOverride Boolean @default(false) @map("is_allow_price_override")
+  isAllowDiscounts     Boolean @default(true) @map("is_allow_discounts")
+
+  // TAT
+  tatMinValue Int?     @map("tat_min_value")
+  tatMinUnit  TatUnit? @map("tat_min_unit")
+  tatMaxValue Int?     @map("tat_max_value")
+  tatMaxUnit  TatUnit? @map("tat_max_unit")
+
+  // Schedule (times stored as "HH:mm" strings)
+  scheduleDays DayOfWeek[] @map("schedule_days")
+  scheduleFrom String?     @map("schedule_from")
+  scheduleTo   String?     @map("schedule_to")
+
+  // Processing window
+  processingTimeFrom String? @map("processing_time_from")
+  processingTimeTo   String? @map("processing_time_to")
+
+  procTimeMinValue Int?     @map("proc_time_min_value")
+  procTimeMinUnit  TatUnit? @map("proc_time_min_unit")
+  procTimeMaxValue Int?     @map("proc_time_max_value")
+  procTimeMaxUnit  TatUnit? @map("proc_time_max_unit")
+
+  approvalTimeFrom String? @map("approval_time_from")
+  approvalTimeTo   String? @map("approval_time_to")
+
+  reportingTimeFrom String? @map("reporting_time_from")
+  reportingTimeTo   String? @map("reporting_time_to")
+
+  approvalDurationMinValue Int?     @map("approval_duration_min_value")
+  approvalDurationMinUnit  TatUnit? @map("approval_duration_min_unit")
+  approvalDurationMaxValue Int?     @map("approval_duration_max_value")
+  approvalDurationMaxUnit  TatUnit? @map("approval_duration_max_unit")
+
+  // Flags
+  isHideInOrderScreen Boolean @default(false) @map("is_hide_in_order_screen")
+  isPreferenceTest    Boolean @default(false) @map("is_preference_test")
+  isOutsource         Boolean @default(false) @map("is_outsource")
+  isBillOnlyTest      Boolean @default(false) @map("is_bill_only_test")
+  isSampleFlow        Boolean @default(false) @map("is_sample_flow")
+  isMandatoryTest     Boolean @default(false) @map("is_mandatory_test")
+
+  // Mandatory-test classification (logical refs)
+  mandatoryDeptId             String?             @map("mandatory_dept_id")
+  mandatoryCatId              String?             @map("mandatory_cat_id")
+  mandatorySubcatId           String?             @map("mandatory_subcat_id")
+  isRepeatIntervalRestriction Boolean             @default(false) @map("is_repeat_interval_restriction")
+  repeatIntervalValue         Int?                @map("repeat_interval_value")
+  repeatIntervalUnit          RepeatIntervalUnit? @map("repeat_interval_unit")
+  isOverrideAllowed           Boolean             @default(false) @map("is_override_allowed")
+
+  isActive Boolean @default(true) @map("is_active")
+
+  // Notes
+  usefulFor               String? @map("useful_for")
+  interpretationOfResults String? @map("interpretation_of_results")
+  limitations             String?
+  remarks                 String?
+  references              String?
+
+  versionHistory Json @default("[]") @map("version_history")
+
+  samples         RadiologyTestSample[]
+  resultParams    RadiologyTestResultParam[]
+  referenceRanges RadiologyTestReferenceRange[]
+  referenceValues RadiologyTestReferenceValue[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([masterDataId])
+  @@index([isActive])
+  @@index([source])
+  @@index([clonedFromId])
+  @@index([sourceMasterTestId])
+  @@index([deletedAt])
+  @@map("radiology_tests")
+}
+
+/// A sample requirement for a radiology test. Mirrors LabTestSample.
+model RadiologyTestSample {
+  id     String  @id @default(uuid())
+  tenantId String? @map("tenant_id")
+  branchId String? @map("branch_id")
+  testId String  @map("test_id")
+  test   RadiologyTest @relation(fields: [testId], references: [id], onDelete: Cascade)
+
+  sampleNameId               String?        @map("sample_name_id")
+  sampleName                 String?        @map("sample_name")
+  sampleType                 String?        @map("sample_type")
+  containerType              ContainerType? @map("container_type")
+  sampleSize                 String?        @map("sample_size")
+  collectionMethod           String?        @map("collection_method")
+  numberOfSamples            Int            @default(1) @map("number_of_samples")
+  stability                  String?
+  transportTemperature       String?        @map("transport_temperature")
+  preservative               String?
+  sampleHandlingInstructions String?        @map("sample_handling_instructions")
+  isFastingRequired          Boolean        @default(false) @map("is_fasting_required")
+  isLightProtection          Boolean        @default(false) @map("is_light_protection")
+  isDefault                  Boolean        @default(false) @map("is_default")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([testId])
+  @@index([deletedAt])
+  @@map("radiology_test_samples")
+}
+
+/// A result parameter for a radiology test. Mirrors LabTestResultParam.
+model RadiologyTestResultParam {
+  id     String  @id @default(uuid())
+  tenantId String? @map("tenant_id")
+  branchId String? @map("branch_id")
+  testId String  @map("test_id")
+  test   RadiologyTest @relation(fields: [testId], references: [id], onDelete: Cascade)
+
+  groupName       String?            @map("group_name")
+  groupLayout     ResultGroupLayout? @map("group_layout")
+  groupLayoutId   String?            @map("group_layout_id")
+  groupSettingsId String?            @map("group_settings_id")
+
+  parameterName   String  @map("parameter_name")
+  parameterCode   String  @map("parameter_code")
+  method          String?
+  attachFileUrl   String? @map("attach_file_url")
+  iconSettingsId  String? @map("icon_settings_id")
+  imageSettingsId String? @map("image_settings_id")
+  reportingUnit   String? @map("reporting_unit")
+
+  resultType         ResultType      @map("result_type")
+  parameterType      ParameterType   @default(MEASURED) @map("parameter_type")
+  resultEntryMode    ResultEntryMode @default(MANUAL) @map("result_entry_mode")
+  calculationFormula String?         @map("calculation_formula")
+  resultRoundingType ResultRounding  @default(TWO_DECIMAL) @map("result_rounding_type")
+  allowableUnits     String?         @map("allowable_units")
+  decimalPlaces      Int             @default(2) @map("decimal_places")
+
+  resultSuggestions String[] @default([]) @map("result_suggestions")
+  defaultValue      String?  @map("default_value")
+
+  criticalMin Decimal? @map("critical_min") @db.Decimal(10, 4)
+  criticalMax Decimal? @map("critical_max") @db.Decimal(10, 4)
+
+  reflexTests         Json     @default("[]") @map("reflex_tests")
+  overallResultGroups String[] @default([]) @map("overall_result_groups")
+
+  notes     String?
+  isNabl    Boolean @default(false) @map("is_nabl")
+  isCap     Boolean @default(false) @map("is_cap")
+  sortOrder Int     @default(0) @map("sort_order")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([testId])
+  @@index([testId, sortOrder])
+  @@index([deletedAt])
+  @@map("radiology_test_result_params")
+}
+
+/// A numeric reference range for a radiology result parameter. Mirrors
+/// LabTestReferenceRange. `paramId` is a logical ref.
+model RadiologyTestReferenceRange {
+  id     String  @id @default(uuid())
+  tenantId String? @map("tenant_id")
+  branchId String? @map("branch_id")
+  testId String  @map("test_id")
+  test   RadiologyTest @relation(fields: [testId], references: [id], onDelete: Cascade)
+  paramId String @map("param_id")
+
+  method String?
+  gender ReferenceGender @default(ALL)
+
+  ageFrom     Int     @default(0) @map("age_from")
+  ageFromUnit AgeUnit @default(YEARS) @map("age_from_unit")
+  ageTo       Int     @default(999) @map("age_to")
+  ageToUnit   AgeUnit @default(YEARS) @map("age_to_unit")
+
+  lowerLimit              Decimal?     @map("lower_limit") @db.Decimal(10, 4)
+  upperLimit              Decimal?     @map("upper_limit") @db.Decimal(10, 4)
+  criticalMin             Decimal?     @map("critical_min") @db.Decimal(10, 4)
+  criticalMax             Decimal?     @map("critical_max") @db.Decimal(10, 4)
+  displayOfReferenceRange String?      @map("display_of_reference_range")
+  abnormalFlagLogic       AbnormalFlag @default(BOLD_AND_RED) @map("abnormal_flag_logic")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([testId])
+  @@index([paramId])
+  @@index([deletedAt])
+  @@map("radiology_test_reference_ranges")
+}
+
+/// A qualitative reference value for a radiology result parameter. Mirrors
+/// LabTestReferenceValue.
+model RadiologyTestReferenceValue {
+  id     String  @id @default(uuid())
+  tenantId String? @map("tenant_id")
+  branchId String? @map("branch_id")
+  testId String  @map("test_id")
+  test   RadiologyTest @relation(fields: [testId], references: [id], onDelete: Cascade)
+  paramId String @map("param_id")
+
+  method String?
+  gender ReferenceGender @default(ALL)
+
+  ageFrom     Int     @default(0) @map("age_from")
+  ageFromUnit AgeUnit @default(YEARS) @map("age_from_unit")
+  ageTo       Int     @default(999) @map("age_to")
+  ageToUnit   AgeUnit @default(YEARS) @map("age_to_unit")
+
+  normalValueText         String       @map("normal_value_text")
+  displayOfReferenceRange String?      @map("display_of_reference_range")
+  abnormalFlagLogic       AbnormalFlag @default(BOLD_AND_RED) @map("abnormal_flag_logic")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([testId])
+  @@index([paramId])
+  @@index([deletedAt])
+  @@map("radiology_test_reference_values")
+}
+
+/// A radiology-panel configuration inside a master data. Mirrors LabPanel.
+model RadiologyPanel {
+  id           String  @id @default(uuid())
+  tenantId     String? @map("tenant_id")
+  branchId     String? @map("branch_id")
+  masterDataId String? @map("master_data_id")
+
+  source DataSource @default(TENANT)
+
+  sourceMasterPanelId String? @map("source_master_panel_id")
+
+  bannerImage String? @map("banner_image")
+  panelName   String  @map("panel_name")
+  panelCode   String  @map("panel_code")
+
+  categoryId   String? @map("category_id")
+  departmentId String? @map("department_id")
+
+  applicableGender   ReferenceGender @default(ALL) @map("applicable_gender")
+  applicableAgeGroup AgeGroup        @default(ALL) @map("applicable_age_group")
+  reportType         ReportType      @default(COMBINED) @map("report_type")
+  turnaroundPriority SamplePriority  @default(ROUTINE) @map("turnaround_priority")
+
+  isActive Boolean @default(true) @map("is_active")
+
+  priceMsrp       Int  @default(0) @map("price_msrp")
+  priceMinimum    Int  @default(0) @map("price_minimum")
+  priceMaximum    Int  @default(0) @map("price_maximum")
+  priceOriginal   Int  @default(0) @map("price_original")
+  franchisePrice  Int  @default(0) @map("franchise_price")
+  commissionPrice Int? @map("commission_price")
+
+  tatMinValue Int?     @map("tat_min_value")
+  tatMinUnit  TatUnit? @default(HOURS) @map("tat_min_unit")
+  tatMaxValue Int?     @map("tat_max_value")
+  tatMaxUnit  TatUnit? @default(HOURS) @map("tat_max_unit")
+
+  panelInstructions String? @map("panel_instructions")
+
+  isDisableDiscount     Boolean @default(false) @map("is_disable_discount")
+  isEnableCms           Boolean @default(true) @map("is_enable_cms")
+  isPreference          Boolean @default(false) @map("is_preference")
+  isFastingRequired     Boolean @default(false) @map("is_fasting_required")
+  isShowOnlineBooking   Boolean @default(true) @map("is_show_online_booking")
+  isHomeCollection      Boolean @default(false) @map("is_home_collection")
+  isAllowPartialBilling Boolean @default(false) @map("is_allow_partial_billing")
+
+  maxTestsRemovable Int @default(0) @map("max_tests_removable")
+
+  tests RadiologyPanelTest[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([masterDataId])
+  @@index([isActive])
+  @@index([source])
+  @@index([sourceMasterPanelId])
+  @@index([deletedAt])
+  @@map("radiology_panels")
+}
+
+/// A test included in a radiology panel. Mirrors LabPanelTest. `testId` is a
+/// logical ref to a RadiologyTest.
+model RadiologyPanelTest {
+  id      String  @id @default(uuid())
+  tenantId String? @map("tenant_id")
+  branchId String? @map("branch_id")
+  panelId String  @map("panel_id")
+  panel   RadiologyPanel @relation(fields: [panelId], references: [id], onDelete: Cascade)
+  testId  String  @map("test_id")
+
+  sortOrder   Int     @default(0) @map("sort_order")
+  isRemovable Boolean @default(true) @map("is_removable")
+  discountPercent Int? @map("discount_percent")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([panelId])
+  @@index([panelId, sortOrder])
+  @@index([testId])
+  @@index([deletedAt])
+  @@map("radiology_panel_tests")
+}
+
+/// A branch's operational Radiology Test List entry — independent snapshot copied
+/// from a Master Data RadiologyTest. Mirrors BranchLabTest (deep structure in
+/// `configSnapshot` JSON). Tenant-scoped + branch-level.
+model BranchRadiologyTest {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  sourceTestId       String? @map("source_test_id")
+  sourceMasterDataId String? @map("source_master_data_id")
+
+  listId String                    @map("list_id")
+  list   BranchRadiologyTestList  @relation(fields: [listId], references: [id])
+
+  testName        String  @map("test_name")
+  testDisplayName String? @map("test_display_name")
+  testCode        String  @map("test_code")
+  aka             String?
+
+  departmentId  String? @map("department_id")
+  categoryId    String? @map("category_id")
+  subCategoryId String? @map("sub_category_id")
+
+  processMethod      ProcessMethod  @default(SINGLE_STEP) @map("process_method")
+  icdCode            String?        @map("icd_code")
+  loincCode          String?        @map("loinc_code")
+  clinicalTags       String[]       @map("clinical_tags")
+  reportTemplateId   String?        @map("report_template_id")
+  samplePriorityType SamplePriority @default(ROUTINE) @map("sample_priority_type")
+  pdfSettingsId      String?        @map("pdf_settings_id")
+  imageSettingsId    String?        @map("image_settings_id")
+  isEnableCms        Boolean        @default(true) @map("is_enable_cms")
+  approvalWorkflowId String?        @map("approval_workflow_id")
+
+  priceMsrp            Int     @default(0) @map("price_msrp")
+  priceMaximum         Int     @default(0) @map("price_maximum")
+  priceMinimum         Int     @default(0) @map("price_minimum")
+  priceOriginal        Int     @default(0) @map("price_original")
+  franchisePrice       Int     @default(0) @map("franchise_price")
+  emergencyPrice       Int     @default(0) @map("emergency_price")
+  commissionPrice      Int?    @map("commission_price")
+  discountCapPct       Int     @default(0) @map("discount_cap_pct")
+  isAllowPriceOverride Boolean @default(false) @map("is_allow_price_override")
+  isAllowDiscounts     Boolean @default(true) @map("is_allow_discounts")
+
+  listPrice Int @default(0) @map("list_price")
+
+  tatMinValue Int?     @map("tat_min_value")
+  tatMinUnit  TatUnit? @map("tat_min_unit")
+  tatMaxValue Int?     @map("tat_max_value")
+  tatMaxUnit  TatUnit? @map("tat_max_unit")
+
+  scheduleDays DayOfWeek[] @map("schedule_days")
+  scheduleFrom String?     @map("schedule_from")
+  scheduleTo   String?     @map("schedule_to")
+
+  processingTimeFrom String? @map("processing_time_from")
+  processingTimeTo   String? @map("processing_time_to")
+
+  procTimeMinValue Int?     @map("proc_time_min_value")
+  procTimeMinUnit  TatUnit? @map("proc_time_min_unit")
+  procTimeMaxValue Int?     @map("proc_time_max_value")
+  procTimeMaxUnit  TatUnit? @map("proc_time_max_unit")
+
+  approvalTimeFrom String? @map("approval_time_from")
+  approvalTimeTo   String? @map("approval_time_to")
+
+  reportingTimeFrom String? @map("reporting_time_from")
+  reportingTimeTo   String? @map("reporting_time_to")
+
+  approvalDurationMinValue Int?     @map("approval_duration_min_value")
+  approvalDurationMinUnit  TatUnit? @map("approval_duration_min_unit")
+  approvalDurationMaxValue Int?     @map("approval_duration_max_value")
+  approvalDurationMaxUnit  TatUnit? @map("approval_duration_max_unit")
+
+  isHideInOrderScreen Boolean @default(false) @map("is_hide_in_order_screen")
+  isPreferenceTest    Boolean @default(false) @map("is_preference_test")
+  isMandatoryTest     Boolean @default(false) @map("is_mandatory_test")
+
+  mandatoryDeptId             String?             @map("mandatory_dept_id")
+  mandatoryCatId              String?             @map("mandatory_cat_id")
+  mandatorySubcatId           String?             @map("mandatory_subcat_id")
+  isRepeatIntervalRestriction Boolean             @default(false) @map("is_repeat_interval_restriction")
+  repeatIntervalValue         Int?                @map("repeat_interval_value")
+  repeatIntervalUnit          RepeatIntervalUnit? @map("repeat_interval_unit")
+
+  isActive Boolean @default(true) @map("is_active")
+
+  isDefault   Boolean @default(true) @map("is_default")
+  isDuplicate Boolean @default(false) @map("is_duplicate")
+
+  usefulFor               String? @map("useful_for")
+  interpretationOfResults String? @map("interpretation_of_results")
+  limitations             String?
+  remarks                 String?
+  references              String?
+
+  configSnapshot Json @default("{}") @map("config_snapshot")
+
+  orderItems OrderItem[]
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([sourceTestId])
+  @@index([listId])
+  @@index([isActive])
+  @@index([isDefault])
+  @@index([deletedAt])
+  @@map("branch_radiology_tests")
+}
+
+/// A branch's operational Radiology Panel List entry. Mirrors BranchLabPanel.
+model BranchRadiologyPanel {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  sourcePanelId      String? @map("source_panel_id")
+  sourceMasterDataId String? @map("source_master_data_id")
+
+  listId String                    @map("list_id")
+  list   BranchRadiologyPanelList @relation(fields: [listId], references: [id])
+
+  bannerImage String? @map("banner_image")
+  panelName   String  @map("panel_name")
+  panelCode   String  @map("panel_code")
+
+  categoryId   String? @map("category_id")
+  departmentId String? @map("department_id")
+
+  applicableGender   ReferenceGender @default(ALL) @map("applicable_gender")
+  applicableAgeGroup AgeGroup        @default(ALL) @map("applicable_age_group")
+  reportType         ReportType      @default(COMBINED) @map("report_type")
+  turnaroundPriority SamplePriority  @default(ROUTINE) @map("turnaround_priority")
+
+  isActive Boolean @default(true) @map("is_active")
+
+  isDefault   Boolean @default(true) @map("is_default")
+  isDuplicate Boolean @default(false) @map("is_duplicate")
+
+  priceMsrp       Int  @default(0) @map("price_msrp")
+  priceMinimum    Int  @default(0) @map("price_minimum")
+  priceMaximum    Int  @default(0) @map("price_maximum")
+  priceOriginal   Int  @default(0) @map("price_original")
+  franchisePrice  Int  @default(0) @map("franchise_price")
+  commissionPrice Int? @map("commission_price")
+
+  listPrice Int @default(0) @map("list_price")
+
+  tatMinValue Int?     @map("tat_min_value")
+  tatMinUnit  TatUnit? @default(HOURS) @map("tat_min_unit")
+  tatMaxValue Int?     @map("tat_max_value")
+  tatMaxUnit  TatUnit? @default(HOURS) @map("tat_max_unit")
+
+  panelInstructions String? @map("panel_instructions")
+
+  isDisableDiscount     Boolean @default(false) @map("is_disable_discount")
+  isEnableCms           Boolean @default(true) @map("is_enable_cms")
+  isPreference          Boolean @default(false) @map("is_preference")
+  isFastingRequired     Boolean @default(false) @map("is_fasting_required")
+  isShowOnlineBooking   Boolean @default(true) @map("is_show_online_booking")
+  isHomeCollection      Boolean @default(false) @map("is_home_collection")
+  isAllowPartialBilling Boolean @default(false) @map("is_allow_partial_billing")
+
+  maxTestsRemovable Int @default(0) @map("max_tests_removable")
+
+  orderItems OrderItem[]
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([sourcePanelId])
+  @@index([listId])
+  @@index([isActive])
+  @@index([isDefault])
+  @@index([deletedAt])
+  @@map("branch_radiology_panels")
+}
+
+/// A branch's named Radiology Test List (Walk-in default). Mirrors BranchLabTestList.
+model BranchRadiologyTestList {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  name      String
+  isDefault Boolean @default(false) @map("is_default")
+
+  priceType      ListPriceType    @default(CUSTOMIZED) @map("price_type")
+  copyPriceFrom  ListPriceSource? @map("copy_price_from")
+  copyPercentage Int?             @map("copy_percentage")
+
+  tests BranchRadiologyTest[]
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([deletedAt])
+  @@map("branch_radiology_test_lists")
+}
+
+/// A branch's named Radiology Panel List (Walk-in default). Mirrors BranchLabPanelList.
+model BranchRadiologyPanelList {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  name      String
+  isDefault Boolean @default(false) @map("is_default")
+
+  priceType      ListPriceType    @default(CUSTOMIZED) @map("price_type")
+  copyPriceFrom  ListPriceSource? @map("copy_price_from")
+  copyPercentage Int?             @map("copy_percentage")
+
+  panels BranchRadiologyPanel[]
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([deletedAt])
+  @@map("branch_radiology_panel_lists")
+}
+
+/// A test included in a branch's Radiology Panel List entry. Mirrors BranchLabPanelTest.
+model BranchRadiologyPanelTest {
+  id               String @id @default(uuid())
+  tenantId         String @map("tenant_id")
+  branchId         String @map("branch_id")
+  branchPanelId    String @map("branch_panel_id")
+  branchTestId     String @map("branch_test_id")
+
+  sortOrder   Int     @default(0) @map("sort_order")
+  isRemovable Boolean @default(true) @map("is_removable")
+  discountPercent Int? @map("discount_percent")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([branchPanelId])
+  @@index([branchPanelId, sortOrder])
+  @@index([branchTestId])
+  @@index([deletedAt])
+  @@map("branch_radiology_panel_tests")
+}
+
+// ─── OPD catalogue ───────────────────────────────────────────────────────────
+// Parallel copy of the Lab catalogue for the OPD service (Combined Branch Phase 1).
+// Physically separate tables so OPD data never mixes with Lab or Radiology.
+
+/// OPD Master Data container — Tenant MD (branchId NULL singleton) or per-branch
+/// Branch MD. Mirrors MasterData. Tenant-scoped.
+model OpdMasterData {
+  id          String  @id @default(uuid())
+  tenantId    String  @map("tenant_id")
+  branchId    String? @map("branch_id")
+  name        String
+  description String?
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([deletedAt])
+  @@map("opd_master_data")
+}
+
+/// An OPD-service configuration inside a master data. Mirrors LabTest (also covers
+/// SITE_ADMIN global templates). Classification ids are logical refs.
+model OpdTest {
+  id           String  @id @default(uuid())
+  tenantId     String? @map("tenant_id")
+  branchId     String? @map("branch_id")
+  masterDataId String? @map("master_data_id")
+
+  source DataSource @default(TENANT)
+
+  clonedFromId          String?   @map("cloned_from_id")
+  templateSyncedAt      DateTime? @map("template_synced_at")
+  sourceMasterTestId    String?   @map("source_master_test_id")
+
+  testName        String  @map("test_name")
+  testDisplayName String? @map("test_display_name")
+  testCode        String  @map("test_code")
+  aka             String?
+
+  departmentId  String? @map("department_id")
+  categoryId    String? @map("category_id")
+  subCategoryId String? @map("sub_category_id")
+
+  processMethod      ProcessMethod     @default(SINGLE_STEP) @map("process_method")
+  icdCode            String?           @map("icd_code")
+  loincCode          String?           @map("loinc_code")
+  clinicalTags       String[]          @map("clinical_tags")
+  reportTemplateId   String?           @map("report_template_id")
+  samplePriorityType SamplePriority    @default(ROUTINE) @map("sample_priority_type")
+  pdfSettingsId      String?           @map("pdf_settings_id")
+  imageSettingsId    String?           @map("image_settings_id")
+  isEnableCms        Boolean           @default(true) @map("is_enable_cms")
+  approvalWorkflow   ApprovalWorkflow? @map("approval_workflow")
+
+  priceMsrp            Int     @default(0) @map("price_msrp")
+  priceMaximum         Int     @default(0) @map("price_maximum")
+  priceMinimum         Int     @default(0) @map("price_minimum")
+  priceOriginal        Int     @default(0) @map("price_original")
+  franchisePrice       Int     @default(0) @map("franchise_price")
+  emergencyPrice       Int     @default(0) @map("emergency_price")
+  commissionPrice      Int?    @map("commission_price")
+  discountCapPct       Int     @default(0) @map("discount_cap_pct")
+  isAllowPriceOverride Boolean @default(false) @map("is_allow_price_override")
+  isAllowDiscounts     Boolean @default(true) @map("is_allow_discounts")
+
+  tatMinValue Int?     @map("tat_min_value")
+  tatMinUnit  TatUnit? @map("tat_min_unit")
+  tatMaxValue Int?     @map("tat_max_value")
+  tatMaxUnit  TatUnit? @map("tat_max_unit")
+
+  scheduleDays DayOfWeek[] @map("schedule_days")
+  scheduleFrom String?     @map("schedule_from")
+  scheduleTo   String?     @map("schedule_to")
+
+  processingTimeFrom String? @map("processing_time_from")
+  processingTimeTo   String? @map("processing_time_to")
+
+  procTimeMinValue Int?     @map("proc_time_min_value")
+  procTimeMinUnit  TatUnit? @map("proc_time_min_unit")
+  procTimeMaxValue Int?     @map("proc_time_max_value")
+  procTimeMaxUnit  TatUnit? @map("proc_time_max_unit")
+
+  approvalTimeFrom String? @map("approval_time_from")
+  approvalTimeTo   String? @map("approval_time_to")
+
+  reportingTimeFrom String? @map("reporting_time_from")
+  reportingTimeTo   String? @map("reporting_time_to")
+
+  approvalDurationMinValue Int?     @map("approval_duration_min_value")
+  approvalDurationMinUnit  TatUnit? @map("approval_duration_min_unit")
+  approvalDurationMaxValue Int?     @map("approval_duration_max_value")
+  approvalDurationMaxUnit  TatUnit? @map("approval_duration_max_unit")
+
+  isHideInOrderScreen Boolean @default(false) @map("is_hide_in_order_screen")
+  isPreferenceTest    Boolean @default(false) @map("is_preference_test")
+  isOutsource         Boolean @default(false) @map("is_outsource")
+  isBillOnlyTest      Boolean @default(false) @map("is_bill_only_test")
+  isSampleFlow        Boolean @default(false) @map("is_sample_flow")
+  isMandatoryTest     Boolean @default(false) @map("is_mandatory_test")
+
+  mandatoryDeptId             String?             @map("mandatory_dept_id")
+  mandatoryCatId              String?             @map("mandatory_cat_id")
+  mandatorySubcatId           String?             @map("mandatory_subcat_id")
+  isRepeatIntervalRestriction Boolean             @default(false) @map("is_repeat_interval_restriction")
+  repeatIntervalValue         Int?                @map("repeat_interval_value")
+  repeatIntervalUnit          RepeatIntervalUnit? @map("repeat_interval_unit")
+  isOverrideAllowed           Boolean             @default(false) @map("is_override_allowed")
+
+  isActive Boolean @default(true) @map("is_active")
+
+  usefulFor               String? @map("useful_for")
+  interpretationOfResults String? @map("interpretation_of_results")
+  limitations             String?
+  remarks                 String?
+  references              String?
+
+  versionHistory Json @default("[]") @map("version_history")
+
+  samples         OpdTestSample[]
+  resultParams    OpdTestResultParam[]
+  referenceRanges OpdTestReferenceRange[]
+  referenceValues OpdTestReferenceValue[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([masterDataId])
+  @@index([isActive])
+  @@index([source])
+  @@index([clonedFromId])
+  @@index([sourceMasterTestId])
+  @@index([deletedAt])
+  @@map("opd_tests")
+}
+
+/// A sample requirement for an OPD service. Mirrors LabTestSample.
+model OpdTestSample {
+  id     String  @id @default(uuid())
+  tenantId String? @map("tenant_id")
+  branchId String? @map("branch_id")
+  testId String  @map("test_id")
+  test   OpdTest @relation(fields: [testId], references: [id], onDelete: Cascade)
+
+  sampleNameId               String?        @map("sample_name_id")
+  sampleName                 String?        @map("sample_name")
+  sampleType                 String?        @map("sample_type")
+  containerType              ContainerType? @map("container_type")
+  sampleSize                 String?        @map("sample_size")
+  collectionMethod           String?        @map("collection_method")
+  numberOfSamples            Int            @default(1) @map("number_of_samples")
+  stability                  String?
+  transportTemperature       String?        @map("transport_temperature")
+  preservative               String?
+  sampleHandlingInstructions String?        @map("sample_handling_instructions")
+  isFastingRequired          Boolean        @default(false) @map("is_fasting_required")
+  isLightProtection          Boolean        @default(false) @map("is_light_protection")
+  isDefault                  Boolean        @default(false) @map("is_default")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([testId])
+  @@index([deletedAt])
+  @@map("opd_test_samples")
+}
+
+/// A result parameter for an OPD service. Mirrors LabTestResultParam.
+model OpdTestResultParam {
+  id     String  @id @default(uuid())
+  tenantId String? @map("tenant_id")
+  branchId String? @map("branch_id")
+  testId String  @map("test_id")
+  test   OpdTest @relation(fields: [testId], references: [id], onDelete: Cascade)
+
+  groupName       String?            @map("group_name")
+  groupLayout     ResultGroupLayout? @map("group_layout")
+  groupLayoutId   String?            @map("group_layout_id")
+  groupSettingsId String?            @map("group_settings_id")
+
+  parameterName   String  @map("parameter_name")
+  parameterCode   String  @map("parameter_code")
+  method          String?
+  attachFileUrl   String? @map("attach_file_url")
+  iconSettingsId  String? @map("icon_settings_id")
+  imageSettingsId String? @map("image_settings_id")
+  reportingUnit   String? @map("reporting_unit")
+
+  resultType         ResultType      @map("result_type")
+  parameterType      ParameterType   @default(MEASURED) @map("parameter_type")
+  resultEntryMode    ResultEntryMode @default(MANUAL) @map("result_entry_mode")
+  calculationFormula String?         @map("calculation_formula")
+  resultRoundingType ResultRounding  @default(TWO_DECIMAL) @map("result_rounding_type")
+  allowableUnits     String?         @map("allowable_units")
+  decimalPlaces      Int             @default(2) @map("decimal_places")
+
+  resultSuggestions String[] @default([]) @map("result_suggestions")
+  defaultValue      String?  @map("default_value")
+
+  criticalMin Decimal? @map("critical_min") @db.Decimal(10, 4)
+  criticalMax Decimal? @map("critical_max") @db.Decimal(10, 4)
+
+  reflexTests         Json     @default("[]") @map("reflex_tests")
+  overallResultGroups String[] @default([]) @map("overall_result_groups")
+
+  notes     String?
+  isNabl    Boolean @default(false) @map("is_nabl")
+  isCap     Boolean @default(false) @map("is_cap")
+  sortOrder Int     @default(0) @map("sort_order")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([testId])
+  @@index([testId, sortOrder])
+  @@index([deletedAt])
+  @@map("opd_test_result_params")
+}
+
+/// A numeric reference range for an OPD result parameter. Mirrors LabTestReferenceRange.
+model OpdTestReferenceRange {
+  id     String  @id @default(uuid())
+  tenantId String? @map("tenant_id")
+  branchId String? @map("branch_id")
+  testId String  @map("test_id")
+  test   OpdTest @relation(fields: [testId], references: [id], onDelete: Cascade)
+  paramId String @map("param_id")
+
+  method String?
+  gender ReferenceGender @default(ALL)
+
+  ageFrom     Int     @default(0) @map("age_from")
+  ageFromUnit AgeUnit @default(YEARS) @map("age_from_unit")
+  ageTo       Int     @default(999) @map("age_to")
+  ageToUnit   AgeUnit @default(YEARS) @map("age_to_unit")
+
+  lowerLimit              Decimal?     @map("lower_limit") @db.Decimal(10, 4)
+  upperLimit              Decimal?     @map("upper_limit") @db.Decimal(10, 4)
+  criticalMin             Decimal?     @map("critical_min") @db.Decimal(10, 4)
+  criticalMax             Decimal?     @map("critical_max") @db.Decimal(10, 4)
+  displayOfReferenceRange String?      @map("display_of_reference_range")
+  abnormalFlagLogic       AbnormalFlag @default(BOLD_AND_RED) @map("abnormal_flag_logic")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([testId])
+  @@index([paramId])
+  @@index([deletedAt])
+  @@map("opd_test_reference_ranges")
+}
+
+/// A qualitative reference value for an OPD result parameter. Mirrors LabTestReferenceValue.
+model OpdTestReferenceValue {
+  id     String  @id @default(uuid())
+  tenantId String? @map("tenant_id")
+  branchId String? @map("branch_id")
+  testId String  @map("test_id")
+  test   OpdTest @relation(fields: [testId], references: [id], onDelete: Cascade)
+  paramId String @map("param_id")
+
+  method String?
+  gender ReferenceGender @default(ALL)
+
+  ageFrom     Int     @default(0) @map("age_from")
+  ageFromUnit AgeUnit @default(YEARS) @map("age_from_unit")
+  ageTo       Int     @default(999) @map("age_to")
+  ageToUnit   AgeUnit @default(YEARS) @map("age_to_unit")
+
+  normalValueText         String       @map("normal_value_text")
+  displayOfReferenceRange String?      @map("display_of_reference_range")
+  abnormalFlagLogic       AbnormalFlag @default(BOLD_AND_RED) @map("abnormal_flag_logic")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([testId])
+  @@index([paramId])
+  @@index([deletedAt])
+  @@map("opd_test_reference_values")
+}
+
+/// An OPD-panel configuration inside a master data. Mirrors LabPanel.
+model OpdPanel {
+  id           String  @id @default(uuid())
+  tenantId     String? @map("tenant_id")
+  branchId     String? @map("branch_id")
+  masterDataId String? @map("master_data_id")
+
+  source DataSource @default(TENANT)
+
+  sourceMasterPanelId String? @map("source_master_panel_id")
+
+  bannerImage String? @map("banner_image")
+  panelName   String  @map("panel_name")
+  panelCode   String  @map("panel_code")
+
+  categoryId   String? @map("category_id")
+  departmentId String? @map("department_id")
+
+  applicableGender   ReferenceGender @default(ALL) @map("applicable_gender")
+  applicableAgeGroup AgeGroup        @default(ALL) @map("applicable_age_group")
+  reportType         ReportType      @default(COMBINED) @map("report_type")
+  turnaroundPriority SamplePriority  @default(ROUTINE) @map("turnaround_priority")
+
+  isActive Boolean @default(true) @map("is_active")
+
+  priceMsrp       Int  @default(0) @map("price_msrp")
+  priceMinimum    Int  @default(0) @map("price_minimum")
+  priceMaximum    Int  @default(0) @map("price_maximum")
+  priceOriginal   Int  @default(0) @map("price_original")
+  franchisePrice  Int  @default(0) @map("franchise_price")
+  commissionPrice Int? @map("commission_price")
+
+  tatMinValue Int?     @map("tat_min_value")
+  tatMinUnit  TatUnit? @default(HOURS) @map("tat_min_unit")
+  tatMaxValue Int?     @map("tat_max_value")
+  tatMaxUnit  TatUnit? @default(HOURS) @map("tat_max_unit")
+
+  panelInstructions String? @map("panel_instructions")
+
+  isDisableDiscount     Boolean @default(false) @map("is_disable_discount")
+  isEnableCms           Boolean @default(true) @map("is_enable_cms")
+  isPreference          Boolean @default(false) @map("is_preference")
+  isFastingRequired     Boolean @default(false) @map("is_fasting_required")
+  isShowOnlineBooking   Boolean @default(true) @map("is_show_online_booking")
+  isHomeCollection      Boolean @default(false) @map("is_home_collection")
+  isAllowPartialBilling Boolean @default(false) @map("is_allow_partial_billing")
+
+  maxTestsRemovable Int @default(0) @map("max_tests_removable")
+
+  tests OpdPanelTest[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([masterDataId])
+  @@index([isActive])
+  @@index([source])
+  @@index([sourceMasterPanelId])
+  @@index([deletedAt])
+  @@map("opd_panels")
+}
+
+/// A test included in an OPD panel. Mirrors LabPanelTest. `testId` is a logical ref.
+model OpdPanelTest {
+  id      String  @id @default(uuid())
+  tenantId String? @map("tenant_id")
+  branchId String? @map("branch_id")
+  panelId String  @map("panel_id")
+  panel   OpdPanel @relation(fields: [panelId], references: [id], onDelete: Cascade)
+  testId  String  @map("test_id")
+
+  sortOrder   Int     @default(0) @map("sort_order")
+  isRemovable Boolean @default(true) @map("is_removable")
+  discountPercent Int? @map("discount_percent")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([panelId])
+  @@index([panelId, sortOrder])
+  @@index([testId])
+  @@index([deletedAt])
+  @@map("opd_panel_tests")
+}
+
+/// A branch's operational OPD Test List entry. Mirrors BranchLabTest.
+model BranchOpdTest {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  sourceTestId       String? @map("source_test_id")
+  sourceMasterDataId String? @map("source_master_data_id")
+
+  listId String              @map("list_id")
+  list   BranchOpdTestList  @relation(fields: [listId], references: [id])
+
+  testName        String  @map("test_name")
+  testDisplayName String? @map("test_display_name")
+  testCode        String  @map("test_code")
+  aka             String?
+
+  departmentId  String? @map("department_id")
+  categoryId    String? @map("category_id")
+  subCategoryId String? @map("sub_category_id")
+
+  processMethod      ProcessMethod  @default(SINGLE_STEP) @map("process_method")
+  icdCode            String?        @map("icd_code")
+  loincCode          String?        @map("loinc_code")
+  clinicalTags       String[]       @map("clinical_tags")
+  reportTemplateId   String?        @map("report_template_id")
+  samplePriorityType SamplePriority @default(ROUTINE) @map("sample_priority_type")
+  pdfSettingsId      String?        @map("pdf_settings_id")
+  imageSettingsId    String?        @map("image_settings_id")
+  isEnableCms        Boolean        @default(true) @map("is_enable_cms")
+  approvalWorkflowId String?        @map("approval_workflow_id")
+
+  priceMsrp            Int     @default(0) @map("price_msrp")
+  priceMaximum         Int     @default(0) @map("price_maximum")
+  priceMinimum         Int     @default(0) @map("price_minimum")
+  priceOriginal        Int     @default(0) @map("price_original")
+  franchisePrice       Int     @default(0) @map("franchise_price")
+  emergencyPrice       Int     @default(0) @map("emergency_price")
+  commissionPrice      Int?    @map("commission_price")
+  discountCapPct       Int     @default(0) @map("discount_cap_pct")
+  isAllowPriceOverride Boolean @default(false) @map("is_allow_price_override")
+  isAllowDiscounts     Boolean @default(true) @map("is_allow_discounts")
+
+  listPrice Int @default(0) @map("list_price")
+
+  tatMinValue Int?     @map("tat_min_value")
+  tatMinUnit  TatUnit? @map("tat_min_unit")
+  tatMaxValue Int?     @map("tat_max_value")
+  tatMaxUnit  TatUnit? @map("tat_max_unit")
+
+  scheduleDays DayOfWeek[] @map("schedule_days")
+  scheduleFrom String?     @map("schedule_from")
+  scheduleTo   String?     @map("schedule_to")
+
+  processingTimeFrom String? @map("processing_time_from")
+  processingTimeTo   String? @map("processing_time_to")
+
+  procTimeMinValue Int?     @map("proc_time_min_value")
+  procTimeMinUnit  TatUnit? @map("proc_time_min_unit")
+  procTimeMaxValue Int?     @map("proc_time_max_value")
+  procTimeMaxUnit  TatUnit? @map("proc_time_max_unit")
+
+  approvalTimeFrom String? @map("approval_time_from")
+  approvalTimeTo   String? @map("approval_time_to")
+
+  reportingTimeFrom String? @map("reporting_time_from")
+  reportingTimeTo   String? @map("reporting_time_to")
+
+  approvalDurationMinValue Int?     @map("approval_duration_min_value")
+  approvalDurationMinUnit  TatUnit? @map("approval_duration_min_unit")
+  approvalDurationMaxValue Int?     @map("approval_duration_max_value")
+  approvalDurationMaxUnit  TatUnit? @map("approval_duration_max_unit")
+
+  isHideInOrderScreen Boolean @default(false) @map("is_hide_in_order_screen")
+  isPreferenceTest    Boolean @default(false) @map("is_preference_test")
+  isMandatoryTest     Boolean @default(false) @map("is_mandatory_test")
+
+  mandatoryDeptId             String?             @map("mandatory_dept_id")
+  mandatoryCatId              String?             @map("mandatory_cat_id")
+  mandatorySubcatId           String?             @map("mandatory_subcat_id")
+  isRepeatIntervalRestriction Boolean             @default(false) @map("is_repeat_interval_restriction")
+  repeatIntervalValue         Int?                @map("repeat_interval_value")
+  repeatIntervalUnit          RepeatIntervalUnit? @map("repeat_interval_unit")
+
+  isActive Boolean @default(true) @map("is_active")
+
+  isDefault   Boolean @default(true) @map("is_default")
+  isDuplicate Boolean @default(false) @map("is_duplicate")
+
+  usefulFor               String? @map("useful_for")
+  interpretationOfResults String? @map("interpretation_of_results")
+  limitations             String?
+  remarks                 String?
+  references              String?
+
+  configSnapshot Json @default("{}") @map("config_snapshot")
+
+  orderItems OrderItem[]
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([sourceTestId])
+  @@index([listId])
+  @@index([isActive])
+  @@index([isDefault])
+  @@index([deletedAt])
+  @@map("branch_opd_tests")
+}
+
+/// A branch's operational OPD Panel List entry. Mirrors BranchLabPanel.
+model BranchOpdPanel {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  sourcePanelId      String? @map("source_panel_id")
+  sourceMasterDataId String? @map("source_master_data_id")
+
+  listId String              @map("list_id")
+  list   BranchOpdPanelList @relation(fields: [listId], references: [id])
+
+  bannerImage String? @map("banner_image")
+  panelName   String  @map("panel_name")
+  panelCode   String  @map("panel_code")
+
+  categoryId   String? @map("category_id")
+  departmentId String? @map("department_id")
+
+  applicableGender   ReferenceGender @default(ALL) @map("applicable_gender")
+  applicableAgeGroup AgeGroup        @default(ALL) @map("applicable_age_group")
+  reportType         ReportType      @default(COMBINED) @map("report_type")
+  turnaroundPriority SamplePriority  @default(ROUTINE) @map("turnaround_priority")
+
+  isActive Boolean @default(true) @map("is_active")
+
+  isDefault   Boolean @default(true) @map("is_default")
+  isDuplicate Boolean @default(false) @map("is_duplicate")
+
+  priceMsrp       Int  @default(0) @map("price_msrp")
+  priceMinimum    Int  @default(0) @map("price_minimum")
+  priceMaximum    Int  @default(0) @map("price_maximum")
+  priceOriginal   Int  @default(0) @map("price_original")
+  franchisePrice  Int  @default(0) @map("franchise_price")
+  commissionPrice Int? @map("commission_price")
+
+  listPrice Int @default(0) @map("list_price")
+
+  tatMinValue Int?     @map("tat_min_value")
+  tatMinUnit  TatUnit? @default(HOURS) @map("tat_min_unit")
+  tatMaxValue Int?     @map("tat_max_value")
+  tatMaxUnit  TatUnit? @default(HOURS) @map("tat_max_unit")
+
+  panelInstructions String? @map("panel_instructions")
+
+  isDisableDiscount     Boolean @default(false) @map("is_disable_discount")
+  isEnableCms           Boolean @default(true) @map("is_enable_cms")
+  isPreference          Boolean @default(false) @map("is_preference")
+  isFastingRequired     Boolean @default(false) @map("is_fasting_required")
+  isShowOnlineBooking   Boolean @default(true) @map("is_show_online_booking")
+  isHomeCollection      Boolean @default(false) @map("is_home_collection")
+  isAllowPartialBilling Boolean @default(false) @map("is_allow_partial_billing")
+
+  maxTestsRemovable Int @default(0) @map("max_tests_removable")
+
+  orderItems OrderItem[]
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([sourcePanelId])
+  @@index([listId])
+  @@index([isActive])
+  @@index([isDefault])
+  @@index([deletedAt])
+  @@map("branch_opd_panels")
+}
+
+/// A branch's named OPD Test List (Walk-in default). Mirrors BranchLabTestList.
+model BranchOpdTestList {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  name      String
+  isDefault Boolean @default(false) @map("is_default")
+
+  priceType      ListPriceType    @default(CUSTOMIZED) @map("price_type")
+  copyPriceFrom  ListPriceSource? @map("copy_price_from")
+  copyPercentage Int?             @map("copy_percentage")
+
+  tests BranchOpdTest[]
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([deletedAt])
+  @@map("branch_opd_test_lists")
+}
+
+/// A branch's named OPD Panel List (Walk-in default). Mirrors BranchLabPanelList.
+model BranchOpdPanelList {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  name      String
+  isDefault Boolean @default(false) @map("is_default")
+
+  priceType      ListPriceType    @default(CUSTOMIZED) @map("price_type")
+  copyPriceFrom  ListPriceSource? @map("copy_price_from")
+  copyPercentage Int?             @map("copy_percentage")
+
+  panels BranchOpdPanel[]
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([deletedAt])
+  @@map("branch_opd_panel_lists")
+}
+
+/// A test included in a branch's OPD Panel List entry. Mirrors BranchLabPanelTest.
+model BranchOpdPanelTest {
+  id               String @id @default(uuid())
+  tenantId         String @map("tenant_id")
+  branchId         String @map("branch_id")
+  branchPanelId    String @map("branch_panel_id")
+  branchTestId     String @map("branch_test_id")
+
+  sortOrder   Int     @default(0) @map("sort_order")
+  isRemovable Boolean @default(true) @map("is_removable")
+  discountPercent Int? @map("discount_percent")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([branchPanelId])
+  @@index([branchPanelId, sortOrder])
+  @@index([branchTestId])
+  @@index([deletedAt])
+  @@map("branch_opd_panel_tests")
 }
 
 /// A SiteAdmin-curated named group of SITE_ADMIN lab-test templates (e.g. "Full
@@ -7032,6 +8367,18 @@ model OrderItem {
   branchLabPanelId String?         @map("branch_lab_panel_id")
   branchLabPanel   BranchLabPanel? @relation(fields: [branchLabPanelId], references: [id])
 
+  // Radiology / OPD catalogue refs (Combined Branch Phase 1). Exactly one of the
+  // six test/panel refs (or `direct`) is set per line — the item's service is
+  // derived from whichever branch table it points at.
+  branchRadiologyTestId  String?               @map("branch_radiology_test_id")
+  branchRadiologyTest    BranchRadiologyTest?  @relation(fields: [branchRadiologyTestId], references: [id])
+  branchRadiologyPanelId String?               @map("branch_radiology_panel_id")
+  branchRadiologyPanel   BranchRadiologyPanel? @relation(fields: [branchRadiologyPanelId], references: [id])
+  branchOpdTestId        String?               @map("branch_opd_test_id")
+  branchOpdTest          BranchOpdTest?        @relation(fields: [branchOpdTestId], references: [id])
+  branchOpdPanelId       String?               @map("branch_opd_panel_id")
+  branchOpdPanel         BranchOpdPanel?       @relation(fields: [branchOpdPanelId], references: [id])
+
   /// Free-text catalogue entry passed directly from the frontend (mutually
   /// exclusive with the test/panel refs).
   direct String?
@@ -7101,6 +8448,10 @@ model OrderItem {
   @@index([orderId])
   @@index([branchLabTestId])
   @@index([branchLabPanelId])
+  @@index([branchRadiologyTestId])
+  @@index([branchRadiologyPanelId])
+  @@index([branchOpdTestId])
+  @@index([branchOpdPanelId])
   @@index([outsourceCenterId])
   @@index([deletedAt])
   @@map("order_items")

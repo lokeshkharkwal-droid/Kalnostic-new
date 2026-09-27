@@ -1,0 +1,26 @@
+meta {
+  name: List OPD Panel Lists By Branch
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/branch-opd-panel-lists/by-branch?branchId={{branchId}}
+  body: none
+  auth: bearer
+}
+
+params:query {
+  branchId: {{branchId}}
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  OPD equivalent of List OPD Panel Lists, but reads a specific branch (GET /branch-opd-panel-lists/by-branch?branchId=…) instead of the JWT's active branch.
+  
+  List all of the active branch's **Lab Panel Lists** (the tabs). Mirror of
+  `/branch-opd-test-lists`. The default Walk-in list is returned first.
+}

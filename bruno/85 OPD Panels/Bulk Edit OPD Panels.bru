@@ -1,0 +1,78 @@
+meta {
+  name: Bulk Edit OPD Panels
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/opd-master-data/{{opdMasterDataId}}/opd-panels/bulk
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "data": [
+      {
+        "opdPanelId": "{{opdPanelId}}",
+        "isActive": false,
+        "turnaroundPriority": "STAT",
+        "isDisableDiscount": true,
+        "commissionPrice": 210
+      },
+          {
+        "opdPanelId": "{{opdPanelId}}",
+        "isActive": false,
+        "turnaroundPriority": "STAT",
+        "isDisableDiscount": true
+      }
+    ]
+  }
+}
+
+vars:pre-request {
+  opdPanelId: 7304fcdc-3c2a-4ee9-9837-7bbde89ca922
+  opdMasterDataId: 3bebbd8d-eef4-4bfa-88f3-3aff4a4a4516
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("reports updated count", function () {
+    const data = res.getBody() && res.getBody().data;
+    expect(data).to.have.property("updated");
+  });
+}
+
+docs {
+  OPD equivalent of the lab **Bulk Edit Lab Panels** endpoint (PATCH /opd-master-data/:masterDataId/opd-panels/bulk).
+  
+  🔒 **RBAC:** requires `business_admin:master_data__allow_multiple_edit` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
+  Bulk-edit lab panels: `data` is an array of per-panel edits, each carrying its
+  own `opdPanelId` plus the scalar fields to change **for that panel** (scoped to
+  the caller's tenant + the path's master data). Only the panels in the payload
+  are touched. Returns `{ updated: <count> }`.
+  
+  ## Rules
+  
+  - `data` — 1 to 500 items. Each item's `opdPanelId` must resolve to an active
+    panel in this master data; an unresolved id → 404 `LAB_PANEL_NOT_FOUND`.
+  - Each item may set any subset of the panel's **scalar** fields (classification,
+    applicability, reporting, status, pricing, TAT, flags, `maxTestsRemovable`).
+    `panelName`/`panelCode` and the `tests` composition are **not** bulk-editable
+    — use the single-panel update for those.
+  - **All-or-nothing**: duplicate `opdPanelId`s, an item with no changes, or a
+    broken cross-field invariant (re-checked per panel against its existing values
+    + test count) → 422 `VALIDATION_ERROR` and **nothing** is changed. Updates run
+    in one transaction.
+}

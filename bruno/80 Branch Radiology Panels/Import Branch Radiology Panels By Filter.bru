@@ -1,0 +1,63 @@
+meta {
+  name: Import Branch Radiology Panels By Filter
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/branch-radiology-panels/import-by-filter
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "listId": "{{branchRadiologyPanelListId}}",
+    "search": "",
+    "categoryId": null,
+    "departmentId": null
+  }
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("reports copied/updated/skipped", function () {
+    const data = res.getBody() && res.getBody().data;
+    expect(data).to.have.property("copied");
+    expect(data).to.have.property("updated");
+    expect(data).to.have.property("skipped");
+  });
+}
+
+docs {
+  Radiology equivalent of Import Branch Radiology Panels but selects the source panels by **filter** rather than an explicit id list (POST /branch-radiology-panels/import-by-filter).
+  
+  Persist-import Master Data lab panels into a branch pricing list. Each panel
+  is deep-copied as an independent snapshot with `listId` = the target list
+  and `listPrice` = MSRP; its member tests are always materialized into the
+  branch's default **Walk-in Lab Test List** (existing copies of the same
+  source test are reused) regardless of which panel list the panel itself
+  lands in — panel lists and test lists are separate, unmapped list types, so
+  there is no other test list to target — so `BranchLabPanelTest` rows always
+  reference branch-owned `BranchLabTest` ids from Walk-in.
+
+  `listId` (optional) targets a specific `BranchLabPanelList` — must belong to
+  the caller's branch (404 `BRANCH_LAB_PANEL_LIST_NOT_FOUND` otherwise). Omit
+  it to import into the branch's default **Walk-in** panel list, which is
+  always ensured to exist first regardless of which list `listId` targets.
+
+  Tenant + active branch come from the JWT. Re-import UPDATES an already-present
+  panel (re-snapshot + rebuild members) and ADDS new ones — never duplicates; ids
+  not in the branch's master data are skipped → `{ copied, updated, skipped }`.
+  400 `ACTIVE_BRANCH_REQUIRED` / 404 `MASTER_DATA_NOT_MAPPED_TO_BRANCH` as applicable.
+}

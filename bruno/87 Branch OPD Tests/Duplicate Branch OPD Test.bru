@@ -1,0 +1,28 @@
+meta {
+  name: Duplicate Branch OPD Test
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/branch-opd-tests/{{branchOPDTestId}}/duplicate
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchOPDTestId: 00000000-0000-0000-0000-000000000000
+}
+
+docs {
+  OPD equivalent of the lab **Duplicate Branch Lab Test** endpoint (POST /branch-opd-tests/:id/duplicate).
+  
+  Create an independent variant of a branch lab test in the same group (same
+  `sourceLabTestId`). The copy is a non-default duplicate (isDuplicate=true,
+  isDefault=false, name suffixed " (Copy)"), editable independently and untouched
+  by sync. Returns the new row.
+}

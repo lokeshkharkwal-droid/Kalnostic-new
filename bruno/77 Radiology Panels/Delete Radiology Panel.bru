@@ -1,0 +1,32 @@
+meta {
+  name: Delete Radiology Panel
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{baseUrl}}/radiology-master-data/{{radiologyMasterDataId}}/radiology-panels/{{radiologyPanelId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Radiology equivalent of the lab **Delete Lab Panel** endpoint (DELETE /radiology-master-data/:masterDataId/radiology-panels/:panelId).
+  
+  🔒 **RBAC:** requires `business_admin:master_data__delete_the_panel` — enforced by `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions (user override ?? branch-role override ?? role baseline) lack this get **403 `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+  
+  Soft-delete a lab panel (sets `deletedAt`) and cascade soft-delete its included
+  tests in one transaction. The panel and its tests no longer appear in any list
+  or get. A missing/already-deleted/foreign panel → 404 `LAB_PANEL_NOT_FOUND`.
+  The freed `panelName` / `panelCode` may be reused by a new active panel.
+}

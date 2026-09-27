@@ -1,0 +1,24 @@
+meta {
+  name: Get Site Admin Template
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/radiology-panels/templates/{{siteAdminRadiologyPanelId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Radiology equivalent of the lab **Get Site Admin Template** endpoint (GET /radiology-panels/templates/:id).
+  
+  Fetch one SITE_ADMIN lab-panel template with its included tests (read-only).
+  Business JWT. 404 `LAB_PANEL_NOT_FOUND` if the id isn't a live template. Uses
+  `siteAdminRadiologyPanelId` captured by `26 SiteAdmin Lab Panels → Create Lab Panel
+  Template`.
+}

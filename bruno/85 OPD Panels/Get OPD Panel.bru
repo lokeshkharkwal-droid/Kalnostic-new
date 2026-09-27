@@ -1,0 +1,36 @@
+meta {
+  name: Get OPD Panel
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/opd-master-data/{{opdMasterDataId}}/opd-panels/{{opdPanelId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  opdPanelId: 7304fcdc-3c2a-4ee9-9837-7bbde89ca922
+  opdMasterDataId: 3bebbd8d-eef4-4bfa-88f3-3aff4a4a4516
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  OPD equivalent of the lab **Get Lab Panel** endpoint (GET /opd-master-data/:masterDataId/opd-panels/:panelId).
+  
+  Fetch one lab panel (full record) composed with its included tests (the `tests`
+  array, ordered by `sortOrder`) and its embedded `category` / `department`
+  objects — each `{ id, name }`, or `null` when unset. Scoped to the caller's
+  tenant + the path's master data; a missing/soft-deleted/foreign panel → 404
+  `LAB_PANEL_NOT_FOUND`.
+}

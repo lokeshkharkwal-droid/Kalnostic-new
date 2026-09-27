@@ -1,0 +1,67 @@
+meta {
+  name: Create OPD Master Data
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/opd-master-data
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "branchId": "{{branchId}}",
+    "name": "Radiology Catalogue",
+    "description": "Manually created master data"
+  }
+}
+
+vars:pre-request {
+  branchId: b3457fcb-b0bf-4714-a93b-d88942b2f520
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("opdMasterDataId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  OPD equivalent of the lab **Create Master Data** endpoint (POST /opd-master-data).
+  
+  Manually create an additional master data for a branch (tenant id from the JWT).
+  Captures `opdMasterDataId`. There is no endpoint to create the *default* master
+  data — that is auto-provisioned when a branch is created.
+  
+  ## Fields
+  
+  - `branchId` — REQUIRED UUID of a branch in the caller's tenant (validated
+    server-side; 404 `BRANCH_NOT_FOUND` otherwise). **Must NOT be the main
+    branch** — the main branch keeps only its single auto-created master data, so
+    targeting it returns 409 `CANNOT_CREATE_MASTER_DATA_FOR_MAIN_BRANCH`. The
+    first branch in a tenant is auto-set as main, so create a second branch and
+    use its id here (a non-main branch may hold several master data).
+  - `name` — 2-255 chars, unique among active master data **on that branch** →
+    409 `MASTER_DATA_NAME_CONFLICT` otherwise.
+  - `description` — optional, ≤ 2000 chars.
+
+  The full accepted body is exactly `{ branchId, name, description? }` — there
+  are no other fields. To seed the new master data with lab tests, use the
+  lab-test clone endpoint afterwards (the DTO does NOT accept a
+  `copyFromMasterDataId`).
+}

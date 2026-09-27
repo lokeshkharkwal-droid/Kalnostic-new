@@ -1,0 +1,26 @@
+meta {
+  name: Get Branch Radiology Test
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/branch-radiology-tests/{{branchRadiologyTestId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchRadiologyTestId: 00000000-0000-0000-0000-000000000000
+}
+
+docs {
+  Radiology equivalent of the lab **Get Branch Lab Test** endpoint (GET /branch-radiology-tests/:id).
+  
+  Fetch one branch lab test with its clinical `configSnapshot`. 404
+  `BRANCH_LAB_TEST_NOT_FOUND` if missing/soft-deleted/other branch.
+}

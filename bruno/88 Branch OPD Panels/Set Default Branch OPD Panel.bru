@@ -1,0 +1,26 @@
+meta {
+  name: Set Default Branch OPD Panel
+  type: http
+  seq: 9
+}
+
+patch {
+  url: {{baseUrl}}/branch-opd-panels/{{branchOPDPanelId}}/default
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchOPDPanelId: 00000000-0000-0000-0000-000000000000
+}
+
+docs {
+  OPD equivalent of the lab **Set Default Branch Lab Panel** endpoint (PATCH /branch-opd-panels/:id/default).
+  
+  Mark this row the default of its variant group (used when creating a lab order).
+  Clears `isDefault` on the group's other active rows in one transaction. No body.
+}
