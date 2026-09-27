@@ -17,7 +17,7 @@ export class ImportBranchOpdTestsDto {
   @ArrayNotEmpty()
   @ArrayUnique()
   @IsUUID('4', { each: true })
-  testIds!: string[];
+  labTestIds!: string[];
 
   /**
    * Pricing list to import into. Omitted = the branch's default (Walk-in) list.

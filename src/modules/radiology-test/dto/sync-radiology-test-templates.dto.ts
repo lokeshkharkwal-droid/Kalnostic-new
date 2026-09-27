@@ -8,7 +8,7 @@ import {
 
 /**
  * Re-pull previously-imported radiology tests from their SITE_ADMIN templates.
- * Scoped to one master data. `testIds` optionally narrows the sync; when omitted,
+ * Scoped to one master data. `labTestIds` optionally narrows the sync; when omitted,
  * every imported test (`clonedFromId != null`) in the master data is synced.
  */
 export class SyncRadiologyTestTemplatesDto {
@@ -20,5 +20,5 @@ export class SyncRadiologyTestTemplatesDto {
   @ArrayMaxSize(500)
   @ArrayUnique()
   @IsUUID('all', { each: true })
-  testIds?: string[];
+  labTestIds?: string[];
 }

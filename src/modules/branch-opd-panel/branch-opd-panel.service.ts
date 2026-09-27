@@ -131,7 +131,7 @@ export class BranchOpdPanelService {
       targetPanelList.id,
       walkInTest.id,
       actorId,
-      dto.panelIds,
+      dto.labPanelIds,
       branchTestBySource,
     );
     await this.writePanelImportPlan(
@@ -455,8 +455,8 @@ export class BranchOpdPanelService {
       isDuplicate: false,
       sourcePanelId: { not: null },
     };
-    if (dto.branchPanelIds?.length) {
-      where.id = { in: dto.branchPanelIds };
+    if (dto.branchLabPanelIds?.length) {
+      where.id = { in: dto.branchLabPanelIds };
     }
     const copies = await this.prisma.branchOpdPanel.findMany({
       where,
@@ -678,22 +678,22 @@ export class BranchOpdPanelService {
    * string, keyed by `branchPanelId`. Samples live on each member `BranchOpdTest`.
    */
   private async resolveSampleSummaries(
-    panelIds: string[],
+    labPanelIds: string[],
   ): Promise<Map<string, string>> {
     const map = new Map<string, string>();
-    if (panelIds.length === 0) {
+    if (labPanelIds.length === 0) {
       return map;
     }
     const memberRows = await this.prisma.branchOpdPanelTest.findMany({
-      where: { branchPanelId: { in: panelIds }, deletedAt: null },
+      where: { branchPanelId: { in: labPanelIds }, deletedAt: null },
       select: { branchPanelId: true, branchTestId: true },
     });
-    const testIds = [...new Set(memberRows.map((r) => r.branchTestId))];
-    if (testIds.length === 0) {
+    const labTestIds = [...new Set(memberRows.map((r) => r.branchTestId))];
+    if (labTestIds.length === 0) {
       return map;
     }
     const tests = await this.prisma.branchOpdTest.findMany({
-      where: { id: { in: testIds } },
+      where: { id: { in: labTestIds } },
       select: { id: true, configSnapshot: true },
     });
     const sampleTypesByTestId = new Map<string, string[]>();

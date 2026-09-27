@@ -8,7 +8,7 @@ import {
 
 /**
  * Re-pull previously-imported opd tests from their SITE_ADMIN templates.
- * Scoped to one master data. `testIds` optionally narrows the sync; when omitted,
+ * Scoped to one master data. `labTestIds` optionally narrows the sync; when omitted,
  * every imported test (`clonedFromId != null`) in the master data is synced.
  */
 export class SyncOpdTestTemplatesDto {
@@ -20,5 +20,5 @@ export class SyncOpdTestTemplatesDto {
   @ArrayMaxSize(500)
   @ArrayUnique()
   @IsUUID('all', { each: true })
-  testIds?: string[];
+  labTestIds?: string[];
 }

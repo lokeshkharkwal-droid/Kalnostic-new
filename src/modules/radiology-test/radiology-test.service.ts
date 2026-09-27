@@ -2070,8 +2070,8 @@ export class RadiologyTestService {
       clonedFromId: { not: null },
       deletedAt: null,
     };
-    if (dto.testIds?.length) {
-      where.id = { in: dto.testIds };
+    if (dto.labTestIds?.length) {
+      where.id = { in: dto.labTestIds };
     }
     const tests = await this.prisma.radiologyTest.findMany({ where });
 

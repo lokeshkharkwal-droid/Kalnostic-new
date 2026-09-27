@@ -16,7 +16,7 @@ export class ImportBranchRadiologyPanelsDto {
   @ArrayNotEmpty()
   @ArrayUnique()
   @IsUUID('4', { each: true })
-  panelIds!: string[];
+  labPanelIds!: string[];
 
   /**
    * Pricing list to import into. Omitted = the branch's default (Walk-in) panel list.

@@ -2062,8 +2062,8 @@ export class OpdTestService {
       clonedFromId: { not: null },
       deletedAt: null,
     };
-    if (dto.testIds?.length) {
-      where.id = { in: dto.testIds };
+    if (dto.labTestIds?.length) {
+      where.id = { in: dto.labTestIds };
     }
     const tests = await this.prisma.opdTest.findMany({ where });
 

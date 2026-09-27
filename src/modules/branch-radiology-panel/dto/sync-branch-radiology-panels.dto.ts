@@ -7,7 +7,7 @@ import {
 } from 'class-validator';
 
 /**
- * Sync payload. `branchPanelIds` optionally restricts the re-snapshot to a subset of
+ * Sync payload. `branchLabPanelIds` optionally restricts the re-snapshot to a subset of
  * the branch's Radiology Panel List; omit it to sync every copy in the target list.
  * Sync reloads each copy's source Master Data panel (via `sourcePanelId`),
  * OVERWRITES the copy's fields, and rebuilds its member tests.
@@ -18,7 +18,7 @@ export class SyncBranchRadiologyPanelsDto {
   @ArrayNotEmpty()
   @ArrayUnique()
   @IsUUID('4', { each: true })
-  branchPanelIds?: string[];
+  branchLabPanelIds?: string[];
 
   /**
    * Pricing list to sync. Omitted = the branch's default (Walk-in) panel list. Must

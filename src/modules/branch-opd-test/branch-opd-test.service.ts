@@ -133,7 +133,7 @@ export class BranchOpdTestService {
       branchId,
       targetList.id,
       actorId,
-      dto.testIds,
+      dto.labTestIds,
     );
     await this.writeImportPlan(tenantId, plan.toCreate, plan.toUpdate);
     return {
@@ -375,8 +375,8 @@ export class BranchOpdTestService {
       isDuplicate: false,
       sourceTestId: { not: null },
     };
-    if (dto.branchTestIds?.length) {
-      where.id = { in: dto.branchTestIds };
+    if (dto.branchLabTestIds?.length) {
+      where.id = { in: dto.branchLabTestIds };
     }
     const copies = await this.prisma.branchOpdTest.findMany({
       where,
