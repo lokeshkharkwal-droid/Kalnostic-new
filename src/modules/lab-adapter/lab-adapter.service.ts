@@ -1,6 +1,6 @@
 import { randomBytes } from 'crypto';
 import { Injectable } from '@nestjs/common';
-import { LabAdapter, Prisma } from '@prisma/client';
+import { AdapterStatus, LabAdapter, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { BranchService } from '../branch/branch.service';
@@ -12,6 +12,7 @@ import {
   LabAdapterBranchRef,
   LabAdapterLabTestRef,
   LabAdapterListRow,
+  LabAdapterOption,
   LabAdapterWithRelations,
 } from './entities/lab-adapter.entity';
 import {
@@ -83,7 +84,7 @@ export class LabAdapterService {
             name: dto.name,
             token,
             equipmentId: dto.equipmentId,
-            isActive: dto.isActive ?? true,
+            status: dto.status ?? AdapterStatus.ONLINE,
             createdBy: actorId,
             updatedBy: actorId,
           },
@@ -118,7 +119,7 @@ export class LabAdapterService {
       where.name = { contains: term, mode: 'insensitive' };
     }
     if (query.status) {
-      where.isActive = query.status === 'ACTIVE';
+      where.status = query.status;
     }
 
     const [adapters, total] = await Promise.all([
@@ -142,11 +143,73 @@ export class LabAdapterService {
       id: a.id,
       name: a.name,
       token: a.token,
-      isActive: a.isActive,
+      status: a.status,
       equipmentName: equipmentNames.get(a.equipmentId) ?? null,
       branchCount: branchCounts.get(a.id) ?? 0,
       labTestsCount: testCounts.get(a.id) ?? 0,
     }));
+    return { data, total, page, limit };
+  }
+
+  /**
+   * Lightweight `{ id, name }` options for the Analyzer selector (Adapter-wise
+   * reference ranges — Reference Range Master). Every non-INACTIVE adapter of
+   * the tenant (ONLINE or REPORT_ONLY — see the `where` clause's own comment),
+   * optionally narrowed to those assigned to one branch (via
+   * `LabAdapterBranch`) and/or a name search. Mirrors
+   * `EquipmentService.findOptions`'s dual-mode shape: omitting `page` returns
+   * the full array (used directly by the Bruno/docs contract), while supplying
+   * it returns a paginated envelope — the frontend's shared `optionFetcher`
+   * helper always sends `page`, so it always takes the paginated branch.
+   * @param tenantId tenant scope (from JWT)
+   * @param filters optional branchId / search / page / limit
+   */
+  async findOptions(
+    tenantId: string,
+    filters: {
+      branchId?: string;
+      search?: string;
+      page?: number;
+      limit?: number;
+    } = {},
+  ): Promise<LabAdapterOption[] | PaginatedResult<LabAdapterOption>> {
+    const where: Prisma.LabAdapterWhereInput = {
+      tenantId,
+      // A Report Only adapter still reports results manually and needs its
+      // own reference ranges configured, so it stays selectable here — only
+      // a fully INACTIVE adapter is excluded.
+      status: { not: AdapterStatus.INACTIVE },
+      deletedAt: null,
+    };
+    const term = filters.search?.trim();
+    if (term) {
+      where.name = { contains: term, mode: 'insensitive' };
+    }
+    if (filters.branchId) {
+      where.branches = {
+        some: { branchId: filters.branchId, deletedAt: null },
+      };
+    }
+
+    const select = { id: true, name: true } as const;
+    const orderBy = { name: 'asc' } as const;
+
+    if (filters.page === undefined) {
+      return this.prisma.labAdapter.findMany({ where, select, orderBy });
+    }
+
+    const page = filters.page;
+    const limit = filters.limit ?? 20;
+    const [data, total] = await Promise.all([
+      this.prisma.labAdapter.findMany({
+        where,
+        select,
+        orderBy,
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.labAdapter.count({ where }),
+    ]);
     return { data, total, page, limit };
   }
 
@@ -230,8 +293,8 @@ export class LabAdapterService {
     if (dto.equipmentId !== undefined) {
       data.equipmentId = dto.equipmentId;
     }
-    if (dto.isActive !== undefined) {
-      data.isActive = dto.isActive;
+    if (dto.status !== undefined) {
+      data.status = dto.status;
     }
 
     const now = new Date();

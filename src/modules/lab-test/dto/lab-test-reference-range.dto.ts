@@ -1,10 +1,16 @@
-import { AbnormalFlag, AgeUnit, ReferenceGender } from '@prisma/client';
 import {
+  AbnormalFlag,
+  AgeUnit,
+  ReferenceGender,
+} from '@prisma/client';
+import {
+  IsBoolean,
   IsEnum,
   IsInt,
   IsNumber,
   IsOptional,
   IsString,
+  IsUUID,
   MaxLength,
   Min,
 } from 'class-validator';
@@ -22,9 +28,25 @@ export class LabTestReferenceRangeDto {
   @MaxLength(255)
   method?: string;
 
+  @IsString()
+  @IsOptional()
+  @MaxLength(255)
+  unit?: string;
+
+  // NULL means this range is not scoped to any analyzer ("Default"). A real
+  // id scopes it to that adapter. Validated against the tenant's LabAdapter
+  // rows in LabTestService (logical ref, no DB FK).
+  @IsUUID('4')
+  @IsOptional()
+  labAdapterId?: string;
+
   @IsEnum(ReferenceGender)
   @IsOptional()
   gender?: ReferenceGender;
+
+  @IsBoolean()
+  @IsOptional()
+  isDefault?: boolean;
 
   @IsInt()
   @Min(0)

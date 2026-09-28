@@ -33,6 +33,7 @@ import { TatSummaryQueryDto } from './dto/tat-summary-query.dto';
 import { UpsertResultValuesDto } from './dto/upsert-result-values.dto';
 import { ReferenceRangeQueryDto } from './dto/reference-range-query.dto';
 import { ReferenceRangeMethodsQueryDto } from './dto/reference-range-methods-query.dto';
+import { ReferenceRangeCandidatesQueryDto } from './dto/reference-range-candidates-query.dto';
 import { TrendReportQueryDto } from './dto/trend-report-query.dto';
 import { PrintReportDto } from './dto/print-report.dto';
 import {
@@ -343,6 +344,21 @@ export class LabReportController {
     @Query() query: ReferenceRangeQueryDto,
   ) {
     return this.labReportService.resolveReferenceRange(
+      id,
+      tenantId,
+      profile.branchId,
+      query,
+    );
+  }
+
+  @Get(':id/reference-range/candidates')
+  listReferenceRangeCandidates(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+    @Query() query: ReferenceRangeCandidatesQueryDto,
+  ) {
+    return this.labReportService.listReferenceRangeCandidates(
       id,
       tenantId,
       profile.branchId,
