@@ -57,6 +57,7 @@ import {
   PLAIN_NOTE_CATEGORIES,
 } from './dto/lab-report-note.dto';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
+import { PdfTemplateConfigService } from '../pdf-report-template/pdf-template-config.service';
 import {
   escapeHtml,
   toText,
@@ -106,7 +107,6 @@ import {
   InvalidResultParamException,
   UnlockNotPermittedException,
   NoActivePrintTemplateException,
-  AmbiguousPrintTemplateException,
   OrderReportsNotFoundException,
   ReportingWindowClosedException,
 } from './exceptions/lab-report.exceptions';
@@ -168,6 +168,7 @@ export class LabReportService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly pdfReportTemplateService: PdfReportTemplateService,
+    private readonly pdfTemplateConfigService: PdfTemplateConfigService,
     private readonly tatService: TatService,
     private readonly technicianSettingsService: TechnicianSettingsService,
     private readonly eventEmitter: EventEmitter2,
@@ -3036,15 +3037,16 @@ export class LabReportService {
 
   /**
    * Print/Download a report (LABORATORY.docx §6.10's "Print / Download"
-   * action). Resolves the tenant's active template of `type` (or the
-   * caller's explicit `templateId`) and renders it with this report's real
-   * data via `PdfReportTemplateService.generatePdf`.
+   * action). When `templateId` is given (the picker's explicit "Print") it is
+   * used verbatim; when omitted (the "Skip Selection" action) the template is
+   * resolved centrally via {@link resolvePrintTemplateId} (Test Template →
+   * Configuration default → first active template → error), then rendered with
+   * this report's real data via `PdfReportTemplateService.generatePdf`.
    * @param type which `PdfReportTemplate` type to resolve against when
    * `templateId` is omitted — `lab_report` (single test) or `lab_panel`.
    * Ignored when `templateId` is given explicitly.
-   * @throws NoActivePrintTemplateException if no active template exists
-   * @throws AmbiguousPrintTemplateException if multiple exist and no
-   * `templateId` was given
+   * @throws NoActivePrintTemplateException if nothing resolves (no per-test
+   * mapping, no configured default, and no active template of `type`)
    */
   async print(
     id: string,
@@ -3057,35 +3059,151 @@ export class LabReportService {
     await this.referralCredit.assertReportAccessAllowedByReportId(tenantId, id);
     const context = await this.buildPrintContext(id, tenantId, branchId);
     const resolvedTemplateId =
-      templateId ?? (await this.resolvePrintTemplateId(tenantId, type));
+      templateId ??
+      (await this.resolvePrintTemplateId(
+        tenantId,
+        branchId,
+        type,
+        await this.getTestReportTemplateId(id, tenantId),
+      ));
+    // Pass both engine contexts; `generatePdf` picks the right one by the
+    // template body's syntax. A Latte-authored `lab_report` template (e.g. the
+    // ezHealthTrack `{foreach $tests}`/`{$test->rows}` style) renders against the
+    // object-shaped `$tests`/`$test` context instead of being flat-rendered
+    // (which would emit its `{foreach}`/`{$…}` tags verbatim into the PDF).
     return this.pdfReportTemplateService.generatePdf(
       resolvedTemplateId,
       tenantId,
       context,
+      this.buildTestLatteContext(context),
     );
   }
 
+  /**
+   * The ONE authoritative lab-report template resolver (frontend "Skip
+   * Selection" and every no-`templateId` print path funnels through here, so the
+   * fallback order lives in exactly one place — never duplicated in the UI):
+   *
+   *   1. **Test Template** — the per-test mapping (`BranchLabTest`/
+   *      `BranchLabPanel.reportTemplateId`), when set and still active.
+   *   2. **Default Lab Template** — the Configuration default for this slot
+   *      (`PdfTemplateConfig`, `slotKey === type`), active-branch first then the
+   *      tenant-wide config, when set and still active.
+   *   3. **First Active Branch Template** — the first active `PdfReportTemplate`
+   *      of `type` in the tenant.
+   *   4. **No Template Available** — nothing resolved.
+   *
+   * @param testReportTemplateId the per-test mapping id (step 1), or null
+   * @throws NoActivePrintTemplateException if steps 1-3 all yield nothing
+   */
   private async resolvePrintTemplateId(
     tenantId: string,
+    branchId: string | null,
     type: PdfReportTemplateType = 'lab_report',
+    testReportTemplateId?: string | null,
   ): Promise<string> {
+    // 1. Test-level mapping.
+    if (
+      testReportTemplateId &&
+      (await this.isActiveTemplate(testReportTemplateId, tenantId))
+    ) {
+      return testReportTemplateId;
+    }
+    // 2. Configuration default (branch-level, then tenant-wide).
+    const configured = await this.resolveConfigDefaultTemplateId(
+      tenantId,
+      branchId,
+      type,
+    );
+    if (configured) return configured;
+    // 3. First active template of this type.
     const { data } = await this.pdfReportTemplateService.findAllForTenant(
       tenantId,
       1,
-      10,
-      {
-        type,
-        status: 'ACTIVE',
-      },
+      1,
+      { type, status: 'ACTIVE' },
     );
-    if (data.length === 0) throw new NoActivePrintTemplateException(tenantId);
-    if (data.length > 1) {
-      throw new AmbiguousPrintTemplateException(
-        tenantId,
-        data.map((t) => t.id),
-      );
+    if (data[0]) return data[0].id;
+    // 4. Nothing available.
+    throw new NoActivePrintTemplateException(tenantId);
+  }
+
+  /**
+   * The per-test report-template mapping for a report's ordered lab test.
+   * Prefers the branch copy's own mapping (`BranchLabTest.reportTemplateId`, set
+   * on branch-admin Master Data), then falls back to the source tenant test's
+   * mapping (`LabTest.reportTemplateId`, set on business-admin Master Data) so a
+   * business-admin mapping is honored even before it is synced into the branch
+   * copy. Returns null for panels (which carry no per-test template field), for
+   * free-text order items, or when nothing is mapped.
+   */
+  private async getTestReportTemplateId(
+    reportId: string,
+    tenantId: string,
+  ): Promise<string | null> {
+    const report = await this.prisma.labReport.findFirst({
+      where: { id: reportId, tenantId, deletedAt: null },
+      select: {
+        orderItem: {
+          select: {
+            branchLabTest: {
+              select: { reportTemplateId: true, sourceLabTestId: true },
+            },
+          },
+        },
+      },
+    });
+    const branchTest = report?.orderItem?.branchLabTest;
+    if (!branchTest) return null;
+
+    // 1. Branch copy's own mapping (branch-admin Master Data).
+    if (branchTest.reportTemplateId) return branchTest.reportTemplateId;
+
+    // 2. Source tenant test mapping (business-admin Master Data).
+    if (branchTest.sourceLabTestId) {
+      const source = await this.prisma.labTest.findFirst({
+        where: { id: branchTest.sourceLabTestId, tenantId, deletedAt: null },
+        select: { reportTemplateId: true },
+      });
+      if (source?.reportTemplateId) return source.reportTemplateId;
     }
-    return data[0]!.id;
+    return null;
+  }
+
+  /**
+   * The Configuration default template id for a slot, preferring the active
+   * branch's config and falling back to the tenant-wide config. Returns null
+   * when unset or the configured template is no longer active.
+   */
+  private async resolveConfigDefaultTemplateId(
+    tenantId: string,
+    branchId: string | null,
+    slotKey: string,
+  ): Promise<string | null> {
+    const scopes: (string | null)[] = branchId ? [branchId, null] : [null];
+    for (const scope of scopes) {
+      const map = await this.pdfTemplateConfigService.getConfig(
+        tenantId,
+        scope,
+      );
+      const templateId = map[slotKey];
+      if (templateId && (await this.isActiveTemplate(templateId, tenantId))) {
+        return templateId;
+      }
+    }
+    return null;
+  }
+
+  /** True when `templateId` is an active, non-deleted template of the tenant. */
+  private async isActiveTemplate(
+    templateId: string,
+    tenantId: string,
+  ): Promise<boolean> {
+    const template = await this.prisma.pdfReportTemplate.findFirst({
+      where: { id: templateId, tenantId, deletedAt: null, isActive: true },
+      select: { id: true },
+    });
+    return template !== null;
   }
 
   /**
@@ -3112,7 +3230,10 @@ export class LabReportService {
     tenantId: string,
     branchId: string | null,
     orderItemIds?: string[],
-  ): Promise<Record<string, unknown>> {
+  ): Promise<{
+    latteContext: Record<string, unknown>;
+    flatContext: GeneratePdfDto;
+  }> {
     const activeBranchId = this.requireBranch(branchId);
     const reportRows = await this.prisma.labReport.findMany({
       where: {
@@ -3207,26 +3328,185 @@ export class LabReportService {
     const contexts = await Promise.all(
       reportRows.map((r) => this.buildPrintContext(r.id, tenantId, branchId)),
     );
-    const reports = reportRows.map((r, idx) => {
-      const c = contexts[idx];
-      const preparedOn = r.approvedAt ?? r.publishedAt;
-      return {
-        lab_test_id: r.labTestId ?? '',
-        body_html: this.buildTestBodyHtml(c),
-        sample_collected_date: toText(c?.variables?.sample_collected_date),
-        sample_received_date: toText(c?.variables?.sample_received_date),
-        report_prepared_on: preparedOn
-          ? formatReportDateTime(toBranchLocalInstant(preparedOn, timezone))
-          : '',
-        // One visible test entry per report (a panel's sub-tests are already
-        // flattened into `body_html`); drives the templates' display gate/count.
-        tests: [{ display_test_sample: '1' }],
-      };
-    });
+    const reports = await Promise.all(
+      reportRows.map(async (r, idx) => {
+        const c = contexts[idx];
+        const preparedOn = r.approvedAt ?? r.publishedAt;
+        return {
+          lab_test_id: r.labTestId ?? '',
+          body_html: await this.buildReportBodyHtml(
+            r.id,
+            tenantId,
+            branchId,
+            c,
+          ),
+          sample_collected_date: toText(c?.variables?.sample_collected_date),
+          sample_received_date: toText(c?.variables?.sample_received_date),
+          report_prepared_on: preparedOn
+            ? formatReportDateTime(toBranchLocalInstant(preparedOn, timezone))
+            : '',
+          // One visible test entry per report (a panel's sub-tests are already
+          // flattened into `body_html`); drives the templates' display gate/count.
+          tests: [{ display_test_sample: '1' }],
+        };
+      }),
+    );
+
+    // Flat-engine fallback context — for `lab_all_report` templates authored in
+    // the flat `{tag}`/`{{#each}}` syntax (e.g. the seeded "Sample Lab All
+    // Reports") rather than Latte. Derived from the SAME per-report `contexts`
+    // (no extra queries): order/patient-level `variables` come from the first
+    // report; `sections.reports` is one row per report; `sections.results`
+    // flattens every parameter row across the order (each tagged with its
+    // `test_name` for `{{this.test_name}}`).
+    const firstCtx = contexts[0];
+    const flatContext: GeneratePdfDto = {
+      variables: {
+        ...(firstCtx?.variables ?? {}),
+        report_count: String(reports.length),
+      },
+      images: firstCtx?.images ?? {},
+      sections: {
+        reports: reports.map((rep, idx) => {
+          const v = contexts[idx]?.variables ?? {};
+          const rows = contexts[idx]?.sections?.results ?? [];
+          return {
+            test_name: toText(v.test_name),
+            report_status: toText(v.report_status),
+            sample_collected_date: rep.sample_collected_date,
+            sample_received_date: rep.sample_received_date,
+            report_prepared_on: rep.report_prepared_on,
+            results_summary: rows
+              .map((r) => {
+                const unit = toText(r.unit);
+                return `${toText(r.parameter_name)}: ${toText(r.observed1)}${
+                  unit ? ` ${unit}` : ''
+                }`.trim();
+              })
+              .filter((s) => s !== ':')
+              .join('; '),
+          };
+        }),
+        results: contexts.flatMap((c) => {
+          const testName = toText(c?.variables?.test_name);
+          return (c?.sections?.results ?? []).map((r) => ({
+            ...r,
+            test_name: testName,
+          }));
+        }),
+      },
+      signatories: firstCtx?.signatories ?? [],
+    };
 
     return {
-      report_tests: { groups: [], tests: reports },
-      header_fields: headerFields,
+      latteContext: {
+        report_tests: { groups: [], tests: reports },
+        header_fields: headerFields,
+      },
+      flatContext,
+    };
+  }
+
+  /**
+   * Build one test's `body_html` for a `lab_all_report` by rendering the report
+   * through its OWN configured single-report `lab_report` template BODY — the
+   * same Test-Template → Configuration → first-active resolution a standalone
+   * print uses ({@link resolvePrintTemplateId}) — so each test preserves its
+   * full designed report structure. This mirrors ezHealthTrack's
+   * `get_body_section()`, which renders each test's own `meta['body_html']` and
+   * stores the result as that test's `body_html` for the outer all-reports loop.
+   *
+   * Only the single-report template's BODY is rendered (not its `header_html`),
+   * so the per-test patient/order header is NOT duplicated — the shared header
+   * comes from the all-report template's own header block + `header_fields`.
+   *
+   * Falls back to the built-in {@link buildTestBodyHtml} stub when the tenant
+   * has no single-report template configured, or rendering fails, so the
+   * combined report always produces a body.
+   */
+  private async buildReportBodyHtml(
+    reportId: string,
+    tenantId: string,
+    branchId: string | null,
+    context: GeneratePdfDto | undefined,
+  ): Promise<string> {
+    try {
+      const templateId = await this.resolvePrintTemplateId(
+        tenantId,
+        branchId,
+        'lab_report',
+        await this.getTestReportTemplateId(reportId, tenantId),
+      );
+      // Pass both engine contexts; the template service picks the right one by
+      // the template body's syntax (flat vs Latte). A Latte body keeps its
+      // ezHealthTrack conditionals (hide-empty-sections, method-column reflow,
+      // per-group sub-headers) working against the `$tests`/`$test` shape.
+      return await this.pdfReportTemplateService.renderReportBodyFragment(
+        templateId,
+        tenantId,
+        context ?? {},
+        this.buildTestLatteContext(context),
+      );
+    } catch {
+      return this.buildTestBodyHtml(context);
+    }
+  }
+
+  /**
+   * Reshape a report's flat {@link buildPrintContext} output into the
+   * object-shaped context a Latte single-test `lab_report` template expects:
+   * `tests[0]` (this report, with `rows[]` + content sections) plus the
+   * root-level approver fields for the signature block. Derived entirely from
+   * the already-built `context`, so it adds no queries. Mirrors the legacy
+   * ezHealthTrack `pdf_body_fields` shape (`$tests`, `$test->rows`, etc.).
+   *
+   * The flat `context.variables` (patient/order header fields — `patient_name`,
+   * `order_code`, `sample_source_label`, `order_date_time`, `order_id_barcode`,
+   * `order_id_qr_code`, …) are also spread at the root, so a Latte template's
+   * header can print them as bare `{patient_name}` tokens or `<img
+   * src="{order_id_qr_code}">`. Latte has no `{{image:…}}` token — images must be
+   * an `<img src="{…}">` against the URL-valued field.
+   */
+  private buildTestLatteContext(
+    context: GeneratePdfDto | undefined,
+  ): Record<string, unknown> {
+    const v = context?.variables ?? {};
+    const rows = (context?.sections?.results ?? []).map((r) => ({
+      parameter_name: toText(r.parameter_name),
+      method_name: toText(r.method_name ?? r.methodology),
+      // `value` is the ezHealthTrack "has a result?" gate; mirror observed1.
+      value: toText(r.observed1),
+      observed1: toText(r.observed1),
+      observed2: toText(r.observed2),
+      unit: toText(r.unit),
+      reference_display: toText(r.reference_display),
+      group_name: toText(r.group_name),
+      result_note: toText(r.result_note),
+    }));
+    const test = {
+      test_name: toText(v.test_name),
+      sample_type: toText(v.sample_type),
+      sample_note: toText(v.sample_note),
+      useful_for: toText(v.useful_for),
+      interpretation: toText(v.interpretation),
+      limitations: toText(v.limitations),
+      references: toText(v.references),
+      rows,
+    };
+    return {
+      // Flat header/order/patient variables as bare Latte tokens (`{patient_name}`,
+      // `{order_code}`, `{order_id_qr_code}`, …). Spread first so the explicit keys
+      // below always win.
+      ...v,
+      tests: [test],
+      // Latte has no `{{image:…}}` token — a Latte template prints the signature
+      // via `<img src="{report_approved_by_signature}">`.
+      report_approved_by_name: toText(v.report_approved_by_name),
+      report_approved_by_designation: toText(v.report_approved_by_designation),
+      report_approved_by_certifications: toText(
+        v.report_approved_by_certifications,
+      ),
+      report_approved_by_signature: toText(v.report_approved_by_signature),
     };
   }
 
@@ -3235,7 +3515,9 @@ export class LabReportService {
    * template drops per iteration) from its single-report {@link buildPrintContext}
    * output: the parameter results table plus any content sections. Self-contained
    * HTML — the surrounding patient/order header comes from the template's own
-   * page-header block, so this is the results only (no duplicate header).
+   * page-header block, so this is the results only (no duplicate header). Used as
+   * the FALLBACK when no single-report template resolves (see
+   * {@link buildReportBodyHtml}).
    */
   private buildTestBodyHtml(ctx: GeneratePdfDto | undefined): string {
     const v = ctx?.variables ?? {};
@@ -3297,10 +3579,9 @@ export class LabReportService {
    * header/title/content-sections, only one shared table for the whole
    * order. Merging N already-correct single-report PDFs sidesteps that
    * limitation entirely, and reuses `print()`'s per-report template
-   * resolution as-is: if per-test template selection is added later (e.g. a
-   * `LabTest`-specific override in `resolvePrintTemplateId`), this method
-   * inherits it automatically since each report resolves its own template
-   * independently, exactly as a standalone print does today.
+   * resolution as-is: each report resolves its own template independently via
+   * the centralized {@link resolvePrintTemplateId} (per-test mapping →
+   * Configuration default → first active), exactly as a standalone print does.
    * @param templateId when given, forces EVERY report in this merge to use
    * this one specific template, skipping each report's own resolution —
    * an explicit override, not the default per-report behavior.
@@ -3311,8 +3592,6 @@ export class LabReportService {
    * items) has no lab reports (wrong id, or no item has reached ACCEPTED yet)
    * @throws NoActivePrintTemplateException if a report's tenant has no
    * active `lab_report` template (and no override `templateId` was given)
-   * @throws AmbiguousPrintTemplateException if multiple exist and no
-   * `templateId` was given
    */
   async printAllForOrder(
     orderId: string,
@@ -3339,16 +3618,21 @@ export class LabReportService {
         tenantId,
       );
       if (type === 'lab_all_report' || type === 'patient_lab_all_report') {
-        const context = await this.buildAllReportsContext(
+        const { latteContext, flatContext } = await this.buildAllReportsContext(
           orderId,
           tenantId,
           branchId,
           orderItemIds,
         );
+        // `generateLattePdf` picks the engine by the template body's syntax: a
+        // Latte all-report template (`{foreach $report_tests->tests}`) uses
+        // `latteContext`; a flat one (`{{#each reports}}`/`{tag}`) falls back to
+        // the flat renderer with `flatContext`.
         return this.pdfReportTemplateService.generateLattePdf(
           templateId,
           tenantId,
-          context,
+          latteContext,
+          flatContext,
         );
       }
     }

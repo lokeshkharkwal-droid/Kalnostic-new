@@ -30,8 +30,17 @@ vars:pre-request {
 docs {
   Upsert the caller's slot -> template assignments for the active scope. Each
   `slotKey` must be a known slot (`GET config/slots`); a non-null `templateId`
-  must be one of the caller's active templates. A null `templateId` clears the
-  slot. Returns the resulting map. 400 `INVALID_PDF_TEMPLATE_CONFIG_SLOT` on an
-  unknown slot; 404 `PDF_REPORT_TEMPLATE_NOT_FOUND` if a `templateId` isn't the
-  tenant's.
+  must be one of the caller's active templates AND of the SAME type as the slot
+  (e.g. the `lab_report` slot only accepts a `lab_report` template). A null
+  `templateId` clears the slot. Returns the resulting map.
+
+  This is the tenant/branch-wide DEFAULT resolved per report by
+  `LabReportService.resolvePrintTemplateId` (per-test mapping -> this config
+  default -> first active). Changing the `lab_report` slot here therefore
+  switches the single-test template used for every report — including each
+  test's body inside a Lab All Report.
+
+  Errors: 400 `INVALID_PDF_TEMPLATE_CONFIG_SLOT` on an unknown slot; 400
+  `PDF_TEMPLATE_CONFIG_TYPE_MISMATCH` if a `templateId`'s type differs from the
+  slot; 404 `PDF_REPORT_TEMPLATE_NOT_FOUND` if a `templateId` isn't the tenant's.
 }

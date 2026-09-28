@@ -119,6 +119,39 @@ export class TemplateRenderService {
   }
 
   /**
+   * Render ONLY the template's interpolated body fragment (no page wrapper, no
+   * `<!DOCTYPE>`/`<html>`, no header/footer) — the direct equivalent of
+   * ezHealthTrack's `get_body_section()` (`meta['body_html']`). Used to build
+   * each test's `body_html` for a `lab_all_report`: every report is rendered
+   * through its own configured single-report `lab_report` template's BODY, and
+   * the resulting fragment is dropped per iteration by the outer all-reports
+   * template (`{foreach $report_tests->tests as $r}{$r->body_html|noescape}`).
+   *
+   * The template's own `{{image:<id>}}` registry is merged with any
+   * generate-time `context.images` (the latter wins on id collisions), exactly
+   * as {@link render} does. When the template carries `custom_css`, it is
+   * prefixed as a `<style>` block so each report's styling survives embedding
+   * in the combined document (harmless if repeated across reports).
+   * @param meta the single-report template's normalized meta (all keys present)
+   * @param context the report's data (variables, images, sections)
+   */
+  renderBodyFragment(meta: PdfTemplateMeta, context: GeneratePdfDto): string {
+    const variables = context.variables ?? {};
+    const images = { ...(meta.images ?? {}), ...(context.images ?? {}) };
+    const sections = context.sections ?? {};
+    const body = this.renderFragment(
+      meta.body_html,
+      variables,
+      images,
+      sections,
+    );
+    const css = meta.custom_css?.trim()
+      ? `<style>${meta.custom_css}</style>`
+      : '';
+    return `${css}${body}`;
+  }
+
+  /**
    * Interpolate one HTML fragment: repeating sections first, then image
    * placeholders, then flat `{placeholder}` variables.
    */
