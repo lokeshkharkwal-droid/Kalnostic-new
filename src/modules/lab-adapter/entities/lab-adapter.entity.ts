@@ -1,4 +1,4 @@
-import { LabAdapter } from '@prisma/client';
+import { AdapterStatus, LabAdapter } from '@prisma/client';
 
 /** A branch assigned to an adapter (resolved with its name for reads). */
 export interface LabAdapterBranchRef {
@@ -38,8 +38,15 @@ export interface LabAdapterListRow {
   id: string;
   name: string;
   token: string;
-  isActive: boolean;
+  status: AdapterStatus;
   equipmentName: string | null;
   branchCount: number;
   labTestsCount: number;
+}
+
+/** A lightweight adapter option row for the Analyzer selector (Adapter-wise
+ * reference ranges). */
+export interface LabAdapterOption {
+  id: string;
+  name: string;
 }

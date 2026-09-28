@@ -654,6 +654,15 @@ export type BillingRecordRow = BillingOrder & {
   paymentMode?: string;
   paymentReference?: string | null;
   paymentDate?: Date | null;
+  /**
+   * Invoice-lock (Outstanding report). Whether an active invoice has already been
+   * generated for this order, and that invoice's number. Drives the frontend's
+   * disabled "Create Invoice" selection checkbox so a record can't be invoiced
+   * twice (the backend double-invoice guard is the non-bypassable backstop).
+   * Absent on the other reports (which don't drive invoice creation).
+   */
+  hasInvoice?: boolean;
+  invoiceCode?: string | null;
 };
 
 /**
