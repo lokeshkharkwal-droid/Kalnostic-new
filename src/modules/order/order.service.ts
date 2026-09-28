@@ -2506,7 +2506,23 @@ export class OrderService {
     };
   }
 
-  /** `lab_quotation_print` — the quotation: items + totals + validity. */
+  /**
+   * `lab_quotation_print` — the quotation: items + totals + validity, plus the
+   * legacy quotation tags:
+   *  - `ext_quote_id` — the quote's external id (`externalOrderId`, generated
+   *    from the branch's QUOTATION format at create, or typed manually). Blank
+   *    when the quote has none.
+   *  - `patient.full_name` / `order.referring_doctor` / `order.referring_panel`
+   *    / `bill.total` — flat aliases of `patient_name` / `referred_by` /
+   *    `referral_panel` / `net_amount`, so the legacy dotted tags resolve.
+   *    `TemplateRenderService` matches a dotted token as one literal key
+   *    (case-insensitively), not as a nested path, so the aliases live on this
+   *    type only rather than changing the shared engine.
+   *  - `item.index` / `item.name` / `item.price` — per-row aliases of `sr_no` /
+   *    `name` / `price` on each `sections.items` row. They must be row keys: a
+   *    `{{#each items}}` block resolves `{col}` against the row first, whereas a
+   *    top-level key would print the same value on every row.
+   */
   private async buildQuotationContext(
     order: OrderWithRelations,
     tenantId: string,
@@ -2514,9 +2530,12 @@ export class OrderService {
     const totals = this.billTotals(order);
     const { dateFormat } = await this.tenantService.getLocale(tenantId);
     const itemRows = await this.itemRowsWithPanelTests(order);
+    const patient = this.patientVariables(order, dateFormat);
+    const referral = this.referralVariables(order);
     return {
       variables: {
         quote_id: order.orderCode,
+        ext_quote_id: order.externalOrderId ?? '',
         quote_date: formatTenantDate(order.orderDate, dateFormat),
         valid_till: order.quotationValidTill
           ? formatTenantDate(order.quotationValidTill, dateFormat)
@@ -2527,10 +2546,21 @@ export class OrderService {
         discount_amount: totals.discount,
         net_amount: totals.net,
         panel_tests_name: this.panelTestsNameFlat(itemRows),
-        ...this.patientVariables(order, dateFormat),
-        ...this.referralVariables(order),
+        ...patient,
+        ...referral,
+        'patient.full_name': patient.patient_name,
+        'order.referring_doctor': referral.referred_by,
+        'order.referring_panel': referral.referral_panel,
+        'bill.total': totals.net,
       },
-      sections: { items: itemRows },
+      sections: {
+        items: itemRows.map((row) => ({
+          ...row,
+          'item.index': row.sr_no,
+          'item.name': row.name,
+          'item.price': row.price,
+        })),
+      },
     };
   }
 

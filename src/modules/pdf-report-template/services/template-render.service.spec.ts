@@ -277,4 +277,54 @@ describe('TemplateRenderService — case-insensitive tokens', () => {
     );
     expect(bodyHtml).toContain('<p>{ORDER.DATE}|{SIGNATURE_NAME}</p>');
   });
+
+  it('resolves the lab quotation legacy tags, with per-row item aliases inside {{#each items}}', () => {
+    // Shape emitted by `OrderService.buildQuotationContext`: flat dotted
+    // aliases at the top level, `item.*` aliases on each row.
+    const { headerTemplate, bodyHtml } = service.render(
+      meta({
+        header_html: '<p>{EXT_QUOTE_ID}</p>',
+        body_html:
+          '<p>{PATIENT.FULL_NAME}|{ORDER.REFERRING_DOCTOR}|{ORDER.REFERRING_PANEL}</p>' +
+          '<table>{{#each items}}<tr><td>{ITEM.INDEX}</td><td>{ITEM.NAME}</td>' +
+          '<td>{panel_tests_name}</td><td>{item.price}</td></tr>{{/each}}</table>' +
+          '<p>Total {BILL.TOTAL}</p>',
+      }),
+      {
+        variables: {
+          ext_quote_id: 'QT-0042',
+          'patient.full_name': 'Asha Verma',
+          'order.referring_doctor': 'Rohit Sharma',
+          'order.referring_panel': 'Apollo Panel',
+          'bill.total': 1550,
+          panel_tests_name: 'RA Factor, KFT',
+        },
+        sections: {
+          items: [
+            {
+              'item.index': 1,
+              'item.name': 'CBC',
+              'item.price': 300,
+              panel_tests_name: '',
+            },
+            {
+              'item.index': 2,
+              'item.name': 'Health Panel',
+              'item.price': 1200,
+              panel_tests_name: 'RA Factor, KFT',
+            },
+          ],
+        },
+      },
+    );
+    expect(headerTemplate).toContain('<p>QT-0042</p>');
+    expect(bodyHtml).toContain('<p>Asha Verma|Rohit Sharma|Apollo Panel</p>');
+    // Each row carries its own values — a test row's empty panel list must not
+    // fall back to the quote-wide flat `panel_tests_name`.
+    expect(bodyHtml).toContain(
+      '<tr><td>1</td><td>CBC</td><td></td><td>300</td></tr>' +
+        '<tr><td>2</td><td>Health Panel</td><td>RA Factor, KFT</td><td>1200</td></tr>',
+    );
+    expect(bodyHtml).toContain('<p>Total 1550</p>');
+  });
 });

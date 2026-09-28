@@ -34,7 +34,7 @@ body:json {
       "header_name": "Quotation Header",
       "header_html": "<h2>Lab Quotation — variable check</h2><div>Quote: {quote_id} · Valid till: {valid_till}</div>",
       "body_name": "Quotation Body",
-      "body_html": "<h3>Scalar variables</h3><table><tr><th class='k'>Variable</th><th>Resolved value</th></tr><tr><td class='k'>quote_id</td><td>{quote_id}</td></tr><tr><td class='k'>quote_date</td><td>{quote_date}</td></tr><tr><td class='k'>valid_till</td><td>{valid_till}</td></tr><tr><td class='k'>status</td><td>{status}</td></tr><tr><td class='k'>branch_name</td><td>{branch_name}</td></tr><tr><td class='k'>gross_amount</td><td>{gross_amount}</td></tr><tr><td class='k'>discount_amount</td><td>{discount_amount}</td></tr><tr><td class='k'>net_amount</td><td>{net_amount}</td></tr><tr><td class='k'>patient_name</td><td>{patient_name}</td></tr><tr><td class='k'>patient_age</td><td>{patient_age}</td></tr><tr><td class='k'>patient_gender</td><td>{patient_gender}</td></tr><tr><td class='k'>patient_um_id</td><td>{patient_um_id}</td></tr><tr><td class='k'>patient_mobile</td><td>{patient_mobile}</td></tr><tr><td class='k'>patient_email</td><td>{patient_email}</td></tr><tr><td class='k'>patient_blood_group</td><td>{patient_blood_group}</td></tr><tr><td class='k'>referred_by</td><td>{referred_by}</td></tr><tr><td class='k'>referral_panel</td><td>{referral_panel}</td></tr></table><h3>sections.items ({{#each items}})</h3><table class='sec'><tr><th>sr_no</th><th>name</th><th>code</th><th>type</th><th>price</th><th>discount</th></tr>{{#each items}}<tr><td>{sr_no}</td><td>{name}</td><td>{code}</td><td>{type}</td><td>{price}</td><td>{discount}</td></tr>{{/each}}</table>",
+      "body_html": "<h3>Scalar variables</h3><table><tr><th class='k'>Variable</th><th>Resolved value</th></tr><tr><td class='k'>quote_id</td><td>{quote_id}</td></tr><tr><td class='k'>EXT_QUOTE_ID</td><td>{EXT_QUOTE_ID}</td></tr><tr><td class='k'>quote_date</td><td>{quote_date}</td></tr><tr><td class='k'>valid_till</td><td>{valid_till}</td></tr><tr><td class='k'>status</td><td>{status}</td></tr><tr><td class='k'>branch_name</td><td>{branch_name}</td></tr><tr><td class='k'>gross_amount</td><td>{gross_amount}</td></tr><tr><td class='k'>discount_amount</td><td>{discount_amount}</td></tr><tr><td class='k'>net_amount</td><td>{net_amount}</td></tr><tr><td class='k'>patient_name</td><td>{patient_name}</td></tr><tr><td class='k'>patient_age</td><td>{patient_age}</td></tr><tr><td class='k'>patient_gender</td><td>{patient_gender}</td></tr><tr><td class='k'>patient_um_id</td><td>{patient_um_id}</td></tr><tr><td class='k'>patient_mobile</td><td>{patient_mobile}</td></tr><tr><td class='k'>patient_email</td><td>{patient_email}</td></tr><tr><td class='k'>patient_blood_group</td><td>{patient_blood_group}</td></tr><tr><td class='k'>referred_by</td><td>{referred_by}</td></tr><tr><td class='k'>referral_panel</td><td>{referral_panel}</td></tr><tr><td class='k'>PATIENT.FULL_NAME</td><td>{PATIENT.FULL_NAME}</td></tr><tr><td class='k'>ORDER.REFERRING_DOCTOR</td><td>{ORDER.REFERRING_DOCTOR}</td></tr><tr><td class='k'>ORDER.REFERRING_PANEL</td><td>{ORDER.REFERRING_PANEL}</td></tr><tr><td class='k'>BILL.TOTAL</td><td>{BILL.TOTAL}</td></tr><tr><td class='k'>panel_tests_name</td><td>{panel_tests_name}</td></tr></table><h3>sections.items ({{#each items}})</h3><table class='sec'><tr><th>sr_no</th><th>name</th><th>code</th><th>type</th><th>price</th><th>discount</th><th>ITEM.INDEX</th><th>ITEM.NAME</th><th>panel_tests_name</th><th>item.price</th></tr>{{#each items}}<tr><td>{sr_no}</td><td>{name}</td><td>{code}</td><td>{type}</td><td>{price}</td><td>{discount}</td><td>{ITEM.INDEX}</td><td>{ITEM.NAME}</td><td>{panel_tests_name}</td><td>{item.price}</td></tr>{{/each}}</table>",
       "footer_name": "Quotation Footer",
       "footer_html": "<div>— end of lab_quotation_print —</div>"
     }
@@ -50,9 +50,21 @@ docs {
   Create the `lab_quotation_print` checklist template and capture
   `quotationTemplateId`.
 
-  Variables from `OrderService.buildQuotationContext`: `quote_id`, `quote_date`,
-  `valid_till`, `status` (the quotation status), `branch_name`, `gross_amount`,
-  `discount_amount`, `net_amount`, the seven `patient_*` fields, `referred_by`,
+  Variables from `OrderService.buildQuotationContext`: `quote_id`,
+  `ext_quote_id` (the quote's external id — blank when it has none),
+  `quote_date`, `valid_till`, `status` (the quotation status), `branch_name`,
+  `gross_amount`, `discount_amount`, `net_amount`, `panel_tests_name` (every
+  panel's sub-tests, comma-joined), the `patient_*` fields, `referred_by`,
   `referral_panel`; `sections.items[] { sr_no, name, code, type, price,
-  discount }`.
+  discount, panel_tests_name }`.
+
+  Legacy quotation tags (lab_quotation_print only; tags match
+  case-insensitively, and a dotted tag is one flat key, not a nested path):
+  - `{PATIENT.FULL_NAME}` = `patient_name`, `{ORDER.REFERRING_DOCTOR}` =
+    `referred_by` (`Self` when none), `{ORDER.REFERRING_PANEL}` =
+    `referral_panel` (`Walk-in` when none), `{BILL.TOTAL}` = `net_amount`.
+  - Inside `{{#each items}}` only: `{ITEM.INDEX}` = the row's `sr_no` (1, 2,
+    3…), `{ITEM.NAME}` = `name`, `{item.price}` = `price` (the item's list
+    price), and `{panel_tests_name}` = that row's own panel sub-tests (blank on
+    a test / direct row). Outside the block these item tags stay literal.
 }
