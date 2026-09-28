@@ -277,6 +277,7 @@ export class LabTestService {
       mandatoryCatId: dto.mandatoryCatId,
       mandatorySubcatId: dto.mandatorySubcatId,
     });
+    await this.assertReportTemplate(tenantId, dto.reportTemplateId);
     (dto.resultParams ?? []).forEach((p) => this.assertParam(p));
     this.assertFormulaSet(dto.resultParams ?? []);
     await this.assertLabAdapterRefs(tenantId, dto.resultParams ?? []);
@@ -1250,6 +1251,7 @@ export class LabTestService {
       mandatoryCatId: dto.mandatoryCatId,
       mandatorySubcatId: dto.mandatorySubcatId,
     });
+    await this.assertReportTemplate(tenantId, dto.reportTemplateId);
     (dto.resultParams ?? []).forEach((p) => this.assertParam(p));
     this.assertFormulaSet(dto.resultParams ?? []);
     await this.assertLabAdapterRefs(tenantId, dto.resultParams ?? []);
@@ -4833,6 +4835,45 @@ export class LabTestService {
           { [field]: id },
         );
       }
+    }
+  }
+
+  /**
+   * Validate the optional per-test report template mapping: when set, it must be
+   * an active (non-deleted) `PdfReportTemplate` of the caller's tenant AND of
+   * type `lab_report` (a single-test report template). Keeps the mapping
+   * consumed by the print resolver (`LabReportService.print` / the per-test body
+   * inside a Lab All Report) from ever pointing at a deleted/foreign template or
+   * a wrong-type one (e.g. a `lab_all_report` container), which would break
+   * rendering.
+   * @throws ValidationException if the id isn't an active `lab_report` template
+   *   of the tenant
+   */
+  private async assertReportTemplate(
+    tenantId: string,
+    reportTemplateId: string | null | undefined,
+  ): Promise<void> {
+    if (!reportTemplateId) return;
+    const template = await this.prisma.pdfReportTemplate.findFirst({
+      where: {
+        id: reportTemplateId,
+        tenantId,
+        deletedAt: null,
+        isActive: true,
+      },
+      select: { id: true, type: true },
+    });
+    if (!template) {
+      throw new ValidationException(
+        'reportTemplateId does not reference an active report template',
+        { reportTemplateId },
+      );
+    }
+    if (template.type !== 'lab_report') {
+      throw new ValidationException(
+        "reportTemplateId must reference a 'lab_report' template",
+        { reportTemplateId, type: template.type },
+      );
     }
   }
 
