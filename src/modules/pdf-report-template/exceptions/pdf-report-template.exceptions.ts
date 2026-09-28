@@ -49,6 +49,23 @@ export class InvalidPdfTemplateConfigSlotException extends KaltrosException {
   }
 }
 
+/**
+ * 400 — a template assigned to a Configuration slot is of the wrong `type`
+ * (e.g. a `lab_all_report` template dropped into the `lab_report` slot). The
+ * slot key and the template's type must match, otherwise the print resolver
+ * would hand the wrong template (and render engine) to the renderer.
+ */
+export class PdfTemplateConfigTypeMismatchException extends KaltrosException {
+  constructor(slotKey: string, templateType: string) {
+    super(
+      'PDF_TEMPLATE_CONFIG_TYPE_MISMATCH',
+      `The chosen template is a '${templateType}' template, which cannot be assigned to the '${slotKey}' slot`,
+      { slotKey, templateType },
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+}
+
 /** 500 — the PDF could not be rendered from the template. */
 export class PdfGenerationFailedException extends KaltrosException {
   constructor(id: string, cause?: string) {

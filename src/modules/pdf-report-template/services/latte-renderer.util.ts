@@ -93,11 +93,56 @@ export function renderLatte(
   data: Record<string, unknown>,
 ): string {
   try {
-    const { nodes, defines } = parse(source);
+    const { nodes, defines } = parse(stripHandlebarsRemnants(source));
     return render(nodes, [data], { defines });
   } catch {
     return source;
   }
+}
+
+/**
+ * Templates authored by cloning a flat `{{#each}}`/`{{image:…}}` template into a
+ * Latte one frequently carry vestigial Handlebars remnants. The Latte engine does
+ * not understand them and would emit them verbatim into the PDF (the reported
+ * `{{#each results}} {{/each}}` leak). Since {@link renderLatte} only ever runs on
+ * Latte bodies (`isLatteBody === true`), any Handlebars tag here is dead code:
+ *  - `{{#each …}}` / `{{/each}}` and `{{#if …}}`/`{{else}}`/`{{/if}}` (and
+ *    `unless`) block wrappers are stripped — the real looping/branching is done by
+ *    the surrounding Latte `{foreach}`/`{if}`;
+ *  - `{{image:ID}}` → `<img src="{$ID}">` (Latte has no image token; the URL-valued
+ *    field is in the context, e.g. `report_approved_by_signature`);
+ *  - `{{this.field}}` → `{$field}` (best-effort — resolves if the field is in scope).
+ * A flat-only template never reaches here (it routes to the flat engine), so this
+ * only ever cleans genuinely-dead flat syntax embedded in a Latte template.
+ */
+function stripHandlebarsRemnants(src: string): string {
+  return src
+    .replace(/\{\{\s*image\s*:\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, '<img src="{$$$1}"/>')
+    .replace(/\{\{\s*this\.([a-zA-Z0-9_]+)\s*\}\}/g, '{$$$1}')
+    .replace(/\{\{\s*#each\b[^}]*\}\}/g, '')
+    .replace(/\{\{\s*\/each\s*\}\}/g, '')
+    .replace(/\{\{\s*#if\b[^}]*\}\}/g, '')
+    .replace(/\{\{\s*#unless\b[^}]*\}\}/g, '')
+    .replace(/\{\{\s*else\s*\}\}/g, '')
+    .replace(/\{\{\s*\/if\s*\}\}/g, '')
+    .replace(/\{\{\s*\/unless\s*\}\}/g, '');
+}
+
+/**
+ * Heuristic: does this template body use Latte control syntax (so it must be
+ * rendered by {@link renderLatte}) rather than the flat `{tag}` / `{{#each}}`
+ * engine? True when it contains a Latte control tag (`{foreach`, `{if `,
+ * `{elseif`, `{else`, `{var `, `{for `) or a `$`-sigil variable (`{$…}`) — none
+ * of which ever appear in a flat template. Used to route a single-test
+ * `lab_report` template to the right engine (a Latte body needs the object-shaped
+ * `$tests`/`$test` context; a flat body needs `variables`/`sections`).
+ */
+export function isLatteBody(source: string | undefined): boolean {
+  if (!source) return false;
+  return (
+    /\{\s*(?:foreach|for|if|elseif|else|var)\b/.test(source) ||
+    /\{\s*\$/.test(source)
+  );
 }
 
 // ─── Tokeniser ───────────────────────────────────────────────────────────────

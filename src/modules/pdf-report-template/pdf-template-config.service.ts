@@ -7,7 +7,10 @@ import {
   PDF_TEMPLATE_CONFIG_SLOT_KEYS,
   PdfTemplateConfigSlotGroup,
 } from './constants/pdf-template-config-slots.constant';
-import { InvalidPdfTemplateConfigSlotException } from './exceptions/pdf-report-template.exceptions';
+import {
+  InvalidPdfTemplateConfigSlotException,
+  PdfTemplateConfigTypeMismatchException,
+} from './exceptions/pdf-report-template.exceptions';
 
 /** Current slot → template map: `{ [slotKey]: templateId | null }`. */
 export type PdfTemplateConfigMap = Record<string, string | null>;
@@ -77,7 +80,19 @@ export class PdfTemplateConfigService {
       }
       if (assignment.templateId) {
         // Throws PdfReportTemplateNotFoundException if it isn't the tenant's.
-        await this.templateService.findById(assignment.templateId, tenantId);
+        const template = await this.templateService.findById(
+          assignment.templateId,
+          tenantId,
+        );
+        // A slot may only hold a template of its OWN type — a `lab_report`
+        // slot can't be pointed at a `lab_all_report` (or any other) template,
+        // which would break rendering (wrong engine/context) at print time.
+        if (template.type !== assignment.slotKey) {
+          throw new PdfTemplateConfigTypeMismatchException(
+            assignment.slotKey,
+            template.type,
+          );
+        }
       }
     }
 

@@ -145,60 +145,51 @@ describe('TemplateRenderService — header/footer as repeating page templates', 
   });
 });
 
-describe('TemplateRenderService — header/footer are confined to their band', () => {
+describe('TemplateRenderService — header/footer as natural-height flow templates', () => {
   const service = new TemplateRenderService();
 
-  it('sizes the header band to margin_top and offsets content by margin_header', () => {
+  it('insets header content by the margin_header gap as top padding (edge side only)', () => {
     const { headerTemplate } = service.render(
-      meta({ header_html: 'H', margin_top: '40', margin_header: '8' }),
+      // margin_left 15 / margin_right 10 (defaults), margin_header 8.
+      meta({ header_html: 'H', margin_header: '8' }),
       {},
     );
-    // Outer wrapper fills the full reserved top margin (40mm) and clips overflow…
-    expect(headerTemplate).toContain('height: 40mm;');
-    expect(headerTemplate).toContain('overflow: hidden;');
-    // …and the content layer hangs from the top by the margin_header gap (8mm).
-    expect(headerTemplate).toContain('class="pdf-header-content"');
-    expect(headerTemplate).toContain('top: 8mm;');
+    // Natural-height flow box: gap padding on the PAGE-EDGE side (top) only, and
+    // the body-facing side (bottom) is `0` — the page margin is grown to fit at
+    // print time (PdfService), so the wrapper has no fixed height and no clipping.
+    expect(headerTemplate).toContain(
+      '<div class="pdf-header" style="box-sizing: border-box; width: 100%; padding: 8mm 10mm 0 15mm;',
+    );
   });
 
-  it('anchors the footer content to the bottom by margin_footer', () => {
+  it('insets footer content by the margin_footer gap as bottom padding', () => {
     const { footerTemplate } = service.render(
-      meta({ footer_html: 'F', margin_bottom: '25', margin_footer: '6' }),
+      meta({ footer_html: 'F', margin_footer: '6' }),
       {},
     );
-    expect(footerTemplate).toContain('height: 25mm;');
-    expect(footerTemplate).toContain('class="pdf-footer-content"');
-    expect(footerTemplate).toContain('bottom: 6mm;');
+    expect(footerTemplate).toContain(
+      '<div class="pdf-footer" style="box-sizing: border-box; width: 100%; padding: 0 10mm 6mm 15mm;',
+    );
   });
 
-  it('caps header/footer images to the band content height, keeping aspect ratio', () => {
+  it('scales header/footer images to the page width without crushing their height', () => {
     const { headerTemplate } = service.render(
       meta({
         header_html: '{{image:l.png}}',
-        margin_top: '30',
+        margin_top: '10',
         margin_header: '5',
       }),
       { images: { 'l.png': 'https://cdn.example/l.png' } },
     );
-    // Content height = margin_top - margin_header = 25mm; images scale to fit it.
-    expect(headerTemplate).toContain('.pdf-header img');
-    expect(headerTemplate).toContain('max-height: 25mm;');
-    expect(headerTemplate).toContain('object-fit: contain;');
-    expect(headerTemplate).toContain('max-width: 100%;');
-  });
-
-  it('clamps a gap larger than its reserved margin (no negative content height)', () => {
-    const { headerTemplate } = service.render(
-      // margin_header (12) > margin_top (10): gap clamps to 10, content -> 0mm.
-      meta({ header_html: 'H', margin_top: '10', margin_header: '12' }),
-      {},
+    // Images keep their natural aspect ratio (`height: auto`, no band-height cap):
+    // the page margin grows to fit, so a real letterhead is never squashed.
+    expect(headerTemplate).toContain(
+      '.pdf-header img { max-width: 100%; height: auto; }',
     );
-    expect(headerTemplate).toContain('height: 10mm;');
-    expect(headerTemplate).toContain('top: 10mm;');
-    expect(headerTemplate).toContain('max-height: 0mm;');
+    expect(headerTemplate).not.toContain('object-fit');
   });
 
-  it('constrains wide tables and long words inside the header band', () => {
+  it('constrains wide tables and long words inside the header', () => {
     const { headerTemplate } = service.render(
       meta({ header_html: '<table><tr><td>x</td></tr></table>' }),
       {},
@@ -248,5 +239,59 @@ describe('TemplateRenderService — case-insensitive tokens', () => {
       { sections: { items: [{ name: 'CBC', price: 300 }] } },
     );
     expect(bodyHtml).toContain('<li>CBC=300</li>');
+  });
+});
+
+describe('TemplateRenderService — renderBodyFragment (lab_all_report body)', () => {
+  const service = new TemplateRenderService();
+
+  it('returns only the interpolated body fragment (no page/document wrapper)', () => {
+    const html = service.renderBodyFragment(
+      meta({
+        body_html:
+          '<div class="report-test">{test_name}</div>' +
+          '<table><tbody>{{#each results}}<tr><td>{parameter_name}</td><td>{observed1}</td></tr>{{/each}}</tbody></table>',
+        header_html: 'HEADER SHOULD NOT APPEAR',
+        footer_html: 'FOOTER SHOULD NOT APPEAR',
+      }),
+      {
+        variables: { test_name: 'Serum Glucose' },
+        sections: {
+          results: [{ parameter_name: 'Glucose', observed1: '120' }],
+        },
+      },
+    );
+    // Body content is interpolated…
+    expect(html).toContain('<div class="report-test">Serum Glucose</div>');
+    expect(html).toContain('<tr><td>Glucose</td><td>120</td></tr>');
+    // …but there is NO full-document wrapper and NO header/footer content, so
+    // the fragment can be embedded per-test inside the all-reports document.
+    expect(html).not.toContain('<!DOCTYPE');
+    expect(html).not.toContain('pdf-body');
+    expect(html).not.toContain('HEADER SHOULD NOT APPEAR');
+    expect(html).not.toContain('FOOTER SHOULD NOT APPEAR');
+  });
+
+  it('prefixes the template custom_css so per-report styling survives embedding', () => {
+    const html = service.renderBodyFragment(
+      meta({
+        body_html: '<div>{test_name}</div>',
+        custom_css: '.report-test { color: red; }',
+      }),
+      { variables: { test_name: 'CBC' } },
+    );
+    expect(html).toContain('<style>.report-test { color: red; }</style>');
+    expect(html).toContain('<div>CBC</div>');
+  });
+
+  it('resolves {{image:<id>}} in the body fragment from the meta registry', () => {
+    const html = service.renderBodyFragment(
+      meta({
+        body_html: 'Sig: {{image:sign.png}}',
+        images: { 'sign.png': 'https://cdn.example/sign.png' },
+      }),
+      {},
+    );
+    expect(html).toContain('<img src="https://cdn.example/sign.png"');
   });
 });
