@@ -17,7 +17,7 @@ import {
   toBranchLocalInstant,
   formatTenantDate,
   formatTenantTime,
-  patientFullAgeDisplay,
+  patientSingleUnitAgeDisplay,
 } from '../../common/utils';
 import { TenantService } from '../tenant/tenant.service';
 import { LabReportService } from '../lab-report/lab-report.service';
@@ -1332,12 +1332,16 @@ export class OrderSampleService {
             .filter(Boolean)
             .join(' ')
         : '',
-      // Full age (Years, Months, Days) from DOB when known; single-unit
-      // (age/ageType) fallback otherwise.
-      patient_age: patientFullAgeDisplay(
+      // Single-unit age ("25 Years" / "6 Months" / "15 Days") from DOB, unit
+      // picked by the registration Age Type rule; stored age/ageType when DOB
+      // is unknown. Labels deliberately skip the full "Y Years, M Months,
+      // D Days" breakdown the order documents print. `now` is the branch-local
+      // date so the age doesn't lag a day between local and UTC midnight.
+      patient_age: patientSingleUnitAgeDisplay(
         patient?.dateOfBirth ?? null,
         patient?.age ?? null,
         patient?.ageType ?? null,
+        toBranchLocalInstant(new Date(), timezone),
       ),
       patient_gender: patient?.gender ?? '',
       patient_um_id: patient?.umId ?? '',
