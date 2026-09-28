@@ -12,6 +12,7 @@ import {
   SampleStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PaginatedResult, paginated } from '../../common/dto/response.dto';
 import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
 import { getReferralPanelId } from '../../prisma/tenant-context';
@@ -48,6 +49,7 @@ import { ListLabReportsDto } from './dto/list-lab-reports.dto';
 import { UpsertResultValuesDto } from './dto/upsert-result-values.dto';
 import { ReferenceRangeQueryDto } from './dto/reference-range-query.dto';
 import { ReferenceRangeMethodsQueryDto } from './dto/reference-range-methods-query.dto';
+import { ReferenceRangeCandidatesQueryDto } from './dto/reference-range-candidates-query.dto';
 import { TrendReportQueryDto } from './dto/trend-report-query.dto';
 import {
   CreateLabReportNoteDto,
@@ -85,7 +87,10 @@ import {
   fullName,
   toWorklistRow,
 } from './entities/lab-report.entity';
-import { LabReportOptions } from './entities/lab-report-options.entity';
+import {
+  LabReportOption,
+  LabReportOptions,
+} from './entities/lab-report-options.entity';
 import { resolveActorNames } from './entities/worklist.entity';
 import { ApproveReportDto } from './dto/approve-report.dto';
 import {
@@ -434,14 +439,30 @@ export class LabReportService {
     }
 
     const orderItem: Prisma.OrderItemWhereInput = {};
-    if (filters.departmentId) {
-      orderItem.branchLabTest = { departmentId: filters.departmentId };
+    // The "Lab Test"/"Lab Panel" filter's id may be either a specific
+    // BranchLabTest/BranchLabPanel.id or that row's sourceLabTestId/
+    // sourceLabPanelId — the same master test/panel is copied into every
+    // pricing list as its own row, and the Reporting dropdown (getOptions)
+    // sends the shared source id so one filter selection matches the test/
+    // panel regardless of which list's copy a given order actually used.
+    const branchLabTestWhere: Prisma.BranchLabTestWhereInput = {};
+    if (filters.departmentId) branchLabTestWhere.departmentId = filters.departmentId;
+    if (filters.branchLabTestId) {
+      branchLabTestWhere.OR = [
+        { id: filters.branchLabTestId },
+        { sourceLabTestId: filters.branchLabTestId },
+      ];
+    }
+    if (Object.keys(branchLabTestWhere).length > 0) {
+      orderItem.branchLabTest = branchLabTestWhere;
     }
     if (filters.branchLabPanelId) {
-      orderItem.branchLabPanelId = filters.branchLabPanelId;
-    }
-    if (filters.branchLabTestId) {
-      orderItem.branchLabTestId = filters.branchLabTestId;
+      orderItem.branchLabPanel = {
+        OR: [
+          { id: filters.branchLabPanelId },
+          { sourceLabPanelId: filters.branchLabPanelId },
+        ],
+      };
     }
     if (filters.orderId) {
       orderItem.orderId = filters.orderId;
@@ -1206,77 +1227,42 @@ export class LabReportService {
   /**
    * Everything the Reporting Worklist's filter row needs in one call
    * (LABORATORY.docx §3.1) — real tenant/branch-scoped lookups for
-   * Branches/Ref By/Panels/Departments/Lab Test/Lab Panel, plus the two
-   * static lists (`sampleStatuses`/`reportStatuses`).
+   * Branches/Ref By/Panels/Departments, plus the two static lists
+   * (`sampleStatuses`/`reportStatuses`). Lab Test/Lab Panel are deliberately
+   * NOT included here — a tenant can have thousands of active tests across
+   * its pricing lists, so those two are their own paginated/searchable
+   * endpoints (`getLabTestOptions`/`getLabPanelOptions` below) rather than one
+   * more array in an unpaginated combined payload.
    */
   async getOptions(
     tenantId: string,
     branchId: string | null,
-    personId: string,
   ): Promise<LabReportOptions> {
-    const activeBranchId = this.requireBranch(branchId);
-    // Scope the Lab Test / Lab Panel filter dropdowns to the caller's departments
-    // (unassigned tests/panels stay visible to all), matching the worklist itself.
-    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
-      tenantId,
-      personId,
-    );
-    const deptScope =
-      scopeIds.length > 0
-        ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
-        : { departmentId: null };
+    this.requireBranch(branchId);
 
-    const [
-      branches,
-      referredByDoctors,
-      referralPanels,
-      departments,
-      labTests,
-      labPanels,
-    ] = await Promise.all([
-      this.prisma.branch.findMany({
-        where: { tenantId, deletedAt: null },
-        select: { id: true, name: true },
-        orderBy: { name: 'asc' },
-      }),
-      this.prisma.referralDoctor.findMany({
-        where: { tenantId, deletedAt: null },
-        select: { id: true, firstName: true, lastName: true },
-        orderBy: { firstName: 'asc' },
-      }),
-      this.prisma.referralPanel.findMany({
-        where: { tenantId, deletedAt: null },
-        select: { id: true, name: true },
-        orderBy: { name: 'asc' },
-      }),
-      this.prisma.department.findMany({
-        where: { tenantId, deletedAt: null },
-        select: { id: true, name: true },
-        orderBy: { name: 'asc' },
-      }),
-      this.prisma.branchLabTest.findMany({
-        where: {
-          tenantId,
-          branchId: activeBranchId,
-          isActive: true,
-          deletedAt: null,
-          ...deptScope,
-        },
-        select: { id: true, testName: true },
-        orderBy: { testName: 'asc' },
-      }),
-      this.prisma.branchLabPanel.findMany({
-        where: {
-          tenantId,
-          branchId: activeBranchId,
-          isActive: true,
-          deletedAt: null,
-          ...deptScope,
-        },
-        select: { id: true, panelName: true },
-        orderBy: { panelName: 'asc' },
-      }),
-    ]);
+    const [branches, referredByDoctors, referralPanels, departments] =
+      await Promise.all([
+        this.prisma.branch.findMany({
+          where: { tenantId, deletedAt: null },
+          select: { id: true, name: true },
+          orderBy: { name: 'asc' },
+        }),
+        this.prisma.referralDoctor.findMany({
+          where: { tenantId, deletedAt: null },
+          select: { id: true, firstName: true, lastName: true },
+          orderBy: { firstName: 'asc' },
+        }),
+        this.prisma.referralPanel.findMany({
+          where: { tenantId, deletedAt: null },
+          select: { id: true, name: true },
+          orderBy: { name: 'asc' },
+        }),
+        this.prisma.department.findMany({
+          where: { tenantId, deletedAt: null },
+          select: { id: true, name: true },
+          orderBy: { name: 'asc' },
+        }),
+      ]);
 
     return {
       branches: branches.map((b) => ({ id: b.id, name: b.name })),
@@ -1286,11 +1272,150 @@ export class LabReportService {
       })),
       referralPanels: referralPanels.map((p) => ({ id: p.id, name: p.name })),
       departments: departments.map((d) => ({ id: d.id, name: d.name })),
-      labTests: labTests.map((t) => ({ id: t.id, name: t.testName })),
-      labPanels: labPanels.map((p) => ({ id: p.id, name: p.panelName })),
       sampleStatuses: Object.values(SampleStatus),
       reportStatuses: Object.values(LabReportStatus),
     };
+  }
+
+  /**
+   * Paginated, searchable **Lab Test** options for the Reporting Worklist's
+   * filter row (`GET /lab-reports/lab-test-options`) — the same underlying
+   * data `getOptions()` used to embed unpaginated, split out because a tenant
+   * can have thousands of active `BranchLabTest` rows.
+   *
+   * The same master test is copied into every pricing list as its own
+   * `BranchLabTest` row (one row per list), so without dedup the same test
+   * would show once per list it's been imported into. Dedup happens in two
+   * passes: first a lightweight id-only fetch (scoped by department, active,
+   * search) to compute the true deduped set + total count and pick out this
+   * page's representative row ids; then a second fetch for just those rows'
+   * display names. Dedup key is `sourceLabTestId ?? id` — a branch-only row
+   * with no source (hand-created, never imported from Master Data) has
+   * nothing to share, so it's simply its own group of one. The returned `id`
+   * is the shared source id (or the row's own id when there's no source), so
+   * `buildListWhere`'s OR match (`id` OR `sourceLabTestId` = filter value)
+   * finds every list's copy when this value is used as a filter.
+   */
+  async getLabTestOptions(
+    tenantId: string,
+    branchId: string | null,
+    personId: string,
+    query: { search?: string; page?: number; limit?: number },
+  ): Promise<PaginatedResult<LabReportOption>> {
+    const activeBranchId = this.requireBranch(branchId);
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+
+    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
+      tenantId,
+      personId,
+    );
+    const deptScope =
+      scopeIds.length > 0
+        ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
+        : { departmentId: null };
+    const term = query.search?.trim();
+
+    const rows = await this.prisma.branchLabTest.findMany({
+      where: {
+        tenantId,
+        branchId: activeBranchId,
+        isActive: true,
+        deletedAt: null,
+        ...deptScope,
+        ...(term
+          ? { testName: { contains: term, mode: 'insensitive' } }
+          : {}),
+      },
+      select: { id: true, testName: true, sourceLabTestId: true },
+      orderBy: { testName: 'asc' },
+    });
+
+    const seen = new Set<string>();
+    const deduped: typeof rows = [];
+    for (const row of rows) {
+      const key = row.sourceLabTestId ?? row.id;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(row);
+    }
+
+    const total = deduped.length;
+    const start = (page - 1) * limit;
+    const pageRows = deduped.slice(start, start + limit);
+
+    return paginated(
+      pageRows.map((t) => ({ id: t.sourceLabTestId ?? t.id, name: t.testName })),
+      total,
+      page,
+      limit,
+    );
+  }
+
+  /**
+   * Paginated, searchable **Lab Panel** options for the Reporting Worklist's
+   * filter row (`GET /lab-reports/lab-panel-options`) — mirrors
+   * {@link getLabTestOptions} exactly (same list-per-pricing-list dedup
+   * reasoning, same `sourceLabPanelId ?? id` dedup/return key), for
+   * `BranchLabPanel` instead of `BranchLabTest`.
+   */
+  async getLabPanelOptions(
+    tenantId: string,
+    branchId: string | null,
+    personId: string,
+    query: { search?: string; page?: number; limit?: number },
+  ): Promise<PaginatedResult<LabReportOption>> {
+    const activeBranchId = this.requireBranch(branchId);
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+
+    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
+      tenantId,
+      personId,
+    );
+    const deptScope =
+      scopeIds.length > 0
+        ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
+        : { departmentId: null };
+    const term = query.search?.trim();
+
+    const rows = await this.prisma.branchLabPanel.findMany({
+      where: {
+        tenantId,
+        branchId: activeBranchId,
+        isActive: true,
+        deletedAt: null,
+        ...deptScope,
+        ...(term
+          ? { panelName: { contains: term, mode: 'insensitive' } }
+          : {}),
+      },
+      select: { id: true, panelName: true, sourceLabPanelId: true },
+      orderBy: { panelName: 'asc' },
+    });
+
+    const seen = new Set<string>();
+    const deduped: typeof rows = [];
+    for (const row of rows) {
+      const key = row.sourceLabPanelId ?? row.id;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(row);
+    }
+
+    const total = deduped.length;
+    const start = (page - 1) * limit;
+    const pageRows = deduped.slice(start, start + limit);
+
+    return paginated(
+      pageRows.map((p) => ({
+        id: p.sourceLabPanelId ?? p.id,
+        name: p.panelName,
+      })),
+      total,
+      page,
+      limit,
+    );
   }
 
   /** Raw nested shape (`report.orderItem.order.patient`, etc.) — used
@@ -1687,6 +1812,7 @@ export class LabReportService {
         reportingUnit: true,
         method: true,
         sortOrder: true,
+        createdAt: true,
         parameterType: true,
         calculationFormula: true,
         decimalPlaces: true,
@@ -1695,7 +1821,10 @@ export class LabReportService {
         groupName: true,
         overallResultGroups: true,
       },
-      orderBy: { sortOrder: 'asc' },
+      // Test Entry orders parameters within a group by creation time, not
+      // result-type or the admin-configurable `sortOrder` — see
+      // `LabReportResultParam.createdAt`.
+      orderBy: { createdAt: 'asc' },
     });
   }
 
@@ -2240,6 +2369,106 @@ export class LabReportService {
   }
 
   /**
+   * List every `LabTestReferenceRange` row for a Quantitative parameter that
+   * matches this patient's gender/age, for the Test Entry / Patient Entry
+   * "Range" dropdown — covers rows with and without an analyzer (`labAdapterId`
+   * null or set), unlike `resolveReferenceRange` (which auto-picks a single
+   * best match, filtered by the currently-selected Methodology). Quantitative-
+   * only: `LabTestReferenceValue` (backing Semi-Quantitative/Qualitative) has
+   * no analyzer field at all, so there's nothing to list there yet.
+   * Selecting a candidate in the dropdown sets Unit/Method/Range together
+   * (the frontend applies the picked row's own fields, same as Sync).
+   */
+  async listReferenceRangeCandidates(
+    id: string,
+    tenantId: string,
+    branchId: string | null,
+    query: ReferenceRangeCandidatesQueryDto,
+  ): Promise<{
+    candidates: Array<{
+      id: string;
+      labAdapterId: string | null;
+      labAdapterName: string | null;
+      method: string | null;
+      unit: string | null;
+      isDefault: boolean;
+      lowerLimit: string | null;
+      upperLimit: string | null;
+      referenceDisplay: string | null;
+    }>;
+  }> {
+    const activeBranchId = this.requireBranch(branchId);
+    const report = await this.prisma.labReport.findFirst({
+      where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
+      include: {
+        orderItem: { include: { order: { include: { patient: true } } } },
+      },
+    });
+    if (!report) throw new LabReportNotFoundException(id);
+    if (!report.labTestId) throw new LabTestCatalogueMissingException(id);
+
+    const param = await this.prisma.labTestResultParam.findFirst({
+      where: {
+        id: query.resultParamId,
+        labTestId: report.labTestId,
+        deletedAt: null,
+      },
+    });
+    if (!param) throw new LabTestCatalogueMissingException(id);
+    if (
+      param.resultType === 'QUALITATIVE' ||
+      param.resultType === 'SEMI_QUANTITATIVE'
+    ) {
+      return { candidates: [] };
+    }
+
+    const patient = report.orderItem.order.patient;
+    const ageInDays = patient.age
+      ? patientAgeInDays(patient.age, patient.ageType ?? 'YEARS')
+      : null;
+
+    const ranges = await this.prisma.labTestReferenceRange.findMany({
+      where: { paramId: param.id, deletedAt: null },
+    });
+    const matching = ranges.filter(
+      (r) =>
+        genderMatches(r.gender, patient.gender) &&
+        (ageInDays === null ||
+          (ageInDays >= rangeAgeInDays(r.ageFrom, r.ageFromUnit) &&
+            ageInDays <= rangeAgeInDays(r.ageTo, r.ageToUnit))),
+    );
+
+    const adapterIds = [
+      ...new Set(matching.map((r) => r.labAdapterId).filter((v) => !!v)),
+    ] as string[];
+    const adapters = adapterIds.length
+      ? await this.prisma.labAdapter.findMany({
+          where: { id: { in: adapterIds }, tenantId },
+          select: { id: true, name: true },
+        })
+      : [];
+    const adapterNames = new Map(adapters.map((a) => [a.id, a.name]));
+
+    const candidates = matching.map((r) => ({
+      id: r.id,
+      labAdapterId: r.labAdapterId,
+      labAdapterName: r.labAdapterId
+        ? (adapterNames.get(r.labAdapterId) ?? null)
+        : null,
+      method: r.method,
+      unit: r.unit,
+      isDefault: r.isDefault,
+      lowerLimit: r.lowerLimit?.toString() ?? null,
+      upperLimit: r.upperLimit?.toString() ?? null,
+      referenceDisplay:
+        r.displayOfReferenceRange ??
+        `${r.lowerLimit?.toString() ?? ''} - ${r.upperLimit?.toString() ?? ''}`.trim(),
+    }));
+
+    return { candidates };
+  }
+
+  /**
    * Trend Report (LABORATORY.docx §5.10) — this patient's full history of
    * observed values for one result parameter, oldest first. The doc says this
    * "already exists in Analytics, reuse the existing component/endpoint" —
@@ -2652,6 +2881,21 @@ export class LabReportService {
     const notesByParamId = new Map(
       resultParams.map((p) => [p.id, p.notes ?? '']),
     );
+    // `{overall_result}` — this REPORT's own per-parameter templated content
+    // (`LabReportOverallResult`, keyed by (labReportId, resultParamId)), the
+    // same source the Overall Result screen edits. Distinct from
+    // `result_note` above (a static catalog note shared by every report of
+    // this test) — this is per-report, filled in during reporting.
+    const overallResultRows =
+      resultParamIds.length === 0
+        ? []
+        : await this.prisma.labReportOverallResult.findMany({
+            where: { labReportId: id, resultParamId: { in: resultParamIds } },
+            select: { resultParamId: true, content: true },
+          });
+    const overallResultByParamId = new Map(
+      overallResultRows.map((r) => [r.resultParamId, r.content ?? '']),
+    );
 
     // `resultValues` (the include on `LAB_REPORT_DETAIL_INCLUDE`) carries no
     // `orderBy` — rows come back in whatever order Postgres returns them,
@@ -2677,6 +2921,7 @@ export class LabReportService {
       reference_display: v.referenceDisplay ?? '',
       group_name: groupNameByParamId.get(v.resultParamId) ?? '',
       result_note: notesByParamId.get(v.resultParamId) ?? '',
+      overall_result: overallResultByParamId.get(v.resultParamId) ?? '',
     }));
 
     return {
@@ -2731,6 +2976,10 @@ export class LabReportService {
         useful_for: report.contentSections.usefulFor ?? '',
         interpretation: report.contentSections.interpretation ?? '',
         limitations: report.contentSections.limitations ?? '',
+        // Bug fix: `remarks` was fetched into `contentSections` (screen/API
+        // already show it) but never assigned into the print `variables` here
+        // — `{remarks}` could never resolve in a lab_report template.
+        remarks: report.contentSections.remarks ?? '',
         references: report.contentSections.references ?? '',
         last_report_prepared_on: lastReportPreparedOn
           ? formatReportDateTime(
@@ -3003,7 +3252,13 @@ export class LabReportService {
         const methodHtml = method
           ? `<div class="rr-method">${method}</div>`
           : '';
-        return `<tr><td>${name}${methodHtml}</td><td>${value}</td><td>${unit}</td><td>${ref}</td></tr>`;
+        // Rich-text HTML from a NotesRichTextEditor (see RICH_TEXT note
+        // below) — printed as-is, not escaped, or the literal tags would show.
+        const overallResult = toText(row.overall_result);
+        const overallResultHtml = overallResult
+          ? `<tr class="rr-overall-result"><td colspan="4">${overallResult}</td></tr>`
+          : '';
+        return `<tr><td>${name}${methodHtml}</td><td>${value}</td><td>${unit}</td><td>${ref}</td></tr>${overallResultHtml}`;
       })
       .join('');
     const table = results.length
@@ -3014,11 +3269,15 @@ export class LabReportService {
       value
         ? `<div class="report-section"><b>${label}:</b> ${value}</div>`
         : '';
+    // interpretation/useful_for/limitations/references are rich-text HTML
+    // from a NotesRichTextEditor (LabReportService.buildPrintContext is the
+    // source) — printed as-is. sample_note is a plain-text technician note,
+    // so it keeps the usual escaping.
     const extras =
-      section('Interpretation', escapeHtml(toText(v.interpretation))) +
-      section('Useful For', escapeHtml(toText(v.useful_for))) +
-      section('Limitations', escapeHtml(toText(v.limitations))) +
-      section('References', escapeHtml(toText(v.references))) +
+      section('Interpretation', toText(v.interpretation)) +
+      section('Useful For', toText(v.useful_for)) +
+      section('Limitations', toText(v.limitations)) +
+      section('References', toText(v.references)) +
       section('Note', escapeHtml(toText(v.sample_note)));
 
     return `<div class="report-test"><div class="report-test-title"><b>${testName}</b></div>${table}${extras}</div>`;

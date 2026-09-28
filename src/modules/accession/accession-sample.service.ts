@@ -17,7 +17,7 @@ import {
   toBranchLocalInstant,
   formatTenantDate,
   formatTenantTime,
-  patientFullAgeDisplay,
+  patientSingleUnitAgeDisplay,
 } from '../../common/utils';
 import { TenantService } from '../tenant/tenant.service';
 import { LabReportService } from '../lab-report/lab-report.service';
@@ -39,6 +39,7 @@ import {
   deriveTatStatus,
   tatCreatedAtRange,
 } from './constants/tat.constant';
+import { CONTAINER_TYPE_LABELS } from './constants/container-type.constants';
 import { AccessionSettingsService } from './accession-settings.service';
 import { BarcodeService } from './barcode.service';
 import { ListSamplesDto, OrderMode } from './dto/list-samples.dto';
@@ -1253,8 +1254,13 @@ export class OrderSampleService {
   /**
    * Print many samples' labels into one PDF ("Multiple Label Print" checklist
    * item). Renders ONE `multiple_order_label_print`-type template ONCE, with
-   * every sample folded into a single repeating `sections.labels` row-set —
-   * same flattened-section approach as `LabReportService.printAllForOrder`
+   * one repeating `sections.labels` row per **distinct barcode** (not per
+   * sample) — several samples sharing one barcode (per the tenant's grouping
+   * mode, e.g. Department+Sample) print as a single combined label, merging
+   * their accession numbers/test names/sample types rather than repeating the
+   * same barcode image once per sample. A sample with no barcode yet (never
+   * assigned) is never merged with another — each stays its own singleton row.
+   * Same flattened-section approach as `LabReportService.printAllForOrder`
    * (the renderer only expands one level of `{{#each}}`).
    * @throws OrderSampleNotFoundException if any sample id is missing
    * @throws NoActiveLabelTemplateException if no active template exists
@@ -1271,8 +1277,19 @@ export class OrderSampleService {
     );
     const { timezone, dateFormat, timeFormat } =
       await this.tenantService.getLocale(tenantId);
-    const labels = samples.map((s) =>
-      this.buildLabelVariables(s, timezone, dateFormat, timeFormat),
+
+    // Group by barcode value; samples with no barcode each form their own
+    // singleton group (nothing to merge them by), keyed off their own id so
+    // they never collide with each other or with a real barcode value.
+    const groups = new Map<string, OrderSampleDetail[]>();
+    for (const s of samples) {
+      const key = s.barcode ? `bc:${s.barcode}` : `id:${s.id}`;
+      const arr = groups.get(key);
+      if (arr) arr.push(s);
+      else groups.set(key, [s]);
+    }
+    const labels = [...groups.values()].map((group) =>
+      this.buildMergedLabelVariables(group, timezone, dateFormat, timeFormat),
     );
     const combined: GeneratePdfDto = { sections: { labels } };
 
@@ -1332,12 +1349,16 @@ export class OrderSampleService {
             .filter(Boolean)
             .join(' ')
         : '',
-      // Full age (Years, Months, Days) from DOB when known; single-unit
-      // (age/ageType) fallback otherwise.
-      patient_age: patientFullAgeDisplay(
+      // Single-unit age ("25 Years" / "6 Months" / "15 Days") from DOB, unit
+      // picked by the registration Age Type rule; stored age/ageType when DOB
+      // is unknown. Labels deliberately skip the full "Y Years, M Months,
+      // D Days" breakdown the order documents print. `now` is the branch-local
+      // date so the age doesn't lag a day between local and UTC midnight.
+      patient_age: patientSingleUnitAgeDisplay(
         patient?.dateOfBirth ?? null,
         patient?.age ?? null,
         patient?.ageType ?? null,
+        toBranchLocalInstant(new Date(), timezone),
       ),
       patient_gender: patient?.gender ?? '',
       patient_um_id: patient?.umId ?? '',
@@ -1350,7 +1371,9 @@ export class OrderSampleService {
         .filter(Boolean)
         .join(', '),
       sample_type: sample.sampleType ?? '',
-      container_type: sample.containerType ?? '',
+      container_type: sample.containerType
+        ? CONTAINER_TYPE_LABELS[sample.containerType]
+        : '',
       priority: sample.priority,
       // Collection date AND time, e.g. `21/09/2026 01:30 PM` (date + space +
       // tenant 12h/24h time). Blank when the sample has no collection time.
@@ -1363,6 +1386,39 @@ export class OrderSampleService {
             timeFormat,
           )}`
         : '',
+    };
+  }
+
+  /**
+   * Flat `{variable}` values for one **barcode group's** label row — one or
+   * more samples sharing a barcode, merged into a single label. Fields that
+   * are identical across the group's samples (barcode/image, patient,
+   * order/UHID, department, sample type/container, collected time) are taken
+   * from the first sample; fields that vary per sample (accession number,
+   * test names) are comma-joined across every sample in the group so the one
+   * printed label still reflects everything the shared barcode covers.
+   */
+  private buildMergedLabelVariables(
+    group: OrderSampleDetail[],
+    timezone: string,
+    dateFormat: string,
+    timeFormat: string,
+  ): Record<string, unknown> {
+    const base = this.buildLabelVariables(
+      group[0]!,
+      timezone,
+      dateFormat,
+      timeFormat,
+    );
+    if (group.length === 1) return base;
+    return {
+      ...base,
+      accession_no: group.map((s) => s.accessionNo).filter(Boolean).join(', '),
+      test_names: [
+        ...new Set(
+          group.flatMap((s) => s.tests.map((t) => t.testName).filter(Boolean)),
+        ),
+      ].join(', '),
     };
   }
 

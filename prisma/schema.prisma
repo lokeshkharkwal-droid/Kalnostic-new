@@ -2611,6 +2611,19 @@ model SiteAdminAuditLog {
 /// order-download call (`/emi/orders?specimen_id=…`), `SUBMIT_RESULT` is the
 /// result-upload call (`/emi/submitResult`); `OTHER` covers anything else the
 /// adapter layer logs.
+/// A LabAdapter's operating state. ONLINE is the only status the LIS/EMI
+/// pipeline accepts (`emi.service.ts`'s token lookup gates on `status:
+/// 'ONLINE'`); REPORT_ONLY and INACTIVE both reject an EMI call the same way
+/// (401 Unauthorized) — REPORT_ONLY exists as a distinct, user-facing status
+/// for an adapter the lab still reports through manually (e.g. for billing/
+/// subscription-count purposes — see LabAdapter.status's own doc comment) but
+/// has intentionally not wired for live instrument submission.
+enum AdapterStatus {
+  ONLINE
+  REPORT_ONLY
+  INACTIVE
+}
+
 enum AdapterAction {
   ORDERS
   SUBMIT_RESULT
@@ -2983,8 +2996,18 @@ model LabTestReferenceRange {
   labTestId String  @map("lab_test_id")
   paramId   String  @map("param_id")
 
-  method String?
-  gender ReferenceGender @default(ALL)
+  method       String?
+  unit         String?
+  // Logical ref to LabAdapter.id (validated in LabTestService, not a DB FK —
+  // same pattern as equipmentId/branchId elsewhere in this codebase). NULL
+  // means this range is not scoped to any analyzer ("Default") — the sole
+  // signal for that state; there is no separate type/flag field.
+  labAdapterId String? @map("lab_adapter_id")
+  gender       ReferenceGender @default(ALL)
+  // One default per (parameter, labAdapterId, gender, age-band) group — see
+  // ReferenceRangeMasterDialog.tsx `makeDefault` for the exact grouping rule.
+  // Not DB-enforced; the frontend owns the mutual-exclusivity.
+  isDefault    Boolean         @default(false) @map("is_default")
 
   ageFrom     Int     @default(0) @map("age_from")
   ageFromUnit AgeUnit @default(YEARS) @map("age_from_unit")
@@ -3006,6 +3029,7 @@ model LabTestReferenceRange {
   @@index([branchId])
   @@index([labTestId])
   @@index([paramId])
+  @@index([labAdapterId])
   @@index([deletedAt])
   @@map("lab_test_reference_ranges")
 }
@@ -3739,7 +3763,15 @@ model LabAdapter {
   name        String  @map("name")
   token       String  @unique @map("token")
   equipmentId String  @map("equipment_id") // logical ref → global SITE_ADMIN Equipment
-  isActive    Boolean @default(true) @map("is_active")
+  // ONLINE = live LIS/EMI submission works (see AdapterStatus's own doc
+  // comment); REPORT_ONLY = the lab still reports through this adapter
+  // manually, but it's not wired for live instrument submission; INACTIVE =
+  // fully disabled. REPORT_ONLY and INACTIVE both reject an EMI call
+  // identically today — REPORT_ONLY is kept as its own status (not folded
+  // into INACTIVE) since it's meant to mean something different in the
+  // subscription/billing count once that's built (deferred — see
+  // [[Adapter status tri-state + subscription billing]] in project memory).
+  status      AdapterStatus @default(ONLINE) @map("status")
 
   // Actor trail: the business user who created/last-updated the adapter.
   createdBy String? @map("created_by")

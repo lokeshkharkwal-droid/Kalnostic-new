@@ -1,9 +1,10 @@
-import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import { AdapterStatus } from '@prisma/client';
+import { IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 
 /**
  * Query for listing a tenant's Lab Adapters: pagination + optional
- * case-insensitive `search` on the adapter name + optional active `status`.
+ * case-insensitive `search` on the adapter name + optional `status` filter.
  */
 export class ListLabAdapterQueryDto extends PaginationQueryDto {
   @IsOptional()
@@ -11,8 +12,8 @@ export class ListLabAdapterQueryDto extends PaginationQueryDto {
   @MaxLength(255)
   search?: string;
 
-  /** Filter by enable/disable state. */
+  /** Filter to one of the 3 operating states (ONLINE/REPORT_ONLY/INACTIVE). */
   @IsOptional()
-  @IsIn(['ACTIVE', 'INACTIVE'])
-  status?: 'ACTIVE' | 'INACTIVE';
+  @IsEnum(AdapterStatus)
+  status?: AdapterStatus;
 }

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
   AdapterAction,
+  AdapterStatus,
   LabAdapter,
   LabReportStatus,
   OrderStatus,
@@ -195,9 +196,12 @@ export class EmiService {
    * Resolve the authenticating adapter from the raw `TOKEN` header value. Because
    * `lab_adapters` is RLS-scoped and no tenant context exists yet, the lookup runs
    * in a transaction that sets `app.adapter_token` so the dedicated token-lookup
-   * policy (prisma/rls.sql) makes exactly the matching row visible.
+   * policy (prisma/rls.sql) makes exactly the matching row visible. Only
+   * `status: ONLINE` resolves — REPORT_ONLY and INACTIVE both reject an EMI
+   * call identically (401 via the null return, same as before the tri-state
+   * existed) since neither is wired for live instrument submission.
    * @param token the `TOKEN` header value (may be undefined/empty)
-   * @returns the active adapter, or `null` when missing/unknown/inactive
+   * @returns the ONLINE adapter, or `null` when missing/unknown/not ONLINE
    */
   async resolveAdapterByToken(
     token: string | undefined,
@@ -210,7 +214,7 @@ export class EmiService {
       return await this.prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT set_config('app.adapter_token', ${value}, true)`;
         return tx.labAdapter.findFirst({
-          where: { token: value, isActive: true, deletedAt: null },
+          where: { token: value, status: AdapterStatus.ONLINE, deletedAt: null },
         });
       });
     } catch (e) {

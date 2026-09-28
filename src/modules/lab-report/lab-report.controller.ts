@@ -29,10 +29,12 @@ import { DeltaCheckService } from './delta-check.service';
 import { ScheduledTestService } from './scheduled-test.service';
 import { MultiStepProcessService } from './multi-step-process.service';
 import { ListLabReportsDto } from './dto/list-lab-reports.dto';
+import { LabReportCatalogueOptionsQueryDto } from './dto/lab-report-catalogue-options-query.dto';
 import { TatSummaryQueryDto } from './dto/tat-summary-query.dto';
 import { UpsertResultValuesDto } from './dto/upsert-result-values.dto';
 import { ReferenceRangeQueryDto } from './dto/reference-range-query.dto';
 import { ReferenceRangeMethodsQueryDto } from './dto/reference-range-methods-query.dto';
+import { ReferenceRangeCandidatesQueryDto } from './dto/reference-range-candidates-query.dto';
 import { TrendReportQueryDto } from './dto/trend-report-query.dto';
 import { PrintReportDto } from './dto/print-report.dto';
 import {
@@ -102,12 +104,44 @@ export class LabReportController {
   getOptions(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
-    @CurrentUser('person_id') personId: string,
   ) {
-    return this.labReportService.getOptions(
+    return this.labReportService.getOptions(tenantId, profile.branchId);
+  }
+
+  /**
+   * Paginated, searchable Lab Test options for the Reporting Worklist's
+   * filter row — split out of `getOptions()` since a tenant can have
+   * thousands of active tests. Declared before `:id` so it isn't captured as
+   * a report id.
+   */
+  @Get('lab-test-options')
+  getLabTestOptions(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Query() query: LabReportCatalogueOptionsQueryDto,
+  ) {
+    return this.labReportService.getLabTestOptions(
       tenantId,
       profile.branchId,
       personId,
+      query,
+    );
+  }
+
+  /** Paginated, searchable Lab Panel options — mirrors `lab-test-options`. */
+  @Get('lab-panel-options')
+  getLabPanelOptions(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Query() query: LabReportCatalogueOptionsQueryDto,
+  ) {
+    return this.labReportService.getLabPanelOptions(
+      tenantId,
+      profile.branchId,
+      personId,
+      query,
     );
   }
 
@@ -343,6 +377,21 @@ export class LabReportController {
     @Query() query: ReferenceRangeQueryDto,
   ) {
     return this.labReportService.resolveReferenceRange(
+      id,
+      tenantId,
+      profile.branchId,
+      query,
+    );
+  }
+
+  @Get(':id/reference-range/candidates')
+  listReferenceRangeCandidates(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+    @Query() query: ReferenceRangeCandidatesQueryDto,
+  ) {
+    return this.labReportService.listReferenceRangeCandidates(
       id,
       tenantId,
       profile.branchId,
