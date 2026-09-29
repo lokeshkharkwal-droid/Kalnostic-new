@@ -484,7 +484,7 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>DELETE /siteadmin/lab-panels/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template)</td></tr>
   <tr><td>GET /master-data/tenant</td><td>Business JWT</td><td>get-or-create the tenant-level Tenant Master Data singleton (branchId NULL)</td></tr>
   <tr><td>GET /master-data/branch</td><td>Business JWT</td><td>get-or-create the active branch's Branch Master Data (branch from JWT)</td></tr>
-  <tr><td>POST /master-data/branch/import-from-tenant</td><td>Business JWT</td><td>sync Tenant Master Data → active Branch Master Data (full overwrite, tests + panels)</td></tr>
+  <tr><td>POST /master-data/branch/import-from-tenant</td><td>Business JWT</td><td>sync Tenant Master Data → active Branch Master Data (full overwrite, tests + panels); also carries each test/panel TAT into its Lab Test/Panel List copies in every list (empty or un-customised copies only — branch-customised TAT is kept). Branch Master Data test/panel update, bulk-edit and Excel update propagate TAT the same way</td></tr>
   <tr><td>POST /master-data/:masterDataId/lab-tests</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
   <tr><td>GET /master-data/:masterDataId/lab-tests</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
   <tr><td>GET /master-data/:masterDataId/lab-tests/listing</td><td>Business JWT</td><td>master-data management (no per-route guard yet)</td></tr>
