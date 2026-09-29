@@ -42,6 +42,30 @@ export class LatteReportRenderService {
   }
 
   /**
+   * Render ONLY the template's interpolated body fragment via Latte (no page
+   * wrapper / header / footer) — the Latte counterpart of
+   * `TemplateRenderService.renderBodyFragment`. Used to build a single test's
+   * `body_html` for a Lab All Report when that test's `lab_report` template is
+   * authored in Latte, so its `{foreach}`/`{if}`/`{var}` conditionals (hide an
+   * empty section, drop the Method column, per-group sub-headers, hide a test
+   * with no values) run as written against the per-test `$tests`/`$test`
+   * context. The template's `custom_css` is prefixed so its styling survives
+   * embedding in the combined document.
+   * @param meta the single-test template's normalized meta (all keys present)
+   * @param data the per-test Latte context (`tests[0]` = this test + approver)
+   */
+  renderBodyFragment(
+    meta: PdfTemplateMeta,
+    data: Record<string, unknown>,
+  ): string {
+    const body = this.transformMpdfTags(renderLatte(meta.body_html, data));
+    const css = meta.custom_css?.trim()
+      ? `<style>${meta.custom_css}</style>`
+      : '';
+    return `${css}${body}`;
+  }
+
+  /**
    * Translate mPDF running-header markup into Puppeteer-friendly inline HTML:
    *  - `<htmlpageheader name=…>INNER</htmlpageheader>` → the INNER block emitted
    *    inline where it was declared (so each test's header sits atop its page).

@@ -49,3 +49,26 @@ export type ReferralPanelListItem = ReferralPanel & {
    */
   hasActiveOrder: boolean;
 };
+
+/**
+ * One row that the bulk Excel import could not create — carries the 1-based
+ * worksheet row number and whatever identifying values were parseable (so the
+ * user can find the offending row), plus a human-readable `reason`.
+ */
+export type ReferralPanelImportSkippedRow = {
+  rowNumber: number;
+  name: string | null;
+  panelCode: string | null;
+  reason: string;
+};
+
+/**
+ * Result of the referral-panel bulk Excel import: how many data rows were seen,
+ * how many panels were created, and the per-row skip reasons (create-only,
+ * skip-and-report — a bad/duplicate row is skipped, valid rows still import).
+ */
+export type ReferralPanelImportResult = {
+  total: number;
+  created: number;
+  skipped: ReferralPanelImportSkippedRow[];
+};

@@ -24,9 +24,26 @@ describe('formula-evaluator', () => {
       ]);
     });
 
+    it('reads the extended operators', () => {
+      expect(tokenize('P1 % P2')).toEqual([
+        { type: 'ident', value: 'P1' },
+        { type: 'op', value: '%' },
+        { type: 'ident', value: 'P2' },
+      ]);
+      expect(tokenize('P1 ** 2 // 3 ^ 2')).toEqual([
+        { type: 'ident', value: 'P1' },
+        { type: 'op', value: '**' },
+        { type: 'number', value: '2' },
+        { type: 'op', value: '//' },
+        { type: 'number', value: '3' },
+        { type: 'op', value: '^' },
+        { type: 'number', value: '2' },
+      ]);
+    });
+
     it('rejects illegal characters', () => {
-      expect(tokenize('P1 % P2')).toBeNull();
       expect(tokenize('P1 . P2')).toBeNull();
+      expect(tokenize('P1 & P2')).toBeNull();
     });
   });
 
@@ -65,8 +82,48 @@ describe('formula-evaluator', () => {
       });
     });
 
-    it('flags division by zero', () => {
+    it('computes modulus, exponentiation and floor division', () => {
+      expect(evaluateFormula('P1 % P2', { P1: 10, P2: 3 })).toEqual({
+        ok: true,
+        value: 1,
+      });
+      expect(evaluateFormula('P1 ** P2', { P1: 2, P2: 3 })).toEqual({
+        ok: true,
+        value: 8,
+      });
+      expect(evaluateFormula('P1 ^ P2', { P1: 2, P2: 3 })).toEqual({
+        ok: true,
+        value: 8,
+      });
+      expect(evaluateFormula('P1 // P2', { P1: 10, P2: 3 })).toEqual({
+        ok: true,
+        value: 3,
+      });
+    });
+
+    it('makes exponentiation right-associative and higher precedence', () => {
+      // 2 ** (3 ** 2) = 2 ** 9 = 512, not (2 ** 3) ** 2 = 64.
+      expect(evaluateFormula('2 ** 3 ** 2', {})).toEqual({
+        ok: true,
+        value: 512,
+      });
+      // Binds tighter than multiplication: 2 * (3 ** 2) = 18.
+      expect(evaluateFormula('2 * 3 ** 2', {})).toEqual({
+        ok: true,
+        value: 18,
+      });
+    });
+
+    it('flags division, modulo and floor-division by zero', () => {
       expect(evaluateFormula('P1 / P0', { P1: 100, P0: 0 })).toEqual({
+        ok: false,
+        error: 'DIV_ZERO',
+      });
+      expect(evaluateFormula('P1 % P0', { P1: 100, P0: 0 })).toEqual({
+        ok: false,
+        error: 'DIV_ZERO',
+      });
+      expect(evaluateFormula('P1 // P0', { P1: 100, P0: 0 })).toEqual({
         ok: false,
         error: 'DIV_ZERO',
       });
@@ -119,17 +176,24 @@ describe('formula-evaluator', () => {
   describe('extractRefs', () => {
     it('collects distinct identifiers, ignoring numbers', () => {
       expect(extractRefs('(P1 + P3) * 2 - P1').sort()).toEqual(['P1', 'P3']);
+      expect(extractRefs('P1 % P2 ** 2 // P3').sort()).toEqual([
+        'P1',
+        'P2',
+        'P3',
+      ]);
     });
 
     it('returns [] for invalid input', () => {
-      expect(extractRefs('P1 % P2')).toEqual([]);
+      expect(extractRefs('P1 & P2')).toEqual([]);
     });
   });
 
   describe('isValidFormulaSyntax', () => {
     it('accepts well-formed and rejects malformed expressions', () => {
       expect(isValidFormulaSyntax('(P1 - P2) / P3')).toBe(true);
-      expect(isValidFormulaSyntax('P1 ** P2')).toBe(false);
+      expect(isValidFormulaSyntax('P1 ** P2 % 3 // 2')).toBe(true);
+      expect(isValidFormulaSyntax('P1 ** * P2')).toBe(false);
+      expect(isValidFormulaSyntax('P1 & P2')).toBe(false);
     });
   });
 

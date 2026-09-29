@@ -145,6 +145,61 @@ describe('TemplateRenderService — header/footer as repeating page templates', 
   });
 });
 
+describe('TemplateRenderService — header/footer as natural-height flow templates', () => {
+  const service = new TemplateRenderService();
+
+  it('insets header content by the margin_header gap as top padding (edge side only)', () => {
+    const { headerTemplate } = service.render(
+      // margin_left 15 / margin_right 10 (defaults), margin_header 8.
+      meta({ header_html: 'H', margin_header: '8' }),
+      {},
+    );
+    // Natural-height flow box: gap padding on the PAGE-EDGE side (top) only, and
+    // the body-facing side (bottom) is `0` — the page margin is grown to fit at
+    // print time (PdfService), so the wrapper has no fixed height and no clipping.
+    expect(headerTemplate).toContain(
+      '<div class="pdf-header" style="box-sizing: border-box; width: 100%; padding: 8mm 10mm 0 15mm;',
+    );
+  });
+
+  it('insets footer content by the margin_footer gap as bottom padding', () => {
+    const { footerTemplate } = service.render(
+      meta({ footer_html: 'F', margin_footer: '6' }),
+      {},
+    );
+    expect(footerTemplate).toContain(
+      '<div class="pdf-footer" style="box-sizing: border-box; width: 100%; padding: 0 10mm 6mm 15mm;',
+    );
+  });
+
+  it('scales header/footer images to the page width without crushing their height', () => {
+    const { headerTemplate } = service.render(
+      meta({
+        header_html: '{{image:l.png}}',
+        margin_top: '10',
+        margin_header: '5',
+      }),
+      { images: { 'l.png': 'https://cdn.example/l.png' } },
+    );
+    // Images keep their natural aspect ratio (`height: auto`, no band-height cap):
+    // the page margin grows to fit, so a real letterhead is never squashed.
+    expect(headerTemplate).toContain(
+      '.pdf-header img { max-width: 100%; height: auto; }',
+    );
+    expect(headerTemplate).not.toContain('object-fit');
+  });
+
+  it('constrains wide tables and long words inside the header', () => {
+    const { headerTemplate } = service.render(
+      meta({ header_html: '<table><tr><td>x</td></tr></table>' }),
+      {},
+    );
+    expect(headerTemplate).toContain('.pdf-header table');
+    expect(headerTemplate).toContain('table-layout: fixed;');
+    expect(headerTemplate).toContain('overflow-wrap: break-word;');
+  });
+});
+
 describe('TemplateRenderService — case-insensitive tokens', () => {
   const service = new TemplateRenderService();
 
@@ -184,5 +239,137 @@ describe('TemplateRenderService — case-insensitive tokens', () => {
       { sections: { items: [{ name: 'CBC', price: 300 }] } },
     );
     expect(bodyHtml).toContain('<li>CBC=300</li>');
+  });
+
+  it('resolves dotted legacy tags as one flat key ({ORDER.DATE} → order.date)', () => {
+    // The referral patient bill emits `signature_name` + a flat `order.date`
+    // alias; the engine matches the dotted token literally, never as a path.
+    const { footerTemplate, bodyHtml } = service.render(
+      meta({
+        body_html: '<p>{ORDER.DATE}</p>',
+        footer_html: '<p>{SIGNATURE_NAME}</p>',
+      }),
+      {
+        variables: {
+          'order.date': '10/09/2026',
+          signature_name: 'Branch Admin',
+        },
+      },
+    );
+    expect(bodyHtml).toContain('<p>10/09/2026</p>');
+    expect(footerTemplate).toContain('<p>Branch Admin</p>');
+  });
+
+  it('leaves {ORDER.DATE}/{SIGNATURE_NAME} literal on contexts without those keys', () => {
+    // e.g. a plain bill_print context, which only carries `order_date`.
+    const { bodyHtml } = service.render(
+      meta({ body_html: '<p>{ORDER.DATE}|{SIGNATURE_NAME}</p>' }),
+      { variables: { order_date: '10/09/2026' } },
+    );
+    expect(bodyHtml).toContain('<p>{ORDER.DATE}|{SIGNATURE_NAME}</p>');
+  });
+
+  it('resolves the lab quotation legacy tags, with per-row item aliases inside {{#each items}}', () => {
+    // Shape emitted by `OrderService.buildQuotationContext`: flat dotted
+    // aliases at the top level, `item.*` aliases on each row.
+    const { headerTemplate, bodyHtml } = service.render(
+      meta({
+        header_html: '<p>{EXT_QUOTE_ID}</p>',
+        body_html:
+          '<p>{PATIENT.FULL_NAME}|{ORDER.REFERRING_DOCTOR}|{ORDER.REFERRING_PANEL}</p>' +
+          '<table>{{#each items}}<tr><td>{ITEM.INDEX}</td><td>{ITEM.NAME}</td>' +
+          '<td>{panel_tests_name}</td><td>{item.price}</td></tr>{{/each}}</table>' +
+          '<p>Total {BILL.TOTAL}</p>',
+      }),
+      {
+        variables: {
+          ext_quote_id: 'QT-0042',
+          'patient.full_name': 'Asha Verma',
+          'order.referring_doctor': 'Rohit Sharma',
+          'order.referring_panel': 'Apollo Panel',
+          'bill.total': 1550,
+          panel_tests_name: 'RA Factor, KFT',
+        },
+        sections: {
+          items: [
+            {
+              'item.index': 1,
+              'item.name': 'CBC',
+              'item.price': 300,
+              panel_tests_name: '',
+            },
+            {
+              'item.index': 2,
+              'item.name': 'Health Panel',
+              'item.price': 1200,
+              panel_tests_name: 'RA Factor, KFT',
+            },
+          ],
+        },
+      },
+    );
+    expect(headerTemplate).toContain('<p>QT-0042</p>');
+    expect(bodyHtml).toContain('<p>Asha Verma|Rohit Sharma|Apollo Panel</p>');
+    // Each row carries its own values — a test row's empty panel list must not
+    // fall back to the quote-wide flat `panel_tests_name`.
+    expect(bodyHtml).toContain(
+      '<tr><td>1</td><td>CBC</td><td></td><td>300</td></tr>' +
+        '<tr><td>2</td><td>Health Panel</td><td>RA Factor, KFT</td><td>1200</td></tr>',
+    );
+    expect(bodyHtml).toContain('<p>Total 1550</p>');
+  });
+});
+
+describe('TemplateRenderService — renderBodyFragment (lab_all_report body)', () => {
+  const service = new TemplateRenderService();
+
+  it('returns only the interpolated body fragment (no page/document wrapper)', () => {
+    const html = service.renderBodyFragment(
+      meta({
+        body_html:
+          '<div class="report-test">{test_name}</div>' +
+          '<table><tbody>{{#each results}}<tr><td>{parameter_name}</td><td>{observed1}</td></tr>{{/each}}</tbody></table>',
+        header_html: 'HEADER SHOULD NOT APPEAR',
+        footer_html: 'FOOTER SHOULD NOT APPEAR',
+      }),
+      {
+        variables: { test_name: 'Serum Glucose' },
+        sections: {
+          results: [{ parameter_name: 'Glucose', observed1: '120' }],
+        },
+      },
+    );
+    // Body content is interpolated…
+    expect(html).toContain('<div class="report-test">Serum Glucose</div>');
+    expect(html).toContain('<tr><td>Glucose</td><td>120</td></tr>');
+    // …but there is NO full-document wrapper and NO header/footer content, so
+    // the fragment can be embedded per-test inside the all-reports document.
+    expect(html).not.toContain('<!DOCTYPE');
+    expect(html).not.toContain('pdf-body');
+    expect(html).not.toContain('HEADER SHOULD NOT APPEAR');
+    expect(html).not.toContain('FOOTER SHOULD NOT APPEAR');
+  });
+
+  it('prefixes the template custom_css so per-report styling survives embedding', () => {
+    const html = service.renderBodyFragment(
+      meta({
+        body_html: '<div>{test_name}</div>',
+        custom_css: '.report-test { color: red; }',
+      }),
+      { variables: { test_name: 'CBC' } },
+    );
+    expect(html).toContain('<style>.report-test { color: red; }</style>');
+    expect(html).toContain('<div>CBC</div>');
+  });
+
+  it('resolves {{image:<id>}} in the body fragment from the meta registry', () => {
+    const html = service.renderBodyFragment(
+      meta({
+        body_html: 'Sig: {{image:sign.png}}',
+        images: { 'sign.png': 'https://cdn.example/sign.png' },
+      }),
+      {},
+    );
+    expect(html).toContain('<img src="https://cdn.example/sign.png"');
   });
 });

@@ -44,6 +44,7 @@ import { ExternalIdService } from '../registration-settings/external-id.service'
 import { ReferralCreditService } from '../referral-credit/referral-credit.service';
 import { CommunicationRecipientNotAllowedException } from '../referral-credit/referral-credit.exceptions';
 import { TenantService } from '../tenant/tenant.service';
+import { PatientService } from '../patient/patient.service';
 import type { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import {
@@ -92,6 +93,7 @@ import {
   deriveReportStatus,
 } from './entities/order.entity';
 import { computeBillingTotals } from './utils/billing-totals';
+import { billStatusLabel } from './utils/bill-status';
 import { BillingGroupBy } from './dto/billing-grouped-query.dto';
 import { BillingDimension } from './dto/billing-query.dto';
 import {
@@ -425,6 +427,7 @@ export class OrderService {
     private readonly shareService: ShareService,
     private readonly tenantService: TenantService,
     private readonly referralCredit: ReferralCreditService,
+    private readonly patientService: PatientService,
   ) {}
 
   /**
@@ -872,6 +875,23 @@ export class OrderService {
               order.id,
             ),
           });
+          // Persist any prescription / diagnostic files uploaded during order
+          // creation as the patient's own documents, so they surface in the
+          // Documents section of the patient page. Same transaction — a failure
+          // here rolls the whole order create back (rule #3: wired via DI).
+          const attachments = dto.diagnostics.prescriptionAttachments ?? [];
+          if (attachments.length) {
+            await this.patientService.createPatientDocumentsInTx(tx, {
+              tenantId,
+              branchId,
+              patientId: dto.patientId,
+              actorId: personId,
+              docs: attachments.map((a) => ({
+                name: a.name,
+                documentUrl: a.url,
+              })),
+            });
+          }
         }
         if (dto.opd) {
           await tx.orderOpd.create({
@@ -1971,6 +1991,8 @@ export class OrderService {
         return this.buildBillContext(order, tenantId);
       case 'accounts_biling':
         return this.buildAccountsBillingContext(order, tenantId);
+      case 'referral_patient_bill_print':
+        return this.buildReferralPatientBillContext(order, tenantId);
       case 'trf_print':
         return this.buildTrfContext(order, tenantId);
       case 'lab_quotation_print':
@@ -2045,6 +2067,25 @@ export class OrderService {
     return {
       referred_by: referredBy || 'Self',
       referral_panel: order.referralPanel?.name ?? 'Walk-in',
+    };
+  }
+
+  /**
+   * Home-visit / sample-collection `{variables}` from the order's Diagnostics
+   * section (the same source as the Order Overview's Billing & Payment card).
+   * `home_visit` is `Yes`/`No`; `home_visit_charge` only applies while Home
+   * Visit is on — pricing ignores it otherwise, and an update that turns Home
+   * Visit off leaves the stored value in place; `sample_charge` is the
+   * sample-collection charge, independent of Home Visit. An order with no
+   * Diagnostics section reads as `No` / `0`.
+   */
+  private diagnosticsVariables(order: OrderWithRelations) {
+    const d = order.diagnostics;
+    const isHomeVisit = d?.isHomeVisit ?? false;
+    return {
+      home_visit: isHomeVisit ? 'Yes' : 'No',
+      home_visit_charge: isHomeVisit ? (d?.visitCharges ?? 0) : 0,
+      sample_charge: d?.sampleCollectionCharges ?? 0,
     };
   }
 
@@ -2274,21 +2315,51 @@ export class OrderService {
     tenantId: string,
   ): Promise<GeneratePdfDto> {
     const totals = this.billTotals(order);
+    // Discount = per-line item discounts + the order-level discount — the
+    // authoritative rollup `findById` attaches (`computeBillingTotals`), i.e.
+    // the Discount the Billings list / Order Overview show. The ledger's
+    // `Σ orderDiscount` (`totals.discount`) omits line discounts entirely.
+    // The percentage is taken against the items' pre-discount total (the base
+    // discounts are applied to), not the ledger gross, which also carries the
+    // non-discountable sample-collection / visit charges.
+    const itemsTotal = order.items.reduce(
+      (s, it) => s + toNum(it.unitPrice),
+      0,
+    );
     const discountPercentage =
-      totals.gross > 0
-        ? roundToTwoDecimalPlaces((totals.discount / totals.gross) * 100)
+      itemsTotal > 0
+        ? roundToTwoDecimalPlaces((order.discountAmount / itemsTotal) * 100)
         : 0;
+    // Same Status label the Billings list shows (cancellation + refunds folded
+    // in), computed from the same inputs as that list row. Deliberately NOT the
+    // stored `order.paymentStatus`: that enum only holds NOT_PAID /
+    // PARTIALLY_PAID / PAID, and `cancel`/`refund` recompute it as a pure
+    // payment state against the retained amount — so a cancelled order kept
+    // printing PAID/PARTIALLY_PAID and a surplus refund left it PAID.
+    const refunded = order.payments.reduce(
+      (s, p) => s + toNum(p.refundAmount),
+      0,
+    );
+    const billStatus = billStatusLabel(
+      order.status,
+      order.netAmount,
+      computeEffectivePaid(
+        order.paidAmount,
+        toNum(order.cancellationCharge),
+        refunded,
+        order.payments.reduce((s, p) => s + toNum(p.refundCharge), 0),
+      ),
+      refunded,
+    );
     const { timezone, dateFormat, timeFormat } =
       await this.tenantService.getLocale(tenantId);
-    // The bill's own date/time is when it was actually generated — the
-    // earliest payment ledger row's `paymentDate` (`order.payments` is
-    // ordered `createdAt: 'asc'`, see `ORDER_INCLUDE`), which carries real
-    // time-of-day precision unlike `orderDate` (`@db.Date`, scheduled/entered
-    // service date, no time). Falls back to the order's own row-creation
-    // timestamp for a "Generate Bill = No" order with an empty ledger.
-    const billInstant = order.payments[0]?.paymentDate ?? order.createdAt;
+    // The bill's own date/time is when it was generated — the bill id is
+    // assigned in the same transaction that creates the order, so that's the
+    // order row's `createdAt` (also what the Billings list shows as the bill's
+    // Date/Time). Not the ledger's `paymentDate`: the Create Order form sends it
+    // date-only, so it's stored at UTC midnight and would always print 05:30 AM.
     const billDateTime = formatTenantDateTime(
-      toBranchLocalInstant(billInstant, timezone),
+      toBranchLocalInstant(order.createdAt, timezone),
       dateFormat,
       timeFormat,
     );
@@ -2328,15 +2399,16 @@ export class OrderService {
         payment_collected_by: paymentCollectedBy,
         panel_tests_name: panelTestsName,
         status: order.status,
-        payment_status: order.paymentStatus,
+        payment_status: billStatus,
         // Alias for the classic old-template tag name (`{bill_status}`) —
         // same value as `payment_status`, kept separate so authors of
         // pre-existing bill_print templates don't need to re-author them.
-        bill_status: order.paymentStatus,
+        bill_status: billStatus,
         branch_name: order.branch?.name ?? '',
         gross_amount: totals.gross,
-        discount_amount: totals.discount,
+        discount_amount: order.discountAmount,
         discount_percentage: discountPercentage,
+        ...this.diagnosticsVariables(order),
         net_amount: totals.net,
         total_amount_in_words: amountInWords(totals.net),
         paid_amount: totals.paid,
@@ -2384,6 +2456,38 @@ export class OrderService {
     };
   }
 
+  /**
+   * `referral_patient_bill_print` — the patient bill for an order billed to a
+   * referral (B2B) panel. Same amounts, item list and payment history as the
+   * patient bill (a superset of {@link buildBillContext}, like
+   * `accounts_biling`), plus the legacy referral-bill tags:
+   *  - `signature_name` — the staff user who registered the order. Legacy
+   *    signed this bill with the order's technician, which defaulted to the
+   *    registering user; the new order model has no per-order technician, so
+   *    `createdBy` is the equivalent. Blank when the creator can't be resolved.
+   *  - `order.date` — a flat alias of `order_date` so a legacy `{ORDER.DATE}`
+   *    tag resolves. `TemplateRenderService` matches a dotted token as one
+   *    literal key (case-insensitively), not as a nested path, so the alias
+   *    lives on this type only rather than changing the shared engine.
+   */
+  private async buildReferralPatientBillContext(
+    order: OrderWithRelations,
+    tenantId: string,
+  ): Promise<GeneratePdfDto> {
+    const bill = await this.buildBillContext(order, tenantId);
+    const signerNameById = await this.resolveActorNames([order.createdBy]);
+    return {
+      variables: {
+        ...bill.variables,
+        signature_name: order.createdBy
+          ? (signerNameById.get(order.createdBy) ?? '')
+          : '',
+        'order.date': bill.variables?.order_date ?? '',
+      },
+      sections: bill.sections,
+    };
+  }
+
   /** `trf_print` — Test Requisition Form: requested tests + clinical notes. */
   private async buildTrfContext(
     order: OrderWithRelations,
@@ -2392,6 +2496,9 @@ export class OrderService {
     const testRows = await this.itemRowsWithPanelTests(order);
     const { dateFormat, timeFormat } =
       await this.tenantService.getLocale(tenantId);
+    // Diagnostics tags. The visit charge is a billing figure, so the TRF
+    // carries only the Home Visit flag and the sample-collection charge.
+    const { home_visit, sample_charge } = this.diagnosticsVariables(order);
     return {
       variables: {
         trf_ref: order.billId ?? order.orderCode,
@@ -2407,6 +2514,8 @@ export class OrderService {
         clinical_notes: order.orderNotes ?? '',
         branch_name: order.branch?.name ?? '',
         panel_tests_name: this.panelTestsNameFlat(testRows),
+        home_visit,
+        sample_charge,
         ...this.patientVariables(order, dateFormat),
         ...this.referralVariables(order),
       },
@@ -2416,7 +2525,23 @@ export class OrderService {
     };
   }
 
-  /** `lab_quotation_print` — the quotation: items + totals + validity. */
+  /**
+   * `lab_quotation_print` — the quotation: items + totals + validity, plus the
+   * legacy quotation tags:
+   *  - `ext_quote_id` — the quote's external id (`externalOrderId`, generated
+   *    from the branch's QUOTATION format at create, or typed manually). Blank
+   *    when the quote has none.
+   *  - `patient.full_name` / `order.referring_doctor` / `order.referring_panel`
+   *    / `bill.total` — flat aliases of `patient_name` / `referred_by` /
+   *    `referral_panel` / `net_amount`, so the legacy dotted tags resolve.
+   *    `TemplateRenderService` matches a dotted token as one literal key
+   *    (case-insensitively), not as a nested path, so the aliases live on this
+   *    type only rather than changing the shared engine.
+   *  - `item.index` / `item.name` / `item.price` — per-row aliases of `sr_no` /
+   *    `name` / `price` on each `sections.items` row. They must be row keys: a
+   *    `{{#each items}}` block resolves `{col}` against the row first, whereas a
+   *    top-level key would print the same value on every row.
+   */
   private async buildQuotationContext(
     order: OrderWithRelations,
     tenantId: string,
@@ -2424,9 +2549,12 @@ export class OrderService {
     const totals = this.billTotals(order);
     const { dateFormat } = await this.tenantService.getLocale(tenantId);
     const itemRows = await this.itemRowsWithPanelTests(order);
+    const patient = this.patientVariables(order, dateFormat);
+    const referral = this.referralVariables(order);
     return {
       variables: {
         quote_id: order.orderCode,
+        ext_quote_id: order.externalOrderId ?? '',
         quote_date: formatTenantDate(order.orderDate, dateFormat),
         valid_till: order.quotationValidTill
           ? formatTenantDate(order.quotationValidTill, dateFormat)
@@ -2437,10 +2565,21 @@ export class OrderService {
         discount_amount: totals.discount,
         net_amount: totals.net,
         panel_tests_name: this.panelTestsNameFlat(itemRows),
-        ...this.patientVariables(order, dateFormat),
-        ...this.referralVariables(order),
+        ...patient,
+        ...referral,
+        'patient.full_name': patient.patient_name,
+        'order.referring_doctor': referral.referred_by,
+        'order.referring_panel': referral.referral_panel,
+        'bill.total': totals.net,
       },
-      sections: { items: itemRows },
+      sections: {
+        items: itemRows.map((row) => ({
+          ...row,
+          'item.index': row.sr_no,
+          'item.name': row.name,
+          'item.price': row.price,
+        })),
+      },
     };
   }
 
@@ -4834,6 +4973,17 @@ export class OrderService {
     // Order-level dimensions (non-collection): one row per order.
     const total = orders.length;
     const pageOrders = orders.slice((page - 1) * limit, page * limit);
+    // Outstanding report: resolve which of the page's orders already carry an
+    // active invoice, so the FE can disable their "Create Invoice" checkbox and
+    // stop a second invoice being raised for the same record. Only the page's
+    // orders are queried, so this stays cheap; other reports skip it.
+    const invoiceCodes =
+      report === 'outstanding'
+        ? await this.invoicedOrderCodes(
+            tenantId,
+            pageOrders.map((o) => o.id),
+          )
+        : new Map<string, string>();
     const data = pageOrders.map((o) => {
       const f = this.dimensionFiguresForOrder(o, dimension, report);
       return {
@@ -4851,6 +5001,8 @@ export class OrderService {
         creditCard: f.creditCard,
         refundAmount: f.refundAmount,
         cancelAmount: f.cancelAmount,
+        hasInvoice: invoiceCodes.has(o.id),
+        invoiceCode: invoiceCodes.get(o.id) ?? null,
       };
     });
     return { data, total, page, limit };

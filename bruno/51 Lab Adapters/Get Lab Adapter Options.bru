@@ -1,0 +1,55 @@
+meta {
+  name: Get Lab Adapter Options
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/lab-adapters/options?search=&branchId=
+  body: none
+  auth: bearer
+}
+
+params:query {
+  search:
+  branchId:
+  ~page: 1
+  ~limit: 20
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.length && data[0].id) bru.setEnvVar("labAdapterOptionId", data[0].id);
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Lightweight `{ id, name }` options for the **Reference Range Master**
+  Analyzer selector — only active, non-deleted adapters of the caller's
+  tenant.
+
+  **Query**
+  - `branchId` (optional) — narrows to adapters assigned to this branch (via
+    `LabAdapterBranch`). Omit to list every active adapter in the tenant. The
+    Reference Range Master's Analyzer picker no longer filters by branch
+    (Business Admin can pick any tenant adapter); this param remains for other
+    callers.
+  - `search` (optional) — case-insensitive match on the adapter `name`.
+  - `page` / `limit` (optional) — omit `page` for the full array; supply it
+    for a paginated `{ data, total, page, limit }` envelope. The frontend's
+    shared `optionFetcher` helper always supplies both, so it always takes the
+    paginated branch.
+
+  **Used by:** the Reference Range Master Add/Edit form's Analyzer picker —
+  the chosen adapter's `id` is stored as `LabTestReferenceRange.labAdapterId`
+  (left empty/null for a range not scoped to any analyzer).
+}

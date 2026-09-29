@@ -1,4 +1,4 @@
-import { renderLatte } from './latte-renderer.util';
+import { renderLatte, isLatteBody } from './latte-renderer.util';
 
 /**
  * Exercises the exact mechanics the "Lab All Reports" template depends on:
@@ -18,6 +18,23 @@ describe('renderLatte', () => {
   it('honours |noescape for pre-rendered HTML', () => {
     const out = renderLatte(`{$body|noescape}`, { body: '<div>x</div>' });
     expect(out).toBe('<div>x</div>');
+  });
+
+  it('applies |upper / |lower transform filters (still escaping output)', () => {
+    expect(renderLatte(`{$name|upper}`, { name: 'john doe' })).toBe('JOHN DOE');
+    expect(renderLatte(`{$name|lower}`, { name: 'JOHN' })).toBe('john');
+    // Transform runs, then the result is HTML-escaped by default.
+    expect(renderLatte(`{$v|upper}`, { v: 'a & b' })).toBe('A &amp; B');
+    // Combined with |noescape → transformed but not escaped.
+    expect(renderLatte(`{$v|upper|noescape}`, { v: 'a & b' })).toBe('A & B');
+    // Unknown filters pass the value through unchanged.
+    expect(renderLatte(`{$v|bogus}`, { v: 'x' })).toBe('x');
+  });
+
+  it('maps {PAGENO}/{nb} to Puppeteer page-number spans', () => {
+    expect(renderLatte(`Page {PAGENO} of {nb}`, {})).toBe(
+      'Page <span class="pageNumber"></span> of <span class="totalPages"></span>',
+    );
   });
 
   it('supports + arithmetic and . concatenation in expressions', () => {
@@ -98,9 +115,120 @@ describe('renderLatte', () => {
     expect(out).not.toContain('pre-count');
   });
 
+  it('supports {for} counted loops with $i++ and a condition', () => {
+    expect(renderLatte(`{for $i = 1; $i <= 3; $i++}[{$i}]{/for}`, {})).toBe(
+      '[1][2][3]',
+    );
+    // Decrement + explicit assignment increment forms.
+    expect(renderLatte(`{for $i = 3; $i > 0; $i--}{$i}{/for}`, {})).toBe('321');
+    expect(
+      renderLatte(`{for $i = 0; $i < 6; $i = $i + 2}{$i},{/for}`, {}),
+    ).toBe('0,2,4,');
+  });
+
+  it('supports {elseif} chains', () => {
+    const tpl = `{if $n > 0}pos{elseif $n < 0}neg{else}zero{/if}`;
+    expect(renderLatte(tpl, { n: 5 })).toBe('pos');
+    expect(renderLatte(tpl, { n: -5 })).toBe('neg');
+    expect(renderLatte(tpl, { n: 0 })).toBe('zero');
+  });
+
+  it('supports the ternary operator ? :', () => {
+    expect(renderLatte(`{$n > 0 ? 'pos' : 'neg'}`, { n: 3 })).toBe('pos');
+    expect(renderLatte(`{$n > 0 ? 'pos' : 'neg'}`, { n: -3 })).toBe('neg');
+    // Nested in the else branch (right-associative).
+    expect(renderLatte(`{$n > 0 ? 'p' : $n < 0 ? 'n' : 'z'}`, { n: 0 })).toBe(
+      'z',
+    );
+  });
+
+  it('supports the null-coalescing operator ??', () => {
+    expect(renderLatte(`{$missing ?? 'fallback'}`, {})).toBe('fallback');
+    expect(renderLatte(`{$name ?? 'fallback'}`, { name: 'Sam' })).toBe('Sam');
+    // Chained: first non-null wins.
+    expect(renderLatte(`{$a ?? $b ?? 'z'}`, { b: 'B' })).toBe('B');
+  });
+
+  it('supports * / % arithmetic with correct precedence', () => {
+    expect(renderLatte(`{2 + 3 * 4}`, {})).toBe('14');
+    expect(renderLatte(`{(2 + 3) * 4}`, {})).toBe('20');
+    expect(renderLatte(`{10 / 4}`, {})).toBe('2.5');
+    expect(renderLatte(`{10 % 3}`, {})).toBe('1');
+    expect(renderLatte(`{5 / 0}`, {})).toBe('0'); // div-by-zero guarded → 0
+  });
+
+  it('supports whitelisted function calls', () => {
+    expect(renderLatte(`{count($xs)}`, { xs: [1, 2, 3] })).toBe('3');
+    expect(renderLatte(`{number_format($n, 2)}`, { n: 1234567.891 })).toBe(
+      '1,234,567.89',
+    );
+    expect(renderLatte(`{round($n, 1)}`, { n: 3.14159 })).toBe('3.1');
+    expect(renderLatte(`{max($a, $b, 10)}`, { a: 3, b: 7 })).toBe('10');
+    expect(renderLatte(`{implode(', ', $xs)}`, { xs: ['a', 'b', 'c'] })).toBe(
+      'a, b, c',
+    );
+    // upper() output is still HTML-escaped by default.
+    expect(renderLatte(`{upper($s)}`, { s: 'a & b' })).toBe('A &amp; B');
+    // Unknown functions render empty (allow-list — no arbitrary execution).
+    expect(renderLatte(`{system('rm -rf /')}`, {})).toBe('');
+  });
+
+  it('supports array literals + index access, incl. in foreach/functions', () => {
+    expect(renderLatte(`{$xs[1]}`, { xs: ['a', 'b', 'c'] })).toBe('b');
+    expect(renderLatte(`{$m['k']}`, { m: { k: 'v' } })).toBe('v');
+    expect(renderLatte(`{count([1, 2, 3, 4])}`, {})).toBe('4');
+    expect(renderLatte(`{foreach [10, 20, 30] as $v}{$v};{/foreach}`, {})).toBe(
+      '10;20;30;',
+    );
+    // Associative literal.
+    expect(
+      renderLatte(
+        `{foreach ['a' => 1, 'b' => 2] as $k => $v}{$k}={$v} {/foreach}`,
+        {},
+      ),
+    ).toBe('a=1 b=2 ');
+  });
+
+  it('caps runaway {for} loops instead of hanging', () => {
+    // Condition never becomes false; the iteration guard must stop it.
+    const out = renderLatte(`{for $i = 0; $i >= 0; $i++}x{/for}`, {});
+    expect(out.length).toBe(100_000); // MAX_ITERATIONS guard
+  });
+
   it('never throws on malformed templates (returns something)', () => {
     expect(() =>
       renderLatte(`{foreach garbage}{/foreach}{$x->`, {}),
     ).not.toThrow();
+  });
+
+  // The ezHealthTrack single-test template gates the whole block on a flag that
+  // is DECLARED before the loop, SET inside a nested loop, and READ after it
+  // (`{var $show=false}…{foreach}{if …}{var $show=true}{/if}{/foreach}{if $show}`).
+  // This only works if assignment mutates the existing outer var in place rather
+  // than shadowing it in the loop frame — guard that contract here.
+  it('mutates an outer {var} from inside a loop and reads it after (ezHealthTrack gate)', () => {
+    const tpl = `{var $show = false}{foreach $rows as $r}{if $r->v != ""}{var $show = true}{/if}{/foreach}{if $show}SHOWN{else}HIDDEN{/if}`;
+    expect(renderLatte(tpl, { rows: [{ v: '' }, { v: '7' }] })).toBe('SHOWN');
+    expect(renderLatte(tpl, { rows: [{ v: '' }, { v: '' }] })).toBe('HIDDEN');
+  });
+});
+
+describe('isLatteBody', () => {
+  it('detects Latte control syntax and $-vars', () => {
+    expect(isLatteBody('{foreach $tests as $t}{$t->name}{/foreach}')).toBe(
+      true,
+    );
+    expect(isLatteBody('{if $x != ""}y{/if}')).toBe(true);
+    expect(isLatteBody('{var $n = 1}')).toBe(true);
+    expect(isLatteBody('<img src="{$sig}">')).toBe(true);
+  });
+
+  it('treats a flat {tag} / {{#each}} template as NOT Latte', () => {
+    expect(isLatteBody('<h3>{test_name}</h3>')).toBe(false);
+    expect(
+      isLatteBody('{{#each results}}<tr>{parameter_name}</tr>{{/each}}'),
+    ).toBe(false);
+    expect(isLatteBody('{{image:logo.png}}')).toBe(false);
+    expect(isLatteBody(undefined)).toBe(false);
   });
 });

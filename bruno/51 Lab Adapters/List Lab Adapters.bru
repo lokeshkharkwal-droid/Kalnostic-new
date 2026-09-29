@@ -14,7 +14,7 @@ params:query {
   page: 1
   limit: 20
   search:
-  ~status: ACTIVE
+  ~status: ONLINE
 }
 
 auth:bearer {
@@ -34,12 +34,12 @@ tests {
 
 docs {
   List the tenant's **lab adapters** (paginated). Auth: **business** token; tenant
-  from the JWT. Each row: `{ id, name, token, isActive, equipmentName,
+  from the JWT. Each row: `{ id, name, token, status, equipmentName,
   branchCount, labTestsCount }`.
 
   **Query**
   - `page` / `limit` — offset pagination (`limit` capped at 100). Pagination lands
     in `meta` (`total`, `page`, `limit`, `totalPages`).
   - `search` (optional) — case-insensitive match on the adapter `name`.
-  - `status` (optional) — `ACTIVE` | `INACTIVE`.
+  - `status` (optional) — `ONLINE` | `REPORT_ONLY` | `INACTIVE`.
 }

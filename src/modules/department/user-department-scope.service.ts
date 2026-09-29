@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { PersonMappingType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 /**
@@ -20,26 +19,27 @@ export class UserDepartmentScopeService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * The tenant-wide department ids a staff user is assigned to (reads the shared
-   * `DepartmentPersonMapping` rows with `type = USER`, `branchId = null`).
+   * The department ids a staff user is assigned to: reads the dedicated
+   * `UserDepartmentAssignment` table (membership — "which departments does
+   * this user belong to", NOT the signatory `DepartmentPersonMapping` table).
+   * Tenant-level only (no branch column on this model), so every assignment
+   * applies regardless of which branch the caller is currently working at.
    * @param tenantId tenant scope (from JWT)
    * @param personId the calling user
-   * @returns the user's department ids (empty when the user has no mapping)
+   * @returns the user's department ids (empty when the user has no assignment)
    */
   async resolveDepartmentIds(
     tenantId: string,
     personId: string,
   ): Promise<string[]> {
-    const rows = await this.prisma.departmentPersonMapping.findMany({
+    const rows = await this.prisma.userDepartmentAssignment.findMany({
       where: {
         tenantId,
         personId,
-        type: PersonMappingType.USER,
-        branchId: null,
         deletedAt: null,
       },
       select: { departmentId: true },
     });
-    return rows.map((r) => r.departmentId);
+    return [...new Set(rows.map((r) => r.departmentId))];
   }
 }

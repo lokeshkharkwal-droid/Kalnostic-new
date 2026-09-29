@@ -17,6 +17,30 @@ export type { PreparedPdfHtml } from './pdf-document.util';
 const IMAGE_TOKEN_RE = /\{\{image:([a-zA-Z0-9_.-]+)\}\}/g;
 
 /**
+ * Keys whose value is rich-text HTML the technician authored in a
+ * `NotesRichTextEditor` (e.g. `<p><strong>…</strong></p>`), not plain text —
+ * `LabReportService.buildPrintContext` is the single source of these values.
+ * Escaping them (the default for every other token, to avoid layout/injection
+ * issues from plain-text values) would print the literal tags instead of the
+ * formatted content, so they're inserted as-is here instead. Every other key
+ * (patient name, order code, `result_note`, …) is genuinely plain text and
+ * must stay escaped.
+ */
+const RICH_TEXT_KEYS = new Set([
+  'useful_for',
+  'interpretation',
+  'limitations',
+  'remarks',
+  'references',
+  'overall_result',
+]);
+
+/** `escapeHtml`, except for a known rich-text field — see {@link RICH_TEXT_KEYS}. */
+function escapeUnlessRichText(key: string, value: string): string {
+  return RICH_TEXT_KEYS.has(key.toLowerCase()) ? value : escapeHtml(value);
+}
+
+/**
  * Collect the distinct `{{image:<id>}}` token ids referenced anywhere in the
  * given HTML fragments (header/body/footer). Used to resolve tokens against the
  * durable, tenant-wide image registry so an image uploaded in one template can be
@@ -95,6 +119,39 @@ export class TemplateRenderService {
   }
 
   /**
+   * Render ONLY the template's interpolated body fragment (no page wrapper, no
+   * `<!DOCTYPE>`/`<html>`, no header/footer) — the direct equivalent of
+   * ezHealthTrack's `get_body_section()` (`meta['body_html']`). Used to build
+   * each test's `body_html` for a `lab_all_report`: every report is rendered
+   * through its own configured single-report `lab_report` template's BODY, and
+   * the resulting fragment is dropped per iteration by the outer all-reports
+   * template (`{foreach $report_tests->tests as $r}{$r->body_html|noescape}`).
+   *
+   * The template's own `{{image:<id>}}` registry is merged with any
+   * generate-time `context.images` (the latter wins on id collisions), exactly
+   * as {@link render} does. When the template carries `custom_css`, it is
+   * prefixed as a `<style>` block so each report's styling survives embedding
+   * in the combined document (harmless if repeated across reports).
+   * @param meta the single-report template's normalized meta (all keys present)
+   * @param context the report's data (variables, images, sections)
+   */
+  renderBodyFragment(meta: PdfTemplateMeta, context: GeneratePdfDto): string {
+    const variables = context.variables ?? {};
+    const images = { ...(meta.images ?? {}), ...(context.images ?? {}) };
+    const sections = context.sections ?? {};
+    const body = this.renderFragment(
+      meta.body_html,
+      variables,
+      images,
+      sections,
+    );
+    const css = meta.custom_css?.trim()
+      ? `<style>${meta.custom_css}</style>`
+      : '';
+    return `${css}${body}`;
+  }
+
+  /**
    * Interpolate one HTML fragment: repeating sections first, then image
    * placeholders, then flat `{placeholder}` variables.
    */
@@ -132,13 +189,18 @@ export class TemplateRenderService {
           let piece = inner.replace(
             /\{\{this\.([a-zA-Z0-9_]+)\}\}/g,
             (_m, col: string) =>
-              escapeHtml(this.stringify(this.resolveField(row, col).value)),
+              escapeUnlessRichText(
+                col,
+                this.stringify(this.resolveField(row, col).value),
+              ),
           );
           piece = piece.replace(
             /\{([a-zA-Z0-9_][a-zA-Z0-9_.]*)\}/g,
             (whole, col: string) => {
               const r = this.resolveField(row, col);
-              return r.found ? escapeHtml(this.stringify(r.value)) : whole;
+              return r.found
+                ? escapeUnlessRichText(col, this.stringify(r.value))
+                : whole;
             },
           );
           return piece;
@@ -178,7 +240,9 @@ export class TemplateRenderService {
       /\{([a-zA-Z0-9_][a-zA-Z0-9_.]*)\}/g,
       (whole, key: string) => {
         const r = this.resolveField(variables, key);
-        return r.found ? escapeHtml(this.stringify(r.value)) : whole;
+        return r.found
+          ? escapeUnlessRichText(key, this.stringify(r.value))
+          : whole;
       },
     );
   }

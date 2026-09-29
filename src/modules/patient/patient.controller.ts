@@ -174,6 +174,16 @@ export class PatientController {
     return this.patientService.findById(id, tenantId);
   }
 
+  /**
+   * List the patient's lab attachments (technician uploads + analyzer/LIS
+   * histogram images), aggregated read-only across the patient's orders for the
+   * Documents section's Lab panel.
+   */
+  @Get(':id/lab-documents')
+  findLabDocuments(@CurrentTenant() tenantId: string, @Param('id') id: string) {
+    return this.patientService.findPatientLabDocuments(tenantId, id);
+  }
+
   /** Update a patient's details. */
   @Patch(':id')
   @RequirePermission(PERMISSION_KEYS.REG_UPDATE_PATIENT_DETAILS)

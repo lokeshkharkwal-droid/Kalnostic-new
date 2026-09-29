@@ -29,6 +29,6 @@ import { LatteReportRenderService } from './services/latte-render.service';
     TemplateRenderService,
     LatteReportRenderService,
   ],
-  exports: [PdfReportTemplateService],
+  exports: [PdfReportTemplateService, PdfTemplateConfigService],
 })
 export class PdfReportTemplateModule {}

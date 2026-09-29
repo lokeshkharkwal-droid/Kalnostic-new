@@ -229,6 +229,23 @@ export type PatientDocumentWithPatientName = PatientDocument & {
 };
 
 /**
+ * A lab attachment (technician upload or analyzer/LIS histogram) surfaced on the
+ * patient page's read-only Lab panel. Aggregated from `LabReportAttachment`
+ * across the patient's orders — see `PatientService.findPatientLabDocuments`.
+ */
+export type PatientLabDocument = {
+  id: string;
+  kind: string;
+  fileUrl: string;
+  fileName: string;
+  notes: string | null;
+  orderCode: string;
+  testName: string | null;
+  source: 'LIS' | 'Technician';
+  uploadedAt: Date;
+};
+
+/**
  * Patient management. Tenant-scoped: every query carries `tenantId` (defence in
  * depth on top of RLS — CLAUDE.md §4.3) and filters soft-deleted rows. Patients
  * are branch-level (`branchId` records the registration branch) but remain
@@ -1389,6 +1406,126 @@ export class PatientService {
       where: { id },
       data: { deletedAt: new Date() },
     });
+  }
+
+  /**
+   * Bulk-create patient document rows using a caller-supplied transaction
+   * client, so the write commits atomically with whatever the caller is doing
+   * (e.g. `OrderService.create` persisting prescription uploads against the
+   * order's patient — CLAUDE.md rule #3, `*InTx` cross-module convention). The
+   * caller owns the `withTenant` scope; this method must not open its own.
+   * @param tx active tenant-scoped transaction client (from `withTenant`)
+   * @param params tenant/branch/patient context + the documents to create
+   */
+  async createPatientDocumentsInTx(
+    tx: Prisma.TransactionClient,
+    params: {
+      tenantId: string;
+      branchId: string | null;
+      patientId: string;
+      actorId?: string | null;
+      docs: Array<{
+        name: string;
+        documentUrl: string;
+        category?: PatientDocumentCategory;
+        type?: string;
+        documentDate?: Date;
+      }>;
+    },
+  ): Promise<void> {
+    const { tenantId, branchId, patientId, actorId, docs } = params;
+    if (docs.length === 0) {
+      return;
+    }
+    await tx.patientDocument.createMany({
+      data: docs.map((doc) => ({
+        category: doc.category ?? PatientDocumentCategory.DOCUMENT,
+        name: doc.name,
+        type: doc.type ?? 'Prescription',
+        documentDate: doc.documentDate ?? new Date(),
+        documentUrl: doc.documentUrl,
+        tenantId,
+        branchId,
+        patientId,
+        createdBy: actorId ?? null,
+        updatedBy: actorId ?? null,
+      })),
+    });
+  }
+
+  // ── Lab documents (aggregated, read-only) ─────────────────────────────────────
+
+  /**
+   * List every lab attachment (technician-uploaded files and analyzer/LIS
+   * histogram images) belonging to a patient, gathered across all of the
+   * patient's orders. Read-only aggregation over `LabReportAttachment` — the
+   * source of truth stays in the Technician Reporting / EMI flows; nothing is
+   * copied. Tenant-scoped (defence in depth on top of RLS).
+   * @param tenantId tenant scope (from the JWT)
+   * @param patientId owning patient
+   * @returns flat rows for the patient page's Lab panel (newest first)
+   * @throws PatientNotFoundException if the patient doesn't belong to the tenant
+   */
+  async findPatientLabDocuments(
+    tenantId: string,
+    patientId: string,
+  ): Promise<PatientLabDocument[]> {
+    await this.ensurePatient(patientId, tenantId);
+    const rows = await this.prisma.labReportAttachment.findMany({
+      where: {
+        tenantId,
+        labReport: {
+          deletedAt: null,
+          orderItem: { order: { patientId, tenantId } },
+        },
+      },
+      include: {
+        labReport: {
+          select: {
+            orderItem: {
+              select: {
+                direct: true,
+                order: { select: { orderCode: true } },
+                branchLabTest: {
+                  select: { testDisplayName: true, testName: true },
+                },
+                branchLabPanel: { select: { panelName: true } },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { uploadedAt: 'desc' },
+    });
+    return rows.map((row) => {
+      const orderItem = row.labReport.orderItem;
+      const testName =
+        orderItem.branchLabTest?.testDisplayName ??
+        orderItem.branchLabTest?.testName ??
+        orderItem.branchLabPanel?.panelName ??
+        orderItem.direct ??
+        null;
+      return {
+        id: row.id,
+        kind: row.kind,
+        fileUrl: row.fileUrl,
+        fileName: row.fileName,
+        notes: row.notes,
+        orderCode: orderItem.order.orderCode,
+        testName,
+        source: this.deriveLabDocumentSource(row.notes),
+        uploadedAt: row.uploadedAt,
+      };
+    });
+  }
+
+  /**
+   * Best-effort label for where a lab attachment came from. EMI/LIS histogram
+   * rows are written with a `"… histogram"` note (see `EmiService.saveHistograms`);
+   * everything else is a human technician upload.
+   */
+  private deriveLabDocumentSource(notes: string | null): 'LIS' | 'Technician' {
+    return notes?.toLowerCase().includes('histogram') ? 'LIS' : 'Technician';
   }
 
   // ── Family members ──────────────────────────────────────────────────────────

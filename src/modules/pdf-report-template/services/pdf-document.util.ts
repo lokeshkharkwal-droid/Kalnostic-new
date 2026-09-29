@@ -57,11 +57,68 @@ function mm(value: string, fallback: number): number {
 }
 
 /**
+ * Format a millimetre number for CSS, trimming float noise (e.g. `4.999999`).
+ */
+function mmCss(value: number): string {
+  return `${Math.round(value * 1000) / 1000}mm`;
+}
+
+/**
+ * The four page margins (mm) a template reserves for the body's frame. The
+ * top/bottom margins are the MINIMUM header/footer band heights — `PdfService`
+ * grows them further at print time to fit taller header/footer content (see the
+ * auto-fit in `pdf.service.ts`), so a real letterhead is never crushed. Empty or
+ * invalid meta values fall back to the shared defaults.
+ */
+export function resolvePageMarginsMm(meta: PdfTemplateMeta): {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+} {
+  return {
+    top: mm(meta.margin_top, 10),
+    right: mm(meta.margin_right, 10),
+    bottom: mm(meta.margin_bottom, 10),
+    left: mm(meta.margin_left, 15),
+  };
+}
+
+/**
+ * CSS that keeps arbitrary header/footer HTML inside the page width without
+ * distorting it, regardless of the selected page size/orientation:
+ *  - images scale DOWN to the available width but keep their natural aspect ratio
+ *    and height (`height: auto`) so a real letterhead is never crushed — the page
+ *    margin is grown at print time to make room (see `PdfService` auto-fit);
+ *  - tables use a fixed layout capped at the content width so wide tables can't
+ *    push past the page margins;
+ *  - long words/URLs wrap instead of forcing horizontal overflow.
+ */
+function edgeContentCss(cls: 'pdf-header' | 'pdf-footer'): string {
+  return `
+      .${cls} img { max-width: 100%; height: auto; }
+      .${cls} table { table-layout: fixed; width: 100%; max-width: 100%; border-collapse: collapse; }
+      .${cls} td, .${cls} th { overflow: hidden; word-break: break-word; overflow-wrap: break-word; }
+      .${cls} * { max-width: 100%; overflow-wrap: break-word; word-wrap: break-word; }`;
+}
+
+/**
  * Build one Puppeteer header/footer template string. It is self-contained (own
  * `<style>`, explicit font size, `print-color-adjust: exact` so backgrounds
- * render) and padded to line up with the body's left/right margins. An empty
- * fragment yields an empty band (suppresses Chromium's default date/page-number
- * chrome).
+ * render) — Chromium renders header/footer templates in an isolated context that
+ * inherits none of the body's CSS.
+ *
+ * The template is a plain NATURAL-HEIGHT flow box (no fixed height, no clipping).
+ * Chromium natively TOP-aligns the header template to the page's top edge and
+ * BOTTOM-aligns the footer template to the bottom edge, then repeats both on
+ * every page — so no absolute positioning is needed. The mPDF
+ * `margin_header` / `margin_footer` gap becomes padding on the PAGE-EDGE side
+ * (top for the header, bottom for the footer); the body-facing side is kept clear
+ * because `PdfService` grows the top/bottom page margin to fit the measured
+ * header/footer height (the Puppeteer equivalent of mPDF's `setAutoTopMargin`).
+ * `mLeft` / `mRight` inset the content to line up with the body's side margins.
+ * An empty fragment yields an empty band (suppresses Chromium's default date /
+ * page-number chrome).
  */
 function buildEdgeTemplate(
   cls: 'pdf-header' | 'pdf-footer',
@@ -72,14 +129,23 @@ function buildEdgeTemplate(
   fontSize: string,
   mLeft: number,
   mRight: number,
+  gapMm: number,
 ): string {
+  const isHeader = cls === 'pdf-header';
+  const gap = mmCss(gapMm);
+  // Gap padding on the page-edge side only; the body-facing side is handled by
+  // the auto-fit margin so header/footer content never touches the body.
+  const padding = isHeader
+    ? `${gap} ${mmCss(mRight)} 0 ${mmCss(mLeft)}`
+    : `0 ${mmCss(mRight)} ${gap} ${mmCss(mLeft)}`;
   return `<style>
 ${baseCss}
 ${customCss}
+${edgeContentCss(cls)}
 </style>
-<div class="${cls}" style="width: 100%; font-family: ${fontFamily}sans-serif; font-size: ${escapeHtml(
+<div class="${cls}" style="box-sizing: border-box; width: 100%; padding: ${padding}; font-family: ${fontFamily}sans-serif; font-size: ${escapeHtml(
     fontSize,
-  )}pt; color: #1a1a1a; padding: 0 ${mRight}mm 0 ${mLeft}mm; -webkit-print-color-adjust: exact; print-color-adjust: exact;">${fragment}</div>`;
+  )}pt; color: #1a1a1a; -webkit-print-color-adjust: exact; print-color-adjust: exact;">${fragment}</div>`;
 }
 
 /**
@@ -104,8 +170,15 @@ export function buildPdfDocuments(
 ): PreparedPdfHtml {
   const fontFamily = meta.default_font ? `${meta.default_font}, ` : '';
   const fontSize = meta.default_font_size || '10';
-  const mLeft = mm(meta.margin_left, 12);
-  const mRight = mm(meta.margin_right, 12);
+  const margins = resolvePageMarginsMm(meta);
+  const mLeft = margins.left;
+  const mRight = margins.right;
+  // The mPDF gap from the page edge to the header/footer content
+  // (`margin_header` / `margin_footer`). The header/footer templates are
+  // natural-height flow boxes; the page's top/bottom margin is grown at print
+  // time to fit them (see `PdfService`), so only the page-edge gap is baked in.
+  const headerGap = mm(meta.margin_header, 5);
+  const footerGap = mm(meta.margin_footer, 5);
   const customCss = meta.custom_css || '';
   // An uploaded watermark image is applied automatically and takes precedence
   // over the text watermark; fall back to text when no image is set.
@@ -161,6 +234,7 @@ ${watermark}
       fontSize,
       mLeft,
       mRight,
+      headerGap,
     ),
     footerTemplate: buildEdgeTemplate(
       'pdf-footer',
@@ -171,6 +245,7 @@ ${watermark}
       fontSize,
       mLeft,
       mRight,
+      footerGap,
     ),
     hasHeaderFooter: header.trim() !== '' || footer.trim() !== '',
   };

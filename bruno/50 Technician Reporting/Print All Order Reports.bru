@@ -25,15 +25,40 @@ body:json {
 }
 
 docs {
-  Render ALL of an order's reports into one consolidated PDF (`lab_all_report`),
-  streamed back as `application/pdf`. Aggregates every active report for the order
-  into a single `{{#each reports}}` section (one row per test, with a joined result
-  summary), plus the de-duplicated approving signatories in the footer
-  (`<signing_authority_tag>`).
+  Render ALL of an order's reports into one consolidated PDF, streamed back as
+  `application/pdf`. Two render paths, chosen by the resolved template's `type`:
+
+  ## Render paths
+  - **`lab_all_report` / `patient_lab_all_report` template** → the whole order is
+    ONE continuous Latte document. The context is
+    `{ report_tests: { groups: [], tests: [...] }, header_fields: {...} }`, where
+    each `report_tests.tests[]` entry carries a **`body_html`** field — the
+    **Body HTML** tag. Crucially, each test's `body_html` is that test's OWN
+    fully-rendered single-report `lab_report` template body (resolved per test via
+    Test-Template → Configuration default → first-active, exactly like a
+    standalone print), so every test preserves its complete designed report
+    structure. The template iterates them one after another, e.g.:
+
+    ```latte
+    {foreach $report_tests->tests as $report}
+      {$report->body_html|noescape}
+    {/foreach}
+    ```
+
+    Only the single-report template's BODY is rendered per test (not its header),
+    so the patient/order header is not duplicated — the shared header comes from
+    the all-report template's own header block + `{$header_fields->...}`. This
+    mirrors the legacy ezHealthTrack "Body HTML" behaviour. When a test has no
+    single-report template configured, its `body_html` falls back to a built-in
+    minimal results table so the combined PDF still renders.
+
+  - **`lab_report` template (or none)** → each report is rendered as its own
+    complete single-report PDF and the pages are merged with `pdf-lib`.
 
   ## Body
-  - `templateId` (optional) — the `lab_all_report` template to render with. Omit to
-    fall back to the tenant's single active `lab_all_report` template.
+  - `templateId` (optional) — the template to render with. Supply a
+    `lab_all_report` template id for the Body-HTML loop path above; omit to fall
+    back to per-report resolution + merge.
   - `orderItemIds` (optional) — array of `OrderItem` UUIDs. When given (non-empty),
     only the reports belonging to these order items are included in the
     consolidated PDF instead of every report on the order. Used by the Order
@@ -45,7 +70,9 @@ docs {
   - `POST /lab-reports/:id/print` renders a SINGLE report. Its body now also
     accepts an optional `type` (`lab_report` | `lab_panel`, default `lab_report`),
     used only to resolve the default template when no `templateId` is given — the
-    same report record renders either way.
+    same report record renders either way. The `lab_all_report` path reuses this
+    exact single-report resolution + body rendering to build each test's
+    `body_html`.
 
   ## Errors
   - 404 `LAB_REPORT_NOT_FOUND` — the order (or the selected `orderItemIds`) has no

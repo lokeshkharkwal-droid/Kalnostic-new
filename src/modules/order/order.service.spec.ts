@@ -311,3 +311,470 @@ describe('OrderService — TDS & Discount rules', () => {
     });
   });
 });
+
+/**
+ * Unit coverage for the `referral_patient_bill_print` render context — the
+ * legacy `{SIGNATURE_NAME}` / `{ORDER.DATE}` tags must resolve on that type and
+ * must NOT leak onto the plain patient bill. The builders only touch
+ * `prisma.person` (actor names) and `tenantService.getLocale`, so those two are
+ * stubbed and the private dispatcher is exercised directly.
+ */
+describe('OrderService — referral patient bill print context', () => {
+  const creatorId = 'person-creator';
+  const prisma = {
+    person: {
+      findMany: jest.fn().mockResolvedValue([
+        {
+          id: creatorId,
+          firstName: 'Branch',
+          middleName: null,
+          lastName: 'Admin',
+        },
+      ]),
+    },
+  };
+  const tenantService = {
+    getLocale: jest.fn().mockResolvedValue({
+      timezone: 'Asia/Kolkata',
+      dateFormat: 'DD/MM/YYYY',
+      timeFormat: '12h',
+    }),
+  };
+  const deps = Array(13).fill(undefined) as unknown[];
+  deps[0] = prisma;
+  deps[11] = tenantService;
+  const service = new OrderService(
+    ...(deps as ConstructorParameters<typeof OrderService>),
+  );
+
+  /** A minimal order: no items/payments, created by `creatorId` on 10 Sep 2026. */
+  const order = {
+    id: 'order-1',
+    orderCode: 'ORD-1',
+    billId: 'DIG-001',
+    status: OrderStatus.ORDER,
+    orderDate: new Date('2026-09-10T00:00:00.000Z'),
+    orderTime: '10:30',
+    createdAt: new Date('2026-09-24T06:00:00.000Z'),
+    createdBy: creatorId,
+    items: [],
+    payments: [],
+    diagnostics: null,
+    discountAmount: 0,
+    netAmount: 0,
+    paidAmount: 0,
+    cancellationCharge: 0,
+    branch: { name: 'Main Branch' },
+    referredByDoctor: null,
+    referralPanel: { name: 'Test Credit Panel' },
+    patient: {
+      firstName: 'Asha',
+      middleName: null,
+      lastName: 'Verma',
+      salutation: null,
+      dateOfBirth: null,
+      age: null,
+      ageType: null,
+      gender: null,
+      umId: 'UM-1',
+      mobile: '9000000000',
+      email: null,
+      bloodGroup: null,
+      addressLine1: null,
+    },
+  };
+
+  /** Invoke the private per-type dispatcher against `order` + overrides. */
+  const buildContext = (
+    type: string,
+    overrides: Record<string, unknown> = {},
+  ) =>
+    (
+      service as unknown as {
+        buildPrintContext: (
+          o: unknown,
+          t: string,
+          tenantId: string,
+        ) => Promise<{ variables?: Record<string, unknown> }>;
+      }
+    ).buildPrintContext({ ...order, ...overrides }, type, 'tenant-1');
+
+  it('resolves signature_name to the order creator and order.date to the order date', async () => {
+    const { variables = {} } = await buildContext(
+      'referral_patient_bill_print',
+    );
+    expect(variables.signature_name).toBe('Branch Admin');
+    expect(variables['order.date']).toBe('10/09/2026');
+    expect(variables['order.date']).toBe(variables.order_date);
+    // Still a superset of the patient bill's tags.
+    expect(variables.bill_id).toBe('DIG-001');
+    expect(variables.referral_panel).toBe('Test Credit Panel');
+  });
+
+  it('leaves signature_name blank when the order has no creator', async () => {
+    const { variables = {} } = await buildContext(
+      'referral_patient_bill_print',
+      { createdBy: null },
+    );
+    expect(variables.signature_name).toBe('');
+  });
+
+  it('does not add the referral-only tags to the plain patient bill', async () => {
+    const { variables = {} } = await buildContext('bill_print');
+    expect(variables).not.toHaveProperty('signature_name');
+    expect(variables).not.toHaveProperty('order.date');
+  });
+});
+
+/**
+ * Unit coverage for the `trf_print` (Test Requisition Form) Diagnostics tags —
+ * `{home_visit}` / `{sample_charge}` must resolve on the TRF from the order's
+ * Diagnostics section, the TRF must NOT pick up the bill-only
+ * `{home_visit_charge}`, and neither tag may leak onto the order slip /
+ * quotation. Same harness as the referral-bill block above: only
+ * `prisma.person` (bill collector name) and `tenantService.getLocale` are
+ * stubbed, and an item-less order keeps `itemRowsWithPanelTests` off Prisma.
+ */
+describe('OrderService — TRF print context (Diagnostics tags)', () => {
+  const prisma = {
+    person: { findMany: jest.fn().mockResolvedValue([]) },
+  };
+  const tenantService = {
+    getLocale: jest.fn().mockResolvedValue({
+      timezone: 'Asia/Kolkata',
+      dateFormat: 'DD/MM/YYYY',
+      timeFormat: '12h',
+    }),
+  };
+  const deps = Array(13).fill(undefined) as unknown[];
+  deps[0] = prisma;
+  deps[11] = tenantService;
+  const service = new OrderService(
+    ...(deps as ConstructorParameters<typeof OrderService>),
+  );
+
+  /** A minimal home-visit order: visit charge 500, sample charge 600. */
+  const order = {
+    id: 'order-1',
+    orderCode: 'ORD-1',
+    billId: 'DIG-001',
+    status: OrderStatus.ORDER,
+    orderDate: new Date('2026-09-10T00:00:00.000Z'),
+    orderTime: '10:30',
+    orderNotes: null,
+    createdAt: new Date('2026-09-24T06:00:00.000Z'),
+    createdBy: null,
+    items: [],
+    payments: [],
+    diagnostics: {
+      isHomeVisit: true,
+      visitCharges: 500,
+      sampleCollectionCharges: 600,
+    },
+    discountAmount: 0,
+    netAmount: 0,
+    paidAmount: 0,
+    cancellationCharge: 0,
+    branch: { name: 'Main Branch' },
+    referredByDoctor: null,
+    referralPanel: null,
+    patient: {
+      firstName: 'Asha',
+      middleName: null,
+      lastName: 'Verma',
+      salutation: null,
+      dateOfBirth: null,
+      age: null,
+      ageType: null,
+      gender: null,
+      umId: 'UM-1',
+      mobile: '9000000000',
+      email: null,
+      bloodGroup: null,
+      addressLine1: null,
+    },
+  };
+
+  /** Invoke the private per-type dispatcher against `order` + overrides. */
+  const buildContext = (
+    type: string,
+    overrides: Record<string, unknown> = {},
+  ) =>
+    (
+      service as unknown as {
+        buildPrintContext: (
+          o: unknown,
+          t: string,
+          tenantId: string,
+        ) => Promise<{ variables?: Record<string, unknown> }>;
+      }
+    ).buildPrintContext({ ...order, ...overrides }, type, 'tenant-1');
+
+  it('resolves home_visit / sample_charge on the TRF, without the bill-only visit charge', async () => {
+    const { variables = {} } = await buildContext('trf_print');
+    expect(variables.home_visit).toBe('Yes');
+    expect(variables.sample_charge).toBe(600);
+    expect(variables).not.toHaveProperty('home_visit_charge');
+    // Existing TRF tags are untouched.
+    expect(variables.trf_ref).toBe('DIG-001');
+    expect(variables.order_code).toBe('ORD-1');
+  });
+
+  it('reads No + the sample charge when Home Visit is off', async () => {
+    const { variables = {} } = await buildContext('trf_print', {
+      diagnostics: {
+        isHomeVisit: false,
+        visitCharges: 0,
+        sampleCollectionCharges: 100,
+      },
+    });
+    expect(variables.home_visit).toBe('No');
+    expect(variables.sample_charge).toBe(100);
+  });
+
+  it('reads No / 0 when the order has no Diagnostics section', async () => {
+    const { variables = {} } = await buildContext('trf_print', {
+      diagnostics: null,
+    });
+    expect(variables.home_visit).toBe('No');
+    expect(variables.sample_charge).toBe(0);
+  });
+
+  it('keeps all three Diagnostics tags on the patient bill', async () => {
+    const { variables = {} } = await buildContext('bill_print');
+    expect(variables.home_visit).toBe('Yes');
+    expect(variables.home_visit_charge).toBe(500);
+    expect(variables.sample_charge).toBe(600);
+  });
+
+  it.each(['order_print', 'lab_quotation_print'])(
+    'does not add the Diagnostics tags to %s',
+    async (type) => {
+      const { variables = {} } = await buildContext(type);
+      expect(variables).not.toHaveProperty('home_visit');
+      expect(variables).not.toHaveProperty('sample_charge');
+    },
+  );
+});
+
+/**
+ * Unit coverage for the `lab_quotation_print` legacy tags — `{EXT_QUOTE_ID}`,
+ * the flat dotted aliases (`{PATIENT.FULL_NAME}`, `{ORDER.REFERRING_DOCTOR}`,
+ * `{ORDER.REFERRING_PANEL}`, `{BILL.TOTAL}`) and the per-row `{ITEM.INDEX}` /
+ * `{ITEM.NAME}` / `{item.price}` aliases must resolve on the quotation (each
+ * row carrying its own values, next to its own `panel_tests_name`), and must
+ * NOT leak onto the other order documents. Same harness as the blocks above,
+ * plus the two panel-member lookups `itemRowsWithPanelTests` makes.
+ */
+describe('OrderService — lab quotation print context (legacy tags)', () => {
+  const prisma = {
+    person: { findMany: jest.fn().mockResolvedValue([]) },
+    branchLabPanelTest: {
+      findMany: jest.fn().mockResolvedValue([
+        { branchLabPanelId: 'panel-1', branchLabTestId: 'test-a' },
+        { branchLabPanelId: 'panel-1', branchLabTestId: 'test-b' },
+      ]),
+    },
+    branchLabTest: {
+      findMany: jest.fn().mockResolvedValue([
+        { id: 'test-a', testName: 'RA Factor' },
+        { id: 'test-b', testName: 'KFT' },
+      ]),
+    },
+  };
+  const tenantService = {
+    getLocale: jest.fn().mockResolvedValue({
+      timezone: 'Asia/Kolkata',
+      dateFormat: 'DD/MM/YYYY',
+      timeFormat: '12h',
+    }),
+  };
+  const deps = Array(13).fill(undefined) as unknown[];
+  deps[0] = prisma;
+  deps[11] = tenantService;
+  const service = new OrderService(
+    ...(deps as ConstructorParameters<typeof OrderService>),
+  );
+
+  /** A quote with a test, a panel and a direct line at three different prices. */
+  const order = {
+    id: 'order-1',
+    orderCode: 'ORD-1',
+    billId: null,
+    externalOrderId: 'QT-0042',
+    status: OrderStatus.QUOTE,
+    quotationStatus: 'DRAFT',
+    quotationValidTill: null,
+    orderDate: new Date('2026-09-10T00:00:00.000Z'),
+    orderTime: null,
+    orderNotes: null,
+    createdAt: new Date('2026-09-24T06:00:00.000Z'),
+    createdBy: null,
+    items: [
+      {
+        branchLabTest: { testName: 'CBC', testCode: 'CBC01' },
+        branchLabPanel: null,
+        direct: null,
+        unitPrice: 300,
+        discount: 0,
+      },
+      {
+        branchLabTest: null,
+        branchLabPanel: {
+          id: 'panel-1',
+          panelName: 'Health Panel',
+          panelCode: 'HP01',
+        },
+        direct: null,
+        unitPrice: 1200,
+        discount: 0,
+      },
+      {
+        branchLabTest: null,
+        branchLabPanel: null,
+        direct: 'Home Kit',
+        unitPrice: 150,
+        discount: 0,
+      },
+    ],
+    payments: [
+      {
+        totalAmount: 1650,
+        orderDiscount: 100,
+        netAmount: 1550,
+        paidAmount: 0,
+      },
+    ],
+    diagnostics: null,
+    discountAmount: 100,
+    netAmount: 1550,
+    paidAmount: 0,
+    cancellationCharge: 0,
+    branch: { name: 'Main Branch' },
+    referredByDoctor: { firstName: 'Rohit', lastName: 'Sharma' },
+    referralPanel: { name: 'Apollo Panel' },
+    patient: {
+      firstName: 'Asha',
+      middleName: 'K',
+      lastName: 'Verma',
+      salutation: null,
+      dateOfBirth: null,
+      age: null,
+      ageType: null,
+      gender: null,
+      umId: 'UM-1',
+      mobile: '9000000000',
+      email: null,
+      bloodGroup: null,
+      addressLine1: null,
+    },
+  };
+
+  type Ctx = {
+    variables?: Record<string, unknown>;
+    sections?: Record<string, Array<Record<string, unknown>>>;
+  };
+
+  /** Invoke the private per-type dispatcher against `order` + overrides. */
+  const buildContext = (
+    type: string,
+    overrides: Record<string, unknown> = {},
+  ): Promise<Ctx> =>
+    (
+      service as unknown as {
+        buildPrintContext: (
+          o: unknown,
+          t: string,
+          tenantId: string,
+        ) => Promise<Ctx>;
+      }
+    ).buildPrintContext({ ...order, ...overrides }, type, 'tenant-1');
+
+  it('resolves ext_quote_id to the external quote id, blank when there is none', async () => {
+    const { variables = {} } = await buildContext('lab_quotation_print');
+    expect(variables.ext_quote_id).toBe('QT-0042');
+    // The internal quote id is untouched.
+    expect(variables.quote_id).toBe('ORD-1');
+
+    const noExt = await buildContext('lab_quotation_print', {
+      externalOrderId: null,
+    });
+    expect(noExt.variables?.ext_quote_id).toBe('');
+  });
+
+  it('aliases the dotted patient / referral / total tags to their base keys', async () => {
+    const { variables = {} } = await buildContext('lab_quotation_print');
+    expect(variables['patient.full_name']).toBe('Asha K Verma');
+    expect(variables['patient.full_name']).toBe(variables.patient_name);
+    expect(variables['order.referring_doctor']).toBe('Rohit Sharma');
+    expect(variables['order.referring_doctor']).toBe(variables.referred_by);
+    expect(variables['order.referring_panel']).toBe('Apollo Panel');
+    expect(variables['order.referring_panel']).toBe(variables.referral_panel);
+    expect(variables['bill.total']).toBe(1550);
+    expect(variables['bill.total']).toBe(variables.net_amount);
+  });
+
+  it('keeps the Self / Walk-in referral fallbacks on the dotted aliases', async () => {
+    const { variables = {} } = await buildContext('lab_quotation_print', {
+      referredByDoctor: null,
+      referralPanel: null,
+    });
+    expect(variables['order.referring_doctor']).toBe('Self');
+    expect(variables['order.referring_panel']).toBe('Walk-in');
+  });
+
+  it('gives every item row its own index, name, price and panel tests', async () => {
+    const { sections = {} } = await buildContext('lab_quotation_print');
+    const rows = sections.items ?? [];
+    expect(
+      rows.map((r) => [
+        r['item.index'],
+        r['item.name'],
+        r['item.price'],
+        r.panel_tests_name,
+      ]),
+    ).toEqual([
+      [1, 'CBC', 300, ''],
+      [2, 'Health Panel', 1200, 'RA Factor, KFT'],
+      [3, 'Home Kit', 150, ''],
+    ]);
+    // The aliases mirror the existing row fields, which stay in place.
+    for (const r of rows) {
+      expect(r['item.index']).toBe(r.sr_no);
+      expect(r['item.name']).toBe(r.name);
+      expect(r['item.price']).toBe(r.price);
+    }
+  });
+
+  it('keeps the item aliases off the top-level variables', async () => {
+    const { variables = {} } = await buildContext('lab_quotation_print');
+    expect(variables).not.toHaveProperty('item.index');
+    expect(variables).not.toHaveProperty('item.name');
+    expect(variables).not.toHaveProperty('item.price');
+    // The flat panel list still covers the whole quote.
+    expect(variables.panel_tests_name).toBe('RA Factor, KFT');
+  });
+
+  it.each(['bill_print', 'order_print', 'trf_print'])(
+    'does not add the quotation-only tags to %s',
+    async (type) => {
+      const { variables = {}, sections = {} } = await buildContext(type);
+      for (const key of [
+        'ext_quote_id',
+        'patient.full_name',
+        'order.referring_doctor',
+        'order.referring_panel',
+        'bill.total',
+      ]) {
+        expect(variables).not.toHaveProperty(key);
+      }
+      const rows = sections.items ?? sections.tests ?? [];
+      expect(rows.length).toBe(3);
+      for (const r of rows) {
+        expect(r).not.toHaveProperty('item.index');
+        expect(r).not.toHaveProperty('item.name');
+        expect(r).not.toHaveProperty('item.price');
+      }
+    },
+  );
+});

@@ -10,7 +10,9 @@ import {
   extractImageTokens,
   PreparedPdfHtml,
 } from './services/template-render.service';
+import { resolvePageMarginsMm } from './services/pdf-document.util';
 import { LatteReportRenderService } from './services/latte-render.service';
+import { isLatteBody } from './services/latte-renderer.util';
 import { CreatePdfReportTemplateDto } from './dto/create-pdf-report-template.dto';
 import { UpdatePdfReportTemplateDto } from './dto/update-pdf-report-template.dto';
 import { GeneratePdfDto } from './dto/generate-pdf.dto';
@@ -240,9 +242,18 @@ export class PdfReportTemplateService {
    * Render a template to a PDF buffer: interpolate the supplied context into the
    * header/body/footer HTML (placeholders, images, repeating sections, signing
    * authority tags), then print to PDF with page settings from `meta`.
+   * Auto-selects the engine by the body's syntax (mirrors
+   * {@link renderReportBodyFragment}): a **Latte** body
+   * (`{foreach}`/`{if}`/`{var}`/`{$…}`, e.g. an ezHealthTrack-style `lab_report`
+   * template) is rendered with the Latte engine against the object-shaped
+   * `latteData`; a **flat** body (`{tag}`/`{{#each}}`/`{{image:…}}`) goes through
+   * {@link TemplateRenderService}. Without this split the flat renderer would emit
+   * a Latte template's control tags verbatim into the PDF.
    * @param id template id
    * @param tenantId tenant scope
    * @param context render data (variables, images, sections, signatories)
+   * @param latteData object-shaped Latte context (`tests`, approver fields) — used
+   * only when the template body is Latte; omit for purely flat templates
    * @returns the generated PDF bytes
    * @throws PdfReportTemplateNotFoundException if missing/soft-deleted
    * @throws PdfGenerationFailedException if rendering fails
@@ -251,11 +262,16 @@ export class PdfReportTemplateService {
     id: string,
     tenantId: string,
     context: GeneratePdfDto,
+    latteData?: Record<string, unknown>,
   ): Promise<Buffer> {
     const template = await this.findById(id, tenantId);
     const meta = this.readMeta(template.meta);
-    const context2 = await this.withRegistryImages(tenantId, meta, context);
-    const prepared = this.renderService.render(meta, context2);
+    const prepared = isLatteBody(meta.body_html)
+      ? this.latteRenderService.render(meta, latteData ?? {})
+      : this.renderService.render(
+          meta,
+          await this.withRegistryImages(tenantId, meta, context),
+        );
     try {
       return await this.pdfService.htmlToPdf(
         prepared.bodyHtml,
@@ -267,14 +283,80 @@ export class PdfReportTemplateService {
   }
 
   /**
-   * Render a `lab_all_report`-type template to a PDF using the Latte engine and
-   * an order-scoped `report_tests`/`header_fields` context (see
-   * {@link LatteReportRenderService}). Unlike {@link generatePdf} the whole order
-   * is one continuous document — the template iterates every test and manages its
-   * own per-test page headers/breaks — so there is no `pdf-lib` merge.
-   * @param id template id (must be a `lab_all_report` template)
+   * Render a single-report template's interpolated BODY fragment to an HTML
+   * string (no page/`<!DOCTYPE>` wrapper, no header/footer) — mirrors
+   * {@link generatePdf} but returns the body only. Used by the `lab_all_report`
+   * context builder to render each test through its own configured
+   * `lab_report` template, exactly as ezHealthTrack's `get_body_section()` does,
+   * so each test's `body_html` preserves the full designed report structure.
+   * @param id single-report template id
+   * @param tenantId tenant scope
+   * @param context the report's render data (variables, images, sections)
+   * @returns the interpolated body HTML fragment
+   * @throws PdfReportTemplateNotFoundException if missing/soft-deleted
+   */
+  async renderBodyFragment(
+    id: string,
+    tenantId: string,
+    context: GeneratePdfDto,
+  ): Promise<string> {
+    const template = await this.findById(id, tenantId);
+    const meta = this.readMeta(template.meta);
+    const context2 = await this.withRegistryImages(tenantId, meta, context);
+    return this.renderService.renderBodyFragment(meta, context2);
+  }
+
+  /**
+   * Render a single test's body fragment for a Lab All Report, auto-selecting
+   * the engine by the template body's syntax:
+   *  - a **Latte** body (`{foreach}`/`{if}`/`{var}`/`{$…}`) is rendered with the
+   *    object-shaped `latteData` (`tests[0]` = this test) so its conditionals run
+   *    as authored — the faithful path for ezHealthTrack-style templates;
+   *  - a **flat** body (`{tag}` / `{{#each results}}` / `{{image:…}}`) goes
+   *    through {@link TemplateRenderService.renderBodyFragment} with `flatContext`
+   *    (the same registry-image resolution a normal single print uses).
+   *
+   * Both inputs are cheaply derived from the SAME report data (see
+   * `LabReportService.buildReportBodyHtml`), so this costs no extra queries.
+   * @param id the resolved single-test `lab_report` template id
+   * @param tenantId tenant scope
+   * @param flatContext flat-engine data (variables, images, sections)
+   * @param latteData Latte-engine data (`tests`, approver fields)
+   * @throws PdfReportTemplateNotFoundException if missing/soft-deleted
+   */
+  async renderReportBodyFragment(
+    id: string,
+    tenantId: string,
+    flatContext: GeneratePdfDto,
+    latteData: Record<string, unknown>,
+  ): Promise<string> {
+    const template = await this.findById(id, tenantId);
+    const meta = this.readMeta(template.meta);
+    if (isLatteBody(meta.body_html)) {
+      return this.latteRenderService.renderBodyFragment(meta, latteData);
+    }
+    const context2 = await this.withRegistryImages(tenantId, meta, flatContext);
+    return this.renderService.renderBodyFragment(meta, context2);
+  }
+
+  /**
+   * Render a `lab_all_report`-type template to a PDF, one continuous document for
+   * the whole order (unlike {@link generatePdf} there is no `pdf-lib` merge).
+   *
+   * Auto-selects the engine by the body's syntax:
+   *  - a **Latte** body (`{foreach $report_tests->tests}` …) renders via
+   *    {@link LatteReportRenderService} against the order-scoped
+   *    `report_tests`/`header_fields` Latte context — the template iterates every
+   *    test and manages its own per-test page headers/breaks;
+   *  - a **flat** body (`{{#each reports}}` / `{tag}`, e.g. the seeded "Sample Lab
+   *    All Reports") falls back to {@link TemplateRenderService} against
+   *    `flatContext` (`variables` + `sections.reports`/`sections.results`).
+   * Without this fallback a flat all-report template would be fed to the Latte
+   * engine, which leaves its `{{#each}}`/`{tag}` markup un-rendered.
+   * @param id template id (a `lab_all_report` / `patient_lab_all_report` template)
    * @param tenantId tenant scope
    * @param context the Latte data (`report_tests`, `header_fields`)
+   * @param flatContext flat-engine data used only when the body is flat
    * @returns the generated PDF bytes
    * @throws PdfReportTemplateNotFoundException if missing/soft-deleted
    * @throws PdfGenerationFailedException if rendering fails
@@ -283,10 +365,16 @@ export class PdfReportTemplateService {
     id: string,
     tenantId: string,
     context: Record<string, unknown>,
+    flatContext?: GeneratePdfDto,
   ): Promise<Buffer> {
     const template = await this.findById(id, tenantId);
     const meta = this.readMeta(template.meta);
-    const prepared = this.latteRenderService.render(meta, context);
+    const prepared = isLatteBody(meta.body_html)
+      ? this.latteRenderService.render(meta, context)
+      : this.renderService.render(
+          meta,
+          await this.withRegistryImages(tenantId, meta, flatContext ?? {}),
+        );
     try {
       return await this.pdfService.htmlToPdf(
         prepared.bodyHtml,
@@ -748,11 +836,15 @@ export class PdfReportTemplateService {
     prepared: PreparedPdfHtml,
   ): PDFOptions {
     const landscape = meta.orientation === 'L';
+    // Use the shared margin resolver so the reserved header/footer bands are
+    // byte-for-byte the space the edge templates fill (see `buildPdfDocuments`);
+    // this is what keeps header/body/footer from bleeding into each other.
+    const m = resolvePageMarginsMm(meta);
     const margin = {
-      top: `${meta.margin_top}mm`,
-      right: `${meta.margin_right}mm`,
-      bottom: `${meta.margin_bottom}mm`,
-      left: `${meta.margin_left}mm`,
+      top: `${m.top}mm`,
+      right: `${m.right}mm`,
+      bottom: `${m.bottom}mm`,
+      left: `${m.left}mm`,
     };
     const base: PDFOptions = {
       printBackground: true,

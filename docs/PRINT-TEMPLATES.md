@@ -156,8 +156,8 @@ from `PDF_TEMPLATE_META_DEFAULTS`, so you only set what you want to change.
 | `orientation` | `'P'` | `'P'` portrait / `'L'` landscape. |
 | `page_size` | `'A4'` | ISO `A0`–`A12`, `B0`–`B12`, `C0`–`C12`/`C76`, barcode `CB1` (100×25mm), `CB2` (50×25mm), or `Letter`/`Legal`. |
 | `margin_left` / `margin_right` | `'15'` / `'10'` | mm (string). |
-| `margin_top` / `margin_bottom` | `'10'` / `'10'` | mm. **Reserves the band the header/footer paint into** — too small and they clip. |
-| `margin_header` / `margin_footer` | `'5'` / `'5'` | mm from the page edge to header/footer content. |
+| `margin_top` / `margin_bottom` | `'10'` / `'10'` | mm. The **minimum** top/bottom margin (where the body starts/ends). The renderer measures your header/footer at print time and **automatically grows this margin to fit** them (mPDF `setAutoTopMargin` analogue), so a tall letterhead is never crushed and never collides with the body — you no longer have to size `margin_top` by hand. Growth is capped at 45% of the page height. |
+| `margin_header` / `margin_footer` | `'5'` / `'5'` | mm from the page edge to header/footer content (the gap above the header / below the footer). |
 | `watermark_text` | `''` | Text watermark (72pt, −30°, ~8% opacity). |
 | `watermark_image` | `''` | Image watermark URL. **Takes precedence** over `watermark_text`. |
 | `images` | `{}` | `{ id: url }` registry backing `{{image:id}}`. |
@@ -168,6 +168,16 @@ from `PDF_TEMPLATE_META_DEFAULTS`, so you only set what you want to change.
 - They render in an **isolated Chromium context** and do **not** inherit the body
   stylesheet — `custom_css` is injected into them separately, but body-only
   `<style>` blocks won't apply. Put shared styles in `custom_css`.
+- **The band auto-fits the content.** The header/footer HTML is rendered as a
+  natural-height flow box; Chromium pins the header to the top edge and the footer
+  to the bottom edge and repeats both on every page. At print time the renderer
+  measures each one and **grows the top/bottom page margin to fit it** (bounded to
+  45% of the page height), so a real letterhead renders at full size and the body
+  always starts below it — no manual `margin_top` tuning, and header content can
+  never bleed into or overlap the body. Wide tables/long words are still
+  constrained to the content width, and images scale down to the page width while
+  keeping their aspect ratio (`height: auto`). Only an extreme header taller than
+  ~45% of the page is clipped.
 - Always give header/footer an explicit font size.
 - If both `header_html` and `footer_html` are blank, Puppeteer's
   `displayHeaderFooter` stays off and you get a clean body-only PDF (no Chromium

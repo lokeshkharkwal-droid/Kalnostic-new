@@ -12,6 +12,7 @@ import {
   SampleStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PaginatedResult, paginated } from '../../common/dto/response.dto';
 import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
 import { getReferralPanelId } from '../../prisma/tenant-context';
@@ -48,6 +49,7 @@ import { ListLabReportsDto } from './dto/list-lab-reports.dto';
 import { UpsertResultValuesDto } from './dto/upsert-result-values.dto';
 import { ReferenceRangeQueryDto } from './dto/reference-range-query.dto';
 import { ReferenceRangeMethodsQueryDto } from './dto/reference-range-methods-query.dto';
+import { ReferenceRangeCandidatesQueryDto } from './dto/reference-range-candidates-query.dto';
 import { TrendReportQueryDto } from './dto/trend-report-query.dto';
 import {
   CreateLabReportNoteDto,
@@ -55,6 +57,7 @@ import {
   PLAIN_NOTE_CATEGORIES,
 } from './dto/lab-report-note.dto';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
+import { PdfTemplateConfigService } from '../pdf-report-template/pdf-template-config.service';
 import {
   escapeHtml,
   toText,
@@ -85,7 +88,10 @@ import {
   fullName,
   toWorklistRow,
 } from './entities/lab-report.entity';
-import { LabReportOptions } from './entities/lab-report-options.entity';
+import {
+  LabReportOption,
+  LabReportOptions,
+} from './entities/lab-report-options.entity';
 import { resolveActorNames } from './entities/worklist.entity';
 import { ApproveReportDto } from './dto/approve-report.dto';
 import {
@@ -101,7 +107,6 @@ import {
   InvalidResultParamException,
   UnlockNotPermittedException,
   NoActivePrintTemplateException,
-  AmbiguousPrintTemplateException,
   OrderReportsNotFoundException,
   ReportingWindowClosedException,
 } from './exceptions/lab-report.exceptions';
@@ -163,6 +168,7 @@ export class LabReportService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly pdfReportTemplateService: PdfReportTemplateService,
+    private readonly pdfTemplateConfigService: PdfTemplateConfigService,
     private readonly tatService: TatService,
     private readonly technicianSettingsService: TechnicianSettingsService,
     private readonly eventEmitter: EventEmitter2,
@@ -233,6 +239,38 @@ export class LabReportService {
         onlyMemberLabTestId,
       ),
     );
+  }
+
+  /**
+   * Re-home the LabReport(s) of an accepted order item to `destBranchId` — used
+   * when an internal branch transfer is accepted, so the report follows the
+   * sample to the branch now processing it (see
+   * `SampleTransferService.cloneIntoDestination`, RULE 1). The report was
+   * created at the origin branch during the origin accept and re-creating it is
+   * a no-op (idempotent), so it must be moved, not re-created, for the receiving
+   * branch's Technician worklist (`buildListWhere` filters on `branchId`) to
+   * show it. Scopes to the one panel member the transferred sample serves when
+   * `onlyMemberLabTestId` is given (matching `createReportForAcceptedItem`);
+   * a non-panel item has its single report (`memberBranchLabTestId` = null).
+   * @param tx the caller's transaction (runs atomically with the transfer accept)
+   * @param tenantId the current tenant
+   * @param orderItemId the order item whose report(s) move
+   * @param destBranchId the receiving branch to move the report(s) to
+   * @param onlyMemberLabTestId scope to this panel member's report only
+   */
+  async rehomeReportsForAcceptedItem(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    orderItemId: string,
+    destBranchId: string,
+    onlyMemberLabTestId?: string | null,
+  ): Promise<void> {
+    const or: Prisma.LabReportWhereInput[] = [{ memberBranchLabTestId: null }];
+    if (onlyMemberLabTestId) or.push({ labTestId: onlyMemberLabTestId });
+    await tx.labReport.updateMany({
+      where: { orderItemId, tenantId, deletedAt: null, OR: or },
+      data: { branchId: destBranchId },
+    });
   }
 
   /**
@@ -402,14 +440,30 @@ export class LabReportService {
     }
 
     const orderItem: Prisma.OrderItemWhereInput = {};
-    if (filters.departmentId) {
-      orderItem.branchLabTest = { departmentId: filters.departmentId };
+    // The "Lab Test"/"Lab Panel" filter's id may be either a specific
+    // BranchLabTest/BranchLabPanel.id or that row's sourceLabTestId/
+    // sourceLabPanelId — the same master test/panel is copied into every
+    // pricing list as its own row, and the Reporting dropdown (getOptions)
+    // sends the shared source id so one filter selection matches the test/
+    // panel regardless of which list's copy a given order actually used.
+    const branchLabTestWhere: Prisma.BranchLabTestWhereInput = {};
+    if (filters.departmentId) branchLabTestWhere.departmentId = filters.departmentId;
+    if (filters.branchLabTestId) {
+      branchLabTestWhere.OR = [
+        { id: filters.branchLabTestId },
+        { sourceLabTestId: filters.branchLabTestId },
+      ];
+    }
+    if (Object.keys(branchLabTestWhere).length > 0) {
+      orderItem.branchLabTest = branchLabTestWhere;
     }
     if (filters.branchLabPanelId) {
-      orderItem.branchLabPanelId = filters.branchLabPanelId;
-    }
-    if (filters.branchLabTestId) {
-      orderItem.branchLabTestId = filters.branchLabTestId;
+      orderItem.branchLabPanel = {
+        OR: [
+          { id: filters.branchLabPanelId },
+          { sourceLabPanelId: filters.branchLabPanelId },
+        ],
+      };
     }
     if (filters.orderId) {
       orderItem.orderId = filters.orderId;
@@ -1174,77 +1228,42 @@ export class LabReportService {
   /**
    * Everything the Reporting Worklist's filter row needs in one call
    * (LABORATORY.docx §3.1) — real tenant/branch-scoped lookups for
-   * Branches/Ref By/Panels/Departments/Lab Test/Lab Panel, plus the two
-   * static lists (`sampleStatuses`/`reportStatuses`).
+   * Branches/Ref By/Panels/Departments, plus the two static lists
+   * (`sampleStatuses`/`reportStatuses`). Lab Test/Lab Panel are deliberately
+   * NOT included here — a tenant can have thousands of active tests across
+   * its pricing lists, so those two are their own paginated/searchable
+   * endpoints (`getLabTestOptions`/`getLabPanelOptions` below) rather than one
+   * more array in an unpaginated combined payload.
    */
   async getOptions(
     tenantId: string,
     branchId: string | null,
-    personId: string,
   ): Promise<LabReportOptions> {
-    const activeBranchId = this.requireBranch(branchId);
-    // Scope the Lab Test / Lab Panel filter dropdowns to the caller's departments
-    // (unassigned tests/panels stay visible to all), matching the worklist itself.
-    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
-      tenantId,
-      personId,
-    );
-    const deptScope =
-      scopeIds.length > 0
-        ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
-        : { departmentId: null };
+    this.requireBranch(branchId);
 
-    const [
-      branches,
-      referredByDoctors,
-      referralPanels,
-      departments,
-      labTests,
-      labPanels,
-    ] = await Promise.all([
-      this.prisma.branch.findMany({
-        where: { tenantId, deletedAt: null },
-        select: { id: true, name: true },
-        orderBy: { name: 'asc' },
-      }),
-      this.prisma.referralDoctor.findMany({
-        where: { tenantId, deletedAt: null },
-        select: { id: true, firstName: true, lastName: true },
-        orderBy: { firstName: 'asc' },
-      }),
-      this.prisma.referralPanel.findMany({
-        where: { tenantId, deletedAt: null },
-        select: { id: true, name: true },
-        orderBy: { name: 'asc' },
-      }),
-      this.prisma.department.findMany({
-        where: { tenantId, deletedAt: null },
-        select: { id: true, name: true },
-        orderBy: { name: 'asc' },
-      }),
-      this.prisma.branchLabTest.findMany({
-        where: {
-          tenantId,
-          branchId: activeBranchId,
-          isActive: true,
-          deletedAt: null,
-          ...deptScope,
-        },
-        select: { id: true, testName: true },
-        orderBy: { testName: 'asc' },
-      }),
-      this.prisma.branchLabPanel.findMany({
-        where: {
-          tenantId,
-          branchId: activeBranchId,
-          isActive: true,
-          deletedAt: null,
-          ...deptScope,
-        },
-        select: { id: true, panelName: true },
-        orderBy: { panelName: 'asc' },
-      }),
-    ]);
+    const [branches, referredByDoctors, referralPanels, departments] =
+      await Promise.all([
+        this.prisma.branch.findMany({
+          where: { tenantId, deletedAt: null },
+          select: { id: true, name: true },
+          orderBy: { name: 'asc' },
+        }),
+        this.prisma.referralDoctor.findMany({
+          where: { tenantId, deletedAt: null },
+          select: { id: true, firstName: true, lastName: true },
+          orderBy: { firstName: 'asc' },
+        }),
+        this.prisma.referralPanel.findMany({
+          where: { tenantId, deletedAt: null },
+          select: { id: true, name: true },
+          orderBy: { name: 'asc' },
+        }),
+        this.prisma.department.findMany({
+          where: { tenantId, deletedAt: null },
+          select: { id: true, name: true },
+          orderBy: { name: 'asc' },
+        }),
+      ]);
 
     return {
       branches: branches.map((b) => ({ id: b.id, name: b.name })),
@@ -1254,11 +1273,150 @@ export class LabReportService {
       })),
       referralPanels: referralPanels.map((p) => ({ id: p.id, name: p.name })),
       departments: departments.map((d) => ({ id: d.id, name: d.name })),
-      labTests: labTests.map((t) => ({ id: t.id, name: t.testName })),
-      labPanels: labPanels.map((p) => ({ id: p.id, name: p.panelName })),
       sampleStatuses: Object.values(SampleStatus),
       reportStatuses: Object.values(LabReportStatus),
     };
+  }
+
+  /**
+   * Paginated, searchable **Lab Test** options for the Reporting Worklist's
+   * filter row (`GET /lab-reports/lab-test-options`) — the same underlying
+   * data `getOptions()` used to embed unpaginated, split out because a tenant
+   * can have thousands of active `BranchLabTest` rows.
+   *
+   * The same master test is copied into every pricing list as its own
+   * `BranchLabTest` row (one row per list), so without dedup the same test
+   * would show once per list it's been imported into. Dedup happens in two
+   * passes: first a lightweight id-only fetch (scoped by department, active,
+   * search) to compute the true deduped set + total count and pick out this
+   * page's representative row ids; then a second fetch for just those rows'
+   * display names. Dedup key is `sourceLabTestId ?? id` — a branch-only row
+   * with no source (hand-created, never imported from Master Data) has
+   * nothing to share, so it's simply its own group of one. The returned `id`
+   * is the shared source id (or the row's own id when there's no source), so
+   * `buildListWhere`'s OR match (`id` OR `sourceLabTestId` = filter value)
+   * finds every list's copy when this value is used as a filter.
+   */
+  async getLabTestOptions(
+    tenantId: string,
+    branchId: string | null,
+    personId: string,
+    query: { search?: string; page?: number; limit?: number },
+  ): Promise<PaginatedResult<LabReportOption>> {
+    const activeBranchId = this.requireBranch(branchId);
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+
+    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
+      tenantId,
+      personId,
+    );
+    const deptScope =
+      scopeIds.length > 0
+        ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
+        : { departmentId: null };
+    const term = query.search?.trim();
+
+    const rows = await this.prisma.branchLabTest.findMany({
+      where: {
+        tenantId,
+        branchId: activeBranchId,
+        isActive: true,
+        deletedAt: null,
+        ...deptScope,
+        ...(term
+          ? { testName: { contains: term, mode: 'insensitive' } }
+          : {}),
+      },
+      select: { id: true, testName: true, sourceLabTestId: true },
+      orderBy: { testName: 'asc' },
+    });
+
+    const seen = new Set<string>();
+    const deduped: typeof rows = [];
+    for (const row of rows) {
+      const key = row.sourceLabTestId ?? row.id;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(row);
+    }
+
+    const total = deduped.length;
+    const start = (page - 1) * limit;
+    const pageRows = deduped.slice(start, start + limit);
+
+    return paginated(
+      pageRows.map((t) => ({ id: t.sourceLabTestId ?? t.id, name: t.testName })),
+      total,
+      page,
+      limit,
+    );
+  }
+
+  /**
+   * Paginated, searchable **Lab Panel** options for the Reporting Worklist's
+   * filter row (`GET /lab-reports/lab-panel-options`) — mirrors
+   * {@link getLabTestOptions} exactly (same list-per-pricing-list dedup
+   * reasoning, same `sourceLabPanelId ?? id` dedup/return key), for
+   * `BranchLabPanel` instead of `BranchLabTest`.
+   */
+  async getLabPanelOptions(
+    tenantId: string,
+    branchId: string | null,
+    personId: string,
+    query: { search?: string; page?: number; limit?: number },
+  ): Promise<PaginatedResult<LabReportOption>> {
+    const activeBranchId = this.requireBranch(branchId);
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+
+    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
+      tenantId,
+      personId,
+    );
+    const deptScope =
+      scopeIds.length > 0
+        ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
+        : { departmentId: null };
+    const term = query.search?.trim();
+
+    const rows = await this.prisma.branchLabPanel.findMany({
+      where: {
+        tenantId,
+        branchId: activeBranchId,
+        isActive: true,
+        deletedAt: null,
+        ...deptScope,
+        ...(term
+          ? { panelName: { contains: term, mode: 'insensitive' } }
+          : {}),
+      },
+      select: { id: true, panelName: true, sourceLabPanelId: true },
+      orderBy: { panelName: 'asc' },
+    });
+
+    const seen = new Set<string>();
+    const deduped: typeof rows = [];
+    for (const row of rows) {
+      const key = row.sourceLabPanelId ?? row.id;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(row);
+    }
+
+    const total = deduped.length;
+    const start = (page - 1) * limit;
+    const pageRows = deduped.slice(start, start + limit);
+
+    return paginated(
+      pageRows.map((p) => ({
+        id: p.sourceLabPanelId ?? p.id,
+        name: p.panelName,
+      })),
+      total,
+      page,
+      limit,
+    );
   }
 
   /** Raw nested shape (`report.orderItem.order.patient`, etc.) — used
@@ -1655,6 +1813,7 @@ export class LabReportService {
         reportingUnit: true,
         method: true,
         sortOrder: true,
+        createdAt: true,
         parameterType: true,
         calculationFormula: true,
         decimalPlaces: true,
@@ -1663,7 +1822,10 @@ export class LabReportService {
         groupName: true,
         overallResultGroups: true,
       },
-      orderBy: { sortOrder: 'asc' },
+      // Test Entry orders parameters within a group by creation time, not
+      // result-type or the admin-configurable `sortOrder` — see
+      // `LabReportResultParam.createdAt`.
+      orderBy: { createdAt: 'asc' },
     });
   }
 
@@ -2208,6 +2370,106 @@ export class LabReportService {
   }
 
   /**
+   * List every `LabTestReferenceRange` row for a Quantitative parameter that
+   * matches this patient's gender/age, for the Test Entry / Patient Entry
+   * "Range" dropdown — covers rows with and without an analyzer (`labAdapterId`
+   * null or set), unlike `resolveReferenceRange` (which auto-picks a single
+   * best match, filtered by the currently-selected Methodology). Quantitative-
+   * only: `LabTestReferenceValue` (backing Semi-Quantitative/Qualitative) has
+   * no analyzer field at all, so there's nothing to list there yet.
+   * Selecting a candidate in the dropdown sets Unit/Method/Range together
+   * (the frontend applies the picked row's own fields, same as Sync).
+   */
+  async listReferenceRangeCandidates(
+    id: string,
+    tenantId: string,
+    branchId: string | null,
+    query: ReferenceRangeCandidatesQueryDto,
+  ): Promise<{
+    candidates: Array<{
+      id: string;
+      labAdapterId: string | null;
+      labAdapterName: string | null;
+      method: string | null;
+      unit: string | null;
+      isDefault: boolean;
+      lowerLimit: string | null;
+      upperLimit: string | null;
+      referenceDisplay: string | null;
+    }>;
+  }> {
+    const activeBranchId = this.requireBranch(branchId);
+    const report = await this.prisma.labReport.findFirst({
+      where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
+      include: {
+        orderItem: { include: { order: { include: { patient: true } } } },
+      },
+    });
+    if (!report) throw new LabReportNotFoundException(id);
+    if (!report.labTestId) throw new LabTestCatalogueMissingException(id);
+
+    const param = await this.prisma.labTestResultParam.findFirst({
+      where: {
+        id: query.resultParamId,
+        labTestId: report.labTestId,
+        deletedAt: null,
+      },
+    });
+    if (!param) throw new LabTestCatalogueMissingException(id);
+    if (
+      param.resultType === 'QUALITATIVE' ||
+      param.resultType === 'SEMI_QUANTITATIVE'
+    ) {
+      return { candidates: [] };
+    }
+
+    const patient = report.orderItem.order.patient;
+    const ageInDays = patient.age
+      ? patientAgeInDays(patient.age, patient.ageType ?? 'YEARS')
+      : null;
+
+    const ranges = await this.prisma.labTestReferenceRange.findMany({
+      where: { paramId: param.id, deletedAt: null },
+    });
+    const matching = ranges.filter(
+      (r) =>
+        genderMatches(r.gender, patient.gender) &&
+        (ageInDays === null ||
+          (ageInDays >= rangeAgeInDays(r.ageFrom, r.ageFromUnit) &&
+            ageInDays <= rangeAgeInDays(r.ageTo, r.ageToUnit))),
+    );
+
+    const adapterIds = [
+      ...new Set(matching.map((r) => r.labAdapterId).filter((v) => !!v)),
+    ] as string[];
+    const adapters = adapterIds.length
+      ? await this.prisma.labAdapter.findMany({
+          where: { id: { in: adapterIds }, tenantId },
+          select: { id: true, name: true },
+        })
+      : [];
+    const adapterNames = new Map(adapters.map((a) => [a.id, a.name]));
+
+    const candidates = matching.map((r) => ({
+      id: r.id,
+      labAdapterId: r.labAdapterId,
+      labAdapterName: r.labAdapterId
+        ? (adapterNames.get(r.labAdapterId) ?? null)
+        : null,
+      method: r.method,
+      unit: r.unit,
+      isDefault: r.isDefault,
+      lowerLimit: r.lowerLimit?.toString() ?? null,
+      upperLimit: r.upperLimit?.toString() ?? null,
+      referenceDisplay:
+        r.displayOfReferenceRange ??
+        `${r.lowerLimit?.toString() ?? ''} - ${r.upperLimit?.toString() ?? ''}`.trim(),
+    }));
+
+    return { candidates };
+  }
+
+  /**
    * Trend Report (LABORATORY.docx §5.10) — this patient's full history of
    * observed values for one result parameter, oldest first. The doc says this
    * "already exists in Analytics, reuse the existing component/endpoint" —
@@ -2620,6 +2882,21 @@ export class LabReportService {
     const notesByParamId = new Map(
       resultParams.map((p) => [p.id, p.notes ?? '']),
     );
+    // `{overall_result}` — this REPORT's own per-parameter templated content
+    // (`LabReportOverallResult`, keyed by (labReportId, resultParamId)), the
+    // same source the Overall Result screen edits. Distinct from
+    // `result_note` above (a static catalog note shared by every report of
+    // this test) — this is per-report, filled in during reporting.
+    const overallResultRows =
+      resultParamIds.length === 0
+        ? []
+        : await this.prisma.labReportOverallResult.findMany({
+            where: { labReportId: id, resultParamId: { in: resultParamIds } },
+            select: { resultParamId: true, content: true },
+          });
+    const overallResultByParamId = new Map(
+      overallResultRows.map((r) => [r.resultParamId, r.content ?? '']),
+    );
 
     // `resultValues` (the include on `LAB_REPORT_DETAIL_INCLUDE`) carries no
     // `orderBy` — rows come back in whatever order Postgres returns them,
@@ -2645,6 +2922,7 @@ export class LabReportService {
       reference_display: v.referenceDisplay ?? '',
       group_name: groupNameByParamId.get(v.resultParamId) ?? '',
       result_note: notesByParamId.get(v.resultParamId) ?? '',
+      overall_result: overallResultByParamId.get(v.resultParamId) ?? '',
     }));
 
     return {
@@ -2699,6 +2977,10 @@ export class LabReportService {
         useful_for: report.contentSections.usefulFor ?? '',
         interpretation: report.contentSections.interpretation ?? '',
         limitations: report.contentSections.limitations ?? '',
+        // Bug fix: `remarks` was fetched into `contentSections` (screen/API
+        // already show it) but never assigned into the print `variables` here
+        // — `{remarks}` could never resolve in a lab_report template.
+        remarks: report.contentSections.remarks ?? '',
         references: report.contentSections.references ?? '',
         last_report_prepared_on: lastReportPreparedOn
           ? formatReportDateTime(
@@ -2755,15 +3037,16 @@ export class LabReportService {
 
   /**
    * Print/Download a report (LABORATORY.docx §6.10's "Print / Download"
-   * action). Resolves the tenant's active template of `type` (or the
-   * caller's explicit `templateId`) and renders it with this report's real
-   * data via `PdfReportTemplateService.generatePdf`.
+   * action). When `templateId` is given (the picker's explicit "Print") it is
+   * used verbatim; when omitted (the "Skip Selection" action) the template is
+   * resolved centrally via {@link resolvePrintTemplateId} (Test Template →
+   * Configuration default → first active template → error), then rendered with
+   * this report's real data via `PdfReportTemplateService.generatePdf`.
    * @param type which `PdfReportTemplate` type to resolve against when
    * `templateId` is omitted — `lab_report` (single test) or `lab_panel`.
    * Ignored when `templateId` is given explicitly.
-   * @throws NoActivePrintTemplateException if no active template exists
-   * @throws AmbiguousPrintTemplateException if multiple exist and no
-   * `templateId` was given
+   * @throws NoActivePrintTemplateException if nothing resolves (no per-test
+   * mapping, no configured default, and no active template of `type`)
    */
   async print(
     id: string,
@@ -2776,35 +3059,151 @@ export class LabReportService {
     await this.referralCredit.assertReportAccessAllowedByReportId(tenantId, id);
     const context = await this.buildPrintContext(id, tenantId, branchId);
     const resolvedTemplateId =
-      templateId ?? (await this.resolvePrintTemplateId(tenantId, type));
+      templateId ??
+      (await this.resolvePrintTemplateId(
+        tenantId,
+        branchId,
+        type,
+        await this.getTestReportTemplateId(id, tenantId),
+      ));
+    // Pass both engine contexts; `generatePdf` picks the right one by the
+    // template body's syntax. A Latte-authored `lab_report` template (e.g. the
+    // ezHealthTrack `{foreach $tests}`/`{$test->rows}` style) renders against the
+    // object-shaped `$tests`/`$test` context instead of being flat-rendered
+    // (which would emit its `{foreach}`/`{$…}` tags verbatim into the PDF).
     return this.pdfReportTemplateService.generatePdf(
       resolvedTemplateId,
       tenantId,
       context,
+      this.buildTestLatteContext(context),
     );
   }
 
+  /**
+   * The ONE authoritative lab-report template resolver (frontend "Skip
+   * Selection" and every no-`templateId` print path funnels through here, so the
+   * fallback order lives in exactly one place — never duplicated in the UI):
+   *
+   *   1. **Test Template** — the per-test mapping (`BranchLabTest`/
+   *      `BranchLabPanel.reportTemplateId`), when set and still active.
+   *   2. **Default Lab Template** — the Configuration default for this slot
+   *      (`PdfTemplateConfig`, `slotKey === type`), active-branch first then the
+   *      tenant-wide config, when set and still active.
+   *   3. **First Active Branch Template** — the first active `PdfReportTemplate`
+   *      of `type` in the tenant.
+   *   4. **No Template Available** — nothing resolved.
+   *
+   * @param testReportTemplateId the per-test mapping id (step 1), or null
+   * @throws NoActivePrintTemplateException if steps 1-3 all yield nothing
+   */
   private async resolvePrintTemplateId(
     tenantId: string,
+    branchId: string | null,
     type: PdfReportTemplateType = 'lab_report',
+    testReportTemplateId?: string | null,
   ): Promise<string> {
+    // 1. Test-level mapping.
+    if (
+      testReportTemplateId &&
+      (await this.isActiveTemplate(testReportTemplateId, tenantId))
+    ) {
+      return testReportTemplateId;
+    }
+    // 2. Configuration default (branch-level, then tenant-wide).
+    const configured = await this.resolveConfigDefaultTemplateId(
+      tenantId,
+      branchId,
+      type,
+    );
+    if (configured) return configured;
+    // 3. First active template of this type.
     const { data } = await this.pdfReportTemplateService.findAllForTenant(
       tenantId,
       1,
-      10,
-      {
-        type,
-        status: 'ACTIVE',
-      },
+      1,
+      { type, status: 'ACTIVE' },
     );
-    if (data.length === 0) throw new NoActivePrintTemplateException(tenantId);
-    if (data.length > 1) {
-      throw new AmbiguousPrintTemplateException(
-        tenantId,
-        data.map((t) => t.id),
-      );
+    if (data[0]) return data[0].id;
+    // 4. Nothing available.
+    throw new NoActivePrintTemplateException(tenantId);
+  }
+
+  /**
+   * The per-test report-template mapping for a report's ordered lab test.
+   * Prefers the branch copy's own mapping (`BranchLabTest.reportTemplateId`, set
+   * on branch-admin Master Data), then falls back to the source tenant test's
+   * mapping (`LabTest.reportTemplateId`, set on business-admin Master Data) so a
+   * business-admin mapping is honored even before it is synced into the branch
+   * copy. Returns null for panels (which carry no per-test template field), for
+   * free-text order items, or when nothing is mapped.
+   */
+  private async getTestReportTemplateId(
+    reportId: string,
+    tenantId: string,
+  ): Promise<string | null> {
+    const report = await this.prisma.labReport.findFirst({
+      where: { id: reportId, tenantId, deletedAt: null },
+      select: {
+        orderItem: {
+          select: {
+            branchLabTest: {
+              select: { reportTemplateId: true, sourceLabTestId: true },
+            },
+          },
+        },
+      },
+    });
+    const branchTest = report?.orderItem?.branchLabTest;
+    if (!branchTest) return null;
+
+    // 1. Branch copy's own mapping (branch-admin Master Data).
+    if (branchTest.reportTemplateId) return branchTest.reportTemplateId;
+
+    // 2. Source tenant test mapping (business-admin Master Data).
+    if (branchTest.sourceLabTestId) {
+      const source = await this.prisma.labTest.findFirst({
+        where: { id: branchTest.sourceLabTestId, tenantId, deletedAt: null },
+        select: { reportTemplateId: true },
+      });
+      if (source?.reportTemplateId) return source.reportTemplateId;
     }
-    return data[0]!.id;
+    return null;
+  }
+
+  /**
+   * The Configuration default template id for a slot, preferring the active
+   * branch's config and falling back to the tenant-wide config. Returns null
+   * when unset or the configured template is no longer active.
+   */
+  private async resolveConfigDefaultTemplateId(
+    tenantId: string,
+    branchId: string | null,
+    slotKey: string,
+  ): Promise<string | null> {
+    const scopes: (string | null)[] = branchId ? [branchId, null] : [null];
+    for (const scope of scopes) {
+      const map = await this.pdfTemplateConfigService.getConfig(
+        tenantId,
+        scope,
+      );
+      const templateId = map[slotKey];
+      if (templateId && (await this.isActiveTemplate(templateId, tenantId))) {
+        return templateId;
+      }
+    }
+    return null;
+  }
+
+  /** True when `templateId` is an active, non-deleted template of the tenant. */
+  private async isActiveTemplate(
+    templateId: string,
+    tenantId: string,
+  ): Promise<boolean> {
+    const template = await this.prisma.pdfReportTemplate.findFirst({
+      where: { id: templateId, tenantId, deletedAt: null, isActive: true },
+      select: { id: true },
+    });
+    return template !== null;
   }
 
   /**
@@ -2831,7 +3230,10 @@ export class LabReportService {
     tenantId: string,
     branchId: string | null,
     orderItemIds?: string[],
-  ): Promise<Record<string, unknown>> {
+  ): Promise<{
+    latteContext: Record<string, unknown>;
+    flatContext: GeneratePdfDto;
+  }> {
     const activeBranchId = this.requireBranch(branchId);
     const reportRows = await this.prisma.labReport.findMany({
       where: {
@@ -2926,26 +3328,185 @@ export class LabReportService {
     const contexts = await Promise.all(
       reportRows.map((r) => this.buildPrintContext(r.id, tenantId, branchId)),
     );
-    const reports = reportRows.map((r, idx) => {
-      const c = contexts[idx];
-      const preparedOn = r.approvedAt ?? r.publishedAt;
-      return {
-        lab_test_id: r.labTestId ?? '',
-        body_html: this.buildTestBodyHtml(c),
-        sample_collected_date: toText(c?.variables?.sample_collected_date),
-        sample_received_date: toText(c?.variables?.sample_received_date),
-        report_prepared_on: preparedOn
-          ? formatReportDateTime(toBranchLocalInstant(preparedOn, timezone))
-          : '',
-        // One visible test entry per report (a panel's sub-tests are already
-        // flattened into `body_html`); drives the templates' display gate/count.
-        tests: [{ display_test_sample: '1' }],
-      };
-    });
+    const reports = await Promise.all(
+      reportRows.map(async (r, idx) => {
+        const c = contexts[idx];
+        const preparedOn = r.approvedAt ?? r.publishedAt;
+        return {
+          lab_test_id: r.labTestId ?? '',
+          body_html: await this.buildReportBodyHtml(
+            r.id,
+            tenantId,
+            branchId,
+            c,
+          ),
+          sample_collected_date: toText(c?.variables?.sample_collected_date),
+          sample_received_date: toText(c?.variables?.sample_received_date),
+          report_prepared_on: preparedOn
+            ? formatReportDateTime(toBranchLocalInstant(preparedOn, timezone))
+            : '',
+          // One visible test entry per report (a panel's sub-tests are already
+          // flattened into `body_html`); drives the templates' display gate/count.
+          tests: [{ display_test_sample: '1' }],
+        };
+      }),
+    );
+
+    // Flat-engine fallback context — for `lab_all_report` templates authored in
+    // the flat `{tag}`/`{{#each}}` syntax (e.g. the seeded "Sample Lab All
+    // Reports") rather than Latte. Derived from the SAME per-report `contexts`
+    // (no extra queries): order/patient-level `variables` come from the first
+    // report; `sections.reports` is one row per report; `sections.results`
+    // flattens every parameter row across the order (each tagged with its
+    // `test_name` for `{{this.test_name}}`).
+    const firstCtx = contexts[0];
+    const flatContext: GeneratePdfDto = {
+      variables: {
+        ...(firstCtx?.variables ?? {}),
+        report_count: String(reports.length),
+      },
+      images: firstCtx?.images ?? {},
+      sections: {
+        reports: reports.map((rep, idx) => {
+          const v = contexts[idx]?.variables ?? {};
+          const rows = contexts[idx]?.sections?.results ?? [];
+          return {
+            test_name: toText(v.test_name),
+            report_status: toText(v.report_status),
+            sample_collected_date: rep.sample_collected_date,
+            sample_received_date: rep.sample_received_date,
+            report_prepared_on: rep.report_prepared_on,
+            results_summary: rows
+              .map((r) => {
+                const unit = toText(r.unit);
+                return `${toText(r.parameter_name)}: ${toText(r.observed1)}${
+                  unit ? ` ${unit}` : ''
+                }`.trim();
+              })
+              .filter((s) => s !== ':')
+              .join('; '),
+          };
+        }),
+        results: contexts.flatMap((c) => {
+          const testName = toText(c?.variables?.test_name);
+          return (c?.sections?.results ?? []).map((r) => ({
+            ...r,
+            test_name: testName,
+          }));
+        }),
+      },
+      signatories: firstCtx?.signatories ?? [],
+    };
 
     return {
-      report_tests: { groups: [], tests: reports },
-      header_fields: headerFields,
+      latteContext: {
+        report_tests: { groups: [], tests: reports },
+        header_fields: headerFields,
+      },
+      flatContext,
+    };
+  }
+
+  /**
+   * Build one test's `body_html` for a `lab_all_report` by rendering the report
+   * through its OWN configured single-report `lab_report` template BODY — the
+   * same Test-Template → Configuration → first-active resolution a standalone
+   * print uses ({@link resolvePrintTemplateId}) — so each test preserves its
+   * full designed report structure. This mirrors ezHealthTrack's
+   * `get_body_section()`, which renders each test's own `meta['body_html']` and
+   * stores the result as that test's `body_html` for the outer all-reports loop.
+   *
+   * Only the single-report template's BODY is rendered (not its `header_html`),
+   * so the per-test patient/order header is NOT duplicated — the shared header
+   * comes from the all-report template's own header block + `header_fields`.
+   *
+   * Falls back to the built-in {@link buildTestBodyHtml} stub when the tenant
+   * has no single-report template configured, or rendering fails, so the
+   * combined report always produces a body.
+   */
+  private async buildReportBodyHtml(
+    reportId: string,
+    tenantId: string,
+    branchId: string | null,
+    context: GeneratePdfDto | undefined,
+  ): Promise<string> {
+    try {
+      const templateId = await this.resolvePrintTemplateId(
+        tenantId,
+        branchId,
+        'lab_report',
+        await this.getTestReportTemplateId(reportId, tenantId),
+      );
+      // Pass both engine contexts; the template service picks the right one by
+      // the template body's syntax (flat vs Latte). A Latte body keeps its
+      // ezHealthTrack conditionals (hide-empty-sections, method-column reflow,
+      // per-group sub-headers) working against the `$tests`/`$test` shape.
+      return await this.pdfReportTemplateService.renderReportBodyFragment(
+        templateId,
+        tenantId,
+        context ?? {},
+        this.buildTestLatteContext(context),
+      );
+    } catch {
+      return this.buildTestBodyHtml(context);
+    }
+  }
+
+  /**
+   * Reshape a report's flat {@link buildPrintContext} output into the
+   * object-shaped context a Latte single-test `lab_report` template expects:
+   * `tests[0]` (this report, with `rows[]` + content sections) plus the
+   * root-level approver fields for the signature block. Derived entirely from
+   * the already-built `context`, so it adds no queries. Mirrors the legacy
+   * ezHealthTrack `pdf_body_fields` shape (`$tests`, `$test->rows`, etc.).
+   *
+   * The flat `context.variables` (patient/order header fields — `patient_name`,
+   * `order_code`, `sample_source_label`, `order_date_time`, `order_id_barcode`,
+   * `order_id_qr_code`, …) are also spread at the root, so a Latte template's
+   * header can print them as bare `{patient_name}` tokens or `<img
+   * src="{order_id_qr_code}">`. Latte has no `{{image:…}}` token — images must be
+   * an `<img src="{…}">` against the URL-valued field.
+   */
+  private buildTestLatteContext(
+    context: GeneratePdfDto | undefined,
+  ): Record<string, unknown> {
+    const v = context?.variables ?? {};
+    const rows = (context?.sections?.results ?? []).map((r) => ({
+      parameter_name: toText(r.parameter_name),
+      method_name: toText(r.method_name ?? r.methodology),
+      // `value` is the ezHealthTrack "has a result?" gate; mirror observed1.
+      value: toText(r.observed1),
+      observed1: toText(r.observed1),
+      observed2: toText(r.observed2),
+      unit: toText(r.unit),
+      reference_display: toText(r.reference_display),
+      group_name: toText(r.group_name),
+      result_note: toText(r.result_note),
+    }));
+    const test = {
+      test_name: toText(v.test_name),
+      sample_type: toText(v.sample_type),
+      sample_note: toText(v.sample_note),
+      useful_for: toText(v.useful_for),
+      interpretation: toText(v.interpretation),
+      limitations: toText(v.limitations),
+      references: toText(v.references),
+      rows,
+    };
+    return {
+      // Flat header/order/patient variables as bare Latte tokens (`{patient_name}`,
+      // `{order_code}`, `{order_id_qr_code}`, …). Spread first so the explicit keys
+      // below always win.
+      ...v,
+      tests: [test],
+      // Latte has no `{{image:…}}` token — a Latte template prints the signature
+      // via `<img src="{report_approved_by_signature}">`.
+      report_approved_by_name: toText(v.report_approved_by_name),
+      report_approved_by_designation: toText(v.report_approved_by_designation),
+      report_approved_by_certifications: toText(
+        v.report_approved_by_certifications,
+      ),
+      report_approved_by_signature: toText(v.report_approved_by_signature),
     };
   }
 
@@ -2954,7 +3515,9 @@ export class LabReportService {
    * template drops per iteration) from its single-report {@link buildPrintContext}
    * output: the parameter results table plus any content sections. Self-contained
    * HTML — the surrounding patient/order header comes from the template's own
-   * page-header block, so this is the results only (no duplicate header).
+   * page-header block, so this is the results only (no duplicate header). Used as
+   * the FALLBACK when no single-report template resolves (see
+   * {@link buildReportBodyHtml}).
    */
   private buildTestBodyHtml(ctx: GeneratePdfDto | undefined): string {
     const v = ctx?.variables ?? {};
@@ -2971,7 +3534,13 @@ export class LabReportService {
         const methodHtml = method
           ? `<div class="rr-method">${method}</div>`
           : '';
-        return `<tr><td>${name}${methodHtml}</td><td>${value}</td><td>${unit}</td><td>${ref}</td></tr>`;
+        // Rich-text HTML from a NotesRichTextEditor (see RICH_TEXT note
+        // below) — printed as-is, not escaped, or the literal tags would show.
+        const overallResult = toText(row.overall_result);
+        const overallResultHtml = overallResult
+          ? `<tr class="rr-overall-result"><td colspan="4">${overallResult}</td></tr>`
+          : '';
+        return `<tr><td>${name}${methodHtml}</td><td>${value}</td><td>${unit}</td><td>${ref}</td></tr>${overallResultHtml}`;
       })
       .join('');
     const table = results.length
@@ -2982,11 +3551,15 @@ export class LabReportService {
       value
         ? `<div class="report-section"><b>${label}:</b> ${value}</div>`
         : '';
+    // interpretation/useful_for/limitations/references are rich-text HTML
+    // from a NotesRichTextEditor (LabReportService.buildPrintContext is the
+    // source) — printed as-is. sample_note is a plain-text technician note,
+    // so it keeps the usual escaping.
     const extras =
-      section('Interpretation', escapeHtml(toText(v.interpretation))) +
-      section('Useful For', escapeHtml(toText(v.useful_for))) +
-      section('Limitations', escapeHtml(toText(v.limitations))) +
-      section('References', escapeHtml(toText(v.references))) +
+      section('Interpretation', toText(v.interpretation)) +
+      section('Useful For', toText(v.useful_for)) +
+      section('Limitations', toText(v.limitations)) +
+      section('References', toText(v.references)) +
       section('Note', escapeHtml(toText(v.sample_note)));
 
     return `<div class="report-test"><div class="report-test-title"><b>${testName}</b></div>${table}${extras}</div>`;
@@ -3006,10 +3579,9 @@ export class LabReportService {
    * header/title/content-sections, only one shared table for the whole
    * order. Merging N already-correct single-report PDFs sidesteps that
    * limitation entirely, and reuses `print()`'s per-report template
-   * resolution as-is: if per-test template selection is added later (e.g. a
-   * `LabTest`-specific override in `resolvePrintTemplateId`), this method
-   * inherits it automatically since each report resolves its own template
-   * independently, exactly as a standalone print does today.
+   * resolution as-is: each report resolves its own template independently via
+   * the centralized {@link resolvePrintTemplateId} (per-test mapping →
+   * Configuration default → first active), exactly as a standalone print does.
    * @param templateId when given, forces EVERY report in this merge to use
    * this one specific template, skipping each report's own resolution —
    * an explicit override, not the default per-report behavior.
@@ -3020,8 +3592,6 @@ export class LabReportService {
    * items) has no lab reports (wrong id, or no item has reached ACCEPTED yet)
    * @throws NoActivePrintTemplateException if a report's tenant has no
    * active `lab_report` template (and no override `templateId` was given)
-   * @throws AmbiguousPrintTemplateException if multiple exist and no
-   * `templateId` was given
    */
   async printAllForOrder(
     orderId: string,
@@ -3048,16 +3618,21 @@ export class LabReportService {
         tenantId,
       );
       if (type === 'lab_all_report' || type === 'patient_lab_all_report') {
-        const context = await this.buildAllReportsContext(
+        const { latteContext, flatContext } = await this.buildAllReportsContext(
           orderId,
           tenantId,
           branchId,
           orderItemIds,
         );
+        // `generateLattePdf` picks the engine by the template body's syntax: a
+        // Latte all-report template (`{foreach $report_tests->tests}`) uses
+        // `latteContext`; a flat one (`{{#each reports}}`/`{tag}`) falls back to
+        // the flat renderer with `flatContext`.
         return this.pdfReportTemplateService.generateLattePdf(
           templateId,
           tenantId,
-          context,
+          latteContext,
+          flatContext,
         );
       }
     }

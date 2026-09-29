@@ -46,7 +46,7 @@ export const PDF_TEMPLATE_CONFIG_SLOT_GROUPS: PdfTemplateConfigSlotGroup[] = [
   {
     label: 'Lab',
     slots: [
-      { key: 'lab_report', label: 'Lab Test Report' },
+      { key: 'lab_report', label: 'Default Lab Test Report Template' },
       { key: 'lab_report_manual_fill', label: 'Lab Report Manual Fill' },
       { key: 'lab_panel', label: 'Lab Panel Report' },
       { key: 'lab_all_report', label: 'Lab All Reports' },
