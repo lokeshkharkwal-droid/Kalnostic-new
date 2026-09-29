@@ -214,7 +214,11 @@ export class EmiService {
       return await this.prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT set_config('app.adapter_token', ${value}, true)`;
         return tx.labAdapter.findFirst({
-          where: { token: value, status: AdapterStatus.ONLINE, deletedAt: null },
+          where: {
+            token: value,
+            status: AdapterStatus.ONLINE,
+            deletedAt: null,
+          },
         });
       });
     } catch (e) {

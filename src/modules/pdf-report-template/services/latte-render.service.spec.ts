@@ -40,7 +40,9 @@ describe('LatteReportRenderService — {{image:ID}} on the Latte path', () => {
       }),
       {},
     );
-    expect(prepared.headerTemplate).toContain('src="https://cdn.example.com/a.png"');
+    expect(prepared.headerTemplate).toContain(
+      'src="https://cdn.example.com/a.png"',
+    );
   });
 
   it('leaves an UNresolved token for the {$ID} context fallback (e.g. a signature URL)', () => {
@@ -54,6 +56,8 @@ describe('LatteReportRenderService — {{image:ID}} on the Latte path', () => {
       }),
       { report_approved_by_signature: 'https://cdn.example.com/sig.png' },
     );
-    expect(prepared.footerTemplate).toContain('src="https://cdn.example.com/sig.png"');
+    expect(prepared.footerTemplate).toContain(
+      'src="https://cdn.example.com/sig.png"',
+    );
   });
 });

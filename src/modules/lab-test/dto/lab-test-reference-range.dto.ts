@@ -1,8 +1,4 @@
-import {
-  AbnormalFlag,
-  AgeUnit,
-  ReferenceGender,
-} from '@prisma/client';
+import { AbnormalFlag, AgeUnit, ReferenceGender } from '@prisma/client';
 import {
   IsBoolean,
   IsEnum,

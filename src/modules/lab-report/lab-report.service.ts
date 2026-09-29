@@ -447,7 +447,8 @@ export class LabReportService {
     // sends the shared source id so one filter selection matches the test/
     // panel regardless of which list's copy a given order actually used.
     const branchLabTestWhere: Prisma.BranchLabTestWhereInput = {};
-    if (filters.departmentId) branchLabTestWhere.departmentId = filters.departmentId;
+    if (filters.departmentId)
+      branchLabTestWhere.departmentId = filters.departmentId;
     if (filters.branchLabTestId) {
       branchLabTestWhere.OR = [
         { id: filters.branchLabTestId },
@@ -1324,9 +1325,7 @@ export class LabReportService {
         isActive: true,
         deletedAt: null,
         ...deptScope,
-        ...(term
-          ? { testName: { contains: term, mode: 'insensitive' } }
-          : {}),
+        ...(term ? { testName: { contains: term, mode: 'insensitive' } } : {}),
       },
       select: { id: true, testName: true, sourceLabTestId: true },
       orderBy: { testName: 'asc' },
@@ -1346,7 +1345,10 @@ export class LabReportService {
     const pageRows = deduped.slice(start, start + limit);
 
     return paginated(
-      pageRows.map((t) => ({ id: t.sourceLabTestId ?? t.id, name: t.testName })),
+      pageRows.map((t) => ({
+        id: t.sourceLabTestId ?? t.id,
+        name: t.testName,
+      })),
       total,
       page,
       limit,
@@ -1387,9 +1389,7 @@ export class LabReportService {
         isActive: true,
         deletedAt: null,
         ...deptScope,
-        ...(term
-          ? { panelName: { contains: term, mode: 'insensitive' } }
-          : {}),
+        ...(term ? { panelName: { contains: term, mode: 'insensitive' } } : {}),
       },
       select: { id: true, panelName: true, sourceLabPanelId: true },
       orderBy: { panelName: 'asc' },
