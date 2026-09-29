@@ -309,7 +309,7 @@ export class OrderSampleService {
 
     // Auto-assign barcodes grouping-aware (Sample / Order / Department /
     // Dept+Sample per Tenant.groupingMode) — samples in the same bucket share
-    // one barcode value + rendered Code 39 image. Synchronous: an S3 failure
+    // one barcode value + rendered Code 128 image. Synchronous: an S3 failure
     // rolls the whole order back (see BarcodeService).
     await this.assignBarcodesToGroups(
       tx,
@@ -349,7 +349,7 @@ export class OrderSampleService {
   /**
    * Assign barcodes to a set of samples inside an existing (already
    * tenant-scoped) transaction, bucketed by the tenant's grouping mode. Each
-   * bucket gets one allocated barcode value + one rendered/uploaded Code 39
+   * bucket gets one allocated barcode value + one rendered/uploaded Code 128
    * image; every member is updated to the shared `barcode` + `orderIdBarcode`.
    * A history row (`assign-barcode`, no status change) is written per sample.
    * @param tx active Prisma transaction client (already tenant-scoped)
@@ -1340,7 +1340,7 @@ export class OrderSampleService {
     return {
       accession_no: sample.accessionNo,
       barcode: sample.barcode ?? '',
-      // S3 URL of the rendered Code 39 barcode image, so a label template can
+      // S3 URL of the rendered Code 128 barcode image, so a label template can
       // show the scannable image via `<img src="{orderIdBarcode}">` (in addition
       // to the font-rendered `{barcode}` value).
       orderIdBarcode: sample.orderIdBarcode ?? '',
@@ -1413,7 +1413,10 @@ export class OrderSampleService {
     if (group.length === 1) return base;
     return {
       ...base,
-      accession_no: group.map((s) => s.accessionNo).filter(Boolean).join(', '),
+      accession_no: group
+        .map((s) => s.accessionNo)
+        .filter(Boolean)
+        .join(', '),
       test_names: [
         ...new Set(
           group.flatMap((s) => s.tests.map((t) => t.testName).filter(Boolean)),

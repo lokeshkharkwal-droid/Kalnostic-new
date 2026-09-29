@@ -1,7 +1,7 @@
 meta {
   name: 32 Verify - Report Detail (Adapter-Filled)
   type: http
-  seq: 32
+  seq: 27
 }
 
 get {
@@ -40,7 +40,7 @@ docs {
   - `status` is **`SAVED`** — the machine fills and leaves the report for human
     validation/approval; it is **never** auto-approved/published (lab QA
     unchanged).
-
+  
   This closes the loop: order accepted → machine scanned it → machine submitted a
   result → the result is visible on the report, all auto-chained with no manual
   copy/paste.

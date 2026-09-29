@@ -117,7 +117,10 @@ export function renderLatte(
  */
 function stripHandlebarsRemnants(src: string): string {
   return src
-    .replace(/\{\{\s*image\s*:\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, '<img src="{$$$1}"/>')
+    .replace(
+      /\{\{\s*image\s*:\s*([a-zA-Z0-9_.-]+)\s*\}\}/g,
+      '<img src="{$$$1}"/>',
+    )
     .replace(/\{\{\s*this\.([a-zA-Z0-9_]+)\s*\}\}/g, '{$$$1}')
     .replace(/\{\{\s*#each\b[^}]*\}\}/g, '')
     .replace(/\{\{\s*\/each\s*\}\}/g, '')
