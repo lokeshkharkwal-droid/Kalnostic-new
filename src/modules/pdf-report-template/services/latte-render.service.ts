@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { PdfTemplateMeta } from '../constants/pdf-template-meta.constant';
-import { PreparedPdfHtml, buildPdfDocuments } from './pdf-document.util';
+import {
+  PreparedPdfHtml,
+  buildPdfDocuments,
+  resolveImageTokens,
+} from './pdf-document.util';
 import { renderLatte } from './latte-renderer.util';
 
 /**
@@ -24,19 +28,32 @@ export class LatteReportRenderService {
   /**
    * Resolve `meta.header_html`/`body_html`/`footer_html` against the Latte
    * context into the Puppeteer body + header/footer templates.
+   *
+   * Uploaded/registry `{{image:ID}}` tokens are resolved to their real `<img>`
+   * BEFORE Latte parsing (see {@link resolveImageTokens}) so a header logo /
+   * letterhead pasted into a Latte-bodied template renders — the Latte engine
+   * would otherwise rewrite `{{image:ID}}` to a `{$ID}` variable the context
+   * never supplies (and an uploaded id like `logo-x.png` isn't even a valid
+   * Latte variable), silently dropping the image. Tokens NOT in `images` are
+   * left for that `{$ID}` fallback (context-provided URLs, e.g. signatures).
    * @param meta the template's normalized meta (all keys present)
    * @param context the order-scoped Latte data (`report_tests`, `header_fields`)
+   * @param images uploaded/registry id → src map (merged over `meta.images`)
    */
   render(
     meta: PdfTemplateMeta,
     context: Record<string, unknown>,
+    images: Record<string, string> = {},
   ): PreparedPdfHtml {
+    const merged = { ...(meta.images ?? {}), ...images };
     const header = this.transformMpdfTags(
-      renderLatte(meta.header_html, context),
+      renderLatte(resolveImageTokens(meta.header_html, merged), context),
     );
-    const body = this.transformMpdfTags(renderLatte(meta.body_html, context));
+    const body = this.transformMpdfTags(
+      renderLatte(resolveImageTokens(meta.body_html, merged), context),
+    );
     const footer = this.transformMpdfTags(
-      renderLatte(meta.footer_html, context),
+      renderLatte(resolveImageTokens(meta.footer_html, merged), context),
     );
     return buildPdfDocuments(meta, header, body, footer);
   }
@@ -53,12 +70,17 @@ export class LatteReportRenderService {
    * embedding in the combined document.
    * @param meta the single-test template's normalized meta (all keys present)
    * @param data the per-test Latte context (`tests[0]` = this test + approver)
+   * @param images uploaded/registry id → src map (merged over `meta.images`)
    */
   renderBodyFragment(
     meta: PdfTemplateMeta,
     data: Record<string, unknown>,
+    images: Record<string, string> = {},
   ): string {
-    const body = this.transformMpdfTags(renderLatte(meta.body_html, data));
+    const merged = { ...(meta.images ?? {}), ...images };
+    const body = this.transformMpdfTags(
+      renderLatte(resolveImageTokens(meta.body_html, merged), data),
+    );
     const css = meta.custom_css?.trim()
       ? `<style>${meta.custom_css}</style>`
       : '';

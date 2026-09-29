@@ -267,7 +267,11 @@ export class PdfReportTemplateService {
     const template = await this.findById(id, tenantId);
     const meta = this.readMeta(template.meta);
     const prepared = isLatteBody(meta.body_html)
-      ? this.latteRenderService.render(meta, latteData ?? {})
+      ? this.latteRenderService.render(
+          meta,
+          latteData ?? {},
+          await this.resolveTemplateImages(tenantId, meta, context.images),
+        )
       : this.renderService.render(
           meta,
           await this.withRegistryImages(tenantId, meta, context),
@@ -333,7 +337,11 @@ export class PdfReportTemplateService {
     const template = await this.findById(id, tenantId);
     const meta = this.readMeta(template.meta);
     if (isLatteBody(meta.body_html)) {
-      return this.latteRenderService.renderBodyFragment(meta, latteData);
+      return this.latteRenderService.renderBodyFragment(
+        meta,
+        latteData,
+        await this.resolveTemplateImages(tenantId, meta, flatContext.images),
+      );
     }
     const context2 = await this.withRegistryImages(tenantId, meta, flatContext);
     return this.renderService.renderBodyFragment(meta, context2);
@@ -370,7 +378,11 @@ export class PdfReportTemplateService {
     const template = await this.findById(id, tenantId);
     const meta = this.readMeta(template.meta);
     const prepared = isLatteBody(meta.body_html)
-      ? this.latteRenderService.render(meta, context)
+      ? this.latteRenderService.render(
+          meta,
+          context,
+          await this.resolveTemplateImages(tenantId, meta, flatContext?.images),
+        )
       : this.renderService.render(
           meta,
           await this.withRegistryImages(tenantId, meta, flatContext ?? {}),
@@ -794,6 +806,42 @@ export class PdfReportTemplateService {
     }
     const registry = Object.fromEntries(rows.map((r) => [r.token, r.url]));
     return { ...context, images: { ...registry, ...(context.images ?? {}) } };
+  }
+
+  /**
+   * Resolve the effective `{{image:<id>}}` src map for a template into a flat
+   * `id → src` object: the template's own `meta.images`, back-filled from the
+   * tenant-wide `PrintTemplateImage` registry for any referenced token not
+   * uploaded on this template (a token pasted from another template), with any
+   * runtime `runtimeImages` winning on collisions. This mirrors the effective
+   * map the flat renderer builds ({@link withRegistryImages} + `render`), but as
+   * a plain map the Latte path can pre-substitute BEFORE Latte parsing — the
+   * Latte engine cannot resolve uploaded/registry images on its own.
+   * @param tenantId tenant scope, or `null` for a global template
+   * @param meta the template's normalized meta
+   * @param runtimeImages generate-time images (highest precedence)
+   */
+  private async resolveTemplateImages(
+    tenantId: string | null,
+    meta: PdfTemplateMeta,
+    runtimeImages?: Record<string, string>,
+  ): Promise<Record<string, string>> {
+    const own = meta.images ?? {};
+    const referenced = extractImageTokens(
+      meta.header_html,
+      meta.body_html,
+      meta.footer_html,
+    );
+    const missing = referenced.filter((id) => !(id in own));
+    let registry: Record<string, string> = {};
+    if (missing.length) {
+      const rows = await this.prisma.printTemplateImage.findMany({
+        where: { tenantId, token: { in: missing }, deletedAt: null },
+        select: { token: true, url: true },
+      });
+      registry = Object.fromEntries(rows.map((r) => [r.token, r.url]));
+    }
+    return { ...own, ...registry, ...(runtimeImages ?? {}) };
   }
 
   /**
