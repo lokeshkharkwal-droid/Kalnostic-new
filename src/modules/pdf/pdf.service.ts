@@ -26,6 +26,10 @@ export class PdfService implements OnModuleDestroy {
 
   /** How long to wait for a single header/footer image fetch before giving up. */
   private static readonly IMAGE_FETCH_TIMEOUT_MS = 10_000;
+  /** Extra clearance (mm) kept between header/footer content and the body. */
+  private static readonly EDGE_BODY_GAP_MM = 4;
+  /** Cap the auto-grown header/footer band at this fraction of the page height. */
+  private static readonly MAX_EDGE_FRACTION = 0.45;
   /** Max distinct image URLs kept as inlined data URIs (immutable upload keys). */
   private static readonly IMAGE_CACHE_MAX = 200;
   /**
@@ -56,7 +60,11 @@ export class PdfService implements OnModuleDestroy {
       // never fetches remote resources, so a remote `<img>` there would print as
       // a broken image (the body works only because `setContent`+`load` fetches
       // its images). Inline those images as base64 data URIs first.
-      const pdfOptions = await this.inlineHeaderFooterImages(options);
+      const inlined = await this.inlineHeaderFooterImages(options);
+      // Then grow the top/bottom page margins to fit the (now fully rendered)
+      // header/footer so their content is never crushed into — or overlapped by —
+      // the body, regardless of template size (mPDF `setAutoTopMargin` analogue).
+      const pdfOptions = await this.fitHeaderFooterMargins(browser, inlined);
       const pdf = await page.pdf({
         format: 'A4',
         printBackground: true, // render CSS background-color / background-image
@@ -89,6 +97,132 @@ export class PdfService implements OnModuleDestroy {
       inlineRemoteImages(options.footerTemplate ?? '', this.imageFetcher),
     ]);
     return { ...options, headerTemplate, footerTemplate };
+  }
+
+  /**
+   * Grow the top/bottom page margins so the (natural-height) header/footer
+   * templates always fit — the Puppeteer analogue of mPDF's
+   * `setAutoTopMargin = 'stretch'`. Chromium reserves exactly `margin.top` /
+   * `margin.bottom` for the header/footer and clips anything taller, so a real
+   * letterhead in a template built with the small default margins would be
+   * crushed and appear to collide with the body. Here we measure each template's
+   * rendered height and set the margin to at least that height plus a small body
+   * gap, keeping the template's configured margin as a floor and clamping the
+   * result to {@link MAX_EDGE_FRACTION} of the page height.
+   *
+   * Only runs when `displayHeaderFooter` is set; any failure degrades to the
+   * incoming margins (no worse than before). Must run AFTER
+   * {@link inlineHeaderFooterImages} so measured heights include the images.
+   */
+  private async fitHeaderFooterMargins(
+    browser: Browser,
+    options?: PDFOptions,
+  ): Promise<PDFOptions | undefined> {
+    if (!options?.displayHeaderFooter) {
+      return options;
+    }
+    try {
+      const pageWidthMm = this.parseMm(options.width, 210);
+      const pageHeightMm = this.parseMm(options.height, 297);
+      const maxEdgeMm = pageHeightMm * PdfService.MAX_EDGE_FRACTION;
+      const [headerMm, footerMm] = await Promise.all([
+        this.measureTemplateHeightMm(
+          browser,
+          options.headerTemplate,
+          pageWidthMm,
+        ),
+        this.measureTemplateHeightMm(
+          browser,
+          options.footerTemplate,
+          pageWidthMm,
+        ),
+      ]);
+      const margin = { ...(options.margin ?? {}) };
+      if (headerMm > 0) {
+        margin.top = this.fitEdge(margin.top, headerMm, maxEdgeMm);
+      }
+      if (footerMm > 0) {
+        margin.bottom = this.fitEdge(margin.bottom, footerMm, maxEdgeMm);
+      }
+      return { ...options, margin };
+    } catch (e) {
+      this.logger.warn(
+        `Header/footer margin auto-fit failed; using configured margins: ${
+          (e as Error).message
+        }`,
+      );
+      return options;
+    }
+  }
+
+  /**
+   * Resolve one edge margin (mm string) to fit measured content: at least the
+   * configured margin, at least `contentMm` + a body gap, never above `maxMm`.
+   */
+  private fitEdge(
+    current: string | number | undefined,
+    contentMm: number,
+    maxMm: number,
+  ): string {
+    const floor = this.parseMm(current, 10);
+    const needed = contentMm + PdfService.EDGE_BODY_GAP_MM;
+    const resolved = Math.min(maxMm, Math.max(floor, needed));
+    return `${Math.ceil(resolved * 100) / 100}mm`;
+  }
+
+  /**
+   * Measure the rendered height (mm) of a header/footer template at the page's
+   * width, by laying it out in a throwaway page. Returns 0 for an empty template.
+   */
+  private async measureTemplateHeightMm(
+    browser: Browser,
+    template: string | undefined,
+    pageWidthMm: number,
+  ): Promise<number> {
+    if (!template || !template.includes('<')) {
+      return 0;
+    }
+    const page = await browser.newPage();
+    try {
+      const widthPx = Math.max(1, Math.round((pageWidthMm * 96) / 25.4));
+      await page.setViewport({
+        width: widthPx,
+        height: 200,
+        deviceScaleFactor: 1,
+      });
+      await page.setContent(template, { waitUntil: 'load' });
+      const heightPx = await page.evaluate(() => {
+        const el = document.querySelector('.pdf-header, .pdf-footer');
+        const rect = el ? el.getBoundingClientRect().height : 0;
+        return Math.ceil(Math.max(rect, document.body.scrollHeight));
+      });
+      return (heightPx * 25.4) / 96;
+    } finally {
+      await page.close().catch((e) => {
+        this.logger.warn('Failed to close measurement page cleanly', e);
+      });
+    }
+  }
+
+  /**
+   * Parse a Puppeteer margin/size value (`"12mm"`, `"48px"`, a bare number, …) to
+   * millimetres, falling back to `fallback` when it can't be read. `px` is
+   * converted at 96dpi; unit-less and `mm` values are taken as millimetres.
+   */
+  private parseMm(
+    value: string | number | undefined,
+    fallback: number,
+  ): number {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const n = Number.parseFloat(value);
+      if (Number.isFinite(n)) {
+        return /px\s*$/i.test(value) ? (n * 25.4) / 96 : n;
+      }
+    }
+    return fallback;
   }
 
   /**

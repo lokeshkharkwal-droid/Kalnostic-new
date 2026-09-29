@@ -1,4 +1,4 @@
-import { renderLatte } from './latte-renderer.util';
+import { renderLatte, isLatteBody } from './latte-renderer.util';
 
 /**
  * Exercises the exact mechanics the "Lab All Reports" template depends on:
@@ -199,5 +199,36 @@ describe('renderLatte', () => {
     expect(() =>
       renderLatte(`{foreach garbage}{/foreach}{$x->`, {}),
     ).not.toThrow();
+  });
+
+  // The ezHealthTrack single-test template gates the whole block on a flag that
+  // is DECLARED before the loop, SET inside a nested loop, and READ after it
+  // (`{var $show=false}…{foreach}{if …}{var $show=true}{/if}{/foreach}{if $show}`).
+  // This only works if assignment mutates the existing outer var in place rather
+  // than shadowing it in the loop frame — guard that contract here.
+  it('mutates an outer {var} from inside a loop and reads it after (ezHealthTrack gate)', () => {
+    const tpl = `{var $show = false}{foreach $rows as $r}{if $r->v != ""}{var $show = true}{/if}{/foreach}{if $show}SHOWN{else}HIDDEN{/if}`;
+    expect(renderLatte(tpl, { rows: [{ v: '' }, { v: '7' }] })).toBe('SHOWN');
+    expect(renderLatte(tpl, { rows: [{ v: '' }, { v: '' }] })).toBe('HIDDEN');
+  });
+});
+
+describe('isLatteBody', () => {
+  it('detects Latte control syntax and $-vars', () => {
+    expect(isLatteBody('{foreach $tests as $t}{$t->name}{/foreach}')).toBe(
+      true,
+    );
+    expect(isLatteBody('{if $x != ""}y{/if}')).toBe(true);
+    expect(isLatteBody('{var $n = 1}')).toBe(true);
+    expect(isLatteBody('<img src="{$sig}">')).toBe(true);
+  });
+
+  it('treats a flat {tag} / {{#each}} template as NOT Latte', () => {
+    expect(isLatteBody('<h3>{test_name}</h3>')).toBe(false);
+    expect(
+      isLatteBody('{{#each results}}<tr>{parameter_name}</tr>{{/each}}'),
+    ).toBe(false);
+    expect(isLatteBody('{{image:logo.png}}')).toBe(false);
+    expect(isLatteBody(undefined)).toBe(false);
   });
 });

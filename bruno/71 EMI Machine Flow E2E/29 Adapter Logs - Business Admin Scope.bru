@@ -1,7 +1,7 @@
 meta {
   name: 29 Adapter Logs - Business Admin Scope
   type: http
-  seq: 29
+  seq: 24
 }
 
 get {
@@ -41,7 +41,7 @@ docs {
   a tenant-level profile with no active branch). The backend does **not** apply a
   branch lock, so this user sees **every branch in the tenant**. Optionally narrow
   to one branch with the `branchId` query param (the `~`-disabled example).
-
+  
   Asserts both EMI calls of this run (`ORDERS` + `SUBMIT_RESULT`) are visible
   tenant-wide — the same rows the Branch Admin saw in step 28, plus any
   tenant-level (`branchId = null`) rows a branch read would hide. Same endpoint as

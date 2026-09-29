@@ -1,7 +1,7 @@
 meta {
   name: 20 Create Order
   type: http
-  seq: 20
+  seq: 15
 }
 
 post {
@@ -16,10 +16,6 @@ headers {
 
 auth:bearer {
   token: {{operatorToken}}
-}
-
-script:pre-request {
-  bru.setVar("orderDate", new Date().toISOString().slice(0, 10));
 }
 
 body:json {
@@ -38,6 +34,10 @@ body:json {
   }
 }
 
+script:pre-request {
+  bru.setVar("orderDate", new Date().toISOString().slice(0, 10));
+}
+
 script:post-response {
   const data = res.body && res.body.success && res.body.data;
   if (data) {
@@ -54,14 +54,14 @@ tests {
 
 docs {
   **Workflow 9 — Create the order.**
-
+  
   An **in-center** (`isHomeVisit: false`) diagnostic order with `status: ORDER`
   and the imported lab test as its single item. Because a `diagnostics` section is
   present and the status is `ORDER`, the backend generates an **accession sample**
   for the item in the same transaction (no home-visit slot reservation is
   triggered, since `isHomeVisit` is false). A single item = a single sample = a
   single lab report, which keeps the TAT tail deterministic.
-
+  
   Captures **`orderId`** and **`orderCode`**. (The panel from step 15 is imported
   and available; it's left off this order to keep exactly one sample/report.)
 }

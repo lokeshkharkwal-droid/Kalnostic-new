@@ -50,6 +50,39 @@ export function escapeAttr(value: string): string {
   return escapeHtml(value).replace(/"/g, '&quot;');
 }
 
+/**
+ * Replace `{{image:ID}}` tokens with an `<img>` for every id RESOLVABLE in
+ * `images` (the template's own `meta.images` merged with the tenant-wide
+ * `PrintTemplateImage` registry). Ids may include a file extension (dots) or a
+ * hyphen, matching the uploaded-image id form (`New_Hedder_-_Copy_5c25c5.png`).
+ *
+ * An UNRESOLVED token is left untouched — this is what lets the Latte path keep
+ * its `{{image:ID}}` → `{$ID}` fallback for image URLs that come from the render
+ * CONTEXT rather than an uploaded image (e.g. `report_approved_by_signature`).
+ * Without this, the Latte engine rewrites EVERY `{{image:ID}}` to a `{$ID}`
+ * variable the context never supplies, so an uploaded header logo (whose id has
+ * `-`/`.` and isn't even a valid single Latte variable) renders as an empty
+ * `src` and disappears — while the same token works in flat-bodied templates.
+ * @param html the fragment to scan
+ * @param images id → src map (uploaded/registry, plus any runtime images)
+ * @returns the fragment with resolvable image tokens turned into `<img>` tags
+ */
+export function resolveImageTokens(
+  html: string,
+  images: Record<string, string>,
+): string {
+  if (!html) {
+    return html;
+  }
+  return html.replace(
+    /\{\{image:([a-zA-Z0-9_.-]+)\}\}/g,
+    (whole, id: string) => {
+      const src = images[id];
+      return src ? `<img src="${escapeAttr(src)}" alt="${id}" />` : whole;
+    },
+  );
+}
+
 /** Parse a `meta` millimetre string (e.g. `"10"`) to a number, or a fallback. */
 function mm(value: string, fallback: number): number {
   const n = Number.parseFloat(value);
@@ -65,11 +98,10 @@ function mmCss(value: number): string {
 
 /**
  * The four page margins (mm) a template reserves for the body's frame. The
- * top/bottom margins double as the header/footer band heights, so the PDF
- * renderer and {@link buildPdfDocuments} MUST derive them the same way — this is
- * the single source of truth. Empty/invalid meta values fall back to the same
- * defaults used when building the edge templates, so the reserved space always
- * matches the wrapper height and content can never bleed across bands.
+ * top/bottom margins are the MINIMUM header/footer band heights — `PdfService`
+ * grows them further at print time to fit taller header/footer content (see the
+ * auto-fit in `pdf.service.ts`), so a real letterhead is never crushed. Empty or
+ * invalid meta values fall back to the shared defaults.
  */
 export function resolvePageMarginsMm(meta: PdfTemplateMeta): {
   top: number;
@@ -86,52 +118,18 @@ export function resolvePageMarginsMm(meta: PdfTemplateMeta): {
 }
 
 /**
- * Geometry of a header/footer band, in millimetres, derived from the page
- * margins. This is the Puppeteer equivalent of mPDF's margin model:
- *
- *  - `band` — the FULL height Chromium reserves for the edge (the top/bottom page
- *    margin: `margin_top` for the header, `margin_bottom` for the footer). Our
- *    wrapper is sized to exactly this so it fills — and never exceeds — the space
- *    reserved for it, so content can never bleed into the body.
- *  - `gap` — the distance from the physical page edge to the header/footer
- *    content (`margin_header` / `margin_footer`). Applied as padding on the
- *    outer edge so the content sits inside the band exactly where mPDF puts it.
- *  - `content` — the usable content height (`band − gap`); images are capped to
- *    this so they scale down to fit the band instead of overflowing it.
- */
-interface EdgeBand {
-  band: number;
-  gap: number;
-  content: number;
-}
-
-/**
- * Resolve an edge band from its reserved margin and inner gap, clamping the gap
- * so it can never exceed the reserved margin (which would yield a negative
- * content height for a misconfigured template).
- */
-function resolveBand(marginMm: number, gapMm: number): EdgeBand {
-  const gap = Math.min(gapMm, marginMm);
-  return { band: marginMm, gap, content: Math.max(0, marginMm - gap) };
-}
-
-/**
- * CSS that keeps arbitrary header/footer HTML strictly inside its band,
- * regardless of the selected page size/orientation:
- *  - images scale down to the available width AND the band's content height,
- *    keeping their aspect ratio (`object-fit: contain`) — never overflowing;
+ * CSS that keeps arbitrary header/footer HTML inside the page width without
+ * distorting it, regardless of the selected page size/orientation:
+ *  - images scale DOWN to the available width but keep their natural aspect ratio
+ *    and height (`height: auto`) so a real letterhead is never crushed — the page
+ *    margin is grown at print time to make room (see `PdfService` auto-fit);
  *  - tables use a fixed layout capped at the content width so wide tables can't
  *    push past the page margins;
  *  - long words/URLs wrap instead of forcing horizontal overflow.
- * `content` is the band's usable height in mm (see {@link EdgeBand}).
  */
-function edgeContentCss(
-  cls: 'pdf-header' | 'pdf-footer',
-  content: number,
-): string {
-  const maxH = mmCss(content);
+function edgeContentCss(cls: 'pdf-header' | 'pdf-footer'): string {
   return `
-      .${cls} img { max-width: 100%; max-height: ${maxH}; height: auto; object-fit: contain; }
+      .${cls} img { max-width: 100%; height: auto; }
       .${cls} table { table-layout: fixed; width: 100%; max-width: 100%; border-collapse: collapse; }
       .${cls} td, .${cls} th { overflow: hidden; word-break: break-word; overflow-wrap: break-word; }
       .${cls} * { max-width: 100%; overflow-wrap: break-word; word-wrap: break-word; }`;
@@ -140,18 +138,19 @@ function edgeContentCss(
 /**
  * Build one Puppeteer header/footer template string. It is self-contained (own
  * `<style>`, explicit font size, `print-color-adjust: exact` so backgrounds
- * render) and confined to the page's top/bottom margin band so its content can
- * never spill into the body or the opposite edge.
+ * render) — Chromium renders header/footer templates in an isolated context that
+ * inherits none of the body's CSS.
  *
- * Structure is an OUTER wrapper sized to the FULL reserved band height (`band`,
- * in mm) with `overflow: hidden` as the final safety net, containing an INNER
- * content layer that is absolutely anchored to the edge (`top: gap` for the
- * header, `bottom: gap` for the footer) and spans the body's left/right margins.
- * Absolute anchoring (rather than flex) leaves the fragment's own layout — floats,
- * `inline-block`, tables — completely intact, while pinning it where mPDF's
- * `margin_header` / `margin_footer` place it: the header hangs from the top of the
- * band, the footer sits on the bottom, so overflow is clipped away from the body.
- * An empty fragment yields an empty band (suppresses Chromium's default date/
+ * The template is a plain NATURAL-HEIGHT flow box (no fixed height, no clipping).
+ * Chromium natively TOP-aligns the header template to the page's top edge and
+ * BOTTOM-aligns the footer template to the bottom edge, then repeats both on
+ * every page — so no absolute positioning is needed. The mPDF
+ * `margin_header` / `margin_footer` gap becomes padding on the PAGE-EDGE side
+ * (top for the header, bottom for the footer); the body-facing side is kept clear
+ * because `PdfService` grows the top/bottom page margin to fit the measured
+ * header/footer height (the Puppeteer equivalent of mPDF's `setAutoTopMargin`).
+ * `mLeft` / `mRight` inset the content to line up with the body's side margins.
+ * An empty fragment yields an empty band (suppresses Chromium's default date /
  * page-number chrome).
  */
 function buildEdgeTemplate(
@@ -163,27 +162,23 @@ function buildEdgeTemplate(
   fontSize: string,
   mLeft: number,
   mRight: number,
-  edge: EdgeBand,
+  gapMm: number,
 ): string {
   const isHeader = cls === 'pdf-header';
-  // Anchor the content layer to the page edge (top for header, bottom for footer)
-  // with the mPDF gap; content taller than the band overflows AWAY from the body
-  // and is clipped by the wrapper, so the body-facing edge is always preserved.
-  const anchor = isHeader
-    ? `top: ${mmCss(edge.gap)};`
-    : `bottom: ${mmCss(edge.gap)};`;
+  const gap = mmCss(gapMm);
+  // Gap padding on the page-edge side only; the body-facing side is handled by
+  // the auto-fit margin so header/footer content never touches the body.
+  const padding = isHeader
+    ? `${gap} ${mmCss(mRight)} 0 ${mmCss(mLeft)}`
+    : `0 ${mmCss(mRight)} ${gap} ${mmCss(mLeft)}`;
   return `<style>
 ${baseCss}
 ${customCss}
-${edgeContentCss(cls, edge.content)}
+${edgeContentCss(cls)}
 </style>
-<div class="${cls}" style="box-sizing: border-box; position: relative; width: 100%; height: ${mmCss(
-    edge.band,
-  )}; overflow: hidden; font-family: ${fontFamily}sans-serif; font-size: ${escapeHtml(
+<div class="${cls}" style="box-sizing: border-box; width: 100%; padding: ${padding}; font-family: ${fontFamily}sans-serif; font-size: ${escapeHtml(
     fontSize,
-  )}pt; color: #1a1a1a; -webkit-print-color-adjust: exact; print-color-adjust: exact;"><div class="${cls}-content" style="position: absolute; ${anchor} left: ${mmCss(
-    mLeft,
-  )}; right: ${mmCss(mRight)};">${fragment}</div></div>`;
+  )}pt; color: #1a1a1a; -webkit-print-color-adjust: exact; print-color-adjust: exact;">${fragment}</div>`;
 }
 
 /**
@@ -211,13 +206,12 @@ export function buildPdfDocuments(
   const margins = resolvePageMarginsMm(meta);
   const mLeft = margins.left;
   const mRight = margins.right;
-  // Vertical bands mirror mPDF: `margin_top`/`margin_bottom` are the full space
-  // reserved for the header/footer (where the body starts/ends); `margin_header`/
-  // `margin_footer` are the gap from the page edge to the header/footer content.
-  // The band heights come from the SAME resolver `metaToPdfOptions` uses, so
-  // Chromium reserves exactly the space each edge template fills.
-  const headerBand = resolveBand(margins.top, mm(meta.margin_header, 5));
-  const footerBand = resolveBand(margins.bottom, mm(meta.margin_footer, 5));
+  // The mPDF gap from the page edge to the header/footer content
+  // (`margin_header` / `margin_footer`). The header/footer templates are
+  // natural-height flow boxes; the page's top/bottom margin is grown at print
+  // time to fit them (see `PdfService`), so only the page-edge gap is baked in.
+  const headerGap = mm(meta.margin_header, 5);
+  const footerGap = mm(meta.margin_footer, 5);
   const customCss = meta.custom_css || '';
   // An uploaded watermark image is applied automatically and takes precedence
   // over the text watermark; fall back to text when no image is set.
@@ -273,7 +267,7 @@ ${watermark}
       fontSize,
       mLeft,
       mRight,
-      headerBand,
+      headerGap,
     ),
     footerTemplate: buildEdgeTemplate(
       'pdf-footer',
@@ -284,7 +278,7 @@ ${watermark}
       fontSize,
       mLeft,
       mRight,
-      footerBand,
+      footerGap,
     ),
     hasHeaderFooter: header.trim() !== '' || footer.trim() !== '',
   };

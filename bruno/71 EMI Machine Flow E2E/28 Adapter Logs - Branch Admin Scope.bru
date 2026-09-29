@@ -1,7 +1,7 @@
 meta {
   name: 28 Adapter Logs - Branch Admin Scope
   type: http
-  seq: 28
+  seq: 23
 }
 
 get {
@@ -54,12 +54,12 @@ docs {
   non-`business_admin` profile). The backend **locks the query to the token's
   `active_branch_id`** (`where.branchId = profile.branchId`), so this user sees
   **only their own branch's** rows. A Branch Admin behaves identically.
-
+  
   Asserts every returned row is attributed to this run's `branchId` (proving the
   branch lock) and that both EMI calls from steps 26/27 — `ORDERS` and
   `SUBMIT_RESULT` — are present (their `branchId` = the order's branch).
   Captures `adapterLogId`.
-
+  
   > Because a branch read filters `branchId = <that branch>`, tenant-level rows
   > (`branchId = null`, e.g. an EMI call whose specimen matched no order) do NOT
   > appear here — only in the Business Admin / Site Admin scopes below.

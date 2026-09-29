@@ -1,7 +1,7 @@
 meta {
   name: 30 Adapter Logs - Site Admin Scope
   type: http
-  seq: 30
+  seq: 25
 }
 
 get {
@@ -49,12 +49,12 @@ docs {
   `adapter-logs:read`, operations_admin+). This view spans **ALL tenants**; here
   it is narrowed to this run's business via `?tenantId={{tenantId}}` so the
   assertions are exact (omit `tenantId` to see every business at once).
-
+  
   Each row is enriched with `tenantName` (the owning business). Asserts the run's
   EMI rows are present, all carry this run's `tenantId`, and both `ORDERS` +
   `SUBMIT_RESULT` show — proving the same logged activity is visible at the
   platform level, not just to the tenant.
-
+  
   This is a **different endpoint + a different token type** from steps 28/29:
   business routes use the business JWT; SiteAdmin routes use the SiteAdmin token
   and are gated by `SiteAdminPermissionGuard`.

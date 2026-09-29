@@ -39,6 +39,7 @@ import {
   deriveTatStatus,
   tatCreatedAtRange,
 } from './constants/tat.constant';
+import { CONTAINER_TYPE_LABELS } from './constants/container-type.constants';
 import { AccessionSettingsService } from './accession-settings.service';
 import { BarcodeService } from './barcode.service';
 import { ListSamplesDto, OrderMode } from './dto/list-samples.dto';
@@ -308,7 +309,7 @@ export class OrderSampleService {
 
     // Auto-assign barcodes grouping-aware (Sample / Order / Department /
     // Dept+Sample per Tenant.groupingMode) — samples in the same bucket share
-    // one barcode value + rendered Code 39 image. Synchronous: an S3 failure
+    // one barcode value + rendered Code 128 image. Synchronous: an S3 failure
     // rolls the whole order back (see BarcodeService).
     await this.assignBarcodesToGroups(
       tx,
@@ -348,7 +349,7 @@ export class OrderSampleService {
   /**
    * Assign barcodes to a set of samples inside an existing (already
    * tenant-scoped) transaction, bucketed by the tenant's grouping mode. Each
-   * bucket gets one allocated barcode value + one rendered/uploaded Code 39
+   * bucket gets one allocated barcode value + one rendered/uploaded Code 128
    * image; every member is updated to the shared `barcode` + `orderIdBarcode`.
    * A history row (`assign-barcode`, no status change) is written per sample.
    * @param tx active Prisma transaction client (already tenant-scoped)
@@ -1253,8 +1254,13 @@ export class OrderSampleService {
   /**
    * Print many samples' labels into one PDF ("Multiple Label Print" checklist
    * item). Renders ONE `multiple_order_label_print`-type template ONCE, with
-   * every sample folded into a single repeating `sections.labels` row-set —
-   * same flattened-section approach as `LabReportService.printAllForOrder`
+   * one repeating `sections.labels` row per **distinct barcode** (not per
+   * sample) — several samples sharing one barcode (per the tenant's grouping
+   * mode, e.g. Department+Sample) print as a single combined label, merging
+   * their accession numbers/test names/sample types rather than repeating the
+   * same barcode image once per sample. A sample with no barcode yet (never
+   * assigned) is never merged with another — each stays its own singleton row.
+   * Same flattened-section approach as `LabReportService.printAllForOrder`
    * (the renderer only expands one level of `{{#each}}`).
    * @throws OrderSampleNotFoundException if any sample id is missing
    * @throws NoActiveLabelTemplateException if no active template exists
@@ -1271,8 +1277,19 @@ export class OrderSampleService {
     );
     const { timezone, dateFormat, timeFormat } =
       await this.tenantService.getLocale(tenantId);
-    const labels = samples.map((s) =>
-      this.buildLabelVariables(s, timezone, dateFormat, timeFormat),
+
+    // Group by barcode value; samples with no barcode each form their own
+    // singleton group (nothing to merge them by), keyed off their own id so
+    // they never collide with each other or with a real barcode value.
+    const groups = new Map<string, OrderSampleDetail[]>();
+    for (const s of samples) {
+      const key = s.barcode ? `bc:${s.barcode}` : `id:${s.id}`;
+      const arr = groups.get(key);
+      if (arr) arr.push(s);
+      else groups.set(key, [s]);
+    }
+    const labels = [...groups.values()].map((group) =>
+      this.buildMergedLabelVariables(group, timezone, dateFormat, timeFormat),
     );
     const combined: GeneratePdfDto = { sections: { labels } };
 
@@ -1323,7 +1340,7 @@ export class OrderSampleService {
     return {
       accession_no: sample.accessionNo,
       barcode: sample.barcode ?? '',
-      // S3 URL of the rendered Code 39 barcode image, so a label template can
+      // S3 URL of the rendered Code 128 barcode image, so a label template can
       // show the scannable image via `<img src="{orderIdBarcode}">` (in addition
       // to the font-rendered `{barcode}` value).
       orderIdBarcode: sample.orderIdBarcode ?? '',
@@ -1354,7 +1371,9 @@ export class OrderSampleService {
         .filter(Boolean)
         .join(', '),
       sample_type: sample.sampleType ?? '',
-      container_type: sample.containerType ?? '',
+      container_type: sample.containerType
+        ? CONTAINER_TYPE_LABELS[sample.containerType]
+        : '',
       priority: sample.priority,
       // Collection date AND time, e.g. `21/09/2026 01:30 PM` (date + space +
       // tenant 12h/24h time). Blank when the sample has no collection time.
@@ -1367,6 +1386,42 @@ export class OrderSampleService {
             timeFormat,
           )}`
         : '',
+    };
+  }
+
+  /**
+   * Flat `{variable}` values for one **barcode group's** label row — one or
+   * more samples sharing a barcode, merged into a single label. Fields that
+   * are identical across the group's samples (barcode/image, patient,
+   * order/UHID, department, sample type/container, collected time) are taken
+   * from the first sample; fields that vary per sample (accession number,
+   * test names) are comma-joined across every sample in the group so the one
+   * printed label still reflects everything the shared barcode covers.
+   */
+  private buildMergedLabelVariables(
+    group: OrderSampleDetail[],
+    timezone: string,
+    dateFormat: string,
+    timeFormat: string,
+  ): Record<string, unknown> {
+    const base = this.buildLabelVariables(
+      group[0]!,
+      timezone,
+      dateFormat,
+      timeFormat,
+    );
+    if (group.length === 1) return base;
+    return {
+      ...base,
+      accession_no: group
+        .map((s) => s.accessionNo)
+        .filter(Boolean)
+        .join(', '),
+      test_names: [
+        ...new Set(
+          group.flatMap((s) => s.tests.map((t) => t.testName).filter(Boolean)),
+        ),
+      ].join(', '),
     };
   }
 
