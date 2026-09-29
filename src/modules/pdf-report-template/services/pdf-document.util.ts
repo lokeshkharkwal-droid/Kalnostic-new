@@ -50,6 +50,39 @@ export function escapeAttr(value: string): string {
   return escapeHtml(value).replace(/"/g, '&quot;');
 }
 
+/**
+ * Replace `{{image:ID}}` tokens with an `<img>` for every id RESOLVABLE in
+ * `images` (the template's own `meta.images` merged with the tenant-wide
+ * `PrintTemplateImage` registry). Ids may include a file extension (dots) or a
+ * hyphen, matching the uploaded-image id form (`New_Hedder_-_Copy_5c25c5.png`).
+ *
+ * An UNRESOLVED token is left untouched — this is what lets the Latte path keep
+ * its `{{image:ID}}` → `{$ID}` fallback for image URLs that come from the render
+ * CONTEXT rather than an uploaded image (e.g. `report_approved_by_signature`).
+ * Without this, the Latte engine rewrites EVERY `{{image:ID}}` to a `{$ID}`
+ * variable the context never supplies, so an uploaded header logo (whose id has
+ * `-`/`.` and isn't even a valid single Latte variable) renders as an empty
+ * `src` and disappears — while the same token works in flat-bodied templates.
+ * @param html the fragment to scan
+ * @param images id → src map (uploaded/registry, plus any runtime images)
+ * @returns the fragment with resolvable image tokens turned into `<img>` tags
+ */
+export function resolveImageTokens(
+  html: string,
+  images: Record<string, string>,
+): string {
+  if (!html) {
+    return html;
+  }
+  return html.replace(
+    /\{\{image:([a-zA-Z0-9_.-]+)\}\}/g,
+    (whole, id: string) => {
+      const src = images[id];
+      return src ? `<img src="${escapeAttr(src)}" alt="${id}" />` : whole;
+    },
+  );
+}
+
 /** Parse a `meta` millimetre string (e.g. `"10"`) to a number, or a fallback. */
 function mm(value: string, fallback: number): number {
   const n = Number.parseFloat(value);

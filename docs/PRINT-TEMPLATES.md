@@ -112,6 +112,15 @@ most common source of "my tag didn't work".
   `meta.images` → the tenant-wide **`PrintTemplateImage` registry** (so an image
   uploaded to one template can be reused in another by pasting its token).
 - Unknown id → collapses to empty (no `<img>` emitted).
+- **Works on both engines.** When a template's **body** is Latte, the *whole*
+  template (header/body/footer) renders through the Latte-subset engine. It still
+  resolves `{{image:id}}` against the same uploaded/registry map **before** Latte
+  parsing, so a pasted header logo renders identically to a flat template. A token
+  with **no** uploaded/registry match falls back to the Latte `{{image:id}}` →
+  `{$id}` behaviour (for image URLs that come from the render *context*, e.g.
+  `report_approved_by_signature`). *(Historically the Latte path resolved
+  `{{image}}` only as a `{$id}` context variable, so an uploaded logo — whose id
+  has `-`/`.` and isn't a valid Latte variable — silently vanished; fixed.)*
 
 ### 2.4 Signatories — `<signing_authority_tag> … </signing_authority_tag>`
 
