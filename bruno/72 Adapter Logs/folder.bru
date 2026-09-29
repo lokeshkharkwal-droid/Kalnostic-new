@@ -49,7 +49,7 @@ docs {
 
   - `GET {{emiBaseUrl}}/emi/orders?specimen_id={{orderCode}}` → one
     `action = ORDERS` row.
-  - `GET {{emiBaseUrl}}/emi/submitResult` → one `action = SUBMIT_RESULT` row.
+  - `POST {{emiBaseUrl}}/emi/submitResult` → one `action = SUBMIT_RESULT` row.
 
   The legacy `s` code maps to `statusCode` and a textual `status` (`SUCCESS` for
   200/199, else `FAILED`); the row also captures `token`, `sourceIpAddress`,
@@ -59,7 +59,7 @@ docs {
 
   **See the round-trip in sequence:** folder **71 EMI Machine Flow E2E** now runs
   it end-to-end — after the machine calls (**26** `GET /emi/orders`, **27**
-  `GET /emi/submitResult`), steps **28 + 29** list `GET /adapter-logs` and assert
+  `POST /emi/submitResult`), steps **28 + 29** list `GET /adapter-logs` and assert
   both calls appear (as the branch-scoped operator). The standalone EMI request
   reference lives in folder **70 EMI Machine Interface**.
 

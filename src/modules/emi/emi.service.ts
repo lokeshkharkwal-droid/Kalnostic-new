@@ -371,7 +371,7 @@ export class EmiService {
   }
 
   /**
-   * `GET /emi/submitResult` — fill the machine's result values onto the order's
+   * `POST /emi/submitResult` — fill the machine's result values onto the order's
    * reports. Mirrors the legacy `AdapterResult::processAdapterResult`: only
    * fillable, adapter-mapped reports are updated (value written with
    * `source = ADAPTER`, report moved to `SAVED`); non-fillable/unmapped reports
