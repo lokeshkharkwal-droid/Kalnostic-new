@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { AlertReviewStatus, WorklistTrigger } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  assertReportNotSentOut,
+  findSentOutReportIds,
+} from './utils/sent-out-report.util';
 import { LabReportService } from './lab-report.service';
 import { RaiseWorklistEntryDto } from './dto/raise-worklist-entry.dto';
 import { UpdateAlertReviewStatusDto } from './dto/update-worklist-status.dto';
@@ -51,6 +55,7 @@ export class OutOfRangeService {
       },
     });
     if (!report) throw new LabReportNotFoundException(labReportId);
+    await assertReportNotSentOut(this.prisma, tenantId, labReportId);
 
     return this.prisma
       .$transaction(async (tx) => {
@@ -91,8 +96,20 @@ export class OutOfRangeService {
 
   async findAll(tenantId: string, branchId: string | null) {
     const activeBranchId = this.requireBranch(branchId);
+    const sentOutIds = await findSentOutReportIds(
+      this.prisma,
+      tenantId,
+      activeBranchId,
+    );
     const rows = await this.prisma.outOfRangeFlag.findMany({
-      where: { tenantId, branchId: activeBranchId, deletedAt: null },
+      where: {
+        tenantId,
+        branchId: activeBranchId,
+        deletedAt: null,
+        ...(sentOutIds.length > 0
+          ? { labReportId: { notIn: sentOutIds } }
+          : {}),
+      },
       include: OUT_OF_RANGE_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
@@ -123,6 +140,7 @@ export class OutOfRangeService {
     });
     if (!entry)
       throw new WorklistEntryNotFoundException('out_of_range_flag', id);
+    await assertReportNotSentOut(this.prisma, tenantId, entry.labReportId);
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const updatedEntry = await tx.outOfRangeFlag.update({

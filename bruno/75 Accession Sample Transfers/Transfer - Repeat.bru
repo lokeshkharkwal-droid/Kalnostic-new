@@ -1,0 +1,52 @@
+meta {
+  name: Transfer - Repeat
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/accession/transfers/{{transferId}}/repeat
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "repeatReason": "Sample clotted"
+  }
+}
+
+tests {
+  test("201 Created", function () { expect(res.getStatus()).to.equal(201); });
+}
+
+docs {
+  Receiving branch: ask the sender to re-collect (transfer RECEIVED or ACCEPTED -> REPEAT).
+
+  For an INTERNAL transfer the test goes back to the sender in the same transaction:
+  - from RECEIVED: the sender's original sample goes SENT_INTERNAL -> REPEAT (its
+    report never left the sender and stops being hidden);
+  - from ACCEPTED: the receiving copy is voided, the report returns to the sender,
+    and the original sample goes to REPEAT. Refused (422 SAMPLE_RETURN_BLOCKED) if the
+    report has been worked on at the receiving branch.
+  The transfer update is conditional on its current status: a concurrent change makes
+  this fail with 422 INVALID_TRANSFER_TRANSITION instead of overwriting it.
+  The sender's referring panel (B2B) is notified once the change has committed.
+  Internal branch transfer rules (manager flow 2026-09-29):
+  - Once a sample is SENT_INTERNAL to another branch, the SENDER's Technician
+    worklist hides its report (list, counts, detail, history, every write, the five
+    secondary worklists, attachments, inventory usage, analyser results). It behaves
+    as "Lab report not found" (404 LAB_REPORT_NOT_FOUND) for the sender.
+  - A sent sample accepts ONLY Retrieve from the sender, and only until the
+    receiving branch has received it (transfer IN_TRANSIT / PICKED_UP).
+  - The receiving branch's Reject / Repeat returns the test to the sender: the
+    sender's original sample goes SENT_INTERNAL -> REPEAT automatically.
+}

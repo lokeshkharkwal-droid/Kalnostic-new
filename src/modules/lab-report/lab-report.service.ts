@@ -116,6 +116,11 @@ import {
   patientAgeInDays,
   rangeAgeInDays,
 } from './utils/reference-range.util';
+import {
+  assertReportNotSentOut,
+  findSentOutReportIds,
+  isReportSentOut,
+} from './utils/sent-out-report.util';
 import { TatService } from './tat.service';
 
 /**
@@ -274,6 +279,121 @@ export class LabReportService {
   }
 
   /**
+   * The lab reports a set of sample-test links serves at `branchId` — used when a
+   * transferred sample is returned to its sender or is about to be sent. For each
+   * `(orderItemId, labTestId)` link: the item's non-panel report
+   * (`memberBranchLabTestId` null) plus, for a panel member, that member's own
+   * report (matched on `labTestId`) — the same matching
+   * {@link rehomeReportsForAcceptedItem} uses.
+   * @param tx the caller's transaction
+   * @param branchId the branch currently holding the reports
+   * @param tests the sample's `OrderSampleTest` links
+   * @returns the matching reports' ids (deduplicated)
+   */
+  async findReportIdsForSampleTests(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    branchId: string | null,
+    tests: { orderItemId: string; labTestId: string | null }[],
+  ): Promise<string[]> {
+    if (!branchId || tests.length === 0) return [];
+    const ids = new Set<string>();
+    for (const t of tests) {
+      const or: Prisma.LabReportWhereInput[] = [
+        { memberBranchLabTestId: null },
+      ];
+      if (t.labTestId) or.push({ labTestId: t.labTestId });
+      const rows = await tx.labReport.findMany({
+        where: {
+          tenantId,
+          branchId,
+          orderItemId: t.orderItemId,
+          deletedAt: null,
+          OR: or,
+        },
+        select: { id: true },
+      });
+      rows.forEach((r) => ids.add(r.id));
+    }
+    return [...ids];
+  }
+
+  /**
+   * Whether a report is completely untouched — no work has started on it:
+   * status `PENDING`, and no result values, notes, attachments, overall-result
+   * entries or per-report Notes-section overrides. Only an untouched report may
+   * change branch (return to the sender) or be sent on, because nothing is lost.
+   * @param tx the caller's transaction
+   */
+  async isReportUntouched(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    reportId: string,
+  ): Promise<boolean> {
+    const report = await tx.labReport.findFirst({
+      where: { id: reportId, tenantId, deletedAt: null },
+      select: {
+        status: true,
+        usefulFor: true,
+        interpretationOfResults: true,
+        limitations: true,
+        remarks: true,
+        references: true,
+      },
+    });
+    if (!report) return true;
+    if (report.status !== LabReportStatus.PENDING) return false;
+    if (
+      report.usefulFor !== null ||
+      report.interpretationOfResults !== null ||
+      report.limitations !== null ||
+      report.remarks !== null ||
+      report.references !== null
+    ) {
+      return false;
+    }
+    const [values, notes, attachments, overall] = await Promise.all([
+      tx.labReportResultValue.count({
+        where: { labReportId: reportId, deletedAt: null },
+      }),
+      tx.labReportNote.count({ where: { labReportId: reportId } }),
+      tx.labReportAttachment.count({ where: { labReportId: reportId } }),
+      tx.labReportOverallResult.count({ where: { labReportId: reportId } }),
+    ]);
+    return values + notes + attachments + overall === 0;
+  }
+
+  /**
+   * Move reports to another branch (a transferred test returning to its sender).
+   * Also clears the NABL stopwatch state the holding branch may have started, so
+   * the sender's clock is not polluted by the receiver's; the legacy TAT is
+   * derived from the linked samples and needs no reset.
+   * @param tx the caller's transaction
+   * @param reportIds the reports to move
+   * @param branchId the branch to hand them to
+   */
+  async moveReportsToBranch(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    reportIds: string[],
+    branchId: string,
+  ): Promise<void> {
+    if (reportIds.length === 0) return;
+    await tx.labReport.updateMany({
+      where: { id: { in: reportIds }, tenantId, deletedAt: null },
+      data: {
+        branchId,
+        isNablTat: false,
+        tatIsRunning: false,
+        tatStartAt: null,
+        tatLastTickAt: null,
+        tatNetMinutes: null,
+        tatEndAt: null,
+      },
+    });
+  }
+
+  /**
    * The constituent `BranchLabTest`s of a panel, resolved via the
    * `BranchLabPanelTest` junction (a raw FK, no Prisma relation, so tests are
    * fetched in a second query) in the panel's own member-test `sortOrder`.
@@ -413,16 +533,24 @@ export class LabReportService {
     return this.requireBranch(filters.branchId ?? activeBranchId);
   }
 
+  /**
+   * Build the worklist `where` for one branch. `sentOutIds` are the reports this
+   * branch has sent to another branch and must not see (see
+   * {@link findSentOutReportIds}); they are excluded from the list AND its
+   * status counts, since both share this filter.
+   */
   private buildListWhere(
     tenantId: string,
     branchId: string,
     filters: ListLabReportsDto,
     scopeIds: string[],
+    sentOutIds: string[] = [],
   ): Prisma.LabReportWhereInput {
     const where: Prisma.LabReportWhereInput = {
       tenantId,
       branchId,
       deletedAt: null,
+      ...(sentOutIds.length > 0 ? { id: { notIn: sentOutIds } } : {}),
     };
 
     if (filters.status) where.status = filters.status;
@@ -604,11 +732,17 @@ export class LabReportService {
       tenantId,
       personId,
     );
+    const sentOutIds = await findSentOutReportIds(
+      this.prisma,
+      tenantId,
+      resolvedBranchId,
+    );
     const where = this.buildListWhere(
       tenantId,
       resolvedBranchId,
       filters,
       scopeIds,
+      sentOutIds,
     );
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 25;
@@ -1167,11 +1301,17 @@ export class LabReportService {
       tenantId,
       personId,
     );
+    const sentOutIds = await findSentOutReportIds(
+      this.prisma,
+      tenantId,
+      resolvedBranchId,
+    );
     const baseWhere = this.buildListWhere(
       tenantId,
       resolvedBranchId,
       { ...filters, status: undefined },
       scopeIds,
+      sentOutIds,
     );
 
     const statuses = Object.values(LabReportStatus);
@@ -1201,6 +1341,7 @@ export class LabReportService {
         outsource: undefined,
       },
       scopeIds,
+      sentOutIds,
     );
     const [inHouse, outsource] = await Promise.all([
       this.prisma.labReport.count({
@@ -1430,11 +1571,57 @@ export class LabReportService {
     branchId: string | null,
   ): Promise<LabReportDetailWithContent> {
     const activeBranchId = this.requireBranch(branchId);
+    return this.loadReportDetail(id, tenantId, activeBranchId);
+  }
+
+  /**
+   * Whether `branchId` may print the WHOLE order - every report on it, whichever
+   * branch currently holds it - rather than only its own reports: true only for
+   * the branch that owns the order (`orders.branch_id`). Any other branch (a
+   * receiving branch, or an unrelated one) keeps the branch-scoped behaviour, so
+   * a branch never prints tests it did not handle and cannot reach an order it
+   * has nothing to do with. An unknown order or one with no branch is `false`.
+   */
+  private async canPrintWholeOrder(
+    orderId: string,
+    tenantId: string,
+    branchId: string,
+  ): Promise<boolean> {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, tenantId, deletedAt: null },
+      select: { branchId: true },
+    });
+    return order?.branchId === branchId;
+  }
+
+  /**
+   * The shared loader behind {@link findById} and the order-owner print-all path.
+   * `branchId` scopes the lookup to that branch and applies the "sent out" rule
+   * (a report the branch has sent elsewhere behaves as not found). `null` means
+   * ANY branch of the tenant - used ONLY by the order-owner's print-all
+   * (see {@link canPrintWholeOrder}); the caller must have authorised it, and the
+   * sent-out rule is skipped because the owner prints everything on its order.
+   * The B2B referral-panel ownership check always applies.
+   */
+  private async loadReportDetail(
+    id: string,
+    tenantId: string,
+    branchId: string | null,
+  ): Promise<LabReportDetailWithContent> {
     const report = await this.prisma.labReport.findFirst({
-      where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
+      where: {
+        id,
+        tenantId,
+        ...(branchId ? { branchId } : {}),
+        deletedAt: null,
+      },
       include: LAB_REPORT_DETAIL_INCLUDE,
     });
     if (!report) throw new LabReportNotFoundException(id);
+    // A report this branch has sent to another branch behaves as not found.
+    if (branchId && (await isReportSentOut(this.prisma, tenantId, report))) {
+      throw new LabReportNotFoundException(id);
+    }
     // B2B Referral Panel isolation: block reading another panel's report by id.
     assertLabReportPanelOwnership(report, getReferralPanelId());
 
@@ -1834,6 +2021,11 @@ export class LabReportService {
       where: { id, tenantId, branchId, deletedAt: null },
     });
     if (!report) throw new LabReportNotFoundException(id);
+    // A report this branch has sent to another branch is not operable (and
+    // behaves as not found) — checked before the lock so nothing is revealed.
+    if (await isReportSentOut(this.prisma, tenantId, report)) {
+      throw new LabReportNotFoundException(id);
+    }
     if (report.isLocked) throw new LabReportLockedException(id);
 
     // Safety net (see LabReportSampleMissingException's own doc comment for
@@ -2235,6 +2427,7 @@ export class LabReportService {
       where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
     });
     if (!report) throw new LabReportNotFoundException(id);
+    await assertReportNotSentOut(this.prisma, tenantId, id);
     if (!report.labTestId) throw new LabTestCatalogueMissingException(id);
 
     const param = await this.prisma.labTestResultParam.findFirst({
@@ -2296,6 +2489,7 @@ export class LabReportService {
       },
     });
     if (!report) throw new LabReportNotFoundException(id);
+    await assertReportNotSentOut(this.prisma, tenantId, id);
     if (!report.labTestId) throw new LabTestCatalogueMissingException(id);
 
     const param = await this.prisma.labTestResultParam.findFirst({
@@ -2406,6 +2600,7 @@ export class LabReportService {
       },
     });
     if (!report) throw new LabReportNotFoundException(id);
+    await assertReportNotSentOut(this.prisma, tenantId, id);
     if (!report.labTestId) throw new LabTestCatalogueMissingException(id);
 
     const param = await this.prisma.labTestResultParam.findFirst({
@@ -2508,6 +2703,7 @@ export class LabReportService {
       include: { orderItem: { include: { order: true } } },
     });
     if (!report) throw new LabReportNotFoundException(id);
+    await assertReportNotSentOut(this.prisma, tenantId, id);
 
     const values = await this.prisma.labReportResultValue.findMany({
       where: {
@@ -2774,8 +2970,11 @@ export class LabReportService {
     id: string,
     tenantId: string,
     branchId: string | null,
+    allBranches = false,
   ): Promise<GeneratePdfDto> {
-    const report = await this.findById(id, tenantId, branchId);
+    const report = allBranches
+      ? await this.loadReportDetail(id, tenantId, null)
+      : await this.findById(id, tenantId, branchId);
     const order = report.orderItem.order;
     const patient = order.patient;
     const testOrPanel =
@@ -2792,6 +2991,10 @@ export class LabReportService {
     // Per-(test × sample) generation means at most one active row.
     const sampleTest = await this.prisma.orderSampleTest.findFirst({
       where: { orderItemId: report.orderItemId, deletedAt: null },
+      // After an internal transfer an item has two live samples (the sender's
+      // original and the receiver's copy, which carries no collection dates or
+      // barcode): prefer the original, so a transferred test keeps its dates.
+      orderBy: { createdAt: 'asc' },
       select: {
         sample: {
           select: {
@@ -2840,7 +3043,7 @@ export class LabReportService {
     const siblingIds = await this.siblingReportIds(
       id,
       tenantId,
-      this.requireBranch(branchId),
+      allBranches ? null : this.requireBranch(branchId),
     );
     const sampleNote = await this.prisma.labReportNote.findFirst({
       where: { labReportId: { in: siblingIds }, category: 'SAMPLE' },
@@ -3054,10 +3257,16 @@ export class LabReportService {
     branchId: string | null,
     templateId?: string,
     type: 'lab_report' | 'lab_panel' = 'lab_report',
+    allBranches = false,
   ): Promise<Buffer> {
     // Referral Panel Settings — Restrict Report Access (Credit Limit/Days).
     await this.referralCredit.assertReportAccessAllowedByReportId(tenantId, id);
-    const context = await this.buildPrintContext(id, tenantId, branchId);
+    const context = await this.buildPrintContext(
+      id,
+      tenantId,
+      branchId,
+      allBranches,
+    );
     const resolvedTemplateId =
       templateId ??
       (await this.resolvePrintTemplateId(
@@ -3235,10 +3444,17 @@ export class LabReportService {
     flatContext: GeneratePdfDto;
   }> {
     const activeBranchId = this.requireBranch(branchId);
+    // The order-owner branch prints every report on the order (any branch);
+    // every other branch only its own.
+    const allBranches = await this.canPrintWholeOrder(
+      orderId,
+      tenantId,
+      activeBranchId,
+    );
     const reportRows = await this.prisma.labReport.findMany({
       where: {
         tenantId,
-        branchId: activeBranchId,
+        ...(allBranches ? {} : { branchId: activeBranchId }),
         deletedAt: null,
         orderItem: { orderId },
         ...(orderItemIds && orderItemIds.length > 0
@@ -3326,7 +3542,9 @@ export class LabReportService {
 
     // Per-report body + dates, reusing the single-report context builder.
     const contexts = await Promise.all(
-      reportRows.map((r) => this.buildPrintContext(r.id, tenantId, branchId)),
+      reportRows.map((r) =>
+        this.buildPrintContext(r.id, tenantId, branchId, allBranches),
+      ),
     );
     const reports = await Promise.all(
       reportRows.map(async (r, idx) => {
@@ -3637,10 +3855,17 @@ export class LabReportService {
       }
     }
 
+    // The order-owner branch prints every report on the order (any branch);
+    // every other branch only its own.
+    const allBranches = await this.canPrintWholeOrder(
+      orderId,
+      tenantId,
+      activeBranchId,
+    );
     const reportRows = await this.prisma.labReport.findMany({
       where: {
         tenantId,
-        branchId: activeBranchId,
+        ...(allBranches ? {} : { branchId: activeBranchId }),
         deletedAt: null,
         orderItem: { orderId },
         ...(orderItemIds && orderItemIds.length > 0
@@ -3656,7 +3881,14 @@ export class LabReportService {
 
     const pdfBuffers = await Promise.all(
       reportRows.map((r) =>
-        this.print(r.id, tenantId, branchId, templateId, 'lab_report'),
+        this.print(
+          r.id,
+          tenantId,
+          branchId,
+          templateId,
+          'lab_report',
+          allBranches,
+        ),
       ),
     );
 
@@ -4601,6 +4833,7 @@ export class LabReportService {
       where: { id, tenantId, branchId, deletedAt: null },
     });
     if (!report) throw new LabReportNotFoundException(id);
+    await assertReportNotSentOut(this.prisma, tenantId, id);
 
     return this.prisma.withTenant(tenantId, async (tx) => {
       await tx.labReportResultValue.updateMany({
@@ -4656,6 +4889,7 @@ export class LabReportService {
       where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
     });
     if (!report) throw new LabReportNotFoundException(id);
+    await assertReportNotSentOut(this.prisma, tenantId, id);
 
     return this.prisma.withTenant(tenantId, async (tx) => {
       const updated = await tx.labReport.update({
@@ -4701,6 +4935,7 @@ export class LabReportService {
       where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
     });
     if (!report) throw new LabReportNotFoundException(id);
+    await assertReportNotSentOut(this.prisma, tenantId, id);
 
     return this.prisma.labReport.update({
       where: { id },
@@ -4757,14 +4992,20 @@ export class LabReportService {
   // not this order-wide tab system, and keep their existing single-report
   // scoping (see PLAIN_NOTE_CATEGORIES's own doc comment).
 
-  /** All `LabReport.id`s belonging to the same order as `id`, `id` included. */
+  /**
+   * All `LabReport.id`s belonging to the same order as `id`, `id` included.
+   * `branchId` limits both the report and its siblings to that branch; `null`
+   * means every branch (the order-owner's print-all, which reads reports held by
+   * other branches).
+   */
   private async siblingReportIds(
     id: string,
     tenantId: string,
-    branchId: string,
+    branchId: string | null,
   ): Promise<string[]> {
+    const branchFilter = branchId ? { branchId } : {};
     const report = await this.prisma.labReport.findFirst({
-      where: { id, tenantId, branchId, deletedAt: null },
+      where: { id, tenantId, ...branchFilter, deletedAt: null },
       select: { orderItem: { select: { orderId: true } } },
     });
     if (!report) throw new LabReportNotFoundException(id);
@@ -4772,7 +5013,7 @@ export class LabReportService {
     const siblings = await this.prisma.labReport.findMany({
       where: {
         tenantId,
-        branchId,
+        ...branchFilter,
         deletedAt: null,
         orderItem: { orderId: report.orderItem.orderId },
       },
@@ -4846,6 +5087,7 @@ export class LabReportService {
       where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
     });
     if (!report) throw new LabReportNotFoundException(id);
+    await assertReportNotSentOut(this.prisma, tenantId, id);
 
     const rows = await this.prisma.labReportHistory.findMany({
       where: { labReportId: id, tenantId },

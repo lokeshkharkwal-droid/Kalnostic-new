@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { assertReportNotSentOut } from './utils/sent-out-report.util';
 import {
   CreateInventoryUsageDto,
   UpdateInventoryUsageDto,
@@ -34,6 +35,7 @@ export class InventoryUsageService {
       where: { id, tenantId, branchId, deletedAt: null },
     });
     if (!report) throw new LabReportNotFoundException(id);
+    await assertReportNotSentOut(this.prisma, tenantId, id);
     return report;
   }
 

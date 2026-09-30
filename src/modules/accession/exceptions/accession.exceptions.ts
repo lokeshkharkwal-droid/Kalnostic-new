@@ -37,13 +37,85 @@ export class AccessionNumberConflictException extends KaltrosException {
  * status (per the PDF §A.9 state machine).
  */
 export class InvalidSampleTransitionException extends KaltrosException {
-  constructor(action: SampleAction, from: SampleStatus) {
+  /**
+   * @param message optional user-facing override (subclasses give a specific
+   *   reason); defaults to the generic "not allowed from status" text
+   * @param code optional error-code override for the same purpose
+   */
+  constructor(
+    action: SampleAction,
+    from: SampleStatus,
+    message?: string,
+    code = 'INVALID_SAMPLE_TRANSITION',
+  ) {
     super(
-      'INVALID_SAMPLE_TRANSITION',
-      `Action "${action}" is not allowed from status ${from}`,
+      code,
+      message ?? `Action "${action}" is not allowed from status ${from}`,
       { action, from },
       HttpStatus.UNPROCESSABLE_ENTITY,
     );
+  }
+}
+
+/**
+ * 422 — a sample already sent to another branch (`SENT_INTERNAL`) can only be
+ * Retrieved (and only before the receiving branch has received it). Extends
+ * {@link InvalidSampleTransitionException} so group actions that "skip invalid"
+ * samples still skip it instead of failing the whole batch.
+ */
+export class SampleSentToBranchException extends InvalidSampleTransitionException {
+  constructor(action: SampleAction, from: SampleStatus) {
+    super(
+      action,
+      from,
+      `This sample has been sent to another branch, so "${action}" is not allowed. It can only be retrieved before the receiving branch receives it, or returned by the receiving branch.`,
+      'SAMPLE_SENT_TO_BRANCH',
+    );
+  }
+}
+
+/**
+ * 422 — Retrieve refused: the receiving branch has already received (or
+ * accepted) the sample, or it has already come back from the receiving branch,
+ * so there is nothing for the sender to pull back. Skippable by group "skip invalid" actions.
+ */
+export class RetrieveBlockedException extends InvalidSampleTransitionException {
+  constructor(from: SampleStatus, reason: 'RECEIVED' | 'RETURNED') {
+    super(
+      'retrieve',
+      from,
+      reason === 'RECEIVED'
+        ? 'The receiving branch has already received this sample, so it can no longer be retrieved.'
+        : 'This sample is no longer at another branch, so there is nothing to retrieve. Collect it again if it needs repeating.',
+      'SAMPLE_RETRIEVE_BLOCKED',
+    );
+  }
+}
+
+/**
+ * 422 — the receiving branch cannot Repeat/return a transferred test because it
+ * has already been worked on there (the report is past PENDING or already holds
+ * results, notes or attachments). Skippable by group "skip invalid" actions.
+ */
+export class SampleReturnBlockedException extends InvalidSampleTransitionException {
+  constructor(from: SampleStatus) {
+    super(
+      'repeat',
+      from,
+      'This test has already been worked on at this branch (its report has results, notes or attachments, or is past Pending), so it cannot be repeated or returned to the sending branch.',
+      'SAMPLE_RETURN_BLOCKED',
+    );
+  }
+}
+
+/**
+ * 422 — the sender cannot Send this sample right now (e.g. it already has an
+ * open transfer, or its report at the sending branch has been worked on).
+ * Skippable by group "skip invalid" actions.
+ */
+export class SendBlockedException extends InvalidSampleTransitionException {
+  constructor(from: SampleStatus, reason: string) {
+    super('send', from, reason, 'SAMPLE_SEND_BLOCKED');
   }
 }
 
@@ -69,6 +141,21 @@ export class InvalidTransferTransitionException extends KaltrosException {
       'INVALID_TRANSFER_TRANSITION',
       `Transfer action "${action}" is not allowed from status ${from}`,
       { action, from },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — the transfer's destination can no longer be changed: the receiving branch
+ * has already received/accepted it or it was returned/rejected.
+ */
+export class TransferNotEditableException extends KaltrosException {
+  constructor(id: string, status: TransferStatus) {
+    super(
+      'TRANSFER_NOT_EDITABLE',
+      'The destination of this transfer can no longer be changed because the receiving branch has already received it or it has been closed.',
+      { id, status },
       HttpStatus.UNPROCESSABLE_ENTITY,
     );
   }

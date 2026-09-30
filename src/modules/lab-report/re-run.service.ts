@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { ReRunStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  assertReportNotSentOut,
+  findSentOutReportIds,
+} from './utils/sent-out-report.util';
 import { LabReportService } from './lab-report.service';
 import { RaiseReRunDto } from './dto/re-run.dto';
 import { UpdateReRunStatusDto } from './dto/update-worklist-status.dto';
@@ -56,6 +60,7 @@ export class ReRunService {
       },
     });
     if (!report) throw new LabReportNotFoundException(labReportId);
+    await assertReportNotSentOut(this.prisma, tenantId, labReportId);
 
     await this.labReportService.resetForRerun(
       labReportId,
@@ -88,8 +93,20 @@ export class ReRunService {
 
   async findAll(tenantId: string, branchId: string | null) {
     const activeBranchId = this.requireBranch(branchId);
+    const sentOutIds = await findSentOutReportIds(
+      this.prisma,
+      tenantId,
+      activeBranchId,
+    );
     const rows = await this.prisma.reRunRequest.findMany({
-      where: { tenantId, branchId: activeBranchId, deletedAt: null },
+      where: {
+        tenantId,
+        branchId: activeBranchId,
+        deletedAt: null,
+        ...(sentOutIds.length > 0
+          ? { labReportId: { notIn: sentOutIds } }
+          : {}),
+      },
       include: WORKLIST_REPORT_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
@@ -125,6 +142,7 @@ export class ReRunService {
       where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
     });
     if (!entry) throw new WorklistEntryNotFoundException('re_run_request', id);
+    await assertReportNotSentOut(this.prisma, tenantId, entry.labReportId);
 
     const updated = await this.prisma.reRunRequest.update({
       where: { id },

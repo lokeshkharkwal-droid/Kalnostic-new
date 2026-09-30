@@ -1,0 +1,55 @@
+meta {
+  name: Send Sample (Internal Transfer)
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/accession/order-samples/{{sampleId}}/send
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "destinationBranchId": "{{destinationBranchId}}",
+    "logisticsType": "Courier",
+    "notes": "Handover at 10:30"
+  }
+}
+
+tests {
+  test("201 Created", function () { expect(res.getStatus()).to.equal(201); });
+}
+
+docs {
+  Send an ACCEPTED sample to another branch of the tenant (INTERNAL transfer).
+  The sample becomes SENT_INTERNAL and a SampleTransfer is created at IN_TRANSIT.
+
+  Refused (422 SAMPLE_SEND_BLOCKED / VALIDATION_ERROR) when:
+  - the destination is the sample's own branch;
+  - the sample already has an open transfer (in transit, picked up, received, accepted);
+  - the report for this test at the sending branch has been worked on (status is not
+    PENDING, or it has results, notes, attachments, overall-result entries or
+    Notes-section overrides) - a report may only change branch while untouched.
+
+  Group sends pass `force`/`skipInvalid` on the bulk route; a sample that is not
+  sendable is skipped when `skipInvalid` is true.
+  Internal branch transfer rules (manager flow 2026-09-29):
+  - Once a sample is SENT_INTERNAL to another branch, the SENDER's Technician
+    worklist hides its report (list, counts, detail, history, every write, the five
+    secondary worklists, attachments, inventory usage, analyser results). It behaves
+    as "Lab report not found" (404 LAB_REPORT_NOT_FOUND) for the sender.
+  - A sent sample accepts ONLY Retrieve from the sender, and only until the
+    receiving branch has received it (transfer IN_TRANSIT / PICKED_UP).
+  - The receiving branch's Reject / Repeat returns the test to the sender: the
+    sender's original sample goes SENT_INTERNAL -> REPEAT automatically.
+}

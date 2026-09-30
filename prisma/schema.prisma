@@ -8333,6 +8333,17 @@ model OrderSample {
   originBranchId     String? @map("origin_branch_id")
   processingBranchId String? @map("processing_branch_id")
 
+  // Set only on a receiving-branch copy created by an accepted INTERNAL transfer:
+  // the `SampleTransfer.id` that produced it (logical ref, no FK). Lets the
+  // receiving branch's Repeat find its transfer + the sender's original sample.
+  sourceTransferId String? @map("source_transfer_id")
+
+  // Every branch this sample (chain of transferred copies) has been with, once it
+  // has been transferred internally: the sender's list + the sender + the receiver,
+  // set when a copy is created. Empty on a never-transferred sample (its own and
+  // origin branch are implied). A sample may never be sent to any of these again.
+  heldBranchIds String[] @default([]) @map("held_branch_ids")
+
   tests         OrderSampleTest[]
   statusHistory OrderSampleStatusHistory[]
   transfers     SampleTransfer[]
@@ -8353,6 +8364,7 @@ model OrderSample {
   @@index([barcode])
   @@index([originBranchId])
   @@index([processingBranchId])
+  @@index([sourceTransferId])
   @@index([deletedAt])
   @@map("order_samples")
 }

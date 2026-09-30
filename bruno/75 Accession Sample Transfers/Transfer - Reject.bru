@@ -1,0 +1,47 @@
+meta {
+  name: Transfer - Reject
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/accession/transfers/{{transferId}}/reject
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "rejectionReason": "Leaked tube"
+  }
+}
+
+tests {
+  test("201 Created", function () { expect(res.getStatus()).to.equal(201); });
+}
+
+docs {
+  Receiving branch: reject a RECEIVED transfer (mandatory reason).
+
+  For an INTERNAL transfer the sender's original sample goes SENT_INTERNAL -> REPEAT
+  in the same transaction (reason recorded on its history), so the sender sees the
+  report again and collects the sample again. The sender's referring panel (B2B) is
+  notified once the change has committed.
+  Internal branch transfer rules (manager flow 2026-09-29):
+  - Once a sample is SENT_INTERNAL to another branch, the SENDER's Technician
+    worklist hides its report (list, counts, detail, history, every write, the five
+    secondary worklists, attachments, inventory usage, analyser results). It behaves
+    as "Lab report not found" (404 LAB_REPORT_NOT_FOUND) for the sender.
+  - A sent sample accepts ONLY Retrieve from the sender, and only until the
+    receiving branch has received it (transfer IN_TRANSIT / PICKED_UP).
+  - The receiving branch's Reject / Repeat returns the test to the sender: the
+    sender's original sample goes SENT_INTERNAL -> REPEAT automatically.
+}
