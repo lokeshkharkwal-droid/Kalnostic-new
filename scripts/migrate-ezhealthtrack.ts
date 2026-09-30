@@ -583,20 +583,27 @@ async function loadFamilyMembers(
   mysql: Connection,
   legacyTenantId: number,
 ): Promise<Map<number, FamilyMemberInfo>> {
-  const [rows] = await mysql.query<LegacyRow[]>(
-    `SELECT pf.PATIENT_ID AS anchor,
-            pf.FAMILY_MEMBER_PATIENT_ID AS member,
-            anchor.PATIENT_MOBILE_NUMBER AS anchorMobile
-       FROM patient_family pf
-       JOIN patientregister anchor ON anchor.PATIENT_ID = pf.PATIENT_ID
-      WHERE pf.FLAG = 0
-        AND pf.FAMILY_MEMBER_PATIENT_ID IS NOT NULL
-        AND pf.PATIENT_ID IN (
-          SELECT DISTINCT patient_id FROM user_patient_relation WHERE tenant_id = ?
-        )
-      ORDER BY pf.PATIENT_FAMILY_ID`,
-    [legacyTenantId],
-  );
+  // Batched by anchor id: the single `IN (SELECT … user_patient_relation)` form
+  // ran long enough on the legacy server to hit `read ETIMEDOUT`.
+  const rows: LegacyRow[] = [];
+  for (const chunk of chunkArray(await loadTenantPatientIds(mysql, legacyTenantId), 500)) {
+    const placeholders = chunk.map(() => '?').join(',');
+    const [batch] = await mysql.query<LegacyRow[]>(
+      `SELECT pf.PATIENT_FAMILY_ID AS pfId,
+              pf.PATIENT_ID AS anchor,
+              pf.FAMILY_MEMBER_PATIENT_ID AS member,
+              anchor.PATIENT_MOBILE_NUMBER AS anchorMobile
+         FROM patient_family pf
+         JOIN patientregister anchor ON anchor.PATIENT_ID = pf.PATIENT_ID
+        WHERE pf.FLAG = 0
+          AND pf.FAMILY_MEMBER_PATIENT_ID IS NOT NULL
+          AND pf.PATIENT_ID IN (${placeholders})`,
+      chunk,
+    );
+    rows.push(...batch);
+  }
+  // Restore the global PATIENT_FAMILY_ID order the first-anchor-wins logic relies on.
+  rows.sort((a, b) => (intOrNull(a.pfId) ?? 0) - (intOrNull(b.pfId) ?? 0));
   const map = new Map<number, FamilyMemberInfo>();
   for (const r of rows) {
     const member = intOrNull(r.member);
@@ -676,17 +683,22 @@ async function migratePatients(
   }
   const targetIds = patientLimit ? patientIds.slice(0, patientLimit) : patientIds;
 
-  // Which of these are already migrated?
-  const done = await prisma.runWithTenant(newTenantId, () =>
-    prisma.patient.findMany({
-      where: {
-        tenantId: newTenantId,
-        deletedAt: null,
-        legacyPatientId: { in: targetIds },
-      },
-      select: { legacyPatientId: true },
-    }),
-  );
+  // Which of these are already migrated? (Chunked: Postgres caps bind params at 32767.)
+  const done: { legacyPatientId: number | null }[] = [];
+  for (const chunk of chunkArray(targetIds, 5000)) {
+    done.push(
+      ...(await prisma.runWithTenant(newTenantId, () =>
+        prisma.patient.findMany({
+          where: {
+            tenantId: newTenantId,
+            deletedAt: null,
+            legacyPatientId: { in: chunk },
+          },
+          select: { legacyPatientId: true },
+        }),
+      )),
+    );
+  }
   const doneSet = new Set(done.map((p) => p.legacyPatientId));
 
   const pending = targetIds.filter((id) => !doneSet.has(id));
@@ -902,16 +914,21 @@ async function migrateFamilyLinks(
   newTenantId: string,
   report: RunReport,
 ): Promise<void> {
-  const [rows] = await mysql.query<LegacyRow[]>(
-    `SELECT DISTINCT pf.PATIENT_ID AS anchor, pf.FAMILY_MEMBER_PATIENT_ID AS member, pf.RELATION AS relation
-       FROM patient_family pf
-      WHERE pf.FLAG = 0
-        AND pf.FAMILY_MEMBER_PATIENT_ID IS NOT NULL
-        AND pf.PATIENT_ID IN (
-          SELECT DISTINCT patient_id FROM user_patient_relation WHERE tenant_id = ?
-        )`,
-    [legacyTenantId],
-  );
+  // Batched by anchor id (see loadFamilyMembers). Batches partition by anchor,
+  // so DISTINCT within a batch is still globally distinct.
+  const rows: LegacyRow[] = [];
+  for (const chunk of chunkArray(await loadTenantPatientIds(mysql, legacyTenantId), 500)) {
+    const placeholders = chunk.map(() => '?').join(',');
+    const [batch] = await mysql.query<LegacyRow[]>(
+      `SELECT DISTINCT pf.PATIENT_ID AS anchor, pf.FAMILY_MEMBER_PATIENT_ID AS member, pf.RELATION AS relation
+         FROM patient_family pf
+        WHERE pf.FLAG = 0
+          AND pf.FAMILY_MEMBER_PATIENT_ID IS NOT NULL
+          AND pf.PATIENT_ID IN (${placeholders})`,
+      chunk,
+    );
+    rows.push(...batch);
+  }
   if (rows.length === 0) {
     logger.log('No family links for this tenant.');
     return;
@@ -925,21 +942,26 @@ async function migrateFamilyLinks(
     if (a !== null) legacyIds.add(a);
     if (m !== null) legacyIds.add(m);
   }
-  const [patients, existingLinks] = await prisma.runWithTenant(newTenantId, () =>
-    Promise.all([
-      prisma.patient.findMany({
-        where: {
-          tenantId: newTenantId,
-          deletedAt: null,
-          legacyPatientId: { in: [...legacyIds] },
-        },
-        select: { id: true, legacyPatientId: true },
-      }),
-      prisma.patientFamilyLink.findMany({
-        where: { tenantId: newTenantId, deletedAt: null },
-        select: { patientId: true, memberId: true },
-      }),
-    ]),
+  const patients: { id: string; legacyPatientId: number | null }[] = [];
+  for (const chunk of chunkArray([...legacyIds], 5000)) {
+    patients.push(
+      ...(await prisma.runWithTenant(newTenantId, () =>
+        prisma.patient.findMany({
+          where: {
+            tenantId: newTenantId,
+            deletedAt: null,
+            legacyPatientId: { in: chunk },
+          },
+          select: { id: true, legacyPatientId: true },
+        }),
+      )),
+    );
+  }
+  const existingLinks = await prisma.runWithTenant(newTenantId, () =>
+    prisma.patientFamilyLink.findMany({
+      where: { tenantId: newTenantId, deletedAt: null },
+      select: { patientId: true, memberId: true },
+    }),
   );
   const idByLegacy = new Map<number, string>();
   for (const p of patients) {
@@ -989,6 +1011,17 @@ async function migrateFamilyLinks(
 }
 
 // ── misc utilities ──────────────────────────────────────────────────────────────
+/** Distinct legacy patient ids owned by the tenant (via user_patient_relation). */
+async function loadTenantPatientIds(
+  mysql: Connection,
+  legacyTenantId: number,
+): Promise<number[]> {
+  const [rows] = await mysql.query<LegacyRow[]>(
+    'SELECT DISTINCT patient_id FROM user_patient_relation WHERE tenant_id = ? AND patient_id IS NOT NULL',
+    [legacyTenantId],
+  );
+  return rows.map((r) => intOrNull(r.patient_id)).filter((id): id is number => id !== null);
+}
 function chunkArray<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
