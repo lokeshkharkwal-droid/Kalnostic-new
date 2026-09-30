@@ -167,4 +167,13 @@ docs {
   Round-trip an unmodified export through this endpoint to confirm
   `{ created: 0, updated: <all active tests>, skipped: [] }` — a good smoke
   test before trusting an edited file.
+
+  **TAT propagation (Branch Master Data only):** when `:masterDataId` is a
+  branch's master data, the each matched (updated) test's resulting TAT (`tatMinValue`/`tatMinUnit`/
+  `tatMaxValue`/`tatMaxUnit`) is pushed, in the same transaction, to its
+  Lab Test List copies in **every** list of the branch (Walk-in + PT-category/referral
+  lists; user duplicates excluded) — the rows Create Order's Diagnostic Items and
+  the TAT engine read. A copy is updated only when its TAT is empty or still equals
+  the previous master TAT; a TAT customised in the Lab Test List is kept. Tenant Master
+  Data edits reach the branch via **Import Master Data from Tenant**.
 }

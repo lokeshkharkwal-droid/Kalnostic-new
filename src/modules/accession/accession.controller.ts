@@ -336,7 +336,7 @@ export class AccessionController {
    * Bulk Assign / Edit Barcode (§A.10.2) — assign ONE shared barcode to every
    * sample in the selected group (the FE sends the group's sample ids). The
    * value is the typed `barcode` when supplied, otherwise the next
-   * system-sequential value; a Code 39 image is rendered + stored per group.
+   * system-sequential value; a Code 128 image is rendered + stored per group.
    */
   @Post('bulk/assign-barcode')
   @RequirePermission(PERMISSION_KEYS.ACC_IH_ASSIGN_BARCODE)

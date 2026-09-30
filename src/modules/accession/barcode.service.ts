@@ -25,13 +25,13 @@ const SEPARATOR_TOKENS: Record<AccessionBarcodeSeparator, string> = {
 const BARCODE_NUMBER_FLOOR = 10000;
 
 /**
- * Barcode value allocation + Code 39 image rendering/storage for accession
+ * Barcode value allocation + Code 128 image rendering/storage for accession
  * samples. Owns two concerns:
  *
  * 1. **Value** — atomically allocates the next sequential barcode id from the
  *    branch's `AccessionSetting.SampleBarcodeSettings_*` counter (shared with
  *    the Settings-page preview), formatted `{prefix}{sep}{number}{sep}{suffix}`.
- * 2. **Image** — renders that value as a Code 39 PNG (`jsbarcode`) and uploads
+ * 2. **Image** — renders that value as a Code 128 PNG (`jsbarcode`) and uploads
  *    it to S3 via {@link UploadsService}, returning the stored asset URL.
  *
  * Wired through the module (CLAUDE.md rule #3): `AccessionModule` imports
@@ -193,7 +193,7 @@ export class BarcodeService {
   }
 
   /**
-   * Render a barcode value as a Code 39 PNG and upload it to S3.
+   * Render a barcode value as a Code 128 PNG and upload it to S3.
    * @param value the barcode value/id to encode (e.g. `10001`)
    * @param tenantId owning tenant (namespaces the S3 key)
    * @returns the stored image's public S3 URL
@@ -201,7 +201,7 @@ export class BarcodeService {
    *   unset or the put fails (the caller rolls the barcode write back)
    */
   async generateAndUpload(value: string, tenantId: string): Promise<string> {
-    const png = this.renderCode39Png(value);
+    const png = this.renderCode128Png(value);
     const { url } = await this.uploads.uploadBuffer(
       png,
       'image/png',
@@ -212,16 +212,17 @@ export class BarcodeService {
   }
 
   /**
-   * Render a Code 39 barcode PNG for the given value. Uses a fixed generation
+   * Render a Code 128 barcode PNG for the given value. Uses a fixed generation
    * configuration (bar width, height, human-readable value shown) so the same
-   * value always produces a consistently scannable image.
+   * value always produces a consistently scannable image. `jsbarcode` picks the
+   * optimal Code 128 subset (128A/B/C) for the value automatically.
    * @param value the barcode value/id to encode
    * @returns the PNG image bytes
    */
-  renderCode39Png(value: string): Buffer {
+  renderCode128Png(value: string): Buffer {
     const canvas = createCanvas(300, 120);
     JsBarcode(canvas, value, {
-      format: 'CODE39',
+      format: 'CODE128',
       displayValue: true,
       width: 2,
       height: 60,

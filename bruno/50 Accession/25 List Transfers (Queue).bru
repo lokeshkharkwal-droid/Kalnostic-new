@@ -40,6 +40,10 @@ tests {
   test("pagination meta is present", function () {
     expect(res.getBody().meta).to.have.property("total");
   });
+  test("rows carry sample.departmentLabel", function () {
+    const data = res.getBody().data;
+    if (data && data[0]) expect(data[0].sample).to.have.property("departmentLabel");
+  });
 }
 
 docs {
@@ -48,4 +52,10 @@ docs {
   or `outgoing` (sent from this branch). `kind` = `INTERNAL` | `EXTERNAL` |
   `OUTSOURCE`; `status` is the §B.5 tab; `search` matches the linked sample's
   accession number. Captures `transferId`.
+
+  Each row's `sample` carries `departmentLabel` (the Department column): the
+  distinct department names of its non-deleted tests (resolved via
+  `orderItem.branchLabTest` / `branchLabPanel` `departmentId`), joined with
+  ", " — `null` when none resolve. `sample.tests` excludes soft-deleted tests,
+  and `sample.order` includes `orderDate`, `orderTime` and `createdAt`.
 }

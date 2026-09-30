@@ -31,6 +31,7 @@ import {
   matchKey,
   parseDataUri,
   parseResultDate,
+  toAuditString,
   toEpochSeconds,
 } from './util/emi-format';
 import { REPORTABLE_SAMPLE_STATUSES } from '../accession/constants/sample-transitions.constant';
@@ -214,7 +215,11 @@ export class EmiService {
       return await this.prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT set_config('app.adapter_token', ${value}, true)`;
         return tx.labAdapter.findFirst({
-          where: { token: value, status: AdapterStatus.ONLINE, deletedAt: null },
+          where: {
+            token: value,
+            status: AdapterStatus.ONLINE,
+            deletedAt: null,
+          },
         });
       });
     } catch (e) {
@@ -367,7 +372,7 @@ export class EmiService {
   }
 
   /**
-   * `GET /emi/submitResult` — fill the machine's result values onto the order's
+   * `POST /emi/submitResult` — fill the machine's result values onto the order's
    * reports. Mirrors the legacy `AdapterResult::processAdapterResult`: only
    * fillable, adapter-mapped reports are updated (value written with
    * `source = ADAPTER`, report moved to `SAVED`); non-fillable/unmapped reports
@@ -429,16 +434,16 @@ export class EmiService {
               adapterId: adapter.id,
               adapterCode: ctx.equipmentCode,
               equipmentId: adapter.equipmentId,
-              tubeInformationId: body.tube_information_id ?? null,
-              tubeNo: body.tube_no ?? null,
-              originalTubeNo: body.original_tube_no ?? null,
-              specimenType: body.specimen_type ?? null,
-              resultDate: body.result_date ?? null,
-              sent: body.sent ?? null,
-              sentDate: body.sent_date ?? null,
-              status: body.status ?? null,
-              localDbStatus: body.local_db_status ?? null,
-              comment: body.comment ?? null,
+              tubeInformationId: toAuditString(body.tube_information_id),
+              tubeNo: toAuditString(body.tube_no),
+              originalTubeNo: toAuditString(body.original_tube_no),
+              specimenType: toAuditString(body.specimen_type),
+              resultDate: toAuditString(body.result_date),
+              sent: toAuditString(body.sent),
+              sentDate: toAuditString(body.sent_date),
+              status: toAuditString(body.status),
+              localDbStatus: toAuditString(body.local_db_status),
+              comment: toAuditString(body.comment),
               testResults: testResults as unknown as Prisma.InputJsonValue,
               testResultSupplement:
                 supplements as unknown as Prisma.InputJsonValue,

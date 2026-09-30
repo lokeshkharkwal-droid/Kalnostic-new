@@ -97,7 +97,7 @@ docs {
   adapter's **`flowAdapterToken`** (the machine credential).
 
   **Machine talks to us:** **26 `GET /emi/orders`** (scan the order by
-  `orderCode`) → **27 `GET /emi/submitResult`** (submit the `HGB` value).
+  `orderCode`) → **27 `POST /emi/submitResult`** (submit the `HGB` value).
 
   **Verify it's logged — read back in all THREE scopes.** The machine calls
   (26/27) each write an `adapter_logs` row (fire-and-forget). The **same rows**

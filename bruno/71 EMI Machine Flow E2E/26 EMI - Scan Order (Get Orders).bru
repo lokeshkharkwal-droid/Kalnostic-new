@@ -1,7 +1,7 @@
 meta {
   name: 26 EMI - Scan Order (Get Orders)
   type: http
-  seq: 26
+  seq: 21
 }
 
 get {
@@ -47,7 +47,7 @@ docs {
   in step 21). The backend resolves the barcode → its accession **sample group** →
   the parent order, and scopes the returned tests to that group (mirrors the legacy
   `OrderSpecimenGroup` specimen-id lookup).
-
+  
   Returns the flat legacy envelope
   `{ "s": "200", "orders": [{ specimen_id, order_date, patient_id, patient_name,
   patient_surname, birth_date, patient_gender, admission_number,

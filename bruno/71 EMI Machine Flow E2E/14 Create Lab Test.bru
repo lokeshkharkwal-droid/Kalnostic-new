@@ -1,7 +1,7 @@
 meta {
   name: 14 Create Lab Test
   type: http
-  seq: 14
+  seq: 12
 }
 
 post {
@@ -62,7 +62,7 @@ script:post-response {
 
 docs {
   **Workflow 5 — Create the lab test, WITH TAT configured.**
-
+  
   The `tatMax*` (60 minutes here) is what the TAT engine grades the report
   against — without it, the breakdown's `band` is `null`. `scheduleDays` (all 7)
   + `scheduleFrom/To` (00:00–23:59) mark the test as processed every day, so no

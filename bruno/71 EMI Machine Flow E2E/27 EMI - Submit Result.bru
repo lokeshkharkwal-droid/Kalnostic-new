@@ -1,10 +1,10 @@
 meta {
   name: 27 EMI - Submit Result
   type: http
-  seq: 27
+  seq: 22
 }
 
-get {
+post {
   url: {{emiBaseUrl}}/emi/submitResult
   body: text
   auth: none
@@ -66,10 +66,10 @@ tests {
 
 docs {
   **Machine step 2 — submit the result.** Exactly what a real analyzer sends:
-  a **GET** to `/emi/submitResult` with a **JSON body under
+  a **POST** to `/emi/submitResult` with a **JSON body under
   `Content-Type: text/plain`** (a legacy quirk — the server reads the raw body).
   Auth is the **`TOKEN`** header (`flowAdapterToken`).
-
+  
   Key fields, all auto-filled from earlier steps:
   - `tube_no` = **`sampleBarcode`** (`OrderSample.barcode`, captured in step 21) —
     the same specimen id the analyzer received from step 26. The backend resolves
@@ -78,7 +78,7 @@ docs {
   - `test_results[0].universal_test_id` = **`emiParamCode`** (`HGB`) — matches the
     result parameter created on the lab test in step 14, so the value fills that
     parameter. `test_result` = `emiResultValue`, `unit` = `emiParamUnit`.
-
+  
   The report is fillable (PENDING, from the accept in step 23) and its test is
   adapter-mapped, so the value is written with **`source = ADAPTER`** and the
   report moves to **`SAVED`**. Success →
