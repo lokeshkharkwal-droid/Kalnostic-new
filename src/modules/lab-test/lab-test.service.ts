@@ -5068,9 +5068,16 @@ export class LabTestService {
       else groups.set(key, [r]);
     }
     for (const group of groups.values()) {
-      if (group.length > 1 && !group.some((r) => r.isDefault)) {
+      const defaultCount = group.filter((r) => r.isDefault).length;
+      if (group.length > 1 && defaultCount === 0) {
         throw new ValidationException(
           `Mark a Default range for parameter '${parameterCode}' (each analyzer, or no analyzer, requires one Default per gender/age when more than one range applies)`,
+          { parameterCode },
+        );
+      }
+      if (defaultCount > 1) {
+        throw new ValidationException(
+          `Only one range can be Default per analyzer/gender/age for parameter '${parameterCode}' (found ${defaultCount})`,
           { parameterCode },
         );
       }

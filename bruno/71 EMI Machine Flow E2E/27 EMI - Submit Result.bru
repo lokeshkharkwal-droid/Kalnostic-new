@@ -4,7 +4,7 @@ meta {
   seq: 22
 }
 
-get {
+post {
   url: {{emiBaseUrl}}/emi/submitResult
   body: text
   auth: none
@@ -66,7 +66,7 @@ tests {
 
 docs {
   **Machine step 2 — submit the result.** Exactly what a real analyzer sends:
-  a **GET** to `/emi/submitResult` with a **JSON body under
+  a **POST** to `/emi/submitResult` with a **JSON body under
   `Content-Type: text/plain`** (a legacy quirk — the server reads the raw body).
   Auth is the **`TOKEN`** header (`flowAdapterToken`).
   

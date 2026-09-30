@@ -1,4 +1,4 @@
-import { Controller, Get, Logger, Req, Res } from '@nestjs/common';
+import { Controller, Get, Logger, Post, Req, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { Public } from '../auth/decorators/public.decorator';
 import { extractClientIp } from '../../common/utils/client-ip.util';
@@ -22,7 +22,7 @@ import { SubmitResultBody } from './dto/submit-result.dto';
  *   `HttpExceptionFilter` (a machine can't parse our `{ success, data, meta }`
  *   shape). All errors are caught and returned as `{ s: "500" }`.
  *
- * The submit body arrives as a GET request with a `text/plain` JSON body (legacy
+ * The submit body arrives as a POST request with a `text/plain` JSON body (legacy
  * quirk), parsed by the raw-body middleware scoped to `/emi/submitResult` in
  * `main.ts` and JSON-decoded here.
  */
@@ -71,10 +71,10 @@ export class EmiController {
   }
 
   /**
-   * `GET /emi/submitResult` — fill the machine's result values onto the order's
+   * `POST /emi/submitResult` — fill the machine's result values onto the order's
    * reports.
    */
-  @Get('submitResult')
+  @Post('submitResult')
   async submitResult(@Req() req: Request, @Res() res: Response): Promise<void> {
     const token = this.headerToken(req);
     if (token === null) {
@@ -100,7 +100,7 @@ export class EmiController {
       res.json(result);
     } catch (e) {
       this.logger.error(
-        `GET /emi/submitResult failed: ${e instanceof Error ? e.message : String(e)}`,
+        `POST /emi/submitResult failed: ${e instanceof Error ? e.message : String(e)}`,
         e instanceof Error ? e.stack : undefined,
       );
       res.json({ s: EMI.INTERNAL_ERROR, m: 'Internal server error' });

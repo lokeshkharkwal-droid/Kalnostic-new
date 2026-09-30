@@ -61,7 +61,7 @@ async function bootstrap(): Promise<void> {
   app.use(compression()); // gzip responses
 
   // ── EMI (lab-machine interface) raw body ──
-  // The legacy analyzer contract sends `GET /emi/submitResult` with a JSON body
+  // The legacy analyzer contract sends `POST /emi/submitResult` with a JSON body
   // under `Content-Type: text/plain`, which the default JSON parser ignores
   // (wrong content-type → it skips without consuming the stream). Capture the
   // raw text ourselves for that one path so the EMI controller can JSON-decode
