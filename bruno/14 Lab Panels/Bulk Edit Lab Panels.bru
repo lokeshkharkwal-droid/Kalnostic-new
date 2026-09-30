@@ -73,4 +73,13 @@ docs {
     broken cross-field invariant (re-checked per panel against its existing values
     + test count) → 422 `VALIDATION_ERROR` and **nothing** is changed. Updates run
     in one transaction.
+
+  **TAT propagation (Branch Master Data only):** when `:masterDataId` is a
+  branch's master data, the each panel's resulting TAT (`tatMinValue`/`tatMinUnit`/
+  `tatMaxValue`/`tatMaxUnit`) is pushed, in the same transaction, to its
+  Lab Panel List copies in **every** list of the branch (Walk-in + PT-category/referral
+  lists; user duplicates excluded) — the rows Create Order's Diagnostic Items and
+  the TAT engine read. A copy is updated only when its TAT is empty or still equals
+  the previous master TAT; a TAT customised in the Lab Panel List is kept. Tenant Master
+  Data edits reach the branch via **Import Master Data from Tenant**.
 }

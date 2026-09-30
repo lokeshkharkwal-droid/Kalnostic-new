@@ -26,6 +26,13 @@ import {
   LabPanelNotFoundException,
   LabPanelTestNotFoundException,
 } from './exceptions/lab-panel.exceptions';
+import {
+  TAT_SELECT,
+  TatConfig,
+  applyTatChanges,
+  pickTat,
+  shouldInheritTat,
+} from '../../common/utils/tat-inheritance.util';
 
 /** Result of a bulk edit: how many panels were updated. */
 export interface BulkEditResult {
@@ -435,7 +442,9 @@ export class LabPanelService {
   /**
    * Update a lab panel. Core fields are patched; when `tests` is provided, the
    * whole included-test set is replaced (old active rows soft-deleted, the new set
-   * created) in one transaction.
+   * created) in one transaction. For a Branch Master Data panel, the resulting
+   * TAT is propagated to its Lab Panel List copies in every list (see
+   * `propagateTatToBranchLabPanelCopies`; branch-customised TAT is kept).
    * @param masterDataId parent master data id
    * @param panelId lab panel id
    * @param tenantId tenant scope
@@ -477,6 +486,20 @@ export class LabPanelService {
     try {
       await this.prisma.withTenant(tenantId, async (tx) => {
         await tx.labPanel.update({ where: { id: panelId }, data: scalars });
+        if (existing.branchId) {
+          await this.propagateTatToBranchLabPanelCopies(
+            tx,
+            tenantId,
+            existing.branchId,
+            [
+              {
+                branchPanelId: panelId,
+                prev: pickTat(existing),
+                next: applyTatChanges(pickTat(existing), scalars),
+              },
+            ],
+          );
+        }
         if (tests !== undefined) {
           await tx.labPanelTest.updateMany({
             where: { labPanelId: panelId, tenantId, deletedAt: null },
@@ -504,6 +527,9 @@ export class LabPanelService {
    * All-or-nothing — every item is validated up front (against the panel's
    * existing values + test count) and the updates run in one transaction, so if
    * any item is invalid or its `labPanelId` can't be resolved nothing changes.
+   * For a Branch Master Data, each panel's resulting TAT is propagated to its
+   * Lab Panel List copies in the same transaction (see
+   * `propagateTatToBranchLabPanelCopies`).
    * @param masterDataId parent master data id
    * @param tenantId tenant scope
    * @param dto the array of per-panel edits
@@ -563,6 +589,23 @@ export class LabPanelService {
     await this.prisma.withTenant(tenantId, async (tx) => {
       for (const { labPanelId, data } of edits) {
         await tx.labPanel.update({ where: { id: labPanelId }, data });
+      }
+      // All panels share the path's master data, so one branch scope (if any).
+      const branchId = panels[0]?.branchId;
+      if (branchId) {
+        await this.propagateTatToBranchLabPanelCopies(
+          tx,
+          tenantId,
+          branchId,
+          edits.map(({ labPanelId, changes }) => {
+            const prev = pickTat(panelById.get(labPanelId)!);
+            return {
+              branchPanelId: labPanelId,
+              prev,
+              next: applyTatChanges(prev, changes),
+            };
+          }),
+        );
       }
     });
     return { updated: edits.length };
@@ -974,8 +1017,10 @@ export class LabPanelService {
    * the branch test copies; members with no mapping are dropped. A branch
    * panel whose tenant source has been soft-deleted is itself soft-deleted
    * (cascading its membership rows) — UNLESS its `sourceMasterLabPanelId` is
-   * NULL (hand-created/never synced), which is always left untouched. Runs
-   * inside the caller's tx.
+   * NULL (hand-created/never synced), which is always left untouched. Each
+   * matched panel's TAT is then carried on into its branch Lab Panel List copies
+   * across every list (see `propagateTatToBranchLabPanelCopies`). Runs inside
+   * the caller's tx.
    */
   private async syncPanelsIntoBranch(
     tx: Prisma.TransactionClient,
@@ -1003,6 +1048,11 @@ export class LabPanelService {
     }
     const sourcePanelIds = new Set(sourcePanels.map((p) => p.id));
 
+    const tatChanges: {
+      branchPanelId: string;
+      prev: TatConfig;
+      next: TatConfig;
+    }[] = [];
     let created = 0;
     let updated = 0;
     for (const src of sourcePanels) {
@@ -1029,6 +1079,11 @@ export class LabPanelService {
       const target = bySource.get(src.id) ?? byCode.get(src.panelCode);
       let panelId: string;
       if (target) {
+        tatChanges.push({
+          branchPanelId: target.id,
+          prev: pickTat(target),
+          next: pickTat(src),
+        });
         await tx.labPanel.update({
           where: { id: target.id },
           data: {
@@ -1066,6 +1121,15 @@ export class LabPanelService {
         });
       }
     }
+
+    // Carry the (possibly new) TAT on into the branch's Lab Panel List copies —
+    // also fills copies that went stale before this propagation existed.
+    await this.propagateTatToBranchLabPanelCopies(
+      tx,
+      tenantId,
+      branchId,
+      tatChanges,
+    );
 
     const orphanPanels = branchPanels.filter(
       (p) =>
@@ -1154,6 +1218,51 @@ export class LabPanelService {
             data: { isDefault: true },
           });
         }
+      }
+    }
+  }
+
+  /**
+   * Push Branch Master Data panels' TAT into their operational `BranchLabPanel`
+   * copies — the rows the Create-Order Diagnostic Items table (`/branch-lab-panels/
+   * options`) and the TAT engine read. Mirrors `LabTestService.
+   * propagateTatToBranchLabTestCopies`: every list of the branch, user duplicates
+   * excluded, and a copy only takes the new TAT when {@link shouldInheritTat}
+   * says it wasn't customised at branch level. Runs inside the caller's tx.
+   * @param changes each branch master panel's TAT before/after the write
+   */
+  private async propagateTatToBranchLabPanelCopies(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    branchId: string,
+    changes: { branchPanelId: string; prev: TatConfig; next: TatConfig }[],
+  ): Promise<void> {
+    if (changes.length === 0) {
+      return;
+    }
+    const copies = await tx.branchLabPanel.findMany({
+      where: {
+        tenantId,
+        branchId,
+        deletedAt: null,
+        isDuplicate: false,
+        sourceLabPanelId: { in: changes.map((c) => c.branchPanelId) },
+      },
+      select: { id: true, sourceLabPanelId: true, ...TAT_SELECT },
+    });
+    for (const { branchPanelId, prev, next } of changes) {
+      const ids = copies
+        .filter(
+          (c) =>
+            c.sourceLabPanelId === branchPanelId &&
+            shouldInheritTat(pickTat(c), prev, next),
+        )
+        .map((c) => c.id);
+      if (ids.length) {
+        await tx.branchLabPanel.updateMany({
+          where: { id: { in: ids } },
+          data: next,
+        });
       }
     }
   }

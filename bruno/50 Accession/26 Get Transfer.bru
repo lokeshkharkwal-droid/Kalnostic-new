@@ -23,4 +23,9 @@ tests {
 docs {
   One transfer with its linked `sample` (tests + order/patient/referral context).
   404 `SAMPLE_TRANSFER_NOT_FOUND` if missing / other tenant.
+
+  `sample.tests` excludes soft-deleted tests; each test carries
+  `orderItem.branchLabTest` / `orderItem.branchLabPanel` with `departmentId`.
+  `sample.order` includes `orderDate`, `orderTime` and `createdAt`. The resolved
+  `departmentLabel` is only on the list endpoint (25 List Transfers).
 }

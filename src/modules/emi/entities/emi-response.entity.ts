@@ -83,7 +83,7 @@ export interface EmiReportLogBlock {
   log: EmiReportLog[];
 }
 
-/** `GET /emi/submitResult` response envelope. */
+/** `POST /emi/submitResult` response envelope. */
 export interface EmiSubmitResponse {
   s: string;
   m?: string;

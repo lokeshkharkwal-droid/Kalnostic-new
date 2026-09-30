@@ -48,6 +48,23 @@ export function parseResultDate(raw: unknown): Date | null {
 }
 
 /**
+ * Coerce a machine-supplied value to the text the `AdapterResult` audit row's
+ * `String?` columns expect. Analyzers vary in whether a given field
+ * (`result_date`, `sent`, `status`, `local_db_status`, …) is sent as a JSON
+ * string, number, or boolean — the audit row keeps them verbatim as text
+ * regardless, so every JSON type must be stringified rather than passed
+ * through as-is (Prisma rejects a non-string for a `String?` column).
+ * @param value the raw field value from the submit payload
+ * @returns the stringified value, or `null` when absent
+ */
+export function toAuditString(value: unknown): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  return typeof value === 'string' ? value : String(value);
+}
+
+/**
  * Case/space-insensitive key for matching a machine-supplied identifier
  * (`universal_test_id` / `test_name`) against our `testCode` / `parameterName`.
  * @param value the raw identifier
