@@ -54,4 +54,11 @@ docs {
   (above) → the tenant-wide reusable-image registry (`print_template_images`,
   which lets a token from another template resolve) → the template's own
   `meta.images`. Header and Footer are repeated on every page of a multi-page PDF.
+
+  Image sizing: append an optional `|w=…,h=…` suffix to control the rendered
+  size, e.g. `{{image:report_approved_by_signature|w=120}}` (width 120px, aspect
+  ratio preserved) or `{{image:logo.png|w=120,h=60}}`. Keys are `w`/`width` and
+  `h`/`height`; a bare number is pixels, or a whitelisted CSS unit may be given
+  (`px % mm cm em rem pt in`). Invalid/unknown parts are ignored; a plain
+  `{{image:ID}}` is unchanged.
 }
