@@ -99,6 +99,13 @@ import {
   UnknownFormulaReferenceException,
 } from './exceptions/lab-test.exceptions';
 import { FormulaParam, validateFormulaSet } from '../../common/utils/formula';
+import {
+  TAT_SELECT,
+  TatConfig,
+  applyTatChanges,
+  pickTat,
+  shouldInheritTat,
+} from '../../common/utils/tat-inheritance.util';
 
 /** Result of a bulk edit: how many lab tests were updated. */
 export interface BulkEditResult {
@@ -1211,7 +1218,9 @@ export class LabTestService {
   /**
    * Update a lab test. Core fields are patched; when `samples` or `resultParams`
    * is provided, that whole child set is replaced (old active rows soft-deleted,
-   * the new set created) in one transaction.
+   * the new set created) in one transaction. For a Branch Master Data test, the
+   * resulting TAT is propagated to its Lab Test List copies in every list (see
+   * `propagateTatToBranchLabTestCopies`; branch-customised TAT is kept).
    * @param masterDataId parent master data id
    * @param labTestId lab test id
    * @param tenantId tenant scope
@@ -1264,6 +1273,20 @@ export class LabTestService {
           where: { id: labTestId },
           data: scalars,
         });
+        if (existing.branchId) {
+          await this.propagateTatToBranchLabTestCopies(
+            tx,
+            tenantId,
+            existing.branchId,
+            [
+              {
+                branchTestId: labTestId,
+                prev: pickTat(existing),
+                next: applyTatChanges(pickTat(existing), scalars),
+              },
+            ],
+          );
+        }
         if (samples !== undefined) {
           await tx.labTestSample.updateMany({
             where: { labTestId, tenantId, deletedAt: null },
@@ -1457,7 +1480,10 @@ export class LabTestService {
    * counts. A branch test whose tenant source has been soft-deleted (i.e. no
    * longer among the active `sourceTests`) is itself soft-deleted, cascading
    * to its children — UNLESS its `sourceMasterLabTestId` is NULL, meaning it
-   * was hand-created/never synced, which is always left untouched.
+   * was hand-created/never synced, which is always left untouched. Each matched
+   * test's TAT is then carried on into its branch Lab Test List copies across
+   * every list (see `propagateTatToBranchLabTestCopies`), so a TAT configured in
+   * Tenant Master Data reaches Create Order without a manual per-list Sync.
    * @param tx caller's transaction client (already in `withTenant`)
    * @param params tenant + branch scope and both master-data ids
    */
@@ -1498,11 +1524,21 @@ export class LabTestService {
     const sourceIds = new Set(sourceTests.map((t) => t.id));
 
     const testIdMap = new Map<string, string>();
+    const tatChanges: {
+      branchTestId: string;
+      prev: TatConfig;
+      next: TatConfig;
+    }[] = [];
     let created = 0;
     let updated = 0;
     for (const src of sourceTests) {
       const target = bySource.get(src.id) ?? byCode.get(src.testCode);
       if (target) {
+        tatChanges.push({
+          branchTestId: target.id,
+          prev: pickTat(target),
+          next: pickTat(src),
+        });
         const history = this.readVersionHistory(target.versionHistory);
         const today = new Date().toISOString().slice(0, 10);
         const open = history.find((e) => e.effectiveTo === null);
@@ -1552,6 +1588,14 @@ export class LabTestService {
         created += 1;
       }
     }
+    // Carry the (possibly new) TAT on into the branch's Lab Test List copies —
+    // also fills copies that went stale before this propagation existed.
+    await this.propagateTatToBranchLabTestCopies(
+      tx,
+      tenantId,
+      branchId,
+      tatChanges,
+    );
 
     const orphans = branchTests.filter(
       (t) =>
@@ -1635,6 +1679,55 @@ export class LabTestService {
             data: { isDefault: true },
           });
         }
+      }
+    }
+  }
+
+  /**
+   * Push Branch Master Data lab tests' TAT into their operational `BranchLabTest`
+   * copies — the rows the Create-Order Diagnostic Items table (`/branch-lab-tests/
+   * options`) and the TAT engine read. Without this, a TAT set/changed in Master
+   * Data never reached a Lab Test List until a manual per-list "Sync".
+   * Covers every list of the branch (Walk-in AND PT-category/referral lists — an
+   * order may resolve to any of them) but excludes user duplicates
+   * (`isDuplicate: true`), which are independently decoupled per the sync
+   * contract. A copy takes the new TAT only when {@link shouldInheritTat} says it
+   * wasn't customised at branch level (empty, or still equal to the previous
+   * master TAT); branch overrides are kept. Runs inside the caller's tx.
+   * @param changes each branch master test's TAT before/after the write
+   */
+  private async propagateTatToBranchLabTestCopies(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    branchId: string,
+    changes: { branchTestId: string; prev: TatConfig; next: TatConfig }[],
+  ): Promise<void> {
+    if (changes.length === 0) {
+      return;
+    }
+    const copies = await tx.branchLabTest.findMany({
+      where: {
+        tenantId,
+        branchId,
+        deletedAt: null,
+        isDuplicate: false,
+        sourceLabTestId: { in: changes.map((c) => c.branchTestId) },
+      },
+      select: { id: true, sourceLabTestId: true, ...TAT_SELECT },
+    });
+    for (const { branchTestId, prev, next } of changes) {
+      const ids = copies
+        .filter(
+          (c) =>
+            c.sourceLabTestId === branchTestId &&
+            shouldInheritTat(pickTat(c), prev, next),
+        )
+        .map((c) => c.id);
+      if (ids.length) {
+        await tx.branchLabTest.updateMany({
+          where: { id: { in: ids } },
+          data: next,
+        });
       }
     }
   }
@@ -2444,7 +2537,9 @@ export class LabTestService {
    * every item is validated up front (against the test's existing values) and the
    * updates run in one transaction, so if any item is invalid or its `labTestId`
    * can't be resolved nothing changes. Children and `testName`/`testCode` are not
-   * bulk-editable.
+   * bulk-editable. For a Branch Master Data, each test's resulting TAT is
+   * propagated to its Lab Test List copies in the same transaction (see
+   * `propagateTatToBranchLabTestCopies`).
    * @param masterDataId parent master data id
    * @param tenantId tenant scope
    * @param dto the array of per-test edits
@@ -2516,6 +2611,23 @@ export class LabTestService {
     await this.prisma.withTenant(tenantId, async (tx) => {
       for (const { labTestId, data } of edits) {
         await tx.labTest.update({ where: { id: labTestId }, data });
+      }
+      // All tests share the path's master data, so one branch scope (if any).
+      const branchId = tests[0]?.branchId;
+      if (branchId) {
+        await this.propagateTatToBranchLabTestCopies(
+          tx,
+          tenantId,
+          branchId,
+          edits.map(({ labTestId, changes }) => {
+            const prev = pickTat(testById.get(labTestId)!);
+            return {
+              branchTestId: labTestId,
+              prev,
+              next: applyTatChanges(prev, changes),
+            };
+          }),
+        );
       }
     });
     return { updated: edits.length };
@@ -2767,7 +2879,9 @@ export class LabTestService {
    * its id (see `upsertParamsByCode`), and its Reference Ranges/Values are
    * fully replaced. Version Control columns are exported for round-trip
    * fidelity but IGNORED on import (version history is an audit trail
-   * managed elsewhere, never bulk-edited via Excel).
+   * managed elsewhere, never bulk-edited via Excel). For a Branch Master Data,
+   * a matched test's resulting TAT is propagated to its Lab Test List copies
+   * (see `propagateTatToBranchLabTestCopies`).
    * @param masterDataId parent master data id
    * @param tenantId tenant scope
    * @param actorId person id recorded as `modifiedBy` on newly-created tests
@@ -3320,7 +3434,28 @@ export class LabTestService {
       // (a failure records this row as skipped via the batch retry + conflictReason).
       this.assertFormulaSet(cleanParams ?? []);
       if (matchedId) {
+        const before = masterData.branchId
+          ? await tx.labTest.findUnique({
+              where: { id: matchedId },
+              select: TAT_SELECT,
+            })
+          : null;
         await tx.labTest.update({ where: { id: matchedId }, data: scalars });
+        if (masterData.branchId && before) {
+          const prev = pickTat(before);
+          await this.propagateTatToBranchLabTestCopies(
+            tx,
+            tenantId,
+            masterData.branchId,
+            [
+              {
+                branchTestId: matchedId,
+                prev,
+                next: applyTatChanges(prev, scalars),
+              },
+            ],
+          );
+        }
         const where = { labTestId: matchedId, tenantId, deletedAt: null };
         await tx.labTestSample.updateMany({
           where,

@@ -112,6 +112,24 @@ most common source of "my tag didn't work".
   `meta.images` → the tenant-wide **`PrintTemplateImage` registry** (so an image
   uploaded to one template can be reused in another by pasting its token).
 - Unknown id → collapses to empty (no `<img>` emitted).
+- **Sizing suffix (optional).** Append `|w=…` and/or `|h=…` after the id to set
+  the rendered size as an inline `style` on the emitted `<img>`:
+
+  ```html
+  {{image:report_approved_by_signature|w=120}}        <!-- width 120px, height auto -->
+  {{image:report_approved_by_signature|w=120,h=60}}   <!-- width 120px, height 60px -->
+  {{image:logo.png|width=40%}}                          <!-- w / h aliases + CSS units -->
+  ```
+
+  - Keys: `w`/`width` and `h`/`height`. A **bare number is pixels**; an explicit
+    whitelisted CSS unit may be given (`px`, `%`, `mm`, `cm`, `em`, `rem`, `pt`,
+    `in`). Setting only a width keeps the natural **aspect ratio** (height stays
+    `auto`).
+  - Only length values reach the tag (validated against a whitelist), so the
+    suffix can't inject arbitrary CSS. Unknown keys / invalid values are ignored.
+  - Backward-compatible: a plain `{{image:id}}` renders exactly as before, and
+    token-id collection ignores the suffix. Works on **both** engines and on the
+    Latte `{$id}` context-image fallback (e.g. `report_approved_by_signature`).
 - **Works on both engines.** When a template's **body** is Latte, the *whole*
   template (header/body/footer) renders through the Latte-subset engine. It still
   resolves `{{image:id}}` against the same uploaded/registry map **before** Latte

@@ -30,6 +30,7 @@ import { OutsourceStatusDto } from './dto/outsource-status.dto';
 import { ListTransfersDto } from './dto/list-transfers.dto';
 import {
   TRANSFER_INCLUDE,
+  SampleTransferListRow,
   SampleTransferWithRelations,
 } from './entities/sample-transfer.entity';
 import {
@@ -337,7 +338,7 @@ export class SampleTransferService {
     tenantId: string,
     branchId: string | null,
     query: ListTransfersDto,
-  ): Promise<PaginatedResult<SampleTransferWithRelations>> {
+  ): Promise<PaginatedResult<SampleTransferListRow>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const where: Prisma.SampleTransferWhereInput = {
@@ -383,9 +384,66 @@ export class SampleTransferService {
         include: TRANSFER_INCLUDE,
       });
       const count = await tx.sampleTransfer.count({ where });
-      return [rows, count] as const;
+      return [
+        await this.withDepartmentLabels(tx, tenantId, rows),
+        count,
+      ] as const;
     });
     return paginated(data, total, page, limit);
+  }
+
+  /**
+   * Attach each row's sample `departmentLabel` (the Department column). Batched
+   * variant of `OrderSampleService.withDepartments`: the classification lives on
+   * `BranchLabTest`/`BranchLabPanel` as a logical `departmentId` (no Prisma
+   * relation), so the ids across the whole page are resolved in one
+   * tenant-scoped `Department` query.
+   * @param tx the tenant-scoped transaction client (RLS GUC already set)
+   * @param tenantId tenant scope for the Department lookup
+   * @param rows the page of transfers (TRANSFER_INCLUDE payload)
+   * @returns the rows with `sample.departmentLabel` = distinct names joined with ", " (null when none)
+   */
+  private async withDepartmentLabels(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    rows: SampleTransferWithRelations[],
+  ): Promise<SampleTransferListRow[]> {
+    const deptIdsOf = (row: SampleTransferWithRelations): string[] =>
+      row.sample.tests
+        .map(
+          (t) =>
+            t.orderItem?.branchLabTest?.departmentId ??
+            t.orderItem?.branchLabPanel?.departmentId ??
+            null,
+        )
+        .filter((v): v is string => !!v);
+
+    const deptIds = [...new Set(rows.flatMap(deptIdsOf))];
+    const nameById = new Map<string, string>();
+    if (deptIds.length > 0) {
+      const depts = await tx.department.findMany({
+        where: { id: { in: deptIds }, tenantId, deletedAt: null },
+        select: { id: true, name: true },
+      });
+      depts.forEach((d) => nameById.set(d.id, d.name));
+    }
+
+    return rows.map((row) => {
+      const names = [
+        ...new Set(
+          deptIdsOf(row)
+            .map((id) => nameById.get(id))
+            .filter((v): v is string => !!v),
+        ),
+      ];
+      return {
+        ...row,
+        sample: {
+          ...row.sample,
+          departmentLabel: names.length > 0 ? names.join(', ') : null,
+        },
+      };
+    });
   }
 
   /**

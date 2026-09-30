@@ -58,4 +58,13 @@ docs {
   
   Same cross-field rules and conflicts as Create (422 `VALIDATION_ERROR`, 409 on
   name/code/parameterCode). 404 `LAB_TEST_NOT_FOUND` if missing/other tenant.
+
+  **TAT propagation (Branch Master Data only):** when `:masterDataId` is a
+  branch's master data, the test's resulting TAT (`tatMinValue`/`tatMinUnit`/
+  `tatMaxValue`/`tatMaxUnit`) is pushed, in the same transaction, to its
+  Lab Test List copies in **every** list of the branch (Walk-in + PT-category/referral
+  lists; user duplicates excluded) — the rows Create Order's Diagnostic Items and
+  the TAT engine read. A copy is updated only when its TAT is empty or still equals
+  the previous master TAT; a TAT customised in the Lab Test List is kept. Tenant Master
+  Data edits reach the branch via **Import Master Data from Tenant**.
 }

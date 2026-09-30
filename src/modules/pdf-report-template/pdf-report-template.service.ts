@@ -556,6 +556,13 @@ export class PdfReportTemplateService {
 
   /**
    * Render a global (SITE_ADMIN) template to a PDF buffer (see `generatePdf`).
+   * Auto-selects the engine by the body's syntax exactly as `generatePdf` does,
+   * so a template previews identically here (site-admin) and once cloned into a
+   * tenant: a **Latte** body (`{foreach}`/`{if}`/`{$…}`) renders through
+   * `LatteReportRenderService`, a **flat** body (`{tag}`/`{{#each}}`/`{{image:…}}`)
+   * through `TemplateRenderService`. This is a placeholder preview, so the Latte
+   * path runs with an empty data context (unresolved fields collapse to blanks
+   * rather than the control tags leaking through as literal text).
    * @param id template id
    * @param context render data (variables, images, sections, signatories)
    * @returns the generated PDF bytes
@@ -568,8 +575,16 @@ export class PdfReportTemplateService {
   ): Promise<Buffer> {
     const template = await this.findGlobalById(id);
     const meta = this.readMeta(template.meta);
-    const context2 = await this.withRegistryImages(null, meta, context);
-    const prepared = this.renderService.render(meta, context2);
+    const prepared = isLatteBody(meta.body_html)
+      ? this.latteRenderService.render(
+          meta,
+          {},
+          await this.resolveTemplateImages(null, meta, context.images),
+        )
+      : this.renderService.render(
+          meta,
+          await this.withRegistryImages(null, meta, context),
+        );
     try {
       return await this.pdfService.htmlToPdf(
         prepared.bodyHtml,

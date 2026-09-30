@@ -55,4 +55,13 @@ docs {
   `isAllowPartialBilling`, and `maxTestsRemovable ≤` the effective test count.
   Name/code collisions → 409; invalid test references → 422
   `LAB_PANEL_TEST_NOT_FOUND`.
+
+  **TAT propagation (Branch Master Data only):** when `:masterDataId` is a
+  branch's master data, the panel's resulting TAT (`tatMinValue`/`tatMinUnit`/
+  `tatMaxValue`/`tatMaxUnit`) is pushed, in the same transaction, to its
+  Lab Panel List copies in **every** list of the branch (Walk-in + PT-category/referral
+  lists; user duplicates excluded) — the rows Create Order's Diagnostic Items and
+  the TAT engine read. A copy is updated only when its TAT is empty or still equals
+  the previous master TAT; a TAT customised in the Lab Panel List is kept. Tenant Master
+  Data edits reach the branch via **Import Master Data from Tenant**.
 }

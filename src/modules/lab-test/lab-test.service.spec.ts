@@ -1,4 +1,4 @@
-import { DataSource, LabTest, Prisma } from '@prisma/client';
+import { DataSource, LabTest, Prisma, TatUnit } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MasterDataService } from '../master-data/master-data.service';
 import { LabTestService } from './lab-test.service';
@@ -162,6 +162,7 @@ describe('LabTestService.syncTestsIntoBranch', () => {
     branchLabTest: {
       findMany: jest.Mock;
       update: jest.Mock;
+      updateMany: jest.Mock;
       findFirst: jest.Mock;
     };
   };
@@ -206,6 +207,7 @@ describe('LabTestService.syncTestsIntoBranch', () => {
       branchLabTest: {
         findMany: jest.fn().mockResolvedValue([]),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
         findFirst: jest.fn().mockResolvedValue(null),
       },
     };
@@ -252,6 +254,80 @@ describe('LabTestService.syncTestsIntoBranch', () => {
     expect(prismaMock.labTest.update).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 'branch-1' } }),
     );
+  });
+
+  it("propagates a matched test's TAT to its Lab Test List copies in every list, keeping branch-customised TAT", async () => {
+    const hours = (min: number | null, max: number | null) => ({
+      tatMinValue: min,
+      tatMinUnit: TatUnit.HOURS,
+      tatMaxValue: max,
+      tatMaxUnit: TatUnit.HOURS,
+    });
+    const src = test({ id: 'src-1', testCode: 'T1', ...hours(4, 8) });
+    const branch = test({
+      id: 'branch-1',
+      testCode: 'T1',
+      sourceMasterLabTestId: 'src-1',
+      ...hours(2, 6),
+    });
+    prismaMock.labTest.findMany
+      .mockResolvedValueOnce([src])
+      .mockResolvedValueOnce([branch]);
+    prismaMock.branchLabTest.findMany.mockResolvedValueOnce([
+      {
+        id: 'walk-in-empty',
+        sourceLabTestId: 'branch-1',
+        ...hours(null, null),
+      },
+      { id: 'pt-list-old', sourceLabTestId: 'branch-1', ...hours(2, 6) },
+      { id: 'referral-custom', sourceLabTestId: 'branch-1', ...hours(1, 3) },
+      { id: 'already-new', sourceLabTestId: 'branch-1', ...hours(4, 8) },
+    ]);
+
+    await service.syncTestsIntoBranch(
+      prismaMock as unknown as Prisma.TransactionClient,
+      baseParams,
+    );
+
+    const [[findArgs]] = prismaMock.branchLabTest.findMany.mock.calls as [
+      [{ where: unknown }],
+    ];
+    expect(findArgs.where).toEqual({
+      tenantId: 'tenant-1',
+      branchId: 'branch-1',
+      deletedAt: null,
+      isDuplicate: false,
+      sourceLabTestId: { in: ['branch-1'] },
+    });
+    expect(prismaMock.branchLabTest.updateMany).toHaveBeenCalledTimes(1);
+    expect(prismaMock.branchLabTest.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ['walk-in-empty', 'pt-list-old'] } },
+      data: hours(4, 8),
+    });
+  });
+
+  it('writes no Lab Test List copies when every copy is customised or current', async () => {
+    const src = test({ id: 'src-1', testCode: 'T1', tatMinValue: 2 });
+    const branch = test({
+      id: 'branch-1',
+      testCode: 'T1',
+      sourceMasterLabTestId: 'src-1',
+      tatMinValue: 2,
+    });
+    prismaMock.labTest.findMany
+      .mockResolvedValueOnce([src])
+      .mockResolvedValueOnce([branch]);
+    prismaMock.branchLabTest.findMany.mockResolvedValueOnce([
+      { id: 'current', sourceLabTestId: 'branch-1', tatMinValue: 2 },
+      { id: 'custom', sourceLabTestId: 'branch-1', tatMinValue: 9 },
+    ]);
+
+    await service.syncTestsIntoBranch(
+      prismaMock as unknown as Prisma.TransactionClient,
+      baseParams,
+    );
+
+    expect(prismaMock.branchLabTest.updateMany).not.toHaveBeenCalled();
   });
 
   it('soft-deletes (cascading to children) a previously-synced branch test whose tenant source no longer exists', async () => {

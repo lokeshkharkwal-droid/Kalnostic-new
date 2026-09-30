@@ -31,4 +31,12 @@ docs {
   or `branch_admin:master_data__import_master_lab_panels` (one atomic import covers
   both). `branch_admin` holds both by baseline; `business_admin`/`administrator`
   bypass. A branch role missing both → 403 PERMISSION_DENIED.
+
+  **TAT propagation:** after the sync, each updated branch test/panel's TAT is
+  carried into its Lab Test List / Lab Panel List copies in **every** list of the
+  branch (user duplicates excluded) — the rows Create Order's Diagnostic Items and
+  the TAT engine read — so a TAT configured in Tenant Master Data no longer needs a
+  manual per-list "Sync from Master Data". A copy is updated only when its TAT is
+  empty or still equals the previous master TAT; branch-customised TAT is kept.
+  Re-running this import also fills copies that were left without TAT earlier.
 }

@@ -55,7 +55,7 @@
 //   use `->` (Latte) but also tolerate `.`. A `{define}` block renders against
 //   `[rootData, paramFrame]` so it sees globals plus its bound parameters.
 
-import { toText } from './pdf-document.util';
+import { imageSizeStyleAttr, toText } from './pdf-document.util';
 
 type Scope = Record<string, unknown>;
 
@@ -110,7 +110,8 @@ export function renderLatte(
  *    `unless`) block wrappers are stripped — the real looping/branching is done by
  *    the surrounding Latte `{foreach}`/`{if}`;
  *  - `{{image:ID}}` → `<img src="{$ID}">` (Latte has no image token; the URL-valued
- *    field is in the context, e.g. `report_approved_by_signature`);
+ *    field is in the context, e.g. `report_approved_by_signature`). An optional
+ *    `|w=…,h=…` sizing suffix (`{{image:ID|w=120}}`) becomes an inline `style`;
  *  - `{{this.field}}` → `{$field}` (best-effort — resolves if the field is in scope).
  * A flat-only template never reaches here (it routes to the flat engine), so this
  * only ever cleans genuinely-dead flat syntax embedded in a Latte template.
@@ -118,8 +119,9 @@ export function renderLatte(
 function stripHandlebarsRemnants(src: string): string {
   return src
     .replace(
-      /\{\{\s*image\s*:\s*([a-zA-Z0-9_.-]+)\s*\}\}/g,
-      '<img src="{$$$1}"/>',
+      /\{\{\s*image\s*:\s*([a-zA-Z0-9_.-]+)\s*(?:\|([^}]*))?\}\}/g,
+      (_m, id: string, size: string | undefined) =>
+        `<img src="{$${id}}"${imageSizeStyleAttr(size)}/>`,
     )
     .replace(/\{\{\s*this\.([a-zA-Z0-9_]+)\s*\}\}/g, '{$$$1}')
     .replace(/\{\{\s*#each\b[^}]*\}\}/g, '')

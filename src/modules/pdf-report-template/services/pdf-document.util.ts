@@ -51,6 +51,58 @@ export function escapeAttr(value: string): string {
 }
 
 /**
+ * A single `{{image:<id>}}` token, with an OPTIONAL sizing suffix after a pipe:
+ * `{{image:ID|w=120}}` or `{{image:ID|w=120,h=60}}`. Group 1 is the id (may
+ * carry a file extension's dots or a hyphen); group 2 is the raw size options
+ * (`w=120,h=60`) or `undefined` when no suffix is present. Backward-compatible —
+ * a plain `{{image:ID}}` still matches with an undefined group 2.
+ */
+export const IMAGE_TOKEN_PATTERN =
+  /\{\{image:([a-zA-Z0-9_.-]+)(?:\|([^}]*))?\}\}/g;
+
+/**
+ * A size value is a bare number (treated as `px`) or a number with one
+ * whitelisted CSS length unit. The whitelist prevents CSS injection through the
+ * token (only lengths reach the emitted `style` attribute).
+ */
+const IMAGE_SIZE_VALUE_RE = /^(\d+(?:\.\d+)?)(px|%|mm|cm|em|rem|pt|in)?$/;
+
+/**
+ * Parse the optional size suffix of an `{{image:ID|w=120,h=60}}` token into a
+ * safe inline `style` attribute. Accepts `w`/`width` and `h`/`height`; a bare
+ * number is treated as pixels, or an explicit whitelisted unit may be given
+ * (`px`, `%`, `mm`, `cm`, `em`, `rem`, `pt`, `in`). Setting only a width keeps
+ * the natural aspect ratio (height stays `auto`). Unknown keys and values that
+ * fail validation are ignored (defence against CSS injection). Pure.
+ * @param options the raw text between `|` and `}}` (e.g. `w=120,h=60`), or undefined
+ * @returns a `style="..."` attribute with a leading space, or `''` when empty
+ */
+export function imageSizeStyleAttr(options: string | undefined): string {
+  if (!options) {
+    return '';
+  }
+  const declarations: string[] = [];
+  for (const part of options.split(',')) {
+    const eq = part.indexOf('=');
+    if (eq < 0) {
+      continue;
+    }
+    const key = part.slice(0, eq).trim().toLowerCase();
+    const match = IMAGE_SIZE_VALUE_RE.exec(part.slice(eq + 1).trim());
+    if (!match) {
+      continue;
+    }
+    const css = match[2] ? `${match[1]}${match[2]}` : `${match[1]}px`;
+    if (key === 'w' || key === 'width') {
+      declarations.push(`width:${css}`);
+    } else if (key === 'h' || key === 'height') {
+      declarations.push(`height:${css}`);
+    }
+  }
+  return declarations.length ? ` style="${declarations.join(';')}"` : '';
+}
+
+/**
  * Replace `{{image:ID}}` tokens with an `<img>` for every id RESOLVABLE in
  * `images` (the template's own `meta.images` merged with the tenant-wide
  * `PrintTemplateImage` registry). Ids may include a file extension (dots) or a
@@ -75,10 +127,12 @@ export function resolveImageTokens(
     return html;
   }
   return html.replace(
-    /\{\{image:([a-zA-Z0-9_.-]+)\}\}/g,
-    (whole, id: string) => {
+    IMAGE_TOKEN_PATTERN,
+    (whole, id: string, size: string | undefined) => {
       const src = images[id];
-      return src ? `<img src="${escapeAttr(src)}" alt="${id}" />` : whole;
+      return src
+        ? `<img src="${escapeAttr(src)}" alt="${id}"${imageSizeStyleAttr(size)} />`
+        : whole;
     },
   );
 }

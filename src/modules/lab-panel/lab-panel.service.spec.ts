@@ -1,4 +1,4 @@
-import { DataSource, LabPanel, Prisma } from '@prisma/client';
+import { DataSource, LabPanel, Prisma, TatUnit } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MasterDataService } from '../master-data/master-data.service';
 import { LabTestService } from '../lab-test/lab-test.service';
@@ -45,6 +45,7 @@ describe('LabPanelService.syncPanelsIntoBranch', () => {
     branchLabPanel: {
       findMany: jest.Mock;
       update: jest.Mock;
+      updateMany: jest.Mock;
       findFirst: jest.Mock;
     };
     branchLabPanelTest: { updateMany: jest.Mock };
@@ -80,6 +81,7 @@ describe('LabPanelService.syncPanelsIntoBranch', () => {
       branchLabPanel: {
         findMany: jest.fn().mockResolvedValue([]),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
         findFirst: jest.fn().mockResolvedValue(null),
       },
       branchLabPanelTest: { updateMany: jest.fn() },
@@ -135,6 +137,56 @@ describe('LabPanelService.syncPanelsIntoBranch', () => {
     expect(prismaMock.labPanel.update).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 'branch-1' } }),
     );
+  });
+
+  it("propagates a matched panel's TAT to its Lab Panel List copies in every list, keeping branch-customised TAT", async () => {
+    const hours = (min: number | null, max: number | null) => ({
+      tatMinValue: min,
+      tatMinUnit: TatUnit.HOURS,
+      tatMaxValue: max,
+      tatMaxUnit: TatUnit.HOURS,
+    });
+    const src = panel({ id: 'src-1', panelCode: 'P1', ...hours(4, 8) });
+    const branch = panel({
+      id: 'branch-1',
+      panelCode: 'P1',
+      sourceMasterLabPanelId: 'src-1',
+      ...hours(2, 6),
+    });
+    prismaMock.labPanel.findMany
+      .mockResolvedValueOnce([src])
+      .mockResolvedValueOnce([branch]);
+    prismaMock.branchLabPanel.findMany.mockResolvedValueOnce([
+      {
+        id: 'walk-in-empty',
+        sourceLabPanelId: 'branch-1',
+        ...hours(null, null),
+      },
+      { id: 'pt-list-old', sourceLabPanelId: 'branch-1', ...hours(2, 6) },
+      { id: 'referral-custom', sourceLabPanelId: 'branch-1', ...hours(1, 3) },
+    ]);
+
+    await syncPanelsIntoBranch(
+      prismaMock as unknown as Prisma.TransactionClient,
+      baseParams,
+      new Map(),
+    );
+
+    const [[findArgs]] = prismaMock.branchLabPanel.findMany.mock.calls as [
+      [{ where: unknown }],
+    ];
+    expect(findArgs.where).toEqual({
+      tenantId: 'tenant-1',
+      branchId: 'branch-1',
+      deletedAt: null,
+      isDuplicate: false,
+      sourceLabPanelId: { in: ['branch-1'] },
+    });
+    expect(prismaMock.branchLabPanel.updateMany).toHaveBeenCalledTimes(1);
+    expect(prismaMock.branchLabPanel.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ['walk-in-empty', 'pt-list-old'] } },
+      data: hours(4, 8),
+    });
   });
 
   it('soft-deletes (cascading membership) a previously-synced branch panel whose tenant source no longer exists', async () => {

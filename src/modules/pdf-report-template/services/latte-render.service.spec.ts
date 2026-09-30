@@ -60,4 +60,21 @@ describe('LatteReportRenderService — {{image:ID}} on the Latte path', () => {
       'src="https://cdn.example.com/sig.png"',
     );
   });
+
+  it('sizes a context-fallback signature via the |w=…,h=… suffix on the Latte path', () => {
+    const prepared = service.render(
+      meta({
+        header_html: '<span>x</span>',
+        footer_html: '{{image:report_approved_by_signature|w=120,h=60}}',
+        body_html: '<p>{$x}</p>',
+      }),
+      { report_approved_by_signature: 'https://cdn.example.com/sig.png' },
+    );
+    expect(prepared.footerTemplate).toContain(
+      'src="https://cdn.example.com/sig.png"',
+    );
+    expect(prepared.footerTemplate).toContain(
+      'style="width:120px;height:60px"',
+    );
+  });
 });
