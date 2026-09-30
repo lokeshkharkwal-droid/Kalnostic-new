@@ -92,6 +92,58 @@ describe('TemplateRenderService — images & watermark', () => {
     expect(bodyHtml).toContain('XY');
     expect(bodyHtml).not.toContain('missing.png');
   });
+
+  it('applies a width-only {{image:<id>|w=120}} suffix as an inline style (px default)', () => {
+    const { bodyHtml } = service.render(
+      meta({
+        body_html: '{{image:sig.png|w=120}}',
+        images: { 'sig.png': 'https://cdn.example/sig.png' },
+      }),
+      emptyCtx,
+    );
+    expect(bodyHtml).toContain(
+      '<img src="https://cdn.example/sig.png" alt="sig.png" style="width:120px" />',
+    );
+  });
+
+  it('applies both width and height from {{image:<id>|w=120,h=60}}', () => {
+    const { bodyHtml } = service.render(
+      meta({
+        body_html: '{{image:sig.png|w=120,h=60}}',
+        images: { 'sig.png': 'https://cdn.example/sig.png' },
+      }),
+      emptyCtx,
+    );
+    expect(bodyHtml).toContain('style="width:120px;height:60px"');
+  });
+
+  it('honours an explicit CSS unit and ignores unknown/invalid size parts', () => {
+    const { bodyHtml } = service.render(
+      meta({
+        body_html: '{{image:sig.png|width=40%,foo=bar,h=abc}}',
+        images: { 'sig.png': 'https://cdn.example/sig.png' },
+      }),
+      emptyCtx,
+    );
+    // Only the valid width survives; the bad key (`foo=bar`) and non-numeric
+    // height (`h=abc`) are dropped — assert on the exact emitted <img> so page
+    // CSS elsewhere in the document can't create false matches.
+    expect(bodyHtml).toContain(
+      '<img src="https://cdn.example/sig.png" alt="sig.png" style="width:40%" />',
+    );
+  });
+
+  it('emits no style attribute for a plain {{image:<id>}} (backward compatible)', () => {
+    const { bodyHtml } = service.render(
+      meta({
+        body_html: '{{image:sig.png}}',
+        images: { 'sig.png': 'https://cdn.example/sig.png' },
+      }),
+      emptyCtx,
+    );
+    expect(bodyHtml).toContain('alt="sig.png" />');
+    expect(bodyHtml).not.toContain('style=');
+  });
 });
 
 describe('extractImageTokens', () => {
@@ -108,6 +160,13 @@ describe('extractImageTokens', () => {
     expect(extractImageTokens(undefined, '', 'plain text, no tokens')).toEqual(
       [],
     );
+  });
+
+  it('collects the id and ignores a |w=…,h=… sizing suffix', () => {
+    const ids = extractImageTokens(
+      '{{image:a.png|w=120}} {{image:b.png|w=80,h=40}} {{image:a.png}}',
+    );
+    expect(ids).toEqual(['a.png', 'b.png']);
   });
 });
 
