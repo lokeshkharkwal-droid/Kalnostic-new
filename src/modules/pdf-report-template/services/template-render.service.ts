@@ -6,6 +6,7 @@ import {
   buildPdfDocuments,
   escapeHtml,
   escapeAttr,
+  imageSizeStyleAttr,
 } from './pdf-document.util';
 
 // Re-exported so existing importers (`pdf-report-template.service.ts`) that pull
@@ -13,8 +14,13 @@ import {
 // to `pdf-document.util.ts` (now shared with the Latte all-reports renderer).
 export type { PreparedPdfHtml } from './pdf-document.util';
 
-/** Matches an `{{image:<id>}}` token; ids may include a file extension (dots). */
-const IMAGE_TOKEN_RE = /\{\{image:([a-zA-Z0-9_.-]+)\}\}/g;
+/**
+ * Matches an `{{image:<id>}}` token; ids may include a file extension (dots).
+ * An optional `|w=…,h=…` sizing suffix is captured in group 2 (see
+ * {@link imageSizeStyleAttr}); group 1 is always the id, so token-id collection
+ * ignores the suffix.
+ */
+const IMAGE_TOKEN_RE = /\{\{image:([a-zA-Z0-9_.-]+)(?:\|([^}]*))?\}\}/g;
 
 /**
  * Keys whose value is rich-text HTML the technician authored in a
@@ -215,17 +221,23 @@ export class TemplateRenderService {
     });
   }
 
-  /** Replace `{{image:ID}}` with an `<img>` for each resolvable image src. */
+  /**
+   * Replace `{{image:ID}}` with an `<img>` for each resolvable image src. An
+   * optional `|w=…,h=…` suffix (`{{image:ID|w=120}}`) is turned into an inline
+   * `style` on the emitted tag via {@link imageSizeStyleAttr}.
+   */
   private interpolateImages(
     html: string,
     images: Record<string, string>,
   ): string {
     // Ids may include the file extension (e.g. `abc-uuid.png`), so allow dots.
     return html.replace(
-      /\{\{image:([a-zA-Z0-9_.-]+)\}\}/g,
-      (_match, id: string) => {
+      IMAGE_TOKEN_RE,
+      (_match, id: string, size: string | undefined) => {
         const src = images[id];
-        return src ? `<img src="${escapeAttr(src)}" alt="${id}" />` : '';
+        return src
+          ? `<img src="${escapeAttr(src)}" alt="${id}"${imageSizeStyleAttr(size)} />`
+          : '';
       },
     );
   }
