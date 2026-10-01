@@ -198,7 +198,7 @@ describe('SampleTransferService — assign center to a previous holder', () => {
     (svc as unknown as { branches: unknown }).branches = {
       findById: jest.fn().mockResolvedValue({}),
     };
-    (prisma.sampleTransfer.findFirst as jest.Mock).mockResolvedValue(transfer);
+    prisma.sampleTransfer.findFirst.mockResolvedValue(transfer);
     await expect(
       svc.assignCenter('tr1', TENANT, PERSON, { destinationBranchId: 'A' }),
     ).rejects.toThrow(SendBlockedException);

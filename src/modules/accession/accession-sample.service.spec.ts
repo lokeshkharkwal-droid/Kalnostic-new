@@ -9,6 +9,12 @@ import { TenantService } from '../tenant/tenant.service';
 import { BarcodeService } from './barcode.service';
 import { UserDepartmentScopeService } from '../department/user-department-scope.service';
 
+/** First argument of a mock's first call, typed (avoids `any` member access in assertions). */
+const firstCallArg = (m: jest.Mock): unknown => {
+  const calls = m.mock.calls as unknown[][];
+  return calls[0]?.[0];
+};
+
 /**
  * Unit coverage for the panel sample-resolution helpers (all private, exercised
  * via an `as unknown` cast — see auth.service.spec.ts for the same pattern).
@@ -209,6 +215,7 @@ describe('OrderSampleService — reconcileForOrderInTx (remove path)', () => {
   }
 
   it('voids a sample linked only to removed items and drops shared links', async () => {
+    const transferUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
     const now = new Date('2026-09-11T00:00:00Z');
     const tx = {
       orderSample: {
@@ -229,7 +236,7 @@ describe('OrderSampleService — reconcileForOrderInTx (remove path)', () => {
         deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       labReport: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
-      sampleTransfer: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      sampleTransfer: { updateMany: transferUpdateMany },
       orderItem: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as import('@prisma/client').Prisma.TransactionClient;
 
@@ -259,19 +266,17 @@ describe('OrderSampleService — reconcileForOrderInTx (remove path)', () => {
       }),
     );
     // S1's transfer still on its way is closed (not left dangling for the receiver)
-    expect(tx.sampleTransfer.updateMany as jest.Mock).toHaveBeenCalledTimes(1);
-    expect(tx.sampleTransfer.updateMany as jest.Mock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          sampleId: 'S1',
-          transferStatus: { in: ['IN_TRANSIT', 'PICKED_UP', 'RECEIVED'] },
-        }),
-        data: expect.objectContaining({
-          transferStatus: 'REJECTED',
-          rejectionReason: 'Order item removed',
-        }),
-      }),
-    );
+    expect(transferUpdateMany).toHaveBeenCalledTimes(1);
+    expect(firstCallArg(transferUpdateMany)).toMatchObject({
+      where: {
+        sampleId: 'S1',
+        transferStatus: { in: ['IN_TRANSIT', 'PICKED_UP', 'RECEIVED'] },
+      },
+      data: {
+        transferStatus: 'REJECTED',
+        rejectionReason: 'Order item removed',
+      },
+    });
     // S2 shared -> NOT voided
     expect(tx.orderSample.update as jest.Mock).not.toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 'S2' } }),
@@ -459,15 +464,18 @@ describe('OrderSampleService — transitionInTx concurrency claim', () => {
   };
 
   const build = (claimCount: number) => {
+    const claim = jest.fn().mockResolvedValue({ count: claimCount });
+    const update = jest
+      .fn()
+      .mockResolvedValue({ ...sample, status: 'SENT_INTERNAL' });
+    const history = jest.fn();
     const tx = {
       orderSample: {
         findFirst: jest.fn().mockResolvedValue(sample),
-        updateMany: jest.fn().mockResolvedValue({ count: claimCount }),
-        update: jest
-          .fn()
-          .mockResolvedValue({ ...sample, status: 'SENT_INTERNAL' }),
+        updateMany: claim,
+        update,
       },
-      orderSampleStatusHistory: { create: jest.fn() },
+      orderSampleStatusHistory: { create: history },
     };
     const service = new OrderSampleService(
       {} as unknown as PrismaService,
@@ -485,28 +493,26 @@ describe('OrderSampleService — transitionInTx concurrency claim', () => {
           transitionInTx: (...a: unknown[]) => Promise<unknown>;
         }
       ).transitionInTx(tx, 't1', 'p1', 's1', 'send', () => ({ data: {} }));
-    return { tx, run };
+    return { claim, update, history, run };
   };
 
   it('claims the row on the status it read, then applies the transition once', async () => {
-    const { tx, run } = build(1);
+    const { claim, update, history, run } = build(1);
     await run();
-    expect(tx.orderSample.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ id: 's1', status: 'ACCEPTED' }),
-      }),
-    );
-    expect(tx.orderSample.update).toHaveBeenCalledTimes(1);
-    expect(tx.orderSampleStatusHistory.create).toHaveBeenCalledTimes(1);
+    expect(firstCallArg(claim)).toMatchObject({
+      where: { id: 's1', status: 'ACCEPTED' },
+    });
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(history).toHaveBeenCalledTimes(1);
   });
 
   it('refuses (no update, no history row) when a concurrent request already moved the sample', async () => {
-    const { tx, run } = build(0);
+    const { update, history, run } = build(0);
     await expect(run()).rejects.toBeInstanceOf(
       InvalidSampleTransitionException,
     );
-    expect(tx.orderSample.update).not.toHaveBeenCalled();
-    expect(tx.orderSampleStatusHistory.create).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+    expect(history).not.toHaveBeenCalled();
   });
 });
 
@@ -567,6 +573,7 @@ describe('OrderSampleService — Return of a transferred copy', () => {
     findById: jest.Mock;
   };
   function setup(copies: Array<{ id: string; status: string }>) {
+    const transferUpdate = jest.fn().mockResolvedValue({ count: 1 });
     const tx = {
       orderSample: {
         findMany: jest
@@ -575,7 +582,7 @@ describe('OrderSampleService — Return of a transferred copy', () => {
             copies.map((c) => ({ ...c, sourceTransferId: 'tr1' })),
           ),
       },
-      sampleTransfer: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      sampleTransfer: { updateMany: transferUpdate },
     };
     const prisma = {
       withTenant: jest.fn((_t: string, fn: (t: typeof tx) => unknown) =>
@@ -597,28 +604,28 @@ describe('OrderSampleService — Return of a transferred copy', () => {
     priv.transitionIds = jest.fn().mockResolvedValue([{ id: 'plain-result' }]);
     priv.notifySamplesRepeated = jest.fn().mockResolvedValue(undefined);
     priv.findById = jest.fn((id: string) => Promise.resolve({ id }));
-    return { service, tx, priv };
+    return { service, transferUpdate, priv };
   }
 
   it('sends a transferred copy back to its sender instead of marking it Returned', async () => {
-    const { service, tx, priv } = setup([{ id: 'copy1', status: 'ACCEPTED' }]);
+    const { service, transferUpdate, priv } = setup([
+      { id: 'copy1', status: 'ACCEPTED' },
+    ]);
     const out = await service.returnSample(['copy1'], 't1', 'p1', {
       handoverPerson: 'X',
-    } as never);
+    });
     expect(priv.returnCopyToOrigin).toHaveBeenCalledTimes(1);
     expect(priv.transitionIds).not.toHaveBeenCalled();
-    expect(tx.sampleTransfer.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ transferStatus: 'REPEAT' }),
-      }),
-    );
+    expect(firstCallArg(transferUpdate)).toMatchObject({
+      data: { transferStatus: 'REPEAT' },
+    });
     expect(priv.notifySamplesRepeated).toHaveBeenCalledWith('t1', ['origin1']);
     expect(out).toEqual([{ id: 'origin1' }]);
   });
 
   it('a normal sample (not a copy) keeps the ordinary Return', async () => {
     const { service, priv } = setup([]);
-    const out = await service.returnSample(['s1'], 't1', 'p1', {} as never);
+    const out = await service.returnSample(['s1'], 't1', 'p1', {});
     expect(priv.returnCopyToOrigin).not.toHaveBeenCalled();
     expect(priv.transitionIds).toHaveBeenCalledWith(
       ['s1'],
@@ -634,7 +641,7 @@ describe('OrderSampleService — Return of a transferred copy', () => {
   it('refuses a copy that cannot be returned from its status, and skips it in a group', async () => {
     const strict = setup([{ id: 'copy1', status: 'SENT_INTERNAL' }]);
     await expect(
-      strict.service.returnSample(['copy1'], 't1', 'p1', {} as never),
+      strict.service.returnSample(['copy1'], 't1', 'p1', {}),
     ).rejects.toBeInstanceOf(InvalidSampleTransitionException);
     expect(strict.priv.returnCopyToOrigin).not.toHaveBeenCalled();
 
