@@ -1892,6 +1892,13 @@ export class LabReportService {
    * value" across however many parameters the test has — not "every
    * parameter filled in" — so genuine partial progress on a multi-parameter
    * test across several Save clicks stays allowed.
+   *
+   * Additional condition (not a replacement): a report with no real observed
+   * value is still allowed through if at least one file has been uploaded via
+   * File+ (`LabReportAttachment` — images/documents/other, attached through
+   * `ReportAttachments`). This lets a technician proceed on tests whose result
+   * is itself an attached file/image rather than a typed value, while a report
+   * with neither a value nor an attachment is still blocked exactly as before.
    */
   private async requireAtLeastOneResultValue(
     id: string,
@@ -1907,7 +1914,13 @@ export class LabReportService {
       },
       select: { id: true },
     });
-    if (!hasRealValue) throw new LabReportResultsRequiredException(id);
+    if (hasRealValue) return;
+
+    const hasAttachment = await this.prisma.labReportAttachment.findFirst({
+      where: { labReportId: id, tenantId },
+      select: { id: true },
+    });
+    if (!hasAttachment) throw new LabReportResultsRequiredException(id);
   }
 
   private assertTransition(
