@@ -1,10 +1,44 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
-import puppeteer, { Browser, PDFOptions } from 'puppeteer';
+import puppeteer, { Browser, PDFOptions, Page } from 'puppeteer';
 import {
   ImageFetcher,
   guessImageMime,
   inlineRemoteImages,
+  isRemoteUrl,
 } from './pdf-image-inline.util';
+import {
+  PdfEmbedSource,
+  PdfFetcher,
+  embedMarkerUrl,
+  fileNameFromUrl,
+  fitSlotPx,
+  isPdfEmbed,
+  newEmbedMarkerPrefix,
+  overlayEmbeddedPdfs,
+  readPdfEmbedSource,
+} from './pdf-embed.util';
+
+/** One PDF `<embed>` found in the body, as reported by the page. */
+interface FoundPdfEmbed {
+  idx: number;
+  src: string;
+  type: string;
+  title: string;
+}
+
+/** DOM rewrite for one PDF `<embed>` (see {@link PdfService.expandPdfEmbeds}). */
+interface PdfEmbedPlan {
+  idx: number;
+  /** One slot per source page, in CSS px, with its marker link. */
+  slots: Array<{ width: number; height: number; href: string }>;
+}
+
+/** An `<embed>` whose PDF couldn't be fetched/parsed: printed as a link instead. */
+interface PdfEmbedFallback {
+  idx: number;
+  src: string;
+  label: string;
+}
 
 /**
  * Shared PDF generation service backed by Puppeteer (headless Chromium),
@@ -38,6 +72,10 @@ export class PdfService implements OnModuleDestroy {
    * re-fetching a shared logo on every print. Bounded by `IMAGE_CACHE_MAX`.
    */
   private readonly imageDataUriCache = new Map<string, string>();
+  /** How long to wait for one embedded-PDF fetch before giving up. */
+  private static readonly EMBED_FETCH_TIMEOUT_MS = 20_000;
+  /** Largest embedded PDF fetched (uploads are capped at 10 MB; headroom for other sources). */
+  private static readonly EMBED_MAX_BYTES = 15 * 1024 * 1024;
 
   /**
    * Render a complete HTML document to a PDF buffer. The caller is responsible
@@ -65,13 +103,32 @@ export class PdfService implements OnModuleDestroy {
       // header/footer so their content is never crushed into — or overlapped by —
       // the body, regardless of template size (mPDF `setAutoTopMargin` analogue).
       const pdfOptions = await this.fitHeaderFooterMargins(browser, inlined);
-      const pdf = await page.pdf({
+      const finalOptions: PDFOptions = {
         format: 'A4',
         printBackground: true, // render CSS background-color / background-image
         margin: { top: '10mm', bottom: '12mm', left: '12mm', right: '12mm' },
         ...pdfOptions,
-      });
-      return Buffer.from(pdf);
+      };
+      // Chromium prints a PDF `<embed>` as an empty grey box; lay each one out
+      // as page-sized slots now (needs the final margins, hence after the
+      // auto-fit) and draw the real pages into them after printing.
+      const embeds = await this.expandPdfEmbeds(page, finalOptions);
+      const pdf = await page.pdf(finalOptions);
+      if (!embeds) {
+        return Buffer.from(pdf);
+      }
+      try {
+        return Buffer.from(
+          await overlayEmbeddedPdfs(pdf, embeds.sources, embeds.prefix),
+        );
+      } catch (e) {
+        this.logger.warn(
+          `Drawing embedded PDFs failed; returning the report without them: ${
+            (e as Error).message
+          }`,
+        );
+        return Buffer.from(pdf);
+      }
     } finally {
       await page.close().catch((e) => {
         this.logger.warn('Failed to close Puppeteer page cleanly', e);
@@ -205,6 +262,157 @@ export class PdfService implements OnModuleDestroy {
   }
 
   /**
+   * Lay out every PDF `<embed>` in the loaded body for printing (see
+   * `pdf-embed.util.ts` for why Chromium needs this). Each `<embed>` pointing at
+   * a remote PDF is fetched and parsed, then replaced by one slot per source
+   * page, sized to that page's aspect ratio within the printable area and
+   * overlaid with a marker link. The original `<embed>` moves into the first
+   * slot; the other slots get none, because every extra `<embed>` would start
+   * its own PDF-viewer instance only to print a grey box. An embed whose file
+   * can't be fetched or parsed becomes a plain "Attached file" link instead.
+   *
+   * Returns `null` when nothing needs drawing, so a body without PDF embeds
+   * costs one DOM query and nothing else.
+   * @returns this render's marker prefix + parsed sources for `overlayEmbeddedPdfs`
+   */
+  private async expandPdfEmbeds(
+    page: Page,
+    options: PDFOptions,
+  ): Promise<{ prefix: string; sources: Map<number, PdfEmbedSource> } | null> {
+    const found: FoundPdfEmbed[] = await page.$$eval('embed', (els) =>
+      els.map((el, idx) => {
+        el.setAttribute('data-pdf-embed-idx', String(idx));
+        return {
+          idx,
+          src: el.src,
+          type: el.getAttribute('type') ?? '',
+          title: el.getAttribute('title') ?? '',
+        };
+      }),
+    );
+    const pdfEmbeds = found.filter(
+      (e) => isRemoteUrl(e.src) && isPdfEmbed(e.src, e.type),
+    );
+    if (pdfEmbeds.length === 0) {
+      return null;
+    }
+
+    // Fetch + parse each distinct file once, even if it is embedded twice.
+    const bySrc = new Map<string, Promise<PdfEmbedSource | null>>();
+    for (const e of pdfEmbeds) {
+      if (!bySrc.has(e.src)) {
+        bySrc.set(
+          e.src,
+          this.pdfFetcher(e.src).then((bytes) =>
+            bytes ? readPdfEmbedSource(bytes) : null,
+          ),
+        );
+      }
+    }
+    const box = this.contentBoxPx(options);
+    const prefix = newEmbedMarkerPrefix();
+    const sources = new Map<number, PdfEmbedSource>();
+    const plans: PdfEmbedPlan[] = [];
+    const fallbacks: PdfEmbedFallback[] = [];
+    for (const e of pdfEmbeds) {
+      const source = await bySrc.get(e.src);
+      if (!source) {
+        this.logger.warn(
+          `Embedded PDF could not be rendered; printing a link instead: ${e.src}`,
+        );
+        fallbacks.push({
+          idx: e.idx,
+          src: e.src,
+          label: e.title || fileNameFromUrl(e.src),
+        });
+        continue;
+      }
+      sources.set(e.idx, source);
+      plans.push({
+        idx: e.idx,
+        slots: source.pageSizes.map((size, pageIdx) => ({
+          ...fitSlotPx(size, box),
+          href: embedMarkerUrl(prefix, e.idx, pageIdx),
+        })),
+      });
+    }
+
+    await page.evaluate(
+      (planList: PdfEmbedPlan[], fallbackList: PdfEmbedFallback[]) => {
+        const find = (idx: number) =>
+          document.querySelector<HTMLElement>(
+            `embed[data-pdf-embed-idx="${idx}"]`,
+          );
+        for (const plan of planList) {
+          const embed = find(plan.idx);
+          if (!embed) {
+            continue;
+          }
+          const wrapper = document.createElement('div');
+          wrapper.className = 'pdf-embed-document';
+          embed.replaceWith(wrapper);
+          plan.slots.forEach((slot, i) => {
+            const box = document.createElement('div');
+            box.className = 'pdf-embed-page';
+            box.style.cssText = `position:relative;width:${slot.width}px;max-width:100%;height:${slot.height}px;margin:0 auto;break-inside:avoid;page-break-inside:avoid;`;
+            if (i === 0) {
+              embed.style.cssText =
+                'display:block;width:100%;height:100%;border:0;';
+              box.append(embed);
+            }
+            const marker = document.createElement('a');
+            marker.href = slot.href;
+            marker.style.cssText = 'position:absolute;inset:0;display:block;';
+            box.append(marker);
+            wrapper.append(box);
+          });
+        }
+        for (const f of fallbackList) {
+          const embed = find(f.idx);
+          if (!embed) {
+            continue;
+          }
+          const note = document.createElement('div');
+          note.className = 'pdf-embed-fallback';
+          const link = document.createElement('a');
+          link.href = f.src;
+          link.textContent = f.label;
+          note.append('Attached file: ', link);
+          embed.replaceWith(note);
+        }
+      },
+      plans,
+      fallbacks,
+    );
+    return sources.size > 0 ? { prefix, sources } : null;
+  }
+
+  /**
+   * The printable body area in CSS px for the final print options: the page
+   * size (explicit `width`/`height`, else A4, swapped for `landscape`) minus the
+   * margins, divided by `scale` (Chromium lays the body out at 1/scale).
+   */
+  private contentBoxPx(options: PDFOptions): { width: number; height: number } {
+    let widthMm = this.parseMm(options.width, 210);
+    let heightMm = this.parseMm(options.height, 297);
+    if (
+      options.landscape &&
+      options.width === undefined &&
+      options.height === undefined
+    ) {
+      [widthMm, heightMm] = [heightMm, widthMm];
+    }
+    const m = options.margin ?? {};
+    const toPx = (mm: number) => (mm * 96) / 25.4 / (options.scale ?? 1);
+    return {
+      width: toPx(widthMm - this.parseMm(m.left, 0) - this.parseMm(m.right, 0)),
+      height: toPx(
+        heightMm - this.parseMm(m.top, 0) - this.parseMm(m.bottom, 0),
+      ),
+    };
+  }
+
+  /**
    * Parse a Puppeteer margin/size value (`"12mm"`, `"48px"`, a bare number, …) to
    * millimetres, falling back to `fallback` when it can't be read. `px` is
    * converted at 96dpi; unit-less and `mm` values are taken as millimetres.
@@ -268,6 +476,45 @@ export class PdfService implements OnModuleDestroy {
     } catch (e) {
       this.logger.warn(
         `Failed to inline header/footer image ${url}: ${(e as Error).message}`,
+      );
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  /**
+   * Fetch an embedded PDF's bytes with a hard timeout and size cap. Returns
+   * `null` on any failure (logged) so the embed degrades to a link instead of
+   * failing the report. Not cached: an attachment is fetched once per print.
+   */
+  private readonly pdfFetcher: PdfFetcher = async (url) => {
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(),
+      PdfService.EMBED_FETCH_TIMEOUT_MS,
+    );
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      if (!res.ok) {
+        this.logger.warn(
+          `Embedded PDF fetch returned ${res.status} for ${url}`,
+        );
+        return null;
+      }
+      const declared = Number(res.headers.get('content-length') ?? 0);
+      if (declared > PdfService.EMBED_MAX_BYTES) {
+        this.logger.warn(`Embedded PDF too large (${declared} bytes): ${url}`);
+        return null;
+      }
+      const data = Buffer.from(await res.arrayBuffer());
+      if (data.length === 0 || data.length > PdfService.EMBED_MAX_BYTES) {
+        return null;
+      }
+      return data;
+    } catch (e) {
+      this.logger.warn(
+        `Failed to fetch embedded PDF ${url}: ${(e as Error).message}`,
       );
       return null;
     } finally {

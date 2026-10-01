@@ -112,6 +112,24 @@ most common source of "my tag didn't work".
   `meta.images` → the tenant-wide **`PrintTemplateImage` registry** (so an image
   uploaded to one template can be reused in another by pasting its token).
 - Unknown id → collapses to empty (no `<img>` emitted).
+- **Sizing suffix (optional).** Append `|w=…` and/or `|h=…` after the id to set
+  the rendered size as an inline `style` on the emitted `<img>`:
+
+  ```html
+  {{image:report_approved_by_signature|w=120}}        <!-- width 120px, height auto -->
+  {{image:report_approved_by_signature|w=120,h=60}}   <!-- width 120px, height 60px -->
+  {{image:logo.png|width=40%}}                          <!-- w / h aliases + CSS units -->
+  ```
+
+  - Keys: `w`/`width` and `h`/`height`. A **bare number is pixels**; an explicit
+    whitelisted CSS unit may be given (`px`, `%`, `mm`, `cm`, `em`, `rem`, `pt`,
+    `in`). Setting only a width keeps the natural **aspect ratio** (height stays
+    `auto`).
+  - Only length values reach the tag (validated against a whitelist), so the
+    suffix can't inject arbitrary CSS. Unknown keys / invalid values are ignored.
+  - Backward-compatible: a plain `{{image:id}}` renders exactly as before, and
+    token-id collection ignores the suffix. Works on **both** engines and on the
+    Latte `{$id}` context-image fallback (e.g. `report_approved_by_signature`).
 - **Works on both engines.** When a template's **body** is Latte, the *whole*
   template (header/body/footer) renders through the Latte-subset engine. It still
   resolves `{{image:id}}` against the same uploaded/registry map **before** Latte
@@ -495,9 +513,31 @@ their tag lists are identical.
 | `{patient_image}` | Patient photo URL. |
 | `{order_id_barcode}` | Order barcode **value** (text). |
 | `{order_id_qr_code}` | Order barcode/QR **image URL**. |
+| `{test_file_attachment}` | The PDF(s) uploaded with this test's Test Entry **File +** button, drawn in place (see below). Empty when the test has none. |
 
 **Image tags** (`{{image:key}}`): `report_approved_by_signature`,
 `patient_image`, `order_id_qr_code`.
+
+**`{test_file_attachment}` — File+ PDF attachment.** Prints the PDF(s) a
+technician uploaded for **this test** with the Test Entry screen's **File +**
+button (`LabReportAttachment.kind = 'file'`, oldest first). It is built from the
+printed report's own attachments, and a `LabReport` is one test line of one
+order, so it can never show another test's or order's file. Non-PDF File+
+uploads (sheets, docs, images) are skipped.
+
+- The tag emits `<embed type="application/pdf">` markup and is inserted
+  unescaped. Latte `lab_report` bodies: `{test_file_attachment}` or
+  `{$test_file_attachment|noescape}`.
+- Chromium prints a PDF `<embed>` as an empty grey box, so `PdfService` lays out
+  one page-sized slot per page of the file where the tag sits, then draws the
+  real pages into those slots after printing (`src/modules/pdf/pdf-embed.util.ts`).
+  Each attached page gets its own report page inside the template's
+  header/footer; pages stay vector and text stays selectable.
+- This applies to **any** `<embed>` whose `type` is `application/pdf` or whose
+  URL ends in `.pdf`, so a template can also embed a fixed PDF by URL.
+- If a file can't be fetched or parsed (non-2xx, over 15 MB, not a PDF,
+  encrypted), the embed prints as an `Attached file: <name>` link instead, and
+  the report still generates. At most 50 pages are drawn per file.
 
 **`results` section row** (parameter rows, sorted by catalogue order):
 
@@ -596,6 +636,7 @@ The context is:
 | `sample_collected_date` | Collection time. |
 | `sample_received_date` | Receipt time. |
 | `report_prepared_on` | Approval/publish time. |
+| `test_file_attachment` | That test's File+ PDF(s) — `{$report->test_file_attachment\|noescape}`. Already inside `body_html` when that test's own `lab_report` template uses the tag. In a flat `{{#each reports}}` template it is a per-row `{test_file_attachment}`; it is blank at the top level, so one test's file never prints for the whole order. |
 | `lab_test_id` | Tenant-master test id. |
 | `tests` | `[{ display_test_sample: '1' }]` visibility gate (mostly unused). |
 
