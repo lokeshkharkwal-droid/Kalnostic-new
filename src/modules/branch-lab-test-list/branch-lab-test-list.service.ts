@@ -22,6 +22,13 @@ export const DEFAULT_LAB_TEST_LIST_NAME = 'Walk-in';
 const CLONE_DROP_KEYS = ['id', 'createdAt', 'updatedAt', 'deletedAt'] as const;
 
 /**
+ * Transaction options for create/clone, which bulk-copy every row of a list
+ * (thousands of tests on large branches). Rows go in via `createMany`, so this is
+ * headroom over the 5s default, not a substitute for batching.
+ */
+const LIST_COPY_TX_OPTIONS = { maxWait: 5000, timeout: 15000 };
+
+/**
  * Branch **Lab Test List** management. A list owns full copies of its
  * `BranchLabTest` rows (identity + config + all price columns), plus a computed
  * `listPrice`. The branch's single `isDefault` list is "Walk-in", auto-created on
@@ -136,21 +143,22 @@ export class BranchLabTestListService {
       branchId,
       actorId,
     );
-    const sourceRows = await this.prisma.branchLabTest.findMany({
-      where: {
-        tenantId,
-        branchId,
-        listId: defaultList.id,
-        isDefault: true,
-        deletedAt: null,
-      },
-    });
     const percentage =
       dto.priceType === 'PERCENTAGE' ? (dto.copyPercentage ?? 0) : null;
 
-    return this.prisma.withTenant(tenantId, async (tx) => {
-      const list = await tx.branchLabTestList.create({
-        data: {
+    return this.prisma.withTenant(
+      tenantId,
+      async (tx) => {
+        const sourceRows = await tx.branchLabTest.findMany({
+          where: {
+            tenantId,
+            branchId,
+            listId: defaultList.id,
+            isDefault: true,
+            deletedAt: null,
+          },
+        });
+        const list = await this.insertList(tx, dto.name, {
           tenantId,
           branchId,
           name: dto.name,
@@ -160,20 +168,21 @@ export class BranchLabTestListService {
           copyPercentage: percentage,
           createdBy: actorId,
           updatedBy: actorId,
-        },
-      });
-      for (const row of sourceRows) {
-        const base = resolveSourcePrice(row, dto.copyPriceFrom);
-        const listPrice = computeListPrice(base, dto.priceType, percentage);
-        await tx.branchLabTest.create({
-          data: this.cloneRowInto(row, list.id, listPrice, actorId, {
-            isDefault: true,
-            isDuplicate: false,
+        });
+        await tx.branchLabTest.createMany({
+          data: sourceRows.map((row) => {
+            const base = resolveSourcePrice(row, dto.copyPriceFrom);
+            const listPrice = computeListPrice(base, dto.priceType, percentage);
+            return this.cloneRowInto(row, list.id, listPrice, actorId, {
+              isDefault: true,
+              isDuplicate: false,
+            });
           }),
         });
-      }
-      return list;
-    });
+        return list;
+      },
+      LIST_COPY_TX_OPTIONS,
+    );
   }
 
   /**
@@ -192,12 +201,13 @@ export class BranchLabTestListService {
   ): Promise<BranchLabTestList> {
     const source = await this.findById(id, tenantId, branchId);
     await this.assertNameAvailable(tenantId, branchId, dto.name);
-    const rows = await this.prisma.branchLabTest.findMany({
-      where: { tenantId, branchId, listId: id, deletedAt: null },
-    });
-    return this.prisma.withTenant(tenantId, async (tx) => {
-      const list = await tx.branchLabTestList.create({
-        data: {
+    return this.prisma.withTenant(
+      tenantId,
+      async (tx) => {
+        const rows = await tx.branchLabTest.findMany({
+          where: { tenantId, branchId, listId: id, deletedAt: null },
+        });
+        const list = await this.insertList(tx, dto.name, {
           tenantId,
           branchId,
           name: dto.name,
@@ -207,18 +217,19 @@ export class BranchLabTestListService {
           copyPercentage: source.copyPercentage,
           createdBy: actorId,
           updatedBy: actorId,
-        },
-      });
-      for (const row of rows) {
-        await tx.branchLabTest.create({
-          data: this.cloneRowInto(row, list.id, row.listPrice, actorId, {
-            isDefault: row.isDefault,
-            isDuplicate: row.isDuplicate,
-          }),
         });
-      }
-      return list;
-    });
+        await tx.branchLabTest.createMany({
+          data: rows.map((row) =>
+            this.cloneRowInto(row, list.id, row.listPrice, actorId, {
+              isDefault: row.isDefault,
+              isDuplicate: row.isDuplicate,
+            }),
+          ),
+        });
+        return list;
+      },
+      LIST_COPY_TX_OPTIONS,
+    );
   }
 
   /**
@@ -294,6 +305,32 @@ export class BranchLabTestListService {
       createdBy: actorId,
       updatedBy: actorId,
     } as Prisma.BranchLabTestUncheckedCreateInput;
+  }
+
+  /**
+   * Insert a non-default list row, translating a unique-index clash into a 409.
+   * `assertNameAvailable` runs before the transaction, so two concurrent creates
+   * with the same name both pass it; the DB partial unique index on
+   * (tenant, branch, name) is the real guard. Only the name index can fire here
+   * because `isDefault` is false.
+   * @throws BranchLabTestListNameConflictException on a P2002
+   */
+  private async insertList(
+    tx: Prisma.TransactionClient,
+    name: string,
+    data: Prisma.BranchLabTestListUncheckedCreateInput,
+  ): Promise<BranchLabTestList> {
+    try {
+      return await tx.branchLabTestList.create({ data });
+    } catch (e) {
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002'
+      ) {
+        throw new BranchLabTestListNameConflictException(name);
+      }
+      throw e;
+    }
   }
 
   /**
