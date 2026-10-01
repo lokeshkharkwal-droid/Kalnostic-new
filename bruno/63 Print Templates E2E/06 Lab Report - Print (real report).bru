@@ -31,4 +31,9 @@ docs {
   `templateId` is omitted; the same report record renders either way.
 
   Requires a real `{{labReportId}}`. Seed one via the Technician Reporting flow.
+
+  `{test_file_attachment}` in the template prints the PDF(s) uploaded for THIS
+  report with the Test Entry "File +" button (`LabReportAttachment.kind =
+  'file'`), drawn in place page by page. To try it, attach one first with
+  `16 Create Report Attachment` (`kind: "file"`, a `.pdf` `fileUrl`).
 }

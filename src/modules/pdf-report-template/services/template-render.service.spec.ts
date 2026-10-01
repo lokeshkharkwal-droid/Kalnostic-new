@@ -373,3 +373,32 @@ describe('TemplateRenderService — renderBodyFragment (lab_all_report body)', (
     expect(html).toContain('<img src="https://cdn.example/sign.png"');
   });
 });
+
+describe('TemplateRenderService — {test_file_attachment}', () => {
+  const service = new TemplateRenderService();
+  const embed =
+    '<div class="test-file-attachment"><embed src="https://cdn/a.pdf?x=1&amp;y=2" type="application/pdf" title="a.pdf" /></div>';
+
+  it('inserts the server-built <embed> markup unescaped', () => {
+    const { bodyHtml } = service.render(
+      meta({ body_html: '<h2>{test_name}</h2>{test_file_attachment}' }),
+      {
+        variables: {
+          test_name: 'CBC <Complete>',
+          test_file_attachment: embed,
+        },
+      },
+    );
+    expect(bodyHtml).toContain(embed);
+    // Every other key is still escaped.
+    expect(bodyHtml).toContain('CBC &lt;Complete&gt;');
+  });
+
+  it('is unescaped per row inside {{#each reports}} too', () => {
+    const { bodyHtml } = service.render(
+      meta({ body_html: '{{#each reports}}[{test_file_attachment}]{{/each}}' }),
+      { sections: { reports: [{ test_file_attachment: embed }] } },
+    );
+    expect(bodyHtml).toContain(`[${embed}]`);
+  });
+});

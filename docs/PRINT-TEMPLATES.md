@@ -495,9 +495,31 @@ their tag lists are identical.
 | `{patient_image}` | Patient photo URL. |
 | `{order_id_barcode}` | Order barcode **value** (text). |
 | `{order_id_qr_code}` | Order barcode/QR **image URL**. |
+| `{test_file_attachment}` | The PDF(s) uploaded with this test's Test Entry **File +** button, drawn in place (see below). Empty when the test has none. |
 
 **Image tags** (`{{image:key}}`): `report_approved_by_signature`,
 `patient_image`, `order_id_qr_code`.
+
+**`{test_file_attachment}` — File+ PDF attachment.** Prints the PDF(s) a
+technician uploaded for **this test** with the Test Entry screen's **File +**
+button (`LabReportAttachment.kind = 'file'`, oldest first). It is built from the
+printed report's own attachments, and a `LabReport` is one test line of one
+order, so it can never show another test's or order's file. Non-PDF File+
+uploads (sheets, docs, images) are skipped.
+
+- The tag emits `<embed type="application/pdf">` markup and is inserted
+  unescaped. Latte `lab_report` bodies: `{test_file_attachment}` or
+  `{$test_file_attachment|noescape}`.
+- Chromium prints a PDF `<embed>` as an empty grey box, so `PdfService` lays out
+  one page-sized slot per page of the file where the tag sits, then draws the
+  real pages into those slots after printing (`src/modules/pdf/pdf-embed.util.ts`).
+  Each attached page gets its own report page inside the template's
+  header/footer; pages stay vector and text stays selectable.
+- This applies to **any** `<embed>` whose `type` is `application/pdf` or whose
+  URL ends in `.pdf`, so a template can also embed a fixed PDF by URL.
+- If a file can't be fetched or parsed (non-2xx, over 15 MB, not a PDF,
+  encrypted), the embed prints as an `Attached file: <name>` link instead, and
+  the report still generates. At most 50 pages are drawn per file.
 
 **`results` section row** (parameter rows, sorted by catalogue order):
 
@@ -596,6 +618,7 @@ The context is:
 | `sample_collected_date` | Collection time. |
 | `sample_received_date` | Receipt time. |
 | `report_prepared_on` | Approval/publish time. |
+| `test_file_attachment` | That test's File+ PDF(s) — `{$report->test_file_attachment\|noescape}`. Already inside `body_html` when that test's own `lab_report` template uses the tag. In a flat `{{#each reports}}` template it is a per-row `{test_file_attachment}`; it is blank at the top level, so one test's file never prints for the whole order. |
 | `lab_test_id` | Tenant-master test id. |
 | `tests` | `[{ display_test_sample: '1' }]` visibility gate (mostly unused). |
 
