@@ -116,6 +116,7 @@ import {
   patientAgeInDays,
   rangeAgeInDays,
 } from './utils/reference-range.util';
+import { buildTestFileAttachmentHtml } from './utils/test-file-attachment.util';
 import { TatService } from './tat.service';
 
 /**
@@ -1892,6 +1893,13 @@ export class LabReportService {
    * value" across however many parameters the test has — not "every
    * parameter filled in" — so genuine partial progress on a multi-parameter
    * test across several Save clicks stays allowed.
+   *
+   * Additional condition (not a replacement): a report with no real observed
+   * value is still allowed through if at least one file has been uploaded via
+   * File+ (`LabReportAttachment` — images/documents/other, attached through
+   * `ReportAttachments`). This lets a technician proceed on tests whose result
+   * is itself an attached file/image rather than a typed value, while a report
+   * with neither a value nor an attachment is still blocked exactly as before.
    */
   private async requireAtLeastOneResultValue(
     id: string,
@@ -1907,7 +1915,13 @@ export class LabReportService {
       },
       select: { id: true },
     });
-    if (!hasRealValue) throw new LabReportResultsRequiredException(id);
+    if (hasRealValue) return;
+
+    const hasAttachment = await this.prisma.labReportAttachment.findFirst({
+      where: { labReportId: id, tenantId },
+      select: { id: true },
+    });
+    if (!hasAttachment) throw new LabReportResultsRequiredException(id);
   }
 
   private assertTransition(
@@ -3019,6 +3033,10 @@ export class LabReportService {
         order_id_barcode: order.orderIdBarcode ?? '',
         order_id_qr_code: order.orderIdQrCode ?? '',
         sample_note: sampleNote?.body ?? '',
+        // `{test_file_attachment}` — the PDF(s) uploaded via this test's
+        // "File +" button, as `<embed>` markup (printed unescaped, see
+        // `RICH_TEXT_KEYS`). Built from THIS report's attachments only.
+        test_file_attachment: buildTestFileAttachmentHtml(report.attachments),
       },
       // Backs the `{{image:ID}}` tokens for the same three image-valued
       // fields above — `TemplateRenderService.interpolateImages` resolves
@@ -3345,6 +3363,8 @@ export class LabReportService {
           report_prepared_on: preparedOn
             ? formatReportDateTime(toBranchLocalInstant(preparedOn, timezone))
             : '',
+          // This test's own File+ PDFs (`{$report->test_file_attachment|noescape}`).
+          test_file_attachment: toText(c?.variables?.test_file_attachment),
           // One visible test entry per report (a panel's sub-tests are already
           // flattened into `body_html`); drives the templates' display gate/count.
           tests: [{ display_test_sample: '1' }],
@@ -3364,6 +3384,9 @@ export class LabReportService {
       variables: {
         ...(firstCtx?.variables ?? {}),
         report_count: String(reports.length),
+        // Test-scoped: the first report's files must not print as the whole
+        // order's. Use `{test_file_attachment}` inside `{{#each reports}}`.
+        test_file_attachment: '',
       },
       images: firstCtx?.images ?? {},
       sections: {
@@ -3376,6 +3399,7 @@ export class LabReportService {
             sample_collected_date: rep.sample_collected_date,
             sample_received_date: rep.sample_received_date,
             report_prepared_on: rep.report_prepared_on,
+            test_file_attachment: rep.test_file_attachment,
             results_summary: rows
               .map((r) => {
                 const unit = toText(r.unit);

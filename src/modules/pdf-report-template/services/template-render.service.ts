@@ -31,6 +31,11 @@ const IMAGE_TOKEN_RE = /\{\{image:([a-zA-Z0-9_.-]+)(?:\|([^}]*))?\}\}/g;
  * formatted content, so they're inserted as-is here instead. Every other key
  * (patient name, order code, `result_note`, …) is genuinely plain text and
  * must stay escaped.
+ *
+ * `test_file_attachment` is not technician-authored: it is `<embed>` markup the
+ * server builds from the report's File+ uploads (URLs and names already
+ * attribute-escaped in `buildTestFileAttachmentHtml`), so it is inserted as-is
+ * for the same reason.
  */
 const RICH_TEXT_KEYS = new Set([
   'useful_for',
@@ -39,6 +44,7 @@ const RICH_TEXT_KEYS = new Set([
   'remarks',
   'references',
   'overall_result',
+  'test_file_attachment',
 ]);
 
 /** `escapeHtml`, except for a known rich-text field — see {@link RICH_TEXT_KEYS}. */
