@@ -59,7 +59,9 @@ docs {
     `body_html` (its result table + content sections, built from the
     single-report context), `sample_collected_date`, `sample_received_date`,
     `report_prepared_on` (that report's own approval time,
-    `DD-MM-YYYY hh:mm AM/PM`), `lab_test_id`, and `tests[].display_test_sample`.
+    `DD-MM-YYYY hh:mm AM/PM`), `test_file_attachment` (that test's own File+
+    PDF(s) as `<embed>` markup: `{$report->test_file_attachment|noescape}`),
+    `lab_test_id`, and `tests[].display_test_sample`.
   - `report_tests.groups[]` — the department-grouped section; currently empty
     (all reports flow through `tests[]`, which templates iterate identically).
   - `header_fields` — shared order/patient header block: `patient.{salutation,
