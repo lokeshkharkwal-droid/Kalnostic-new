@@ -1375,6 +1375,19 @@ export class UsersService {
           where: { tenantId, personId, branchId: a.branchId, deletedAt: null },
         });
         if (existing) {
+          if (
+            existing.authRoleId !== a.authRoleId ||
+            !this.sameModuleSet(existing.enabledModules, a.enabledModules)
+          ) {
+            await this.pruneOverridesOutsideModules(
+              tx,
+              tenantId,
+              personId,
+              a.branchId,
+              a.roleKey,
+              a.enabledModules,
+            );
+          }
           await tx.userBranchProfile.update({
             where: { id: existing.id },
             data: {
@@ -1389,6 +1402,15 @@ export class UsersService {
             },
           });
         } else {
+          // Overrides left over from a previously revoked assignment are stale.
+          await this.pruneOverridesOutsideModules(
+            tx,
+            tenantId,
+            personId,
+            a.branchId,
+            a.roleKey,
+            a.enabledModules,
+          );
           await tx.userBranchProfile.create({
             data: {
               tenantId,
@@ -1647,6 +1669,20 @@ export class UsersService {
       if (dto.defaultModule !== undefined) {
         data.defaultModuleId = dto.defaultModule ?? null;
       }
+      if (
+        (newRole && newRole.id !== existing.authRoleId) ||
+        (dto.modules !== undefined &&
+          !this.sameModuleSet(existing.enabledModules, dto.modules))
+      ) {
+        await this.pruneOverridesOutsideModules(
+          tx,
+          tenantId,
+          personId,
+          branchId,
+          targetRoleKey,
+          effectiveModules,
+        );
+      }
       const updated = await tx.userBranchProfile.update({
         where: { id: existing.id },
         data,
@@ -1788,6 +1824,40 @@ export class UsersService {
       }
     }
     return { moduleKeys, permissions };
+  }
+
+  /** Whether two module-key lists hold the same set (order-insensitive). */
+  private sameModuleSet(a: string[], b: string[]): boolean {
+    const setA = new Set(a);
+    return setA.size === new Set(b).size && b.every((m) => setA.has(m));
+  }
+
+  /**
+   * Drop a user's permission overrides at a branch for modules outside the
+   * assignment's effective modules. Called when the role or module set changes:
+   * an override's allow also surfaces its module (see {@link getMyPermissions}),
+   * so stale grants would otherwise keep showing modules the admin removed.
+   */
+  private async pruneOverridesOutsideModules(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    personId: string,
+    branchId: string,
+    roleKey: string,
+    enabledModules: string[],
+  ): Promise<void> {
+    const { moduleKeys } = this.resolveEffectiveModules(
+      roleKey,
+      enabledModules,
+    );
+    await tx.userBranchPermission.deleteMany({
+      where: {
+        tenantId,
+        personId,
+        branchId,
+        moduleKey: { notIn: [...moduleKeys] },
+      },
+    });
   }
 
   /** The module a permission key belongs to (null if unknown). */
