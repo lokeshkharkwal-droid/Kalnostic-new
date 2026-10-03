@@ -1,6 +1,7 @@
 import {
   patientAgeDisplay,
   patientFullAgeDisplay,
+  patientReportAgeDisplay,
   patientSingleUnitAgeDisplay,
   salutationLabel,
 } from './patient-label.util';
@@ -120,5 +121,65 @@ describe('patientSingleUnitAgeDisplay', () => {
       patientSingleUnitAgeDisplay(new Date('invalid'), 10, 'DAYS', NOW),
     ).toBe('10 Days');
     expect(patientSingleUnitAgeDisplay(null, null, null, NOW)).toBe('');
+  });
+});
+
+describe('patientReportAgeDisplay', () => {
+  const age = (dob: string, now = NOW) =>
+    patientReportAgeDisplay(d(dob), null, null, now);
+
+  it('uses Days from 0 to 29 days old', () => {
+    expect(age('2026-09-25')).toBe('0 Days');
+    expect(age('2026-09-24')).toBe('1 Day');
+    expect(age('2026-09-10')).toBe('15 Days');
+    expect(age('2026-08-27')).toBe('29 Days');
+  });
+
+  it('switches to Months at 30 days, even before a full calendar month', () => {
+    // 2026-08-26 → 2026-09-25 is 30 days but 0 calendar months (August has 31).
+    expect(age('2026-08-26')).toBe('1 Month');
+    expect(age('2026-08-25')).toBe('1 Month');
+  });
+
+  it('keeps Days below 30 days even when a short month already completed', () => {
+    // 2026-02-01 → 2026-03-01: 1 calendar month, but only 28 days.
+    expect(age('2026-02-01', d('2026-03-01'))).toBe('28 Days');
+  });
+
+  it('uses Months from 1 up to 11 months old', () => {
+    expect(age('2026-03-25')).toBe('6 Months');
+    expect(age('2025-10-25')).toBe('11 Months');
+    // 11 months 30 days is still under 1 year.
+    expect(age('2025-09-26')).toBe('11 Months');
+  });
+
+  it('uses Years from 1 year old', () => {
+    expect(age('2025-09-25')).toBe('1 Year');
+    expect(age('2001-09-25')).toBe('25 Years');
+    expect(age('2001-12-12')).toBe('24 Years');
+    expect(age('1930-01-01')).toBe('96 Years');
+  });
+
+  it('never combines units', () => {
+    for (const dob of ['2026-09-10', '2026-03-12', '2001-05-17']) {
+      expect(age(dob)).toMatch(/^\d+ (Days?|Months?|Years?)$/);
+    }
+  });
+
+  it('prefers the DOB over a stale age/ageType snapshot', () => {
+    expect(patientReportAgeDisplay(d('2026-03-25'), 23, 'YEARS', NOW)).toBe(
+      '6 Months',
+    );
+  });
+
+  it('falls back to the age/ageType snapshot without a usable DOB', () => {
+    expect(patientReportAgeDisplay(null, 23, 'YEARS', NOW)).toBe('23 Years');
+    expect(patientReportAgeDisplay(d('2026-10-01'), 6, 'MONTHS', NOW)).toBe(
+      '6 Months',
+    );
+    expect(patientReportAgeDisplay(new Date('invalid'), 10, 'DAYS', NOW)).toBe(
+      '10 Days',
+    );
+    expect(patientReportAgeDisplay(null, null, null, NOW)).toBe('');
   });
 });

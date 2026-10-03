@@ -78,3 +78,58 @@ describe('LatteReportRenderService — {{image:ID}} on the Latte path', () => {
     );
   });
 });
+
+describe('LatteReportRenderService — barcode image tags', () => {
+  const service = new LatteReportRenderService();
+  const ORDER_SRC = 'data:image/png;base64,T1JERVI=';
+  const SAMPLE_SRC = 'data:image/png;base64,U0FNUExF';
+  // `buildTestLatteContext` spreads the flat variables at the root; the
+  // runtime images map carries the same srcs.
+  const data = {
+    patient_name: 'Jane',
+    order_id_barcode: ORDER_SRC,
+    order_id_qr_code: SAMPLE_SRC,
+  };
+  const images = { order_id_barcode: ORDER_SRC, order_id_qr_code: SAMPLE_SRC };
+
+  it('renders a bare tag in text as an <img> instead of raw data-URI text', () => {
+    const html = service.renderBodyFragment(
+      meta({
+        body_html: '<p>{$patient_name}</p><div>{order_id_qr_code}</div>',
+      }),
+      data,
+      images,
+    );
+    expect(html).toContain(
+      `<div><img src="${SAMPLE_SRC}" alt="order_id_qr_code" /></div>`,
+    );
+  });
+
+  it('fills <img src="{tag}"> and {{image:tag}} with the same src', () => {
+    const html = service.renderBodyFragment(
+      meta({
+        body_html:
+          '<p>{$patient_name}</p><img src="{order_id_barcode}" alt="x">{{image:order_id_barcode}}',
+      }),
+      data,
+      images,
+    );
+    expect(html).toContain(`<img src="${ORDER_SRC}" alt="x">`);
+    expect(html).toContain(`<img src="${ORDER_SRC}" alt="order_id_barcode" />`);
+    expect(html).not.toContain(SAMPLE_SRC);
+  });
+
+  it('renders bare barcode tags in a Latte template header', () => {
+    const prepared = service.render(
+      meta({
+        header_html: '<span>{order_id_barcode}</span>',
+        body_html: '<p>{$patient_name}</p>',
+      }),
+      data,
+      images,
+    );
+    expect(prepared.headerTemplate).toContain(
+      `<span><img src="${ORDER_SRC}" alt="order_id_barcode" /></span>`,
+    );
+  });
+});
