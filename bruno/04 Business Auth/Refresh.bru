@@ -31,4 +31,13 @@ script:post-response {
 docs {
   Exchange a refresh token for a new access + refresh pair (single-use
   rotation). Re-captures both tokens.
+
+  The session is re-validated on every refresh (the access token itself is
+  self-contained, so this is where admin changes take effect):
+  - person inactive, or tenant membership INACTIVE → 403 ACCOUNT_INACTIVE;
+  - the stored (branch + role) context is kept only while that assignment is
+    still live — active, not revoked, per-branch status ACTIVE, branch not
+    soft-deleted. Otherwise the new tokens land on the user's DEFAULT profile,
+    exactly like a fresh login.
+  - `profiles[]` in the new JWT omits assignments on soft-deleted branches.
 }

@@ -403,7 +403,17 @@ export class BranchService {
       where: { tenantId, moduleKey, isEnabled: true, deletedAt: null },
       select: { branchId: true },
     });
-    return rows.map((row) => row.branchId);
+    // Module enablement rows outlive a soft-deleted branch, so keep only
+    // branches that still exist.
+    const live = await this.prisma.branch.findMany({
+      where: {
+        tenantId,
+        deletedAt: null,
+        id: { in: rows.map((row) => row.branchId) },
+      },
+      select: { id: true },
+    });
+    return live.map((branch) => branch.id);
   }
 
   /**
