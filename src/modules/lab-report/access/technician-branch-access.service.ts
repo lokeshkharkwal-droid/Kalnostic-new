@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { LabReportStatus, StaffStatus } from '@prisma/client';
+import {
+  LabReportStatus,
+  StaffStatus,
+  TransferKind,
+  TransferStatus,
+} from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { tenantContext } from '../../../prisma/tenant-context';
 import { UsersService } from '../../users/users.service';
@@ -10,6 +15,7 @@ import {
 } from '../exceptions/lab-report.exceptions';
 import {
   isStatusVisible,
+  senderLinkWhere,
   visibleStatusesFor,
   type BranchRule,
   type VisibleStatuses,
@@ -201,7 +207,18 @@ export class TechnicianBranchAccessService {
   ): Promise<WorklistBranchScope> {
     if (!requested) {
       if (!active.branchId) throw new ActiveBranchRequiredException();
-      return { rules: [{ branchId: active.branchId, statuses: 'ALL' }] };
+      const linked = await this.branchesWithSenderLinks(tenantId, [
+        active.branchId,
+      ]);
+      return {
+        rules: [
+          {
+            branchId: active.branchId,
+            statuses: 'ALL',
+            senderLinked: linked.has(active.branchId),
+          },
+        ],
+      };
     }
     const access = await this.resolve(tenantId, personId, active);
     const usable = (a: BranchAccess): boolean =>
@@ -209,9 +226,18 @@ export class TechnicianBranchAccessService {
       a.isActiveBranch ||
       a.isAdmin ||
       a.permissions.has(requiredKey);
+    // The sender link only applies to the main worklist: the special tabs list
+    // work items a branch can act on, so they stay with the branch holding them.
+    const linked = requiredKey
+      ? new Set<string>()
+      : await this.branchesWithSenderLinks(
+          tenantId,
+          access.map((a) => a.branchId),
+        );
     const toRule = (a: BranchAccess): BranchRule => ({
       branchId: a.branchId,
       statuses: a.visibleStatuses,
+      senderLinked: linked.has(a.branchId),
     });
     if (requested.toLowerCase() === 'all') {
       const rules = access.filter(usable).map(toRule);
@@ -223,6 +249,66 @@ export class TechnicianBranchAccessService {
       throw new BranchNotAccessibleException(requested);
     }
     return { rules: [toRule(match)] };
+  }
+
+  /**
+   * Which of these branches have sent samples that another branch accepted — a
+   * cheap existence check so only those branches pay for the sender-link filter.
+   */
+  private branchesWithSenderLinks(
+    tenantId: string,
+    branchIds: string[],
+  ): Promise<Set<string>> {
+    return this.withTenantContext(tenantId, async () => {
+      const rows = await this.prisma.sampleTransfer.findMany({
+        where: {
+          tenantId,
+          kind: TransferKind.INTERNAL,
+          transferStatus: TransferStatus.ACCEPTED,
+          branchId: { in: branchIds },
+          deletedAt: null,
+        },
+        distinct: ['branchId'],
+        select: { branchId: true },
+      });
+      return new Set(
+        rows.map((r) => r.branchId).filter((b): b is string => !!b),
+      );
+    });
+  }
+
+  /**
+   * Whether the caller may VIEW this report only because a branch of theirs sent
+   * it: the caller's own branch (and any branch they are authorised for) sent a
+   * sample for it that the receiver accepted, and the report is in a status that
+   * branch may see. It grants no permissions at all — the guard re-points the
+   * request at the report's branch without a role, for reads only.
+   */
+  async hasSenderLinkTo(
+    tenantId: string,
+    personId: string,
+    active: ActiveContext,
+    reportId: string,
+  ): Promise<boolean> {
+    const access = await this.resolve(tenantId, personId, active);
+    return this.withTenantContext(tenantId, async () => {
+      for (const a of access) {
+        const row = await this.prisma.labReport.findFirst({
+          where: {
+            id: reportId,
+            tenantId,
+            deletedAt: null,
+            ...senderLinkWhere(a.branchId),
+            ...(a.visibleStatuses === 'ALL'
+              ? {}
+              : { status: { in: [...a.visibleStatuses] } }),
+          },
+          select: { id: true },
+        });
+        if (row) return true;
+      }
+      return false;
+    });
   }
 
   /**

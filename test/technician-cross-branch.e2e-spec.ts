@@ -54,6 +54,12 @@ import { PERMISSION_KEYS } from './../src/modules/permissions/constants/module-p
  * separate gates, and a report is always judged by ITS OWN branch's
  * permissions — "All Branches" only widens the set, it never merges permissions.
  *
+ * Sent flow (internal transfer): two more throwaway order items stand for a test
+ * branch A SENT to branch S (the technician has no profile at S). One was
+ * accepted by S (the report now sits at S) and one is still in transit (the
+ * report is still at A). The sender must still see both, view-only; every write
+ * is refused.
+ *
  * All seeded rows are hard-deleted in afterAll. Requires a reachable PostgreSQL
  * with at least one lab report whose order item is a plain (non panel-member)
  * test, and the `lab_technician` role; the suite self-skips otherwise (and says
@@ -86,7 +92,15 @@ describe('Technician cross-branch worklist (e2e)', () => {
     alerts: [] as string[],
     deptAssignments: [] as string[],
     memberships: [] as string[],
+    items: [] as string[],
+    samples: [] as string[],
+    sampleTests: [] as string[],
+    transfers: [] as string[],
   };
+  let branchS = '';
+  let reportAtS = ''; // sent by A, accepted by S: the report now sits at S
+  let reportInTransit = ''; // sent by A, not accepted yet: still at A
+  let acceptedTransferId = '';
 
   const K = PERMISSION_KEYS;
   const ALL_LAB_KEYS = Object.entries(K)
@@ -180,6 +194,7 @@ describe('Technician cross-branch worklist (e2e)', () => {
       include: {
         orderItem: {
           select: {
+            orderId: true,
             branchLabTest: { select: { departmentId: true } },
             branchLabPanel: { select: { departmentId: true } },
           },
@@ -370,6 +385,109 @@ describe('Technician cross-branch worklist (e2e)', () => {
       created.alerts.push(a.id);
     }
 
+    // --- sent flow: branch S (no profile for the technician) + two sent tests ----------
+    const bS = await prisma.branch.create({
+      data: {
+        tenantId,
+        name: `E2E XB S ${stamp}`,
+        shortName: 'XBS',
+        code: `XBS${stamp}`.toUpperCase().slice(0, 20),
+        branchType: branch.branchType,
+        status: 'ACTIVE',
+      },
+      select: { id: true },
+    });
+    branchS = bS.id;
+    created.branches.push(bS.id);
+    const mS = await prisma.branchModule.create({
+      data: {
+        tenantId,
+        branchId: bS.id,
+        moduleKey: 'lab_operations',
+        isEnabled: true,
+      },
+      select: { id: true },
+    });
+    created.modules.push(mS.id);
+
+    const baseItem = await prisma.orderItem.findUniqueOrThrow({
+      where: { id: base.orderItemId },
+    });
+    const { id: _bid, createdAt: _bc, updatedAt: _bu, ...itemData } = baseItem;
+    const makeSentTest = async (opts: {
+      reportBranch: string;
+      reportStatus: LabReportStatus;
+      transferStatus: 'ACCEPTED' | 'IN_TRANSIT';
+      tag: string;
+    }) => {
+      const item = await prisma.orderItem.create({
+        data: itemData as never,
+        select: { id: true },
+      });
+      created.items.push(item.id);
+      const report = await prisma.labReport.create({
+        data: {
+          ...(clone as object),
+          orderItemId: item.id,
+          branchId: opts.reportBranch,
+          status: opts.reportStatus,
+          deletedAt: null,
+        } as never,
+        select: { id: true },
+      });
+      created.reports.push(report.id);
+      const sample = await prisma.orderSample.create({
+        data: {
+          tenantId,
+          orderId: base.orderItem.orderId,
+          labTestSampleId: 'e2e-lts',
+          accessionNo: `E2E-${opts.tag}-${stamp}`.toUpperCase(),
+          branchId: BR.A,
+          status: 'SENT_INTERNAL',
+        } as never,
+        select: { id: true },
+      });
+      created.samples.push(sample.id);
+      const link = await prisma.orderSampleTest.create({
+        data: {
+          tenantId,
+          sampleId: sample.id,
+          orderItemId: item.id,
+          labTestId: base.labTestId,
+        },
+        select: { id: true },
+      });
+      created.sampleTests.push(link.id);
+      const transfer = await prisma.sampleTransfer.create({
+        data: {
+          tenantId,
+          sampleId: sample.id,
+          kind: 'INTERNAL',
+          transferStatus: opts.transferStatus,
+          branchId: BR.A,
+          destinationBranchId: bS.id,
+        } as never,
+        select: { id: true },
+      });
+      created.transfers.push(transfer.id);
+      return { reportId: report.id, transferId: transfer.id };
+    };
+    const accepted = await makeSentTest({
+      reportBranch: bS.id,
+      reportStatus: LabReportStatus.SAVED,
+      transferStatus: 'ACCEPTED',
+      tag: 'ACC',
+    });
+    reportAtS = accepted.reportId;
+    acceptedTransferId = accepted.transferId;
+    const transit = await makeSentTest({
+      reportBranch: BR.A ?? '',
+      reportStatus: LabReportStatus.PENDING,
+      transferStatus: 'IN_TRANSIT',
+      tag: 'TRN',
+    });
+    reportInTransit = transit.reportId;
+
     // --- token for the technician, active at A ---------------------------------------
     token = app.get(JwtService, { strict: false }).sign(
       {
@@ -395,8 +513,20 @@ describe('Technician cross-branch worklist (e2e)', () => {
         await prisma.criticalAlert.deleteMany({
           where: { id: { in: created.alerts } },
         });
+        await prisma.sampleTransfer.deleteMany({
+          where: { id: { in: created.transfers } },
+        });
+        await prisma.orderSampleTest.deleteMany({
+          where: { id: { in: created.sampleTests } },
+        });
+        await prisma.orderSample.deleteMany({
+          where: { id: { in: created.samples } },
+        });
         await prisma.labReport.deleteMany({
           where: { id: { in: created.reports } },
+        });
+        await prisma.orderItem.deleteMany({
+          where: { id: { in: created.items } },
         });
         await prisma.userBranchPermission.deleteMany({
           where: { id: { in: created.perms } },
@@ -537,9 +667,11 @@ describe('Technician cross-branch worklist (e2e)', () => {
       expect(res.status).toBe(200);
       const c = res.body.data;
       // A(1 each) + B(1 each) + C(P,S) + D(1 each) = 3 Pending, 3 Saved, 3 Approved? no:
-      // Pending A,B,C,D = 4; Saved A,B,C,D = 4; Approved A,B,D = 3
-      expect(c.pending).toBe(4);
-      expect(c.saved).toBe(4);
+      // Pending A,B,C,D = 4 (+1 sent test still in transit, at A);
+      // Saved A,B,C,D = 4 (+1 sent test accepted by S, seen through the sender
+      // link); Approved A,B,D = 3
+      expect(c.pending).toBe(5);
+      expect(c.saved).toBe(5);
       expect(c.approved).toBe(3);
     });
   });
@@ -790,9 +922,166 @@ describe('Technician cross-branch worklist (e2e)', () => {
     );
   });
 
+  // ---------------------------------------------------------------------------
+  describe('sent flow: the sender keeps seeing what it sent, view-only', () => {
+    async function listRows(query = '') {
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/lab-reports?limit=100${query ? `&${query}` : ''}`)
+        .set(auth());
+      expect(res.status).toBe(200);
+      const rows: Array<{ id: string; accessMode?: string }> = Array.isArray(
+        res.body?.data,
+      )
+        ? res.body.data
+        : (res.body?.data?.data ?? []);
+      return rows;
+    }
+    const idsIn = async (query = '') =>
+      (await listRows(query)).map((r) => r.id);
+
+    run(
+      'the report held by the receiving branch is still listed for the sender (default view)',
+      async () => {
+        expect(await idsIn()).toContain(reportAtS);
+      },
+    );
+
+    run('the report still waiting at the sender is listed too', async () => {
+      expect(await idsIn()).toContain(reportInTransit);
+    });
+
+    run(
+      'both sent rows are marked view-only, normal rows are full',
+      async () => {
+        const rows = await listRows();
+        const mode = (id: string) => rows.find((r) => r.id === id)?.accessMode;
+        expect(mode(reportAtS)).toBe('view'); // held elsewhere, listed by the link
+        expect(mode(reportInTransit)).toBe('view'); // locked while in transit
+        expect(mode(idOf('A', LabReportStatus.SAVED))).toBe('full');
+      },
+    );
+
+    run(
+      'All Branches includes it; another authorised branch (which sent nothing) does not',
+      async () => {
+        expect(await idsIn('branchId=all')).toContain(reportAtS);
+        expect(await idsIn(`branchId=${BR.B}`)).not.toContain(reportAtS);
+      },
+    );
+
+    run('the sender can open and read it', async () => {
+      for (const path of ['', '/history']) {
+        const res = await request(app.getHttpServer())
+          .get(`/api/v1/lab-reports/${reportAtS}${path}`)
+          .set(auth());
+        expect(res.status).toBe(200);
+      }
+    });
+
+    run(
+      'but cannot change it: every write on the report held by S is refused',
+      async () => {
+        const save = await request(app.getHttpServer())
+          .post(`/api/v1/lab-reports/${reportAtS}/save`)
+          .set(auth())
+          .send({});
+        expect(save.status).toBe(404);
+        const results = await request(app.getHttpServer())
+          .patch(`/api/v1/lab-reports/${reportAtS}/results`)
+          .set(auth())
+          .send({
+            values: [
+              {
+                resultParamId: '00000000-0000-4000-8000-000000000000',
+                observed1: '1',
+              },
+            ],
+          });
+        expect(results.status).toBe(404);
+        const adjust = await request(app.getHttpServer())
+          .delete(
+            `/api/v1/lab-reports/${reportAtS}/tat-adjustments/00000000-0000-4000-8000-000000000000`,
+          )
+          .set(auth());
+        expect(adjust.status).toBe(404);
+      },
+    );
+
+    run(
+      'an alert raised at the sender for a report that has since moved cannot be updated either',
+      async () => {
+        const alert = await prisma.criticalAlert.create({
+          data: {
+            tenantId,
+            branchId: BR.A,
+            labReportId: reportAtS,
+            reportStatusAtTrigger: LabReportStatus.SAVED,
+          },
+          select: { id: true },
+        });
+        created.alerts.push(alert.id);
+        const res = await request(app.getHttpServer())
+          .patch(`/api/v1/critical-alerts/${alert.id}/status`)
+          .set(auth())
+          .send({ status: 'ACKNOWLEDGED' });
+        expect(res.status).toBe(404);
+      },
+    );
+
+    run(
+      'before Accept the report is still at the sender: readable, but every write says "sent out"',
+      async () => {
+        const read = await request(app.getHttpServer())
+          .get(`/api/v1/lab-reports/${reportInTransit}`)
+          .set(auth());
+        expect(read.status).toBe(200);
+        const save = await request(app.getHttpServer())
+          .post(`/api/v1/lab-reports/${reportInTransit}/save`)
+          .set(auth())
+          .send({});
+        expect(save.status).toBe(409);
+        expect(JSON.stringify(save.body)).toContain('LAB_REPORT_SENT_OUT');
+      },
+    );
+
+    run(
+      'the link ends when the transfer is undone (receiver repeats or returns)',
+      async () => {
+        await prisma.sampleTransfer.update({
+          where: { id: acceptedTransferId },
+          data: { transferStatus: 'REPEAT' },
+        });
+        try {
+          expect(await idsIn()).not.toContain(reportAtS);
+          const res = await request(app.getHttpServer())
+            .get(`/api/v1/lab-reports/${reportAtS}`)
+            .set(auth());
+          expect(res.status).toBe(404);
+        } finally {
+          await prisma.sampleTransfer.update({
+            where: { id: acceptedTransferId },
+            data: { transferStatus: 'ACCEPTED' },
+          });
+        }
+        expect(await idsIn()).toContain(reportAtS);
+      },
+    );
+
+    run(
+      'a branch that never sent it gets nothing: the TAT summary refuses an unauthorised branch',
+      async () => {
+        const res = await request(app.getHttpServer())
+          .get(`/api/v1/lab-reports/tat/summary?branchId=${BR.E}`)
+          .set(auth());
+        expect(res.status).toBe(403);
+      },
+    );
+  });
+
   it('keeps the fixtures it needs (sanity)', () => {
     if (!ready) return;
     expect(baseReportId).toBeTruthy();
     expect(Object.keys(BR)).toHaveLength(LETTERS.length);
+    expect(branchS).toBeTruthy();
   });
 });

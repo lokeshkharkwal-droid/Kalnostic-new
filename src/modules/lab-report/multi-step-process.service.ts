@@ -132,7 +132,6 @@ export class MultiStepProcessService {
       },
     });
     if (!report) throw new LabReportNotFoundException(labReportId);
-    await assertReportNotSentOut(this.prisma, tenantId, labReportId);
 
     const process = await this.prisma.multiStepTestProcess.findFirst({
       where: { labReportId, tenantId, deletedAt: null },

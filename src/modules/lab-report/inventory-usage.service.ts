@@ -30,12 +30,18 @@ export class InventoryUsageService {
     return branchId;
   }
 
-  private async requireReport(id: string, tenantId: string, branchId: string) {
+  /** The report in the active branch; writes are refused while it is sent out. */
+  private async requireReport(
+    id: string,
+    tenantId: string,
+    branchId: string,
+    opts: { forRead?: boolean } = {},
+  ) {
     const report = await this.prisma.labReport.findFirst({
       where: { id, tenantId, branchId, deletedAt: null },
     });
     if (!report) throw new LabReportNotFoundException(id);
-    await assertReportNotSentOut(this.prisma, tenantId, id);
+    if (!opts.forRead) await assertReportNotSentOut(this.prisma, tenantId, id);
     return report;
   }
 
@@ -45,7 +51,9 @@ export class InventoryUsageService {
     branchId: string | null,
   ) {
     const activeBranchId = this.requireBranch(branchId);
-    await this.requireReport(labReportId, tenantId, activeBranchId);
+    await this.requireReport(labReportId, tenantId, activeBranchId, {
+      forRead: true,
+    });
 
     return this.prisma.labReportInventoryUsage.findMany({
       where: { labReportId, tenantId, deletedAt: null },

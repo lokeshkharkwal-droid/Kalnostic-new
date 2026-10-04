@@ -1850,6 +1850,9 @@ export class OrderSampleService {
       sample.branchId,
       sample.tests,
     );
+    // Lock before checking, so a technician write still in flight is seen by the
+    // check (and one that starts later finds the report sent out).
+    await this.labReportService.lockReports(tx, tenantId, reportIds);
     for (const reportId of reportIds) {
       if (
         !(await this.labReportService.isReportUntouched(tx, tenantId, reportId))
@@ -1916,6 +1919,7 @@ export class OrderSampleService {
       copy.branchId,
       copy.tests,
     );
+    await this.labReportService.lockReports(tx, tenantId, reportIds);
     for (const reportId of reportIds) {
       if (
         !(await this.labReportService.isReportUntouched(tx, tenantId, reportId))

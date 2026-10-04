@@ -24,6 +24,10 @@ type Setup = {
   moduleOn: string[];
   /** Permission keys per branch (independent per branch). */
   permissions: Record<string, string[]>;
+  /** Branches that have sent samples another branch accepted. */
+  sentBy?: string[];
+  /** What the per-report sender-link lookup finds (when asked). */
+  linkedReport?: boolean;
 };
 
 function build(setup: Setup) {
@@ -54,6 +58,18 @@ function build(setup: Setup) {
               .map((branchId) => ({ branchId })),
           ),
       ),
+    },
+    sampleTransfer: {
+      findMany: jest
+        .fn()
+        .mockResolvedValue(
+          (setup.sentBy ?? []).map((branchId) => ({ branchId })),
+        ),
+    },
+    labReport: {
+      findFirst: jest
+        .fn()
+        .mockResolvedValue(setup.linkedReport ? { id: 'r1' } : null),
     },
     runWithTenant: jest.fn((_t: string, fn: () => Promise<unknown>) => fn()),
   };
@@ -187,7 +203,9 @@ describe('TechnicianBranchAccessService — which branches', () => {
       permissions: { [B]: FULL },
     });
     const scope = await svc.resolveScope(TENANT, PERSON, ACTIVE, undefined);
-    expect(scope).toEqual({ rules: [{ branchId: A, statuses: 'ALL' }] });
+    expect(scope).toEqual({
+      rules: [{ branchId: A, statuses: 'ALL', senderLinked: false }],
+    });
     expect(prisma.userBranchProfile.findMany).not.toHaveBeenCalled();
   });
 
@@ -356,7 +374,9 @@ describe('TechnicianBranchAccessService — edge cases', () => {
       permissions: {},
     });
     const scope = await svc.resolveScope(TENANT, PERSON, ACTIVE, A);
-    expect(scope.rules).toEqual([{ branchId: A, statuses: 'ALL' }]);
+    expect(scope.rules).toEqual([
+      { branchId: A, statuses: 'ALL', senderLinked: false },
+    ]);
   });
 
   it('a branch that is deactivated in the tenant drops out of All Branches', async () => {
@@ -398,7 +418,9 @@ describe('TechnicianBranchAccessService — edge cases', () => {
       B,
       K.LAB_ACCESS_CRITICAL_LIST,
     );
-    expect(scope.rules).toEqual([{ branchId: B, statuses: 'ALL' }]);
+    expect(scope.rules).toEqual([
+      { branchId: B, statuses: 'ALL', senderLinked: false },
+    ]);
   });
 
   it('branches are listed own-first, then alphabetically — a stable dropdown order', async () => {
@@ -461,5 +483,154 @@ describe('TechnicianBranchAccessService — edge cases', () => {
       branchStatus: 'ACTIVE',
       enabledModules: { has: 'lab_operations' },
     });
+  });
+});
+
+describe('TechnicianBranchAccessService - sender link', () => {
+  it('default scope: the own branch is flagged only when it has sent samples that were accepted', async () => {
+    const withLink = build({
+      profiles: [],
+      activeBranches: [A],
+      moduleOn: [A],
+      permissions: {},
+      sentBy: [A],
+    });
+    expect(
+      (await withLink.svc.resolveScope(TENANT, PERSON, ACTIVE, undefined))
+        .rules,
+    ).toEqual([{ branchId: A, statuses: 'ALL', senderLinked: true }]);
+
+    const without = build({
+      profiles: [],
+      activeBranches: [A],
+      moduleOn: [A],
+      permissions: {},
+    });
+    expect(
+      (await without.svc.resolveScope(TENANT, PERSON, ACTIVE, undefined))
+        .rules[0]?.senderLinked,
+    ).toBe(false);
+  });
+
+  it('All Branches: each branch is flagged on its own sends, never on another branch', async () => {
+    const { svc } = build({
+      profiles: [{ branchId: B }, { branchId: C }],
+      activeBranches: [A, B, C],
+      moduleOn: [A, B, C],
+      permissions: { [B]: FULL, [C]: FULL },
+      sentBy: [B],
+    });
+    const scope = await svc.resolveScope(TENANT, PERSON, ACTIVE, 'all');
+    const linked = Object.fromEntries(
+      scope.rules.map((r) => [r.branchId, r.senderLinked]),
+    );
+    expect(linked).toEqual({ [A]: false, [B]: true, [C]: false });
+  });
+
+  it('only authorised branches are asked about (no lookup for others)', async () => {
+    const { svc, prisma } = build({
+      profiles: [{ branchId: B }],
+      activeBranches: [A, B, E],
+      moduleOn: [A, B, E],
+      permissions: { [B]: FULL },
+      sentBy: [E],
+    });
+    await svc.resolveScope(TENANT, PERSON, ACTIVE, 'all');
+    const where = (
+      prisma.sampleTransfer.findMany.mock.calls[0] as [
+        { where: { branchId: { in: string[] } } },
+      ]
+    )[0].where;
+    expect([...where.branchId.in].sort()).toEqual([A, B]);
+  });
+
+  it('special tabs never carry the sender link (they list work the branch can act on)', async () => {
+    const { svc, prisma } = build({
+      profiles: [{ branchId: B }],
+      activeBranches: [A, B],
+      moduleOn: [A, B],
+      permissions: { [B]: [K.LAB_ACCESS_CRITICAL_LIST] },
+      sentBy: [A, B],
+    });
+    const scope = await svc.resolveScope(
+      TENANT,
+      PERSON,
+      ACTIVE,
+      'all',
+      K.LAB_ACCESS_CRITICAL_LIST,
+    );
+    expect(scope.rules.every((r) => !r.senderLinked)).toBe(true);
+    expect(prisma.sampleTransfer.findMany).not.toHaveBeenCalled();
+  });
+
+  it('the transfer lookup only counts INTERNAL transfers the receiver ACCEPTED', async () => {
+    const { svc, prisma } = build({
+      profiles: [],
+      activeBranches: [A],
+      moduleOn: [A],
+      permissions: {},
+    });
+    await svc.resolveScope(TENANT, PERSON, ACTIVE, undefined);
+    const where = (
+      prisma.sampleTransfer.findMany.mock.calls[0] as [
+        { where: Record<string, unknown> },
+      ]
+    )[0].where;
+    expect(where).toMatchObject({
+      tenantId: TENANT,
+      kind: 'INTERNAL',
+      transferStatus: 'ACCEPTED',
+      deletedAt: null,
+    });
+  });
+
+  it('hasSenderLinkTo: true when a branch of the caller sent the report', async () => {
+    const { svc, prisma } = build({
+      profiles: [],
+      activeBranches: [A],
+      moduleOn: [A],
+      permissions: {},
+      linkedReport: true,
+    });
+    expect(await svc.hasSenderLinkTo(TENANT, PERSON, ACTIVE, 'r1')).toBe(true);
+    const where = (
+      prisma.labReport.findFirst.mock.calls[0] as [
+        { where: Record<string, unknown> },
+      ]
+    )[0].where;
+    expect(where).toMatchObject({
+      id: 'r1',
+      tenantId: TENANT,
+      branchId: { not: A },
+    });
+  });
+
+  it('hasSenderLinkTo: false when nothing links the report to the caller branches', async () => {
+    const { svc } = build({
+      profiles: [],
+      activeBranches: [A],
+      moduleOn: [A],
+      permissions: {},
+      linkedReport: false,
+    });
+    expect(await svc.hasSenderLinkTo(TENANT, PERSON, ACTIVE, 'r1')).toBe(false);
+  });
+
+  it('hasSenderLinkTo: an authorised branch counts too, limited to the statuses it may see', async () => {
+    const { svc, prisma } = build({
+      profiles: [{ branchId: B }],
+      activeBranches: [A, B],
+      moduleOn: [A, B],
+      permissions: { [B]: [K.LAB_ACCESS_SAVED] },
+      linkedReport: false,
+    });
+    await svc.hasSenderLinkTo(TENANT, PERSON, ACTIVE, 'r1');
+    const calls = prisma.labReport.findFirst.mock.calls as Array<
+      [{ where: { branchId: { not: string }; status?: { in: string[] } } }]
+    >;
+    const forB = calls.find((c) => c[0].where.branchId.not === B)?.[0].where;
+    const forA = calls.find((c) => c[0].where.branchId.not === A)?.[0].where;
+    expect(forB?.status).toEqual({ in: ['SAVED'] });
+    expect(forA?.status).toBeUndefined();
   });
 });

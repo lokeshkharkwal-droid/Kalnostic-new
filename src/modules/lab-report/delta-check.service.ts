@@ -173,7 +173,14 @@ export class DeltaCheckService {
   ) {
     const activeBranchId = this.requireBranch(branchId);
     const entry = await this.prisma.deltaCheck.findFirst({
-      where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
+      where: {
+        id,
+        tenantId,
+        deletedAt: null,
+        // Tied to the REPORT's branch, not the branch stamped on this row when it
+        // was raised: the row keeps that branch after the report is re-homed.
+        labReport: { is: { branchId: activeBranchId, deletedAt: null } },
+      },
     });
     if (!entry) throw new WorklistEntryNotFoundException('delta_check', id);
     await assertReportNotSentOut(this.prisma, tenantId, entry.labReportId);

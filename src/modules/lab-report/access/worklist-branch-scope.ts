@@ -1,4 +1,9 @@
-import { LabReportStatus } from '@prisma/client';
+import {
+  LabReportStatus,
+  Prisma,
+  TransferKind,
+  TransferStatus,
+} from '@prisma/client';
 import { PERMISSION_KEYS } from '../../permissions/constants/module-permissions.constant';
 
 /**
@@ -12,6 +17,13 @@ export type VisibleStatuses = ReadonlySet<LabReportStatus> | 'ALL';
 export interface BranchRule {
   branchId: string;
   statuses: VisibleStatuses;
+  /**
+   * True when this branch has sent samples to other branches that were accepted
+   * there. The rule then also covers those reports, which now sit at another
+   * branch, so the sender keeps seeing what it sent (view and print only — see
+   * {@link senderLinkWhere}).
+   */
+  senderLinked?: boolean;
 }
 
 /**
@@ -62,29 +74,77 @@ export function isStatusVisible(
 }
 
 /**
+ * Reports the branch SENT to another branch: the report is now held elsewhere,
+ * and the branch's own sample for that test was accepted by the receiver through
+ * an internal transfer.
+ *
+ * Matching goes through the order item (the same key the re-home uses), so a
+ * panel is matched at item level; the report must have left the branch, which
+ * keeps unsent members of a panel (still at the sender) out. The link lasts while
+ * the transfer stays accepted: a Retrieve, or the receiver's Repeat / Return,
+ * moves the transfer out of the accepted state and ends it, as does removing the
+ * test from the order.
+ */
+export function senderLinkWhere(branchId: string): Prisma.LabReportWhereInput {
+  return {
+    branchId: { not: branchId },
+    orderItem: {
+      is: {
+        orderSampleTests: {
+          some: {
+            deletedAt: null,
+            sample: {
+              is: {
+                branchId,
+                deletedAt: null,
+                transfers: {
+                  some: {
+                    kind: TransferKind.INTERNAL,
+                    transferStatus: TransferStatus.ACCEPTED,
+                    branchId,
+                    deletedAt: null,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+}
+
+/**
+ * The reports one rule covers: those held by the branch plus, when the rule is
+ * `senderLinked`, those it sent — each limited to the statuses the rule grants.
+ */
+export function ruleWhere(rule: BranchRule): Prisma.LabReportWhereInput {
+  const own: Prisma.LabReportWhereInput = { branchId: rule.branchId };
+  const where: Prisma.LabReportWhereInput = rule.senderLinked
+    ? { OR: [own, senderLinkWhere(rule.branchId)] }
+    : { ...own };
+  if (rule.statuses !== 'ALL') {
+    where.status = { in: [...rule.statuses] };
+  }
+  return where;
+}
+
+/** Rules that can match anything: a branch granting no statuses contributes nothing. */
+export function usableRules(scope: WorklistBranchScope): BranchRule[] {
+  return scope.rules.filter((r) => r.statuses === 'ALL' || r.statuses.size > 0);
+}
+
+/**
  * `where` fragment for the special worklists (Critical Alerts, Re-run, Out of
- * Range, Delta Check, Scheduled Tests), whose rows belong to a report. Per
- * branch, a row is listed only when its report's status is one that branch
- * grants — the same rule the main worklist applies. No usable branch matches
- * nothing.
+ * Range, Delta Check, Scheduled Tests), whose rows belong to a report. A row
+ * follows its REPORT — not the branch it was raised at, which goes stale when
+ * the report is re-homed — and is listed under the same per-branch rule as the
+ * main worklist. No usable branch matches nothing.
  */
 export function worklistRowBranchWhere(scope: WorklistBranchScope): {
-  OR: Array<{
-    branchId: string;
-    labReport?: { status: { in: LabReportStatus[] } };
-  }>;
+  OR: Array<{ labReport: { is: Prisma.LabReportWhereInput } }>;
 } {
-  const usable = scope.rules.filter(
-    (r) => r.statuses === 'ALL' || r.statuses.size > 0,
-  );
   return {
-    OR: usable.map((r) =>
-      r.statuses === 'ALL'
-        ? { branchId: r.branchId }
-        : {
-            branchId: r.branchId,
-            labReport: { status: { in: [...r.statuses] } },
-          },
-    ),
+    OR: usableRules(scope).map((r) => ({ labReport: { is: ruleWhere(r) } })),
   };
 }

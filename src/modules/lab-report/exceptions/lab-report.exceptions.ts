@@ -74,6 +74,23 @@ export class LabReportLockedException extends KaltrosException {
 }
 
 /**
+ * 409 — the report's sample has been sent to another branch and has not been
+ * received or returned yet, so the report is view-only until then. Every
+ * write (results, status changes, notes, attachments, ...) is refused; reads
+ * and prints are unaffected.
+ */
+export class LabReportSentOutException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'LAB_REPORT_SENT_OUT',
+      'This sample has been sent to another branch, so its report is view-only until the transfer is received or returned.',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
  * 409 — safety net, not reachable through the real app today. Every genuine
  * `LabReport` is only ever created by `OrderSampleService
  * .ensureLabReportsForAcceptedSample`, which runs after the sample it's for

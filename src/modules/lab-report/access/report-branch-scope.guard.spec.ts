@@ -13,11 +13,18 @@ function setup(opts: {
   meta?: ReportBranchScopeMeta;
   report?: { branchId: string | null; status: LabReportStatus } | null;
   access?: { branchId: string; profileKey: string | null } | null;
+  /** Whether the caller's branch SENT the report (the read-only sender link). */
+  senderLinked?: boolean;
+  method?: string;
+  /** The route is marked AllowSenderLinkRead. */
+  allowRead?: boolean;
   params?: Record<string, string>;
   active?: string | null;
 }) {
   const reflector = {
-    getAllAndOverride: jest.fn().mockReturnValue(opts.meta),
+    getAllAndOverride: jest.fn((key: string) =>
+      key === 'allowSenderLinkRead' ? opts.allowRead : opts.meta,
+    ),
   } as unknown as Reflector;
   const prisma = {
     labReport: { findFirst: jest.fn().mockResolvedValue(opts.report ?? null) },
@@ -25,6 +32,7 @@ function setup(opts: {
   };
   const access = {
     canSee: jest.fn().mockResolvedValue(opts.access ?? null),
+    hasSenderLinkTo: jest.fn().mockResolvedValue(opts.senderLinked ?? false),
   };
   const user = {
     tenant_id: 't1',
@@ -32,7 +40,11 @@ function setup(opts: {
     active_branch_id: opts.active === undefined ? A : opts.active,
     active_profile_key: 'lab_technician',
   };
-  const request = { user, params: opts.params ?? { id: 'r1' } };
+  const request = {
+    user,
+    params: opts.params ?? { id: 'r1' },
+    method: opts.method ?? 'GET',
+  };
   const ctx = {
     getHandler: () => undefined,
     getClass: () => undefined,
@@ -135,5 +147,66 @@ describe('ReportBranchScopeGuard', () => {
       't1',
       expect.any(Function),
     );
+  });
+});
+
+describe('ReportBranchScopeGuard - a branch that only SENT the report', () => {
+  const sent = {
+    meta: META,
+    report: { branchId: B, status: LabReportStatus.SAVED },
+    access: null, // no working access at B
+    senderLinked: true,
+  };
+
+  it('may LOOK at it: GET is re-pointed at the report branch with no role', async () => {
+    const { guard, ctx, user, access } = setup({ ...sent, method: 'GET' });
+    await guard.canActivate(ctx);
+    expect(access.hasSenderLinkTo).toHaveBeenCalledWith(
+      't1',
+      'p1',
+      { branchId: A, profileKey: 'lab_technician' },
+      'r1',
+    );
+    expect(user.active_branch_id).toBe(B);
+    expect(user.active_profile_key).toBeNull();
+  });
+
+  it.each(['POST', 'PATCH', 'PUT', 'DELETE'])(
+    'is NOT re-pointed for %s, so every write keeps failing at the branch-scoped lookup',
+    async (method) => {
+      const { guard, ctx, user, access } = setup({ ...sent, method });
+      await guard.canActivate(ctx);
+      expect(access.hasSenderLinkTo).not.toHaveBeenCalled();
+      expect(user.active_branch_id).toBe(A);
+    },
+  );
+
+  it('a POST route marked AllowSenderLinkRead (print) is allowed', async () => {
+    const { guard, ctx, user } = setup({
+      ...sent,
+      method: 'POST',
+      allowRead: true,
+    });
+    await guard.canActivate(ctx);
+    expect(user.active_branch_id).toBe(B);
+    expect(user.active_profile_key).toBeNull();
+  });
+
+  it('no link, no access: untouched (the lookup then says not found)', async () => {
+    const { guard, ctx, user } = setup({ ...sent, senderLinked: false });
+    await guard.canActivate(ctx);
+    expect(user.active_branch_id).toBe(A);
+    expect(user.active_profile_key).toBe('lab_technician');
+  });
+
+  it('real access beats the link: judged at the report branch with their role there', async () => {
+    const { guard, ctx, user, access } = setup({
+      ...sent,
+      access: { branchId: B, profileKey: 'lab_supervisor' },
+    });
+    await guard.canActivate(ctx);
+    expect(access.hasSenderLinkTo).not.toHaveBeenCalled();
+    expect(user.active_branch_id).toBe(B);
+    expect(user.active_profile_key).toBe('lab_supervisor');
   });
 });

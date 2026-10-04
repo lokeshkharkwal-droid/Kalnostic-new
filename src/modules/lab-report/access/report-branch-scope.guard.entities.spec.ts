@@ -21,8 +21,7 @@ function setup(
   entity: ReportBranchEntity,
   model: string,
   row: {
-    branchId: string | null;
-    labReport: { status: LabReportStatus };
+    labReport: { branchId: string | null; status: LabReportStatus };
   } | null,
   canSee: { branchId: string; profileKey: string | null } | null,
 ) {
@@ -66,7 +65,7 @@ describe.each(MODELS)(
       const { guard, ctx, user, finders, prisma, access } = setup(
         entity,
         model,
-        { branchId: B, labReport: { status: LabReportStatus.SAVED } },
+        { labReport: { branchId: B, status: LabReportStatus.SAVED } },
         { branchId: B, profileKey: 'lab_supervisor' },
       );
       await expect(guard.canActivate(ctx)).resolves.toBe(true);
@@ -94,7 +93,7 @@ describe.each(MODELS)(
       const { guard, ctx, user } = setup(
         entity,
         model,
-        { branchId: B, labReport: { status: LabReportStatus.APPROVED } },
+        { labReport: { branchId: B, status: LabReportStatus.APPROVED } },
         null, // canSee → null: no access / status not visible there
       );
       await guard.canActivate(ctx);
@@ -106,7 +105,7 @@ describe.each(MODELS)(
       const { guard, ctx, user, access } = setup(
         entity,
         model,
-        { branchId: A, labReport: { status: LabReportStatus.PENDING } },
+        { labReport: { branchId: A, status: LabReportStatus.PENDING } },
         null,
       );
       await guard.canActivate(ctx);
@@ -128,7 +127,7 @@ describe('ReportBranchScopeGuard — never trusts a client-supplied branch', () 
     const { guard, ctx, user, access } = setup(
       'criticalAlert',
       'criticalAlert',
-      { branchId: B, labReport: { status: LabReportStatus.SAVED } },
+      { labReport: { branchId: B, status: LabReportStatus.SAVED } },
       { branchId: B, profileKey: 'x' },
     );
     user.active_branch_id = null;

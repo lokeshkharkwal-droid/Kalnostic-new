@@ -57,7 +57,7 @@ export class LabReportAttachmentService {
     tenantId: string,
     branchId: string | null,
   ): Promise<LabReportAttachment[]> {
-    await this.requireReport(reportId, tenantId, branchId);
+    await this.requireReport(reportId, tenantId, branchId, { forRead: true });
     return this.prisma.labReportAttachment.findMany({
       where: { labReportId: reportId, tenantId },
       orderBy: { uploadedAt: 'desc' },
@@ -89,13 +89,17 @@ export class LabReportAttachmentService {
   }
 
   /**
-   * Ensure the report exists within the caller's tenant + active branch.
-   * @throws LabReportNotFoundException otherwise
+   * Ensure the report exists within the caller's tenant + active branch. Writes
+   * are also refused while the report's sample is sent to another branch
+   * (view-only); `forRead` skips only that lock.
+   * @throws LabReportNotFoundException if the report is not in this branch
+   * @throws LabReportSentOutException for a write on a sent-out report
    */
   private async requireReport(
     reportId: string,
     tenantId: string,
     branchId: string | null,
+    opts: { forRead?: boolean } = {},
   ): Promise<void> {
     const report = await this.prisma.labReport.findFirst({
       where: { id: reportId, tenantId, branchId, deletedAt: null },
@@ -104,6 +108,8 @@ export class LabReportAttachmentService {
     if (!report) {
       throw new LabReportNotFoundException(reportId);
     }
-    await assertReportNotSentOut(this.prisma, tenantId, reportId);
+    if (!opts.forRead) {
+      await assertReportNotSentOut(this.prisma, tenantId, reportId);
+    }
   }
 }

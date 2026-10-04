@@ -30,13 +30,16 @@ export class TatAdjustmentService {
     labReportId: string,
     tenantId: string,
     branchId: string,
+    opts: { forRead?: boolean } = {},
   ) {
     const report = await this.prisma.labReport.findFirst({
       where: { id: labReportId, tenantId, branchId, deletedAt: null },
       select: { id: true },
     });
     if (!report) throw new LabReportNotFoundException(labReportId);
-    await assertReportNotSentOut(this.prisma, tenantId, labReportId);
+    if (!opts.forRead) {
+      await assertReportNotSentOut(this.prisma, tenantId, labReportId);
+    }
   }
 
   /**
@@ -87,7 +90,9 @@ export class TatAdjustmentService {
     branchId: string | null,
   ): Promise<Array<TatAdjustment & { enteredByName: string | null }>> {
     const activeBranchId = this.requireBranch(branchId);
-    await this.requireReport(labReportId, tenantId, activeBranchId);
+    await this.requireReport(labReportId, tenantId, activeBranchId, {
+      forRead: true,
+    });
 
     const rows = await this.prisma.tatAdjustment.findMany({
       where: {
@@ -126,6 +131,10 @@ export class TatAdjustmentService {
     branchId: string | null,
   ) {
     const activeBranchId = this.requireBranch(branchId);
+    // The same report checks as every other write (branch + view-only lock): the
+    // adjustment alone is not enough, because its branch is the one it was
+    // raised at, which may no longer be where the report is.
+    await this.requireReport(labReportId, tenantId, activeBranchId);
     const existing = await this.prisma.tatAdjustment.findFirst({
       where: {
         id: adjustmentId,

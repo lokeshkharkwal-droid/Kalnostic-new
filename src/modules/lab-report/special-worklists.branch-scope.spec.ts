@@ -64,7 +64,7 @@ describe.each(CASES)('$name worklist — branch scope', (c) => {
     expect(w).toMatchObject({
       tenantId: 't1',
       deletedAt: null,
-      OR: [{ branchId: 'A' }],
+      OR: [{ labReport: { is: { branchId: 'A' } } }],
     });
   });
 
@@ -77,14 +77,16 @@ describe.each(CASES)('$name worklist — branch scope', (c) => {
       ],
     });
     expect(w.OR).toEqual([
-      { branchId: 'A' },
+      { labReport: { is: { branchId: 'A' } } },
       {
-        branchId: 'B',
-        labReport: { status: { in: [LabReportStatus.PENDING] } },
+        labReport: {
+          is: { branchId: 'B', status: { in: [LabReportStatus.PENDING] } },
+        },
       },
       {
-        branchId: 'C',
-        labReport: { status: { in: [LabReportStatus.APPROVED] } },
+        labReport: {
+          is: { branchId: 'C', status: { in: [LabReportStatus.APPROVED] } },
+        },
       },
     ]);
   });
@@ -96,7 +98,7 @@ describe.each(CASES)('$name worklist — branch scope', (c) => {
         { branchId: 'D', statuses: new Set() },
       ],
     });
-    expect(w.OR).toEqual([{ branchId: 'A' }]);
+    expect(w.OR).toEqual([{ labReport: { is: { branchId: 'A' } } }]);
   });
 
   it('an empty scope matches nothing', async () => {

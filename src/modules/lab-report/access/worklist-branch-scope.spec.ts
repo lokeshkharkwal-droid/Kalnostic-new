@@ -3,6 +3,9 @@ import { PERMISSION_KEYS } from '../../permissions/constants/module-permissions.
 import {
   STATUS_ACCESS_KEYS,
   isStatusVisible,
+  ruleWhere,
+  senderLinkWhere,
+  usableRules,
   visibleStatusesFor,
   worklistRowBranchWhere,
 } from './worklist-branch-scope';
@@ -63,10 +66,10 @@ describe('isStatusVisible', () => {
 });
 
 describe('worklistRowBranchWhere (special worklists)', () => {
-  it('a full-visibility branch is matched on branch alone', () => {
+  it('a full-visibility branch is matched on the report’s branch alone', () => {
     expect(
       worklistRowBranchWhere({ rules: [{ branchId: 'A', statuses: 'ALL' }] }),
-    ).toEqual({ OR: [{ branchId: 'A' }] });
+    ).toEqual({ OR: [{ labReport: { is: { branchId: 'A' } } }] });
   });
 
   it("each branch keeps ITS OWN statuses — one branch's statuses never leak to another", () => {
@@ -78,16 +81,25 @@ describe('worklistRowBranchWhere (special worklists)', () => {
       ],
     });
     expect(w.OR).toEqual([
-      { branchId: 'A' },
+      { labReport: { is: { branchId: 'A' } } },
       {
-        branchId: 'B',
-        labReport: { status: { in: [LabReportStatus.PENDING] } },
+        labReport: {
+          is: { branchId: 'B', status: { in: [LabReportStatus.PENDING] } },
+        },
       },
       {
-        branchId: 'C',
-        labReport: { status: { in: [LabReportStatus.APPROVED] } },
+        labReport: {
+          is: { branchId: 'C', status: { in: [LabReportStatus.APPROVED] } },
+        },
       },
     ]);
+  });
+
+  it('a row follows its report: the row’s own (stale) branch is never consulted', () => {
+    const w = worklistRowBranchWhere({
+      rules: [{ branchId: 'A', statuses: 'ALL' }],
+    });
+    expect(Object.keys(w.OR[0] ?? {})).toEqual(['labReport']);
   });
 
   it('a branch granting no statuses contributes nothing', () => {
@@ -97,7 +109,7 @@ describe('worklistRowBranchWhere (special worklists)', () => {
         { branchId: 'D', statuses: new Set() },
       ],
     });
-    expect(w.OR).toEqual([{ branchId: 'A' }]);
+    expect(w.OR).toEqual([{ labReport: { is: { branchId: 'A' } } }]);
   });
 
   it('no usable branch yields an empty OR (matches nothing — never everything)', () => {
@@ -107,5 +119,69 @@ describe('worklistRowBranchWhere (special worklists)', () => {
       }).OR,
     ).toEqual([]);
     expect(worklistRowBranchWhere({ rules: [] }).OR).toEqual([]);
+  });
+});
+
+describe('senderLinkWhere', () => {
+  const w = senderLinkWhere('A');
+
+  it('only reports that have LEFT the sender (a report still at A is not "sent")', () => {
+    expect(w.branchId).toEqual({ not: 'A' });
+  });
+
+  it("matches through the sender's own live sample with an ACCEPTED internal transfer from that branch", () => {
+    const sample = (
+      (w.orderItem as { is: Record<string, unknown> }).is.orderSampleTests as {
+        some: { deletedAt: null; sample: { is: Record<string, unknown> } };
+      }
+    ).some;
+    expect(sample.deletedAt).toBeNull();
+    expect(sample.sample.is).toMatchObject({ branchId: 'A', deletedAt: null });
+    expect(
+      (sample.sample.is.transfers as { some: Record<string, unknown> }).some,
+    ).toEqual({
+      kind: 'INTERNAL',
+      transferStatus: 'ACCEPTED',
+      branchId: 'A',
+      deletedAt: null,
+    });
+  });
+
+  it('is specific to the sender branch it was built for', () => {
+    expect(JSON.stringify(senderLinkWhere('B'))).not.toContain('"A"');
+  });
+});
+
+describe('ruleWhere', () => {
+  it('without a sender link it is just the branch (and its statuses)', () => {
+    expect(ruleWhere({ branchId: 'A', statuses: 'ALL' })).toEqual({
+      branchId: 'A',
+    });
+    expect(
+      ruleWhere({ branchId: 'B', statuses: new Set([LabReportStatus.SAVED]) }),
+    ).toEqual({ branchId: 'B', status: { in: [LabReportStatus.SAVED] } });
+  });
+
+  it('with a sender link it covers held AND sent reports, under the same statuses', () => {
+    const w = ruleWhere({
+      branchId: 'A',
+      statuses: new Set([LabReportStatus.APPROVED]),
+      senderLinked: true,
+    });
+    expect(w.OR).toEqual([{ branchId: 'A' }, senderLinkWhere('A')]);
+    expect(w.status).toEqual({ in: [LabReportStatus.APPROVED] });
+  });
+});
+
+describe('usableRules', () => {
+  it('drops branches that grant no statuses', () => {
+    expect(
+      usableRules({
+        rules: [
+          { branchId: 'A', statuses: 'ALL' },
+          { branchId: 'D', statuses: new Set() },
+        ],
+      }).map((r) => r.branchId),
+    ).toEqual(['A']);
   });
 });

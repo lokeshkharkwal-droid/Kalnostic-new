@@ -66,6 +66,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
 import { TechnicianBranchAccessService } from './access/technician-branch-access.service';
 import {
+  AllowSenderLinkRead,
   ReportBranchScope,
   ReportBranchScopeGuard,
 } from './access/report-branch-scope.guard';
@@ -185,11 +186,23 @@ export class LabReportController {
    * routes so `tat` isn't captured as a report id.
    */
   @Get('tat/summary')
-  getTatSummary(
+  async getTatSummary(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
     @Query() query: TatSummaryQueryDto,
   ) {
+    // A branch other than the caller's own must be one they may reach through the
+    // Technician module (throws BRANCH_NOT_ACCESSIBLE otherwise). Without this the
+    // analytics would aggregate any branch of the tenant.
+    if (query.branchId && query.branchId !== profile.branchId) {
+      await this.branchAccess.resolveScope(
+        tenantId,
+        personId,
+        profile,
+        query.branchId,
+      );
+    }
     return this.tatService.summary(tenantId, profile.branchId, query);
   }
 
@@ -463,6 +476,7 @@ export class LabReportController {
   /** Print/Download Report (LABORATORY.docx §6.10). Streams the rendered PDF
    * back directly, matching `PdfReportTemplateController.generate`'s own
    * binary-response pattern (bypasses `ResponseInterceptor`'s JSON envelope). */
+  @AllowSenderLinkRead()
   @Post(':id/print')
   @Audit({
     module: AuditModule.LAB_REPORT,

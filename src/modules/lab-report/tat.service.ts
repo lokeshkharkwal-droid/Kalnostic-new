@@ -7,7 +7,6 @@ import {
   TatUnit,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { findSentOutReportIds } from './utils/sent-out-report.util';
 import { getReferralPanelId } from '../../prisma/tenant-context';
 import {
   classifyTat,
@@ -700,14 +699,6 @@ export class TatService {
       approvedAt:
         filters.dateFrom || filters.dateTo ? approvedAt : { not: null },
     };
-
-    // Reports this branch has sent to another branch are not its work any more.
-    const sentOutIds = await findSentOutReportIds(
-      this.prisma,
-      tenantId,
-      resolvedBranch,
-    );
-    if (sentOutIds.length > 0) where.id = { notIn: sentOutIds };
 
     // B2B Referral Panel isolation: constrain the analytics to the panel's own
     // reports (nested via orderItem.order), same as the worklist.

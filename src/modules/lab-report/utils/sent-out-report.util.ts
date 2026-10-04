@@ -1,5 +1,8 @@
 import { Prisma, SampleStatus } from '@prisma/client';
-import { LabReportNotFoundException } from '../exceptions/lab-report.exceptions';
+import {
+  LabReportNotFoundException,
+  LabReportSentOutException,
+} from '../exceptions/lab-report.exceptions';
 
 /**
  * The slice of a Prisma client (or transaction client) these helpers need — so
@@ -19,9 +22,11 @@ export interface SentOutReportKey {
 }
 
 /**
- * "Sent out" rule (internal branch transfer): a lab report is hidden from — and
- * not operable by — the branch that currently holds it while THAT branch's own
- * live sample for the report's test is `SENT_INTERNAL`.
+ * "Sent out" rule (internal branch transfer): a lab report stays visible to the
+ * branch that currently holds it but is VIEW-ONLY (see
+ * {@link assertReportNotSentOut}) while THAT branch's own live sample for the
+ * report's test is `SENT_INTERNAL`. Between Send and Accept the report is still
+ * at the sender; the lock keeps it untouched so it can move, or come back, whole.
  *
  * Only the report holder's own sample counts. After a transfer an order item has
  * two samples (the sender's `SENT_INTERNAL` original and the receiver's
@@ -66,12 +71,14 @@ export async function isReportSentOut(
 }
 
 /**
- * Throw {@link LabReportNotFoundException} when the report is sent out (see
- * {@link isReportSentOut}). A sent-out report behaves as if it does not exist for
- * the branch that sent it — same error as a missing report, so nothing is leaked.
+ * Write-lock: throw {@link LabReportSentOutException} when the report is sent out
+ * (see {@link isReportSentOut}). A sent-out report stays VISIBLE to its holder but
+ * is view-only until the transfer is received or returned, so every write path
+ * calls this; reads must not. A missing report is still a plain not-found.
  * Looks the report up by id (tenant-scoped), so it can be called from any
  * service that has already resolved the caller's branch.
- * @throws LabReportNotFoundException if the report is sent out (or missing)
+ * @throws LabReportNotFoundException if the report is missing
+ * @throws LabReportSentOutException if the report is sent out
  */
 export async function assertReportNotSentOut(
   db: SentOutDb,
@@ -89,13 +96,13 @@ export async function assertReportNotSentOut(
   });
   if (!report) throw new LabReportNotFoundException(reportId);
   if (await isReportSentOut(db, tenantId, report)) {
-    throw new LabReportNotFoundException(reportId);
+    throw new LabReportSentOutException(reportId);
   }
 }
 
 /**
- * Ids of the branch's lab reports that are currently sent out — used to exclude
- * them from list queries (`id: { notIn }`). Two bounded queries: (1) the sent-out
+ * Ids of the branch's lab reports that are currently sent out — used to mark
+ * those rows view-only in list responses. Two bounded queries: (1) the sent-out
  * sample links at this branch whose order item still has a report at this branch
  * (a report that already moved to the receiving branch is excluded up front, so
  * the set stays small — only reports in the send→accept window), then (2) those

@@ -100,6 +100,7 @@ import {
   InvalidLabReportTransitionException,
   InvalidSignatoryAuthorityException,
   LabReportLockedException,
+  LabReportSentOutException,
   LabReportSampleMissingException,
   LabReportResultsRequiredException,
   LabReportNotesRequiredException,
@@ -124,7 +125,11 @@ import {
   isReportSentOut,
 } from './utils/sent-out-report.util';
 import { TatService } from './tat.service';
-import type { WorklistBranchScope } from './access/worklist-branch-scope';
+import {
+  ruleWhere,
+  usableRules,
+  type WorklistBranchScope,
+} from './access/worklist-branch-scope';
 
 /**
  * Technician Reporting core module: worklist, Test Entry (result values), and
@@ -339,6 +344,24 @@ export class LabReportService {
       rows.forEach((r) => ids.add(r.id));
     }
     return [...ids];
+  }
+
+  /**
+   * Lock these reports' rows for the rest of the caller's transaction (in a fixed
+   * order, so two transactions never wait on each other). Used right before the
+   * "is it untouched?" check that gates Send and the receiver's return: a
+   * technician write that is still in flight finishes first and is then seen by
+   * the check, and one that starts later waits and then finds the report locked
+   * or moved.
+   * @param tx the caller's transaction
+   */
+  async lockReports(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    reportIds: string[],
+  ): Promise<void> {
+    if (reportIds.length === 0) return;
+    await tx.$queryRaw`SELECT id FROM lab_reports WHERE tenant_id = ${tenantId} AND id IN (${Prisma.join(reportIds)}) ORDER BY id FOR UPDATE`;
   }
 
   /**
@@ -568,27 +591,25 @@ export class LabReportService {
     where: Prisma.LabReportWhereInput,
     scope: WorklistBranchScope,
   ): void {
-    const usable = scope.rules.filter(
-      (r) => r.statuses === 'ALL' || r.statuses.size > 0,
-    );
+    const usable = usableRules(scope);
     if (usable.length === 0) {
       where.branchId = { in: [] };
       return;
     }
     const [only] = usable;
-    if (usable.length === 1 && only && only.statuses === 'ALL') {
+    if (
+      usable.length === 1 &&
+      only &&
+      only.statuses === 'ALL' &&
+      !only.senderLinked
+    ) {
       where.branchId = only.branchId;
       return;
     }
-    where.AND = [
-      {
-        OR: usable.map((r) =>
-          r.statuses === 'ALL'
-            ? { branchId: r.branchId }
-            : { branchId: r.branchId, status: { in: [...r.statuses] } },
-        ),
-      },
-    ];
+    // One rule per branch: the reports it holds (and, when it has sent samples
+    // that were accepted elsewhere, those too), each limited to the statuses
+    // ITS permissions grant — never merged across branches.
+    where.AND = [{ OR: usable.map(ruleWhere) }];
   }
 
   private buildListWhere(
@@ -812,6 +833,7 @@ export class LabReportService {
     worklistRows = await this.attachMemberTestNames(worklistRows);
     worklistRows = await this.attachResultTypes(worklistRows);
     worklistRows = await this.attachSampleStatuses(tenantId, worklistRows);
+    worklistRows = await this.attachAccessMode(tenantId, scope, worklistRows);
 
     // Analytical-TAT band per row (SRS §6.2/§8): frozen snapshot for approved
     // reports, live compute for in-flight ones — batched over the whole page.
@@ -1258,6 +1280,42 @@ export class LabReportService {
    * null for a grandfathered panel — in both cases every linked sample is
    * legitimately "this row's", same as before this change).
    */
+  /**
+   * Marks each row `full` (a branch in the caller's scope holds the report and it
+   * is not locked) or `view` (the report sits at another branch and is only
+   * listed because the caller's branch sent it, or its sample is sent out and
+   * waiting for the receiver). The frontend renders `view` rows without actions;
+   * the server refuses their writes either way.
+   */
+  private async attachAccessMode<
+    T extends { id: string; branchId: string | null },
+  >(
+    tenantId: string,
+    scope: WorklistBranchScope,
+    rows: T[],
+  ): Promise<Array<T & { accessMode: 'full' | 'view' }>> {
+    const scopeBranches = new Set(scope.rules.map((r) => r.branchId));
+    const heldBranches = [
+      ...new Set(
+        rows
+          .map((r) => r.branchId)
+          .filter((b): b is string => !!b && scopeBranches.has(b)),
+      ),
+    ];
+    const lockedIds = new Set<string>();
+    for (const branchId of heldBranches) {
+      const ids = await findSentOutReportIds(this.prisma, tenantId, branchId);
+      ids.forEach((id) => lockedIds.add(id));
+    }
+    return rows.map((r) => ({
+      ...r,
+      accessMode:
+        r.branchId && scopeBranches.has(r.branchId) && !lockedIds.has(r.id)
+          ? 'full'
+          : 'view',
+    }));
+  }
+
   private async attachSampleStatuses(
     tenantId: string,
     rows: LabReportWorklistRow[],
@@ -1666,10 +1724,6 @@ export class LabReportService {
       include: LAB_REPORT_DETAIL_INCLUDE,
     });
     if (!report) throw new LabReportNotFoundException(id);
-    // A report this branch has sent to another branch behaves as not found.
-    if (branchId && (await isReportSentOut(this.prisma, tenantId, report))) {
-      throw new LabReportNotFoundException(id);
-    }
     // B2B Referral Panel isolation: block reading another panel's report by id.
     assertLabReportPanelOwnership(report, getReferralPanelId());
 
@@ -2064,15 +2118,43 @@ export class LabReportService {
     });
   }
 
-  private async requireReport(id: string, tenantId: string, branchId: string) {
+  /**
+   * First step of a write transaction: lock the report row, then re-check that
+   * its sample is not sent out. The up-front `requireReport` check runs before
+   * the transaction, so on its own it can lose a race with a Send that commits in
+   * between; Send locks the same row, so whichever transaction comes second waits
+   * and then sees the other's result. Reads are unaffected.
+   * @throws LabReportSentOutException when the sample was sent in the meantime
+   */
+  private async lockReportForWrite(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    reportId: string,
+  ): Promise<void> {
+    await tx.$queryRaw`SELECT id FROM lab_reports WHERE id = ${reportId} AND tenant_id = ${tenantId} FOR UPDATE`;
+    await assertReportNotSentOut(tx, tenantId, reportId);
+  }
+
+  /**
+   * The report as seen by the active branch, ready to be worked on. Writes (the
+   * default) are refused while the report's sample is sent to another branch
+   * (view-only until received or returned); `forRead` skips only that lock.
+   */
+  private async requireReport(
+    id: string,
+    tenantId: string,
+    branchId: string,
+    opts: { forRead?: boolean } = {},
+  ) {
     const report = await this.prisma.labReport.findFirst({
       where: { id, tenantId, branchId, deletedAt: null },
     });
     if (!report) throw new LabReportNotFoundException(id);
-    // A report this branch has sent to another branch is not operable (and
-    // behaves as not found) — checked before the lock so nothing is revealed.
-    if (await isReportSentOut(this.prisma, tenantId, report)) {
-      throw new LabReportNotFoundException(id);
+    if (
+      !opts.forRead &&
+      (await isReportSentOut(this.prisma, tenantId, report))
+    ) {
+      throw new LabReportSentOutException(id);
     }
     if (report.isLocked) throw new LabReportLockedException(id);
 
@@ -2278,6 +2360,7 @@ export class LabReportService {
     }
 
     await this.prisma.withTenant(tenantId, async (tx) => {
+      await this.lockReportForWrite(tx, tenantId, id);
       const now = new Date();
       for (const value of dto.values) {
         await tx.labReportResultValue.upsert({
@@ -2488,7 +2571,6 @@ export class LabReportService {
       where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
     });
     if (!report) throw new LabReportNotFoundException(id);
-    await assertReportNotSentOut(this.prisma, tenantId, id);
     if (!report.labTestId) throw new LabTestCatalogueMissingException(id);
 
     const param = await this.prisma.labTestResultParam.findFirst({
@@ -2550,7 +2632,6 @@ export class LabReportService {
       },
     });
     if (!report) throw new LabReportNotFoundException(id);
-    await assertReportNotSentOut(this.prisma, tenantId, id);
     if (!report.labTestId) throw new LabTestCatalogueMissingException(id);
 
     const param = await this.prisma.labTestResultParam.findFirst({
@@ -2661,7 +2742,6 @@ export class LabReportService {
       },
     });
     if (!report) throw new LabReportNotFoundException(id);
-    await assertReportNotSentOut(this.prisma, tenantId, id);
     if (!report.labTestId) throw new LabTestCatalogueMissingException(id);
 
     const param = await this.prisma.labTestResultParam.findFirst({
@@ -2764,7 +2844,6 @@ export class LabReportService {
       include: { orderItem: { include: { order: true } } },
     });
     if (!report) throw new LabReportNotFoundException(id);
-    await assertReportNotSentOut(this.prisma, tenantId, id);
 
     const values = await this.prisma.labReportResultValue.findMany({
       where: {
@@ -4434,6 +4513,7 @@ export class LabReportService {
     await this.requireAtLeastOneResultValue(id, tenantId);
 
     return this.prisma.withTenant(tenantId, async (tx) => {
+      await this.lockReportForWrite(tx, tenantId, id);
       const updated = await tx.labReport.update({
         where: { id },
         data: {
@@ -4472,6 +4552,7 @@ export class LabReportService {
     await this.requireAtLeastOneResultValue(id, tenantId);
 
     return this.prisma.withTenant(tenantId, async (tx) => {
+      await this.lockReportForWrite(tx, tenantId, id);
       const updated = await tx.labReport.update({
         where: { id },
         data: {
@@ -4516,6 +4597,7 @@ export class LabReportService {
     );
 
     return this.prisma.withTenant(tenantId, async (tx) => {
+      await this.lockReportForWrite(tx, tenantId, id);
       const updated = await tx.labReport.update({
         where: { id },
         data: {
@@ -4562,6 +4644,7 @@ export class LabReportService {
     this.assertTransition('editReport', report.status);
 
     return this.prisma.withTenant(tenantId, async (tx) => {
+      await this.lockReportForWrite(tx, tenantId, id);
       const updated = await tx.labReport.update({
         where: { id },
         data: { status: LabReportStatus.SAVED },
@@ -4592,6 +4675,7 @@ export class LabReportService {
     this.assertTransition('reject', report.status);
 
     return this.prisma.withTenant(tenantId, async (tx) => {
+      await this.lockReportForWrite(tx, tenantId, id);
       const updated = await tx.labReport.update({
         where: { id },
         data: { status: LabReportStatus.RESULT_REJECTED },
@@ -4631,6 +4715,7 @@ export class LabReportService {
     this.assertTransition('resubmit', report.status);
 
     return this.prisma.withTenant(tenantId, async (tx) => {
+      await this.lockReportForWrite(tx, tenantId, id);
       const updated = await tx.labReport.update({
         where: { id },
         data: {
@@ -4791,6 +4876,7 @@ export class LabReportService {
         })();
 
     return this.prisma.withTenant(tenantId, async (tx) => {
+      await this.lockReportForWrite(tx, tenantId, id);
       const updated = await tx.labReport.update({
         where: { id },
         data: {
@@ -4838,6 +4924,7 @@ export class LabReportService {
     this.assertTransition('publish', report.status);
 
     const updated = await this.prisma.withTenant(tenantId, async (tx) => {
+      await this.lockReportForWrite(tx, tenantId, id);
       const u = await tx.labReport.update({
         where: { id },
         data: {
@@ -4883,6 +4970,7 @@ export class LabReportService {
     this.assertTransition('errorReported', report.status);
 
     return this.prisma.withTenant(tenantId, async (tx) => {
+      await this.lockReportForWrite(tx, tenantId, id);
       const updated = await tx.labReport.update({
         where: { id },
         data: { status: LabReportStatus.ERROR_REPORTED },
@@ -4932,6 +5020,7 @@ export class LabReportService {
     await assertReportNotSentOut(this.prisma, tenantId, id);
 
     return this.prisma.withTenant(tenantId, async (tx) => {
+      await this.lockReportForWrite(tx, tenantId, id);
       await tx.labReportResultValue.updateMany({
         where: { labReportId: id, deletedAt: null },
         data: { deletedAt: new Date() },
@@ -4988,6 +5077,7 @@ export class LabReportService {
     await assertReportNotSentOut(this.prisma, tenantId, id);
 
     return this.prisma.withTenant(tenantId, async (tx) => {
+      await this.lockReportForWrite(tx, tenantId, id);
       const updated = await tx.labReport.update({
         where: { id },
         data: {
@@ -5146,7 +5236,9 @@ export class LabReportService {
     query: ListLabReportNotesDto,
   ) {
     const activeBranchId = this.requireBranch(branchId);
-    await this.requireReport(id, tenantId, activeBranchId);
+    await this.requireReport(id, tenantId, activeBranchId, {
+      forRead: true,
+    });
     const reportIds = await this.siblingReportIds(id, tenantId, activeBranchId);
 
     const rows = await this.prisma.labReportNote.findMany({
@@ -5183,7 +5275,6 @@ export class LabReportService {
       where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
     });
     if (!report) throw new LabReportNotFoundException(id);
-    await assertReportNotSentOut(this.prisma, tenantId, id);
 
     const rows = await this.prisma.labReportHistory.findMany({
       where: { labReportId: id, tenantId },

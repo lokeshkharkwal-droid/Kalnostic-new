@@ -1,5 +1,8 @@
 import { SampleStatus } from '@prisma/client';
-import { LabReportNotFoundException } from '../exceptions/lab-report.exceptions';
+import {
+  LabReportNotFoundException,
+  LabReportSentOutException,
+} from '../exceptions/lab-report.exceptions';
 import {
   assertReportNotSentOut,
   findSentOutReportIds,
@@ -78,13 +81,13 @@ describe('sent-out report rule', () => {
       ).rejects.toThrow(LabReportNotFoundException);
     });
 
-    it('throws not-found for a sent-out report and passes otherwise', async () => {
+    it('throws the view-only (sent out) error for a sent-out report and passes otherwise', async () => {
       const db = makeDb();
       db.labReport.findFirst.mockResolvedValue(key);
       db.orderSampleTest.findFirst.mockResolvedValueOnce({ id: 'x' });
       await expect(
         assertReportNotSentOut(asDb(db), 't1', 'r1'),
-      ).rejects.toThrow(LabReportNotFoundException);
+      ).rejects.toThrow(LabReportSentOutException);
       db.orderSampleTest.findFirst.mockResolvedValueOnce(null);
       await expect(
         assertReportNotSentOut(asDb(db), 't1', 'r1'),
