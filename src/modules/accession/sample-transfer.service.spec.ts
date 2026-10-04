@@ -204,3 +204,85 @@ describe('SampleTransferService — assign center to a previous holder', () => {
     ).rejects.toThrow(SendBlockedException);
   });
 });
+
+describe('SampleTransferService — accept clones the sample into the receiving branch', () => {
+  function accept() {
+    const source = {
+      id: 'sA',
+      branchId: 'A',
+      originBranchId: 'A',
+      orderId: 'o1',
+      labTestId: 'lt1',
+      labTestSampleId: 'lts1',
+      departmentId: 'd1',
+      sampleType: 'Blood',
+      containerType: 'Serum tube',
+      sampleGroupLabel: 'G1',
+      sampleName: 'Fasting blood',
+      priority: 'NORMAL',
+      barcode: 'BC-1',
+      orderIdBarcode: 'OB-1',
+      heldBranchIds: [],
+      tests: [{ orderItemId: 'i1', labTestId: 'lt1', testName: 'CBC' }],
+    };
+    const create = jest.fn().mockResolvedValue({ id: 'copy1' });
+    const tx = {
+      orderSample: {
+        findFirst: jest.fn().mockResolvedValue(source),
+        create,
+      },
+      tenant: {
+        update: jest.fn().mockResolvedValue({ accessionCounter: 7 }),
+      },
+    };
+    const samples = {
+      ensureLabReportsForAcceptedSample: jest.fn().mockResolvedValue(undefined),
+      rehomeLabReportsForSample: jest.fn().mockResolvedValue(undefined),
+    };
+    const svc = new SampleTransferService(
+      {} as never,
+      samples as never,
+      {} as never,
+      {} as never,
+    );
+    const done = (
+      svc as unknown as {
+        cloneIntoDestination: (...a: unknown[]) => Promise<void>;
+      }
+    ).cloneIntoDestination(tx, TENANT, PERSON, {
+      id: 'tr1',
+      kind: TransferKind.INTERNAL,
+      sampleId: 'sA',
+      destinationBranchId: 'B',
+      receiveCondition: null,
+    });
+    return { done, create, samples };
+  }
+
+  it('the copy keeps the sample name and the tube barcode of the original', async () => {
+    const { done, create } = accept();
+    await done;
+    const data = (
+      create.mock.calls[0] as [{ data: Record<string, unknown> }]
+    )[0].data;
+    expect(data).toMatchObject({
+      branchId: 'B',
+      sampleName: 'Fasting blood',
+      barcode: 'BC-1',
+      orderIdBarcode: 'OB-1',
+      sourceTransferId: 'tr1',
+    });
+  });
+
+  it('moves the report only from the sending branch (a report already elsewhere stays)', async () => {
+    const { done, samples } = accept();
+    await done;
+    expect(samples.rehomeLabReportsForSample).toHaveBeenCalledWith(
+      expect.anything(),
+      TENANT,
+      'copy1',
+      'B',
+      'A', // the sender's branch
+    );
+  });
+});

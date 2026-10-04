@@ -2634,12 +2634,14 @@ export class OrderSampleService {
    * @param tenantId the current tenant
    * @param sampleId the cloned (destination-branch) sample
    * @param destBranchId the receiving branch to move the report(s) to
+   * @param fromBranchId the sending branch (only reports it still holds move)
    */
   async rehomeLabReportsForSample(
     tx: Prisma.TransactionClient,
     tenantId: string,
     sampleId: string,
     destBranchId: string,
+    fromBranchId?: string | null,
   ): Promise<void> {
     const sampleTests = await tx.orderSampleTest.findMany({
       where: { sampleId, tenantId, deletedAt: null },
@@ -2652,6 +2654,7 @@ export class OrderSampleService {
         orderItemId,
         destBranchId,
         labTestId,
+        fromBranchId,
       );
     }
   }

@@ -265,6 +265,10 @@ export class LabReportService {
    * @param orderItemId the order item whose report(s) move
    * @param destBranchId the receiving branch to move the report(s) to
    * @param onlyMemberLabTestId scope to this panel member's report only
+   * @param fromBranchId the sending branch. When given, only a report still held
+   *   by the sender (or still at the order item's own branch, where it was
+   *   created) moves — a report that already went elsewhere, for example through
+   *   another sample of the same item, is left where it is.
    */
   async rehomeReportsForAcceptedItem(
     tx: Prisma.TransactionClient,
@@ -272,11 +276,27 @@ export class LabReportService {
     orderItemId: string,
     destBranchId: string,
     onlyMemberLabTestId?: string | null,
+    fromBranchId?: string | null,
   ): Promise<void> {
     const or: Prisma.LabReportWhereInput[] = [{ memberBranchLabTestId: null }];
     if (onlyMemberLabTestId) or.push({ labTestId: onlyMemberLabTestId });
+    const where: Prisma.LabReportWhereInput = {
+      orderItemId,
+      tenantId,
+      deletedAt: null,
+      OR: or,
+    };
+    if (fromBranchId) {
+      const item = await tx.orderItem.findFirst({
+        where: { id: orderItemId, tenantId },
+        select: { branchId: true },
+      });
+      where.branchId = {
+        in: [fromBranchId, ...(item?.branchId ? [item.branchId] : [])],
+      };
+    }
     await tx.labReport.updateMany({
-      where: { orderItemId, tenantId, deletedAt: null, OR: or },
+      where,
       data: { branchId: destBranchId },
     });
   }
@@ -337,6 +357,8 @@ export class LabReportService {
       where: { id: reportId, tenantId, deletedAt: null },
       select: {
         status: true,
+        isLocked: true,
+        lockedAt: true,
         usefulFor: true,
         interpretationOfResults: true,
         limitations: true,
@@ -346,6 +368,7 @@ export class LabReportService {
     });
     if (!report) return true;
     if (report.status !== LabReportStatus.PENDING) return false;
+    if (report.isLocked || report.lockedAt !== null) return false;
     if (
       report.usefulFor !== null ||
       report.interpretationOfResults !== null ||
@@ -355,15 +378,26 @@ export class LabReportService {
     ) {
       return false;
     }
-    const [values, notes, attachments, overall] = await Promise.all([
-      tx.labReportResultValue.count({
-        where: { labReportId: reportId, deletedAt: null },
-      }),
-      tx.labReportNote.count({ where: { labReportId: reportId } }),
-      tx.labReportAttachment.count({ where: { labReportId: reportId } }),
-      tx.labReportOverallResult.count({ where: { labReportId: reportId } }),
+    // Every child table a technician action can write to. Rows that were later
+    // soft-deleted still count: they show work was done (a re-run, for example,
+    // resets the report to PENDING and soft-deletes its values). The history log
+    // is not counted — it already holds the "sample accepted" entry.
+    const byReport = { labReportId: reportId };
+    const counts = await Promise.all([
+      tx.labReportResultValue.count({ where: byReport }),
+      tx.labReportNote.count({ where: byReport }),
+      tx.labReportAttachment.count({ where: byReport }),
+      tx.labReportOverallResult.count({ where: byReport }),
+      tx.reRunRequest.count({ where: byReport }),
+      tx.criticalAlert.count({ where: byReport }),
+      tx.outOfRangeFlag.count({ where: byReport }),
+      tx.deltaCheck.count({ where: byReport }),
+      tx.scheduledTest.count({ where: byReport }),
+      tx.multiStepTestProcess.count({ where: byReport }),
+      tx.labReportInventoryUsage.count({ where: byReport }),
+      tx.tatAdjustment.count({ where: byReport }),
     ]);
-    return values + notes + attachments + overall === 0;
+    return counts.every((n) => n === 0);
   }
 
   /**
@@ -3019,8 +3053,9 @@ export class LabReportService {
     const sampleTest = await this.prisma.orderSampleTest.findFirst({
       where: { orderItemId: report.orderItemId, deletedAt: null },
       // After an internal transfer an item has two live samples (the sender's
-      // original and the receiver's copy, which carries no collection dates or
-      // barcode): prefer the original, so a transferred test keeps its dates.
+      // original and the receiver's copy, which carries no collection dates;
+      // the barcode is shared): prefer the original, so a transferred test
+      // keeps its dates.
       orderBy: { createdAt: 'asc' },
       select: {
         sample: {

@@ -41,6 +41,14 @@ describe('previous-holders util', () => {
     expect(isPreviousHolder(sample('B', 'A'), 'A')).toBe(true);
   });
 
+  it('decided rule: after A -> B and a Repeat back to A, A may send to B again', () => {
+    // After the receiver's Repeat the sender's own row is the one that is sent
+    // again. It carries no stored holder list (only copies do), so B is not a
+    // previous holder of it — the manager confirmed this re-send is allowed.
+    const originalAtA = sample('A', 'A');
+    expect(isPreviousHolder(originalAtA, 'B')).toBe(false);
+  });
+
   it('does not duplicate branches and ignores a missing destination', () => {
     const copy = heldBranchesForCopy(sample('A', 'A', ['A']), null);
     expect(copy).toEqual(['A']);
