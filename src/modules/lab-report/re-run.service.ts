@@ -5,10 +5,7 @@ import {
 import { Injectable } from '@nestjs/common';
 import { ReRunStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import {
-  assertReportNotSentOut,
-  findSentOutReportIds,
-} from './utils/sent-out-report.util';
+import { assertReportNotSentOut } from './utils/sent-out-report.util';
 import { LabReportService } from './lab-report.service';
 import { RaiseReRunDto } from './dto/re-run.dto';
 import { UpdateReRunStatusDto } from './dto/update-worklist-status.dto';

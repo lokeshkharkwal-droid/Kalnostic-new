@@ -5,10 +5,7 @@ import {
 import { Injectable } from '@nestjs/common';
 import { ScheduledTestStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import {
-  assertReportNotSentOut,
-  findSentOutReportIds,
-} from './utils/sent-out-report.util';
+import { assertReportNotSentOut } from './utils/sent-out-report.util';
 import { LabReportDirectoryService } from './lab-report-directory.service';
 import { LabReportService } from './lab-report.service';
 import { ScheduleTestDto } from './dto/schedule-test.dto';

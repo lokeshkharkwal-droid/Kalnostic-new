@@ -124,6 +124,11 @@ import {
   findSentOutReportIds,
   isReportSentOut,
 } from './utils/sent-out-report.util';
+import {
+  PRINTABLE_REPORT_STATUSES,
+  isReportPrintable,
+  pendingResultRow,
+} from './utils/print-visibility.util';
 import { TatService } from './tat.service';
 import {
   ruleWhere,
@@ -1700,6 +1705,24 @@ export class LabReportService {
     return order?.branchId === branchId;
   }
 
+  /** Whether `branchId` owns the order this report belongs to (see {@link canPrintWholeOrder}). */
+  private async ownsReportsOrder(
+    reportId: string,
+    tenantId: string,
+    branchId: string,
+  ): Promise<boolean> {
+    const report = await this.prisma.labReport.findFirst({
+      where: { id: reportId, tenantId, deletedAt: null },
+      select: { orderItem: { select: { orderId: true } } },
+    });
+    if (!report) return false;
+    return this.canPrintWholeOrder(
+      report.orderItem.orderId,
+      tenantId,
+      branchId,
+    );
+  }
+
   /**
    * The shared loader behind {@link findById} and the order-owner print-all path.
    * `branchId` scopes the lookup to that branch and applies the "sent out" rule
@@ -3111,10 +3134,19 @@ export class LabReportService {
     tenantId: string,
     branchId: string | null,
     allBranches = false,
+    opts: { maskUnfinished?: boolean } = {},
   ): Promise<GeneratePdfDto> {
     const report = allBranches
       ? await this.loadReportDetail(id, tenantId, null)
       : await this.findById(id, tenantId, branchId);
+    // A report whose results nobody has signed off prints as "Result pending",
+    // never as half-entered numbers: always on order-level documents (Print All,
+    // Share), and on a single print by a branch that is only the order's owner
+    // (the report is held, and being worked on, elsewhere).
+    const hideResults =
+      !isReportPrintable(report.status) &&
+      (!!opts.maskUnfinished ||
+        (allBranches && !!report.branchId && report.branchId !== branchId));
     const order = report.orderItem.order;
     const patient = order.patient;
     const testOrPanel =
@@ -3253,7 +3285,7 @@ export class LabReportService {
         (sortOrderByParamId.get(b.resultParamId) ?? 0),
     );
 
-    const results = sortedResultValues.map((v) => ({
+    const realResults = sortedResultValues.map((v) => ({
       parameter_name: paramNameById.get(v.resultParamId) ?? '',
       observed1: v.observed1 ?? '',
       observed2: v.observed2 ?? '',
@@ -3268,6 +3300,21 @@ export class LabReportService {
       result_note: notesByParamId.get(v.resultParamId) ?? '',
       overall_result: overallResultByParamId.get(v.resultParamId) ?? '',
     }));
+    const printedTestName =
+      (testOrPanel && 'testName' in testOrPanel
+        ? testOrPanel.testName
+        : undefined) ??
+      (testOrPanel && 'panelName' in testOrPanel
+        ? testOrPanel.panelName
+        : undefined) ??
+      report.orderItem.direct ??
+      '';
+    const results = hideResults
+      ? [pendingResultRow(printedTestName)]
+      : realResults;
+    // Free-text sections and uploaded files can hold unsigned findings too.
+    const section = (value: string | null | undefined): string =>
+      hideResults ? '' : (value ?? '');
 
     return {
       variables: {
@@ -3308,24 +3355,16 @@ export class LabReportService {
               .join(' ')
           : '',
         referral_panel: order.referralPanel?.name ?? '',
-        test_name:
-          (testOrPanel && 'testName' in testOrPanel
-            ? testOrPanel.testName
-            : undefined) ??
-          (testOrPanel && 'panelName' in testOrPanel
-            ? testOrPanel.panelName
-            : undefined) ??
-          report.orderItem.direct ??
-          '',
-        report_status: report.status,
-        useful_for: report.contentSections.usefulFor ?? '',
-        interpretation: report.contentSections.interpretation ?? '',
-        limitations: report.contentSections.limitations ?? '',
+        test_name: printedTestName,
+        report_status: hideResults ? LabReportStatus.PENDING : report.status,
+        useful_for: section(report.contentSections.usefulFor),
+        interpretation: section(report.contentSections.interpretation),
+        limitations: section(report.contentSections.limitations),
         // Bug fix: `remarks` was fetched into `contentSections` (screen/API
         // already show it) but never assigned into the print `variables` here
         // — `{remarks}` could never resolve in a lab_report template.
-        remarks: report.contentSections.remarks ?? '',
-        references: report.contentSections.references ?? '',
+        remarks: section(report.contentSections.remarks),
+        references: section(report.contentSections.references),
         last_report_prepared_on: lastReportPreparedOn
           ? formatReportDateTime(
               toBranchLocalInstant(lastReportPreparedOn, timezone),
@@ -3366,7 +3405,9 @@ export class LabReportService {
         // `{test_file_attachment}` — the PDF(s) uploaded via this test's
         // "File +" button, as `<embed>` markup (printed unescaped, see
         // `RICH_TEXT_KEYS`). Built from THIS report's attachments only.
-        test_file_attachment: buildTestFileAttachmentHtml(report.attachments),
+        test_file_attachment: hideResults
+          ? ''
+          : buildTestFileAttachmentHtml(report.attachments),
       },
       // Backs the `{{image:ID}}` tokens for the same three image-valued
       // fields above — `TemplateRenderService.interpolateImages` resolves
@@ -3403,14 +3444,21 @@ export class LabReportService {
     templateId?: string,
     type: 'lab_report' | 'lab_panel' = 'lab_report',
     allBranches = false,
+    maskUnfinished = false,
   ): Promise<Buffer> {
     // Referral Panel Settings — Restrict Report Access (Credit Limit/Days).
     await this.referralCredit.assertReportAccessAllowedByReportId(tenantId, id);
+    // The order's own branch may print any report on its order, held anywhere —
+    // the same rule Print All applies — so the two buttons never disagree.
+    const wholeOrder =
+      allBranches ||
+      (!!branchId && (await this.ownsReportsOrder(id, tenantId, branchId)));
     const context = await this.buildPrintContext(
       id,
       tenantId,
       branchId,
-      allBranches,
+      wholeOrder,
+      { maskUnfinished },
     );
     const resolvedTemplateId =
       templateId ??
@@ -3704,6 +3752,7 @@ export class LabReportService {
           tenantId,
           r.branchId ?? branchId,
           allBranches,
+          { maskUnfinished: true },
         ),
       ),
     );
@@ -4054,18 +4103,30 @@ export class LabReportService {
       throw new OrderReportsNotFoundException(orderId);
     }
 
-    const pdfBuffers = await Promise.all(
-      reportRows.map((r) =>
-        this.print(
-          r.id,
-          tenantId,
-          r.branchId ?? branchId,
-          templateId,
-          'lab_report',
-          allBranches,
-        ),
-      ),
+    // A report this caller cannot read is skipped, not allowed to fail the whole
+    // document; unfinished ones print as "Result pending".
+    const rendered = await Promise.all(
+      reportRows.map(async (r) => {
+        try {
+          return await this.print(
+            r.id,
+            tenantId,
+            r.branchId ?? branchId,
+            templateId,
+            'lab_report',
+            allBranches,
+            true,
+          );
+        } catch (e) {
+          if (e instanceof LabReportNotFoundException) return null;
+          throw e;
+        }
+      }),
     );
+    const pdfBuffers = rendered.filter((b): b is Buffer => b !== null);
+    if (pdfBuffers.length === 0) {
+      throw new OrderReportsNotFoundException(orderId);
+    }
 
     const merged = await PDFDocument.create();
     for (const buf of pdfBuffers) {
@@ -4480,12 +4541,29 @@ export class LabReportService {
       ],
       contactFor,
     );
+    // Tests whose results are not signed off yet print as "Result pending" — count
+    // them over the whole order (every branch), so the sender can be warned.
+    const [totalReportCount, readyReportCount] = await Promise.all([
+      this.prisma.labReport.count({
+        where: { tenantId, deletedAt: null, orderItem: { orderId } },
+      }),
+      this.prisma.labReport.count({
+        where: {
+          tenantId,
+          deletedAt: null,
+          orderItem: { orderId },
+          status: { in: [...PRINTABLE_REPORT_STATUSES] },
+        },
+      }),
+    ]);
     return {
       orderId: order.id,
       orderCode: order.orderCode,
       patientName,
       patientId: p?.id ?? null,
       channels,
+      pendingReportCount: totalReportCount - readyReportCount,
+      totalReportCount,
     };
   }
 
