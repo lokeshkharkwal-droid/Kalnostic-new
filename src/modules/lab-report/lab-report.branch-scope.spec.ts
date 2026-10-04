@@ -101,11 +101,21 @@ describe('Print All across authorised branches', () => {
     return Buffer.from(await doc.save());
   }
 
-  async function setup(rows: Array<{ id: string; branchId: string | null }>) {
+  async function setup(
+    rows: Array<{ id: string; branchId: string | null }>,
+    orderOwnerBranch = 'ORDER-OWNER',
+  ) {
     const findMany = jest.fn().mockResolvedValue(rows);
     const svc = Object.create(LabReportService.prototype) as LabReportService;
     Object.assign(svc, {
-      prisma: { labReport: { findMany } },
+      prisma: {
+        labReport: { findMany },
+        order: {
+          findFirst: jest
+            .fn()
+            .mockResolvedValue({ branchId: orderOwnerBranch }),
+        },
+      },
       referralCredit: {
         assertReportAccessAllowedByOrderId: jest
           .fn()
@@ -137,6 +147,27 @@ describe('Print All across authorised branches', () => {
     expect(print.mock.calls.map((c) => [c[0], c[2]])).toEqual([
       ['r1', 'A'],
       ['r2', 'B'],
+    ]);
+  });
+
+  it('the order-owner branch prints every report on the order, whatever its scope', async () => {
+    const { svc, findMany, print } = await setup(
+      [
+        { id: 'r1', branchId: 'A' },
+        { id: 'r2', branchId: 'B' },
+      ],
+      'A', // the caller's branch owns the order
+    );
+    await svc.printAllForOrder('o1', 't1', 'A', undefined, undefined, {
+      rules: [{ branchId: 'A', statuses: 'ALL' }],
+    });
+    const where = (findMany.mock.calls[0] as [{ where: Where }])[0].where;
+    expect(where.branchId).toBeUndefined(); // no branch restriction at all
+    expect(where.AND).toBeUndefined();
+    // each report is still rendered through its own branch, read across branches
+    expect(print.mock.calls.map((c) => [c[0], c[2], c[5]])).toEqual([
+      ['r1', 'A', true],
+      ['r2', 'B', true],
     ]);
   });
 

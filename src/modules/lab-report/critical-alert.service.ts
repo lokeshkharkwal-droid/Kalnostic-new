@@ -5,6 +5,10 @@ import {
 import { Injectable } from '@nestjs/common';
 import { AlertReviewStatus, WorklistTrigger } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  assertReportNotSentOut,
+  findSentOutReportIds,
+} from './utils/sent-out-report.util';
 import { LabReportService } from './lab-report.service';
 import { RaiseWorklistEntryDto } from './dto/raise-worklist-entry.dto';
 import { UpdateAlertReviewStatusDto } from './dto/update-worklist-status.dto';
@@ -61,6 +65,7 @@ export class CriticalAlertService {
       },
     });
     if (!report) throw new LabReportNotFoundException(labReportId);
+    await assertReportNotSentOut(this.prisma, tenantId, labReportId);
 
     return this.prisma
       .$transaction(async (tx) => {
@@ -136,6 +141,7 @@ export class CriticalAlertService {
       where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
     });
     if (!entry) throw new WorklistEntryNotFoundException('critical_alert', id);
+    await assertReportNotSentOut(this.prisma, tenantId, entry.labReportId);
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const updatedEntry = await tx.criticalAlert.update({

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { LabReportAttachment } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { assertReportNotSentOut } from './utils/sent-out-report.util';
 import { CreateLabReportAttachmentDto } from './dto/create-lab-report-attachment.dto';
 import { LabReportNotFoundException } from './exceptions/lab-report.exceptions';
 
@@ -103,5 +104,6 @@ export class LabReportAttachmentService {
     if (!report) {
       throw new LabReportNotFoundException(reportId);
     }
+    await assertReportNotSentOut(this.prisma, tenantId, reportId);
   }
 }

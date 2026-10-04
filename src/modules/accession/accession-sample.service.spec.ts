@@ -1,4 +1,5 @@
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { InvalidSampleTransitionException } from './exceptions/accession.exceptions';
 import { AccessionSettingsService } from './accession-settings.service';
 import { OrderSampleService } from './accession-sample.service';
 import { LabReportService } from '../lab-report/lab-report.service';
@@ -7,6 +8,12 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { TenantService } from '../tenant/tenant.service';
 import { BarcodeService } from './barcode.service';
 import { UserDepartmentScopeService } from '../department/user-department-scope.service';
+
+/** First argument of a mock's first call, typed (avoids `any` member access in assertions). */
+const firstCallArg = (m: jest.Mock): unknown => {
+  const calls = m.mock.calls as unknown[][];
+  return calls[0]?.[0];
+};
 
 /**
  * Unit coverage for the panel sample-resolution helpers (all private, exercised
@@ -208,6 +215,7 @@ describe('OrderSampleService — reconcileForOrderInTx (remove path)', () => {
   }
 
   it('voids a sample linked only to removed items and drops shared links', async () => {
+    const transferUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
     const now = new Date('2026-09-11T00:00:00Z');
     const tx = {
       orderSample: {
@@ -228,6 +236,7 @@ describe('OrderSampleService — reconcileForOrderInTx (remove path)', () => {
         deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       labReport: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+      sampleTransfer: { updateMany: transferUpdateMany },
       orderItem: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as import('@prisma/client').Prisma.TransactionClient;
 
@@ -256,6 +265,18 @@ describe('OrderSampleService — reconcileForOrderInTx (remove path)', () => {
         data: expect.objectContaining({ deletedAt: now, status: 'CANCELLED' }),
       }),
     );
+    // S1's transfer still on its way is closed (not left dangling for the receiver)
+    expect(transferUpdateMany).toHaveBeenCalledTimes(1);
+    expect(firstCallArg(transferUpdateMany)).toMatchObject({
+      where: {
+        sampleId: 'S1',
+        transferStatus: { in: ['IN_TRANSIT', 'PICKED_UP', 'RECEIVED'] },
+      },
+      data: {
+        transferStatus: 'REJECTED',
+        rejectionReason: 'Order item removed',
+      },
+    });
     // S2 shared -> NOT voided
     expect(tx.orderSample.update as jest.Mock).not.toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 'S2' } }),
@@ -562,5 +583,205 @@ describe('OrderSampleService — order overview hides superseded originals', () 
     const { result, findMany } = run([row('a', 'ACCEPTED', A)], []);
     expect((await result).size).toBe(0);
     expect(findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('OrderSampleService — transitionInTx concurrency claim', () => {
+  const sample = {
+    id: 's1',
+    tenantId: 't1',
+    branchId: 'A',
+    status: 'ACCEPTED',
+    previousStatus: null,
+  };
+
+  const build = (claimCount: number) => {
+    const claim = jest.fn().mockResolvedValue({ count: claimCount });
+    const update = jest
+      .fn()
+      .mockResolvedValue({ ...sample, status: 'SENT_INTERNAL' });
+    const history = jest.fn();
+    const tx = {
+      orderSample: {
+        findFirst: jest.fn().mockResolvedValue(sample),
+        updateMany: claim,
+        update,
+      },
+      orderSampleStatusHistory: { create: history },
+    };
+    const service = new OrderSampleService(
+      {} as unknown as PrismaService,
+      {} as unknown as AccessionSettingsService,
+      {} as unknown as LabReportService,
+      {} as unknown as PdfReportTemplateService,
+      {} as unknown as EventEmitter2,
+      {} as unknown as TenantService,
+      {} as unknown as BarcodeService,
+      {} as unknown as UserDepartmentScopeService,
+    );
+    const run = () =>
+      (
+        service as unknown as {
+          transitionInTx: (...a: unknown[]) => Promise<unknown>;
+        }
+      ).transitionInTx(tx, 't1', 'p1', 's1', 'send', () => ({ data: {} }));
+    return { claim, update, history, run };
+  };
+
+  it('claims the row on the status it read, then applies the transition once', async () => {
+    const { claim, update, history, run } = build(1);
+    await run();
+    expect(firstCallArg(claim)).toMatchObject({
+      where: { id: 's1', status: 'ACCEPTED' },
+    });
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(history).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses (no update, no history row) when a concurrent request already moved the sample', async () => {
+    const { update, history, run } = build(0);
+    await expect(run()).rejects.toBeInstanceOf(
+      InvalidSampleTransitionException,
+    );
+    expect(update).not.toHaveBeenCalled();
+    expect(history).not.toHaveBeenCalled();
+  });
+});
+
+describe('OrderSampleService — retrieve target', () => {
+  const retrieveTarget = (sample: {
+    status: string;
+    previousStatus: string | null;
+  }) =>
+    (
+      new OrderSampleService(
+        {} as unknown as PrismaService,
+        {} as unknown as AccessionSettingsService,
+        {} as unknown as LabReportService,
+        {} as unknown as PdfReportTemplateService,
+        {} as unknown as EventEmitter2,
+        {} as unknown as TenantService,
+        {} as unknown as BarcodeService,
+        {} as unknown as UserDepartmentScopeService,
+      ) as unknown as { retrieveTarget: (s: unknown) => string | null }
+    ).retrieveTarget(sample);
+
+  it('puts a sent sample back to the status it had before the send', () => {
+    expect(
+      retrieveTarget({ status: 'SENT_INTERNAL', previousStatus: 'NEW' }),
+    ).toBe('NEW');
+    expect(
+      retrieveTarget({ status: 'SENT_INTERNAL', previousStatus: 'COLLECTED' }),
+    ).toBe('COLLECTED');
+    expect(
+      retrieveTarget({
+        status: 'FORWARD_EXTERNAL',
+        previousStatus: 'ACCEPTED',
+      }),
+    ).toBe('ACCEPTED');
+  });
+
+  it('falls back to Accepted when the previous status is missing or unusable', () => {
+    expect(
+      retrieveTarget({ status: 'SENT_INTERNAL', previousStatus: null }),
+    ).toBe('ACCEPTED');
+    expect(
+      retrieveTarget({ status: 'OUTSOURCED', previousStatus: 'CANCELLED' }),
+    ).toBe('ACCEPTED');
+    expect(
+      retrieveTarget({
+        status: 'SENT_INTERNAL',
+        previousStatus: 'SENT_INTERNAL',
+      }),
+    ).toBe('ACCEPTED');
+  });
+});
+
+describe('OrderSampleService — Return of a transferred copy', () => {
+  type Priv = {
+    returnCopyToOrigin: jest.Mock;
+    transitionIds: jest.Mock;
+    notifySamplesRepeated: jest.Mock;
+    findById: jest.Mock;
+  };
+  function setup(copies: Array<{ id: string; status: string }>) {
+    const transferUpdate = jest.fn().mockResolvedValue({ count: 1 });
+    const tx = {
+      orderSample: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue(
+            copies.map((c) => ({ ...c, sourceTransferId: 'tr1' })),
+          ),
+      },
+      sampleTransfer: { updateMany: transferUpdate },
+    };
+    const prisma = {
+      withTenant: jest.fn((_t: string, fn: (t: typeof tx) => unknown) =>
+        fn(tx),
+      ),
+    };
+    const service = new OrderSampleService(
+      prisma as unknown as PrismaService,
+      {} as unknown as AccessionSettingsService,
+      {} as unknown as LabReportService,
+      {} as unknown as PdfReportTemplateService,
+      {} as unknown as EventEmitter2,
+      {} as unknown as TenantService,
+      {} as unknown as BarcodeService,
+      {} as unknown as UserDepartmentScopeService,
+    );
+    const priv = service as unknown as Priv;
+    priv.returnCopyToOrigin = jest.fn().mockResolvedValue('origin1');
+    priv.transitionIds = jest.fn().mockResolvedValue([{ id: 'plain-result' }]);
+    priv.notifySamplesRepeated = jest.fn().mockResolvedValue(undefined);
+    priv.findById = jest.fn((id: string) => Promise.resolve({ id }));
+    return { service, transferUpdate, priv };
+  }
+
+  it('sends a transferred copy back to its sender instead of marking it Returned', async () => {
+    const { service, transferUpdate, priv } = setup([
+      { id: 'copy1', status: 'ACCEPTED' },
+    ]);
+    const out = await service.returnSample(['copy1'], 't1', 'p1', {
+      handoverPerson: 'X',
+    });
+    expect(priv.returnCopyToOrigin).toHaveBeenCalledTimes(1);
+    expect(priv.transitionIds).not.toHaveBeenCalled();
+    expect(firstCallArg(transferUpdate)).toMatchObject({
+      data: { transferStatus: 'REPEAT' },
+    });
+    expect(priv.notifySamplesRepeated).toHaveBeenCalledWith('t1', ['origin1']);
+    expect(out).toEqual([{ id: 'origin1' }]);
+  });
+
+  it('a normal sample (not a copy) keeps the ordinary Return', async () => {
+    const { service, priv } = setup([]);
+    const out = await service.returnSample(['s1'], 't1', 'p1', {});
+    expect(priv.returnCopyToOrigin).not.toHaveBeenCalled();
+    expect(priv.transitionIds).toHaveBeenCalledWith(
+      ['s1'],
+      't1',
+      'p1',
+      'return',
+      expect.any(Function),
+      expect.anything(),
+    );
+    expect(out).toEqual([{ id: 'plain-result' }]);
+  });
+
+  it('refuses a copy that cannot be returned from its status, and skips it in a group', async () => {
+    const strict = setup([{ id: 'copy1', status: 'SENT_INTERNAL' }]);
+    await expect(
+      strict.service.returnSample(['copy1'], 't1', 'p1', {}),
+    ).rejects.toBeInstanceOf(InvalidSampleTransitionException);
+    expect(strict.priv.returnCopyToOrigin).not.toHaveBeenCalled();
+
+    const group = setup([{ id: 'copy1', status: 'SENT_INTERNAL' }]);
+    const out = await group.service.returnSample(['copy1'], 't1', 'p1', {
+      skipInvalid: true,
+    } as never);
+    expect(group.priv.returnCopyToOrigin).not.toHaveBeenCalled();
+    expect(out).toEqual([]);
   });
 });

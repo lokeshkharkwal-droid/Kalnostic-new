@@ -8,6 +8,15 @@ import { TatStatus } from '../constants/tat.constant';
  */
 export const SAMPLE_LIST_INCLUDE = {
   tests: { where: { deletedAt: null } },
+  // Latest transfer only (id/kind/status): lets the in-house list tell whether a
+  // sent sample can still be retrieved / re-addressed (only until the receiving
+  // branch has received it) without fetching the full detail per row.
+  transfers: {
+    where: { deletedAt: null },
+    orderBy: { createdAt: 'desc' },
+    take: 1,
+    select: { id: true, kind: true, transferStatus: true },
+  },
   order: {
     select: {
       id: true,

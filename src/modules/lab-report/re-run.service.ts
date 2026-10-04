@@ -5,6 +5,10 @@ import {
 import { Injectable } from '@nestjs/common';
 import { ReRunStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  assertReportNotSentOut,
+  findSentOutReportIds,
+} from './utils/sent-out-report.util';
 import { LabReportService } from './lab-report.service';
 import { RaiseReRunDto } from './dto/re-run.dto';
 import { UpdateReRunStatusDto } from './dto/update-worklist-status.dto';
@@ -60,6 +64,7 @@ export class ReRunService {
       },
     });
     if (!report) throw new LabReportNotFoundException(labReportId);
+    await assertReportNotSentOut(this.prisma, tenantId, labReportId);
 
     await this.labReportService.resetForRerun(
       labReportId,
@@ -133,6 +138,7 @@ export class ReRunService {
       where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
     });
     if (!entry) throw new WorklistEntryNotFoundException('re_run_request', id);
+    await assertReportNotSentOut(this.prisma, tenantId, entry.labReportId);
 
     const updated = await this.prisma.reRunRequest.update({
       where: { id },
