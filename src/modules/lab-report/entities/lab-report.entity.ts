@@ -336,6 +336,14 @@ export interface LabReportWorklistRow {
    * Barcode" step). Empty array under the same (rare/defensive) condition as
    * `sampleStatuses`. */
   sampleBarcodes: (string | null)[];
+  /** Index-paired with `sampleIds` — the branch each linked sample belongs to.
+   * After an internal transfer an item has the sender's original and the
+   * receiver's copy; this lets each viewer see the status of ITS OWN sample. */
+  sampleBranchIds: (string | null)[];
+  /** `full` when a branch of the caller holds the report; `view` when it is only
+   * listed because the caller's branch sent it, or its sample is sent out and
+   * waiting for the receiver (view and print only). */
+  accessMode?: 'full' | 'view';
 
   /** Whether this test has been assigned to a multi-step process
    * (LABORATORY.docx §5.7 — Histopathology/Bone Marrow/Cytology/IHC, tracked
@@ -496,6 +504,7 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
     sampleStatuses: [],
     sampleIds: [],
     sampleBarcodes: [],
+    sampleBranchIds: [],
     tat: null,
 
     multiStepProcessType: null,

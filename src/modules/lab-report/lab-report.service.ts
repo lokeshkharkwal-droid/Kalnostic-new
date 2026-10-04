@@ -1333,20 +1333,27 @@ export class LabReportService {
       select: {
         orderItemId: true,
         labTestId: true,
-        sample: { select: { id: true, status: true, barcode: true } },
+        sample: {
+          select: { id: true, status: true, barcode: true, branchId: true },
+        },
       },
     });
 
     // Group by orderItemId first (every sample of the item — the fallback for
     // a non-panel/grandfathered row), and separately by
     // (orderItemId, labTestId) for the precise per-member-test scoping.
-    type SampleInfo = { status: SampleStatus; barcode: string | null };
+    type SampleInfo = {
+      status: SampleStatus;
+      barcode: string | null;
+      branchId: string | null;
+    };
     const byOrderItem = new Map<string, Map<string, SampleInfo>>();
     const byOrderItemAndTest = new Map<string, Map<string, SampleInfo>>();
     for (const { orderItemId, labTestId, sample } of sampleTests) {
       const info: SampleInfo = {
         status: sample.status,
         barcode: sample.barcode,
+        branchId: sample.branchId,
       };
       const item =
         byOrderItem.get(orderItemId) ?? new Map<string, SampleInfo>();
@@ -1373,6 +1380,7 @@ export class LabReportService {
         sampleIds: entries.map(([sampleId]) => sampleId),
         sampleStatuses: entries.map(([, info]) => info.status),
         sampleBarcodes: entries.map(([, info]) => info.barcode),
+        sampleBranchIds: entries.map(([, info]) => info.branchId),
       };
     });
   }
