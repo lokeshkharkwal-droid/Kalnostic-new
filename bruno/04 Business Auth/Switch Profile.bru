@@ -47,7 +47,8 @@ docs {
   `lab_technician`, `receptionist`, `patient`, …) or a tenant **custom** role
   (from `/roles`, see "34 Roles"). The switch is validated against the user's
   assignment for `(branchId, role.key)`; a role/branch the user doesn't hold →
-  ProfileSwitchDenied. Omit `branchId` for tenant-level profiles (e.g.
+  ProfileSwitchDenied — as does an assignment whose branch is deactivated
+  (per-branch status) or soft-deleted. Omit `branchId` for tenant-level profiles (e.g.
   `business_admin`, `patient`). The resulting JWT `active_profile_key` /
   `profile_label` still equal the role's `key` / `name` (unchanged contract).
 }

@@ -60,4 +60,12 @@ docs {
     DEFAULT_MODULE_NOT_IN_MODULES; if the role template links specific modules it
     must be one of them else 422 MODULE_NOT_IN_ROLE_TEMPLATE. Omit to leave unset.
   - `status` ACTIVE|INACTIVE controls access to that branch only.
+  - Every assignment must grant at least one module enabled at the branch — the
+    chosen `modules`, or (when omitted) the role's default modules — else 422
+    NO_MODULE_ACCESS_AT_BRANCH.
+  - `shouldRevokeUnlisted` (optional boolean, default false): when true,
+    `branches` is the user's COMPLETE branch set — every other branch-level
+    assignment is revoked (and its permission overrides dropped) in the same
+    transaction, so the save is all-or-nothing. The Edit User form sends true.
+    Tenant-level profiles (e.g. business_admin) are never touched.
 }

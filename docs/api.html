@@ -829,7 +829,7 @@ coherent example: SiteAdmin <i>owner@kalnostics.com</i> created tenant <b>City D
 <div class="ep" id="auth-refresh">
   <div><span class="m post">POST</span><span class="path">/api/v1/auth/refresh</span></div>
   <div class="tags"><span class="tag pub">public</span></div>
-  <p>Rotate a refresh token. The old token is single-use; a new access + refresh pair is issued with the same context.</p>
+  <p>Rotate a refresh token. The old token is single-use; a new access + refresh pair is issued with the same context — re-validated first: an inactive person or INACTIVE tenant membership gets <code>403 ACCOUNT_INACTIVE</code>, and if the stored branch/profile assignment was revoked, deactivated, or its branch deleted, the new tokens land on the user's default profile (as at login). <code>profiles[]</code> omits assignments on deleted branches.</p>
   <p class="lbl">Request body</p>
   <pre>{ "refreshToken": "a1b2c3…" }</pre>
   <p class="lbl">curl</p>
@@ -843,7 +843,7 @@ coherent example: SiteAdmin <i>owner@kalnostics.com</i> created tenant <b>City D
 <div class="ep" id="auth-switch">
   <div><span class="m post">POST</span><span class="path">/api/v1/auth/switch-profile</span></div>
   <div class="tags"><span class="tag biz">business JWT</span></div>
-  <p>Switch the active branch/profile context. Returns a new access <strong>and</strong> refresh token: the refresh-token context is rotated to the switched branch/profile, so a later <code>/auth/refresh</code> keeps the switched context instead of reverting. Session-only — the user's default profile (<code>isDefault</code>) is not changed, so a fresh login still lands on the admin-set default branch. Omit <code>branchId</code> for tenant-level profiles.</p>
+  <p>Switch the active branch/profile context. Returns a new access <strong>and</strong> refresh token: the refresh-token context is rotated to the switched branch/profile, so a later <code>/auth/refresh</code> keeps the switched context instead of reverting. Session-only — the user's default profile (<code>isDefault</code>) is not changed, so a fresh login still lands on the admin-set default branch. Omit <code>branchId</code> for tenant-level profiles. Denied (<code>403 PROFILE_SWITCH_DENIED</code>) if the assignment is missing, revoked, on a deactivated branch, or on a deleted branch.</p>
   <p class="lbl">Request body</p>
   <pre>{ "branchId": "uuid-or-omit", "profileKey": "doctor" }</pre>
   <p class="lbl">curl</p>

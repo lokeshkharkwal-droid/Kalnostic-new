@@ -69,3 +69,18 @@ export class LabAdapterLabTestNotFoundException extends KaltrosException {
     );
   }
 }
+
+/**
+ * 422 — one or more selected `labTestIds` belong to a branch the adapter is not
+ * assigned to (e.g. a test picked for a branch that was then removed).
+ */
+export class LabAdapterLabTestBranchMismatchException extends KaltrosException {
+  constructor(labTestIds: string[]) {
+    super(
+      'LAB_ADAPTER_LAB_TEST_BRANCH_MISMATCH',
+      'One or more selected lab tests belong to a branch this adapter is not assigned to',
+      { labTestIds },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}

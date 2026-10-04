@@ -179,8 +179,12 @@ export class BranchController {
     action: AuditAction.DELETE,
     description: 'Deleted a branch',
   })
-  remove(@CurrentTenant() tenantId: string, @Param('id') id: string) {
-    return this.branchService.remove(id, tenantId);
+  remove(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') actorId: string,
+    @Param('id') id: string,
+  ) {
+    return this.branchService.remove(id, tenantId, actorId);
   }
 
   /**

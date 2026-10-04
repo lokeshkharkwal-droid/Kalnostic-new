@@ -45,4 +45,7 @@ docs {
     set stands.
   - `defaultModule` — must be one of the effective `modules` (else 422
     DEFAULT_MODULE_NOT_IN_MODULES) and linked to the role template, when it links any.
+  - The resulting assignment must grant at least one module enabled at the branch
+    (the effective `modules`, or the role's default modules when the set is
+    empty) — else 422 NO_MODULE_ACCESS_AT_BRANCH.
 }
