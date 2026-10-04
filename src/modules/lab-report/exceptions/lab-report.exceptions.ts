@@ -13,6 +13,21 @@ export class LabReportNotFoundException extends KaltrosException {
   }
 }
 
+/**
+ * 403 — the requested branch is not one the caller may reach through the
+ * Technician module (no branch access, or no Technician-module access there).
+ */
+export class BranchNotAccessibleException extends KaltrosException {
+  constructor(branchId: string) {
+    super(
+      'BRANCH_NOT_ACCESSIBLE',
+      'You do not have Technician access to that branch',
+      { branchId },
+      HttpStatus.FORBIDDEN,
+    );
+  }
+}
+
 /** 422 — the caller has no active branch context (required for all routes). */
 export class ActiveBranchRequiredException extends KaltrosException {
   constructor() {

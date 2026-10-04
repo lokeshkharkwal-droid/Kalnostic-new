@@ -1,4 +1,18 @@
-import { UseGuards, Body, Controller, Get, Param, Patch } from '@nestjs/common';
+import { TechnicianBranchAccessService } from './access/technician-branch-access.service';
+import {
+  ReportBranchScope,
+  ReportBranchScopeGuard,
+} from './access/report-branch-scope.guard';
+import { WorklistBranchQueryDto } from './dto/worklist-branch-query.dto';
+import {
+  UseGuards,
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Query,
+} from '@nestjs/common';
 import { PermissionGuard } from '../permissions/guards/permission.guard';
 import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
 import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
@@ -17,17 +31,30 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * controller covers the worklist's own list/status-update.
  */
 @Controller('out-of-range-flags')
-@UseGuards(PermissionGuard)
+@UseGuards(ReportBranchScopeGuard, PermissionGuard)
+@ReportBranchScope({ entity: 'outOfRangeFlag' })
 export class OutOfRangeController {
-  constructor(private readonly outOfRangeService: OutOfRangeService) {}
+  constructor(
+    private readonly outOfRangeService: OutOfRangeService,
+    private readonly branchAccess: TechnicianBranchAccessService,
+  ) {}
 
   @Get()
   @RequirePermission(PERMISSION_KEYS.LAB_ACCESS_OOR)
-  findAll(
+  async findAll(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Query() query: WorklistBranchQueryDto,
   ) {
-    return this.outOfRangeService.findAll(tenantId, profile.branchId);
+    const scope = await this.branchAccess.resolveScope(
+      tenantId,
+      personId,
+      profile,
+      query.branchId,
+      PERMISSION_KEYS.LAB_ACCESS_OOR,
+    );
+    return this.outOfRangeService.findAll(tenantId, scope);
   }
 
   @Patch(':id/status')

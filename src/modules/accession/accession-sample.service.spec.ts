@@ -432,3 +432,135 @@ describe('OrderSampleService — label variables', () => {
     expect(labelAge(null)).toBe('');
   });
 });
+
+describe('OrderSampleService — order overview hides superseded originals', () => {
+  type Row = {
+    id: string;
+    status: string;
+    branchId: string | null;
+    tests: Array<{ orderItemId: string; labTestId: string | null }>;
+  };
+  const A = 'branchA';
+  const B = 'branchB';
+  const C = 'branchC';
+  const test = (orderItemId: string, labTestId: string | null = 't1') => ({
+    orderItemId,
+    labTestId,
+  });
+  const row = (
+    id: string,
+    status: string,
+    branchId: string,
+    tests = [test('i1')],
+  ): Row => ({ id, status, branchId, tests });
+
+  function run(
+    rows: Row[],
+    acceptedTransfers: Array<{ sampleId: string; destinationBranchId: string }>,
+  ) {
+    const findMany = jest.fn().mockResolvedValue(acceptedTransfers);
+    const tx = { sampleTransfer: { findMany } };
+    const service = new OrderSampleService(
+      {} as unknown as PrismaService,
+      {} as unknown as AccessionSettingsService,
+      {} as unknown as LabReportService,
+      {} as unknown as PdfReportTemplateService,
+      {} as unknown as EventEmitter2,
+      {} as unknown as TenantService,
+      {} as unknown as BarcodeService,
+      {} as unknown as UserDepartmentScopeService,
+    );
+    const result = (
+      service as unknown as {
+        supersededSampleIds: (
+          tx: unknown,
+          tenantId: string,
+          rows: Row[],
+        ) => Promise<Set<string>>;
+      }
+    ).supersededSampleIds(tx, 't1', rows);
+    return { result, findMany };
+  }
+
+  it('hides the sender original once the transfer is accepted and the receiving copy exists', async () => {
+    const { result } = run(
+      [row('orig', 'SENT_INTERNAL', A), row('copy', 'ACCEPTED', B)],
+      [{ sampleId: 'orig', destinationBranchId: B }],
+    );
+    expect([...(await result)]).toEqual(['orig']);
+  });
+
+  it('keeps the original while the transfer is still on its way (no accepted transfer, no copy)', async () => {
+    const { result, findMany } = run(
+      [row('orig', 'SENT_INTERNAL', A)],
+      [], // the query only returns ACCEPTED transfers
+    );
+    expect((await result).size).toBe(0);
+    expect(findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the original when its accepted transfer has no live copy any more (copy voided)', async () => {
+    const { result } = run(
+      [row('orig', 'SENT_INTERNAL', A)],
+      [{ sampleId: 'orig', destinationBranchId: B }],
+    );
+    expect((await result).size).toBe(0);
+  });
+
+  it('chain A → B → C: hides the originals at A and B, shows only the holder at C', async () => {
+    const { result } = run(
+      [
+        row('atA', 'SENT_INTERNAL', A),
+        row('atB', 'SENT_INTERNAL', B),
+        row('atC', 'ACCEPTED', C),
+      ],
+      [
+        { sampleId: 'atA', destinationBranchId: B },
+        { sampleId: 'atB', destinationBranchId: C },
+      ],
+    );
+    expect([...(await result)].sort()).toEqual(['atA', 'atB']);
+  });
+
+  it('A → B accepted, then B → C still in transit: only the sender original is hidden', async () => {
+    const { result } = run(
+      [row('atA', 'SENT_INTERNAL', A), row('atB', 'SENT_INTERNAL', B)],
+      [{ sampleId: 'atA', destinationBranchId: B }],
+    );
+    expect([...(await result)]).toEqual(['atA']);
+  });
+
+  it('does not mix up the member samples of a panel: a copy of one member does not hide another', async () => {
+    const memberA = [test('panel', 'chol')];
+    const memberB = [test('panel', 'trig')];
+    const { result } = run(
+      [
+        row('s1', 'SENT_INTERNAL', A, memberA),
+        row('s2', 'SENT_INTERNAL', A, memberB),
+        row('c1', 'ACCEPTED', B, memberA), // copy of s1 only
+      ],
+      [
+        { sampleId: 's1', destinationBranchId: B },
+        { sampleId: 's2', destinationBranchId: B },
+      ],
+    );
+    expect([...(await result)]).toEqual(['s1']);
+  });
+
+  it("a copy that lacks one of the original's tests does not supersede it", async () => {
+    const { result } = run(
+      [
+        row('orig', 'SENT_INTERNAL', A, [test('i1'), test('i2')]),
+        row('copy', 'ACCEPTED', B, [test('i1')]),
+      ],
+      [{ sampleId: 'orig', destinationBranchId: B }],
+    );
+    expect((await result).size).toBe(0);
+  });
+
+  it('makes no transfer query at all when nothing in the order is Sent', async () => {
+    const { result, findMany } = run([row('a', 'ACCEPTED', A)], []);
+    expect((await result).size).toBe(0);
+    expect(findMany).not.toHaveBeenCalled();
+  });
+});

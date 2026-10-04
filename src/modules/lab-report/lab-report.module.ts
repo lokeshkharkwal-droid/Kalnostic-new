@@ -31,6 +31,8 @@ import { InventoryUsageService } from './inventory-usage.service';
 import { MultiStepProcessService } from './multi-step-process.service';
 import { TatService } from './tat.service';
 import { NablTatCronService } from './nabl-tat-cron.service';
+import { TechnicianBranchAccessService } from './access/technician-branch-access.service';
+import { ReportBranchScopeGuard } from './access/report-branch-scope.guard';
 
 /**
  * Technician Reporting feature module (LABORATORY.docx). Exports
@@ -75,6 +77,8 @@ import { NablTatCronService } from './nabl-tat-cron.service';
     InventoryUsageController,
   ],
   providers: [
+    TechnicianBranchAccessService,
+    ReportBranchScopeGuard,
     LabReportService,
     LabReportAttachmentService,
     LabReportDirectoryService,

@@ -1,3 +1,7 @@
+import {
+  worklistRowBranchWhere,
+  type WorklistBranchScope,
+} from './access/worklist-branch-scope';
 import { Injectable } from '@nestjs/common';
 import { AlertReviewStatus, WorklistTrigger } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -95,10 +99,14 @@ export class CriticalAlertService {
       });
   }
 
-  async findAll(tenantId: string, branchId: string | null) {
-    const activeBranchId = this.requireBranch(branchId);
+  /**
+   * The worklist's entries for the branches in `scope` (the caller's own branch by
+   * default; several branches for "All Branches" — see
+   * `TechnicianBranchAccessService.resolveScope`).
+   */
+  async findAll(tenantId: string, scope: WorklistBranchScope) {
     const rows = await this.prisma.criticalAlert.findMany({
-      where: { tenantId, branchId: activeBranchId, deletedAt: null },
+      where: { tenantId, ...worklistRowBranchWhere(scope), deletedAt: null },
       include: CRITICAL_ALERT_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });

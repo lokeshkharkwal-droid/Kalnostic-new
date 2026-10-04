@@ -85,6 +85,7 @@ import {
   LabReportStatusCounts,
   LabReportTransitionAction,
   LabReportWorklistRow,
+  WorklistTat,
   fullName,
   toWorklistRow,
 } from './entities/lab-report.entity';
@@ -118,6 +119,7 @@ import {
 } from './utils/reference-range.util';
 import { buildTestFileAttachmentHtml } from './utils/test-file-attachment.util';
 import { TatService } from './tat.service';
+import type { WorklistBranchScope } from './access/worklist-branch-scope';
 
 /**
  * Technician Reporting core module: worklist, Test Entry (result values), and
@@ -401,30 +403,51 @@ export class LabReportService {
   }
 
   /**
-   * Resolve the worklist's branch scope: an explicit `filters.branchId` ("All
-   * Branches" filter row, LABORATORY.docx §3.1) overrides the caller's active
-   * branch — same permissive pattern as `OrderService.findAll` (any branch in
-   * the tenant, no ownership check). Falls back to the caller's active
-   * branch, then errors if neither is present.
+   * Apply a branch scope to a list `where`. A single branch with every status
+   * keeps the plain `branchId` equality (the shape the own-branch worklist has
+   * always used). Several branches — or a branch with a restricted status set —
+   * become an OR of per-branch rules, so each branch contributes only the
+   * statuses ITS permissions grant (permissions are never merged across
+   * branches). A scope with no usable rule matches nothing.
    */
-  private resolveBranch(
-    activeBranchId: string | null,
-    filters: Pick<ListLabReportsDto, 'branchId'>,
-  ): string {
-    return this.requireBranch(filters.branchId ?? activeBranchId);
+  private applyBranchScope(
+    where: Prisma.LabReportWhereInput,
+    scope: WorklistBranchScope,
+  ): void {
+    const usable = scope.rules.filter(
+      (r) => r.statuses === 'ALL' || r.statuses.size > 0,
+    );
+    if (usable.length === 0) {
+      where.branchId = { in: [] };
+      return;
+    }
+    const [only] = usable;
+    if (usable.length === 1 && only && only.statuses === 'ALL') {
+      where.branchId = only.branchId;
+      return;
+    }
+    where.AND = [
+      {
+        OR: usable.map((r) =>
+          r.statuses === 'ALL'
+            ? { branchId: r.branchId }
+            : { branchId: r.branchId, status: { in: [...r.statuses] } },
+        ),
+      },
+    ];
   }
 
   private buildListWhere(
     tenantId: string,
-    branchId: string,
+    scope: WorklistBranchScope,
     filters: ListLabReportsDto,
     scopeIds: string[],
   ): Prisma.LabReportWhereInput {
     const where: Prisma.LabReportWhereInput = {
       tenantId,
-      branchId,
       deletedAt: null,
     };
+    this.applyBranchScope(where, scope);
 
     if (filters.status) where.status = filters.status;
     if (filters.urgent) where.isUrgent = true;
@@ -594,23 +617,23 @@ export class LabReportService {
     return { OR: or };
   }
 
+  /**
+   * The Reporting Worklist page.
+   * @param scope the branches (and per-branch visible statuses) this request
+   *   covers — resolved by the controller from the caller's branch + Technician-
+   *   module access (see `TechnicianBranchAccessService.resolveScope`)
+   */
   async findAll(
     tenantId: string,
-    branchId: string | null,
+    scope: WorklistBranchScope,
     filters: ListLabReportsDto,
     personId: string,
   ) {
-    const resolvedBranchId = this.resolveBranch(branchId, filters);
     const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
       tenantId,
       personId,
     );
-    const where = this.buildListWhere(
-      tenantId,
-      resolvedBranchId,
-      filters,
-      scopeIds,
-    );
+    const where = this.buildListWhere(tenantId, scope, filters, scopeIds);
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 25;
 
@@ -638,11 +661,23 @@ export class LabReportService {
 
     // Analytical-TAT band per row (SRS §6.2/§8): frozen snapshot for approved
     // reports, live compute for in-flight ones — batched over the whole page.
-    const tatByReport = await this.tatService.computeBandsForReports(
-      tenantId,
-      resolvedBranchId,
-      rows,
-    );
+    // `computeBandsForReports` reads ONE branch's calendar/timezone, so rows of
+    // different branches (an "All Branches" page) are computed per branch.
+    const tatByReport = new Map<string, WorklistTat>();
+    const rowsByBranch = new Map<string, typeof rows>();
+    for (const row of rows) {
+      const key = row.branchId ?? scope.rules[0]?.branchId ?? '';
+      rowsByBranch.set(key, [...(rowsByBranch.get(key) ?? []), row]);
+    }
+    for (const [rowBranchId, branchRows] of rowsByBranch) {
+      if (!rowBranchId) continue;
+      const bands = await this.tatService.computeBandsForReports(
+        tenantId,
+        rowBranchId,
+        branchRows,
+      );
+      for (const [reportId, tat] of bands) tatByReport.set(reportId, tat);
+    }
     worklistRows = worklistRows.map((r) => ({
       ...r,
       tat: tatByReport.get(r.id) ?? null,
@@ -1159,18 +1194,17 @@ export class LabReportService {
 
   async getCounts(
     tenantId: string,
-    branchId: string | null,
+    scope: WorklistBranchScope,
     filters: ListLabReportsDto,
     personId: string,
   ): Promise<LabReportStatusCounts> {
-    const resolvedBranchId = this.resolveBranch(branchId, filters);
     const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
       tenantId,
       personId,
     );
     const baseWhere = this.buildListWhere(
       tenantId,
-      resolvedBranchId,
+      scope,
       { ...filters, status: undefined },
       scopeIds,
     );
@@ -1194,7 +1228,7 @@ export class LabReportService {
     // whichever source pill happens to be selected right now.
     const sourceBaseWhere = this.buildListWhere(
       tenantId,
-      resolvedBranchId,
+      scope,
       {
         ...filters,
         status: undefined,
@@ -3248,23 +3282,31 @@ export class LabReportService {
     tenantId: string,
     branchId: string | null,
     orderItemIds?: string[],
+    scope?: WorklistBranchScope,
   ): Promise<{
     latteContext: Record<string, unknown>;
     flatContext: GeneratePdfDto;
   }> {
     const activeBranchId = this.requireBranch(branchId);
+    const reportWhere: Prisma.LabReportWhereInput = {
+      tenantId,
+      deletedAt: null,
+      orderItem: { orderId },
+      ...(orderItemIds && orderItemIds.length > 0
+        ? { orderItemId: { in: orderItemIds } }
+        : {}),
+    };
+    // The order's reports in every branch the caller may reach (own branch only
+    // when no scope is given — the share flows).
+    this.applyBranchScope(
+      reportWhere,
+      scope ?? { rules: [{ branchId: activeBranchId, statuses: 'ALL' }] },
+    );
     const reportRows = await this.prisma.labReport.findMany({
-      where: {
-        tenantId,
-        branchId: activeBranchId,
-        deletedAt: null,
-        orderItem: { orderId },
-        ...(orderItemIds && orderItemIds.length > 0
-          ? { orderItemId: { in: orderItemIds } }
-          : {}),
-      },
+      where: reportWhere,
       select: {
         id: true,
+        branchId: true,
         labTestId: true,
         approvedAt: true,
         publishedAt: true,
@@ -3344,7 +3386,10 @@ export class LabReportService {
 
     // Per-report body + dates, reusing the single-report context builder.
     const contexts = await Promise.all(
-      reportRows.map((r) => this.buildPrintContext(r.id, tenantId, branchId)),
+      // Each report is rendered through ITS OWN branch (settings, templates).
+      reportRows.map((r) =>
+        this.buildPrintContext(r.id, tenantId, r.branchId ?? branchId),
+      ),
     );
     const reports = await Promise.all(
       reportRows.map(async (r, idx) => {
@@ -3355,7 +3400,7 @@ export class LabReportService {
           body_html: await this.buildReportBodyHtml(
             r.id,
             tenantId,
-            branchId,
+            r.branchId ?? branchId,
             c,
           ),
           sample_collected_date: toText(c?.variables?.sample_collected_date),
@@ -3623,6 +3668,7 @@ export class LabReportService {
     branchId: string | null,
     templateId?: string,
     orderItemIds?: string[],
+    scope?: WorklistBranchScope,
   ): Promise<Buffer> {
     const activeBranchId = this.requireBranch(branchId);
     // Referral Panel Settings — Restrict Report Access (Credit Limit/Days).
@@ -3647,6 +3693,7 @@ export class LabReportService {
           tenantId,
           branchId,
           orderItemIds,
+          scope,
         );
         // `generateLattePdf` picks the engine by the template body's syntax: a
         // Latte all-report template (`{foreach $report_tests->tests}`) uses
@@ -3661,17 +3708,21 @@ export class LabReportService {
       }
     }
 
+    const reportWhere: Prisma.LabReportWhereInput = {
+      tenantId,
+      deletedAt: null,
+      orderItem: { orderId },
+      ...(orderItemIds && orderItemIds.length > 0
+        ? { orderItemId: { in: orderItemIds } }
+        : {}),
+    };
+    this.applyBranchScope(
+      reportWhere,
+      scope ?? { rules: [{ branchId: activeBranchId, statuses: 'ALL' }] },
+    );
     const reportRows = await this.prisma.labReport.findMany({
-      where: {
-        tenantId,
-        branchId: activeBranchId,
-        deletedAt: null,
-        orderItem: { orderId },
-        ...(orderItemIds && orderItemIds.length > 0
-          ? { orderItemId: { in: orderItemIds } }
-          : {}),
-      },
-      select: { id: true },
+      where: reportWhere,
+      select: { id: true, branchId: true },
       orderBy: { createdAt: 'asc' },
     });
     if (reportRows.length === 0) {
@@ -3680,7 +3731,13 @@ export class LabReportService {
 
     const pdfBuffers = await Promise.all(
       reportRows.map((r) =>
-        this.print(r.id, tenantId, branchId, templateId, 'lab_report'),
+        this.print(
+          r.id,
+          tenantId,
+          r.branchId ?? branchId,
+          templateId,
+          'lab_report',
+        ),
       ),
     );
 

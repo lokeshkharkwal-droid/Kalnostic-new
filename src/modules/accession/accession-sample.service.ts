@@ -8,6 +8,7 @@ import {
   Prisma,
   SamplePriority,
   SampleStatus,
+  TransferKind,
   TransferStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -272,6 +273,7 @@ export class OrderSampleService {
           labTestSampleId: unit.sample.id,
           departmentId: unit.departmentId,
           accessionNo,
+          sampleName: unit.sample.sampleName,
           sampleType: unit.sample.sampleType,
           containerType: unit.sample.containerType,
           sampleGroupLabel:
@@ -855,7 +857,16 @@ export class OrderSampleService {
    * orders. Powers the Product Overview modal's grouped Test Details, so its
    * groups/barcodes/action-scope match `/accession/inhouse-orders` exactly.
    * Scoped by tenant + order id only (no branch filter): the modal always
-   * targets a specific order the caller just created/opened.
+   * targets a specific order the caller just created/opened, and a user with
+   * access to several branches must be able to see the order across them.
+   *
+   * One physical sample sent between branches has several rows (the sender's
+   * original and each receiving branch's copy). The overview lists the order's
+   * tests, not its sample records, so a sender's original whose transfer was
+   * accepted — and which therefore has a live copy — is left out
+   * ({@link supersededSampleIds}); the row of the branch that currently holds the
+   * sample is the one shown. A transfer still on its way has no copy yet, so the
+   * original stays visible as "Sent".
    * @param tenantId tenant scope (from JWT)
    * @param orderId the order whose samples to group
    * @returns the order's grouped samples, or `null` when it has none yet (e.g. a
@@ -880,11 +891,16 @@ export class OrderSampleService {
         });
         const mode =
           tenant?.groupingMode ?? AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME;
-        const rows = await tx.orderSample.findMany({
+        const found = await tx.orderSample.findMany({
           where: { orderId, tenantId, deletedAt: null },
           include: SAMPLE_LIST_INCLUDE,
           orderBy: { createdAt: 'desc' },
         });
+        const superseded = await this.supersededSampleIds(tx, tenantId, found);
+        const rows =
+          superseded.size > 0
+            ? found.filter((r) => !superseded.has(r.id))
+            : found;
         return { rows, mode };
       },
     );
@@ -909,6 +925,60 @@ export class OrderSampleService {
     }
 
     return this.buildOrderGroup(orderId, rows, mode, deptNameById, tat, nowMs);
+  }
+
+  /**
+   * Ids of samples that an accepted internal transfer has superseded. A
+   * `SENT_INTERNAL` sample with an `ACCEPTED` INTERNAL transfer is superseded
+   * when a live sample of the same order exists at the transfer's destination
+   * branch and carries all of its tests — that is the receiving branch's copy
+   * (made when the transfer was accepted, with the same order items / tests), and
+   * it is now the record of the branch holding the sample. The sender's original
+   * is just history. Matching on the full (order item, test) set keeps the
+   * samples of a panel's different member tests apart, and an accepted transfer
+   * whose copy was since voided supersedes nothing — the original stays.
+   * Needs only the rows already loaded plus one transfer query.
+   */
+  private async supersededSampleIds(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    rows: ReadonlyArray<{
+      id: string;
+      status: SampleStatus;
+      branchId: string | null;
+      tests: ReadonlyArray<{ orderItemId: string; labTestId: string | null }>;
+    }>,
+  ): Promise<Set<string>> {
+    const sent = rows.filter((r) => r.status === SampleStatus.SENT_INTERNAL);
+    if (sent.length === 0) return new Set();
+    const accepted = await tx.sampleTransfer.findMany({
+      where: {
+        tenantId,
+        sampleId: { in: sent.map((r) => r.id) },
+        kind: TransferKind.INTERNAL,
+        transferStatus: TransferStatus.ACCEPTED,
+        deletedAt: null,
+        destinationBranchId: { not: null },
+      },
+      select: { sampleId: true, destinationBranchId: true },
+    });
+    const testKey = (t: { orderItemId: string; labTestId: string | null }) =>
+      `${t.orderItemId}:${t.labTestId ?? ''}`;
+    const superseded = new Set<string>();
+    for (const t of accepted) {
+      const original = sent.find((r) => r.id === t.sampleId);
+      if (!original || original.tests.length === 0) continue;
+      const needed = original.tests.map(testKey);
+      const hasCopy = rows.some((c) => {
+        if (c.id === original.id || c.branchId !== t.destinationBranchId) {
+          return false;
+        }
+        const have = new Set(c.tests.map(testKey));
+        return needed.every((k) => have.has(k));
+      });
+      if (hasCopy) superseded.add(original.id);
+    }
+    return superseded;
   }
 
   /**
@@ -1370,6 +1440,7 @@ export class OrderSampleService {
         .map((t) => t.testName)
         .filter(Boolean)
         .join(', '),
+      sample_name: sample.sampleName ?? '',
       sample_type: sample.sampleType ?? '',
       container_type: sample.containerType
         ? CONTAINER_TYPE_LABELS[sample.containerType]
