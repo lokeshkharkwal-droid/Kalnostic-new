@@ -524,15 +524,22 @@ export class BranchService {
   }
 
   /**
-   * Soft-delete a branch (sets deletedAt; row is preserved). The tenant's main
-   * branch cannot be deleted — set another branch as main, or deactivate it
-   * (which releases the main-branch pointer), first.
+   * Soft-delete a branch (sets deletedAt and status INACTIVE; row is preserved)
+   * and, in the same transaction, detach everything that grants access through
+   * it: staff assignments at the branch are revoked, user-level and branch-role
+   * permission overrides there are removed, and its module enablement is
+   * disabled. Historical business data (orders, patients, settings, audit) is
+   * left untouched. The tenant's main branch cannot be deleted — set another
+   * branch as main, or deactivate it (which releases the main-branch pointer),
+   * first.
    * @param id branch id
    * @param tenantId tenant scope
+   * @param actorId person deleting the branch (recorded as the revoker of the
+   *   branch's staff assignments)
    * @throws BranchNotFoundException if missing/soft-deleted
    * @throws CannotDeleteMainBranchException if the branch is the current main branch
    */
-  async remove(id: string, tenantId: string): Promise<Branch> {
+  async remove(id: string, tenantId: string, actorId: string): Promise<Branch> {
     await this.findById(id, tenantId);
     const pointer = await this.prisma.tenantMainBranch.findUnique({
       where: { tenantId },
@@ -540,9 +547,32 @@ export class BranchService {
     if (pointer?.branchId === id) {
       throw new CannotDeleteMainBranchException(id);
     }
-    return this.prisma.branch.update({
-      where: { id },
-      data: { deletedAt: new Date() },
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const deletedAt = new Date();
+      await tx.userBranchProfile.updateMany({
+        where: { tenantId, branchId: id, deletedAt: null },
+        data: {
+          isActive: false,
+          isDefault: false,
+          deletedAt,
+          revokedAt: deletedAt,
+          revokedBy: actorId,
+        },
+      });
+      await tx.userBranchPermission.deleteMany({
+        where: { tenantId, branchId: id },
+      });
+      await tx.branchRolePermission.deleteMany({
+        where: { tenantId, branchId: id },
+      });
+      await tx.branchModule.updateMany({
+        where: { tenantId, branchId: id, deletedAt: null },
+        data: { isEnabled: false, deletedAt },
+      });
+      return tx.branch.update({
+        where: { id },
+        data: { deletedAt, status: BranchStatus.INACTIVE },
+      });
     });
   }
 
