@@ -89,6 +89,19 @@ function ageBreakdownFromDob(
 }
 
 /**
+ * Whole days elapsed from `dateOfBirth` (date-only, UTC midnight) to `now`'s
+ * calendar day, read via UTC getters like {@link ageBreakdownFromDob}.
+ */
+function daysSinceDob(dateOfBirth: Date, now: Date): number {
+  const today = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+  );
+  return Math.round((today - dateOfBirth.getTime()) / (24 * 60 * 60 * 1000));
+}
+
+/**
  * Full patient age as `"25 Years, 4 Months, 12 Days"` for print templates
  * (`{patient_age}`). When the patient's `dateOfBirth` is known this is computed
  * as a Years/Months/Days breakdown from DOB to `now` (all three components are
@@ -151,20 +164,56 @@ export function patientSingleUnitAgeDisplay(
   if (!breakdown || !dateOfBirth) {
     return patientAgeDisplay(age, ageType);
   }
-  const today = Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate(),
-  );
-  const totalDays = Math.round(
-    (today - dateOfBirth.getTime()) / (24 * 60 * 60 * 1000),
-  );
+  const totalDays = daysSinceDob(dateOfBirth, now);
   if (totalDays <= 31) {
     return patientAgeDisplay(totalDays, AgeType.DAYS);
   }
   const totalMonths = breakdown.years * 12 + breakdown.months;
   if (totalMonths <= 12) {
     return patientAgeDisplay(totalMonths, AgeType.MONTHS);
+  }
+  return patientAgeDisplay(breakdown.years, AgeType.YEARS);
+}
+
+/**
+ * Single-unit patient age for lab reports (`{patient_age}` on `lab_report` /
+ * `lab_panel` / `lab_all_report`) — `"15 Days"`, `"6 Months"`, `"25 Years"` —
+ * computed from `dateOfBirth` to `now` by the report's age bands:
+ *  - 0 to 29 days old → Days
+ *  - 30 days up to (not including) 1 year → Months; a 30-day-old whose
+ *    calendar month isn't complete yet still reads `1 Month`, never `0 Months`
+ *  - 1 year and over → Years
+ * Each value is singularised for 1 (via {@link patientAgeDisplay}). Distinct
+ * from {@link patientSingleUnitAgeDisplay}, whose bands follow the
+ * registration form's Age Type rule (up to 31 days / 12 months).
+ *
+ * When `dateOfBirth` is missing, in the future, or invalid, this falls back to
+ * the stored `age`/`ageType` snapshot (`''` when `age` is unknown).
+ *
+ * @param dateOfBirth the patient's date of birth (may be null)
+ * @param age the denormalised age snapshot (fallback)
+ * @param ageType the unit of `age` (fallback)
+ * @param now reference date, read via UTC getters — pass a tenant-local
+ *   wall-clock instant (`toBranchLocalInstant`) so the day is the branch's
+ *   calendar day; defaults to the current date
+ * @returns the formatted age string, or `''` when nothing is known
+ */
+export function patientReportAgeDisplay(
+  dateOfBirth: Date | null | undefined,
+  age: number | null | undefined,
+  ageType: AgeType | null | undefined,
+  now: Date = new Date(),
+): string {
+  const breakdown = ageBreakdownFromDob(dateOfBirth, now);
+  if (!breakdown || !dateOfBirth) {
+    return patientAgeDisplay(age, ageType);
+  }
+  const totalDays = daysSinceDob(dateOfBirth, now);
+  if (totalDays < 30) {
+    return patientAgeDisplay(totalDays, AgeType.DAYS);
+  }
+  if (breakdown.years < 1) {
+    return patientAgeDisplay(Math.max(1, breakdown.months), AgeType.MONTHS);
   }
   return patientAgeDisplay(breakdown.years, AgeType.YEARS);
 }

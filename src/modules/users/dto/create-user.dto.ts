@@ -203,4 +203,13 @@ export class AssignBranchesDto {
   @ValidateNested({ each: true })
   @Type(() => BranchAssignmentItemDto)
   branches: BranchAssignmentItemDto[];
+
+  /**
+   * When true, `branches` is the user's complete branch set: every branch-level
+   * assignment NOT listed is revoked in the same transaction (so an edit-form
+   * save is all-or-nothing). Defaults to false (add/update only).
+   */
+  @IsOptional()
+  @IsBoolean()
+  shouldRevokeUnlisted?: boolean;
 }

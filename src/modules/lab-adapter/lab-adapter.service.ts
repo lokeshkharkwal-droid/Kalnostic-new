@@ -10,6 +10,7 @@ import { UpdateLabAdapterDto } from './dto/update-lab-adapter.dto';
 import { ListLabAdapterQueryDto } from './dto/list-lab-adapter-query.dto';
 import {
   LabAdapterBranchRef,
+  LabAdapterLabTestOption,
   LabAdapterLabTestRef,
   LabAdapterListRow,
   LabAdapterOption,
@@ -18,6 +19,7 @@ import {
 import {
   LabAdapterBranchNotFoundException,
   LabAdapterEquipmentNotFoundException,
+  LabAdapterLabTestBranchMismatchException,
   LabAdapterLabTestNotFoundException,
   LabAdapterNameConflictException,
   LabAdapterNotFoundException,
@@ -245,8 +247,10 @@ export class LabAdapterService {
    * auto-map against the **effective** equipment and branches — the values newly
    * supplied in this update, falling back to the persisted ones. This is what
    * makes changing the equipment, the branches, or both on edit re-derive the
-   * mapped tests the same way create does. Omitting `labTestIds` entirely leaves
-   * the existing mappings untouched.
+   * mapped tests the same way create does. Omitting `labTestIds` keeps the
+   * existing mappings — except, when `branchIds` changes, tests belonging to a
+   * removed branch are dropped. Manual tests must belong to the effective
+   * branches.
    * @param id adapter id
    * @param tenantId tenant scope (from JWT)
    * @param actorId person id recorded as updated-by (or null)
@@ -254,6 +258,8 @@ export class LabAdapterService {
    * @throws LabAdapterNotFoundException if missing/soft-deleted/other tenant
    * @throws LabAdapterEquipmentNotFoundException / LabAdapterBranchNotFoundException
    *   / LabAdapterLabTestNotFoundException on invalid refs
+   * @throws LabAdapterLabTestBranchMismatchException if a manual test belongs to
+   *   a branch the adapter isn't assigned to
    * @throws LabAdapterNameConflictException if the name is already taken
    */
   async update(
@@ -283,6 +289,14 @@ export class LabAdapterService {
         effectiveEquipmentId,
         effectiveBranchIds,
         dto.labTestIds,
+      );
+    } else if (dto.branchIds !== undefined) {
+      // Branches changed but tests weren't sent: keep the mapped tests, minus
+      // those belonging to a branch that was just removed.
+      resolvedTestIds = await this.resolveTestIdsAtBranches(
+        tenantId,
+        id,
+        dto.branchIds,
       );
     }
 
@@ -383,6 +397,117 @@ export class LabAdapterService {
   }
 
   /**
+   * Options for the adapter form's manual Lab Tests picker — the active
+   * default-variant tests on the Walk-in (default) list of each **selected**
+   * branch, i.e. the same row set the auto-map draws from. Scoped by the
+   * client-supplied `branchIds` rather than the JWT's active branch, because an
+   * adapter is tenant-level and a Business Admin has no active branch. Each id is
+   * verified against the tenant first. When several branches are selected the
+   * label carries the branch name, since each branch has its own copy of a test.
+   * @param tenantId tenant scope (from JWT)
+   * @param filters selected branches + optional search + pagination
+   * @throws LabAdapterBranchNotFoundException if any branch ref is invalid
+   */
+  async findLabTestOptions(
+    tenantId: string,
+    filters: {
+      branchIds: string[];
+      search?: string;
+      page?: number;
+      limit?: number;
+    },
+  ): Promise<
+    LabAdapterLabTestOption[] | PaginatedResult<LabAdapterLabTestOption>
+  > {
+    const branchIds = [...new Set(filters.branchIds)];
+    // Verify every branch belongs to the tenant (never trust the client id —
+    // CLAUDE.md §4.7), keeping each name for the multi-branch option labels.
+    const branchNames = new Map<string, string>();
+    const missing: string[] = [];
+    for (const branchId of branchIds) {
+      try {
+        const branch = await this.branchService.findById(branchId, tenantId);
+        branchNames.set(branchId, branch.name);
+      } catch {
+        missing.push(branchId);
+      }
+    }
+    if (missing.length) {
+      throw new LabAdapterBranchNotFoundException(missing);
+    }
+
+    const defaultLists = await this.prisma.branchLabTestList.findMany({
+      where: {
+        tenantId,
+        branchId: { in: branchIds },
+        isDefault: true,
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+    const where: Prisma.BranchLabTestWhereInput = {
+      tenantId,
+      branchId: { in: branchIds },
+      listId: { in: defaultLists.map((l) => l.id) },
+      isActive: true,
+      isDefault: true,
+      deletedAt: null,
+    };
+    const term = filters.search?.trim();
+    if (term) {
+      where.testName = { contains: term, mode: 'insensitive' };
+    }
+
+    const select = {
+      id: true,
+      branchId: true,
+      testName: true,
+      testCode: true,
+    } as const;
+    const orderBy = [{ testName: 'asc' }, { branchId: 'asc' }] as const;
+    const multiBranch = branchIds.length > 1;
+    const toOption = (r: {
+      id: string;
+      branchId: string;
+      testName: string;
+      testCode: string | null;
+    }): LabAdapterLabTestOption => {
+      const code = r.testCode ? ` (${r.testCode})` : '';
+      const branch = multiBranch
+        ? ` · ${branchNames.get(r.branchId) ?? ''}`
+        : '';
+      return {
+        id: r.id,
+        name: `${r.testName}${code}${branch}`,
+        branchId: r.branchId,
+      };
+    };
+
+    if (filters.page === undefined) {
+      const rows = await this.prisma.branchLabTest.findMany({
+        where,
+        select,
+        orderBy: [...orderBy],
+      });
+      return rows.map(toOption);
+    }
+
+    const page = filters.page;
+    const limit = filters.limit ?? 20;
+    const [rows, total] = await Promise.all([
+      this.prisma.branchLabTest.findMany({
+        where,
+        select,
+        orderBy: [...orderBy],
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.branchLabTest.count({ where }),
+    ]);
+    return { data: rows.map(toOption), total, page, limit };
+  }
+
+  /**
    * Validate that every id references an active branch of the caller's tenant
    * (verified via `BranchService`, never trusting the client id — CLAUDE.md §4.7).
    * @throws LabAdapterBranchNotFoundException listing the invalid ids
@@ -409,12 +534,16 @@ export class LabAdapterService {
 
   /**
    * Validate that every id references an active branch lab test of the caller's
-   * tenant.
-   * @throws LabAdapterLabTestNotFoundException listing the invalid ids
+   * tenant **and** belongs to one of the adapter's branches — so a test picked
+   * for a branch that was later removed can't be saved. One query covers both
+   * checks.
+   * @throws LabAdapterLabTestNotFoundException listing ids that don't exist
+   * @throws LabAdapterLabTestBranchMismatchException listing ids at other branches
    */
   private async assertBranchLabTestRefs(
     tenantId: string,
     labTestIds: string[],
+    branchIds: string[],
   ): Promise<void> {
     if (!labTestIds.length) {
       return;
@@ -422,12 +551,17 @@ export class LabAdapterService {
     const unique = [...new Set(labTestIds)];
     const found = await this.prisma.branchLabTest.findMany({
       where: { id: { in: unique }, tenantId, deletedAt: null },
-      select: { id: true },
+      select: { id: true, branchId: true },
     });
-    if (found.length !== unique.length) {
-      const foundIds = new Set(found.map((t) => t.id));
-      const missing = unique.filter((id) => !foundIds.has(id));
+    const branchOf = new Map(found.map((t) => [t.id, t.branchId]));
+    const missing = unique.filter((id) => !branchOf.has(id));
+    if (missing.length) {
       throw new LabAdapterLabTestNotFoundException(missing);
+    }
+    const allowed = new Set(branchIds);
+    const outside = unique.filter((id) => !allowed.has(branchOf.get(id)!));
+    if (outside.length) {
+      throw new LabAdapterLabTestBranchMismatchException(outside);
     }
   }
 
@@ -443,6 +577,8 @@ export class LabAdapterService {
    * @param branchIds the effective branches (new set, else persisted)
    * @param manualIds the caller's lab-test selection (`[]` = auto-map)
    * @throws LabAdapterLabTestNotFoundException if a manual id is invalid
+   * @throws LabAdapterLabTestBranchMismatchException if a manual id belongs to a
+   *   branch outside `branchIds`
    */
   private async resolveLabTestIds(
     tenantId: string,
@@ -451,7 +587,7 @@ export class LabAdapterService {
     manualIds: string[],
   ): Promise<string[]> {
     if (manualIds.length) {
-      await this.assertBranchLabTestRefs(tenantId, manualIds);
+      await this.assertBranchLabTestRefs(tenantId, manualIds, branchIds);
       return manualIds;
     }
     return this.resolveEquipmentTestsForBranches(
@@ -471,6 +607,36 @@ export class LabAdapterService {
       select: { branchId: true },
     });
     return rows.map((r) => r.branchId);
+  }
+
+  /**
+   * An adapter's currently mapped test ids, keeping only those at `branchIds`
+   * (in their saved order). Used when an update changes the branches without
+   * sending tests, so tests of a removed branch are dropped.
+   */
+  private async resolveTestIdsAtBranches(
+    tenantId: string,
+    labAdapterId: string,
+    branchIds: string[],
+  ): Promise<string[]> {
+    const rows = await this.prisma.labAdapterTest.findMany({
+      where: { labAdapterId, tenantId, deletedAt: null },
+      orderBy: { sortOrder: 'asc' },
+      select: { branchLabTestId: true },
+    });
+    const kept = await this.prisma.branchLabTest.findMany({
+      where: {
+        id: { in: rows.map((r) => r.branchLabTestId) },
+        branchId: { in: branchIds },
+        tenantId,
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+    const keptIds = new Set(kept.map((t) => t.id));
+    return rows
+      .map((r) => r.branchLabTestId)
+      .filter((testId) => keptIds.has(testId));
   }
 
   /**
@@ -618,7 +784,7 @@ export class LabAdapterService {
     }));
   }
 
-  /** Resolve an adapter's active mapped tests to `{ id, testName, testCode }`. */
+  /** Resolve an adapter's active mapped tests to `{ id, branchId, testName, testCode }`. */
   private async resolveLabTests(
     tenantId: string,
     labAdapterId: string,
@@ -634,13 +800,18 @@ export class LabAdapterService {
     }
     const tests = await this.prisma.branchLabTest.findMany({
       where: { id: { in: testIds }, tenantId, deletedAt: null },
-      select: { id: true, testName: true, testCode: true },
+      select: { id: true, branchId: true, testName: true, testCode: true },
     });
     const byId = new Map(tests.map((t) => [t.id, t]));
     return testIds
       .map((id) => byId.get(id))
       .filter((t): t is NonNullable<typeof t> => Boolean(t))
-      .map((t) => ({ id: t.id, testName: t.testName, testCode: t.testCode }));
+      .map((t) => ({
+        id: t.id,
+        branchId: t.branchId,
+        testName: t.testName,
+        testCode: t.testCode,
+      }));
   }
 
   /** Count active branch assignments per adapter, keyed by `labAdapterId`. */

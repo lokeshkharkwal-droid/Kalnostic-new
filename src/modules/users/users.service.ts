@@ -52,10 +52,12 @@ import {
   DefaultModuleNotInModulesException,
   InvalidDepartmentAssignmentException,
   InvalidModuleKeyException,
+  ModuleNotAssignedToUserException,
   ModuleNotEnabledForBranchException,
   ModuleNotInRoleTemplateException,
   ModuleNotValidForBranchTypeException,
   MultipleDefaultBranchException,
+  NoModuleAccessAtBranchException,
   NotOwnerTenantException,
   PersonEmailTakenException,
   PersonNotFoundException,
@@ -1308,9 +1310,15 @@ export class UsersService {
       .map((p) => p.branchId)
       .filter((b): b is string => !!b);
     const branches = await this.prisma.branch.findMany({
-      where: { id: { in: branchIds }, tenantId },
+      where: { id: { in: branchIds }, tenantId, deletedAt: null },
     });
     const branchNameMap = new Map(branches.map((b) => [b.id, b.name]));
+    // Assignments on a soft-deleted branch grant nothing (permission resolution
+    // and profile switching reject the branch) and can't be edited — the branch
+    // is gone from every picker — so they're left out of the edit form.
+    const liveProfiles = profiles.filter(
+      (p) => !p.branchId || branchNameMap.has(p.branchId),
+    );
 
     const { aadhaarNumber, ...rest } = person;
     return {
@@ -1320,7 +1328,7 @@ export class UsersService {
       },
       membership: this.membershipResponse(membership),
       username: cred?.systemUsername ?? null,
-      branches: profiles.map((p) => {
+      branches: liveProfiles.map((p) => {
         const rv = this.roleView(p.authRole);
         return {
           id: p.id,
@@ -1347,13 +1355,16 @@ export class UsersService {
    * its own role and optional module access: `{ branchId, role, modules?,
    * defaultModule?, defaultBranch?, status? }`. One role per branch — an
    * existing assignment for a branch is re-roled in place. Enforces a single
-   * default branch.
+   * default branch. With `shouldRevokeUnlisted`, the list is the user's complete
+   * branch set and every other branch-level assignment is revoked in the same
+   * transaction (see {@link revokeAssignments}).
    */
   async assignBranches(
     tenantId: string,
     personId: string,
     branches: BranchAssignmentItemDto[],
     actorId: string,
+    shouldRevokeUnlisted = false,
   ): Promise<void> {
     const membership = await this.getMembership(tenantId, personId);
     const prepared = await this.prepareBranchAssignments(
@@ -1362,23 +1373,76 @@ export class UsersService {
       branches,
     );
 
-    await this.prisma.withTenant(tenantId, async (tx) => {
-      if (prepared.some((a) => a.isDefault)) {
-        await tx.userBranchProfile.updateMany({
-          where: { tenantId, personId, isDefault: true },
-          data: { isDefault: false },
-        });
-      }
-      for (const a of prepared) {
-        // One role per branch: match on (tenant, person, branch), not role.
-        const existing = await tx.userBranchProfile.findFirst({
-          where: { tenantId, personId, branchId: a.branchId, deletedAt: null },
-        });
-        if (existing) {
-          if (
-            existing.authRoleId !== a.authRoleId ||
-            !this.sameModuleSet(existing.enabledModules, a.enabledModules)
-          ) {
+    const revokedBranchIds = await this.prisma.withTenant(
+      tenantId,
+      async (tx) => {
+        let revoked: string[] = [];
+        if (shouldRevokeUnlisted) {
+          const unlisted = await tx.userBranchProfile.findMany({
+            where: {
+              tenantId,
+              personId,
+              deletedAt: null,
+              branchId: { not: null, notIn: prepared.map((a) => a.branchId) },
+            },
+            select: { branchId: true },
+          });
+          revoked = unlisted
+            .map((p) => p.branchId)
+            .filter((b): b is string => b !== null);
+          await this.revokeAssignments(
+            tx,
+            tenantId,
+            personId,
+            revoked,
+            actorId,
+          );
+        }
+        if (prepared.some((a) => a.isDefault)) {
+          await tx.userBranchProfile.updateMany({
+            where: { tenantId, personId, isDefault: true },
+            data: { isDefault: false },
+          });
+        }
+        for (const a of prepared) {
+          // One role per branch: match on (tenant, person, branch), not role.
+          const existing = await tx.userBranchProfile.findFirst({
+            where: {
+              tenantId,
+              personId,
+              branchId: a.branchId,
+              deletedAt: null,
+            },
+          });
+          if (existing) {
+            if (
+              existing.authRoleId !== a.authRoleId ||
+              !this.sameModuleSet(existing.enabledModules, a.enabledModules)
+            ) {
+              await this.pruneOverridesOutsideModules(
+                tx,
+                tenantId,
+                personId,
+                a.branchId,
+                a.roleKey,
+                a.enabledModules,
+              );
+            }
+            await tx.userBranchProfile.update({
+              where: { id: existing.id },
+              data: {
+                authRoleId: a.authRoleId,
+                isActive: true,
+                branchStatus: a.branchStatus,
+                defaultModuleId: a.defaultModuleId,
+                enabledModules: a.enabledModules,
+                isDefault: a.isDefault,
+                revokedAt: null,
+                revokedBy: null,
+              },
+            });
+          } else {
+            // Overrides left over from a previously revoked assignment are stale.
             await this.pruneOverridesOutsideModules(
               tx,
               tenantId,
@@ -1387,52 +1451,38 @@ export class UsersService {
               a.roleKey,
               a.enabledModules,
             );
+            await tx.userBranchProfile.create({
+              data: {
+                tenantId,
+                personId,
+                branchId: a.branchId,
+                authRoleId: a.authRoleId,
+                branchStatus: a.branchStatus,
+                defaultModuleId: a.defaultModuleId,
+                enabledModules: a.enabledModules,
+                isDefault: a.isDefault,
+                isActive: true,
+                assignedAt: new Date(),
+                assignedBy: actorId,
+              },
+            });
           }
-          await tx.userBranchProfile.update({
-            where: { id: existing.id },
-            data: {
-              authRoleId: a.authRoleId,
-              isActive: true,
-              branchStatus: a.branchStatus,
-              defaultModuleId: a.defaultModuleId,
-              enabledModules: a.enabledModules,
-              isDefault: a.isDefault,
-              revokedAt: null,
-              revokedBy: null,
-            },
-          });
-        } else {
-          // Overrides left over from a previously revoked assignment are stale.
-          await this.pruneOverridesOutsideModules(
-            tx,
-            tenantId,
-            personId,
-            a.branchId,
-            a.roleKey,
-            a.enabledModules,
-          );
-          await tx.userBranchProfile.create({
-            data: {
-              tenantId,
-              personId,
-              branchId: a.branchId,
-              authRoleId: a.authRoleId,
-              branchStatus: a.branchStatus,
-              defaultModuleId: a.defaultModuleId,
-              enabledModules: a.enabledModules,
-              isDefault: a.isDefault,
-              isActive: true,
-              assignedAt: new Date(),
-              assignedBy: actorId,
-            },
-          });
         }
-      }
-      await tx.person.update({
-        where: { id: personId },
-        data: { isStaff: true },
+        await tx.person.update({
+          where: { id: personId },
+          data: { isStaff: true },
+        });
+        return revoked;
+      },
+    );
+    for (const branchId of revokedBranchIds) {
+      await this.eventEmitter.emitAsync('users.branch.assignment.updated', {
+        tenantId,
+        personId,
+        branchId,
+        actorId,
       });
-    });
+    }
   }
 
   /**
@@ -1645,6 +1695,12 @@ export class UsersService {
       }
     }
     const effectiveModules = dto.modules ?? existing.enabledModules;
+    await this.assertGrantsModuleAccess(
+      tenantId,
+      branchId,
+      targetRoleKey,
+      effectiveModules,
+    );
     if (dto.defaultModule !== undefined && dto.defaultModule !== null) {
       if (!effectiveModules.includes(dto.defaultModule)) {
         throw new DefaultModuleNotInModulesException(dto.defaultModule);
@@ -1700,7 +1756,8 @@ export class UsersService {
   /**
    * Revoke (remove) a single (user + branch) assignment. Soft-deletes the active
    * `UserBranchProfile` for the (tenant, person, branch): sets `deletedAt`,
-   * `isActive = false`, and stamps `revokedAt`/`revokedBy`. Idempotent from the
+   * `isActive = false`, stamps `revokedAt`/`revokedBy`, and drops the user's
+   * permission overrides at that branch. Idempotent from the
    * caller's view — throws {@link ProfileNotFoundException} if no active
    * assignment exists for that branch.
    * @param tenantId tenant scope (from the JWT)
@@ -1723,22 +1780,48 @@ export class UsersService {
     }
 
     await this.prisma.withTenant(tenantId, async (tx) => {
-      await tx.userBranchProfile.update({
-        where: { id: existing.id },
-        data: {
-          isActive: false,
-          isDefault: false,
-          deletedAt: new Date(),
-          revokedAt: new Date(),
-          revokedBy: actorId,
-        },
-      });
+      await this.revokeAssignments(tx, tenantId, personId, [branchId], actorId);
       await this.eventEmitter.emitAsync('users.branch.assignment.updated', {
         tenantId,
         personId,
         branchId,
         actorId,
       });
+    });
+  }
+
+  /**
+   * Revoke (soft-delete) a user's active assignments at the given branches and
+   * drop their permission overrides there, so a later re-assignment to the same
+   * branch starts clean instead of reviving old grants.
+   * @param tx a tenant-scoped transaction client
+   */
+  private async revokeAssignments(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    personId: string,
+    branchIds: string[],
+    actorId: string,
+  ): Promise<void> {
+    if (branchIds.length === 0) return;
+    const now = new Date();
+    await tx.userBranchProfile.updateMany({
+      where: {
+        tenantId,
+        personId,
+        branchId: { in: branchIds },
+        deletedAt: null,
+      },
+      data: {
+        isActive: false,
+        isDefault: false,
+        deletedAt: now,
+        revokedAt: now,
+        revokedBy: actorId,
+      },
+    });
+    await tx.userBranchPermission.deleteMany({
+      where: { tenantId, personId, branchId: { in: branchIds } },
     });
   }
 
@@ -1834,9 +1917,10 @@ export class UsersService {
 
   /**
    * Drop a user's permission overrides at a branch for modules outside the
-   * assignment's effective modules. Called when the role or module set changes:
-   * an override's allow also surfaces its module (see {@link getMyPermissions}),
-   * so stale grants would otherwise keep showing modules the admin removed.
+   * assignment's effective modules. Called when the role or module set changes.
+   * Such overrides are already inert (assigned modules gate access — see
+   * {@link getMyPermissions}); pruning keeps the table from carrying dead grants
+   * that would silently come back if the module were re-assigned later.
    */
   private async pruneOverridesOutsideModules(
     tx: Prisma.TransactionClient,
@@ -1860,20 +1944,13 @@ export class UsersService {
     });
   }
 
-  /** The module a permission key belongs to (null if unknown). */
-  private moduleOfPermission(permissionKey: string): string | null {
-    return (
-      MODULE_PERMISSION_CATALOG.find((e) => e.permissionKey === permissionKey)
-        ?.moduleKey ?? null
-    );
-  }
-
   /**
    * Resolve the module-grouped permissions for a (user + branch). The baseline is
    * the set of modules **assigned to the user** at that branch (falling back to
    * the role template when none are assigned — see {@link resolveEffectiveModules}).
-   * Only modules enabled for the branch are returned; effective `allowed` =
-   * override ?? the baseline.
+   * Only modules that are both enabled for the branch AND assigned to the user
+   * are returned (assigned modules are the ceiling — overrides can't add one);
+   * effective `allowed` = override ?? the baseline.
    */
   async getBranchPermissions(
     tenantId: string,
@@ -1896,10 +1973,11 @@ export class UsersService {
     if (enabledModules.size === 0) {
       return [];
     }
-    const { permissions: baseline } = this.resolveEffectiveModules(
-      profile.authRole?.key ?? '',
-      profile.enabledModules,
-    );
+    const { moduleKeys: assignedModules, permissions: baseline } =
+      this.resolveEffectiveModules(
+        profile.authRole?.key ?? '',
+        profile.enabledModules,
+      );
     const overrides = await this.prisma.userBranchPermission.findMany({
       where: { tenantId, personId, branchId, deletedAt: null },
     });
@@ -1914,8 +1992,9 @@ export class UsersService {
       profile.authRoleId,
     );
 
-    return MODULE_PERMISSION_CATALOG.filter((e) =>
-      enabledModules.has(e.moduleKey),
+    return MODULE_PERMISSION_CATALOG.filter(
+      (e) =>
+        enabledModules.has(e.moduleKey) && assignedModules.has(e.moduleKey),
     ).map((e) => {
       const base = baseline.has(e.permissionKey);
       return {
@@ -2047,19 +2126,13 @@ export class UsersService {
         branchId,
         activeProfile?.authRoleId,
       );
-      // Gate = branch-enabled ∩ (assigned modules ∪ modules with an allow
-      // override at either tier) — so an explicit permission grant still
-      // surfaces its module, and modules the branch doesn't enable are denied.
-      const gateModules = new Set(effective.moduleKeys);
-      for (const map of [branchRoleMap, overrideMap]) {
-        for (const [permissionKey, allowed] of map) {
-          if (allowed) {
-            const mk = this.moduleOfPermission(permissionKey);
-            if (mk) gateModules.add(mk);
-          }
-        }
-      }
-      permGate = new Set([...gateModules].filter((k) => moduleFilter.has(k)));
+      // Gate = branch-enabled ∩ assigned modules. The modules assigned to the
+      // user are a hard ceiling: overrides at either tier only fine-tune keys
+      // INSIDE those modules and can never surface a module the user wasn't
+      // assigned (a stale allow override would otherwise show it in the nav).
+      permGate = new Set(
+        [...effective.moduleKeys].filter((k) => moduleFilter.has(k)),
+      );
     }
 
     const grouped = this.groupResolvedPermissions(
@@ -2144,7 +2217,9 @@ export class UsersService {
 
   /**
    * Replace the (user + branch) permission grants. Accepts only modules enabled
-   * for the branch; supports Select-All/Deselect-All (client sends the full set).
+   * for the branch AND assigned to the user there (an override outside the
+   * assigned modules would have no effect — see {@link getMyPermissions});
+   * supports Select-All/Deselect-All (client sends the full set).
    */
   async updateBranchPermissions(
     tenantId: string,
@@ -2158,6 +2233,22 @@ export class UsersService {
       tenantId,
       dto.branchId,
     );
+    const profile = await this.prisma.userBranchProfile.findFirst({
+      where: {
+        tenantId,
+        personId,
+        branchId: dto.branchId,
+        isActive: true,
+        deletedAt: null,
+      },
+      include: PROFILE_WITH_ROLE,
+    });
+    const assignedModules = profile
+      ? this.resolveEffectiveModules(
+          profile.authRole?.key ?? '',
+          profile.enabledModules,
+        ).moduleKeys
+      : new Set<string>();
     const validKeys = new Map(
       MODULE_PERMISSION_CATALOG.map((e) => [e.permissionKey, e.moduleKey]),
     );
@@ -2168,6 +2259,12 @@ export class UsersService {
       }
       if (!enabledModules.has(item.moduleKey)) {
         throw new ModuleNotEnabledForBranchException(
+          item.moduleKey,
+          dto.branchId,
+        );
+      }
+      if (!assignedModules.has(item.moduleKey)) {
+        throw new ModuleNotAssignedToUserException(
           item.moduleKey,
           dto.branchId,
         );
@@ -2570,6 +2667,26 @@ export class UsersService {
   }
 
   /**
+   * An assignment must grant at least one module at the branch: its effective
+   * modules (the chosen ones, else the role's default modules) intersected with
+   * the modules the branch enables. Without this an assignment can be saved that
+   * shows up in the profile switcher but lands on an empty navigation.
+   * @throws NoModuleAccessAtBranchException if nothing would be accessible
+   */
+  private async assertGrantsModuleAccess(
+    tenantId: string,
+    branchId: string,
+    roleKey: string,
+    modules: string[],
+  ): Promise<void> {
+    const { moduleKeys } = this.resolveEffectiveModules(roleKey, modules);
+    const enabled = await this.getActiveBranchModuleKeys(tenantId, branchId);
+    if (![...moduleKeys].some((key) => enabled.has(key))) {
+      throw new NoModuleAccessAtBranchException(branchId, roleKey);
+    }
+  }
+
+  /**
    * If a role template links specific modules, the chosen module must be one of
    * them. Templates with no linked modules accept any (branch-enabled) module.
    */
@@ -2635,6 +2752,12 @@ export class UsersService {
           this.assertModuleInRoleTemplate(role.key, moduleKey);
         }
       }
+      await this.assertGrantsModuleAccess(
+        tenantId,
+        it.branchId,
+        role.key,
+        modules,
+      );
 
       // The default (landing) module must be one of the enabled modules and
       // linked to the role template (when the template links any).

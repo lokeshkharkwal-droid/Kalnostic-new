@@ -135,6 +135,33 @@ export class ModuleNotEnabledForBranchException extends KaltrosException {
   }
 }
 
+/** 422 — permission override targets a module not assigned to the user at the branch. */
+export class ModuleNotAssignedToUserException extends KaltrosException {
+  constructor(moduleKey: string, branchId: string) {
+    super(
+      'MODULE_NOT_ASSIGNED_TO_USER',
+      `Module '${moduleKey}' is not assigned to this user at this branch`,
+      { moduleKey, branchId },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — the assignment would grant no module at the branch: none of the chosen
+ * modules (or, when none are chosen, the role's default modules) is enabled there.
+ */
+export class NoModuleAccessAtBranchException extends KaltrosException {
+  constructor(branchId: string, roleKey: string) {
+    super(
+      'NO_MODULE_ACCESS_AT_BRANCH',
+      'Select at least one module that is enabled for this branch',
+      { branchId, roleKey },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
 /** 422 — chosen module is not offered by the branch's type. */
 export class ModuleNotValidForBranchTypeException extends KaltrosException {
   constructor(moduleKey: string, branchType: string) {

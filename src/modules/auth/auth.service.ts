@@ -155,28 +155,17 @@ export class AuthService {
     // Tenant-global staff status (User Management v2.0): a staff member whose
     // membership is INACTIVE cannot log in to that tenant, even though the
     // platform-level Person is still active (so they remain usable elsewhere).
-    if (tenantId) {
-      // tenant_staff_memberships is RLS-scoped; login has no request tenant
-      // context yet, so scope this read to the caller's tenant or the guard
-      // silently no-ops under enforced RLS (RLS_ENABLED=true + non-owner role).
-      const membership = await this.prisma.runWithTenant(tenantId, () =>
-        this.prisma.tenantStaffMembership.findFirst({
-          where: { tenantId, personId: person.id, deletedAt: null },
-          select: { status: true },
-        }),
-      );
-      if (membership && membership.status === StaffStatus.INACTIVE) {
-        throw new AccountInactiveException(person.id);
-      }
-    }
+    await this.assertMembershipActive(person.id, tenantId);
 
     this.logger.log(`Login successful: person ${person.id} from ${clientIp}`);
     return this.issueTokens(person.id, tenantId, null, null, clientIp);
   }
 
   /**
-   * Rotate a refresh token: validate, mark the old one used, issue a new pair
-   * with the same context.
+   * Rotate a refresh token: validate, mark the old one used, re-check that the
+   * person, membership and stored (branch + role) assignment are still live, and
+   * issue a new pair with the same context — or the default context if the
+   * stored assignment was revoked, re-roled, or its branch deleted.
    * @param refreshTokenValue raw refresh token from the client
    * @param clientIp client IP (audit)
    */
@@ -203,13 +192,41 @@ export class AuthService {
       data: { isUsed: true },
     });
 
-    const tenantId = await this.getTenantForPerson(stored.personId);
+    // Re-validate the session against current state: the access token is
+    // self-contained, so refresh is the only point where deactivation, a revoked
+    // assignment, a role change or a deleted branch can take effect.
+    const person = await this.prisma.person.findFirst({
+      where: { id: stored.personId, deletedAt: null },
+      select: { isActive: true, ownerTenantId: true },
+    });
+    if (!person || !person.isActive) {
+      throw new AccountInactiveException(stored.personId);
+    }
+    const tenantId = person.ownerTenantId ?? '';
+    await this.assertMembershipActive(stored.personId, tenantId);
+
+    // Restore the switched profile from the role relation (stable key) — but
+    // only while that assignment is still live. Otherwise fall back to the
+    // default profile, exactly as a fresh login would.
+    const profileKey = stored.authRole?.key ?? null;
+    const contextIsLive = profileKey
+      ? await this.hasActiveAssignment(
+          stored.personId,
+          tenantId,
+          stored.branchId,
+          profileKey,
+        )
+      : stored.branchId === null;
+    if (!contextIsLive) {
+      this.logger.log(
+        `Refresh: person ${stored.personId} context ${profileKey ?? 'none'} @ ${stored.branchId ?? 'tenant'} is no longer valid — falling back to the default profile`,
+      );
+    }
     return this.issueTokens(
       stored.personId,
       tenantId,
-      stored.branchId,
-      // Restore the switched profile from the role relation (stable key).
-      stored.authRole?.key ?? null,
+      contextIsLive ? stored.branchId : null,
+      contextIsLive ? profileKey : null,
       clientIp,
     );
   }
@@ -227,7 +244,7 @@ export class AuthService {
    * @param clientIp client IP (audit)
    * @returns a new access + refresh token pair for the switched context
    * @throws ProfileSwitchDeniedException if the target assignment is missing,
-   *   inactive, or on a deactivated branch
+   *   inactive, on a deactivated branch, or on a deleted branch
    */
   async switchProfile(
     personId: string,
@@ -236,18 +253,12 @@ export class AuthService {
     clientIp: string,
   ): Promise<{ accessToken: string; refreshToken: string }> {
     const branchId = dto.branchId ?? null;
-    const assignment = await this.prisma.userBranchProfile.findFirst({
-      where: {
-        tenantId,
-        personId,
-        branchId,
-        authRole: { key: dto.profileKey },
-        isActive: true,
-        // Can't switch into a deactivated branch (per-branch status).
-        branchStatus: StaffStatus.ACTIVE,
-        deletedAt: null,
-      },
-    });
+    const assignment = await this.hasActiveAssignment(
+      personId,
+      tenantId,
+      branchId,
+      dto.profileKey,
+    );
     if (!assignment) {
       throw new ProfileSwitchDeniedException(
         branchId ?? 'tenant',
@@ -376,7 +387,7 @@ export class AuthService {
       }
     }
 
-    const profileEntries: JwtProfileEntry[] = await Promise.all(
+    const resolvedEntries: Array<JwtProfileEntry | null> = await Promise.all(
       allProfiles
         .filter(
           (p) =>
@@ -404,15 +415,23 @@ export class AuthService {
             p.branchId,
             resolvedTenantId,
           );
+          // A soft-deleted branch must not appear in the switcher or be picked
+          // as the landing profile.
+          if (!branch) {
+            return null;
+          }
           return {
             branch_id: p.branchId,
-            branch_name: branch?.name ?? null,
-            branch_type: branch?.branchType ?? null,
+            branch_name: branch.name,
+            branch_type: branch.branchType,
             profile_key: key,
             profile_label: label,
             is_default: p.isDefault,
           };
         }),
+    );
+    const profileEntries = resolvedEntries.filter(
+      (e): e is JwtProfileEntry => e !== null,
     );
 
     let effectiveBranchId = activeBranchId;
@@ -526,13 +545,56 @@ export class AuthService {
     return createHash('sha256').update(token).digest('hex');
   }
 
-  /** Active tenant for a person, falling back to their ownerTenantId. */
-  private async getTenantForPerson(personId: string): Promise<string> {
-    const person = await this.prisma.person.findFirst({
-      where: { id: personId, deletedAt: null },
-      select: { ownerTenantId: true },
-    });
-    return person?.ownerTenantId ?? '';
+  /**
+   * Reject a session for a person whose tenant membership is INACTIVE
+   * (User Management v2.0 global deactivation). The membership table is
+   * RLS-scoped and these calls run before any request tenant context exists,
+   * so the read is scoped explicitly.
+   * @throws AccountInactiveException if the membership is INACTIVE
+   */
+  private async assertMembershipActive(
+    personId: string,
+    tenantId: string,
+  ): Promise<void> {
+    if (!tenantId) return;
+    const membership = await this.prisma.runWithTenant(tenantId, () =>
+      this.prisma.tenantStaffMembership.findFirst({
+        where: { tenantId, personId, deletedAt: null },
+        select: { status: true },
+      }),
+    );
+    if (membership && membership.status === StaffStatus.INACTIVE) {
+      throw new AccountInactiveException(personId);
+    }
+  }
+
+  /**
+   * Whether the person currently holds a live assignment for (branch + role):
+   * active, not revoked, per-branch status ACTIVE, and — for a branch-level
+   * assignment — on a branch that still exists (not soft-deleted).
+   */
+  private async hasActiveAssignment(
+    personId: string,
+    tenantId: string,
+    branchId: string | null,
+    profileKey: string,
+  ): Promise<boolean> {
+    const assignment = await this.prisma.runWithTenant(tenantId, () =>
+      this.prisma.userBranchProfile.findFirst({
+        where: {
+          tenantId,
+          personId,
+          branchId,
+          authRole: { key: profileKey },
+          isActive: true,
+          branchStatus: StaffStatus.ACTIVE,
+          deletedAt: null,
+        },
+        select: { id: true },
+      }),
+    );
+    if (!assignment) return false;
+    return branchId ? !!(await this.safeFindBranch(branchId, tenantId)) : true;
   }
 
   /** Look up a branch without throwing (returns null if not found). */
