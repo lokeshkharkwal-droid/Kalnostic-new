@@ -55,11 +55,13 @@ jobs:
           PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
         run: |
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$BASTION_SSH_KEY" > ~/.ssh/bastion_key
-          printf '%s\n' "$PROD_SSH_KEY"    > ~/.ssh/prod_key
-          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+           install -m 700 -d ~/.ssh
+          printf '%s\n' "$BASTION_SSH_KEY" | tr -d '\r' > ~/.ssh/bastion_key
+          printf '%s\n' "$PROD_SSH_KEY"    | tr -d '\r' > ~/.ssh/prod_key
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/bastion_key ~/.ssh/prod_key ~/.ssh/known_hosts
+          echo "Host keys GitHub received:"
+          ssh-keygen -lf ~/.ssh/known_hosts || echo "!! SSH_KNOWN_HOSTS is empty or unreadable"
           cat > ~/.ssh/config <<EOF
           Host bastion
             HostName ${{ vars.BASTION_HOST }}
