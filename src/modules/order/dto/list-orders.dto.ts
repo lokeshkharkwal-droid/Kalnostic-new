@@ -1,5 +1,6 @@
 import {
   AppointmentStatus,
+  BillStatus,
   BillingType,
   OrderDateType,
   OrderStatus,
@@ -128,6 +129,16 @@ export class ListOrdersDto extends PaginationQueryDto {
   @IsOptional()
   @IsEnum(PaymentStatus)
   paymentStatus?: PaymentStatus;
+
+  /**
+   * Billing Status filter, matched against the order's stored `billStatus` — the
+   * same value the Billings list renders in its Status column, so a filtered
+   * row always shows the status that was filtered for (a CANCELLED order is
+   * never returned for `PAID`).
+   */
+  @IsOptional()
+  @IsEnum(BillStatus)
+  billStatus?: BillStatus;
 
   /**
    * Payment-mode filter — matches orders with a collected payment

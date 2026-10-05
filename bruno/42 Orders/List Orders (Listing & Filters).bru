@@ -21,6 +21,7 @@ params:query {
   ~statuses: ORDER,APPOINTMENT,CANCELLED
   ~appointmentStatus: NEW
   ~paymentStatus: PAID
+  ~billStatus: PAID
   ~paymentMode: CASH
   ~quotationStatus: DRAFT
   ~orderType: WALK_IN
@@ -63,7 +64,8 @@ docs {
   is the summed TDS withheld), the refund rollups (`refundedAmount` /
   `refundChargeTotal`) and the order's `refundStatus`
   (`NONE | PARTIALLY_REFUNDED | FULLY_REFUNDED`, so a refunded order's Status folds
-  to "Refunded" rather than "Not Paid"), the
+  to "Refunded" rather than "Not Paid"), the order's `billStatus` (the single
+  Billings Status — see the `billStatus` filter), the
   active-item count (`itemCount`), the collected-item count (`collectedItemCount`),
   the order-level `reportStatus`
   (`PENDING | PARTIALLY_COMPLETED | COMPLETED | APPROVED`, the Order Console's
@@ -101,6 +103,13 @@ docs {
     stored `paymentStatus` (derived from the payment ledger — summed `paidAmount`
     vs `netAmount` — and recomputed on every payment write). The appointments list
     payment filter sends this.
+  - `billStatus` — `NOT_PAID` | `PARTIALLY_PAID` | `PAID` | `CANCELLED` |
+    `REQUIRE_REFUND` | `PARTIALLY_REFUNDED` | `FULLY_REFUNDED`. Matches the order's
+    stored `billStatus` — the exact Status the Billings list renders per row, so a
+    filtered row always shows the status filtered for (a cancelled order is never
+    returned for `PAID`). Derived by `deriveBillStatus` (Cancelled → refund states
+    → payment states) and recomputed in-transaction on every order/payment write.
+    The Billings screen's Status filter sends this.
   - `paymentMode` — `CASH` | `CARD` | `UPI` | `WALLET` | `CREDIT` | `BANK_TRANSFER`.
     Matches orders with a collected payment (`entryType = PAYMENT`) made via this
     mode; powers the Billing report's Payment Mode filter.
