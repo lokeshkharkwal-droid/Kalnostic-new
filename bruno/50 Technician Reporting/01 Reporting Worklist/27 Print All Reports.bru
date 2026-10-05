@@ -68,6 +68,10 @@ docs {
     full_name}`, `client_age`, `client_gender` (M/F), `client_phone`,
     `client_uhid`, `external_order_id`, `sample_source_label`, `refer_by_name`,
     `referring_panel_name`, `order_date_time`, `order_id_barcode`.
+    `client_age` is one unit (0-29 days → Days, under 1 year → Months, else
+    Years); `order_date_time` is the typed order time, else the order's
+    `createdAt` in the tenant timezone; `order_id_barcode` is a Code 128
+    barcode image src (`data:` URI) of the Order ID (`Order.orderIdBarcode`).
 
   ## Resolution & errors
 

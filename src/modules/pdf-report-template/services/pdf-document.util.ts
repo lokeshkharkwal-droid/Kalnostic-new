@@ -137,6 +137,62 @@ export function resolveImageTokens(
   );
 }
 
+/**
+ * Context keys whose flat `{key}` tag renders as an IMAGE wherever it stands in
+ * text — not only via `{{image:key}}` or `<img src="{key}">`. Their value is an
+ * image src (a barcode data URI), so printing it as text is never useful.
+ * Resolved against the render's `images` map, so a context that doesn't supply
+ * the image (any non-lab-report type) is unaffected:
+ *  - `order_id_barcode` — the Order ID (`Order.orderIdBarcode`) barcode.
+ *  - `order_id_qr_code` — the Sample ID (`OrderSample.barcode`) barcode
+ *    (legacy tag name; it is a barcode, not a QR code).
+ * Every other image-valued key (`patient_image`, …) keeps printing its URL.
+ */
+export const BARE_IMAGE_TAG_KEYS = new Set([
+  'order_id_barcode',
+  'order_id_qr_code',
+]);
+
+/** A flat single-brace `{identifier}` tag (same shape as the flat engine's). */
+const BARE_TAG_PATTERN = /\{([a-zA-Z0-9_][a-zA-Z0-9_.]*)\}/g;
+
+/**
+ * Replace a bare `{key}` tag of a {@link BARE_IMAGE_TAG_KEYS} key with an
+ * `<img>` of `images[key]` when the tag stands in TEXT. A tag inside an HTML tag
+ * (`<img src="{order_id_qr_code}" alt="…">` — the nearest `<` before it comes
+ * after the nearest `>`) is left alone, so variable interpolation fills the src
+ * as before. Lookup is case-insensitive, like flat variables. A key with no
+ * image (empty/missing) is left for normal variable interpolation. Runs before
+ * either engine interpolates, so `{tag}`, `{{image:tag}}` and
+ * `<img src="{tag}">` all render the same image.
+ * @param html the fragment to scan
+ * @param images id → src map (runtime images merged over the template's)
+ * @returns the fragment with text-position image tags turned into `<img>`s
+ */
+export function resolveBareImageTags(
+  html: string,
+  images: Record<string, string>,
+): string {
+  if (!html) {
+    return html;
+  }
+  return html.replace(
+    BARE_TAG_PATTERN,
+    (whole, key: string, offset: number, src: string) => {
+      const id = key.toLowerCase();
+      const image = images[id];
+      if (!BARE_IMAGE_TAG_KEYS.has(id) || !image) {
+        return whole;
+      }
+      const insideTag =
+        src.lastIndexOf('<', offset) > src.lastIndexOf('>', offset);
+      return insideTag
+        ? whole
+        : `<img src="${escapeAttr(image)}" alt="${id}" />`;
+    },
+  );
+}
+
 /** Parse a `meta` millimetre string (e.g. `"10"`) to a number, or a fallback. */
 function mm(value: string, fallback: number): number {
   const n = Number.parseFloat(value);

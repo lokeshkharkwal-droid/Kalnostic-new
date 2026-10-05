@@ -12,6 +12,8 @@
  * them (`/`, `-`, `.`, space). Any other pattern falls back to
  * {@link DEFAULT_DATE_FORMAT}'s output rather than emitting garbled text.
  */
+import { toBranchLocalInstant } from './tat-working-time.util';
+
 const DEFAULT_DATE_FORMAT = 'DD/MM/YYYY';
 
 const DATE_TOKEN_PATTERN = /YYYY|YY|MM|DD/g;
@@ -94,7 +96,9 @@ export function formatTenantDateTime(
  * `12h`/`24h`). Both inputs are already branch-local wall-clock values entered by
  * the operator, so — unlike real UTC instants (`collectedAt`) — no
  * `toBranchLocalInstant` conversion is applied. A missing/malformed `orderTime`
- * falls back to `00:00`.
+ * falls back to `00:00`. Used by the bill/TRF documents; lab reports use
+ * {@link formatOrderPrintDateTime}, which falls back to the order's real
+ * creation time instead.
  */
 export function formatOrderDateTime(
   orderDate: Date,
@@ -105,7 +109,17 @@ export function formatOrderDateTime(
   const [hours, minutes] = (orderTime ?? '00:00')
     .split(':')
     .map((n) => Number(n) || 0);
-  const combined = new Date(
+  const combined = combineOrderDateTime(orderDate, hours, minutes);
+  return `${formatTenantDate(combined, dateFormat)} ${formatTenantTime(combined, timeFormat)}`;
+}
+
+/** `orderDate`'s calendar day at `hours:minutes`, as a wall-clock instant (UTC getters). */
+function combineOrderDateTime(
+  orderDate: Date,
+  hours: number | undefined,
+  minutes: number | undefined,
+): Date {
+  return new Date(
     Date.UTC(
       orderDate.getUTCFullYear(),
       orderDate.getUTCMonth(),
@@ -114,7 +128,104 @@ export function formatOrderDateTime(
       minutes,
     ),
   );
-  return `${formatTenantDate(combined, dateFormat)} ${formatTenantTime(combined, timeFormat)}`;
+}
+
+/** A strictly valid operator-entered `"HH:mm"` order time, or null. */
+const ORDER_TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+/** True when two wall-clock instants fall on the same UTC-getter calendar day. */
+function sameUtcDay(a: Date, b: Date): boolean {
+  return (
+    a.getUTCFullYear() === b.getUTCFullYear() &&
+    a.getUTCMonth() === b.getUTCMonth() &&
+    a.getUTCDate() === b.getUTCDate()
+  );
+}
+
+/** The order fields {@link resolveOrderLocalDateTime} reads. */
+export interface OrderDateTimeSource {
+  /** Date-only order date (`@db.Date`, stored at UTC midnight). */
+  orderDate: Date;
+  /** Optional operator-entered order time, `"HH:mm"` branch-local. */
+  orderTime: string | null | undefined;
+  /** The real UTC instant the order was created. */
+  createdAt: Date;
+}
+
+/**
+ * The order's tenant-local wall-clock moment for the lab report's
+ * `{order_date}` / `{order_date_time}` tags (read via UTC getters, like every
+ * formatter in this module), and whether that moment carries a real time:
+ *  1. An operator-entered `orderTime` (`"HH:mm"`, only captured when the branch
+ *     allows editing the order date) wins, combined with `orderDate` as-is —
+ *     both are already branch-local, so no timezone conversion.
+ *  2. Otherwise, when `orderDate` is the day the order was created — matched
+ *     against `createdAt`'s UTC day (the registration form defaults the date
+ *     from the browser's UTC day) or its tenant-local day — the order was
+ *     placed "now", so `createdAt` converted to the tenant timezone is the
+ *     exact order date and time. This also corrects the date of an order
+ *     placed between local midnight and the UTC rollover, whose stored
+ *     `orderDate` is the previous day.
+ *  3. Otherwise the order was back- or advance-dated without a time: the
+ *     chosen `orderDate`, with `hasTime: false` (no real time exists).
+ * @param order the order's date, optional time and creation instant
+ * @param timezone the tenant/branch IANA zone (null → `createdAt` as-is)
+ */
+export function resolveOrderLocalDateTime(
+  order: OrderDateTimeSource,
+  timezone: string | null | undefined,
+): { local: Date; hasTime: boolean } {
+  const typed = ORDER_TIME_PATTERN.exec(order.orderTime?.trim() ?? '');
+  if (typed) {
+    return {
+      local: combineOrderDateTime(
+        order.orderDate,
+        Number(typed[1]),
+        Number(typed[2]),
+      ),
+      hasTime: true,
+    };
+  }
+  const createdLocal = toBranchLocalInstant(order.createdAt, timezone);
+  if (
+    sameUtcDay(order.orderDate, order.createdAt) ||
+    sameUtcDay(order.orderDate, createdLocal)
+  ) {
+    return { local: createdLocal, hasTime: true };
+  }
+  return { local: order.orderDate, hasTime: false };
+}
+
+/**
+ * The lab report's `{order_date}` — the order's date per the tenant
+ * `dateFormat`, resolved by {@link resolveOrderLocalDateTime}.
+ */
+export function formatOrderPrintDate(
+  order: OrderDateTimeSource,
+  timezone: string | null | undefined,
+  dateFormat: string,
+): string {
+  return formatTenantDate(
+    resolveOrderLocalDateTime(order, timezone).local,
+    dateFormat,
+  );
+}
+
+/**
+ * The lab report's `{order_date_time}` — `"<date> <time>"` per the tenant
+ * `dateFormat`/`timeFormat` (same layout as {@link formatOrderDateTime}),
+ * resolved by {@link resolveOrderLocalDateTime}. A back/advance-dated order
+ * with no entered time prints its date only rather than a made-up time.
+ */
+export function formatOrderPrintDateTime(
+  order: OrderDateTimeSource,
+  timezone: string | null | undefined,
+  dateFormat: string,
+  timeFormat: string,
+): string {
+  const { local, hasTime } = resolveOrderLocalDateTime(order, timezone);
+  const date = formatTenantDate(local, dateFormat);
+  return hasTime ? `${date} ${formatTenantTime(local, timeFormat)}` : date;
 }
 
 /**
