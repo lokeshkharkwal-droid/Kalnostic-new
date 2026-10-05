@@ -93,7 +93,7 @@ import {
   deriveReportStatus,
 } from './entities/order.entity';
 import { computeBillingTotals } from './utils/billing-totals';
-import { billStatusLabel } from './utils/bill-status';
+import { billStatusLabel, recomputeBillStatusInTx } from './utils/bill-status';
 import { BillingGroupBy } from './dto/billing-grouped-query.dto';
 import { BillingDimension } from './dto/billing-query.dto';
 import {
@@ -997,6 +997,8 @@ export class OrderService {
           personId,
           order.id,
         );
+        // Billing Status (list badge + filter) off the final items + ledger.
+        await recomputeBillStatusInTx(tx, tenantId, order.id);
         return order.id;
       });
     } catch (e) {
@@ -1660,6 +1662,7 @@ export class OrderService {
         where: { id: o.id },
         data: { paymentStatus: derivePaymentStatus(net, paid + applied) },
       });
+      await recomputeBillStatusInTx(tx, tenantId, o.id);
       remaining -= applied;
     }
   }
@@ -3227,6 +3230,7 @@ export class OrderService {
       where.quotationStatus = { not: null };
     }
     if (query.paymentStatus) where.paymentStatus = query.paymentStatus;
+    if (query.billStatus) where.billStatus = query.billStatus;
     // Payment-mode filter: the order has a collected payment (PAYMENT entry) via
     // this mode. Pushed to `and[]` so it composes with other payment filters.
     if (query.paymentMode) {
@@ -6074,6 +6078,10 @@ export class OrderService {
         });
       }
 
+      // Billing Status: items, discount, ledger and/or status may all have
+      // changed in this patch, so always recompute off the final state.
+      await recomputeBillStatusInTx(tx, tenantId, id);
+
       // Re-point the phlebotomist slot reservation when the booking changed
       // (reschedule / phlebotomist swap / home-visit toggle / status flip). Skip
       // when nothing about the booking changed so we don't re-validate (and
@@ -6497,6 +6505,7 @@ export class OrderService {
           ),
         },
       });
+      await recomputeBillStatusInTx(tx, tenantId, id);
 
       // Cancel the linked appointment too (+ history) so a cancelled order no
       // longer occupies a phlebotomist slot.
@@ -6615,8 +6624,13 @@ export class OrderService {
         refundSum,
         refundChargeSum,
       );
+      // A CANCELLED order owes nothing, so its whole retained amount is
+      // refundable (the documented refund top-up on a cancelled order) — using
+      // the un-zeroed ledger net here made every such top-up throw
+      // NothingToRefund.
+      const owed = existing.status === OrderStatus.CANCELLED ? 0 : netSum;
       const refundable = roundToTwoDecimalPlaces(
-        Math.max(0, effectivePaidNow - netSum),
+        Math.max(0, effectivePaidNow - owed),
       );
       if (refundable <= 0) {
         throw new NothingToRefundException(id);
@@ -6679,6 +6693,7 @@ export class OrderService {
           updatedBy: actorId,
         },
       });
+      await recomputeBillStatusInTx(tx, tenantId, id);
     });
     // Fire-and-forget: confirm the refund to the patient. Handled by ClinicalEventListener.
     void this.eventEmitter.emitAsync('order.refunded', {

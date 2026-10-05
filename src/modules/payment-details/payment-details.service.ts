@@ -5,6 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
 import { getReferralPanelId } from '../../prisma/tenant-context';
 import { PaginatedResult } from '../../common/dto/response.dto';
+import { recomputeBillStatusInTx } from '../order/utils/bill-status';
 import {
   derivePaymentStatus,
   computeEffectivePaid,
@@ -362,5 +363,7 @@ export class PaymentDetailsService {
       where: { id: orderId },
       data: { paymentStatus: derivePaymentStatus(net, effectivePaid) },
     });
+    // Keep the Billings list Status (badge + filter) in step with the ledger.
+    await recomputeBillStatusInTx(tx, tenantId, orderId);
   }
 }
