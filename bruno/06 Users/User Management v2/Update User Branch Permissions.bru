@@ -63,5 +63,9 @@ docs {
   for the branch (supports Select-All / Deselect-All per module). Only modules
   **enabled for the branch** are accepted, and each `permissionKey` must belong
   to its `moduleKey` (else 422 INVALID_MODULE_KEY / MODULE_NOT_ENABLED_FOR_BRANCH).
+  Each module must also be ASSIGNED to the user at that branch (their
+  `enabledModules`, or the role's default modules when none are set) — else 422
+  MODULE_NOT_ASSIGNED_TO_USER. Overrides only fine-tune permissions inside the
+  assigned modules; they never grant a module (assign it via Assign Branches).
   Absent permissions fall back to the role baseline.
 }

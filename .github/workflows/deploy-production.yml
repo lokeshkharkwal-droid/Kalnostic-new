@@ -1,0 +1,90 @@
+name: Deploy backend to production
+
+on:
+  push:
+    branches: [production-deploy]
+  pull_request:
+    branches: [production-deploy]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Commit SHA to deploy (for rollback). Empty = branch tip."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-backend-${{ github.event_name == 'pull_request' && github.ref || 'production' }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci   # dummy; nothing connects to it
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9            # same as the server
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec prisma validate
+      - run: pnpm exec prisma generate
+      - run: pnpm type-check
+      - run: pnpm build
+
+  deploy:
+    needs: verify
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - name: Configure SSH (runner -> bastion -> prod)
+        env:
+          BASTION_SSH_KEY: ${{ secrets.BASTION_SSH_KEY }}
+          PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$BASTION_SSH_KEY" > ~/.ssh/bastion_key
+          printf '%s\n' "$PROD_SSH_KEY"    > ~/.ssh/prod_key
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/bastion_key ~/.ssh/prod_key ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<EOF
+          Host bastion
+            HostName ${{ vars.BASTION_HOST }}
+            Port ${{ vars.BASTION_PORT }}
+            User ${{ vars.BASTION_USER }}
+            IdentityFile ~/.ssh/bastion_key
+            IdentitiesOnly yes
+          Host prod
+            HostName ${{ vars.PROD_HOST }}
+            User root
+            IdentityFile ~/.ssh/prod_key
+            IdentitiesOnly yes
+            ProxyJump bastion
+          Host *
+            StrictHostKeyChecking yes
+            ServerAliveInterval 15
+            ServerAliveCountMax 8
+            ConnectTimeout 20
+          EOF
+
+      - name: Deploy
+        env:
+          DEPLOY_SHA: ${{ inputs.sha || github.sha }}
+        run: ssh prod "backend $DEPLOY_SHA"
+
+      - name: Clean up keys
+        if: always()
+        run: rm -rf ~/.ssh  

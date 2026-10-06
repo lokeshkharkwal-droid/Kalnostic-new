@@ -251,6 +251,7 @@ export class UserManagementController {
       id,
       dto.branches,
       actorId,
+      dto.shouldRevokeUnlisted ?? false,
     );
   }
 
