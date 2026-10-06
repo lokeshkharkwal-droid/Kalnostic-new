@@ -21,6 +21,10 @@ import {
 } from 'class-validator';
 import { ToBoolean } from '../../../common/decorators/to-boolean.decorator';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
+import {
+  BILL_STATUS_FILTER_LABELS,
+  type BillStatusFilter,
+} from '../utils/bill-status';
 
 /**
  * Query parameters for the order listing endpoint. Extends the shared pagination
@@ -292,6 +296,17 @@ export class ListOrdersDto extends PaginationQueryDto {
   @IsOptional()
   @IsIn(['PENDING', 'PARTIALLY_COMPLETED', 'COMPLETED', 'APPROVED'])
   reportStatus?: 'PENDING' | 'PARTIALLY_COMPLETED' | 'COMPLETED' | 'APPROVED';
+
+  /**
+   * Bill status, matched against the label the Registration → Billings Status
+   * column shows (`billStatusLabel`: cancellation + refunds folded in) — NOT
+   * the stored `paymentStatus`, which stays `PAID` after a cancel or a surplus
+   * refund. `PAID` | `NOT_PAID` | `PARTIALLY_PAID` | `CANCELLED` |
+   * `FULLY_REFUNDED` | `PARTIALLY_REFUNDED` | `REQUIRE_REFUND`.
+   */
+  @IsOptional()
+  @IsIn(Object.keys(BILL_STATUS_FILTER_LABELS))
+  billStatus?: BillStatusFilter;
 
   /** Home-visit filter (`OrderDiagnostics.isHomeVisit`). */
   @IsOptional()

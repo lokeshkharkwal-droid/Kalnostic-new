@@ -2,6 +2,23 @@ import { OrderStatus } from '@prisma/client';
 import { roundToTwoDecimalPlaces } from '../../../common/utils';
 
 /**
+ * `GET /orders?billStatus=` filter code → the {@link billStatusLabel} label it
+ * matches (the Billings Status column), one entry per possible label.
+ */
+export const BILL_STATUS_FILTER_LABELS = {
+  PAID: 'Paid',
+  NOT_PAID: 'Not Paid',
+  PARTIALLY_PAID: 'Partially Paid',
+  CANCELLED: 'Cancelled',
+  FULLY_REFUNDED: 'Fully Refunded',
+  PARTIALLY_REFUNDED: 'Partially Refunded',
+  REQUIRE_REFUND: 'Require Refund',
+} as const;
+
+/** A `billStatus` filter code (key of {@link BILL_STATUS_FILTER_LABELS}). */
+export type BillStatusFilter = keyof typeof BILL_STATUS_FILTER_LABELS;
+
+/**
  * Display label for a bill's status — exactly what the Registration → Billings
  * list shows in its Status column. Used by the `{bill_status}` /
  * `{payment_status}` print tags so a printed bill reads the same as the screen,
