@@ -19,12 +19,12 @@ import { getReferralPanelId } from '../../prisma/tenant-context';
 import {
   genderLabel,
   salutationLabel,
-  patientFullAgeDisplay,
+  patientReportAgeDisplay,
   sampleSourceLabel,
   toBranchLocalInstant,
   formatReportDateTime,
-  formatTenantDate,
-  formatOrderDateTime,
+  formatOrderPrintDate,
+  formatOrderPrintDateTime,
   buildEvaluationOrder,
   evaluateFormula,
   formatCalculatedValue,
@@ -117,6 +117,11 @@ import {
   rangeAgeInDays,
 } from './utils/reference-range.util';
 import { buildTestFileAttachmentHtml } from './utils/test-file-attachment.util';
+import {
+  buildReportBarcodeTags,
+  pickReportSample,
+} from './utils/print-barcode.util';
+import { code128DataUri } from '../../common/utils/barcode-image.util';
 import { TatService } from './tat.service';
 
 /**
@@ -2802,25 +2807,41 @@ export class LabReportService {
 
     // The sample this report's test was drawn from — `OrderSampleTest`/
     // `OrderSample` are raw FKs (no Prisma relation field on `LabReport`),
-    // resolved via the same `orderItemId` `LabReport` already carries.
-    // Per-(test × sample) generation means at most one active row.
-    const sampleTest = await this.prisma.orderSampleTest.findFirst({
-      where: { orderItemId: report.orderItemId, deletedAt: null },
+    // resolved via the same `orderItemId` `LabReport` already carries. A panel
+    // item links every member test's samples to the one `orderItemId`, so a
+    // panel member is narrowed by its `labTestId` (same scoping as
+    // `attachSampleStatuses`); a multi-tube test can still have several rows,
+    // so the oldest one carrying a barcode wins (`pickReportSample`). Feeds the
+    // `sample_*` tags and the Sample ID barcode (`{order_id_qr_code}`).
+    const sampleLinks = await this.prisma.orderSampleTest.findMany({
+      where: {
+        tenantId,
+        orderItemId: report.orderItemId,
+        deletedAt: null,
+        ...(report.memberBranchLabTestId && report.labTestId
+          ? { labTestId: report.labTestId }
+          : {}),
+      },
+      orderBy: { sample: { createdAt: 'asc' } },
       select: {
         sample: {
           select: {
             collectedAt: true,
             receivedAt: true,
             sampleType: true,
-            sampleGroupLabel: true,
-            containerType: true,
             barcode: true,
-            orderIdBarcode: true,
           },
         },
       },
     });
-    const sample = sampleTest?.sample;
+    const sample = pickReportSample(sampleLinks);
+    const barcodeTags = buildReportBarcodeTags(
+      order.orderIdBarcode,
+      sample?.barcode,
+    );
+    // "Today" on the branch's calendar — `{patient_age}` is the age as of the
+    // print date, and a raw UTC `now` is still yesterday before 05:30 IST.
+    const localNow = toBranchLocalInstant(new Date(), timezone);
 
     // `sample_source_label` is the order-level Sample Source (In-House /
     // Supplied) from `OrderDiagnostics`, not anything on `OrderSample` — a
@@ -2942,13 +2963,14 @@ export class LabReportService {
     return {
       variables: {
         order_code: order.orderCode,
-        order_date: formatTenantDate(order.orderDate, dateFormat),
-        // Combines the date-only `orderDate` with the separately-captured
-        // `orderTime` ("HH:mm") into one date+time display value, matching the
-        // `{collected_at}` label format (shared `formatOrderDateTime` helper).
-        order_date_time: formatOrderDateTime(
-          order.orderDate,
-          order.orderTime,
+        // The order's real date/time: the operator-entered `orderTime` when
+        // one was typed, else the order's creation instant (`createdAt`) in the
+        // tenant timezone — `orderTime` is usually unset, which used to print
+        // every order at `12:00 AM`. See `resolveOrderLocalDateTime`.
+        order_date: formatOrderPrintDate(order, timezone, dateFormat),
+        order_date_time: formatOrderPrintDateTime(
+          order,
+          timezone,
           dateFormat,
           timeFormat,
         ),
@@ -2961,12 +2983,13 @@ export class LabReportService {
           .filter(Boolean)
           .join(' '),
         patient_salutation: patient.salutation ?? '',
-        // Full age (Years, Months, Days) from DOB; single-unit (age/ageType)
-        // fallback when DOB is absent.
-        patient_age: patientFullAgeDisplay(
+        // Single unit from DOB as of today: 0-29 days → Days, under 1 year →
+        // Months, else Years; stored age/ageType fallback when DOB is absent.
+        patient_age: patientReportAgeDisplay(
           patient.dateOfBirth ?? null,
           patient.age,
           patient.ageType,
+          localNow,
         ),
         patient_gender: genderLabel(patient.gender),
         patient_um_id: patient.umId ?? '',
@@ -3024,29 +3047,30 @@ export class LabReportService {
         // Flat `{patient_image}` prints the URL; `{{image:patient_image}}`
         // auto-renders an <img> via the images map below.
         patient_image: patient.photoUrl ?? '',
-        // Order-level barcode (generated at order creation) — the VALUE and the
-        // rendered image URL. `{order_id_barcode}` prints the value;
-        // `{order_id_qr_code}` holds the S3 image URL (usable as
-        // `<img src="{order_id_qr_code}">` or auto-rendered via the images map
-        // below as `{{image:order_id_qr_code}}`). Despite the tag name it is a
-        // barcode image, not a QR code.
-        order_id_barcode: order.orderIdBarcode ?? '',
-        order_id_qr_code: order.orderIdQrCode ?? '',
+        // Code 128 barcode images (data URIs), rendered from the IDs:
+        // `{order_id_barcode}` = Order ID (`Order.orderIdBarcode`),
+        // `{order_id_qr_code}` = Sample ID (this report's `OrderSample.barcode`
+        // — a barcode despite the tag name). Each renders as an image whether
+        // written `{tag}`, `{{image:tag}}` (images map below) or
+        // `<img src="{tag}">` — see `resolveBareImageTags`.
+        order_id_barcode: barcodeTags.order_id_barcode,
+        order_id_qr_code: barcodeTags.order_id_qr_code,
         sample_note: sampleNote?.body ?? '',
         // `{test_file_attachment}` — the PDF(s) uploaded via this test's
         // "File +" button, as `<embed>` markup (printed unescaped, see
         // `RICH_TEXT_KEYS`). Built from THIS report's attachments only.
         test_file_attachment: buildTestFileAttachmentHtml(report.attachments),
       },
-      // Backs the `{{image:ID}}` tokens for the same three image-valued
-      // fields above — `TemplateRenderService.interpolateImages` resolves
-      // those tokens against this map only (never against `variables`), so
-      // without these entries the tags render blank regardless of template
-      // or environment.
+      // Backs the `{{image:ID}}` tokens (and the bare barcode tags) for the
+      // image-valued fields above — `TemplateRenderService.interpolateImages`
+      // resolves those tokens against this map only (never against
+      // `variables`), so without these entries the tags render blank
+      // regardless of template or environment.
       images: {
         report_approved_by_signature: approver?.signatureImage ?? '',
         patient_image: patient.photoUrl ?? '',
-        order_id_qr_code: order.orderIdQrCode ?? '',
+        order_id_barcode: barcodeTags.order_id_barcode,
+        order_id_qr_code: barcodeTags.order_id_qr_code,
       },
       sections: { results },
       signatories,
@@ -3307,10 +3331,12 @@ export class LabReportService {
           patient.lastName,
         ]),
       },
-      client_age: patientFullAgeDisplay(
+      // Same single-unit report age as `{patient_age}` (see buildPrintContext).
+      client_age: patientReportAgeDisplay(
         patient.dateOfBirth ?? null,
         patient.age,
         patient.ageType,
+        toBranchLocalInstant(new Date(), timezone),
       ),
       // Raw M/F/O code (templates test `client_gender == 'M'`).
       client_gender: patient.gender
@@ -3329,17 +3355,17 @@ export class LabReportService {
           ])
         : ' -- ',
       referring_panel_name: order.referralPanel?.name ?? ' -- ',
-      // Order date + operator-entered order time (combines `orderDate` +
-      // `orderTime`, matching `{collected_at}`); the previous version formatted
-      // the date-only `orderDate` alone, so the time always read `12:00 AM`.
-      order_date_time: formatOrderDateTime(
-        order.orderDate,
-        order.orderTime,
+      // Same resolution as the single report's `{order_date_time}`: typed
+      // `orderTime`, else the order's `createdAt` in the tenant timezone.
+      order_date_time: formatOrderPrintDateTime(
+        order,
+        timezone,
         dateFormat,
         timeFormat,
       ),
-      // Barcode IMAGE url (templates use it as `<img src=…>`).
-      order_id_barcode: order.orderIdQrCode ?? '',
+      // Order ID barcode IMAGE src (Code 128 data URI of
+      // `Order.orderIdBarcode`; templates use it as `<img src=…>`).
+      order_id_barcode: code128DataUri(order.orderIdBarcode),
     };
 
     // Per-report body + dates, reusing the single-report context builder.

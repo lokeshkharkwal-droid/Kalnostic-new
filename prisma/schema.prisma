@@ -6372,6 +6372,22 @@ enum RefundStatus {
   FULLY_REFUNDED
 }
 
+/// The single billing Status of an order — exactly what the Billings list shows
+/// AND what its Status filter matches. Derived by `deriveBillStatus`
+/// (`src/modules/order/utils/bill-status.ts`) from the order status, the
+/// authoritative net (`computeBillingTotals`) and the effective paid/refunded
+/// ledger amounts, and recomputed in the same transaction as every write that
+/// changes them. Mutually exclusive: a CANCELLED order is never also PAID.
+enum BillStatus {
+  NOT_PAID
+  PARTIALLY_PAID
+  PAID
+  CANCELLED
+  REQUIRE_REFUND
+  PARTIALLY_REFUNDED
+  FULLY_REFUNDED
+}
+
 /// How the order is billed.
 enum BillingType {
   CASH_CLIENT
@@ -6557,6 +6573,11 @@ model Order {
   // Refunded" instead of a misleading "Not Paid" once a paid order is refunded.
   refundStatus RefundStatus @default(NONE) @map("refund_status")
 
+  // The one billing Status the Billings list renders and filters by (see
+  // `BillStatus`). Stored for the same reason as paymentStatus: the derivation
+  // sums the ledger + items, which Prisma can't express in a `where`.
+  billStatus BillStatus @default(NOT_PAID) @map("bill_status")
+
   // Fee (rupees, up to 2 decimal places) retained by the lab when the order is
   // cancelled (0 = none). Deducted from the order's effective paid amount;
   // caps the refundable amount on a cancel-with-refund (max refundable = paid
@@ -6662,6 +6683,7 @@ model Order {
   @@index([appointmentId])
   @@index([sourceQuotationId])
   @@index([paymentStatus])
+  @@index([billStatus])
   @@index([billId])
   @@index([branchId, externalOrderId])
   // Per-branch uniqueness of the order barcode VALUE among orders only (NULLs are

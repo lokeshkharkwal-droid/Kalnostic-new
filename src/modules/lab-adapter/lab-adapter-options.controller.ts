@@ -2,6 +2,7 @@ import { Controller, Get, Query } from '@nestjs/common';
 import { LabAdapterService } from './lab-adapter.service';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { LabAdapterOptionsQueryDto } from './dto/lab-adapter-options-query.dto';
+import { LabAdapterLabTestOptionsQueryDto } from './dto/lab-adapter-lab-test-options-query.dto';
 
 /**
  * Lab Adapter **options** endpoint (`GET /lab-adapters/options`) — a
@@ -31,6 +32,25 @@ export class LabAdapterOptionsController {
   ) {
     return this.labAdapterService.findOptions(tenantId, {
       branchId: query.branchId,
+      search: query.search,
+      page: query.page,
+      limit: query.limit,
+    });
+  }
+
+  /**
+   * Lightweight `{ id, name }` options for the adapter form's manual Lab Tests
+   * picker — the selected branches' Walk-in lab tests. Takes `branchIds` from the
+   * query (verified against the tenant) instead of the JWT's active branch, so a
+   * Business Admin (no active branch) can pick tests too.
+   */
+  @Get('lab-test-options')
+  findLabTestOptions(
+    @CurrentTenant() tenantId: string,
+    @Query() query: LabAdapterLabTestOptionsQueryDto,
+  ) {
+    return this.labAdapterService.findLabTestOptions(tenantId, {
+      branchIds: query.branchIds,
       search: query.search,
       page: query.page,
       limit: query.limit,

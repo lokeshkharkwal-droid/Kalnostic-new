@@ -9,6 +9,8 @@ export interface LabAdapterBranchRef {
 /** A branch lab test mapped to an adapter (a lightweight projection). */
 export interface LabAdapterLabTestRef {
   id: string;
+  /** The branch this test copy belongs to (each branch has its own copy). */
+  branchId: string;
   testName: string;
   testCode: string | null;
 }
@@ -49,4 +51,12 @@ export interface LabAdapterListRow {
 export interface LabAdapterOption {
   id: string;
   name: string;
+}
+
+/** A lab-test option row for the adapter form's manual Lab Tests picker. Carries
+ * `branchId` so the form can drop a test when its branch is deselected. */
+export interface LabAdapterLabTestOption {
+  id: string;
+  name: string;
+  branchId: string;
 }

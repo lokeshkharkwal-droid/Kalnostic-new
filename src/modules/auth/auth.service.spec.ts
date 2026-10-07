@@ -9,6 +9,10 @@ import { BranchService } from '../branch/branch.service';
 import { AuthRoleService } from '../auth-role/auth-role.service';
 import { AuthService } from './auth.service';
 import { JwtPayload } from './types/jwt-payload.type';
+import {
+  AccountInactiveException,
+  ProfileSwitchDeniedException,
+} from './exceptions/auth.exceptions';
 
 /** Subset of the refresh-token create input the tests assert on. */
 interface RefreshCreateArg {
@@ -58,6 +62,7 @@ describe('AuthService — switchProfile / refresh context', () => {
   const prismaMock = {
     userBranchProfile: { findFirst: jest.fn() },
     person: { findFirst: jest.fn() },
+    tenantStaffMembership: { findFirst: jest.fn() },
     refreshToken: {
       findFirst: jest.fn(),
       update: jest.fn(),
@@ -107,7 +112,12 @@ describe('AuthService — switchProfile / refresh context', () => {
       isPatient: false,
       platformMrn: null,
       ownerTenantId: 't1',
+      isActive: true,
     });
+    prismaMock.tenantStaffMembership.findFirst.mockResolvedValue({
+      status: StaffStatus.ACTIVE,
+    });
+    prismaMock.userBranchProfile.findFirst.mockResolvedValue({ id: 'live' });
     usersServiceMock.getPersonProfiles.mockResolvedValue(PROFILES);
     branchServiceMock.findById.mockResolvedValue({
       name: 'A Branch',
@@ -200,6 +210,85 @@ describe('AuthService — switchProfile / refresh context', () => {
         '127.0.0.1',
       ),
     ).rejects.toThrow();
+    expect(prismaMock.refreshToken.create).not.toHaveBeenCalled();
+  });
+
+  /** A refresh-token row for the switched doctor @ branch B context. */
+  const storedDoctorAtB = () => ({
+    id: 'r1',
+    personId: 'p1',
+    branchId: 'branch-B',
+    authRole: { key: 'doctor' },
+    isUsed: false,
+    isRevoked: false,
+    expiresAt: new Date(Date.now() + 86_400_000),
+  });
+
+  /** findById that treats `deletedId` as soft-deleted (throws like the real one). */
+  const branchDeleted = (deletedId: string) =>
+    branchServiceMock.findById.mockImplementation((id: string) =>
+      id === deletedId
+        ? Promise.reject(new Error('BranchNotFoundException'))
+        : Promise.resolve({ name: 'A Branch', branchType: 'DIAGNOSTIC' }),
+    );
+
+  it('falls back to the default profile on refresh when the stored assignment was revoked', async () => {
+    prismaMock.refreshToken.findFirst.mockResolvedValue(storedDoctorAtB());
+    prismaMock.userBranchProfile.findFirst.mockResolvedValue(null);
+
+    await service.refresh('raw-refresh-token', '127.0.0.1');
+
+    expect(lastSignedPayload().active_branch_id).toBe('branch-A');
+    expect(lastSignedPayload().active_profile_key).toBe('branch_admin');
+  });
+
+  it('falls back to the default profile on refresh when the stored branch was deleted, and hides it', async () => {
+    prismaMock.refreshToken.findFirst.mockResolvedValue(storedDoctorAtB());
+    branchDeleted('branch-B');
+
+    await service.refresh('raw-refresh-token', '127.0.0.1');
+
+    const payload = lastSignedPayload();
+    expect(payload.active_branch_id).toBe('branch-A');
+    expect(payload.profiles.map((p) => p.branch_id)).not.toContain('branch-B');
+  });
+
+  it('rejects a refresh once the tenant membership is deactivated', async () => {
+    prismaMock.refreshToken.findFirst.mockResolvedValue(storedDoctorAtB());
+    prismaMock.tenantStaffMembership.findFirst.mockResolvedValue({
+      status: StaffStatus.INACTIVE,
+    });
+
+    await expect(
+      service.refresh('raw-refresh-token', '127.0.0.1'),
+    ).rejects.toThrow(AccountInactiveException);
+    expect(jwtMock.sign).not.toHaveBeenCalled();
+  });
+
+  it('rejects a refresh once the person is deactivated', async () => {
+    prismaMock.refreshToken.findFirst.mockResolvedValue(storedDoctorAtB());
+    prismaMock.person.findFirst.mockResolvedValue({
+      id: 'p1',
+      ownerTenantId: 't1',
+      isActive: false,
+    });
+
+    await expect(
+      service.refresh('raw-refresh-token', '127.0.0.1'),
+    ).rejects.toThrow(AccountInactiveException);
+  });
+
+  it('rejects a switch into an assignment whose branch was deleted', async () => {
+    branchDeleted('branch-B');
+
+    await expect(
+      service.switchProfile(
+        'p1',
+        't1',
+        { profileKey: 'doctor', branchId: 'branch-B' },
+        '127.0.0.1',
+      ),
+    ).rejects.toThrow(ProfileSwitchDeniedException);
     expect(prismaMock.refreshToken.create).not.toHaveBeenCalled();
   });
 });

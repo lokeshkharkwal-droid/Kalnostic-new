@@ -46,6 +46,60 @@ export function diffOrderItems(
 }
 
 /**
+ * Minimal shape of an incoming payment row on update — the fields the diff keys
+ * on. Deliberately has NO index signature so a richer row type (the real
+ * `OrderPaymentDto`) still satisfies `extends IncomingOrderPayment`, letting
+ * `diffOrderPayments` be generic and preserve the caller's exact row type (a
+ * `[key: string]: unknown` index signature would both erase that type and bar a
+ * class/interface without one from matching the constraint).
+ */
+export interface IncomingOrderPayment {
+  /** Existing PaymentDetails id — sent for rows hydrated from the order on edit. */
+  id?: string;
+  paidAmount?: number;
+}
+
+/** The keep/add partition of an update's payments against the stored PAYMENT set. */
+export interface OrderPaymentDiff<
+  T extends IncomingOrderPayment = IncomingOrderPayment,
+> {
+  keep: Array<{ id: string; incoming: T }>;
+  add: T[];
+}
+
+/**
+ * Partition incoming update payments against the order's existing live PAYMENT
+ * row ids, keyed on stable `PaymentDetails.id`. Payments are **immutable
+ * historical records**, so there is deliberately NO `remove` partition — a
+ * collected payment is never deleted on an order edit (money is only ever
+ * returned by appending a REFUND row via cancel/refund). The caller refreshes the
+ * order financial snapshot on the canonical (oldest) kept row in place and
+ * appends the `add` rows; existing rows keep their id / collectedBy / paymentDate
+ * / reference / amount so collection history never changes after an edit.
+ * - keep: incoming row whose `id` matches a live PAYMENT row (preserve it).
+ * - add: incoming row with no `id`, or an `id` that is not a live PAYMENT row —
+ *   a genuinely new collection to append.
+ * @param existingIds live (deletedAt null) PAYMENT row ids for the order
+ * @param incoming the update DTO's payment rows
+ */
+export function diffOrderPayments<T extends IncomingOrderPayment>(
+  existingIds: string[],
+  incoming: T[],
+): OrderPaymentDiff<T> {
+  const existing = new Set(existingIds);
+  const keep: OrderPaymentDiff<T>['keep'] = [];
+  const add: T[] = [];
+  for (const row of incoming) {
+    if (row.id && existing.has(row.id)) {
+      keep.push({ id: row.id, incoming: row });
+    } else {
+      add.push(row);
+    }
+  }
+  return { keep, add };
+}
+
+/**
  * Report statuses at which a test can no longer be removed from an order — the
  * result has been filled/generated. Deletable only while a test has no report or
  * its reports are still PENDING / PARTIAL_PENDING.

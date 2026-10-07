@@ -18,6 +18,8 @@ docs {
   Revoke (remove) a single (user + branch) assignment. Soft-deletes the active
   `UserBranchProfile` for the (tenant, person, branch): sets `deletedAt`,
   `isActive = false`, clears the default flag, and stamps `revokedAt`/`revokedBy`.
+  The user's permission overrides at that branch are deleted too, so a later
+  re-assignment starts clean.
 
   - 204/200 on success; the assignment disappears from `GET /users/manage/:id`.
   - 404 PROFILE_NOT_FOUND if there is no active assignment for that branch.

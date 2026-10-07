@@ -3,6 +3,7 @@ import { PdfTemplateMeta } from '../constants/pdf-template-meta.constant';
 import {
   PreparedPdfHtml,
   buildPdfDocuments,
+  resolveBareImageTags,
   resolveImageTokens,
 } from './pdf-document.util';
 import { renderLatte } from './latte-renderer.util';
@@ -47,13 +48,13 @@ export class LatteReportRenderService {
   ): PreparedPdfHtml {
     const merged = { ...(meta.images ?? {}), ...images };
     const header = this.transformMpdfTags(
-      renderLatte(resolveImageTokens(meta.header_html, merged), context),
+      renderLatte(this.resolveImages(meta.header_html, merged), context),
     );
     const body = this.transformMpdfTags(
-      renderLatte(resolveImageTokens(meta.body_html, merged), context),
+      renderLatte(this.resolveImages(meta.body_html, merged), context),
     );
     const footer = this.transformMpdfTags(
-      renderLatte(resolveImageTokens(meta.footer_html, merged), context),
+      renderLatte(this.resolveImages(meta.footer_html, merged), context),
     );
     return buildPdfDocuments(meta, header, body, footer);
   }
@@ -79,12 +80,23 @@ export class LatteReportRenderService {
   ): string {
     const merged = { ...(meta.images ?? {}), ...images };
     const body = this.transformMpdfTags(
-      renderLatte(resolveImageTokens(meta.body_html, merged), data),
+      renderLatte(this.resolveImages(meta.body_html, merged), data),
     );
     const css = meta.custom_css?.trim()
       ? `<style>${meta.custom_css}</style>`
       : '';
     return `${css}${body}`;
+  }
+
+  /**
+   * Resolve image placeholders BEFORE Latte parsing: `{{image:ID}}` tokens
+   * (see {@link resolveImageTokens}) and bare image-valued tags standing in
+   * text, e.g. `{order_id_qr_code}` (see {@link resolveBareImageTags}) — a bare
+   * Latte token would otherwise print its data URI as raw text. Tags inside an
+   * HTML tag (`<img src="{order_id_qr_code}">`) are left for Latte to fill.
+   */
+  private resolveImages(html: string, images: Record<string, string>): string {
+    return resolveBareImageTags(resolveImageTokens(html, images), images);
   }
 
   /**

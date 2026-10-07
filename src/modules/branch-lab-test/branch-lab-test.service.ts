@@ -34,6 +34,7 @@ export interface BranchLabTestOption {
   id: string;
   name: string;
   price: number;
+  sampleName: string | null;
   sampleType: string | null;
   isFasting: boolean;
   scheduleDays: DayOfWeek[];
@@ -659,8 +660,9 @@ export class BranchLabTestService {
    * Create-Order lab-test selector. Returns the branch's **active default-variant**
    * rows only (one orderable row per variant group), so a selected id is directly
    * usable as an order item's `branchLabTestId`. `price` is the list price
-   * (`priceMsrp`, minor units); `sampleType`/`isFasting` come from the first sample
-   * in `configSnapshot` — both feed the form's Diagnostic Items table. Supports a
+   * (`priceMsrp`, minor units); `sampleName`/`sampleType`/`isFasting` come from the
+   * first sample in `configSnapshot` — all feed the form's Diagnostic Items table
+   * (`sampleName` e.g. "Blood (EDTA)", `sampleType` e.g. "Blood"). Supports a
    * case-insensitive `search` on testName.
    *
    * `preferredOnly` narrows to `isPreferenceTest: true` when set AND no
@@ -740,6 +742,7 @@ export class BranchLabTestService {
         id: r.id,
         name: r.testName,
         price: r.listPrice,
+        sampleName: sample?.sampleName ?? null,
         sampleType: sample?.sampleType ?? null,
         isFasting: sample?.isFastingRequired ?? false,
         scheduleDays: r.scheduleDays,
