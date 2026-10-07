@@ -1,0 +1,55 @@
+meta {
+  name: Share Bill - Unpaid Blocked (409)
+  type: http
+  seq: 41
+}
+
+post {
+  url: {{baseUrl}}/orders/{{unpaidOrderId}}/share-bill
+  body: json
+  auth: bearer
+}
+
+headers {
+  content-type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "channel": "EMAIL",
+    "recipientType": "PATIENT",
+    "toAddress": "patient@example.com"
+  }
+}
+
+vars:pre-request {
+  unpaidOrderId: 00000000-0000-0000-0000-000000000000
+}
+
+tests {
+  test("409 Conflict", function () {
+    expect(res.getStatus()).to.equal(409);
+  });
+  test("error code is BILL_COPY_PRINT_NOT_ALLOWED_FOR_UNPAID", function () {
+    expect(res.getBody().error.code).to.equal(
+      "BILL_COPY_PRINT_NOT_ALLOWED_FOR_UNPAID",
+    );
+  });
+}
+
+docs {
+  Proves Share Bill follows the SAME paid-only rule as Print Bill. With the branch
+  setting `BillingMenu_AllowBillCopyPrintForPaidBillingsOnly` ON, sharing the bill
+  of a not-fully-PAID order (unpaid / cancelled / require-refund / partially- or
+  fully-refunded) is refused with 409 `BILL_COPY_PRINT_NOT_ALLOWED_FOR_UNPAID` —
+  the same exception Print Bill throws — before any recipient/template resolution
+  or PDF render (so even the text-only SMS channel is blocked).
+
+  Prereqs: the branch's "print paid bills only" setting ON, and `unpaidOrderId` set
+  to an order that is not fully paid (e.g. a cancelled order). A fully-PAID order
+  shares normally (subject to the template prereqs on the main Share Bill request).
+}

@@ -5,6 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
 import { getReferralPanelId } from '../../prisma/tenant-context';
 import { PaginatedResult } from '../../common/dto/response.dto';
+import { roundToTwoDecimalPlaces } from '../../common/utils';
 import { recomputeBillStatusInTx } from '../order/utils/bill-status';
 import {
   derivePaymentStatus,
@@ -182,7 +183,12 @@ export class PaymentDetailsService {
         agg._sum.refundAmount?.toNumber() ?? 0,
         agg._sum.refundCharge?.toNumber() ?? 0,
       );
-      const pending = (agg._sum.netAmount?.toNumber() ?? 0) - effectivePaid;
+      // Round to 2dp before comparing: `netAmount − effectivePaid` in float can
+      // land at e.g. 666.5999999… and wrongly reject an exact 666.60 payment of a
+      // balance that contains paise. Whole-rupee balances are unaffected.
+      const pending = roundToTwoDecimalPlaces(
+        (agg._sum.netAmount?.toNumber() ?? 0) - effectivePaid,
+      );
       const attempted = dto.paidAmount ?? 0;
       if (attempted > pending) {
         throw new PaymentOverpaymentException(pending, attempted);

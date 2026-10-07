@@ -59,8 +59,13 @@ docs {
 
   ## Guards
 
-  - 422 `PAYMENT_OVERPAYMENT` — `paidAmount` exceeds the pending balance
-    (summed net − summed paid).
+  - 422 `PAYMENT_OVERPAYMENT` — `paidAmount` exceeds the pending balance. Pending
+    is now **rounded to 2 decimal places** (paisa) before the comparison, so a
+    balance containing paise is payable in full — e.g. net ₹999.90, paid ₹333.30,
+    then ₹666.60 is accepted (previously `999.90 − 333.30` landed at `666.5999…` in
+    float and wrongly rejected the exact ₹666.60). Whole-rupee balances are
+    unaffected. The same 2dp rounding applies to the refund-max checks on
+    `POST /orders/:id/refund` and `PATCH /orders/:id/cancel`.
   - 422 `PAYMENT_ORDER_CANCELLED` — the order is cancelled; no further payments.
   - 403 `PAYMENT_COLLECTION_BY_OTHER_USER_NOT_ALLOWED` — the caller is not the
     order's creator and the branch's Registration Setting

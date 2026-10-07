@@ -168,5 +168,11 @@ docs {
     bill is forced to `paymentStatus = PAID` while ₹0 was collected. The Billing
     screen sends this so a freshly-created, unpaid appointment does not surface as
     a bill until a payment (> 0) is made; an appointment with a payment and every
-    non-appointment order are unaffected.
+    non-appointment order are unaffected. **This flag also marks the "billing
+    scope":** when set, the server additionally forces `status NOT IN (DRAFT,
+    QUOTE)` so drafts and quotations can never leak onto the Billings screen as
+    "Not Paid" bills, even if the client omits the `statuses` filter. (The Billings
+    list sends both `hideUnpaidAppointments=true` and
+    `statuses=APPOINTMENT,ORDER,CANCELLED`; the backend exclusion is the
+    non-bypassable backstop.)
 }

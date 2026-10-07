@@ -6,6 +6,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  IsUUID,
   MaxLength,
   Min,
 } from 'class-validator';
@@ -19,6 +20,16 @@ import { roundToTwoDecimalPlacesTransform } from '../../../common/utils';
  * by the order create/update payloads.
  */
 export class OrderPaymentDto {
+  /**
+   * Existing `PaymentDetails` id — sent on update for rows hydrated from the
+   * order so the backend can preserve them as immutable historical records
+   * (matched in `diffOrderPayments`). Omitted for a newly-added payment, which
+   * is appended. Ignored on create.
+   */
+  @IsOptional()
+  @IsUUID()
+  id?: string;
+
   @IsOptional()
   @Transform(roundToTwoDecimalPlacesTransform)
   @IsNumber({ maxDecimalPlaces: 2 })
