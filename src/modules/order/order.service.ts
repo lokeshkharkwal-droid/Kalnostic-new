@@ -93,7 +93,10 @@ import {
   deriveReportStatus,
 } from './entities/order.entity';
 import { computeBillingTotals } from './utils/billing-totals';
-import { billStatusLabel } from './utils/bill-status';
+import {
+  BILL_STATUS_FILTER_LABELS,
+  billStatusLabel,
+} from './utils/bill-status';
 import { BillingGroupBy } from './dto/billing-grouped-query.dto';
 import { BillingDimension } from './dto/billing-query.dto';
 import {
@@ -3510,6 +3513,72 @@ export class OrderService {
         )
         .map((c) => c.id);
       and.push({ id: { in: matchedIds } });
+    }
+    if (query.billStatus) {
+      // Matches the Billings "Status" column label (`billStatusLabel`), NOT the
+      // stored `paymentStatus`: `cancel`/`refund` recompute that as a pure
+      // payment state, so it stays PAID after a cancel or a surplus refund and a
+      // `paymentStatus` filter listed Cancelled / Fully Refunded bills under
+      // "Paid". Cancelled wins outright on the order status, so it needs no
+      // scan; every other label depends on the ledger, so — like `reportStatus`
+      // above — the candidates are scanned with the exact money derivation
+      // `findAll` uses for each row, and matched by id.
+      if (query.billStatus === 'CANCELLED') {
+        and.push({ status: OrderStatus.CANCELLED });
+      } else {
+        const candidates = await this.prisma.order.findMany({
+          where: {
+            ...where,
+            AND: [...and, { status: { not: OrderStatus.CANCELLED } }],
+          },
+          select: {
+            id: true,
+            status: true,
+            cancellationCharge: true,
+            items: {
+              where: { deletedAt: null },
+              select: { unitPrice: true, discount: true },
+            },
+            payments: {
+              where: { deletedAt: null },
+              select: {
+                totalAmount: true,
+                orderDiscount: true,
+                orderDiscountMode: true,
+                orderDiscountValue: true,
+                netAmount: true,
+                paidAmount: true,
+                refundAmount: true,
+                refundCharge: true,
+              },
+            },
+          },
+        });
+        const label = BILL_STATUS_FILTER_LABELS[query.billStatus];
+        const matchedIds = candidates
+          .filter((c) => {
+            const { netAmount, paidAmount } = this.billingRollups(
+              c.payments,
+              c.items,
+            );
+            const refunded = c.payments.reduce(
+              (s, p) => s + toNum(p.refundAmount),
+              0,
+            );
+            const effectivePaid = computeEffectivePaid(
+              paidAmount,
+              toNum(c.cancellationCharge),
+              refunded,
+              c.payments.reduce((s, p) => s + toNum(p.refundCharge), 0),
+            );
+            return (
+              billStatusLabel(c.status, netAmount, effectivePaid, refunded) ===
+              label
+            );
+          })
+          .map((c) => c.id);
+        and.push({ id: { in: matchedIds } });
+      }
     }
 
     // Patient name / mobile via the to-one patient relation filter.
