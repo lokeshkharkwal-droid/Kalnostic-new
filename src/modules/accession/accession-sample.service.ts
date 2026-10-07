@@ -5,6 +5,7 @@ import {
   OrderSample,
   OrderSampleStatusHistory,
   LabTestSample,
+  OrderStatus,
   Prisma,
   SamplePriority,
   SampleStatus,
@@ -71,6 +72,8 @@ import {
   OrderSampleNotFoundException,
   InvalidSampleTransitionException,
   RetrieveBlockedException,
+  SampleOrderCancelledException,
+  SampleRepeatBlockedException,
   SampleReturnBlockedException,
   SampleSentToBranchException,
   SendBlockedException,
@@ -1700,10 +1703,11 @@ export class OrderSampleService {
    *
    * A receiving-branch COPY of a transferred sample (`sourceTransferId` set) is
    * not repeated in place: the test goes back to its sender (see
-   * {@link returnCopyToOrigin}) — allowed only while its report is untouched,
-   * otherwise refused. Such copies are handled first, in their own transaction;
-   * every other id follows the normal transition path. A copy is voided, so it is
-   * not part of the returned list.
+   * {@link returnCopyToOrigin}) — allowed until its report's result is validated.
+   * Such copies are handled first, in their own transaction; every other id
+   * follows the normal transition path, where a Repeat also resets the report
+   * (see {@link reportsToResetOnRepeat}). A copy is voided, so it is not part of
+   * the returned list.
    */
   async repeat(
     ids: string[],
@@ -1784,6 +1788,46 @@ export class OrderSampleService {
       returnedOriginIds.map((id) => this.findById(id, tenantId)),
     );
     return [...returned, ...samples];
+  }
+
+  /**
+   * The user actions that stay allowed on a CANCELLED order's samples so a sample
+   * that is out at another branch can be wound down: Retrieve (the sender pulling
+   * back a sample the receiver has not received yet; the usual window still
+   * applies) and, for the receiving branch's own copy, Store then Discard (Discard
+   * is only legal from Stored, so Store must stay open too - otherwise a copy
+   * whose report was already worked on, which cannot be sent back, would have no
+   * way out).
+   */
+  private isCancelledOrderWindDown(
+    action: SampleAction,
+    sample: { sourceTransferId: string | null },
+  ): boolean {
+    if (action === 'retrieve') return true;
+    return (
+      (action === 'store' || action === 'discard') &&
+      sample.sourceTransferId !== null
+    );
+  }
+
+  /**
+   * Whether the order is CANCELLED - the one question every accession and
+   * transfer action asks before touching a sample, so a cancelled order's samples
+   * stay exactly as they were. Public so the transfer service shares it.
+   * @param tx active Prisma transaction client
+   * @param tenantId tenant scope
+   * @param orderId the sample's order
+   */
+  async isOrderCancelled(
+    tx: Pick<Prisma.TransactionClient, 'order'>,
+    tenantId: string,
+    orderId: string,
+  ): Promise<boolean> {
+    const cancelled = await tx.order.findFirst({
+      where: { id: orderId, tenantId, status: OrderStatus.CANCELLED },
+      select: { id: true },
+    });
+    return cancelled !== null;
   }
 
   /**
@@ -1869,13 +1913,15 @@ export class OrderSampleService {
    * Return a transferred test to its sender: the receiving branch's Repeat of its
    * copy of the sample (after it accepted the transfer). Inside the caller's
    * transaction —
-   *  1. refuses (`SampleReturnBlockedException`) unless every report the copy
-   *     serves is untouched (PENDING, no results/notes/attachments) — nothing may
-   *     be lost;
+   *  1. refuses (`SampleReturnBlockedException`) only when a report the copy
+   *     serves already has a validated result (Result Done, Approved, Published);
+   *     anything earlier is work in progress and is reset in step 3;
    *  2. voids the copy (soft-delete + `CANCELLED` + history row) together with
    *     its `OrderSampleTest` links, so it drops out of the receiver's lists and
    *     nothing reads its stale status;
-   *  3. hands the report(s) back to the sender (clearing any NABL stopwatch);
+   *  3. resets the report(s) (values cleared, back to PENDING, lock removed,
+   *     worklist entries dropped; notes/attachments kept) and hands them back to
+   *     the sender (clearing any NABL stopwatch);
    *  4. moves the sender's ORIGINAL sample from `SENT_INTERNAL` to `REPEAT`
    *     (system-driven, with the reason on its history), which also ends the
    *     "sent out" hiding of the report for the sender.
@@ -1886,7 +1932,7 @@ export class OrderSampleService {
    * @param reason the receiver's repeat/reject reason, recorded on the history
    * @throws OrderSampleNotFoundException if the copy, its transfer or the
    *   original sample cannot be found
-   * @throws SampleReturnBlockedException if a report has been worked on
+   * @throws SampleReturnBlockedException if a report's result is already validated
    */
   async returnCopyToOrigin(
     tx: Prisma.TransactionClient,
@@ -1920,12 +1966,12 @@ export class OrderSampleService {
       copy.tests,
     );
     await this.labReportService.lockReports(tx, tenantId, reportIds);
-    for (const reportId of reportIds) {
-      if (
-        !(await this.labReportService.isReportUntouched(tx, tenantId, reportId))
-      ) {
-        throw new SampleReturnBlockedException(copy.status);
-      }
+    // Only a validated result (Result Done, Approved, Published) stops the send-back;
+    // earlier work is reset below so the sending branch starts clean.
+    if (
+      !(await this.labReportService.canReturnToSender(tx, tenantId, reportIds))
+    ) {
+      throw new SampleReturnBlockedException(copy.status);
     }
 
     const now = new Date();
@@ -1954,6 +2000,12 @@ export class OrderSampleService {
       },
     });
 
+    await this.labReportService.resetReportsForReturn(
+      tx,
+      tenantId,
+      reportIds,
+      personId,
+    );
     if (origin.branchId) {
       await this.labReportService.moveReportsToBranch(
         tx,
@@ -2214,11 +2266,23 @@ export class OrderSampleService {
     const changed = await this.prisma.withTenant(tenantId, async (tx) => {
       const samples = await tx.orderSample.findMany({
         where: { id: { in: ids }, tenantId, deletedAt: null },
-        select: { id: true, status: true, branchId: true, barcode: true },
+        select: {
+          id: true,
+          status: true,
+          branchId: true,
+          barcode: true,
+          orderId: true,
+        },
       });
       const found = new Set(samples.map((s) => s.id));
       const missing = ids.find((id) => !found.has(id));
       if (missing) throw new OrderSampleNotFoundException(missing);
+      // A cancelled order's samples are frozen - the barcode stays as it is.
+      for (const s of samples) {
+        if (await this.isOrderCancelled(tx, tenantId, s.orderId)) {
+          throw new SampleOrderCancelledException('assign-barcode', s.status);
+        }
+      }
 
       const branchId = samples[0]?.branchId ?? null;
       let value: string;
@@ -2350,6 +2414,19 @@ export class OrderSampleService {
     });
     if (!sample) throw new OrderSampleNotFoundException(sampleId);
 
+    // A cancelled order's samples are frozen - except the wind-down of a sample
+    // that is out at another branch: the sender's Retrieve, the receiving branch's
+    // Store / Discard of its own copy, and the system-driven moves that the receiving
+    // branch's Reject / Repeat / Return trigger (`note.system`). Everything else is
+    // refused.
+    if (
+      !note.system &&
+      !this.isCancelledOrderWindDown(action, sample) &&
+      (await this.isOrderCancelled(tx, tenantId, sample.orderId))
+    ) {
+      throw new SampleOrderCancelledException(action, sample.status);
+    }
+
     // A sample sent to another branch of the tenant is out of this branch's
     // hands: the ONLY user action that may touch it is Retrieve (and only before
     // the receiving branch has received it — checked below). This guard runs
@@ -2440,6 +2517,15 @@ export class OrderSampleService {
       await assertNotReceived();
     }
 
+    // A user's Repeat starts the report over: the new tube must not inherit the
+    // old tube's values. Refused first when the result is already validated.
+    // (The system-driven Repeat from a receiving branch's return resets the
+    // report itself, in returnCopyToOrigin.)
+    const repeatReportIds =
+      action === 'repeat' && !note.system
+        ? await this.reportsToResetOnRepeat(tx, tenantId, sample)
+        : [];
+
     // Claim the row on the status we validated against. Two concurrent requests
     // (double-click Send / Accept / Retrieve) both read the same status; the
     // second blocks on this row lock until the first commits, then re-checks the
@@ -2482,7 +2568,47 @@ export class OrderSampleService {
         changedBy: personId,
       },
     });
+    if (repeatReportIds.length > 0) {
+      await this.labReportService.resetReportsForReturn(
+        tx,
+        tenantId,
+        repeatReportIds,
+        personId,
+      );
+    }
     return updated;
+  }
+
+  /**
+   * The reports a Repeat of this sample (at its own branch) starts over, checked
+   * and locked before the sample changes. A report whose result is already
+   * validated (Result Done, Approved, Published) refuses the Repeat — it would wipe
+   * a validated result; the lab uses Re-run for that. The reports are locked first
+   * so a validation in flight cannot slip in after the answer.
+   * @throws SampleRepeatBlockedException if a report's result is validated
+   */
+  private async reportsToResetOnRepeat(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sample: OrderSample,
+  ): Promise<string[]> {
+    const tests = await tx.orderSampleTest.findMany({
+      where: { sampleId: sample.id, tenantId, deletedAt: null },
+      select: { orderItemId: true, labTestId: true },
+    });
+    const reportIds = await this.labReportService.findReportIdsForSampleTests(
+      tx,
+      tenantId,
+      sample.branchId,
+      tests,
+    );
+    await this.labReportService.lockReports(tx, tenantId, reportIds);
+    if (
+      !(await this.labReportService.canReturnToSender(tx, tenantId, reportIds))
+    ) {
+      throw new SampleRepeatBlockedException(sample.status);
+    }
+    return reportIds;
   }
 
   /**

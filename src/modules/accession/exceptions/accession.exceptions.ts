@@ -75,6 +75,37 @@ export class SampleSentToBranchException extends InvalidSampleTransitionExceptio
 }
 
 /**
+ * 422 — the sample's order was cancelled, so no accession action is allowed on
+ * it. Extends {@link InvalidSampleTransitionException} so group actions that
+ * "skip invalid" samples skip it instead of failing the whole batch.
+ */
+export class SampleOrderCancelledException extends InvalidSampleTransitionException {
+  constructor(action: SampleAction | 'assign-barcode', from: SampleStatus) {
+    super(
+      action as SampleAction,
+      from,
+      `This order has been cancelled, so "${action}" is not allowed on its samples.`,
+      'SAMPLE_ORDER_CANCELLED',
+    );
+  }
+}
+
+/**
+ * 409 — the order behind this transfer was cancelled, so the transfer can no
+ * longer be picked up, received, accepted, rejected or repeated.
+ */
+export class TransferOrderCancelledException extends KaltrosException {
+  constructor(transferId: string, action: TransferAction | 'assign-center') {
+    super(
+      'TRANSFER_ORDER_CANCELLED',
+      `This order has been cancelled, so "${action}" is not allowed on its transfer.`,
+      { id: transferId, action },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
  * 422 — Retrieve refused: the receiving branch has already received (or
  * accepted) the sample, or it has already come back from the receiving branch,
  * so there is nothing for the sender to pull back. Skippable by group "skip invalid" actions.
@@ -93,17 +124,35 @@ export class RetrieveBlockedException extends InvalidSampleTransitionException {
 }
 
 /**
- * 422 — the receiving branch cannot Repeat/return a transferred test because it
- * has already been worked on there (the report is past PENDING or already holds
- * results, notes or attachments). Skippable by group "skip invalid" actions.
+ * 422 — the receiving branch cannot Repeat/return a transferred test because its
+ * result is already validated there (Result Done, Approved or Published). Work
+ * still in progress does not block it: the report is reset on the way back.
+ * Skippable by group "skip invalid" actions.
  */
 export class SampleReturnBlockedException extends InvalidSampleTransitionException {
   constructor(from: SampleStatus) {
     super(
       'repeat',
       from,
-      'This test has already been worked on at this branch (its report has results, notes or attachments, or is past Pending), so it cannot be repeated or returned to the sending branch.',
+      'The result of this test is already done at this branch (Result Done, Approved or Published), so it cannot be repeated or returned to the sending branch.',
       'SAMPLE_RETURN_BLOCKED',
+    );
+  }
+}
+
+/**
+ * 422 — a sample cannot be Repeated because the report it serves already has a
+ * validated result (Result Done, Approved or Published); repeating would wipe it.
+ * A validated result is redone with Re-run instead. Skippable by group "skip
+ * invalid" actions.
+ */
+export class SampleRepeatBlockedException extends InvalidSampleTransitionException {
+  constructor(from: SampleStatus) {
+    super(
+      'repeat',
+      from,
+      'The result of this test is already done (Result Done, Approved or Published), so the sample cannot be repeated. Use Re-run to redo a validated result.',
+      'SAMPLE_REPEAT_BLOCKED',
     );
   }
 }

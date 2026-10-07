@@ -34,7 +34,13 @@ function setup(opts: {
     canSee: jest.fn().mockResolvedValue(opts.access ?? null),
     hasSenderLinkTo: jest.fn().mockResolvedValue(opts.senderLinked ?? false),
   };
-  const user = {
+  const user: {
+    tenant_id: string;
+    person_id: string;
+    active_branch_id: string | null;
+    active_profile_key: string | null;
+    sender_link_read?: boolean;
+  } = {
     tenant_id: 't1',
     person_id: 'p1',
     active_branch_id: opts.active === undefined ? A : opts.active,
@@ -169,6 +175,19 @@ describe('ReportBranchScopeGuard - a branch that only SENT the report', () => {
     );
     expect(user.active_branch_id).toBe(B);
     expect(user.active_profile_key).toBeNull();
+    // the handler can tell this is a look-only link (print must mask results)
+    expect(user.sender_link_read).toBe(true);
+  });
+
+  it('a caller with real access at the report branch is NOT marked look-only', async () => {
+    const { guard, ctx, user } = setup({
+      ...sent,
+      access: { branchId: B, profileKey: 'lab_technician' },
+      method: 'GET',
+    });
+    await guard.canActivate(ctx);
+    expect(user.active_branch_id).toBe(B);
+    expect(user.sender_link_read).toBeUndefined();
   });
 
   it.each(['POST', 'PATCH', 'PUT', 'DELETE'])(

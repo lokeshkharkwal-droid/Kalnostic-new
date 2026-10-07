@@ -3,8 +3,10 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PDFDocument } from 'pdf-lib';
 import {
   LabReportHistory,
+  LabReportNoteCategory,
   LabReportStatus,
   MessagingChannel,
+  OrderStatus,
   PersonMappingType,
   Prisma,
   RecipientType,
@@ -100,7 +102,7 @@ import {
   InvalidLabReportTransitionException,
   InvalidSignatoryAuthorityException,
   LabReportLockedException,
-  LabReportSentOutException,
+  LabReportPrintOrderCancelledException,
   LabReportSampleMissingException,
   LabReportResultsRequiredException,
   LabReportNotesRequiredException,
@@ -120,10 +122,30 @@ import {
 } from './utils/reference-range.util';
 import { buildTestFileAttachmentHtml } from './utils/test-file-attachment.util';
 import {
-  assertReportNotSentOut,
+  assertReportWritable,
   findSentOutReportIds,
-  isReportSentOut,
 } from './utils/sent-out-report.util';
+import { VALIDATED_REPORT_STATUSES } from './utils/validated-report.util';
+
+/**
+ * Note categories that describe a report's RESULTS (the technician's own notes and
+ * the automatic notes written alongside worklist entries). They are hidden when a
+ * test goes back for a repeat. ORDER and SAMPLE notes are order-wide by design and
+ * stay.
+ */
+const RESULT_BOUND_NOTE_CATEGORIES: LabReportNoteCategory[] = [
+  LabReportNoteCategory.TECH,
+  LabReportNoteCategory.LOCK,
+  LabReportNoteCategory.DELTA,
+  LabReportNoteCategory.CRITICAL_ALERT,
+  LabReportNoteCategory.OUT_OF_RANGE,
+  LabReportNoteCategory.RE_RUN,
+  LabReportNoteCategory.SCHEDULE,
+  LabReportNoteCategory.ERROR_REPORTED,
+  LabReportNoteCategory.RESULT_REJECTED,
+  LabReportNoteCategory.UPDATE_STATUS,
+  LabReportNoteCategory.MULTI_STEP,
+];
 import {
   PRINTABLE_REPORT_STATUSES,
   isReportPrintable,
@@ -370,10 +392,192 @@ export class LabReportService {
   }
 
   /**
+   * Whether every one of these reports may go back to the sending branch as a
+   * Repeat: none has a validated result (Result Done, Approved or Published).
+   * Anything earlier is still work in progress and is reset on the way back
+   * ({@link resetReportsForReturn}). Call after {@link lockReports}, so a
+   * validation in flight cannot slip in after the answer.
+   * @param tx the caller's transaction
+   */
+  async canReturnToSender(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    reportIds: string[],
+  ): Promise<boolean> {
+    if (reportIds.length === 0) return true;
+    const validated = await tx.labReport.findFirst({
+      where: {
+        id: { in: reportIds },
+        tenantId,
+        deletedAt: null,
+        status: { in: VALIDATED_REPORT_STATUSES },
+      },
+      select: { id: true },
+    });
+    return validated === null;
+  }
+
+  /**
+   * Start these reports over for the sending branch: a transferred test is going
+   * back as a Repeat, so whatever the receiving branch entered belongs to a sample
+   * that was sent back and must not be validated by mistake. Inside the caller's
+   * transaction:
+   *  - the result values are soft-deleted and the report goes back to PENDING (the
+   *    stage timestamps and the TAT snapshot are cleared, as a re-run does);
+   *  - the lock is removed (there is no unlock yet, so a locked report would be
+   *    stuck at the sender);
+   *  - the worklist entries about those values (re-run, critical alert, out of
+   *    range, delta check, scheduled test, multi-step) are soft-deleted;
+   *  - everything else the branch recorded about those results is hidden too: the
+   *    overall results, the technician's own notes and the automatic notes, the
+   *    attachments and the TAT adjustments are soft-deleted, and the five
+   *    Notes-section texts (useful for, interpretation, limitations, remarks,
+   *    references) are cleared;
+   *  - ORDER and SAMPLE notes (order-wide by design) and reagent usage (a record of
+   *    what was physically used) stay;
+   *  - one `returned_for_repeat` history row keeps the status the report had and the
+   *    text of the five cleared fields, so nothing is lost.
+   * Soft-deleted rows stay in the database.
+   * Reports that were never worked on go through the same steps harmlessly.
+   * @param tx the caller's transaction
+   * @param actorId who sent it back (null = the system)
+   */
+  async resetReportsForReturn(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    reportIds: string[],
+    actorId: string | null,
+  ): Promise<void> {
+    if (reportIds.length === 0) return;
+    const now = new Date();
+    const reports = await tx.labReport.findMany({
+      where: { id: { in: reportIds }, tenantId, deletedAt: null },
+      select: {
+        id: true,
+        status: true,
+        usefulFor: true,
+        interpretationOfResults: true,
+        limitations: true,
+        remarks: true,
+        references: true,
+      },
+    });
+    const byReport = { labReportId: { in: reportIds }, deletedAt: null };
+    await tx.labReportResultValue.updateMany({
+      where: byReport,
+      data: { deletedAt: now },
+    });
+    await tx.reRunRequest.updateMany({
+      where: byReport,
+      data: { deletedAt: now },
+    });
+    await tx.criticalAlert.updateMany({
+      where: byReport,
+      data: { deletedAt: now },
+    });
+    await tx.outOfRangeFlag.updateMany({
+      where: byReport,
+      data: { deletedAt: now },
+    });
+    await tx.deltaCheck.updateMany({
+      where: byReport,
+      data: { deletedAt: now },
+    });
+    await tx.scheduledTest.updateMany({
+      where: byReport,
+      data: { deletedAt: now },
+    });
+    await tx.multiStepTestProcess.updateMany({
+      where: byReport,
+      data: { deletedAt: now },
+    });
+    await tx.labReportOverallResult.updateMany({
+      where: byReport,
+      data: { deletedAt: now },
+    });
+    await tx.labReportNote.updateMany({
+      where: { ...byReport, category: { in: RESULT_BOUND_NOTE_CATEGORIES } },
+      data: { deletedAt: now },
+    });
+    await tx.labReportAttachment.updateMany({
+      where: byReport,
+      data: { deletedAt: now },
+    });
+    await tx.tatAdjustment.updateMany({
+      where: byReport,
+      data: { deletedAt: now },
+    });
+    await tx.labReport.updateMany({
+      where: { id: { in: reportIds }, tenantId, deletedAt: null },
+      data: {
+        usefulFor: null,
+        interpretationOfResults: null,
+        limitations: null,
+        remarks: null,
+        references: null,
+        status: LabReportStatus.PENDING,
+        savedAt: null,
+        savedBy: null,
+        submittedAt: null,
+        submittedBy: null,
+        validatedAt: null,
+        validatedBy: null,
+        approvedAt: null,
+        approvedBy: null,
+        publishedAt: null,
+        publishedBy: null,
+        reportingDeferredUntil: null,
+        tatStartAt: null,
+        tatNetMinutes: null,
+        tatMaxMinutes: null,
+        tatBand: null,
+        isLocked: false,
+        lockedAt: null,
+        lockedBy: null,
+        lockNotes: null,
+      },
+    });
+    for (const r of reports) {
+      // Keep the text of the five cleared fields on the history line, readable
+      // as a sentence (the Audit Trail shows this note as is).
+      const cleared = (
+        [
+          ['Useful for', r.usefulFor],
+          ['Interpretation', r.interpretationOfResults],
+          ['Limitations', r.limitations],
+          ['Remarks', r.remarks],
+          ['References', r.references],
+        ] as Array<[string, string | null]>
+      )
+        .filter(([, value]) => value !== null)
+        .map(([label, value]) => `${label}: ${value}`);
+      await this.recordHistory(
+        tx,
+        tenantId,
+        r.id,
+        r.status,
+        LabReportStatus.PENDING,
+        'returned_for_repeat',
+        actorId ?? 'system',
+        cleared.length > 0
+          ? `Cleared for the repeat — ${cleared.join('; ')}`
+          : undefined,
+      );
+    }
+  }
+
+  /**
    * Whether a report is completely untouched — no work has started on it:
-   * status `PENDING`, and no result values, notes, attachments, overall-result
-   * entries or per-report Notes-section overrides. Only an untouched report may
-   * change branch (return to the sender) or be sent on, because nothing is lost.
+   * status `PENDING`, not locked, and no result values, notes, attachments,
+   * overall-result entries or per-report Notes-section overrides. Only an
+   * untouched report may be sent on, because nothing is lost.
+   *
+   * A report that went back for a repeat ({@link resetReportsForReturn}) starts a
+   * new cycle: rows that return hid (soft-deleted), and the notes and reagent usage
+   * it deliberately kept, belong to the old cycle and do not count. Only live rows,
+   * and rows created after the return, are new work. A report that was never
+   * returned keeps the strict rule — a soft-deleted row (a re-run, say) still shows
+   * work was done.
    * @param tx the caller's transaction
    */
   async isReportUntouched(
@@ -406,24 +610,59 @@ export class LabReportService {
     ) {
       return false;
     }
-    // Every child table a technician action can write to. Rows that were later
-    // soft-deleted still count: they show work was done (a re-run, for example,
-    // resets the report to PENDING and soft-deletes its values). The history log
-    // is not counted — it already holds the "sample accepted" entry.
-    const byReport = { labReportId: reportId };
+    // When did the last return for a repeat reset this report? Everything the old
+    // cycle left behind is judged against that moment.
+    const lastReturn = await tx.labReportHistory.findFirst({
+      where: { labReportId: reportId, action: 'returned_for_repeat' },
+      orderBy: { createdAt: 'desc' },
+      select: { createdAt: true },
+    });
+    const since = lastReturn?.createdAt ?? null;
+
+    // Every child table a technician action can write to. Without a return, any
+    // row counts, even one soft-deleted later: it shows work was done (a re-run, for
+    // example, resets the report to PENDING and soft-deletes its values). After a
+    // return, a row counts if it is live or was created after the return. The history
+    // log is not counted — it already holds the "sample accepted" entry.
+    const base = { labReportId: reportId };
+    const cycle = (createdField: 'createdAt' | 'uploadedAt' = 'createdAt') =>
+      since
+        ? {
+            ...base,
+            OR: [{ deletedAt: null }, { [createdField]: { gt: since } }],
+          }
+        : base;
     const counts = await Promise.all([
-      tx.labReportResultValue.count({ where: byReport }),
-      tx.labReportNote.count({ where: byReport }),
-      tx.labReportAttachment.count({ where: byReport }),
-      tx.labReportOverallResult.count({ where: byReport }),
-      tx.reRunRequest.count({ where: byReport }),
-      tx.criticalAlert.count({ where: byReport }),
-      tx.outOfRangeFlag.count({ where: byReport }),
-      tx.deltaCheck.count({ where: byReport }),
-      tx.scheduledTest.count({ where: byReport }),
-      tx.multiStepTestProcess.count({ where: byReport }),
-      tx.labReportInventoryUsage.count({ where: byReport }),
-      tx.tatAdjustment.count({ where: byReport }),
+      tx.labReportResultValue.count({ where: cycle() }),
+      tx.labReportNote.count({
+        where: since
+          ? {
+              ...base,
+              OR: [
+                // result-related notes the return did not hide
+                {
+                  deletedAt: null,
+                  category: { in: RESULT_BOUND_NOTE_CATEGORIES },
+                },
+                // ORDER / SAMPLE notes are kept by the return: only new ones count
+                { createdAt: { gt: since } },
+              ],
+            }
+          : base,
+      }),
+      tx.labReportAttachment.count({ where: cycle('uploadedAt') }),
+      tx.labReportOverallResult.count({ where: cycle() }),
+      tx.reRunRequest.count({ where: cycle() }),
+      tx.criticalAlert.count({ where: cycle() }),
+      tx.outOfRangeFlag.count({ where: cycle() }),
+      tx.deltaCheck.count({ where: cycle() }),
+      tx.scheduledTest.count({ where: cycle() }),
+      tx.multiStepTestProcess.count({ where: cycle() }),
+      // Reagent usage is kept by the return (it was really used): only new rows count.
+      tx.labReportInventoryUsage.count({
+        where: since ? { ...base, createdAt: { gt: since } } : base,
+      }),
+      tx.tatAdjustment.count({ where: cycle() }),
     ]);
     return counts.every((n) => n === 0);
   }
@@ -1714,6 +1953,42 @@ export class LabReportService {
   }
 
   /** Whether `branchId` owns the order this report belongs to (see {@link canPrintWholeOrder}). */
+  /**
+   * Printing a cancelled order's report is refused (see
+   * {@link LabReportPrintOrderCancelledException}).
+   * @throws LabReportPrintOrderCancelledException if the report's order is cancelled
+   */
+  private async assertReportOrderNotCancelledForPrint(
+    tenantId: string,
+    reportId: string,
+  ): Promise<void> {
+    const cancelled = await this.prisma.labReport.findFirst({
+      where: {
+        id: reportId,
+        tenantId,
+        deletedAt: null,
+        orderItem: { order: { status: OrderStatus.CANCELLED } },
+      },
+      select: { id: true },
+    });
+    if (cancelled) throw new LabReportPrintOrderCancelledException(reportId);
+  }
+
+  /**
+   * Same refusal for the whole-order print.
+   * @throws LabReportPrintOrderCancelledException if the order is cancelled
+   */
+  private async assertOrderNotCancelledForPrint(
+    tenantId: string,
+    orderId: string,
+  ): Promise<void> {
+    const cancelled = await this.prisma.order.findFirst({
+      where: { id: orderId, tenantId, status: OrderStatus.CANCELLED },
+      select: { id: true },
+    });
+    if (cancelled) throw new LabReportPrintOrderCancelledException(orderId);
+  }
+
   private async ownsReportsOrder(
     reportId: string,
     tenantId: string,
@@ -1776,7 +2051,7 @@ export class LabReportService {
         // applied, from the dedicated per-parameter table (not columns on this
         // report itself — see LabReportOverallResult's model doc comment).
         this.prisma.labReportOverallResult.findMany({
-          where: { labReportId: id, tenantId },
+          where: { labReportId: id, tenantId, deletedAt: null },
           select: { resultParamId: true, templateId: true, content: true },
         }),
       ]);
@@ -1996,6 +2271,7 @@ export class LabReportService {
     const existing = await this.prisma.labReportOverallResult.findUnique({
       where: {
         labReportId_resultParamId: { labReportId: report.id, resultParamId },
+        deletedAt: null,
       },
       select: { templateId: true, content: true },
     });
@@ -2046,7 +2322,8 @@ export class LabReportService {
         templateId,
         content,
       },
-      update: { templateId, content },
+      // `deletedAt: null` revives a row a repeat soft-deleted.
+      update: { templateId, content, deletedAt: null },
       select: { templateId: true, content: true },
     });
     return {
@@ -2163,7 +2440,7 @@ export class LabReportService {
     reportId: string,
   ): Promise<void> {
     await tx.$queryRaw`SELECT id FROM lab_reports WHERE id = ${reportId} AND tenant_id = ${tenantId} FOR UPDATE`;
-    await assertReportNotSentOut(tx, tenantId, reportId);
+    await assertReportWritable(tx, tenantId, reportId);
   }
 
   /**
@@ -2175,17 +2452,18 @@ export class LabReportService {
     id: string,
     tenantId: string,
     branchId: string,
-    opts: { forRead?: boolean } = {},
+    opts: { forRead?: boolean; allowAwaitingSample?: boolean } = {},
   ) {
     const report = await this.prisma.labReport.findFirst({
       where: { id, tenantId, branchId, deletedAt: null },
     });
     if (!report) throw new LabReportNotFoundException(id);
-    if (
-      !opts.forRead &&
-      (await isReportSentOut(this.prisma, tenantId, report))
-    ) {
-      throw new LabReportSentOutException(id);
+    if (!opts.forRead) {
+      // A cancelled order's report is no longer worked on; a sent-out one is
+      // view-only. Both are write locks, so reads (forRead) skip them.
+      await assertReportWritable(this.prisma, tenantId, id, {
+        allowAwaitingSample: opts.allowAwaitingSample,
+      });
     }
     if (report.isLocked) throw new LabReportLockedException(id);
 
@@ -2270,7 +2548,7 @@ export class LabReportService {
     if (hasRealValue) return;
 
     const hasAttachment = await this.prisma.labReportAttachment.findFirst({
-      where: { labReportId: id, tenantId },
+      where: { labReportId: id, tenantId, deletedAt: null },
       select: { id: true },
     });
     if (!hasAttachment) throw new LabReportResultsRequiredException(id);
@@ -3227,7 +3505,11 @@ export class LabReportService {
       allBranches ? null : this.requireBranch(branchId),
     );
     const sampleNote = await this.prisma.labReportNote.findFirst({
-      where: { labReportId: { in: siblingIds }, category: 'SAMPLE' },
+      where: {
+        labReportId: { in: siblingIds },
+        category: 'SAMPLE',
+        deletedAt: null,
+      },
       orderBy: { createdAt: 'desc' },
       select: { body: true },
     });
@@ -3275,7 +3557,11 @@ export class LabReportService {
       resultParamIds.length === 0
         ? []
         : await this.prisma.labReportOverallResult.findMany({
-            where: { labReportId: id, resultParamId: { in: resultParamIds } },
+            where: {
+              labReportId: id,
+              resultParamId: { in: resultParamIds },
+              deletedAt: null,
+            },
             select: { resultParamId: true, content: true },
           });
     const overallResultByParamId = new Map(
@@ -3456,6 +3742,7 @@ export class LabReportService {
   ): Promise<Buffer> {
     // Referral Panel Settings — Restrict Report Access (Credit Limit/Days).
     await this.referralCredit.assertReportAccessAllowedByReportId(tenantId, id);
+    await this.assertReportOrderNotCancelledForPrint(tenantId, id);
     // The order's own branch may print any report on its order, held anywhere —
     // the same rule Print All applies — so the two buttons never disagree.
     const wholeOrder =
@@ -4049,6 +4336,7 @@ export class LabReportService {
       tenantId,
       orderId,
     );
+    await this.assertOrderNotCancelledForPrint(tenantId, orderId);
 
     // If the caller picked a `lab_all_report` (or the patient-facing
     // `patient_lab_all_report`) template, render the whole order as ONE
@@ -5103,7 +5391,7 @@ export class LabReportService {
       where: { id, tenantId, branchId, deletedAt: null },
     });
     if (!report) throw new LabReportNotFoundException(id);
-    await assertReportNotSentOut(this.prisma, tenantId, id);
+    await assertReportWritable(this.prisma, tenantId, id);
 
     return this.prisma.withTenant(tenantId, async (tx) => {
       await this.lockReportForWrite(tx, tenantId, id);
@@ -5160,7 +5448,7 @@ export class LabReportService {
       where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
     });
     if (!report) throw new LabReportNotFoundException(id);
-    await assertReportNotSentOut(this.prisma, tenantId, id);
+    await assertReportWritable(this.prisma, tenantId, id);
 
     return this.prisma.withTenant(tenantId, async (tx) => {
       await this.lockReportForWrite(tx, tenantId, id);
@@ -5207,7 +5495,7 @@ export class LabReportService {
       where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
     });
     if (!report) throw new LabReportNotFoundException(id);
-    await assertReportNotSentOut(this.prisma, tenantId, id);
+    await assertReportWritable(this.prisma, tenantId, id);
 
     return this.prisma.labReport.update({
       where: { id },
@@ -5302,7 +5590,12 @@ export class LabReportService {
     dto: CreateLabReportNoteDto,
   ) {
     const activeBranchId = this.requireBranch(branchId);
-    await this.requireReport(id, tenantId, activeBranchId);
+    // Order and Sample notes are not results: they stay possible while the sample
+    // is on Repeat (the usual place to explain why). Tech notes are not.
+    await this.requireReport(id, tenantId, activeBranchId, {
+      allowAwaitingSample:
+        dto.category === 'ORDER' || dto.category === 'SAMPLE',
+    });
 
     return this.prisma.labReportNote.create({
       data: {
@@ -5330,6 +5623,7 @@ export class LabReportService {
     const rows = await this.prisma.labReportNote.findMany({
       where: {
         tenantId,
+        deletedAt: null,
         labReportId: { in: reportIds },
         category: query.category
           ? query.category

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { LabReportAttachment } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { assertReportNotSentOut } from './utils/sent-out-report.util';
+import { assertReportWritable } from './utils/sent-out-report.util';
 import { CreateLabReportAttachmentDto } from './dto/create-lab-report-attachment.dto';
 import { LabReportNotFoundException } from './exceptions/lab-report.exceptions';
 
@@ -59,13 +59,14 @@ export class LabReportAttachmentService {
   ): Promise<LabReportAttachment[]> {
     await this.requireReport(reportId, tenantId, branchId, { forRead: true });
     return this.prisma.labReportAttachment.findMany({
-      where: { labReportId: reportId, tenantId },
+      where: { labReportId: reportId, tenantId, deletedAt: null },
       orderBy: { uploadedAt: 'desc' },
     });
   }
 
   /**
-   * Remove one attachment (hard delete — the model has no soft-delete column).
+   * Remove one attachment (a user's explicit delete is a hard delete; a repeat's
+   * reset soft-deletes via `deletedAt`).
    * @throws LabReportNotFoundException if the report is missing/other tenant/branch
    */
   async remove(
@@ -77,7 +78,12 @@ export class LabReportAttachmentService {
     await this.requireReport(reportId, tenantId, branchId);
     return this.prisma.withTenant(tenantId, async (tx) => {
       const existing = await tx.labReportAttachment.findFirst({
-        where: { id: attachmentId, labReportId: reportId, tenantId },
+        where: {
+          id: attachmentId,
+          labReportId: reportId,
+          tenantId,
+          deletedAt: null,
+        },
         select: { id: true },
       });
       if (!existing) {
@@ -109,7 +115,7 @@ export class LabReportAttachmentService {
       throw new LabReportNotFoundException(reportId);
     }
     if (!opts.forRead) {
-      await assertReportNotSentOut(this.prisma, tenantId, reportId);
+      await assertReportWritable(this.prisma, tenantId, reportId);
     }
   }
 }

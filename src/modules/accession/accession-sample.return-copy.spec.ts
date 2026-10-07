@@ -1,0 +1,114 @@
+import { OrderSampleService } from './accession-sample.service';
+import { SampleReturnBlockedException } from './exceptions/accession.exceptions';
+
+/**
+ * The receiving branch's Repeat/Return of an accepted copy: allowed while the
+ * report is still work in progress (it is reset on the way back), refused only
+ * once the result is validated.
+ */
+function build(canReturn: boolean) {
+  const calls: string[] = [];
+  const labReportService = {
+    findReportIdsForSampleTests: jest.fn().mockResolvedValue(['r1', 'r2']),
+    lockReports: jest.fn(() => {
+      calls.push('lock');
+      return Promise.resolve();
+    }),
+    canReturnToSender: jest.fn(() => {
+      calls.push('check');
+      return Promise.resolve(canReturn);
+    }),
+    resetReportsForReturn: jest.fn(() => {
+      calls.push('reset');
+      return Promise.resolve();
+    }),
+    moveReportsToBranch: jest.fn(() => {
+      calls.push('move');
+      return Promise.resolve();
+    }),
+  };
+  const tx = {
+    orderSample: {
+      findFirst: jest
+        .fn()
+        .mockResolvedValueOnce({
+          id: 'copy1',
+          branchId: 'B',
+          status: 'ACCEPTED',
+          sourceTransferId: 'tr1',
+          tests: [{ orderItemId: 'i1', labTestId: 'lt1' }],
+        })
+        .mockResolvedValueOnce({ id: 'orig1', branchId: 'A' }),
+      update: jest.fn().mockResolvedValue({}),
+    },
+    sampleTransfer: {
+      findFirst: jest.fn().mockResolvedValue({ id: 'tr1', sampleId: 'orig1' }),
+    },
+    orderSampleTest: { updateMany: jest.fn().mockResolvedValue({}) },
+  };
+  const service = new OrderSampleService(
+    {} as never,
+    {} as never,
+    labReportService as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+  );
+  const transition = jest.fn(() => {
+    calls.push('transition');
+    return Promise.resolve();
+  });
+  (service as unknown as { transitionInTx: unknown }).transitionInTx =
+    transition;
+  return { service, tx, labReportService, calls, transition };
+}
+
+describe('OrderSampleService.returnCopyToOrigin - Repeat below Result Done', () => {
+  it('locks, checks, resets, then moves the reports and repeats the original', async () => {
+    const { service, tx, labReportService, calls, transition } = build(true);
+    const originId = await service.returnCopyToOrigin(
+      tx as never,
+      't1',
+      'u1',
+      'copy1',
+      'wrong sample',
+    );
+    expect(originId).toBe('orig1');
+    expect(calls).toEqual(['lock', 'check', 'reset', 'move', 'transition']);
+    expect(labReportService.resetReportsForReturn).toHaveBeenCalledWith(
+      tx,
+      't1',
+      ['r1', 'r2'],
+      'u1',
+    );
+    expect(labReportService.moveReportsToBranch).toHaveBeenCalledWith(
+      tx,
+      't1',
+      ['r1', 'r2'],
+      'A',
+    );
+    expect(transition).toHaveBeenCalledTimes(1);
+  });
+
+  it('a validated result blocks it, before anything is changed', async () => {
+    const { service, tx, labReportService, calls } = build(false);
+    await expect(
+      service.returnCopyToOrigin(tx as never, 't1', 'u1', 'copy1', 'x'),
+    ).rejects.toBeInstanceOf(SampleReturnBlockedException);
+    expect(calls).toEqual(['lock', 'check']);
+    expect(tx.orderSample.update).not.toHaveBeenCalled();
+    expect(tx.orderSampleTest.updateMany).not.toHaveBeenCalled();
+    expect(labReportService.resetReportsForReturn).not.toHaveBeenCalled();
+  });
+
+  it('no longer asks whether the report is untouched', async () => {
+    const { service, tx, labReportService } = build(true);
+    (labReportService as Record<string, unknown>).isReportUntouched = jest.fn();
+    await service.returnCopyToOrigin(tx as never, 't1', 'u1', 'copy1', 'x');
+    expect(
+      (labReportService as Record<string, jest.Mock>).isReportUntouched,
+    ).not.toHaveBeenCalled();
+  });
+});

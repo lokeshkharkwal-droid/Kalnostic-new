@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  OrderStatus,
   Prisma,
   SampleSource,
   SampleStatus,
@@ -126,6 +127,18 @@ const STATUS_DISPLAY_ORDER: SampleStatus[] = [
  * unlike every other Accession endpoint, which is always locked to the
  * caller's own active branch (confirmed with the user).
  */
+/**
+ * Cancelled orders are not live work: the dashboard leaves their samples (and
+ * internal transfers) out of every count, so a cancelled order cannot look
+ * overdue. The list itself still shows them, tagged "Order cancelled".
+ */
+const LIVE_ORDER_SAMPLES = {
+  order: { status: { not: OrderStatus.CANCELLED } },
+} satisfies Prisma.OrderSampleWhereInput;
+const LIVE_ORDER_TRANSFERS = {
+  sample: { order: { status: { not: OrderStatus.CANCELLED } } },
+} satisfies Prisma.SampleTransferWhereInput;
+
 @Injectable()
 export class AccessionDashboardService {
   constructor(
@@ -220,6 +233,7 @@ export class AccessionDashboardService {
         tenantId,
         ...branchWhere(branchId),
         deletedAt: null,
+        ...LIVE_ORDER_SAMPLES,
       },
       _count: { _all: true },
     });
@@ -265,6 +279,7 @@ export class AccessionDashboardService {
         tenantId,
         ...branchWhere(branchId),
         deletedAt: null,
+        ...LIVE_ORDER_SAMPLES,
       },
       select: { createdAt: true, status: true },
     });
@@ -330,6 +345,7 @@ export class AccessionDashboardService {
           tenantId,
           ...branchWhere(branchId),
           deletedAt: null,
+          ...LIVE_ORDER_SAMPLES,
         },
         select: { createdAt: true, status: true },
       }),
@@ -338,6 +354,7 @@ export class AccessionDashboardService {
           tenantId,
           ...destinationBranchWhere,
           deletedAt: null,
+          ...LIVE_ORDER_TRANSFERS,
           transferStatus: TransferStatus.REJECTED,
           ...(createdAt && { createdAt }),
         },
@@ -402,6 +419,7 @@ export class AccessionDashboardService {
         where: {
           tenantId,
           deletedAt: null,
+          ...LIVE_ORDER_TRANSFERS,
           kind: TransferKind.INTERNAL,
           ...originWhere,
           destinationBranchId: { not: null },
@@ -414,6 +432,7 @@ export class AccessionDashboardService {
         where: {
           tenantId,
           deletedAt: null,
+          ...LIVE_ORDER_TRANSFERS,
           kind: TransferKind.INTERNAL,
           ...destinationWhere,
           originBranchId: { not: null },
@@ -602,6 +621,7 @@ export class AccessionDashboardService {
         tenantId,
         ...branchWhere(branchId),
         deletedAt: null,
+        ...LIVE_ORDER_SAMPLES,
         createdAt: createdAtRange,
       },
       select: {

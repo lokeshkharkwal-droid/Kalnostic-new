@@ -19,7 +19,9 @@ function makeTx(opts: { sentOut: boolean }) {
       return Promise.resolve([]);
     }),
     labReport: {
-      findFirst: jest.fn(() => {
+      findFirst: jest.fn((arg?: { where?: { orderItem?: unknown } }) => {
+        // The "is the order cancelled?" probe filters on orderItem.order: none here.
+        if (arg?.where?.orderItem) return Promise.resolve(null);
         calls.push('read-report');
         return Promise.resolve({
           branchId: 'A',
@@ -37,6 +39,8 @@ function makeTx(opts: { sentOut: boolean }) {
       findFirst: jest.fn(() =>
         Promise.resolve(opts.sentOut ? { id: 'sent-link' } : null),
       ),
+      // the "awaiting its sample" rule: no linked sample, so it does not apply
+      findMany: jest.fn().mockResolvedValue([]),
     },
     labReportHistory: { create: jest.fn() },
   };

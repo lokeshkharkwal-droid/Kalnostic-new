@@ -6,6 +6,7 @@ import {
   MultiStepProcessType,
   MultiStepStage,
   ParameterType,
+  OrderStatus,
   PaymentStatus,
   Prisma,
   ResultType,
@@ -32,9 +33,9 @@ export interface WorklistTat {
 /** Relations eager-loaded when fetching a report's full detail (Test Entry screen). */
 export const LAB_REPORT_DETAIL_INCLUDE = {
   resultValues: { where: { deletedAt: null } },
-  notes: { orderBy: { createdAt: 'desc' } },
-  attachments: { orderBy: { uploadedAt: 'desc' } },
-  multiStepProcess: true,
+  notes: { where: { deletedAt: null }, orderBy: { createdAt: 'desc' } },
+  attachments: { where: { deletedAt: null }, orderBy: { uploadedAt: 'desc' } },
+  multiStepProcess: { where: { deletedAt: null } },
   orderItem: {
     include: {
       order: {
@@ -267,6 +268,9 @@ export interface LabReportWorklistRow {
     createdAt: Date;
     billingType: BillingType;
     paymentStatus: PaymentStatus;
+    /** CANCELLED freezes the report: the worklist shows an "Order cancelled" tag
+     * and every action on the row is refused. */
+    status: OrderStatus;
   } | null;
 
   patient: {
@@ -427,6 +431,7 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
           createdAt: order.createdAt,
           billingType: order.billingType,
           paymentStatus: order.paymentStatus,
+          status: order.status,
         }
       : null,
 

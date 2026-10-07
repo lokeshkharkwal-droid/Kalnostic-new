@@ -27,6 +27,8 @@ export const TRANSFER_INCLUDE = {
           orderDate: true,
           orderTime: true,
           createdAt: true,
+          // CANCELLED here tags the row "Order cancelled" and hides the forward steps.
+          status: true,
           billId: true,
           patient: true,
           referredByDoctor: true,

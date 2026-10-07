@@ -39,6 +39,7 @@ import {
   OrderSampleNotFoundException,
   InvalidSampleTransitionException,
   InvalidTransferTransitionException,
+  TransferOrderCancelledException,
   OutsourceCenterNotFoundException,
   SampleTransferNotFoundException,
   TransferDestinationMissingException,
@@ -261,6 +262,21 @@ export class SampleTransferService {
     actor?: { branchId: string | null; profileKey: string | null },
   ): Promise<SampleTransferWithRelations> {
     const transfer = await this.findTransferById(transferId, tenantId);
+    // A cancelled order's transfer is frozen, destination included.
+    const sampleOfTransfer = await this.prisma.orderSample.findFirst({
+      where: { id: transfer.sampleId, tenantId },
+      select: { orderId: true },
+    });
+    if (
+      sampleOfTransfer &&
+      (await this.samples.isOrderCancelled(
+        this.prisma,
+        tenantId,
+        sampleOfTransfer.orderId,
+      ))
+    ) {
+      throw new TransferOrderCancelledException(transferId, 'assign-center');
+    }
     // An INTERNAL transfer's destination can only change until the receiving
     // branch has received it (same window as Retrieve).
     if (
@@ -624,6 +640,36 @@ export class SampleTransferService {
             where: { id, tenantId, deletedAt: null },
           });
           if (!transfer) throw new SampleTransferNotFoundException(id);
+          // A cancelled order's transfers are frozen - the forward steps (pick up,
+          // receive, accept) are refused. Reject and Repeat stay open so the
+          // receiving branch can send the sample back and wind it down.
+          if (
+            action === 'pick-up' ||
+            action === 'receive' ||
+            action === 'accept'
+          ) {
+            const transferred = await tx.orderSample.findFirst({
+              where: { id: transfer.sampleId, tenantId },
+              select: { orderId: true },
+            });
+            // Accept creates new records (the copy at the receiving branch), so it
+            // takes the order row FOR SHARE first: a cancel that is committing at
+            // this very moment is waited for, and the check below then sees it.
+            // (Accepts of the same order do not block each other.)
+            if (transferred && action === 'accept') {
+              await tx.$queryRaw`SELECT id FROM orders WHERE id = ${transferred.orderId} AND tenant_id = ${tenantId} FOR SHARE`;
+            }
+            if (
+              transferred &&
+              (await this.samples.isOrderCancelled(
+                tx,
+                tenantId,
+                transferred.orderId,
+              ))
+            ) {
+              throw new TransferOrderCancelledException(transfer.id, action);
+            }
+          }
           // An INTERNAL transfer nobody was addressed to cannot be picked up,
           // received or accepted — the sender must assign a branch first (Assign
           // Center closes once the receiver has it, so it would be stuck).

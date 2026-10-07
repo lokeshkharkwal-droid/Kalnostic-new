@@ -80,6 +80,11 @@ function ctxFor(
 ): Promise<Ctx> {
   const svc = Object.create(LabReportService.prototype) as LabReportService;
   Object.assign(svc, {
+    // the cancelled-order print check has its own spec (print-cancelled)
+    assertReportOrderNotCancelledForPrint: jest
+      .fn()
+      .mockResolvedValue(undefined),
+    assertOrderNotCancelledForPrint: jest.fn().mockResolvedValue(undefined),
     loadReportDetail: jest.fn().mockResolvedValue(report),
     findById: jest.fn().mockResolvedValue(report),
     resolveStoredSignatories: jest.fn().mockResolvedValue([]),
@@ -198,6 +203,11 @@ describe('LabReportService.print - single print follows the same order-owner rul
       sections: { results: [] },
     });
     Object.assign(svc, {
+      // the cancelled-order print check has its own spec (print-cancelled)
+      assertReportOrderNotCancelledForPrint: jest
+        .fn()
+        .mockResolvedValue(undefined),
+      assertOrderNotCancelledForPrint: jest.fn().mockResolvedValue(undefined),
       referralCredit: {
         assertReportAccessAllowedByReportId: jest
           .fn()
@@ -248,6 +258,11 @@ describe('LabReportService.printAllForOrder - skips what it cannot show, masks w
         : Promise.resolve(pdf),
     );
     Object.assign(svc, {
+      // the cancelled-order print check has its own spec (print-cancelled)
+      assertReportOrderNotCancelledForPrint: jest
+        .fn()
+        .mockResolvedValue(undefined),
+      assertOrderNotCancelledForPrint: jest.fn().mockResolvedValue(undefined),
       prisma: {
         labReport: { findMany: jest.fn().mockResolvedValue(rows) },
         order: {
@@ -299,6 +314,11 @@ describe('LabReportService.getShareInfo - how many tests are still pending', () 
       .mockResolvedValueOnce(2); // validated / approved / published
     const svc = Object.create(LabReportService.prototype) as LabReportService;
     Object.assign(svc, {
+      // the cancelled-order print check has its own spec (print-cancelled)
+      assertReportOrderNotCancelledForPrint: jest
+        .fn()
+        .mockResolvedValue(undefined),
+      assertOrderNotCancelledForPrint: jest.fn().mockResolvedValue(undefined),
       prisma: {
         order: {
           findFirst: jest.fn().mockResolvedValue({

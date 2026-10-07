@@ -2,6 +2,7 @@ import { TransferKind, TransferStatus } from '@prisma/client';
 import { SampleTransferService } from './sample-transfer.service';
 import {
   InvalidTransferTransitionException,
+  TransferOrderCancelledException,
   TransferDestinationMissingException,
   SendBlockedException,
   TransferNotEditableException,
@@ -33,19 +34,23 @@ function setup(
     ...row,
   };
   const tx = {
+    $queryRaw: jest.fn().mockResolvedValue([]),
     sampleTransfer: {
       findFirst: jest.fn().mockResolvedValue(transfer),
       updateMany: jest.fn().mockResolvedValue({ count: opts.updateCount ?? 1 }),
     },
     orderSample: {
       findMany: jest.fn().mockResolvedValue(opts.copies ?? []),
+      findFirst: jest.fn().mockResolvedValue({ orderId: 'o1' }),
     },
   };
   const prisma = {
     withTenant: jest.fn((_t: string, fn: (t: typeof tx) => unknown) => fn(tx)),
     sampleTransfer: { findFirst: jest.fn().mockResolvedValue(transfer) },
+    orderSample: { findFirst: jest.fn().mockResolvedValue({ orderId: 'o1' }) },
   };
   const samples = {
+    isOrderCancelled: jest.fn().mockResolvedValue(false),
     transitionInTx: jest.fn().mockResolvedValue({}),
     returnCopyToOrigin: jest.fn().mockResolvedValue('sA'),
     notifySamplesRepeated: jest.fn().mockResolvedValue(undefined),
@@ -148,6 +153,134 @@ describe('SampleTransferService — assign center window', () => {
         destinationBranchId: 'C',
       }),
     ).rejects.toThrow(TransferNotEditableException);
+  });
+});
+
+describe('SampleTransferService - a cancelled order freezes its transfers', () => {
+  it.each([
+    ['pickUp', TransferStatus.IN_TRANSIT],
+    ['receive', TransferStatus.PICKED_UP],
+    ['accept', TransferStatus.RECEIVED],
+  ] as const)(
+    'the forward step %s is refused and nothing is written',
+    async (method, status) => {
+      const { svc, tx, samples } = setup({ transferStatus: status });
+      samples.isOrderCancelled.mockResolvedValue(true);
+      const call = (
+        svc as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>
+      )[method]!.bind(svc);
+      await expect(call(['tr1'], TENANT, PERSON, {})).rejects.toBeInstanceOf(
+        TransferOrderCancelledException,
+      );
+      expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
+      expect(samples.transitionInTx).not.toHaveBeenCalled();
+      expect(samples.returnCopyToOrigin).not.toHaveBeenCalled();
+    },
+  );
+
+  describe('the wind-down by the receiving branch stays open', () => {
+    it('Reject of a received sample is NOT refused (the sample goes back to the sender)', async () => {
+      const { svc, tx, samples } = setup({
+        transferStatus: TransferStatus.RECEIVED,
+      });
+      samples.isOrderCancelled.mockResolvedValue(true);
+      await svc.reject(['tr1'], TENANT, PERSON, {
+        rejectionReason: 'Cancelled',
+      });
+      expect(samples.isOrderCancelled).not.toHaveBeenCalled();
+      expect(samples.transitionInTx).toHaveBeenCalledTimes(1);
+      expect(tx.sampleTransfer.updateMany).toHaveBeenCalled();
+    });
+
+    it('Repeat of an accepted copy is NOT refused (the copy goes back to the sender)', async () => {
+      const { svc, tx, samples } = setup(
+        { transferStatus: TransferStatus.ACCEPTED },
+        { copies: [{ id: 'copy1' }] },
+      );
+      samples.isOrderCancelled.mockResolvedValue(true);
+      await svc.repeatTransfer(['tr1'], TENANT, PERSON, {
+        repeatReason: 'Cancelled',
+      });
+      expect(samples.isOrderCancelled).not.toHaveBeenCalled();
+      expect(tx.sampleTransfer.updateMany).toHaveBeenCalled();
+    });
+  });
+
+  describe('Accept takes the order row before it re-checks (cancel vs accept race)', () => {
+    it('locks the order row FOR SHARE first, then asks whether it is cancelled', async () => {
+      const { svc, tx, samples } = setup({
+        transferStatus: TransferStatus.RECEIVED,
+      });
+      const order: string[] = [];
+      tx.$queryRaw.mockImplementation((...a: unknown[]) => {
+        order.push('lock');
+        const sql = (a[0] as string[]).join('?');
+        expect(sql).toContain('FROM orders');
+        expect(sql).toContain('FOR SHARE');
+        return Promise.resolve([]);
+      });
+      samples.isOrderCancelled.mockImplementation(() => {
+        order.push('check');
+        return Promise.resolve(true);
+      });
+      await expect(
+        svc.accept(['tr1'], TENANT, PERSON, {}),
+      ).rejects.toBeInstanceOf(TransferOrderCancelledException);
+      expect(order).toEqual(['lock', 'check']);
+    });
+
+    it.each([
+      ['pickUp', TransferStatus.IN_TRANSIT],
+      ['receive', TransferStatus.PICKED_UP],
+    ] as const)(
+      '%s does not take the lock (it creates nothing)',
+      async (method, status) => {
+        const { svc, tx } = setup({ transferStatus: status });
+        await (
+          svc as unknown as Record<
+            string,
+            (...a: unknown[]) => Promise<unknown>
+          >
+        )[method]!(['tr1'], TENANT, PERSON, {});
+        expect(tx.$queryRaw).not.toHaveBeenCalled();
+      },
+    );
+
+    it('Reject and Repeat (the wind-down) do not take it either', async () => {
+      const a = setup({ transferStatus: TransferStatus.RECEIVED });
+      await a.svc.reject(['tr1'], TENANT, PERSON, { rejectionReason: 'x' });
+      expect(a.tx.$queryRaw).not.toHaveBeenCalled();
+    });
+  });
+
+  it('asks about the order of the transfer sample', async () => {
+    const { svc, samples, tx } = setup({
+      transferStatus: TransferStatus.PICKED_UP,
+    });
+    samples.isOrderCancelled.mockResolvedValue(true);
+    await svc
+      .receive(['tr1'], TENANT, PERSON, {} as never)
+      .catch(() => undefined);
+    expect(tx.orderSample.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'sA', tenantId: TENANT } }),
+    );
+    expect(samples.isOrderCancelled).toHaveBeenCalledWith(tx, TENANT, 'o1');
+  });
+
+  it('an order that is not cancelled goes on to the normal transfer step', async () => {
+    const { svc, tx } = setup({ transferStatus: TransferStatus.PICKED_UP });
+    await svc.receive(['tr1'], TENANT, PERSON, {} as never);
+    expect(tx.sampleTransfer.updateMany).toHaveBeenCalled();
+  });
+
+  it('assign center is refused too', async () => {
+    const { svc, samples } = setup({
+      transferStatus: TransferStatus.IN_TRANSIT,
+    });
+    samples.isOrderCancelled.mockResolvedValue(true);
+    await expect(
+      svc.assignCenter('tr1', TENANT, PERSON, { destinationBranchId: 'C' }),
+    ).rejects.toBeInstanceOf(TransferOrderCancelledException);
   });
 });
 

@@ -486,16 +486,21 @@ export class LabReportController {
   async print(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('sender_link_read') senderLinkRead: boolean | undefined,
     @Param('id') id: string,
     @Body() dto: PrintReportDto,
     @Res() res: Response,
   ): Promise<void> {
+    // A branch that only holds the look-only sender link prints unfinished
+    // results as "Result pending", exactly like Print All.
     const pdf = await this.labReportService.print(
       id,
       tenantId,
       profile.branchId,
       dto.templateId,
       dto.type,
+      false,
+      !!senderLinkRead,
     );
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(

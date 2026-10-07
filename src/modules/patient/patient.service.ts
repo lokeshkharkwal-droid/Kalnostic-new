@@ -1474,6 +1474,7 @@ export class PatientService {
     const rows = await this.prisma.labReportAttachment.findMany({
       where: {
         tenantId,
+        deletedAt: null,
         labReport: {
           deletedAt: null,
           orderItem: { order: { patientId, tenantId } },

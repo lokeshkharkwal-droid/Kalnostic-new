@@ -134,6 +134,10 @@ export class ReportBranchScopeGuard implements CanActivate {
       if (linked) {
         user.active_branch_id = target.branchId;
         user.active_profile_key = null; // no permissions at that branch
+        // Tell the handler this is a look-only link, not the holder: the
+        // re-point above would otherwise make it look like the report's own
+        // branch (a print would skip the "Result pending" rule).
+        user.sender_link_read = true;
       }
     }
     // Otherwise untouched: the branch-scoped lookup will say not found.

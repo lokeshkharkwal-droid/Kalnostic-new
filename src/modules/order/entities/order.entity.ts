@@ -375,6 +375,13 @@ export type OrderWithRelations = Prisma.OrderGetPayload<{
   /** The invoice number of the active invoice linked to this order, if any. */
   invoiceCode: string | null;
   /**
+   * Why the lab side stops this order being cancelled right now: `RESULT_DONE`
+   * (a test, at any branch, is Result Done / Approved / Published); null when
+   * cancelling is allowed. Drives the disabled Cancel action;
+   * `OrderService.cancel` enforces the same rule.
+   */
+  cancelBlockedReason: 'RESULT_DONE' | null;
+  /**
    * Authoritative billing rollups (minor units) — the SAME derivation the
    * Billings list exposes (`findAll` → `billingRollups` → `computeBillingTotals`):
    * a PERCENT order-discount is recomputed against the current item total so
@@ -724,4 +731,11 @@ export type OrderListRow = Prisma.OrderGetPayload<{
   hasInvoice: boolean;
   /** The invoice number of the active invoice linked to this order, if any. */
   invoiceCode: string | null;
+  /**
+   * Why the lab side stops this order being cancelled right now: `RESULT_DONE`
+   * (a test, at any branch, is Result Done / Approved / Published); null when
+   * cancelling is allowed. Drives the disabled Cancel action;
+   * `OrderService.cancel` enforces the same rule.
+   */
+  cancelBlockedReason: 'RESULT_DONE' | null;
 };

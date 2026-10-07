@@ -5,7 +5,7 @@ import {
 import { Injectable } from '@nestjs/common';
 import { ScheduledTestStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { assertReportNotSentOut } from './utils/sent-out-report.util';
+import { assertReportWritable } from './utils/sent-out-report.util';
 import { LabReportDirectoryService } from './lab-report-directory.service';
 import { LabReportService } from './lab-report.service';
 import { ScheduleTestDto } from './dto/schedule-test.dto';
@@ -60,7 +60,7 @@ export class ScheduledTestService {
       },
     });
     if (!report) throw new LabReportNotFoundException(labReportId);
-    await assertReportNotSentOut(this.prisma, tenantId, labReportId);
+    await assertReportWritable(this.prisma, tenantId, labReportId);
 
     if (dto.assignedToId) {
       await this.directory.assertActiveTechnician(
@@ -161,7 +161,7 @@ export class ScheduledTestService {
       },
     });
     if (!entry) throw new WorklistEntryNotFoundException('scheduled_test', id);
-    await assertReportNotSentOut(this.prisma, tenantId, entry.labReportId);
+    await assertReportWritable(this.prisma, tenantId, entry.labReportId);
 
     if (dto.assignedToId) {
       await this.directory.assertActiveTechnician(
@@ -230,7 +230,7 @@ export class ScheduledTestService {
       },
     });
     if (!entry) throw new WorklistEntryNotFoundException('scheduled_test', id);
-    await assertReportNotSentOut(this.prisma, tenantId, entry.labReportId);
+    await assertReportWritable(this.prisma, tenantId, entry.labReportId);
 
     const updated = await this.prisma.withTenant(tenantId, async (tx) => {
       const updatedEntry = await tx.scheduledTest.update({

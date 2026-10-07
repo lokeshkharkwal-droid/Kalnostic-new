@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { MultiStepStage, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { assertReportNotSentOut } from './utils/sent-out-report.util';
+import { assertReportWritable } from './utils/sent-out-report.util';
 import {
   AdvanceMultiStepStageDto,
   AssignMultiStepProcessDto,
@@ -69,7 +69,7 @@ export class MultiStepProcessService {
       },
     });
     if (!report) throw new LabReportNotFoundException(labReportId);
-    await assertReportNotSentOut(this.prisma, tenantId, labReportId);
+    await assertReportWritable(this.prisma, tenantId, labReportId);
 
     return this.prisma.$transaction(async (tx) => {
       const existing = await tx.multiStepTestProcess.findUnique({
@@ -157,7 +157,7 @@ export class MultiStepProcessService {
       },
     });
     if (!report) throw new LabReportNotFoundException(labReportId);
-    await assertReportNotSentOut(this.prisma, tenantId, labReportId);
+    await assertReportWritable(this.prisma, tenantId, labReportId);
 
     const process = await this.prisma.multiStepTestProcess.findFirst({
       where: { labReportId, tenantId, deletedAt: null },

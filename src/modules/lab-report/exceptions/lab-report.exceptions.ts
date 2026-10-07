@@ -91,6 +91,55 @@ export class LabReportSentOutException extends KaltrosException {
 }
 
 /**
+ * 409 — the report's sample is on Repeat, or has been re-collected but not
+ * accepted again, so there is no accepted tube to enter results for yet. Every
+ * write is refused (reads and prints are unaffected) until the Accession user
+ * accepts the sample again.
+ */
+export class LabReportSampleAwaitingException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'LAB_REPORT_SAMPLE_AWAITING',
+      'This test’s sample is on Repeat or waiting to be accepted again, so the report is view-only until the sample is accepted.',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
+ * 409 — the report's order was cancelled, so the report can no longer be worked
+ * on: every write path refuses (reads and prints are unaffected). Raised by
+ * `assertReportWritable`, together with the sent-out lock.
+ */
+export class LabReportOrderCancelledException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'LAB_REPORT_ORDER_CANCELLED',
+      'This order has been cancelled, so its report can no longer be worked on.',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
+ * 409 — the order was cancelled, so its reports cannot be printed (single or
+ * whole-order). Printing is read-only, but a cancelled order has no report to
+ * hand to a patient, so every print route refuses.
+ */
+export class LabReportPrintOrderCancelledException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'LAB_REPORT_PRINT_ORDER_CANCELLED',
+      'This order has been cancelled, so its reports cannot be printed.',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
  * 409 — safety net, not reachable through the real app today. Every genuine
  * `LabReport` is only ever created by `OrderSampleService
  * .ensureLabReportsForAcceptedSample`, which runs after the sample it's for

@@ -7429,8 +7429,11 @@ model LabReportOverallResult {
   templateId    String? @map("template_id")
   content       String? @db.Text
 
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  /// Soft delete: set when a test goes back for a repeat. The (report, param)
+  /// row is revived by the next save (`deletedAt` back to null).
+  deletedAt DateTime? @map("deleted_at")
 
   @@unique([labReportId, resultParamId])
   @@index([tenantId])
@@ -7469,6 +7472,10 @@ model LabReportNote {
 
   createdBy String   @map("created_by")
   createdAt DateTime @default(now()) @map("created_at")
+  /// Soft delete: set when a transferred test goes back for a repeat and the
+  /// receiving branch's result-related notes are hidden (see
+  /// LabReportService.resetReportsForReturn). Readers filter `deletedAt: null`.
+  deletedAt DateTime? @map("deleted_at")
 
   @@index([tenantId])
   @@index([labReportId])
@@ -7493,6 +7500,9 @@ model LabReportAttachment {
 
   uploadedBy String   @map("uploaded_by")
   uploadedAt DateTime @default(now()) @map("uploaded_at")
+  /// Soft delete: set when a test goes back for a repeat (see
+  /// LabReportService.resetReportsForReturn). Readers filter `deletedAt: null`.
+  deletedAt DateTime? @map("deleted_at")
 
   @@index([tenantId])
   @@index([labReportId])

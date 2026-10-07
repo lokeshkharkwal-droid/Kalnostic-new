@@ -1,5 +1,8 @@
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { InvalidSampleTransitionException } from './exceptions/accession.exceptions';
+import {
+  InvalidSampleTransitionException,
+  SampleOrderCancelledException,
+} from './exceptions/accession.exceptions';
 import { AccessionSettingsService } from './accession-settings.service';
 import { OrderSampleService } from './accession-sample.service';
 import { LabReportService } from '../lab-report/lab-report.service';
@@ -608,6 +611,8 @@ describe('OrderSampleService — transitionInTx concurrency claim', () => {
         update,
       },
       orderSampleStatusHistory: { create: history },
+      // the "is the order cancelled?" probe: not cancelled
+      order: { findFirst: jest.fn().mockResolvedValue(null) },
     };
     const service = new OrderSampleService(
       {} as unknown as PrismaService,
@@ -645,6 +650,148 @@ describe('OrderSampleService — transitionInTx concurrency claim', () => {
     );
     expect(update).not.toHaveBeenCalled();
     expect(history).not.toHaveBeenCalled();
+  });
+});
+
+describe('OrderSampleService - a cancelled order freezes its samples', () => {
+  const baseSample = {
+    id: 's1',
+    orderId: 'o1',
+    tenantId: 't1',
+    branchId: 'A',
+    status: 'ACCEPTED',
+    previousStatus: null,
+    sourceTransferId: null as string | null,
+  };
+  const build = (cancelled: boolean, over: Partial<typeof baseSample> = {}) => {
+    const sample = { ...baseSample, ...over };
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const tx = {
+      orderSample: {
+        findFirst: jest.fn().mockResolvedValue(sample),
+        findMany: jest.fn().mockResolvedValue([sample]),
+        updateMany,
+        update: jest.fn().mockResolvedValue(sample),
+      },
+      orderSampleStatusHistory: { create: jest.fn() },
+      order: {
+        findFirst: jest.fn().mockResolvedValue(cancelled ? { id: 'o1' } : null),
+      },
+    };
+    const service = new OrderSampleService(
+      {} as unknown as PrismaService,
+      {} as unknown as AccessionSettingsService,
+      {} as unknown as LabReportService,
+      {} as unknown as PdfReportTemplateService,
+      {} as unknown as EventEmitter2,
+      {} as unknown as TenantService,
+      {} as unknown as BarcodeService,
+      {} as unknown as UserDepartmentScopeService,
+    );
+    const transition = (action: string, note: object = {}) =>
+      (
+        service as unknown as {
+          transitionInTx: (...a: unknown[]) => Promise<unknown>;
+        }
+      ).transitionInTx(
+        tx,
+        't1',
+        'p1',
+        's1',
+        action,
+        () => ({ data: {} }),
+        note,
+      );
+    return { tx, updateMany, transition, service };
+  };
+
+  it.each(['collect', 'accept', 'hold', 'repeat', 'send', 'discard'])(
+    '%s is refused and nothing is written',
+    async (action) => {
+      const { tx, updateMany, transition } = build(true);
+      await expect(transition(action)).rejects.toBeInstanceOf(
+        SampleOrderCancelledException,
+      );
+      expect(updateMany).not.toHaveBeenCalled();
+      expect(tx.orderSample.update).not.toHaveBeenCalled();
+      expect(tx.orderSampleStatusHistory.create).not.toHaveBeenCalled();
+    },
+  );
+
+  describe('the wind-down of a sample that is out at another branch stays open', () => {
+    it("the sender's Retrieve is not stopped by the cancelled order", async () => {
+      const { tx, transition } = build(true, { status: 'SENT_INTERNAL' });
+      await transition('retrieve').catch((e: unknown) => {
+        expect(e).not.toBeInstanceOf(SampleOrderCancelledException);
+      });
+      // the freeze does not even look: Retrieve is on the open list
+      expect(tx.order.findFirst).not.toHaveBeenCalled();
+    });
+
+    it.each(['store', 'discard'])(
+      "the receiving branch's %s of its own copy is not stopped",
+      async (action) => {
+        const { tx, transition } = build(true, { sourceTransferId: 'tr1' });
+        await transition(action).catch((e: unknown) => {
+          expect(e).not.toBeInstanceOf(SampleOrderCancelledException);
+        });
+        expect(tx.order.findFirst).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(['store', 'discard'])(
+      '%s of a sample that is NOT a transferred copy stays refused',
+      async (action) => {
+        const { transition } = build(true, { sourceTransferId: null });
+        await expect(transition(action)).rejects.toBeInstanceOf(
+          SampleOrderCancelledException,
+        );
+      },
+    );
+
+    it("the system-driven moves of the receiving branch's Reject / Repeat / Return are not stopped", async () => {
+      const { tx, transition } = build(true, { status: 'SENT_INTERNAL' });
+      await transition('repeat', { system: true, force: true }).catch(
+        (e: unknown) => {
+          expect(e).not.toBeInstanceOf(SampleOrderCancelledException);
+        },
+      );
+      expect(tx.order.findFirst).not.toHaveBeenCalled();
+    });
+  });
+
+  it('is skippable by a group "skip invalid" action (an invalid-transition error)', async () => {
+    const { transition } = build(true);
+    await expect(transition('accept')).rejects.toBeInstanceOf(
+      InvalidSampleTransitionException,
+    );
+  });
+
+  it('asks about the order of THIS sample, tenant-scoped', async () => {
+    const { tx, transition } = build(true);
+    await transition('accept').catch(() => undefined);
+    expect(tx.order.findFirst.mock.calls[0]).toEqual([
+      expect.objectContaining({
+        where: { id: 'o1', tenantId: 't1', status: 'CANCELLED' },
+      }),
+    ]);
+  });
+
+  it('an order that is not cancelled goes on to the normal transition', async () => {
+    const { updateMany, transition } = build(false);
+    await transition('send').catch(() => undefined);
+    expect(updateMany).toHaveBeenCalled();
+  });
+
+  it('assign barcode is refused on a cancelled order', async () => {
+    const { tx, service } = build(true);
+    const prisma = {
+      withTenant: (_t: string, fn: (x: typeof tx) => unknown) => fn(tx),
+    };
+    (service as unknown as { prisma: unknown }).prisma = prisma;
+    await expect(
+      service.assignBarcode(['s1'], 't1', 'p1', { barcode: 'X1' }),
+    ).rejects.toBeInstanceOf(SampleOrderCancelledException);
   });
 });
 

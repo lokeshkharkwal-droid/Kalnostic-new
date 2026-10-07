@@ -254,6 +254,54 @@ export class OrderAlreadyInvoicedException extends KaltrosException {
   }
 }
 
+/**
+ * 409 — a test of the order already has a validated result (Result Done,
+ * Approved or Published), so the order can no longer be cancelled.
+ */
+export class OrderCancelBlockedByResultException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'ORDER_CANCEL_BLOCKED_RESULT_DONE',
+      'This order cannot be cancelled because at least one test already has its result done',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
+ * 409 — a cancelled order is final: it cannot be edited. Without this, saving the
+ * edit form (which carries `status: ORDER`) silently reopened a cancelled order
+ * and switched every lab rule that depends on the cancel back off.
+ */
+export class OrderCancelledNotEditableException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'ORDER_CANCELLED_NOT_EDITABLE',
+      'This order has been cancelled, so it cannot be updated',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
+ * 409 — only a DRAFT order can be deleted. A confirmed order (ORDER), a quotation,
+ * an appointment or a cancelled order is part of the lab's record: it is
+ * cancelled, never deleted. Raised both on the up-front status check and, if the
+ * draft was finalized a moment before the delete, on the atomic claim.
+ */
+export class OrderNotDeletableException extends KaltrosException {
+  constructor(id: string, status?: string) {
+    super(
+      'ORDER_NOT_DELETABLE',
+      'Only a draft order can be deleted. A confirmed order must be cancelled instead',
+      { id, ...(status ? { status } : {}) },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
 /** 409 — the order is already cancelled, so it can't be cancelled again. */
 export class OrderAlreadyCancelledException extends KaltrosException {
   constructor(id: string) {

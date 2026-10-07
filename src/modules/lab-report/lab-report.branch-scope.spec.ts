@@ -108,6 +108,11 @@ describe('Print All across authorised branches', () => {
     const findMany = jest.fn().mockResolvedValue(rows);
     const svc = Object.create(LabReportService.prototype) as LabReportService;
     Object.assign(svc, {
+      // the cancelled-order print check has its own spec (print-cancelled)
+      assertReportOrderNotCancelledForPrint: jest
+        .fn()
+        .mockResolvedValue(undefined),
+      assertOrderNotCancelledForPrint: jest.fn().mockResolvedValue(undefined),
       prisma: {
         labReport: { findMany },
         order: {

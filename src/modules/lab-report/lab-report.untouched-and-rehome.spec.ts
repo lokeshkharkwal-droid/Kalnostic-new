@@ -29,9 +29,10 @@ const CLEAN_REPORT: Record<string, unknown> = {
   references: null,
 };
 
-function untouched(
+function setup(
   report: Record<string, unknown> | null,
   counts: Counts = {},
+  returnedAt: Date | null = null,
 ) {
   const tx: Record<string, unknown> = {
     labReport: {
@@ -41,12 +42,31 @@ function untouched(
           report === null ? null : { ...CLEAN_REPORT, ...report },
         ),
     },
+    labReportHistory: {
+      findFirst: jest
+        .fn()
+        .mockResolvedValue(returnedAt ? { createdAt: returnedAt } : null),
+    },
   };
   for (const t of CHILD_TABLES) {
     tx[t] = { count: jest.fn().mockResolvedValue(counts[t] ?? 0) };
   }
   const svc = Object.create(LabReportService.prototype) as LabReportService;
-  return svc.isReportUntouched(tx as never, 't1', 'r1');
+  return { tx, svc, run: () => svc.isReportUntouched(tx as never, 't1', 'r1') };
+}
+
+function untouched(
+  report: Record<string, unknown> | null,
+  counts: Counts = {},
+  returnedAt: Date | null = null,
+) {
+  return setup(report, counts, returnedAt).run();
+}
+
+/** The `where` a child table's count was asked with. */
+function whereOf(tx: Record<string, unknown>, table: string) {
+  const count = (tx[table] as { count: jest.Mock }).count;
+  return (count.mock.calls[0] as [{ where: Record<string, unknown> }])[0].where;
 }
 
 describe('LabReportService.isReportUntouched', () => {
@@ -86,6 +106,86 @@ describe('LabReportService.isReportUntouched', () => {
       expect(await untouched({}, { [table]: 1 })).toBe(false);
     },
   );
+});
+
+describe('LabReportService.isReportUntouched - a report returned for repeat starts a new cycle', () => {
+  const RETURNED = new Date('2026-10-06T10:00:00Z');
+
+  it('never returned: every row counts, including soft-deleted ones (strict, unchanged)', async () => {
+    const { tx, run } = setup({});
+    await run();
+    for (const table of CHILD_TABLES) {
+      expect(whereOf(tx, table)).toEqual({ labReportId: 'r1' });
+    }
+  });
+
+  it.each([
+    'labReportResultValue',
+    'labReportOverallResult',
+    'reRunRequest',
+    'criticalAlert',
+    'outOfRangeFlag',
+    'deltaCheck',
+    'scheduledTest',
+    'multiStepTestProcess',
+    'tatAdjustment',
+  ])(
+    'returned: %s counts only live rows or rows created after the return',
+    async (table) => {
+      const { tx, run } = setup({}, {}, RETURNED);
+      await run();
+      expect(whereOf(tx, table)).toEqual({
+        labReportId: 'r1',
+        OR: [{ deletedAt: null }, { createdAt: { gt: RETURNED } }],
+      });
+    },
+  );
+
+  it('returned: attachments use their upload time', async () => {
+    const { tx, run } = setup({}, {}, RETURNED);
+    await run();
+    expect(whereOf(tx, 'labReportAttachment')).toEqual({
+      labReportId: 'r1',
+      OR: [{ deletedAt: null }, { uploadedAt: { gt: RETURNED } }],
+    });
+  });
+
+  it('returned: the notes the return kept (ORDER / SAMPLE) only count when new', async () => {
+    const { tx, run } = setup({}, {}, RETURNED);
+    await run();
+    const where = whereOf(tx, 'labReportNote') as {
+      OR: Array<{ category?: { in: string[] }; createdAt?: unknown }>;
+    };
+    const live = where.OR.find((c) => c.category);
+    expect(live?.category?.in).not.toContain('ORDER');
+    expect(live?.category?.in).not.toContain('SAMPLE');
+    expect(where.OR).toContainEqual({ createdAt: { gt: RETURNED } });
+  });
+
+  it('returned: the reagent usage the return kept only counts when new', async () => {
+    const { tx, run } = setup({}, {}, RETURNED);
+    await run();
+    expect(whereOf(tx, 'labReportInventoryUsage')).toEqual({
+      labReportId: 'r1',
+      createdAt: { gt: RETURNED },
+    });
+  });
+
+  it('returned: new work after the return still makes it touched', async () => {
+    expect(await untouched({}, { labReportResultValue: 1 }, RETURNED)).toBe(
+      false,
+    );
+  });
+
+  it('returned: status, lock and the Notes-section texts are judged as before', async () => {
+    expect(await untouched({ status: 'SAVED' }, {}, RETURNED)).toBe(false);
+    expect(await untouched({ isLocked: true }, {}, RETURNED)).toBe(false);
+    expect(await untouched({ remarks: 'x' }, {}, RETURNED)).toBe(false);
+  });
+
+  it('returned and clean: untouched, so the sender can send it again', async () => {
+    expect(await untouched({}, {}, RETURNED)).toBe(true);
+  });
 });
 
 describe('LabReportService.rehomeReportsForAcceptedItem', () => {

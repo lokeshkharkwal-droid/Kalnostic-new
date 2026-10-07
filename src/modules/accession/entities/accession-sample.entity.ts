@@ -24,6 +24,8 @@ export const SAMPLE_LIST_INCLUDE = {
       orderDate: true,
       orderTime: true,
       createdAt: true,
+      // CANCELLED here freezes the sample: the list shows an "Order cancelled" tag.
+      status: true,
       billId: true,
       patient: true,
       referredByDoctor: true,
@@ -65,6 +67,8 @@ export const SAMPLE_INCLUDE = {
       orderDate: true,
       orderTime: true,
       createdAt: true,
+      // CANCELLED here freezes the sample: the list shows an "Order cancelled" tag.
+      status: true,
       billId: true,
       patient: true,
       referredByDoctor: true,

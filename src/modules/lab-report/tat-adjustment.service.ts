@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { TatAdjustment } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { assertReportNotSentOut } from './utils/sent-out-report.util';
+import { assertReportWritable } from './utils/sent-out-report.util';
 import { CreateTatAdjustmentDto } from './dto/tat-adjustment.dto';
 import { resolveActorNames } from './entities/worklist.entity';
 import {
@@ -38,7 +38,7 @@ export class TatAdjustmentService {
     });
     if (!report) throw new LabReportNotFoundException(labReportId);
     if (!opts.forRead) {
-      await assertReportNotSentOut(this.prisma, tenantId, labReportId);
+      await assertReportWritable(this.prisma, tenantId, labReportId);
     }
   }
 

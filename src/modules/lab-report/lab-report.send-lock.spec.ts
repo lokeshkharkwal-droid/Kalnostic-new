@@ -30,11 +30,18 @@ const REPORT = {
 /** A prisma stand-in where `sentOut` decides whether the holder's sample is SENT_INTERNAL. */
 function prismaWith(opts: { sentOut: boolean }) {
   return {
-    labReport: { findFirst: jest.fn().mockResolvedValue(REPORT) },
+    labReport: {
+      // The "is the order cancelled?" probe filters on orderItem.order: none here.
+      findFirst: jest.fn((arg?: { where?: { orderItem?: unknown } }) =>
+        Promise.resolve(arg?.where?.orderItem ? null : REPORT),
+      ),
+    },
     orderSampleTest: {
       findFirst: jest
         .fn()
         .mockResolvedValue(opts.sentOut ? { id: 'link' } : { id: 'link2' }),
+      // the "awaiting its sample" rule: no linked sample, so it does not apply
+      findMany: jest.fn().mockResolvedValue([]),
     },
   };
 }

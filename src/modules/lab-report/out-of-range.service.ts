@@ -5,7 +5,7 @@ import {
 import { Injectable } from '@nestjs/common';
 import { AlertReviewStatus, WorklistTrigger } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { assertReportNotSentOut } from './utils/sent-out-report.util';
+import { assertReportWritable } from './utils/sent-out-report.util';
 import { LabReportService } from './lab-report.service';
 import { RaiseWorklistEntryDto } from './dto/raise-worklist-entry.dto';
 import { UpdateAlertReviewStatusDto } from './dto/update-worklist-status.dto';
@@ -56,7 +56,7 @@ export class OutOfRangeService {
       },
     });
     if (!report) throw new LabReportNotFoundException(labReportId);
-    await assertReportNotSentOut(this.prisma, tenantId, labReportId);
+    await assertReportWritable(this.prisma, tenantId, labReportId);
 
     return this.prisma
       .$transaction(async (tx) => {
@@ -140,7 +140,7 @@ export class OutOfRangeService {
     });
     if (!entry)
       throw new WorklistEntryNotFoundException('out_of_range_flag', id);
-    await assertReportNotSentOut(this.prisma, tenantId, entry.labReportId);
+    await assertReportWritable(this.prisma, tenantId, entry.labReportId);
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const updatedEntry = await tx.outOfRangeFlag.update({
