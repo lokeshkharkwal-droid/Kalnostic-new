@@ -30,9 +30,10 @@ tests {
 docs {
   Refund part of an order's paid amount **without** cancelling it (the standalone
   "Refund Without Cancellation" action). Writes a REFUND row to the payment ledger
-  and recomputes `paymentStatus` **and** `refundStatus` off the new effective paid
-  amount. Works on active **and** already-cancelled orders (use it to top up a
-  partial refund made at cancellation time).
+  and recomputes `paymentStatus`, `refundStatus` and `billStatus` off the new
+  effective paid amount. Works on active **and** already-cancelled orders (use it
+  to top up a partial refund made at cancellation time — a cancelled order owes
+  nothing, so its whole retained amount is refundable).
 
   Body:
   - `amount` (minor units, required, ≥1) — returned to the patient.

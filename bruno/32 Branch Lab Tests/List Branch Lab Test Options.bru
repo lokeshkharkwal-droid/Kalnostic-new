@@ -21,12 +21,13 @@ auth:bearer {
 }
 
 docs {
-  Lightweight `{ id, name, price, sampleType, isFasting }` options for the
-  Create-Order lab-test picker. Returns the active branch's **active default-variant**
-  lab tests only (one orderable row per variant group), so a selected id is directly
-  usable as an order item's `branchLabTestId`; `price` is the list price (`priceMsrp`,
-  minor units) and `sampleType`/`isFasting` (from the first sample in `configSnapshot`)
-  populate the Diagnostic Items table. Scoped to the JWT tenant + active branch (no
+  Lightweight `{ id, name, price, sampleName, sampleType, isFasting, …schedule/TAT }`
+  options for the Create-Order lab-test picker. Returns the active branch's **active
+  default-variant** lab tests only (one orderable row per variant group), so a selected
+  id is directly usable as an order item's `branchLabTestId`; `price` is the list price
+  (`priceMsrp`, minor units) and `sampleName` (e.g. "Blood (EDTA)"), `sampleType` (e.g.
+  "Blood") and `isFasting` (from the first sample in `configSnapshot`) populate the
+  Diagnostic Items table. Scoped to the JWT tenant + active branch (no
   `branchId` in the query). `search` matches testName (case-insensitive). Omit
   `page` for the full array; supply `page` for a `{ data, total, page, limit }` envelope.
 }
