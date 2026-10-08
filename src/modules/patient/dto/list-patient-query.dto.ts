@@ -74,9 +74,11 @@ export class ListPatientQueryDto extends PaginationQueryDto {
 
   /**
    * When `true`, each returned patient carries its active family members
-   * (`familyMembers`). Default OFF so existing consumers are unaffected. Query
-   * strings are coerced via `@ToBoolean()` (avoids the implicit-conversion
-   * `false → true` bug).
+   * (`familyMembers`), and a `search` becomes family-aware: matches are
+   * grouped under their main patient (households share a mobile), with
+   * `matchedMemberIds` / `indirectMatches`. Default OFF so existing consumers
+   * are unaffected. Query strings are coerced via `@ToBoolean()` (avoids the
+   * implicit-conversion `false → true` bug).
    */
   @IsOptional()
   @ToBoolean()
