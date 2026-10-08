@@ -44,6 +44,11 @@ docs {
   `acquire`, `halt`, `error`, `hold`, `repeat`, `store`, `discard`, `return`,
   `cancel`, `retrieve`, `assign-barcode`.
 
+  **Barcode on collection:** `collect` and `collect-print` both now generate the
+  sample barcode at collection time (sequential + grouping-aware, one shared value
+  per group) — barcodes are no longer assigned at order creation, and `collect`
+  barcodes the sample just like `collect-print`.
+
   ## `bulk/assign-barcode` (group barcode)
 
   `POST /accession/order-samples/bulk/assign-barcode` with `{ "ids": [...] }` and

@@ -48,7 +48,10 @@ export const SAMPLE_INCLUDE = {
     },
   },
   statusHistory: { orderBy: { createdAt: 'desc' } },
-  transfers: { orderBy: { createdAt: 'desc' } },
+  // Exclude soft-deleted transfers so a recalled (Retrieve) transfer never lingers
+  // on the sample's own transfer list / Edit-Center lookup (findTransfers already
+  // filters deletedAt: null on the receiving queue).
+  transfers: { where: { deletedAt: null }, orderBy: { createdAt: 'desc' } },
   order: {
     select: {
       id: true,

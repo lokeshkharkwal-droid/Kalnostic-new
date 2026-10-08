@@ -515,6 +515,9 @@ export class AccessionDashboardService {
       : Array.isArray(branchId)
         ? { originBranchId: { in: branchId } }
         : { originBranchId: branchId };
+    // No `outsourceCenterId: { not: null }` filter: a sample may be marked
+    // Outsourced before its center is assigned (assign-later flow), so those
+    // null-center rows group under an "Unassigned" slice rather than vanishing.
     const grouped = await this.prisma.sampleTransfer.groupBy({
       by: ['outsourceCenterId'],
       where: {
@@ -522,7 +525,6 @@ export class AccessionDashboardService {
         deletedAt: null,
         kind: TransferKind.OUTSOURCE,
         ...originWhere,
-        outsourceCenterId: { not: null },
         ...(createdAt && { createdAt }),
       },
       _count: { _all: true },
@@ -539,7 +541,9 @@ export class AccessionDashboardService {
     const nameById = new Map(centers.map((c) => [c.id, c.name]));
 
     return grouped.map((g) => ({
-      label: nameById.get(g.outsourceCenterId!) ?? 'Unknown Center',
+      label: g.outsourceCenterId
+        ? (nameById.get(g.outsourceCenterId) ?? 'Unknown Center')
+        : 'Unassigned',
       value: g._count._all,
     }));
   }

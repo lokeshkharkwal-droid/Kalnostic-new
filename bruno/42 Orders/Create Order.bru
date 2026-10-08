@@ -362,9 +362,11 @@ docs {
   - **Previous dues:** if the patient has outstanding dues and the branch does
     NOT allow ordering without clearing dues
     (`ChargesAndDeductions_AllowOrderWithoutClearingPreviousDues = false`),
-    `previousDuesCleared` must be ≥ `min(outstanding, MinimumPreviousDuesToClear)`
-    — else 422 `PREVIOUS_DUES_NOT_CLEARED`. It may never exceed the outstanding
-    balance — else 422 `PREVIOUS_DUES_OVERPAYMENT`.
+    `previousDuesCleared` must be ≥ `ceil(outstanding × MinimumPreviousDuesPercentToClear%)`
+    — the configured minimum **percentage** of the outstanding balance (a
+    percentage of `0` ⇒ the full outstanding) — else 422
+    `PREVIOUS_DUES_NOT_CLEARED`. It may never exceed the outstanding balance —
+    else 422 `PREVIOUS_DUES_OVERPAYMENT`.
   - **Cross-order settlement (oldest-first):** when the order becomes `ORDER`,
     `previousDuesCleared` is applied across the patient's outstanding orders from
     the oldest `orderDate` first — a settlement `PaymentDetails` row (a pure

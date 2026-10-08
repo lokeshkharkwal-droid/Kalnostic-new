@@ -5712,7 +5712,7 @@ model RegistrationSetting {
   ChargesAndDeductions_MaximumLoyaltyPointsEquivalentAmount  Decimal @default(0) @map("charges_and_deductions_maximum_loyalty_points_equivalent_amount") @db.Decimal(10, 2)
   ChargesAndDeductions_AllowClearPreviousDues                Boolean @default(false) @map("charges_and_deductions_allow_clear_previous_dues")
   ChargesAndDeductions_AllowOrderWithoutClearingPreviousDues Boolean @default(false) @map("charges_and_deductions_allow_order_without_clearing_dues")
-  ChargesAndDeductions_MinimumPreviousDuesToClear            Decimal @default(0) @map("charges_and_deductions_minimum_previous_dues_to_clear") @db.Decimal(10, 2)
+  ChargesAndDeductions_MinimumPreviousDuesPercentToClear     Int     @default(0) @map("charges_and_deductions_minimum_previous_dues_percent_to_clear")
   ChargesAndDeductions_AllowPartialBilling                   Boolean @default(false) @map("charges_and_deductions_allow_partial_billing")
   ChargesAndDeductions_MinimumPercentOfNetAmountToProceed    Int     @default(0) @map("charges_and_deductions_minimum_percent_of_net_amount_to_proceed")
   ChargesAndDeductions_TdsApplicable                         Boolean @default(false) @map("charges_and_deductions_tds_applicable")
@@ -8485,6 +8485,13 @@ model SampleTransfer {
   rejectionReason  String?   @map("rejection_reason")
   repeatReason     String?   @map("repeat_reason")
 
+  // The destination OrderSample materialised when an INTERNAL transfer is ACCEPTED
+  // (RULE 1). Links the transfer to its clone so a later Retrieve/recall can unwind
+  // the clone (soft-delete it + move its reports back to the origin) instead of
+  // leaving a stale sample in the receiving branch's In-House list. Null until
+  // accepted / for external + outsource transfers (no local clone).
+  clonedSampleId String? @map("cloned_sample_id")
+
   // Manual outsource tracking (PDF §D.3 / CR-3 — no sync).
   outsourceStatus String? @map("outsource_status")
 
@@ -8501,6 +8508,7 @@ model SampleTransfer {
   @@index([transferStatus])
   @@index([destinationBranchId])
   @@index([outsourceCenterId])
+  @@index([clonedSampleId])
   @@index([deletedAt])
   @@map("sample_transfers")
 }

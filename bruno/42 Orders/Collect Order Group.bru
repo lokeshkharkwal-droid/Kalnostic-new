@@ -43,22 +43,24 @@ docs {
 
   - `sampleIds[]` (required, non-empty UUIDs) — a group's accession sample ids
     (from `44 Get Order Grouped Samples` → `groups[].sampleIds`).
-  - `print` (optional) — mirrors "Collect & Print": also assign a barcode to any
-    sample in the group that lacks one (`BAR-#####-A`).
+  - `print` (optional) — **retained for the front-end label dialog; it no longer
+    gates the barcode.** The barcode is now assigned on **every** collect (see
+    below), so Collect and Collect & Print behave identically server-side.
   - `tubeType` (optional, ≤100 chars) — the Collect modal's Tube / Sample Type.
     When set it is written to every collected sample; otherwise the server derives
     it from each sample's container/sample type.
   - `notes` (optional, ≤1000 chars) / `attachmentUrl` (optional, ≤2048 chars) —
-    recorded on each sample's `AccessionStatusHistory` row. These bring the Order
-    Overview modal's "Collect & Print" to full parity with the accession
-    `Collect & Print` action (barcode label is then printed client-side via
-    `print-label(s)`).
+    recorded on each sample's `AccessionStatusHistory` row. The barcode label is
+    printed client-side via `print-label(s)` after a "Collect & Print".
 
   Every collectable sample in the set (NEW / HOLD / REPEAT) is transitioned to
   COLLECTED in one tenant-scoped transaction (an `AccessionStatusHistory` row is
   appended), and — because a sample is one physical tube shared by several tests —
   every sibling order item on a transitioned sample is stamped
-  `collectedAt`/`collectedBy` too. Returns the refreshed, fully-composed order.
+  `collectedAt`/`collectedBy` too. The sample **barcode is generated at this
+  point** (sequential + grouping-aware, one shared value per group) — barcodes
+  are **no longer** assigned at order creation. Returns the refreshed,
+  fully-composed order.
 
   Idempotent: samples already past NEW/HOLD/REPEAT are skipped (no
   `INVALID_SAMPLE_TRANSITION`); a repeat call on an all-collected group is a
