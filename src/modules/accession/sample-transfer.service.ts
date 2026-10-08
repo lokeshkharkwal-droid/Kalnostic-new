@@ -124,14 +124,21 @@ export class SampleTransferService {
     );
   }
 
-  /** Outsource: Accepted → Outsourced + OUTSOURCE transfer (manual tracking). */
+  /**
+   * Outsource: Accepted → Outsourced + OUTSOURCE transfer (manual tracking).
+   * The center is optional here — when provided it is validated against the
+   * caller's tenant; when omitted the transfer is created with a null
+   * `outsourceCenterId` and the center can be set later via Assign Center.
+   */
   async outsource(
     sampleIds: string[],
     tenantId: string,
     personId: string | null,
     dto: OutsourceSampleDto,
   ): Promise<SampleTransferWithRelations[]> {
-    await this.assertOutsourceCenter(dto.outsourceCenterId, tenantId);
+    if (dto.outsourceCenterId) {
+      await this.assertOutsourceCenter(dto.outsourceCenterId, tenantId);
+    }
     return this.dispatch(
       sampleIds,
       tenantId,
@@ -140,7 +147,7 @@ export class SampleTransferService {
       TransferKind.OUTSOURCE,
       dto,
       {
-        outsourceCenterId: dto.outsourceCenterId,
+        outsourceCenterId: dto.outsourceCenterId ?? null,
         outsourceStatus: dto.outsourceStatus ?? null,
       },
     );

@@ -38,11 +38,13 @@ docs {
   (NEW / HOLD / REPEAT) are transitioned to COLLECTED (an `AccessionStatusHistory`
   row is appended), and because a sample is one physical tube shared by several
   tests, every sibling order item on a transitioned sample is stamped collected
-  too. Both writes share one tenant-scoped transaction.
+  too. The sample **barcode is generated at this point** (sequential +
+  grouping-aware, one shared value per group) — barcodes are **no longer**
+  assigned at order creation. Both writes share one tenant-scoped transaction.
 
-  Query param `?print=true` ("Collect & Print") additionally assigns a barcode to
-  the collected sample(s) that lack one (`BAR-#####-A`). Omit or `false` for a
-  plain collect.
+  Query param `?print=true` ("Collect & Print") is **retained for the front-end
+  label dialog only; it no longer gates the barcode** — the barcode is assigned on
+  every collect, so `print=true` and `print=false` behave identically server-side.
 
   Idempotent: a repeat call keeps the original `collectedAt`, and samples already
   past NEW/HOLD/REPEAT are skipped (no `INVALID_SAMPLE_TRANSITION`). Safe no-op

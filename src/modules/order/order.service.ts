@@ -6377,18 +6377,21 @@ export class OrderService {
    *
    * Beyond the order-item `collectedAt` flag, this also drives the real accession
    * sample lifecycle: the item's linked `OrderSample`(s) still in a
-   * collectable status are transitioned to `COLLECTED` (with a barcode when
-   * `opts.print` is set), and — because a sample is one physical tube shared by
-   * several tests — every sibling order item on a transitioned sample is stamped
-   * collected too (`OrderSampleService.collectForOrderItemInTx`). Both writes
-   * share one `withTenant` transaction so they commit atomically under the same
-   * RLS tenant context. Safe no-op when the order has no samples yet (e.g. a
-   * DRAFT / non-diagnostic order): only `collectedAt` is set.
+   * collectable status are transitioned to `COLLECTED` — and the sample barcode
+   * is generated at this point (sequential + grouping-aware), the barcode now
+   * being produced on collection rather than at order creation — and, because a
+   * sample is one physical tube shared by several tests, every sibling order item
+   * on a transitioned sample is stamped collected too
+   * (`OrderSampleService.collectForOrderItemInTx`). Both writes share one
+   * `withTenant` transaction so they commit atomically under the same RLS tenant
+   * context. Safe no-op when the order has no samples yet (e.g. a DRAFT /
+   * non-diagnostic order): only `collectedAt` is set.
    * @param orderId order the item belongs to
    * @param itemId order item id
    * @param tenantId tenant scope (from JWT)
    * @param actorId acting person id (recorded as `collectedBy`), may be null
-   * @param opts `print` also assigns a barcode to the collected sample(s)
+   * @param opts `print` is retained for the front-end label dialog; it no longer
+   *   gates the barcode, which is assigned on every collect
    * @returns the fully-composed order after the update
    * @throws OrderNotFoundException / OrderItemNotFoundException
    */
@@ -6435,13 +6438,15 @@ export class OrderService {
    * `sampleIds`). Every collectable sample in the set is transitioned to
    * COLLECTED and its sibling order items stamped collected, all in one
    * `withTenant` transaction (`OrderSampleService.collectSamplesInTx`). Idempotent
-   * — already-collected samples are skipped. `print` also assigns a barcode to any
-   * sample that lacks one.
+   * — already-collected samples are skipped. The sample barcode is generated here,
+   * on collection (sequential + grouping-aware, one shared barcode per group),
+   * rather than at order creation.
    * @param orderId the order the samples belong to (validated against the tenant)
    * @param sampleIds the group's accession sample ids to collect
    * @param tenantId tenant scope (from JWT)
    * @param actorId acting person id (recorded as `collectedBy`), may be null
-   * @param opts `print` also assigns a barcode to the collected sample(s)
+   * @param opts `print` is retained for the front-end label dialog; it no longer
+   *   gates the barcode, which is assigned on every collect
    * @returns the fully-composed order after the update
    * @throws OrderNotFoundException if the order is missing/soft-deleted/other tenant
    */
