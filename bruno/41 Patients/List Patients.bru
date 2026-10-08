@@ -57,4 +57,13 @@ docs {
   - `includeFamily` — `true` attaches each patient's active `familyMembers`
     (`{ linkId, relationship, member: { id, firstName, lastName, age, mobile,
     umId } }`). Default OFF, so other consumers are unaffected.
+    With a `search`, it also makes the search **family-aware** (Create Order):
+    matches (first 200) are walked up their active family links to their main
+    patient (one with no active anchor; deleted anchors are ignored, link
+    cycles resolve to one patient), and each main patient is returned ONCE —
+    a mobile shared by a household yields one result with the members nested.
+    Extra fields per result: `matchedMemberIds` (members that matched the
+    search) and `indirectMatches` (matched members deeper than a direct link,
+    `{ id, firstName, lastName, age, mobile, umId }`). `total` / pagination
+    count main patients.
 }

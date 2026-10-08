@@ -55,6 +55,17 @@ export interface FamilyMemberResult {
 /** A patient list row optionally carrying its active family members. */
 export type PatientWithFamily = Patient & {
   familyMembers?: FamilyMemberSummary[];
+  /**
+   * Family-aware search only: ids of the matched patients that resolved to this
+   * main patient (excludes the main patient itself), so the UI can highlight
+   * which member actually matched the search.
+   */
+  matchedMemberIds?: string[];
+  /**
+   * Family-aware search only: matched members that are NOT direct links of this
+   * main patient (deeper in a family chain), so they are still selectable.
+   */
+  indirectMatches?: FamilyMemberSummary['member'][];
 };
 
 /**
