@@ -44,7 +44,7 @@ jobs:
 
   deploy:
     needs: verify
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/production-deploy'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
@@ -53,22 +53,28 @@ jobs:
         env:
           BASTION_SSH_KEY: ${{ secrets.BASTION_SSH_KEY }}
           PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
-          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
         run: |
           install -m 700 -d ~/.ssh
-          printf '%s\n' "$BASTION_SSH_KEY" > ~/.ssh/bastion_key
-          printf '%s\n' "$PROD_SSH_KEY"    > ~/.ssh/prod_key
-          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/bastion_key ~/.ssh/prod_key ~/.ssh/known_hosts
+          printf '%s\n' "$BASTION_SSH_KEY" | tr -d '\r' > ~/.ssh/bastion_key
+          printf '%s\n' "$PROD_SSH_KEY" | tr -d '\r' > ~/.ssh/prod_key
+          chmod 600 ~/.ssh/bastion_key ~/.ssh/prod_key
+          # Host public keys are not secret; pinned here (verified by fingerprint on each server).
+          cat > ~/.ssh/known_hosts <<'KH'
+          68.183.228.112 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKSzfkZOBeR9SNiVBFxmyLQtOlh9fvGOuXkuLWEjZkLX
+          10.104.80.2 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBcX7QzFFNqV/9ctrHITZcKGaOHPFmDiJ6BYPmWj1FCI
+          KH
+          echo "Private keys GitHub received (fingerprints):"
+          ssh-keygen -lf ~/.ssh/bastion_key || echo "!! BASTION_SSH_KEY secret is missing or malformed"
+          ssh-keygen -lf ~/.ssh/prod_key || echo "!! PROD_SSH_KEY secret is missing or malformed"
           cat > ~/.ssh/config <<EOF
           Host bastion
-            HostName ${{ vars.BASTION_HOST }}
-            Port ${{ vars.BASTION_PORT }}
-            User ${{ vars.BASTION_USER }}
+            HostName ${{ vars.BASTION_HOST || '68.183.228.112' }}
+            Port ${{ vars.BASTION_PORT || '22' }}
+            User ${{ vars.BASTION_USER || 'gh-deploy' }}
             IdentityFile ~/.ssh/bastion_key
             IdentitiesOnly yes
           Host prod
-            HostName ${{ vars.PROD_HOST }}
+            HostName ${{ vars.PROD_HOST || '10.104.80.2' }}
             User root
             IdentityFile ~/.ssh/prod_key
             IdentitiesOnly yes
@@ -87,4 +93,4 @@ jobs:
 
       - name: Clean up keys
         if: always()
-        run: rm -rf ~/.ssh  
+        run: rm -rf ~/.ssh

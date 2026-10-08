@@ -37,6 +37,7 @@ body:json {
     },
     "payments": [
       {
+        "id": "{{existingPaymentId}}",
         "totalAmount": 3000,
         "orderDiscount": 200,
         "netAmount": 3000,
@@ -54,6 +55,7 @@ body:json {
 vars:pre-request {
   orderId: 70f7fd0c-e902-4832-aa2c-841398df5d2d
   existingOrderItemId: 00000000-0000-0000-0000-000000000000
+  existingPaymentId: 00000000-0000-0000-0000-000000000000
 }
 
 tests {
@@ -113,29 +115,50 @@ docs {
   `quotationStatus` (`DRAFT`/`CONVERTED`/`EXPIRED`) and `quotationValidTill`
   (ISO date) are patchable for quotes; omit them to leave existing values intact.
 
-  ## payments[]
+  ## payments[] — immutable history, reconcile-in-place
 
-  When `payments` is supplied the whole ledger is REPLACED (old rows soft-deleted,
-  the new set created) and the order's `paymentStatus` is recomputed from the new
-  rows (summed `paidAmount` vs `netAmount`); omit `payments` to leave the ledger
-  and status untouched. One row per payment method (split → multiple rows), each
-  with its own `paidAmount`/`paymentMode`/`reference`; order-level billing lives on
-  the first row. Overpayment is rejected — a supplied `payments[]` ledger whose
-  summed `paidAmount` exceeds the (post-edit) summed `netAmount` is refused with 422
-  `PAYMENT_OVERPAYMENT` and the patch rolls back. Note: this check is against the
-  explicitly supplied ledger only — if items are removed and the net drops below the
-  already-paid amount without a new `payments[]`, the surplus becomes a refundable
-  negative balance (no `PAYMENT_OVERPAYMENT`; use `POST /orders/:id/refund`).
+  Payment transactions are **immutable historical records**: an update NEVER
+  deletes + recreates them (doing so used to churn transaction ids, reset
+  `paymentDate`, and re-stamp `collectedBy` as the editor, silently changing
+  historical collection reports). When `payments` is supplied the server
+  reconciles in place:
+
+  - Each row MAY carry an `id` (an existing `PaymentDetails.id` from
+    `GET /orders/:id` → `payments[].id`). A row **with a matching id is kept** —
+    its `paidAmount` / `paymentMode` / `reference` / `paymentDate` / `collectedBy`
+    / `createdAt` are preserved exactly; only the order-level financial snapshot
+    (gross / discount / net, carried on the first/canonical row) is refreshed.
+  - A row **with no id** (or an unknown id) is a genuinely new collection and is
+    **appended**. Only the net-new money (summed incoming `paidAmount` −
+    already-stored paid) is added, so a re-sent unchanged ledger never fabricates
+    a duplicate receipt.
+  - An existing payment that is simply **absent** from the payload is **left
+    intact** — it is NOT removed (money is only ever returned by a REFUND row via
+    `POST /orders/:id/refund` or `PATCH /orders/:id/cancel`). The edit form
+    therefore locks already-collected rows; to collect more, send a new (id-less)
+    row.
+
+  Omit `payments` entirely to leave the ledger and status untouched. The order's
+  `paymentStatus` / `billStatus` / `refundStatus` are recomputed from the effective
+  ledger after the reconcile. Overpayment is still rejected — a supplied `payments[]`
+  whose summed `paidAmount` exceeds the (post-edit) summed `netAmount` is refused
+  with 422 `PAYMENT_OVERPAYMENT` and the patch rolls back. Items removed so the net
+  drops below the already-paid amount (without a new `payments[]`) is allowed — the
+  surplus becomes a refundable negative balance (use `POST /orders/:id/refund`).
   `patientId` is not editable.
 
-  ## Invoice lock
+  ## Invoice lock & cancelled-order guard
 
-  Once an invoice has been generated for the order (an active `InvoiceSourceOrder`
-  link exists), the order is immutable: any update is rejected with 409
-  `ORDER_ALREADY_INVOICED`, regardless of payment status. Cancelling that invoice
-  (`POST /invoices/:id/cancel`) soft-deletes its source link and unlocks the order.
-  The order list/detail responses expose `hasInvoice` (boolean) and `invoiceCode`
-  so the frontend can disable the edit/cancel actions before the call.
+  The order is immutable (any update rejected) in two terminal states:
+  - 409 `ORDER_ALREADY_INVOICED` — an active `InvoiceSourceOrder` link exists.
+    Cancelling that invoice (`POST /invoices/:id/cancel`) unlocks the order.
+  - 409 `ORDER_ALREADY_CANCELLED` — the order's status is `CANCELLED`. Updating a
+    cancelled order would revive it while its cancellation charge, refunds and
+    released phlebotomist slot stay as they were, leaving the balance/status
+    inconsistent — so it is refused outright (see the dedicated 409 request).
+
+  The order list/detail responses expose `hasInvoice` (boolean), `invoiceCode` and
+  `status` so the frontend can disable the edit/cancel actions before the call.
 
   ## Billing Menu creator-scoped guards (by other user)
 

@@ -32,7 +32,8 @@ tests {
 }
 
 docs {
-  Collect & Print (§A.10.1) — as **Collect** (New/Hold/Repeat → Collected) and
-  **assigns a barcode** (`BAR-#####-A`, derived from the accession number) if the
-  sample has none. Same body as Collect.
+  Collect & Print (§A.10.1) — **identical to Collect on the backend**
+  (New/Hold/Repeat → Collected, assigning a sequential grouping-aware sample
+  barcode on collection). The "& Print" distinction is a front-end concern: after
+  collecting it opens the barcode-label template picker. Same body as Collect.
 }

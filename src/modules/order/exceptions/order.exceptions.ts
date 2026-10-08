@@ -501,7 +501,8 @@ export class QuotationDuplicationNotAllowedException extends KaltrosException {
  * 422 — the patient has outstanding previous dues that must be cleared before a
  * new order can be created (the branch's `Allow Order Without Clearing Previous
  * Dues` is off and the amount cleared on this order is below the required
- * minimum). `required` is `min(outstanding, MinimumPreviousDuesToClear)`.
+ * minimum). `required` is `ceil(outstanding × MinimumPreviousDuesPercentToClear%)`
+ * (or the full outstanding when the configured percentage is 0).
  */
 export class PreviousDuesNotClearedException extends KaltrosException {
   constructor(outstanding: number, required: number, cleared: number) {

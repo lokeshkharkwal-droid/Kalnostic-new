@@ -39,8 +39,21 @@ docs {
   - `toAddress` (optional) — auto-filled, editable contact; omit to use the
     recipient's stored contact for the channel.
 
+  ## Paid-only gate (same rule as Print Bill)
+
+  Share Bill obeys the SAME eligibility rule as Print Bill, so the two can never
+  diverge. When the branch setting
+  `BillingMenu_AllowBillCopyPrintForPaidBillingsOnly` is ON, the bill can only be
+  shared once the order's billing `status === PAID`; a Cancelled / Require-Refund /
+  Partially-Refunded / Fully-Refunded / unpaid order is refused up front with 409
+  `BILL_COPY_PRINT_NOT_ALLOWED_FOR_UNPAID` (checked before recipient resolution and
+  before the PDF renders, so it also blocks the text-only SMS path). See the
+  dedicated "Share Bill - Unpaid Blocked (409)" request.
+
   ## Errors
   - 404 `ORDER_NOT_FOUND` — order missing / soft-deleted / other tenant.
+  - 409 `BILL_COPY_PRINT_NOT_ALLOWED_FOR_UNPAID` — paid-only setting on and the
+    order is not fully PAID (same gate as Print Bill).
   - 422 `SHARE_TEMPLATE_NOT_ACTIVATED` — no activated template for the channel.
   - 422 `SHARE_TEMPLATE_NOT_CONFIGURED` — WhatsApp template missing its approved id.
   - 400 `SHARE_RECIPIENT_MISSING` — no address/number for the chosen recipient.

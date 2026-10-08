@@ -38,6 +38,7 @@ import {
   moduleLabel,
   SYSTEM_MODULES,
 } from '../permissions/constants/system-modules.constant';
+import { allowedModulesForRole } from '../permissions/constants/role-module-access.config';
 import { BRANCH_MODULES } from '../branch-catalogue/constants/branch-modules.constant';
 import { BranchAssignmentItemDto, CreateUserDto } from './dto/create-user.dto';
 import { CreateQuickStaffDto } from './dto/create-quick-staff.dto';
@@ -1691,7 +1692,7 @@ export class UsersService {
     if (dto.modules !== undefined && dto.modules.length > 0) {
       await this.assertModulesValidForBranch(tenantId, branch, dto.modules);
       for (const moduleKey of dto.modules) {
-        this.assertModuleInRoleTemplate(targetRoleKey, moduleKey);
+        this.assertModuleAssignableToRole(targetRoleKey, moduleKey);
       }
     }
     const effectiveModules = dto.modules ?? existing.enabledModules;
@@ -1705,7 +1706,7 @@ export class UsersService {
       if (!effectiveModules.includes(dto.defaultModule)) {
         throw new DefaultModuleNotInModulesException(dto.defaultModule);
       }
-      this.assertModuleInRoleTemplate(targetRoleKey, dto.defaultModule);
+      this.assertModuleAssignableToRole(targetRoleKey, dto.defaultModule);
     }
 
     return this.prisma.withTenant(tenantId, async (tx) => {
@@ -2687,12 +2688,19 @@ export class UsersService {
   }
 
   /**
-   * If a role template links specific modules, the chosen module must be one of
-   * them. Templates with no linked modules accept any (branch-enabled) module.
+   * A module may be assigned to a role only if it is in that role's assignable
+   * set (`allowedModulesForRole`). Role selection no longer restricts modules —
+   * every role is allowed every available module — so this now accepts any valid
+   * catalogue module; the real limiter is branch enablement
+   * (`assertModulesValidForBranch`, run first). Kept config-driven so re-adding a
+   * per-role restriction later needs no service change.
    */
-  private assertModuleInRoleTemplate(roleKey: string, moduleKey: string): void {
-    const linked = roleTemplateModules(roleKey);
-    if (linked.length > 0 && !linked.includes(moduleKey)) {
+  private assertModuleAssignableToRole(
+    roleKey: string,
+    moduleKey: string,
+  ): void {
+    const allowed = allowedModulesForRole(roleKey);
+    if (allowed.length > 0 && !allowed.includes(moduleKey)) {
       throw new ModuleNotInRoleTemplateException(moduleKey, roleKey);
     }
   }
@@ -2749,7 +2757,7 @@ export class UsersService {
       if (modules.length > 0) {
         await this.assertModulesValidForBranch(tenantId, branch, modules);
         for (const moduleKey of modules) {
-          this.assertModuleInRoleTemplate(role.key, moduleKey);
+          this.assertModuleAssignableToRole(role.key, moduleKey);
         }
       }
       await this.assertGrantsModuleAccess(
@@ -2766,7 +2774,7 @@ export class UsersService {
         if (!modules.includes(it.defaultModule)) {
           throw new DefaultModuleNotInModulesException(it.defaultModule);
         }
-        this.assertModuleInRoleTemplate(role.key, it.defaultModule);
+        this.assertModuleAssignableToRole(role.key, it.defaultModule);
         moduleId = it.defaultModule;
       }
 

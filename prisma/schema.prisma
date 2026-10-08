@@ -5712,7 +5712,7 @@ model RegistrationSetting {
   ChargesAndDeductions_MaximumLoyaltyPointsEquivalentAmount  Decimal @default(0) @map("charges_and_deductions_maximum_loyalty_points_equivalent_amount") @db.Decimal(10, 2)
   ChargesAndDeductions_AllowClearPreviousDues                Boolean @default(false) @map("charges_and_deductions_allow_clear_previous_dues")
   ChargesAndDeductions_AllowOrderWithoutClearingPreviousDues Boolean @default(false) @map("charges_and_deductions_allow_order_without_clearing_dues")
-  ChargesAndDeductions_MinimumPreviousDuesToClear            Decimal @default(0) @map("charges_and_deductions_minimum_previous_dues_to_clear") @db.Decimal(10, 2)
+  ChargesAndDeductions_MinimumPreviousDuesPercentToClear     Int     @default(0) @map("charges_and_deductions_minimum_previous_dues_percent_to_clear")
   ChargesAndDeductions_AllowPartialBilling                   Boolean @default(false) @map("charges_and_deductions_allow_partial_billing")
   ChargesAndDeductions_MinimumPercentOfNetAmountToProceed    Int     @default(0) @map("charges_and_deductions_minimum_percent_of_net_amount_to_proceed")
   ChargesAndDeductions_TdsApplicable                         Boolean @default(false) @map("charges_and_deductions_tds_applicable")
@@ -6372,6 +6372,22 @@ enum RefundStatus {
   FULLY_REFUNDED
 }
 
+/// The single billing Status of an order — exactly what the Billings list shows
+/// AND what its Status filter matches. Derived by `deriveBillStatus`
+/// (`src/modules/order/utils/bill-status.ts`) from the order status, the
+/// authoritative net (`computeBillingTotals`) and the effective paid/refunded
+/// ledger amounts, and recomputed in the same transaction as every write that
+/// changes them. Mutually exclusive: a CANCELLED order is never also PAID.
+enum BillStatus {
+  NOT_PAID
+  PARTIALLY_PAID
+  PAID
+  CANCELLED
+  REQUIRE_REFUND
+  PARTIALLY_REFUNDED
+  FULLY_REFUNDED
+}
+
 /// How the order is billed.
 enum BillingType {
   CASH_CLIENT
@@ -6557,6 +6573,11 @@ model Order {
   // Refunded" instead of a misleading "Not Paid" once a paid order is refunded.
   refundStatus RefundStatus @default(NONE) @map("refund_status")
 
+  // The one billing Status the Billings list renders and filters by (see
+  // `BillStatus`). Stored for the same reason as paymentStatus: the derivation
+  // sums the ledger + items, which Prisma can't express in a `where`.
+  billStatus BillStatus @default(NOT_PAID) @map("bill_status")
+
   // Fee (rupees, up to 2 decimal places) retained by the lab when the order is
   // cancelled (0 = none). Deducted from the order's effective paid amount;
   // caps the refundable amount on a cancel-with-refund (max refundable = paid
@@ -6662,6 +6683,7 @@ model Order {
   @@index([appointmentId])
   @@index([sourceQuotationId])
   @@index([paymentStatus])
+  @@index([billStatus])
   @@index([billId])
   @@index([branchId, externalOrderId])
   // Per-branch uniqueness of the order barcode VALUE among orders only (NULLs are
@@ -8463,6 +8485,13 @@ model SampleTransfer {
   rejectionReason  String?   @map("rejection_reason")
   repeatReason     String?   @map("repeat_reason")
 
+  // The destination OrderSample materialised when an INTERNAL transfer is ACCEPTED
+  // (RULE 1). Links the transfer to its clone so a later Retrieve/recall can unwind
+  // the clone (soft-delete it + move its reports back to the origin) instead of
+  // leaving a stale sample in the receiving branch's In-House list. Null until
+  // accepted / for external + outsource transfers (no local clone).
+  clonedSampleId String? @map("cloned_sample_id")
+
   // Manual outsource tracking (PDF §D.3 / CR-3 — no sync).
   outsourceStatus String? @map("outsource_status")
 
@@ -8479,6 +8508,7 @@ model SampleTransfer {
   @@index([transferStatus])
   @@index([destinationBranchId])
   @@index([outsourceCenterId])
+  @@index([clonedSampleId])
   @@index([deletedAt])
   @@map("sample_transfers")
 }
