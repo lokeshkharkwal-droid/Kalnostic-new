@@ -100,9 +100,10 @@ export class SaveRegistrationSettingsDto {
   ChargesAndDeductions_AllowOrderWithoutClearingPreviousDues?: boolean;
 
   @IsOptional()
-  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsInt()
   @Min(0)
-  ChargesAndDeductions_MinimumPreviousDuesToClear?: number;
+  @Max(100)
+  ChargesAndDeductions_MinimumPreviousDuesPercentToClear?: number;
 
   @IsOptional()
   @IsBoolean()

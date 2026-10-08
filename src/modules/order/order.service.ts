@@ -95,7 +95,6 @@ import {
 } from './entities/order.entity';
 import { computeBillingTotals } from './utils/billing-totals';
 import {
-  BILL_STATUS_FILTER_LABELS,
   billStatusLabel,
   deriveBillStatus,
   recomputeBillStatusInTx,
@@ -1277,7 +1276,8 @@ export class OrderService {
    *
    * Previous dues: when the patient still owes money and the branch does NOT
    * allow ordering without clearing dues, at least
-   * `min(outstanding, MinimumPreviousDuesToClear)` must be cleared on this order.
+   * `ceil(outstanding × MinimumPreviousDuesPercentToClear%)` must be cleared on
+   * this order (a configured percentage of 0 falls back to the full outstanding).
    *
    * Partial billing: when partial billing is disabled the full `netAmount` must
    * be collected; when enabled, at least `MinimumPercentOfNetAmountToProceed`%
@@ -1341,15 +1341,17 @@ export class OrderService {
         );
       }
       if (duesGateActive && outstanding > 0) {
-        const minToClear = Number(
-          settings.ChargesAndDeductions_MinimumPreviousDuesToClear,
-        );
+        const minPercent =
+          settings.ChargesAndDeductions_MinimumPreviousDuesPercentToClear;
         // Toggle OFF ⇒ the full outstanding must be cleared by default; a
-        // positive configured minimum relaxes it to just that amount (capped at
-        // what's owed). A minimum of 0 means "no explicit minimum" — not "clear
-        // nothing" — so it falls back to full clearance.
+        // positive configured percentage relaxes it to that share of the
+        // outstanding balance (e.g. 50% of ₹1000 ⇒ ₹500, rounded up and capped
+        // at what's owed). A percentage of 0 means "no explicit minimum" — not
+        // "clear nothing" — so it falls back to full clearance.
         const required =
-          minToClear > 0 ? Math.min(outstanding, minToClear) : outstanding;
+          minPercent > 0
+            ? Math.min(outstanding, Math.ceil((outstanding * minPercent) / 100))
+            : outstanding;
         if (previousDuesCleared < required) {
           throw new PreviousDuesNotClearedException(
             outstanding,
@@ -3591,72 +3593,6 @@ export class OrderService {
         )
         .map((c) => c.id);
       and.push({ id: { in: matchedIds } });
-    }
-    if (query.billStatus) {
-      // Matches the Billings "Status" column label (`billStatusLabel`), NOT the
-      // stored `paymentStatus`: `cancel`/`refund` recompute that as a pure
-      // payment state, so it stays PAID after a cancel or a surplus refund and a
-      // `paymentStatus` filter listed Cancelled / Fully Refunded bills under
-      // "Paid". Cancelled wins outright on the order status, so it needs no
-      // scan; every other label depends on the ledger, so — like `reportStatus`
-      // above — the candidates are scanned with the exact money derivation
-      // `findAll` uses for each row, and matched by id.
-      if (query.billStatus === 'CANCELLED') {
-        and.push({ status: OrderStatus.CANCELLED });
-      } else {
-        const candidates = await this.prisma.order.findMany({
-          where: {
-            ...where,
-            AND: [...and, { status: { not: OrderStatus.CANCELLED } }],
-          },
-          select: {
-            id: true,
-            status: true,
-            cancellationCharge: true,
-            items: {
-              where: { deletedAt: null },
-              select: { unitPrice: true, discount: true },
-            },
-            payments: {
-              where: { deletedAt: null },
-              select: {
-                totalAmount: true,
-                orderDiscount: true,
-                orderDiscountMode: true,
-                orderDiscountValue: true,
-                netAmount: true,
-                paidAmount: true,
-                refundAmount: true,
-                refundCharge: true,
-              },
-            },
-          },
-        });
-        const label = BILL_STATUS_FILTER_LABELS[query.billStatus];
-        const matchedIds = candidates
-          .filter((c) => {
-            const { netAmount, paidAmount } = this.billingRollups(
-              c.payments,
-              c.items,
-            );
-            const refunded = c.payments.reduce(
-              (s, p) => s + toNum(p.refundAmount),
-              0,
-            );
-            const effectivePaid = computeEffectivePaid(
-              paidAmount,
-              toNum(c.cancellationCharge),
-              refunded,
-              c.payments.reduce((s, p) => s + toNum(p.refundCharge), 0),
-            );
-            return (
-              billStatusLabel(c.status, netAmount, effectivePaid, refunded) ===
-              label
-            );
-          })
-          .map((c) => c.id);
-        and.push({ id: { in: matchedIds } });
-      }
     }
 
     // Patient name / mobile via the to-one patient relation filter.

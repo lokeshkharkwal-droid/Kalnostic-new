@@ -44,7 +44,7 @@ body:json {
     "ChargesAndDeductions_MaximumLoyaltyPointsEquivalentAmount": 500,
     "ChargesAndDeductions_AllowClearPreviousDues": true,
     "ChargesAndDeductions_AllowOrderWithoutClearingPreviousDues": false,
-    "ChargesAndDeductions_MinimumPreviousDuesToClear": 0,
+    "ChargesAndDeductions_MinimumPreviousDuesPercentToClear": 50,
     "ChargesAndDeductions_AllowPartialBilling": true,
     "ChargesAndDeductions_MinimumPercentOfNetAmountToProceed": 30,
     "ChargesAndDeductions_TdsApplicable": false,
@@ -135,8 +135,11 @@ docs {
     (Quotation *ID* config — prefix/separator/suffix/reset-cycle — is separate,
     see "Registration Id Sequences".)
   - `ChargesAndDeductions_*` — visit/sample-collection charges + editability,
-    wallet/loyalty deduction + caps, previous-dues rules, partial billing +
-    minimum-% threshold, TDS min/max %, order/line discount min/max %.
+    wallet/loyalty deduction + caps, previous-dues rules
+    (`MinimumPreviousDuesPercentToClear` = minimum **percentage** of the
+    patient's outstanding dues that must be cleared, `0` ⇒ full clearance),
+    partial billing + minimum-% threshold, TDS min/max %, order/line discount
+    min/max %.
     `AllowOrderDiscountOnly` / `AllowLineDiscountOnly` /
     `AllowBothOrderAndLineDiscount` are **mutually exclusive** — at most one
     may be `true`.

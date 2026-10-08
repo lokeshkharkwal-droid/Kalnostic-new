@@ -8,7 +8,6 @@ import {
   Prisma,
   SamplePriority,
   SampleStatus,
-  TransferStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
@@ -52,6 +51,7 @@ import { DiscardSampleDto } from './dto/discard-sample.dto';
 import { CancelSampleDto } from './dto/cancel-sample.dto';
 import { RepeatSampleDto } from './dto/repeat-sample.dto';
 import { ReturnSampleDto } from './dto/return-sample.dto';
+import { RetrieveSampleDto } from './dto/retrieve-sample.dto';
 import { AssignBarcodeDto } from './dto/assign-barcode.dto';
 import {
   SAMPLE_INCLUDE,
@@ -127,6 +127,24 @@ interface ActionNote {
    * `FORCE_TARGET` status. `retrieve` is never forced (no forced target).
    */
   force?: boolean;
+}
+
+/**
+ * The statuses a sample is in while it lives at another branch / partner / center
+ * via an open transfer (Send/Forward/Outsource). A local action that moves a sample
+ * OUT of one of these (Retrieve / Repeat) is a "recall": its outstanding
+ * transfer(s) — and, for an accepted internal transfer, the clone materialised in
+ * the receiving branch — must be unwound so no stale record is left cross-branch.
+ */
+const TRANSFERRED_STATUSES: ReadonlySet<SampleStatus> = new Set([
+  SampleStatus.SENT_INTERNAL,
+  SampleStatus.FORWARD_EXTERNAL,
+  SampleStatus.OUTSOURCED,
+]);
+
+/** True while the sample lives at another branch/partner/center (see above). */
+function isTransferredStatus(status: SampleStatus): boolean {
+  return TRANSFERRED_STATUSES.has(status);
 }
 
 /**
@@ -1707,14 +1725,19 @@ export class OrderSampleService {
     ids: string[],
     tenantId: string,
     personId: string | null,
-    dto: SampleNoteDto,
+    dto: RetrieveSampleDto,
   ): Promise<OrderSampleWithRelations[]> {
     return this.transitionIds(
       ids,
       tenantId,
       personId,
       'retrieve',
-      () => ({ data: {} }),
+      // Record the station/lab the sample was retrieved from on the history row's
+      // `reason` (the shared Notes + Attachment ride along via the note arg).
+      () => ({
+        data: {},
+        ...(dto.retrievedFrom ? { reason: dto.retrievedFrom } : {}),
+      }),
       dto,
     );
   }
@@ -1876,44 +1899,79 @@ export class OrderSampleService {
     // action's fixed target status regardless of its current status (no legality
     // check). `retrieve` has no forced target, so it keeps its normal behaviour.
     const forced = note.force ? FORCE_TARGET[action] : undefined;
-    const toStatus =
-      forced ??
-      (action === 'retrieve'
-        ? (nextSampleStatus('retrieve', sample.status) ?? sample.previousStatus)
-        : nextSampleStatus(action, sample.status));
-    if (!toStatus) {
-      throw new InvalidSampleTransitionException(action, sample.status);
-    }
-
-    if (action === 'retrieve') {
-      await tx.sampleTransfer.updateMany({
+    let toStatus: SampleStatus | null;
+    if (forced) {
+      toStatus = forced;
+    } else if (action === 'retrieve') {
+      // Revert to the sample's immediately-previous status from its OWN history:
+      // the `fromStatus` of the most recent NON-retrieve transition INTO the
+      // current status. Repeated retrieves therefore walk back the real timeline
+      // (New → Collected → Accepted ⇒ Accepted → Collected → New), instead of
+      // oscillating on the single `previousStatus` column. Falls back to the §A.9
+      // transfer-return target, then `null`: a sample with no prior history (just
+      // created, or already back at its first status) yields an "invalid"
+      // transition, so bulk `skipInvalid` skips it gracefully — no-op, no loop —
+      // rather than forcing a hardcoded previous status.
+      const prevRow = await tx.orderSampleStatusHistory.findFirst({
         where: {
           sampleId: sample.id,
           tenantId,
           deletedAt: null,
-          transferStatus: {
-            in: [
-              TransferStatus.IN_TRANSIT,
-              TransferStatus.PICKED_UP,
-              TransferStatus.RECEIVED,
-            ],
-          },
+          toStatus: sample.status,
+          // Only a genuine MOVEMENT into the current status counts — not a prior
+          // retrieve (which would walk back up), and not a no-status-change row
+          // (assign-barcode / update notes / share all record toStatus ==
+          // fromStatus == current). `{ not: current }` on the nullable fromStatus
+          // also drops the `generate` row (fromStatus = null), so a freshly-created
+          // sample correctly yields no previous status. Mirrors findHistory's
+          // movement filter so the UI's shown "New Status" matches what happens.
+          fromStatus: { not: sample.status },
+          action: { not: 'retrieve' },
         },
-        data: {
-          transferStatus: TransferStatus.REJECTED,
-          rejectionReason: 'Recalled via Retrieve',
-          updatedBy: personId,
-        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        select: { fromStatus: true },
       });
+      toStatus =
+        prevRow?.fromStatus ?? nextSampleStatus('retrieve', sample.status);
+    } else {
+      toStatus = nextSampleStatus(action, sample.status);
+    }
+    if (!toStatus) {
+      throw new InvalidSampleTransitionException(action, sample.status);
+    }
+
+    // Recall: this action moves the sample OUT of a transferred status (Retrieve /
+    // Repeat on a Sent / Forwarded / Outsourced sample). Unwind the transfer fully
+    // so no stale record is left in the receiving branch — soft-delete the open
+    // transfer(s) (they vanish from both branches' referral/outsource queues, which
+    // filter deletedAt: null) and, for an accepted INTERNAL transfer, soft-delete
+    // the clone it created in the receiving branch's In-House list and move its lab
+    // report(s) back to the origin. (See recallTransfersForSampleInTx.)
+    const recalling =
+      isTransferredStatus(sample.status) && !isTransferredStatus(toStatus);
+    if (recalling) {
+      await this.recallTransfersForSampleInTx(tx, tenantId, personId, sample);
     }
 
     const built = build(sample);
+    const originBranch = sample.originBranchId ?? sample.branchId;
     const updated = await tx.orderSample.update({
       where: { id: sample.id },
       data: {
         ...built.data,
         status: toStatus,
         previousStatus: sample.status,
+        // A recalled sample is processed at its origin again: revert the processing
+        // branch (set to the destination on Send / Assign Center) and clear the
+        // now-void dispatch fields so the origin branch's list is accurate.
+        ...(recalling
+          ? {
+              processingBranchId: originBranch,
+              dispatchedAt: null,
+              logisticsType: null,
+              logisticsPerson: null,
+            }
+          : {}),
         updatedBy: personId,
       },
     });
@@ -1932,6 +1990,104 @@ export class OrderSampleService {
       },
     });
     return updated;
+  }
+
+  /**
+   * Recall every outstanding transfer of a sample that is being pulled back from a
+   * transferred status (Retrieve / Repeat). For each non-deleted transfer:
+   *  - if it was an accepted INTERNAL transfer (a clone exists in the receiving
+   *    branch's In-House list), soft-delete that clone and move its lab report(s)
+   *    back to the origin branch (see {@link removeTransferCloneInTx}); then
+   *  - soft-delete the transfer itself, so it disappears from BOTH branches'
+   *    referral / outsource queues (`findTransfers` filters `deletedAt: null`).
+   * Runs inside the caller's transaction so the sample revert + the cross-branch
+   * cleanup commit atomically.
+   * @param tx the caller's (tenant-scoped) transaction
+   * @param tenantId the current tenant
+   * @param personId the acting person (for `updatedBy`)
+   * @param sample the source sample being recalled (its branch is the origin)
+   */
+  private async recallTransfersForSampleInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    personId: string | null,
+    sample: OrderSample,
+  ): Promise<void> {
+    const originBranch = sample.originBranchId ?? sample.branchId;
+    const transfers = await tx.sampleTransfer.findMany({
+      where: { sampleId: sample.id, tenantId, deletedAt: null },
+    });
+    const now = new Date();
+    for (const transfer of transfers) {
+      if (transfer.clonedSampleId) {
+        await this.removeTransferCloneInTx(
+          tx,
+          tenantId,
+          personId,
+          transfer.clonedSampleId,
+          originBranch,
+        );
+      }
+      await tx.sampleTransfer.update({
+        where: { id: transfer.id },
+        data: {
+          deletedAt: now,
+          rejectionReason: transfer.rejectionReason ?? 'Recalled via Retrieve',
+          updatedBy: personId,
+        },
+      });
+    }
+  }
+
+  /**
+   * Unwind the clone an accepted INTERNAL transfer created in the receiving branch
+   * (RULE 1): (1) recursively recall the clone's OWN outstanding transfers — so a
+   * chained transfer (A→B→C) is cleaned up all the way down, not just one hop;
+   * (2) move its lab report(s) back to the origin branch (they were re-homed to the
+   * destination on accept) so the recalled origin sample keeps its report locally;
+   * (3) soft-delete the clone + its tests so it leaves the receiving branch's
+   * In-House list. Idempotent — a no-op if the clone is already gone. Mutually
+   * recursive with {@link recallTransfersForSampleInTx}; terminates because clone
+   * links form a tree (each transfer materialises at most one, newly-created clone).
+   * @param tx the caller's transaction
+   * @param tenantId the current tenant
+   * @param personId the acting person (for `updatedBy`)
+   * @param cloneId the destination-branch clone sample id
+   * @param originBranch the TRUE origin branch to re-home the clone's report(s) to
+   */
+  private async removeTransferCloneInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    personId: string | null,
+    cloneId: string,
+    originBranch: string | null,
+  ): Promise<void> {
+    const clone = await tx.orderSample.findFirst({
+      where: { id: cloneId, tenantId, deletedAt: null },
+    });
+    if (!clone) return; // already removed / never cloned
+
+    // Chained transfer: if this clone was itself forwarded onward (B→C), recall
+    // those transfers too (recursively removing their clones). The clone carries
+    // the TRUE origin in `originBranchId` (propagated at clone time), so reports
+    // all flow back to the original origin branch.
+    await this.recallTransfersForSampleInTx(tx, tenantId, personId, clone);
+
+    // Move the clone's report(s) back to the origin before soft-deleting the tests
+    // they're resolved from (rehome reads the clone's OrderSampleTest rows).
+    if (originBranch) {
+      await this.rehomeLabReportsForSample(tx, tenantId, cloneId, originBranch);
+    }
+
+    const now = new Date();
+    await tx.orderSampleTest.updateMany({
+      where: { sampleId: cloneId, tenantId, deletedAt: null },
+      data: { deletedAt: now },
+    });
+    await tx.orderSample.update({
+      where: { id: cloneId },
+      data: { deletedAt: now, updatedBy: personId },
+    });
   }
 
   /**
