@@ -226,6 +226,17 @@ export interface LabReportWorklistRow {
    * `LabReportLockedException`, rather than only failing after the fact. */
   isLocked: boolean;
 
+  /** Why the report was locked (the note typed in the Lock Test dialog), when
+   * locked; null when unlocked or no reason was given. Lets the Unlock dialog
+   * show the reason without reading the notes (which are blocked while locked). */
+  lockNotes: string | null;
+  /** When it was locked; null when unlocked. */
+  lockedAt: Date | null;
+  /** Who locked it (`Person.id`, logical ref); null when unlocked. */
+  lockedBy: string | null;
+  /** Display name for `lockedBy`, resolved by `LabReportService` (batched). */
+  lockedByName: string | null;
+
   /** Raw ref (logical, no Prisma relation — see `Branch` everywhere else in
    * this codebase). Resolved to `branch.name` by `LabReportService.findAll`
    * via a batched lookup, not joined here. */
@@ -399,6 +410,10 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
     isOutsourced: row.isOutsourced,
     createdAt: row.createdAt,
     isLocked: row.isLocked,
+    lockNotes: row.isLocked ? (row.lockNotes ?? null) : null,
+    lockedAt: row.isLocked ? (row.lockedAt ?? null) : null,
+    lockedBy: row.isLocked ? (row.lockedBy ?? null) : null,
+    lockedByName: null,
 
     branchId: row.branchId,
     branch: null,

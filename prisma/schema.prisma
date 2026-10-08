@@ -7469,6 +7469,7 @@ enum LabReportNoteCategory {
   SAMPLE
   TECH
   LOCK
+  UNLOCK
   DELTA
   CRITICAL_ALERT
   OUT_OF_RANGE

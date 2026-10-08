@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { timestampRange } from '../../common/utils/date-range.util';
 import {
   OrderSample,
   Prisma,
@@ -360,12 +361,9 @@ export class SampleTransferService {
     } else {
       where.destinationBranchId = branchId;
     }
-    if (query.dateFrom || query.dateTo) {
-      where.sendDate = {
-        ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),
-        ...(query.dateTo ? { lte: new Date(query.dateTo) } : {}),
-      };
-    }
+    // A day-only `dateTo` covers that whole day (see `timestampRange`).
+    const sendDateRange = timestampRange(query.dateFrom, query.dateTo);
+    if (sendDateRange) where.sendDate = sendDateRange;
     // Filters on the linked sample + its order (accession search, referral refs).
     const sample: Prisma.OrderSampleWhereInput = {};
     if (query.search) {

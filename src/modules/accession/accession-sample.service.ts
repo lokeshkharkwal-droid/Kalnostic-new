@@ -32,6 +32,7 @@ import {
   COLLECTABLE_SAMPLE_STATUSES,
 } from './constants/sample-transitions.constant';
 import {
+  TAT_STATUSES,
   TERMINAL_SAMPLE_STATUSES,
   TatStatus,
   TatThresholds,
@@ -1080,29 +1081,48 @@ export class OrderSampleService {
   }
 
   /**
-   * Accession list summary for the active branch: a count per status (§A.5 tabs,
-   * all statuses present with 0 default), a count per TAT band (§A.4 bar), and the
-   * overall total.
+   * Accession list summary: a count per status (§A.5 tabs, all statuses present
+   * with 0 default), a count per TAT band (§A.4 bar), and the overall total.
+   *
+   * The counts follow the SAME filters as the list (date range, search, doctor,
+   * panel, department, …) so the tabs/cards describe the records the user is
+   * looking at — but deliberately ignore `status`, `tatStatus` and paging: every
+   * tab/card must keep showing its own total whichever tab or card is selected
+   * (otherwise picking "New" would zero every other tab). Counts are SAMPLES, as
+   * before. Everything is counted in the database (one group-by for the tabs, one
+   * count per TAT band) — no rows are loaded into memory.
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT profile)
+   * @param personId caller, for the department-visibility scope
+   * @param query the list's filters (status / tatStatus / page / limit are ignored)
    */
   async summary(
     tenantId: string,
     branchId: string | null,
     personId: string,
+    query: ListSamplesDto = {},
   ): Promise<AccessionSummary> {
     const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
       tenantId,
       personId,
     );
-    const where: Prisma.OrderSampleWhereInput = {
+    const tat = await this.tatThresholds(tenantId, branchId);
+    const nowMs = Date.now();
+    const where = this.buildSampleWhere(
       tenantId,
       branchId,
-      deletedAt: null,
-      // Same mandatory department-visibility scope as the list, so the status
-      // tab + TAT bar counts always match the rows the user can actually see.
-      AND: [this.departmentScopeForSamples(scopeIds)],
-    };
+      {
+        ...query,
+        status: undefined,
+        tatStatus: undefined,
+        page: undefined,
+        limit: undefined,
+      },
+      tat,
+      nowMs,
+      scopeIds,
+    );
+
     const grouped = await this.prisma.orderSample.groupBy({
       by: ['status'],
       where,
@@ -1118,22 +1138,25 @@ export class OrderSampleService {
       total += g._count._all;
     }
 
-    const nowMs = Date.now();
-    const tat = await this.tatThresholds(tenantId, branchId);
-    const rows = await this.prisma.orderSample.findMany({
-      where,
-      select: { createdAt: true, status: true },
-    });
-    const byTat: Record<TatStatus, number> = {
-      WITHIN: 0,
-      WARNING: 0,
-      CRITICAL: 0,
-      BREACHED: 0,
-    };
-    for (const r of rows) {
-      const band = deriveTatStatus(r.createdAt, r.status, tat, nowMs);
-      if (band) byTat[band] += 1;
-    }
+    // One count per TAT band — the same `createdAt` range + open-status rule the
+    // list's TAT filter uses, so a card always equals the rows behind it.
+    const bandCounts = await Promise.all(
+      TAT_STATUSES.map((band) =>
+        this.prisma.orderSample.count({
+          where: {
+            AND: [
+              where,
+              { status: { notIn: [...TERMINAL_SAMPLE_STATUSES] } },
+              { createdAt: tatCreatedAtRange(band, tat, nowMs) },
+            ],
+          },
+        }),
+      ),
+    );
+    // Built in the fixed band order (WITHIN → BREACHED), not completion order.
+    const byTat = Object.fromEntries(
+      TAT_STATUSES.map((band, i) => [band, bandCounts[i]]),
+    ) as Record<TatStatus, number>;
     return { total, byStatus, byTat };
   }
 

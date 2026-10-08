@@ -8,6 +8,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { BranchService } from '../branch/branch.service';
 import { RegistrationSettingsService } from './registration-settings.service';
+import { ExternalIdExhaustedException } from './exceptions/registration-settings.exceptions';
 
 /** Parts used to build a formatted external id. */
 export interface ExternalIdParts {
@@ -29,6 +30,19 @@ export const EXTERNAL_ID_PREFIX: Record<ExternalIdPurpose, string> = {
   [ExternalIdPurpose.APPOINTMENT]: 'APT',
   [ExternalIdPurpose.PATIENT]: 'PAT',
 };
+
+/**
+ * Order and quote external ids are stored in the same `orders` table, so the
+ * generator must skip any number a live row in the branch already holds. Other
+ * purposes (appointment, patient) live in their own tables and are unaffected.
+ */
+const ORDERS_TABLE_PURPOSES: ReadonlySet<ExternalIdPurpose> = new Set([
+  ExternalIdPurpose.ORDER,
+  ExternalIdPurpose.QUOTATION,
+]);
+
+/** How many consecutive taken numbers the generator will skip before giving up. */
+export const MAX_EXTERNAL_ID_SKIPS = 200;
 
 /** The next external id a branch would mint for a purpose (peek, no bump). */
 export interface ExternalIdPreview {
@@ -205,7 +219,21 @@ export class ExternalIdService {
       },
     });
 
-    let sequence: number;
+    const reset =
+      !!existing && shouldResetCounter(counterType, existing.lastResetAt, now);
+    const { sequence, value } = await this.firstFreeSequence(
+      tx,
+      tenantId,
+      branchId,
+      purpose,
+      !existing || reset ? 1 : existing.counter + 1,
+      (seq) =>
+        this.withPrefix(
+          purpose,
+          formatExternalId(format, { now, shortName, sequence: seq }),
+        ),
+    );
+
     if (!existing) {
       await tx.externalIdCounter.create({
         data: {
@@ -213,14 +241,11 @@ export class ExternalIdService {
           branchId,
           purpose,
           counterType,
-          counter: 1,
+          counter: sequence,
           lastResetAt: now,
         },
       });
-      sequence = 1;
     } else {
-      const reset = shouldResetCounter(counterType, existing.lastResetAt, now);
-      sequence = reset ? 1 : existing.counter + 1;
       await tx.externalIdCounter.update({
         where: { id: existing.id },
         data: {
@@ -230,10 +255,7 @@ export class ExternalIdService {
       });
     }
 
-    return this.withPrefix(
-      purpose,
-      formatExternalId(format, { now, shortName, sequence }),
-    );
+    return value;
   }
 
   /**
@@ -283,6 +305,43 @@ export class ExternalIdService {
     return { format, value };
   }
 
+  /**
+   * The first sequence number, from `startSequence` upward, whose formatted id is
+   * not already held by a live record in this branch. Quotes and orders share the
+   * `orders` table, so for those purposes taken ids are skipped (an id typed by
+   * hand before the branch switched to an auto format, for example); other
+   * purposes live in their own tables and are returned unchanged. Read-only — it
+   * never bumps the counter, so the generator and the form preview share it.
+   * @throws ExternalIdExhaustedException after MAX_EXTERNAL_ID_SKIPS taken numbers
+   */
+  private async firstFreeSequence(
+    db: Pick<Prisma.TransactionClient, 'order'>,
+    tenantId: string,
+    branchId: string,
+    purpose: ExternalIdPurpose,
+    startSequence: number,
+    build: (sequence: number) => string | null,
+  ): Promise<{ sequence: number; value: string | null }> {
+    let sequence = startSequence;
+    let value = build(sequence);
+    if (!ORDERS_TABLE_PURPOSES.has(purpose)) return { sequence, value };
+    let skips = 0;
+    while (
+      value !== null &&
+      (await db.order.findFirst({
+        where: { tenantId, branchId, externalOrderId: value, deletedAt: null },
+        select: { id: true },
+      }))
+    ) {
+      if (++skips > MAX_EXTERNAL_ID_SKIPS) {
+        throw new ExternalIdExhaustedException(purpose, skips);
+      }
+      sequence += 1;
+      value = build(sequence);
+    }
+    return { sequence, value };
+  }
+
   /** Prepend the fixed entity prefix to an auto id; pass through null (NONE). */
   private withPrefix(
     purpose: ExternalIdPurpose,
@@ -318,20 +377,35 @@ export class ExternalIdService {
         },
       },
     });
-    const nextSequence =
+    const startSequence =
       !existing || shouldResetCounter(counterType, existing.lastResetAt, now)
         ? 1
         : existing.counter + 1;
-    return {
-      format,
-      value: this.withPrefix(
+    const build = (seq: number) =>
+      this.withPrefix(
         purpose,
         formatExternalId(format, {
           now,
           shortName: branch.shortName,
-          sequence: nextSequence,
+          sequence: seq,
         }),
-      ),
-    };
+      );
+    // Show the number the record will really get: skip ids a live record already
+    // holds, exactly as the generator does when saving. A preview must never
+    // fail, so if every candidate is taken fall back to the plain next number.
+    try {
+      const { value } = await this.firstFreeSequence(
+        this.prisma,
+        tenantId,
+        branchId,
+        purpose,
+        startSequence,
+        build,
+      );
+      return { format, value };
+    } catch (err) {
+      if (!(err instanceof ExternalIdExhaustedException)) throw err;
+      return { format, value: build(startSequence) };
+    }
   }
 }

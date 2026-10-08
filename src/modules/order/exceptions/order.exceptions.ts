@@ -471,6 +471,37 @@ export class SourceQuotationInvalidException extends KaltrosException {
   }
 }
 
+/**
+ * 409 — the source quotation has already been converted to an order (a quote
+ * converts once; a second, concurrent or repeated, conversion is rejected and its
+ * create rolls back).
+ */
+export class QuotationAlreadyConvertedException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'QUOTATION_ALREADY_CONVERTED',
+      'This quotation has already been converted to an order',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
+ * 422 — a quotation is an estimate, not a bill: it cannot take (new) money. The
+ * payment is collected on the order once the quote is converted.
+ */
+export class QuotationPaymentNotAllowedException extends KaltrosException {
+  constructor(attempted: number) {
+    super(
+      'QUOTATION_PAYMENT_NOT_ALLOWED',
+      "A quotation can't carry a payment. Convert it to an order and collect the payment there.",
+      { attempted },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
 /** 422 — the quotation is still within its validity window (only expired
  * quotations may be duplicated). */
 export class QuotationNotExpiredException extends KaltrosException {
