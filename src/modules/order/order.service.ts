@@ -2554,9 +2554,6 @@ export class OrderService {
     const testRows = await this.itemRowsWithPanelTests(order);
     const { dateFormat, timeFormat } =
       await this.tenantService.getLocale(tenantId);
-    // Diagnostics tags. The visit charge is a billing figure, so the TRF
-    // carries only the Home Visit flag and the sample-collection charge.
-    const { home_visit, sample_charge } = this.diagnosticsVariables(order);
     return {
       variables: {
         trf_ref: order.billId ?? order.orderCode,
@@ -2572,8 +2569,9 @@ export class OrderService {
         clinical_notes: order.orderNotes ?? '',
         branch_name: order.branch?.name ?? '',
         panel_tests_name: this.panelTestsNameFlat(testRows),
-        home_visit,
-        sample_charge,
+        // Diagnostics tags: Home Visit flag, visit charge (0 unless Home Visit
+        // is on), sample-collection charge.
+        ...this.diagnosticsVariables(order),
         ...this.patientVariables(order, dateFormat),
         ...this.referralVariables(order),
       },
