@@ -55,6 +55,6 @@ docs {
   - `branchId` — only patients registered at that branch (UUID). Read filter
     only; tenant scoping + RLS already guard cross-tenant access.
   - `includeFamily` — `true` attaches each patient's active `familyMembers`
-    (`{ linkId, relationship, member: { id, firstName, lastName, age, mobile,
-    umId } }`). Default OFF, so other consumers are unaffected.
+    (`{ linkId, relationship, member: { id, firstName, lastName, age, ageType,
+    mobile, umId } }`; `ageType` = unit of `age`, `null` = years). Default OFF, so other consumers are unaffected.
 }

@@ -49,8 +49,8 @@ tests {
 docs {
   Paginated list of home-visit collections for the Collection Schedule, scoped to
   the active branch. Newest scheduled first. Each row is enriched with the order
-  (code/bill id/date), patient (name/mobile/UMID/address), assigned phlebotomist,
-  the linked appointment status, financial rollups (`grossAmount`,
+  (code/bill id/date), patient (name/mobile/UMID/address, `age` + its unit
+  `ageType`, `dateOfBirth`), assigned phlebotomist, the linked appointment status, financial rollups (`grossAmount`,
   `discountAmount`, `netAmount`, `paidAmount`, `balanceAmount`, `visitCharges`,
   `sampleCollectionCharges` — all minor units), the sample barcode (first
   generated sample), and item counts.

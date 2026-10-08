@@ -27,7 +27,8 @@ tests {
 
 docs {
   List the anchor patient's active family members (most recent first). Each entry:
-  `{ linkId, relationship, member: { id, firstName, lastName, age, mobile, umId } }`.
+  `{ linkId, relationship, member: { id, firstName, lastName, age, ageType, mobile, umId } }`
+  (`ageType` is the unit of `age` — `YEARS` | `MONTHS` | `DAYS`, or `null` = years).
   Directional — shows only the members linked FROM this anchor patient. 404
   `PATIENT_NOT_FOUND` if the anchor is missing/other tenant.
 }

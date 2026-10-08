@@ -461,6 +461,7 @@ export const ORDER_LIST_INCLUDE = {
       whatsappNumber: true, // Share and Inform: auto-fill the WhatsApp recipient
       gender: true,
       age: true,
+      ageType: true,
       dateOfBirth: true,
       umId: true,
     },
