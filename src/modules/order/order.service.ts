@@ -215,6 +215,7 @@ import {
   AmbiguousOrderPrintTemplateException,
   NotAQuotationException,
   SourceQuotationInvalidException,
+  QuotationAlreadyConvertedException,
   QuotationNotExpiredException,
   QuotationDuplicationNotAllowedException,
   PreviousDuesNotClearedException,
@@ -251,6 +252,7 @@ import {
   isDisallowedOverpayment,
   type IncomingOrderItem,
 } from './utils/order-item-diff';
+import { assertQuoteTakesNoNewMoney } from './utils/quote-payment';
 
 /**
  * The minimal payment shape the discount/TDS + partial-billing validators read —
@@ -572,6 +574,9 @@ export class OrderService {
     if (payPaid > payNet) {
       throw new PaymentOverpaymentException(payNet, payPaid);
     }
+    // A quotation is an estimate, not a bill: it takes no money (collected on the
+    // order after conversion instead).
+    assertQuoteTakesNoNewMoney(dto.status, payPaid);
     // Generate Bill = No: the order records no money (the FE also disables the
     // whole Payment Details section). Reject any positive paid amount as defence
     // in depth.
@@ -829,25 +834,12 @@ export class OrderService {
         // keeps status = QUOTE (so it stays on the Quotations screen) — only its
         // quotationStatus changes.
         if (dto.sourceQuotationId && dto.status !== OrderStatus.QUOTE) {
-          const sourceQuote = await tx.order.findFirst({
-            where: {
-              id: dto.sourceQuotationId,
-              tenantId,
-              deletedAt: null,
-              quotationStatus: { not: null },
-            },
-            select: { id: true },
-          });
-          if (!sourceQuote) {
-            throw new SourceQuotationInvalidException(dto.sourceQuotationId);
-          }
-          await tx.order.update({
-            where: { id: sourceQuote.id },
-            data: {
-              quotationStatus: QuotationStatus.CONVERTED,
-              updatedBy: personId,
-            },
-          });
+          await this.markSourceQuotationConvertedInTx(
+            tx,
+            tenantId,
+            dto.sourceQuotationId,
+            personId,
+          );
         }
         // Seed the create-form's single `orderNotes` string as the first entry
         // of the Order Notes history so the Order Overview tab shows it alongside
@@ -934,6 +926,11 @@ export class OrderService {
               branchId,
               orderId: order.id,
               ...p,
+              // A new order always gets its own payment rows: `OrderPaymentDto.id`
+              // is "ignored on create", and a client-supplied id (e.g. the source
+              // quote's payment id carried over on Convert to Order) would collide
+              // with the existing row's primary key.
+              id: undefined,
               // Generate Bill = No ⇒ zero every money field except the gross
               // `totalAmount` (kept for visibility): payable/net/paid = 0 so the
               // order carries no due and reads as settled.
@@ -1021,7 +1018,7 @@ export class OrderService {
         return order.id;
       });
     } catch (e) {
-      this.rethrowConflict(e);
+      this.rethrowConflict(e, dto.sourceQuotationId);
       throw e;
     }
     const created = await this.findById(createdId, tenantId);
@@ -5645,6 +5642,10 @@ export class OrderService {
     ) {
       throw new PaymentOverpaymentException(payNet, payPaid);
     }
+    // A quote may keep what it already holds, but cannot take MORE money.
+    if (dto.payments !== undefined) {
+      assertQuoteTakesNoNewMoney(effectiveStatus, payPaid, storedPaidTotal);
+    }
     // Generate Bill = No (either set by this patch or already stored): the order
     // may not carry a positive paid amount. Only bites when the ledger is part of
     // this patch — a non-payment edit leaves the stored totals untouched.
@@ -6899,6 +6900,7 @@ export class OrderService {
       select: {
         branchId: true,
         status: true,
+        sourceQuotationId: true,
         appointment: { select: { status: true } },
         diagnostics: {
           select: {
@@ -6938,7 +6940,54 @@ export class OrderService {
           reservation.at,
         );
       }
-      return tx.order.update({ where: { id }, data: { deletedAt: now } });
+      const deleted = await tx.order.update({
+        where: { id },
+        data: { deletedAt: now },
+      });
+      // Deleting a DRAFT order that was saved from a quote (Convert → Save as
+      // Draft) abandons the conversion: reopen the source quote so it can be
+      // converted again. A finalized/cancelled order is a real business event and
+      // leaves its quote CONVERTED.
+      if (booking?.status === OrderStatus.DRAFT && booking.sourceQuotationId) {
+        await this.reopenSourceQuotationInTx(
+          tx,
+          tenantId,
+          booking.sourceQuotationId,
+          id,
+        );
+      }
+      return deleted;
+    });
+  }
+
+  /**
+   * Put a CONVERTED source quote back to DRAFT (open, convertible again) once the
+   * draft order made from it has been deleted — but only if no other live order
+   * still points at the quote (e.g. a second conversion, or a finalized order).
+   */
+  private async reopenSourceQuotationInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sourceQuotationId: string,
+    deletedOrderId: string,
+  ): Promise<void> {
+    const otherLiveOrders = await tx.order.count({
+      where: {
+        tenantId,
+        sourceQuotationId,
+        deletedAt: null,
+        id: { not: deletedOrderId },
+      },
+    });
+    if (otherLiveOrders > 0) return;
+    await tx.order.updateMany({
+      where: {
+        id: sourceQuotationId,
+        tenantId,
+        deletedAt: null,
+        quotationStatus: QuotationStatus.CONVERTED,
+      },
+      data: { quotationStatus: QuotationStatus.DRAFT },
     });
   }
 
@@ -7558,13 +7607,71 @@ export class OrderService {
     return map;
   }
 
-  /** Map an order-code unique-constraint violation (P2002) to a typed 409. */
-  private rethrowConflict(e: unknown): void {
+  /**
+   * Flip the source quote of a Convert-to-Order create to CONVERTED, inside the
+   * create transaction. It is a compare-and-set (`updateMany` guarded on a
+   * not-yet-converted status), so two requests converting the same quote at once
+   * — a double submit, or the quote open in two tabs — cannot both succeed: the
+   * second matches no row, throws, and its whole create (the new order) rolls back.
+   */
+  private async markSourceQuotationConvertedInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sourceQuotationId: string,
+    personId: string | null,
+  ): Promise<void> {
+    const converted = await tx.order.updateMany({
+      where: {
+        id: sourceQuotationId,
+        tenantId,
+        deletedAt: null,
+        quotationStatus: {
+          in: [QuotationStatus.DRAFT, QuotationStatus.EXPIRED],
+        },
+      },
+      data: {
+        quotationStatus: QuotationStatus.CONVERTED,
+        updatedBy: personId,
+      },
+    });
+    if (converted.count > 0) return;
+    const alreadyConverted = await tx.order.findFirst({
+      where: {
+        id: sourceQuotationId,
+        tenantId,
+        deletedAt: null,
+        quotationStatus: QuotationStatus.CONVERTED,
+      },
+      select: { id: true },
+    });
+    throw alreadyConverted
+      ? new QuotationAlreadyConvertedException(sourceQuotationId)
+      : new SourceQuotationInvalidException(sourceQuotationId);
+  }
+
+  /**
+   * Map an order-code unique-constraint violation (P2002) to a typed 409. A
+   * violation on another table inside the same transaction (e.g. a payment row's
+   * primary key) is NOT an order-code clash, so it is left to surface as itself
+   * rather than being reported as "an order with this code already exists".
+   */
+  private rethrowConflict(e: unknown, sourceQuotationId?: string): void {
+    if (!(e instanceof Prisma.PrismaClientKnownRequestError)) return;
     if (
-      e instanceof Prisma.PrismaClientKnownRequestError &&
-      e.code === 'P2002'
+      e.code === 'P2002' &&
+      (e.meta?.modelName === undefined || e.meta.modelName === 'Order')
     ) {
       throw new OrderCodeConflictException('');
+    }
+    // A Convert-to-Order whose `sourceQuotationId` matches no order violates the
+    // self-FK at the order insert (before the conversion flip runs) — report it
+    // as the typed 422 instead of an opaque 500.
+    if (
+      e.code === 'P2003' &&
+      sourceQuotationId &&
+      e.meta?.constraint === 'orders_source_quotation_id_fkey'
+    ) {
+      throw new SourceQuotationInvalidException(sourceQuotationId);
     }
   }
 }

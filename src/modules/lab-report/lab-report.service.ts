@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { timestampRange } from '../../common/utils/date-range.util';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PDFDocument } from 'pdf-lib';
 import {
@@ -105,7 +106,8 @@ import {
   LabReportNotFoundException,
   LabTestCatalogueMissingException,
   InvalidResultParamException,
-  UnlockNotPermittedException,
+  LabReportAlreadyLockedException,
+  LabReportNotLockedException,
   NoActivePrintTemplateException,
   OrderReportsNotFoundException,
   ReportingWindowClosedException,
@@ -438,12 +440,9 @@ export class LabReportService {
     // Standalone "Outsource" checkbox (distinct from the source pill above) —
     // same underlying signal, only ever narrows to outsourced items when checked.
     if (filters.outsource) where.isOutsourced = true;
-    if (filters.dateFrom || filters.dateTo) {
-      where.createdAt = {
-        ...(filters.dateFrom ? { gte: new Date(filters.dateFrom) } : {}),
-        ...(filters.dateTo ? { lte: new Date(filters.dateTo) } : {}),
-      };
-    }
+    // A day-only `dateTo` covers that whole day (see `timestampRange`).
+    const createdAtRange = timestampRange(filters.dateFrom, filters.dateTo);
+    if (createdAtRange) where.createdAt = createdAtRange;
 
     const orderItem: Prisma.OrderItemWhereInput = {};
     // The "Lab Test"/"Lab Panel" filter's id may be either a specific
@@ -640,6 +639,7 @@ export class LabReportService {
     worklistRows = await this.attachMemberTestNames(worklistRows);
     worklistRows = await this.attachResultTypes(worklistRows);
     worklistRows = await this.attachSampleStatuses(tenantId, worklistRows);
+    worklistRows = await this.attachLockedByNames(worklistRows);
 
     // Analytical-TAT band per row (SRS §6.2/§8): frozen snapshot for approved
     // reports, live compute for in-flight ones — batched over the whole page.
@@ -1471,6 +1471,21 @@ export class LabReportService {
   }
 
   /**
+   * Resolve `lockedBy` (a `Person.id`) to a display name for locked rows: one
+   * batched lookup, and none at all when nothing in the page is locked.
+   */
+  private async attachLockedByNames(
+    rows: LabReportWorklistRow[],
+  ): Promise<LabReportWorklistRow[]> {
+    const lockedIds = rows.map((r) => r.lockedBy).filter((v) => !!v);
+    if (lockedIds.length === 0) return rows;
+    const names = await resolveActorNames(this.prisma, lockedIds);
+    return rows.map((r) =>
+      r.lockedBy ? { ...r, lockedByName: names.get(r.lockedBy) ?? null } : r,
+    );
+  }
+
+  /**
    * Flattens `findById`'s raw nested tree into the same flat branch/
    * department/order/patient/referredByDoctor/referralPanel/test shape the
    * list endpoint (`findAll` -> `toWorklistRow` + attach* resolvers) already
@@ -1502,6 +1517,7 @@ export class LabReportService {
     worklistRow = (await this.attachMemberTestNames([worklistRow]))[0]!;
     worklistRow = (await this.attachResultTypes([worklistRow]))[0]!;
     worklistRow = (await this.attachMultiStepProcess([worklistRow]))[0]!;
+    worklistRow = (await this.attachLockedByNames([worklistRow]))[0]!;
 
     return {
       ...worklistRow,
@@ -1835,12 +1851,24 @@ export class LabReportService {
     });
   }
 
-  private async requireReport(id: string, tenantId: string, branchId: string) {
+  /**
+   * Load a report for an action on it. A locked report is refused (409) unless
+   * `allowLocked` is set — which only READ paths use (e.g. the notes tabs, which
+   * the Test Entry popup loads when it opens a locked test so it can be unlocked).
+   */
+  private async requireReport(
+    id: string,
+    tenantId: string,
+    branchId: string,
+    opts: { allowLocked?: boolean } = {},
+  ) {
     const report = await this.prisma.labReport.findFirst({
       where: { id, tenantId, branchId, deletedAt: null },
     });
     if (!report) throw new LabReportNotFoundException(id);
-    if (report.isLocked) throw new LabReportLockedException(id);
+    if (report.isLocked && !opts.allowLocked) {
+      throw new LabReportLockedException(id);
+    }
 
     // Safety net (see LabReportSampleMissingException's own doc comment for
     // why this should never fire for a genuine report, and what it guards
@@ -4651,6 +4679,9 @@ export class LabReportService {
       where: { id, tenantId, branchId, deletedAt: null },
     });
     if (!report) throw new LabReportNotFoundException(id);
+    // A locked test cannot be worked on, not even re-run, until it is unlocked
+    // (otherwise it resets to Pending yet stays locked and cannot be entered).
+    if (report.isLocked) throw new LabReportLockedException(id);
 
     return this.prisma.withTenant(tenantId, async (tx) => {
       await tx.labReportResultValue.updateMany({
@@ -4694,6 +4725,37 @@ export class LabReportService {
 
   // ── Lock / Unlock ───────────────────────────────────────────────────────────
 
+  /**
+   * One place that records a lock or an unlock as a note row (category `LOCK` /
+   * `UNLOCK`): who (`createdBy`), when (`createdAt`) and, for a lock, the
+   * reason. Written for EVERY lock/unlock, even with no reason, so the history
+   * survives `unlock` clearing the report's own lock fields. If this ever moves to
+   * a dedicated lock-history table, change it here only.
+   */
+  private async recordLockEvent(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    labReportId: string,
+    kind: 'LOCK' | 'UNLOCK',
+    actorId: string,
+    reason?: string,
+  ) {
+    await tx.labReportNote.create({
+      data: {
+        tenantId,
+        labReportId,
+        category: kind,
+        body: reason ?? '',
+        createdBy: actorId,
+      },
+    });
+  }
+
+  /**
+   * Lock a report against further work. Refused (409) when it is already locked,
+   * so a second lock can never overwrite who locked it and why. A reason that is
+   * only blank spaces counts as no reason. The reason is stored exactly as typed.
+   */
   async lock(
     id: string,
     tenantId: string,
@@ -4706,60 +4768,68 @@ export class LabReportService {
       where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
     });
     if (!report) throw new LabReportNotFoundException(id);
+    const reason = notes && notes.trim() ? notes : undefined;
 
     return this.prisma.withTenant(tenantId, async (tx) => {
-      const updated = await tx.labReport.update({
-        where: { id },
+      // Compare-and-set on `isLocked` so two simultaneous locks cannot both win.
+      const { count } = await tx.labReport.updateMany({
+        where: {
+          id,
+          tenantId,
+          branchId: activeBranchId,
+          deletedAt: null,
+          isLocked: false,
+        },
         data: {
           isLocked: true,
           lockedAt: new Date(),
           lockedBy: actorId,
-          lockNotes: notes,
+          lockNotes: reason ?? null,
         },
       });
-      if (notes) {
-        await tx.labReportNote.create({
-          data: {
-            tenantId,
-            labReportId: id,
-            category: 'LOCK',
-            body: notes,
-            createdBy: actorId,
-          },
-        });
-      }
-      return updated;
+      if (count === 0) throw new LabReportAlreadyLockedException(id);
+      await this.recordLockEvent(tx, tenantId, id, 'LOCK', actorId, reason);
+      return tx.labReport.findUniqueOrThrow({ where: { id } });
     });
   }
 
   /**
-   * Unlock requires the caller to hold the `lab_operations:lock_override`
-   * permission (supervisor-gated) — checked in the controller via
-   * `usePermissions`-equivalent guard, NOT here. This method assumes the
-   * caller has already been authorized (see the `canUnlock` param and the
-   * TODO on the controller route).
+   * Unlock a locked report. Authorised in the controller by the same permission
+   * as Lock Test (whoever can lock can unlock). Clears the report's lock fields,
+   * but the lock/unlock history stays as `LOCK` / `UNLOCK` note rows. Refused
+   * (409) when the report is not locked.
    */
   async unlock(
     id: string,
     tenantId: string,
     branchId: string | null,
-    canUnlock: boolean,
+    actorId: string,
   ) {
-    if (!canUnlock) throw new UnlockNotPermittedException();
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.prisma.labReport.findFirst({
       where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
     });
     if (!report) throw new LabReportNotFoundException(id);
 
-    return this.prisma.labReport.update({
-      where: { id },
-      data: {
-        isLocked: false,
-        lockedAt: null,
-        lockedBy: null,
-        lockNotes: null,
-      },
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const { count } = await tx.labReport.updateMany({
+        where: {
+          id,
+          tenantId,
+          branchId: activeBranchId,
+          deletedAt: null,
+          isLocked: true,
+        },
+        data: {
+          isLocked: false,
+          lockedAt: null,
+          lockedBy: null,
+          lockNotes: null,
+        },
+      });
+      if (count === 0) throw new LabReportNotLockedException(id);
+      await this.recordLockEvent(tx, tenantId, id, 'UNLOCK', actorId);
+      return tx.labReport.findUniqueOrThrow({ where: { id } });
     });
   }
 
@@ -4859,7 +4929,10 @@ export class LabReportService {
     query: ListLabReportNotesDto,
   ) {
     const activeBranchId = this.requireBranch(branchId);
-    await this.requireReport(id, tenantId, activeBranchId);
+    // Reading notes is allowed on a locked test (adding one is not — see createNote).
+    await this.requireReport(id, tenantId, activeBranchId, {
+      allowLocked: true,
+    });
     const reportIds = await this.siblingReportIds(id, tenantId, activeBranchId);
 
     const rows = await this.prisma.labReportNote.findMany({

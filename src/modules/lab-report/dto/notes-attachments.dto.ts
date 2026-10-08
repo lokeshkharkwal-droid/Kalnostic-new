@@ -1,4 +1,5 @@
 import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { RawString } from '../../../common/decorators/raw-string.decorator';
 
 /**
  * Shared body shape for the per-test actions that take Notes + (optionally)
@@ -9,12 +10,14 @@ import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
  */
 export class ActionNotesDto {
   @IsOptional()
+  @RawString()
   @IsString()
   notes?: string;
 }
 
 /** Notes are mandatory for this action (Reject, Error Reported). */
 export class RequiredActionNotesDto {
+  @RawString()
   @IsString()
   @IsNotEmpty()
   notes: string;

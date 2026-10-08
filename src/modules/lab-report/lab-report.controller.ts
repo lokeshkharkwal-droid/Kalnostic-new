@@ -758,14 +758,11 @@ export class LabReportController {
   }
 
   /**
-   * Unlock requires the supervisor `lab_operations:lock_override` permission.
-   * TODO: wire the real permission check once the fine-grained permission-key
-   * system (used elsewhere in this codebase for admin features) exposes an
-   * equivalent guardable key for this module — passing `true` unconditionally
-   * here would leave unlock ungated for any authenticated user. Left as an
-   * explicit, named TODO rather than silently defaulting to permissive.
+   * Unlock a locked report. Gated by the same permission as Lock Test: whoever
+   * can lock a test can unlock it.
    */
   @Post(':id/unlock')
+  @RequirePermission(PERMISSION_KEYS.LAB_MARK_LOCK_TEST)
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
@@ -774,14 +771,14 @@ export class LabReportController {
   unlock(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
     @Param('id') id: string,
   ) {
-    const canUnlock = false; // TODO: replace with real supervisor permission check
     return this.labReportService.unlock(
       id,
       tenantId,
       profile.branchId,
-      canUnlock,
+      personId,
     );
   }
 

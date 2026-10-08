@@ -7,6 +7,7 @@ import { getReferralPanelId } from '../../prisma/tenant-context';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { roundToTwoDecimalPlaces } from '../../common/utils';
 import { recomputeBillStatusInTx } from '../order/utils/bill-status';
+import { assertQuoteTakesNoNewMoney } from '../order/utils/quote-payment';
 import {
   derivePaymentStatus,
   computeEffectivePaid,
@@ -144,6 +145,8 @@ export class PaymentDetailsService {
     if (order.status === OrderStatus.CANCELLED) {
       throw new PaymentOrderCancelledException(dto.orderId);
     }
+    // A quotation is an estimate, not a bill — it cannot take a payment.
+    assertQuoteTakesNoNewMoney(order.status, dto.paidAmount ?? 0);
     await this.assertCanCollect(tenantId, order, personId);
     // "Settle payment of other users": collecting on an order created by someone
     // else additionally requires the permission (layered on top of the branch
@@ -290,6 +293,18 @@ export class PaymentDetailsService {
   ): Promise<PaymentDetailsEntity> {
     const existing = await this.findById(id, tenantId);
     await this.assertCanCollectForOrder(tenantId, existing.orderId, personId);
+    // Raising a payment on a quotation is refused (lowering/keeping is fine).
+    if (dto.paidAmount !== undefined) {
+      const owner = await this.prisma.order.findFirst({
+        where: { id: existing.orderId, tenantId, deletedAt: null },
+        select: { status: true },
+      });
+      assertQuoteTakesNoNewMoney(
+        owner?.status,
+        dto.paidAmount,
+        existing.paidAmount ?? 0,
+      );
+    }
     const { paymentDate, ...rest } = dto;
     return this.prisma.withTenant(tenantId, async (tx) => {
       const row = await tx.paymentDetails.update({
