@@ -547,6 +547,36 @@ describe('OrderService — TRF print context (Diagnostics tags)', () => {
     expect(variables.sample_charge).toBe(600);
   });
 
+  it.each([
+    ['only the sample charge', false, 0, 600, 0, 600],
+    ['only the visit charge', true, 500, 0, 500, 0],
+    ['neither charge', false, 0, 0, 0, 0],
+    ['a stale visit charge after Home Visit was turned off', false, 500, 0, 0, 0],
+  ])(
+    'resolves the bill charge tags with %s',
+    async (_label, isHomeVisit, visitCharges, sampleCollectionCharges, visit, sample) => {
+      const { variables = {} } = await buildContext('bill_print', {
+        diagnostics: { isHomeVisit, visitCharges, sampleCollectionCharges },
+      });
+      expect(variables.home_visit_charge).toBe(visit);
+      expect(variables.sample_charge).toBe(sample);
+    },
+  );
+
+  it('reads 0 / 0 on the patient bill when the order has no Diagnostics section', async () => {
+    const { variables = {} } = await buildContext('bill_print', {
+      diagnostics: null,
+    });
+    expect(variables.home_visit_charge).toBe(0);
+    expect(variables.sample_charge).toBe(0);
+  });
+
+  it('carries both bill charge tags onto the accounts billing document', async () => {
+    const { variables = {} } = await buildContext('accounts_biling');
+    expect(variables.home_visit_charge).toBe(500);
+    expect(variables.sample_charge).toBe(600);
+  });
+
   it.each(['order_print', 'lab_quotation_print'])(
     'does not add the Diagnostics tags to %s',
     async (type) => {
