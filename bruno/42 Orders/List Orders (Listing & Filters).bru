@@ -58,7 +58,8 @@ auth:bearer {
 
 docs {
   Paginated list of orders in the caller's tenant. Each row carries the patient
-  ref (with age/gender), the referral refs (doctor/panel/internal/external names),
+  ref (with age + its unit `ageType` (`YEARS`/`MONTHS`/`DAYS`, `null` = years),
+  dateOfBirth and gender), the referral refs (doctor/panel/internal/external names),
   the payment rollups (`grossAmount`/`discountAmount`/`netAmount`/`tdsAmount`/
   `dueAmount`/`paidAmount`, where `dueAmount = max(0, net − paid)` and `tdsAmount`
   is the summed TDS withheld), the refund rollups (`refundedAmount` /

@@ -1,4 +1,5 @@
 import {
+  AgeType,
   BillingType,
   Gender,
   LabReportStatus,
@@ -112,6 +113,7 @@ export interface WorklistReportContext {
     id: string;
     name: string;
     age: number | null;
+    ageType: AgeType | null;
     ageDisplay: string | null;
     gender: Gender | null;
     umId: string | null;
@@ -189,6 +191,7 @@ export function toWorklistReportContext(
             patient.lastName,
           ]),
           age: patient.age,
+          ageType: patient.ageType,
           ageDisplay:
             patient.age != null
               ? `${patient.age}${AGE_TYPE_SUFFIX[patient.ageType ?? 'YEARS']}`

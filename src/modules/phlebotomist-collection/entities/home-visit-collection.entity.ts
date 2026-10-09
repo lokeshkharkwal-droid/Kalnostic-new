@@ -35,6 +35,7 @@ export const COLLECTION_LIST_INCLUDE = {
           email: true,
           gender: true,
           age: true,
+          ageType: true,
           dateOfBirth: true,
           umId: true,
           addressLine1: true,
