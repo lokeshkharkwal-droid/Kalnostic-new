@@ -17,6 +17,7 @@ import {
 } from './entities/worklist.entity';
 import {
   ActiveBranchRequiredException,
+  LabReportLockedException,
   LabReportNotFoundException,
   WorklistEntryNotFoundException,
 } from './exceptions/lab-report.exceptions';
@@ -62,7 +63,12 @@ export class CriticalAlertService {
       },
     });
     if (!report) throw new LabReportNotFoundException(labReportId);
+    // Write locks first (a sent-out sample is view-only; a cancelled order or a
+    // not-yet-accepted sample is closed), then the technician's own Lock.
     await assertReportWritable(this.prisma, tenantId, labReportId);
+    // A locked test is frozen: the screen disables "Inform Critical Alert" on it,
+    // so the server must refuse it too (a direct API call would otherwise slip by).
+    if (report.isLocked) throw new LabReportLockedException(labReportId);
 
     return this.prisma
       .$transaction(async (tx) => {

@@ -1,5 +1,12 @@
-import { IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import {
+  IsBoolean,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+} from 'class-validator';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
+import { ToBoolean } from '../../../common/decorators/to-boolean.decorator';
 
 /**
  * Query DTO for the lightweight `GET /internal-referrals/options` endpoint (id +
@@ -8,6 +15,9 @@ import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
  * - `search` — case-insensitive match against the internal referral `firstName`.
  * - `branchId` — restrict to a single branch (strict; records with no branch
  *   are excluded). The active branch is supplied by the caller.
+ * - `includeUnassigned` — with `branchId`, ALSO include tenant-wide records that
+ *   have no branch (`branchId = null`). Used by the Create-Order "Internal
+ *   Referral User" picker; other callers keep the strict branch scope.
  * - `page` / `limit` (inherited) — **opt-in** offset pagination. When `page` is
  *   omitted the endpoint returns the full `{ id, name }[]` array; when `page` is
  *   supplied it returns a paginated `{ data, total, page, limit }` envelope.
@@ -21,4 +31,9 @@ export class InternalReferralOptionsQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsUUID()
   branchId?: string;
+
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  includeUnassigned?: boolean;
 }

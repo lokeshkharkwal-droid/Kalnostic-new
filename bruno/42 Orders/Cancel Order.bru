@@ -47,7 +47,8 @@ docs {
   Effective Paid = `paid − cancellationCharge − refunds − refund charges` (floored
   at 0); this is what the billing list shows as "Paid", and `paymentStatus` +
   `refundStatus` (`NONE | PARTIALLY_REFUNDED | FULLY_REFUNDED`) are recomputed off
-  it. The refunded total surfaces in the list's `refundedAmount`
+  it. `billStatus` becomes `CANCELLED` (the only Status a cancelled order shows or
+  filters under on Billings). The refunded total surfaces in the list's `refundedAmount`
   ("Refund Provided" column).
 
   Example bodies:

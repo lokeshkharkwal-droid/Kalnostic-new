@@ -85,12 +85,14 @@ export class InternalReferralService {
   /**
    * Lightweight `{ id, name }` options for the searchable selector
    * (`GET /internal-referrals/options`). Tenant-scoped to non-deleted internal
-   * referrals; optionally filtered by a case-insensitive `firstName` search. The
+   * referrals; optionally filtered by a case-insensitive name/mobile search and a
+   * `branchId` (strict, or that branch plus no-branch records when
+   * `includeUnassigned` is set). The
    * `name` prefers the stored `fullName`, falling back to first + last name.
    * Returns the full array when `page` is omitted, or a paginated envelope when
    * `page` is supplied.
    * @param tenantId tenant scope
-   * @param filters optional `search` and opt-in `page`/`limit`
+   * @param filters optional `search`, `branchId`, `includeUnassigned` and opt-in `page`/`limit`
    * @returns the full `{ id, name }[]` array, or a paginated `{ data, total, page, limit }` envelope
    */
   async findOptions(
@@ -98,6 +100,7 @@ export class InternalReferralService {
     filters: {
       search?: string;
       branchId?: string;
+      includeUnassigned?: boolean;
       page?: number;
       limit?: number;
     } = {},
@@ -113,7 +116,15 @@ export class InternalReferralService {
       status: InternalReferralStatus.ACTIVE,
     };
     if (filters.branchId) {
-      where.branchId = filters.branchId;
+      // `includeUnassigned` widens the branch scope to tenant-wide (no-branch)
+      // records too. Wrapped in AND so it doesn't clash with the search OR below.
+      if (filters.includeUnassigned) {
+        where.AND = [
+          { OR: [{ branchId: filters.branchId }, { branchId: null }] },
+        ];
+      } else {
+        where.branchId = filters.branchId;
+      }
     }
     const search = filters.search?.trim();
     if (search) {

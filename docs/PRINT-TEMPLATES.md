@@ -482,12 +482,12 @@ their tag lists are identical.
 | Tag | Description |
 | --- | --- |
 | `{order_code}` | Order identifier. |
-| `{order_date}` | Order date (locale). |
-| `{order_date_time}` | Order date + time. |
+| `{order_date}` | Order date (locale): the order date when an order time was typed, else the day the order was created (tenant timezone). |
+| `{order_date_time}` | Order date + time, e.g. `01/10/2026 2:24 PM`: the typed order time when there is one, else the order's creation time (`createdAt`, tenant timezone). A back/advance-dated order with no typed time prints the date only. |
 | `{order_external_id}` / `{external_order_id}` | Client's external order id (aliases). |
 | `{patient_name}` | Full name. |
 | `{patient_salutation}` | Salutation. |
-| `{patient_age}` | Full age: `25 Years, 4 Months, 12 Days` when DOB is known; single-unit fallback (e.g. `25 Years`) otherwise, or blank when age is unknown. |
+| `{patient_age}` | One unit from the DOB as of today: 0-29 days → `15 Days`, under 1 year → `6 Months`, else `25 Years`. Stored age/age-type fallback when DOB is missing, or blank when age is unknown. |
 | `{patient_gender}` | Gender label. |
 | `{patient_um_id}` | UHID. |
 | `{patient_mobile}` | Mobile. |
@@ -511,12 +511,19 @@ their tag lists are identical.
 | `{report_approved_by_certifications}` | Comma-joined certs (NABL/CAP/ISO). |
 | `{report_approved_by_signature}` | Signature image URL. |
 | `{patient_image}` | Patient photo URL. |
-| `{order_id_barcode}` | Order barcode **value** (text). |
-| `{order_id_qr_code}` | Order barcode/QR **image URL**. |
+| `{order_id_barcode}` | Code 128 barcode **image** of the Order ID (`Order.orderIdBarcode`). |
+| `{order_id_qr_code}` | Code 128 barcode **image** of the Sample ID (this report's `OrderSample.barcode`) — a barcode despite the name. |
 | `{test_file_attachment}` | The PDF(s) uploaded with this test's Test Entry **File +** button, drawn in place (see below). Empty when the test has none. |
 
 **Image tags** (`{{image:key}}`): `report_approved_by_signature`,
-`patient_image`, `order_id_qr_code`.
+`patient_image`, `order_id_barcode`, `order_id_qr_code`.
+
+**Barcode tags.** `order_id_barcode` and `order_id_qr_code` hold a
+`data:image/png;base64,…` src rendered from the ID, so all three forms print the
+same barcode image: `{order_id_qr_code}` (bare, in text), `{{image:order_id_qr_code}}`
+and `<img src="{order_id_qr_code}" alt="…">`. The other image-valued tags
+(`patient_image`, `report_approved_by_signature`) still print their URL when
+written bare.
 
 **`{test_file_attachment}` — File+ PDF attachment.** Prints the PDF(s) a
 technician uploaded for **this test** with the Test Entry screen's **File +**
@@ -617,7 +624,7 @@ The context is:
 | `header_image` | Letterhead image (currently empty). |
 | `patient.salutation` | Salutation. |
 | `patient.full_name` | Full name. |
-| `client_age` | Full age: `25 Years, 4 Months, 12 Days` when DOB is known; single-unit fallback otherwise. |
+| `client_age` | Same one-unit age as `{patient_age}` (0-29 days → Days, under 1 year → Months, else Years). |
 | `client_gender` | Single-char gender. |
 | `client_phone` | Mobile. |
 | `client_uhid` | UHID. |
@@ -625,8 +632,8 @@ The context is:
 | `sample_source_label` | In-House / Supplied. |
 | `refer_by_name` | Referring doctor (or ` -- `). |
 | `referring_panel_name` | Referring panel (or ` -- `). |
-| `order_date_time` | Order date/time. |
-| `order_id_barcode` | Order QR/barcode image URL. |
+| `order_date_time` | Order date/time — typed order time, else the order's creation time (tenant timezone). |
+| `order_id_barcode` | Code 128 barcode image src (`data:` URI) of the Order ID (`Order.orderIdBarcode`). |
 
 **`report_tests.tests[]` (one per test):**
 

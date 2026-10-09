@@ -461,3 +461,103 @@ describe('TemplateRenderService — {test_file_attachment}', () => {
     expect(bodyHtml).toContain(`[${embed}]`);
   });
 });
+
+describe('TemplateRenderService — barcode image tags', () => {
+  const service = new TemplateRenderService();
+  const ORDER_SRC = 'data:image/png;base64,T1JERVI=';
+  const SAMPLE_SRC = 'data:image/png;base64,U0FNUExF';
+  // The shape `LabReportService.buildPrintContext` emits: each barcode is an
+  // image src in BOTH `variables` and `images`.
+  const ctx: GeneratePdfDto = {
+    variables: {
+      order_id_barcode: ORDER_SRC,
+      order_id_qr_code: SAMPLE_SRC,
+      patient_image: 'https://cdn/p.png',
+    },
+    images: {
+      order_id_barcode: ORDER_SRC,
+      order_id_qr_code: SAMPLE_SRC,
+      patient_image: 'https://cdn/p.png',
+    },
+  };
+
+  it('renders a bare {order_id_qr_code} in text as an <img>', () => {
+    const { bodyHtml } = service.render(
+      meta({ body_html: '<p>Sample: {order_id_qr_code}</p>' }),
+      ctx,
+    );
+    expect(bodyHtml).toContain(
+      `<p>Sample: <img src="${SAMPLE_SRC}" alt="order_id_qr_code" /></p>`,
+    );
+  });
+
+  it('renders all three forms of a tag as the same image', () => {
+    const { bodyHtml } = service.render(
+      meta({
+        body_html:
+          '<div id="a">{order_id_qr_code}</div><div id="b">{{image:order_id_qr_code}}</div><div id="c"><img src="{order_id_qr_code}" alt="A descriptive text of the image"></div>',
+      }),
+      ctx,
+    );
+    expect(bodyHtml.split(SAMPLE_SRC)).toHaveLength(4);
+    expect(bodyHtml).toContain(
+      `<img src="${SAMPLE_SRC}" alt="A descriptive text of the image">`,
+    );
+    expect(bodyHtml).not.toContain(ORDER_SRC);
+    expect(bodyHtml).not.toContain('{order_id_qr_code}');
+  });
+
+  it('keeps the order and sample barcodes on their own tags', () => {
+    const { bodyHtml } = service.render(
+      meta({
+        body_html:
+          '[O]{order_id_barcode}{{image:order_id_barcode}}[S]{order_id_qr_code}',
+      }),
+      ctx,
+    );
+    const [, orderPart = '', samplePart = ''] = bodyHtml.split(/\[O\]|\[S\]/);
+    expect(orderPart.split(ORDER_SRC)).toHaveLength(3);
+    expect(orderPart).not.toContain(SAMPLE_SRC);
+    expect(samplePart).toContain(SAMPLE_SRC);
+    expect(samplePart).not.toContain(ORDER_SRC);
+  });
+
+  it('renders bare barcode tags in the header template too (case-insensitive)', () => {
+    const { headerTemplate } = service.render(
+      meta({ header_html: '<span>{ORDER_ID_BARCODE}</span>' }),
+      ctx,
+    );
+    expect(headerTemplate).toContain(
+      `<span><img src="${ORDER_SRC}" alt="order_id_barcode" /></span>`,
+    );
+  });
+
+  it('leaves other image-valued tags printing their URL when bare', () => {
+    const { bodyHtml } = service.render(
+      meta({ body_html: '<p>{patient_image}</p>' }),
+      ctx,
+    );
+    expect(bodyHtml).toContain('<p>https://cdn/p.png</p>');
+  });
+
+  it('renders blank (not a broken image) when the barcode is unset', () => {
+    const { bodyHtml } = service.render(
+      meta({
+        body_html: '<p>[{order_id_barcode}][{{image:order_id_barcode}}]</p>',
+      }),
+      {
+        variables: { order_id_barcode: '' },
+        images: { order_id_barcode: '' },
+      },
+    );
+    expect(bodyHtml).toContain('<p>[][]</p>');
+  });
+
+  it('leaves the tags alone for a context without the image (other template types)', () => {
+    const { bodyHtml } = service.render(
+      meta({ body_html: '<p>{order_id_barcode}</p>' }),
+      { variables: { order_code: 'ORD-1' } },
+    );
+    expect(bodyHtml).toContain('<p>{order_id_barcode}</p>');
+  });
+});

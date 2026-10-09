@@ -5,6 +5,9 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
 import { getReferralPanelId } from '../../prisma/tenant-context';
 import { PaginatedResult } from '../../common/dto/response.dto';
+import { roundToTwoDecimalPlaces } from '../../common/utils';
+import { recomputeBillStatusInTx } from '../order/utils/bill-status';
+import { assertQuoteTakesNoNewMoney } from '../order/utils/quote-payment';
 import {
   derivePaymentStatus,
   computeEffectivePaid,
@@ -142,6 +145,8 @@ export class PaymentDetailsService {
     if (order.status === OrderStatus.CANCELLED) {
       throw new PaymentOrderCancelledException(dto.orderId);
     }
+    // A quotation is an estimate, not a bill — it cannot take a payment.
+    assertQuoteTakesNoNewMoney(order.status, dto.paidAmount ?? 0);
     await this.assertCanCollect(tenantId, order, personId);
     // "Settle payment of other users": collecting on an order created by someone
     // else additionally requires the permission (layered on top of the branch
@@ -181,7 +186,12 @@ export class PaymentDetailsService {
         agg._sum.refundAmount?.toNumber() ?? 0,
         agg._sum.refundCharge?.toNumber() ?? 0,
       );
-      const pending = (agg._sum.netAmount?.toNumber() ?? 0) - effectivePaid;
+      // Round to 2dp before comparing: `netAmount − effectivePaid` in float can
+      // land at e.g. 666.5999999… and wrongly reject an exact 666.60 payment of a
+      // balance that contains paise. Whole-rupee balances are unaffected.
+      const pending = roundToTwoDecimalPlaces(
+        (agg._sum.netAmount?.toNumber() ?? 0) - effectivePaid,
+      );
       const attempted = dto.paidAmount ?? 0;
       if (attempted > pending) {
         throw new PaymentOverpaymentException(pending, attempted);
@@ -283,6 +293,18 @@ export class PaymentDetailsService {
   ): Promise<PaymentDetailsEntity> {
     const existing = await this.findById(id, tenantId);
     await this.assertCanCollectForOrder(tenantId, existing.orderId, personId);
+    // Raising a payment on a quotation is refused (lowering/keeping is fine).
+    if (dto.paidAmount !== undefined) {
+      const owner = await this.prisma.order.findFirst({
+        where: { id: existing.orderId, tenantId, deletedAt: null },
+        select: { status: true },
+      });
+      assertQuoteTakesNoNewMoney(
+        owner?.status,
+        dto.paidAmount,
+        existing.paidAmount ?? 0,
+      );
+    }
     const { paymentDate, ...rest } = dto;
     return this.prisma.withTenant(tenantId, async (tx) => {
       const row = await tx.paymentDetails.update({
@@ -362,5 +384,7 @@ export class PaymentDetailsService {
       where: { id: orderId },
       data: { paymentStatus: derivePaymentStatus(net, effectivePaid) },
     });
+    // Keep the Billings list Status (badge + filter) in step with the ledger.
+    await recomputeBillStatusInTx(tx, tenantId, orderId);
   }
 }

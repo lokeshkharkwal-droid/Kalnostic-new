@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { timestampRange } from '../../common/utils/date-range.util';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PDFDocument } from 'pdf-lib';
 import {
@@ -21,12 +22,12 @@ import { getReferralPanelId } from '../../prisma/tenant-context';
 import {
   genderLabel,
   salutationLabel,
-  patientFullAgeDisplay,
+  patientReportAgeDisplay,
   sampleSourceLabel,
   toBranchLocalInstant,
   formatReportDateTime,
-  formatTenantDate,
-  formatOrderDateTime,
+  formatOrderPrintDate,
+  formatOrderPrintDateTime,
   buildEvaluationOrder,
   evaluateFormula,
   formatCalculatedValue,
@@ -109,7 +110,8 @@ import {
   LabReportNotFoundException,
   LabTestCatalogueMissingException,
   InvalidResultParamException,
-  UnlockNotPermittedException,
+  LabReportAlreadyLockedException,
+  LabReportNotLockedException,
   NoActivePrintTemplateException,
   OrderReportsNotFoundException,
   ReportingWindowClosedException,
@@ -126,16 +128,34 @@ import {
   findSentOutReportIds,
 } from './utils/sent-out-report.util';
 import { VALIDATED_REPORT_STATUSES } from './utils/validated-report.util';
+import {
+  PRINTABLE_REPORT_STATUSES,
+  isReportPrintable,
+  pendingResultRow,
+} from './utils/print-visibility.util';
+import {
+  buildReportBarcodeTags,
+  pickReportSample,
+} from './utils/print-barcode.util';
+import { code128DataUri } from '../../common/utils/barcode-image.util';
+import { TatService } from './tat.service';
+import {
+  ruleWhere,
+  usableRules,
+  type WorklistBranchScope,
+} from './access/worklist-branch-scope';
 
 /**
  * Note categories that describe a report's RESULTS (the technician's own notes and
  * the automatic notes written alongside worklist entries). They are hidden when a
  * test goes back for a repeat. ORDER and SAMPLE notes are order-wide by design and
- * stay.
+ * stay. `UNLOCK` belongs with `LOCK`: it is the other half of the lock history of
+ * the result that was cleared.
  */
 const RESULT_BOUND_NOTE_CATEGORIES: LabReportNoteCategory[] = [
   LabReportNoteCategory.TECH,
   LabReportNoteCategory.LOCK,
+  LabReportNoteCategory.UNLOCK,
   LabReportNoteCategory.DELTA,
   LabReportNoteCategory.CRITICAL_ALERT,
   LabReportNoteCategory.OUT_OF_RANGE,
@@ -146,17 +166,6 @@ const RESULT_BOUND_NOTE_CATEGORIES: LabReportNoteCategory[] = [
   LabReportNoteCategory.UPDATE_STATUS,
   LabReportNoteCategory.MULTI_STEP,
 ];
-import {
-  PRINTABLE_REPORT_STATUSES,
-  isReportPrintable,
-  pendingResultRow,
-} from './utils/print-visibility.util';
-import { TatService } from './tat.service';
-import {
-  ruleWhere,
-  usableRules,
-  type WorklistBranchScope,
-} from './access/worklist-branch-scope';
 
 /**
  * Technician Reporting core module: worklist, Test Entry (result values), and
@@ -875,12 +884,9 @@ export class LabReportService {
     // Standalone "Outsource" checkbox (distinct from the source pill above) —
     // same underlying signal, only ever narrows to outsourced items when checked.
     if (filters.outsource) where.isOutsourced = true;
-    if (filters.dateFrom || filters.dateTo) {
-      where.createdAt = {
-        ...(filters.dateFrom ? { gte: new Date(filters.dateFrom) } : {}),
-        ...(filters.dateTo ? { lte: new Date(filters.dateTo) } : {}),
-      };
-    }
+    // A day-only `dateTo` covers that whole day (see `timestampRange`).
+    const createdAtRange = timestampRange(filters.dateFrom, filters.dateTo);
+    if (createdAtRange) where.createdAt = createdAtRange;
 
     const orderItem: Prisma.OrderItemWhereInput = {};
     // The "Lab Test"/"Lab Panel" filter's id may be either a specific
@@ -1078,6 +1084,7 @@ export class LabReportService {
     worklistRows = await this.attachResultTypes(worklistRows);
     worklistRows = await this.attachSampleStatuses(tenantId, worklistRows);
     worklistRows = await this.attachAccessMode(tenantId, scope, worklistRows);
+    worklistRows = await this.attachLockedByNames(worklistRows);
 
     // Analytical-TAT band per row (SRS §6.2/§8): frozen snapshot for approved
     // reports, live compute for in-flight ones — batched over the whole page.
@@ -2060,6 +2067,21 @@ export class LabReportService {
   }
 
   /**
+   * Resolve `lockedBy` (a `Person.id`) to a display name for locked rows: one
+   * batched lookup, and none at all when nothing in the page is locked.
+   */
+  private async attachLockedByNames(
+    rows: LabReportWorklistRow[],
+  ): Promise<LabReportWorklistRow[]> {
+    const lockedIds = rows.map((r) => r.lockedBy).filter((v) => !!v);
+    if (lockedIds.length === 0) return rows;
+    const names = await resolveActorNames(this.prisma, lockedIds);
+    return rows.map((r) =>
+      r.lockedBy ? { ...r, lockedByName: names.get(r.lockedBy) ?? null } : r,
+    );
+  }
+
+  /**
    * Flattens `findById`'s raw nested tree into the same flat branch/
    * department/order/patient/referredByDoctor/referralPanel/test shape the
    * list endpoint (`findAll` -> `toWorklistRow` + attach* resolvers) already
@@ -2091,6 +2113,7 @@ export class LabReportService {
     worklistRow = (await this.attachMemberTestNames([worklistRow]))[0]!;
     worklistRow = (await this.attachResultTypes([worklistRow]))[0]!;
     worklistRow = (await this.attachMultiStepProcess([worklistRow]))[0]!;
+    worklistRow = (await this.attachLockedByNames([worklistRow]))[0]!;
 
     return {
       ...worklistRow,
@@ -2444,15 +2467,24 @@ export class LabReportService {
   }
 
   /**
-   * The report as seen by the active branch, ready to be worked on. Writes (the
-   * default) are refused while the report's sample is sent to another branch
-   * (view-only until received or returned); `forRead` skips only that lock.
+   * The report as seen by the active branch, ready to be worked on. Two separate
+   * gates apply to writes (the default):
+   *  - the write locks: refused while the report's sample is sent to another
+   *    branch (view-only until received or returned), its order is cancelled, or
+   *    its sample is not accepted yet. `forRead` skips only these.
+   *  - the technician's own Lock: a locked report is refused (409) unless
+   *    `allowLocked` is set - which only READ paths use (e.g. the notes tabs, which
+   *    the Test Entry popup loads when it opens a locked test so it can be unlocked).
    */
   private async requireReport(
     id: string,
     tenantId: string,
     branchId: string,
-    opts: { forRead?: boolean; allowAwaitingSample?: boolean } = {},
+    opts: {
+      forRead?: boolean;
+      allowAwaitingSample?: boolean;
+      allowLocked?: boolean;
+    } = {},
   ) {
     const report = await this.prisma.labReport.findFirst({
       where: { id, tenantId, branchId, deletedAt: null },
@@ -2465,7 +2497,9 @@ export class LabReportService {
         allowAwaitingSample: opts.allowAwaitingSample,
       });
     }
-    if (report.isLocked) throw new LabReportLockedException(id);
+    if (report.isLocked && !opts.allowLocked) {
+      throw new LabReportLockedException(id);
+    }
 
     // Safety net (see LabReportSampleMissingException's own doc comment for
     // why this should never fire for a genuine report, and what it guards
@@ -3445,30 +3479,45 @@ export class LabReportService {
 
     // The sample this report's test was drawn from — `OrderSampleTest`/
     // `OrderSample` are raw FKs (no Prisma relation field on `LabReport`),
-    // resolved via the same `orderItemId` `LabReport` already carries.
-    // Per-(test × sample) generation means at most one active row.
-    const sampleTest = await this.prisma.orderSampleTest.findFirst({
-      where: { orderItemId: report.orderItemId, deletedAt: null },
-      // After an internal transfer an item has two live samples (the sender's
-      // original and the receiver's copy, which carries no collection dates;
-      // the barcode is shared): prefer the original, so a transferred test
-      // keeps its dates.
-      orderBy: { createdAt: 'asc' },
+    // resolved via the same `orderItemId` `LabReport` already carries. A panel
+    // item links every member test's samples to the one `orderItemId`, so a
+    // panel member is narrowed by its `labTestId` (same scoping as
+    // `attachSampleStatuses`); a multi-tube test can still have several rows,
+    // so the oldest one carrying a barcode wins (`pickReportSample`). After an
+    // internal transfer an item has two live samples (the sender's original and
+    // the receiver's copy, which carries no collection dates; the barcode is
+    // shared): oldest-first prefers the original, so a transferred test keeps its
+    // dates. Feeds the `sample_*` tags and the Sample ID barcode
+    // (`{order_id_qr_code}`).
+    const sampleLinks = await this.prisma.orderSampleTest.findMany({
+      where: {
+        tenantId,
+        orderItemId: report.orderItemId,
+        deletedAt: null,
+        ...(report.memberBranchLabTestId && report.labTestId
+          ? { labTestId: report.labTestId }
+          : {}),
+      },
+      orderBy: { sample: { createdAt: 'asc' } },
       select: {
         sample: {
           select: {
             collectedAt: true,
             receivedAt: true,
             sampleType: true,
-            sampleGroupLabel: true,
-            containerType: true,
             barcode: true,
-            orderIdBarcode: true,
           },
         },
       },
     });
-    const sample = sampleTest?.sample;
+    const sample = pickReportSample(sampleLinks);
+    const barcodeTags = buildReportBarcodeTags(
+      order.orderIdBarcode,
+      sample?.barcode,
+    );
+    // "Today" on the branch's calendar — `{patient_age}` is the age as of the
+    // print date, and a raw UTC `now` is still yesterday before 05:30 IST.
+    const localNow = toBranchLocalInstant(new Date(), timezone);
 
     // `sample_source_label` is the order-level Sample Source (In-House /
     // Supplied) from `OrderDiagnostics`, not anything on `OrderSample` — a
@@ -3613,13 +3662,14 @@ export class LabReportService {
     return {
       variables: {
         order_code: order.orderCode,
-        order_date: formatTenantDate(order.orderDate, dateFormat),
-        // Combines the date-only `orderDate` with the separately-captured
-        // `orderTime` ("HH:mm") into one date+time display value, matching the
-        // `{collected_at}` label format (shared `formatOrderDateTime` helper).
-        order_date_time: formatOrderDateTime(
-          order.orderDate,
-          order.orderTime,
+        // The order's real date/time: the operator-entered `orderTime` when
+        // one was typed, else the order's creation instant (`createdAt`) in the
+        // tenant timezone — `orderTime` is usually unset, which used to print
+        // every order at `12:00 AM`. See `resolveOrderLocalDateTime`.
+        order_date: formatOrderPrintDate(order, timezone, dateFormat),
+        order_date_time: formatOrderPrintDateTime(
+          order,
+          timezone,
           dateFormat,
           timeFormat,
         ),
@@ -3632,12 +3682,13 @@ export class LabReportService {
           .filter(Boolean)
           .join(' '),
         patient_salutation: patient.salutation ?? '',
-        // Full age (Years, Months, Days) from DOB; single-unit (age/ageType)
-        // fallback when DOB is absent.
-        patient_age: patientFullAgeDisplay(
+        // Single unit from DOB as of today: 0-29 days → Days, under 1 year →
+        // Months, else Years; stored age/ageType fallback when DOB is absent.
+        patient_age: patientReportAgeDisplay(
           patient.dateOfBirth ?? null,
           patient.age,
           patient.ageType,
+          localNow,
         ),
         patient_gender: genderLabel(patient.gender),
         patient_um_id: patient.umId ?? '',
@@ -3687,14 +3738,14 @@ export class LabReportService {
         // Flat `{patient_image}` prints the URL; `{{image:patient_image}}`
         // auto-renders an <img> via the images map below.
         patient_image: patient.photoUrl ?? '',
-        // Order-level barcode (generated at order creation) — the VALUE and the
-        // rendered image URL. `{order_id_barcode}` prints the value;
-        // `{order_id_qr_code}` holds the S3 image URL (usable as
-        // `<img src="{order_id_qr_code}">` or auto-rendered via the images map
-        // below as `{{image:order_id_qr_code}}`). Despite the tag name it is a
-        // barcode image, not a QR code.
-        order_id_barcode: order.orderIdBarcode ?? '',
-        order_id_qr_code: order.orderIdQrCode ?? '',
+        // Code 128 barcode images (data URIs), rendered from the IDs:
+        // `{order_id_barcode}` = Order ID (`Order.orderIdBarcode`),
+        // `{order_id_qr_code}` = Sample ID (this report's `OrderSample.barcode`
+        // — a barcode despite the tag name). Each renders as an image whether
+        // written `{tag}`, `{{image:tag}}` (images map below) or
+        // `<img src="{tag}">` — see `resolveBareImageTags`.
+        order_id_barcode: barcodeTags.order_id_barcode,
+        order_id_qr_code: barcodeTags.order_id_qr_code,
         sample_note: sampleNote?.body ?? '',
         // `{test_file_attachment}` — the PDF(s) uploaded via this test's
         // "File +" button, as `<embed>` markup (printed unescaped, see
@@ -3703,15 +3754,16 @@ export class LabReportService {
           ? ''
           : buildTestFileAttachmentHtml(report.attachments),
       },
-      // Backs the `{{image:ID}}` tokens for the same three image-valued
-      // fields above — `TemplateRenderService.interpolateImages` resolves
-      // those tokens against this map only (never against `variables`), so
-      // without these entries the tags render blank regardless of template
-      // or environment.
+      // Backs the `{{image:ID}}` tokens (and the bare barcode tags) for the
+      // image-valued fields above — `TemplateRenderService.interpolateImages`
+      // resolves those tokens against this map only (never against
+      // `variables`), so without these entries the tags render blank
+      // regardless of template or environment.
       images: {
         report_approved_by_signature: approver?.signatureImage ?? '',
         patient_image: patient.photoUrl ?? '',
-        order_id_qr_code: order.orderIdQrCode ?? '',
+        order_id_barcode: barcodeTags.order_id_barcode,
+        order_id_qr_code: barcodeTags.order_id_qr_code,
       },
       sections: { results },
       signatories,
@@ -4002,10 +4054,12 @@ export class LabReportService {
           patient.lastName,
         ]),
       },
-      client_age: patientFullAgeDisplay(
+      // Same single-unit report age as `{patient_age}` (see buildPrintContext).
+      client_age: patientReportAgeDisplay(
         patient.dateOfBirth ?? null,
         patient.age,
         patient.ageType,
+        toBranchLocalInstant(new Date(), timezone),
       ),
       // Raw M/F/O code (templates test `client_gender == 'M'`).
       client_gender: patient.gender
@@ -4024,17 +4078,17 @@ export class LabReportService {
           ])
         : ' -- ',
       referring_panel_name: order.referralPanel?.name ?? ' -- ',
-      // Order date + operator-entered order time (combines `orderDate` +
-      // `orderTime`, matching `{collected_at}`); the previous version formatted
-      // the date-only `orderDate` alone, so the time always read `12:00 AM`.
-      order_date_time: formatOrderDateTime(
-        order.orderDate,
-        order.orderTime,
+      // Same resolution as the single report's `{order_date_time}`: typed
+      // `orderTime`, else the order's `createdAt` in the tenant timezone.
+      order_date_time: formatOrderPrintDateTime(
+        order,
+        timezone,
         dateFormat,
         timeFormat,
       ),
-      // Barcode IMAGE url (templates use it as `<img src=…>`).
-      order_id_barcode: order.orderIdQrCode ?? '',
+      // Order ID barcode IMAGE src (Code 128 data URI of
+      // `Order.orderIdBarcode`; templates use it as `<img src=…>`).
+      order_id_barcode: code128DataUri(order.orderIdBarcode),
     };
 
     // Per-report body + dates, reusing the single-report context builder.
@@ -5392,6 +5446,9 @@ export class LabReportService {
     });
     if (!report) throw new LabReportNotFoundException(id);
     await assertReportWritable(this.prisma, tenantId, id);
+    // A locked test cannot be worked on, not even re-run, until it is unlocked
+    // (otherwise it resets to Pending yet stays locked and cannot be entered).
+    if (report.isLocked) throw new LabReportLockedException(id);
 
     return this.prisma.withTenant(tenantId, async (tx) => {
       await this.lockReportForWrite(tx, tenantId, id);
@@ -5436,6 +5493,37 @@ export class LabReportService {
 
   // ── Lock / Unlock ───────────────────────────────────────────────────────────
 
+  /**
+   * One place that records a lock or an unlock as a note row (category `LOCK` /
+   * `UNLOCK`): who (`createdBy`), when (`createdAt`) and, for a lock, the
+   * reason. Written for EVERY lock/unlock, even with no reason, so the history
+   * survives `unlock` clearing the report's own lock fields. If this ever moves to
+   * a dedicated lock-history table, change it here only.
+   */
+  private async recordLockEvent(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    labReportId: string,
+    kind: 'LOCK' | 'UNLOCK',
+    actorId: string,
+    reason?: string,
+  ) {
+    await tx.labReportNote.create({
+      data: {
+        tenantId,
+        labReportId,
+        category: kind,
+        body: reason ?? '',
+        createdBy: actorId,
+      },
+    });
+  }
+
+  /**
+   * Lock a report against further work. Refused (409) when it is already locked,
+   * so a second lock can never overwrite who locked it and why. A reason that is
+   * only blank spaces counts as no reason. The reason is stored exactly as typed.
+   */
   async lock(
     id: string,
     tenantId: string,
@@ -5449,47 +5537,44 @@ export class LabReportService {
     });
     if (!report) throw new LabReportNotFoundException(id);
     await assertReportWritable(this.prisma, tenantId, id);
+    const reason = notes && notes.trim() ? notes : undefined;
 
     return this.prisma.withTenant(tenantId, async (tx) => {
       await this.lockReportForWrite(tx, tenantId, id);
-      const updated = await tx.labReport.update({
-        where: { id },
+      // Compare-and-set on `isLocked` so two simultaneous locks cannot both win.
+      const { count } = await tx.labReport.updateMany({
+        where: {
+          id,
+          tenantId,
+          branchId: activeBranchId,
+          deletedAt: null,
+          isLocked: false,
+        },
         data: {
           isLocked: true,
           lockedAt: new Date(),
           lockedBy: actorId,
-          lockNotes: notes,
+          lockNotes: reason ?? null,
         },
       });
-      if (notes) {
-        await tx.labReportNote.create({
-          data: {
-            tenantId,
-            labReportId: id,
-            category: 'LOCK',
-            body: notes,
-            createdBy: actorId,
-          },
-        });
-      }
-      return updated;
+      if (count === 0) throw new LabReportAlreadyLockedException(id);
+      await this.recordLockEvent(tx, tenantId, id, 'LOCK', actorId, reason);
+      return tx.labReport.findUniqueOrThrow({ where: { id } });
     });
   }
 
   /**
-   * Unlock requires the caller to hold the `lab_operations:lock_override`
-   * permission (supervisor-gated) — checked in the controller via
-   * `usePermissions`-equivalent guard, NOT here. This method assumes the
-   * caller has already been authorized (see the `canUnlock` param and the
-   * TODO on the controller route).
+   * Unlock a locked report. Authorised in the controller by the same permission
+   * as Lock Test (whoever can lock can unlock). Clears the report's lock fields,
+   * but the lock/unlock history stays as `LOCK` / `UNLOCK` note rows. Refused
+   * (409) when the report is not locked.
    */
   async unlock(
     id: string,
     tenantId: string,
     branchId: string | null,
-    canUnlock: boolean,
+    actorId: string,
   ) {
-    if (!canUnlock) throw new UnlockNotPermittedException();
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.prisma.labReport.findFirst({
       where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
@@ -5497,14 +5582,25 @@ export class LabReportService {
     if (!report) throw new LabReportNotFoundException(id);
     await assertReportWritable(this.prisma, tenantId, id);
 
-    return this.prisma.labReport.update({
-      where: { id },
-      data: {
-        isLocked: false,
-        lockedAt: null,
-        lockedBy: null,
-        lockNotes: null,
-      },
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const { count } = await tx.labReport.updateMany({
+        where: {
+          id,
+          tenantId,
+          branchId: activeBranchId,
+          deletedAt: null,
+          isLocked: true,
+        },
+        data: {
+          isLocked: false,
+          lockedAt: null,
+          lockedBy: null,
+          lockNotes: null,
+        },
+      });
+      if (count === 0) throw new LabReportNotLockedException(id);
+      await this.recordLockEvent(tx, tenantId, id, 'UNLOCK', actorId);
+      return tx.labReport.findUniqueOrThrow({ where: { id } });
     });
   }
 
@@ -5615,8 +5711,11 @@ export class LabReportService {
     query: ListLabReportNotesDto,
   ) {
     const activeBranchId = this.requireBranch(branchId);
+    // Reading notes is allowed on a locked test (adding one is not - see createNote)
+    // and on a sent-out / cancelled one (a read, not a write).
     await this.requireReport(id, tenantId, activeBranchId, {
       forRead: true,
+      allowLocked: true,
     });
     const reportIds = await this.siblingReportIds(id, tenantId, activeBranchId);
 

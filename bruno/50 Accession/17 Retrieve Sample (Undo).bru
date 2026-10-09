@@ -20,7 +20,9 @@ auth:bearer {
 
 body:json {
   {
-    "notes": "Recalled the sample"
+    "retrievedFrom": "Main Lab",
+    "notes": "Recalled the sample",
+    "attachmentUrl": ""
   }
 }
 
@@ -31,8 +33,30 @@ tests {
 }
 
 docs {
-  Retrieve / Retry (§A.7/§A.10.19) — the **universal undo**. Reverts a transferred
-  sample (Sent / Forward / Outsourced / Returned) back to **Accepted**, and any
-  other status back to its recorded `previousStatus`. Also **recalls** any still-
-  open transfer for the sample (marks it `REJECTED` — "Recalled via Retrieve").
+  Retrieve / Retry (§A.7/§A.10.19) — the **universal undo**. Moves the sample back
+  to its **immediately-previous status from its own history**: the `fromStatus` of
+  the most recent NON-retrieve transition INTO the current status. Repeated
+  retrieves therefore walk the real timeline (New → Collected → Accepted ⇒
+  Accepted → Collected → New), rather than oscillating on a single stored previous
+  status. A sample with **no prior history** (just created, or already back at its
+  first status) is a no-op — the transition is "invalid", so a bulk call with
+  `skipInvalid` skips it gracefully instead of forcing a status. A transferred
+  sample (Sent / Forward / Outsourced / Returned) reverts to **Accepted** via the
+  §A.9 send/forward/outsource history row.
+
+  **Cross-branch recall** — pulling a Sent / Forwarded / Outsourced sample back
+  (Retrieve, or Repeat) unwinds the whole transfer so no stale record is left in the
+  receiving branch: every open transfer is **soft-deleted** (deletedAt) so it leaves
+  both branches' Referral / Outsource queues (which filter `deletedAt IS NULL`), and
+  for an **accepted INTERNAL** transfer the destination clone it created (RULE 1) is
+  soft-deleted and its lab report(s) moved back to the origin branch. The source
+  sample's `processingBranchId` is reset to its origin and the dispatch fields cleared.
+
+  Body (all optional): `retrievedFrom` (station / lab the sample is retrieved from —
+  stored on the retrieve history row's `reason`), `notes`, `attachmentUrl`.
+
+  The bulk twin is `POST /accession/order-samples/bulk/retrieve` with `{ "ids": [...],
+  "retrievedFrom"?, "notes"?, "attachmentUrl"?, "skipInvalid"? }` — the grouped
+  in-house page's "Retrieve All" stepping modal sends each group's `sampleIds` with
+  `skipInvalid: true` (samples not in a retrievable state are skipped).
 }

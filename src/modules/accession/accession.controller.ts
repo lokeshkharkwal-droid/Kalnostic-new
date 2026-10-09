@@ -25,6 +25,7 @@ import { DiscardSampleDto } from './dto/discard-sample.dto';
 import { CancelSampleDto } from './dto/cancel-sample.dto';
 import { RepeatSampleDto } from './dto/repeat-sample.dto';
 import { ReturnSampleDto } from './dto/return-sample.dto';
+import { RetrieveSampleDto } from './dto/retrieve-sample.dto';
 import { AssignBarcodeDto } from './dto/assign-barcode.dto';
 import { ShareSampleDto } from './dto/share-sample.dto';
 import {
@@ -34,6 +35,7 @@ import {
   BulkCollectDto,
   BulkDiscardDto,
   BulkRepeatDto,
+  BulkRetrieveDto,
   BulkReturnDto,
   BulkSampleNoteDto,
   BulkStoreDto,
@@ -85,14 +87,24 @@ export class AccessionController {
     );
   }
 
-  /** Summary counts for the status tabs (§A.5) + TAT bar (§A.4) + total. */
+  /**
+   * Summary counts for the status tabs (§A.5) + TAT bar (§A.4) + total. Takes the
+   * list's filters (date range, search, …) so the counts match what the list
+   * shows; `status`, `tatStatus` and paging are accepted but ignored.
+   */
   @Get('summary')
   summary(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
     @CurrentUser('person_id') personId: string,
+    @Query() query: ListSamplesDto,
   ) {
-    return this.sampleService.summary(tenantId, profile.branchId, personId);
+    return this.sampleService.summary(
+      tenantId,
+      profile.branchId,
+      personId,
+      query,
+    );
   }
 
   /**
@@ -327,7 +339,7 @@ export class AccessionController {
   bulkRetrieve(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
-    @Body() dto: BulkSampleNoteDto,
+    @Body() dto: BulkRetrieveDto,
   ) {
     return this.sampleService.retrieve(dto.ids, tenantId, personId, dto);
   }
@@ -552,7 +564,7 @@ export class AccessionController {
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
     @Param('id') id: string,
-    @Body() dto: SampleNoteDto,
+    @Body() dto: RetrieveSampleDto,
   ) {
     return (
       await this.sampleService.retrieve([id], tenantId, personId, dto)

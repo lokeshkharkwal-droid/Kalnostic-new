@@ -36,4 +36,20 @@ docs {
   report with the Test Entry "File +" button (`LabReportAttachment.kind =
   'file'`), drawn in place page by page. To try it, attach one first with
   `16 Create Report Attachment` (`kind: "file"`, a `.pdf` `fileUrl`).
+
+  Tag notes:
+  - `{patient_age}` — one unit from the DOB as of today (tenant timezone):
+    0-29 days → `N Days`, under 1 year → `N Months`, else `N Years`. Falls
+    back to the stored age/age type when the patient has no DOB.
+  - `{order_date}` / `{order_date_time}` — the operator-entered order time
+    when one was typed (with the order date), else the order's `createdAt`
+    in the tenant timezone (e.g. `01/10/2026 2:24 PM`). A back/advance-dated
+    order with no typed time prints its date only.
+  - `{order_id_barcode}` — Code 128 barcode IMAGE of the Order ID
+    (`Order.orderIdBarcode`).
+  - `{order_id_qr_code}` — Code 128 barcode IMAGE of the Sample ID (this
+    report's `OrderSample.barcode`; a barcode despite the tag name).
+  - Both barcode tags render the same image whether written `{tag}`,
+    `{{image:tag}}` or `<img src="{tag}" alt="…">` (the value is a
+    `data:image/png;base64,…` URI rendered from the ID).
 }

@@ -1,0 +1,49 @@
+meta {
+  name: Update Cancelled Order (409)
+  type: http
+  seq: 40
+}
+
+patch {
+  url: {{baseUrl}}/orders/{{cancelledOrderId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "orderNotes": "should be rejected"
+  }
+}
+
+vars:pre-request {
+  cancelledOrderId: 00000000-0000-0000-0000-000000000000
+}
+
+tests {
+  test("409 Conflict", function () {
+    expect(res.getStatus()).to.equal(409);
+  });
+  test("error code is ORDER_ALREADY_CANCELLED", function () {
+    expect(res.getBody().error.code).to.equal("ORDER_ALREADY_CANCELLED");
+  });
+}
+
+docs {
+  A cancelled order is terminal — any `PATCH /orders/:id` is refused with 409
+  `ORDER_ALREADY_CANCELLED`. Reviving a cancelled order would leave its
+  cancellation charge, refunds and released phlebotomist slot inconsistent, so the
+  guard runs up front (mirrors the `cancel()` guard and the invoice-lock guard).
+
+  Prereq: set `cancelledOrderId` to an order already in status `CANCELLED` (cancel
+  one via `PATCH /orders/:id/cancel` first). The frontend also disables the
+  "Update Order" action for rows whose `status === "Cancelled"`.
+}

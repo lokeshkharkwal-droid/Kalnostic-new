@@ -1,12 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { createCanvas } from '@napi-rs/canvas';
-import JsBarcode from 'jsbarcode';
 import {
   AccessionBarcodeResetCycle,
   AccessionBarcodeSeparator,
   Prisma,
 } from '@prisma/client';
 import { UploadsService } from '../uploads/uploads.service';
+import { renderCode128Png as renderCode128PngImage } from '../../common/utils/barcode-image.util';
 
 /** Separator glyphs for `AccessionSetting.SampleBarcodeSettings_Separator`. */
 const SEPARATOR_TOKENS: Record<AccessionBarcodeSeparator, string> = {
@@ -216,20 +215,13 @@ export class BarcodeService {
    * configuration (bar width, height, human-readable value shown) so the same
    * value always produces a consistently scannable image. `jsbarcode` picks the
    * optimal Code 128 subset (128A/B/C) for the value automatically.
+   * Delegates to the shared {@link renderCode128Png} util, which print
+   * contexts also use to inline barcodes, so both always produce the same image.
    * @param value the barcode value/id to encode
    * @returns the PNG image bytes
    */
   renderCode128Png(value: string): Buffer {
-    const canvas = createCanvas(300, 120);
-    JsBarcode(canvas, value, {
-      format: 'CODE128',
-      displayValue: true,
-      width: 2,
-      height: 60,
-      margin: 10,
-      fontSize: 16,
-    });
-    return canvas.toBuffer('image/png');
+    return renderCode128PngImage(value);
   }
 
   /** Compose `{prefix}{sep}{paddedNumber}{sep}{suffix}` (mirrors the Settings preview). */

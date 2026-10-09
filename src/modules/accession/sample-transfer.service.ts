@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { timestampRange } from '../../common/utils/date-range.util';
 import {
   OrderSample,
   Prisma,
@@ -133,14 +134,21 @@ export class SampleTransferService {
     );
   }
 
-  /** Outsource: Accepted → Outsourced + OUTSOURCE transfer (manual tracking). */
+  /**
+   * Outsource: Accepted → Outsourced + OUTSOURCE transfer (manual tracking).
+   * The center is optional here — when provided it is validated against the
+   * caller's tenant; when omitted the transfer is created with a null
+   * `outsourceCenterId` and the center can be set later via Assign Center.
+   */
   async outsource(
     sampleIds: string[],
     tenantId: string,
     personId: string | null,
     dto: OutsourceSampleDto,
   ): Promise<SampleTransferWithRelations[]> {
-    await this.assertOutsourceCenter(dto.outsourceCenterId, tenantId);
+    if (dto.outsourceCenterId) {
+      await this.assertOutsourceCenter(dto.outsourceCenterId, tenantId);
+    }
     return this.dispatch(
       sampleIds,
       tenantId,
@@ -149,7 +157,7 @@ export class SampleTransferService {
       TransferKind.OUTSOURCE,
       dto,
       {
-        outsourceCenterId: dto.outsourceCenterId,
+        outsourceCenterId: dto.outsourceCenterId ?? null,
         outsourceStatus: dto.outsourceStatus ?? null,
       },
     );
@@ -398,12 +406,9 @@ export class SampleTransferService {
     } else {
       where.destinationBranchId = branchId;
     }
-    if (query.dateFrom || query.dateTo) {
-      where.sendDate = {
-        ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),
-        ...(query.dateTo ? { lte: new Date(query.dateTo) } : {}),
-      };
-    }
+    // A day-only `dateTo` covers that whole day (see `timestampRange`).
+    const sendDateRange = timestampRange(query.dateFrom, query.dateTo);
+    if (sendDateRange) where.sendDate = sendDateRange;
     // Filters on the linked sample + its order (accession search, referral refs).
     const sample: Prisma.OrderSampleWhereInput = {};
     if (query.search) {
@@ -689,8 +694,14 @@ export class SampleTransferService {
               transfer.transferStatus,
             );
           }
+          let clonedSampleId: string | null = null;
           if (action === 'accept') {
-            await this.cloneIntoDestination(tx, tenantId, personId, transfer);
+            clonedSampleId = await this.cloneIntoDestination(
+              tx,
+              tenantId,
+              personId,
+              transfer,
+            );
           }
           // Receiving branch rejects / repeats an INTERNAL transfer: the test
           // goes back to the sender (its original sample -> REPEAT).
@@ -717,7 +728,14 @@ export class SampleTransferService {
               deletedAt: null,
               transferStatus: transfer.transferStatus,
             },
-            data: { ...build(), transferStatus: to, updatedBy: personId },
+            data: {
+              ...build(),
+              transferStatus: to,
+              // Link the transfer to the clone it just created so a later recall
+              // (Retrieve) can unwind the clone (§A.10.19).
+              ...(clonedSampleId ? { clonedSampleId } : {}),
+              updatedBy: personId,
+            },
           });
           if (updated.count !== 1) {
             throw new InvalidTransferTransitionException(
@@ -820,8 +838,8 @@ export class SampleTransferService {
       destinationBranchId: string | null;
       receiveCondition: string | null;
     },
-  ): Promise<void> {
-    if (transfer.kind !== TransferKind.INTERNAL) return;
+  ): Promise<string | null> {
+    if (transfer.kind !== TransferKind.INTERNAL) return null;
     if (!transfer.destinationBranchId) {
       throw new TransferDestinationMissingException(transfer.id);
     }
@@ -913,6 +931,8 @@ export class SampleTransferService {
       destBranch,
       source.branchId,
     );
+
+    return cloned.id;
   }
 
   /** Validate an outsource center belongs to the caller's tenant. */

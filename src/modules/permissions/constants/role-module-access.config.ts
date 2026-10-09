@@ -1,40 +1,55 @@
 import { ProfileKey } from './profile-registry.constant';
+import { SYSTEM_MODULE_KEYS } from './system-modules.constant';
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────
- *  ROLE → MODULE ACCESS CONFIG  (single source of truth — edit this file)
+ *  ROLE → MODULE CONFIG  (single source of truth — edit this file)
  * ─────────────────────────────────────────────────────────────────────────────
  *
- * This is the **configuration file** that maps every predefined role to the set
- * of system modules it is allowed to access. It is plain data — no database
- * table backs it (per the User Management v2.0 spec, role→module access is a
- * static configuration, not a DB mapping).
+ * This config maps roles to modules for TWO **independent** concerns. Keeping
+ * them separate is what lets "which modules a role may be ASSIGNED" open up to
+ * everything without touching "which permissions a role holds by default".
  *
- * WHERE IT IS USED
- *  - `GET /users/manage/roles` returns each role's allowed modules, so the
- *    frontend's "Assigned Branches and Modules" screen only offers the modules
- *    that are valid for the selected Default Role.
- *  - The users service validates every assigned module against this config
- *    (`assertModuleInRoleTemplate`) so an invalid role→module pairing is
- *    rejected server-side too (defence in depth — the UI restriction is not the
- *    only guard).
+ * 1) ASSIGNMENT ACCESS — {@link allowedModulesForRole}
+ *    Which modules may be ASSIGNED to a user holding a role (the checkboxes on
+ *    the "Assigned Branches, Roles and Modules" screen). **Every role may be
+ *    assigned EVERY available module** — role selection no longer restricts the
+ *    offered/accepted modules. Used by:
+ *      - `GET /users/manage/roles` (so the screen offers the full catalogue), and
+ *      - the users service (`assertModuleAssignableToRole`) so the same rule is
+ *        enforced server-side (defence in depth).
+ *
+ * 2) BASELINE / DEFAULT MODULES — {@link ROLE_BASELINE_MODULES}
+ *    The per-role module set whose permissions make up a role's **baseline
+ *    permission grant**, and which also serves as the module-access **fallback**
+ *    for a profile that has no explicitly-assigned modules (legacy/tenant-level
+ *    rows — see `resolveEffectiveModules` / `ROLE_DEFAULT_MODULES`). This is a
+ *    permissions concern and is deliberately UNCHANGED by opening assignment up:
+ *    broadening assignment must never silently broaden any role's permissions.
  *
  * HOW TO EDIT
  *  - Keys are role (profile) keys from `profile-registry.constant.ts`.
  *  - Values are module keys from `system-modules.constant.ts`.
- *  - Add/remove a module key from a role's array to change what that role may
- *    access. No UI or service code needs to change.
- *
- * THE EMPTY-ARRAY RULE
- *  - An **empty array** means "no module restriction": the role may be assigned
- *    ANY module the branch has enabled. Use this for roles whose module set is
- *    not yet fixed (e.g. `doctor`, `chemist`). To lock a role down, list its
- *    modules explicitly.
+ *  - To change a role's default *permissions*, edit {@link ROLE_BASELINE_MODULES}.
+ *  - Assignment access is intentionally unrestricted; see {@link allowedModulesForRole}.
  *
  * @see system-modules.constant.ts  — the master module catalogue (module keys)
  * @see profile-registry.constant.ts — the role (profile) catalogue (role keys)
  */
-export const ROLE_MODULE_ACCESS: Record<ProfileKey, string[]> = {
+
+/**
+ * Per-role BASELINE (default) modules. A role's baseline permission set is the
+ * expansion of these modules, and they are the module-access fallback for a
+ * profile with no explicitly-assigned modules. Consumed by
+ * `module-permissions.constant.ts` as `ROLE_DEFAULT_MODULES`.
+ *
+ * THE EMPTY-ARRAY RULE
+ *  - An **empty array** means the role has no baseline modules of its own; such a
+ *    role's access follows the per-user module selection (e.g. `doctor`,
+ *    `chemist`). It does NOT restrict what may be assigned — assignment is
+ *    governed by {@link allowedModulesForRole}, which is unrestricted.
+ */
+export const ROLE_BASELINE_MODULES: Record<ProfileKey, string[]> = {
   // The two admin roles map 1:1 to their console module, whose permission set is
   // the full API resource catalogue (see ADMIN_CONSOLE_MODULE_KEYS) — so both
   // roles' baselines expand to every API resource permission.
@@ -89,10 +104,12 @@ function allAccessModules(): string[] {
 }
 
 /**
- * The module keys a role is allowed to access. An **empty array** means the role
- * has no module restriction (any branch-enabled module is allowed) — see the
- * empty-array rule above. Unknown roles (e.g. tenant custom roles) return `[]`.
+ * The module keys a role may be **assigned**. Every role may be assigned EVERY
+ * available module — role selection does not restrict the module list anymore.
+ * Returns the full master module catalogue for any role (including unknown /
+ * tenant custom roles). The branch's own enablement (`assertModulesValidForBranch`)
+ * remains the real limiter on what can actually be assigned at a given branch.
  */
-export function allowedModulesForRole(roleKey: string): string[] {
-  return ROLE_MODULE_ACCESS[roleKey as ProfileKey] ?? [];
+export function allowedModulesForRole(_roleKey: string): string[] {
+  return [...SYSTEM_MODULE_KEYS];
 }

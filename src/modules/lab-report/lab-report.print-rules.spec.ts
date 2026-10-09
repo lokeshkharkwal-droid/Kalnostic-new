@@ -28,6 +28,8 @@ function reportIn(status: LabReportStatus, branchId = 'A') {
         orderCode: 'ORD-1',
         orderDate: new Date('2026-10-01'),
         orderTime: null,
+        // the order's creation instant: its printed date/time when no time was typed
+        createdAt: new Date('2026-10-01T05:00:00.000Z'),
         externalOrderId: null,
         orderIdBarcode: null,
         orderIdQrCode: null,
@@ -76,6 +78,9 @@ function ctxFor(
     allBranches?: boolean;
     callerBranch?: string | null;
     maskUnfinished?: boolean;
+    /** The report's sample links, as the database returns them (oldest first). */
+    sampleLinks?: unknown[];
+    onSampleQuery?: (query: unknown) => void;
   } = {},
 ): Promise<Ctx> {
   const svc = Object.create(LabReportService.prototype) as LabReportService;
@@ -99,7 +104,12 @@ function ctxFor(
       }),
     },
     prisma: {
-      orderSampleTest: { findFirst: jest.fn().mockResolvedValue(null) },
+      orderSampleTest: {
+        findMany: jest.fn().mockImplementation((query: unknown) => {
+          opts.onSampleQuery?.(query);
+          return Promise.resolve(opts.sampleLinks ?? []);
+        }),
+      },
       orderDiagnostics: { findUnique: jest.fn().mockResolvedValue(null) },
       labReport: {
         aggregate: jest.fn().mockResolvedValue({ _max: { approvedAt: null } }),
@@ -157,6 +167,36 @@ describe('printing: unfinished results print as "Result pending"', () => {
       expect(ctx.variables.report_status).toBe('PENDING');
     },
   );
+
+  it('after an internal transfer the print uses the original sample of the sending branch (oldest first), so a transferred test keeps its dates', async () => {
+    let query: { where?: Record<string, unknown>; orderBy?: unknown } = {};
+    const original = {
+      collectedAt: new Date('2026-10-01T04:00:00.000Z'),
+      receivedAt: new Date('2026-10-01T05:00:00.000Z'),
+      sampleType: 'Serum',
+      barcode: 'BC-1',
+    };
+    // the receiver's copy carries the same barcode but no collection dates
+    const copy = { ...original, collectedAt: null, receivedAt: null };
+    const ctx = await ctxFor(reportIn(LabReportStatus.RESULT_DONE), {
+      sampleLinks: [{ sample: original }, { sample: copy }],
+      onSampleQuery: (q) => (query = q as typeof query),
+    });
+    expect(query.orderBy).toEqual({ sample: { createdAt: 'asc' } });
+    expect(query.where).toMatchObject({
+      orderItemId: 'item1',
+      deletedAt: null,
+    });
+    expect(ctx.variables.sample_collected_date).not.toBe('');
+    expect(ctx.variables.sample_received_date).not.toBe('');
+    expect(ctx.variables.sample_type).toBe('Serum');
+  });
+
+  it('prints blank sample details when the report has no sample at all', async () => {
+    const ctx = await ctxFor(reportIn(LabReportStatus.RESULT_DONE));
+    expect(ctx.variables.sample_collected_date).toBe('');
+    expect(ctx.variables.sample_type).toBe('');
+  });
 
   it.each([
     LabReportStatus.RESULT_DONE,

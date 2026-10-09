@@ -7,6 +7,7 @@ import {
   escapeHtml,
   escapeAttr,
   imageSizeStyleAttr,
+  resolveBareImageTags,
 } from './pdf-document.util';
 
 // Re-exported so existing importers (`pdf-report-template.service.ts`) that pull
@@ -165,7 +166,9 @@ export class TemplateRenderService {
 
   /**
    * Interpolate one HTML fragment: repeating sections first, then image
-   * placeholders, then flat `{placeholder}` variables.
+   * placeholders (`{{image:ID}}`, plus bare image-valued tags such as
+   * `{order_id_barcode}` standing in text — see `resolveBareImageTags`), then
+   * flat `{placeholder}` variables.
    */
   private renderFragment(
     html: string,
@@ -175,6 +178,7 @@ export class TemplateRenderService {
   ): string {
     let out = this.interpolateSections(html, sections);
     out = this.interpolateImages(out, images);
+    out = resolveBareImageTags(out, images);
     out = this.interpolateVariables(out, variables);
     return out;
   }

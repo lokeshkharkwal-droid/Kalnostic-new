@@ -1,6 +1,6 @@
 import { OrderStatus } from '@prisma/client';
 import { OrderService } from './order.service';
-import { OrderCancelledNotEditableException } from './exceptions/order.exceptions';
+import { OrderAlreadyCancelledException } from './exceptions/order.exceptions';
 
 /** A cancelled order is final: saving an edit must never reopen it. */
 describe('OrderService.update - a cancelled order', () => {
@@ -22,14 +22,14 @@ describe('OrderService.update - a cancelled order', () => {
     const { service, afterGuard } = build(OrderStatus.CANCELLED);
     await expect(
       service.update('o1', 't1', 'p1', { status: OrderStatus.ORDER }),
-    ).rejects.toBeInstanceOf(OrderCancelledNotEditableException);
+    ).rejects.toBeInstanceOf(OrderAlreadyCancelledException);
     expect(afterGuard).not.toHaveBeenCalled();
   });
 
   it('carries the 409 code the screen can recognise', async () => {
     const { service } = build(OrderStatus.CANCELLED);
     await expect(service.update('o1', 't1', 'p1', {})).rejects.toMatchObject({
-      response: { error: { code: 'ORDER_CANCELLED_NOT_EDITABLE' } },
+      response: { error: { code: 'ORDER_ALREADY_CANCELLED' } },
     });
   });
 

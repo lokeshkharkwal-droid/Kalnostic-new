@@ -39,6 +39,11 @@ docs {
   defaults to now when omitted. Records `collectedBy` = caller. Illegal from other
   statuses → 422 `INVALID_SAMPLE_TRANSITION`.
 
+  The sample **barcode is generated here, on collection** (sequential +
+  grouping-aware, one shared value per group) — barcodes are **no longer**
+  assigned at order creation. Plain Collect barcodes the sample just like
+  Collect & Print.
+
   Every §A.10 modal also accepts optional `notes` + `attachmentUrl` (URL only —
   no upload endpoint), recorded on the history row.
 }

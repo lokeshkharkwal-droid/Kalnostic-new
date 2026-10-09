@@ -8,8 +8,8 @@ import { ActiveBranchRequiredException } from './exceptions/branch-lab-test.exce
 
 /**
  * Branch Lab Test **options** endpoint (`GET /branch-lab-tests/options`) — a
- * lightweight `{ id, name, price, sampleType, isFasting }` selector for the
- * Create-Order lab-test picker.
+ * lightweight `{ id, name, price, sampleName, sampleType, isFasting }` selector
+ * for the Create-Order lab-test picker.
  * Separate from the CRUD controller (mirrors the lab-test module's split).
  * Business-authenticated; tenant from the JWT (`@CurrentTenant`) and the active
  * branch from the JWT profile (`@CurrentProfile`) — never the body (CLAUDE.md §4.7).
@@ -27,8 +27,8 @@ export class BranchLabTestOptionsController {
   }
 
   /**
-   * Lightweight `{ id, name, price, sampleType, isFasting }` options for the
-   * searchable selector — the active branch's active default-variant lab tests,
+   * Lightweight `{ id, name, price, sampleName, sampleType, isFasting }` options
+   * for the searchable selector — the active branch's active default-variant lab tests,
    * optionally filtered by `search`.
    */
   @Get('options')
