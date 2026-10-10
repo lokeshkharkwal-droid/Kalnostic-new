@@ -28,12 +28,14 @@ describe('OrderSampleService — printLabels {collected_at}', () => {
     id: string,
     orderCode: string,
     collectedAt: string | null,
+    sampleName: string | null = null,
   ): OrderSampleDetail =>
     ({
       id,
       accessionNo: `ACC-${id}`,
       barcode: null,
       orderIdBarcode: null,
+      sampleName,
       sampleType: 'Blood',
       containerType: null,
       priority: 'ROUTINE',
@@ -47,6 +49,7 @@ describe('OrderSampleService — printLabels {collected_at}', () => {
     s1: sample('s1', 'ORD-00115', '2026-09-18T10:05:39.774Z'),
     s2: sample('s2', 'ORD-00114', '2026-09-10T05:48:29.430Z'),
     s3: sample('s3', 'ORD-00118', null),
+    s4: sample('s4', 'ORD-00119', null, 'Fasting blood'),
   };
 
   /** The render context `printLabels` handed to `generatePdf`. */
@@ -112,6 +115,16 @@ describe('OrderSampleService — printLabels {collected_at}', () => {
       '10/09/2026 11:18',
       '18/09/2026 15:35',
     ]);
+  });
+
+  it("prints each label's own {sample_name}, blank when the sample has none", async () => {
+    locale('12h');
+
+    await service.printLabels(['s4', 's3'], 't1', 'tpl-1');
+
+    const labels = printedContext().sections?.labels ?? [];
+    expect(labels.map((l) => l.sample_name)).toEqual(['Fasting blood', '']);
+    expect(labels.map((l) => l.sample_type)).toEqual(['Blood', 'Blood']);
   });
 
   it('resolves {collected_at} per label inside {{#each labels}}', async () => {

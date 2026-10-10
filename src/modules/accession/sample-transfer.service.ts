@@ -676,6 +676,7 @@ export class SampleTransferService {
         sampleType: source.sampleType,
         containerType: source.containerType,
         sampleGroupLabel: source.sampleGroupLabel,
+        sampleName: source.sampleName,
         priority: source.priority,
         status: SampleStatus.ACCEPTED,
         originBranchId: source.originBranchId ?? source.branchId,

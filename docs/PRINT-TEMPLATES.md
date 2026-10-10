@@ -503,6 +503,7 @@ their tag lists are identical.
 | `{last_report_prepared_on}` | Latest approval time on the order. |
 | `{sample_collected_date}` | Sample collection time (branch-local). |
 | `{sample_received_date}` | Sample receipt time. |
+| `{sample_name}` | Sample name (e.g. "Fasting blood"); blank when the sample has none. |
 | `{sample_type}` | Sample type. |
 | `{sample_source_label}` | In-House / Supplied label. |
 | `{sample_note}` | Most recent sample-category note. |
@@ -679,6 +680,7 @@ Both types share the same per-sample fields:
 | `{department_name}` | Department name(s) of the sample's tests. A sample can span multiple departments → distinct names, comma-joined (e.g. `Biochemistry, Hematology`). Blank when no department is assigned. |
 | `{order_code}` | Order code. |
 | `{test_names}` | Comma-joined test names. |
+| `{sample_name}` | Sample name (e.g. "Fasting blood"); blank when the sample has none. |
 | `{sample_type}` | Sample type. |
 | `{container_type}` | Container / tube type. |
 | `{priority}` | Priority. |
