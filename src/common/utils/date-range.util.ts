@@ -40,3 +40,28 @@ export function timestampRange(
   }
   return bounds;
 }
+
+/**
+ * Turn a list screen's date-range filter into inclusive bounds for a
+ * **date-only** column (`@db.Date`, e.g. `orders.order_date`) — the counterpart
+ * of {@link timestampRange}.
+ *
+ * A date-only column has no time of day, so both ends are plain inclusive days.
+ * Only the calendar day as written is used (`2026-10-06` or the day part of
+ * `2026-10-06T…`), never converted through a time zone, so the day the user
+ * picked is the day that is compared.
+ *
+ * Returns `undefined` when neither bound is set.
+ */
+export function dateOnlyRange(
+  dateFrom?: string,
+  dateTo?: string,
+): Pick<DateRangeBounds, 'gte' | 'lte'> | undefined {
+  if (!dateFrom && !dateTo) return undefined;
+  const day = (value: string) =>
+    new Date(`${value.slice(0, 10)}T00:00:00.000Z`);
+  const bounds: Pick<DateRangeBounds, 'gte' | 'lte'> = {};
+  if (dateFrom) bounds.gte = day(dateFrom);
+  if (dateTo) bounds.lte = day(dateTo);
+  return bounds;
+}

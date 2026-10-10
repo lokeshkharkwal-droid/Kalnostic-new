@@ -8325,6 +8325,7 @@ model OrderSample {
   orderIdBarcode String? @map("order_id_barcode")
 
   // Sample identity (snapshotted from the resolved LabTestSample).
+  sampleName       String?        @map("sample_name")
   sampleType       String?        @map("sample_type")
   containerType    ContainerType? @map("container_type")
   sampleGroupLabel String?        @map("sample_group_label") // e.g. "EDTA ×2"

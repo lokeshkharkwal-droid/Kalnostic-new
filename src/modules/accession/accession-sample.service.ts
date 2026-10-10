@@ -289,6 +289,7 @@ export class OrderSampleService {
           labTestSampleId: unit.sample.id,
           departmentId: unit.departmentId,
           accessionNo,
+          sampleName: unit.sample.sampleName,
           sampleType: unit.sample.sampleType,
           containerType: unit.sample.containerType,
           sampleGroupLabel:
@@ -1482,6 +1483,7 @@ export class OrderSampleService {
         .map((t) => t.testName)
         .filter(Boolean)
         .join(', '),
+      sample_name: sample.sampleName ?? '',
       sample_type: sample.sampleType ?? '',
       container_type: sample.containerType
         ? CONTAINER_TYPE_LABELS[sample.containerType]
