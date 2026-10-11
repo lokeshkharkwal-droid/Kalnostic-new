@@ -1,4 +1,5 @@
 import {
+  AgeType,
   MedicalHistory,
   Patient,
   PatientFamilyLink,
@@ -41,6 +42,7 @@ export interface FamilyMemberSummary {
     firstName: string;
     lastName: string | null;
     age: number | null;
+    ageType: AgeType | null;
     mobile: string;
     umId: string | null;
   };

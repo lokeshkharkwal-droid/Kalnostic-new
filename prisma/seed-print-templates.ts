@@ -64,7 +64,7 @@ ${PATIENT_LINE}
 ${PATIENT_LINE}
 <table><thead><tr><th>#</th><th>Service</th><th>Code</th><th>Price</th><th>Disc</th></tr></thead>
 <tbody>{{#each items}}<tr><td>{sr_no}</td><td>{name}</td><td>{code}</td><td>{price}</td><td>{discount}</td></tr>{{/each}}</tbody></table>
-<div>Gross: {gross_amount} &nbsp; Discount: {discount_amount} &nbsp; Net: <b>{net_amount}</b> &nbsp; Paid: {paid_amount}</div>
+<div>Gross: {gross_amount} &nbsp; Sample Collection Charges: {sample_charge} &nbsp; Visit Charges: {home_visit_charge} &nbsp; Discount: {discount_amount} &nbsp; Net: <b>{net_amount}</b> &nbsp; Paid: {paid_amount}</div>
 <div>Refund: {refund_total} &nbsp; Refund Charges: {refund_charge_total} &nbsp; Cancellation Charge: {cancellation_charge} &nbsp; Balance: <b>{balance_amount}</b></div>
 <h4>Payments &amp; Refunds</h4>
 <table><thead><tr><th>Date</th><th>Type</th><th>Mode</th><th>Reference</th><th>Amount</th><th>Refund Charge</th></tr></thead>
@@ -82,7 +82,7 @@ ${PATIENT_LINE}
 <div class="muted">Panel: {panel_name} ({panel_code}) &nbsp; Accounts: {panel_accounts_person} &nbsp; {panel_accounts_email} &nbsp; {panel_accounts_mobile}</div>
 <table><thead><tr><th>#</th><th>Service</th><th>Code</th><th>Price</th><th>Disc</th></tr></thead>
 <tbody>{{#each items}}<tr><td>{sr_no}</td><td>{name}</td><td>{code}</td><td>{price}</td><td>{discount}</td></tr>{{/each}}</tbody></table>
-<div>Gross: {gross_amount} &nbsp; Discount: {discount_amount} &nbsp; Net: <b>{net_amount}</b> &nbsp; Paid: {paid_amount}</div>
+<div>Gross: {gross_amount} &nbsp; Sample Collection Charges: {sample_charge} &nbsp; Visit Charges: {home_visit_charge} &nbsp; Discount: {discount_amount} &nbsp; Net: <b>{net_amount}</b> &nbsp; Paid: {paid_amount}</div>
 <div>Refund: {refund_total} &nbsp; Refund Charges: {refund_charge_total} &nbsp; Cancellation Charge: {cancellation_charge} &nbsp; Balance: <b>{balance_amount}</b></div>
 <h4>Payments &amp; Refunds</h4>
 <table><thead><tr><th>Date</th><th>Type</th><th>Mode</th><th>Reference</th><th>Amount</th><th>Refund Charge</th></tr></thead>

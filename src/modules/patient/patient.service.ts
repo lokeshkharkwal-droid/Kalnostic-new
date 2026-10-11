@@ -98,6 +98,7 @@ const FAMILY_MEMBER_SELECT = {
   firstName: true,
   lastName: true,
   age: true,
+  ageType: true,
   mobile: true,
   umId: true,
 } as const;
@@ -194,6 +195,7 @@ function summarizeFamilyPerson(
       firstName: person.firstName,
       lastName: person.lastName,
       age: person.age,
+      ageType: person.ageType,
       mobile: person.mobile,
       umId: person.umId,
     },
