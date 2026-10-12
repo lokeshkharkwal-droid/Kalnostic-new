@@ -1,4 +1,8 @@
-import { code128DataUri, renderCode128Png } from './barcode-image.util';
+import {
+  code128DataUri,
+  qrCodeDataUri,
+  renderCode128Png,
+} from './barcode-image.util';
 import { BarcodeService } from '../../modules/accession/barcode.service';
 import type { UploadsService } from '../../modules/uploads/uploads.service';
 
@@ -25,6 +29,37 @@ describe('code128DataUri', () => {
 
   it('returns empty when Code 128 cannot encode the value', () => {
     expect(code128DataUri('नमूना')).toBe('');
+  });
+});
+
+/** Width × height from a PNG's IHDR chunk (bytes 16–24). */
+function pngSize(uri: string): { width: number; height: number } {
+  const png = Buffer.from(uri.split(',')[1] ?? '', 'base64');
+  return { width: png.readUInt32BE(16), height: png.readUInt32BE(20) };
+}
+
+describe('qrCodeDataUri', () => {
+  it('returns a square PNG data URI, unlike the wide Code 128 render', async () => {
+    const uri = await qrCodeDataUri('ORD-00113');
+    expect(uri.startsWith('data:image/png;base64,')).toBe(true);
+    const png = Buffer.from(uri.split(',')[1] ?? '', 'base64');
+    expect(png.subarray(0, 4)).toEqual(PNG_SIGNATURE);
+    expect(pngSize(uri)).toEqual({ width: 160, height: 160 });
+
+    const barcode = pngSize(code128DataUri('ORD-00113'));
+    expect(barcode.width).toBeGreaterThan(barcode.height);
+  });
+
+  it('encodes different values to different images', async () => {
+    expect(await qrCodeDataUri('ORD-00113')).not.toBe(
+      await qrCodeDataUri('10008'),
+    );
+  });
+
+  it('returns empty for an unset value', async () => {
+    expect(await qrCodeDataUri('')).toBe('');
+    expect(await qrCodeDataUri(null)).toBe('');
+    expect(await qrCodeDataUri(undefined)).toBe('');
   });
 });
 

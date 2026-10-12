@@ -146,6 +146,73 @@ export class ExternalReferralService {
   }
 
   /**
+   * Distinct external-referral organisation names as `{ id, name }` options
+   * (`id` is the name itself — organisations have no master table). Powers the
+   * Accession "External Referral Center" filter, so inactive referrals are kept
+   * (past orders may still reference them). Optional `search` (case-insensitive)
+   * and `branchId` scope; `page`/`limit` opt into the paginated envelope.
+   */
+  async findOrganisationOptions(
+    tenantId: string,
+    filters: {
+      search?: string;
+      branchId?: string;
+      page?: number;
+      limit?: number;
+    } = {},
+  ): Promise<
+    | Array<{ id: string; name: string }>
+    | PaginatedResult<{ id: string; name: string }>
+  > {
+    const search = filters.search?.trim();
+    const where: Prisma.ExternalReferralWhereInput = {
+      tenantId,
+      deletedAt: null,
+      AND: [
+        { organisationName: { not: null } },
+        { organisationName: { not: '' } },
+        ...(search
+          ? [
+              {
+                organisationName: {
+                  contains: search,
+                  mode: 'insensitive' as const,
+                },
+              },
+            ]
+          : []),
+      ],
+      ...(filters.branchId ? { branchId: filters.branchId } : {}),
+    };
+    const toOption = (r: { organisationName: string | null }) => ({
+      id: r.organisationName as string,
+      name: r.organisationName as string,
+    });
+    const groupArgs = {
+      by: ['organisationName'] as Prisma.ExternalReferralScalarFieldEnum[],
+      where,
+      orderBy: { organisationName: 'asc' as const },
+    };
+
+    if (filters.page === undefined) {
+      const rows = await this.prisma.externalReferral.groupBy(groupArgs);
+      return rows.map(toOption);
+    }
+
+    const page = filters.page;
+    const limit = filters.limit ?? 20;
+    const [rows, all] = await Promise.all([
+      this.prisma.externalReferral.groupBy({
+        ...groupArgs,
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.externalReferral.groupBy(groupArgs),
+    ]);
+    return { data: rows.map(toOption), total: all.length, page, limit };
+  }
+
+  /**
    * Validate that a referenced settings template exists in the caller's tenant.
    * No-op when no id is supplied.
    * @param tenantId tenant scope
