@@ -3,23 +3,25 @@ import { code128DataUri } from '../../../common/utils/barcode-image.util';
 /**
  * The lab report's two barcode print tags, each a Code 128 image src (data URI)
  * — never the raw value, and never one ID in place of the other:
- *  - `order_id_barcode` — the **Order ID** barcode, encoding
- *    `Order.orderIdBarcode` (the order-barcode counter value, e.g. `10020`).
+ *  - `order_id_barcode` — the **Order ID** barcode, encoding the order's
+ *    `Order.orderCode` (e.g. `ORD-00113`) — the Order ID the app shows. Not
+ *    `Order.orderIdBarcode`: that order-barcode counter starts at 10001 like
+ *    the sample counter, so it printed what looked like (and often was) a
+ *    Sample ID.
  *  - `order_id_qr_code` — the **Sample ID** barcode, encoding
  *    `OrderSample.barcode` of the report's own sample (e.g. `10023`). The tag
  *    name is historical: it renders a barcode, not a QR code.
- * Order and sample barcodes come from independent counters and may share a
- * number, so the source field — not the value — decides which tag gets it.
+ * The source field — not the value — decides which tag gets which ID.
  * Each is `''` when its value is unset (the tag then renders blank).
- * @param orderBarcode the order's `orderIdBarcode` value
+ * @param orderCode the order's `orderCode` (its Order ID)
  * @param sampleBarcode the report sample's `barcode` value
  */
 export function buildReportBarcodeTags(
-  orderBarcode: string | null | undefined,
+  orderCode: string | null | undefined,
   sampleBarcode: string | null | undefined,
 ): { order_id_barcode: string; order_id_qr_code: string } {
   return {
-    order_id_barcode: code128DataUri(orderBarcode),
+    order_id_barcode: code128DataUri(orderCode),
     order_id_qr_code: code128DataUri(sampleBarcode),
   };
 }

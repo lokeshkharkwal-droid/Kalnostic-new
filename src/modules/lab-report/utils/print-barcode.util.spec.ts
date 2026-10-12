@@ -7,21 +7,21 @@ jest.mock('../../../common/utils/barcode-image.util', () => ({
 }));
 
 describe('buildReportBarcodeTags', () => {
-  it('puts the Order ID on order_id_barcode and the Sample ID on order_id_qr_code', () => {
-    expect(buildReportBarcodeTags('10020', '10023')).toEqual({
-      order_id_barcode: 'barcode:10020',
-      order_id_qr_code: 'barcode:10023',
+  it('puts the Order ID (order code) on order_id_barcode and the Sample ID on order_id_qr_code', () => {
+    expect(buildReportBarcodeTags('ORD-00113', '10008')).toEqual({
+      order_id_barcode: 'barcode:ORD-00113',
+      order_id_qr_code: 'barcode:10008',
     });
   });
 
-  it('keeps each tag on its own source when the two counters share a number', () => {
-    expect(buildReportBarcodeTags('10020', null)).toEqual({
-      order_id_barcode: 'barcode:10020',
+  it('keeps each tag on its own source when one ID is unset', () => {
+    expect(buildReportBarcodeTags('ORD-00113', null)).toEqual({
+      order_id_barcode: 'barcode:ORD-00113',
       order_id_qr_code: '',
     });
-    expect(buildReportBarcodeTags(null, '10020')).toEqual({
+    expect(buildReportBarcodeTags(null, '10008')).toEqual({
       order_id_barcode: '',
-      order_id_qr_code: 'barcode:10020',
+      order_id_qr_code: 'barcode:10008',
     });
   });
 });

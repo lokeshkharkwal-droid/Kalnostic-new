@@ -46,7 +46,7 @@ docs {
     in the tenant timezone (e.g. `01/10/2026 2:24 PM`). A back/advance-dated
     order with no typed time prints its date only.
   - `{order_id_barcode}` — Code 128 barcode IMAGE of the Order ID
-    (`Order.orderIdBarcode`).
+    (`Order.orderCode`, e.g. `ORD-00113`).
   - `{order_id_qr_code}` — Code 128 barcode IMAGE of the Sample ID (this
     report's `OrderSample.barcode`; a barcode despite the tag name).
   - Both barcode tags render the same image whether written `{tag}`,

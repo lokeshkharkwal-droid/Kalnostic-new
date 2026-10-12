@@ -2864,7 +2864,7 @@ export class LabReportService {
     });
     const sample = pickReportSample(sampleLinks);
     const barcodeTags = buildReportBarcodeTags(
-      order.orderIdBarcode,
+      order.orderCode,
       sample?.barcode,
     );
     // "Today" on the branch's calendar — `{patient_age}` is the age as of the
@@ -3076,7 +3076,7 @@ export class LabReportService {
         // auto-renders an <img> via the images map below.
         patient_image: patient.photoUrl ?? '',
         // Code 128 barcode images (data URIs), rendered from the IDs:
-        // `{order_id_barcode}` = Order ID (`Order.orderIdBarcode`),
+        // `{order_id_barcode}` = Order ID (`Order.orderCode`, e.g. `ORD-00113`),
         // `{order_id_qr_code}` = Sample ID (this report's `OrderSample.barcode`
         // — a barcode despite the tag name). Each renders as an image whether
         // written `{tag}`, `{{image:tag}}` (images map below) or
@@ -3391,9 +3391,9 @@ export class LabReportService {
         dateFormat,
         timeFormat,
       ),
-      // Order ID barcode IMAGE src (Code 128 data URI of
-      // `Order.orderIdBarcode`; templates use it as `<img src=…>`).
-      order_id_barcode: code128DataUri(order.orderIdBarcode),
+      // Order ID barcode IMAGE src (Code 128 data URI of the Order ID
+      // `Order.orderCode`; templates use it as `<img src=…>`).
+      order_id_barcode: code128DataUri(order.orderCode),
     };
 
     // Per-report body + dates, reusing the single-report context builder.

@@ -143,7 +143,7 @@ export function resolveImageTokens(
  * image src (a barcode data URI), so printing it as text is never useful.
  * Resolved against the render's `images` map, so a context that doesn't supply
  * the image (any non-lab-report type) is unaffected:
- *  - `order_id_barcode` — the Order ID (`Order.orderIdBarcode`) barcode.
+ *  - `order_id_barcode` — the Order ID (`Order.orderCode`) barcode.
  *  - `order_id_qr_code` — the Sample ID (`OrderSample.barcode`) barcode
  *    (legacy tag name; it is a barcode, not a QR code).
  * Every other image-valued key (`patient_image`, …) keeps printing its URL.
