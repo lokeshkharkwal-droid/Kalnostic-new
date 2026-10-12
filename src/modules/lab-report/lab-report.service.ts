@@ -2930,7 +2930,7 @@ export class LabReportService {
     // panel member is narrowed by its `labTestId` (same scoping as
     // `attachSampleStatuses`); a multi-tube test can still have several rows,
     // so the oldest one carrying a barcode wins (`pickReportSample`). Feeds the
-    // `sample_*` tags and the Sample ID barcode (`{order_id_qr_code}`).
+    // `sample_*` tags and the Sample ID barcode (`{sample_id_barcode}`).
     const sampleLinks = await this.prisma.orderSampleTest.findMany({
       where: {
         tenantId,
@@ -2954,8 +2954,8 @@ export class LabReportService {
       },
     });
     const sample = pickReportSample(sampleLinks);
-    const barcodeTags = buildReportBarcodeTags(
-      order.orderIdBarcode,
+    const barcodeTags = await buildReportBarcodeTags(
+      order.orderCode,
       sample?.barcode,
     );
     // "Today" on the branch's calendar — `{patient_age}` is the age as of the
@@ -3167,14 +3167,16 @@ export class LabReportService {
         // Flat `{patient_image}` prints the URL; `{{image:patient_image}}`
         // auto-renders an <img> via the images map below.
         patient_image: patient.photoUrl ?? '',
-        // Code 128 barcode images (data URIs), rendered from the IDs:
-        // `{order_id_barcode}` = Order ID (`Order.orderIdBarcode`),
-        // `{order_id_qr_code}` = Sample ID (this report's `OrderSample.barcode`
-        // — a barcode despite the tag name). Each renders as an image whether
-        // written `{tag}`, `{{image:tag}}` (images map below) or
-        // `<img src="{tag}">` — see `resolveBareImageTags`.
+        // Barcode/QR images (data URIs), rendered from the IDs:
+        // `{order_id_barcode}` = Order ID (`Order.orderCode`, e.g. `ORD-00113`)
+        // as Code 128, `{order_id_qr_code}` = the same Order ID as a QR code,
+        // `{sample_id_barcode}` = Sample ID (this report's `OrderSample.barcode`)
+        // as Code 128. Each renders as an image whether written `{tag}`,
+        // `{{image:tag}}` (images map below) or `<img src="{tag}">` — see
+        // `resolveBareImageTags`.
         order_id_barcode: barcodeTags.order_id_barcode,
         order_id_qr_code: barcodeTags.order_id_qr_code,
+        sample_id_barcode: barcodeTags.sample_id_barcode,
         sample_note: sampleNote?.body ?? '',
         // `{test_file_attachment}` — the PDF(s) uploaded via this test's
         // "File +" button, as `<embed>` markup (printed unescaped, see
@@ -3191,6 +3193,7 @@ export class LabReportService {
         patient_image: patient.photoUrl ?? '',
         order_id_barcode: barcodeTags.order_id_barcode,
         order_id_qr_code: barcodeTags.order_id_qr_code,
+        sample_id_barcode: barcodeTags.sample_id_barcode,
       },
       sections: { results },
       signatories,
@@ -3483,9 +3486,9 @@ export class LabReportService {
         dateFormat,
         timeFormat,
       ),
-      // Order ID barcode IMAGE src (Code 128 data URI of
-      // `Order.orderIdBarcode`; templates use it as `<img src=…>`).
-      order_id_barcode: code128DataUri(order.orderIdBarcode),
+      // Order ID barcode IMAGE src (Code 128 data URI of the Order ID
+      // `Order.orderCode`; templates use it as `<img src=…>`).
+      order_id_barcode: code128DataUri(order.orderCode),
     };
 
     // Per-report body + dates, reusing the single-report context builder.

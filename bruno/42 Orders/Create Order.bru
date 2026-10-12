@@ -183,9 +183,9 @@ docs {
     Order Barcode Settings counter/format — a separate entity from sample
     barcodes, so their numbers may coincide) and `orderIdQrCode` holds the **S3
     URL** of the rendered Code39 barcode image (the name is kept for the
-    print-template contract — it is a barcode image, not a QR code). Both surface
-    as the `{order_id_barcode}` / `{order_id_qr_code}` lab-report template tags
-    (the latter also as `{{image:order_id_qr_code}}`). The image is uploaded to S3
+    print-template contract — it is a barcode image, not a QR code). Neither
+    feeds the lab-report barcode tags: `{order_id_barcode}` encodes the Order ID
+    (`orderCode`) and `{order_id_qr_code}` the Sample ID. The image is uploaded to S3
     inside the create transaction, so an S3 failure rolls the whole order back.
   - `orderTime` — optional time-of-day (`"HH:mm"`), stored separately from the
     DATE-only `orderDate` so the form's Order Time round-trips on edit.

@@ -8,10 +8,12 @@ import {
   Prisma,
   SamplePriority,
   SampleStatus,
+  TransferKind,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
+import { timestampRange } from '../../common/utils/date-range.util';
 import {
   toBranchLocalInstant,
   formatTenantDate,
@@ -2461,6 +2463,27 @@ export class OrderSampleService {
     if (query.isHomeCollection) {
       order.diagnostics = { is: { isHomeVisit: true } };
     }
+    if (query.internalReferralId) {
+      order.internalReferralId = query.internalReferralId;
+    }
+    if (query.externalReferralId) {
+      order.externalReferralId = query.externalReferralId;
+    }
+    if (query.internalReferralBranchId) {
+      order.internalReferral = {
+        is: { branchId: query.internalReferralBranchId },
+      };
+    }
+    if (query.externalReferralOrganisation) {
+      order.externalReferral = {
+        is: {
+          organisationName: {
+            equals: query.externalReferralOrganisation,
+            mode: 'insensitive',
+          },
+        },
+      };
+    }
 
     const and: Prisma.OrderSampleWhereInput[] = [];
     if (query.search) {
@@ -2490,6 +2513,26 @@ export class OrderSampleService {
       });
     }
     if (query.isOutsource) and.push({ status: SampleStatus.OUTSOURCED });
+    if (query.outsourceCenterId) {
+      and.push({
+        transfers: {
+          some: {
+            deletedAt: null,
+            kind: TransferKind.OUTSOURCE,
+            outsourceCenterId: query.outsourceCenterId,
+          },
+        },
+      });
+    }
+    // Send / Forward / Outsource date: the sample has a transfer of that kind
+    // dispatched on the chosen day (its `sendDate`, else when it was created).
+    for (const [kind, day] of [
+      [TransferKind.INTERNAL, query.sendDate],
+      [TransferKind.EXTERNAL, query.forwardDate],
+      [TransferKind.OUTSOURCE, query.outsourceDate],
+    ] as const) {
+      if (day) and.push(this.transferOnDay(kind, day));
+    }
     if (query.isUrgent) {
       and.push({
         OR: [
@@ -2509,6 +2552,26 @@ export class OrderSampleService {
     if (Object.keys(order).length > 0) where.order = order;
     if (and.length > 0) where.AND = and;
     return where;
+  }
+
+  /**
+   * "Has a `kind` transfer dispatched on `day`" (YYYY-MM-DD, whole day). Uses the
+   * transfer's `sendDate`, falling back to `createdAt` when no send date was set.
+   */
+  private transferOnDay(
+    kind: TransferKind,
+    day: string,
+  ): Prisma.OrderSampleWhereInput {
+    const range = timestampRange(day, day);
+    return {
+      transfers: {
+        some: {
+          deletedAt: null,
+          kind,
+          OR: [{ sendDate: range }, { sendDate: null, createdAt: range }],
+        },
+      },
+    };
   }
 
   /**
