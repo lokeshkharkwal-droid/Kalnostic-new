@@ -104,6 +104,7 @@ import {
   LabReportResultsRequiredException,
   LabReportNotesRequiredException,
   LabReportNotFoundException,
+  LabReportValueChangedException,
   LabTestCatalogueMissingException,
   InvalidResultParamException,
   LabReportAlreadyLockedException,
@@ -113,11 +114,17 @@ import {
   ReportingWindowClosedException,
 } from './exceptions/lab-report.exceptions';
 import {
+  compareRangeCandidates,
   computeTrendFlag,
   genderMatches,
-  patientAgeInDays,
-  rangeAgeInDays,
+  isExactAgeMatch,
+  rangeAgeMatch,
+  sortRangesByAgeSpecificity,
 } from './utils/reference-range.util';
+import {
+  classifyResultValueSave,
+  describeAnalyzerOverwrite,
+} from './utils/result-value-save.util';
 import { buildTestFileAttachmentHtml } from './utils/test-file-attachment.util';
 import {
   buildReportBarcodeTags,
@@ -2057,13 +2064,13 @@ export class LabReportService {
       where: { id: report.orderItemId },
       select: { branchLabPanelId: true },
     });
-    const validParamIds = new Set(
-      (
-        await this.getResultParams(
-          report.labTestId,
-          orderItem?.branchLabPanelId ?? null,
-        )
-      ).map((p) => p.id),
+    const resultParams = await this.getResultParams(
+      report.labTestId,
+      orderItem?.branchLabPanelId ?? null,
+    );
+    const validParamIds = new Set(resultParams.map((p) => p.id));
+    const paramNameById = new Map(
+      resultParams.map((p) => [p.id, p.parameterName]),
     );
     for (const value of dto.values) {
       if (!validParamIds.has(value.resultParamId)) {
@@ -2073,7 +2080,58 @@ export class LabReportService {
 
     await this.prisma.withTenant(tenantId, async (tx) => {
       const now = new Date();
-      for (const value of dto.values) {
+
+      // What is stored today for these parameters (deleted rows included: the unique key
+      // ignores deletedAt) decides, per value, whether it is an analyzer's value the
+      // technician left alone, one they overwrote, or an ordinary save.
+      const storedValues = await tx.labReportResultValue.findMany({
+        where: {
+          labReportId: id,
+          tenantId,
+          resultParamId: { in: dto.values.map((v) => v.resultParamId) },
+        },
+      });
+      const storedByParam = new Map(
+        storedValues.map((s) => [s.resultParamId, s]),
+      );
+      const plan = dto.values.map((value) => {
+        const stored = storedByParam.get(value.resultParamId);
+        return { value, stored, ...classifyResultValueSave(stored, value) };
+      });
+
+      // A screen that is out of date for an analyzer value must not replace the newer
+      // result: refuse the whole save before anything is written.
+      const staleParamIds = plan
+        .filter((p) => p.stale)
+        .map((p) => p.value.resultParamId);
+      if (staleParamIds.length > 0) {
+        throw new LabReportValueChangedException(id, staleParamIds);
+      }
+
+      for (const { value, stored, mode } of plan) {
+        if (mode === 'keep-analyzer') {
+          // The analyzer's value was not touched: it stays the analyzer's (source, analyzer id
+          // and time unchanged). Only the range, method and display text may be updated, and
+          // the unit only when the analyzer sent none.
+          const data = {
+            methodology: value.methodology,
+            referenceRangeId: value.referenceRangeId,
+            referenceDisplay: value.referenceDisplay,
+            ...(stored?.unit == null ? { unit: value.unit } : {}),
+          };
+          if (Object.values(data).some((v) => v !== undefined)) {
+            await tx.labReportResultValue.update({
+              where: {
+                labReportId_resultParamId: {
+                  labReportId: id,
+                  resultParamId: value.resultParamId,
+                },
+              },
+              data,
+            });
+          }
+          continue;
+        }
         await tx.labReportResultValue.upsert({
           where: {
             labReportId_resultParamId: {
@@ -2114,6 +2172,48 @@ export class LabReportService {
             deletedAt: null,
           },
         });
+      }
+
+      // Every analyzer value a technician overwrote leaves an Audit Trail entry (who, the
+      // analyzer's old value, the new one): the analyzer's original is otherwise lost.
+      const overwritten = plan.filter(
+        (p) => p.mode === 'overwrite-analyzer' && p.stored,
+      );
+      if (overwritten.length > 0) {
+        const adapterIds = [
+          ...new Set(
+            overwritten
+              .map((p) => p.stored?.enteredBy)
+              .filter((a): a is string => !!a),
+          ),
+        ];
+        const adapters = adapterIds.length
+          ? await tx.labAdapter.findMany({
+              where: { id: { in: adapterIds }, tenantId },
+              select: { id: true, name: true },
+            })
+          : [];
+        const adapterNameById = new Map(adapters.map((a) => [a.id, a.name]));
+        for (const { value, stored } of overwritten) {
+          if (!stored) continue;
+          await this.recordHistory(
+            tx,
+            tenantId,
+            id,
+            report.status,
+            report.status,
+            'ANALYZER_VALUE_OVERWRITTEN',
+            actorId,
+            describeAnalyzerOverwrite(
+              paramNameById.get(value.resultParamId) ?? value.resultParamId,
+              stored.enteredBy
+                ? adapterNameById.get(stored.enteredBy)
+                : undefined,
+              stored,
+              value,
+            ),
+          );
+        }
       }
 
       // Authoritative recompute of dynamic/calculated parameters. Any calculated
@@ -2355,9 +2455,6 @@ export class LabReportService {
     if (!param) throw new LabTestCatalogueMissingException(id);
 
     const patient = report.orderItem.order.patient;
-    const ageInDays = patient.age
-      ? patientAgeInDays(patient.age, patient.ageType ?? 'YEARS')
-      : null;
 
     // Bug fix: this used to gate on QUALITATIVE only, so a SEMI_QUANTITATIVE
     // param (which also has no numeric LabTestReferenceRange — only a
@@ -2376,12 +2473,13 @@ export class LabReportService {
           ...(query.methodology ? { method: query.methodology } : {}),
         },
       });
-      const match = candidates.find(
+      // Only a band the patient's age CERTAINLY falls in is picked automatically
+      // (calendar rule, same as master data): a stored age that straddles a band
+      // edge ("1 Year" against "0-17 Months" / "18-23 Months") is not guessed.
+      const match = sortRangesByAgeSpecificity(candidates).find(
         (c) =>
           genderMatches(c.gender, patient.gender) &&
-          (ageInDays === null ||
-            (ageInDays >= rangeAgeInDays(c.ageFrom, c.ageFromUnit) &&
-              ageInDays <= rangeAgeInDays(c.ageTo, c.ageToUnit))),
+          isExactAgeMatch(rangeAgeMatch(patient, c)),
       );
       return match
         ? {
@@ -2399,12 +2497,10 @@ export class LabReportService {
         ...(query.methodology ? { method: query.methodology } : {}),
       },
     });
-    const match = candidates.find(
+    const match = sortRangesByAgeSpecificity(candidates).find(
       (c) =>
         genderMatches(c.gender, patient.gender) &&
-        (ageInDays === null ||
-          (ageInDays >= rangeAgeInDays(c.ageFrom, c.ageFromUnit) &&
-            ageInDays <= rangeAgeInDays(c.ageTo, c.ageToUnit))),
+        isExactAgeMatch(rangeAgeMatch(patient, c)),
     );
     return match
       ? {
@@ -2443,6 +2539,8 @@ export class LabReportService {
       lowerLimit: string | null;
       upperLimit: string | null;
       referenceDisplay: string | null;
+      /** `match`/`unknown`: may be picked automatically. `partial`: the patient's stored age is too coarse to be sure, so it is listed but never picked automatically. */
+      ageMatch: 'match' | 'partial' | 'unknown';
     }>;
   }> {
     const activeBranchId = this.requireBranch(branchId);
@@ -2471,20 +2569,26 @@ export class LabReportService {
     }
 
     const patient = report.orderItem.order.patient;
-    const ageInDays = patient.age
-      ? patientAgeInDays(patient.age, patient.ageType ?? 'YEARS')
-      : null;
 
     const ranges = await this.prisma.labTestReferenceRange.findMany({
       where: { paramId: param.id, deletedAt: null },
     });
-    const matching = ranges.filter(
-      (r) =>
-        genderMatches(r.gender, patient.gender) &&
-        (ageInDays === null ||
-          (ageInDays >= rangeAgeInDays(r.ageFrom, r.ageFromUnit) &&
-            ageInDays <= rangeAgeInDays(r.ageTo, r.ageToUnit))),
-    );
+    // Rows whose age band the patient's stored age is certainly in come first, then
+    // those it MIGHT be in (the stored age is too coarse to be sure); rows it is
+    // certainly outside are left out. Within each group the order is fixed (Default
+    // first, then a range without an analyzer first, ... see `compareRangeCandidates`),
+    // so it never depends on database row order.
+    const matchingScored = ranges
+      .filter((r) => genderMatches(r.gender, patient.gender))
+      .map((row) => ({ row, ageMatch: rangeAgeMatch(patient, row) }))
+      .filter((x) => x.ageMatch !== 'none')
+      .sort(
+        (x, y) =>
+          Number(!isExactAgeMatch(x.ageMatch)) -
+            Number(!isExactAgeMatch(y.ageMatch)) ||
+          compareRangeCandidates(x.row, y.row),
+      );
+    const matching = matchingScored.map((x) => x.row);
 
     const adapterIds = [
       ...new Set(matching.map((r) => r.labAdapterId).filter((v) => !!v)),
@@ -2497,7 +2601,8 @@ export class LabReportService {
       : [];
     const adapterNames = new Map(adapters.map((a) => [a.id, a.name]));
 
-    const candidates = matching.map((r) => ({
+    const candidates = matchingScored.map(({ row: r, ageMatch }) => ({
+      ageMatch: ageMatch as 'match' | 'partial' | 'unknown',
       id: r.id,
       labAdapterId: r.labAdapterId,
       labAdapterName: r.labAdapterId

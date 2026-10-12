@@ -44,5 +44,25 @@ docs {
   A formula that can't be computed yet (blank/non-numeric input, division by
   zero) blanks that slot rather than failing the save.
 
+  **Analyzer (machine) values.** A value an analyzer filled (`source = ADAPTER`,
+  `enteredBy` = the analyzer's id) STAYS the analyzer's after a Save when Observed 1
+  and Observed 2 are unchanged (trimmed; empty equals null; the unit is not
+  compared). Only the range id, display text and method are then updated (the unit
+  only when the analyzer sent none). A changed value becomes `MANUAL` (the
+  technician), and each overwrite is recorded in the report's Audit Trail
+  (`GET /lab-reports/:id/history`, action `ANALYZER_VALUE_OVERWRITTEN`, with the old
+  and new value and the analyzer's name).
+  - `overridesAnalyzer` (optional boolean): the technician confirmed overwriting the
+    analyzer's value or range. Forces `MANUAL` even when the number is unchanged
+    (e.g. only the range was changed).
+  - `loadedUpdatedAt` (optional ISO date): the value's `updatedAt` as the screen loaded
+    it. If the stored analyzer value has changed since (the analyzer re-sent a result
+    while the screen was open) the whole save is refused with 409
+    `LAB_REPORT_VALUE_CHANGED` and nothing is written; reload and review. Omit it to
+    skip the check.
+  Both fields are optional; older clients that omit them keep working. Unknown
+  fields are rejected (400), so deploy the backend before a frontend that sends them.
+
   404 `LAB_REPORT_NOT_FOUND`. 409 `LAB_REPORT_LOCKED` if the report is locked.
+  409 `LAB_REPORT_VALUE_CHANGED` if an analyzer value changed since `loadedUpdatedAt`.
 }

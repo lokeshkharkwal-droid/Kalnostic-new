@@ -59,6 +59,22 @@ export class LabReportLockedException extends KaltrosException {
 }
 
 /**
+ * 409 — an analyzer-filled value changed after the technician's screen loaded it (the analyzer
+ * re-sent a result). Saving that screen would silently replace the newer result, so nothing is
+ * written; the screen reloads and the technician reviews the new value.
+ */
+export class LabReportValueChangedException extends KaltrosException {
+  constructor(id: string, resultParamIds: string[]) {
+    super(
+      'LAB_REPORT_VALUE_CHANGED',
+      'The analyzer sent a newer result while this screen was open. The report was not saved; it will reload so you can review the new value.',
+      { id, resultParamIds },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
  * 409 — safety net, not reachable through the real app today. Every genuine
  * `LabReport` is only ever created by `OrderSampleService
  * .ensureLabReportsForAcceptedSample`, which runs after the sample it's for
