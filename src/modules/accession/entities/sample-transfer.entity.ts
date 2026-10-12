@@ -43,15 +43,26 @@ export type SampleTransferWithRelations = Prisma.SampleTransferGetPayload<{
 }>;
 
 /**
- * A referral-queue list row — the transfer with its sample enriched with
- * `departmentLabel` (distinct test department names joined with ", "; null
- * when none resolve).
+ * A transfer with its sample enriched with `departmentLabel` (distinct test
+ * department names joined with ", "; null when none resolve).
  */
-export type SampleTransferListRow = Omit<
+export type SampleTransferDeptRow = Omit<
   SampleTransferWithRelations,
   'sample'
 > & {
   sample: SampleTransferWithRelations['sample'] & {
     departmentLabel: string | null;
   };
+};
+
+/**
+ * A referral-queue list row — the dept-labelled transfer plus the resolved
+ * `outsourceCenterName`. `outsourceCenterId` is a logical ref with no Prisma
+ * relation, so the name is resolved separately — and deliberately WITHOUT a
+ * `deletedAt` filter, so a historical transfer to a since-deactivated center
+ * still shows the center's name instead of surfacing its raw id. Null when the
+ * transfer has no center (not yet assigned) or the center no longer exists.
+ */
+export type SampleTransferListRow = SampleTransferDeptRow & {
+  outsourceCenterName: string | null;
 };

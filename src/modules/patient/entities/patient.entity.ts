@@ -41,7 +41,9 @@ export interface FamilyMemberSummary {
     firstName: string;
     lastName: string | null;
     age: number | null;
-    mobile: string;
+    // Nullable: a patient (incl. a family member) may have no mobile when the
+    // B2B "optional mobile" registration setting is used.
+    mobile: string | null;
     umId: string | null;
   };
 }

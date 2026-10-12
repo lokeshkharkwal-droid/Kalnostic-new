@@ -115,7 +115,8 @@ export class SampleTransferController {
     @Param('id') id: string,
     @Body() dto: SendSampleDto,
   ) {
-    return (await this.transfers.send([id], tenantId, personId, dto))[0];
+    return (await this.transfers.send([id], tenantId, personId, dto))
+      .succeeded[0];
   }
 
   /** Forward (External Transfer) — Accepted → Forward (External). */
@@ -128,7 +129,8 @@ export class SampleTransferController {
     @Param('id') id: string,
     @Body() dto: ForwardSampleDto,
   ) {
-    return (await this.transfers.forward([id], tenantId, personId, dto))[0];
+    return (await this.transfers.forward([id], tenantId, personId, dto))
+      .succeeded[0];
   }
 
   /** Outsource — Accepted → Outsourced. */
@@ -141,7 +143,8 @@ export class SampleTransferController {
     @Param('id') id: string,
     @Body() dto: OutsourceSampleDto,
   ) {
-    return (await this.transfers.outsource([id], tenantId, personId, dto))[0];
+    return (await this.transfers.outsource([id], tenantId, personId, dto))
+      .succeeded[0];
   }
 
   // ── Receiving side — queue + §B.10 lifecycle on TRANSFER ids ───────────────
@@ -165,7 +168,13 @@ export class SampleTransferController {
     @CurrentUser('person_id') personId: string,
     @Body() dto: BulkPickUpDto,
   ) {
-    return this.transfers.pickUp(dto.ids, tenantId, personId, dto);
+    return this.transfers.pickUp(
+      dto.ids,
+      tenantId,
+      personId,
+      dto,
+      dto.skipInvalid,
+    );
   }
 
   /** Bulk Receive. */
@@ -177,7 +186,13 @@ export class SampleTransferController {
     @CurrentUser('person_id') personId: string,
     @Body() dto: BulkReceiveDto,
   ) {
-    return this.transfers.receive(dto.ids, tenantId, personId, dto);
+    return this.transfers.receive(
+      dto.ids,
+      tenantId,
+      personId,
+      dto,
+      dto.skipInvalid,
+    );
   }
 
   /** Bulk Accept (RULE 1 clone per transfer). */
@@ -189,7 +204,13 @@ export class SampleTransferController {
     @CurrentUser('person_id') personId: string,
     @Body() dto: BulkTransferAcceptDto,
   ) {
-    return this.transfers.accept(dto.ids, tenantId, personId, dto);
+    return this.transfers.accept(
+      dto.ids,
+      tenantId,
+      personId,
+      dto,
+      dto.skipInvalid,
+    );
   }
 
   /** Bulk Repeat. */
@@ -201,7 +222,13 @@ export class SampleTransferController {
     @CurrentUser('person_id') personId: string,
     @Body() dto: BulkTransferRepeatDto,
   ) {
-    return this.transfers.repeatTransfer(dto.ids, tenantId, personId, dto);
+    return this.transfers.repeatTransfer(
+      dto.ids,
+      tenantId,
+      personId,
+      dto,
+      dto.skipInvalid,
+    );
   }
 
   /** Bulk Reject. */
@@ -213,7 +240,13 @@ export class SampleTransferController {
     @CurrentUser('person_id') personId: string,
     @Body() dto: BulkTransferRejectDto,
   ) {
-    return this.transfers.reject(dto.ids, tenantId, personId, dto);
+    return this.transfers.reject(
+      dto.ids,
+      tenantId,
+      personId,
+      dto,
+      dto.skipInvalid,
+    );
   }
 
   /** Fetch one transfer (with sample + order context). */
@@ -232,7 +265,8 @@ export class SampleTransferController {
     @Param('id') id: string,
     @Body() dto: TransferPickUpDto,
   ) {
-    return (await this.transfers.pickUp([id], tenantId, personId, dto))[0];
+    return (await this.transfers.pickUp([id], tenantId, personId, dto))
+      .succeeded[0];
   }
 
   /** Receive (§B.11.2). */
@@ -245,7 +279,8 @@ export class SampleTransferController {
     @Param('id') id: string,
     @Body() dto: TransferReceiveDto,
   ) {
-    return (await this.transfers.receive([id], tenantId, personId, dto))[0];
+    return (await this.transfers.receive([id], tenantId, personId, dto))
+      .succeeded[0];
   }
 
   /** Accept (§B.11.3) — INTERNAL clones into In-House (RULE 1). */
@@ -258,7 +293,8 @@ export class SampleTransferController {
     @Param('id') id: string,
     @Body() dto: SampleNoteDto,
   ) {
-    return (await this.transfers.accept([id], tenantId, personId, dto))[0];
+    return (await this.transfers.accept([id], tenantId, personId, dto))
+      .succeeded[0];
   }
 
   /** Repeat (§B.11.4). */
@@ -271,9 +307,8 @@ export class SampleTransferController {
     @Param('id') id: string,
     @Body() dto: TransferRepeatDto,
   ) {
-    return (
-      await this.transfers.repeatTransfer([id], tenantId, personId, dto)
-    )[0];
+    return (await this.transfers.repeatTransfer([id], tenantId, personId, dto))
+      .succeeded[0];
   }
 
   /** Reject (§B.11.5). */
@@ -286,7 +321,8 @@ export class SampleTransferController {
     @Param('id') id: string,
     @Body() dto: TransferRejectDto,
   ) {
-    return (await this.transfers.reject([id], tenantId, personId, dto))[0];
+    return (await this.transfers.reject([id], tenantId, personId, dto))
+      .succeeded[0];
   }
 
   /**

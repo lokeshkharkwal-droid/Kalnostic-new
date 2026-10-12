@@ -83,10 +83,21 @@ export type OrderSampleWithRelations = Prisma.OrderSampleGetPayload<{
  * departments joined with ", " (null when none resolve); each test also carries
  * its own `department` name.
  */
-export type OrderSampleDetail = Omit<OrderSampleWithRelations, 'tests'> & {
+export type OrderSampleDetail = Omit<
+  OrderSampleWithRelations,
+  'tests' | 'transfers'
+> & {
   departmentLabel: string | null;
   tests: (OrderSampleWithRelations['tests'][number] & {
     department: string | null;
+  })[];
+  /**
+   * Transfers enriched with the resolved OUTSOURCE center name (`outsourceCenterId`
+   * is a logical ref — see `withDepartments`). Lets the Assign/Edit Center flow
+   * pre-fill the current center instead of opening blank.
+   */
+  transfers: (OrderSampleWithRelations['transfers'][number] & {
+    outsourceCenterName: string | null;
   })[];
 };
 

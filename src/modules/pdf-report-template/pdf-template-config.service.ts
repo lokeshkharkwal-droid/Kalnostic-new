@@ -54,6 +54,45 @@ export class PdfTemplateConfigService {
   }
 
   /**
+   * The configured DEFAULT template id for a single slot, preferring the active
+   * branch's config and falling back to the tenant-wide config. Returns null
+   * when the slot is unset in both scopes, or when the configured template is no
+   * longer an active (non-deleted) template of the tenant. Used by print flows
+   * to honor the "Configuration" default before falling back to the first active
+   * template (see §3 of the barcode-printing workflow).
+   * @param tenantId tenant scope
+   * @param branchId active branch (checked first), or null for tenant-wide only
+   * @param slotKey the config slot / template type key (e.g. `order_label_print`)
+   */
+  async resolveConfiguredTemplateId(
+    tenantId: string,
+    branchId: string | null,
+    slotKey: string,
+  ): Promise<string | null> {
+    const scopes: (string | null)[] = branchId ? [branchId, null] : [null];
+    for (const scope of scopes) {
+      const map = await this.getConfig(tenantId, scope);
+      const templateId = map[slotKey];
+      if (templateId && (await this.isActiveTemplate(templateId, tenantId))) {
+        return templateId;
+      }
+    }
+    return null;
+  }
+
+  /** True when `templateId` is an active, non-deleted template of the tenant. */
+  private async isActiveTemplate(
+    templateId: string,
+    tenantId: string,
+  ): Promise<boolean> {
+    const template = await this.prisma.pdfReportTemplate.findFirst({
+      where: { id: templateId, tenantId, deletedAt: null, isActive: true },
+      select: { id: true },
+    });
+    return template !== null;
+  }
+
+  /**
    * Upsert the supplied slot assignments for the caller's scope. Each `slotKey`
    * must be a known slot and each non-null `templateId` must be an active
    * template of the caller's tenant (validated before any write). The upsert is

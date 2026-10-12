@@ -512,7 +512,7 @@ export class PatientService {
       select: { id: true },
     });
     if (localActive) {
-      throw new PatientMobileConflictException(dto.mobile);
+      throw new PatientMobileConflictException(dto.mobile ?? '');
     }
     // The mobile belongs to a Person registered only at OTHER tenants. Rather
     // than blocking registration / Create Order with a cross-tenant prompt,
@@ -559,7 +559,7 @@ export class PatientService {
             personLink,
           );
         } catch (e) {
-          this.rethrowPatientWriteConflict(e, dto.mobile, manualUmId);
+          this.rethrowPatientWriteConflict(e, dto.mobile ?? '', manualUmId);
         }
       }
       if (!options?.allowAutoUmId) {
@@ -616,7 +616,7 @@ export class PatientService {
           continue; // collision → next allocated/generated id
         }
         if (this.isMobileConflict(e)) {
-          throw new PatientMobileConflictException(dto.mobile);
+          throw new PatientMobileConflictException(dto.mobile ?? '');
         }
         throw e;
       }
