@@ -7,12 +7,16 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   MaxLength,
 } from 'class-validator';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 import { ToBoolean } from '../../../common/decorators/to-boolean.decorator';
 import { TAT_STATUSES } from '../constants/tat.constant';
 import type { TatStatus } from '../constants/tat.constant';
+
+/** A calendar day (`YYYY-MM-DD`) — the transfer-date filters match the whole day. */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Order-mode filter values (§A.3 "Order Mode" dropdown). */
 export const ORDER_MODES = [
@@ -148,4 +152,51 @@ export class ListSamplesDto extends PaginationQueryDto {
   @ToBoolean()
   @IsBoolean()
   isHomeCollection?: boolean;
+
+  /** Filter by the order's internal referral (the referring employee). */
+  @IsOptional()
+  @IsUUID()
+  internalReferralId?: string;
+
+  /** Filter by the order's external referral (the referring partner). */
+  @IsOptional()
+  @IsUUID()
+  externalReferralId?: string;
+
+  /** Filter by the branch of the order's internal referral (its "center"). */
+  @IsOptional()
+  @IsUUID()
+  internalReferralBranchId?: string;
+
+  /**
+   * Filter by the organisation of the order's external referral (its
+   * "center"). Exact, case-insensitive match on `organisationName`.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  externalReferralOrganisation?: string;
+
+  /** Only samples outsourced to this outsource center (OUTSOURCE transfer). */
+  @IsOptional()
+  @IsUUID()
+  outsourceCenterId?: string;
+
+  /** Only samples Sent (INTERNAL transfer) on this day (YYYY-MM-DD). */
+  @IsOptional()
+  @IsDateString({ strict: true })
+  @Matches(DATE_ONLY, { message: 'sendDate must be YYYY-MM-DD' })
+  sendDate?: string;
+
+  /** Only samples Forwarded (EXTERNAL transfer) on this day (YYYY-MM-DD). */
+  @IsOptional()
+  @IsDateString({ strict: true })
+  @Matches(DATE_ONLY, { message: 'forwardDate must be YYYY-MM-DD' })
+  forwardDate?: string;
+
+  /** Only samples Outsourced (OUTSOURCE transfer) on this day (YYYY-MM-DD). */
+  @IsOptional()
+  @IsDateString({ strict: true })
+  @Matches(DATE_ONLY, { message: 'outsourceDate must be YYYY-MM-DD' })
+  outsourceDate?: string;
 }
