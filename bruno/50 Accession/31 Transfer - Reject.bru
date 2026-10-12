@@ -32,7 +32,16 @@ tests {
 }
 
 docs {
-  Reject (§B.11.5) — **Received → Rejected**. `rejectionReason` is **required**.
-  Origin branch is notified; the sample is not processed. Bulk:
-  `POST /accession/transfers/bulk/reject`.
+  Reject (§B.11.5) — **Received → Rejected**, and also **Accepted → Rejected**
+  (reject-after-accept). `rejectionReason` is **required**. Origin branch is
+  notified; the sample is not processed. For an INTERNAL transfer rejected from
+  Accepted, the accept-time clone in the receiving branch is unwound (soft-deleted
+  + its lab reports re-homed to origin) before the transfer is marked Rejected.
+
+  **Bulk:** `POST /accession/transfers/bulk/reject` (and the other
+  `transfers/bulk/<action>` — pick-up/receive/accept/repeat) take `{ ids: [...],
+  ...fields, skipInvalid? }` and resolve to the structured result
+  `{ succeeded: [<transfer>…], skipped: [{ id, accessionNo, reason }…] }`. With
+  `skipInvalid: true` (the multi-select bar), transfers not in a legal state for
+  the action are skipped and listed under `skipped` instead of failing the batch.
 }

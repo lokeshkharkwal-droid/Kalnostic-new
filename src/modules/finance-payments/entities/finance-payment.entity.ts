@@ -57,6 +57,9 @@ export interface PaymentLedgerItem {
   notes: string | null;
   attachmentUrl: string | null;
   orderId: string | null;
+  /** Human-readable parent order code (Direct rows, e.g. `ORD-00001`); null for
+   *  invoice receipts, which have no single parent order. */
+  orderCode: string | null;
   invoiceId: string | null;
 }
 

@@ -554,6 +554,7 @@ export class FinancePaymentsService {
       notes: r.notes,
       attachmentUrl: null,
       orderId: r.orderId,
+      orderCode: o.orderCode,
       invoiceId: null,
     };
   }
@@ -595,6 +596,7 @@ export class FinancePaymentsService {
       notes: r.notes,
       attachmentUrl: r.attachmentUrl,
       orderId: null,
+      orderCode: null,
       invoiceId: r.invoiceId,
     };
   }

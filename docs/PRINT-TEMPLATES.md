@@ -222,12 +222,15 @@ from `PDF_TEMPLATE_META_DEFAULTS`, so you only set what you want to change.
   (`doc == null`).
 - **ACTIVE + not soft-deleted.** Only `isActive = true`, `deletedAt = null`
   templates are listed/resolved.
-- **Template resolution / ambiguity.** When you print without an explicit
-  `templateId`, the backend resolves the tenant's single active template of that
-  `type`. **Zero active → error** (`NoActiveLabelTemplateException` /
-  no-template). **More than one active and none configured as default → ambiguity
-  error** (`AmbiguousLabelTemplateException`). Set a Configuration default per
-  slot, or pass `templateId`.
+- **Template resolution.** When you print without an explicit `templateId`,
+  **barcode labels** (`order_label_print` / `multiple_order_label_print`) and
+  **lab reports** resolve in three tiers: (1) the Configuration default for that
+  slot (active branch, then tenant-wide), else (2) the **first active template**
+  of that `type`, else (3) **zero active → error** (`NoActiveLabelTemplateException`
+  / `NoActivePrintTemplateException`). More than one active template is fine — the
+  configured (else first) one is used. Order documents still require either a
+  single active template of the `type` or a configured default. Set a
+  Configuration default per slot, or pass `templateId`, to be explicit.
 - **Unique name per tenant** among active templates → 409
   `PDF_REPORT_TEMPLATE_NAME_CONFLICT` on collision.
 - **Tenant/branch scoped.** `branchId = null` → tenant-wide; a branch UUID → that
@@ -511,7 +514,7 @@ their tag lists are identical.
 | `{report_approved_by_certifications}` | Comma-joined certs (NABL/CAP/ISO). |
 | `{report_approved_by_signature}` | Signature image URL. |
 | `{patient_image}` | Patient photo URL. |
-| `{order_id_barcode}` | Code 128 barcode **image** of the Order ID (`Order.orderIdBarcode`). |
+| `{order_id_barcode}` | Code 128 barcode **image** of the Order ID (`Order.orderCode`, e.g. `ORD-00113`). |
 | `{order_id_qr_code}` | Code 128 barcode **image** of the Sample ID (this report's `OrderSample.barcode`) — a barcode despite the name. |
 | `{test_file_attachment}` | The PDF(s) uploaded with this test's Test Entry **File +** button, drawn in place (see below). Empty when the test has none. |
 
@@ -633,7 +636,7 @@ The context is:
 | `refer_by_name` | Referring doctor (or ` -- `). |
 | `referring_panel_name` | Referring panel (or ` -- `). |
 | `order_date_time` | Order date/time — typed order time, else the order's creation time (tenant timezone). |
-| `order_id_barcode` | Code 128 barcode image src (`data:` URI) of the Order ID (`Order.orderIdBarcode`). |
+| `order_id_barcode` | Code 128 barcode image src (`data:` URI) of the Order ID (`Order.orderCode`, e.g. `ORD-00113`). |
 
 **`report_tests.tests[]` (one per test):**
 

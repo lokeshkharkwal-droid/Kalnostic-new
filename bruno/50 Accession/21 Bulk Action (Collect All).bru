@@ -31,8 +31,11 @@ tests {
   test("transition applied (or rejected by the state machine)", function () {
     expect(res.getStatus()).to.be.oneOf([200, 201, 422]);
   });
-  test("returns an array of updated samples", function () {
-    if (res.getStatus() < 400) expect(res.getBody().data).to.be.an("array");
+  test("returns { succeeded, skipped }", function () {
+    if (res.getStatus() < 400) {
+      expect(res.getBody().data).to.have.property("succeeded").that.is.an("array");
+      expect(res.getBody().data).to.have.property("skipped").that.is.an("array");
+    }
   });
 }
 
@@ -57,14 +60,24 @@ docs {
   system-sequential value (from `10001`); a single Code 39 image is rendered and
   its S3 URL stored in `orderIdBarcode` on all members, in one transaction.
 
-  ## `skipInvalid` (group actions — "send all + skip invalid")
+  ## `skipInvalid` (group / multi-select actions — "skip invalid")
 
   Optional boolean (default `false`). When `false` the batch is strict: if any id
   is not in a legal state for the action the whole request fails with 422
   `INVALID_SAMPLE_TRANSITION`. When `true` (used by the grouped in-house page's
-  Order / Department / Department+Sample action buttons, which send every
-  `sampleIds` in the group) samples not in a legal state are **skipped** and the
-  response returns only the ids that transitioned.
+  Order / Department / Department+Sample action buttons AND the multi-select
+  action bar, which send every selected `sampleIds`) samples not in a legal state
+  are **skipped** instead of failing the batch.
+
+  ## Response shape — `{ succeeded, skipped }`
+
+  Every `bulk/<action>` resolves to
+  `{ "succeeded": [ <updated sample | transfer>… ], "skipped": [ { "id", "accessionNo", "reason" }… ] }`
+  (inside the standard `data` envelope). `succeeded` holds the rows that actually
+  changed; `skipped` names each id that was not in a legal state (only populated
+  when `skipInvalid` is `true`) with a human-readable reason, so the front end can
+  report successes and skips separately. The single-item endpoints
+  (`:id/<action>`) still return the single updated row.
 
   ## `force` (group status actions — "direct status override")
 
