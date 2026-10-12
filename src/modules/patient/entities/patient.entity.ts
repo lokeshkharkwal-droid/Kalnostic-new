@@ -1,4 +1,5 @@
 import {
+  AgeType,
   MedicalHistory,
   Patient,
   PatientFamilyLink,
@@ -41,9 +42,8 @@ export interface FamilyMemberSummary {
     firstName: string;
     lastName: string | null;
     age: number | null;
-    // Nullable: a patient (incl. a family member) may have no mobile when the
-    // B2B "optional mobile" registration setting is used.
-    mobile: string | null;
+    ageType: AgeType | null;
+    mobile: string;
     umId: string | null;
   };
 }

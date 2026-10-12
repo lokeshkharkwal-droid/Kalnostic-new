@@ -1,4 +1,7 @@
-import { BillStatus, Prisma } from '@prisma/client';
+import 'reflect-metadata';
+import { BillStatus, OrderStatus, Prisma } from '@prisma/client';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
 import { OrderService } from './order.service';
 import { ListOrdersDto } from './dto/list-orders.dto';
 
@@ -67,5 +70,91 @@ describe('OrderService — billStatus list filter', () => {
       }
     ).buildOrderWhere({ section: 'DIAGNOSTICS' }, 'tenant-1', 'branch-1');
     expect(where.billStatus).toBeUndefined();
+  });
+
+  // ── Additional coverage (added alongside the two tests above) ──────────────
+
+  /** Run the private where-builder for any query. */
+  const buildQuery = async (query: ListOrdersDto) => {
+    const { where } = await (
+      service as unknown as {
+        buildOrderWhere: (
+          q: ListOrdersDto,
+          tenantId: string,
+          branchId: string | null,
+        ) => Promise<{ where: Prisma.OrderWhereInput }>;
+      }
+    ).buildOrderWhere(query, 'tenant-1', 'branch-1');
+    return where;
+  };
+
+  it('offers exactly the seven statuses the Billings screen shows', () => {
+    expect([...Object.values(BillStatus)].sort()).toEqual([
+      'CANCELLED',
+      'FULLY_REFUNDED',
+      'NOT_PAID',
+      'PAID',
+      'PARTIALLY_PAID',
+      'PARTIALLY_REFUNDED',
+      'REQUIRE_REFUND',
+    ]);
+  });
+
+  it('answers from the indexed column alone: no orders are loaded to scan', async () => {
+    await buildQuery({
+      section: 'DIAGNOSTICS',
+      billStatus: BillStatus.NOT_PAID,
+    });
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it('composes with the Billings drafts/quotations exclusion instead of replacing it', async () => {
+    const where = await buildQuery({
+      section: 'DIAGNOSTICS',
+      hideUnpaidAppointments: true,
+      billStatus: BillStatus.PAID,
+    });
+    expect(where.billStatus).toBe(BillStatus.PAID);
+    expect(where.AND).toContainEqual({
+      status: { notIn: [OrderStatus.DRAFT, OrderStatus.QUOTE] },
+    });
+  });
+
+  it('composes with the other screen filters', async () => {
+    const where = await buildQuery({
+      section: 'DIAGNOSTICS',
+      billStatus: BillStatus.PARTIALLY_PAID,
+      referralPanelId: 'panel-1',
+    });
+    expect(where).toMatchObject({
+      billStatus: BillStatus.PARTIALLY_PAID,
+      referralPanelId: 'panel-1',
+      tenantId: 'tenant-1',
+      branchId: 'branch-1',
+    });
+  });
+
+  describe('the query parameter', () => {
+    const check = (value: unknown) =>
+      validate(plainToInstance(ListOrdersDto, { billStatus: value }));
+
+    it.each(Object.values(BillStatus))('accepts %s', async (v) => {
+      expect(await check(v)).toHaveLength(0);
+    });
+
+    it.each(['paid', 'Paid', 'BANANA', 'FULLY REFUNDED', ''])(
+      'rejects %j',
+      async (v) => {
+        const errors = await check(v);
+        expect(errors.some((e) => e.property === 'billStatus')).toBe(true);
+      },
+    );
+
+    it('is declared once on the DTO (a second declaration breaks the build)', () => {
+      const instance = plainToInstance(ListOrdersDto, {
+        billStatus: 'NOT_PAID',
+      });
+      expect(instance.billStatus).toBe('NOT_PAID');
+    });
   });
 });

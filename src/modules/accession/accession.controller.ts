@@ -87,14 +87,24 @@ export class AccessionController {
     );
   }
 
-  /** Summary counts for the status tabs (§A.5) + TAT bar (§A.4) + total. */
+  /**
+   * Summary counts for the status tabs (§A.5) + TAT bar (§A.4) + total. Takes the
+   * list's filters (date range, search, …) so the counts match what the list
+   * shows; `status`, `tatStatus` and paging are accepted but ignored.
+   */
   @Get('summary')
   summary(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
     @CurrentUser('person_id') personId: string,
+    @Query() query: ListSamplesDto,
   ) {
-    return this.sampleService.summary(tenantId, profile.branchId, personId);
+    return this.sampleService.summary(
+      tenantId,
+      profile.branchId,
+      personId,
+      query,
+    );
   }
 
   /**

@@ -514,7 +514,7 @@ their tag lists are identical.
 | `{report_approved_by_certifications}` | Comma-joined certs (NABL/CAP/ISO). |
 | `{report_approved_by_signature}` | Signature image URL. |
 | `{patient_image}` | Patient photo URL. |
-| `{order_id_barcode}` | Code 128 barcode **image** of the Order ID (`Order.orderIdBarcode`). |
+| `{order_id_barcode}` | Code 128 barcode **image** of the Order ID (`Order.orderCode`, e.g. `ORD-00113`). |
 | `{order_id_qr_code}` | Code 128 barcode **image** of the Sample ID (this report's `OrderSample.barcode`) — a barcode despite the name. |
 | `{test_file_attachment}` | The PDF(s) uploaded with this test's Test Entry **File +** button, drawn in place (see below). Empty when the test has none. |
 
@@ -636,7 +636,7 @@ The context is:
 | `refer_by_name` | Referring doctor (or ` -- `). |
 | `referring_panel_name` | Referring panel (or ` -- `). |
 | `order_date_time` | Order date/time — typed order time, else the order's creation time (tenant timezone). |
-| `order_id_barcode` | Code 128 barcode image src (`data:` URI) of the Order ID (`Order.orderIdBarcode`). |
+| `order_id_barcode` | Code 128 barcode image src (`data:` URI) of the Order ID (`Order.orderCode`, e.g. `ORD-00113`). |
 
 **`report_tests.tests[]` (one per test):**
 

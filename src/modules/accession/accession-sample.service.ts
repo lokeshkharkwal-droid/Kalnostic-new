@@ -8,10 +8,12 @@ import {
   Prisma,
   SamplePriority,
   SampleStatus,
+  TransferKind,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
+import { timestampRange } from '../../common/utils/date-range.util';
 import {
   toBranchLocalInstant,
   formatTenantDate,
@@ -33,6 +35,7 @@ import {
   COLLECTABLE_SAMPLE_STATUSES,
 } from './constants/sample-transitions.constant';
 import {
+  TAT_STATUSES,
   TERMINAL_SAMPLE_STATUSES,
   TatStatus,
   TatThresholds,
@@ -1085,29 +1088,48 @@ export class OrderSampleService {
   }
 
   /**
-   * Accession list summary for the active branch: a count per status (§A.5 tabs,
-   * all statuses present with 0 default), a count per TAT band (§A.4 bar), and the
-   * overall total.
+   * Accession list summary: a count per status (§A.5 tabs, all statuses present
+   * with 0 default), a count per TAT band (§A.4 bar), and the overall total.
+   *
+   * The counts follow the SAME filters as the list (date range, search, doctor,
+   * panel, department, …) so the tabs/cards describe the records the user is
+   * looking at — but deliberately ignore `status`, `tatStatus` and paging: every
+   * tab/card must keep showing its own total whichever tab or card is selected
+   * (otherwise picking "New" would zero every other tab). Counts are SAMPLES, as
+   * before. Everything is counted in the database (one group-by for the tabs, one
+   * count per TAT band) — no rows are loaded into memory.
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT profile)
+   * @param personId caller, for the department-visibility scope
+   * @param query the list's filters (status / tatStatus / page / limit are ignored)
    */
   async summary(
     tenantId: string,
     branchId: string | null,
     personId: string,
+    query: ListSamplesDto = {},
   ): Promise<AccessionSummary> {
     const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
       tenantId,
       personId,
     );
-    const where: Prisma.OrderSampleWhereInput = {
+    const tat = await this.tatThresholds(tenantId, branchId);
+    const nowMs = Date.now();
+    const where = this.buildSampleWhere(
       tenantId,
       branchId,
-      deletedAt: null,
-      // Same mandatory department-visibility scope as the list, so the status
-      // tab + TAT bar counts always match the rows the user can actually see.
-      AND: [this.departmentScopeForSamples(scopeIds)],
-    };
+      {
+        ...query,
+        status: undefined,
+        tatStatus: undefined,
+        page: undefined,
+        limit: undefined,
+      },
+      tat,
+      nowMs,
+      scopeIds,
+    );
+
     const grouped = await this.prisma.orderSample.groupBy({
       by: ['status'],
       where,
@@ -1123,22 +1145,25 @@ export class OrderSampleService {
       total += g._count._all;
     }
 
-    const nowMs = Date.now();
-    const tat = await this.tatThresholds(tenantId, branchId);
-    const rows = await this.prisma.orderSample.findMany({
-      where,
-      select: { createdAt: true, status: true },
-    });
-    const byTat: Record<TatStatus, number> = {
-      WITHIN: 0,
-      WARNING: 0,
-      CRITICAL: 0,
-      BREACHED: 0,
-    };
-    for (const r of rows) {
-      const band = deriveTatStatus(r.createdAt, r.status, tat, nowMs);
-      if (band) byTat[band] += 1;
-    }
+    // One count per TAT band — the same `createdAt` range + open-status rule the
+    // list's TAT filter uses, so a card always equals the rows behind it.
+    const bandCounts = await Promise.all(
+      TAT_STATUSES.map((band) =>
+        this.prisma.orderSample.count({
+          where: {
+            AND: [
+              where,
+              { status: { notIn: [...TERMINAL_SAMPLE_STATUSES] } },
+              { createdAt: tatCreatedAtRange(band, tat, nowMs) },
+            ],
+          },
+        }),
+      ),
+    );
+    // Built in the fixed band order (WITHIN → BREACHED), not completion order.
+    const byTat = Object.fromEntries(
+      TAT_STATUSES.map((band, i) => [band, bandCounts[i]]),
+    ) as Record<TatStatus, number>;
     return { total, byStatus, byTat };
   }
 
@@ -2545,6 +2570,27 @@ export class OrderSampleService {
     if (query.isHomeCollection) {
       order.diagnostics = { is: { isHomeVisit: true } };
     }
+    if (query.internalReferralId) {
+      order.internalReferralId = query.internalReferralId;
+    }
+    if (query.externalReferralId) {
+      order.externalReferralId = query.externalReferralId;
+    }
+    if (query.internalReferralBranchId) {
+      order.internalReferral = {
+        is: { branchId: query.internalReferralBranchId },
+      };
+    }
+    if (query.externalReferralOrganisation) {
+      order.externalReferral = {
+        is: {
+          organisationName: {
+            equals: query.externalReferralOrganisation,
+            mode: 'insensitive',
+          },
+        },
+      };
+    }
 
     const and: Prisma.OrderSampleWhereInput[] = [];
     if (query.search) {
@@ -2574,6 +2620,26 @@ export class OrderSampleService {
       });
     }
     if (query.isOutsource) and.push({ status: SampleStatus.OUTSOURCED });
+    if (query.outsourceCenterId) {
+      and.push({
+        transfers: {
+          some: {
+            deletedAt: null,
+            kind: TransferKind.OUTSOURCE,
+            outsourceCenterId: query.outsourceCenterId,
+          },
+        },
+      });
+    }
+    // Send / Forward / Outsource date: the sample has a transfer of that kind
+    // dispatched on the chosen day (its `sendDate`, else when it was created).
+    for (const [kind, day] of [
+      [TransferKind.INTERNAL, query.sendDate],
+      [TransferKind.EXTERNAL, query.forwardDate],
+      [TransferKind.OUTSOURCE, query.outsourceDate],
+    ] as const) {
+      if (day) and.push(this.transferOnDay(kind, day));
+    }
     if (query.isUrgent) {
       and.push({
         OR: [
@@ -2593,6 +2659,26 @@ export class OrderSampleService {
     if (Object.keys(order).length > 0) where.order = order;
     if (and.length > 0) where.AND = and;
     return where;
+  }
+
+  /**
+   * "Has a `kind` transfer dispatched on `day`" (YYYY-MM-DD, whole day). Uses the
+   * transfer's `sendDate`, falling back to `createdAt` when no send date was set.
+   */
+  private transferOnDay(
+    kind: TransferKind,
+    day: string,
+  ): Prisma.OrderSampleWhereInput {
+    const range = timestampRange(day, day);
+    return {
+      transfers: {
+        some: {
+          deletedAt: null,
+          kind,
+          OR: [{ sendDate: range }, { sendDate: null, createdAt: range }],
+        },
+      },
+    };
   }
 
   /**

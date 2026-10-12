@@ -99,14 +99,26 @@ export class LabReportResultsRequiredException extends KaltrosException {
   }
 }
 
-/** 403 — unlocking a report requires the supervisor unlock permission. */
-export class UnlockNotPermittedException extends KaltrosException {
-  constructor() {
+/** 409 — the report is already locked; a second lock would overwrite who/why. */
+export class LabReportAlreadyLockedException extends KaltrosException {
+  constructor(id: string) {
     super(
-      'UNLOCK_NOT_PERMITTED',
-      'You do not have permission to unlock a locked report',
-      {},
-      HttpStatus.FORBIDDEN,
+      'LAB_REPORT_ALREADY_LOCKED',
+      'This report is already locked. Unlock it first if you need to lock it again.',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/** 409 — only a locked report can be unlocked. */
+export class LabReportNotLockedException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'LAB_REPORT_NOT_LOCKED',
+      'This report is not locked.',
+      { id },
+      HttpStatus.CONFLICT,
     );
   }
 }

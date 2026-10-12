@@ -98,6 +98,7 @@ const FAMILY_MEMBER_SELECT = {
   firstName: true,
   lastName: true,
   age: true,
+  ageType: true,
   mobile: true,
   umId: true,
 } as const;
@@ -194,6 +195,7 @@ function summarizeFamilyPerson(
       firstName: person.firstName,
       lastName: person.lastName,
       age: person.age,
+      ageType: person.ageType,
       mobile: person.mobile,
       umId: person.umId,
     },
@@ -1160,7 +1162,6 @@ export class PatientService {
     const allergies = values('allergy', 'type');
     const smoking = values('smoking', 'status');
     const alcohol = values('alcohol', 'status');
-    const symptoms = new Set(rich.symptoms ?? []);
     return {
       hasDiabetes: conditions.some((c) => c.includes('diabet')),
       hasHypertension: conditions.some((c) => c.includes('hypertension')),
@@ -1178,6 +1179,23 @@ export class PatientService {
       isFormerSmoker: smoking.some((s) => s.includes('former')),
       isCurrentAlcoholic: alcohol.some((s) => s.includes('current')),
       isFormerAlcoholic: alcohol.some((s) => s.includes('former')),
+      ...this.deriveSymptomFlags(rich.symptoms),
+    };
+  }
+
+  /**
+   * Derive the flat symptom columns from the rich symptoms checklist. When
+   * `symptoms` is omitted (the Registration Create pages never send it —
+   * symptoms there are per-visit, not patient history) no symptom column is
+   * returned, so an update leaves the stored values untouched and a create
+   * falls back to the column defaults (`false`).
+   * @param list the selected symptom labels, or undefined when not provided
+   * @returns a partial of the flat symptom columns (empty when omitted)
+   */
+  private deriveSymptomFlags(list: string[] | undefined) {
+    if (list === undefined) return {};
+    const symptoms = new Set(list);
+    return {
       hasCough: symptoms.has('Cough'),
       hasFever: symptoms.has('Fever'),
       hasShortnessOfBreath: symptoms.has('Shortness of Breath'),
@@ -1247,11 +1265,41 @@ export class PatientService {
     dto: UpdateMedicalHistoryDto,
     actorId?: string,
   ): Promise<MedicalHistory> {
-    await this.findMedicalHistoryById(id, tenantId, patientId);
+    const existing = await this.findMedicalHistoryById(id, tenantId, patientId);
+    /* `richHistory` replaces the stored JSON wholesale. When the caller omits
+       `symptoms` (the Registration Create pages), carry the stored symptoms
+       forward so they are not wiped; an explicit array (even `[]`, from the
+       Patient Details editor) still replaces them. */
+    let data: MedicalHistoryDto = dto;
+    if (dto.richHistory && dto.richHistory.symptoms === undefined) {
+      const stored = this.storedSymptoms(existing.richHistory);
+      if (stored) {
+        data = {
+          ...dto,
+          richHistory: { ...dto.richHistory, symptoms: stored },
+        };
+      }
+    }
     return this.prisma.medicalHistory.update({
       where: { id },
-      data: { ...this.buildMedicalWriteData(dto), updatedBy: actorId ?? null },
+      data: { ...this.buildMedicalWriteData(data), updatedBy: actorId ?? null },
     });
+  }
+
+  /**
+   * Read the symptoms checklist out of a stored `richHistory` JSON value.
+   * @param rich the persisted `richHistory` column
+   * @returns the stored symptom labels, or undefined when none are stored
+   */
+  private storedSymptoms(rich: Prisma.JsonValue | null): string[] | undefined {
+    if (!rich || typeof rich !== 'object' || Array.isArray(rich)) {
+      return undefined;
+    }
+    const symptoms = rich.symptoms;
+    return Array.isArray(symptoms) &&
+      symptoms.every((x): x is string => typeof x === 'string')
+      ? symptoms
+      : undefined;
   }
 
   /**
