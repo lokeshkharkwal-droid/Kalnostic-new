@@ -28,7 +28,11 @@ export class RichMedicalHistoryDto {
   @IsOptional()
   entries?: Record<string, Array<Record<string, string>>>;
 
-  /** Selected symptom labels (checklist). */
+  /**
+   * Selected symptom labels (checklist). Omit it on an update to keep the
+   * stored symptoms (the Registration Create pages never send symptoms — they
+   * are per-visit, not patient history); an explicit array replaces them.
+   */
   @IsArray()
   @IsString({ each: true })
   @IsOptional()
