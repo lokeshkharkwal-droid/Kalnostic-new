@@ -3,6 +3,7 @@ import { AccessionSettingsService } from './accession-settings.service';
 import { OrderSampleService } from './accession-sample.service';
 import { LabReportService } from '../lab-report/lab-report.service';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
+import { PdfTemplateConfigService } from '../pdf-report-template/pdf-template-config.service';
 import { TemplateRenderService } from '../pdf-report-template/services/template-render.service';
 import { PdfTemplateMeta } from '../pdf-report-template/constants/pdf-template-meta.constant';
 import { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
@@ -71,6 +72,7 @@ describe('OrderSampleService — printLabels {collected_at}', () => {
       {} as unknown as AccessionSettingsService,
       {} as unknown as LabReportService,
       pdfReportTemplateService as unknown as PdfReportTemplateService,
+      {} as unknown as PdfTemplateConfigService,
       {} as unknown as EventEmitter2,
       tenantService as unknown as TenantService,
       {} as unknown as BarcodeService,
@@ -92,7 +94,7 @@ describe('OrderSampleService — printLabels {collected_at}', () => {
   it("prints each label's own collection date and time (12h)", async () => {
     locale('12h');
 
-    await service.printLabels(['s1', 's2', 's3'], 't1', 'tpl-1');
+    await service.printLabels(['s1', 's2', 's3'], 't1', null, 'tpl-1');
 
     expect(printedCollectedAt()).toEqual([
       '18/09/2026 3:35 PM',
@@ -109,7 +111,7 @@ describe('OrderSampleService — printLabels {collected_at}', () => {
   it("follows the tenant's 24h time format", async () => {
     locale('24h');
 
-    await service.printLabels(['s2', 's1'], 't1', 'tpl-1');
+    await service.printLabels(['s2', 's1'], 't1', null, 'tpl-1');
 
     expect(printedCollectedAt()).toEqual([
       '10/09/2026 11:18',
@@ -130,7 +132,7 @@ describe('OrderSampleService — printLabels {collected_at}', () => {
   it('resolves {collected_at} per label inside {{#each labels}}', async () => {
     locale('12h');
 
-    await service.printLabels(['s1', 's3', 's2'], 't1', 'tpl-1');
+    await service.printLabels(['s1', 's3', 's2'], 't1', null, 'tpl-1');
 
     const meta = {
       header_html: '',

@@ -36,9 +36,12 @@ export const TRANSFER_TRANSITIONS: Readonly<
     [TransferStatus.RECEIVED]: TransferStatus.REPEAT,
     [TransferStatus.ACCEPTED]: TransferStatus.REPEAT,
   },
-  // Reject — sample rejected; origin branch notified.
+  // Reject — sample rejected; origin branch notified. Allowed from Received, and
+  // also from Accepted (reject after acceptance): for an INTERNAL transfer the
+  // accept-time clone is unwound in `transferAction` before the status change.
   reject: {
     [TransferStatus.RECEIVED]: TransferStatus.REJECTED,
+    [TransferStatus.ACCEPTED]: TransferStatus.REJECTED,
   },
 };
 

@@ -222,12 +222,15 @@ from `PDF_TEMPLATE_META_DEFAULTS`, so you only set what you want to change.
   (`doc == null`).
 - **ACTIVE + not soft-deleted.** Only `isActive = true`, `deletedAt = null`
   templates are listed/resolved.
-- **Template resolution / ambiguity.** When you print without an explicit
-  `templateId`, the backend resolves the tenant's single active template of that
-  `type`. **Zero active → error** (`NoActiveLabelTemplateException` /
-  no-template). **More than one active and none configured as default → ambiguity
-  error** (`AmbiguousLabelTemplateException`). Set a Configuration default per
-  slot, or pass `templateId`.
+- **Template resolution.** When you print without an explicit `templateId`,
+  **barcode labels** (`order_label_print` / `multiple_order_label_print`) and
+  **lab reports** resolve in three tiers: (1) the Configuration default for that
+  slot (active branch, then tenant-wide), else (2) the **first active template**
+  of that `type`, else (3) **zero active → error** (`NoActiveLabelTemplateException`
+  / `NoActivePrintTemplateException`). More than one active template is fine — the
+  configured (else first) one is used. Order documents still require either a
+  single active template of the `type` or a configured default. Set a
+  Configuration default per slot, or pass `templateId`, to be explicit.
 - **Unique name per tenant** among active templates → 409
   `PDF_REPORT_TEMPLATE_NAME_CONFLICT` on collision.
 - **Tenant/branch scoped.** `branchId = null` → tenant-wide; a branch UUID → that
