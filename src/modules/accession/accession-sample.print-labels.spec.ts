@@ -3,6 +3,7 @@ import { AccessionSettingsService } from './accession-settings.service';
 import { OrderSampleService } from './accession-sample.service';
 import { LabReportService } from '../lab-report/lab-report.service';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
+import { PdfTemplateConfigService } from '../pdf-report-template/pdf-template-config.service';
 import { TemplateRenderService } from '../pdf-report-template/services/template-render.service';
 import { PdfTemplateMeta } from '../pdf-report-template/constants/pdf-template-meta.constant';
 import { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
@@ -28,12 +29,14 @@ describe('OrderSampleService — printLabels {collected_at}', () => {
     id: string,
     orderCode: string,
     collectedAt: string | null,
+    sampleName: string | null = null,
   ): OrderSampleDetail =>
     ({
       id,
       accessionNo: `ACC-${id}`,
       barcode: null,
       orderIdBarcode: null,
+      sampleName,
       sampleType: 'Blood',
       containerType: null,
       priority: 'ROUTINE',
@@ -47,6 +50,7 @@ describe('OrderSampleService — printLabels {collected_at}', () => {
     s1: sample('s1', 'ORD-00115', '2026-09-18T10:05:39.774Z'),
     s2: sample('s2', 'ORD-00114', '2026-09-10T05:48:29.430Z'),
     s3: sample('s3', 'ORD-00118', null),
+    s4: sample('s4', 'ORD-00119', null, 'Fasting blood'),
   };
 
   /** The render context `printLabels` handed to `generatePdf`. */
@@ -68,6 +72,7 @@ describe('OrderSampleService — printLabels {collected_at}', () => {
       {} as unknown as AccessionSettingsService,
       {} as unknown as LabReportService,
       pdfReportTemplateService as unknown as PdfReportTemplateService,
+      {} as unknown as PdfTemplateConfigService,
       {} as unknown as EventEmitter2,
       tenantService as unknown as TenantService,
       {} as unknown as BarcodeService,
@@ -89,7 +94,7 @@ describe('OrderSampleService — printLabels {collected_at}', () => {
   it("prints each label's own collection date and time (12h)", async () => {
     locale('12h');
 
-    await service.printLabels(['s1', 's2', 's3'], 't1', 'tpl-1');
+    await service.printLabels(['s1', 's2', 's3'], 't1', null, 'tpl-1');
 
     expect(printedCollectedAt()).toEqual([
       '18/09/2026 3:35 PM',
@@ -106,7 +111,7 @@ describe('OrderSampleService — printLabels {collected_at}', () => {
   it("follows the tenant's 24h time format", async () => {
     locale('24h');
 
-    await service.printLabels(['s2', 's1'], 't1', 'tpl-1');
+    await service.printLabels(['s2', 's1'], 't1', null, 'tpl-1');
 
     expect(printedCollectedAt()).toEqual([
       '10/09/2026 11:18',
@@ -114,10 +119,20 @@ describe('OrderSampleService — printLabels {collected_at}', () => {
     ]);
   });
 
+  it("prints each label's own {sample_name}, blank when the sample has none", async () => {
+    locale('12h');
+
+    await service.printLabels(['s4', 's3'], 't1', 'tpl-1');
+
+    const labels = printedContext().sections?.labels ?? [];
+    expect(labels.map((l) => l.sample_name)).toEqual(['Fasting blood', '']);
+    expect(labels.map((l) => l.sample_type)).toEqual(['Blood', 'Blood']);
+  });
+
   it('resolves {collected_at} per label inside {{#each labels}}', async () => {
     locale('12h');
 
-    await service.printLabels(['s1', 's3', 's2'], 't1', 'tpl-1');
+    await service.printLabels(['s1', 's3', 's2'], 't1', null, 'tpl-1');
 
     const meta = {
       header_html: '',

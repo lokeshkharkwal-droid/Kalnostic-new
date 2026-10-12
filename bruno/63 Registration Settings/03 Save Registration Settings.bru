@@ -89,6 +89,7 @@ body:json {
     "Appointment_AutoIncrementExternalAppointmentIdFormat": "YMD_DAILY",
 
     "Patients_AllowMergingTwoPatients": false,
+    "Patients_AllowB2bPatientWithoutMobile": false,
     "Patients_AutoIncrementExternalPatientIdFormat": "YMD_DAILY"
   }
 }
@@ -161,6 +162,9 @@ docs {
     (auto id prefixed with a fixed `APT`; `NONE` = no external id). Preview via
     `.../preview?purpose=APPOINTMENT`.
   - `Patients_AllowMergingTwoPatients` — merging two patients.
+  - `Patients_AllowB2bPatientWithoutMobile` — when `true`, a B2B order (one with
+    a referral panel attached) may register a patient without a mobile number.
+    Non-B2B orders still require one. Default `false` (existing behaviour).
   - `Patients_AutoIncrementExternalPatientIdFormat` — same `ExternalIdFormat`
     option set, applied to the patient **UMID** (auto id prefixed with a fixed
     `PAT`, globally unique; `NONE` = operator types the UMID manually, required).

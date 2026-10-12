@@ -77,6 +77,7 @@ import {
 import {
   ImportableTemplateRow,
   ImportXlsxResult,
+  ImportXlsxSampleNameNotice,
   ImportXlsxSkippedTest,
   ImportXlsxUnresolvedClassification,
   LabTestExportPayload,
@@ -93,6 +94,11 @@ import {
   LabTestWithChildren,
   ReflexTestRef,
 } from './entities/lab-test.entity';
+import {
+  resolveSampleName,
+  summariseSampleNameNotes,
+  type SampleNameNote,
+} from './utils/sample-name.util';
 import { ImportLabTestTemplatesDto } from './dto/import-lab-test-templates.dto';
 import { SyncLabTestTemplatesDto } from './dto/sync-lab-test-templates.dto';
 import {
@@ -3129,11 +3135,15 @@ export class LabTestService {
 
     // ── 4. Assemble each span into one `ImportXlsxTestRowDto`. ─────────────
     const assembled: { dto: ImportXlsxTestRowDto; span: TestSpan }[] = [];
+    // Sample names that were tidied or are not standard names, per test row-span (reported, never rejected).
+    const sampleNameNotesBySpan = new Map<string, SampleNameNote[]>();
     for (const span of spans) {
       const firstRow = span.rows[0]!;
       if (firstRow.v[COL.testName] === '') continue; // already reported
       const dto = this.buildTestScalarsDto(firstRow, span.rowLabel);
-      dto.samples = this.buildSamplesForSpan(span.rows, COL);
+      const sampleNameNotes: SampleNameNote[] = [];
+      dto.samples = this.buildSamplesForSpan(span.rows, COL, sampleNameNotes);
+      sampleNameNotesBySpan.set(span.rowLabel, sampleNameNotes);
       dto.resultParams = this.buildParamsForSpan(
         span.rows,
         COL,
@@ -3578,7 +3588,19 @@ export class LabTestService {
       ...skippedByRowLabel.entries(),
     ].map(([rowLabel, errs]) => ({ rowLabel, errors: errs }));
 
-    return { created, updated, skipped, unresolvedClassifications };
+    const sampleNameNotices: ImportXlsxSampleNameNotice[] =
+      summariseSampleNameNotes(
+        sampleNameNotesBySpan,
+        new Set(skippedByRowLabel.keys()),
+      );
+
+    return {
+      created,
+      updated,
+      skipped,
+      unresolvedClassifications,
+      sampleNameNotices,
+    };
   }
 
   /**
@@ -4201,6 +4223,7 @@ export class LabTestService {
   private buildSamplesForSpan(
     rows: { rowNum: number; v: string[] }[],
     COL: ColumnIndex,
+    sampleNameNotes?: SampleNameNote[],
   ): ImportXlsxSampleRowDto[] {
     const samples: ImportXlsxSampleRowDto[] = [];
     for (const row of rows) {
@@ -4224,7 +4247,19 @@ export class LabTestService {
       if (!hasAny) continue;
       const dto = new ImportXlsxSampleRowDto();
       dto.rowLabel = `Row ${row.rowNum}`;
-      dto.sampleName = sampleName || undefined;
+      if (sampleName) {
+        // A name that is a standard one apart from capitals / spacing /
+        // punctuation gets the standard spelling; any other name is kept
+        // exactly as typed (never rejected - real data holds many names that
+        // are not on the standard list).
+        const resolved = resolveSampleName(sampleName);
+        dto.sampleName = resolved.name;
+        if (resolved.status === 'mapped') {
+          sampleNameNotes?.push({ typed: sampleName, mappedTo: resolved.name });
+        } else if (resolved.status === 'custom') {
+          sampleNameNotes?.push({ typed: sampleName });
+        }
+      }
       dto.sampleType = sampleType || undefined;
       dto.containerType = this.coerceCellValue(
         'containerType',

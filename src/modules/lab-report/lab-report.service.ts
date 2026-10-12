@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { timestampRange } from '../../common/utils/date-range.util';
+import { dateOnlyRange } from '../../common/utils/date-range.util';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PDFDocument } from 'pdf-lib';
 import {
@@ -79,6 +79,7 @@ import {
   LabReportContentSections,
   LabReportDetailApiResponse,
   LabReportDetailWithContent,
+  LabReportListRow,
   LabReportOverallResult,
   LabReportResultParam,
   LabReportSignatoryCandidate,
@@ -126,6 +127,10 @@ import {
   describeAnalyzerOverwrite,
 } from './utils/result-value-save.util';
 import { buildTestFileAttachmentHtml } from './utils/test-file-attachment.util';
+import {
+  sortWorklistMatches,
+  type WorklistMatch,
+} from './utils/worklist-order.util';
 import {
   buildReportBarcodeTags,
   pickReportSample,
@@ -447,9 +452,6 @@ export class LabReportService {
     // Standalone "Outsource" checkbox (distinct from the source pill above) —
     // same underlying signal, only ever narrows to outsourced items when checked.
     if (filters.outsource) where.isOutsourced = true;
-    // A day-only `dateTo` covers that whole day (see `timestampRange`).
-    const createdAtRange = timestampRange(filters.dateFrom, filters.dateTo);
-    if (createdAtRange) where.createdAt = createdAtRange;
 
     const orderItem: Prisma.OrderItemWhereInput = {};
     // The "Lab Test"/"Lab Panel" filter's id may be either a specific
@@ -486,27 +488,27 @@ export class LabReportService {
         some: { sample: { status: filters.sampleStatus }, deletedAt: null },
       };
     }
-    if (
-      filters.referredByDoctorId ||
-      filters.referralPanelId ||
-      filters.homeCollection ||
-      filters.patientId
-    ) {
-      const order: Prisma.OrderWhereInput = {};
-      if (filters.referredByDoctorId) {
-        order.referredByDoctorId = filters.referredByDoctorId;
-      }
-      if (filters.referralPanelId) {
-        order.referralPanelId = filters.referralPanelId;
-      }
-      if (filters.homeCollection) {
-        order.diagnostics = { is: { isHomeVisit: true } };
-      }
-      if (filters.patientId) {
-        order.patientId = filters.patientId;
-      }
-      orderItem.order = order;
+    // Order-level filters, joined through OrderItem.order.
+    const order: Prisma.OrderWhereInput = {};
+    // The date filter compares the ORDER's date (`orderDate`, a date-only column)
+    // — the date the worklist row shows, and the one the Accession worklist
+    // filters on — not the report's own `createdAt`, which is stamped when the
+    // sample is accepted and can be days after the order date.
+    const orderDateRange = dateOnlyRange(filters.dateFrom, filters.dateTo);
+    if (orderDateRange) order.orderDate = orderDateRange;
+    if (filters.referredByDoctorId) {
+      order.referredByDoctorId = filters.referredByDoctorId;
     }
+    if (filters.referralPanelId) {
+      order.referralPanelId = filters.referralPanelId;
+    }
+    if (filters.homeCollection) {
+      order.diagnostics = { is: { isHomeVisit: true } };
+    }
+    if (filters.patientId) {
+      order.patientId = filters.patientId;
+    }
+    if (Object.keys(order).length > 0) orderItem.order = order;
 
     // Search bar (LABORATORY.docx §1.1 element 4): Patient Name, Order ID, Test
     // Name, Ref Panel. Spans both OrderItem-level fields (Test Name, via the
@@ -625,20 +627,17 @@ export class LabReportService {
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 25;
 
-    const [rows, total] = await Promise.all([
-      this.prisma.labReport.findMany({
-        where,
-        include: LAB_REPORT_LIST_INCLUDE,
-        // Default sort matches Registration Billing / Accession worklists:
-        // by when the ORDER was placed, not when this LabReport row itself
-        // was created (which is stamped later, at sample-ACCEPTED time, and
-        // drifts out of order when samples are accepted out of sequence).
-        orderBy: { orderItem: { order: { createdAt: 'desc' } } },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      this.prisma.labReport.count({ where }),
-    ]);
+    // Worklist order matches the Accession worklist: newest first by when the
+    // order's newest sample was created (see `sortWorklistMatches`). Prisma can't
+    // order by a to-many aggregate, so the page is picked in two steps.
+    const { pageIds, total } = await this.pageWorklistReportIds(
+      tenantId,
+      resolvedBranchId,
+      where,
+      page,
+      limit,
+    );
+    const rows = await this.fetchWorklistRowsInOrder(tenantId, pageIds);
 
     let worklistRows = rows.map(toWorklistRow);
     worklistRows = await this.attachBranchNames(tenantId, worklistRows);
@@ -667,6 +666,97 @@ export class LabReportService {
     // codebase already follows this; this one didn't, so `GET /lab-reports`
     // was returning a non-standard envelope with no `meta.total/page/limit`).
     return { data: worklistRows, total, page, limit };
+  }
+
+  /**
+   * One worklist page of report ids, in worklist order, plus the total number of
+   * matching reports. Fetches only ids + the two timestamps the ordering needs
+   * for every report that passed the filters, ranks them with
+   * {@link sortWorklistMatches}, and slices the page — the full rows are loaded
+   * afterwards for that page only ({@link fetchWorklistRowsInOrder}).
+   * @param branchId the branch whose samples decide the order (a transferred
+   *   copy at another branch must not push this branch's rows up or down)
+   */
+  private async pageWorklistReportIds(
+    tenantId: string,
+    branchId: string,
+    where: Prisma.LabReportWhereInput,
+    page: number,
+    limit: number,
+  ): Promise<{ pageIds: string[]; total: number }> {
+    const found = await this.prisma.labReport.findMany({
+      where,
+      select: {
+        id: true,
+        createdAt: true,
+        orderItem: {
+          select: { orderId: true, order: { select: { createdAt: true } } },
+        },
+      },
+    });
+    const matches: WorklistMatch[] = found.map((r) => ({
+      id: r.id,
+      createdAt: r.createdAt,
+      orderId: r.orderItem.orderId,
+      orderCreatedAt: r.orderItem.order.createdAt,
+    }));
+    const latestSampleByOrder = await this.latestSampleCreatedByOrder(
+      tenantId,
+      branchId,
+      [...new Set(matches.map((m) => m.orderId))],
+    );
+    const ordered = sortWorklistMatches(matches, latestSampleByOrder);
+    const start = (page - 1) * limit;
+    return {
+      pageIds: ordered.slice(start, start + limit).map((m) => m.id),
+      total: ordered.length,
+    };
+  }
+
+  /**
+   * `orderId → newest live sample's createdAt` at the given branch, for the
+   * orders in view. Queried in chunks so a large worklist never exceeds the
+   * database's bind-parameter limit.
+   */
+  private async latestSampleCreatedByOrder(
+    tenantId: string,
+    branchId: string,
+    orderIds: string[],
+  ): Promise<Map<string, Date>> {
+    const latest = new Map<string, Date>();
+    const CHUNK = 5000;
+    for (let i = 0; i < orderIds.length; i += CHUNK) {
+      const groups = await this.prisma.orderSample.groupBy({
+        by: ['orderId'],
+        where: {
+          tenantId,
+          branchId,
+          deletedAt: null,
+          orderId: { in: orderIds.slice(i, i + CHUNK) },
+        },
+        _max: { createdAt: true },
+      });
+      for (const g of groups) {
+        if (g._max.createdAt) latest.set(g.orderId, g._max.createdAt);
+      }
+    }
+    return latest;
+  }
+
+  /** Load the full worklist rows for `ids`, returned in exactly that order. */
+  private async fetchWorklistRowsInOrder(
+    tenantId: string,
+    ids: string[],
+  ): Promise<LabReportListRow[]> {
+    if (ids.length === 0) return [];
+    const fetched = await this.prisma.labReport.findMany({
+      where: { id: { in: ids }, tenantId },
+      include: LAB_REPORT_LIST_INCLUDE,
+    });
+    const byId = new Map(fetched.map((r) => [r.id, r]));
+    return ids
+      .map((id) => byId.get(id))
+      .filter((r): r is LabReportListRow => r !== undefined);
   }
 
   /**
@@ -2945,7 +3035,7 @@ export class LabReportService {
     // panel member is narrowed by its `labTestId` (same scoping as
     // `attachSampleStatuses`); a multi-tube test can still have several rows,
     // so the oldest one carrying a barcode wins (`pickReportSample`). Feeds the
-    // `sample_*` tags and the Sample ID barcode (`{order_id_qr_code}`).
+    // `sample_*` tags and the Sample ID barcode (`{sample_id_barcode}`).
     const sampleLinks = await this.prisma.orderSampleTest.findMany({
       where: {
         tenantId,
@@ -2961,6 +3051,7 @@ export class LabReportService {
           select: {
             collectedAt: true,
             receivedAt: true,
+            sampleName: true,
             sampleType: true,
             barcode: true,
           },
@@ -2968,8 +3059,8 @@ export class LabReportService {
       },
     });
     const sample = pickReportSample(sampleLinks);
-    const barcodeTags = buildReportBarcodeTags(
-      order.orderIdBarcode,
+    const barcodeTags = await buildReportBarcodeTags(
+      order.orderCode,
       sample?.barcode,
     );
     // "Today" on the branch's calendar — `{patient_age}` is the age as of the
@@ -3167,6 +3258,7 @@ export class LabReportService {
               toBranchLocalInstant(sample.receivedAt, timezone),
             )
           : '',
+        sample_name: sample?.sampleName ?? '',
         sample_type: sample?.sampleType ?? '',
         sample_source_label: sampleSourceLabel(diagnostics?.sampleSource),
         // Approver (Doctor-only per product decision) — flat tags for templates
@@ -3180,14 +3272,16 @@ export class LabReportService {
         // Flat `{patient_image}` prints the URL; `{{image:patient_image}}`
         // auto-renders an <img> via the images map below.
         patient_image: patient.photoUrl ?? '',
-        // Code 128 barcode images (data URIs), rendered from the IDs:
-        // `{order_id_barcode}` = Order ID (`Order.orderIdBarcode`),
-        // `{order_id_qr_code}` = Sample ID (this report's `OrderSample.barcode`
-        // — a barcode despite the tag name). Each renders as an image whether
-        // written `{tag}`, `{{image:tag}}` (images map below) or
-        // `<img src="{tag}">` — see `resolveBareImageTags`.
+        // Barcode/QR images (data URIs), rendered from the IDs:
+        // `{order_id_barcode}` = Order ID (`Order.orderCode`, e.g. `ORD-00113`)
+        // as Code 128, `{order_id_qr_code}` = the same Order ID as a QR code,
+        // `{sample_id_barcode}` = Sample ID (this report's `OrderSample.barcode`)
+        // as Code 128. Each renders as an image whether written `{tag}`,
+        // `{{image:tag}}` (images map below) or `<img src="{tag}">` — see
+        // `resolveBareImageTags`.
         order_id_barcode: barcodeTags.order_id_barcode,
         order_id_qr_code: barcodeTags.order_id_qr_code,
+        sample_id_barcode: barcodeTags.sample_id_barcode,
         sample_note: sampleNote?.body ?? '',
         // `{test_file_attachment}` — the PDF(s) uploaded via this test's
         // "File +" button, as `<embed>` markup (printed unescaped, see
@@ -3204,6 +3298,7 @@ export class LabReportService {
         patient_image: patient.photoUrl ?? '',
         order_id_barcode: barcodeTags.order_id_barcode,
         order_id_qr_code: barcodeTags.order_id_qr_code,
+        sample_id_barcode: barcodeTags.sample_id_barcode,
       },
       sections: { results },
       signatories,
@@ -3496,9 +3591,9 @@ export class LabReportService {
         dateFormat,
         timeFormat,
       ),
-      // Order ID barcode IMAGE src (Code 128 data URI of
-      // `Order.orderIdBarcode`; templates use it as `<img src=…>`).
-      order_id_barcode: code128DataUri(order.orderIdBarcode),
+      // Order ID barcode IMAGE src (Code 128 data URI of the Order ID
+      // `Order.orderCode`; templates use it as `<img src=…>`).
+      order_id_barcode: code128DataUri(order.orderCode),
     };
 
     // Per-report body + dates, reusing the single-report context builder.

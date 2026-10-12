@@ -421,6 +421,18 @@ export interface ImportXlsxUnresolvedClassification {
   name: string;
 }
 
+/** A Sample Name in the uploaded file that is not spelled like one of the standard sample names. Informational
+ * only: nothing is rejected, the name is saved either way. */
+export interface ImportXlsxSampleNameNotice {
+  /** The name exactly as typed in the sheet. */
+  name: string;
+  /** Set when the name was saved under the standard spelling (it differed only by capitals, spacing or
+   * punctuation). Absent when the name is not a standard name and was saved exactly as typed. */
+  mappedTo?: string;
+  /** How many imported tests used it (a skipped test is not counted). */
+  tests: number;
+}
+
 export interface ImportXlsxResult {
   created: number;
   updated: number;
@@ -429,4 +441,7 @@ export interface ImportXlsxResult {
    * file that doesn't exist yet, deduplicated across the whole file. Empty
    * when every classification name in the file resolved successfully. */
   unresolvedClassifications: ImportXlsxUnresolvedClassification[];
+  /** Sample names in the file that are not standard names (saved as typed) or were tidied to the standard
+   * spelling. Empty when every name was already a standard one. Never causes a skip. */
+  sampleNameNotices: ImportXlsxSampleNameNotice[];
 }

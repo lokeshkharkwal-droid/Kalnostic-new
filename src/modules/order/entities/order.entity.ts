@@ -556,6 +556,9 @@ export const ORDER_LIST_INCLUDE = {
       reference: true,
       paymentDate: true,
       createdAt: true,
+      // The staff Person who recorded this ledger row — the Finance Collection
+      // report shows the collector, and the Refund report the refunder.
+      collectedBy: true,
     },
   },
   // The order(s) this quote was converted into — used to surface "View Order"
@@ -655,6 +658,24 @@ export type BillingRecordRow = BillingOrder & {
   paymentMode?: string;
   paymentReference?: string | null;
   paymentDate?: Date | null;
+  /**
+   * The `Person.id` who recorded this collected payment (Collection report only —
+   * from the source `PaymentDetails.collectedBy`). Resolved to a name in
+   * {@link responsibleUser}; falls back to the order's creator when the payment
+   * never captured a collector.
+   */
+  paymentCollectedById?: string | null;
+  /**
+   * Finance-report display fields (attached by `billingRecords`, every report):
+   * `dateTimeDisplay` is the row's localised `"YYYY-MM-DD HH:mm"` moment (the
+   * order's date+time, or the payment's for Collection) — fixes the FE showing
+   * `00:00` from the date-only `orderDate`. `responsibleUser` is the name of the
+   * person the report holds responsible: the order creator (Billing/Outstanding),
+   * the payment collector (Collection), the refunder (Refund) or the canceller
+   * (Cancel). Null when no actor was recorded (historical rows).
+   */
+  dateTimeDisplay?: string;
+  responsibleUser?: string | null;
   /**
    * Invoice-lock (Outstanding report). Whether an active invoice has already been
    * generated for this order, and that invoice's number. Drives the frontend's

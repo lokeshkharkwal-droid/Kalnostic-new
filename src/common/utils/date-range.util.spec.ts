@@ -1,4 +1,4 @@
-import { timestampRange } from './date-range.util';
+import { dateOnlyRange, timestampRange } from './date-range.util';
 
 /**
  * The list screens send plain days (`2026-10-06`). For a timestamp column the end
@@ -71,5 +71,52 @@ describe('timestampRange', () => {
     expect(r.lte).toBeUndefined();
     const t = timestampRange('2026-10-05', '2026-10-06T10:30:00Z')!;
     expect(t.lt).toBeUndefined();
+  });
+});
+
+/**
+ * A date-only column (`orders.order_date`) has no time of day, so both ends are
+ * plain inclusive days — and the day compared is the day the user picked.
+ */
+describe('dateOnlyRange', () => {
+  it('returns nothing when no date is given', () => {
+    expect(dateOnlyRange()).toBeUndefined();
+    expect(dateOnlyRange('', '')).toBeUndefined();
+  });
+
+  it('both ends are inclusive days', () => {
+    expect(dateOnlyRange('2026-10-06', '2026-10-09')).toEqual({
+      gte: new Date('2026-10-06T00:00:00.000Z'),
+      lte: new Date('2026-10-09T00:00:00.000Z'),
+    });
+  });
+
+  it('a single day is that day on both ends', () => {
+    expect(dateOnlyRange('2026-10-06', '2026-10-06')).toEqual({
+      gte: new Date('2026-10-06T00:00:00.000Z'),
+      lte: new Date('2026-10-06T00:00:00.000Z'),
+    });
+  });
+
+  it('an open end stays open', () => {
+    expect(dateOnlyRange('2026-10-07')).toEqual({
+      gte: new Date('2026-10-07T00:00:00.000Z'),
+    });
+    expect(dateOnlyRange(undefined, '2026-10-06')).toEqual({
+      lte: new Date('2026-10-06T00:00:00.000Z'),
+    });
+  });
+
+  it('keeps the calendar day as written when a time is attached', () => {
+    expect(
+      dateOnlyRange('2026-10-06T18:30:00.000Z', '2026-10-09T23:59:59.999Z'),
+    ).toEqual({
+      gte: new Date('2026-10-06T00:00:00.000Z'),
+      lte: new Date('2026-10-09T00:00:00.000Z'),
+    });
+  });
+
+  it('never produces an exclusive upper bound (unlike timestampRange)', () => {
+    expect(dateOnlyRange('2026-10-06', '2026-10-09')).not.toHaveProperty('lt');
   });
 });
