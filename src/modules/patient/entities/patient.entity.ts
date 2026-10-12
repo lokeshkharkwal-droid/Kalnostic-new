@@ -43,7 +43,7 @@ export interface FamilyMemberSummary {
     lastName: string | null;
     age: number | null;
     ageType: AgeType | null;
-    mobile: string;
+    mobile: string | null;
     umId: string | null;
   };
 }
