@@ -26,6 +26,7 @@ import {
 } from 'class-validator';
 import { LabTestSampleDto } from './lab-test-sample.dto';
 import { LabTestResultParamDto } from './lab-test-result-param.dto';
+import { NoteMaxLength } from '../../../common/validators/note-max-length.validator';
 
 const HH_MM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -324,22 +325,27 @@ export class UpdateLabTestDto {
 
   @IsString()
   @IsOptional()
+  @NoteMaxLength('Useful For')
   usefulFor?: string;
 
   @IsString()
   @IsOptional()
+  @NoteMaxLength('Interpretation')
   interpretationOfResults?: string;
 
   @IsString()
   @IsOptional()
+  @NoteMaxLength('Limitations')
   limitations?: string;
 
   @IsString()
   @IsOptional()
+  @NoteMaxLength('Remarks')
   remarks?: string;
 
   @IsString()
   @IsOptional()
+  @NoteMaxLength('References')
   references?: string;
 
   // Optional on update (omit = leave samples unchanged), but if provided it must
