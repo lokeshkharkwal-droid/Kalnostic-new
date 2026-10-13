@@ -3,6 +3,7 @@ import { dateOnlyRange } from '../../common/utils/date-range.util';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PDFDocument } from 'pdf-lib';
 import {
+  AgeType,
   LabReportHistory,
   LabReportStatus,
   MessagingChannel,
@@ -13,6 +14,7 @@ import {
   SampleStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { calendarDayIn, exactBirthDate } from '../../common/utils/age-dob.util';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
 import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
@@ -115,8 +117,11 @@ import {
   ReportingWindowClosedException,
 } from './exceptions/lab-report.exceptions';
 import {
+  candidateAgeMatch,
+  candidateAgeRank,
   compareRangeCandidates,
   computeTrendFlag,
+  type ExactAge,
   genderMatches,
   isExactAgeMatch,
   rangeAgeMatch,
@@ -2511,6 +2516,60 @@ export class LabReportService {
   }
 
   /**
+   * The patient's exact birth date and the day their age is measured on — the day the
+   * sample was collected (the earliest collection of this report's samples; the order
+   * date when none is recorded; today when there is no order date) — so the range follows
+   * the patient's REAL age that day. The birth date is the saved date of birth, or, for a
+   * patient who only ever gave an age, the day the record was created minus that age.
+   * `null` when the patient has neither (the caller falls back to the stored age).
+   */
+  private async exactPatientAge(
+    report: {
+      orderItemId: string;
+      labTestId: string | null;
+      memberBranchLabTestId: string | null;
+      orderItem: { order: { orderDate?: Date | null } };
+    },
+    tenantId: string,
+    patient: {
+      dateOfBirth?: Date | null;
+      age?: number | null;
+      ageType?: AgeType | null;
+      createdAt?: Date | null;
+    },
+  ): Promise<ExactAge | null> {
+    const hasDob = !!patient.dateOfBirth;
+    const hasAgeAndCreated =
+      patient.age !== null && patient.age !== undefined && !!patient.createdAt;
+    if (!hasDob && !hasAgeAndCreated) return null;
+
+    const { timezone } = await this.tenantService.getLocale(tenantId);
+    const links = await this.prisma.orderSampleTest.findMany({
+      where: {
+        tenantId,
+        orderItemId: report.orderItemId,
+        deletedAt: null,
+        ...(report.memberBranchLabTestId && report.labTestId
+          ? { labTestId: report.labTestId }
+          : {}),
+      },
+      select: { sample: { select: { collectedAt: true } } },
+    });
+    const collected = links
+      .map((l) => l.sample?.collectedAt ?? null)
+      .filter((d): d is Date => d !== null)
+      .sort((a, b) => a.getTime() - b.getTime())[0];
+    const orderDate = report.orderItem.order.orderDate ?? null;
+    const onDay = collected
+      ? calendarDayIn(collected, timezone)
+      : orderDate
+        ? calendarDayIn(orderDate, 'UTC') // a DATE column: its UTC day is the day
+        : calendarDayIn(new Date(), timezone);
+    const dob = exactBirthDate(patient, onDay, timezone);
+    return dob ? { dob, onDay } : null;
+  }
+
+  /**
    * Resolve the reference range/value for one result parameter given the
    * current methodology and the report's patient (age/gender), following
    * `LabTestResultParam.resultType` to decide which of
@@ -2545,6 +2604,7 @@ export class LabReportService {
     if (!param) throw new LabTestCatalogueMissingException(id);
 
     const patient = report.orderItem.order.patient;
+    const exactAge = await this.exactPatientAge(report, tenantId, patient);
 
     // Bug fix: this used to gate on QUALITATIVE only, so a SEMI_QUANTITATIVE
     // param (which also has no numeric LabTestReferenceRange — only a
@@ -2569,7 +2629,7 @@ export class LabReportService {
       const match = sortRangesByAgeSpecificity(candidates).find(
         (c) =>
           genderMatches(c.gender, patient.gender) &&
-          isExactAgeMatch(rangeAgeMatch(patient, c)),
+          isExactAgeMatch(rangeAgeMatch(patient, c, exactAge)),
       );
       return match
         ? {
@@ -2590,7 +2650,7 @@ export class LabReportService {
     const match = sortRangesByAgeSpecificity(candidates).find(
       (c) =>
         genderMatches(c.gender, patient.gender) &&
-        isExactAgeMatch(rangeAgeMatch(patient, c)),
+        isExactAgeMatch(rangeAgeMatch(patient, c, exactAge)),
     );
     return match
       ? {
@@ -2659,6 +2719,7 @@ export class LabReportService {
     }
 
     const patient = report.orderItem.order.patient;
+    const exactAge = await this.exactPatientAge(report, tenantId, patient);
 
     const ranges = await this.prisma.labTestReferenceRange.findMany({
       where: { paramId: param.id, deletedAt: null },
@@ -2670,12 +2731,14 @@ export class LabReportService {
     // so it never depends on database row order.
     const matchingScored = ranges
       .filter((r) => genderMatches(r.gender, patient.gender))
-      .map((row) => ({ row, ageMatch: rangeAgeMatch(patient, row) }))
+      .map((row) => ({
+        row,
+        ageMatch: candidateAgeMatch(patient, row, exactAge),
+      }))
       .filter((x) => x.ageMatch !== 'none')
       .sort(
         (x, y) =>
-          Number(!isExactAgeMatch(x.ageMatch)) -
-            Number(!isExactAgeMatch(y.ageMatch)) ||
+          candidateAgeRank(x.ageMatch) - candidateAgeRank(y.ageMatch) ||
           compareRangeCandidates(x.row, y.row),
       );
     const matching = matchingScored.map((x) => x.row);

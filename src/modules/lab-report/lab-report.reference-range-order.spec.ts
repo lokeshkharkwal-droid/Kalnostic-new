@@ -1,6 +1,9 @@
 import { AgeType, AgeUnit } from '@prisma/client';
 import { LabReportService } from './lab-report.service';
 import {
+  candidateAgeMatch,
+  candidateAgeRank,
+  coversAllAges,
   isExactAgeMatch,
   rangeAgeMatch,
   sortRangesByAgeSpecificity,
@@ -270,7 +273,7 @@ describe('LabReportService — which reference range the technician side offers'
       expect(res.candidates).toEqual([]);
     });
 
-    it('a patient with no age at all is still unfiltered (unchanged behaviour)', async () => {
+    it('a patient with no age at all still sees every range listed, but none of them is a certain fit', async () => {
       const res = await list([adult, newborn], {
         age: null,
         ageType: AgeType.DAYS,
@@ -377,5 +380,158 @@ describe('LabReportService — which reference range the technician side offers'
         expect(res.candidates.map((c) => c.id)).toEqual(['older', 'newer']);
       }
     });
+  });
+});
+
+describe('a patient with NO age (and no date of birth): only a range that fits everybody may be picked', () => {
+  const band = (
+    ageFrom: number,
+    ageFromUnit: AgeUnit,
+    ageTo: number,
+    ageToUnit: AgeUnit,
+  ) => ({ ageFrom, ageFromUnit, ageTo, ageToUnit });
+  const noAge = { age: null, ageType: null };
+
+  it.each([
+    [0, Y, 999, Y, true],
+    [0, Y, 120, Y, true],
+    [0, Y, 119, Y, false],
+    [0, M, 1440, M, true],
+    [0, M, 1439, M, false],
+    [0, D, 43800, D, true],
+    [0, D, 43000, D, false],
+    [0, D, 999, Y, true],
+    [1, Y, 999, Y, false],
+    [18, Y, 999, Y, false],
+    [0, Y, 17, Y, false],
+  ])('range %i %s .. %i %s covers all ages: %s', (f, fu, t, tu, expected) => {
+    expect(coversAllAges(band(f, fu, t, tu))).toBe(expected);
+  });
+
+  it('candidateAgeMatch: no age + all-ages range = match; no age + any other range = unknown', () => {
+    expect(candidateAgeMatch(noAge, band(0, Y, 999, Y))).toBe('match');
+    expect(candidateAgeMatch(noAge, band(0, Y, 17, Y))).toBe('unknown');
+    expect(candidateAgeMatch(noAge, band(18, Y, 999, Y))).toBe('unknown');
+    expect(
+      candidateAgeMatch(
+        { age: undefined, ageType: AgeType.YEARS },
+        band(18, Y, 60, Y),
+      ),
+    ).toBe('unknown');
+  });
+
+  it('candidateAgeMatch: with an age it is exactly rangeAgeMatch (age 0 is a real age)', () => {
+    for (const age of [0, 1, 30, 34, 90]) {
+      for (const b of [
+        band(0, Y, 17, Y),
+        band(18, Y, 60, Y),
+        band(0, D, 28, D),
+        band(0, Y, 999, Y),
+      ]) {
+        const patient = { age, ageType: AgeType.YEARS };
+        expect(candidateAgeMatch(patient, b)).toBe(rangeAgeMatch(patient, b));
+      }
+    }
+    expect(
+      candidateAgeMatch({ age: 0, ageType: AgeType.DAYS }, band(18, Y, 60, Y)),
+    ).toBe('none');
+  });
+
+  it('candidateAgeRank: certain fits first, then ranges that cannot be told, then maybes', () => {
+    expect(
+      ['partial', 'unknown', 'match'].sort(
+        (a, b) => candidateAgeRank(a as never) - candidateAgeRank(b as never),
+      ),
+    ).toEqual(['match', 'unknown', 'partial']);
+  });
+
+  it('the text-type lookups are unchanged: with no age they may still pick (rangeAgeMatch)', () => {
+    expect(isExactAgeMatch(rangeAgeMatch(noAge, band(0, Y, 17, Y)))).toBe(true);
+  });
+});
+
+describe('LabReportService — the Range list for a patient with no age', () => {
+  const row = (
+    id: string,
+    ageFrom: number,
+    ageTo: number,
+    isDefault = true,
+  ) => ({
+    id,
+    labAdapterId: null,
+    method: null,
+    unit: 'g/dL',
+    isDefault,
+    gender: 'ALL',
+    ageFrom,
+    ageFromUnit: Y,
+    ageTo,
+    ageToUnit: Y,
+    lowerLimit: { toString: () => '12' },
+    upperLimit: { toString: () => '16' },
+    displayOfReferenceRange: id,
+  });
+  const listFor = async (
+    rows: unknown[],
+    patient: { age: number | null; ageType: AgeType | null },
+  ) => {
+    const prisma = {
+      labReport: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'rep',
+          labTestId: 'lt',
+          orderItem: { order: { patient: { ...patient, gender: 'MALE' } } },
+        }),
+      },
+      labTestResultParam: {
+        findFirst: jest
+          .fn()
+          .mockResolvedValue({ id: 'p1', resultType: 'QUANTITATIVE' }),
+      },
+      labTestReferenceRange: { findMany: jest.fn().mockResolvedValue(rows) },
+      labAdapter: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const svc = Object.create(LabReportService.prototype) as unknown as {
+      prisma: unknown;
+      listReferenceRangeCandidates: (
+        ...a: unknown[]
+      ) => Promise<{ candidates: { id: string; ageMatch: string }[] }>;
+    };
+    svc.prisma = prisma;
+    return (
+      await svc.listReferenceRangeCandidates('rep', 't1', 'b1', {
+        resultParamId: 'p1',
+      })
+    ).candidates.map((c) => [c.id, c.ageMatch]);
+  };
+
+  it('an all-ages range is a certain fit and comes first; child/adult ranges are listed but unknown', async () => {
+    const got = await listFor(
+      [row('0-17', 0, 17), row('18-999', 18, 999), row('all-ages', 0, 999)],
+      { age: null, ageType: null },
+    );
+    expect(got).toEqual([
+      ['all-ages', 'match'],
+      ['0-17', 'unknown'],
+      ['18-999', 'unknown'],
+    ]);
+  });
+
+  it('only age-specific ranges: every one is unknown (nothing is a certain fit, so nothing is picked automatically)', async () => {
+    const got = await listFor([row('0-17', 0, 17), row('18-999', 18, 999)], {
+      age: null,
+      ageType: null,
+    });
+    expect(got.every(([, m]) => m === 'unknown')).toBe(true);
+    expect(got).toHaveLength(2);
+  });
+
+  it('a patient WITH an age is unaffected: an all-ages range is a certain fit like any other', async () => {
+    const got = await listFor(
+      [row('0-17', 0, 17), row('18-999', 18, 999), row('all-ages', 0, 999)],
+      { age: 34, ageType: AgeType.YEARS },
+    );
+    expect(got.map(([id]) => id).sort()).toEqual(['18-999', 'all-ages']);
+    expect(got.every(([, m]) => m === 'match')).toBe(true);
   });
 });

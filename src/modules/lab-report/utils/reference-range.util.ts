@@ -3,6 +3,7 @@ import {
   classifyAgeMatch,
   type AgeMatch,
 } from '../../../common/utils/age-bounds.util';
+import { dobInAgeBand } from '../../../common/utils/age-dob.util';
 import { normalizeUnit } from '../../../common/utils/unit-normalize.util';
 
 /** Convert an `ageFrom`/`ageTo` bound (in its own stored unit) to total days. */
@@ -162,6 +163,8 @@ export type RangeAgeMatch = AgeMatch | 'unknown';
  *
  * @param patient the patient's stored age and its unit (an unset unit means years)
  * @param row a reference row's age band
+ * @param exact the patient's exact birth date and the day their age is measured on (the sample collection day),
+ *   when known: the calendar then decides (`match` or `none`, never `partial`) and the stored age is not used
  */
 export function rangeAgeMatch(
   patient: {
@@ -174,7 +177,12 @@ export function rangeAgeMatch(
     ageTo: number;
     ageToUnit: AgeUnit;
   },
+  exact?: ExactAge | null,
 ): RangeAgeMatch {
+  if (exact) {
+    const inBand = dobInAgeBand(exact.dob, exact.onDay, row);
+    if (inBand !== null) return inBand ? 'match' : 'none';
+  }
   if (patient.age === null || patient.age === undefined) return 'unknown';
   return classifyAgeMatch(
     {
@@ -186,7 +194,69 @@ export function rangeAgeMatch(
   );
 }
 
+/** A patient's exact birth date and the calendar day their age is measured on (both UTC-midnight dates). */
+export interface ExactAge {
+  dob: Date;
+  onDay: Date;
+}
+
 /** Whether a row may be picked automatically: its age band certainly fits, or the patient has no age. */
 export function isExactAgeMatch(match: RangeAgeMatch): boolean {
   return match === 'match' || match === 'unknown';
+}
+
+/** The oldest age a range must reach to count as "all ages" (a patient never lives longer). */
+const ALL_AGES_UP_TO_YEARS = 120;
+
+/**
+ * Whether a range fits EVERY patient whatever their age: it starts at birth and runs to at least 120 years (the
+ * default band is 0 to 999 Years). Such a range is safe to pick for a patient whose age is not known.
+ */
+export function coversAllAges(row: {
+  ageFrom: number;
+  ageFromUnit: AgeUnit;
+  ageTo: number;
+  ageToUnit: AgeUnit;
+}): boolean {
+  const toInYears =
+    row.ageToUnit === AgeUnit.YEARS
+      ? row.ageTo
+      : row.ageToUnit === AgeUnit.MONTHS
+        ? row.ageTo / 12
+        : row.ageTo / 365;
+  return row.ageFrom === 0 && toInYears >= ALL_AGES_UP_TO_YEARS;
+}
+
+/**
+ * How a range relates to the patient's age for the technician's Range LIST (the quantitative picker). Same as
+ * {@link rangeAgeMatch}, except for a patient with NO age (and no date of birth): a range that covers all ages
+ * certainly fits (`match`, so it may be picked automatically), any other range stays `unknown` and is only listed,
+ * so the technician chooses. (The text-type lookups keep using {@link rangeAgeMatch}.)
+ *
+ * @param patient the patient's stored age and its unit
+ * @param row a reference row's age band
+ * @param exact the patient's exact birth date and measuring day, when known (see {@link rangeAgeMatch})
+ */
+export function candidateAgeMatch(
+  patient: {
+    age: number | null | undefined;
+    ageType: AgeType | null | undefined;
+  },
+  row: {
+    ageFrom: number;
+    ageFromUnit: AgeUnit;
+    ageTo: number;
+    ageToUnit: AgeUnit;
+  },
+  exact?: ExactAge | null,
+): RangeAgeMatch {
+  if (!exact && (patient.age === null || patient.age === undefined)) {
+    return coversAllAges(row) ? 'match' : 'unknown';
+  }
+  return rangeAgeMatch(patient, row, exact);
+}
+
+/** Sort position of a range in the Range list: certain fits first, then ones that cannot be told, then maybes. */
+export function candidateAgeRank(match: RangeAgeMatch): number {
+  return match === 'match' ? 0 : match === 'unknown' ? 1 : 2;
 }
