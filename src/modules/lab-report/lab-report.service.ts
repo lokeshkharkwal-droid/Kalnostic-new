@@ -3655,6 +3655,9 @@ export class LabReportService {
       reference_display: toText(r.reference_display),
       group_name: toText(r.group_name),
       result_note: toText(r.result_note),
+      // Per-report Overall Result rich-text HTML (`LabReportOverallResult`) —
+      // without this key a Latte `{$row->overall_result}` is always empty.
+      overall_result: toText(r.overall_result),
     }));
     const test = {
       test_name: toText(v.test_name),

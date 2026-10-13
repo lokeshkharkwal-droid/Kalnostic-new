@@ -23,6 +23,7 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import { NoteMaxLength } from '../../../common/validators/note-max-length.validator';
 
 /** 24-hour `HH:mm` clock time (branch-local), e.g. `08:30`. */
 const HH_MM = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -311,22 +312,27 @@ export class ImportLabTestRowDto {
 
   @IsString()
   @IsOptional()
+  @NoteMaxLength('Useful For')
   usefulFor?: string;
 
   @IsString()
   @IsOptional()
+  @NoteMaxLength('Interpretation')
   interpretationOfResults?: string;
 
   @IsString()
   @IsOptional()
+  @NoteMaxLength('Limitations')
   limitations?: string;
 
   @IsString()
   @IsOptional()
+  @NoteMaxLength('Remarks')
   remarks?: string;
 
   @IsString()
   @IsOptional()
+  @NoteMaxLength('References')
   references?: string;
 }
 
