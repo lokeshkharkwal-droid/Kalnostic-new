@@ -1,0 +1,14 @@
+{
+  "tenant": "production test three",
+  "tenantId": "92f6e838-3779-4a74-a823-c1a8e50e2248",
+  "orderCount": 175,
+  "person": "user two",
+  "active_profile_key": "branch_admin",
+  "active_branch_id": "57ac1025-e086-49a3-bf6b-971838a9ddae",
+  "active_branch_name": "testing branch",
+  "branchOrderCounts": {
+    "57ac1025-e086-49a3-bf6b-971838a9ddae": 69
+  },
+  "profileCount": 1,
+  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwZXJzb25faWQiOiI5NGE1NjBjMi1kNTZlLTQ1ZjctYWI0OS0zZWE4ZmE3MjNkM2UiLCJ0ZW5hbnRfaWQiOiI5MmY2ZTgzOC0zNzc5LTRhNzQtYTgyMy1jMWE4ZTUwZTIyNDgiLCJhY3RpdmVfYnJhbmNoX2lkIjoiNTdhYzEwMjUtZTA4Ni00OWEzLWJmNmItOTcxODM4YTlkZGFlIiwiYWN0aXZlX2JyYW5jaF90eXBlIjoiRElBR05PU1RJQyIsImFjdGl2ZV9wcm9maWxlX2tleSI6ImJyYW5jaF9hZG1pbiIsImlzX3BhdGllbnRfY29udGV4dCI6ZmFsc2UsInByb2ZpbGVzIjpbeyJicmFuY2hfaWQiOiI1N2FjMTAyNS1lMDg2LTQ5YTMtYmY2Yi05NzE4MzhhOWRkYWUiLCJicmFuY2hfbmFtZSI6InRlc3RpbmcgYnJhbmNoIiwiYnJhbmNoX3R5cGUiOiJESUFHTk9TVElDIiwicHJvZmlsZV9rZXkiOiJicmFuY2hfYWRtaW4iLCJwcm9maWxlX2xhYmVsIjoiQnJhbmNoIEFkbWluIiwiaXNfZGVmYXVsdCI6dHJ1ZX1dLCJpc19wYXRpZW50IjpmYWxzZSwicGxhdGZvcm1fbXJuIjoiS0FMLTIwMjYwODA0LTI5N0MxNTI5IiwicmVmZXJyYWxfcGFuZWxfaWQiOm51bGwsImlhdCI6MTc5MTg4MTYzNSwiZXhwIjoxNzkxODkyNDM1fQ._RnjIKhdd9ENAveM-GSAeoAdsWZvWH5xPNYGcJjs8G0"
+}

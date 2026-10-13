@@ -6858,6 +6858,16 @@ model InvoicePayment {
   paymentDate   DateTime          @default(now()) @map("payment_date")
   notes         String?
 
+  /// Single-payment revert markers. Reverting one receipt keeps the row ACTIVE
+  /// (`deletedAt` NULL) but ZEROES `amount` and flags `revertedAt`, so the invoice's
+  /// paid/outstanding/status recompute off the remaining non-reverted receipts.
+  /// `revertedAmount` preserves the original figure for the "Reverted" tab. Kept
+  /// symmetric with `PaymentDetails` so the ledger treats both sources the same.
+  revertedAt     DateTime? @map("reverted_at")
+  revertedBy     String?   @map("reverted_by")
+  revertReason   String?   @map("revert_reason")
+  revertedAmount Int       @default(0) @map("reverted_amount")
+
   createdBy String?   @map("created_by")
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -6868,6 +6878,7 @@ model InvoicePayment {
   @@index([invoiceId])
   @@index([paymentFor])
   @@index([deletedAt])
+  @@index([revertedAt])
   @@map("invoice_payments")
 }
 
@@ -7523,6 +7534,11 @@ model LabReportAttachment {
   fileName String  @map("file_name")
   notes    String?
 
+  /// Server-measured size in bytes (from the upload endpoint), used to enforce
+  /// the per-report total-size limit on "File +" attachments. Nullable: EMI
+  /// histogram rows and rows created before this column don't carry it.
+  fileSizeBytes Int? @map("file_size_bytes")
+
   uploadedBy String   @map("uploaded_by")
   uploadedAt DateTime @default(now()) @map("uploaded_at")
 
@@ -8065,6 +8081,19 @@ model PaymentDetails {
   /// 0 otherwise.
   refundCharge Decimal          @default(0) @map("refund_charge") @db.Decimal(12, 2)
 
+  /// Single-payment revert markers (distinct from a whole-order cancel). Reverting
+  /// one payment keeps the row ACTIVE (`deletedAt` stays NULL) — so its `netAmount`
+  /// snapshot still counts toward the order's net total (net is summed across the
+  /// order's payment rows, so soft-deleting would collapse it) — but ZEROES the
+  /// money fields (`paidAmount`/`refundAmount`/`refundCharge`) so the row no longer
+  /// contributes collected/refunded money. `revertedAmount` preserves the original
+  /// figure for the Finance → Payments "Reverted" tab; `revertedAt` flags the row so
+  /// every collected-money sum and display path can exclude it.
+  revertedAt     DateTime? @map("reverted_at")
+  revertedBy     String?   @map("reverted_by")
+  revertReason   String?   @map("revert_reason")
+  revertedAmount Decimal   @default(0) @map("reverted_amount") @db.Decimal(12, 2)
+
   // Settlement links that consolidated this collected payment (back-relation).
   // A payment may back multiple active links (partial re-settlement); it is
   // ineligible for a new settlement once its collected amount is fully reserved.
@@ -8078,6 +8107,7 @@ model PaymentDetails {
   @@index([branchId])
   @@index([orderId])
   @@index([deletedAt])
+  @@index([revertedAt])
   @@map("payment_details")
 }
 

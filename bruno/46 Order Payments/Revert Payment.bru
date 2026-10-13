@@ -1,0 +1,40 @@
+meta {
+  name: Revert Payment
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/payments/{{paymentId}}/revert
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "reason": "Reverted from Payments ledger"
+  }
+}
+
+docs {
+  Revert a SINGLE order payment (the Finance → Payments "Revert" action) — not the
+  whole order. The row is kept ACTIVE but its money fields are zeroed and its
+  original amount preserved in `revertedAmount` (its `netAmount` snapshot is kept so
+  the order's net total — summed across payment rows — survives). The order's paid
+  amount, `paymentStatus`, `billStatus` and the Outstanding report then recompute off
+  the remaining non-reverted money, while the reverted row stays visible in the
+  ledger's "Reverted" tab. The order and its total are left untouched.
+
+  Permission `finance:payments__cancel_direct_order_payment`. Guarded like Delete
+  Payment (403 `PAYMENT_COLLECTION_BY_OTHER_USER_NOT_ALLOWED`). Blocked with 409
+  `PAYMENT_REVERT_BLOCKED_ORDER_INVOICED` when the order has been consolidated into
+  an invoice (revert the invoice receipt instead). `reason` is optional.
+}

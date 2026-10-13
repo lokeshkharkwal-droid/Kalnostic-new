@@ -303,6 +303,16 @@ export const ORDER_INCLUDE = {
           tatMaxUnit: true,
         },
       },
+      // Reporting progress of this item's report(s) — one LabReport for a
+      // non-panel/grandfathered-panel item, several (one per member test) for a
+      // post-breakdown panel item; created lazily once a linked sample is
+      // accepted, empty until then. `approvedAt` is null until the report is
+      // approved in Technician Reporting. Lets the Order Overview's Test Details
+      // surface each sample's report Approved Date & Time.
+      labReports: {
+        where: { deletedAt: null },
+        select: { status: true, approvedAt: true, memberBranchLabTestId: true },
+      },
     },
   },
   diagnostics: {
