@@ -1,0 +1,38 @@
+meta {
+  name: Revert Invoice Payment
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/invoices/{{invoiceId}}/payments/{{invoicePaymentId}}/revert
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "reason": "Reverted from Payments ledger"
+  }
+}
+
+docs {
+  Revert a SINGLE invoice receipt — not the whole invoice. The receipt row is kept
+  active but its `amount` is zeroed (original preserved in `revertedAmount`), and the
+  invoice's paid / outstanding balances and payment + due status are recomputed off
+  the REMAINING non-reverted receipts. The invoice stays active, so if it drops out
+  of COMPLETED its source orders reappear on the Outstanding report automatically.
+  The reverted row stays visible in the Finance → Payments "Reverted" tab.
+
+  Permission `finance:payments__cancel_invoice_payment`. `INVOICE_ALREADY_CANCELLED`
+  (409) if the invoice was cancelled; `INVOICE_PAYMENT_NOT_FOUND` (404) if the
+  receipt does not resolve / is already reverted. `reason` is optional.
+}

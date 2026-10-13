@@ -13,6 +13,7 @@ import { PaginatedResult } from '../../common/dto/response.dto';
 import { OrderService } from '../order/order.service';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { ReceiveInvoicePaymentDto } from './dto/receive-invoice-payment.dto';
+import { RevertInvoicePaymentDto } from './dto/revert-invoice-payment.dto';
 import { CancelInvoiceDto } from './dto/cancel-invoice.dto';
 import { ListInvoicesDto } from './dto/list-invoices.dto';
 import { InvoiceSummaryQueryDto } from './dto/invoice-summary-query.dto';
@@ -29,6 +30,7 @@ import {
   InvoiceCancelBlockedHasPaymentsException,
   InvoiceMixedPartyException,
   InvoiceNotFoundException,
+  InvoicePaymentNotFoundException,
   InvoiceOrderAlreadyInvoicedException,
   InvoiceOrderNotFoundException,
   InvoiceOrderNotOutstandingException,
@@ -366,7 +368,9 @@ export class InvoiceService {
   ): Promise<InvoicePaymentHistoryRow[]> {
     await this.getOne(id, tenantId);
     const rows = await this.prisma.invoicePayment.findMany({
-      where: { invoiceId: id, tenantId, deletedAt: null },
+      // Reverted receipts are display-hidden here (they surface in the Finance →
+      // Payments "Reverted" tab); invoice balances live on the Invoice row.
+      where: { invoiceId: id, tenantId, deletedAt: null, revertedAt: null },
       orderBy: { paymentDate: 'desc' },
       select: {
         id: true,
@@ -510,6 +514,117 @@ export class InvoiceService {
   }
 
   /**
+   * Revert a SINGLE invoice receipt (the Finance → Payments "Revert" action on an
+   * invoice row). Unlike cancelling the whole invoice, this affects only the one
+   * receipt. The row is kept active (`deletedAt` NULL) but its `amount` is zeroed
+   * and `revertedAt`/`revertedAmount` are stamped (symmetric with a direct-payment
+   * revert, so the ledger treats both the same); the invoice's paid / outstanding
+   * balances and payment + due status are recomputed off the REMAINING
+   * non-reverted receipts. The invoice stays active — so if it drops out of
+   * COMPLETED, its source orders reappear on the Outstanding report automatically.
+   * @param id invoice id
+   * @param paymentId the receipt row to revert
+   * @param tenantId tenant scope
+   * @param actorId acting person id (recorded as `revertedBy`)
+   * @param reason optional free-text reason
+   * @throws InvoiceNotFoundException if the invoice does not resolve
+   * @throws InvoiceAlreadyCancelledException if the invoice is cancelled
+   * @throws InvoicePaymentNotFoundException if the receipt does not resolve / is already reverted
+   */
+  async revertPayment(
+    id: string,
+    paymentId: string,
+    tenantId: string,
+    actorId: string | null,
+    reason?: string,
+  ): Promise<InvoiceDetail> {
+    const invoice = await this.getOne(id, tenantId);
+    if (invoice.paymentStatus === InvoicePaymentStatus.CANCELLED) {
+      throw new InvoiceAlreadyCancelledException(id);
+    }
+    // A reverted receipt stays active, so exclude `revertedAt` rows too (can't
+    // re-revert).
+    const payment = await this.prisma.invoicePayment.findFirst({
+      where: {
+        id: paymentId,
+        invoiceId: id,
+        tenantId,
+        deletedAt: null,
+        revertedAt: null,
+      },
+      select: { id: true, amount: true },
+    });
+    if (!payment) {
+      throw new InvoicePaymentNotFoundException(paymentId);
+    }
+
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      await tx.invoicePayment.update({
+        where: { id: paymentId },
+        data: {
+          revertedAt: new Date(),
+          revertedBy: actorId,
+          revertReason: reason ?? null,
+          revertedAmount: payment.amount,
+          // Zero the money but keep the row active (symmetric with direct revert).
+          amount: 0,
+        },
+      });
+
+      // Recompute paid totals from the full set of REMAINING non-reverted receipts
+      // (a fresh sum, not a delta) so the balances can never drift.
+      const [paidInvoiceAgg, paidTdsAgg] = await Promise.all([
+        tx.invoicePayment.aggregate({
+          where: {
+            invoiceId: id,
+            tenantId,
+            deletedAt: null,
+            revertedAt: null,
+            paymentFor: InvoicePaymentFor.INVOICE,
+          },
+          _sum: { amount: true },
+        }),
+        tx.invoicePayment.aggregate({
+          where: {
+            invoiceId: id,
+            tenantId,
+            deletedAt: null,
+            revertedAt: null,
+            paymentFor: InvoicePaymentFor.TDS,
+          },
+          _sum: { amount: true },
+        }),
+      ]);
+      const paidInvoice = paidInvoiceAgg._sum.amount ?? 0;
+      const paidTds = paidTdsAgg._sum.amount ?? 0;
+      const outstandingInvoice = invoice.netAmount - paidInvoice;
+      const outstandingTds = invoice.tdsAmount - paidTds;
+
+      await tx.invoice.update({
+        where: { id },
+        data: {
+          paidInvoice,
+          paidTds,
+          outstandingInvoice,
+          outstandingTds,
+          paymentStatus: this.derivePaymentStatus(
+            paidInvoice,
+            outstandingInvoice,
+          ),
+          dueStatus: this.deriveDueStatus(
+            invoice.invoiceDueDate,
+            outstandingInvoice,
+          ),
+          // `settledLate` is a one-way reporting flag — never cleared on revert.
+          updatedBy: actorId,
+        },
+      });
+    });
+
+    return this.getOne(id, tenantId);
+  }
+
+  /**
    * Cancel an invoice with a mandatory reason. Blocked when any payment exists. The
    * invoice stays historically visible (not soft-deleted) so its number is never
    * reused; its source-order links are soft-deleted so those orders can be
@@ -528,8 +643,10 @@ export class InvoiceService {
     if (invoice.paymentStatus === InvoicePaymentStatus.CANCELLED) {
       throw new InvoiceAlreadyCancelledException(id);
     }
+    // Reverted receipts stay active but no longer represent money — they must not
+    // block cancellation (a fully-reverted invoice should be cancellable).
     const paymentCount = await this.prisma.invoicePayment.count({
-      where: { invoiceId: id, tenantId, deletedAt: null },
+      where: { invoiceId: id, tenantId, deletedAt: null, revertedAt: null },
     });
     if (paymentCount > 0) {
       throw new InvoiceCancelBlockedHasPaymentsException(id);

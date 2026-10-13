@@ -14,6 +14,7 @@ import { AuditAction, AuditModule } from '@prisma/client';
 import { InvoiceService } from './invoice.service';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { ReceiveInvoicePaymentDto } from './dto/receive-invoice-payment.dto';
+import { RevertInvoicePaymentDto } from './dto/revert-invoice-payment.dto';
 import { CancelInvoiceDto } from './dto/cancel-invoice.dto';
 import { ListInvoicesDto } from './dto/list-invoices.dto';
 import { InvoiceSummaryQueryDto } from './dto/invoice-summary-query.dto';
@@ -113,6 +114,34 @@ export class InvoiceController {
       profile.branchId,
       personId,
       dto,
+    );
+  }
+
+  /**
+   * Revert a single invoice receipt (Finance → Payments "Revert" action). Reverses
+   * only this receipt and recomputes the invoice's paid/outstanding/status; the
+   * reverted row stays visible in the ledger's "Reverted" tab.
+   */
+  @Post(':id/payments/:paymentId/revert')
+  @RequirePermission(PERMISSION_KEYS.FIN_PAYMENTS_CANCEL_INVOICE)
+  @Audit({
+    module: AuditModule.INVOICE,
+    action: AuditAction.UPDATE,
+    description: 'Reverted an invoice receipt',
+  })
+  revertPayment(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+    @Param('id') id: string,
+    @Param('paymentId') paymentId: string,
+    @Body() dto: RevertInvoicePaymentDto,
+  ) {
+    return this.invoiceService.revertPayment(
+      id,
+      paymentId,
+      tenantId,
+      personId,
+      dto.reason,
     );
   }
 

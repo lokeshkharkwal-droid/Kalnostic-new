@@ -31,8 +31,9 @@ export class UploadsController {
    * object is stored under `{env}/{tenantId}/{YYYY}/{MM}/{DD}/{filename}`,
    * keeping the file's original (sanitised) name.
    *
-   * @returns `{ url }` — store this string wherever an attachment URL is kept.
-   * @throws InvalidUploadFileException if no file is sent or the type is unsupported.
+   * @returns `{ url, size }` — the stored URL plus the server-measured byte size.
+   * @throws InvalidUploadFileException if no file is sent, the type is
+   *   unsupported, or its bytes don't match its declared type.
    */
   @Post('attachment')
   @UseInterceptors(

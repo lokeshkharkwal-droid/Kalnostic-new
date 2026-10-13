@@ -17,6 +17,7 @@ export const PAYMENT_LEDGER_STATUSES = [
   'COMPLETED',
   'CANCELLED',
   'REFUNDED',
+  'REVERTED',
 ] as const;
 export type PaymentLedgerStatusFilter =
   (typeof PAYMENT_LEDGER_STATUSES)[number];
