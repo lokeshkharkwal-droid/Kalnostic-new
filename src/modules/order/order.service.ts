@@ -93,6 +93,8 @@ import {
   computeEffectivePaid,
   deriveRefundStatus,
   deriveReportStatus,
+  deriveReportStatusCounts,
+  orderItemNames,
 } from './entities/order.entity';
 import { computeBillingTotals } from './utils/billing-totals';
 import {
@@ -3787,6 +3789,12 @@ export class OrderService {
         collectedItemCount: count?.collected ?? 0,
         // Order-level "Order Status": derived per-test from each item's LabReport.
         reportStatus: deriveReportStatus(r.items, panelMemberCounts),
+        // Per-status report counts (all nine LabReport statuses) + the item
+        // display names — drive the Order Console's "Report Status" and
+        // "Order Item" columns. Counted per report so they match the technician
+        // worklist; names resolved from the already-included test/panel refs.
+        reportStatusCounts: deriveReportStatusCounts(r.items),
+        itemNames: orderItemNames(r.items),
         grossAmount,
         discountAmount,
         netAmount,
