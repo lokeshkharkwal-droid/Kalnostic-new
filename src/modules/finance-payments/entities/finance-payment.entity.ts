@@ -3,8 +3,16 @@ import { PaymentMode } from '@prisma/client';
 /** Whether a ledger row originated from a direct order payment or an invoice receipt. */
 export type PaymentLedgerType = 'DIRECT' | 'INVOICE';
 
-/** Display status of a ledger row (derived — no per-payment status column exists). */
-export type PaymentLedgerStatus = 'COMPLETED' | 'CANCELLED' | 'REFUNDED';
+/**
+ * Display status of a ledger row. Mostly derived from the parent order/invoice;
+ * `REVERTED` is the one per-payment state (the row carries `revertedAt`) — a single
+ * payment reverted without cancelling its parent order/invoice.
+ */
+export type PaymentLedgerStatus =
+  | 'COMPLETED'
+  | 'CANCELLED'
+  | 'REFUNDED'
+  | 'REVERTED';
 
 /**
  * Canonical payment-mode display labels. Mirrors the Finance Collection report
@@ -80,4 +88,7 @@ export interface FinancePaymentsSummary {
   cancelledAmount: number;
   refundedCount: number;
   refundedAmount: number;
+  /** Single payments reverted (distinct from a whole-order/invoice cancel). */
+  revertedCount: number;
+  revertedAmount: number;
 }

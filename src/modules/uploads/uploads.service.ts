@@ -5,9 +5,11 @@ import { randomUUID } from 'crypto';
 import { basename, extname } from 'path';
 import { UploadAttachmentResult } from './dto/upload-attachment.dto';
 import {
+  InvalidUploadFileException,
   UploadFailedException,
   UploadNotConfiguredException,
 } from './exceptions/uploads.exceptions';
+import { contentMatchesMime } from './file-signature.util';
 
 /** Default Spaces region when `SPACES_REGION` is unset. */
 const DEFAULT_REGION = 'sgp1';
@@ -51,14 +53,25 @@ export class UploadsService {
    * @param file the multipart file (type/size already validated by the
    *   controller's `FileInterceptor`).
    * @param tenantId owning tenant, used to namespace the object key.
-   * @returns `{ url }` — the fully-qualified Spaces URL of the stored object.
+   * @returns `{ url, size }` — the Spaces URL and server-measured byte size.
    * @throws UploadNotConfiguredException if bucket/credentials are unset.
    * @throws UploadFailedException if the Spaces put fails.
+   * @throws InvalidUploadFileException if the bytes don't match the declared type.
    */
   async uploadAttachment(
     file: Express.Multer.File,
     tenantId: string,
   ): Promise<UploadAttachmentResult> {
+    // Content-based check (not just the extension / client Content-Type): reject
+    // a file whose bytes don't match a recognised signature for its declared
+    // type (e.g. a non-PDF renamed `report.pdf`). Conservative — types with no
+    // known signature (CSV, Office docs) pass. The multipart `fileFilter`
+    // already screens the declared MIME against the allow-list.
+    if (!contentMatchesMime(file.buffer, file.mimetype)) {
+      throw new InvalidUploadFileException(
+        `File content does not match its type (${file.mimetype})`,
+      );
+    }
     return this.put(
       file.buffer,
       file.mimetype,
@@ -78,7 +91,7 @@ export class UploadsService {
    * @param contentType the object's MIME type (e.g. `image/bmp`)
    * @param ext the file extension including the dot (e.g. `.bmp`)
    * @param tenantId owning tenant, used to namespace the object key
-   * @returns `{ url }` — the fully-qualified Spaces URL of the stored object
+   * @returns `{ url, size }` — the Spaces URL and server-measured byte size
    * @throws UploadNotConfiguredException if bucket/credentials are unset
    * @throws UploadFailedException if the Spaces put fails
    */
@@ -155,7 +168,10 @@ export class UploadsService {
       throw new UploadFailedException({ key });
     }
 
-    return { url: this.buildPublicUrl(bucket!, key, endpoint!) };
+    return {
+      url: this.buildPublicUrl(bucket!, key, endpoint!),
+      size: body.length,
+    };
   }
 
   /**

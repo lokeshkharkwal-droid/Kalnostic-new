@@ -23,7 +23,8 @@ body:json {
     "kind": "document",
     "fileUrl": "https://s3-ap-southeast-1.amazonaws.com/stage.ez.reports/uploads/finance-attachments/demo/report.pdf",
     "fileName": "report.pdf",
-    "notes": "Reference document"
+    "notes": "Reference document",
+    "fileSizeBytes": 12345
   }
 }
 
@@ -41,6 +42,26 @@ docs {
   - `fileUrl` (required, url) — the S3 URL from `POST /uploads/attachment`.
   - `fileName` (required) — display name.
   - `notes` (optional) — caption.
+  - `fileSizeBytes` (optional, int) — the `size` returned by `POST /uploads/attachment`;
+    summed to enforce the per-report File+ total-size limit.
+
+  **PDF or raster image for `kind: "file"`** — a `file` upload (the Test Entry
+  "File +" button) must be a PDF or a raster image (`fileName`/`fileUrl` ending in
+  `.pdf`/`.png`/`.jpg`/`.jpeg`/`.webp`/`.gif` — **SVG is not accepted**); these
+  feed the `{test_file_attachment}` print tag — a PDF is embedded as pages, an
+  image is rendered via `<img>`. `image` / `document` uploads accept their usual types.
+
+  **File+ limits (per report):** at most **10** File attachments and **25 MB** total
+  (409/422 `TOO_MANY_TEST_FILE_ATTACHMENTS` / `TEST_FILE_ATTACHMENTS_TOO_LARGE`).
+
+  Negative case — rejected with a 400 validation error ("Only PDF or image files
+  can be attached with the File button"):
+  ```json
+  { "kind": "file", "fileUrl": "https://.../qc-results.xlsx", "fileName": "qc-results.xlsx" }
+  ```
+
+  Note: `POST /uploads/attachment` also verifies the file's **content** (magic bytes)
+  matches its declared type and returns `{ url, size }` (the `size` goes in `fileSizeBytes`).
 
   Gated on the technician-notes permission. The same table backs the EMI histogram
   images, so both show in `GET .../attachments`. Captures `labReportAttachmentId`.

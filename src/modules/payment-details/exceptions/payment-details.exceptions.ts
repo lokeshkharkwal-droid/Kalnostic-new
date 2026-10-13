@@ -49,6 +49,35 @@ export class PaymentOrderCancelledException extends KaltrosException {
   }
 }
 
+/** 409 — the payment has already been reverted (cannot revert twice). */
+export class PaymentAlreadyRevertedException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'PAYMENT_ALREADY_REVERTED',
+      'This payment has already been reverted',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
+ * 409 — the payment cannot be reverted because its order has been consolidated
+ * into an invoice. The collected money is now tracked on the invoice ledger, so
+ * reverting the order-level payment would desync the two. Revert the invoice
+ * receipt instead (or cancel the invoice to free the order first).
+ */
+export class PaymentRevertBlockedOrderInvoicedException extends KaltrosException {
+  constructor(orderId: string) {
+    super(
+      'PAYMENT_REVERT_BLOCKED_ORDER_INVOICED',
+      'This payment cannot be reverted because its order has been invoiced',
+      { orderId },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
 /**
  * 403 — the current user is not the order's creator and the branch's
  * `BillingMenu_AllowCollectionOfAmountByOtherUser` setting is off, so they may

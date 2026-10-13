@@ -109,6 +109,18 @@ export class InvoiceAlreadyCancelledException extends KaltrosException {
   }
 }
 
+/** 404 — an invoice receipt could not be found (missing/reverted/other tenant). */
+export class InvoicePaymentNotFoundException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'INVOICE_PAYMENT_NOT_FOUND',
+      'Invoice payment not found',
+      { id },
+      HttpStatus.NOT_FOUND,
+    );
+  }
+}
+
 /** 409 — cancellation is blocked because the invoice already has payments. */
 export class InvoiceCancelBlockedHasPaymentsException extends KaltrosException {
   constructor(id: string) {

@@ -139,6 +139,39 @@ export class LabReportNotLockedException extends KaltrosException {
   }
 }
 
+/**
+ * 422 — a report already has the maximum number of Test Entry "File +"
+ * attachments (LABORATORY.docx §4.4 File bucket). Keeps a single report's
+ * embedded PDFs/images bounded.
+ */
+export class TooManyTestFileAttachmentsException extends KaltrosException {
+  constructor(labReportId: string, max: number) {
+    super(
+      'TOO_MANY_TEST_FILE_ATTACHMENTS',
+      `A report can have at most ${max} File attachments`,
+      { labReportId, max },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — adding this "File +" upload would push the report's File attachments
+ * over the total-size limit.
+ */
+export class TestFileAttachmentsTooLargeException extends KaltrosException {
+  constructor(labReportId: string, maxBytes: number) {
+    super(
+      'TEST_FILE_ATTACHMENTS_TOO_LARGE',
+      `A report's File attachments cannot exceed ${Math.round(
+        maxBytes / (1024 * 1024),
+      )} MB in total`,
+      { labReportId, maxBytes },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
 /** 404 — the report has not been assigned to a multi-step process. */
 export class MultiStepProcessNotFoundException extends KaltrosException {
   constructor(labReportId: string) {
