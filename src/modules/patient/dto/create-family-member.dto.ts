@@ -2,6 +2,7 @@ import { Relationship } from '@prisma/client';
 import {
   IsEnum,
   IsInt,
+  Max,
   IsOptional,
   IsString,
   MaxLength,
@@ -28,6 +29,7 @@ export class CreateFamilyMemberDto {
   /** The family member's age in years (optional). */
   @IsInt()
   @Min(0)
+  @Max(150) // years
   @IsOptional()
   age?: number;
 
