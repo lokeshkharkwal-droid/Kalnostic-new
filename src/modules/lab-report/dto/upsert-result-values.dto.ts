@@ -3,6 +3,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsBoolean,
+  IsDateString,
   IsOptional,
   IsString,
   IsUUID,
@@ -55,6 +56,25 @@ export class ResultValueItemDto {
   @IsOptional()
   @IsBoolean()
   isManualOverride?: boolean;
+
+  /**
+   * The technician confirmed (in the "Overwrite the analyzer's value?" dialog) that they are
+   * changing an analyzer-filled value or its range. Forces the row to be saved as a human entry
+   * even when the number itself is unchanged (e.g. only the range was changed).
+   */
+  @IsOptional()
+  @IsBoolean()
+  overridesAnalyzer?: boolean;
+
+  /**
+   * The row's `updatedAt` (ISO) as the screen loaded it. For a value the analyzer filled, the save
+   * is refused (409) when the stored row has changed since: the analyzer re-sent a result while
+   * the screen was open, and saving the old screen would silently replace the newer result.
+   * Omitted by older clients, which skips the check.
+   */
+  @IsOptional()
+  @IsDateString()
+  loadedUpdatedAt?: string;
 }
 
 /** Bulk upsert body for `PATCH /lab-reports/:id/results`. Does not change status. */

@@ -39,6 +39,14 @@ import {
 } from './dto/list-lab-tests.dto';
 import { LabTestResultParamDto } from './dto/lab-test-result-param.dto';
 import { LabTestReferenceRangeDto } from './dto/lab-test-reference-range.dto';
+import {
+  ageRangeKey,
+  classifyAgeOverlap,
+  formatAgeBound,
+  isAgeRangeValid,
+  type AgeBound,
+} from '../../common/utils/age-bounds.util';
+import { normalizeUnit } from '../../common/utils/unit-normalize.util';
 import { AddLabTestVersionDto } from './dto/add-lab-test-version.dto';
 import {
   BulkEditLabTestItemDto,
@@ -239,6 +247,18 @@ const TEMPLATE_NULLED_REFS = {
  * `withTenant` transactions. Cross-field invariants are validated here (defence
  * in front of the CHECK constraints in prisma/rls.sql).
  */
+/** The settings of a previous range that a re-import keeps for the range that replaces it. */
+interface PreviousRangeSettings {
+  method: string | null;
+  gender: ReferenceGender;
+  ageFrom: number;
+  ageFromUnit: AgeUnit;
+  ageTo: number;
+  ageToUnit: AgeUnit;
+  unit: string | null;
+  isDefault: boolean;
+}
+
 @Injectable()
 export class LabTestService {
   constructor(
@@ -3485,6 +3505,7 @@ export class LabTestService {
           matchedId,
           cleanParams,
           now,
+          { fromImport: true },
         );
         updated += 1;
       } else {
@@ -4479,6 +4500,7 @@ export class LabTestService {
           'abnormalFlagLogic',
           v[COL.valueFlag] ?? '',
         ) as AbnormalFlag | undefined;
+        this.assertImportValueQuiet(value, value.rowLabel, errors, skipDetails);
         current.referenceValues = current.referenceValues ?? [];
         current.referenceValues.push(value);
       }
@@ -4524,7 +4546,29 @@ export class LabTestService {
       );
     }
     (p.referenceRanges ?? []).forEach((r) => this.assertRange(r));
+    (p.referenceValues ?? []).forEach((v) => this.assertAgeBounds(v));
     this.assertNoRangeOverlap(p.referenceRanges ?? [], p.parameterCode);
+  }
+
+  /** Validate a reference-value row's Age From / Age To without throwing (aggregate instead). */
+  private assertImportValueQuiet(
+    v: ImportXlsxReferenceValueRowDto,
+    rowLabel: string | undefined,
+    errors: string[],
+    skipDetails: { rowLabel: string; column?: string; message: string }[],
+  ): void {
+    try {
+      this.assertAgeBounds(v);
+    } catch (e) {
+      if (e instanceof ValidationException) {
+        const label = rowLabel ?? '';
+        const message = this.validationMessage(e);
+        errors.push(`${label}: ${message}`);
+        skipDetails.push({ rowLabel: label, message });
+        return;
+      }
+      throw e;
+    }
   }
 
   /** Validate a range row's numeric bounds without throwing (aggregate instead). */
@@ -4737,6 +4781,16 @@ export class LabTestService {
    * ranges/values, so full-replace is the existing, unchanged contract); an
    * unmatched incoming code creates a new parameter; an existing active
    * parameter whose code no longer appears in the payload is soft-deleted.
+   *
+   * `options.fromImport` (the xlsx-import update path only) protects what the
+   * sheet cannot carry, so a re-import never erases it:
+   *  - ranges tied to an analyzer (`labAdapterId` set) are kept untouched, with
+   *    their Default flag and unit; only the analyzer-less ranges are replaced
+   *    by the sheet's rows;
+   *  - a re-created analyzer-less range keeps the unit and Default flag of the
+   *    old analyzer-less range with the same method, gender and age band;
+   *  - reflex tests are left alone when the sheet sent none (the edit form
+   *    always sends its own set, where `undefined` means "none").
    */
   private async upsertParamsByCode(
     tx: Prisma.TransactionClient,
@@ -4745,7 +4799,9 @@ export class LabTestService {
     labTestId: string,
     params: LabTestResultParamDto[] | undefined,
     now: Date,
+    options: { fromImport?: boolean } = {},
   ): Promise<void> {
+    const fromImport = options.fromImport === true;
     const existing = await tx.labTestResultParam.findMany({
       where: { labTestId, tenantId, deletedAt: null },
       select: { id: true, parameterCode: true },
@@ -4761,19 +4817,45 @@ export class LabTestService {
       const existingId = existingByCode.get(p.parameterCode.toLowerCase());
 
       let paramId: string;
+      let previousRanges: PreviousRangeSettings[] = [];
       if (existingId) {
         matchedIds.add(existingId);
         await tx.labTestResultParam.update({
           where: { id: existingId },
           data: {
             ...paramScalars,
-            reflexTests: (reflexTests ??
-              []) as unknown as Prisma.InputJsonValue,
+            ...(fromImport && reflexTests === undefined
+              ? {}
+              : {
+                  reflexTests: (reflexTests ??
+                    []) as unknown as Prisma.InputJsonValue,
+                }),
           },
         });
         paramId = existingId;
+        if (fromImport) {
+          previousRanges = await tx.labTestReferenceRange.findMany({
+            where: { paramId, tenantId, deletedAt: null, labAdapterId: null },
+            select: {
+              method: true,
+              gender: true,
+              ageFrom: true,
+              ageFromUnit: true,
+              ageTo: true,
+              ageToUnit: true,
+              unit: true,
+              isDefault: true,
+            },
+          });
+        }
         await tx.labTestReferenceRange.updateMany({
-          where: { paramId, tenantId, deletedAt: null },
+          where: {
+            paramId,
+            tenantId,
+            deletedAt: null,
+            // An import keeps the ranges tied to an analyzer (the sheet cannot carry them).
+            ...(fromImport ? { labAdapterId: null } : {}),
+          },
           data: { deletedAt: now },
         });
         await tx.labTestReferenceValue.updateMany({
@@ -4797,7 +4879,7 @@ export class LabTestService {
       if (referenceRanges?.length) {
         await tx.labTestReferenceRange.createMany({
           data: referenceRanges.map((r) => ({
-            ...r,
+            ...this.carryOverRangeSettings(r, previousRanges),
             tenantId,
             branchId,
             labTestId,
@@ -4835,6 +4917,40 @@ export class LabTestService {
         data: { deletedAt: now },
       });
     }
+  }
+
+  /**
+   * An imported (analyzer-less) range keeps the unit and Default flag the sheet cannot carry: they
+   * come from the previous analyzer-less range with the same method, gender and age band, unless the
+   * row itself sets them. A range with no previous match is returned unchanged.
+   *
+   * @param range the range as read from the sheet
+   * @param previous the parameter's previous analyzer-less ranges
+   */
+  private carryOverRangeSettings(
+    range: LabTestReferenceRangeDto,
+    previous: PreviousRangeSettings[],
+  ): LabTestReferenceRangeDto {
+    if (previous.length === 0) return range;
+    const key = (r: {
+      method?: string | null;
+      gender?: ReferenceGender | null;
+      ageFrom?: number;
+      ageFromUnit?: AgeUnit;
+      ageTo?: number;
+      ageToUnit?: AgeUnit;
+    }): string => {
+      const { from, to } = this.ageBoundsOf(r);
+      return `${(r.method ?? '').trim()}\u0000${r.gender ?? ReferenceGender.ALL}\u0000${ageRangeKey(from, to)}`;
+    };
+    const wanted = key(range);
+    const match = previous.find((p) => key(p) === wanted);
+    if (!match) return range;
+    return {
+      ...range,
+      unit: range.unit ?? match.unit ?? undefined,
+      isDefault: range.isDefault ?? match.isDefault,
+    };
   }
 
   /** A shallow copy of a row with the re-derived meta keys removed (for cloning). */
@@ -5062,28 +5178,40 @@ export class LabTestService {
       });
     }
     (p.referenceRanges ?? []).forEach((r) => this.assertRange(r));
+    (p.referenceValues ?? []).forEach((v) => this.assertAgeBounds(v));
     this.assertNoRangeOverlap(p.referenceRanges ?? [], p.parameterCode);
     this.assertAdapterDefaultsPresent(p.referenceRanges ?? [], p.parameterCode);
   }
 
   /**
-   * Every (labAdapterId, gender, age-band) group of TWO OR MORE ranges must
-   * carry exactly one `isDefault` range — the technician-side EMI pipeline
-   * picks "the first Default-marked range of an adapter" for the patient's
-   * gender/age, so an ambiguous group with none would silently have no
-   * result mapping. A group with only one range is exempt: there's no
-   * ambiguity to resolve, since that single range is the only candidate
-   * either way. This applies identically whether `labAdapterId` is a real
-   * adapter or null (a range not scoped to any analyzer) — null is just
-   * another group value, grouped with other null-adapter ranges the same way
-   * a real adapter's ranges are grouped together. Method/Unit are
-   * deliberately NOT part of the group key (mirrors `assertNoRangeOverlap`'s
-   * partitioning minus method/unit): only one range across all methods/units
-   * on a given adapter (or none) can be Default for a given gender/age slice.
+   * Every (labAdapterId, unit, gender, age-band) group of TWO OR MORE ranges
+   * must carry exactly one `isDefault` range — an ambiguous group with none
+   * would leave the technician screen unable to choose a range for an
+   * analyzer's value. A group with only one range is exempt: there's no
+   * ambiguity to resolve, since that single range is the only candidate either
+   * way. This applies identically whether `labAdapterId` is a real adapter or
+   * null (a range not scoped to any analyzer) — null is just another group
+   * value.
+   *
+   * The METHOD is deliberately NOT part of the key: an analyzer sends a value
+   * and its unit but never the method, so "which range does this analyzer's
+   * value get" is decided by analyzer + unit (+ the patient's gender/age), and
+   * the Default breaks the tie between several methods in the same unit. The
+   * unit ignores letter case and surrounding spaces ("g/dL" = "g/dl"),
+   * identical to the overlap check (a missing / null unit is the same as '').
+   *
+   * Because the overlap check partitions by (analyzer, method, unit), two
+   * ranges of one analyzer with the same unit and age band but DIFFERENT methods
+   * pass it and meet here as one group: exactly one of them must be the
+   * Default. (Two with the same method as well are already rejected by the
+   * overlap check, which runs first.) See
+   * lab-test.service.default-grouping.spec.ts.
    */
   private assertAdapterDefaultsPresent(
     ranges: Array<{
       labAdapterId?: string;
+      method?: string;
+      unit?: string;
       gender?: ReferenceGender;
       ageFrom?: number;
       ageFromUnit?: AgeUnit;
@@ -5095,9 +5223,8 @@ export class LabTestService {
   ): void {
     const groups = new Map<string, typeof ranges>();
     for (const r of ranges) {
-      const from = this.ageBoundInDays(r.ageFrom, r.ageFromUnit);
-      const to = this.ageBoundInDays(r.ageTo ?? 999, r.ageToUnit);
-      const key = `${r.labAdapterId ?? ''}\u0000${r.gender ?? ReferenceGender.ALL}\u0000${from}\u0000${to}`;
+      const { from, to } = this.ageBoundsOf(r);
+      const key = `${r.labAdapterId ?? ''}\u0000${normalizeUnit(r.unit)}\u0000${r.gender ?? ReferenceGender.ALL}\u0000${ageRangeKey(from, to)}`;
       const group = groups.get(key);
       if (group) group.push(r);
       else groups.set(key, [r]);
@@ -5106,13 +5233,13 @@ export class LabTestService {
       const defaultCount = group.filter((r) => r.isDefault).length;
       if (group.length > 1 && defaultCount === 0) {
         throw new ValidationException(
-          `Mark a Default range for parameter '${parameterCode}' (each analyzer, or no analyzer, requires one Default per gender/age when more than one range applies)`,
+          `Mark a Default range for parameter '${parameterCode}' (each analyzer + unit, or no analyzer, requires one Default per gender/age when more than one range applies)`,
           { parameterCode },
         );
       }
       if (defaultCount > 1) {
         throw new ValidationException(
-          `Only one range can be Default per analyzer/gender/age for parameter '${parameterCode}' (found ${defaultCount})`,
+          `Only one range can be Default per analyzer/unit/gender/age for parameter '${parameterCode}' (found ${defaultCount})`,
           { parameterCode },
         );
       }
@@ -5218,24 +5345,53 @@ export class LabTestService {
     ) {
       throw new ValidationException('criticalMax must be ≥ upperLimit');
     }
-    if ((r.ageFrom ?? 0) > (r.ageTo ?? 999)) {
-      throw new ValidationException('ageFrom must be ≤ ageTo');
+    this.assertAgeBounds(r);
+  }
+
+  /**
+   * Validate a reference range's / reference value's Age From and Age To, each a
+   * number plus a unit (Days / Months / Years). The two bounds are compared on
+   * the calendar, never by raw number, so "15 Days to 1 Year" is accepted and
+   * "1 Year to 11 Months" is rejected. Both ends are inclusive and "To" covers
+   * its whole unit (see `common/utils/age-bounds.util.ts`). Omitted values use the same
+   * defaults as the database (0 Years to 999 Years).
+   *
+   * @param r any object carrying the four age fields (range, value or import row)
+   * @throws ValidationException when Age From is later than Age To for some birth date
+   */
+  private assertAgeBounds(r: {
+    ageFrom?: number;
+    ageFromUnit?: AgeUnit;
+    ageTo?: number;
+    ageToUnit?: AgeUnit;
+  }): void {
+    const from = {
+      value: r.ageFrom ?? 0,
+      unit: r.ageFromUnit ?? AgeUnit.YEARS,
+    };
+    const to = { value: r.ageTo ?? 999, unit: r.ageToUnit ?? AgeUnit.YEARS };
+    if (!isAgeRangeValid(from, to)) {
+      throw new ValidationException(
+        `Age From (${formatAgeBound(from)}) cannot be later than Age To (${formatAgeBound(to)}). Ages in different units are compared by calendar date.`,
+      );
     }
   }
 
-  /** Age unit expressed in days, for comparing bounds given in different units. */
-  private static readonly AGE_UNIT_TO_DAYS: Record<AgeUnit, number> = {
-    [AgeUnit.DAYS]: 1,
-    [AgeUnit.MONTHS]: 30,
-    [AgeUnit.YEARS]: 365,
-  };
-
-  /** Convert an age bound to days for cross-unit comparison (approximate — see
-   * AGE_UNIT_TO_DAYS). Missing values fall back to the same open bounds
-   * assertRange/the schema default use (0 / 999 years). */
-  private ageBoundInDays(value: number | undefined, unit: AgeUnit | undefined) {
-    const days = LabTestService.AGE_UNIT_TO_DAYS[unit ?? AgeUnit.YEARS];
-    return (value ?? 0) * days;
+  /**
+   * A range's Age From / Age To as bounds. Missing values fall back to the same
+   * defaults as the database (0 Years to 999 Years). Bounds are compared on the
+   * calendar (see `common/utils/age-bounds.util.ts`), never converted to a fixed number of days.
+   */
+  private ageBoundsOf(r: {
+    ageFrom?: number;
+    ageFromUnit?: AgeUnit;
+    ageTo?: number;
+    ageToUnit?: AgeUnit;
+  }): { from: AgeBound; to: AgeBound } {
+    return {
+      from: { value: r.ageFrom ?? 0, unit: r.ageFromUnit ?? AgeUnit.YEARS },
+      to: { value: r.ageTo ?? 999, unit: r.ageToUnit ?? AgeUnit.YEARS },
+    };
   }
 
   /** Whether two Gender applicabilities can apply to the same person (ALL
@@ -5283,7 +5439,8 @@ export class LabTestService {
     const adapterWise = ranges.filter((r) => !!r.labAdapterId);
     const groups = new Map<string, typeof adapterWise>();
     for (const r of adapterWise) {
-      const key = `${r.labAdapterId ?? ''}\u0000${r.method ?? ''}\u0000${r.unit ?? ''}`;
+      // The unit is compared ignoring letter case and surrounding spaces ("g/dL" = "g/dl").
+      const key = `${r.labAdapterId ?? ''}\u0000${r.method ?? ''}\u0000${normalizeUnit(r.unit)}`;
       const group = groups.get(key);
       if (group) group.push(r);
       else groups.set(key, [r]);
@@ -5309,17 +5466,21 @@ export class LabTestService {
     for (let i = 0; i < group.length; i++) {
       const a = group[i]!;
       const aGender = a.gender ?? ReferenceGender.ALL;
-      const aFrom = this.ageBoundInDays(a.ageFrom, a.ageFromUnit);
-      const aTo = this.ageBoundInDays(a.ageTo ?? 999, a.ageToUnit);
+      const { from: aFrom, to: aTo } = this.ageBoundsOf(a);
       for (let j = i + 1; j < group.length; j++) {
         const b = group[j]!;
         const bGender = b.gender ?? ReferenceGender.ALL;
         if (!this.gendersOverlap(aGender, bGender)) continue;
-        const bFrom = this.ageBoundInDays(b.ageFrom, b.ageFromUnit);
-        const bTo = this.ageBoundInDays(b.ageTo ?? 999, b.ageToUnit);
-        if (aFrom > bTo || bFrom > aTo) continue;
+        const { from: bFrom, to: bTo } = this.ageBoundsOf(b);
+        // Ages are compared on the calendar. Only a REAL overlap (shared ages for
+        // every birth date) is rejected; a few-day calendar edge that occurs for
+        // some birth dates only ("0-28 Days" next to "1-11 Months" for a baby born
+        // in February) is allowed — the technician side then prefers the later
+        // range (see sortRangesByAgeSpecificity).
+        if (classifyAgeOverlap(aFrom, aTo, bFrom, bTo) !== 'definite') continue;
         const isExactDuplicate =
-          aGender === bGender && aFrom === bFrom && aTo === bTo;
+          aGender === bGender &&
+          ageRangeKey(aFrom, aTo) === ageRangeKey(bFrom, bTo);
         throw new ValidationException(
           isExactDuplicate
             ? `A similar reference range already exists for parameter '${parameterCode}'`

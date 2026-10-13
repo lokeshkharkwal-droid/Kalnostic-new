@@ -16,6 +16,7 @@ import {
   IsEmail,
   IsEnum,
   IsInt,
+  Max,
   IsOptional,
   IsString,
   IsUUID,
@@ -77,6 +78,7 @@ export class CreatePatientDto {
 
   @IsInt()
   @Min(0)
+  @Max(54750) // 150 years expressed in days, the biggest value any age unit can hold
   @IsOptional()
   age?: number;
 

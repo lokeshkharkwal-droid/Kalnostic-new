@@ -2062,7 +2062,8 @@ export class OrderSampleService {
 
     // Group status actions force a direct override: the sample is moved to the
     // action's fixed target status regardless of its current status (no legality
-    // check). `retrieve` has no forced target, so it keeps its normal behaviour.
+    // check). `retrieve` and `return` have no forced target (see FORCE_TARGET), so
+    // they keep the normal legality check — a Collected sample can never be Returned.
     const forced = note.force ? FORCE_TARGET[action] : undefined;
     let toStatus: SampleStatus | null;
     if (forced) {
