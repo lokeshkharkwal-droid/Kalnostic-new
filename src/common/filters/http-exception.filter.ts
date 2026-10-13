@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { KaltrosException } from '../exceptions/kaltros.exception';
+import { REQUEST_BODY_LIMIT_MB } from '../constants/request-limits.constant';
 
 /** The error envelope all failures are rendered into. */
 interface ErrorEnvelope {
@@ -27,6 +28,9 @@ interface ErrorEnvelope {
  *   through unchanged, and its server-only `context` is logged.
  * - Other `HttpException`s (e.g. the `ValidationPipe`'s `BadRequestException`)
  *   are wrapped, preserving status + message(s).
+ * - A request body over the size limit (the body parser throws a raw
+ *   `entity.too.large` error before routing) becomes a clear 413, so the user
+ *   is told to shorten the text instead of seeing a generic 500.
  * - Anything unknown becomes a clean 500 with its stack logged.
  */
 @Catch()
@@ -64,6 +68,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
     if (exception instanceof HttpException) {
       return exception.getStatus();
     }
+    if (this.isPayloadTooLarge(exception)) {
+      return HttpStatus.PAYLOAD_TOO_LARGE;
+    }
     return HttpStatus.INTERNAL_SERVER_ERROR;
   }
 
@@ -93,6 +100,16 @@ export class HttpExceptionFilter implements ExceptionFilter {
       return { success: false, error: { code, message } };
     }
 
+    if (this.isPayloadTooLarge(exception)) {
+      return {
+        success: false,
+        error: {
+          code: 'PAYLOAD_TOO_LARGE',
+          message: `The data you sent is too large (the limit is ${REQUEST_BODY_LIMIT_MB} MB per request). Shorten the text, or remove pasted images, and try again.`,
+        },
+      };
+    }
+
     return {
       success: false,
       error: {
@@ -100,6 +117,17 @@ export class HttpExceptionFilter implements ExceptionFilter {
         message: 'An unexpected error occurred.',
       },
     };
+  }
+
+  /**
+   * Whether the body parser rejected the request for being over the size
+   * limit. It throws a plain error (not an `HttpException`) tagged with
+   * `type: 'entity.too.large'` and status 413.
+   */
+  private isPayloadTooLarge(exception: unknown): boolean {
+    if (typeof exception !== 'object' || exception === null) return false;
+    const e = exception as { type?: unknown; status?: unknown };
+    return e.type === 'entity.too.large' || e.status === 413;
   }
 
   /** Map a status code to a default error code for non-Kaltros HttpExceptions. */

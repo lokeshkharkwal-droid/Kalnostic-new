@@ -46,8 +46,12 @@ docs {
   allowed the write) falling back to the `LabTest` master's default
   otherwise.
 
-  Values may be rich-text HTML (Master Data's Notes editor produces HTML) —
-  `@MaxLength(20000)` per field to accommodate markup, not just plain text.
+  Values may be rich-text HTML (Master Data's Notes editor produces HTML).
+  Each field accepts up to 1,000,000 characters (the shared `NOTE_MAX_LENGTH`,
+  the same limit Master Data enforces for these notes). Over the limit: 400
+  `VALIDATION_ERROR` with a message naming the field, e.g. "Useful For is too
+  long (1,000,005 characters). The maximum is 1,000,000 characters." A request
+  body over 5 MB is refused with 413 `PAYLOAD_TOO_LARGE`.
 
   404 `LAB_REPORT_NOT_FOUND` if missing/other-tenant/other-branch. 409
   `LAB_REPORT_LOCKED` if the report is locked.
