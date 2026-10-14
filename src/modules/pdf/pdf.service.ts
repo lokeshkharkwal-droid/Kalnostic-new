@@ -13,10 +13,21 @@ import {
   fileNameFromUrl,
   fitSlotPx,
   isPdfEmbed,
+  looksLikePdf,
   newEmbedMarkerPrefix,
   overlayEmbeddedPdfs,
   readPdfEmbedSource,
 } from './pdf-embed.util';
+import {
+  APPEND_MARKER_CLASS,
+  AppendPiece,
+  appendPiecesToPdf,
+  firstPageSizeOf,
+  isGif,
+  isJpeg,
+  isPng,
+  isWebp,
+} from './pdf-append.util';
 
 /** One PDF `<embed>` found in the body, as reported by the page. */
 interface FoundPdfEmbed {
@@ -38,6 +49,12 @@ interface PdfEmbedFallback {
   idx: number;
   src: string;
   label: string;
+}
+
+/** One `{test_file_attachment_without_header}` marker found in the body. */
+interface AppendAttachmentMarker {
+  src: string;
+  name: string;
 }
 
 /**
@@ -94,6 +111,10 @@ export class PdfService implements OnModuleDestroy {
       // `setContent` doesn't accept `networkidle*`; `load` waits for referenced
       // resources (inline images/fonts) to finish.
       await page.setContent(html, { waitUntil: 'load' });
+      // `{test_file_attachment_without_header}` markers: collect them now (while
+      // the DOM is live) so their files can be APPENDED as pages after printing.
+      // They are `display:none`, so they never affect layout or the printed pages.
+      const appendMarkers = await this.collectAppendAttachments(page);
       // Chromium renders the header/footer templates in an isolated context that
       // never fetches remote resources, so a remote `<img>` there would print as
       // a broken image (the body works only because `setContent`+`load` fetches
@@ -114,21 +135,37 @@ export class PdfService implements OnModuleDestroy {
       // auto-fit) and draw the real pages into them after printing.
       const embeds = await this.expandPdfEmbeds(page, finalOptions);
       const pdf = await page.pdf(finalOptions);
-      if (!embeds) {
-        return Buffer.from(pdf);
+      let result: Uint8Array = pdf;
+      if (embeds) {
+        try {
+          result = await overlayEmbeddedPdfs(
+            pdf,
+            embeds.sources,
+            embeds.prefix,
+          );
+        } catch (e) {
+          this.logger.warn(
+            `Drawing embedded PDFs failed; returning the report without them: ${
+              (e as Error).message
+            }`,
+          );
+          result = pdf;
+        }
       }
-      try {
-        return Buffer.from(
-          await overlayEmbeddedPdfs(pdf, embeds.sources, embeds.prefix),
-        );
-      } catch (e) {
-        this.logger.warn(
-          `Drawing embedded PDFs failed; returning the report without them: ${
-            (e as Error).message
-          }`,
-        );
-        return Buffer.from(pdf);
+      // Append `{test_file_attachment_without_header}` files as extra pages at the
+      // very end. Any failure degrades to the report without them (never fails it).
+      if (appendMarkers.length > 0) {
+        try {
+          result = await this.appendAttachments(result, appendMarkers);
+        } catch (e) {
+          this.logger.warn(
+            `Appending attachments failed; returning the report without them: ${
+              (e as Error).message
+            }`,
+          );
+        }
       }
+      return Buffer.from(result);
     } finally {
       await page.close().catch((e) => {
         this.logger.warn('Failed to close Puppeteer page cleanly', e);
@@ -385,6 +422,162 @@ export class PdfService implements OnModuleDestroy {
       fallbacks,
     );
     return sources.size > 0 ? { prefix, sources } : null;
+  }
+
+  /**
+   * Read every `{test_file_attachment_without_header}` marker the body renders
+   * (hidden `display:none` `<div class="pdf-append-attachment">`s carrying the
+   * file URL + name), in document order. These do not affect the printed pages —
+   * their files are merged in AFTER printing (see {@link appendAttachments}).
+   */
+  private async collectAppendAttachments(
+    page: Page,
+  ): Promise<AppendAttachmentMarker[]> {
+    return page.$$eval(`.${APPEND_MARKER_CLASS}`, (els) =>
+      els.map((el) => ({
+        src: el.getAttribute('data-pdf-append-src') ?? '',
+        name: el.getAttribute('data-pdf-append-name') ?? '',
+      })),
+    );
+  }
+
+  /**
+   * Fetch each append marker's file and append its pages to the end of the
+   * finished report: a PDF merged page-for-page as-is; an image **rendered to a
+   * one-page PDF through Chromium** ({@link imageToPdfPage}) so its orientation
+   * (EXIF), colours (CMYK) and format match the inline `{test_file_attachment}`
+   * tag exactly; a file that can't be downloaded or rendered becomes a visible
+   * note page ({@link appendPiecesToPdf}). One bad upload never fails the print.
+   * @param pdfBytes the finished report PDF
+   * @param markers the collected append markers, in order
+   * @returns the report with the attachments' pages (or note pages) appended
+   */
+  private async appendAttachments(
+    pdfBytes: Uint8Array,
+    markers: AppendAttachmentMarker[],
+  ): Promise<Uint8Array> {
+    const browser = await this.getBrowser();
+    // Report page size, so appended image pages match the report's dimensions.
+    const pageSize = await firstPageSizeOf(pdfBytes);
+    const pieces: AppendPiece[] = [];
+    // Fetch each distinct URL once, even if the same file is appended twice.
+    const bytesBySrc = new Map<string, Buffer | null>();
+    for (const marker of markers) {
+      if (!isRemoteUrl(marker.src)) {
+        continue;
+      }
+      const name = marker.name || fileNameFromUrl(marker.src);
+      if (!bytesBySrc.has(marker.src)) {
+        bytesBySrc.set(marker.src, await this.pdfFetcher(marker.src));
+      }
+      const bytes = bytesBySrc.get(marker.src) ?? null;
+      if (!bytes) {
+        pieces.push({
+          type: 'note',
+          name,
+          reason: 'file could not be downloaded',
+        });
+        continue;
+      }
+      if (looksLikePdf(bytes)) {
+        pieces.push({ type: 'pdf', name, bytes });
+        continue;
+      }
+      // Treat as an image: render it to a one-page PDF via Chromium.
+      const rendered = await this.imageToPdfPage(
+        browser,
+        bytes,
+        name,
+        pageSize,
+      );
+      pieces.push(
+        rendered
+          ? { type: 'pdf', name, bytes: rendered }
+          : { type: 'note', name, reason: 'image could not be rendered' },
+      );
+    }
+    if (pieces.length === 0) {
+      return pdfBytes;
+    }
+    return appendPiecesToPdf(pdfBytes, pieces, (name, reason) =>
+      this.logger.warn(`Append attachment noted (${reason}): ${name}`),
+    );
+  }
+
+  /**
+   * Render one uploaded image to a single-page PDF sized like the report's pages,
+   * using the shared Chromium instance — so EXIF orientation, CMYK/other colour
+   * spaces, embedded profiles and every browser-supported format (png/jpeg/webp/
+   * gif) render identically to the inline `<img>` path. The image is fitted
+   * (aspect ratio preserved) and centred with a small margin. `pageRanges: '1'`
+   * guarantees exactly one page even if layout rounding would overflow.
+   *
+   * Returns `null` when the image can't be decoded (broken/corrupt — the `<img>`
+   * never loads) or rendering throws, so the caller draws a note page instead.
+   */
+  private async imageToPdfPage(
+    browser: Browser,
+    bytes: Uint8Array,
+    name: string,
+    pageSize: { width: number; height: number },
+  ): Promise<Uint8Array | null> {
+    const page = await browser.newPage();
+    try {
+      const mime = this.imageMimeType(bytes, name);
+      const dataUri = `data:${mime};base64,${Buffer.from(bytes).toString('base64')}`;
+      const html = `<!doctype html><html><head><meta charset="utf-8"><style>
+        html,body{margin:0;padding:0;height:100%;}
+        .wrap{box-sizing:border-box;width:100%;height:100%;display:flex;align-items:center;justify-content:center;padding:6mm;}
+        img{max-width:100%;max-height:100%;object-fit:contain;image-orientation:from-image;}
+      </style></head><body><div class="wrap"><img src="${dataUri}" /></div></body></html>`;
+      await page.setContent(html, { waitUntil: 'load' });
+      // A broken/undecodable image loads with naturalWidth 0 — treat as a failure
+      // so the caller shows a note page rather than a blank/broken-icon page.
+      const decoded = await page.evaluate(() => {
+        const img = document.querySelector('img');
+        return !!(img && img.complete && img.naturalWidth > 0);
+      });
+      if (!decoded) {
+        return null;
+      }
+      const toPx = (pt: number) => `${(pt * 96) / 72}px`;
+      return await page.pdf({
+        width: toPx(pageSize.width),
+        height: toPx(pageSize.height),
+        printBackground: true,
+        margin: { top: '0', bottom: '0', left: '0', right: '0' },
+        pageRanges: '1',
+      });
+    } catch (e) {
+      this.logger.warn(
+        `Rendering appended image failed (${name}): ${(e as Error).message}`,
+      );
+      return null;
+    } finally {
+      await page.close().catch((e) => {
+        this.logger.warn('Failed to close image render page cleanly', e);
+      });
+    }
+  }
+
+  /**
+   * Best image MIME for a data URI: by byte signature first (robust against a
+   * misnamed file), then the file name's extension ({@link guessImageMime}).
+   */
+  private imageMimeType(bytes: Uint8Array, name: string): string {
+    if (isPng(bytes)) {
+      return 'image/png';
+    }
+    if (isJpeg(bytes)) {
+      return 'image/jpeg';
+    }
+    if (isWebp(bytes)) {
+      return 'image/webp';
+    }
+    if (isGif(bytes)) {
+      return 'image/gif';
+    }
+    return guessImageMime(name);
   }
 
   /**
