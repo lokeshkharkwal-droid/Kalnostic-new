@@ -3006,9 +3006,9 @@ model LabTestReferenceRange {
   // signal for that state; there is no separate type/flag field.
   labAdapterId String? @map("lab_adapter_id")
   gender       ReferenceGender @default(ALL)
-  // One default per (parameter, labAdapterId, unit, gender, age-band) group — the
-  // method is NOT part of the key (an analyzer never sends it). Validated in the
-  // backend (`assertAdapterDefaultsPresent`) and the admin dialogs
+  // One default per (parameter, labAdapterId, method, unit, gender, age-band) group —
+  // each method has its own Default. Validated in the backend
+  // (`assertAdapterDefaultsPresent`) and the admin dialogs
   // (`referenceRangeOverlap.ts`); not DB-enforced.
   isDefault    Boolean         @default(false) @map("is_default")
 

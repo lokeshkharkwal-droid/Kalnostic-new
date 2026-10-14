@@ -45,6 +45,14 @@ export function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;');
 }
 
+/**
+ * Escape HTML text content and keep its line breaks: each one becomes `<br />`. For a plain-text value the
+ * user wrote over several lines (a Qualitative result), which HTML would otherwise run together on one line.
+ */
+export function escapeHtmlKeepLineBreaks(value: string): string {
+  return escapeHtml(value).replace(/\r\n|\r|\n/g, '<br />');
+}
+
 /** Escape a value for use inside a double-quoted HTML attribute. */
 export function escapeAttr(value: string): string {
   return escapeHtml(value).replace(/"/g, '&quot;');
