@@ -33,6 +33,15 @@ tests {
 }
 
 docs {
+  Validated result: a sample that is at this branch is NOT retrieved back to BEFORE its
+  acceptance (New / Collected / Halt / Hold / Repeat ...) while any test on it has a
+  validated result (Result Done, Approved or Published) - the sample would say "not
+  accepted yet" next to a done result. Refused 422 SAMPLE_RETRIEVE_BLOCKED_RESULT_DONE
+  (skipped with that reason in a bulk call with `skipInvalid`); use Re-run to redo a
+  validated result. An undo that stays at / after acceptance (Stored -> Accepted ...),
+  a result that is not validated yet (it stays saved) and a sample that is out at
+  another branch (its transfer rules apply) are not affected. Nothing is deleted.
+
   Retrieve / Retry (§A.7/§A.10.19) — the **universal undo**. Moves the sample back
   to its **immediately-previous status from its own history**: the `fromStatus` of
   the most recent NON-retrieve transition INTO the current status. Repeated

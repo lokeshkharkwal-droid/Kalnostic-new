@@ -182,6 +182,25 @@ export class SampleRepeatBlockedException extends InvalidSampleTransitionExcepti
 }
 
 /**
+ * 422 — a sample cannot be Retrieved (the universal undo) back to before its
+ * acceptance because a test on it already has a validated result (Result Done,
+ * Approved or Published): the sample would say "not accepted yet" while its
+ * result is done. A validated result is redone with Re-run instead. Anything
+ * earlier (no result, saved, validation pending) does not block. Skippable by
+ * group "skip invalid" actions.
+ */
+export class SampleRetrieveBlockedByResultException extends InvalidSampleTransitionException {
+  constructor(from: SampleStatus) {
+    super(
+      'retrieve',
+      from,
+      'The result of this test is already done (Result Done, Approved or Published), so the sample cannot be retrieved back to before its acceptance. Use Re-run to redo a validated result.',
+      'SAMPLE_RETRIEVE_BLOCKED_RESULT_DONE',
+    );
+  }
+}
+
+/**
  * 422 — the sender cannot Send this sample right now (e.g. it already has an
  * open transfer, or its report at the sending branch has been worked on).
  * Skippable by group "skip invalid" actions.

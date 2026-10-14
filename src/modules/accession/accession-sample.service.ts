@@ -84,6 +84,7 @@ import {
   SampleOrderCancelledException,
   SampleRepeatBlockedException,
   SampleReturnBlockedException,
+  SampleRetrieveBlockedByResultException,
   SampleSentToBranchException,
   SendBlockedException,
   NoActiveLabelTemplateException,
@@ -92,6 +93,7 @@ import {
   PREVIOUS_HOLDER_MESSAGE,
   isPreviousHolder,
 } from './utils/previous-holders.util';
+import { PRE_ACCEPT_SAMPLE_STATUSES } from '../lab-report/utils/sent-out-report.util';
 import {
   branchMayRead,
   branchesWithStake,
@@ -2832,6 +2834,21 @@ export class OrderSampleService {
       throw new InvalidSampleTransitionException(action, sample.status);
     }
 
+    // Retrieve is the universal undo, but it may not pull a sample (that is at this
+    // branch) back to BEFORE its acceptance while a test on it already has a
+    // validated result: the sample would say "not accepted yet" next to a result
+    // that is done. Same rule as Repeat. A sample that is out at another branch
+    // keeps its own transfer rules below, and an undo that stays at or after
+    // acceptance (Stored -> Accepted, Halted -> Accepted, ...) is not affected.
+    if (
+      action === 'retrieve' &&
+      !note.system &&
+      !isTransferredStatus(sample.status) &&
+      PRE_ACCEPT_SAMPLE_STATUSES.includes(toStatus)
+    ) {
+      await this.assertNoValidatedResultForRetrieve(tx, tenantId, sample);
+    }
+
     if (action === 'retrieve') {
       // Internal transfers can be recalled only until the receiving branch has
       // received them. Checked before AND after the recall so a concurrent
@@ -2971,6 +2988,38 @@ export class OrderSampleService {
       );
     }
     return updated;
+  }
+
+  /**
+   * Refuses a Retrieve that would take this sample back to before its acceptance
+   * while a report it serves has a validated result (Result Done, Approved or
+   * Published). The reports are locked first (the same fixed-order lock Repeat
+   * takes), so a validation in flight cannot slip in after the answer. Nothing is
+   * changed or deleted: results that are not validated yet stay saved (and are
+   * write-locked while the sample waits to be accepted again).
+   * @throws SampleRetrieveBlockedByResultException if a report's result is validated
+   */
+  private async assertNoValidatedResultForRetrieve(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sample: OrderSample,
+  ): Promise<void> {
+    const tests = await tx.orderSampleTest.findMany({
+      where: { sampleId: sample.id, tenantId, deletedAt: null },
+      select: { orderItemId: true, labTestId: true },
+    });
+    const reportIds = await this.labReportService.findReportIdsForSampleTests(
+      tx,
+      tenantId,
+      sample.branchId,
+      tests,
+    );
+    await this.labReportService.lockReports(tx, tenantId, reportIds);
+    if (
+      !(await this.labReportService.canReturnToSender(tx, tenantId, reportIds))
+    ) {
+      throw new SampleRetrieveBlockedByResultException(sample.status);
+    }
   }
 
   /**
@@ -3204,9 +3253,14 @@ export class OrderSampleService {
               skipped.push({
                 id,
                 accessionNo: meta?.accessionNo ?? null,
-                reason: `Action "${action}" is not allowed from status ${
-                  meta?.status ?? 'UNKNOWN'
-                }`,
+                // A refusal that carries its own explanation (a validated result)
+                // is shown as such, not as the generic "not allowed from status".
+                reason:
+                  e instanceof SampleRetrieveBlockedByResultException
+                    ? e.message
+                    : `Action "${action}" is not allowed from status ${
+                        meta?.status ?? 'UNKNOWN'
+                      }`,
               });
               continue;
             }
