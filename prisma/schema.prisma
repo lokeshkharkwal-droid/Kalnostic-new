@@ -2989,7 +2989,7 @@ model LabTestResultParam {
 
 /// A numeric reference range for a result parameter (`paramId` is a logical ref to
 /// LabTestResultParam). CHECK constraints (lower≤upper, critical bounds,
-/// age_from≤age_to) live in prisma/rls.sql.
+/// age bounds, unit-aware) live in prisma/rls.sql.
 model LabTestReferenceRange {
   id        String  @id @default(uuid())
   // NULL when the parent lab test is a SITE_ADMIN template.
@@ -3006,9 +3006,10 @@ model LabTestReferenceRange {
   // signal for that state; there is no separate type/flag field.
   labAdapterId String? @map("lab_adapter_id")
   gender       ReferenceGender @default(ALL)
-  // One default per (parameter, labAdapterId, gender, age-band) group — see
-  // ReferenceRangeMasterDialog.tsx `makeDefault` for the exact grouping rule.
-  // Not DB-enforced; the frontend owns the mutual-exclusivity.
+  // One default per (parameter, labAdapterId, unit, gender, age-band) group — the
+  // method is NOT part of the key (an analyzer never sends it). Validated in the
+  // backend (`assertAdapterDefaultsPresent`) and the admin dialogs
+  // (`referenceRangeOverlap.ts`); not DB-enforced.
   isDefault    Boolean         @default(false) @map("is_default")
 
   ageFrom     Int     @default(0) @map("age_from")
