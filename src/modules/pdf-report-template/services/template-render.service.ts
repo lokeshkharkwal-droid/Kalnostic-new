@@ -40,6 +40,12 @@ const IMAGE_TOKEN_RE = /\{\{image:([a-zA-Z0-9_.-]+)(?:\|([^}]*))?\}\}/g;
  * for the same reason. `test_file_attachment_without_header` is likewise
  * server-built markup — hidden `display:none` markers (escaped URLs/names) the
  * PDF pipeline turns into appended pages — so it too is inserted as-is.
+ *
+ * `observed1` / `observed2` are plain-text readings, but `buildPrintContext`
+ * escapes them itself AND may wrap an out-of-range quantitative value in the
+ * configured abnormal-flag styling (`<span style="…">`) — so they arrive as
+ * safe HTML and must not be re-escaped here, or the markup would print
+ * literally.
  */
 const RICH_TEXT_KEYS = new Set([
   'useful_for',
@@ -50,6 +56,8 @@ const RICH_TEXT_KEYS = new Set([
   'overall_result',
   'test_file_attachment',
   'test_file_attachment_without_header',
+  'observed1',
+  'observed2',
 ]);
 
 /**

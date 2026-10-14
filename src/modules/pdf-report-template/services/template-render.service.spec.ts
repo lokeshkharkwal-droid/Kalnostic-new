@@ -409,6 +409,50 @@ describe('TemplateRenderService — renderBodyFragment (lab_all_report body)', (
     expect(html).not.toContain('FOOTER SHOULD NOT APPEAR');
   });
 
+  it('passes abnormal-flag styled {observed1}/{observed2} through unescaped', () => {
+    // buildPrintContext pre-escapes and wraps an out-of-range quantitative
+    // reading in abnormal-flag markup; observed1/observed2 are rich-text keys,
+    // so the engine must not re-escape the span.
+    const html = service.renderBodyFragment(
+      meta({
+        body_html:
+          '<table><tbody>{{#each results}}<tr><td>{observed1}</td><td>{observed2}</td></tr>{{/each}}</tbody></table>',
+      }),
+      {
+        sections: {
+          results: [
+            {
+              observed1:
+                '<span style="font-weight:bold;color:#d32f2f">21</span>',
+              observed2: '9',
+            },
+          ],
+        },
+      },
+    );
+    expect(html).toContain(
+      '<td><span style="font-weight:bold;color:#d32f2f">21</span></td>',
+    );
+    expect(html).toContain('<td>9</td>');
+  });
+
+  it('renders the {is_observed_*_abnormal} boolean tags as literal true/false', () => {
+    const html = service.renderBodyFragment(
+      meta({
+        body_html:
+          '{{#each results}}<tr><td>{is_observed_1_abnormal}</td><td>{is_observed_2_abnormal}</td></tr>{{/each}}',
+      }),
+      {
+        sections: {
+          results: [
+            { is_observed_1_abnormal: true, is_observed_2_abnormal: false },
+          ],
+        },
+      },
+    );
+    expect(html).toContain('<tr><td>true</td><td>false</td></tr>');
+  });
+
   it('prefixes the template custom_css so per-report styling survives embedding', () => {
     const html = service.renderBodyFragment(
       meta({
