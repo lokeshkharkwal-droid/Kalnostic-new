@@ -1,4 +1,11 @@
-import { AgeType, AgeUnit, Gender, ReferenceGender } from '@prisma/client';
+import {
+  AbnormalFlag,
+  AgeType,
+  AgeUnit,
+  Gender,
+  ReferenceGender,
+  ResultType,
+} from '@prisma/client';
 import {
   classifyAgeMatch,
   type AgeMatch,
@@ -42,13 +49,19 @@ export type TrendFlag = 'Low' | 'Normal' | 'High';
  * resolved for this value, or the bound(s) needed are themselves null, or
  * `observed1` isn't a finite number (always true for qualitative results,
  * which never carry a numeric reference range at all) — never guessed.
+ *
+ * A blank reading (`null`, `''`, or whitespace only) is treated as "no numeric
+ * value" (→ `null`), NOT as `0`: `Number('')` is `0` in JS, which would wrongly
+ * flag an empty result as out-of-range for any range whose lower limit is above
+ * zero (the common case) — e.g. an unfilled Observed 2.
  */
 export function computeTrendFlag(
   observed1: string | null,
   range: { lowerLimit: unknown; upperLimit: unknown } | undefined,
 ): TrendFlag | null {
   if (!range) return null;
-  const value = observed1 === null ? NaN : Number(observed1);
+  const trimmed = observed1 === null ? '' : observed1.trim();
+  const value = trimmed === '' ? NaN : Number(trimmed);
   if (!Number.isFinite(value)) return null;
 
   const lower =
@@ -66,6 +79,50 @@ export function computeTrendFlag(
   if (lower !== null && value < lower) return 'Low';
   if (upper !== null && value > upper) return 'High';
   return 'Normal';
+}
+
+/**
+ * The inline CSS that renders one {@link AbnormalFlag} choice in a printed
+ * report. Keyed off `LabTestReferenceRange.abnormalFlagLogic` (the styling the
+ * lab configured for an out-of-range quantitative reading under Master Data →
+ * Reference Range), this is what wraps an observed value when it falls below the
+ * lower limit or above the upper limit — see
+ * `LabReportService.buildPrintContext`. Returns a bare `style` body (no quotes,
+ * no trailing semicolon) so callers can drop it straight into
+ * `<span style="…">`. Pure — no DB, no escaping.
+ */
+/**
+ * Whether one observed reading should be treated as abnormal (out of range) for
+ * report display. True only for a QUANTITATIVE parameter whose value falls below
+ * the lower limit or above the upper limit of its resolved reference range (via
+ * {@link computeTrendFlag}). Qualitative/semi-quantitative parameters, blank or
+ * non-numeric readings, and readings with no resolved range are all `false`.
+ * Single source of truth for both the `{is_observed_*_abnormal}` tags and the
+ * abnormal styling in `LabReportService.buildPrintContext`.
+ */
+export function isObservedAbnormal(
+  observed: string | null,
+  resultType: ResultType | null | undefined,
+  range: { lowerLimit: unknown; upperLimit: unknown } | undefined,
+): boolean {
+  if (resultType !== ResultType.QUANTITATIVE) return false;
+  const flag = computeTrendFlag(observed, range);
+  return flag === 'Low' || flag === 'High';
+}
+
+export function abnormalFlagStyle(flag: AbnormalFlag): string {
+  switch (flag) {
+    case AbnormalFlag.BOLD_AND_RED:
+      return 'font-weight:bold;color:#d32f2f';
+    case AbnormalFlag.BOLD_ONLY:
+      return 'font-weight:bold';
+    case AbnormalFlag.ITALIC:
+      return 'font-style:italic';
+    case AbnormalFlag.UNDERLINE:
+      return 'text-decoration:underline';
+    case AbnormalFlag.COLOUR_HIGHLIGHT:
+      return 'background-color:#fff176';
+  }
 }
 
 /**

@@ -587,8 +587,9 @@ a 3-page PDF attachment prints **8 pages**, and an image becomes one appended pa
 | Field | Description |
 | --- | --- |
 | `{parameter_name}` | Analyte / parameter name. |
-| `{observed1}` | Primary observed value. |
-| `{observed2}` | Secondary observed value. |
+| `{observed1}` | Primary observed value. For a **Quantitative** parameter whose reading falls below the Lower Limit or above the Upper Limit of its resolved reference range, this is wrapped in the range's configured **Abnormal Flag Logic** styling (bold / red / italic / underline / highlight, from Master Data → Reference Range); in-range and qualitative readings render plain. The value is server-escaped HTML — in a Latte template print it with `|noescape` (`{$row->observed1|noescape}`) to show the styling. |
+| `{observed2}` | Secondary observed value. Styled by the same abnormal-flag logic as `{observed1}`, evaluated independently against the same range. |
+| `{is_observed_1_abnormal}` / `{is_observed_2_abnormal}` | Boolean — `true` when that reading is a **Quantitative** value outside the Lower/Upper limits of its resolved reference range, else `false`. Same evaluation that drives the abnormal styling. In a classic template it renders the literal `true`/`false`; in a Latte template it is a real boolean, so branch on it (`{if $row->is_observed_1_abnormal}…{/if}`) — e.g. to print a `H`/`L` flag or an arrow column. |
 | `{unit}` | Measurement unit. |
 | `{methodology}` / `{method_name}` | Method (aliases). |
 | `{reference_display}` | Formatted reference range. |

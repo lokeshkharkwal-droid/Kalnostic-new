@@ -36,7 +36,7 @@ const PATIENT_LINE =
   '<div class="muted">Patient: {patient_name} &nbsp; Age/Gender: {patient_age}/{patient_gender} &nbsp; UHID: {patient_um_id}</div>';
 
 /** The 9 sample templates — one per supported print type. */
-const TEMPLATES: Array<{
+export const TEMPLATES: Array<{
   type: string;
   name: string;
   meta: Prisma.InputJsonObject;
@@ -126,8 +126,8 @@ ${PATIENT_LINE}
       `<div>Order: <b>{order_code}</b> &nbsp; Date: {order_date}</div>
 ${PATIENT_LINE}
 <div>Test: <b>{test_name}</b> &nbsp; Status: {report_status}</div>
-<table><thead><tr><th>Result</th><th>Result 2</th><th>Unit</th><th>Method</th><th>Reference</th></tr></thead>
-<tbody>{{#each results}}<tr><td>{observed1}</td><td>{observed2}</td><td>{unit}</td><td>{methodology}</td><td>{reference_display}</td></tr>{{/each}}</tbody></table>
+<table><thead><tr><th>Result</th><th>Abnormal?</th><th>Result 2</th><th>Abnormal 2?</th><th>Unit</th><th>Method</th><th>Reference</th></tr></thead>
+<tbody>{{#each results}}<tr><td>{observed1}</td><td>{is_observed_1_abnormal}</td><td>{observed2}</td><td>{is_observed_2_abnormal}</td><td>{unit}</td><td>{methodology}</td><td>{reference_display}</td></tr>{{/each}}</tbody></table>
 <div class="muted">Useful For: {useful_for}</div>
 <div class="muted">Interpretation: {interpretation}</div>
 <div class="muted">Limitations: {limitations}</div>
@@ -143,8 +143,8 @@ ${PATIENT_LINE}
       `<div>Order: <b>{order_code}</b> &nbsp; Date: {order_date}</div>
 ${PATIENT_LINE}
 <div>Panel: <b>{test_name}</b> &nbsp; Status: {report_status}</div>
-<table><thead><tr><th>Result</th><th>Result 2</th><th>Unit</th><th>Method</th><th>Reference</th></tr></thead>
-<tbody>{{#each results}}<tr><td>{observed1}</td><td>{observed2}</td><td>{unit}</td><td>{methodology}</td><td>{reference_display}</td></tr>{{/each}}</tbody></table>
+<table><thead><tr><th>Result</th><th>Abnormal?</th><th>Result 2</th><th>Abnormal 2?</th><th>Unit</th><th>Method</th><th>Reference</th></tr></thead>
+<tbody>{{#each results}}<tr><td>{observed1}</td><td>{is_observed_1_abnormal}</td><td>{observed2}</td><td>{is_observed_2_abnormal}</td><td>{unit}</td><td>{methodology}</td><td>{reference_display}</td></tr>{{/each}}</tbody></table>
 <div class="muted">Interpretation: {interpretation}</div>`,
       '<signing_authority_tag><div style="display:inline-block;margin-right:24px"><b>{name}</b><div class="muted">{designation}</div></div></signing_authority_tag>',
     ),
