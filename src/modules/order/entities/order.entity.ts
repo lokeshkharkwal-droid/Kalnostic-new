@@ -270,16 +270,26 @@ export function deriveReportStatusCounts(
 export function orderItemNames(
   items: {
     direct: string | null;
-    branchLabTest: { testName: string } | null;
-    branchLabPanel: { panelName: string } | null;
+    branchLabTest: { testName: string; isBillOnlyTest?: boolean } | null;
+    branchLabPanel: { panelName: string; isBillOnlyTest?: boolean } | null;
   }[],
 ): string[] {
-  return items.map(
-    (it) =>
-      it.branchLabPanel?.panelName ??
-      it.branchLabTest?.testName ??
-      it.direct ??
-      '—',
+  return (
+    items
+      // Bill-only tests/panels are billed but never enter the lab workflow, so they
+      // don't belong in the Order Console's workflow item column.
+      .filter(
+        (it) =>
+          !it.branchLabTest?.isBillOnlyTest &&
+          !it.branchLabPanel?.isBillOnlyTest,
+      )
+      .map(
+        (it) =>
+          it.branchLabPanel?.panelName ??
+          it.branchLabTest?.testName ??
+          it.direct ??
+          '—',
+      )
   );
 }
 
@@ -350,6 +360,11 @@ export const ORDER_INCLUDE = {
           testCode: true,
           priceMsrp: true,
           listPrice: true,
+          // Billed-only test: excluded from the workflow (no sample/report), so
+          // the FE can hide it from the Order Console's workflow item list.
+          isBillOnlyTest: true,
+          // Drives the create-order edit/reorder discount input (disabled when false).
+          isAllowDiscounts: true,
           scheduleDays: true,
           scheduleFrom: true,
           scheduleTo: true,
@@ -366,6 +381,9 @@ export const ORDER_INCLUDE = {
           panelCode: true,
           priceMsrp: true,
           listPrice: true,
+          isBillOnlyTest: true,
+          // Panel discount flag (inverse of the FE `isAllowDiscounts` option).
+          isDisableDiscount: true,
           tatMinValue: true,
           tatMinUnit: true,
           tatMaxValue: true,
@@ -566,9 +584,21 @@ export const ORDER_LIST_INCLUDE = {
       // in both the Billings list and Finance reports (computeBillingTotals).
       unitPrice: true,
       discount: true,
-      branchLabTest: { select: { id: true, testName: true, testCode: true } },
+      branchLabTest: {
+        select: {
+          id: true,
+          testName: true,
+          testCode: true,
+          isBillOnlyTest: true,
+        },
+      },
       branchLabPanel: {
-        select: { id: true, panelName: true, panelCode: true },
+        select: {
+          id: true,
+          panelName: true,
+          panelCode: true,
+          isBillOnlyTest: true,
+        },
       },
       // Reporting progress of this test's report(s) — one LabReport for a
       // non-panel/grandfathered-panel item, or several (one per member test)
@@ -755,6 +785,15 @@ export type BillingRecordRow = BillingOrder & {
    */
   dateTimeDisplay?: string;
   responsibleUser?: string | null;
+  /**
+   * The resolved display name of the order's ORIGINAL creator (`Order.createdBy`),
+   * attached by `billingRecords` for EVERY report. Distinct from
+   * {@link responsibleUser}, which on Collection/Refund/Cancel is the
+   * action-performer (collector / refunder / canceller) — this is always the order
+   * creator, so each Finance page can show a consistent "Order Created By" column.
+   * Null when the order has no recorded creator (never a made-up name).
+   */
+  orderCreatedByName?: string | null;
   /**
    * Invoice-lock (Outstanding report). Whether an active invoice has already been
    * generated for this order, and that invoice's number. Drives the frontend's

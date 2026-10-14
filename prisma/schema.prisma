@@ -2818,8 +2818,10 @@ model LabTest {
   isBillOnlyTest      Boolean @default(false) @map("is_bill_only_test")
   /// Whether this test participates in the sample-flow/routing pipeline.
   /// Excel "Sample Flow" column — previously a UI-only toggle with no
-  /// backing field (added 2026-09-06).
-  isSampleFlow        Boolean @default(false) @map("is_sample_flow")
+  /// backing field (added 2026-09-06). Default TRUE (2026-10-14): a test
+  /// follows the normal sample workflow (accession → collection) unless
+  /// explicitly set to No, which auto-accepts it and skips collection.
+  isSampleFlow        Boolean @default(true) @map("is_sample_flow")
   isMandatoryTest     Boolean @default(false) @map("is_mandatory_test")
 
   // Mandatory-test classification — real relations to the catalogue tables
@@ -3175,6 +3177,12 @@ model LabPanel {
   isShowOnlineBooking   Boolean @default(true) @map("is_show_online_booking")
   isHomeCollection      Boolean @default(false) @map("is_home_collection")
   isAllowPartialBilling Boolean @default(false) @map("is_allow_partial_billing")
+  // Workflow flags (mirror the lab-test flags). isBillOnlyTest: the panel is
+  // billed but never enters the lab workflow (no accession/collection/technician/
+  // report for any of its member tests). isSampleFlow: when false the panel's
+  // samples are auto-accepted and skip collection, proceeding to the technician.
+  isBillOnlyTest        Boolean @default(false) @map("is_bill_only_test")
+  isSampleFlow          Boolean @default(true) @map("is_sample_flow")
 
   // Max tests removable in a single order (0 = no limit). Only meaningful when
   // isAllowPartialBilling = true (enforced in service + CHECK in prisma/rls.sql).
@@ -3347,6 +3355,13 @@ model BranchLabTest {
   isHideInOrderScreen Boolean @default(false) @map("is_hide_in_order_screen")
   isPreferenceTest    Boolean @default(false) @map("is_preference_test")
   isMandatoryTest     Boolean @default(false) @map("is_mandatory_test")
+  // Workflow flags mirrored from the source LabTest (propagated on import/sync).
+  // isBillOnlyTest: the test is billed but never enters the lab workflow (no
+  // accession/collection/technician/report). isSampleFlow: when false the test
+  // bypasses sample collection — its sample is auto-accepted and it proceeds
+  // straight to the technician. Default TRUE = normal collection flow.
+  isBillOnlyTest      Boolean @default(false) @map("is_bill_only_test")
+  isSampleFlow        Boolean @default(true) @map("is_sample_flow")
 
   // Mandatory-test classification (logical refs)
   mandatoryDeptId             String?             @map("mandatory_dept_id")
@@ -3476,6 +3491,10 @@ model BranchLabPanel {
   isShowOnlineBooking   Boolean @default(true) @map("is_show_online_booking")
   isHomeCollection      Boolean @default(false) @map("is_home_collection")
   isAllowPartialBilling Boolean @default(false) @map("is_allow_partial_billing")
+  // Workflow flags mirrored from the source LabPanel (propagated on import/sync).
+  // See LabPanel for semantics. Default TRUE isSampleFlow = normal collection.
+  isBillOnlyTest        Boolean @default(false) @map("is_bill_only_test")
+  isSampleFlow          Boolean @default(true) @map("is_sample_flow")
 
   maxTestsRemovable Int @default(0) @map("max_tests_removable")
 
