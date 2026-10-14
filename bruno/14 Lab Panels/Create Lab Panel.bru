@@ -40,6 +40,8 @@ body:json {
     "tatMaxUnit": "HOURS",
     "panelInstructions": "Overnight fasting of 10-12 hours recommended.",
     "isDisableDiscount": false,
+    "isBillOnlyTest": false,
+    "isSampleFlow": true,
     "isEnableCms": true,
     "isPreference": false,
     "isFastingRequired": true,
@@ -92,8 +94,22 @@ docs {
   - `tests[].labTestId` must reference an **active lab test in the same master
     data** → 422 `LAB_PANEL_TEST_NOT_FOUND`. A test may appear at most once.
   
+  ## Workflow flags (optional)
+
+  - `isDisableDiscount` (default `false`) — when `true`, discounts are **not**
+    allowed on this panel in an order (422 `TEST_DISCOUNT_NOT_ALLOWED`; the
+    Create-Order option API surfaces the inverse as `isAllowDiscounts`).
+  - `isBillOnlyTest` (default `false`) — when `true`, the panel is billed but
+    **excluded from the lab workflow**: no accession samples, no technician/report
+    stages, and it does not appear in the Order Console item list (its amount is
+    still included in the bill).
+  - `isSampleFlow` (default `true`) — when `false`, the panel's samples are
+    **auto-accepted at order creation** and skip collection, proceeding straight to
+    the technician. These flags propagate to the branch's `BranchLabPanel` copies
+    on import/sync.
+
   ## Cross-field rules (422 VALIDATION_ERROR)
-  
+
   - `priceMaximum ≤ priceMsrp`, `priceMinimum ≤ priceMaximum`.
   - `maxTestsRemovable > 0` requires `isAllowPartialBilling: true`.
   - `maxTestsRemovable` cannot exceed the number of tests in the panel.

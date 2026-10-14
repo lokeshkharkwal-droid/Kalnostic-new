@@ -110,6 +110,16 @@ export class BulkEditLabPanelItemDto {
   @IsOptional()
   isDisableDiscount?: boolean;
 
+  /** Billed but never enters the lab workflow (no accession/collection/report). */
+  @IsBoolean()
+  @IsOptional()
+  isBillOnlyTest?: boolean;
+
+  /** When false, the panel's samples are auto-accepted and skip collection. */
+  @IsBoolean()
+  @IsOptional()
+  isSampleFlow?: boolean;
+
   @IsBoolean()
   @IsOptional()
   isEnableCms?: boolean;

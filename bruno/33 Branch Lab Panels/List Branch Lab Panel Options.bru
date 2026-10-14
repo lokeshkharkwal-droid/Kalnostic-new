@@ -21,13 +21,20 @@ auth:bearer {
 }
 
 docs {
-  Lightweight `{ id, name, price, sampleType, isFasting }` options for the
-  Create-Order lab-panel picker. Returns the active branch's **active default-variant**
-  lab panels only (one orderable row per variant group), so a selected id is directly
-  usable as an order item's `branchLabPanelId`; `price` is the list price (`priceMsrp`,
-  minor units), `sampleType` is always `null` (a panel has no single specimen) and
-  `isFasting` reflects the panel's `isFastingRequired`. Scoped to the JWT tenant +
-  active branch (no `branchId` in the query). `search` matches panelName
-  (case-insensitive). Omit `page` for the full array; supply `page` for a
-  `{ data, total, page, limit }` envelope.
+  Lightweight `{ id, name, price, sampleType, isFasting, isAllowDiscounts,
+  isBillOnlyTest }` options for the Create-Order lab-panel picker. Returns the active
+  branch's **active default-variant** lab panels only (one orderable row per variant
+  group), so a selected id is directly usable as an order item's `branchLabPanelId`;
+  `price` is the list price (`priceMsrp`, minor units), `sampleType` is always `null`
+  (a panel has no single specimen) and `isFasting` reflects the panel's
+  `isFastingRequired`.
+
+  `isAllowDiscounts` is the inverse of the panel's `isDisableDiscount` (drives the FE
+  discount input; backend rejects a disallowed discount with 422
+  `TEST_DISCOUNT_NOT_ALLOWED`). `isBillOnlyTest` flags a billed-only panel the
+  frontend hides from the workflow item list (it generates no accession samples).
+
+  Scoped to the JWT tenant + active branch (no `branchId` in the query). `search`
+  matches panelName (case-insensitive). Omit `page` for the full array; supply `page`
+  for a `{ data, total, page, limit }` envelope.
 }

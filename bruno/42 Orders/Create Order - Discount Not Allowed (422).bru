@@ -68,6 +68,11 @@ docs {
   - `LINE_ITEM_DISCOUNT_NOT_ALLOWED` / `LINE_ITEM_DISCOUNT_OUT_OF_RANGE` — a
     per-line discount is disabled, or its % of that item's price is outside
     `[Minimum, Maximum] Line Item Discount %`.
+  - `TEST_DISCOUNT_NOT_ALLOWED` — a per-line discount was applied to a test/panel
+    whose catalogue config disallows discounts (lab test `isAllowDiscounts = false`,
+    or lab panel `isDisableDiscount = true`). This is a per-item product rule,
+    independent of the branch's discount settings — other items in the same order
+    can still be discounted. See `Create Order - Test Discount Not Allowed (422)`.
   - `TDS_NOT_APPLICABLE` / `TDS_OUT_OF_RANGE` — TDS supplied while not
     applicable, or its % of the net amount is outside `[Minimum, Maximum] TDS %`.
   - `PARTIAL_BILLING_NOT_ALLOWED_FOR_DISCOUNTED_ORDER` — the order carries a

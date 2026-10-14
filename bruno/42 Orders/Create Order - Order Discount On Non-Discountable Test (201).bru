@@ -1,0 +1,76 @@
+meta {
+  name: Create Order - Order Discount On Non-Discountable Test (201)
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "status": "ORDER",
+    "orderDate": "2026-10-14",
+    "orderType": "WALK_IN",
+    "billingType": "CASH_CLIENT",
+    "patientId": "{{patientId}}",
+    "items": [
+      {
+        "branchLabTestId": "{{branchLabTestId}}"
+      }
+    ],
+    "payments": [
+      {
+        "totalAmount": 1000,
+        "orderDiscount": 150,
+        "orderDiscountMode": "AMOUNT",
+        "orderDiscountValue": 150,
+        "netAmount": 850,
+        "payableAmount": 850,
+        "paidAmount": 850,
+        "paymentMode": "CASH"
+      }
+    ]
+  }
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("order-level discount is applied even on a non-discountable test", function () {
+    const d = res.getBody().data;
+    expect(d.discountAmount).to.equal(150);
+    expect(d.netAmount).to.equal(850);
+  });
+}
+
+docs {
+  Regression for the per-test "Allow Discounts" rule: an **order-level** discount
+  (`payments[].orderDiscount`) is accepted **regardless** of a test's catalogue
+  `isAllowDiscounts` flag — the per-test rule restricts only **per-line** item
+  discounts (`items[].discount`), never the order-level discount.
+
+  Point `{{branchLabTestId}}` at a branch lab test whose source Master Data test
+  has `Allow Discounts = No`. The order succeeds (201); the order's net reflects
+  the ₹150 order discount, and that discount is allocated proportionally across
+  the order's lines (including the non-discountable test) in the billing/report
+  breakdown. Contrast with `Create Order - Test Discount Not Allowed (422)`, where
+  a **per-line** discount on the same test is rejected.
+
+  Behaviour matrix (verified):
+  - Allow Discounts = No  + order-level discount → **201** (this request)
+  - Allow Discounts = No  + per-line item discount → **422 TEST_DISCOUNT_NOT_ALLOWED**
+  - Allow Discounts = Yes + per-line item discount → **201** (within branch min/max %)
+}
