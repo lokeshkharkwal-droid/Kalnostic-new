@@ -37,7 +37,9 @@ const IMAGE_TOKEN_RE = /\{\{image:([a-zA-Z0-9_.-]+)(?:\|([^}]*))?\}\}/g;
  * `test_file_attachment` is not technician-authored: it is `<embed>` markup the
  * server builds from the report's File+ uploads (URLs and names already
  * attribute-escaped in `buildTestFileAttachmentHtml`), so it is inserted as-is
- * for the same reason.
+ * for the same reason. `test_file_attachment_without_header` is likewise
+ * server-built markup — hidden `display:none` markers (escaped URLs/names) the
+ * PDF pipeline turns into appended pages — so it too is inserted as-is.
  */
 const RICH_TEXT_KEYS = new Set([
   'useful_for',
@@ -47,6 +49,7 @@ const RICH_TEXT_KEYS = new Set([
   'references',
   'overall_result',
   'test_file_attachment',
+  'test_file_attachment_without_header',
 ]);
 
 /**

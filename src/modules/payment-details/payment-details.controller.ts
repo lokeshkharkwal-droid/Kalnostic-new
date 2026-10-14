@@ -104,7 +104,12 @@ export class PaymentDetailsController {
     @Param('id') id: string,
     @Body() dto: RevertPaymentDetailsDto,
   ) {
-    return this.paymentDetailsService.revert(id, tenantId, personId, dto.reason);
+    return this.paymentDetailsService.revert(
+      id,
+      tenantId,
+      personId,
+      dto.reason,
+    );
   }
 
   /** Soft-delete a payment record. */

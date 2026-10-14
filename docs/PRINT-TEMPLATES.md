@@ -518,6 +518,7 @@ their tag lists are identical.
 | `{order_id_barcode}` | Code 128 barcode **image** of the Order ID (`Order.orderCode`, e.g. `ORD-00113`). |
 | `{order_id_qr_code}` | Code 128 barcode **image** of the Sample ID (this report's `OrderSample.barcode`) — a barcode despite the name. |
 | `{test_file_attachment}` | The PDF(s) uploaded with this test's Test Entry **File +** button, drawn in place (see below). Empty when the test has none. |
+| `{test_file_attachment_without_header}` | The SAME File+ uploads, but **appended as extra pages at the end of the report** instead of drawn in place (see below). Empty when the test has none. |
 
 **Image tags** (`{{image:key}}`): `report_approved_by_signature`,
 `patient_image`, `order_id_barcode`, `order_id_qr_code`.
@@ -549,6 +550,37 @@ uploads (sheets, docs, images) are skipped.
 - If a file can't be fetched or parsed (non-2xx, over 15 MB, not a PDF,
   encrypted), the embed prints as an `Attached file: <name>` link instead, and
   the report still generates. At most 50 pages are drawn per file.
+
+**`{test_file_attachment_without_header}` — File+ attachment appended as pages.**
+Selects exactly the same File+ uploads as `{test_file_attachment}` (this test's
+PDFs **and** images, `kind = 'file'`, oldest first, test-scoped), but instead of
+drawing them inside the report it **appends their own pages to the very end of the
+finished PDF**, untouched by the template's header/footer. So a 5-page report plus
+a 3-page PDF attachment prints **8 pages**, and an image becomes one appended page.
+
+- The tag emits **no visible content** — only a hidden (`display:none`) marker per
+  file (`<div class="pdf-append-attachment" …>`). `PdfService` reads the markers
+  after layout, prints the report as usual, then merges the files onto the end
+  (`src/modules/pdf/pdf-append.util.ts`). It is inserted unescaped, so Latte
+  `lab_report` bodies use `{test_file_attachment_without_header}` or
+  `{$test_file_attachment_without_header|noescape}`.
+- **PDF** attachments are merged page-for-page as-is (vector content and selectable
+  text preserved); each keeps its own page size. **Image** attachments are rendered
+  to a new page (sized like the report's pages, fitted and centred, never enlarged
+  past native pixels) **through the same Chromium the report body uses** — so EXIF
+  orientation (phone photos), CMYK/other colour spaces and every browser-supported
+  format (png/jpeg/webp/gif) come out identical to the inline `{test_file_attachment}`
+  `<img>`.
+- Use `{test_file_attachment}` to show a file **in place**, or
+  `{test_file_attachment_without_header}` to **append** it — don't use both for the
+  same file, or it prints twice. Non-PDF/non-image File+ uploads are skipped.
+- **Failures are surfaced, not silent.** A file that can't be downloaded, parsed or
+  rendered (404/oversized/corrupt, an encrypted PDF, an undecodable image) is
+  replaced by a visible **"Attachment could not be included"** note page (and
+  logged), so the report still generates and a missing attachment is never invisible.
+- In a `lab_all_report`, it is a per-test `{$report->test_file_attachment_without_header|noescape}`
+  (blank at the top level, like `{test_file_attachment}`); every test's appended
+  files land after all report pages.
 
 **`results` section row** (parameter rows, sorted by catalogue order):
 
@@ -648,6 +680,7 @@ The context is:
 | `sample_received_date` | Receipt time. |
 | `report_prepared_on` | Approval/publish time. |
 | `test_file_attachment` | That test's File+ PDF(s) — `{$report->test_file_attachment\|noescape}`. Already inside `body_html` when that test's own `lab_report` template uses the tag. In a flat `{{#each reports}}` template it is a per-row `{test_file_attachment}`; it is blank at the top level, so one test's file never prints for the whole order. |
+| `test_file_attachment_without_header` | That test's File+ files **appended as pages** instead of drawn inline — `{$report->test_file_attachment_without_header\|noescape}`. Same test-scoping/`body_html` notes as `test_file_attachment`; every test's appended files land after all report pages. |
 | `lab_test_id` | Tenant-master test id. |
 | `tests` | `[{ display_test_sample: '1' }]` visibility gate (mostly unused). |
 

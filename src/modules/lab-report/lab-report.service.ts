@@ -135,7 +135,10 @@ import {
   classifyResultValueSave,
   describeAnalyzerOverwrite,
 } from './utils/result-value-save.util';
-import { buildTestFileAttachmentHtml } from './utils/test-file-attachment.util';
+import {
+  buildTestFileAttachmentAppendHtml,
+  buildTestFileAttachmentHtml,
+} from './utils/test-file-attachment.util';
 import {
   sortWorklistMatches,
   type WorklistMatch,
@@ -3331,6 +3334,13 @@ export class LabReportService {
         // "File +" button, as `<embed>` markup (printed unescaped, see
         // `RICH_TEXT_KEYS`). Built from THIS report's attachments only.
         test_file_attachment: buildTestFileAttachmentHtml(report.attachments),
+        // `{test_file_attachment_without_header}` — the SAME File+ uploads, but
+        // as hidden markers the PDF pipeline turns into APPENDED pages at the end
+        // of the finished report (PDF merged as-is, image → one page) instead of
+        // drawing them inline. Printed unescaped (see `RICH_TEXT_KEYS`).
+        test_file_attachment_without_header: buildTestFileAttachmentAppendHtml(
+          report.attachments,
+        ),
       },
       // Backs the `{{image:ID}}` tokens (and the bare barcode tags) for the
       // image-valued fields above — `TemplateRenderService.interpolateImages`
@@ -3663,6 +3673,11 @@ export class LabReportService {
             : '',
           // This test's own File+ PDFs (`{$report->test_file_attachment|noescape}`).
           test_file_attachment: toText(c?.variables?.test_file_attachment),
+          // Same test's File+ files, but APPENDED at the report's end instead of
+          // drawn inline (`{$report->test_file_attachment_without_header|noescape}`).
+          test_file_attachment_without_header: toText(
+            c?.variables?.test_file_attachment_without_header,
+          ),
           // One visible test entry per report (a panel's sub-tests are already
           // flattened into `body_html`); drives the templates' display gate/count.
           tests: [{ display_test_sample: '1' }],
@@ -3685,6 +3700,9 @@ export class LabReportService {
         // Test-scoped: the first report's files must not print as the whole
         // order's. Use `{test_file_attachment}` inside `{{#each reports}}`.
         test_file_attachment: '',
+        // Same reasoning for the append variant — blank at the top level; use
+        // `{test_file_attachment_without_header}` inside `{{#each reports}}`.
+        test_file_attachment_without_header: '',
       },
       images: firstCtx?.images ?? {},
       sections: {
@@ -3698,6 +3716,8 @@ export class LabReportService {
             sample_received_date: rep.sample_received_date,
             report_prepared_on: rep.report_prepared_on,
             test_file_attachment: rep.test_file_attachment,
+            test_file_attachment_without_header:
+              rep.test_file_attachment_without_header,
             results_summary: rows
               .map((r) => {
                 const unit = toText(r.unit);
