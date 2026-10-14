@@ -45,6 +45,15 @@ export class SigningAuthorityDto {
   @IsString()
   @MaxLength(255)
   certifications?: string;
+
+  /**
+   * Comma-joined degrees of this signatory's qualifications (e.g. "MBBS, MD")
+   * — empty for a plain staff `Person` signatory or a Doctor with none recorded.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  qualification?: string;
 }
 
 /**

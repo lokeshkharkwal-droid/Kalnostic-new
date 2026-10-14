@@ -392,6 +392,65 @@ export function fullName(parts: Array<string | null | undefined>): string {
   return parts.filter((p): p is string => Boolean(p && p.trim())).join(' ');
 }
 
+/**
+ * The Doctor columns a printed report needs for a signing Doctor — shared by
+ * the `<signing_authority_tag>` signatory block and the flat
+ * `{report_approved_by_*}` tags so both always read the same fields. Active
+ * qualifications are ordered like the Doctor detail endpoint
+ * (`DOCTOR_DETAIL_INCLUDE`).
+ */
+export const SIGNING_DOCTOR_SELECT = {
+  id: true,
+  firstName: true,
+  lastName: true,
+  signatoryDesignation: true,
+  registrationNo: true,
+  registrationCouncil: true,
+  signatureImagePath: true,
+  isNablAuthorized: true,
+  isCapCertified: true,
+  isIsoCertified: true,
+  qualifications: {
+    where: { deletedAt: null },
+    orderBy: { createdAt: 'asc' },
+    select: { degree: true },
+  },
+} satisfies Prisma.DoctorSelect;
+
+/**
+ * Comma-joined accreditation labels for a signing Doctor (e.g. "NABL
+ * Authorized, CAP Certified") — empty when none of the flags are set. Backs
+ * `{report_approved_by_certifications}` and the signatory block's per-doctor
+ * certifications.
+ */
+export function doctorCertifications(d: {
+  isNablAuthorized: boolean;
+  isCapCertified: boolean;
+  isIsoCertified: boolean;
+}): string {
+  return [
+    d.isNablAuthorized ? 'NABL Authorized' : null,
+    d.isCapCertified ? 'CAP Certified' : null,
+    d.isIsoCertified ? 'ISO Certified' : null,
+  ]
+    .filter((c): c is string => c !== null)
+    .join(', ');
+}
+
+/**
+ * Comma-joined degrees of a signing Doctor's active qualifications, in the
+ * order they were added (e.g. "MBBS, MD (Pathology)") — empty when none are
+ * recorded. Backs `{report_approved_by_qualification}`.
+ */
+export function doctorQualification(
+  qualifications: Array<{ degree: string | null }>,
+): string {
+  return qualifications
+    .map((q) => q.degree?.trim())
+    .filter((deg): deg is string => Boolean(deg))
+    .join(', ');
+}
+
 /** Maps one raw `LabReportListRow` (Prisma's nested include tree) into the flat
  * `LabReportWorklistRow` shape the worklist table needs. Pure reshaping — no
  * new queries, no new data beyond what `LAB_REPORT_LIST_INCLUDE` already fetches.
