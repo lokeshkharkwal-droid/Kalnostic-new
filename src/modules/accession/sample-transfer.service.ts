@@ -577,17 +577,43 @@ export class SampleTransferService {
 
   /**
    * Fetch one transfer with its sample + order context.
-   * @throws SampleTransferNotFoundException if missing/soft-deleted/other tenant
+   * @param actingBranchId the caller's ACTIVE branch. When given, the branch must
+   *   be the transfer's sender / holder / receiver, or have a stake in its sample
+   *   (see {@link OrderSampleService.branchMayReadSample}); otherwise the transfer
+   *   is reported as not found. Omit (or null, for a tenant-wide caller such as
+   *   the business admin) to read without the branch check - the service's own
+   *   internal reads do.
+   * @throws SampleTransferNotFoundException if missing/soft-deleted/other tenant,
+   *   or if the caller's branch has no stake in it
    */
   async findTransferById(
     id: string,
     tenantId: string,
+    actingBranchId?: string | null,
   ): Promise<SampleTransferWithRelations> {
     const transfer = await this.prisma.sampleTransfer.findFirst({
       where: { id, tenantId, deletedAt: null },
       include: TRANSFER_INCLUDE,
     });
     if (!transfer) throw new SampleTransferNotFoundException(id);
+    if (actingBranchId) {
+      const ownTransfer = [
+        transfer.branchId,
+        transfer.originBranchId,
+        transfer.destinationBranchId,
+      ].includes(actingBranchId);
+      if (
+        !ownTransfer &&
+        !(await this.samples.branchMayReadSample(
+          transfer.sampleId,
+          tenantId,
+          actingBranchId,
+        ))
+      ) {
+        // Same answer as a missing transfer: do not confirm that it exists.
+        throw new SampleTransferNotFoundException(id);
+      }
+    }
     return transfer;
   }
 

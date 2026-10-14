@@ -259,10 +259,17 @@ export class SampleTransferController {
     );
   }
 
-  /** Fetch one transfer (with sample + order context). */
+  /**
+   * Fetch one transfer (with sample + order context). Limited to the branches with
+   * a stake in it (404 otherwise); a tenant-wide caller is not limited.
+   */
   @Get('transfers/:id')
-  findTransfer(@CurrentTenant() tenantId: string, @Param('id') id: string) {
-    return this.transfers.findTransferById(id, tenantId);
+  findTransfer(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+  ) {
+    return this.transfers.findTransferById(id, tenantId, profile.branchId);
   }
 
   /** Picked Up (§B.11.1). */

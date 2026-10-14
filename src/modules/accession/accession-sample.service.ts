@@ -92,6 +92,10 @@ import {
   PREVIOUS_HOLDER_MESSAGE,
   isPreviousHolder,
 } from './utils/previous-holders.util';
+import {
+  branchMayRead,
+  branchesWithStake,
+} from './utils/branch-read-scope.util';
 
 /** Resolved display fields attached to a history row for the Audit Trail UI. */
 export interface AccessionHistoryActor {
@@ -1283,9 +1287,19 @@ export class OrderSampleService {
    * order/patient), scoped to the tenant (Sample Overview — PDF §A.10.4).
    * @param id sample id
    * @param tenantId tenant scope
-   * @throws OrderSampleNotFoundException if missing/soft-deleted/other tenant
+   * @param actingBranchId the caller's ACTIVE branch. When given, the sample must
+   *   have a stake in that branch (see {@link branchMayReadSample}), otherwise it
+   *   is reported as not found. Omit (or null, for a tenant-wide caller such as
+   *   the business admin) to read without the branch check - the service's own
+   *   internal reads do.
+   * @throws OrderSampleNotFoundException if missing/soft-deleted/other tenant, or
+   *   if it has no stake in the caller's branch
    */
-  async findById(id: string, tenantId: string): Promise<OrderSampleDetail> {
+  async findById(
+    id: string,
+    tenantId: string,
+    actingBranchId?: string | null,
+  ): Promise<OrderSampleDetail> {
     const sample = await this.prisma.orderSample.findFirst({
       where: { id, tenantId, deletedAt: null },
       include: SAMPLE_INCLUDE,
@@ -1293,7 +1307,61 @@ export class OrderSampleService {
     if (!sample) {
       throw new OrderSampleNotFoundException(id);
     }
+    if (
+      actingBranchId &&
+      !(await this.branchMayReadSample(id, tenantId, actingBranchId))
+    ) {
+      // Same answer as a missing sample: do not confirm that it exists.
+      throw new OrderSampleNotFoundException(id);
+    }
     return this.withDepartments(sample, tenantId);
+  }
+
+  /**
+   * Whether a branch has a stake in a sample - holds it, created it, processes it,
+   * has had it, booked its order, or sent / received a transfer that moved it, its
+   * copy or the transfer that produced it. Reads by id (Sample Overview, History,
+   * the transfer detail) are limited to these branches, so a branch that never
+   * touched a sample cannot open it by guessing or reusing an id.
+   * @param sampleId the sample to check
+   * @param tenantId tenant scope
+   * @param actingBranchId the caller's active branch
+   */
+  async branchMayReadSample(
+    sampleId: string,
+    tenantId: string,
+    actingBranchId: string | null | undefined,
+  ): Promise<boolean> {
+    if (!actingBranchId) return true;
+    const sample = await this.prisma.orderSample.findFirst({
+      where: { id: sampleId, tenantId, deletedAt: null },
+      select: {
+        branchId: true,
+        originBranchId: true,
+        processingBranchId: true,
+        heldBranchIds: true,
+        sourceTransferId: true,
+        order: { select: { branchId: true } },
+      },
+    });
+    if (!sample) return false;
+    const transfers = await this.prisma.sampleTransfer.findMany({
+      where: {
+        tenantId,
+        deletedAt: null,
+        OR: [
+          { sampleId },
+          { clonedSampleId: sampleId },
+          ...(sample.sourceTransferId ? [{ id: sample.sourceTransferId }] : []),
+        ],
+      },
+      select: {
+        branchId: true,
+        originBranchId: true,
+        destinationBranchId: true,
+      },
+    });
+    return branchMayRead(actingBranchId, branchesWithStake(sample, transfers));
   }
 
   /**
@@ -1403,14 +1471,17 @@ export class OrderSampleService {
    * correctly has an empty trail.
    * @param id sample id
    * @param tenantId tenant scope
-   * @throws OrderSampleNotFoundException if the sample is missing
+   * @param branchId the caller's active branch: the sample must have a stake in it
+   *   (null for a tenant-wide caller reads without the check)
+   * @throws OrderSampleNotFoundException if the sample is missing, or has no stake
+   *   in the caller's branch
    */
   async findHistory(
     id: string,
     tenantId: string,
     branchId: string | null,
   ): Promise<Array<OrderSampleStatusHistory & AccessionHistoryActor>> {
-    await this.findById(id, tenantId);
+    await this.findById(id, tenantId, branchId);
     const rows = await this.prisma.orderSampleStatusHistory.findMany({
       where: { sampleId: id, tenantId, deletedAt: null },
       orderBy: { createdAt: 'desc' },

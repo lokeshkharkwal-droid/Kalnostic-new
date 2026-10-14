@@ -21,6 +21,12 @@ tests {
 }
 
 docs {
+  Branch scope: opens only for a branch with a stake in it - the branch holding the
+  sample, the branch it was created in or is processed at, any branch it has been
+  with, the order's own branch, or the sender / holder / receiver of a transfer that
+  moved it. Any other branch gets 404 (the same answer as a missing id). A caller with
+  no active branch (business admin) is not limited.
+
   The sample's status-MOVEMENT log (§A.10.5), newest first, for the Audit
   Trail UI. Each row carries `action`, `fromStatus`, `toStatus`, optional
   `reason` / `notes` / `attachmentUrl`, and `changedBy` (raw `Person.id`).

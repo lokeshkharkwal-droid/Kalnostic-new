@@ -390,13 +390,23 @@ export class AccessionController {
 
   // ── Single-sample reads ────────────────────────────────────────────────────
 
-  /** Fetch one sample fully composed (Sample Overview — §A.10.4). */
+  /**
+   * Fetch one sample fully composed (Sample Overview — §A.10.4). Limited to the
+   * branches with a stake in it (404 otherwise); a tenant-wide caller is not limited.
+   */
   @Get(':id')
-  findOne(@CurrentTenant() tenantId: string, @Param('id') id: string) {
-    return this.sampleService.findById(id, tenantId);
+  findOne(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+  ) {
+    return this.sampleService.findById(id, tenantId, profile.branchId);
   }
 
-  /** Fetch a sample's status-change history (§A.10.5, newest first). */
+  /**
+   * Fetch a sample's status-change history (§A.10.5, newest first). Same branch
+   * limit as the sample itself.
+   */
   @Get(':id/history')
   findHistory(
     @CurrentTenant() tenantId: string,
