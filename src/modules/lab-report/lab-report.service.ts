@@ -89,6 +89,9 @@ import {
   LabReportStatusCounts,
   LabReportTransitionAction,
   LabReportWorklistRow,
+  SIGNING_DOCTOR_SELECT,
+  doctorCertifications,
+  doctorQualification,
   fullName,
   toWorklistRow,
 } from './entities/lab-report.entity';
@@ -2930,17 +2933,7 @@ export class LabReportService {
       doctorIds.length
         ? this.prisma.doctor.findMany({
             where: { id: { in: doctorIds }, tenantId, deletedAt: null },
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              signatoryDesignation: true,
-              registrationCouncil: true,
-              signatureImagePath: true,
-              isNablAuthorized: true,
-              isCapCertified: true,
-              isIsoCertified: true,
-            },
+            select: SIGNING_DOCTOR_SELECT,
           })
         : Promise.resolve([]),
     ]);
@@ -2960,18 +2953,13 @@ export class LabReportService {
       } else {
         const d = doctorById.get(slot.id);
         if (d) {
-          const certifications = [
-            d.isNablAuthorized ? 'NABL Authorized' : null,
-            d.isCapCertified ? 'CAP Certified' : null,
-            d.isIsoCertified ? 'ISO Certified' : null,
-          ]
-            .filter((c): c is string => c !== null)
-            .join(', ');
           signatories.push({
             name: fullName([d.firstName, d.lastName]),
             designation:
               d.signatoryDesignation ?? d.registrationCouncil ?? undefined,
-            certifications: certifications || undefined,
+            registrationNumber: d.registrationNo || undefined,
+            qualification: doctorQualification(d.qualifications) || undefined,
+            certifications: doctorCertifications(d) || undefined,
             signatureImage: d.signatureImagePath ?? undefined,
           });
         }
@@ -2982,8 +2970,11 @@ export class LabReportService {
 
   /**
    * Resolve the report's approving **Doctor** for the flat
-   * `{report_approved_by_*}` tags — name, designation, certifications and
-   * signature image. Per the product decision these tags are Doctor-only, so we
+   * `{report_approved_by_*}` tags — name, designation, certifications,
+   * qualification (the Doctor's active qualification degrees), registration
+   * no. and signature image. Every one of those tags reads this single Doctor,
+   * so they always describe the same approver. Per the product decision these
+   * tags are Doctor-only, so we
    * take the first signatory slot whose stored type is a Doctor
    * (`CONSULTANT_DOCTOR`/`REPORTING_DOCTOR`), ignoring `USER` slots (which have
    * no certifications/signature). Reads the report's own frozen signatory
@@ -3006,6 +2997,8 @@ export class LabReportService {
     name: string;
     designation: string;
     certifications: string;
+    qualification: string;
+    registrationNo: string;
     signatureImage: string;
   } | null> {
     const doctorSlot = [
@@ -3030,31 +3023,16 @@ export class LabReportService {
 
     const d = await this.prisma.doctor.findFirst({
       where: { id: doctorSlot.id, tenantId, deletedAt: null },
-      select: {
-        firstName: true,
-        lastName: true,
-        signatoryDesignation: true,
-        registrationCouncil: true,
-        isNablAuthorized: true,
-        isCapCertified: true,
-        isIsoCertified: true,
-        signatureImagePath: true,
-      },
+      select: SIGNING_DOCTOR_SELECT,
     });
     if (!d) return null;
-
-    const certifications = [
-      d.isNablAuthorized ? 'NABL Authorized' : null,
-      d.isCapCertified ? 'CAP Certified' : null,
-      d.isIsoCertified ? 'ISO Certified' : null,
-    ]
-      .filter((c): c is string => c !== null)
-      .join(', ');
 
     return {
       name: fullName([d.firstName, d.lastName]),
       designation: d.signatoryDesignation ?? d.registrationCouncil ?? '',
-      certifications,
+      certifications: doctorCertifications(d),
+      qualification: doctorQualification(d.qualifications),
+      registrationNo: d.registrationNo ?? '',
       signatureImage: d.signatureImagePath ?? '',
     };
   }
@@ -3330,6 +3308,8 @@ export class LabReportService {
         report_approved_by_name: approver?.name ?? '',
         report_approved_by_designation: approver?.designation ?? '',
         report_approved_by_certifications: approver?.certifications ?? '',
+        report_approved_by_qualification: approver?.qualification ?? '',
+        report_approved_by_registration_no: approver?.registrationNo ?? '',
         report_approved_by_signature: approver?.signatureImage ?? '',
         // Patient photo (persisted on `Patient.photoUrl`, set at registration).
         // Flat `{patient_image}` prints the URL; `{{image:patient_image}}`
@@ -3849,6 +3829,12 @@ export class LabReportService {
       report_approved_by_designation: toText(v.report_approved_by_designation),
       report_approved_by_certifications: toText(
         v.report_approved_by_certifications,
+      ),
+      report_approved_by_qualification: toText(
+        v.report_approved_by_qualification,
+      ),
+      report_approved_by_registration_no: toText(
+        v.report_approved_by_registration_no,
       ),
       report_approved_by_signature: toText(v.report_approved_by_signature),
     };
