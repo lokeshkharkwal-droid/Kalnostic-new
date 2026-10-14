@@ -46,6 +46,7 @@ import {
   InvalidSampleTransitionException,
   InvalidTransferTransitionException,
   TransferOrderCancelledException,
+  TransferWrongBranchException,
   OutsourceCenterNotFoundException,
   SampleTransferNotFoundException,
   TransferDestinationMissingException,
@@ -175,6 +176,7 @@ export class SampleTransferService {
     transferIds: string[],
     tenantId: string,
     personId: string | null,
+    actingBranchId: string | null,
     dto: TransferPickUpDto,
     skipInvalid = false,
   ): Promise<BulkActionResult<SampleTransferWithRelations>> {
@@ -182,6 +184,7 @@ export class SampleTransferService {
       transferIds,
       tenantId,
       personId,
+      actingBranchId,
       'pick-up',
       () => ({
         pickedUpBy: dto.pickedUpBy ?? null,
@@ -196,6 +199,7 @@ export class SampleTransferService {
     transferIds: string[],
     tenantId: string,
     personId: string | null,
+    actingBranchId: string | null,
     dto: TransferReceiveDto,
     skipInvalid = false,
   ): Promise<BulkActionResult<SampleTransferWithRelations>> {
@@ -203,6 +207,7 @@ export class SampleTransferService {
       transferIds,
       tenantId,
       personId,
+      actingBranchId,
       'receive',
       () => ({
         receivedAt: new Date(),
@@ -217,6 +222,7 @@ export class SampleTransferService {
     transferIds: string[],
     tenantId: string,
     personId: string | null,
+    actingBranchId: string | null,
     _dto: SampleNoteDto,
     skipInvalid = false,
   ): Promise<BulkActionResult<SampleTransferWithRelations>> {
@@ -224,6 +230,7 @@ export class SampleTransferService {
       transferIds,
       tenantId,
       personId,
+      actingBranchId,
       'accept',
       () => ({
         acceptedAt: new Date(),
@@ -237,6 +244,7 @@ export class SampleTransferService {
     transferIds: string[],
     tenantId: string,
     personId: string | null,
+    actingBranchId: string | null,
     dto: TransferRepeatDto,
     skipInvalid = false,
   ): Promise<BulkActionResult<SampleTransferWithRelations>> {
@@ -244,6 +252,7 @@ export class SampleTransferService {
       transferIds,
       tenantId,
       personId,
+      actingBranchId,
       'repeat',
       () => ({
         repeatReason: dto.repeatReason,
@@ -258,6 +267,7 @@ export class SampleTransferService {
     transferIds: string[],
     tenantId: string,
     personId: string | null,
+    actingBranchId: string | null,
     dto: TransferRejectDto,
     skipInvalid = false,
   ): Promise<BulkActionResult<SampleTransferWithRelations>> {
@@ -265,6 +275,7 @@ export class SampleTransferService {
       transferIds,
       tenantId,
       personId,
+      actingBranchId,
       'reject',
       () => ({
         rejectionReason: dto.rejectionReason,
@@ -285,6 +296,19 @@ export class SampleTransferService {
     actor?: { branchId: string | null; profileKey: string | null },
   ): Promise<SampleTransferWithRelations> {
     const transfer = await this.findTransferById(transferId, tenantId);
+    // Choosing / changing where an INTERNAL transfer goes is the SENDING branch's
+    // call (the branch that created it), never the receiver's or a bystander's.
+    if (
+      actor &&
+      transfer.kind === TransferKind.INTERNAL &&
+      transfer.branchId !== actor.branchId
+    ) {
+      throw new TransferWrongBranchException(
+        transferId,
+        'assign-center',
+        'sender',
+      );
+    }
     // A cancelled order's transfer is frozen, destination included.
     const sampleOfTransfer = await this.prisma.orderSample.findFirst({
       where: { id: transfer.sampleId, tenantId },
@@ -712,6 +736,7 @@ export class SampleTransferService {
     transferIds: string[],
     tenantId: string,
     personId: string | null,
+    actingBranchId: string | null,
     action: TransferAction,
     build: () => Prisma.SampleTransferUpdateManyMutationInput,
     skipInvalid = false,
@@ -742,6 +767,22 @@ export class SampleTransferService {
             where: { id, tenantId, deletedAt: null },
           });
           if (!transfer) throw new SampleTransferNotFoundException(id);
+          // Only the RECEIVING branch works an INTERNAL transfer. The caller's
+          // active branch (the profile they are working as) must be the transfer's
+          // destination; a transfer nobody was addressed to falls through to the
+          // "destination missing" refusal below. Always an error, never a "skip":
+          // a group action must not reveal or touch another branch's transfers.
+          if (
+            transfer.kind === TransferKind.INTERNAL &&
+            transfer.destinationBranchId &&
+            transfer.destinationBranchId !== actingBranchId
+          ) {
+            throw new TransferWrongBranchException(
+              transfer.id,
+              action,
+              'receiver',
+            );
+          }
           // A cancelled order's transfers are frozen - the forward steps (pick up,
           // receive, accept) are refused. Reject and Repeat stay open so the
           // receiving branch can send the sample back and wind it down.

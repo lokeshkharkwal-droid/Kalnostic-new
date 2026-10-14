@@ -343,9 +343,16 @@ export class AccessionController {
   bulkRetrieve(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Body() dto: BulkRetrieveDto,
   ) {
-    return this.sampleService.retrieve(dto.ids, tenantId, personId, dto);
+    return this.sampleService.retrieve(
+      dto.ids,
+      tenantId,
+      personId,
+      profile.branchId,
+      dto,
+    );
   }
 
   /**
@@ -577,11 +584,19 @@ export class AccessionController {
   async retrieve(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Param('id') id: string,
     @Body() dto: RetrieveSampleDto,
   ) {
-    return (await this.sampleService.retrieve([id], tenantId, personId, dto))
-      .succeeded[0];
+    return (
+      await this.sampleService.retrieve(
+        [id],
+        tenantId,
+        personId,
+        profile.branchId,
+        dto,
+      )
+    ).succeeded[0];
   }
 
   /** Assign Barcode & Print (§A.10.2). */

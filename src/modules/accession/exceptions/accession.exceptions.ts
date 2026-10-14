@@ -106,6 +106,30 @@ export class TransferOrderCancelledException extends KaltrosException {
 }
 
 /**
+ * 403 — the caller is working as a branch that has no say in this internal
+ * transfer. Pick up / receive / accept / reject / repeat belong to the receiving
+ * (destination) branch; Retrieve and Assign Center belong to the sending branch.
+ * The caller's ACTIVE branch (the profile they switched to) is what counts, so a
+ * person assigned to both branches simply switches profile first.
+ */
+export class TransferWrongBranchException extends KaltrosException {
+  constructor(
+    id: string,
+    action: TransferAction | 'retrieve' | 'assign-center',
+    role: 'receiver' | 'sender',
+  ) {
+    super(
+      'TRANSFER_WRONG_BRANCH',
+      role === 'receiver'
+        ? `This transfer is addressed to another branch, so "${action}" is not allowed from your current branch. Switch to the receiving branch to act on it.`
+        : `Only the sending branch can "${action}" this sample. Switch to the sending branch to do it.`,
+      { id, action, role },
+      HttpStatus.FORBIDDEN,
+    );
+  }
+}
+
+/**
  * 422 — Retrieve refused: the receiving branch has already received (or
  * accepted) the sample, or it has already come back from the receiving branch,
  * so there is nothing for the sender to pull back. Skippable by group "skip invalid" actions.

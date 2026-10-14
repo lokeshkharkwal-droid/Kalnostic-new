@@ -38,6 +38,11 @@ docs {
   (status REPEAT with previous status SENT_INTERNAL) - collect it again instead.
   Any other action on a SENT_INTERNAL sample (repeat, store, return, send... even
   with `force`) is refused with 422 SAMPLE_SENT_TO_BRANCH.
+  Who may act (INTERNAL transfer): only the SENDING branch. The caller's active branch
+  (the profile they switched to) must be the branch that sent the sample, otherwise
+  403 TRANSFER_WRONG_BRANCH and nothing changes. A caller with no active branch
+  (business admin) is refused too. A group Retrieve is refused as a whole, never
+  skipped, when any sent sample belongs to another branch.
   Internal branch transfer rules:
   - Once a sample is SENT_INTERNAL to another branch, the SENDER still sees its
     report in the Technician worklist but it is VIEW-ONLY: every write (results,

@@ -43,6 +43,12 @@ docs {
   The transfer update is conditional on its current status: a concurrent change makes
   this fail with 422 INVALID_TRANSFER_TRANSITION instead of overwriting it.
   The sender's referring panel (B2B) is notified once the change has committed.
+  Who may act (INTERNAL transfer): only the RECEIVING branch. The caller's active
+  branch (the profile they switched to) must be the transfer's destination, otherwise
+  403 TRANSFER_WRONG_BRANCH and nothing changes. The same applies to pick-up, receive
+  and accept. A caller with no active branch (business admin) is refused too. A group
+  action is refused as a whole, never skipped, when any transfer belongs to another
+  branch.
   Internal branch transfer rules:
   - Once a sample is SENT_INTERNAL to another branch, the SENDER still sees its
     report in the Technician worklist but it is VIEW-ONLY: every write is refused with

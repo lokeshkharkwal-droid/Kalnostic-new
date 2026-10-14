@@ -8,6 +8,7 @@ import {
   TransferDestinationMissingException,
   SendBlockedException,
   TransferNotEditableException,
+  TransferWrongBranchException,
 } from './exceptions/accession.exceptions';
 
 const TENANT = 't1';
@@ -75,7 +76,7 @@ function setup(
 describe('SampleTransferService — return to sender', () => {
   it('reject from RECEIVED sends the original sample to REPEAT (system, forced)', async () => {
     const { svc, samples, tx } = setup({});
-    await svc.reject(['tr1'], TENANT, PERSON, {
+    await svc.reject(['tr1'], TENANT, PERSON, 'B', {
       rejectionReason: 'Leaked',
     });
     expect(samples.transitionInTx).toHaveBeenCalledTimes(1);
@@ -105,7 +106,7 @@ describe('SampleTransferService — return to sender', () => {
       { transferStatus: TransferStatus.ACCEPTED },
       { copies: [{ id: 'copy1' }] },
     );
-    await svc.repeatTransfer(['tr1'], TENANT, PERSON, {
+    await svc.repeatTransfer(['tr1'], TENANT, PERSON, 'B', {
       repeatReason: 'Clotted',
     });
     expect(samples.returnCopyToOrigin).toHaveBeenCalledWith(
@@ -125,7 +126,7 @@ describe('SampleTransferService — return to sender', () => {
       { copies: [] },
     );
     await expect(
-      svc.repeatTransfer(['tr1'], TENANT, PERSON, {
+      svc.repeatTransfer(['tr1'], TENANT, PERSON, 'B', {
         repeatReason: 'x',
       }),
     ).rejects.toThrow();
@@ -140,7 +141,9 @@ describe('SampleTransferService — return to sender', () => {
       { transferStatus: TransferStatus.ACCEPTED, clonedSampleId: 'copy1' },
       { copies: [{ id: 'copy1' }] },
     );
-    await svc.reject(['tr1'], TENANT, PERSON, { rejectionReason: 'Leaked' });
+    await svc.reject(['tr1'], TENANT, PERSON, 'B', {
+      rejectionReason: 'Leaked',
+    });
     expect(samples.removeTransferCloneInTx).not.toHaveBeenCalled();
     expect(samples.returnCopyToOrigin).toHaveBeenCalledWith(
       expect.anything(),
@@ -172,7 +175,7 @@ describe('SampleTransferService — return to sender', () => {
       new Error('SAMPLE_RETURN_BLOCKED'),
     );
     await expect(
-      svc.reject(['tr1'], TENANT, PERSON, { rejectionReason: 'x' }),
+      svc.reject(['tr1'], TENANT, PERSON, 'B', { rejectionReason: 'x' }),
     ).rejects.toThrow('SAMPLE_RETURN_BLOCKED');
     expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
     expect(samples.notifySamplesRepeated).not.toHaveBeenCalled();
@@ -184,6 +187,7 @@ describe('SampleTransferService — return to sender', () => {
       ['tr1'],
       TENANT,
       PERSON,
+      'B',
       { rejectionReason: 'x' },
       true,
     );
@@ -212,6 +216,7 @@ describe('SampleTransferService — return to sender', () => {
         ['tr1'],
         TENANT,
         PERSON,
+        'B',
         { rejectionReason: 'x' },
         true,
       );
@@ -240,6 +245,7 @@ describe('SampleTransferService — return to sender', () => {
         ['tr1'],
         TENANT,
         PERSON,
+        'B',
         { repeatReason: 'x' },
         true,
       );
@@ -278,6 +284,7 @@ describe('SampleTransferService — return to sender', () => {
         ['tr1', 'tr2'],
         TENANT,
         PERSON,
+        'B',
         { rejectionReason: 'x' },
         true,
       );
@@ -313,7 +320,7 @@ describe('SampleTransferService — return to sender', () => {
         new SampleReturnBlockedException(SampleStatus.ACCEPTED),
       );
       await expect(
-        svc.reject(['tr1'], TENANT, PERSON, { rejectionReason: 'x' }),
+        svc.reject(['tr1'], TENANT, PERSON, 'B', { rejectionReason: 'x' }),
       ).rejects.toBeInstanceOf(SampleReturnBlockedException);
       expect(tx.$executeRaw).not.toHaveBeenCalled();
       expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
@@ -325,7 +332,14 @@ describe('SampleTransferService — return to sender', () => {
         { copies: [] },
       );
       await expect(
-        svc.reject(['tr1'], TENANT, PERSON, { rejectionReason: 'x' }, true),
+        svc.reject(
+          ['tr1'],
+          TENANT,
+          PERSON,
+          'B',
+          { rejectionReason: 'x' },
+          true,
+        ),
       ).rejects.toThrow();
       expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
     });
@@ -333,7 +347,7 @@ describe('SampleTransferService — return to sender', () => {
 
   it('does not touch samples for an EXTERNAL transfer', async () => {
     const { svc, samples } = setup({ kind: TransferKind.EXTERNAL });
-    await svc.reject(['tr1'], TENANT, PERSON, {
+    await svc.reject(['tr1'], TENANT, PERSON, 'B', {
       rejectionReason: 'x',
     });
     expect(samples.transitionInTx).not.toHaveBeenCalled();
@@ -344,7 +358,7 @@ describe('SampleTransferService — return to sender', () => {
   it('refuses when a concurrent change already moved the transfer', async () => {
     const { svc } = setup({}, { updateCount: 0 });
     await expect(
-      svc.reject(['tr1'], TENANT, PERSON, { rejectionReason: 'x' }),
+      svc.reject(['tr1'], TENANT, PERSON, 'B', { rejectionReason: 'x' }),
     ).rejects.toThrow(InvalidTransferTransitionException);
   });
 });
@@ -377,9 +391,9 @@ describe('SampleTransferService - a cancelled order freezes its transfers', () =
       const call = (
         svc as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>
       )[method]!.bind(svc);
-      await expect(call(['tr1'], TENANT, PERSON, {})).rejects.toBeInstanceOf(
-        TransferOrderCancelledException,
-      );
+      await expect(
+        call(['tr1'], TENANT, PERSON, 'B', {}),
+      ).rejects.toBeInstanceOf(TransferOrderCancelledException);
       expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
       expect(samples.transitionInTx).not.toHaveBeenCalled();
       expect(samples.returnCopyToOrigin).not.toHaveBeenCalled();
@@ -392,7 +406,7 @@ describe('SampleTransferService - a cancelled order freezes its transfers', () =
         transferStatus: TransferStatus.RECEIVED,
       });
       samples.isOrderCancelled.mockResolvedValue(true);
-      await svc.reject(['tr1'], TENANT, PERSON, {
+      await svc.reject(['tr1'], TENANT, PERSON, 'B', {
         rejectionReason: 'Cancelled',
       });
       expect(samples.isOrderCancelled).not.toHaveBeenCalled();
@@ -406,7 +420,7 @@ describe('SampleTransferService - a cancelled order freezes its transfers', () =
         { copies: [{ id: 'copy1' }] },
       );
       samples.isOrderCancelled.mockResolvedValue(true);
-      await svc.repeatTransfer(['tr1'], TENANT, PERSON, {
+      await svc.repeatTransfer(['tr1'], TENANT, PERSON, 'B', {
         repeatReason: 'Cancelled',
       });
       expect(samples.isOrderCancelled).not.toHaveBeenCalled();
@@ -432,7 +446,7 @@ describe('SampleTransferService - a cancelled order freezes its transfers', () =
         return Promise.resolve(true);
       });
       await expect(
-        svc.accept(['tr1'], TENANT, PERSON, {}),
+        svc.accept(['tr1'], TENANT, PERSON, 'B', {}),
       ).rejects.toBeInstanceOf(TransferOrderCancelledException);
       expect(order).toEqual(['lock', 'check']);
     });
@@ -449,14 +463,16 @@ describe('SampleTransferService - a cancelled order freezes its transfers', () =
             string,
             (...a: unknown[]) => Promise<unknown>
           >
-        )[method]!(['tr1'], TENANT, PERSON, {});
+        )[method]!(['tr1'], TENANT, PERSON, 'B', {});
         expect(tx.$queryRaw).not.toHaveBeenCalled();
       },
     );
 
     it('Reject and Repeat (the wind-down) do not take it either', async () => {
       const a = setup({ transferStatus: TransferStatus.RECEIVED });
-      await a.svc.reject(['tr1'], TENANT, PERSON, { rejectionReason: 'x' });
+      await a.svc.reject(['tr1'], TENANT, PERSON, 'B', {
+        rejectionReason: 'x',
+      });
       expect(a.tx.$queryRaw).not.toHaveBeenCalled();
     });
   });
@@ -467,7 +483,7 @@ describe('SampleTransferService - a cancelled order freezes its transfers', () =
     });
     samples.isOrderCancelled.mockResolvedValue(true);
     await svc
-      .receive(['tr1'], TENANT, PERSON, {} as never)
+      .receive(['tr1'], TENANT, PERSON, 'B', {} as never)
       .catch(() => undefined);
     expect(tx.orderSample.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 'sA', tenantId: TENANT } }),
@@ -477,7 +493,7 @@ describe('SampleTransferService - a cancelled order freezes its transfers', () =
 
   it('an order that is not cancelled goes on to the normal transfer step', async () => {
     const { svc, tx } = setup({ transferStatus: TransferStatus.PICKED_UP });
-    await svc.receive(['tr1'], TENANT, PERSON, {} as never);
+    await svc.receive(['tr1'], TENANT, PERSON, 'B', {} as never);
     expect(tx.sampleTransfer.updateMany).toHaveBeenCalled();
   });
 
@@ -506,8 +522,10 @@ describe('SampleTransferService — transfer with no destination', () => {
       });
       const call =
         method === 'receive'
-          ? svc.receive(['tr1'], TENANT, PERSON, { receiveCondition: 'ok' })
-          : svc[method](['tr1'], TENANT, PERSON, {});
+          ? svc.receive(['tr1'], TENANT, PERSON, 'B', {
+              receiveCondition: 'ok',
+            })
+          : svc[method](['tr1'], TENANT, PERSON, 'B', {});
       await expect(call).rejects.toThrow(TransferDestinationMissingException);
       expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
     },
@@ -520,7 +538,7 @@ describe('SampleTransferService — transfer with no destination', () => {
       destinationBranchId: null,
     });
     await expect(
-      svc.pickUp(['tr1'], TENANT, PERSON, {}),
+      svc.pickUp(['tr1'], TENANT, PERSON, 'B', {}),
     ).resolves.toBeDefined();
   });
 });
@@ -625,5 +643,160 @@ describe('SampleTransferService — accept clones the sample into the receiving 
       'B',
       'A', // the sender's branch
     );
+  });
+});
+
+describe('SampleTransferService - only the receiving branch works an INTERNAL transfer', () => {
+  // Transfer addressed to branch B (sent by A). Each action in a state where it is legal.
+  const ACTIONS = [
+    ['pickUp', TransferStatus.IN_TRANSIT],
+    ['receive', TransferStatus.PICKED_UP],
+    ['accept', TransferStatus.RECEIVED],
+    ['reject', TransferStatus.RECEIVED],
+    ['repeatTransfer', TransferStatus.RECEIVED],
+  ] as const;
+
+  function run(
+    svc: ReturnType<typeof setup>['svc'],
+    method: (typeof ACTIONS)[number][0],
+    actingBranchId: string | null,
+    skipInvalid = false,
+  ) {
+    const ids = ['tr1'];
+    switch (method) {
+      case 'pickUp':
+        return svc.pickUp(ids, TENANT, PERSON, actingBranchId, {}, skipInvalid);
+      case 'receive':
+        return svc.receive(
+          ids,
+          TENANT,
+          PERSON,
+          actingBranchId,
+          { receiveCondition: 'ok' },
+          skipInvalid,
+        );
+      case 'accept':
+        return svc.accept(ids, TENANT, PERSON, actingBranchId, {}, skipInvalid);
+      case 'reject':
+        return svc.reject(
+          ids,
+          TENANT,
+          PERSON,
+          actingBranchId,
+          { rejectionReason: 'x' },
+          skipInvalid,
+        );
+      case 'repeatTransfer':
+        return svc.repeatTransfer(
+          ids,
+          TENANT,
+          PERSON,
+          actingBranchId,
+          { repeatReason: 'x' },
+          skipInvalid,
+        );
+    }
+  }
+
+  describe.each(ACTIONS)('%s', (method, status) => {
+    it.each([
+      ['the sending branch', 'A'],
+      ['an uninvolved branch', 'C'],
+      ['a caller with no active branch (business admin)', null],
+    ])('is refused for %s, and nothing is touched', async (_who, branch) => {
+      const { svc, tx, samples } = setup({ transferStatus: status });
+      await expect(run(svc, method, branch)).rejects.toBeInstanceOf(
+        TransferWrongBranchException,
+      );
+      expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
+      expect(samples.transitionInTx).not.toHaveBeenCalled();
+      expect(samples.returnCopyToOrigin).not.toHaveBeenCalled();
+    });
+
+    it('is still refused as a whole inside a "skip invalid" group action (never skipped)', async () => {
+      const { svc, tx } = setup({ transferStatus: status });
+      await expect(run(svc, method, 'A', true)).rejects.toBeInstanceOf(
+        TransferWrongBranchException,
+      );
+      expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
+    });
+
+    // Accept builds a whole copy of the sample; its success path is covered by the
+    // "accept clones the sample" tests below, which already act as branch B.
+    if (method !== 'accept') {
+      it('works for the receiving branch (B)', async () => {
+        const { svc } = setup({ transferStatus: status });
+        await expect(run(svc, method, 'B')).resolves.toBeDefined();
+      });
+    }
+  });
+
+  it('the refusal is a 403 with a readable message that names the receiving role', async () => {
+    const { svc } = setup({ transferStatus: TransferStatus.IN_TRANSIT });
+    const err = await run(svc, 'pickUp', 'A').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TransferWrongBranchException);
+    const e = err as TransferWrongBranchException;
+    expect(e.getStatus()).toBe(403);
+    expect(JSON.stringify(e.getResponse())).toContain('TRANSFER_WRONG_BRANCH');
+    expect(JSON.stringify(e.getResponse())).toContain(
+      'Switch to the receiving branch',
+    );
+  });
+
+  it('a group action with one wrong-branch transfer touches none of them', async () => {
+    const { svc, tx } = setup({ transferStatus: TransferStatus.IN_TRANSIT });
+    tx.sampleTransfer.findFirst.mockImplementation(
+      ({ where }: { where: { id: string } }) =>
+        Promise.resolve({
+          id: where.id,
+          sampleId: where.id,
+          kind: TransferKind.INTERNAL,
+          transferStatus: TransferStatus.IN_TRANSIT,
+          destinationBranchId: where.id === 'mine' ? 'B' : 'C',
+          receiveCondition: null,
+        }),
+    );
+    await expect(
+      svc.pickUp(['mine', 'foreign'], TENANT, PERSON, 'B', {}, true),
+    ).rejects.toBeInstanceOf(TransferWrongBranchException);
+  });
+
+  it('an EXTERNAL transfer has no destination branch and is not branch-checked', async () => {
+    const { svc } = setup({
+      kind: TransferKind.EXTERNAL,
+      transferStatus: TransferStatus.IN_TRANSIT,
+      destinationBranchId: null,
+    });
+    await expect(
+      svc.pickUp(['tr1'], TENANT, PERSON, 'Z', {}),
+    ).resolves.toBeDefined();
+  });
+
+  describe('Assign Center belongs to the sending branch', () => {
+    function withSender(senderBranch: string) {
+      const ctx = setup({ transferStatus: TransferStatus.IN_TRANSIT });
+      ctx.prisma.sampleTransfer.findFirst.mockResolvedValue({
+        ...ctx.transfer,
+        branchId: senderBranch,
+        sample: {},
+      });
+      return ctx;
+    }
+    it.each([
+      ['the receiving branch', 'B'],
+      ['an uninvolved branch', 'C'],
+      ['a caller with no active branch', null],
+    ])('is refused for %s', async (_who, branch) => {
+      const { svc } = withSender('A');
+      await expect(
+        svc.assignCenter(
+          'tr1',
+          TENANT,
+          PERSON,
+          { destinationBranchId: 'D' },
+          { branchId: branch, profileKey: 'doctor' },
+        ),
+      ).rejects.toBeInstanceOf(TransferWrongBranchException);
+    });
   });
 });

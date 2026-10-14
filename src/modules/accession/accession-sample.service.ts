@@ -80,6 +80,7 @@ import {
   OrderSampleNotFoundException,
   InvalidSampleTransitionException,
   RetrieveBlockedException,
+  TransferWrongBranchException,
   SampleOrderCancelledException,
   SampleRepeatBlockedException,
   SampleReturnBlockedException,
@@ -2441,8 +2442,10 @@ export class OrderSampleService {
     ids: string[],
     tenantId: string,
     personId: string | null,
+    actingBranchId: string | null,
     dto: RetrieveSampleDto,
   ): Promise<BulkActionResult<OrderSampleWithRelations>> {
+    await this.assertRetrieverIsSender(ids, tenantId, actingBranchId);
     return this.transitionIds(
       ids,
       tenantId,
@@ -2456,6 +2459,36 @@ export class OrderSampleService {
       }),
       dto,
     );
+  }
+
+  /**
+   * Only the SENDING branch can pull back a sample it sent to another branch. A
+   * sample that is out at another branch (SENT_INTERNAL) is held by the branch
+   * that sent it, so the caller's active branch must be that branch. Always an
+   * error, never a "skip", so a group Retrieve cannot touch another branch's
+   * samples. Other samples are unaffected.
+   * @throws TransferWrongBranchException
+   */
+  private async assertRetrieverIsSender(
+    ids: string[],
+    tenantId: string,
+    actingBranchId: string | null,
+  ): Promise<void> {
+    const sent = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.orderSample.findMany({
+        where: {
+          id: { in: ids },
+          tenantId,
+          deletedAt: null,
+          status: SampleStatus.SENT_INTERNAL,
+        },
+        select: { id: true, branchId: true },
+      }),
+    );
+    const foreign = sent.find((s) => s.branchId !== actingBranchId);
+    if (foreign) {
+      throw new TransferWrongBranchException(foreign.id, 'retrieve', 'sender');
+    }
   }
 
   // ── No-status-change mutations (§A.10.2 / §A.10.3) ─────────────────────────
