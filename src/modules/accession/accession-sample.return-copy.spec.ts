@@ -1,12 +1,15 @@
 import { OrderSampleService } from './accession-sample.service';
-import { SampleReturnBlockedException } from './exceptions/accession.exceptions';
+import {
+  SampleReturnBlockedException,
+  SampleSentToBranchException,
+} from './exceptions/accession.exceptions';
 
 /**
  * The receiving branch's Repeat/Return of an accepted copy: allowed while the
  * report is still work in progress (it is reset on the way back), refused only
  * once the result is validated.
  */
-function build(canReturn: boolean) {
+function build(canReturn: boolean, copyStatus = 'ACCEPTED') {
   const calls: string[] = [];
   const labReportService = {
     findReportIdsForSampleTests: jest.fn().mockResolvedValue(['r1', 'r2']),
@@ -34,7 +37,7 @@ function build(canReturn: boolean) {
         .mockResolvedValueOnce({
           id: 'copy1',
           branchId: 'B',
-          status: 'ACCEPTED',
+          status: copyStatus,
           sourceTransferId: 'tr1',
           tests: [{ orderItemId: 'i1', labTestId: 'lt1' }],
         })
@@ -102,6 +105,33 @@ describe('OrderSampleService.returnCopyToOrigin - Repeat below Result Done', () 
     expect(tx.orderSample.update).not.toHaveBeenCalled();
     expect(tx.orderSampleTest.updateMany).not.toHaveBeenCalled();
     expect(labReportService.resetReportsForReturn).not.toHaveBeenCalled();
+  });
+
+  it.each(['SENT_INTERNAL', 'FORWARD_EXTERNAL', 'OUTSOURCED'])(
+    'a copy this branch has already passed on (%s) cannot be sent back, and nothing is read or changed',
+    async (status) => {
+      const { service, tx, labReportService, calls, transition } = build(
+        true,
+        status,
+      );
+      await expect(
+        service.returnCopyToOrigin(tx as never, 't1', 'u1', 'copy1', 'x'),
+      ).rejects.toBeInstanceOf(SampleSentToBranchException);
+      // refused before the transfer, the reports or anything else is touched
+      expect(calls).toEqual([]);
+      expect(tx.sampleTransfer.findFirst).not.toHaveBeenCalled();
+      expect(labReportService.lockReports).not.toHaveBeenCalled();
+      expect(tx.orderSample.update).not.toHaveBeenCalled();
+      expect(tx.orderSampleTest.updateMany).not.toHaveBeenCalled();
+      expect(labReportService.resetReportsForReturn).not.toHaveBeenCalled();
+      expect(transition).not.toHaveBeenCalled();
+    },
+  );
+
+  it('a copy that was passed on and then retrieved back (ACCEPTED again) can be returned as usual', async () => {
+    const { service, tx, calls } = build(true, 'ACCEPTED');
+    await service.returnCopyToOrigin(tx as never, 't1', 'u1', 'copy1', 'x');
+    expect(calls).toEqual(['lock', 'check', 'reset', 'move', 'transition']);
   });
 
   it('no longer asks whether the report is untouched', async () => {

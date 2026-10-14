@@ -1,6 +1,8 @@
-import { TransferKind, TransferStatus } from '@prisma/client';
+import { SampleStatus, TransferKind, TransferStatus } from '@prisma/client';
 import { SampleTransferService } from './sample-transfer.service';
 import {
+  SampleReturnBlockedException,
+  SampleSentToBranchException,
   InvalidTransferTransitionException,
   TransferOrderCancelledException,
   TransferDestinationMissingException,
@@ -36,6 +38,8 @@ function setup(
   };
   const tx = {
     $queryRaw: jest.fn().mockResolvedValue([]),
+    // savepoints taken around each send-back of a "skip invalid" group action
+    $executeRaw: jest.fn().mockResolvedValue(0),
     sampleTransfer: {
       findFirst: jest.fn().mockResolvedValue(transfer),
       // skipInvalid pre-reads the accession numbers of the transfers it may skip.
@@ -187,6 +191,144 @@ describe('SampleTransferService — return to sender', () => {
     expect(result.skipped).toHaveLength(1);
     expect(result.skipped[0]).toMatchObject({ id: 'tr1' });
     expect(result.skipped[0]!.reason).toContain('"reject"');
+  });
+
+  describe('a group "skip invalid" Reject/Repeat does not fail as a whole', () => {
+    /** The raw SQL statements run inside the transaction, in order (savepoints). */
+    const sqlOf = (tx: { $executeRaw: jest.Mock }) =>
+      tx.$executeRaw.mock.calls.map((c: unknown[]) =>
+        (c[0] as string[]).join('').trim(),
+      );
+
+    it('skips a transfer whose report at the receiver is validated, changes nothing for it and rolls back to the savepoint', async () => {
+      const { svc, samples, tx } = setup(
+        { transferStatus: TransferStatus.ACCEPTED, clonedSampleId: 'copy1' },
+        { copies: [{ id: 'copy1' }] },
+      );
+      samples.returnCopyToOrigin.mockRejectedValue(
+        new SampleReturnBlockedException(SampleStatus.ACCEPTED),
+      );
+      const result = await svc.reject(
+        ['tr1'],
+        TENANT,
+        PERSON,
+        { rejectionReason: 'x' },
+        true,
+      );
+      expect(result.succeeded).toEqual([]);
+      expect(result.skipped).toHaveLength(1);
+      expect(result.skipped[0]).toMatchObject({ id: 'tr1' });
+      expect(result.skipped[0]!.reason).toContain('already done');
+      expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
+      expect(samples.notifySamplesRepeated).not.toHaveBeenCalled();
+      expect(sqlOf(tx)).toEqual([
+        'SAVEPOINT return_to_sender',
+        'ROLLBACK TO SAVEPOINT return_to_sender',
+        'RELEASE SAVEPOINT return_to_sender',
+      ]);
+    });
+
+    it('also skips a transfer whose copy has already been passed on to another branch', async () => {
+      const { svc, samples, tx } = setup(
+        { transferStatus: TransferStatus.ACCEPTED, clonedSampleId: 'copy1' },
+        { copies: [{ id: 'copy1' }] },
+      );
+      samples.returnCopyToOrigin.mockRejectedValue(
+        new SampleSentToBranchException('repeat', SampleStatus.SENT_INTERNAL),
+      );
+      const result = await svc.repeatTransfer(
+        ['tr1'],
+        TENANT,
+        PERSON,
+        { repeatReason: 'x' },
+        true,
+      );
+      expect(result.succeeded).toEqual([]);
+      expect(result.skipped[0]!.reason).toContain('sent to another branch');
+      expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('the other transfers of the group still go through', async () => {
+      const { svc, samples, tx } = setup(
+        { transferStatus: TransferStatus.ACCEPTED },
+        {},
+      );
+      tx.sampleTransfer.findFirst.mockImplementation(
+        ({ where }: { where: { id: string } }) =>
+          Promise.resolve({
+            id: where.id,
+            sampleId: where.id === 'tr1' ? 'sA' : 'sB',
+            kind: TransferKind.INTERNAL,
+            transferStatus: TransferStatus.ACCEPTED,
+            destinationBranchId: 'B',
+            receiveCondition: null,
+            clonedSampleId: null,
+          }),
+      );
+      tx.orderSample.findMany.mockImplementation(
+        ({ where }: { where: { sourceTransferId: string } }) =>
+          Promise.resolve([{ id: `copy-${where.sourceTransferId}` }]),
+      );
+      samples.returnCopyToOrigin
+        .mockRejectedValueOnce(
+          new SampleReturnBlockedException(SampleStatus.ACCEPTED),
+        )
+        .mockResolvedValueOnce('sB');
+      const result = await svc.reject(
+        ['tr1', 'tr2'],
+        TENANT,
+        PERSON,
+        { rejectionReason: 'x' },
+        true,
+      );
+      expect(result.skipped.map((x) => x.id)).toEqual(['tr1']);
+      expect(result.succeeded).toHaveLength(1);
+      // only the second transfer was written, and its sender sample is notified
+      expect(tx.sampleTransfer.updateMany).toHaveBeenCalledTimes(1);
+      expect(
+        (
+          tx.sampleTransfer.updateMany.mock.calls[0] as [
+            { where: { id: string } },
+          ]
+        )[0].where.id,
+      ).toBe('tr2');
+      expect(samples.notifySamplesRepeated).toHaveBeenCalledWith(TENANT, [
+        'sB',
+      ]);
+      expect(sqlOf(tx)).toEqual([
+        'SAVEPOINT return_to_sender',
+        'ROLLBACK TO SAVEPOINT return_to_sender',
+        'RELEASE SAVEPOINT return_to_sender',
+        'SAVEPOINT return_to_sender',
+        'RELEASE SAVEPOINT return_to_sender',
+      ]);
+    });
+
+    it('without skip-invalid the refusal is still raised (strict action), and no savepoint is used', async () => {
+      const { svc, samples, tx } = setup(
+        { transferStatus: TransferStatus.ACCEPTED, clonedSampleId: 'copy1' },
+        { copies: [{ id: 'copy1' }] },
+      );
+      samples.returnCopyToOrigin.mockRejectedValue(
+        new SampleReturnBlockedException(SampleStatus.ACCEPTED),
+      );
+      await expect(
+        svc.reject(['tr1'], TENANT, PERSON, { rejectionReason: 'x' }),
+      ).rejects.toBeInstanceOf(SampleReturnBlockedException);
+      expect(tx.$executeRaw).not.toHaveBeenCalled();
+      expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('an error that is NOT a refusal (e.g. the copy is missing) is never swallowed, even when skipping', async () => {
+      const { svc, tx } = setup(
+        { transferStatus: TransferStatus.ACCEPTED },
+        { copies: [] },
+      );
+      await expect(
+        svc.reject(['tr1'], TENANT, PERSON, { rejectionReason: 'x' }, true),
+      ).rejects.toThrow();
+      expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
+    });
   });
 
   it('does not touch samples for an EXTERNAL transfer', async () => {

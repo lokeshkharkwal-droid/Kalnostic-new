@@ -821,15 +821,47 @@ export class SampleTransferService {
             transfer.kind === TransferKind.INTERNAL &&
             (action === 'reject' || action === 'repeat')
           ) {
-            returnedSampleIds.push(
-              ...(await this.returnToSender(
+            // A group "skip invalid" action must not fail as a whole because one
+            // transfer cannot go back (a validated result at the receiver, or its
+            // copy already passed on to another branch: both are
+            // `InvalidSampleTransitionException`s). Each return runs inside a
+            // savepoint so that a transfer which is skipped leaves nothing behind,
+            // even when it has several copies and the refusal comes after the
+            // first one was already returned.
+            if (skipInvalid) await tx.$executeRaw`SAVEPOINT return_to_sender`;
+            try {
+              const returned = await this.returnToSender(
                 tx,
                 tenantId,
                 personId,
                 transfer,
                 reason,
-              )),
-            );
+              );
+              if (skipInvalid) {
+                await tx.$executeRaw`RELEASE SAVEPOINT return_to_sender`;
+              }
+              returnedSampleIds.push(...returned);
+            } catch (e) {
+              if (
+                skipInvalid &&
+                e instanceof InvalidSampleTransitionException
+              ) {
+                await tx.$executeRaw`ROLLBACK TO SAVEPOINT return_to_sender`;
+                await tx.$executeRaw`RELEASE SAVEPOINT return_to_sender`;
+                // `e.message` is only the class name; the user-facing sentence is in
+                // the response body (`{ error: { code, message } }`).
+                const body = e.getResponse() as {
+                  error?: { message?: string };
+                };
+                skipped.push({
+                  id,
+                  accessionNo: accNoById.get(id) ?? null,
+                  reason: body.error?.message ?? e.message,
+                });
+                continue;
+              }
+              throw e;
+            }
           }
           // Conditional on the status we validated: a concurrent Retrieve /
           // action that already moved the transfer makes this a no-op → refuse

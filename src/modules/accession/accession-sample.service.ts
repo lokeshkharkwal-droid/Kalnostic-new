@@ -2097,6 +2097,12 @@ export class OrderSampleService {
    * Return a transferred test to its sender: the receiving branch's Repeat of its
    * copy of the sample (after it accepted the transfer). Inside the caller's
    * transaction —
+   *  0. refuses (`SampleSentToBranchException`) when the copy has itself been
+   *     passed on to another branch, a partner or an outsource centre
+   *     (`SENT_INTERNAL` / `FORWARD_EXTERNAL` / `OUTSOURCED`): it is out of this
+   *     branch's hands, so voiding it here would leave that onward transfer open
+   *     at the next branch with a sample and report nobody returned. The branch
+   *     must retrieve it first (possible only before the next branch receives it);
    *  1. refuses (`SampleReturnBlockedException`) only when a report the copy
    *     serves already has a validated result (Result Done, Approved, Published);
    *     anything earlier is work in progress and is reset in step 3;
@@ -2116,6 +2122,7 @@ export class OrderSampleService {
    * @param reason the receiver's repeat/reject reason, recorded on the history
    * @throws OrderSampleNotFoundException if the copy, its transfer or the
    *   original sample cannot be found
+   * @throws SampleSentToBranchException if the copy has been passed on already
    * @throws SampleReturnBlockedException if a report's result is already validated
    */
   async returnCopyToOrigin(
@@ -2131,6 +2138,11 @@ export class OrderSampleService {
     });
     if (!copy || !copy.sourceTransferId) {
       throw new OrderSampleNotFoundException(copyId);
+    }
+    // Checked before anything is read or written: a copy this branch has already
+    // passed on cannot be sent back (see the doc comment, step 0).
+    if (isTransferredStatus(copy.status)) {
+      throw new SampleSentToBranchException('repeat', copy.status);
     }
     const transfer = await tx.sampleTransfer.findFirst({
       where: { id: copy.sourceTransferId, tenantId, deletedAt: null },
