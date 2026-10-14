@@ -683,7 +683,10 @@ export class SampleTransferService {
           sampleId: sample.id,
           kind,
           transferStatus: TransferStatus.IN_TRANSIT,
-          originBranchId: sample.originBranchId ?? sample.branchId,
+          // The branch sending on THIS hop (the one holding the sample now), not
+          // the chain's first sender: B forwarding its copy to C is B's outgoing
+          // transfer. The sample's own `originBranchId` keeps the true origin.
+          originBranchId: sample.branchId,
           destinationBranchId: destination.destinationBranchId ?? null,
           outsourceCenterId: destination.outsourceCenterId ?? null,
           externalPartnerName: destination.externalPartnerName ?? null,

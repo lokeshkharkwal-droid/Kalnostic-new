@@ -800,3 +800,164 @@ describe('SampleTransferService - only the receiving branch works an INTERNAL tr
     });
   });
 });
+
+describe('SampleTransferService - the origin of a transfer is the branch sending that hop', () => {
+  function dispatchSetup(heldSample: Record<string, unknown>) {
+    const created: Record<string, unknown>[] = [];
+    const tx = {
+      sampleTransfer: {
+        create: jest.fn((args: { data: Record<string, unknown> }) => {
+          created.push(args.data);
+          return Promise.resolve({ id: 'tNew' });
+        }),
+      },
+      orderSample: { update: jest.fn().mockResolvedValue({}) },
+    };
+    const prisma = {
+      withTenant: jest.fn((_t: string, fn: (t: typeof tx) => unknown) =>
+        fn(tx),
+      ),
+      sampleTransfer: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'tNew' }),
+      },
+    };
+    const samples = {
+      assertInternalSendable: jest.fn().mockResolvedValue(undefined),
+      transitionInTx: jest.fn().mockResolvedValue(heldSample),
+    };
+    const branches = { findById: jest.fn().mockResolvedValue({}) };
+    const svc = new SampleTransferService(
+      prisma as never,
+      samples as never,
+      branches as never,
+      {} as never,
+    );
+    return { svc, created, tx };
+  }
+
+  it('A sending its own sample to B: origin is A', async () => {
+    const { svc, created } = dispatchSetup({
+      id: 'sA',
+      branchId: 'A',
+      originBranchId: 'A',
+    });
+    await svc.send(['sA'], TENANT, PERSON, { destinationBranchId: 'B' });
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({
+      branchId: 'A',
+      originBranchId: 'A',
+      destinationBranchId: 'B',
+    });
+  });
+
+  it('B passing on its copy (first sender was A) to C: origin is B, not A', async () => {
+    const { svc, created } = dispatchSetup({
+      id: 'copyB',
+      branchId: 'B',
+      originBranchId: 'A',
+    });
+    await svc.send(['copyB'], TENANT, PERSON, { destinationBranchId: 'C' });
+    expect(created[0]).toMatchObject({
+      branchId: 'B',
+      originBranchId: 'B',
+      destinationBranchId: 'C',
+    });
+  });
+
+  it('a sample that has no origin of its own recorded uses the sending branch', async () => {
+    const { svc, created } = dispatchSetup({
+      id: 's1',
+      branchId: 'A',
+      originBranchId: null,
+    });
+    await svc.send(['s1'], TENANT, PERSON, { destinationBranchId: 'B' });
+    expect(created[0]).toMatchObject({ originBranchId: 'A' });
+  });
+
+  it('a Send with no destination yet still records the sending branch as origin', async () => {
+    const { svc, created } = dispatchSetup({
+      id: 'sA',
+      branchId: 'A',
+      originBranchId: 'A',
+    });
+    await svc.send(['sA'], TENANT, PERSON, {});
+    expect(created[0]).toMatchObject({
+      originBranchId: 'A',
+      destinationBranchId: null,
+    });
+  });
+
+  it('a copy at B forwarded to an external partner: origin is B', async () => {
+    const { svc, created } = dispatchSetup({
+      id: 'copyB',
+      branchId: 'B',
+      originBranchId: 'A',
+    });
+    await svc.forward(['copyB'], TENANT, PERSON, {
+      externalPartnerName: 'Partner lab',
+    });
+    expect(created[0]).toMatchObject({
+      kind: TransferKind.EXTERNAL,
+      originBranchId: 'B',
+    });
+  });
+
+  it("the sample's own true origin (used for returns) is not rewritten by a send", async () => {
+    const { svc, tx } = dispatchSetup({
+      id: 'copyB',
+      branchId: 'B',
+      originBranchId: 'A',
+    });
+    await svc.send(['copyB'], TENANT, PERSON, { destinationBranchId: 'C' });
+    const [updateArgs] = tx.orderSample.update.mock.calls[0] as [
+      { data: Record<string, unknown> },
+    ];
+    const data = updateArgs.data;
+    expect(data).not.toHaveProperty('originBranchId');
+    expect(data).toMatchObject({ processingBranchId: 'C' });
+  });
+
+  describe('the outgoing list matches the origin of each hop', () => {
+    function listSetup() {
+      const findMany = jest.fn().mockResolvedValue([]);
+      const tx = {
+        sampleTransfer: {
+          findMany,
+          count: jest.fn().mockResolvedValue(0),
+        },
+        department: { findMany: jest.fn().mockResolvedValue([]) },
+        outsourceCenter: { findMany: jest.fn().mockResolvedValue([]) },
+      };
+      const prisma = {
+        withTenant: jest.fn((_t: string, fn: (t: typeof tx) => unknown) =>
+          fn(tx),
+        ),
+      };
+      const svc = new SampleTransferService(
+        prisma as never,
+        {} as never,
+        {} as never,
+        {} as never,
+      );
+      return { svc, findMany };
+    }
+
+    it.each([['A'], ['B']])(
+      "branch %s's outgoing list asks for the transfers that branch sent",
+      async (branch) => {
+        const { svc, findMany } = listSetup();
+        await svc.findTransfers(TENANT, branch, { direction: 'outgoing' });
+        const [args] = findMany.mock.calls[0] as [{ where: object }];
+        expect(args.where).toMatchObject({ originBranchId: branch });
+        expect(args.where).not.toHaveProperty('destinationBranchId');
+      },
+    );
+
+    it('the incoming list is still keyed on the branch that is the destination', async () => {
+      const { svc, findMany } = listSetup();
+      await svc.findTransfers(TENANT, 'C', { direction: 'incoming' });
+      const [args] = findMany.mock.calls[0] as [{ where: object }];
+      expect(args.where).toMatchObject({ destinationBranchId: 'C' });
+    });
+  });
+});
