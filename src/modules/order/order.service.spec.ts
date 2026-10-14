@@ -154,6 +154,10 @@ describe('OrderService — TDS & Discount rules', () => {
     });
   });
 
+  // The per-test "Allow Discounts" flag is enforced in the FRONTEND only (the
+  // per-item discount input is hidden for a non-discountable test). The backend
+  // has NO per-test discount gate, so an order-level discount is never blocked by
+  // it — covered by the order-level discount cases below.
   describe('order-level discount', () => {
     it('rejects an order discount when order discounts are disabled', () => {
       expect(() =>
@@ -564,10 +568,24 @@ describe('OrderService — TRF print context (Diagnostics tags)', () => {
     ['only the sample charge', false, 0, 600, 0, 600],
     ['only the visit charge', true, 500, 0, 500, 0],
     ['neither charge', false, 0, 0, 0, 0],
-    ['a stale visit charge after Home Visit was turned off', false, 500, 0, 0, 0],
+    [
+      'a stale visit charge after Home Visit was turned off',
+      false,
+      500,
+      0,
+      0,
+      0,
+    ],
   ])(
     'resolves the bill charge tags with %s',
-    async (_label, isHomeVisit, visitCharges, sampleCollectionCharges, visit, sample) => {
+    async (
+      _label,
+      isHomeVisit,
+      visitCharges,
+      sampleCollectionCharges,
+      visit,
+      sample,
+    ) => {
       const { variables = {} } = await buildContext('bill_print', {
         diagnostics: { isHomeVisit, visitCharges, sampleCollectionCharges },
       });

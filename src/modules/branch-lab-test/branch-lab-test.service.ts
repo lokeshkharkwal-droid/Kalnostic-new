@@ -37,6 +37,10 @@ export interface BranchLabTestOption {
   sampleName: string | null;
   sampleType: string | null;
   isFasting: boolean;
+  /** Whether discounts may be applied to this test (drives the FE discount input). */
+  isAllowDiscounts: boolean;
+  /** Billed-only test: excluded from the lab workflow (no sample/report). */
+  isBillOnlyTest: boolean;
   scheduleDays: DayOfWeek[];
   scheduleFrom: string | null;
   scheduleTo: string | null;
@@ -88,14 +92,14 @@ const BRANCH_TEST_DROP_KEYS = [
   // Test List. Bug fixed 2026-09-07; revisit if/when a real branch-level
   // approval-workflow field is added.
   'approvalWorkflow',
-  // Same problem, same fix, for 4 more LabTest-only columns added the same
-  // week (2026-09-04 to 09-06) with no BranchLabTest counterpart at all.
-  // Confirmed via schema.prisma: none of the 4 appear anywhere in the
-  // BranchLabTest model. Revisit if/when Branch Lab Test gains its own
-  // copies of these flags.
+  // LabTest-only columns with no BranchLabTest counterpart — dropped so Prisma
+  // doesn't reject import/sync with "Unknown argument …".
+  // NOTE: `isBillOnlyTest` and `isSampleFlow` were removed from this list
+  // (2026-10-14) — BranchLabTest now has its own copies, so they propagate from
+  // the source test on import/sync (the order/accession workflow reads them at
+  // the branch level). `isOutsource`/`isOverrideAllowed` still have no branch
+  // counterpart and stay dropped.
   'isOutsource',
-  'isBillOnlyTest',
-  'isSampleFlow',
   'isOverrideAllowed',
 ];
 
@@ -712,6 +716,8 @@ export class BranchLabTestService {
       id: true,
       testName: true,
       listPrice: true,
+      isAllowDiscounts: true,
+      isBillOnlyTest: true,
       configSnapshot: true,
       scheduleDays: true,
       scheduleFrom: true,
@@ -726,6 +732,8 @@ export class BranchLabTestService {
       id: string;
       testName: string;
       listPrice: number;
+      isAllowDiscounts: boolean;
+      isBillOnlyTest: boolean;
       configSnapshot: Prisma.JsonValue;
       scheduleDays: DayOfWeek[];
       scheduleFrom: string | null;
@@ -745,6 +753,8 @@ export class BranchLabTestService {
         sampleName: sample?.sampleName ?? null,
         sampleType: sample?.sampleType ?? null,
         isFasting: sample?.isFastingRequired ?? false,
+        isAllowDiscounts: r.isAllowDiscounts,
+        isBillOnlyTest: r.isBillOnlyTest,
         scheduleDays: r.scheduleDays,
         scheduleFrom: r.scheduleFrom,
         scheduleTo: r.scheduleTo,

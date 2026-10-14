@@ -12,6 +12,7 @@
  * them (`/`, `-`, `.`, space). Any other pattern falls back to
  * {@link DEFAULT_DATE_FORMAT}'s output rather than emitting garbled text.
  */
+import { OrderDateType } from '@prisma/client';
 import { toBranchLocalInstant } from './tat-working-time.util';
 
 const DEFAULT_DATE_FORMAT = 'DD/MM/YYYY';
@@ -252,4 +253,32 @@ export function formatReportDateTime(
   const period = hours24 >= 12 ? 'PM' : 'AM';
   const hours12 = hours24 % 12 || 12;
   return `${day}-${month}-${year} ${pad2(hours12)}:${minutes} ${period}`;
+}
+
+/**
+ * Classify an order's date relative to the tenant's "today" (both compared as
+ * DATE-only, matching the `order_date @db.Date` column): `BACKTRACKED` when
+ * dated in the past, `ADVANCE_DATED` in the future, `CURRENT` when it is today.
+ *
+ * `orderDate` is a calendar date stored at UTC midnight, so its UTC day already
+ * IS the chosen day (read it directly — converting would shift it). "Today",
+ * however, must be the **tenant-local** day, not the server's UTC day: an order
+ * placed between local midnight and the UTC rollover (e.g. 00:30 in
+ * `Asia/Kolkata`, when UTC is still the previous day) would otherwise be
+ * mis-bucketed as `ADVANCE_DATED` — and the mirror case in a west-of-UTC zone as
+ * `BACKTRACKED`.
+ * @param orderDate the order's date (ISO string or Date — only its UTC day is read)
+ * @param timezone the tenant/branch IANA zone (null → the server clock as-is)
+ * @param now the instant taken as "now" (defaults to the current time; injectable for tests)
+ */
+export function classifyOrderDate(
+  orderDate: string | Date,
+  timezone: string | null | undefined,
+  now: Date = new Date(),
+): OrderDateType {
+  const orderDay = new Date(orderDate).toISOString().slice(0, 10);
+  const today = toBranchLocalInstant(now, timezone).toISOString().slice(0, 10);
+  if (orderDay < today) return OrderDateType.BACKTRACKED;
+  if (orderDay > today) return OrderDateType.ADVANCE_DATED;
+  return OrderDateType.CURRENT;
 }

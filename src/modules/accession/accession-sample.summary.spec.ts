@@ -55,6 +55,7 @@ describe('OrderSampleService.summary — filters, selection and TAT rule', () =>
       undefined as never,
       undefined as never,
       undefined as never,
+      undefined as never,
       { resolveDepartmentIds } as never,
     );
   });
@@ -222,6 +223,7 @@ describe('OrderSampleService.summary — filters, selection and TAT rule', () =>
     service = new OrderSampleService(
       { orderSample: { groupBy, count, findMany } } as never,
       settings as never,
+      undefined as never,
       undefined as never,
       undefined as never,
       undefined as never,

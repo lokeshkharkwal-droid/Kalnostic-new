@@ -63,6 +63,7 @@ import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-temp
 import { PdfTemplateConfigService } from '../pdf-report-template/pdf-template-config.service';
 import {
   escapeHtml,
+  escapeHtmlKeepLineBreaks,
   toText,
 } from '../pdf-report-template/services/pdf-document.util';
 import type { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
@@ -120,6 +121,7 @@ import {
   ReportingWindowClosedException,
 } from './exceptions/lab-report.exceptions';
 import {
+  abnormalFlagStyle,
   candidateAgeMatch,
   candidateAgeRank,
   compareRangeCandidates,
@@ -127,6 +129,7 @@ import {
   type ExactAge,
   genderMatches,
   isExactAgeMatch,
+  isObservedAbnormal,
   rangeAgeMatch,
   sortRangesByAgeSpecificity,
 } from './utils/reference-range.util';
@@ -134,7 +137,10 @@ import {
   classifyResultValueSave,
   describeAnalyzerOverwrite,
 } from './utils/result-value-save.util';
-import { buildTestFileAttachmentHtml } from './utils/test-file-attachment.util';
+import {
+  buildTestFileAttachmentAppendHtml,
+  buildTestFileAttachmentHtml,
+} from './utils/test-file-attachment.util';
 import {
   sortWorklistMatches,
   type WorklistMatch,
@@ -3165,10 +3171,17 @@ export class LabReportService {
               groupName: true,
               sortOrder: true,
               notes: true,
+              resultType: true,
             },
           });
     const paramNameById = new Map(
       resultParams.map((p) => [p.id, p.parameterName]),
+    );
+    // Only QUANTITATIVE parameters get the out-of-range abnormal-flag styling
+    // (requirement): a qualitative/semi-quantitative reading has no numeric
+    // lower/upper limit to compare against.
+    const resultTypeByParamId = new Map(
+      resultParams.map((p) => [p.id, p.resultType]),
     );
     const groupNameByParamId = new Map(
       resultParams.map((p) => [p.id, p.groupName ?? '']),
@@ -3198,6 +3211,65 @@ export class LabReportService {
       overallResultRows.map((r) => [r.resultParamId, r.content ?? '']),
     );
 
+    // Each saved reading carries the `referenceRangeId` resolved for it at entry
+    // time (by age/gender/method). Join those back to their numeric
+    // `lowerLimit`/`upperLimit` + configured `abnormalFlagLogic` so an
+    // out-of-range QUANTITATIVE reading can be rendered in its configured
+    // abnormal styling (Master Data → Reference Range). Same join as
+    // `findTrend`, plus `abnormalFlagLogic`.
+    const referenceRangeIds = [
+      ...new Set(
+        report.resultValues
+          .map((v) => v.referenceRangeId)
+          .filter((rid): rid is string => rid != null),
+      ),
+    ];
+    const referenceRanges =
+      referenceRangeIds.length === 0
+        ? []
+        : await this.prisma.labTestReferenceRange.findMany({
+            where: { id: { in: referenceRangeIds } },
+            select: {
+              id: true,
+              lowerLimit: true,
+              upperLimit: true,
+              abnormalFlagLogic: true,
+            },
+          });
+    const rangeById = new Map(referenceRanges.map((r) => [r.id, r]));
+
+    // Classify one observed reading: is it out of its resolved reference range
+    // (QUANTITATIVE only), and what is the display HTML? `abnormal` is the
+    // single source of truth for both the `{is_observed_*_abnormal}` tags and
+    // the styling — `html` is the escaped value, wrapped in the configured
+    // abnormal-flag markup only when abnormal, so `observed1`/`observed2` render
+    // as rich text downstream (see `RICH_TEXT_KEYS` in `template-render.service`
+    // and `buildTestBodyHtml`). `observed1` and `observed2` are classified
+    // independently against the same range — unlike the trend chart
+    // (`findTrend`), which flags `observed1` only.
+    const classifyObserved = (
+      raw: string,
+      resultParamId: string,
+      referenceRangeId: string | null,
+    ): { html: string; abnormal: boolean } => {
+      const safe = escapeHtml(raw);
+      const range = referenceRangeId
+        ? rangeById.get(referenceRangeId)
+        : undefined;
+      const abnormal = isObservedAbnormal(
+        raw,
+        resultTypeByParamId.get(resultParamId),
+        range,
+      );
+      if (!abnormal) {
+        return { html: safe, abnormal: false };
+      }
+      return {
+        html: `<span style="${abnormalFlagStyle(range!.abnormalFlagLogic)}">${safe}</span>`,
+        abnormal: true,
+      };
+    };
+
     // `resultValues` (the include on `LAB_REPORT_DETAIL_INCLUDE`) carries no
     // `orderBy` — rows come back in whatever order Postgres returns them,
     // not necessarily insertion or entry order. A multi-parameter test (e.g.
@@ -3209,21 +3281,44 @@ export class LabReportService {
         (sortOrderByParamId.get(b.resultParamId) ?? 0),
     );
 
-    const results = sortedResultValues.map((v) => ({
-      parameter_name: paramNameById.get(v.resultParamId) ?? '',
-      observed1: v.observed1 ?? '',
-      observed2: v.observed2 ?? '',
-      unit: v.unit ?? '',
-      methodology: v.methodology ?? '',
-      // Alias for the classic old-template tag name (`{method_name}`) — same
-      // value as `methodology`, kept separate so pre-existing lab_report
-      // templates authored against that tag don't need to be re-authored.
-      method_name: v.methodology ?? '',
-      reference_display: v.referenceDisplay ?? '',
-      group_name: groupNameByParamId.get(v.resultParamId) ?? '',
-      result_note: notesByParamId.get(v.resultParamId) ?? '',
-      overall_result: overallResultByParamId.get(v.resultParamId) ?? '',
-    }));
+    const results = sortedResultValues.map((v) => {
+      const o1 = classifyObserved(
+        v.observed1 ?? '',
+        v.resultParamId,
+        v.referenceRangeId,
+      );
+      const o2 = classifyObserved(
+        v.observed2 ?? '',
+        v.resultParamId,
+        v.referenceRangeId,
+      );
+      return {
+        parameter_name: paramNameById.get(v.resultParamId) ?? '',
+        // `observed1`/`observed2` are rich HTML (escaped, optionally wrapped in
+        // the configured abnormal-flag styling when out of range) so the
+        // `{observed1}`/`{observed2}` tags carry styling automatically.
+        // `*_raw` keeps the plain reading for internal, plain-text consumers
+        // (the Latte "has-a-result?" gate and the results summary).
+        // `is_observed_*_abnormal` is a boolean a template can branch on (e.g.
+        // a Latte `{if $row->is_observed_1_abnormal}` flag column).
+        observed1: o1.html,
+        observed2: o2.html,
+        observed1_raw: v.observed1 ?? '',
+        observed2_raw: v.observed2 ?? '',
+        is_observed_1_abnormal: o1.abnormal,
+        is_observed_2_abnormal: o2.abnormal,
+        unit: v.unit ?? '',
+        methodology: v.methodology ?? '',
+        // Alias for the classic old-template tag name (`{method_name}`) — same
+        // value as `methodology`, kept separate so pre-existing lab_report
+        // templates authored against that tag don't need to be re-authored.
+        method_name: v.methodology ?? '',
+        reference_display: v.referenceDisplay ?? '',
+        group_name: groupNameByParamId.get(v.resultParamId) ?? '',
+        result_note: notesByParamId.get(v.resultParamId) ?? '',
+        overall_result: overallResultByParamId.get(v.resultParamId) ?? '',
+      };
+    });
 
     return {
       variables: {
@@ -3330,6 +3425,13 @@ export class LabReportService {
         // "File +" button, as `<embed>` markup (printed unescaped, see
         // `RICH_TEXT_KEYS`). Built from THIS report's attachments only.
         test_file_attachment: buildTestFileAttachmentHtml(report.attachments),
+        // `{test_file_attachment_without_header}` — the SAME File+ uploads, but
+        // as hidden markers the PDF pipeline turns into APPENDED pages at the end
+        // of the finished report (PDF merged as-is, image → one page) instead of
+        // drawing them inline. Printed unescaped (see `RICH_TEXT_KEYS`).
+        test_file_attachment_without_header: buildTestFileAttachmentAppendHtml(
+          report.attachments,
+        ),
       },
       // Backs the `{{image:ID}}` tokens (and the bare barcode tags) for the
       // image-valued fields above — `TemplateRenderService.interpolateImages`
@@ -3667,6 +3769,11 @@ export class LabReportService {
             : '',
           // This test's own File+ PDFs (`{$report->test_file_attachment|noescape}`).
           test_file_attachment: toText(c?.variables?.test_file_attachment),
+          // Same test's File+ files, but APPENDED at the report's end instead of
+          // drawn inline (`{$report->test_file_attachment_without_header|noescape}`).
+          test_file_attachment_without_header: toText(
+            c?.variables?.test_file_attachment_without_header,
+          ),
           // One visible test entry per report (a panel's sub-tests are already
           // flattened into `body_html`); drives the templates' display gate/count.
           tests: [{ display_test_sample: '1' }],
@@ -3689,6 +3796,9 @@ export class LabReportService {
         // Test-scoped: the first report's files must not print as the whole
         // order's. Use `{test_file_attachment}` inside `{{#each reports}}`.
         test_file_attachment: '',
+        // Same reasoning for the append variant — blank at the top level; use
+        // `{test_file_attachment_without_header}` inside `{{#each reports}}`.
+        test_file_attachment_without_header: '',
       },
       images: firstCtx?.images ?? {},
       sections: {
@@ -3702,12 +3812,17 @@ export class LabReportService {
             sample_received_date: rep.sample_received_date,
             report_prepared_on: rep.report_prepared_on,
             test_file_attachment: rep.test_file_attachment,
+            test_file_attachment_without_header:
+              rep.test_file_attachment_without_header,
             results_summary: rows
               .map((r) => {
                 const unit = toText(r.unit);
-                return `${toText(r.parameter_name)}: ${toText(r.observed1)}${
-                  unit ? ` ${unit}` : ''
-                }`.trim();
+                // Plain-text summary — use the raw reading, not the
+                // styled-HTML `observed1` (falling back to `observed1` for a
+                // context not built by `buildPrintContext`).
+                return `${toText(r.parameter_name)}: ${toText(
+                  r.observed1_raw ?? r.observed1,
+                )}${unit ? ` ${unit}` : ''}`.trim();
               })
               .filter((s) => s !== ':')
               .join('; '),
@@ -3804,10 +3919,18 @@ export class LabReportService {
     const rows = (context?.sections?.results ?? []).map((r) => ({
       parameter_name: toText(r.parameter_name),
       method_name: toText(r.method_name ?? r.methodology),
-      // `value` is the ezHealthTrack "has a result?" gate; mirror observed1.
-      value: toText(r.observed1),
+      // `value` is the ezHealthTrack "has a result?" gate — mirror the raw
+      // reading (not the styled HTML, which would never be empty/falsey).
+      value: toText(r.observed1_raw ?? r.observed1),
+      // `observed1`/`observed2` carry the escaped + optionally abnormal-styled
+      // HTML; a Latte single-report template must print them with `|noescape`
+      // (e.g. `{$row->observed1|noescape}`) to show the styling.
       observed1: toText(r.observed1),
       observed2: toText(r.observed2),
+      // Real booleans (not stringified) so a Latte `{if $row->...}` branches
+      // correctly — e.g. a custom flag/arrow column.
+      is_observed_1_abnormal: r.is_observed_1_abnormal === true,
+      is_observed_2_abnormal: r.is_observed_2_abnormal === true,
       unit: toText(r.unit),
       reference_display: toText(r.reference_display),
       group_name: toText(r.group_name),
@@ -3868,7 +3991,8 @@ export class LabReportService {
       .map((row) => {
         const name = escapeHtml(toText(row.parameter_name));
         const method = escapeHtml(toText(row.methodology));
-        const value = escapeHtml(toText(row.observed1));
+        // A Qualitative result can be written over several lines: keep them.
+        const value = escapeHtmlKeepLineBreaks(toText(row.observed1));
         const unit = escapeHtml(toText(row.unit));
         const ref = escapeHtml(toText(row.reference_display));
         const methodHtml = method
