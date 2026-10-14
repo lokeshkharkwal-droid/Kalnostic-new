@@ -211,6 +211,25 @@ describe('renderLatte', () => {
     expect(renderLatte(tpl, { rows: [{ v: '' }, { v: '7' }] })).toBe('SHOWN');
     expect(renderLatte(tpl, { rows: [{ v: '' }, { v: '' }] })).toBe('HIDDEN');
   });
+
+  // Lab All Report `{order_code}`: `buildAllReportsContext` exposes the order
+  // code both on `header_fields` and at the root, so the bare tag works in a
+  // Latte body (incl. inside a `{define}` header block) — and an absent value
+  // prints empty instead of breaking the render.
+  it('resolves the all-report {order_code} as a bare tag and via header_fields', () => {
+    const data = {
+      order_code: 'ORD-00114',
+      header_fields: { order_code: 'ORD-00114', external_order_id: 'EXT-9' },
+      report_tests: { groups: [], tests: [{ body_html: '<p>CBC</p>' }] },
+    };
+    const tpl = `{foreach $report_tests->tests as $report}{include page_header, $header_fields}{$report->body_html|noescape}{/foreach}{define page_header, $header_fields}[{order_code}|{$header_fields->order_code}|{$header_fields->external_order_id}]{/define}`;
+    expect(renderLatte(tpl, data)).toBe(
+      '[ORD-00114|ORD-00114|EXT-9]<p>CBC</p>',
+    );
+    expect(renderLatte('Order: {order_code}{if true}.{/if}', {})).toBe(
+      'Order: .',
+    );
+  });
 });
 
 describe('isLatteBody', () => {
