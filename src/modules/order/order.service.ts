@@ -231,7 +231,6 @@ import {
   OrderDiscountOutOfRangeException,
   LineItemDiscountNotAllowedException,
   LineItemDiscountOutOfRangeException,
-  TestDiscountNotAllowedException,
   TdsNotApplicableException,
   TdsOutOfRangeException,
   PartialBillingNotAllowedForDiscountedOrderException,
@@ -610,12 +609,6 @@ export class OrderService {
       branchId,
       dto.items ?? [],
     );
-    // Per-item discount-allowed flags (catalogue rule) for the discount validator.
-    const discountAllowed = await this.loadItemDiscountAllowed(
-      tenantId,
-      branchId,
-      dto.items ?? [],
-    );
 
     // B2B orders bypass ONLY the branch Previous-Dues + Partial-Billing rules:
     // when a referral panel is attached the order follows that panel's own credit/
@@ -666,7 +659,6 @@ export class OrderService {
         items: dto.items ?? [],
         payments: dto.payments,
         itemPrices,
-        discountAllowed,
       });
     }
 
@@ -1239,60 +1231,6 @@ export class OrderService {
   }
 
   /**
-   * Resolve whether each item's branch lab test/panel permits discounts, keyed by
-   * that row id. A lab test allows discounts when `isAllowDiscounts = true`; a lab
-   * panel allows them when `isDisableDiscount = false` (inverted flag). Direct
-   * (free-text) items and unknown ids are omitted from the map and treated as
-   * allowed by the caller. Branch-scoped. Used to block a per-line discount on a
-   * test/panel configured as non-discountable (CLAUDE.md §4.7 — server-enforced).
-   * @param tenantId tenant scope
-   * @param branchId active branch (null → nothing resolved)
-   * @param items the order items to resolve
-   */
-  private async loadItemDiscountAllowed(
-    tenantId: string,
-    branchId: string | null,
-    items: Array<{ branchLabTestId?: string; branchLabPanelId?: string }>,
-  ): Promise<Map<string, boolean>> {
-    const allowed = new Map<string, boolean>();
-    if (!branchId || !items.length) {
-      return allowed;
-    }
-    const testIds = items
-      .map((i) => i.branchLabTestId)
-      .filter((v): v is string => Boolean(v));
-    const panelIds = items
-      .map((i) => i.branchLabPanelId)
-      .filter((v): v is string => Boolean(v));
-    const [tests, panels] = await Promise.all([
-      testIds.length
-        ? this.prisma.branchLabTest.findMany({
-            where: { id: { in: testIds }, tenantId, branchId, deletedAt: null },
-            select: { id: true, isAllowDiscounts: true },
-          })
-        : Promise.resolve([]),
-      panelIds.length
-        ? this.prisma.branchLabPanel.findMany({
-            where: {
-              id: { in: panelIds },
-              tenantId,
-              branchId,
-              deletedAt: null,
-            },
-            select: { id: true, isDisableDiscount: true },
-          })
-        : Promise.resolve([]),
-    ]);
-    for (const t of tests) {
-      allowed.set(t.id, t.isAllowDiscounts);
-    }
-    for (const p of panels) {
-      allowed.set(p.id, !p.isDisableDiscount);
-    }
-    return allowed;
-  }
-
-  /**
    * Sum a patient's outstanding previous dues — the positive
    * `netAmount − paidAmount` balance across their active, non-cancelled orders
    * (`ORDER`/`APPOINTMENT`), **business-wide** (every branch in the tenant).
@@ -1572,17 +1510,8 @@ export class OrderService {
     items: OrderItemDto[];
     payments: DiscountTdsPaymentRow[] | undefined;
     itemPrices: Map<string, number>;
-    discountAllowed?: Map<string, boolean>;
   }): void {
-    const {
-      status,
-      branchId,
-      settings,
-      items,
-      payments,
-      itemPrices,
-      discountAllowed,
-    } = params;
+    const { status, branchId, settings, items, payments, itemPrices } = params;
     if (status !== OrderStatus.ORDER || !branchId || !settings) return;
 
     // Small tolerance so a legitimately at-the-boundary percentage isn't
@@ -1624,15 +1553,10 @@ export class OrderService {
       const discount = item.discount ?? 0;
       lineDiscountTotal += discount;
       if (discount <= 0) continue;
-      // Per-test/panel rule (independent of the branch's discount settings):
-      // a catalogue item marked non-discountable rejects any discount on its
-      // line. Other items in the order are unaffected. `direct` free-text items
-      // and unknown ids (not in the map) are treated as allowed. Optional-chained
-      // so a missing map (e.g. a caller that doesn't resolve flags) degrades to
-      // "allowed" rather than throwing.
-      if (!item.direct && discountAllowed?.get(key) === false) {
-        throw new TestDiscountNotAllowedException(key || 'item');
-      }
+      // NOTE: the per-test "Allow Discounts" flag is enforced in the FRONTEND
+      // only (the per-item discount input is hidden for a non-discountable test).
+      // There is intentionally no server-side per-test discount gate here, so an
+      // order-level discount never trips a per-test rule.
       if (!lineDiscountEnabled) throw new LineItemDiscountNotAllowedException();
       // Effective percentage: use the typed PERCENT value directly, else derive
       // it from the amount and the line's price. A discount on a zero-price
@@ -6037,12 +5961,6 @@ export class OrderService {
         });
       }
 
-      // Per-item discount-allowed flags (catalogue rule) for the effective items.
-      const discountAllowed = await this.loadItemDiscountAllowed(
-        tenantId,
-        branchId,
-        effectiveItems,
-      );
       this.assertDiscountAndTdsRules({
         status: OrderStatus.ORDER,
         branchId,
@@ -6050,7 +5968,6 @@ export class OrderService {
         items: effectiveItems,
         payments: effectivePayments,
         itemPrices,
-        discountAllowed,
       });
     }
 

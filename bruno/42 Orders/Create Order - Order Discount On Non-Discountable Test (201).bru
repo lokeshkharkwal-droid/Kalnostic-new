@@ -57,20 +57,18 @@ tests {
 }
 
 docs {
-  Regression for the per-test "Allow Discounts" rule: an **order-level** discount
-  (`payments[].orderDiscount`) is accepted **regardless** of a test's catalogue
-  `isAllowDiscounts` flag — the per-test rule restricts only **per-line** item
-  discounts (`items[].discount`), never the order-level discount.
+  An **order-level** discount (`payments[].orderDiscount`) is accepted regardless
+  of a test's catalogue `isAllowDiscounts` flag. The per-test "Allow Discounts"
+  flag is enforced on the FRONTEND only (it hides the per-item discount input for
+  a non-discountable test); there is NO server-side per-test discount gate, so an
+  order-level discount is never rejected because of it.
 
   Point `{{branchLabTestId}}` at a branch lab test whose source Master Data test
   has `Allow Discounts = No`. The order succeeds (201); the order's net reflects
-  the ₹150 order discount, and that discount is allocated proportionally across
-  the order's lines (including the non-discountable test) in the billing/report
-  breakdown. Contrast with `Create Order - Test Discount Not Allowed (422)`, where
-  a **per-line** discount on the same test is rejected.
+  the ₹150 order discount, allocated proportionally across the order's lines
+  (including the non-discountable test) in the billing/report breakdown.
 
-  Behaviour matrix (verified):
-  - Allow Discounts = No  + order-level discount → **201** (this request)
-  - Allow Discounts = No  + per-line item discount → **422 TEST_DISCOUNT_NOT_ALLOWED**
-  - Allow Discounts = Yes + per-line item discount → **201** (within branch min/max %)
+  The order-level discount % is still validated against the branch's
+  `[Minimum, Maximum] Discount %` (Registration Settings) — that is a branch rule,
+  not a per-test rule.
 }

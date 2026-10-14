@@ -713,24 +713,6 @@ export class LineItemDiscountOutOfRangeException extends KaltrosException {
 }
 
 /**
- * 422 — a line-item discount was applied to a test/panel whose catalogue config
- * disallows discounts (lab test `isAllowDiscounts = false`, or lab panel
- * `isDisableDiscount = true`). This is a per-item product rule independent of the
- * branch's discount settings — other items in the same order are unaffected.
- * `itemRef` identifies the offending branch lab test / panel.
- */
-export class TestDiscountNotAllowedException extends KaltrosException {
-  constructor(itemRef: string) {
-    super(
-      'TEST_DISCOUNT_NOT_ALLOWED',
-      'Discounts are not allowed on this test',
-      { itemRef },
-      HttpStatus.UNPROCESSABLE_ENTITY,
-    );
-  }
-}
-
-/**
  * 422 — a TDS deduction was supplied but the branch's Registration settings
  * have `TDS Applicable` turned off.
  */

@@ -29,10 +29,12 @@ docs {
   `sampleName` (e.g. "Blood (EDTA)"), `sampleType` (e.g. "Blood") and `isFasting`
   (from the first sample in `configSnapshot`) populate the Diagnostic Items table.
 
-  `isAllowDiscounts` drives the FE per-line discount input (disabled when `false`;
-  the backend also rejects a discount on such a test with 422
-  `TEST_DISCOUNT_NOT_ALLOWED`). `isBillOnlyTest` flags a billed-only test that the
-  frontend hides from the workflow item list (it generates no accession sample).
+  `isAllowDiscounts` drives the FE per-line discount input — when `false` the
+  frontend hides the item's discount input (this is the ONLY place the per-test
+  "Allow Discounts" flag is enforced; the backend has no per-test discount gate,
+  so an order-level discount is always accepted). `isBillOnlyTest` flags a
+  billed-only test that the frontend hides from the workflow item list (it
+  generates no accession sample).
 
   Scoped to the JWT tenant + active branch (no `branchId` in the query). `search`
   matches testName (case-insensitive). Omit `page` for the full array; supply `page`

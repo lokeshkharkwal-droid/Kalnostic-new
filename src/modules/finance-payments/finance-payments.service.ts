@@ -178,8 +178,16 @@ export class FinancePaymentsService {
     // Sorting on the coarser display value reintroduces the tie instability the
     // DB `orderBy` fixes, so the merged page prefix must key off `createdAt`/`id`.
     const merged = [
-      ...directRows.map((r) => ({ item: this.mapDirect(r), at: r.createdAt.getTime(), id: r.id })),
-      ...invoiceRows.map((r) => ({ item: this.mapInvoice(r), at: r.createdAt.getTime(), id: r.id })),
+      ...directRows.map((r) => ({
+        item: this.mapDirect(r),
+        at: r.createdAt.getTime(),
+        id: r.id,
+      })),
+      ...invoiceRows.map((r) => ({
+        item: this.mapInvoice(r),
+        at: r.createdAt.getTime(),
+        id: r.id,
+      })),
     ].sort((a, b) => b.at - a.at || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
     const pageItems = merged.slice((page - 1) * limit, take).map((m) => m.item);
     await this.resolveNamesInPlace(tenantId, pageItems);

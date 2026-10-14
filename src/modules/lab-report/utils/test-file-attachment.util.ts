@@ -1,4 +1,5 @@
 import type { LabReportAttachment } from '@prisma/client';
+import { APPEND_MARKER_CLASS } from '../../pdf/pdf-append.util';
 import { escapeAttr } from '../../pdf-report-template/services/pdf-document.util';
 import type { LabReportAttachmentKind } from '../dto/create-lab-report-attachment.dto';
 import { isImageFileName, isPdfFileName } from './pdf-file.util';
@@ -60,6 +61,55 @@ export function buildTestFileAttachmentHtml(
     .filter((a) => a.kind === FILE_BUCKET)
     .sort((a, b) => a.uploadedAt.getTime() - b.uploadedAt.getTime())
     .map(renderTestFileAttachment)
+    .filter((html) => html !== '')
+    .join('');
+}
+
+/**
+ * Render one "File +" upload as a hidden "append" marker for the
+ * `{test_file_attachment_without_header}` tag. Unlike
+ * {@link renderTestFileAttachment} (which draws the file INSIDE the report), this
+ * emits no visible content — a `display:none` placeholder carrying the file's URL
+ * and name. After layout `PdfService` reads these markers and appends each file's
+ * own pages to the END of the finished PDF (a PDF merged page-for-page as-is; an
+ * image converted to one page), so the attachment extends the report instead of
+ * being embedded in a page. Non-PDF/non-image uploads return `''` and are dropped,
+ * exactly as {@link renderTestFileAttachment} drops them.
+ */
+function renderTestFileAttachmentAppendMarker(a: TestFileAttachment): string {
+  if (
+    !isPdfFileName(a.fileName, a.fileUrl) &&
+    !isImageFileName(a.fileName, a.fileUrl)
+  ) {
+    return '';
+  }
+  return `<div class="${APPEND_MARKER_CLASS}" data-pdf-append-src="${escapeAttr(
+    a.fileUrl,
+  )}" data-pdf-append-name="${escapeAttr(a.fileName)}" style="display:none"></div>`;
+}
+
+/**
+ * Build the `{test_file_attachment_without_header}` print-tag value: for each
+ * "File +" upload on THIS report (`kind === 'file'`, oldest first, PDFs and
+ * images), a hidden marker the PDF pipeline turns into APPENDED pages at the end
+ * of the finished report — a PDF merged page-for-page, an image converted to one
+ * page. It selects exactly the same uploads as {@link buildTestFileAttachmentHtml}
+ * but appends them instead of embedding them inline (no `<embed>`/`<img>`), so a
+ * 5-page report plus a 3-page attachment prints 8 pages.
+ *
+ * Built from this report's own attachments only, so — like its sibling — it can
+ * never show another test's or order's file. Non-PDF/non-image File+ uploads are
+ * skipped.
+ * @param attachments the report's attachments (any order, any bucket)
+ * @returns the marker HTML for the tag, or `''` when the test has no PDF/image File+ upload
+ */
+export function buildTestFileAttachmentAppendHtml(
+  attachments: TestFileAttachment[],
+): string {
+  return attachments
+    .filter((a) => a.kind === FILE_BUCKET)
+    .sort((a, b) => a.uploadedAt.getTime() - b.uploadedAt.getTime())
+    .map(renderTestFileAttachmentAppendMarker)
     .filter((html) => html !== '')
     .join('');
 }
