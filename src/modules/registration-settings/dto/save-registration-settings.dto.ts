@@ -274,6 +274,8 @@ export class SaveRegistrationSettingsDto {
   // ── Patients / UMID ──
   @IsOptional() @IsBoolean() Patients_AllowMergingTwoPatients?: boolean;
 
+  @IsOptional() @IsBoolean() Patients_AllowB2bPatientWithoutMobile?: boolean;
+
   @IsOptional()
   @IsEnum(ExternalIdFormat)
   Patients_AutoIncrementExternalPatientIdFormat?: ExternalIdFormat;

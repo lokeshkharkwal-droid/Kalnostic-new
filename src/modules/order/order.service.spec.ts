@@ -428,9 +428,9 @@ describe('OrderService — referral patient bill print context', () => {
 
 /**
  * Unit coverage for the `trf_print` (Test Requisition Form) Diagnostics tags —
- * `{home_visit}` / `{sample_charge}` must resolve on the TRF from the order's
- * Diagnostics section, the TRF must NOT pick up the bill-only
- * `{home_visit_charge}`, and neither tag may leak onto the order slip /
+ * `{home_visit}` / `{home_visit_charge}` / `{sample_charge}` must resolve on
+ * the TRF from the order's Diagnostics section (the visit charge with the same
+ * Home-Visit-on rule as the bill), and none may leak onto the order slip /
  * quotation. Same harness as the referral-bill block above: only
  * `prisma.person` (bill collector name) and `tenantService.getLocale` are
  * stubbed, and an item-less order keeps `itemRowsWithPanelTests` off Prisma.
@@ -510,11 +510,11 @@ describe('OrderService — TRF print context (Diagnostics tags)', () => {
       }
     ).buildPrintContext({ ...order, ...overrides }, type, 'tenant-1');
 
-  it('resolves home_visit / sample_charge on the TRF, without the bill-only visit charge', async () => {
+  it('resolves home_visit / home_visit_charge / sample_charge on the TRF', async () => {
     const { variables = {} } = await buildContext('trf_print');
     expect(variables.home_visit).toBe('Yes');
+    expect(variables.home_visit_charge).toBe(500);
     expect(variables.sample_charge).toBe(600);
-    expect(variables).not.toHaveProperty('home_visit_charge');
     // Existing TRF tags are untouched.
     expect(variables.trf_ref).toBe('DIG-001');
     expect(variables.order_code).toBe('ORD-1');
@@ -529,7 +529,19 @@ describe('OrderService — TRF print context (Diagnostics tags)', () => {
       },
     });
     expect(variables.home_visit).toBe('No');
+    expect(variables.home_visit_charge).toBe(0);
     expect(variables.sample_charge).toBe(100);
+  });
+
+  it('reads a 0 visit charge on the TRF when a stale charge remains after Home Visit was turned off', async () => {
+    const { variables = {} } = await buildContext('trf_print', {
+      diagnostics: {
+        isHomeVisit: false,
+        visitCharges: 500,
+        sampleCollectionCharges: 0,
+      },
+    });
+    expect(variables.home_visit_charge).toBe(0);
   });
 
   it('reads No / 0 when the order has no Diagnostics section', async () => {
@@ -537,6 +549,7 @@ describe('OrderService — TRF print context (Diagnostics tags)', () => {
       diagnostics: null,
     });
     expect(variables.home_visit).toBe('No');
+    expect(variables.home_visit_charge).toBe(0);
     expect(variables.sample_charge).toBe(0);
   });
 
@@ -547,11 +560,42 @@ describe('OrderService — TRF print context (Diagnostics tags)', () => {
     expect(variables.sample_charge).toBe(600);
   });
 
+  it.each([
+    ['only the sample charge', false, 0, 600, 0, 600],
+    ['only the visit charge', true, 500, 0, 500, 0],
+    ['neither charge', false, 0, 0, 0, 0],
+    ['a stale visit charge after Home Visit was turned off', false, 500, 0, 0, 0],
+  ])(
+    'resolves the bill charge tags with %s',
+    async (_label, isHomeVisit, visitCharges, sampleCollectionCharges, visit, sample) => {
+      const { variables = {} } = await buildContext('bill_print', {
+        diagnostics: { isHomeVisit, visitCharges, sampleCollectionCharges },
+      });
+      expect(variables.home_visit_charge).toBe(visit);
+      expect(variables.sample_charge).toBe(sample);
+    },
+  );
+
+  it('reads 0 / 0 on the patient bill when the order has no Diagnostics section', async () => {
+    const { variables = {} } = await buildContext('bill_print', {
+      diagnostics: null,
+    });
+    expect(variables.home_visit_charge).toBe(0);
+    expect(variables.sample_charge).toBe(0);
+  });
+
+  it('carries both bill charge tags onto the accounts billing document', async () => {
+    const { variables = {} } = await buildContext('accounts_biling');
+    expect(variables.home_visit_charge).toBe(500);
+    expect(variables.sample_charge).toBe(600);
+  });
+
   it.each(['order_print', 'lab_quotation_print'])(
     'does not add the Diagnostics tags to %s',
     async (type) => {
       const { variables = {} } = await buildContext(type);
       expect(variables).not.toHaveProperty('home_visit');
+      expect(variables).not.toHaveProperty('home_visit_charge');
       expect(variables).not.toHaveProperty('sample_charge');
     },
   );

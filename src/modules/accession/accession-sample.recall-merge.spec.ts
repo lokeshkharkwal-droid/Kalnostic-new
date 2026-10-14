@@ -3,6 +3,7 @@ import { OrderSampleService } from './accession-sample.service';
 import {
   InvalidSampleTransitionException,
   RetrieveBlockedException,
+  SampleSentToBranchException,
 } from './exceptions/accession.exceptions';
 
 /**
@@ -12,7 +13,8 @@ import {
  *    ("Recalled via Retrieve") and is refused once the receiving branch has
  *    received them; a sample the receiver sent back cannot be retrieved;
  *  - the destructive recall (`recallTransfersForSampleInTx`) belongs to the
- *    sender's own Repeat of a Forwarded / Outsourced sample ONLY. It must never
+ *    sender's own Retrieve / Repeat of a Forwarded / Outsourced sample ONLY (a
+ *    partner / outsource centre has no branch design: main's cleanup stays). It must never
  *    run for the system moves a receiving branch's Reject / Repeat / Return
  *    triggers: those close the transfer themselves right after, and a recall in
  *    between would soft-delete the very transfer being acted on.
@@ -20,7 +22,7 @@ import {
  * says it came from.
  */
 interface TransferUpdate {
-  where: { sampleId: string; deletedAt: null; OR: unknown[] };
+  where: { sampleId: string; deletedAt: null } & Record<string, unknown>;
   data: Record<string, unknown>;
 }
 
@@ -81,6 +83,7 @@ function build(sampleOver: Record<string, unknown> = {}, opts: Opts = {}) {
     {} as never,
     {} as never,
     labReportService as never,
+    {} as never,
     {} as never,
     {} as never,
     {} as never,
@@ -177,9 +180,14 @@ describe('Retrieve of a sample sent to another branch', () => {
       rejectionReason: 'Recalled via Retrieve',
       updatedBy: 'p1',
     });
-    // never an earlier cycle's finished transfer, never a deleted one
-    expect(call.where).toMatchObject({ sampleId: 's1', deletedAt: null });
-    expect(call.where.OR).toHaveLength(2);
+    // never an earlier cycle's finished transfer, never a deleted one, and only
+    // an INTERNAL transfer that the receiving branch has not received yet
+    expect(call.where).toMatchObject({
+      sampleId: 's1',
+      deletedAt: null,
+      kind: 'INTERNAL',
+      transferStatus: { in: ['IN_TRANSIT', 'PICKED_UP'] },
+    });
   });
 
   it('puts the sample back at its origin (processing branch and dispatch fields reset)', async () => {
@@ -210,6 +218,47 @@ describe('Retrieve of a sample sent to another branch', () => {
     await expect(m.run('retrieve')).rejects.toBeInstanceOf(
       RetrieveBlockedException,
     );
+    expect(m.tx.orderSample.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('Retrieve of a Forwarded / Outsourced sample (a partner, not a branch)', () => {
+  it.each([SampleStatus.FORWARD_EXTERNAL, SampleStatus.OUTSOURCED])(
+    'runs the recall cleanup (a partner has no branch design) and never closes the transfer as REJECTED (%s)',
+    async (status) => {
+      const m = build({ status, previousStatus: SampleStatus.ACCEPTED });
+      await m.run('retrieve');
+      expect(m.recall).toHaveBeenCalledTimes(1);
+      expect(m.recall).toHaveBeenCalledWith(
+        m.tx,
+        't1',
+        'p1',
+        expect.objectContaining({ id: 's1' }),
+      );
+      // The only transfer write Retrieve makes is scoped to INTERNAL transfers, so
+      // it cannot touch the external / outsource transfer the recall just unwound.
+      for (const [arg] of m.tx.sampleTransfer.updateMany.mock.calls) {
+        expect(arg.where).toMatchObject({ kind: 'INTERNAL' });
+      }
+      expect(m.updatedData()).toMatchObject({
+        status: SampleStatus.ACCEPTED,
+        processingBranchId: 'A',
+        dispatchedAt: null,
+        logisticsType: null,
+        logisticsPerson: null,
+      });
+    },
+  );
+});
+
+describe('the sender cannot Repeat a Sent sample', () => {
+  it('refuses a user Repeat of a SENT_INTERNAL sample, even when forced, and writes nothing', async () => {
+    const m = build();
+    await expect(m.run('repeat', { force: true })).rejects.toBeInstanceOf(
+      SampleSentToBranchException,
+    );
+    expect(m.recall).not.toHaveBeenCalled();
+    expect(m.tx.orderSample.updateMany).not.toHaveBeenCalled();
     expect(m.tx.orderSample.update).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,5 @@
-import { IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { IsOptional, IsString, IsUUID } from 'class-validator';
+import { NoteMaxLength } from '../../../common/validators/note-max-length.validator';
 
 /**
  * Body for `PATCH /lab-reports/:id/overall-result`. Two independent actions,
@@ -24,6 +25,6 @@ export class UpdateOverallResultDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(20000)
+  @NoteMaxLength('Overall Result')
   content?: string;
 }

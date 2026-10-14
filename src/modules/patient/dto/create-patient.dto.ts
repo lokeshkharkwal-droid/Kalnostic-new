@@ -16,6 +16,7 @@ import {
   IsEmail,
   IsEnum,
   IsInt,
+  Max,
   IsOptional,
   IsString,
   IsUUID,
@@ -77,6 +78,7 @@ export class CreatePatientDto {
 
   @IsInt()
   @Min(0)
+  @Max(54750) // 150 years expressed in days, the biggest value any age unit can hold
   @IsOptional()
   age?: number;
 
@@ -94,10 +96,16 @@ export class CreatePatientDto {
   photoUrl?: string | null;
 
   // ── Contact ──
+  // Optional at the API layer so B2B orders can register a patient without a
+  // mobile when the `Patients_AllowB2bPatientWithoutMobile` setting is on. The
+  // Create-Order frontend enforces "required" for non-B2B orders; when absent
+  // it omits the field (stored as NULL, never ""). MinLength still applies when
+  // a value IS supplied.
+  @IsOptional()
   @IsString()
   @MinLength(4)
   @MaxLength(30)
-  mobile: string;
+  mobile?: string;
 
   @IsString()
   @IsOptional()

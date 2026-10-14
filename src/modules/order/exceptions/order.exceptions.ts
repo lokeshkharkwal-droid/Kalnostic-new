@@ -270,22 +270,6 @@ export class OrderCancelBlockedByResultException extends KaltrosException {
 }
 
 /**
- * 409 — a cancelled order is final: it cannot be edited. Without this, saving the
- * edit form (which carries `status: ORDER`) silently reopened a cancelled order
- * and switched every lab rule that depends on the cancel back off.
- */
-export class OrderCancelledNotEditableException extends KaltrosException {
-  constructor(id: string) {
-    super(
-      'ORDER_CANCELLED_NOT_EDITABLE',
-      'This order has been cancelled, so it cannot be updated',
-      { id },
-      HttpStatus.CONFLICT,
-    );
-  }
-}
-
-/**
  * 409 — only a DRAFT order can be deleted. A confirmed order (ORDER), a quotation,
  * an appointment or a cancelled order is part of the lab's record: it is
  * cancelled, never deleted. Raised both on the up-front status check and, if the

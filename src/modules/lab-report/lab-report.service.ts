@@ -1,8 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { timestampRange } from '../../common/utils/date-range.util';
+import { dateOnlyRange } from '../../common/utils/date-range.util';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PDFDocument } from 'pdf-lib';
 import {
+  AgeType,
   LabReportHistory,
   LabReportNoteCategory,
   LabReportStatus,
@@ -15,6 +16,7 @@ import {
   SampleStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { calendarDayIn, exactBirthDate } from '../../common/utils/age-dob.util';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
 import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
@@ -81,6 +83,7 @@ import {
   LabReportContentSections,
   LabReportDetailApiResponse,
   LabReportDetailWithContent,
+  LabReportListRow,
   LabReportOverallResult,
   LabReportResultParam,
   LabReportSignatoryCandidate,
@@ -108,6 +111,7 @@ import {
   LabReportResultsRequiredException,
   LabReportNotesRequiredException,
   LabReportNotFoundException,
+  LabReportValueChangedException,
   LabTestCatalogueMissingException,
   InvalidResultParamException,
   LabReportAlreadyLockedException,
@@ -117,11 +121,20 @@ import {
   ReportingWindowClosedException,
 } from './exceptions/lab-report.exceptions';
 import {
+  candidateAgeMatch,
+  candidateAgeRank,
+  compareRangeCandidates,
   computeTrendFlag,
+  type ExactAge,
   genderMatches,
-  patientAgeInDays,
-  rangeAgeInDays,
+  isExactAgeMatch,
+  rangeAgeMatch,
+  sortRangesByAgeSpecificity,
 } from './utils/reference-range.util';
+import {
+  classifyResultValueSave,
+  describeAnalyzerOverwrite,
+} from './utils/result-value-save.util';
 import { buildTestFileAttachmentHtml } from './utils/test-file-attachment.util';
 import {
   assertReportWritable,
@@ -133,6 +146,10 @@ import {
   isReportPrintable,
   pendingResultRow,
 } from './utils/print-visibility.util';
+import {
+  sortWorklistMatches,
+  type WorklistMatch,
+} from './utils/worklist-order.util';
 import {
   buildReportBarcodeTags,
   pickReportSample,
@@ -152,6 +169,16 @@ import {
  * stay. `UNLOCK` belongs with `LOCK`: it is the other half of the lock history of
  * the result that was cleared.
  */
+/**
+ * The notes the system writes when a report is locked or unlocked. They record the
+ * lock history, not work on the report's results, so the "has this report been
+ * worked on?" check ignores them.
+ */
+const LOCK_EVENT_NOTE_CATEGORIES: LabReportNoteCategory[] = [
+  LabReportNoteCategory.LOCK,
+  LabReportNoteCategory.UNLOCK,
+];
+
 const RESULT_BOUND_NOTE_CATEGORIES: LabReportNoteCategory[] = [
   LabReportNoteCategory.TECH,
   LabReportNoteCategory.LOCK,
@@ -644,20 +671,26 @@ export class LabReportService {
     const counts = await Promise.all([
       tx.labReportResultValue.count({ where: cycle() }),
       tx.labReportNote.count({
-        where: since
-          ? {
-              ...base,
-              OR: [
-                // result-related notes the return did not hide
-                {
-                  deletedAt: null,
-                  category: { in: RESULT_BOUND_NOTE_CATEGORIES },
-                },
-                // ORDER / SAMPLE notes are kept by the return: only new ones count
-                { createdAt: { gt: since } },
-              ],
-            }
-          : base,
+        where: {
+          ...base,
+          // Locking and unlocking a report is not work on its results: the system
+          // writes a LOCK / UNLOCK note for each, and they must not make an
+          // otherwise untouched report look worked on (it could never be sent).
+          category: { notIn: LOCK_EVENT_NOTE_CATEGORIES },
+          ...(since
+            ? {
+                OR: [
+                  // result-related notes the return did not hide
+                  {
+                    deletedAt: null,
+                    category: { in: RESULT_BOUND_NOTE_CATEGORIES },
+                  },
+                  // ORDER / SAMPLE notes are kept by the return: only new ones count
+                  { createdAt: { gt: since } },
+                ],
+              }
+            : {}),
+        },
       }),
       tx.labReportAttachment.count({ where: cycle('uploadedAt') }),
       tx.labReportOverallResult.count({ where: cycle() }),
@@ -884,9 +917,6 @@ export class LabReportService {
     // Standalone "Outsource" checkbox (distinct from the source pill above) —
     // same underlying signal, only ever narrows to outsourced items when checked.
     if (filters.outsource) where.isOutsourced = true;
-    // A day-only `dateTo` covers that whole day (see `timestampRange`).
-    const createdAtRange = timestampRange(filters.dateFrom, filters.dateTo);
-    if (createdAtRange) where.createdAt = createdAtRange;
 
     const orderItem: Prisma.OrderItemWhereInput = {};
     // The "Lab Test"/"Lab Panel" filter's id may be either a specific
@@ -923,27 +953,27 @@ export class LabReportService {
         some: { sample: { status: filters.sampleStatus }, deletedAt: null },
       };
     }
-    if (
-      filters.referredByDoctorId ||
-      filters.referralPanelId ||
-      filters.homeCollection ||
-      filters.patientId
-    ) {
-      const order: Prisma.OrderWhereInput = {};
-      if (filters.referredByDoctorId) {
-        order.referredByDoctorId = filters.referredByDoctorId;
-      }
-      if (filters.referralPanelId) {
-        order.referralPanelId = filters.referralPanelId;
-      }
-      if (filters.homeCollection) {
-        order.diagnostics = { is: { isHomeVisit: true } };
-      }
-      if (filters.patientId) {
-        order.patientId = filters.patientId;
-      }
-      orderItem.order = order;
+    // Order-level filters, joined through OrderItem.order.
+    const order: Prisma.OrderWhereInput = {};
+    // The date filter compares the ORDER's date (`orderDate`, a date-only column)
+    // — the date the worklist row shows, and the one the Accession worklist
+    // filters on — not the report's own `createdAt`, which is stamped when the
+    // sample is accepted and can be days after the order date.
+    const orderDateRange = dateOnlyRange(filters.dateFrom, filters.dateTo);
+    if (orderDateRange) order.orderDate = orderDateRange;
+    if (filters.referredByDoctorId) {
+      order.referredByDoctorId = filters.referredByDoctorId;
     }
+    if (filters.referralPanelId) {
+      order.referralPanelId = filters.referralPanelId;
+    }
+    if (filters.homeCollection) {
+      order.diagnostics = { is: { isHomeVisit: true } };
+    }
+    if (filters.patientId) {
+      order.patientId = filters.patientId;
+    }
+    if (Object.keys(order).length > 0) orderItem.order = order;
 
     // Search bar (LABORATORY.docx §1.1 element 4): Patient Name, Order ID, Test
     // Name, Ref Panel. Spans both OrderItem-level fields (Test Name, via the
@@ -1062,20 +1092,17 @@ export class LabReportService {
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 25;
 
-    const [rows, total] = await Promise.all([
-      this.prisma.labReport.findMany({
-        where,
-        include: LAB_REPORT_LIST_INCLUDE,
-        // Default sort matches Registration Billing / Accession worklists:
-        // by when the ORDER was placed, not when this LabReport row itself
-        // was created (which is stamped later, at sample-ACCEPTED time, and
-        // drifts out of order when samples are accepted out of sequence).
-        orderBy: { orderItem: { order: { createdAt: 'desc' } } },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      this.prisma.labReport.count({ where }),
-    ]);
+    // Worklist order matches the Accession worklist: newest first by when the
+    // order's newest sample was created (see `sortWorklistMatches`). Prisma can't
+    // order by a to-many aggregate, so the page is picked in two steps.
+    const { pageIds, total } = await this.pageWorklistReportIds(
+      tenantId,
+      scope,
+      where,
+      page,
+      limit,
+    );
+    const rows = await this.fetchWorklistRowsInOrder(tenantId, pageIds);
 
     let worklistRows = rows.map(toWorklistRow);
     worklistRows = await this.attachBranchNames(tenantId, worklistRows);
@@ -1117,6 +1144,118 @@ export class LabReportService {
     // codebase already follows this; this one didn't, so `GET /lab-reports`
     // was returning a non-standard envelope with no `meta.total/page/limit`).
     return { data: worklistRows, total, page, limit };
+  }
+
+  /**
+   * One worklist page of report ids, in worklist order, plus the total number of
+   * matching reports. Fetches only ids + the two timestamps the ordering needs
+   * for every report that passed the filters, ranks them with
+   * {@link sortWorklistMatches}, and slices the page — the full rows are loaded
+   * afterwards for that page only ({@link fetchWorklistRowsInOrder}).
+   * @param scope the branches this request covers. A report is ranked by its
+   *   order's newest sample at the report's OWN branch (a transferred copy at
+   *   another branch must not push this branch's rows up or down), so an "All
+   *   Branches" page ranks each branch's rows against that branch's samples.
+   */
+  private async pageWorklistReportIds(
+    tenantId: string,
+    scope: WorklistBranchScope,
+    where: Prisma.LabReportWhereInput,
+    page: number,
+    limit: number,
+  ): Promise<{ pageIds: string[]; total: number }> {
+    const found = await this.prisma.labReport.findMany({
+      where,
+      select: {
+        id: true,
+        createdAt: true,
+        branchId: true,
+        orderItem: {
+          select: { orderId: true, order: { select: { createdAt: true } } },
+        },
+      },
+    });
+    // The ordering util keys its lookup on `orderId`; here that key is
+    // `<branchId>:<orderId>`, so one order's reports at different branches are
+    // ranked (and kept together) per branch.
+    const fallbackBranchId = scope.rules[0]?.branchId ?? '';
+    const rankKey = (branchId: string | null, orderId: string): string =>
+      `${branchId ?? fallbackBranchId}:${orderId}`;
+    const matches: WorklistMatch[] = found.map((r) => ({
+      id: r.id,
+      createdAt: r.createdAt,
+      orderId: rankKey(r.branchId, r.orderItem.orderId),
+      orderCreatedAt: r.orderItem.order.createdAt,
+    }));
+    const orderIdsByBranch = new Map<string, Set<string>>();
+    for (const r of found) {
+      const branchId = r.branchId ?? fallbackBranchId;
+      if (!branchId) continue;
+      const set = orderIdsByBranch.get(branchId) ?? new Set<string>();
+      set.add(r.orderItem.orderId);
+      orderIdsByBranch.set(branchId, set);
+    }
+    const latestSampleByOrder = new Map<string, Date>();
+    for (const [branchId, orderIds] of orderIdsByBranch) {
+      const latest = await this.latestSampleCreatedByOrder(tenantId, branchId, [
+        ...orderIds,
+      ]);
+      for (const [orderId, createdAt] of latest) {
+        latestSampleByOrder.set(rankKey(branchId, orderId), createdAt);
+      }
+    }
+    const ordered = sortWorklistMatches(matches, latestSampleByOrder);
+    const start = (page - 1) * limit;
+    return {
+      pageIds: ordered.slice(start, start + limit).map((m) => m.id),
+      total: ordered.length,
+    };
+  }
+
+  /**
+   * `orderId → newest live sample's createdAt` at the given branch, for the
+   * orders in view. Queried in chunks so a large worklist never exceeds the
+   * database's bind-parameter limit.
+   */
+  private async latestSampleCreatedByOrder(
+    tenantId: string,
+    branchId: string,
+    orderIds: string[],
+  ): Promise<Map<string, Date>> {
+    const latest = new Map<string, Date>();
+    const CHUNK = 5000;
+    for (let i = 0; i < orderIds.length; i += CHUNK) {
+      const groups = await this.prisma.orderSample.groupBy({
+        by: ['orderId'],
+        where: {
+          tenantId,
+          branchId,
+          deletedAt: null,
+          orderId: { in: orderIds.slice(i, i + CHUNK) },
+        },
+        _max: { createdAt: true },
+      });
+      for (const g of groups) {
+        if (g._max.createdAt) latest.set(g.orderId, g._max.createdAt);
+      }
+    }
+    return latest;
+  }
+
+  /** Load the full worklist rows for `ids`, returned in exactly that order. */
+  private async fetchWorklistRowsInOrder(
+    tenantId: string,
+    ids: string[],
+  ): Promise<LabReportListRow[]> {
+    if (ids.length === 0) return [];
+    const fetched = await this.prisma.labReport.findMany({
+      where: { id: { in: ids }, tenantId },
+      include: LAB_REPORT_LIST_INCLUDE,
+    });
+    const byId = new Map(fetched.map((r) => [r.id, r]));
+    return ids
+      .map((id) => byId.get(id))
+      .filter((r): r is LabReportListRow => r !== undefined);
   }
 
   /**
@@ -2688,13 +2827,13 @@ export class LabReportService {
       where: { id: report.orderItemId },
       select: { branchLabPanelId: true },
     });
-    const validParamIds = new Set(
-      (
-        await this.getResultParams(
-          report.labTestId,
-          orderItem?.branchLabPanelId ?? null,
-        )
-      ).map((p) => p.id),
+    const resultParams = await this.getResultParams(
+      report.labTestId,
+      orderItem?.branchLabPanelId ?? null,
+    );
+    const validParamIds = new Set(resultParams.map((p) => p.id));
+    const paramNameById = new Map(
+      resultParams.map((p) => [p.id, p.parameterName]),
     );
     for (const value of dto.values) {
       if (!validParamIds.has(value.resultParamId)) {
@@ -2705,7 +2844,58 @@ export class LabReportService {
     await this.prisma.withTenant(tenantId, async (tx) => {
       await this.lockReportForWrite(tx, tenantId, id);
       const now = new Date();
-      for (const value of dto.values) {
+
+      // What is stored today for these parameters (deleted rows included: the unique key
+      // ignores deletedAt) decides, per value, whether it is an analyzer's value the
+      // technician left alone, one they overwrote, or an ordinary save.
+      const storedValues = await tx.labReportResultValue.findMany({
+        where: {
+          labReportId: id,
+          tenantId,
+          resultParamId: { in: dto.values.map((v) => v.resultParamId) },
+        },
+      });
+      const storedByParam = new Map(
+        storedValues.map((s) => [s.resultParamId, s]),
+      );
+      const plan = dto.values.map((value) => {
+        const stored = storedByParam.get(value.resultParamId);
+        return { value, stored, ...classifyResultValueSave(stored, value) };
+      });
+
+      // A screen that is out of date for an analyzer value must not replace the newer
+      // result: refuse the whole save before anything is written.
+      const staleParamIds = plan
+        .filter((p) => p.stale)
+        .map((p) => p.value.resultParamId);
+      if (staleParamIds.length > 0) {
+        throw new LabReportValueChangedException(id, staleParamIds);
+      }
+
+      for (const { value, stored, mode } of plan) {
+        if (mode === 'keep-analyzer') {
+          // The analyzer's value was not touched: it stays the analyzer's (source, analyzer id
+          // and time unchanged). Only the range, method and display text may be updated, and
+          // the unit only when the analyzer sent none.
+          const data = {
+            methodology: value.methodology,
+            referenceRangeId: value.referenceRangeId,
+            referenceDisplay: value.referenceDisplay,
+            ...(stored?.unit == null ? { unit: value.unit } : {}),
+          };
+          if (Object.values(data).some((v) => v !== undefined)) {
+            await tx.labReportResultValue.update({
+              where: {
+                labReportId_resultParamId: {
+                  labReportId: id,
+                  resultParamId: value.resultParamId,
+                },
+              },
+              data,
+            });
+          }
+          continue;
+        }
         await tx.labReportResultValue.upsert({
           where: {
             labReportId_resultParamId: {
@@ -2746,6 +2936,48 @@ export class LabReportService {
             deletedAt: null,
           },
         });
+      }
+
+      // Every analyzer value a technician overwrote leaves an Audit Trail entry (who, the
+      // analyzer's old value, the new one): the analyzer's original is otherwise lost.
+      const overwritten = plan.filter(
+        (p) => p.mode === 'overwrite-analyzer' && p.stored,
+      );
+      if (overwritten.length > 0) {
+        const adapterIds = [
+          ...new Set(
+            overwritten
+              .map((p) => p.stored?.enteredBy)
+              .filter((a): a is string => !!a),
+          ),
+        ];
+        const adapters = adapterIds.length
+          ? await tx.labAdapter.findMany({
+              where: { id: { in: adapterIds }, tenantId },
+              select: { id: true, name: true },
+            })
+          : [];
+        const adapterNameById = new Map(adapters.map((a) => [a.id, a.name]));
+        for (const { value, stored } of overwritten) {
+          if (!stored) continue;
+          await this.recordHistory(
+            tx,
+            tenantId,
+            id,
+            report.status,
+            report.status,
+            'ANALYZER_VALUE_OVERWRITTEN',
+            actorId,
+            describeAnalyzerOverwrite(
+              paramNameById.get(value.resultParamId) ?? value.resultParamId,
+              stored.enteredBy
+                ? adapterNameById.get(stored.enteredBy)
+                : undefined,
+              stored,
+              value,
+            ),
+          );
+        }
       }
 
       // Authoritative recompute of dynamic/calculated parameters. Any calculated
@@ -2953,6 +3185,60 @@ export class LabReportService {
   }
 
   /**
+   * The patient's exact birth date and the day their age is measured on — the day the
+   * sample was collected (the earliest collection of this report's samples; the order
+   * date when none is recorded; today when there is no order date) — so the range follows
+   * the patient's REAL age that day. The birth date is the saved date of birth, or, for a
+   * patient who only ever gave an age, the day the record was created minus that age.
+   * `null` when the patient has neither (the caller falls back to the stored age).
+   */
+  private async exactPatientAge(
+    report: {
+      orderItemId: string;
+      labTestId: string | null;
+      memberBranchLabTestId: string | null;
+      orderItem: { order: { orderDate?: Date | null } };
+    },
+    tenantId: string,
+    patient: {
+      dateOfBirth?: Date | null;
+      age?: number | null;
+      ageType?: AgeType | null;
+      createdAt?: Date | null;
+    },
+  ): Promise<ExactAge | null> {
+    const hasDob = !!patient.dateOfBirth;
+    const hasAgeAndCreated =
+      patient.age !== null && patient.age !== undefined && !!patient.createdAt;
+    if (!hasDob && !hasAgeAndCreated) return null;
+
+    const { timezone } = await this.tenantService.getLocale(tenantId);
+    const links = await this.prisma.orderSampleTest.findMany({
+      where: {
+        tenantId,
+        orderItemId: report.orderItemId,
+        deletedAt: null,
+        ...(report.memberBranchLabTestId && report.labTestId
+          ? { labTestId: report.labTestId }
+          : {}),
+      },
+      select: { sample: { select: { collectedAt: true } } },
+    });
+    const collected = links
+      .map((l) => l.sample?.collectedAt ?? null)
+      .filter((d): d is Date => d !== null)
+      .sort((a, b) => a.getTime() - b.getTime())[0];
+    const orderDate = report.orderItem.order.orderDate ?? null;
+    const onDay = collected
+      ? calendarDayIn(collected, timezone)
+      : orderDate
+        ? calendarDayIn(orderDate, 'UTC') // a DATE column: its UTC day is the day
+        : calendarDayIn(new Date(), timezone);
+    const dob = exactBirthDate(patient, onDay, timezone);
+    return dob ? { dob, onDay } : null;
+  }
+
+  /**
    * Resolve the reference range/value for one result parameter given the
    * current methodology and the report's patient (age/gender), following
    * `LabTestResultParam.resultType` to decide which of
@@ -2987,9 +3273,7 @@ export class LabReportService {
     if (!param) throw new LabTestCatalogueMissingException(id);
 
     const patient = report.orderItem.order.patient;
-    const ageInDays = patient.age
-      ? patientAgeInDays(patient.age, patient.ageType ?? 'YEARS')
-      : null;
+    const exactAge = await this.exactPatientAge(report, tenantId, patient);
 
     // Bug fix: this used to gate on QUALITATIVE only, so a SEMI_QUANTITATIVE
     // param (which also has no numeric LabTestReferenceRange — only a
@@ -3008,12 +3292,13 @@ export class LabReportService {
           ...(query.methodology ? { method: query.methodology } : {}),
         },
       });
-      const match = candidates.find(
+      // Only a band the patient's age CERTAINLY falls in is picked automatically
+      // (calendar rule, same as master data): a stored age that straddles a band
+      // edge ("1 Year" against "0-17 Months" / "18-23 Months") is not guessed.
+      const match = sortRangesByAgeSpecificity(candidates).find(
         (c) =>
           genderMatches(c.gender, patient.gender) &&
-          (ageInDays === null ||
-            (ageInDays >= rangeAgeInDays(c.ageFrom, c.ageFromUnit) &&
-              ageInDays <= rangeAgeInDays(c.ageTo, c.ageToUnit))),
+          isExactAgeMatch(rangeAgeMatch(patient, c, exactAge)),
       );
       return match
         ? {
@@ -3031,12 +3316,10 @@ export class LabReportService {
         ...(query.methodology ? { method: query.methodology } : {}),
       },
     });
-    const match = candidates.find(
+    const match = sortRangesByAgeSpecificity(candidates).find(
       (c) =>
         genderMatches(c.gender, patient.gender) &&
-        (ageInDays === null ||
-          (ageInDays >= rangeAgeInDays(c.ageFrom, c.ageFromUnit) &&
-            ageInDays <= rangeAgeInDays(c.ageTo, c.ageToUnit))),
+        isExactAgeMatch(rangeAgeMatch(patient, c, exactAge)),
     );
     return match
       ? {
@@ -3075,6 +3358,8 @@ export class LabReportService {
       lowerLimit: string | null;
       upperLimit: string | null;
       referenceDisplay: string | null;
+      /** `match`/`unknown`: may be picked automatically. `partial`: the patient's stored age is too coarse to be sure, so it is listed but never picked automatically. */
+      ageMatch: 'match' | 'partial' | 'unknown';
     }>;
   }> {
     const activeBranchId = this.requireBranch(branchId);
@@ -3103,20 +3388,29 @@ export class LabReportService {
     }
 
     const patient = report.orderItem.order.patient;
-    const ageInDays = patient.age
-      ? patientAgeInDays(patient.age, patient.ageType ?? 'YEARS')
-      : null;
+    const exactAge = await this.exactPatientAge(report, tenantId, patient);
 
     const ranges = await this.prisma.labTestReferenceRange.findMany({
       where: { paramId: param.id, deletedAt: null },
     });
-    const matching = ranges.filter(
-      (r) =>
-        genderMatches(r.gender, patient.gender) &&
-        (ageInDays === null ||
-          (ageInDays >= rangeAgeInDays(r.ageFrom, r.ageFromUnit) &&
-            ageInDays <= rangeAgeInDays(r.ageTo, r.ageToUnit))),
-    );
+    // Rows whose age band the patient's stored age is certainly in come first, then
+    // those it MIGHT be in (the stored age is too coarse to be sure); rows it is
+    // certainly outside are left out. Within each group the order is fixed (Default
+    // first, then a range without an analyzer first, ... see `compareRangeCandidates`),
+    // so it never depends on database row order.
+    const matchingScored = ranges
+      .filter((r) => genderMatches(r.gender, patient.gender))
+      .map((row) => ({
+        row,
+        ageMatch: candidateAgeMatch(patient, row, exactAge),
+      }))
+      .filter((x) => x.ageMatch !== 'none')
+      .sort(
+        (x, y) =>
+          candidateAgeRank(x.ageMatch) - candidateAgeRank(y.ageMatch) ||
+          compareRangeCandidates(x.row, y.row),
+      );
+    const matching = matchingScored.map((x) => x.row);
 
     const adapterIds = [
       ...new Set(matching.map((r) => r.labAdapterId).filter((v) => !!v)),
@@ -3129,7 +3423,8 @@ export class LabReportService {
       : [];
     const adapterNames = new Map(adapters.map((a) => [a.id, a.name]));
 
-    const candidates = matching.map((r) => ({
+    const candidates = matchingScored.map(({ row: r, ageMatch }) => ({
+      ageMatch: ageMatch as 'match' | 'partial' | 'unknown',
       id: r.id,
       labAdapterId: r.labAdapterId,
       labAdapterName: r.labAdapterId
@@ -3488,7 +3783,7 @@ export class LabReportService {
     // the receiver's copy, which carries no collection dates; the barcode is
     // shared): oldest-first prefers the original, so a transferred test keeps its
     // dates. Feeds the `sample_*` tags and the Sample ID barcode
-    // (`{order_id_qr_code}`).
+    // (`{sample_id_barcode}`).
     const sampleLinks = await this.prisma.orderSampleTest.findMany({
       where: {
         tenantId,
@@ -3504,6 +3799,7 @@ export class LabReportService {
           select: {
             collectedAt: true,
             receivedAt: true,
+            sampleName: true,
             sampleType: true,
             barcode: true,
           },
@@ -3511,8 +3807,8 @@ export class LabReportService {
       },
     });
     const sample = pickReportSample(sampleLinks);
-    const barcodeTags = buildReportBarcodeTags(
-      order.orderIdBarcode,
+    const barcodeTags = await buildReportBarcodeTags(
+      order.orderCode,
       sample?.barcode,
     );
     // "Today" on the branch's calendar — `{patient_age}` is the age as of the
@@ -3725,6 +4021,7 @@ export class LabReportService {
               toBranchLocalInstant(sample.receivedAt, timezone),
             )
           : '',
+        sample_name: sample?.sampleName ?? '',
         sample_type: sample?.sampleType ?? '',
         sample_source_label: sampleSourceLabel(diagnostics?.sampleSource),
         // Approver (Doctor-only per product decision) — flat tags for templates
@@ -3738,14 +4035,16 @@ export class LabReportService {
         // Flat `{patient_image}` prints the URL; `{{image:patient_image}}`
         // auto-renders an <img> via the images map below.
         patient_image: patient.photoUrl ?? '',
-        // Code 128 barcode images (data URIs), rendered from the IDs:
-        // `{order_id_barcode}` = Order ID (`Order.orderIdBarcode`),
-        // `{order_id_qr_code}` = Sample ID (this report's `OrderSample.barcode`
-        // — a barcode despite the tag name). Each renders as an image whether
-        // written `{tag}`, `{{image:tag}}` (images map below) or
-        // `<img src="{tag}">` — see `resolveBareImageTags`.
+        // Barcode/QR images (data URIs), rendered from the IDs:
+        // `{order_id_barcode}` = Order ID (`Order.orderCode`, e.g. `ORD-00113`)
+        // as Code 128, `{order_id_qr_code}` = the same Order ID as a QR code,
+        // `{sample_id_barcode}` = Sample ID (this report's `OrderSample.barcode`)
+        // as Code 128. Each renders as an image whether written `{tag}`,
+        // `{{image:tag}}` (images map below) or `<img src="{tag}">` — see
+        // `resolveBareImageTags`.
         order_id_barcode: barcodeTags.order_id_barcode,
         order_id_qr_code: barcodeTags.order_id_qr_code,
+        sample_id_barcode: barcodeTags.sample_id_barcode,
         sample_note: sampleNote?.body ?? '',
         // `{test_file_attachment}` — the PDF(s) uploaded via this test's
         // "File +" button, as `<embed>` markup (printed unescaped, see
@@ -3764,6 +4063,7 @@ export class LabReportService {
         patient_image: patient.photoUrl ?? '',
         order_id_barcode: barcodeTags.order_id_barcode,
         order_id_qr_code: barcodeTags.order_id_qr_code,
+        sample_id_barcode: barcodeTags.sample_id_barcode,
       },
       sections: { results },
       signatories,
@@ -4086,9 +4386,9 @@ export class LabReportService {
         dateFormat,
         timeFormat,
       ),
-      // Order ID barcode IMAGE src (Code 128 data URI of
-      // `Order.orderIdBarcode`; templates use it as `<img src=…>`).
-      order_id_barcode: code128DataUri(order.orderIdBarcode),
+      // Order ID barcode IMAGE src (Code 128 data URI of the Order ID
+      // `Order.orderCode`; templates use it as `<img src=…>`).
+      order_id_barcode: code128DataUri(order.orderCode),
     };
 
     // Per-report body + dates, reusing the single-report context builder.
@@ -4265,6 +4565,9 @@ export class LabReportService {
       reference_display: toText(r.reference_display),
       group_name: toText(r.group_name),
       result_note: toText(r.result_note),
+      // Per-report Overall Result rich-text HTML (`LabReportOverallResult`) —
+      // without this key a Latte `{$row->overall_result}` is always empty.
+      overall_result: toText(r.overall_result),
     }));
     const test = {
       test_name: toText(v.test_name),

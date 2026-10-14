@@ -18,6 +18,7 @@ interface TransferRow {
   transferStatus: TransferStatus;
   destinationBranchId: string | null;
   receiveCondition: string | null;
+  clonedSampleId?: string | null;
 }
 
 function setup(
@@ -37,6 +38,8 @@ function setup(
     $queryRaw: jest.fn().mockResolvedValue([]),
     sampleTransfer: {
       findFirst: jest.fn().mockResolvedValue(transfer),
+      // skipInvalid pre-reads the accession numbers of the transfers it may skip.
+      findMany: jest.fn().mockResolvedValue([]),
       updateMany: jest.fn().mockResolvedValue({ count: opts.updateCount ?? 1 }),
     },
     orderSample: {
@@ -54,6 +57,7 @@ function setup(
     transitionInTx: jest.fn().mockResolvedValue({}),
     returnCopyToOrigin: jest.fn().mockResolvedValue('sA'),
     notifySamplesRepeated: jest.fn().mockResolvedValue(undefined),
+    removeTransferCloneInTx: jest.fn().mockResolvedValue(undefined),
   };
   const svc = new SampleTransferService(
     prisma as never,
@@ -121,6 +125,68 @@ describe('SampleTransferService — return to sender', () => {
         repeatReason: 'x',
       }),
     ).rejects.toThrow();
+  });
+
+  it('reject from ACCEPTED returns the receiving copy to the sender - and never pre-unwinds the clone', async () => {
+    // The accept created a copy (clonedSampleId). Our design owns this wind-down:
+    // returnCopyToOrigin voids the copy, refuses when a report there has a validated
+    // result, and resets/returns the report. Main's separate clone pre-unwind must
+    // NOT run first (it would void the copy, and returnToSender would then find none).
+    const { svc, samples, tx } = setup(
+      { transferStatus: TransferStatus.ACCEPTED, clonedSampleId: 'copy1' },
+      { copies: [{ id: 'copy1' }] },
+    );
+    await svc.reject(['tr1'], TENANT, PERSON, { rejectionReason: 'Leaked' });
+    expect(samples.removeTransferCloneInTx).not.toHaveBeenCalled();
+    expect(samples.returnCopyToOrigin).toHaveBeenCalledWith(
+      expect.anything(),
+      TENANT,
+      PERSON,
+      'copy1',
+      'Leaked',
+    );
+    expect(samples.transitionInTx).not.toHaveBeenCalled();
+    expect(samples.notifySamplesRepeated).toHaveBeenCalledWith(TENANT, ['sA']);
+    const upd = (
+      tx.sampleTransfer.updateMany.mock.calls[0] as unknown[]
+    )[0] as {
+      where: { transferStatus: TransferStatus };
+      data: { transferStatus: TransferStatus; clonedSampleId?: string | null };
+    };
+    expect(upd.where.transferStatus).toBe(TransferStatus.ACCEPTED);
+    expect(upd.data.transferStatus).toBe(TransferStatus.REJECTED);
+    // the link to the (now voided) copy is cleared
+    expect(upd.data.clonedSampleId).toBeNull();
+  });
+
+  it('reject from ACCEPTED is refused when a report at the receiver is validated (nothing is changed)', async () => {
+    const { svc, samples, tx } = setup(
+      { transferStatus: TransferStatus.ACCEPTED, clonedSampleId: 'copy1' },
+      { copies: [{ id: 'copy1' }] },
+    );
+    samples.returnCopyToOrigin.mockRejectedValue(
+      new Error('SAMPLE_RETURN_BLOCKED'),
+    );
+    await expect(
+      svc.reject(['tr1'], TENANT, PERSON, { rejectionReason: 'x' }),
+    ).rejects.toThrow('SAMPLE_RETURN_BLOCKED');
+    expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
+    expect(samples.notifySamplesRepeated).not.toHaveBeenCalled();
+  });
+
+  it('with skipInvalid a transfer that cannot take the action is reported as skipped, not thrown', async () => {
+    const { svc } = setup({ transferStatus: TransferStatus.IN_TRANSIT });
+    const result = await svc.reject(
+      ['tr1'],
+      TENANT,
+      PERSON,
+      { rejectionReason: 'x' },
+      true,
+    );
+    expect(result.succeeded).toEqual([]);
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0]).toMatchObject({ id: 'tr1' });
+    expect(result.skipped[0]!.reason).toContain('"reject"');
   });
 
   it('does not touch samples for an EXTERNAL transfer', async () => {

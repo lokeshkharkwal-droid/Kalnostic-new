@@ -32,4 +32,22 @@ export class ExternalReferralOptionsController {
       limit: query.limit,
     });
   }
+
+  /**
+   * Distinct external-referral organisation names as `{ id, name }` options
+   * (`id` = the name) for the Accession "External Referral Center" filter.
+   * Same query contract as `options`.
+   */
+  @Get('organisation-options')
+  findOrganisationOptions(
+    @CurrentTenant() tenantId: string,
+    @Query() query: ExternalReferralOptionsQueryDto,
+  ) {
+    return this.externalReferralService.findOrganisationOptions(tenantId, {
+      search: query.search,
+      branchId: query.branchId,
+      page: query.page,
+      limit: query.limit,
+    });
+  }
 }

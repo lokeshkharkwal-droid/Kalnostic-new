@@ -44,6 +44,10 @@ tests {
     const data = res.getBody().data;
     if (data && data[0]) expect(data[0].sample).to.have.property("departmentLabel");
   });
+  test("rows carry outsourceCenterName (OUTSOURCE destination name)", function () {
+    const data = res.getBody().data;
+    if (data && data[0]) expect(data[0]).to.have.property("outsourceCenterName");
+  });
 }
 
 docs {
@@ -58,4 +62,11 @@ docs {
   `orderItem.branchLabTest` / `branchLabPanel` `departmentId`), joined with
   ", " — `null` when none resolve. `sample.tests` excludes soft-deleted tests,
   and `sample.order` includes `orderDate`, `orderTime` and `createdAt`.
+
+  Each row also carries `outsourceCenterName` — the OUTSOURCE destination's
+  resolved display name. `outsourceCenterId` is a logical ref (no Prisma
+  relation), so the name is resolved separately and deliberately WITHOUT a
+  `deletedAt` filter, so a historical transfer to a since-deactivated center
+  still shows its name instead of the raw id. `null` for INTERNAL/EXTERNAL
+  transfers, when no center is assigned, or when the center no longer exists.
 }

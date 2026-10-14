@@ -115,8 +115,48 @@ describe('LabReportService.isReportUntouched - a report returned for repeat star
     const { tx, run } = setup({});
     await run();
     for (const table of CHILD_TABLES) {
-      expect(whereOf(tx, table)).toEqual({ labReportId: 'r1' });
+      // Notes are the one exception: the system's own LOCK / UNLOCK notes never count
+      // (see the dedicated tests below).
+      expect(whereOf(tx, table)).toEqual(
+        table === 'labReportNote'
+          ? { labReportId: 'r1', category: { notIn: ['LOCK', 'UNLOCK'] } }
+          : { labReportId: 'r1' },
+      );
     }
+  });
+
+  it('never returned: a lock / unlock cycle is not work - its LOCK and UNLOCK notes are ignored', async () => {
+    const { tx, run } = setup({});
+    await run();
+    expect(whereOf(tx, 'labReportNote')).toMatchObject({
+      category: { notIn: ['LOCK', 'UNLOCK'] },
+    });
+    // Any other note (ORDER, SAMPLE, TECH, ...) still counts: nothing narrows it.
+    const where = whereOf(tx, 'labReportNote') as Record<string, unknown>;
+    expect(where).not.toHaveProperty('OR');
+    expect(where).not.toHaveProperty('deletedAt');
+  });
+
+  it('returned: LOCK / UNLOCK notes are ignored there too, even ones written after the return', async () => {
+    const { tx, run } = setup({}, {}, RETURNED);
+    await run();
+    expect(whereOf(tx, 'labReportNote')).toMatchObject({
+      category: { notIn: ['LOCK', 'UNLOCK'] },
+    });
+  });
+
+  it('a report that was only locked and unlocked is untouched (the sender may send it)', async () => {
+    // Its only notes are the LOCK / UNLOCK pair, which the count query excludes, so
+    // every child table counts zero rows.
+    expect(await untouched({})).toBe(true);
+  });
+
+  it('but a report that is locked right now is still touched', async () => {
+    expect(await untouched({ isLocked: true })).toBe(false);
+  });
+
+  it('and any other note still makes it touched', async () => {
+    expect(await untouched({}, { labReportNote: 1 })).toBe(false);
   });
 
   it.each([

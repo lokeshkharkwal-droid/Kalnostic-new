@@ -20,7 +20,11 @@ export const INVOICE_DETAIL_INCLUDE = {
     },
   },
   payments: {
-    where: { deletedAt: null },
+    // Reverted receipts are hidden from the invoice detail's payment history (they
+    // surface in the Finance → Payments "Reverted" tab). The invoice's paid /
+    // outstanding totals come from the Invoice row's own scalars, not this list, so
+    // hiding them here is display-only and does not affect any balance.
+    where: { deletedAt: null, revertedAt: null },
     orderBy: { paymentDate: 'desc' },
     select: {
       id: true,

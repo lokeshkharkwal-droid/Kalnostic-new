@@ -273,9 +273,9 @@ export interface LabReportWorklistRow {
     orderDate: Date;
     orderTime: string | null;
     /** When the order was actually placed (DB-guaranteed, `@default(now())`)
-     * — used as the worklist's "Order creation date & time" display instead
-     * of `orderTime`, which is a manually-typed, optional backdating field
-     * (often left blank) rather than a real creation timestamp. */
+     * — the TIME shown next to `orderDate` in the worklist's "Order Date"
+     * (instead of `orderTime`, a manually-typed, optional backdating field,
+     * often left blank). The DATE shown, and filtered on, is `orderDate`. */
     createdAt: Date;
     billingType: BillingType;
     paymentStatus: PaymentStatus;
@@ -288,6 +288,7 @@ export interface LabReportWorklistRow {
     id: string;
     name: string;
     age: number | null;
+    ageType: AgeType | null;
     ageDisplay: string | null;
     gender: Gender | null;
     umId: string | null;
@@ -459,6 +460,7 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
             patient.lastName,
           ]),
           age: patient.age,
+          ageType: patient.ageType,
           ageDisplay:
             patient.age != null
               ? `${patient.age}${AGE_TYPE_SUFFIX[patient.ageType ?? 'YEARS']}`

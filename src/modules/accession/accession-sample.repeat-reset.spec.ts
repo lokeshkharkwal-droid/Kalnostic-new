@@ -63,6 +63,7 @@ function build(opts: { canReturn?: boolean; reportIds?: string[] } = {}) {
     {} as never,
     {} as never,
     {} as never,
+    {} as never,
   );
   const repeat = (note = {}) =>
     service.transitionInTx(

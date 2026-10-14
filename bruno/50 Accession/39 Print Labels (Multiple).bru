@@ -35,12 +35,15 @@ docs {
   ## Body
   - `ids` (required, non-empty) — accession sample ids to label.
   - `templateId` (optional) — the `multiple_order_label_print` template to render
-    with. Omit to fall back to the tenant's single active multi-label template.
+    with. Omit to let the backend resolve it: the Configuration default for the
+    `multiple_order_label_print` slot (active branch, then tenant-wide), else the
+    first active `multiple_order_label_print` template. More than one active
+    template is fine — the configured (else first) one is used.
 
   ## Errors
   - 404 `ACCESSION_SAMPLE_NOT_FOUND` — none of the `ids` resolve.
-  - 404 `NO_ACTIVE_LABEL_TEMPLATE` / 409 `AMBIGUOUS_LABEL_TEMPLATE` — template
-    resolution failed and no `templateId` supplied.
+  - 404 `NO_ACTIVE_PRINT_TEMPLATE` — no `templateId` supplied and no active
+    `multiple_order_label_print` template exists to fall back to.
 
   In Bruno, use "Save Response → Save to file" to inspect the PDF.
 }

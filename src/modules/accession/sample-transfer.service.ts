@@ -32,9 +32,14 @@ import { OutsourceStatusDto } from './dto/outsource-status.dto';
 import { ListTransfersDto } from './dto/list-transfers.dto';
 import {
   TRANSFER_INCLUDE,
+  SampleTransferDeptRow,
   SampleTransferListRow,
   SampleTransferWithRelations,
 } from './entities/sample-transfer.entity';
+import {
+  BulkActionResult,
+  BulkSkippedItem,
+} from './entities/bulk-action-result.entity';
 import {
   AccessionNumberConflictException,
   OrderSampleNotFoundException,
@@ -98,7 +103,7 @@ export class SampleTransferService {
     tenantId: string,
     personId: string | null,
     dto: SendSampleDto,
-  ): Promise<SampleTransferWithRelations[]> {
+  ): Promise<BulkActionResult<SampleTransferWithRelations>> {
     if (dto.destinationBranchId) {
       await this.branches.findById(dto.destinationBranchId, tenantId);
     }
@@ -119,7 +124,7 @@ export class SampleTransferService {
     tenantId: string,
     personId: string | null,
     dto: ForwardSampleDto,
-  ): Promise<SampleTransferWithRelations[]> {
+  ): Promise<BulkActionResult<SampleTransferWithRelations>> {
     return this.dispatch(
       sampleIds,
       tenantId,
@@ -145,7 +150,7 @@ export class SampleTransferService {
     tenantId: string,
     personId: string | null,
     dto: OutsourceSampleDto,
-  ): Promise<SampleTransferWithRelations[]> {
+  ): Promise<BulkActionResult<SampleTransferWithRelations>> {
     if (dto.outsourceCenterId) {
       await this.assertOutsourceCenter(dto.outsourceCenterId, tenantId);
     }
@@ -171,7 +176,8 @@ export class SampleTransferService {
     tenantId: string,
     personId: string | null,
     dto: TransferPickUpDto,
-  ): Promise<SampleTransferWithRelations[]> {
+    skipInvalid = false,
+  ): Promise<BulkActionResult<SampleTransferWithRelations>> {
     return this.transferAction(
       transferIds,
       tenantId,
@@ -181,6 +187,7 @@ export class SampleTransferService {
         pickedUpBy: dto.pickedUpBy ?? null,
         pickedUpAt: new Date(),
       }),
+      skipInvalid,
     );
   }
 
@@ -190,7 +197,8 @@ export class SampleTransferService {
     tenantId: string,
     personId: string | null,
     dto: TransferReceiveDto,
-  ): Promise<SampleTransferWithRelations[]> {
+    skipInvalid = false,
+  ): Promise<BulkActionResult<SampleTransferWithRelations>> {
     return this.transferAction(
       transferIds,
       tenantId,
@@ -200,6 +208,7 @@ export class SampleTransferService {
         receivedAt: new Date(),
         receiveCondition: dto.receiveCondition,
       }),
+      skipInvalid,
     );
   }
 
@@ -209,7 +218,8 @@ export class SampleTransferService {
     tenantId: string,
     personId: string | null,
     _dto: SampleNoteDto,
-  ): Promise<SampleTransferWithRelations[]> {
+    skipInvalid = false,
+  ): Promise<BulkActionResult<SampleTransferWithRelations>> {
     return this.transferAction(
       transferIds,
       tenantId,
@@ -218,6 +228,7 @@ export class SampleTransferService {
       () => ({
         acceptedAt: new Date(),
       }),
+      skipInvalid,
     );
   }
 
@@ -227,7 +238,8 @@ export class SampleTransferService {
     tenantId: string,
     personId: string | null,
     dto: TransferRepeatDto,
-  ): Promise<SampleTransferWithRelations[]> {
+    skipInvalid = false,
+  ): Promise<BulkActionResult<SampleTransferWithRelations>> {
     return this.transferAction(
       transferIds,
       tenantId,
@@ -236,6 +248,7 @@ export class SampleTransferService {
       () => ({
         repeatReason: dto.repeatReason,
       }),
+      skipInvalid,
       dto.repeatReason,
     );
   }
@@ -246,7 +259,8 @@ export class SampleTransferService {
     tenantId: string,
     personId: string | null,
     dto: TransferRejectDto,
-  ): Promise<SampleTransferWithRelations[]> {
+    skipInvalid = false,
+  ): Promise<BulkActionResult<SampleTransferWithRelations>> {
     return this.transferAction(
       transferIds,
       tenantId,
@@ -255,6 +269,7 @@ export class SampleTransferService {
       () => ({
         rejectionReason: dto.rejectionReason,
       }),
+      skipInvalid,
       dto.rejectionReason,
     );
   }
@@ -434,10 +449,13 @@ export class SampleTransferService {
         include: TRANSFER_INCLUDE,
       });
       const count = await tx.sampleTransfer.count({ where });
-      return [
-        await this.withDepartmentLabels(tx, tenantId, rows),
-        count,
-      ] as const;
+      const deptRows = await this.withDepartmentLabels(tx, tenantId, rows);
+      const fullRows = await this.withOutsourceCenterNames(
+        tx,
+        tenantId,
+        deptRows,
+      );
+      return [fullRows, count] as const;
     });
     return paginated(data, total, page, limit);
   }
@@ -457,7 +475,7 @@ export class SampleTransferService {
     tx: Prisma.TransactionClient,
     tenantId: string,
     rows: SampleTransferWithRelations[],
-  ): Promise<SampleTransferListRow[]> {
+  ): Promise<SampleTransferDeptRow[]> {
     const deptIdsOf = (row: SampleTransferWithRelations): string[] =>
       row.sample.tests
         .map(
@@ -497,6 +515,43 @@ export class SampleTransferService {
   }
 
   /**
+   * Attach each transfer's `outsourceCenterName` (the OUTSOURCE destination's
+   * display name). `SampleTransfer.outsourceCenterId` is a logical ref (no Prisma
+   * relation), so the names are resolved in one tenant-scoped `OutsourceCenter`
+   * query — deliberately WITHOUT a `deletedAt` filter, so a historical transfer to
+   * a since-deactivated center still shows its name instead of surfacing the raw
+   * id. Transfers with no center (not yet assigned) stay null.
+   * @param tx the tenant-scoped transaction client (RLS GUC already set)
+   * @param tenantId tenant scope for the OutsourceCenter lookup
+   * @param rows the page of (dept-labelled) transfers
+   */
+  private async withOutsourceCenterNames(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    rows: SampleTransferDeptRow[],
+  ): Promise<SampleTransferListRow[]> {
+    const centerIds = [
+      ...new Set(
+        rows.map((r) => r.outsourceCenterId).filter((v): v is string => !!v),
+      ),
+    ];
+    const nameById = new Map<string, string>();
+    if (centerIds.length > 0) {
+      const centers = await tx.outsourceCenter.findMany({
+        where: { id: { in: centerIds }, tenantId },
+        select: { id: true, name: true },
+      });
+      centers.forEach((c) => nameById.set(c.id, c.name));
+    }
+    return rows.map((row) => ({
+      ...row,
+      outsourceCenterName: row.outsourceCenterId
+        ? (nameById.get(row.outsourceCenterId) ?? null)
+        : null,
+    }));
+  }
+
+  /**
    * Fetch one transfer with its sample + order context.
    * @throws SampleTransferNotFoundException if missing/soft-deleted/other tenant
    */
@@ -526,10 +581,26 @@ export class SampleTransferService {
     kind: TransferKind,
     dto: TransferDispatchDto,
     destination: TransferDestination,
-  ): Promise<SampleTransferWithRelations[]> {
+  ): Promise<BulkActionResult<SampleTransferWithRelations>> {
     const now = new Date();
     const sendDate = dto.sendDate ? new Date(dto.sendDate) : now;
+    const skipped: BulkSkippedItem[] = [];
     const created = await this.prisma.withTenant(tenantId, async (tx) => {
+      // Pre-read id → accession/status so a skipped sample can be named in the
+      // result without a per-skip query. Only the `skipInvalid` path skips (and
+      // reads this), so single / strict dispatches don't pay for the lookup. A
+      // skipped sample is never transitioned, so its status is still accurate.
+      const metaById = new Map<
+        string,
+        { id: string; accessionNo: string; status: SampleStatus }
+      >();
+      if (dto.skipInvalid) {
+        const metaRows = await tx.orderSample.findMany({
+          where: { id: { in: sampleIds }, tenantId, deletedAt: null },
+          select: { id: true, accessionNo: true, status: true },
+        });
+        for (const r of metaRows) metaById.set(r.id, r);
+      }
       const done: string[] = [];
       for (const sampleId of sampleIds) {
         // Group override: `force` moves every sample straight to the transfer's
@@ -570,6 +641,14 @@ export class SampleTransferService {
             dto.skipInvalid &&
             e instanceof InvalidSampleTransitionException
           ) {
+            const meta = metaById.get(sampleId);
+            skipped.push({
+              id: sampleId,
+              accessionNo: meta?.accessionNo ?? null,
+              reason: `Action "${sampleAction}" is not allowed from status ${
+                meta?.status ?? 'UNKNOWN'
+              }`,
+            });
             continue;
           }
           throw e;
@@ -613,15 +692,19 @@ export class SampleTransferService {
       }
       return done;
     });
-    return Promise.all(
+    const succeeded = await Promise.all(
       created.map((id) => this.findTransferById(id, tenantId)),
     );
+    return { succeeded, skipped };
   }
 
   /**
    * Apply a validated §B.10 transfer transition to each id in one transaction. On
    * INTERNAL `accept`, clones the sample into the receiving branch's In-House list
-   * (RULE 1). All-or-nothing across the id set.
+   * (RULE 1); on `reject` of an already-accepted INTERNAL transfer, unwinds that
+   * clone first. Strict bulk is all-or-nothing; with `skipInvalid` (bulk / group
+   * actions) a transfer not in a legal state is skipped and recorded in the
+   * result's `skipped` list. Returns the changed rows + the skipped ids.
    * @throws SampleTransferNotFoundException / InvalidTransferTransitionException
    * @throws TransferDestinationMissingException / AccessionNumberConflictException
    */
@@ -631,14 +714,28 @@ export class SampleTransferService {
     personId: string | null,
     action: TransferAction,
     build: () => Prisma.SampleTransferUpdateManyMutationInput,
+    skipInvalid = false,
     reason?: string,
-  ): Promise<SampleTransferWithRelations[]> {
+  ): Promise<BulkActionResult<SampleTransferWithRelations>> {
+    const skipped: BulkSkippedItem[] = [];
     let changed: string[];
     // Sender-side samples returned to REPEAT by this call (notified once the
     // transaction has committed).
     const returnedSampleIds: string[] = [];
     try {
       changed = await this.prisma.withTenant(tenantId, async (tx) => {
+        // Pre-read transfer id → sample accession no so a skipped transfer can be
+        // named in the result. Only the skipInvalid path reads this.
+        const accNoById = new Map<string, string | null>();
+        if (skipInvalid) {
+          const metaRows = await tx.sampleTransfer.findMany({
+            where: { id: { in: transferIds }, tenantId, deletedAt: null },
+            select: { id: true, sample: { select: { accessionNo: true } } },
+          });
+          for (const r of metaRows) {
+            accNoById.set(r.id, r.sample?.accessionNo ?? null);
+          }
+        }
         const done: string[] = [];
         for (const id of transferIds) {
           const transfer = await tx.sampleTransfer.findFirst({
@@ -689,11 +786,26 @@ export class SampleTransferService {
           }
           const to = nextTransferStatus(action, transfer.transferStatus);
           if (!to) {
+            if (skipInvalid) {
+              skipped.push({
+                id,
+                accessionNo: accNoById.get(id) ?? null,
+                reason: `Transfer action "${action}" is not allowed from status ${transfer.transferStatus}`,
+              });
+              continue;
+            }
             throw new InvalidTransferTransitionException(
               action,
               transfer.transferStatus,
             );
           }
+          // Reject / Repeat after acceptance (INTERNAL): the accept created a copy in
+          // the receiving branch. `returnToSender` below owns that wind-down - it voids
+          // the copy, refuses when a report at the receiver already has a validated
+          // result, and resets the report and hands it back to the sender. The earlier
+          // clone pre-unwind is deliberately NOT run here: it would void the copy first
+          // and `returnToSender` would then find none (and skip the validated-result
+          // check). Only INTERNAL transfers ever have a copy (`clonedSampleId`).
           let clonedSampleId: string | null = null;
           if (action === 'accept') {
             clonedSampleId = await this.cloneIntoDestination(
@@ -734,6 +846,10 @@ export class SampleTransferService {
               // Link the transfer to the clone it just created so a later recall
               // (Retrieve) can unwind the clone (§A.10.19).
               ...(clonedSampleId ? { clonedSampleId } : {}),
+              // The clone was just unwound (reject-after-accept) — clear the link.
+              ...(action === 'reject' && transfer.clonedSampleId
+                ? { clonedSampleId: null }
+                : {}),
               updatedBy: personId,
             },
           });
@@ -754,9 +870,10 @@ export class SampleTransferService {
     if (returnedSampleIds.length > 0) {
       await this.samples.notifySamplesRepeated(tenantId, returnedSampleIds);
     }
-    return Promise.all(
+    const succeeded = await Promise.all(
       changed.map((id) => this.findTransferById(id, tenantId)),
     );
+    return { succeeded, skipped };
   }
 
   /**
@@ -765,7 +882,7 @@ export class SampleTransferService {
    *  - before the receiver accepted (`RECEIVED`): the sender's original sample
    *    goes `SENT_INTERNAL → REPEAT` (its report never left the sender, and stops
    *    being hidden);
-   *  - after the receiver accepted (`ACCEPTED`, Repeat only): the receiver's
+   *  - after the receiver accepted (`ACCEPTED`, Repeat or Reject): the receiver's
    *    copy is voided, the report returns to the sender, and the original sample
    *    goes to `REPEAT` — refused if the report has been worked on
    *    (see `OrderSampleService.returnCopyToOrigin`).

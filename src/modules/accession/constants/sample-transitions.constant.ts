@@ -179,7 +179,12 @@ export const REPORTABLE_SAMPLE_STATUSES: ReadonlySet<SampleStatus> = new Set([
  * previous status; the previous status must NOT block the action). Each action's
  * target is a single status in `SAMPLE_TRANSITIONS`, so this is that status.
  * `retrieve` is intentionally excluded — it keeps its "revert to previous status"
- * behaviour and is never force-applied.
+ * behaviour and is never force-applied. `return` is excluded too: a sample may only
+ * be returned from a status where `SAMPLE_TRANSITIONS.return` allows it (Accepted,
+ * Acquired, Halt, Error, Stored). A group Return over a mixed-status group used to
+ * force a Collected (or New / Hold / Repeat) sample straight to Returned; it now
+ * follows the normal legality check, so those samples are refused (or skipped by
+ * `skipInvalid`).
  */
 export const FORCE_TARGET: Partial<Record<SampleAction, SampleStatus>> = {
   collect: SampleStatus.COLLECTED,
@@ -191,7 +196,6 @@ export const FORCE_TARGET: Partial<Record<SampleAction, SampleStatus>> = {
   repeat: SampleStatus.REPEAT,
   store: SampleStatus.STORED,
   discard: SampleStatus.DISCARDED,
-  return: SampleStatus.RETURNED,
   cancel: SampleStatus.CANCELLED,
   send: SampleStatus.SENT_INTERNAL,
   forward: SampleStatus.FORWARD_EXTERNAL,

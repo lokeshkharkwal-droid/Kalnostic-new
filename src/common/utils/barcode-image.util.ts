@@ -1,9 +1,10 @@
 import { createCanvas } from '@napi-rs/canvas';
 import JsBarcode from 'jsbarcode';
+import { toDataURL } from 'qrcode';
 
 // Deliberately NOT re-exported from `common/utils/index.ts`: it loads the
 // native `@napi-rs/canvas` binding, which every barrel importer would then pay
-// for. Import it by path where a barcode image is actually rendered.
+// for. Import it by path where a barcode/QR image is actually rendered.
 
 /**
  * Render a Code 128 barcode PNG for the given value. Uses a fixed generation
@@ -45,6 +46,33 @@ export function code128DataUri(value: string | null | undefined): string {
   }
   try {
     return `data:image/png;base64,${renderCode128Png(value).toString('base64')}`;
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * A QR code of `value` as a `data:image/png;base64,…` URI, for print templates
+ * (`<img src="…">` / `{{image:…}}`). Like {@link code128DataUri} it is rendered
+ * from the value itself, so it always encodes the current DB value and needs no
+ * network fetch when Puppeteer prints it. Error correction `M` (~15%) keeps a
+ * short ID scannable after printing; the 2-module white margin is built into
+ * the image so it still scans when placed flush against a table border.
+ * @param value the text to encode
+ * @returns the data URI, or `''` when `value` is empty or cannot be encoded
+ */
+export async function qrCodeDataUri(
+  value: string | null | undefined,
+): Promise<string> {
+  if (!value) {
+    return '';
+  }
+  try {
+    return await toDataURL(value, {
+      errorCorrectionLevel: 'M',
+      margin: 2,
+      width: 160,
+    });
   } catch {
     return '';
   }

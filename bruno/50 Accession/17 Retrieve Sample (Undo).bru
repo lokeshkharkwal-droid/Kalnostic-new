@@ -44,13 +44,20 @@ docs {
   sample (Sent / Forward / Outsourced / Returned) reverts to **Accepted** via the
   §A.9 send/forward/outsource history row.
 
-  **Cross-branch recall** — pulling a Sent / Forwarded / Outsourced sample back
-  (Retrieve, or Repeat) unwinds the whole transfer so no stale record is left in the
-  receiving branch: every open transfer is **soft-deleted** (deletedAt) so it leaves
-  both branches' Referral / Outsource queues (which filter `deletedAt IS NULL`), and
-  for an **accepted INTERNAL** transfer the destination clone it created (RULE 1) is
-  soft-deleted and its lab report(s) moved back to the origin branch. The source
-  sample's `processingBranchId` is reset to its origin and the dispatch fields cleared.
+  **Cross-branch recall** — pulling a **Forwarded / Outsourced** sample back (Retrieve,
+  or Repeat) unwinds the whole transfer so no stale record is left: every open
+  transfer is **soft-deleted** (deletedAt) so it leaves the Referral / Outsource
+  queues (which filter `deletedAt IS NULL`). The source sample's `processingBranchId`
+  is reset to its origin and the dispatch fields cleared. (A partner / outsource
+  centre has no branch copy, so there is no clone to remove.)
+
+  **Sent (INTERNAL) samples are different:** the sender can Retrieve only until the
+  receiving branch has received the sample (transfer IN_TRANSIT / PICKED_UP). The open
+  transfer is then closed as **REJECTED** (reason "Recalled via Retrieve", kept as
+  history for both branches) and the sample returns to its previous status. Once the
+  receiver has received or accepted it, Retrieve is refused (422 SAMPLE_RETRIEVE_BLOCKED);
+  the receiving branch sends it back with its own Reject / Repeat. The sender cannot
+  Repeat a Sent sample (422 SAMPLE_SENT_TO_BRANCH).
 
   Body (all optional): `retrievedFrom` (station / lab the sample is retrieved from —
   stored on the retrieve history row's `reason`), `notes`, `attachmentUrl`.

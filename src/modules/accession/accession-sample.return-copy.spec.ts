@@ -55,6 +55,7 @@ function build(canReturn: boolean) {
     {} as never,
     {} as never,
     {} as never,
+    {} as never,
   );
   const transition = jest.fn(() => {
     calls.push('transition');

@@ -243,24 +243,15 @@ export class TransferDestinationMissingException extends KaltrosException {
  * (`order_label_print` or `multiple_order_label_print`) to render with. */
 export class NoActiveLabelTemplateException extends KaltrosException {
   constructor(tenantId: string, type: string) {
+    const label =
+      type === 'multiple_order_label_print'
+        ? 'Lab Order Multiple Labels'
+        : 'Lab Order Label';
     super(
       'NO_ACTIVE_PRINT_TEMPLATE',
-      `No active ${type} PDF template is configured for this tenant`,
+      `No active ${label} template is available to print. Add or activate a ${label} template under Old Templates → Print, or set one under Old Templates → Configuration.`,
       { tenantId, type },
       HttpStatus.NOT_FOUND,
-    );
-  }
-}
-
-/** 409 — more than one active template of the requested `type` exists and
- * the caller did not specify which one to use. */
-export class AmbiguousLabelTemplateException extends KaltrosException {
-  constructor(tenantId: string, type: string, templateIds: string[]) {
-    super(
-      'AMBIGUOUS_PRINT_TEMPLATE',
-      `Multiple active ${type} PDF templates exist — specify templateId`,
-      { tenantId, type, templateIds },
-      HttpStatus.CONFLICT,
     );
   }
 }

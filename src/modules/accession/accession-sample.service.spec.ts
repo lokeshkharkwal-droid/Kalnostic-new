@@ -7,6 +7,7 @@ import { AccessionSettingsService } from './accession-settings.service';
 import { OrderSampleService } from './accession-sample.service';
 import { LabReportService } from '../lab-report/lab-report.service';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
+import { PdfTemplateConfigService } from '../pdf-report-template/pdf-template-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TenantService } from '../tenant/tenant.service';
 import { BarcodeService } from './barcode.service';
@@ -44,6 +45,7 @@ describe('OrderSampleService — panel sample resolution', () => {
       {} as unknown as AccessionSettingsService,
       {} as unknown as LabReportService,
       {} as unknown as PdfReportTemplateService,
+      {} as unknown as PdfTemplateConfigService,
       {} as unknown as EventEmitter2,
       {} as unknown as TenantService,
       {} as unknown as BarcodeService,
@@ -210,6 +212,7 @@ describe('OrderSampleService — reconcileForOrderInTx (remove path)', () => {
       {} as unknown as AccessionSettingsService,
       {} as unknown as LabReportService,
       {} as unknown as PdfReportTemplateService,
+      {} as unknown as PdfTemplateConfigService,
       {} as unknown as EventEmitter2,
       {} as unknown as TenantService,
       {} as unknown as BarcodeService,
@@ -385,6 +388,7 @@ describe('OrderSampleService — label variables', () => {
     {} as unknown as AccessionSettingsService,
     {} as unknown as LabReportService,
     {} as unknown as PdfReportTemplateService,
+    {} as unknown as PdfTemplateConfigService,
     {} as unknown as EventEmitter2,
     {} as unknown as TenantService,
     {} as unknown as BarcodeService,
@@ -489,6 +493,7 @@ describe('OrderSampleService — order overview hides superseded originals', () 
       {} as unknown as AccessionSettingsService,
       {} as unknown as LabReportService,
       {} as unknown as PdfReportTemplateService,
+      {} as unknown as PdfTemplateConfigService,
       {} as unknown as EventEmitter2,
       {} as unknown as TenantService,
       {} as unknown as BarcodeService,
@@ -619,6 +624,7 @@ describe('OrderSampleService — transitionInTx concurrency claim', () => {
       {} as unknown as AccessionSettingsService,
       {} as unknown as LabReportService,
       {} as unknown as PdfReportTemplateService,
+      {} as unknown as PdfTemplateConfigService,
       {} as unknown as EventEmitter2,
       {} as unknown as TenantService,
       {} as unknown as BarcodeService,
@@ -683,6 +689,7 @@ describe('OrderSampleService - a cancelled order freezes its samples', () => {
       {} as unknown as AccessionSettingsService,
       {} as unknown as LabReportService,
       {} as unknown as PdfReportTemplateService,
+      {} as unknown as PdfTemplateConfigService,
       {} as unknown as EventEmitter2,
       {} as unknown as TenantService,
       {} as unknown as BarcodeService,
@@ -806,6 +813,7 @@ describe('OrderSampleService — retrieve target', () => {
         {} as unknown as AccessionSettingsService,
         {} as unknown as LabReportService,
         {} as unknown as PdfReportTemplateService,
+        {} as unknown as PdfTemplateConfigService,
         {} as unknown as EventEmitter2,
         {} as unknown as TenantService,
         {} as unknown as BarcodeService,
@@ -873,6 +881,7 @@ describe('OrderSampleService — Return of a transferred copy', () => {
       {} as unknown as AccessionSettingsService,
       {} as unknown as LabReportService,
       {} as unknown as PdfReportTemplateService,
+      {} as unknown as PdfTemplateConfigService,
       {} as unknown as EventEmitter2,
       {} as unknown as TenantService,
       {} as unknown as BarcodeService,
@@ -880,7 +889,9 @@ describe('OrderSampleService — Return of a transferred copy', () => {
     );
     const priv = service as unknown as Priv;
     priv.returnCopyToOrigin = jest.fn().mockResolvedValue('origin1');
-    priv.transitionIds = jest.fn().mockResolvedValue([{ id: 'plain-result' }]);
+    priv.transitionIds = jest
+      .fn()
+      .mockResolvedValue({ succeeded: [{ id: 'plain-result' }], skipped: [] });
     priv.notifySamplesRepeated = jest.fn().mockResolvedValue(undefined);
     priv.findById = jest.fn((id: string) => Promise.resolve({ id }));
     return { service, transferUpdate, priv };
@@ -899,7 +910,7 @@ describe('OrderSampleService — Return of a transferred copy', () => {
       data: { transferStatus: 'REPEAT' },
     });
     expect(priv.notifySamplesRepeated).toHaveBeenCalledWith('t1', ['origin1']);
-    expect(out).toEqual([{ id: 'origin1' }]);
+    expect(out).toEqual({ succeeded: [{ id: 'origin1' }], skipped: [] });
   });
 
   it('a normal sample (not a copy) keeps the ordinary Return', async () => {
@@ -914,7 +925,7 @@ describe('OrderSampleService — Return of a transferred copy', () => {
       expect.any(Function),
       expect.anything(),
     );
-    expect(out).toEqual([{ id: 'plain-result' }]);
+    expect(out).toEqual({ succeeded: [{ id: 'plain-result' }], skipped: [] });
   });
 
   it('refuses a copy that cannot be returned from its status, and skips it in a group', async () => {
@@ -929,6 +940,16 @@ describe('OrderSampleService — Return of a transferred copy', () => {
       skipInvalid: true,
     } as never);
     expect(group.priv.returnCopyToOrigin).not.toHaveBeenCalled();
-    expect(out).toEqual([]);
+    // Skipped, and named with the same wording as every other skipped sample.
+    expect(out).toEqual({
+      succeeded: [],
+      skipped: [
+        {
+          id: 'copy1',
+          accessionNo: null,
+          reason: 'Action "return" is not allowed from status SENT_INTERNAL',
+        },
+      ],
+    });
   });
 });

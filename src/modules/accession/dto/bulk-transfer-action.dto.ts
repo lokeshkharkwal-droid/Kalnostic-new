@@ -1,4 +1,11 @@
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsUUID } from 'class-validator';
+import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
+  IsBoolean,
+  IsOptional,
+  IsUUID,
+} from 'class-validator';
 import { SampleNoteDto } from './sample-note.dto';
 import { SendSampleDto } from './send-sample.dto';
 import { ForwardSampleDto } from './forward-sample.dto';
@@ -50,6 +57,12 @@ export class BulkPickUpDto extends TransferPickUpDto {
   @ArrayMaxSize(500)
   @IsUUID('all', { each: true })
   ids: string[];
+
+  /** Skip transfers not in a legal state for this action (multi-select bar)
+   *  instead of failing the whole batch; the skipped ids are returned. */
+  @IsOptional()
+  @IsBoolean()
+  skipInvalid?: boolean;
 }
 
 /** Bulk Receive (transfer ids). */
@@ -59,6 +72,10 @@ export class BulkReceiveDto extends TransferReceiveDto {
   @ArrayMaxSize(500)
   @IsUUID('all', { each: true })
   ids: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  skipInvalid?: boolean;
 }
 
 /** Bulk Accept (transfer ids). */
@@ -68,6 +85,10 @@ export class BulkTransferAcceptDto extends SampleNoteDto {
   @ArrayMaxSize(500)
   @IsUUID('all', { each: true })
   ids: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  skipInvalid?: boolean;
 }
 
 /** Bulk Repeat (transfer ids). */
@@ -77,6 +98,10 @@ export class BulkTransferRepeatDto extends TransferRepeatDto {
   @ArrayMaxSize(500)
   @IsUUID('all', { each: true })
   ids: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  skipInvalid?: boolean;
 }
 
 /** Bulk Reject (transfer ids). */
@@ -86,4 +111,8 @@ export class BulkTransferRejectDto extends TransferRejectDto {
   @ArrayMaxSize(500)
   @IsUUID('all', { each: true })
   ids: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  skipInvalid?: boolean;
 }

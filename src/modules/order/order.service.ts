@@ -61,6 +61,7 @@ import {
   formatTenantDate,
   formatTenantDateTime,
   formatOrderDateTime,
+  resolveOrderLocalDateTime,
 } from '../../common/utils';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
@@ -92,6 +93,8 @@ import {
   computeEffectivePaid,
   deriveRefundStatus,
   deriveReportStatus,
+  deriveReportStatusCounts,
+  orderItemNames,
 } from './entities/order.entity';
 import { computeBillingTotals } from './utils/billing-totals';
 import {
@@ -609,6 +612,13 @@ export class OrderService {
       dto.items ?? [],
     );
 
+    // B2B orders bypass ONLY the branch Previous-Dues + Partial-Billing rules:
+    // when a referral panel is attached the order follows that panel's own credit/
+    // wallet terms (enforced separately below via `referralCredit`), so the retail
+    // previous-dues / partial-billing gates must not block it. Discounts, TDS, the
+    // appointment paid-only gate, and everything else stay enforced. The frontend
+    // applies the same narrow bypass on the Create screen.
+    const isB2bOrder = Boolean(dto.referralPanelId);
     // Fetch the branch's Registration settings once (only when finalizing a real
     // order at a branch) and share it across every rule below.
     const needsBillingRules =
@@ -622,25 +632,28 @@ export class OrderService {
         : null;
     const hasDiscount = this.orderHasDiscount(dto.items ?? [], dto.payments);
 
-    // Enforce the branch's Previous-Dues + Partial-Billing rules (Registration
-    // Settings → Charges & Deductions). Only bites when finalizing a real order
-    // (`status = ORDER`) at a branch; DRAFT/QUOTE/APPOINTMENT are exempt. Also
-    // skipped entirely when no bill is generated — there is nothing to bill, so
-    // the previous-dues / partial-billing / discount gates must not block it.
+    // Enforce the branch billing rules (Registration Settings → Charges &
+    // Deductions). Only bite when finalizing a real order (`status = ORDER`) at a
+    // branch; DRAFT/QUOTE/APPOINTMENT are exempt. Also skipped entirely when no
+    // bill is generated — there is nothing to bill, so the gates must not block it.
     if (!billNotGenerated) {
-      await this.assertBillingRules({
-        tenantId,
-        branchId,
-        status: dto.status,
-        patientId: dto.patientId,
-        payments: dto.payments,
-        previousDuesCleared: dto.previousDuesCleared ?? 0,
-        settings,
-        hasDiscount,
-      });
+      // Previous-Dues + Partial-Billing — skipped for B2B orders (`isB2bOrder`),
+      // whose credit terms are governed by the referral panel instead.
+      if (!isB2bOrder) {
+        await this.assertBillingRules({
+          tenantId,
+          branchId,
+          status: dto.status,
+          patientId: dto.patientId,
+          payments: dto.payments,
+          previousDuesCleared: dto.previousDuesCleared ?? 0,
+          settings,
+          hasDiscount,
+        });
+      }
 
-      // Enforce the branch's TDS & Discount rules (allow-flags, discount mode,
-      // and min/max percentages) against the server-side item prices.
+      // TDS & Discount rules (allow-flags, discount mode, and min/max percentages)
+      // against the server-side item prices — enforced for B2B orders too.
       this.assertDiscountAndTdsRules({
         status: dto.status,
         branchId,
@@ -655,7 +668,7 @@ export class OrderService {
     // The two flags are mutually exclusive (enforced on save): "check-in for
     // paid only" blocks an unpaid/partial appointment; "allow progress of
     // unpaid/partial" (or neither) permits it. Only bites when creating an
-    // APPOINTMENT-status order at a branch.
+    // APPOINTMENT-status order at a branch. Enforced for B2B orders too.
     if (dto.status === OrderStatus.APPOINTMENT && branchId) {
       const apptSettings =
         settings ??
@@ -2559,9 +2572,6 @@ export class OrderService {
     const testRows = await this.itemRowsWithPanelTests(order);
     const { dateFormat, timeFormat } =
       await this.tenantService.getLocale(tenantId);
-    // Diagnostics tags. The visit charge is a billing figure, so the TRF
-    // carries only the Home Visit flag and the sample-collection charge.
-    const { home_visit, sample_charge } = this.diagnosticsVariables(order);
     return {
       variables: {
         trf_ref: order.billId ?? order.orderCode,
@@ -2577,8 +2587,9 @@ export class OrderService {
         clinical_notes: order.orderNotes ?? '',
         branch_name: order.branch?.name ?? '',
         panel_tests_name: this.panelTestsNameFlat(testRows),
-        home_visit,
-        sample_charge,
+        // Diagnostics tags: Home Visit flag, visit charge (0 unless Home Visit
+        // is on), sample-collection charge.
+        ...this.diagnosticsVariables(order),
         ...this.patientVariables(order, dateFormat),
         ...this.referralVariables(order),
       },
@@ -3784,6 +3795,12 @@ export class OrderService {
         collectedItemCount: count?.collected ?? 0,
         // Order-level "Order Status": derived per-test from each item's LabReport.
         reportStatus: deriveReportStatus(r.items, panelMemberCounts),
+        // Per-status report counts (all nine LabReport statuses) + the item
+        // display names — drive the Order Console's "Report Status" and
+        // "Order Item" columns. Counted per report so they match the technician
+        // worklist; names resolved from the already-included test/panel refs.
+        reportStatusCounts: deriveReportStatusCounts(r.items),
+        itemNames: orderItemNames(r.items),
         grossAmount,
         discountAmount,
         netAmount,
@@ -4968,6 +4985,9 @@ export class OrderService {
   ): Promise<PaginatedResult<BillingRecordRow>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
+    // Tenant timezone drives the report's "Date & Time" column so a stored
+    // UTC/midnight value renders as the correct branch-local wall clock.
+    const { timezone } = await this.tenantService.getLocale(tenantId);
     const orders = await this.loadBillingOrders(
       tenantId,
       activeBranchId,
@@ -5012,6 +5032,7 @@ export class OrderService {
       }
       const total = rows.length;
       const data = rows.slice((page - 1) * limit, page * limit);
+      await this.enrichReportRows(report, data, timezone);
       return { data, total, page, limit };
     }
 
@@ -5081,8 +5102,10 @@ export class OrderService {
           paymentMode: p.paymentMode,
           paymentReference: p.reference,
           paymentDate: p.paymentDate ?? p.createdAt,
+          paymentCollectedById: p.collectedBy ?? null,
         };
       });
+      await this.enrichReportRows(report, data, timezone);
       return { data, total, page, limit };
     }
 
@@ -5121,7 +5144,88 @@ export class OrderService {
         invoiceCode: invoiceCodes.get(o.id) ?? null,
       };
     });
+    await this.enrichReportRows(report, data, timezone);
     return { data, total, page, limit };
+  }
+
+  /**
+   * Attach the Finance-report display fields every detailed-record row needs:
+   *  - `dateTimeDisplay` — the row's `"YYYY-MM-DD HH:mm"` moment in the tenant's
+   *    timezone. For Collection it's the payment's instant; for every other
+   *    report it's the order's date+time (operator-entered `orderTime`, else the
+   *    creation instant, resolved by {@link resolveOrderLocalDateTime}). This is
+   *    the fix for the reports showing `00:00`: the FE used the date-only
+   *    `orderDate`, which carries no time.
+   *  - `responsibleUser` — the name of the person the report holds responsible:
+   *    the order creator (Billing/Outstanding), the payment collector
+   *    (Collection), the refunder (Refund) or the canceller (Cancel). Resolved in
+   *    one batched `Person` lookup; null for historical rows with no recorded
+   *    actor (never a made-up name).
+   * @param report the active Finance report (selects the actor + date source)
+   * @param rows the page's detailed-record rows (mutated in place)
+   * @param timezone the tenant/branch IANA zone (from `TenantService.getLocale`)
+   */
+  private async enrichReportRows(
+    report: BillingReport,
+    rows: BillingRecordRow[],
+    timezone: string | null,
+  ): Promise<void> {
+    const actorIdOf = (r: BillingRecordRow): string | null => {
+      if (report === 'collection') {
+        return r.paymentCollectedById ?? r.createdBy ?? null;
+      }
+      if (report === 'refund') {
+        // The actor of the latest refund ledger entry that captured one, else
+        // the order's last editor (the refund was applied via update/cancel).
+        const refunder = [...r.payments]
+          .reverse()
+          .find(
+            (p) => p.entryType === PaymentEntryType.REFUND && p.collectedBy,
+          );
+        return refunder?.collectedBy ?? r.updatedBy ?? null;
+      }
+      if (report === 'cancel') return r.updatedBy ?? null;
+      return r.createdBy ?? null; // billing, outstanding
+    };
+
+    const names = await this.resolveActorNames(rows.map(actorIdOf));
+    for (const r of rows) {
+      const actorId = actorIdOf(r);
+      // `resolveActorNames` only maps ids it actually found, so an unresolved id
+      // becomes null rather than a raw UUID leaking to the client.
+      r.responsibleUser = actorId ? (names.get(actorId) ?? null) : null;
+
+      // Collection's stored `paymentDate` is operator-entered and date-only (UTC
+      // midnight), so it carries no time — resolve it the same way orders do:
+      // when the payment was recorded on its own date, its real `createdAt`
+      // instant is the true collection time; a back-dated receipt keeps the date
+      // only. Every other report resolves the order's own date+time.
+      const local =
+        report === 'collection'
+          ? resolveOrderLocalDateTime(
+              {
+                orderDate: r.paymentDate ?? r.createdAt,
+                orderTime: null,
+                createdAt: r.createdAt,
+              },
+              timezone,
+            ).local
+          : resolveOrderLocalDateTime(r, timezone).local;
+      r.dateTimeDisplay = this.formatReportMinute(local);
+    }
+  }
+
+  /**
+   * Format a tenant-local wall-clock instant (its UTC getters already hold the
+   * branch-local time, per `toBranchLocalInstant`) as `"YYYY-MM-DD HH:mm"` for a
+   * Finance report's "Date & Time" column.
+   */
+  private formatReportMinute(local: Date): string {
+    const p = (n: number): string => String(n).padStart(2, '0');
+    return (
+      `${local.getUTCFullYear()}-${p(local.getUTCMonth() + 1)}-${p(local.getUTCDate())}` +
+      ` ${p(local.getUTCHours())}:${p(local.getUTCMinutes())}`
+    );
   }
 
   /**
@@ -5542,6 +5646,7 @@ export class OrderService {
         branchId: true,
         status: true,
         patientId: true,
+        referralPanelId: true,
         orderCode: true,
         externalOrderId: true,
         isBillGenerated: true,
@@ -5561,6 +5666,17 @@ export class OrderService {
     });
     const branchId = existing?.branchId ?? null;
     const effectiveStatus = dto.status ?? existing?.status;
+
+    // B2B bypass (mirrors create()): when the effective order carries a referral
+    // panel — the patched value, or the stored one when the patch doesn't touch
+    // it — the branch Registration Settings do not apply, so the finalize-time
+    // Previous-Dues / Partial-Billing / Discount / TDS gates below are skipped.
+    // The frontend applies the same bypass on the Create screen.
+    const effectiveReferralPanelId =
+      dto.referralPanelId !== undefined
+        ? dto.referralPanelId
+        : (existing?.referralPanelId ?? null);
+    const isB2bOrder = Boolean(effectiveReferralPanelId);
 
     // Billing-menu permission gates (branch Registration Settings, keyed on the
     // record's original creator). Loaded once; only consulted when the order has
@@ -5726,8 +5842,9 @@ export class OrderService {
     // when a draft is finalized (or an order re-saved) to `status = ORDER`. Uses
     // the incoming ledger/items when this patch replaces them, otherwise the
     // order's stored rows — so the checks run against the order's effective state.
-    // Skipped when no bill is generated — there is nothing to bill, so the
-    // previous-dues / partial-billing / discount gates must not block the order.
+    // Skipped when no bill is generated — there is nothing to bill, so the gates
+    // must not block the order. For B2B orders (`isB2bOrder`) only the Previous-Dues
+    // + Partial-Billing check below is skipped; TDS/Discount stays enforced.
     if (
       effectiveStatus === OrderStatus.ORDER &&
       branchId &&
@@ -5804,7 +5921,9 @@ export class OrderService {
         branchId,
       );
 
-      if (existing?.patientId) {
+      // Previous-Dues + Partial-Billing — skipped for B2B orders (`isB2bOrder`),
+      // whose credit terms are governed by the referral panel instead.
+      if (existing?.patientId && !isB2bOrder) {
         await this.assertBillingRules({
           tenantId,
           branchId,
