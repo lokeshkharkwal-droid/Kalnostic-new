@@ -63,6 +63,7 @@ import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-temp
 import { PdfTemplateConfigService } from '../pdf-report-template/pdf-template-config.service';
 import {
   escapeHtml,
+  escapeHtmlKeepLineBreaks,
   toText,
 } from '../pdf-report-template/services/pdf-document.util';
 import type { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
@@ -3858,7 +3859,8 @@ export class LabReportService {
       .map((row) => {
         const name = escapeHtml(toText(row.parameter_name));
         const method = escapeHtml(toText(row.methodology));
-        const value = escapeHtml(toText(row.observed1));
+        // A Qualitative result can be written over several lines: keep them.
+        const value = escapeHtmlKeepLineBreaks(toText(row.observed1));
         const unit = escapeHtml(toText(row.unit));
         const ref = escapeHtml(toText(row.reference_display));
         const methodHtml = method

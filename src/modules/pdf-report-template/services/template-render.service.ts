@@ -5,6 +5,7 @@ import {
   PreparedPdfHtml,
   buildPdfDocuments,
   escapeHtml,
+  escapeHtmlKeepLineBreaks,
   escapeAttr,
   imageSizeStyleAttr,
   resolveBareImageTags,
@@ -48,9 +49,22 @@ const RICH_TEXT_KEYS = new Set([
   'test_file_attachment',
 ]);
 
-/** `escapeHtml`, except for a known rich-text field — see {@link RICH_TEXT_KEYS}. */
+/**
+ * Plain-text keys whose line breaks must survive printing: a result value (`observed1`) can be written over
+ * several lines (a Qualitative result). Still escaped, but each line break prints as `<br />`.
+ */
+const LINE_BREAK_KEYS = new Set(['observed1']);
+
+/**
+ * `escapeHtml`, except for a known rich-text field — see {@link RICH_TEXT_KEYS} — and a field that keeps its
+ * line breaks — see {@link LINE_BREAK_KEYS}.
+ */
 function escapeUnlessRichText(key: string, value: string): string {
-  return RICH_TEXT_KEYS.has(key.toLowerCase()) ? value : escapeHtml(value);
+  const k = key.toLowerCase();
+  if (RICH_TEXT_KEYS.has(k)) return value;
+  return LINE_BREAK_KEYS.has(k)
+    ? escapeHtmlKeepLineBreaks(value)
+    : escapeHtml(value);
 }
 
 /**
