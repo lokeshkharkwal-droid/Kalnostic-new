@@ -15,6 +15,7 @@ const PAYMENT_DETAILS_MONEY_FIELDS = [
   'remainingBalance',
   'refundAmount',
   'refundCharge',
+  'revertedAmount',
 ] as const;
 type PaymentDetailsMoneyField = (typeof PAYMENT_DETAILS_MONEY_FIELDS)[number];
 

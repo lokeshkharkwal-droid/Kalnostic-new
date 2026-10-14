@@ -2,7 +2,18 @@ import { Injectable } from '@nestjs/common';
 import { LabReportAttachment } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateLabReportAttachmentDto } from './dto/create-lab-report-attachment.dto';
-import { LabReportNotFoundException } from './exceptions/lab-report.exceptions';
+import {
+  LabReportNotFoundException,
+  TestFileAttachmentsTooLargeException,
+  TooManyTestFileAttachmentsException,
+} from './exceptions/lab-report.exceptions';
+
+/** The Test Entry "File +" bucket (PDFs + images the print tag renders). */
+const FILE_KIND = 'file';
+/** Max "File +" attachments per report. */
+const MAX_FILE_ATTACHMENTS = 10;
+/** Max combined size of a report's "File +" attachments (25 MB). */
+const MAX_FILE_ATTACHMENT_TOTAL_BYTES = 25 * 1024 * 1024;
 
 /**
  * Attachments for a technician report — images / documents / files linked to a
@@ -16,13 +27,18 @@ export class LabReportAttachmentService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * Attach an already-uploaded file to a report.
+   * Attach an already-uploaded file to a report. For "File +" uploads
+   * (`kind === 'file'`) the per-report count and total-size limits are enforced
+   * inside the transaction (so two concurrent adds can't both slip past), and
+   * the server-measured `fileSizeBytes` is recorded for the total.
    * @param reportId the lab report id
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT); the report must belong to it
-   * @param dto kind + fileUrl + fileName + optional notes
+   * @param dto kind + fileUrl + fileName + optional notes + optional fileSizeBytes
    * @param actorId person id recorded as `uploadedBy`
    * @throws LabReportNotFoundException if the report is missing/other tenant/branch
+   * @throws TooManyTestFileAttachmentsException if the File+ count limit is reached
+   * @throws TestFileAttachmentsTooLargeException if the File+ total-size limit is exceeded
    */
   async addAttachment(
     reportId: string,
@@ -32,8 +48,29 @@ export class LabReportAttachmentService {
     actorId: string,
   ): Promise<LabReportAttachment> {
     await this.requireReport(reportId, tenantId, branchId);
-    return this.prisma.withTenant(tenantId, (tx) =>
-      tx.labReportAttachment.create({
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      if (dto.kind === FILE_KIND) {
+        const existing = await tx.labReportAttachment.findMany({
+          where: { labReportId: reportId, tenantId, kind: FILE_KIND },
+          select: { fileSizeBytes: true },
+        });
+        if (existing.length >= MAX_FILE_ATTACHMENTS) {
+          throw new TooManyTestFileAttachmentsException(
+            reportId,
+            MAX_FILE_ATTACHMENTS,
+          );
+        }
+        const total =
+          existing.reduce((sum, a) => sum + (a.fileSizeBytes ?? 0), 0) +
+          (dto.fileSizeBytes ?? 0);
+        if (total > MAX_FILE_ATTACHMENT_TOTAL_BYTES) {
+          throw new TestFileAttachmentsTooLargeException(
+            reportId,
+            MAX_FILE_ATTACHMENT_TOTAL_BYTES,
+          );
+        }
+      }
+      return tx.labReportAttachment.create({
         data: {
           tenantId,
           labReportId: reportId,
@@ -41,10 +78,11 @@ export class LabReportAttachmentService {
           fileUrl: dto.fileUrl,
           fileName: dto.fileName,
           notes: dto.notes ?? null,
+          fileSizeBytes: dto.fileSizeBytes ?? null,
           uploadedBy: actorId,
         },
-      }),
-    );
+      });
+    });
   }
 
   /**

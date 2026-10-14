@@ -89,9 +89,13 @@ interface ModeBuckets {
  * the tenant GUC per op). Money is whole rupees in both sources, so amounts merge
  * without conversion.
  *
- * Status is **derived** (no per-payment status column): a REFUND ledger row →
- * `REFUNDED`; a payment whose parent order/invoice is CANCELLED → `CANCELLED`;
- * otherwise `COMPLETED`. Writes (record / cancel) reuse the existing order,
+ * Status is mostly **derived**: a REFUND ledger row → `REFUNDED`; a payment whose
+ * parent order/invoice is CANCELLED → `CANCELLED`; otherwise `COMPLETED`. The one
+ * per-row state is `REVERTED` — a single payment reverted without cancelling its
+ * parent. A reverted row stays active (`deletedAt` NULL) with its money zeroed and
+ * `revertedAt` set, so the active-status filters/buckets exclude it (via
+ * `revertedAt: null`) while it still shows under `REVERTED` with its preserved
+ * `revertedAmount`. Writes (record / revert) reuse the existing order,
  * payment-details and invoice endpoints — this module never mutates.
  */
 @Injectable()
@@ -144,7 +148,11 @@ export class FinancePaymentsService {
           ? this.prisma.paymentDetails.findMany({
               where: directWhere,
               include: DIRECT_INCLUDE,
-              orderBy: { createdAt: 'desc' },
+              // `id` tiebreaker makes the ordering a TOTAL order so each page's
+              // `take: page*limit` prefix is stable — otherwise rows sharing a
+              // `createdAt` shuffle between fetches and the merge-slice below
+              // drops/duplicates rows at page boundaries (breaks batch export).
+              orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
               take,
             })
           : Promise.resolve([] as DirectRow[]),
@@ -155,7 +163,8 @@ export class FinancePaymentsService {
           ? this.prisma.invoicePayment.findMany({
               where: invoiceWhere,
               include: INVOICE_INCLUDE,
-              orderBy: { createdAt: 'desc' },
+              // Total order (see paymentDetails above) so page prefixes are stable.
+              orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
               take,
             })
           : Promise.resolve([] as InvoiceRow[]),
@@ -164,13 +173,15 @@ export class FinancePaymentsService {
           : Promise.resolve(0),
       ]);
 
+    // Sort by the SAME total order the sources are fetched with — full-precision
+    // `createdAt` then `id` — NOT the minute-precision `dateTime` display string.
+    // Sorting on the coarser display value reintroduces the tie instability the
+    // DB `orderBy` fixes, so the merged page prefix must key off `createdAt`/`id`.
     const merged = [
-      ...directRows.map((r) => this.mapDirect(r)),
-      ...invoiceRows.map((r) => this.mapInvoice(r)),
-    ].sort((a, b) =>
-      a.dateTime < b.dateTime ? 1 : a.dateTime > b.dateTime ? -1 : 0,
-    );
-    const pageItems = merged.slice((page - 1) * limit, take);
+      ...directRows.map((r) => ({ item: this.mapDirect(r), at: r.createdAt.getTime(), id: r.id })),
+      ...invoiceRows.map((r) => ({ item: this.mapInvoice(r), at: r.createdAt.getTime(), id: r.id })),
+    ].sort((a, b) => b.at - a.at || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+    const pageItems = merged.slice((page - 1) * limit, take).map((m) => m.item);
     await this.resolveNamesInPlace(tenantId, pageItems);
 
     return {
@@ -219,6 +230,8 @@ export class FinancePaymentsService {
     let cancelledCount = 0;
     let refundedAmount = 0;
     let refundedCount = 0;
+    let revertedAmount = 0;
+    let revertedCount = 0;
 
     if (useDirect) {
       const completed = await this.prisma.paymentDetails.groupBy({
@@ -227,6 +240,8 @@ export class FinancePaymentsService {
           AND: [
             dBase,
             {
+              deletedAt: null,
+              revertedAt: null,
               entryType: PaymentEntryType.PAYMENT,
               order: { status: { not: OrderStatus.CANCELLED } },
             },
@@ -239,7 +254,16 @@ export class FinancePaymentsService {
       }
 
       const refund = await this.prisma.paymentDetails.aggregate({
-        where: { AND: [dBase, { entryType: PaymentEntryType.REFUND }] },
+        where: {
+          AND: [
+            dBase,
+            {
+              deletedAt: null,
+              revertedAt: null,
+              entryType: PaymentEntryType.REFUND,
+            },
+          ],
+        },
         _sum: { refundAmount: true },
         _count: { _all: true },
       });
@@ -251,6 +275,8 @@ export class FinancePaymentsService {
           AND: [
             dBase,
             {
+              deletedAt: null,
+              revertedAt: null,
               entryType: PaymentEntryType.PAYMENT,
               order: { status: OrderStatus.CANCELLED },
             },
@@ -261,6 +287,16 @@ export class FinancePaymentsService {
       });
       cancelledAmount += toNum(cancelled._sum.paidAmount);
       cancelledCount += cancelled._count._all;
+
+      // Reverted single payments. A reverted row's live money fields are zeroed, so
+      // the original figure is read from `revertedAmount`.
+      const reverted = await this.prisma.paymentDetails.aggregate({
+        where: { AND: [dBase, { revertedAt: { not: null } }] },
+        _sum: { revertedAmount: true },
+        _count: { _all: true },
+      });
+      revertedAmount += toNum(reverted._sum.revertedAmount);
+      revertedCount += reverted._count._all;
     }
 
     if (useInvoice && iBase) {
@@ -270,6 +306,8 @@ export class FinancePaymentsService {
           AND: [
             iBase,
             {
+              deletedAt: null,
+              revertedAt: null,
               invoice: {
                 paymentStatus: { not: InvoicePaymentStatus.CANCELLED },
               },
@@ -286,7 +324,11 @@ export class FinancePaymentsService {
         where: {
           AND: [
             iBase,
-            { invoice: { paymentStatus: InvoicePaymentStatus.CANCELLED } },
+            {
+              deletedAt: null,
+              revertedAt: null,
+              invoice: { paymentStatus: InvoicePaymentStatus.CANCELLED },
+            },
           ],
         },
         _sum: { amount: true },
@@ -294,6 +336,15 @@ export class FinancePaymentsService {
       });
       cancelledAmount += cancelled._sum.amount ?? 0;
       cancelledCount += cancelled._count._all;
+
+      // A reverted receipt's live `amount` is zeroed — read `revertedAmount`.
+      const reverted = await this.prisma.invoicePayment.aggregate({
+        where: { AND: [iBase, { revertedAt: { not: null } }] },
+        _sum: { revertedAmount: true },
+        _count: { _all: true },
+      });
+      revertedAmount += reverted._sum.revertedAmount ?? 0;
+      revertedCount += reverted._count._all;
     }
 
     const totalPayments = roundToTwoDecimalPlaces(
@@ -315,6 +366,8 @@ export class FinancePaymentsService {
       cancelledAmount: roundToTwoDecimalPlaces(cancelledAmount),
       refundedCount,
       refundedAmount: roundToTwoDecimalPlaces(refundedAmount),
+      revertedCount,
+      revertedAmount: roundToTwoDecimalPlaces(revertedAmount),
     };
   }
 
@@ -322,7 +375,11 @@ export class FinancePaymentsService {
 
   /**
    * Shared Direct-source filters (branch, date, referral, user, search) — no
-   * `mode`/`status` (those are layered on per caller).
+   * `mode`/`status` and **no visibility** (`deletedAt`/`revertedAt`): each caller
+   * layers its own visibility clause on top (the summary buckets want active-only;
+   * the records list also surfaces reverted rows). Keeping visibility out of the
+   * base is what lets a reverted (soft-deleted) row show in the "Reverted" tab
+   * while still being excluded from the collected-total buckets.
    */
   private directBaseWhere(
     tenantId: string,
@@ -330,7 +387,6 @@ export class FinancePaymentsService {
   ): Prisma.PaymentDetailsWhereInput {
     const where: Prisma.PaymentDetailsWhereInput = {
       tenantId,
-      deletedAt: null,
     };
     const and: Prisma.PaymentDetailsWhereInput[] = [];
 
@@ -383,9 +439,10 @@ export class FinancePaymentsService {
   }
 
   /**
-   * Shared Invoice-source filters. Returns `null` when the referral filters can
-   * never match an invoice (an invoice bills exactly one party dimension, so >1
-   * distinct referral filter is unsatisfiable).
+   * Shared Invoice-source filters (no `mode`/`status` and **no visibility** — see
+   * {@link directBaseWhere}). Returns `null` when the referral filters can never
+   * match an invoice (an invoice bills exactly one party dimension, so >1 distinct
+   * referral filter is unsatisfiable).
    */
   private invoiceBaseWhere(
     tenantId: string,
@@ -393,7 +450,6 @@ export class FinancePaymentsService {
   ): Prisma.InvoicePaymentWhereInput | null {
     const where: Prisma.InvoicePaymentWhereInput = {
       tenantId,
-      deletedAt: null,
     };
     const and: Prisma.InvoicePaymentWhereInput[] = [];
 
@@ -447,7 +503,13 @@ export class FinancePaymentsService {
     return where;
   }
 
-  /** Compose the Direct records `where`: base + optional mode + optional status. */
+  /**
+   * Compose the Direct records `where`: base + optional mode + a status/visibility
+   * clause. A reverted payment stays active (`deletedAt: null`) but flags
+   * `revertedAt`, so the default visibility (`deletedAt: null`) already surfaces
+   * both active and reverted rows while excluding edit-replaced rows (which are
+   * soft-deleted, `deletedAt` set). Each status clause carries its own visibility.
+   */
   private directRecordsWhere(
     tenantId: string,
     q: ListFinancePaymentsDto,
@@ -456,56 +518,77 @@ export class FinancePaymentsService {
       this.directBaseWhere(tenantId, q),
     ];
     if (q.mode) clauses.push({ paymentMode: q.mode });
-    const status = this.directStatusClause(q.status);
-    if (status) clauses.push(status);
+    clauses.push(this.directStatusClause(q.status) ?? { deletedAt: null });
     return { AND: clauses };
   }
 
-  /** Compose the Invoice records `where`: base + optional mode + optional status. */
+  /** Compose the Invoice records `where`: base + optional mode + status/visibility. */
   private composeInvoiceRecordsWhere(
     base: Prisma.InvoicePaymentWhereInput,
     q: ListFinancePaymentsDto,
   ): Prisma.InvoicePaymentWhereInput {
     const clauses: Prisma.InvoicePaymentWhereInput[] = [base];
     if (q.mode) clauses.push({ paymentMode: q.mode });
-    const status = this.invoiceStatusClause(q.status);
-    if (status) clauses.push(status);
+    clauses.push(this.invoiceStatusClause(q.status) ?? { deletedAt: null });
     return { AND: clauses };
   }
 
-  /** Direct-source clause for a status filter (null = no restriction). */
+  /**
+   * Direct-source clause for a status filter (null = no filter → caller applies the
+   * default `deletedAt: null` visibility). Parent-derived statuses are active AND
+   * NOT reverted (`deletedAt: null, revertedAt: null`); `REVERTED` keys on
+   * `revertedAt` alone.
+   */
   private directStatusClause(
     status: PaymentLedgerStatusFilter | undefined,
   ): Prisma.PaymentDetailsWhereInput | null {
     switch (status) {
       case 'COMPLETED':
         return {
+          deletedAt: null,
+          revertedAt: null,
           entryType: PaymentEntryType.PAYMENT,
           order: { status: { not: OrderStatus.CANCELLED } },
         };
       case 'CANCELLED':
         return {
+          deletedAt: null,
+          revertedAt: null,
           entryType: PaymentEntryType.PAYMENT,
           order: { status: OrderStatus.CANCELLED },
         };
       case 'REFUNDED':
-        return { entryType: PaymentEntryType.REFUND };
+        return {
+          deletedAt: null,
+          revertedAt: null,
+          entryType: PaymentEntryType.REFUND,
+        };
+      case 'REVERTED':
+        return { revertedAt: { not: null } };
       default:
         return null;
     }
   }
 
-  /** Invoice-source clause for a status filter (null = no restriction). */
+  /** Invoice-source clause for a status filter (null = no filter → default visibility). */
   private invoiceStatusClause(
     status: PaymentLedgerStatusFilter | undefined,
   ): Prisma.InvoicePaymentWhereInput | null {
     switch (status) {
       case 'COMPLETED':
         return {
+          deletedAt: null,
+          revertedAt: null,
           invoice: { paymentStatus: { not: InvoicePaymentStatus.CANCELLED } },
         };
       case 'CANCELLED':
-        return { invoice: { paymentStatus: InvoicePaymentStatus.CANCELLED } };
+        return {
+          deletedAt: null,
+          revertedAt: null,
+          invoice: { paymentStatus: InvoicePaymentStatus.CANCELLED },
+        };
+      case 'REVERTED':
+        return { revertedAt: { not: null } };
       default:
         // REFUNDED never matches an invoice; handled by skipping the source.
         return null;
@@ -518,11 +601,15 @@ export class FinancePaymentsService {
   private mapDirect(r: DirectRow): PaymentLedgerItem {
     const o = r.order;
     const isRefund = r.entryType === PaymentEntryType.REFUND;
-    const status: PaymentLedgerStatus = isRefund
-      ? 'REFUNDED'
-      : o.status === OrderStatus.CANCELLED
-        ? 'CANCELLED'
-        : 'COMPLETED';
+    // A reverted row wins over every parent-derived status (it was individually
+    // reverted, regardless of the order's own state).
+    const status: PaymentLedgerStatus = r.revertedAt
+      ? 'REVERTED'
+      : isRefund
+        ? 'REFUNDED'
+        : o.status === OrderStatus.CANCELLED
+          ? 'CANCELLED'
+          : 'COMPLETED';
     const p = o.patient;
     const customerName = [p.firstName, p.middleName, p.lastName]
       .filter(Boolean)
@@ -536,7 +623,10 @@ export class FinancePaymentsService {
       billOrInvoiceId: o.billId ?? o.orderCode,
       customerName,
       mobile: p.mobile,
-      amount: toNum(isRefund ? r.refundAmount : r.paidAmount),
+      // A reverted row's live money is zeroed; show the preserved original.
+      amount: r.revertedAt
+        ? toNum(r.revertedAmount)
+        : toNum(isRefund ? r.refundAmount : r.paidAmount),
       mode: paymentModeLabel(r.paymentMode),
       modeKey: r.paymentMode,
       refId: r.reference,
@@ -554,6 +644,7 @@ export class FinancePaymentsService {
       notes: r.notes,
       attachmentUrl: null,
       orderId: r.orderId,
+      orderCode: o.orderCode,
       invoiceId: null,
     };
   }
@@ -561,8 +652,9 @@ export class FinancePaymentsService {
   /** Map an Invoice (`InvoicePayment`) row to a unified ledger item (names resolved later). */
   private mapInvoice(r: InvoiceRow): PaymentLedgerItem {
     const inv = r.invoice;
-    const status: PaymentLedgerStatus =
-      inv.paymentStatus === InvoicePaymentStatus.CANCELLED
+    const status: PaymentLedgerStatus = r.revertedAt
+      ? 'REVERTED'
+      : inv.paymentStatus === InvoicePaymentStatus.CANCELLED
         ? 'CANCELLED'
         : 'COMPLETED';
     const party = inv.partyName;
@@ -573,7 +665,8 @@ export class FinancePaymentsService {
       billOrInvoiceId: inv.invoiceNo,
       customerName: party,
       mobile: inv.partyMobile,
-      amount: r.amount,
+      // A reverted receipt's live `amount` is zeroed; show the preserved original.
+      amount: r.revertedAt ? r.revertedAmount : r.amount,
       mode: paymentModeLabel(r.paymentMode),
       modeKey: r.paymentMode,
       refId: r.reference,
@@ -595,6 +688,7 @@ export class FinancePaymentsService {
       notes: r.notes,
       attachmentUrl: r.attachmentUrl,
       orderId: null,
+      orderCode: null,
       invoiceId: r.invoiceId,
     };
   }

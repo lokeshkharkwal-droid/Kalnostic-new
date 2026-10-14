@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
+  AgeType,
   ExternalIdFormat,
   ExternalIdPurpose,
   Gender,
@@ -50,6 +51,7 @@ import {
   UmIdGenerationConflictException,
 } from './exceptions/patient.exceptions';
 import { isValidPhone, normalizePhone } from '../../common/utils/phone.util';
+import { calendarDayIn, dobFromAge } from '../../common/utils/age-dob.util';
 
 /**
  * How the created `Patient` should connect to the shared platform `Person`:
@@ -514,7 +516,7 @@ export class PatientService {
       select: { id: true },
     });
     if (localActive) {
-      throw new PatientMobileConflictException(dto.mobile);
+      throw new PatientMobileConflictException(dto.mobile ?? '');
     }
     // The mobile belongs to a Person registered only at OTHER tenants. Rather
     // than blocking registration / Create Order with a cross-tenant prompt,
@@ -561,7 +563,7 @@ export class PatientService {
             personLink,
           );
         } catch (e) {
-          this.rethrowPatientWriteConflict(e, dto.mobile, manualUmId);
+          this.rethrowPatientWriteConflict(e, dto.mobile ?? '', manualUmId);
         }
       }
       if (!options?.allowAutoUmId) {
@@ -618,7 +620,7 @@ export class PatientService {
           continue; // collision → next allocated/generated id
         }
         if (this.isMobileConflict(e)) {
-          throw new PatientMobileConflictException(dto.mobile);
+          throw new PatientMobileConflictException(dto.mobile ?? '');
         }
         throw e;
       }
@@ -641,7 +643,13 @@ export class PatientService {
     personLink: PersonLink = { mode: 'none' },
   ): Promise<PatientWithHistory> {
     const { medicalHistories, dateOfBirth, ...patientFields } = dto;
+    // A typed age with no date of birth is turned into one (today minus the age).
+    const birthDate = dateOfBirth
+      ? new Date(dateOfBirth)
+      : await this.dobFromTypedAge(tenantId, dto.age, dto.ageType);
     return this.prisma.withTenant(tenantId, async (tx) => {
+      // The shared platform identity only ever gets a date of birth the user really entered —
+      // never one estimated from an age (other labs reuse it as if it were exact).
       const personId = await this.resolvePersonId(
         tx,
         tenantId,
@@ -653,7 +661,7 @@ export class PatientService {
         data: {
           ...patientFields,
           umId,
-          dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
+          dateOfBirth: birthDate,
           tenantId,
           branchId: ctx.branchId,
           personId,
@@ -945,18 +953,32 @@ export class PatientService {
     dto: UpdatePatientDto,
     ctx: PatientWriteContext = { branchId: null },
   ): Promise<Patient> {
-    await this.ensurePatient(id, tenantId);
+    const existing = await this.ensurePatient(id, tenantId);
     await this.validatePtCategory(tenantId, ctx.branchId, dto.ptCategoryId);
     const { dateOfBirth, ...rest } = dto;
     const actorId = ctx.actorId;
+    // An age that is NEW or CHANGED, with no date of birth sent along, was just told:
+    // turn it into a date of birth. The same age sent back unchanged (Create Order re-saves
+    // the patient on every order) must NOT be converted again, or the age would restart today.
+    const ageType = dto.ageType ?? existing.ageType;
+    const ageJustTold =
+      dto.age !== undefined &&
+      dto.age !== null &&
+      (dto.age !== existing.age ||
+        (ageType ?? AgeType.YEARS) !== (existing.ageType ?? AgeType.YEARS));
+    const birthDate: Date | null | undefined = dateOfBirth
+      ? new Date(dateOfBirth)
+      : ageJustTold
+        ? await this.dobFromTypedAge(tenantId, dto.age, ageType)
+        : dateOfBirth === undefined
+          ? undefined
+          : null;
     try {
       const updated = await this.prisma.patient.update({
         where: { id },
         data: {
           ...rest,
-          ...(dateOfBirth !== undefined
-            ? { dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null }
-            : {}),
+          ...(birthDate !== undefined ? { dateOfBirth: birthDate } : {}),
           updatedBy: actorId ?? null,
         },
       });
@@ -1599,12 +1621,15 @@ export class PatientService {
     ctx: PatientWriteContext,
   ): Promise<FamilyMemberResult> {
     const anchor = await this.ensurePatient(patientId, tenantId);
+    // The member's age is in years; save the date of birth it implies (today minus the age).
+    const birthDate = await this.dobFromTypedAge(tenantId, dto.age, null);
     try {
       return await this.prisma.withTenant(tenantId, async (tx) => {
         const member = await tx.patient.create({
           data: {
             firstName: dto.name,
             age: dto.age ?? null,
+            dateOfBirth: birthDate,
             mobile: dto.mobile,
             relationship: dto.relationship,
             umId: dto.umId ?? null,
@@ -1811,6 +1836,34 @@ export class PatientService {
    * Assert a patient exists (active) in the tenant and return it. Used to guard
    * updates/deletes and medical-history operations.
    */
+  /**
+   * The date of birth that makes an age typed today exact: today (on the tenant's
+   * clock) minus the age. A patient whose age arrives without a date of birth would
+   * otherwise keep a frozen number that goes stale; saving the date of birth lets the
+   * age be worked out afresh whenever it is needed.
+   * @returns `null` when there is no age to convert (or it is not a believable age)
+   */
+  private async dobFromTypedAge(
+    tenantId: string,
+    age: number | null | undefined,
+    ageType: AgeType | null | undefined,
+  ): Promise<Date | null> {
+    if (age === null || age === undefined) return null;
+    let timeZone = 'Asia/Kolkata'; // platform default (same fallback as the tenant locale)
+    try {
+      const tenant = await this.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { settings: true },
+      });
+      const stored = (tenant?.settings as { timezone?: string } | null)
+        ?.timezone;
+      if (stored) timeZone = stored;
+    } catch {
+      // Keep the platform default: the time zone only decides which calendar day "today" is.
+    }
+    return dobFromAge(age, ageType, calendarDayIn(new Date(), timeZone));
+  }
+
   private async ensurePatient(id: string, tenantId: string): Promise<Patient> {
     const patient = await this.prisma.patient.findFirst({
       where: { id, tenantId, deletedAt: null },

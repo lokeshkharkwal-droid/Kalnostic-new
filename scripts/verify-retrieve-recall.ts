@@ -99,7 +99,12 @@ async function main(): Promise<void> {
         },
       });
       await tx.orderItem.create({
-        data: { tenantId, branchId: branchA.id, orderId: order.id, direct: 'E2E Test' },
+        data: {
+          tenantId,
+          branchId: branchA.id,
+          orderId: order.id,
+          direct: 'E2E Test',
+        },
       });
       const mkSample = async (acc: string) => {
         const s = await tx.orderSample.create({
@@ -138,36 +143,61 @@ async function main(): Promise<void> {
 
     // ── [A] History-based retrieve ───────────────────────────────────────────
     console.log('\n[A] History-based retrieve (New → Collected → Accepted):');
-    await samples.collect([sampleX.id], tenantId, PERSON, { tubeType: 'EDTA' } as any);
+    await samples.collect([sampleX.id], tenantId, PERSON, {
+      tubeType: 'EDTA',
+    } as any);
     await samples.accept([sampleX.id], tenantId, PERSON, {
       sampleCondition: 'Satisfactory',
     } as any);
     check('accept → ACCEPTED', (await read(sampleX.id))?.status === 'ACCEPTED');
 
-    await samples.retrieve([sampleX.id], tenantId, PERSON, { skipInvalid: true } as any);
-    check('retrieve → COLLECTED', (await read(sampleX.id))?.status === 'COLLECTED',
-      `got ${(await read(sampleX.id))?.status}`);
+    await samples.retrieve([sampleX.id], tenantId, PERSON, {
+      skipInvalid: true,
+    } as any);
+    check(
+      'retrieve → COLLECTED',
+      (await read(sampleX.id))?.status === 'COLLECTED',
+      `got ${(await read(sampleX.id))?.status}`,
+    );
 
-    await samples.retrieve([sampleX.id], tenantId, PERSON, { skipInvalid: true } as any);
-    check('retrieve → NEW', (await read(sampleX.id))?.status === 'NEW',
-      `got ${(await read(sampleX.id))?.status}`);
+    await samples.retrieve([sampleX.id], tenantId, PERSON, {
+      skipInvalid: true,
+    } as any);
+    check(
+      'retrieve → NEW',
+      (await read(sampleX.id))?.status === 'NEW',
+      `got ${(await read(sampleX.id))?.status}`,
+    );
 
-    await samples.retrieve([sampleX.id], tenantId, PERSON, { skipInvalid: true } as any);
-    check('retrieve at NEW → skip (stays NEW)', (await read(sampleX.id))?.status === 'NEW',
-      `got ${(await read(sampleX.id))?.status}`);
+    await samples.retrieve([sampleX.id], tenantId, PERSON, {
+      skipInvalid: true,
+    } as any);
+    check(
+      'retrieve at NEW → skip (stays NEW)',
+      (await read(sampleX.id))?.status === 'NEW',
+      `got ${(await read(sampleX.id))?.status}`,
+    );
 
     // ── [B] Cross-branch recall ──────────────────────────────────────────────
     console.log('\n[B] Cross-branch recall (send → accept@dest → retrieve):');
-    await samples.collect([sampleY.id], tenantId, PERSON, { tubeType: 'EDTA' } as any);
+    await samples.collect([sampleY.id], tenantId, PERSON, {
+      tubeType: 'EDTA',
+    } as any);
     await samples.accept([sampleY.id], tenantId, PERSON, {
       sampleCondition: 'Satisfactory',
     } as any);
     const sent = await transfers.send([sampleY.id], tenantId, PERSON, {
       destinationBranchId: branchB.id,
     } as any);
-    const transfer = sent[0]!;
-    check('send → SENT_INTERNAL', (await read(sampleY.id))?.status === 'SENT_INTERNAL');
-    check('transfer created (IN_TRANSIT)', transfer?.transferStatus === 'IN_TRANSIT');
+    const transfer = sent.succeeded[0]!;
+    check(
+      'send → SENT_INTERNAL',
+      (await read(sampleY.id))?.status === 'SENT_INTERNAL',
+    );
+    check(
+      'transfer created (IN_TRANSIT)',
+      transfer?.transferStatus === 'IN_TRANSIT',
+    );
 
     await transfers.pickUp([transfer.id], tenantId, PERSON, {} as any);
     await transfers.receive([transfer.id], tenantId, PERSON, {
@@ -177,32 +207,58 @@ async function main(): Promise<void> {
 
     const tAccepted = await readTransfer(transfer.id);
     const cloneId = tAccepted?.clonedSampleId ?? null;
-    check('transfer ACCEPTED + clone linked', tAccepted?.transferStatus === 'ACCEPTED' && !!cloneId,
-      `status=${tAccepted?.transferStatus} clonedSampleId=${cloneId}`);
+    check(
+      'transfer ACCEPTED + clone linked',
+      tAccepted?.transferStatus === 'ACCEPTED' && !!cloneId,
+      `status=${tAccepted?.transferStatus} clonedSampleId=${cloneId}`,
+    );
     const cloneBefore = cloneId ? await read(cloneId) : null;
-    check('clone exists in dest branch (ACCEPTED, not deleted)',
-      cloneBefore?.branchId === branchB.id && cloneBefore?.status === 'ACCEPTED' && cloneBefore?.deletedAt === null,
-      `branch=${cloneBefore?.branchId} status=${cloneBefore?.status} deletedAt=${cloneBefore?.deletedAt}`);
+    check(
+      'clone exists in dest branch (ACCEPTED, not deleted)',
+      cloneBefore?.branchId === branchB.id &&
+        cloneBefore?.status === 'ACCEPTED' &&
+        cloneBefore?.deletedAt === null,
+      `branch=${cloneBefore?.branchId} status=${cloneBefore?.status} deletedAt=${cloneBefore?.deletedAt}`,
+    );
 
     // Retrieve the origin sample.
-    await samples.retrieve([sampleY.id], tenantId, PERSON, { skipInvalid: true } as any);
+    await samples.retrieve([sampleY.id], tenantId, PERSON, {
+      skipInvalid: true,
+    } as any);
     const yAfter = await read(sampleY.id);
-    check('origin sample back to ACCEPTED', yAfter?.status === 'ACCEPTED', `got ${yAfter?.status}`);
-    check('processingBranchId reset to origin', yAfter?.processingBranchId === branchA.id,
-      `got ${yAfter?.processingBranchId}`);
+    check(
+      'origin sample back to ACCEPTED',
+      yAfter?.status === 'ACCEPTED',
+      `got ${yAfter?.status}`,
+    );
+    check(
+      'processingBranchId reset to origin',
+      yAfter?.processingBranchId === branchA.id,
+      `got ${yAfter?.processingBranchId}`,
+    );
 
     const tAfter = await readTransfer(transfer.id);
-    check('transfer soft-deleted', tAfter?.deletedAt != null, `deletedAt=${tAfter?.deletedAt}`);
+    check(
+      'transfer soft-deleted',
+      tAfter?.deletedAt != null,
+      `deletedAt=${tAfter?.deletedAt}`,
+    );
     const cloneAfter = cloneId ? await read(cloneId) : null;
-    check('clone soft-deleted', cloneAfter?.deletedAt != null, `deletedAt=${cloneAfter?.deletedAt}`);
+    check(
+      'clone soft-deleted',
+      cloneAfter?.deletedAt != null,
+      `deletedAt=${cloneAfter?.deletedAt}`,
+    );
 
     const queue = await transfers.findTransfers(tenantId, branchB.id, {
       direction: 'incoming',
       kind: 'INTERNAL',
     } as any);
-    check('transfer gone from receiving branch referral queue',
+    check(
+      'transfer gone from receiving branch referral queue',
       !queue.data.some((t: any) => t.id === transfer.id),
-      `queue has ${queue.data.length} row(s)`);
+      `queue has ${queue.data.length} row(s)`,
+    );
   } catch (e) {
     failed++;
     console.error('\nUNEXPECTED ERROR:', e);
@@ -210,7 +266,9 @@ async function main(): Promise<void> {
     // ── Cleanup (hard-delete the isolated test tenant's data) ────────────────
     try {
       await prisma.withTenant(tenantId, async (tx) => {
-        await tx.labReport.deleteMany({ where: { tenantId } }).catch(() => undefined);
+        await tx.labReport
+          .deleteMany({ where: { tenantId } })
+          .catch(() => undefined);
         await tx.sampleTransfer.deleteMany({ where: { tenantId } });
         await tx.orderSampleStatusHistory.deleteMany({ where: { tenantId } });
         await tx.orderSampleTest.deleteMany({ where: { tenantId } });
@@ -223,7 +281,10 @@ async function main(): Promise<void> {
       await prisma.tenant.delete({ where: { id: tenantId } });
       console.log('\nCleanup: test tenant removed.');
     } catch (e) {
-      console.error('Cleanup failed (manual removal may be needed):', (e as Error).message);
+      console.error(
+        'Cleanup failed (manual removal may be needed):',
+        (e as Error).message,
+      );
     }
     console.log(`\nRESULT: ${passed} passed, ${failed} failed`);
     await app.close();

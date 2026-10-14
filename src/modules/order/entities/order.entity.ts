@@ -215,6 +215,75 @@ export function deriveReportStatus(
 }
 
 /**
+ * The nine {@link LabReportStatus} values in their canonical display order —
+ * the same order (and colour coding) the technician worklist renders. The Order
+ * Console's "Report Status" column shows per-status counts in this order so
+ * every row reads consistently.
+ */
+export const LAB_REPORT_STATUS_ORDER: readonly LabReportStatus[] = [
+  LabReportStatus.PENDING,
+  LabReportStatus.PARTIAL_PENDING,
+  LabReportStatus.SAVED,
+  LabReportStatus.VALIDATION_PENDING,
+  LabReportStatus.RESULT_DONE,
+  LabReportStatus.APPROVED,
+  LabReportStatus.PUBLISHED,
+  LabReportStatus.ERROR_REPORTED,
+  LabReportStatus.RESULT_REJECTED,
+];
+
+/** Per-{@link LabReportStatus} report counts for one order (all nine keys present). */
+export type ReportStatusCounts = Record<LabReportStatus, number>;
+
+/**
+ * Count the order's actual `LabReport`s grouped by their {@link LabReportStatus}.
+ * Counts one per **report** — exactly the rows the technician worklist lists — so
+ * the Order Console's per-status counts reconcile with that view with no double
+ * counting. An item with no report yet (sample not accepted at Accession, so no
+ * `LabReport` exists) contributes nothing, mirroring the worklist. Every one of
+ * the nine statuses is always present in the result (zero when none), so the
+ * frontend can render a consistent, ordered column.
+ * @param items the order's active items with their `labReports[].status`
+ * @returns a map of every {@link LabReportStatus} to its report count
+ */
+export function deriveReportStatusCounts(
+  items: { labReports: { status: LabReportStatus }[] }[],
+): ReportStatusCounts {
+  const counts = Object.fromEntries(
+    LAB_REPORT_STATUS_ORDER.map((s) => [s, 0]),
+  ) as ReportStatusCounts;
+  for (const item of items) {
+    for (const report of item.labReports) {
+      counts[report.status] += 1;
+    }
+  }
+  return counts;
+}
+
+/**
+ * The display names of an order's active items, in order — a panel's name, else
+ * the test's name, else the `direct` free-text value. Drives the Order Console's
+ * "Order Item" column and its "+N more" overflow tooltip, so the frontend never
+ * has to carry the raw catalogue refs just to render names.
+ * @param items the order's active items with their resolved test/panel refs
+ */
+export function orderItemNames(
+  items: {
+    direct: string | null;
+    branchLabTest: { testName: string } | null;
+    branchLabPanel: { panelName: string } | null;
+  }[],
+): string[] {
+  return items.map(
+    (it) =>
+      it.branchLabPanel?.panelName ??
+      it.branchLabTest?.testName ??
+      it.direct ??
+      '—',
+  );
+}
+
+/**
  * Prisma `include` for a fully-composed order read: patient ref, the referral
  * refs (referral doctor / panel and internal / external referral records),
  * catalogue items (active only, with their resolved test/panel — `direct` items
@@ -302,6 +371,16 @@ export const ORDER_INCLUDE = {
           tatMaxValue: true,
           tatMaxUnit: true,
         },
+      },
+      // Reporting progress of this item's report(s) — one LabReport for a
+      // non-panel/grandfathered-panel item, several (one per member test) for a
+      // post-breakdown panel item; created lazily once a linked sample is
+      // accepted, empty until then. `approvedAt` is null until the report is
+      // approved in Technician Reporting. Lets the Order Overview's Test Details
+      // surface each sample's report Approved Date & Time.
+      labReports: {
+        where: { deletedAt: null },
+        select: { status: true, approvedAt: true, memberBranchLabTestId: true },
       },
     },
   },
@@ -556,6 +635,9 @@ export const ORDER_LIST_INCLUDE = {
       reference: true,
       paymentDate: true,
       createdAt: true,
+      // The staff Person who recorded this ledger row — the Finance Collection
+      // report shows the collector, and the Refund report the refunder.
+      collectedBy: true,
     },
   },
   // The order(s) this quote was converted into — used to surface "View Order"
@@ -656,6 +738,24 @@ export type BillingRecordRow = BillingOrder & {
   paymentReference?: string | null;
   paymentDate?: Date | null;
   /**
+   * The `Person.id` who recorded this collected payment (Collection report only —
+   * from the source `PaymentDetails.collectedBy`). Resolved to a name in
+   * {@link responsibleUser}; falls back to the order's creator when the payment
+   * never captured a collector.
+   */
+  paymentCollectedById?: string | null;
+  /**
+   * Finance-report display fields (attached by `billingRecords`, every report):
+   * `dateTimeDisplay` is the row's localised `"YYYY-MM-DD HH:mm"` moment (the
+   * order's date+time, or the payment's for Collection) — fixes the FE showing
+   * `00:00` from the date-only `orderDate`. `responsibleUser` is the name of the
+   * person the report holds responsible: the order creator (Billing/Outstanding),
+   * the payment collector (Collection), the refunder (Refund) or the canceller
+   * (Cancel). Null when no actor was recorded (historical rows).
+   */
+  dateTimeDisplay?: string;
+  responsibleUser?: string | null;
+  /**
    * Invoice-lock (Outstanding report). Whether an active invoice has already been
    * generated for this order, and that invoice's number. Drives the frontend's
    * disabled "Create Invoice" selection checkbox so a record can't be invoiced
@@ -683,6 +783,18 @@ export type OrderListRow = Prisma.OrderGetPayload<{
    * ({@link deriveReportStatus}). This is the Order Console's "Order Status".
    */
   reportStatus: OrderReportStatus;
+  /**
+   * Per-{@link LabReportStatus} report counts for this order ({@link
+   * deriveReportStatusCounts}) — all nine statuses, counted per report so they
+   * reconcile with the technician worklist. Drives the Order Console's "Report
+   * Status" column (count-per-status, each in its status colour).
+   */
+  reportStatusCounts: ReportStatusCounts;
+  /**
+   * Display names of the order's active items, in order ({@link orderItemNames})
+   * — drives the Order Console's "Order Item" column and its "+N more" tooltip.
+   */
+  itemNames: string[];
   grossAmount: number;
   discountAmount: number;
   netAmount: number;

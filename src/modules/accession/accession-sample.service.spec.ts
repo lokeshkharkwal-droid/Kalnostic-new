@@ -3,6 +3,7 @@ import { AccessionSettingsService } from './accession-settings.service';
 import { OrderSampleService } from './accession-sample.service';
 import { LabReportService } from '../lab-report/lab-report.service';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
+import { PdfTemplateConfigService } from '../pdf-report-template/pdf-template-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TenantService } from '../tenant/tenant.service';
 import { BarcodeService } from './barcode.service';
@@ -34,6 +35,7 @@ describe('OrderSampleService — panel sample resolution', () => {
       {} as unknown as AccessionSettingsService,
       {} as unknown as LabReportService,
       {} as unknown as PdfReportTemplateService,
+      {} as unknown as PdfTemplateConfigService,
       {} as unknown as EventEmitter2,
       {} as unknown as TenantService,
       {} as unknown as BarcodeService,
@@ -200,6 +202,7 @@ describe('OrderSampleService — reconcileForOrderInTx (remove path)', () => {
       {} as unknown as AccessionSettingsService,
       {} as unknown as LabReportService,
       {} as unknown as PdfReportTemplateService,
+      {} as unknown as PdfTemplateConfigService,
       {} as unknown as EventEmitter2,
       {} as unknown as TenantService,
       {} as unknown as BarcodeService,
@@ -361,6 +364,7 @@ describe('OrderSampleService — label variables', () => {
     {} as unknown as AccessionSettingsService,
     {} as unknown as LabReportService,
     {} as unknown as PdfReportTemplateService,
+    {} as unknown as PdfTemplateConfigService,
     {} as unknown as EventEmitter2,
     {} as unknown as TenantService,
     {} as unknown as BarcodeService,
