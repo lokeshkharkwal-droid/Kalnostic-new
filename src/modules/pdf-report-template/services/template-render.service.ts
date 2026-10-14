@@ -297,7 +297,9 @@ export class TemplateRenderService {
    * Expand `<signing_authority_tag>` blocks in the footer into one block per
    * signatory. A tag wrapping inner markup uses that inner block as the
    * per-signatory template (`{name}`, `{designation}`, `{registrationNumber}`,
-   * `{signatureImage}`); a bare tag uses a default block.
+   * `{signatureImage}`, plus that signatory's
+   * `{report_approved_by_certifications}` / `{report_approved_by_qualification}` /
+   * `{report_approved_by_registration_no}`); a bare tag uses a default block.
    */
   private expandSigningAuthority(
     footerHtml: string,
@@ -333,6 +335,8 @@ export class TemplateRenderService {
       registrationNumber: s.registrationNumber ?? '',
       signatureImage: s.signatureImage ?? '',
       report_approved_by_certifications: s.certifications ?? '',
+      report_approved_by_qualification: s.qualification ?? '',
+      report_approved_by_registration_no: s.registrationNumber ?? '',
     };
     return template.replace(/\{([a-zA-Z0-9_]+)\}/g, (whole, key: string) =>
       key in fields ? escapeHtml(this.stringify(fields[key])) : whole,
