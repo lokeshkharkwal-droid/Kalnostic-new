@@ -30,8 +30,10 @@ export const ALLOWED_ATTACHMENT_MIME_TYPES = [
 /** Hard cap for an uploaded attachment: 10 MB. */
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
-/** Shape returned by the upload endpoint — the stored file's public URL. */
+/** Shape returned by the upload endpoint — the stored file's public URL + size. */
 export interface UploadAttachmentResult {
   /** Fully-qualified S3 URL of the stored file. */
   url: string;
+  /** Server-measured size of the stored file in bytes. */
+  size: number;
 }

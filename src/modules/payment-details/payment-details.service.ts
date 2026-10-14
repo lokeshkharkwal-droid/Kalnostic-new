@@ -1,11 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { OrderStatus, Prisma } from '@prisma/client';
+import { OrderStatus, PaymentEntryType, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
 import { getReferralPanelId } from '../../prisma/tenant-context';
 import { PaginatedResult } from '../../common/dto/response.dto';
+import { roundToTwoDecimalPlaces } from '../../common/utils';
 import { recomputeBillStatusInTx } from '../order/utils/bill-status';
+import { assertQuoteTakesNoNewMoney } from '../order/utils/quote-payment';
 import {
   derivePaymentStatus,
   computeEffectivePaid,
@@ -21,11 +23,13 @@ import {
   PaymentDetailsEntity,
 } from './entities/payment-details.entity';
 import {
+  PaymentAlreadyRevertedException,
   PaymentCollectionByOtherUserNotAllowedException,
   PaymentDetailsNotFoundException,
   PaymentOrderCancelledException,
   PaymentOrderNotFoundException,
   PaymentOverpaymentException,
+  PaymentRevertBlockedOrderInvoicedException,
 } from './exceptions/payment-details.exceptions';
 
 /**
@@ -143,6 +147,8 @@ export class PaymentDetailsService {
     if (order.status === OrderStatus.CANCELLED) {
       throw new PaymentOrderCancelledException(dto.orderId);
     }
+    // A quotation is an estimate, not a bill — it cannot take a payment.
+    assertQuoteTakesNoNewMoney(order.status, dto.paidAmount ?? 0);
     await this.assertCanCollect(tenantId, order, personId);
     // "Settle payment of other users": collecting on an order created by someone
     // else additionally requires the permission (layered on top of the branch
@@ -182,7 +188,12 @@ export class PaymentDetailsService {
         agg._sum.refundAmount?.toNumber() ?? 0,
         agg._sum.refundCharge?.toNumber() ?? 0,
       );
-      const pending = (agg._sum.netAmount?.toNumber() ?? 0) - effectivePaid;
+      // Round to 2dp before comparing: `netAmount − effectivePaid` in float can
+      // land at e.g. 666.5999999… and wrongly reject an exact 666.60 payment of a
+      // balance that contains paise. Whole-rupee balances are unaffected.
+      const pending = roundToTwoDecimalPlaces(
+        (agg._sum.netAmount?.toNumber() ?? 0) - effectivePaid,
+      );
       const attempted = dto.paidAmount ?? 0;
       if (attempted > pending) {
         throw new PaymentOverpaymentException(pending, attempted);
@@ -284,6 +295,18 @@ export class PaymentDetailsService {
   ): Promise<PaymentDetailsEntity> {
     const existing = await this.findById(id, tenantId);
     await this.assertCanCollectForOrder(tenantId, existing.orderId, personId);
+    // Raising a payment on a quotation is refused (lowering/keeping is fine).
+    if (dto.paidAmount !== undefined) {
+      const owner = await this.prisma.order.findFirst({
+        where: { id: existing.orderId, tenantId, deletedAt: null },
+        select: { status: true },
+      });
+      assertQuoteTakesNoNewMoney(
+        owner?.status,
+        dto.paidAmount,
+        existing.paidAmount ?? 0,
+      );
+    }
     const { paymentDate, ...rest } = dto;
     return this.prisma.withTenant(tenantId, async (tx) => {
       const row = await tx.paymentDetails.update({
@@ -316,6 +339,90 @@ export class PaymentDetailsService {
       const row = await tx.paymentDetails.update({
         where: { id },
         data: { deletedAt: new Date() },
+      });
+      await this.recomputePaymentStatus(tx, tenantId, existing.orderId);
+      return mapPaymentDetails(row);
+    });
+  }
+
+  /**
+   * Revert a SINGLE order payment (the Finance → Payments "Revert" action). Unlike
+   * cancelling the whole order, this affects only the one payment.
+   *
+   * The row is deliberately **kept active** (`deletedAt` stays NULL): the order's
+   * net total is summed across its payment rows (one row carries the net snapshot),
+   * so soft-deleting could collapse the order's net to zero and wrongly flip it to
+   * Paid. Instead we ZERO the row's money fields (`paidAmount`/`refundAmount`/
+   * `refundCharge`) so it contributes no collected money, PRESERVE its `netAmount`
+   * snapshot, stash the original figure in `revertedAmount`, and flag `revertedAt`.
+   * The order's paid amount, `paymentStatus`, `billStatus` and the Outstanding
+   * report then recompute correctly off the remaining non-reverted money, with the
+   * order and its total left untouched. The reverted row stays visible in the
+   * ledger's "Reverted" tab.
+   *
+   * Blocked when the order has been consolidated into an invoice — that money is
+   * tracked on the invoice ledger, so revert the invoice receipt instead.
+   * @param id the payment row id to revert
+   * @param tenantId tenant scope
+   * @param personId acting user (recorded as `revertedBy`; checked against the
+   *   order's creator for the collection-by-other-user gate)
+   * @param reason optional free-text reason
+   * @throws PaymentDetailsNotFoundException if missing/other tenant
+   * @throws PaymentAlreadyRevertedException if the payment was already reverted
+   * @throws PaymentCollectionByOtherUserNotAllowedException when barred by setting
+   * @throws PaymentRevertBlockedOrderInvoicedException when the order is invoiced
+   */
+  async revert(
+    id: string,
+    tenantId: string,
+    personId: string | null,
+    reason?: string,
+  ): Promise<PaymentDetailsEntity> {
+    const existing = await this.findById(id, tenantId);
+    // Idempotency guard: a reverted row stays active, so findById still returns it.
+    if (existing.revertedAt) {
+      throw new PaymentAlreadyRevertedException(id);
+    }
+    await this.assertCanCollectForOrder(tenantId, existing.orderId, personId);
+    // Invoice-lock: an invoiced order's collected money lives on the invoice
+    // ledger — reverting it here would desync the two. Mirrors the active-link
+    // check `OrderService.assertNotInvoiced` uses.
+    const invoiced = await this.prisma.invoiceSourceOrder.findFirst({
+      where: {
+        tenantId,
+        orderId: existing.orderId,
+        deletedAt: null,
+        invoice: { deletedAt: null },
+      },
+      select: { id: true },
+    });
+    if (invoiced) {
+      throw new PaymentRevertBlockedOrderInvoicedException(existing.orderId);
+    }
+    // The original figure to preserve for the "Reverted" tab: a PAYMENT row's
+    // collected amount, or a REFUND row's returned amount.
+    const originalAmount =
+      existing.entryType === PaymentEntryType.REFUND
+        ? existing.refundAmount
+        : existing.paidAmount;
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const row = await tx.paymentDetails.update({
+        where: { id },
+        data: {
+          revertedAt: new Date(),
+          revertedBy: personId,
+          revertReason: reason ?? null,
+          revertedAmount: originalAmount,
+          // Zero every "money in" field — collected cash, refunds, and the
+          // wallet/points applied as payment (the latter feed the Collections
+          // "Wallet/Loyalty Used" metrics) — while KEEPING the net snapshot
+          // (`netAmount`/`totalAmount`/discount/TDS) so the order's net survives.
+          paidAmount: 0,
+          refundAmount: 0,
+          refundCharge: 0,
+          deductFromWallet: 0,
+          deductFromPoints: 0,
+        },
       });
       await this.recomputePaymentStatus(tx, tenantId, existing.orderId);
       return mapPaymentDetails(row);

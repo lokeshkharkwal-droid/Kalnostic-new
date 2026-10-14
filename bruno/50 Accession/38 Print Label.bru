@@ -34,12 +34,15 @@ docs {
   ## Body
   - `sampleId` (required) — the accession sample to label.
   - `templateId` (optional) — the `order_label_print` template to render with. Omit
-    to fall back to the tenant's single active label template.
+    to let the backend resolve it: the Configuration default for the
+    `order_label_print` slot (active branch, then tenant-wide), else the first
+    active `order_label_print` template. Having more than one active template is
+    fine — the configured (else first) one is used.
 
   ## Errors
   - 404 `ACCESSION_SAMPLE_NOT_FOUND` — sample missing / soft-deleted / other tenant.
-  - 404 `NO_ACTIVE_LABEL_TEMPLATE` / 409 `AMBIGUOUS_LABEL_TEMPLATE` — template
-    resolution failed and no `templateId` supplied.
+  - 404 `NO_ACTIVE_PRINT_TEMPLATE` — no `templateId` supplied and no active
+    `order_label_print` template exists to fall back to.
 
   In Bruno, use "Save Response → Save to file" to inspect the PDF.
 }

@@ -17,6 +17,7 @@ import { PaymentDetailsService } from './payment-details.service';
 import { CreatePaymentDetailsDto } from './dto/create-payment-details.dto';
 import { UpdatePaymentDetailsDto } from './dto/update-payment-details.dto';
 import { ListPaymentDetailsDto } from './dto/list-payment-details.dto';
+import { RevertPaymentDetailsDto } from './dto/revert-payment-details.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
@@ -82,6 +83,33 @@ export class PaymentDetailsController {
     @Body() dto: UpdatePaymentDetailsDto,
   ) {
     return this.paymentDetailsService.update(id, tenantId, personId, dto);
+  }
+
+  /**
+   * Revert a single order payment (Finance → Payments "Revert" action). Reverses
+   * only this payment — the order and its total are left intact — and recomputes
+   * the order's paid/status. The reverted row stays visible in the ledger's
+   * "Reverted" tab.
+   */
+  @Post(':id/revert')
+  @RequirePermission(PERMISSION_KEYS.FIN_PAYMENTS_CANCEL_DIRECT)
+  @Audit({
+    module: AuditModule.PAYMENT_DETAILS,
+    action: AuditAction.DELETE,
+    description: 'Reverted a payment',
+  })
+  revert(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+    @Param('id') id: string,
+    @Body() dto: RevertPaymentDetailsDto,
+  ) {
+    return this.paymentDetailsService.revert(
+      id,
+      tenantId,
+      personId,
+      dto.reason,
+    );
   }
 
   /** Soft-delete a payment record. */

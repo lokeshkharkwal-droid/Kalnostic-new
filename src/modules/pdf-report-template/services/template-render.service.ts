@@ -5,6 +5,7 @@ import {
   PreparedPdfHtml,
   buildPdfDocuments,
   escapeHtml,
+  escapeHtmlKeepLineBreaks,
   escapeAttr,
   imageSizeStyleAttr,
   resolveBareImageTags,
@@ -36,7 +37,15 @@ const IMAGE_TOKEN_RE = /\{\{image:([a-zA-Z0-9_.-]+)(?:\|([^}]*))?\}\}/g;
  * `test_file_attachment` is not technician-authored: it is `<embed>` markup the
  * server builds from the report's File+ uploads (URLs and names already
  * attribute-escaped in `buildTestFileAttachmentHtml`), so it is inserted as-is
- * for the same reason.
+ * for the same reason. `test_file_attachment_without_header` is likewise
+ * server-built markup — hidden `display:none` markers (escaped URLs/names) the
+ * PDF pipeline turns into appended pages — so it too is inserted as-is.
+ *
+ * `observed1` / `observed2` are plain-text readings, but `buildPrintContext`
+ * escapes them itself AND may wrap an out-of-range quantitative value in the
+ * configured abnormal-flag styling (`<span style="…">`) — so they arrive as
+ * safe HTML and must not be re-escaped here, or the markup would print
+ * literally.
  */
 const RICH_TEXT_KEYS = new Set([
   'useful_for',
@@ -46,11 +55,27 @@ const RICH_TEXT_KEYS = new Set([
   'references',
   'overall_result',
   'test_file_attachment',
+  'test_file_attachment_without_header',
+  'observed1',
+  'observed2',
 ]);
 
-/** `escapeHtml`, except for a known rich-text field — see {@link RICH_TEXT_KEYS}. */
+/**
+ * Plain-text keys whose line breaks must survive printing: a result value (`observed1`) can be written over
+ * several lines (a Qualitative result). Still escaped, but each line break prints as `<br />`.
+ */
+const LINE_BREAK_KEYS = new Set(['observed1']);
+
+/**
+ * `escapeHtml`, except for a known rich-text field — see {@link RICH_TEXT_KEYS} — and a field that keeps its
+ * line breaks — see {@link LINE_BREAK_KEYS}.
+ */
 function escapeUnlessRichText(key: string, value: string): string {
-  return RICH_TEXT_KEYS.has(key.toLowerCase()) ? value : escapeHtml(value);
+  const k = key.toLowerCase();
+  if (RICH_TEXT_KEYS.has(k)) return value;
+  return LINE_BREAK_KEYS.has(k)
+    ? escapeHtmlKeepLineBreaks(value)
+    : escapeHtml(value);
 }
 
 /**
@@ -297,7 +322,9 @@ export class TemplateRenderService {
    * Expand `<signing_authority_tag>` blocks in the footer into one block per
    * signatory. A tag wrapping inner markup uses that inner block as the
    * per-signatory template (`{name}`, `{designation}`, `{registrationNumber}`,
-   * `{signatureImage}`); a bare tag uses a default block.
+   * `{signatureImage}`, plus that signatory's
+   * `{report_approved_by_certifications}` / `{report_approved_by_qualification}` /
+   * `{report_approved_by_registration_no}`); a bare tag uses a default block.
    */
   private expandSigningAuthority(
     footerHtml: string,
@@ -333,6 +360,8 @@ export class TemplateRenderService {
       registrationNumber: s.registrationNumber ?? '',
       signatureImage: s.signatureImage ?? '',
       report_approved_by_certifications: s.certifications ?? '',
+      report_approved_by_qualification: s.qualification ?? '',
+      report_approved_by_registration_no: s.registrationNumber ?? '',
     };
     return template.replace(/\{([a-zA-Z0-9_]+)\}/g, (whole, key: string) =>
       key in fields ? escapeHtml(this.stringify(fields[key])) : whole,

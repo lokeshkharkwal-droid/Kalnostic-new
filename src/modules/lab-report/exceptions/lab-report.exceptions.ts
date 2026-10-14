@@ -59,6 +59,22 @@ export class LabReportLockedException extends KaltrosException {
 }
 
 /**
+ * 409 — an analyzer-filled value changed after the technician's screen loaded it (the analyzer
+ * re-sent a result). Saving that screen would silently replace the newer result, so nothing is
+ * written; the screen reloads and the technician reviews the new value.
+ */
+export class LabReportValueChangedException extends KaltrosException {
+  constructor(id: string, resultParamIds: string[]) {
+    super(
+      'LAB_REPORT_VALUE_CHANGED',
+      'The analyzer sent a newer result while this screen was open. The report was not saved; it will reload so you can review the new value.',
+      { id, resultParamIds },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
  * 409 — safety net, not reachable through the real app today. Every genuine
  * `LabReport` is only ever created by `OrderSampleService
  * .ensureLabReportsForAcceptedSample`, which runs after the sample it's for
@@ -99,14 +115,59 @@ export class LabReportResultsRequiredException extends KaltrosException {
   }
 }
 
-/** 403 — unlocking a report requires the supervisor unlock permission. */
-export class UnlockNotPermittedException extends KaltrosException {
-  constructor() {
+/** 409 — the report is already locked; a second lock would overwrite who/why. */
+export class LabReportAlreadyLockedException extends KaltrosException {
+  constructor(id: string) {
     super(
-      'UNLOCK_NOT_PERMITTED',
-      'You do not have permission to unlock a locked report',
-      {},
-      HttpStatus.FORBIDDEN,
+      'LAB_REPORT_ALREADY_LOCKED',
+      'This report is already locked. Unlock it first if you need to lock it again.',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/** 409 — only a locked report can be unlocked. */
+export class LabReportNotLockedException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'LAB_REPORT_NOT_LOCKED',
+      'This report is not locked.',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
+ * 422 — a report already has the maximum number of Test Entry "File +"
+ * attachments (LABORATORY.docx §4.4 File bucket). Keeps a single report's
+ * embedded PDFs/images bounded.
+ */
+export class TooManyTestFileAttachmentsException extends KaltrosException {
+  constructor(labReportId: string, max: number) {
+    super(
+      'TOO_MANY_TEST_FILE_ATTACHMENTS',
+      `A report can have at most ${max} File attachments`,
+      { labReportId, max },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — adding this "File +" upload would push the report's File attachments
+ * over the total-size limit.
+ */
+export class TestFileAttachmentsTooLargeException extends KaltrosException {
+  constructor(labReportId: string, maxBytes: number) {
+    super(
+      'TEST_FILE_ATTACHMENTS_TOO_LARGE',
+      `A report's File attachments cannot exceed ${Math.round(
+        maxBytes / (1024 * 1024),
+      )} MB in total`,
+      { labReportId, maxBytes },
+      HttpStatus.UNPROCESSABLE_ENTITY,
     );
   }
 }

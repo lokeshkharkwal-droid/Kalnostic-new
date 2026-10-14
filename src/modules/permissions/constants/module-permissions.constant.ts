@@ -1,5 +1,5 @@
 import { ProfileKey } from './profile-registry.constant';
-import { ROLE_MODULE_ACCESS } from './role-module-access.config';
+import { ROLE_BASELINE_MODULES } from './role-module-access.config';
 import { moduleLabel } from './system-modules.constant';
 
 /**
@@ -1248,10 +1248,13 @@ export function modulePermissionKeys(moduleKey: string): string[] {
  * Default modules each role is granted at baseline. A role's baseline permission
  * set is every permission key of these modules; per-(user+branch) and
  * per-(branch+role) rows then override individual keys. Re-exported from the
- * dedicated role→module access config so it can be edited independently.
+ * dedicated role→module config so it can be edited independently. This is the
+ * BASELINE source only — it is intentionally separate from assignment access
+ * (`allowedModulesForRole`, which is unrestricted), so opening module assignment
+ * up to all modules never changes any role's default permissions.
  */
 export const ROLE_DEFAULT_MODULES: Record<ProfileKey, string[]> =
-  ROLE_MODULE_ACCESS;
+  ROLE_BASELINE_MODULES;
 
 /** Expand a list of module keys into all their permission keys (catalogue order). */
 function expandModulePermissions(moduleKeys: string[]): string[] {

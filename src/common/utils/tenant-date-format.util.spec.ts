@@ -1,4 +1,6 @@
+import { OrderDateType } from '@prisma/client';
 import {
+  classifyOrderDate,
   formatOrderDateTime,
   formatOrderPrintDate,
   formatOrderPrintDateTime,
@@ -103,6 +105,51 @@ describe('formatOrderDateTime (bill/TRF) is unchanged', () => {
     );
     expect(formatOrderDateTime(d('2026-09-21'), null, FMT, '12h')).toBe(
       '21/09/2026 12:00 AM',
+    );
+  });
+});
+
+describe('classifyOrderDate — tenant-local "today"', () => {
+  it('an order placed just after local midnight (east of UTC) is CURRENT, not ADVANCE_DATED', () => {
+    // 00:30 IST on the 14th — UTC is still 19:00 on the 13th.
+    const now = new Date('2026-10-13T19:00:00Z');
+    expect(classifyOrderDate('2026-10-14', IST, now)).toBe(
+      OrderDateType.CURRENT,
+    );
+    // The bug it fixes: comparing against the server's UTC day flips it.
+    expect(classifyOrderDate('2026-10-14', null, now)).toBe(
+      OrderDateType.ADVANCE_DATED,
+    );
+  });
+
+  it('an evening order (west of UTC) is CURRENT, not BACKTRACKED', () => {
+    // 22:00 America/New_York on the 13th — UTC has already rolled to the 14th.
+    const now = new Date('2026-10-14T02:00:00Z');
+    expect(classifyOrderDate('2026-10-13', 'America/New_York', now)).toBe(
+      OrderDateType.CURRENT,
+    );
+    expect(classifyOrderDate('2026-10-13', null, now)).toBe(
+      OrderDateType.BACKTRACKED,
+    );
+  });
+
+  it('still buckets genuinely past / future order dates', () => {
+    const now = new Date('2026-10-14T08:30:00Z'); // 14:00 IST on the 14th
+    expect(classifyOrderDate('2026-10-10', IST, now)).toBe(
+      OrderDateType.BACKTRACKED,
+    );
+    expect(classifyOrderDate('2026-10-14', IST, now)).toBe(
+      OrderDateType.CURRENT,
+    );
+    expect(classifyOrderDate('2026-10-20', IST, now)).toBe(
+      OrderDateType.ADVANCE_DATED,
+    );
+  });
+
+  it('accepts a Date (the UTC-midnight shape Prisma returns) as well as a string', () => {
+    const now = new Date('2026-10-13T19:00:00Z');
+    expect(classifyOrderDate(d('2026-10-14'), IST, now)).toBe(
+      OrderDateType.CURRENT,
     );
   });
 });

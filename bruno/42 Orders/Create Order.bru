@@ -183,9 +183,9 @@ docs {
     Order Barcode Settings counter/format — a separate entity from sample
     barcodes, so their numbers may coincide) and `orderIdQrCode` holds the **S3
     URL** of the rendered Code39 barcode image (the name is kept for the
-    print-template contract — it is a barcode image, not a QR code). Both surface
-    as the `{order_id_barcode}` / `{order_id_qr_code}` lab-report template tags
-    (the latter also as `{{image:order_id_qr_code}}`). The image is uploaded to S3
+    print-template contract — it is a barcode image, not a QR code). Neither
+    feeds the lab-report barcode tags: `{order_id_barcode}` encodes the Order ID
+    (`orderCode`) and `{order_id_qr_code}` the Sample ID. The image is uploaded to S3
     inside the create transaction, so an S3 failure rolls the whole order back.
   - `orderTime` — optional time-of-day (`"HH:mm"`), stored separately from the
     DATE-only `orderDate` so the form's Order Time round-trips on edit.
@@ -362,9 +362,11 @@ docs {
   - **Previous dues:** if the patient has outstanding dues and the branch does
     NOT allow ordering without clearing dues
     (`ChargesAndDeductions_AllowOrderWithoutClearingPreviousDues = false`),
-    `previousDuesCleared` must be ≥ `min(outstanding, MinimumPreviousDuesToClear)`
-    — else 422 `PREVIOUS_DUES_NOT_CLEARED`. It may never exceed the outstanding
-    balance — else 422 `PREVIOUS_DUES_OVERPAYMENT`.
+    `previousDuesCleared` must be ≥ `ceil(outstanding × MinimumPreviousDuesPercentToClear%)`
+    — the configured minimum **percentage** of the outstanding balance (a
+    percentage of `0` ⇒ the full outstanding) — else 422
+    `PREVIOUS_DUES_NOT_CLEARED`. It may never exceed the outstanding balance —
+    else 422 `PREVIOUS_DUES_OVERPAYMENT`.
   - **Cross-order settlement (oldest-first):** when the order becomes `ORDER`,
     `previousDuesCleared` is applied across the patient's outstanding orders from
     the oldest `orderDate` first — a settlement `PaymentDetails` row (a pure

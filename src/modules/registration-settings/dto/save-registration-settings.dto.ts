@@ -100,9 +100,10 @@ export class SaveRegistrationSettingsDto {
   ChargesAndDeductions_AllowOrderWithoutClearingPreviousDues?: boolean;
 
   @IsOptional()
-  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsInt()
   @Min(0)
-  ChargesAndDeductions_MinimumPreviousDuesToClear?: number;
+  @Max(100)
+  ChargesAndDeductions_MinimumPreviousDuesPercentToClear?: number;
 
   @IsOptional()
   @IsBoolean()
@@ -272,6 +273,8 @@ export class SaveRegistrationSettingsDto {
 
   // ── Patients / UMID ──
   @IsOptional() @IsBoolean() Patients_AllowMergingTwoPatients?: boolean;
+
+  @IsOptional() @IsBoolean() Patients_AllowB2bPatientWithoutMobile?: boolean;
 
   @IsOptional()
   @IsEnum(ExternalIdFormat)

@@ -3,8 +3,16 @@ import { PaymentMode } from '@prisma/client';
 /** Whether a ledger row originated from a direct order payment or an invoice receipt. */
 export type PaymentLedgerType = 'DIRECT' | 'INVOICE';
 
-/** Display status of a ledger row (derived — no per-payment status column exists). */
-export type PaymentLedgerStatus = 'COMPLETED' | 'CANCELLED' | 'REFUNDED';
+/**
+ * Display status of a ledger row. Mostly derived from the parent order/invoice;
+ * `REVERTED` is the one per-payment state (the row carries `revertedAt`) — a single
+ * payment reverted without cancelling its parent order/invoice.
+ */
+export type PaymentLedgerStatus =
+  | 'COMPLETED'
+  | 'CANCELLED'
+  | 'REFUNDED'
+  | 'REVERTED';
 
 /**
  * Canonical payment-mode display labels. Mirrors the Finance Collection report
@@ -46,6 +54,15 @@ export interface PaymentLedgerItem {
   /** Resolved actor display name (from `Order.createdBy` / `InvoicePayment.createdBy`). */
   user: string | null;
   userId: string | null;
+  /**
+   * The order's ORIGINAL creator for this row — `Order.createdBy` resolved to a
+   * display name. Only Direct rows map to a single order, so `orderCreatedById` /
+   * `orderCreatedByName` are populated there; an invoice receipt aggregates many
+   * orders, so both are null (the FE renders a "—" fallback). Distinct from
+   * {@link user}, which is the payment's own actor.
+   */
+  orderCreatedById: string | null;
+  orderCreatedByName: string | null;
   /** Resolved branch name. */
   branch: string | null;
   branchId: string | null;
@@ -57,6 +74,9 @@ export interface PaymentLedgerItem {
   notes: string | null;
   attachmentUrl: string | null;
   orderId: string | null;
+  /** Human-readable parent order code (Direct rows, e.g. `ORD-00001`); null for
+   *  invoice receipts, which have no single parent order. */
+  orderCode: string | null;
   invoiceId: string | null;
 }
 
@@ -77,4 +97,7 @@ export interface FinancePaymentsSummary {
   cancelledAmount: number;
   refundedCount: number;
   refundedAmount: number;
+  /** Single payments reverted (distinct from a whole-order/invoice cancel). */
+  revertedCount: number;
+  revertedAmount: number;
 }

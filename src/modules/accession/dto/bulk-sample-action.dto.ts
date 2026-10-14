@@ -15,6 +15,7 @@ import { DiscardSampleDto } from './discard-sample.dto';
 import { CancelSampleDto } from './cancel-sample.dto';
 import { RepeatSampleDto } from './repeat-sample.dto';
 import { ReturnSampleDto } from './return-sample.dto';
+import { RetrieveSampleDto } from './retrieve-sample.dto';
 
 /**
  * Bulk (multi-select) action payloads (PDF §A.11). Each mirrors its single-item
@@ -265,6 +266,38 @@ export class BulkReturnDto extends ReturnSampleDto {
    * "Force" (group status actions) — apply the action to every id regardless of
    * its current status, overriding to the action's target status (no transition
    * validation). Distinct from `skipInvalid` (which skips instead of forcing).
+   */
+  @IsOptional()
+  @IsBoolean()
+  force?: boolean;
+}
+
+/**
+ * Bulk Retrieve (§A.7 / §A.10.19) — the universal undo, applied to every id in the
+ * selected group(s). Mirrors {@link RetrieveSampleDto} (adds the optional
+ * `retrievedFrom`) and the shared group flags. The "Retrieve All" stepping modal
+ * sends each group's sample ids with `skipInvalid` so samples not in a retrievable
+ * state are skipped rather than failing the batch.
+ */
+export class BulkRetrieveDto extends RetrieveSampleDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(500)
+  @IsUUID('all', { each: true })
+  ids: string[];
+
+  /**
+   * "Send all + skip invalid" — the FE sends every sample id in the group;
+   * samples not in a retrievable state are skipped server-side instead of
+   * failing the batch. Omit for strict bulk.
+   */
+  @IsOptional()
+  @IsBoolean()
+  skipInvalid?: boolean;
+
+  /**
+   * "Force" — accepted for payload uniformity; a no-op for retrieve (which has no
+   * forced target and always reverts to `previousStatus`).
    */
   @IsOptional()
   @IsBoolean()

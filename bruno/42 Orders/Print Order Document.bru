@@ -57,12 +57,29 @@ docs {
     explicit `templateId`.
   - 409 `AMBIGUOUS_ORDER_PRINT_TEMPLATE` — several active templates of `type` and
     no `templateId` supplied.
-  - 409 `BILL_COPY_PRINT_NOT_ALLOWED_FOR_UNPAID` — `type: "bill_print"` while the
+  - 409 `BILL_COPY_PRINT_NOT_ALLOWED_FOR_UNPAID` — a **bill document**
+    (`bill_print`, `accounts_biling`, or `referral_patient_bill_print`) while the
     branch Registration Setting
-    `BillingMenu_AllowBillCopyPrintForPaidBillingsOnly` is on and the order is not
-    fully paid (net − effective-paid > 0). Only `bill_print` is gated; `trf_print`,
-    `order_print`, `lab_quotation_print`, and `order_barcode_print` are always
-    printable.
+    `BillingMenu_AllowBillCopyPrintForPaidBillingsOnly` is on and the order's
+    billing `status !== PAID`. The gate is keyed on the derived bill status
+    (cancellation + refunds folded in) — so Cancelled / Require-Refund / Partially-
+    or Fully-Refunded / unpaid orders are all blocked, exactly matching the
+    Billings "Paid" badge and the Share Bill gate. `trf_print`, `order_print`,
+    `lab_quotation_print`, and `order_barcode_print` are never gated.
+
+  ## Bill amount tags (bill_print / accounts_biling / referral_patient_bill_print)
+
+  The bill context exposes the authoritative rollups (the SAME values the Billings
+  list and View Bill show — `computeBillingTotals`, not a raw ledger sum):
+  `gross_amount`, `discount_amount`, `net_amount`, `paid_amount`, and a
+  refund-aware `balance_amount` (net − effective-paid). It also exposes
+  `refund_total`, `refund_charge_total`, `cancellation_charge`, and `effective_paid`
+  so the bill can show money returned and retained fees. Each `sections.payments`
+  row carries `type` (`Payment`/`Refund`), `amount` (paid for a Payment, refunded
+  for a Refund — a refund no longer prints as ₹0), `mode`, `reference`,
+  `refund_charge`. The seeded default `bill_print`/`accounts_biling` templates were
+  updated to render these; existing tenant templates can adopt the new tags via the
+  Old Templates editor.
 
   In Bruno, use "Save Response → Save to file" to inspect the PDF.
 }

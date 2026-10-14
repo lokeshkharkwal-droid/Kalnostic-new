@@ -486,3 +486,119 @@ describe('PatientService.create — manual UMID branch', () => {
     expect(createdUmId()).toBe('MANUAL-1');
   });
 });
+
+/**
+ * Symptoms are per-visit on the Registration Create pages, so those pages omit
+ * `richHistory.symptoms`. An omitted list must never wipe the patient's stored
+ * symptoms (JSON or flat `has*` columns); an explicit list still replaces them.
+ */
+describe('PatientService medical-history symptoms', () => {
+  /** The `data` argument of a medicalHistory write. */
+  type WriteArg = { data: Record<string, unknown> };
+
+  let prismaMock: {
+    patient: { findFirst: jest.Mock };
+    medicalHistory: {
+      findFirst: jest.Mock;
+      update: jest.Mock;
+      create: jest.Mock;
+    };
+  };
+  let service: PatientService;
+
+  const stored = {
+    id: 'mh1',
+    richHistory: {
+      entries: { medical: [] },
+      symptoms: ['Cough', 'Fever'],
+    },
+  };
+  const medicalEntry = { condition: 'Diabetes', since: '2020' };
+
+  const writtenData = (mock: jest.Mock): Record<string, unknown> =>
+    (mock.mock.calls[0] as [WriteArg])[0].data;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    prismaMock = {
+      patient: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'p1', branchId: 'b1' }),
+      },
+      medicalHistory: {
+        findFirst: jest.fn().mockResolvedValue(stored),
+        update: jest.fn().mockResolvedValue(stored),
+        create: jest.fn().mockResolvedValue(stored),
+      },
+    };
+    service = new PatientService(
+      prismaMock as unknown as PrismaService,
+      {} as unknown as PtCategoryService,
+      {} as unknown as ExternalIdService,
+      {} as unknown as EventEmitter2,
+    );
+  });
+
+  it('keeps the stored symptoms when an update omits them', async () => {
+    await service.updateMedicalHistory('mh1', 't1', 'p1', {
+      richHistory: { entries: { medical: [medicalEntry] } },
+    });
+
+    const data = writtenData(prismaMock.medicalHistory.update);
+    expect(data.richHistory).toEqual({
+      entries: { medical: [medicalEntry] },
+      symptoms: ['Cough', 'Fever'],
+    });
+    expect(data.hasDiabetes).toBe(true);
+    expect(data.hasCough).toBe(true);
+    expect(data.hasFever).toBe(true);
+  });
+
+  it('writes no symptom columns when an update omits them and none are stored', async () => {
+    prismaMock.medicalHistory.findFirst.mockResolvedValue({
+      id: 'mh1',
+      richHistory: null,
+    });
+
+    await service.updateMedicalHistory('mh1', 't1', 'p1', {
+      richHistory: { entries: { medical: [medicalEntry] } },
+    });
+
+    const data = writtenData(prismaMock.medicalHistory.update);
+    expect(data.richHistory).not.toHaveProperty('symptoms');
+    expect(data).not.toHaveProperty('hasCough');
+    expect(data.hasDiabetes).toBe(true);
+  });
+
+  it('replaces the stored symptoms when an update sends them explicitly', async () => {
+    await service.updateMedicalHistory('mh1', 't1', 'p1', {
+      richHistory: { symptoms: ['Fever'] },
+    });
+
+    const data = writtenData(prismaMock.medicalHistory.update);
+    expect(data.richHistory).toEqual({ symptoms: ['Fever'] });
+    expect(data.hasFever).toBe(true);
+    expect(data.hasCough).toBe(false);
+  });
+
+  it('clears the stored symptoms when an update sends an empty list', async () => {
+    await service.updateMedicalHistory('mh1', 't1', 'p1', {
+      richHistory: { symptoms: [] },
+    });
+
+    const data = writtenData(prismaMock.medicalHistory.update);
+    expect(data.richHistory).toEqual({ symptoms: [] });
+    expect(data.hasCough).toBe(false);
+    expect(data.hasFever).toBe(false);
+  });
+
+  it('writes no symptom columns when a create omits them', async () => {
+    await service.addMedicalHistory('t1', 'p1', {
+      richHistory: { entries: { medical: [medicalEntry] } },
+    });
+
+    const data = writtenData(prismaMock.medicalHistory.create);
+    expect(data).not.toHaveProperty('hasCough');
+    expect(data.richHistory).not.toHaveProperty('symptoms');
+    expect(data.hasDiabetes).toBe(true);
+  });
+});

@@ -502,8 +502,15 @@ ALTER TABLE lab_test_reference_ranges DROP CONSTRAINT IF EXISTS chk_ref_range_cr
 ALTER TABLE lab_test_reference_ranges ADD CONSTRAINT chk_ref_range_critical_max
   CHECK (critical_max IS NULL OR upper_limit IS NULL OR critical_max >= upper_limit);
 ALTER TABLE lab_test_reference_ranges DROP CONSTRAINT IF EXISTS chk_ref_range_age;
+-- Unit-aware safety net (age_from / age_to carry their own DAYS/MONTHS/YEARS unit,
+-- so raw `age_from <= age_to` rejected valid ranges like "15 Days to 1 Year"). The exact
+-- rule lives in the application (lab-test/utils/age-bounds.util.ts). NOT VALID = new /
+-- updated rows only. See migration 20261011120000_age_range_unit_aware_check.
 ALTER TABLE lab_test_reference_ranges ADD CONSTRAINT chk_ref_range_age
-  CHECK (age_from <= age_to);
+  CHECK (
+    age_from * (CASE age_from_unit WHEN 'DAYS' THEN 1 WHEN 'MONTHS' THEN 28 ELSE 365 END)
+    < (age_to + 1) * (CASE age_to_unit WHEN 'DAYS' THEN 1 WHEN 'MONTHS' THEN 31 ELSE 366 END)
+  ) NOT VALID;
 
 -- ── lab_test_reference_values ─────────────────────────────────────────────────────
 ALTER TABLE lab_test_reference_values ENABLE ROW LEVEL SECURITY;
@@ -517,8 +524,15 @@ CREATE POLICY lab_test_reference_values_tenant_isolation ON lab_test_reference_v
   );
 
 ALTER TABLE lab_test_reference_values DROP CONSTRAINT IF EXISTS chk_ref_value_age;
+-- Unit-aware safety net (age_from / age_to carry their own DAYS/MONTHS/YEARS unit,
+-- so raw `age_from <= age_to` rejected valid ranges like "15 Days to 1 Year"). The exact
+-- rule lives in the application (lab-test/utils/age-bounds.util.ts). NOT VALID = new /
+-- updated rows only. See migration 20261011120000_age_range_unit_aware_check.
 ALTER TABLE lab_test_reference_values ADD CONSTRAINT chk_ref_value_age
-  CHECK (age_from <= age_to);
+  CHECK (
+    age_from * (CASE age_from_unit WHEN 'DAYS' THEN 1 WHEN 'MONTHS' THEN 28 ELSE 365 END)
+    < (age_to + 1) * (CASE age_to_unit WHEN 'DAYS' THEN 1 WHEN 'MONTHS' THEN 31 ELSE 366 END)
+  ) NOT VALID;
 
 -- ── lab_panels ──────────────────────────────────────────────────────────────────
 ALTER TABLE lab_panels ENABLE ROW LEVEL SECURITY;

@@ -56,9 +56,11 @@ docs {
     "refId": "UPI-001",
     "user": "Receptionist A",      // resolved actor name
     "userId": "<person uuid>",
+    "orderCreatedById": "<person uuid>", // Direct: Order.createdBy; null for Invoice
+    "orderCreatedByName": "Receptionist A", // "Order Created By" — the order's original creator; null for Invoice
     "branch": "Branch Hyderabad",
     "branchId": "<branch uuid>",
-    "status": "COMPLETED",         // COMPLETED | CANCELLED | REFUNDED
+    "status": "COMPLETED",         // COMPLETED | CANCELLED | REFUNDED | REVERTED
     "referralPanel": null,
     "referredBy": "Dr. Mehta",
     "internalReferralUser": null,
@@ -70,9 +72,11 @@ docs {
   }
   ```
 
-  **Status is derived** (no per-payment status column):
+  **Status is mostly derived:**
   - a REFUND ledger row → `REFUNDED`;
   - a payment whose parent order/invoice is CANCELLED → `CANCELLED`;
+  - a single payment reverted (kept active, money zeroed, `revertedAt` set) without
+    cancelling its parent → `REVERTED` (still listed, for audit — "Reverted" tab);
   - otherwise `COMPLETED`.
 
   **Filters** (all optional, tenant taken from the JWT — never the query):
@@ -81,9 +85,10 @@ docs {
   - `search` — payment id, bill/order id, invoice no, customer name, mobile.
   - `mode` — `PaymentMode` enum (`CASH` | `UPI` | `BANK_TRANSFER` | `CARD` (Debit Card) | `CREDIT` (Credit Card) | `WALLET`).
   - `type` — `DIRECT` | `INVOICE`.
-  - `status` — `COMPLETED` | `CANCELLED` | `REFUNDED` (Invoices have no refund concept, so `REFUNDED` returns Direct rows only).
+  - `status` — `COMPLETED` | `CANCELLED` | `REFUNDED` | `REVERTED` (Invoices have no refund concept, so `REFUNDED` returns Direct rows only; `REVERTED` returns both sources).
   - `referralPanelId` / `referredByDoctorId` / `internalReferralId` / `externalReferralId` — for Direct, matched on the order's referral FK; for Invoice, mapped to the invoice `partyType`+`partyId`.
   - `userId` — the `Person.id` responsible (`Order.createdBy` for Direct; `InvoicePayment.createdBy` for Invoice).
+  - `orderCreatedById` / `orderCreatedByName` — the **original order creator** ("Order Created By" column). Direct rows map to one order (`Order.createdBy`); invoice receipts aggregate many orders, so both are `null` (the FE renders `—`).
   - `page` / `limit` — offset pagination (`limit` capped at 100). `meta` carries `total`/`page`/`limit`/`totalPages`.
 
   Pagination merges the top `page*limit` of each source and slices; `total` is the

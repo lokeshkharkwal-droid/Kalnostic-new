@@ -82,26 +82,36 @@ describe('LatteReportRenderService — {{image:ID}} on the Latte path', () => {
 describe('LatteReportRenderService — barcode image tags', () => {
   const service = new LatteReportRenderService();
   const ORDER_SRC = 'data:image/png;base64,T1JERVI=';
+  const QR_SRC = 'data:image/png;base64,UVI=';
   const SAMPLE_SRC = 'data:image/png;base64,U0FNUExF';
   // `buildTestLatteContext` spreads the flat variables at the root; the
   // runtime images map carries the same srcs.
   const data = {
     patient_name: 'Jane',
     order_id_barcode: ORDER_SRC,
-    order_id_qr_code: SAMPLE_SRC,
+    order_id_qr_code: QR_SRC,
+    sample_id_barcode: SAMPLE_SRC,
   };
-  const images = { order_id_barcode: ORDER_SRC, order_id_qr_code: SAMPLE_SRC };
+  const images = {
+    order_id_barcode: ORDER_SRC,
+    order_id_qr_code: QR_SRC,
+    sample_id_barcode: SAMPLE_SRC,
+  };
 
   it('renders a bare tag in text as an <img> instead of raw data-URI text', () => {
     const html = service.renderBodyFragment(
       meta({
-        body_html: '<p>{$patient_name}</p><div>{order_id_qr_code}</div>',
+        body_html:
+          '<p>{$patient_name}</p><div>{order_id_qr_code}</div><i>{sample_id_barcode}</i>',
       }),
       data,
       images,
     );
     expect(html).toContain(
-      `<div><img src="${SAMPLE_SRC}" alt="order_id_qr_code" /></div>`,
+      `<div><img src="${QR_SRC}" alt="order_id_qr_code" /></div>`,
+    );
+    expect(html).toContain(
+      `<i><img src="${SAMPLE_SRC}" alt="sample_id_barcode" /></i>`,
     );
   });
 
@@ -116,6 +126,7 @@ describe('LatteReportRenderService — barcode image tags', () => {
     );
     expect(html).toContain(`<img src="${ORDER_SRC}" alt="x">`);
     expect(html).toContain(`<img src="${ORDER_SRC}" alt="order_id_barcode" />`);
+    expect(html).not.toContain(QR_SRC);
     expect(html).not.toContain(SAMPLE_SRC);
   });
 

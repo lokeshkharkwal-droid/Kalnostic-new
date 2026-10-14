@@ -25,6 +25,7 @@ import { DiscardSampleDto } from './dto/discard-sample.dto';
 import { CancelSampleDto } from './dto/cancel-sample.dto';
 import { RepeatSampleDto } from './dto/repeat-sample.dto';
 import { ReturnSampleDto } from './dto/return-sample.dto';
+import { RetrieveSampleDto } from './dto/retrieve-sample.dto';
 import { AssignBarcodeDto } from './dto/assign-barcode.dto';
 import { ShareSampleDto } from './dto/share-sample.dto';
 import {
@@ -34,6 +35,7 @@ import {
   BulkCollectDto,
   BulkDiscardDto,
   BulkRepeatDto,
+  BulkRetrieveDto,
   BulkReturnDto,
   BulkSampleNoteDto,
   BulkStoreDto,
@@ -85,14 +87,24 @@ export class AccessionController {
     );
   }
 
-  /** Summary counts for the status tabs (§A.5) + TAT bar (§A.4) + total. */
+  /**
+   * Summary counts for the status tabs (§A.5) + TAT bar (§A.4) + total. Takes the
+   * list's filters (date range, search, …) so the counts match what the list
+   * shows; `status`, `tatStatus` and paging are accepted but ignored.
+   */
   @Get('summary')
   summary(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
     @CurrentUser('person_id') personId: string,
+    @Query() query: ListSamplesDto,
   ) {
-    return this.sampleService.summary(tenantId, profile.branchId, personId);
+    return this.sampleService.summary(
+      tenantId,
+      profile.branchId,
+      personId,
+      query,
+    );
   }
 
   /**
@@ -139,12 +151,14 @@ export class AccessionController {
   @Audit(auditUpdate('Printed a sample label'))
   async printLabel(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Body() dto: PrintLabelDto,
     @Res() res: Response,
   ): Promise<void> {
     const pdf = await this.sampleService.printLabel(
       dto.sampleId,
       tenantId,
+      profile.branchId,
       dto.templateId,
     );
     res.setHeader('Content-Type', 'application/pdf');
@@ -161,12 +175,14 @@ export class AccessionController {
   @Audit(auditUpdate('Printed multiple sample labels'))
   async printLabels(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Body() dto: PrintLabelsDto,
     @Res() res: Response,
   ): Promise<void> {
     const pdf = await this.sampleService.printLabels(
       dto.ids,
       tenantId,
+      profile.branchId,
       dto.templateId,
     );
     res.setHeader('Content-Type', 'application/pdf');
@@ -327,7 +343,7 @@ export class AccessionController {
   bulkRetrieve(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
-    @Body() dto: BulkSampleNoteDto,
+    @Body() dto: BulkRetrieveDto,
   ) {
     return this.sampleService.retrieve(dto.ids, tenantId, personId, dto);
   }
@@ -395,7 +411,8 @@ export class AccessionController {
     @Param('id') id: string,
     @Body() dto: CollectSampleDto,
   ) {
-    return (await this.sampleService.collect([id], tenantId, personId, dto))[0];
+    return (await this.sampleService.collect([id], tenantId, personId, dto))
+      .succeeded[0];
   }
 
   /** Collect & Print (§A.10.1). */
@@ -410,7 +427,7 @@ export class AccessionController {
   ) {
     return (
       await this.sampleService.collectAndPrint([id], tenantId, personId, dto)
-    )[0];
+    ).succeeded[0];
   }
 
   /** Accept Sample. */
@@ -423,7 +440,8 @@ export class AccessionController {
     @Param('id') id: string,
     @Body() dto: AcceptSampleDto,
   ) {
-    return (await this.sampleService.accept([id], tenantId, personId, dto))[0];
+    return (await this.sampleService.accept([id], tenantId, personId, dto))
+      .succeeded[0];
   }
 
   /** Acquire. */
@@ -436,7 +454,8 @@ export class AccessionController {
     @Param('id') id: string,
     @Body() dto: SampleNoteDto,
   ) {
-    return (await this.sampleService.acquire([id], tenantId, personId, dto))[0];
+    return (await this.sampleService.acquire([id], tenantId, personId, dto))
+      .succeeded[0];
   }
 
   /** Hault. */
@@ -449,7 +468,8 @@ export class AccessionController {
     @Param('id') id: string,
     @Body() dto: SampleNoteDto,
   ) {
-    return (await this.sampleService.halt([id], tenantId, personId, dto))[0];
+    return (await this.sampleService.halt([id], tenantId, personId, dto))
+      .succeeded[0];
   }
 
   /** Error. */
@@ -462,7 +482,8 @@ export class AccessionController {
     @Param('id') id: string,
     @Body() dto: SampleNoteDto,
   ) {
-    return (await this.sampleService.error([id], tenantId, personId, dto))[0];
+    return (await this.sampleService.error([id], tenantId, personId, dto))
+      .succeeded[0];
   }
 
   /** Hold. */
@@ -475,7 +496,8 @@ export class AccessionController {
     @Param('id') id: string,
     @Body() dto: SampleNoteDto,
   ) {
-    return (await this.sampleService.hold([id], tenantId, personId, dto))[0];
+    return (await this.sampleService.hold([id], tenantId, personId, dto))
+      .succeeded[0];
   }
 
   /** Repeat. */
@@ -487,7 +509,8 @@ export class AccessionController {
     @Param('id') id: string,
     @Body() dto: RepeatSampleDto,
   ) {
-    return (await this.sampleService.repeat([id], tenantId, personId, dto))[0];
+    return (await this.sampleService.repeat([id], tenantId, personId, dto))
+      .succeeded[0];
   }
 
   /** Store. */
@@ -500,7 +523,8 @@ export class AccessionController {
     @Param('id') id: string,
     @Body() dto: StoreSampleDto,
   ) {
-    return (await this.sampleService.store([id], tenantId, personId, dto))[0];
+    return (await this.sampleService.store([id], tenantId, personId, dto))
+      .succeeded[0];
   }
 
   /** Discard. */
@@ -513,7 +537,8 @@ export class AccessionController {
     @Param('id') id: string,
     @Body() dto: DiscardSampleDto,
   ) {
-    return (await this.sampleService.discard([id], tenantId, personId, dto))[0];
+    return (await this.sampleService.discard([id], tenantId, personId, dto))
+      .succeeded[0];
   }
 
   /** Return. */
@@ -528,7 +553,7 @@ export class AccessionController {
   ) {
     return (
       await this.sampleService.returnSample([id], tenantId, personId, dto)
-    )[0];
+    ).succeeded[0];
   }
 
   /** Cancel. */
@@ -541,7 +566,8 @@ export class AccessionController {
     @Param('id') id: string,
     @Body() dto: CancelSampleDto,
   ) {
-    return (await this.sampleService.cancel([id], tenantId, personId, dto))[0];
+    return (await this.sampleService.cancel([id], tenantId, personId, dto))
+      .succeeded[0];
   }
 
   /** Retrieve (universal undo). */
@@ -552,11 +578,10 @@ export class AccessionController {
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
     @Param('id') id: string,
-    @Body() dto: SampleNoteDto,
+    @Body() dto: RetrieveSampleDto,
   ) {
-    return (
-      await this.sampleService.retrieve([id], tenantId, personId, dto)
-    )[0];
+    return (await this.sampleService.retrieve([id], tenantId, personId, dto))
+      .succeeded[0];
   }
 
   /** Assign Barcode & Print (§A.10.2). */
@@ -571,7 +596,7 @@ export class AccessionController {
   ) {
     return (
       await this.sampleService.assignBarcode([id], tenantId, personId, dto)
-    )[0];
+    ).succeeded[0];
   }
 
   /** Share & Inform (§A.10.20) — record a notification/document share. */
@@ -596,8 +621,7 @@ export class AccessionController {
     @Param('id') id: string,
     @Body() dto: SampleNoteDto,
   ) {
-    return (
-      await this.sampleService.updateNotes([id], tenantId, personId, dto)
-    )[0];
+    return (await this.sampleService.updateNotes([id], tenantId, personId, dto))
+      .succeeded[0];
   }
 }

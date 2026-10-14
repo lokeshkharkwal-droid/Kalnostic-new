@@ -21,6 +21,8 @@ auth:bearer {
 body:json {
   {
     "outsourceCenterId": "{{outsourceCenterId}}",
+    "sendDate": "2026-10-08",
+    "sendTime": "14:30",
     "logisticsType": "Courier",
     "outsourceStatus": "Dispatched",
     "notes": "Sent to third-party lab"
@@ -35,10 +37,21 @@ tests {
 
 docs {
   Outsource — **Accepted → Outsourced**, creating an OUTSOURCE `SampleTransfer`.
-  `outsourceCenterId` references an existing `OutsourceCenter` (validated → 404
-  `ACCESSION_OUTSOURCE_CENTER_NOT_FOUND` if missing). Third-party labs don't use
+
+  `outsourceCenterId` is **optional at this step**: omit it to mark the sample
+  Outsourced now and assign the center later via **Assign Center**
+  (`POST /accession/transfers/:id/assign-center`) — mirroring the Internal Send
+  flow whose station is likewise optional-then-assignable. When supplied it must
+  reference an existing `OutsourceCenter` in the caller's tenant (validated → 404
+  `ACCESSION_OUTSOURCE_CENTER_NOT_FOUND` if missing); when omitted the transfer is
+  created with a null center.
+
+  `sendDate`/`sendTime` are optional (the UI pre-fills them with "now"); `sendDate`
+  defaults to the current time server-side when absent. Third-party labs don't use
   Kalnostic, so tracking is **manual** via `outsourceStatus` (CR-3). Bulk:
   `POST /accession/order-samples/bulk/outsource`.
 
-  > Set `{{outsourceCenterId}}` from the Outsource Centers folder first.
+  > To outsource *with* a center, set `{{outsourceCenterId}}` from the Outsource
+  > Centers folder first; otherwise drop that body field to test the assign-later
+  > flow.
 }

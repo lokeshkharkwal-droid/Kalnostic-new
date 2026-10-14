@@ -1,7 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { dateOnlyRange } from '../../common/utils/date-range.util';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PDFDocument } from 'pdf-lib';
 import {
+  AgeType,
   LabReportHistory,
   LabReportStatus,
   MessagingChannel,
@@ -12,6 +14,7 @@ import {
   SampleStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { calendarDayIn, exactBirthDate } from '../../common/utils/age-dob.util';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
 import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
@@ -60,6 +63,7 @@ import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-temp
 import { PdfTemplateConfigService } from '../pdf-report-template/pdf-template-config.service';
 import {
   escapeHtml,
+  escapeHtmlKeepLineBreaks,
   toText,
 } from '../pdf-report-template/services/pdf-document.util';
 import type { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
@@ -78,6 +82,7 @@ import {
   LabReportContentSections,
   LabReportDetailApiResponse,
   LabReportDetailWithContent,
+  LabReportListRow,
   LabReportOverallResult,
   LabReportResultParam,
   LabReportSignatoryCandidate,
@@ -85,6 +90,9 @@ import {
   LabReportStatusCounts,
   LabReportTransitionAction,
   LabReportWorklistRow,
+  SIGNING_DOCTOR_SELECT,
+  doctorCertifications,
+  doctorQualification,
   fullName,
   toWorklistRow,
 } from './entities/lab-report.entity';
@@ -103,20 +111,40 @@ import {
   LabReportResultsRequiredException,
   LabReportNotesRequiredException,
   LabReportNotFoundException,
+  LabReportValueChangedException,
   LabTestCatalogueMissingException,
   InvalidResultParamException,
-  UnlockNotPermittedException,
+  LabReportAlreadyLockedException,
+  LabReportNotLockedException,
   NoActivePrintTemplateException,
   OrderReportsNotFoundException,
   ReportingWindowClosedException,
 } from './exceptions/lab-report.exceptions';
 import {
+  abnormalFlagStyle,
+  candidateAgeMatch,
+  candidateAgeRank,
+  compareRangeCandidates,
   computeTrendFlag,
+  type ExactAge,
   genderMatches,
-  patientAgeInDays,
-  rangeAgeInDays,
+  isExactAgeMatch,
+  isObservedAbnormal,
+  rangeAgeMatch,
+  sortRangesByAgeSpecificity,
 } from './utils/reference-range.util';
-import { buildTestFileAttachmentHtml } from './utils/test-file-attachment.util';
+import {
+  classifyResultValueSave,
+  describeAnalyzerOverwrite,
+} from './utils/result-value-save.util';
+import {
+  buildTestFileAttachmentAppendHtml,
+  buildTestFileAttachmentHtml,
+} from './utils/test-file-attachment.util';
+import {
+  sortWorklistMatches,
+  type WorklistMatch,
+} from './utils/worklist-order.util';
 import {
   buildReportBarcodeTags,
   pickReportSample,
@@ -438,12 +466,6 @@ export class LabReportService {
     // Standalone "Outsource" checkbox (distinct from the source pill above) —
     // same underlying signal, only ever narrows to outsourced items when checked.
     if (filters.outsource) where.isOutsourced = true;
-    if (filters.dateFrom || filters.dateTo) {
-      where.createdAt = {
-        ...(filters.dateFrom ? { gte: new Date(filters.dateFrom) } : {}),
-        ...(filters.dateTo ? { lte: new Date(filters.dateTo) } : {}),
-      };
-    }
 
     const orderItem: Prisma.OrderItemWhereInput = {};
     // The "Lab Test"/"Lab Panel" filter's id may be either a specific
@@ -480,27 +502,27 @@ export class LabReportService {
         some: { sample: { status: filters.sampleStatus }, deletedAt: null },
       };
     }
-    if (
-      filters.referredByDoctorId ||
-      filters.referralPanelId ||
-      filters.homeCollection ||
-      filters.patientId
-    ) {
-      const order: Prisma.OrderWhereInput = {};
-      if (filters.referredByDoctorId) {
-        order.referredByDoctorId = filters.referredByDoctorId;
-      }
-      if (filters.referralPanelId) {
-        order.referralPanelId = filters.referralPanelId;
-      }
-      if (filters.homeCollection) {
-        order.diagnostics = { is: { isHomeVisit: true } };
-      }
-      if (filters.patientId) {
-        order.patientId = filters.patientId;
-      }
-      orderItem.order = order;
+    // Order-level filters, joined through OrderItem.order.
+    const order: Prisma.OrderWhereInput = {};
+    // The date filter compares the ORDER's date (`orderDate`, a date-only column)
+    // — the date the worklist row shows, and the one the Accession worklist
+    // filters on — not the report's own `createdAt`, which is stamped when the
+    // sample is accepted and can be days after the order date.
+    const orderDateRange = dateOnlyRange(filters.dateFrom, filters.dateTo);
+    if (orderDateRange) order.orderDate = orderDateRange;
+    if (filters.referredByDoctorId) {
+      order.referredByDoctorId = filters.referredByDoctorId;
     }
+    if (filters.referralPanelId) {
+      order.referralPanelId = filters.referralPanelId;
+    }
+    if (filters.homeCollection) {
+      order.diagnostics = { is: { isHomeVisit: true } };
+    }
+    if (filters.patientId) {
+      order.patientId = filters.patientId;
+    }
+    if (Object.keys(order).length > 0) orderItem.order = order;
 
     // Search bar (LABORATORY.docx §1.1 element 4): Patient Name, Order ID, Test
     // Name, Ref Panel. Spans both OrderItem-level fields (Test Name, via the
@@ -619,20 +641,17 @@ export class LabReportService {
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 25;
 
-    const [rows, total] = await Promise.all([
-      this.prisma.labReport.findMany({
-        where,
-        include: LAB_REPORT_LIST_INCLUDE,
-        // Default sort matches Registration Billing / Accession worklists:
-        // by when the ORDER was placed, not when this LabReport row itself
-        // was created (which is stamped later, at sample-ACCEPTED time, and
-        // drifts out of order when samples are accepted out of sequence).
-        orderBy: { orderItem: { order: { createdAt: 'desc' } } },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      this.prisma.labReport.count({ where }),
-    ]);
+    // Worklist order matches the Accession worklist: newest first by when the
+    // order's newest sample was created (see `sortWorklistMatches`). Prisma can't
+    // order by a to-many aggregate, so the page is picked in two steps.
+    const { pageIds, total } = await this.pageWorklistReportIds(
+      tenantId,
+      resolvedBranchId,
+      where,
+      page,
+      limit,
+    );
+    const rows = await this.fetchWorklistRowsInOrder(tenantId, pageIds);
 
     let worklistRows = rows.map(toWorklistRow);
     worklistRows = await this.attachBranchNames(tenantId, worklistRows);
@@ -640,6 +659,7 @@ export class LabReportService {
     worklistRows = await this.attachMemberTestNames(worklistRows);
     worklistRows = await this.attachResultTypes(worklistRows);
     worklistRows = await this.attachSampleStatuses(tenantId, worklistRows);
+    worklistRows = await this.attachLockedByNames(worklistRows);
 
     // Analytical-TAT band per row (SRS §6.2/§8): frozen snapshot for approved
     // reports, live compute for in-flight ones — batched over the whole page.
@@ -660,6 +680,97 @@ export class LabReportService {
     // codebase already follows this; this one didn't, so `GET /lab-reports`
     // was returning a non-standard envelope with no `meta.total/page/limit`).
     return { data: worklistRows, total, page, limit };
+  }
+
+  /**
+   * One worklist page of report ids, in worklist order, plus the total number of
+   * matching reports. Fetches only ids + the two timestamps the ordering needs
+   * for every report that passed the filters, ranks them with
+   * {@link sortWorklistMatches}, and slices the page — the full rows are loaded
+   * afterwards for that page only ({@link fetchWorklistRowsInOrder}).
+   * @param branchId the branch whose samples decide the order (a transferred
+   *   copy at another branch must not push this branch's rows up or down)
+   */
+  private async pageWorklistReportIds(
+    tenantId: string,
+    branchId: string,
+    where: Prisma.LabReportWhereInput,
+    page: number,
+    limit: number,
+  ): Promise<{ pageIds: string[]; total: number }> {
+    const found = await this.prisma.labReport.findMany({
+      where,
+      select: {
+        id: true,
+        createdAt: true,
+        orderItem: {
+          select: { orderId: true, order: { select: { createdAt: true } } },
+        },
+      },
+    });
+    const matches: WorklistMatch[] = found.map((r) => ({
+      id: r.id,
+      createdAt: r.createdAt,
+      orderId: r.orderItem.orderId,
+      orderCreatedAt: r.orderItem.order.createdAt,
+    }));
+    const latestSampleByOrder = await this.latestSampleCreatedByOrder(
+      tenantId,
+      branchId,
+      [...new Set(matches.map((m) => m.orderId))],
+    );
+    const ordered = sortWorklistMatches(matches, latestSampleByOrder);
+    const start = (page - 1) * limit;
+    return {
+      pageIds: ordered.slice(start, start + limit).map((m) => m.id),
+      total: ordered.length,
+    };
+  }
+
+  /**
+   * `orderId → newest live sample's createdAt` at the given branch, for the
+   * orders in view. Queried in chunks so a large worklist never exceeds the
+   * database's bind-parameter limit.
+   */
+  private async latestSampleCreatedByOrder(
+    tenantId: string,
+    branchId: string,
+    orderIds: string[],
+  ): Promise<Map<string, Date>> {
+    const latest = new Map<string, Date>();
+    const CHUNK = 5000;
+    for (let i = 0; i < orderIds.length; i += CHUNK) {
+      const groups = await this.prisma.orderSample.groupBy({
+        by: ['orderId'],
+        where: {
+          tenantId,
+          branchId,
+          deletedAt: null,
+          orderId: { in: orderIds.slice(i, i + CHUNK) },
+        },
+        _max: { createdAt: true },
+      });
+      for (const g of groups) {
+        if (g._max.createdAt) latest.set(g.orderId, g._max.createdAt);
+      }
+    }
+    return latest;
+  }
+
+  /** Load the full worklist rows for `ids`, returned in exactly that order. */
+  private async fetchWorklistRowsInOrder(
+    tenantId: string,
+    ids: string[],
+  ): Promise<LabReportListRow[]> {
+    if (ids.length === 0) return [];
+    const fetched = await this.prisma.labReport.findMany({
+      where: { id: { in: ids }, tenantId },
+      include: LAB_REPORT_LIST_INCLUDE,
+    });
+    const byId = new Map(fetched.map((r) => [r.id, r]));
+    return ids
+      .map((id) => byId.get(id))
+      .filter((r): r is LabReportListRow => r !== undefined);
   }
 
   /**
@@ -1471,6 +1582,21 @@ export class LabReportService {
   }
 
   /**
+   * Resolve `lockedBy` (a `Person.id`) to a display name for locked rows: one
+   * batched lookup, and none at all when nothing in the page is locked.
+   */
+  private async attachLockedByNames(
+    rows: LabReportWorklistRow[],
+  ): Promise<LabReportWorklistRow[]> {
+    const lockedIds = rows.map((r) => r.lockedBy).filter((v) => !!v);
+    if (lockedIds.length === 0) return rows;
+    const names = await resolveActorNames(this.prisma, lockedIds);
+    return rows.map((r) =>
+      r.lockedBy ? { ...r, lockedByName: names.get(r.lockedBy) ?? null } : r,
+    );
+  }
+
+  /**
    * Flattens `findById`'s raw nested tree into the same flat branch/
    * department/order/patient/referredByDoctor/referralPanel/test shape the
    * list endpoint (`findAll` -> `toWorklistRow` + attach* resolvers) already
@@ -1502,6 +1628,7 @@ export class LabReportService {
     worklistRow = (await this.attachMemberTestNames([worklistRow]))[0]!;
     worklistRow = (await this.attachResultTypes([worklistRow]))[0]!;
     worklistRow = (await this.attachMultiStepProcess([worklistRow]))[0]!;
+    worklistRow = (await this.attachLockedByNames([worklistRow]))[0]!;
 
     return {
       ...worklistRow,
@@ -1835,12 +1962,24 @@ export class LabReportService {
     });
   }
 
-  private async requireReport(id: string, tenantId: string, branchId: string) {
+  /**
+   * Load a report for an action on it. A locked report is refused (409) unless
+   * `allowLocked` is set — which only READ paths use (e.g. the notes tabs, which
+   * the Test Entry popup loads when it opens a locked test so it can be unlocked).
+   */
+  private async requireReport(
+    id: string,
+    tenantId: string,
+    branchId: string,
+    opts: { allowLocked?: boolean } = {},
+  ) {
     const report = await this.prisma.labReport.findFirst({
       where: { id, tenantId, branchId, deletedAt: null },
     });
     if (!report) throw new LabReportNotFoundException(id);
-    if (report.isLocked) throw new LabReportLockedException(id);
+    if (report.isLocked && !opts.allowLocked) {
+      throw new LabReportLockedException(id);
+    }
 
     // Safety net (see LabReportSampleMissingException's own doc comment for
     // why this should never fire for a genuine report, and what it guards
@@ -2029,13 +2168,13 @@ export class LabReportService {
       where: { id: report.orderItemId },
       select: { branchLabPanelId: true },
     });
-    const validParamIds = new Set(
-      (
-        await this.getResultParams(
-          report.labTestId,
-          orderItem?.branchLabPanelId ?? null,
-        )
-      ).map((p) => p.id),
+    const resultParams = await this.getResultParams(
+      report.labTestId,
+      orderItem?.branchLabPanelId ?? null,
+    );
+    const validParamIds = new Set(resultParams.map((p) => p.id));
+    const paramNameById = new Map(
+      resultParams.map((p) => [p.id, p.parameterName]),
     );
     for (const value of dto.values) {
       if (!validParamIds.has(value.resultParamId)) {
@@ -2045,7 +2184,58 @@ export class LabReportService {
 
     await this.prisma.withTenant(tenantId, async (tx) => {
       const now = new Date();
-      for (const value of dto.values) {
+
+      // What is stored today for these parameters (deleted rows included: the unique key
+      // ignores deletedAt) decides, per value, whether it is an analyzer's value the
+      // technician left alone, one they overwrote, or an ordinary save.
+      const storedValues = await tx.labReportResultValue.findMany({
+        where: {
+          labReportId: id,
+          tenantId,
+          resultParamId: { in: dto.values.map((v) => v.resultParamId) },
+        },
+      });
+      const storedByParam = new Map(
+        storedValues.map((s) => [s.resultParamId, s]),
+      );
+      const plan = dto.values.map((value) => {
+        const stored = storedByParam.get(value.resultParamId);
+        return { value, stored, ...classifyResultValueSave(stored, value) };
+      });
+
+      // A screen that is out of date for an analyzer value must not replace the newer
+      // result: refuse the whole save before anything is written.
+      const staleParamIds = plan
+        .filter((p) => p.stale)
+        .map((p) => p.value.resultParamId);
+      if (staleParamIds.length > 0) {
+        throw new LabReportValueChangedException(id, staleParamIds);
+      }
+
+      for (const { value, stored, mode } of plan) {
+        if (mode === 'keep-analyzer') {
+          // The analyzer's value was not touched: it stays the analyzer's (source, analyzer id
+          // and time unchanged). Only the range, method and display text may be updated, and
+          // the unit only when the analyzer sent none.
+          const data = {
+            methodology: value.methodology,
+            referenceRangeId: value.referenceRangeId,
+            referenceDisplay: value.referenceDisplay,
+            ...(stored?.unit == null ? { unit: value.unit } : {}),
+          };
+          if (Object.values(data).some((v) => v !== undefined)) {
+            await tx.labReportResultValue.update({
+              where: {
+                labReportId_resultParamId: {
+                  labReportId: id,
+                  resultParamId: value.resultParamId,
+                },
+              },
+              data,
+            });
+          }
+          continue;
+        }
         await tx.labReportResultValue.upsert({
           where: {
             labReportId_resultParamId: {
@@ -2086,6 +2276,48 @@ export class LabReportService {
             deletedAt: null,
           },
         });
+      }
+
+      // Every analyzer value a technician overwrote leaves an Audit Trail entry (who, the
+      // analyzer's old value, the new one): the analyzer's original is otherwise lost.
+      const overwritten = plan.filter(
+        (p) => p.mode === 'overwrite-analyzer' && p.stored,
+      );
+      if (overwritten.length > 0) {
+        const adapterIds = [
+          ...new Set(
+            overwritten
+              .map((p) => p.stored?.enteredBy)
+              .filter((a): a is string => !!a),
+          ),
+        ];
+        const adapters = adapterIds.length
+          ? await tx.labAdapter.findMany({
+              where: { id: { in: adapterIds }, tenantId },
+              select: { id: true, name: true },
+            })
+          : [];
+        const adapterNameById = new Map(adapters.map((a) => [a.id, a.name]));
+        for (const { value, stored } of overwritten) {
+          if (!stored) continue;
+          await this.recordHistory(
+            tx,
+            tenantId,
+            id,
+            report.status,
+            report.status,
+            'ANALYZER_VALUE_OVERWRITTEN',
+            actorId,
+            describeAnalyzerOverwrite(
+              paramNameById.get(value.resultParamId) ?? value.resultParamId,
+              stored.enteredBy
+                ? adapterNameById.get(stored.enteredBy)
+                : undefined,
+              stored,
+              value,
+            ),
+          );
+        }
       }
 
       // Authoritative recompute of dynamic/calculated parameters. Any calculated
@@ -2293,6 +2525,60 @@ export class LabReportService {
   }
 
   /**
+   * The patient's exact birth date and the day their age is measured on — the day the
+   * sample was collected (the earliest collection of this report's samples; the order
+   * date when none is recorded; today when there is no order date) — so the range follows
+   * the patient's REAL age that day. The birth date is the saved date of birth, or, for a
+   * patient who only ever gave an age, the day the record was created minus that age.
+   * `null` when the patient has neither (the caller falls back to the stored age).
+   */
+  private async exactPatientAge(
+    report: {
+      orderItemId: string;
+      labTestId: string | null;
+      memberBranchLabTestId: string | null;
+      orderItem: { order: { orderDate?: Date | null } };
+    },
+    tenantId: string,
+    patient: {
+      dateOfBirth?: Date | null;
+      age?: number | null;
+      ageType?: AgeType | null;
+      createdAt?: Date | null;
+    },
+  ): Promise<ExactAge | null> {
+    const hasDob = !!patient.dateOfBirth;
+    const hasAgeAndCreated =
+      patient.age !== null && patient.age !== undefined && !!patient.createdAt;
+    if (!hasDob && !hasAgeAndCreated) return null;
+
+    const { timezone } = await this.tenantService.getLocale(tenantId);
+    const links = await this.prisma.orderSampleTest.findMany({
+      where: {
+        tenantId,
+        orderItemId: report.orderItemId,
+        deletedAt: null,
+        ...(report.memberBranchLabTestId && report.labTestId
+          ? { labTestId: report.labTestId }
+          : {}),
+      },
+      select: { sample: { select: { collectedAt: true } } },
+    });
+    const collected = links
+      .map((l) => l.sample?.collectedAt ?? null)
+      .filter((d): d is Date => d !== null)
+      .sort((a, b) => a.getTime() - b.getTime())[0];
+    const orderDate = report.orderItem.order.orderDate ?? null;
+    const onDay = collected
+      ? calendarDayIn(collected, timezone)
+      : orderDate
+        ? calendarDayIn(orderDate, 'UTC') // a DATE column: its UTC day is the day
+        : calendarDayIn(new Date(), timezone);
+    const dob = exactBirthDate(patient, onDay, timezone);
+    return dob ? { dob, onDay } : null;
+  }
+
+  /**
    * Resolve the reference range/value for one result parameter given the
    * current methodology and the report's patient (age/gender), following
    * `LabTestResultParam.resultType` to decide which of
@@ -2327,9 +2613,7 @@ export class LabReportService {
     if (!param) throw new LabTestCatalogueMissingException(id);
 
     const patient = report.orderItem.order.patient;
-    const ageInDays = patient.age
-      ? patientAgeInDays(patient.age, patient.ageType ?? 'YEARS')
-      : null;
+    const exactAge = await this.exactPatientAge(report, tenantId, patient);
 
     // Bug fix: this used to gate on QUALITATIVE only, so a SEMI_QUANTITATIVE
     // param (which also has no numeric LabTestReferenceRange — only a
@@ -2348,12 +2632,13 @@ export class LabReportService {
           ...(query.methodology ? { method: query.methodology } : {}),
         },
       });
-      const match = candidates.find(
+      // Only a band the patient's age CERTAINLY falls in is picked automatically
+      // (calendar rule, same as master data): a stored age that straddles a band
+      // edge ("1 Year" against "0-17 Months" / "18-23 Months") is not guessed.
+      const match = sortRangesByAgeSpecificity(candidates).find(
         (c) =>
           genderMatches(c.gender, patient.gender) &&
-          (ageInDays === null ||
-            (ageInDays >= rangeAgeInDays(c.ageFrom, c.ageFromUnit) &&
-              ageInDays <= rangeAgeInDays(c.ageTo, c.ageToUnit))),
+          isExactAgeMatch(rangeAgeMatch(patient, c, exactAge)),
       );
       return match
         ? {
@@ -2371,12 +2656,10 @@ export class LabReportService {
         ...(query.methodology ? { method: query.methodology } : {}),
       },
     });
-    const match = candidates.find(
+    const match = sortRangesByAgeSpecificity(candidates).find(
       (c) =>
         genderMatches(c.gender, patient.gender) &&
-        (ageInDays === null ||
-          (ageInDays >= rangeAgeInDays(c.ageFrom, c.ageFromUnit) &&
-            ageInDays <= rangeAgeInDays(c.ageTo, c.ageToUnit))),
+        isExactAgeMatch(rangeAgeMatch(patient, c, exactAge)),
     );
     return match
       ? {
@@ -2415,6 +2698,8 @@ export class LabReportService {
       lowerLimit: string | null;
       upperLimit: string | null;
       referenceDisplay: string | null;
+      /** `match`/`unknown`: may be picked automatically. `partial`: the patient's stored age is too coarse to be sure, so it is listed but never picked automatically. */
+      ageMatch: 'match' | 'partial' | 'unknown';
     }>;
   }> {
     const activeBranchId = this.requireBranch(branchId);
@@ -2443,20 +2728,29 @@ export class LabReportService {
     }
 
     const patient = report.orderItem.order.patient;
-    const ageInDays = patient.age
-      ? patientAgeInDays(patient.age, patient.ageType ?? 'YEARS')
-      : null;
+    const exactAge = await this.exactPatientAge(report, tenantId, patient);
 
     const ranges = await this.prisma.labTestReferenceRange.findMany({
       where: { paramId: param.id, deletedAt: null },
     });
-    const matching = ranges.filter(
-      (r) =>
-        genderMatches(r.gender, patient.gender) &&
-        (ageInDays === null ||
-          (ageInDays >= rangeAgeInDays(r.ageFrom, r.ageFromUnit) &&
-            ageInDays <= rangeAgeInDays(r.ageTo, r.ageToUnit))),
-    );
+    // Rows whose age band the patient's stored age is certainly in come first, then
+    // those it MIGHT be in (the stored age is too coarse to be sure); rows it is
+    // certainly outside are left out. Within each group the order is fixed (Default
+    // first, then a range without an analyzer first, ... see `compareRangeCandidates`),
+    // so it never depends on database row order.
+    const matchingScored = ranges
+      .filter((r) => genderMatches(r.gender, patient.gender))
+      .map((row) => ({
+        row,
+        ageMatch: candidateAgeMatch(patient, row, exactAge),
+      }))
+      .filter((x) => x.ageMatch !== 'none')
+      .sort(
+        (x, y) =>
+          candidateAgeRank(x.ageMatch) - candidateAgeRank(y.ageMatch) ||
+          compareRangeCandidates(x.row, y.row),
+      );
+    const matching = matchingScored.map((x) => x.row);
 
     const adapterIds = [
       ...new Set(matching.map((r) => r.labAdapterId).filter((v) => !!v)),
@@ -2469,7 +2763,8 @@ export class LabReportService {
       : [];
     const adapterNames = new Map(adapters.map((a) => [a.id, a.name]));
 
-    const candidates = matching.map((r) => ({
+    const candidates = matchingScored.map(({ row: r, ageMatch }) => ({
+      ageMatch: ageMatch as 'match' | 'partial' | 'unknown',
       id: r.id,
       labAdapterId: r.labAdapterId,
       labAdapterName: r.labAdapterId
@@ -2644,17 +2939,7 @@ export class LabReportService {
       doctorIds.length
         ? this.prisma.doctor.findMany({
             where: { id: { in: doctorIds }, tenantId, deletedAt: null },
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              signatoryDesignation: true,
-              registrationCouncil: true,
-              signatureImagePath: true,
-              isNablAuthorized: true,
-              isCapCertified: true,
-              isIsoCertified: true,
-            },
+            select: SIGNING_DOCTOR_SELECT,
           })
         : Promise.resolve([]),
     ]);
@@ -2674,18 +2959,13 @@ export class LabReportService {
       } else {
         const d = doctorById.get(slot.id);
         if (d) {
-          const certifications = [
-            d.isNablAuthorized ? 'NABL Authorized' : null,
-            d.isCapCertified ? 'CAP Certified' : null,
-            d.isIsoCertified ? 'ISO Certified' : null,
-          ]
-            .filter((c): c is string => c !== null)
-            .join(', ');
           signatories.push({
             name: fullName([d.firstName, d.lastName]),
             designation:
               d.signatoryDesignation ?? d.registrationCouncil ?? undefined,
-            certifications: certifications || undefined,
+            registrationNumber: d.registrationNo || undefined,
+            qualification: doctorQualification(d.qualifications) || undefined,
+            certifications: doctorCertifications(d) || undefined,
             signatureImage: d.signatureImagePath ?? undefined,
           });
         }
@@ -2696,8 +2976,11 @@ export class LabReportService {
 
   /**
    * Resolve the report's approving **Doctor** for the flat
-   * `{report_approved_by_*}` tags — name, designation, certifications and
-   * signature image. Per the product decision these tags are Doctor-only, so we
+   * `{report_approved_by_*}` tags — name, designation, certifications,
+   * qualification (the Doctor's active qualification degrees), registration
+   * no. and signature image. Every one of those tags reads this single Doctor,
+   * so they always describe the same approver. Per the product decision these
+   * tags are Doctor-only, so we
    * take the first signatory slot whose stored type is a Doctor
    * (`CONSULTANT_DOCTOR`/`REPORTING_DOCTOR`), ignoring `USER` slots (which have
    * no certifications/signature). Reads the report's own frozen signatory
@@ -2720,6 +3003,8 @@ export class LabReportService {
     name: string;
     designation: string;
     certifications: string;
+    qualification: string;
+    registrationNo: string;
     signatureImage: string;
   } | null> {
     const doctorSlot = [
@@ -2744,31 +3029,16 @@ export class LabReportService {
 
     const d = await this.prisma.doctor.findFirst({
       where: { id: doctorSlot.id, tenantId, deletedAt: null },
-      select: {
-        firstName: true,
-        lastName: true,
-        signatoryDesignation: true,
-        registrationCouncil: true,
-        isNablAuthorized: true,
-        isCapCertified: true,
-        isIsoCertified: true,
-        signatureImagePath: true,
-      },
+      select: SIGNING_DOCTOR_SELECT,
     });
     if (!d) return null;
-
-    const certifications = [
-      d.isNablAuthorized ? 'NABL Authorized' : null,
-      d.isCapCertified ? 'CAP Certified' : null,
-      d.isIsoCertified ? 'ISO Certified' : null,
-    ]
-      .filter((c): c is string => c !== null)
-      .join(', ');
 
     return {
       name: fullName([d.firstName, d.lastName]),
       designation: d.signatoryDesignation ?? d.registrationCouncil ?? '',
-      certifications,
+      certifications: doctorCertifications(d),
+      qualification: doctorQualification(d.qualifications),
+      registrationNo: d.registrationNo ?? '',
       signatureImage: d.signatureImagePath ?? '',
     };
   }
@@ -2812,7 +3082,7 @@ export class LabReportService {
     // panel member is narrowed by its `labTestId` (same scoping as
     // `attachSampleStatuses`); a multi-tube test can still have several rows,
     // so the oldest one carrying a barcode wins (`pickReportSample`). Feeds the
-    // `sample_*` tags and the Sample ID barcode (`{order_id_qr_code}`).
+    // `sample_*` tags and the Sample ID barcode (`{sample_id_barcode}`).
     const sampleLinks = await this.prisma.orderSampleTest.findMany({
       where: {
         tenantId,
@@ -2828,6 +3098,7 @@ export class LabReportService {
           select: {
             collectedAt: true,
             receivedAt: true,
+            sampleName: true,
             sampleType: true,
             barcode: true,
           },
@@ -2835,8 +3106,8 @@ export class LabReportService {
       },
     });
     const sample = pickReportSample(sampleLinks);
-    const barcodeTags = buildReportBarcodeTags(
-      order.orderIdBarcode,
+    const barcodeTags = await buildReportBarcodeTags(
+      order.orderCode,
       sample?.barcode,
     );
     // "Today" on the branch's calendar — `{patient_age}` is the age as of the
@@ -2900,10 +3171,17 @@ export class LabReportService {
               groupName: true,
               sortOrder: true,
               notes: true,
+              resultType: true,
             },
           });
     const paramNameById = new Map(
       resultParams.map((p) => [p.id, p.parameterName]),
+    );
+    // Only QUANTITATIVE parameters get the out-of-range abnormal-flag styling
+    // (requirement): a qualitative/semi-quantitative reading has no numeric
+    // lower/upper limit to compare against.
+    const resultTypeByParamId = new Map(
+      resultParams.map((p) => [p.id, p.resultType]),
     );
     const groupNameByParamId = new Map(
       resultParams.map((p) => [p.id, p.groupName ?? '']),
@@ -2933,6 +3211,65 @@ export class LabReportService {
       overallResultRows.map((r) => [r.resultParamId, r.content ?? '']),
     );
 
+    // Each saved reading carries the `referenceRangeId` resolved for it at entry
+    // time (by age/gender/method). Join those back to their numeric
+    // `lowerLimit`/`upperLimit` + configured `abnormalFlagLogic` so an
+    // out-of-range QUANTITATIVE reading can be rendered in its configured
+    // abnormal styling (Master Data → Reference Range). Same join as
+    // `findTrend`, plus `abnormalFlagLogic`.
+    const referenceRangeIds = [
+      ...new Set(
+        report.resultValues
+          .map((v) => v.referenceRangeId)
+          .filter((rid): rid is string => rid != null),
+      ),
+    ];
+    const referenceRanges =
+      referenceRangeIds.length === 0
+        ? []
+        : await this.prisma.labTestReferenceRange.findMany({
+            where: { id: { in: referenceRangeIds } },
+            select: {
+              id: true,
+              lowerLimit: true,
+              upperLimit: true,
+              abnormalFlagLogic: true,
+            },
+          });
+    const rangeById = new Map(referenceRanges.map((r) => [r.id, r]));
+
+    // Classify one observed reading: is it out of its resolved reference range
+    // (QUANTITATIVE only), and what is the display HTML? `abnormal` is the
+    // single source of truth for both the `{is_observed_*_abnormal}` tags and
+    // the styling — `html` is the escaped value, wrapped in the configured
+    // abnormal-flag markup only when abnormal, so `observed1`/`observed2` render
+    // as rich text downstream (see `RICH_TEXT_KEYS` in `template-render.service`
+    // and `buildTestBodyHtml`). `observed1` and `observed2` are classified
+    // independently against the same range — unlike the trend chart
+    // (`findTrend`), which flags `observed1` only.
+    const classifyObserved = (
+      raw: string,
+      resultParamId: string,
+      referenceRangeId: string | null,
+    ): { html: string; abnormal: boolean } => {
+      const safe = escapeHtml(raw);
+      const range = referenceRangeId
+        ? rangeById.get(referenceRangeId)
+        : undefined;
+      const abnormal = isObservedAbnormal(
+        raw,
+        resultTypeByParamId.get(resultParamId),
+        range,
+      );
+      if (!abnormal) {
+        return { html: safe, abnormal: false };
+      }
+      return {
+        html: `<span style="${abnormalFlagStyle(range!.abnormalFlagLogic)}">${safe}</span>`,
+        abnormal: true,
+      };
+    };
+
     // `resultValues` (the include on `LAB_REPORT_DETAIL_INCLUDE`) carries no
     // `orderBy` — rows come back in whatever order Postgres returns them,
     // not necessarily insertion or entry order. A multi-parameter test (e.g.
@@ -2944,21 +3281,44 @@ export class LabReportService {
         (sortOrderByParamId.get(b.resultParamId) ?? 0),
     );
 
-    const results = sortedResultValues.map((v) => ({
-      parameter_name: paramNameById.get(v.resultParamId) ?? '',
-      observed1: v.observed1 ?? '',
-      observed2: v.observed2 ?? '',
-      unit: v.unit ?? '',
-      methodology: v.methodology ?? '',
-      // Alias for the classic old-template tag name (`{method_name}`) — same
-      // value as `methodology`, kept separate so pre-existing lab_report
-      // templates authored against that tag don't need to be re-authored.
-      method_name: v.methodology ?? '',
-      reference_display: v.referenceDisplay ?? '',
-      group_name: groupNameByParamId.get(v.resultParamId) ?? '',
-      result_note: notesByParamId.get(v.resultParamId) ?? '',
-      overall_result: overallResultByParamId.get(v.resultParamId) ?? '',
-    }));
+    const results = sortedResultValues.map((v) => {
+      const o1 = classifyObserved(
+        v.observed1 ?? '',
+        v.resultParamId,
+        v.referenceRangeId,
+      );
+      const o2 = classifyObserved(
+        v.observed2 ?? '',
+        v.resultParamId,
+        v.referenceRangeId,
+      );
+      return {
+        parameter_name: paramNameById.get(v.resultParamId) ?? '',
+        // `observed1`/`observed2` are rich HTML (escaped, optionally wrapped in
+        // the configured abnormal-flag styling when out of range) so the
+        // `{observed1}`/`{observed2}` tags carry styling automatically.
+        // `*_raw` keeps the plain reading for internal, plain-text consumers
+        // (the Latte "has-a-result?" gate and the results summary).
+        // `is_observed_*_abnormal` is a boolean a template can branch on (e.g.
+        // a Latte `{if $row->is_observed_1_abnormal}` flag column).
+        observed1: o1.html,
+        observed2: o2.html,
+        observed1_raw: v.observed1 ?? '',
+        observed2_raw: v.observed2 ?? '',
+        is_observed_1_abnormal: o1.abnormal,
+        is_observed_2_abnormal: o2.abnormal,
+        unit: v.unit ?? '',
+        methodology: v.methodology ?? '',
+        // Alias for the classic old-template tag name (`{method_name}`) — same
+        // value as `methodology`, kept separate so pre-existing lab_report
+        // templates authored against that tag don't need to be re-authored.
+        method_name: v.methodology ?? '',
+        reference_display: v.referenceDisplay ?? '',
+        group_name: groupNameByParamId.get(v.resultParamId) ?? '',
+        result_note: notesByParamId.get(v.resultParamId) ?? '',
+        overall_result: overallResultByParamId.get(v.resultParamId) ?? '',
+      };
+    });
 
     return {
       variables: {
@@ -3034,6 +3394,7 @@ export class LabReportService {
               toBranchLocalInstant(sample.receivedAt, timezone),
             )
           : '',
+        sample_name: sample?.sampleName ?? '',
         sample_type: sample?.sampleType ?? '',
         sample_source_label: sampleSourceLabel(diagnostics?.sampleSource),
         // Approver (Doctor-only per product decision) — flat tags for templates
@@ -3042,24 +3403,35 @@ export class LabReportService {
         report_approved_by_name: approver?.name ?? '',
         report_approved_by_designation: approver?.designation ?? '',
         report_approved_by_certifications: approver?.certifications ?? '',
+        report_approved_by_qualification: approver?.qualification ?? '',
+        report_approved_by_registration_no: approver?.registrationNo ?? '',
         report_approved_by_signature: approver?.signatureImage ?? '',
         // Patient photo (persisted on `Patient.photoUrl`, set at registration).
         // Flat `{patient_image}` prints the URL; `{{image:patient_image}}`
         // auto-renders an <img> via the images map below.
         patient_image: patient.photoUrl ?? '',
-        // Code 128 barcode images (data URIs), rendered from the IDs:
-        // `{order_id_barcode}` = Order ID (`Order.orderIdBarcode`),
-        // `{order_id_qr_code}` = Sample ID (this report's `OrderSample.barcode`
-        // — a barcode despite the tag name). Each renders as an image whether
-        // written `{tag}`, `{{image:tag}}` (images map below) or
-        // `<img src="{tag}">` — see `resolveBareImageTags`.
+        // Barcode/QR images (data URIs), rendered from the IDs:
+        // `{order_id_barcode}` = Order ID (`Order.orderCode`, e.g. `ORD-00113`)
+        // as Code 128, `{order_id_qr_code}` = the same Order ID as a QR code,
+        // `{sample_id_barcode}` = Sample ID (this report's `OrderSample.barcode`)
+        // as Code 128. Each renders as an image whether written `{tag}`,
+        // `{{image:tag}}` (images map below) or `<img src="{tag}">` — see
+        // `resolveBareImageTags`.
         order_id_barcode: barcodeTags.order_id_barcode,
         order_id_qr_code: barcodeTags.order_id_qr_code,
+        sample_id_barcode: barcodeTags.sample_id_barcode,
         sample_note: sampleNote?.body ?? '',
         // `{test_file_attachment}` — the PDF(s) uploaded via this test's
         // "File +" button, as `<embed>` markup (printed unescaped, see
         // `RICH_TEXT_KEYS`). Built from THIS report's attachments only.
         test_file_attachment: buildTestFileAttachmentHtml(report.attachments),
+        // `{test_file_attachment_without_header}` — the SAME File+ uploads, but
+        // as hidden markers the PDF pipeline turns into APPENDED pages at the end
+        // of the finished report (PDF merged as-is, image → one page) instead of
+        // drawing them inline. Printed unescaped (see `RICH_TEXT_KEYS`).
+        test_file_attachment_without_header: buildTestFileAttachmentAppendHtml(
+          report.attachments,
+        ),
       },
       // Backs the `{{image:ID}}` tokens (and the bare barcode tags) for the
       // image-valued fields above — `TemplateRenderService.interpolateImages`
@@ -3071,6 +3443,7 @@ export class LabReportService {
         patient_image: patient.photoUrl ?? '',
         order_id_barcode: barcodeTags.order_id_barcode,
         order_id_qr_code: barcodeTags.order_id_qr_code,
+        sample_id_barcode: barcodeTags.sample_id_barcode,
       },
       sections: { results },
       signatories,
@@ -3363,9 +3736,9 @@ export class LabReportService {
         dateFormat,
         timeFormat,
       ),
-      // Order ID barcode IMAGE src (Code 128 data URI of
-      // `Order.orderIdBarcode`; templates use it as `<img src=…>`).
-      order_id_barcode: code128DataUri(order.orderIdBarcode),
+      // Order ID barcode IMAGE src (Code 128 data URI of the Order ID
+      // `Order.orderCode`; templates use it as `<img src=…>`).
+      order_id_barcode: code128DataUri(order.orderCode),
     };
 
     // Per-report body + dates, reusing the single-report context builder.
@@ -3391,6 +3764,11 @@ export class LabReportService {
             : '',
           // This test's own File+ PDFs (`{$report->test_file_attachment|noescape}`).
           test_file_attachment: toText(c?.variables?.test_file_attachment),
+          // Same test's File+ files, but APPENDED at the report's end instead of
+          // drawn inline (`{$report->test_file_attachment_without_header|noescape}`).
+          test_file_attachment_without_header: toText(
+            c?.variables?.test_file_attachment_without_header,
+          ),
           // One visible test entry per report (a panel's sub-tests are already
           // flattened into `body_html`); drives the templates' display gate/count.
           tests: [{ display_test_sample: '1' }],
@@ -3413,6 +3791,9 @@ export class LabReportService {
         // Test-scoped: the first report's files must not print as the whole
         // order's. Use `{test_file_attachment}` inside `{{#each reports}}`.
         test_file_attachment: '',
+        // Same reasoning for the append variant — blank at the top level; use
+        // `{test_file_attachment_without_header}` inside `{{#each reports}}`.
+        test_file_attachment_without_header: '',
       },
       images: firstCtx?.images ?? {},
       sections: {
@@ -3426,12 +3807,17 @@ export class LabReportService {
             sample_received_date: rep.sample_received_date,
             report_prepared_on: rep.report_prepared_on,
             test_file_attachment: rep.test_file_attachment,
+            test_file_attachment_without_header:
+              rep.test_file_attachment_without_header,
             results_summary: rows
               .map((r) => {
                 const unit = toText(r.unit);
-                return `${toText(r.parameter_name)}: ${toText(r.observed1)}${
-                  unit ? ` ${unit}` : ''
-                }`.trim();
+                // Plain-text summary — use the raw reading, not the
+                // styled-HTML `observed1` (falling back to `observed1` for a
+                // context not built by `buildPrintContext`).
+                return `${toText(r.parameter_name)}: ${toText(
+                  r.observed1_raw ?? r.observed1,
+                )}${unit ? ` ${unit}` : ''}`.trim();
               })
               .filter((s) => s !== ':')
               .join('; '),
@@ -3524,14 +3910,25 @@ export class LabReportService {
     const rows = (context?.sections?.results ?? []).map((r) => ({
       parameter_name: toText(r.parameter_name),
       method_name: toText(r.method_name ?? r.methodology),
-      // `value` is the ezHealthTrack "has a result?" gate; mirror observed1.
-      value: toText(r.observed1),
+      // `value` is the ezHealthTrack "has a result?" gate — mirror the raw
+      // reading (not the styled HTML, which would never be empty/falsey).
+      value: toText(r.observed1_raw ?? r.observed1),
+      // `observed1`/`observed2` carry the escaped + optionally abnormal-styled
+      // HTML; a Latte single-report template must print them with `|noescape`
+      // (e.g. `{$row->observed1|noescape}`) to show the styling.
       observed1: toText(r.observed1),
       observed2: toText(r.observed2),
+      // Real booleans (not stringified) so a Latte `{if $row->...}` branches
+      // correctly — e.g. a custom flag/arrow column.
+      is_observed_1_abnormal: r.is_observed_1_abnormal === true,
+      is_observed_2_abnormal: r.is_observed_2_abnormal === true,
       unit: toText(r.unit),
       reference_display: toText(r.reference_display),
       group_name: toText(r.group_name),
       result_note: toText(r.result_note),
+      // Per-report Overall Result rich-text HTML (`LabReportOverallResult`) —
+      // without this key a Latte `{$row->overall_result}` is always empty.
+      overall_result: toText(r.overall_result),
     }));
     const test = {
       test_name: toText(v.test_name),
@@ -3556,6 +3953,12 @@ export class LabReportService {
       report_approved_by_certifications: toText(
         v.report_approved_by_certifications,
       ),
+      report_approved_by_qualification: toText(
+        v.report_approved_by_qualification,
+      ),
+      report_approved_by_registration_no: toText(
+        v.report_approved_by_registration_no,
+      ),
       report_approved_by_signature: toText(v.report_approved_by_signature),
     };
   }
@@ -3578,7 +3981,8 @@ export class LabReportService {
       .map((row) => {
         const name = escapeHtml(toText(row.parameter_name));
         const method = escapeHtml(toText(row.methodology));
-        const value = escapeHtml(toText(row.observed1));
+        // A Qualitative result can be written over several lines: keep them.
+        const value = escapeHtmlKeepLineBreaks(toText(row.observed1));
         const unit = escapeHtml(toText(row.unit));
         const ref = escapeHtml(toText(row.reference_display));
         const methodHtml = method
@@ -4651,6 +5055,9 @@ export class LabReportService {
       where: { id, tenantId, branchId, deletedAt: null },
     });
     if (!report) throw new LabReportNotFoundException(id);
+    // A locked test cannot be worked on, not even re-run, until it is unlocked
+    // (otherwise it resets to Pending yet stays locked and cannot be entered).
+    if (report.isLocked) throw new LabReportLockedException(id);
 
     return this.prisma.withTenant(tenantId, async (tx) => {
       await tx.labReportResultValue.updateMany({
@@ -4694,6 +5101,37 @@ export class LabReportService {
 
   // ── Lock / Unlock ───────────────────────────────────────────────────────────
 
+  /**
+   * One place that records a lock or an unlock as a note row (category `LOCK` /
+   * `UNLOCK`): who (`createdBy`), when (`createdAt`) and, for a lock, the
+   * reason. Written for EVERY lock/unlock, even with no reason, so the history
+   * survives `unlock` clearing the report's own lock fields. If this ever moves to
+   * a dedicated lock-history table, change it here only.
+   */
+  private async recordLockEvent(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    labReportId: string,
+    kind: 'LOCK' | 'UNLOCK',
+    actorId: string,
+    reason?: string,
+  ) {
+    await tx.labReportNote.create({
+      data: {
+        tenantId,
+        labReportId,
+        category: kind,
+        body: reason ?? '',
+        createdBy: actorId,
+      },
+    });
+  }
+
+  /**
+   * Lock a report against further work. Refused (409) when it is already locked,
+   * so a second lock can never overwrite who locked it and why. A reason that is
+   * only blank spaces counts as no reason. The reason is stored exactly as typed.
+   */
   async lock(
     id: string,
     tenantId: string,
@@ -4706,60 +5144,68 @@ export class LabReportService {
       where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
     });
     if (!report) throw new LabReportNotFoundException(id);
+    const reason = notes && notes.trim() ? notes : undefined;
 
     return this.prisma.withTenant(tenantId, async (tx) => {
-      const updated = await tx.labReport.update({
-        where: { id },
+      // Compare-and-set on `isLocked` so two simultaneous locks cannot both win.
+      const { count } = await tx.labReport.updateMany({
+        where: {
+          id,
+          tenantId,
+          branchId: activeBranchId,
+          deletedAt: null,
+          isLocked: false,
+        },
         data: {
           isLocked: true,
           lockedAt: new Date(),
           lockedBy: actorId,
-          lockNotes: notes,
+          lockNotes: reason ?? null,
         },
       });
-      if (notes) {
-        await tx.labReportNote.create({
-          data: {
-            tenantId,
-            labReportId: id,
-            category: 'LOCK',
-            body: notes,
-            createdBy: actorId,
-          },
-        });
-      }
-      return updated;
+      if (count === 0) throw new LabReportAlreadyLockedException(id);
+      await this.recordLockEvent(tx, tenantId, id, 'LOCK', actorId, reason);
+      return tx.labReport.findUniqueOrThrow({ where: { id } });
     });
   }
 
   /**
-   * Unlock requires the caller to hold the `lab_operations:lock_override`
-   * permission (supervisor-gated) — checked in the controller via
-   * `usePermissions`-equivalent guard, NOT here. This method assumes the
-   * caller has already been authorized (see the `canUnlock` param and the
-   * TODO on the controller route).
+   * Unlock a locked report. Authorised in the controller by the same permission
+   * as Lock Test (whoever can lock can unlock). Clears the report's lock fields,
+   * but the lock/unlock history stays as `LOCK` / `UNLOCK` note rows. Refused
+   * (409) when the report is not locked.
    */
   async unlock(
     id: string,
     tenantId: string,
     branchId: string | null,
-    canUnlock: boolean,
+    actorId: string,
   ) {
-    if (!canUnlock) throw new UnlockNotPermittedException();
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.prisma.labReport.findFirst({
       where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
     });
     if (!report) throw new LabReportNotFoundException(id);
 
-    return this.prisma.labReport.update({
-      where: { id },
-      data: {
-        isLocked: false,
-        lockedAt: null,
-        lockedBy: null,
-        lockNotes: null,
-      },
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const { count } = await tx.labReport.updateMany({
+        where: {
+          id,
+          tenantId,
+          branchId: activeBranchId,
+          deletedAt: null,
+          isLocked: true,
+        },
+        data: {
+          isLocked: false,
+          lockedAt: null,
+          lockedBy: null,
+          lockNotes: null,
+        },
+      });
+      if (count === 0) throw new LabReportNotLockedException(id);
+      await this.recordLockEvent(tx, tenantId, id, 'UNLOCK', actorId);
+      return tx.labReport.findUniqueOrThrow({ where: { id } });
     });
   }
 
@@ -4859,7 +5305,10 @@ export class LabReportService {
     query: ListLabReportNotesDto,
   ) {
     const activeBranchId = this.requireBranch(branchId);
-    await this.requireReport(id, tenantId, activeBranchId);
+    // Reading notes is allowed on a locked test (adding one is not — see createNote).
+    await this.requireReport(id, tenantId, activeBranchId, {
+      allowLocked: true,
+    });
     const reportIds = await this.siblingReportIds(id, tenantId, activeBranchId);
 
     const rows = await this.prisma.labReportNote.findMany({

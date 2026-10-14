@@ -8,11 +8,12 @@ import {
   Prisma,
   SamplePriority,
   SampleStatus,
-  TransferStatus,
+  TransferKind,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
+import { timestampRange } from '../../common/utils/date-range.util';
 import {
   toBranchLocalInstant,
   formatTenantDate,
@@ -23,6 +24,7 @@ import { TenantService } from '../tenant/tenant.service';
 import { LabReportService } from '../lab-report/lab-report.service';
 import { UserDepartmentScopeService } from '../department/user-department-scope.service';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
+import { PdfTemplateConfigService } from '../pdf-report-template/pdf-template-config.service';
 import type { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
 import type { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
 import { BranchLabTestConfigSnapshot } from '../branch-lab-test/entities/branch-lab-test.entity';
@@ -33,6 +35,7 @@ import {
   COLLECTABLE_SAMPLE_STATUSES,
 } from './constants/sample-transitions.constant';
 import {
+  TAT_STATUSES,
   TERMINAL_SAMPLE_STATUSES,
   TatStatus,
   TatThresholds,
@@ -52,6 +55,7 @@ import { DiscardSampleDto } from './dto/discard-sample.dto';
 import { CancelSampleDto } from './dto/cancel-sample.dto';
 import { RepeatSampleDto } from './dto/repeat-sample.dto';
 import { ReturnSampleDto } from './dto/return-sample.dto';
+import { RetrieveSampleDto } from './dto/retrieve-sample.dto';
 import { AssignBarcodeDto } from './dto/assign-barcode.dto';
 import {
   SAMPLE_INCLUDE,
@@ -66,11 +70,14 @@ import {
   GroupedSampleItem,
 } from './entities/accession-sample.entity';
 import {
+  BulkActionResult,
+  BulkSkippedItem,
+} from './entities/bulk-action-result.entity';
+import {
   AccessionNumberConflictException,
   OrderSampleNotFoundException,
   InvalidSampleTransitionException,
   NoActiveLabelTemplateException,
-  AmbiguousLabelTemplateException,
 } from './exceptions/accession.exceptions';
 
 /** Resolved display fields attached to a history row for the Audit Trail UI. */
@@ -91,6 +98,12 @@ interface SampleUnit {
   testName: string | null;
   departmentId: string | null;
   sample: LabTestSample | null;
+  /**
+   * Whether this unit's governing test/panel follows the normal sample workflow.
+   * `false` (Sample Flow = No) means the sample is auto-accepted at generation —
+   * collection is skipped and the test proceeds straight to the technician.
+   */
+  sampleFlow: boolean;
 }
 
 /**
@@ -130,6 +143,24 @@ interface ActionNote {
 }
 
 /**
+ * The statuses a sample is in while it lives at another branch / partner / center
+ * via an open transfer (Send/Forward/Outsource). A local action that moves a sample
+ * OUT of one of these (Retrieve / Repeat) is a "recall": its outstanding
+ * transfer(s) — and, for an accepted internal transfer, the clone materialised in
+ * the receiving branch — must be unwound so no stale record is left cross-branch.
+ */
+const TRANSFERRED_STATUSES: ReadonlySet<SampleStatus> = new Set([
+  SampleStatus.SENT_INTERNAL,
+  SampleStatus.FORWARD_EXTERNAL,
+  SampleStatus.OUTSOURCED,
+]);
+
+/** True while the sample lives at another branch/partner/center (see above). */
+function isTransferredStatus(status: SampleStatus): boolean {
+  return TRANSFERRED_STATUSES.has(status);
+}
+
+/**
  * Order samples — the core per-(test × sample) entity of the accession module.
  * Tenant-scoped (RLS) + branch-level (CLAUDE.md §4.5/§4.7).
  *
@@ -150,6 +181,7 @@ export class OrderSampleService {
     private readonly settings: AccessionSettingsService,
     private readonly labReportService: LabReportService,
     private readonly pdfReportTemplateService: PdfReportTemplateService,
+    private readonly pdfTemplateConfigService: PdfTemplateConfigService,
     private readonly eventEmitter: EventEmitter2,
     private readonly tenantService: TenantService,
     private readonly barcodeService: BarcodeService,
@@ -232,6 +264,24 @@ export class OrderSampleService {
     // Flatten the order into (test × sample) units — panels expanded to tests.
     const units: SampleUnit[] = [];
     for (const item of items) {
+      // Bill Only Test/Panel: billed but never enters the lab workflow — generate
+      // no samples at all (so it never appears in accession/collection/technician/
+      // reporting). The item still counts toward the order's bill. Auto-mark it
+      // collected — there is physically nothing to collect — so the Order Overview
+      // shows it as Collected rather than stuck Pending. Idempotent (only stamps
+      // a not-yet-collected item).
+      if (
+        item.branchLabTest?.isBillOnlyTest ||
+        item.branchLabPanel?.isBillOnlyTest
+      ) {
+        if (!item.collectedAt) {
+          await tx.orderItem.update({
+            where: { id: item.id },
+            data: { collectedAt: new Date(), collectedBy: personId },
+          });
+        }
+        continue;
+      }
       if (item.branchLabTest) {
         await this.collectTestUnits(
           tx,
@@ -239,21 +289,30 @@ export class OrderSampleService {
           item.id,
           item.branchLabTest,
           units,
+          item.branchLabTest.isSampleFlow,
         );
       } else if (item.branchLabPanel) {
+        // The panel's own Sample Flow governs all its member-test samples.
+        const panelSampleFlow = item.branchLabPanel.isSampleFlow;
         const tests = await this.panelConstituentTests(
           tx,
           tenantId,
           item.branchLabPanel.id,
         );
         for (const test of tests) {
-          await this.collectTestUnits(tx, tenantId, item.id, test, units);
+          await this.collectTestUnits(
+            tx,
+            tenantId,
+            item.id,
+            test,
+            units,
+            panelSampleFlow,
+          );
         }
       }
       // `direct` free-text items resolve no LabTestSample and are skipped.
     }
 
-    const createdSamples: BarcodeGroupable[] = [];
     for (const unit of units) {
       if (!unit.sample) continue; // labTestSampleId is mandatory
       const tenant = await tx.tenant.update({
@@ -262,8 +321,16 @@ export class OrderSampleService {
         select: { accessionCounter: true },
       });
       const accessionNo = `ACC-${String(tenant.accessionCounter).padStart(5, '0')}`;
+      // Sample Flow = No: skip collection entirely — the sample is born ACCEPTED
+      // so the test proceeds straight to the technician (LabReports created below).
+      // Sample Flow = Yes (default): born NEW and follows the normal collect →
+      // accept workflow. A barcode is still assigned only on collect, so an
+      // auto-accepted sample keeps `barcode = null`.
+      const autoAccept = !unit.sampleFlow;
+      // Single timestamp for the auto-accept received+accepted pair (mirrors the
+      // normal `accept` transition, which stamps both receivedAt and acceptedAt).
+      const acceptedNow = autoAccept ? new Date() : null;
       const created = await tx.orderSample.create({
-        select: { id: true, departmentId: true, sampleGroupLabel: true },
         data: {
           tenantId,
           branchId,
@@ -272,6 +339,7 @@ export class OrderSampleService {
           labTestSampleId: unit.sample.id,
           departmentId: unit.departmentId,
           accessionNo,
+          sampleName: unit.sample.sampleName,
           sampleType: unit.sample.sampleType,
           containerType: unit.sample.containerType,
           sampleGroupLabel:
@@ -279,7 +347,9 @@ export class OrderSampleService {
             unit.sample.sampleType ??
             unit.sample.containerType ??
             'General',
-          status: SampleStatus.NEW,
+          status: autoAccept ? SampleStatus.ACCEPTED : SampleStatus.NEW,
+          receivedAt: acceptedNow,
+          acceptedAt: acceptedNow,
           originBranchId: branchId,
           processingBranchId: branchId,
           createdBy: personId,
@@ -298,26 +368,36 @@ export class OrderSampleService {
               tenantId,
               branchId,
               action: 'generate',
-              toStatus: SampleStatus.NEW,
+              toStatus: autoAccept ? SampleStatus.ACCEPTED : SampleStatus.NEW,
+              reason: autoAccept
+                ? 'Sample Flow = No: auto-accepted at generation; sample collection skipped'
+                : undefined,
               changedBy: personId,
             },
           },
         },
+        select: { id: true },
       });
-      createdSamples.push(created);
+      // Create the LabReport(s) for an auto-accepted sample so it surfaces in the
+      // technician worklist — the same path a normal accept takes. The nested
+      // `tests.create` above is already persisted, so the OrderSampleTest row
+      // this reads exists.
+      if (autoAccept) {
+        await this.ensureLabReportsForAcceptedSample(
+          tx,
+          tenantId,
+          created.id,
+          personId,
+        );
+      }
     }
 
-    // Auto-assign barcodes grouping-aware (Sample / Order / Department /
-    // Dept+Sample per Tenant.groupingMode) — samples in the same bucket share
-    // one barcode value + rendered Code 128 image. Synchronous: an S3 failure
-    // rolls the whole order back (see BarcodeService).
-    await this.assignBarcodesToGroups(
-      tx,
-      tenantId,
-      branchId,
-      personId,
-      createdSamples,
-    );
+    // Barcodes are no longer assigned at order creation — a sample is barcoded
+    // only when it is actually collected (see `assignBarcodesOnCollectInTx`,
+    // wired into every collect path). Samples are created here with
+    // `barcode = null` and get their sequential, grouping-aware barcode at the
+    // moment of collection. Sample Flow = No samples skip collection, so they
+    // stay `barcode = null`.
   }
 
   /**
@@ -347,24 +427,48 @@ export class OrderSampleService {
   }
 
   /**
-   * Assign barcodes to a set of samples inside an existing (already
-   * tenant-scoped) transaction, bucketed by the tenant's grouping mode. Each
-   * bucket gets one allocated barcode value + one rendered/uploaded Code 128
-   * image; every member is updated to the shared `barcode` + `orderIdBarcode`.
-   * A history row (`assign-barcode`, no status change) is written per sample.
+   * Assign a proper sequential sample barcode to each just-collected sample that
+   * lacks one, bucketed by the tenant's live grouping mode — the collect-time
+   * counterpart of the former creation-time auto-assignment. Samples in the same
+   * bucket (same {@link barcodeGroupKey}, scoped to one order) share one barcode:
+   * an existing group barcode — from a sibling already collected in the same
+   * order + group — is reused (so a partial-group collection stays consistent);
+   * otherwise a fresh sequential value is allocated from the branch's Accession
+   * Settings counter and its Code 128 image is rendered/uploaded. A per-sample
+   * `assign-barcode` history row (no status change) is written. Idempotent —
+   * samples that already carry a barcode are skipped. Runs inside the caller's
+   * (already tenant-scoped) collect transaction so the barcode and the sample's
+   * COLLECTED status commit atomically. A branchless order has no barcode counter,
+   * so its samples are left unbarcoded for a later manual Assign Barcode.
    * @param tx active Prisma transaction client (already tenant-scoped)
+   * @param tenantId tenant scope
+   * @param personId acting person id (recorded as `updatedBy` / `changedBy`)
+   * @param sampleIds the just-collected sample ids to barcode
    */
-  private async assignBarcodesToGroups(
+  private async assignBarcodesOnCollectInTx(
     tx: Prisma.TransactionClient,
     tenantId: string,
-    branchId: string | null,
     personId: string | null,
-    samples: BarcodeGroupable[],
+    sampleIds: string[],
   ): Promise<void> {
-    // Barcodes live on the branch's Accession Settings counter, so a branchless
-    // order (rare — diagnostics are branch-level) is left unbarcoded here; a
-    // barcode can be assigned later via the Assign Barcode action.
-    if (samples.length === 0 || !branchId) return;
+    if (sampleIds.length === 0) return;
+    const targets = await tx.orderSample.findMany({
+      where: {
+        id: { in: sampleIds },
+        tenantId,
+        deletedAt: null,
+        barcode: null,
+      },
+      select: {
+        id: true,
+        orderId: true,
+        branchId: true,
+        departmentId: true,
+        sampleGroupLabel: true,
+      },
+    });
+    if (targets.length === 0) return;
+
     const tenant = await tx.tenant.findUnique({
       where: { id: tenantId },
       select: { groupingMode: true },
@@ -372,34 +476,79 @@ export class OrderSampleService {
     const mode =
       tenant?.groupingMode ?? AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME;
 
-    const buckets = new Map<string, string[]>();
-    for (const sample of samples) {
-      const key = this.barcodeGroupKey(sample, mode);
-      const arr = buckets.get(key);
-      if (arr) arr.push(sample.id);
-      else buckets.set(key, [sample.id]);
+    // Existing group barcodes across the affected orders, so a sibling already
+    // collected in the same order + group lends its barcode (partial collection).
+    const orderIds = [...new Set(targets.map((t) => t.orderId))];
+    const barcoded = await tx.orderSample.findMany({
+      where: {
+        orderId: { in: orderIds },
+        tenantId,
+        deletedAt: null,
+        barcode: { not: null },
+      },
+      select: {
+        id: true,
+        orderId: true,
+        departmentId: true,
+        sampleGroupLabel: true,
+        barcode: true,
+        orderIdBarcode: true,
+      },
+    });
+    const existing = new Map<string, { barcode: string; url: string | null }>();
+    for (const s of barcoded) {
+      if (!s.barcode) continue;
+      const key = `${s.orderId}::${this.barcodeGroupKey(s, mode)}`;
+      if (!existing.has(key)) {
+        existing.set(key, { barcode: s.barcode, url: s.orderIdBarcode });
+      }
     }
 
-    for (const ids of buckets.values()) {
-      const value = await this.barcodeService.allocateNumberInTx(
-        tx,
-        tenantId,
-        branchId,
-      );
-      const url = await this.barcodeService.generateAndUpload(value, tenantId);
+    // Bucket the unbarcoded targets by order + grouping key.
+    const buckets = new Map<
+      string,
+      { branchId: string | null; ids: string[] }
+    >();
+    for (const t of targets) {
+      const key = `${t.orderId}::${this.barcodeGroupKey(t, mode)}`;
+      const bucket = buckets.get(key);
+      if (bucket) bucket.ids.push(t.id);
+      else buckets.set(key, { branchId: t.branchId, ids: [t.id] });
+    }
+
+    for (const [key, bucket] of buckets) {
+      // Barcodes live on the branch's Accession Settings counter; a branchless
+      // order can't allocate one — leave it for a later manual Assign Barcode.
+      if (!bucket.branchId) continue;
+
+      let value: string;
+      let url: string | null;
+      const reuse = existing.get(key);
+      if (reuse) {
+        value = reuse.barcode;
+        url = reuse.url;
+      } else {
+        value = await this.barcodeService.allocateNumberInTx(
+          tx,
+          tenantId,
+          bucket.branchId,
+        );
+        url = await this.barcodeService.generateAndUpload(value, tenantId);
+      }
+
       await tx.orderSample.updateMany({
-        where: { id: { in: ids }, tenantId },
+        where: { id: { in: bucket.ids }, tenantId },
         data: { barcode: value, orderIdBarcode: url, updatedBy: personId },
       });
-      for (const id of ids) {
+      for (const id of bucket.ids) {
         await tx.orderSampleStatusHistory.create({
           data: {
             tenantId,
-            branchId,
+            branchId: bucket.branchId,
             sampleId: id,
             action: 'assign-barcode',
-            toStatus: SampleStatus.NEW,
-            fromStatus: SampleStatus.NEW,
+            toStatus: SampleStatus.COLLECTED,
+            fromStatus: SampleStatus.COLLECTED,
             changedBy: personId,
           },
         });
@@ -529,8 +678,9 @@ export class OrderSampleService {
    * lifecycle (not just `OrderItem.collectedAt`). For each sample serving the
    * item that is still in a collectable status (`NEW`/`HOLD`/`REPEAT`), applies
    * the §A.9 `collect` transition → `COLLECTED` (stamping `collectedAt`/
-   * `collectedBy`/`tubeType`, and a barcode when `print` is set, exactly like
-   * `collect`/`collectAndPrint`) and appends a history row. Because a sample is
+   * `collectedBy`/`tubeType`, and — at collection time — a sequential,
+   * grouping-aware barcode via `assignBarcodesOnCollectInTx`, regardless of
+   * `print`) and appends a history row. Because a sample is
    * one physical tube shared by several tests, all sibling order items on a
    * transitioned sample are stamped collected too (a tube is drawn once).
    * Idempotent: samples already past `NEW`/`HOLD`/`REPEAT` are skipped, so a
@@ -540,7 +690,8 @@ export class OrderSampleService {
    * @param tenantId tenant scope
    * @param personId acting person id (recorded as `collectedBy`/`changedBy`)
    * @param orderItemId the order item whose sample(s) to collect
-   * @param opts `print` also assigns a barcode when the sample lacks one
+   * @param opts collection metadata; `print` no longer gates the barcode, which
+   *   is assigned (sequential + grouping-aware) on every collect
    */
   async collectForOrderItemInTx(
     tx: Prisma.TransactionClient,
@@ -579,7 +730,8 @@ export class OrderSampleService {
    * @param tenantId tenant scope
    * @param personId acting person id (recorded as `collectedBy`/`changedBy`)
    * @param sampleIds the accession sample ids to collect
-   * @param opts `print` also assigns a barcode when the sample lacks one
+   * @param opts collection metadata; `print` no longer gates the barcode, which
+   *   is assigned (sequential + grouping-aware) on every collect
    */
   async collectSamplesInTx(
     tx: Prisma.TransactionClient,
@@ -607,13 +759,25 @@ export class OrderSampleService {
     for (const s of collectable) {
       await this.collectSampleInTx(tx, tenantId, personId, s.id, now, opts);
     }
+
+    // Barcode is generated at collection time (not at order creation): assign a
+    // sequential, grouping-aware barcode to the just-collected samples that lack
+    // one — regardless of `print` (plain Collect barcodes too; "& Print" only
+    // additionally prints the label on the front end).
+    await this.assignBarcodesOnCollectInTx(
+      tx,
+      tenantId,
+      personId,
+      collectable.map((s) => s.id),
+    );
   }
 
   /**
    * Collect one accession sample inside an existing (already tenant-scoped)
    * transaction: apply the §A.9 `collect` transition → `COLLECTED` (stamping
-   * `collectedAt`/`collectedBy`/`tubeType`, and a barcode when `print` is set,
-   * exactly like `collect`/`collectAndPrint`), then — because a sample is one
+   * `collectedAt`/`collectedBy`/`tubeType`; the barcode is assigned separately,
+   * grouping-aware, by the batch caller `collectSamplesInTx`), then — because a
+   * sample is one
    * physical tube shared by several tests — stamp every sibling order item on
    * the sample collected too (a tube is drawn once). The caller must have already
    * confirmed the sample is in a collectable status. Shared by
@@ -651,12 +815,8 @@ export class OrderSampleService {
             sample.containerType ??
             sample.sampleType ??
             undefined,
-          ...(opts.print
-            ? {
-                barcode:
-                  sample.barcode ?? this.deriveBarcode(sample.accessionNo),
-              }
-            : {}),
+          // Barcode is assigned after the collect transition, grouping-aware,
+          // by `assignBarcodesOnCollectInTx` in the batch caller — not here.
         },
       }),
       { notes: opts.notes, attachmentUrl: opts.attachmentUrl },
@@ -991,29 +1151,48 @@ export class OrderSampleService {
   }
 
   /**
-   * Accession list summary for the active branch: a count per status (§A.5 tabs,
-   * all statuses present with 0 default), a count per TAT band (§A.4 bar), and the
-   * overall total.
+   * Accession list summary: a count per status (§A.5 tabs, all statuses present
+   * with 0 default), a count per TAT band (§A.4 bar), and the overall total.
+   *
+   * The counts follow the SAME filters as the list (date range, search, doctor,
+   * panel, department, …) so the tabs/cards describe the records the user is
+   * looking at — but deliberately ignore `status`, `tatStatus` and paging: every
+   * tab/card must keep showing its own total whichever tab or card is selected
+   * (otherwise picking "New" would zero every other tab). Counts are SAMPLES, as
+   * before. Everything is counted in the database (one group-by for the tabs, one
+   * count per TAT band) — no rows are loaded into memory.
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT profile)
+   * @param personId caller, for the department-visibility scope
+   * @param query the list's filters (status / tatStatus / page / limit are ignored)
    */
   async summary(
     tenantId: string,
     branchId: string | null,
     personId: string,
+    query: ListSamplesDto = {},
   ): Promise<AccessionSummary> {
     const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
       tenantId,
       personId,
     );
-    const where: Prisma.OrderSampleWhereInput = {
+    const tat = await this.tatThresholds(tenantId, branchId);
+    const nowMs = Date.now();
+    const where = this.buildSampleWhere(
       tenantId,
       branchId,
-      deletedAt: null,
-      // Same mandatory department-visibility scope as the list, so the status
-      // tab + TAT bar counts always match the rows the user can actually see.
-      AND: [this.departmentScopeForSamples(scopeIds)],
-    };
+      {
+        ...query,
+        status: undefined,
+        tatStatus: undefined,
+        page: undefined,
+        limit: undefined,
+      },
+      tat,
+      nowMs,
+      scopeIds,
+    );
+
     const grouped = await this.prisma.orderSample.groupBy({
       by: ['status'],
       where,
@@ -1029,22 +1208,25 @@ export class OrderSampleService {
       total += g._count._all;
     }
 
-    const nowMs = Date.now();
-    const tat = await this.tatThresholds(tenantId, branchId);
-    const rows = await this.prisma.orderSample.findMany({
-      where,
-      select: { createdAt: true, status: true },
-    });
-    const byTat: Record<TatStatus, number> = {
-      WITHIN: 0,
-      WARNING: 0,
-      CRITICAL: 0,
-      BREACHED: 0,
-    };
-    for (const r of rows) {
-      const band = deriveTatStatus(r.createdAt, r.status, tat, nowMs);
-      if (band) byTat[band] += 1;
-    }
+    // One count per TAT band — the same `createdAt` range + open-status rule the
+    // list's TAT filter uses, so a card always equals the rows behind it.
+    const bandCounts = await Promise.all(
+      TAT_STATUSES.map((band) =>
+        this.prisma.orderSample.count({
+          where: {
+            AND: [
+              where,
+              { status: { notIn: [...TERMINAL_SAMPLE_STATUSES] } },
+              { createdAt: tatCreatedAtRange(band, tat, nowMs) },
+            ],
+          },
+        }),
+      ),
+    );
+    // Built in the fixed band order (WITHIN → BREACHED), not completion order.
+    const byTat = Object.fromEntries(
+      TAT_STATUSES.map((band, i) => [band, bandCounts[i]]),
+    ) as Record<TatStatus, number>;
     return { total, byStatus, byTat };
   }
 
@@ -1123,9 +1305,39 @@ export class OrderSampleService {
       ),
     ];
 
+    // Resolve the transfers' OUTSOURCE center names (logical ref — no Prisma
+    // relation), WITHOUT a deletedAt filter so a since-deactivated center still
+    // resolves. Only queried when the sample actually has an outsource transfer,
+    // so non-outsourced samples pay nothing. Lets the FE pre-fill Assign/Edit
+    // Center with the current center instead of opening blank.
+    const centerIds = [
+      ...new Set(
+        sample.transfers
+          .map((tr) => tr.outsourceCenterId)
+          .filter((v): v is string => !!v),
+      ),
+    ];
+    const centerNameById = new Map<string, string>();
+    if (centerIds.length > 0) {
+      const centers = await this.prisma.withTenant(tenantId, (tx) =>
+        tx.outsourceCenter.findMany({
+          where: { id: { in: centerIds }, tenantId },
+          select: { id: true, name: true },
+        }),
+      );
+      centers.forEach((c) => centerNameById.set(c.id, c.name));
+    }
+    const transfers = sample.transfers.map((tr) => ({
+      ...tr,
+      outsourceCenterName: tr.outsourceCenterId
+        ? (centerNameById.get(tr.outsourceCenterId) ?? null)
+        : null,
+    }));
+
     return {
       ...sample,
       tests,
+      transfers,
       departmentLabel: distinct.length > 0 ? distinct.join(', ') : null,
     };
   }
@@ -1226,24 +1438,30 @@ export class OrderSampleService {
 
   /**
    * Print one sample's barcode label ("Label Print" checklist item).
-   * Resolves the tenant's active `order_label_print` template (or the
-   * caller's explicit `templateId`) and renders it with this sample's real
-   * data via `PdfReportTemplateService.generatePdf`.
+   * Resolves the `order_label_print` template to use — the caller's explicit
+   * `templateId` when given, otherwise the configured default (Old Templates →
+   * Configuration), then the first active template — and renders it with this
+   * sample's real data via `PdfReportTemplateService.generatePdf`.
+   * @param branchId active branch (honors branch-level Configuration first,
+   * then tenant-wide); null for tenant-wide only
    * @throws OrderSampleNotFoundException if missing/soft-deleted
    * @throws NoActiveLabelTemplateException if no active template exists
-   * @throws AmbiguousLabelTemplateException if multiple exist and no
-   * `templateId` was given
    */
   async printLabel(
     id: string,
     tenantId: string,
+    branchId: string | null,
     templateId?: string,
   ): Promise<Buffer> {
     const sample = await this.findById(id, tenantId);
     const context = await this.buildLabelContext(sample, tenantId);
     const resolvedTemplateId =
       templateId ??
-      (await this.resolveLabelTemplateId(tenantId, 'order_label_print'));
+      (await this.resolveLabelTemplateId(
+        tenantId,
+        branchId,
+        'order_label_print',
+      ));
     return this.pdfReportTemplateService.generatePdf(
       resolvedTemplateId,
       tenantId,
@@ -1262,14 +1480,15 @@ export class OrderSampleService {
    * assigned) is never merged with another — each stays its own singleton row.
    * Same flattened-section approach as `LabReportService.printAllForOrder`
    * (the renderer only expands one level of `{{#each}}`).
+   * @param branchId active branch (honors branch-level Configuration first,
+   * then tenant-wide); null for tenant-wide only
    * @throws OrderSampleNotFoundException if any sample id is missing
    * @throws NoActiveLabelTemplateException if no active template exists
-   * @throws AmbiguousLabelTemplateException if multiple exist and no
-   * `templateId` was given
    */
   async printLabels(
     ids: string[],
     tenantId: string,
+    branchId: string | null,
     templateId?: string,
   ): Promise<Buffer> {
     const samples = await Promise.all(
@@ -1297,6 +1516,7 @@ export class OrderSampleService {
       templateId ??
       (await this.resolveLabelTemplateId(
         tenantId,
+        branchId,
         'multiple_order_label_print',
       ));
     return this.pdfReportTemplateService.generatePdf(
@@ -1306,27 +1526,37 @@ export class OrderSampleService {
     );
   }
 
+  /**
+   * Resolve the label template to render when the caller gave none, following
+   * the 3-tier rule: (1) the Configuration default for this slot/type (active
+   * branch, then tenant-wide), (2) the first active template of this type,
+   * (3) fail with a clear, user-facing error. More than one active template is
+   * valid — we simply pick the configured one, else the first.
+   * @throws NoActiveLabelTemplateException when no active template exists
+   */
   private async resolveLabelTemplateId(
     tenantId: string,
+    branchId: string | null,
     type: PdfReportTemplateType,
   ): Promise<string> {
+    // 1. Configuration default (Old Templates → Configuration).
+    const configured =
+      await this.pdfTemplateConfigService.resolveConfiguredTemplateId(
+        tenantId,
+        branchId,
+        type,
+      );
+    if (configured) return configured;
+    // 2. First active template of this type.
     const { data } = await this.pdfReportTemplateService.findAllForTenant(
       tenantId,
       1,
-      10,
+      1,
       { type, status: 'ACTIVE' },
     );
-    if (data.length === 0) {
-      throw new NoActiveLabelTemplateException(tenantId, type);
-    }
-    if (data.length > 1) {
-      throw new AmbiguousLabelTemplateException(
-        tenantId,
-        type,
-        data.map((t) => t.id),
-      );
-    }
-    return data[0]!.id;
+    if (data[0]) return data[0].id;
+    // 3. Nothing available.
+    throw new NoActiveLabelTemplateException(tenantId, type);
   }
 
   /** Flat `{variable}` values for one sample's label. */
@@ -1370,6 +1600,7 @@ export class OrderSampleService {
         .map((t) => t.testName)
         .filter(Boolean)
         .join(', '),
+      sample_name: sample.sampleName ?? '',
       sample_type: sample.sampleType ?? '',
       container_type: sample.containerType
         ? CONTAINER_TYPE_LABELS[sample.containerType]
@@ -1444,13 +1675,19 @@ export class OrderSampleService {
 
   // ── State-machine actions (PDF §A.9/§A.10) ─────────────────────────────────
 
-  /** Collect Sample (§A.10.1) — New/Hold/Repeat → Collected. */
+  /**
+   * Collect Sample (§A.10.1) — New/Hold/Repeat → Collected. The sample barcode is
+   * generated **at collection time** (not at order creation): once the samples
+   * transition to COLLECTED, a sequential, grouping-aware barcode is assigned to
+   * each collected sample that lacks one (`assignBarcodesOnCollectInTx`), in the
+   * same transaction.
+   */
   async collect(
     ids: string[],
     tenantId: string,
     personId: string | null,
     dto: CollectSampleDto,
-  ): Promise<OrderSampleWithRelations[]> {
+  ): Promise<BulkActionResult<OrderSampleWithRelations>> {
     return this.transitionIds(
       ids,
       tenantId,
@@ -1464,31 +1701,24 @@ export class OrderSampleService {
         },
       }),
       dto,
+      (tx, changedIds) =>
+        this.assignBarcodesOnCollectInTx(tx, tenantId, personId, changedIds),
     );
   }
 
-  /** Collect & Print (§A.10.1) — as Collect, and assigns a barcode if missing. */
+  /**
+   * Collect & Print (§A.10.1) — identical to {@link collect} on the backend (the
+   * sample barcode is generated on collection either way); the "& Print"
+   * distinction is a front-end concern — it additionally opens the label print
+   * dialog after collection.
+   */
   async collectAndPrint(
     ids: string[],
     tenantId: string,
     personId: string | null,
     dto: CollectSampleDto,
-  ): Promise<OrderSampleWithRelations[]> {
-    return this.transitionIds(
-      ids,
-      tenantId,
-      personId,
-      'collect',
-      (sample) => ({
-        data: {
-          collectedAt: dto.collectedAt ? new Date(dto.collectedAt) : new Date(),
-          collectedBy: personId,
-          tubeType: dto.tubeType,
-          barcode: sample.barcode ?? this.deriveBarcode(sample.accessionNo),
-        },
-      }),
-      dto,
-    );
+  ): Promise<BulkActionResult<OrderSampleWithRelations>> {
+    return this.collect(ids, tenantId, personId, dto);
   }
 
   /** Accept Sample — Collected/Halt → Accepted (stamps received/accepted time). */
@@ -1497,7 +1727,7 @@ export class OrderSampleService {
     tenantId: string,
     personId: string | null,
     dto: AcceptSampleDto,
-  ): Promise<OrderSampleWithRelations[]> {
+  ): Promise<BulkActionResult<OrderSampleWithRelations>> {
     const now = new Date();
     return this.transitionIds(
       ids,
@@ -1521,7 +1751,7 @@ export class OrderSampleService {
     tenantId: string,
     personId: string | null,
     dto: SampleNoteDto,
-  ): Promise<OrderSampleWithRelations[]> {
+  ): Promise<BulkActionResult<OrderSampleWithRelations>> {
     return this.transitionIds(
       ids,
       tenantId,
@@ -1538,7 +1768,7 @@ export class OrderSampleService {
     tenantId: string,
     personId: string | null,
     dto: SampleNoteDto,
-  ): Promise<OrderSampleWithRelations[]> {
+  ): Promise<BulkActionResult<OrderSampleWithRelations>> {
     return this.transitionIds(
       ids,
       tenantId,
@@ -1555,8 +1785,8 @@ export class OrderSampleService {
     tenantId: string,
     personId: string | null,
     dto: SampleNoteDto,
-  ): Promise<OrderSampleWithRelations[]> {
-    const samples = await this.transitionIds(
+  ): Promise<BulkActionResult<OrderSampleWithRelations>> {
+    const result = await this.transitionIds(
       ids,
       tenantId,
       personId,
@@ -1566,8 +1796,12 @@ export class OrderSampleService {
     );
     // Fire-and-forget: inform the order's referring panel (B2B). Handled by
     // ClinicalEventListener; walk-in orders (no panel) are skipped there.
-    this.emitSampleFlagged('accession.sample.error', tenantId, samples);
-    return samples;
+    this.emitSampleFlagged(
+      'accession.sample.error',
+      tenantId,
+      result.succeeded,
+    );
+    return result;
   }
 
   /** Hold — New/Repeat → Hold. */
@@ -1576,7 +1810,7 @@ export class OrderSampleService {
     tenantId: string,
     personId: string | null,
     dto: SampleNoteDto,
-  ): Promise<OrderSampleWithRelations[]> {
+  ): Promise<BulkActionResult<OrderSampleWithRelations>> {
     return this.transitionIds(
       ids,
       tenantId,
@@ -1593,8 +1827,8 @@ export class OrderSampleService {
     tenantId: string,
     personId: string | null,
     dto: RepeatSampleDto,
-  ): Promise<OrderSampleWithRelations[]> {
-    const samples = await this.transitionIds(
+  ): Promise<BulkActionResult<OrderSampleWithRelations>> {
+    const result = await this.transitionIds(
       ids,
       tenantId,
       personId,
@@ -1604,8 +1838,12 @@ export class OrderSampleService {
     );
     // Fire-and-forget: inform the order's referring panel (B2B). Handled by
     // ClinicalEventListener; walk-in orders (no panel) are skipped there.
-    this.emitSampleFlagged('accession.sample.repeat', tenantId, samples);
-    return samples;
+    this.emitSampleFlagged(
+      'accession.sample.repeat',
+      tenantId,
+      result.succeeded,
+    );
+    return result;
   }
 
   /**
@@ -1634,7 +1872,7 @@ export class OrderSampleService {
     tenantId: string,
     personId: string | null,
     dto: StoreSampleDto,
-  ): Promise<OrderSampleWithRelations[]> {
+  ): Promise<BulkActionResult<OrderSampleWithRelations>> {
     return this.transitionIds(
       ids,
       tenantId,
@@ -1651,7 +1889,7 @@ export class OrderSampleService {
     tenantId: string,
     personId: string | null,
     dto: DiscardSampleDto,
-  ): Promise<OrderSampleWithRelations[]> {
+  ): Promise<BulkActionResult<OrderSampleWithRelations>> {
     return this.transitionIds(
       ids,
       tenantId,
@@ -1668,7 +1906,7 @@ export class OrderSampleService {
     tenantId: string,
     personId: string | null,
     dto: ReturnSampleDto,
-  ): Promise<OrderSampleWithRelations[]> {
+  ): Promise<BulkActionResult<OrderSampleWithRelations>> {
     return this.transitionIds(
       ids,
       tenantId,
@@ -1687,7 +1925,7 @@ export class OrderSampleService {
     tenantId: string,
     personId: string | null,
     dto: CancelSampleDto,
-  ): Promise<OrderSampleWithRelations[]> {
+  ): Promise<BulkActionResult<OrderSampleWithRelations>> {
     return this.transitionIds(
       ids,
       tenantId,
@@ -1707,14 +1945,19 @@ export class OrderSampleService {
     ids: string[],
     tenantId: string,
     personId: string | null,
-    dto: SampleNoteDto,
-  ): Promise<OrderSampleWithRelations[]> {
+    dto: RetrieveSampleDto,
+  ): Promise<BulkActionResult<OrderSampleWithRelations>> {
     return this.transitionIds(
       ids,
       tenantId,
       personId,
       'retrieve',
-      () => ({ data: {} }),
+      // Record the station/lab the sample was retrieved from on the history row's
+      // `reason` (the shared Notes + Attachment ride along via the note arg).
+      () => ({
+        data: {},
+        ...(dto.retrievedFrom ? { reason: dto.retrievedFrom } : {}),
+      }),
       dto,
     );
   }
@@ -1739,8 +1982,8 @@ export class OrderSampleService {
     tenantId: string,
     personId: string | null,
     dto: AssignBarcodeDto,
-  ): Promise<OrderSampleWithRelations[]> {
-    if (ids.length === 0) return [];
+  ): Promise<BulkActionResult<OrderSampleWithRelations>> {
+    if (ids.length === 0) return { succeeded: [], skipped: [] };
     const changed = await this.prisma.withTenant(tenantId, async (tx) => {
       const samples = await tx.orderSample.findMany({
         where: { id: { in: ids }, tenantId, deletedAt: null },
@@ -1803,7 +2046,12 @@ export class OrderSampleService {
       }
       return ids;
     });
-    return Promise.all(changed.map((id) => this.findById(id, tenantId)));
+    // Barcode assignment performs no status transition, so nothing is ever
+    // skipped — `skipped` is returned empty for the uniform bulk-result contract.
+    const succeeded = await Promise.all(
+      changed.map((id) => this.findById(id, tenantId)),
+    );
+    return { succeeded, skipped: [] };
   }
 
   /** Update Sample (§A.10.3) — records a note/attachment with no status change. */
@@ -1812,7 +2060,7 @@ export class OrderSampleService {
     tenantId: string,
     personId: string | null,
     dto: SampleNoteDto,
-  ): Promise<OrderSampleWithRelations[]> {
+  ): Promise<BulkActionResult<OrderSampleWithRelations>> {
     return this.mutateIds(
       ids,
       tenantId,
@@ -1834,7 +2082,9 @@ export class OrderSampleService {
     personId: string | null,
     dto: ShareSampleDto,
   ): Promise<OrderSampleWithRelations> {
-    const [sample] = await this.mutateIds(
+    const {
+      succeeded: [sample],
+    } = await this.mutateIds(
       [id],
       tenantId,
       personId,
@@ -1874,46 +2124,82 @@ export class OrderSampleService {
 
     // Group status actions force a direct override: the sample is moved to the
     // action's fixed target status regardless of its current status (no legality
-    // check). `retrieve` has no forced target, so it keeps its normal behaviour.
+    // check). `retrieve` and `return` have no forced target (see FORCE_TARGET), so
+    // they keep the normal legality check — a Collected sample can never be Returned.
     const forced = note.force ? FORCE_TARGET[action] : undefined;
-    const toStatus =
-      forced ??
-      (action === 'retrieve'
-        ? (nextSampleStatus('retrieve', sample.status) ?? sample.previousStatus)
-        : nextSampleStatus(action, sample.status));
-    if (!toStatus) {
-      throw new InvalidSampleTransitionException(action, sample.status);
-    }
-
-    if (action === 'retrieve') {
-      await tx.sampleTransfer.updateMany({
+    let toStatus: SampleStatus | null;
+    if (forced) {
+      toStatus = forced;
+    } else if (action === 'retrieve') {
+      // Revert to the sample's immediately-previous status from its OWN history:
+      // the `fromStatus` of the most recent NON-retrieve transition INTO the
+      // current status. Repeated retrieves therefore walk back the real timeline
+      // (New → Collected → Accepted ⇒ Accepted → Collected → New), instead of
+      // oscillating on the single `previousStatus` column. Falls back to the §A.9
+      // transfer-return target, then `null`: a sample with no prior history (just
+      // created, or already back at its first status) yields an "invalid"
+      // transition, so bulk `skipInvalid` skips it gracefully — no-op, no loop —
+      // rather than forcing a hardcoded previous status.
+      const prevRow = await tx.orderSampleStatusHistory.findFirst({
         where: {
           sampleId: sample.id,
           tenantId,
           deletedAt: null,
-          transferStatus: {
-            in: [
-              TransferStatus.IN_TRANSIT,
-              TransferStatus.PICKED_UP,
-              TransferStatus.RECEIVED,
-            ],
-          },
+          toStatus: sample.status,
+          // Only a genuine MOVEMENT into the current status counts — not a prior
+          // retrieve (which would walk back up), and not a no-status-change row
+          // (assign-barcode / update notes / share all record toStatus ==
+          // fromStatus == current). `{ not: current }` on the nullable fromStatus
+          // also drops the `generate` row (fromStatus = null), so a freshly-created
+          // sample correctly yields no previous status. Mirrors findHistory's
+          // movement filter so the UI's shown "New Status" matches what happens.
+          fromStatus: { not: sample.status },
+          action: { not: 'retrieve' },
         },
-        data: {
-          transferStatus: TransferStatus.REJECTED,
-          rejectionReason: 'Recalled via Retrieve',
-          updatedBy: personId,
-        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        select: { fromStatus: true },
       });
+      toStatus =
+        prevRow?.fromStatus ?? nextSampleStatus('retrieve', sample.status);
+    } else {
+      toStatus = nextSampleStatus(action, sample.status);
+    }
+    if (!toStatus) {
+      throw new InvalidSampleTransitionException(action, sample.status);
+    }
+
+    // Recall: this action moves the sample OUT of a transferred status (Retrieve /
+    // Repeat on a Sent / Forwarded / Outsourced sample). Unwind the transfer fully
+    // so no stale record is left in the receiving branch — soft-delete the open
+    // transfer(s) (they vanish from both branches' referral/outsource queues, which
+    // filter deletedAt: null) and, for an accepted INTERNAL transfer, soft-delete
+    // the clone it created in the receiving branch's In-House list and move its lab
+    // report(s) back to the origin. (See recallTransfersForSampleInTx.)
+    const recalling =
+      isTransferredStatus(sample.status) && !isTransferredStatus(toStatus);
+    if (recalling) {
+      await this.recallTransfersForSampleInTx(tx, tenantId, personId, sample);
     }
 
     const built = build(sample);
+    const originBranch = sample.originBranchId ?? sample.branchId;
     const updated = await tx.orderSample.update({
       where: { id: sample.id },
       data: {
         ...built.data,
         status: toStatus,
         previousStatus: sample.status,
+        // A recalled sample is processed at its origin again: revert the processing
+        // branch (set to the destination on Send / Assign Center) and clear the
+        // now-void dispatch fields so the origin branch's list is accurate.
+        ...(recalling
+          ? {
+              processingBranchId: originBranch,
+              dispatchedAt: null,
+              logisticsType: null,
+              logisticsPerson: null,
+            }
+          : {}),
         updatedBy: personId,
       },
     });
@@ -1935,10 +2221,118 @@ export class OrderSampleService {
   }
 
   /**
+   * Recall every outstanding transfer of a sample that is being pulled back from a
+   * transferred status (Retrieve / Repeat). For each non-deleted transfer:
+   *  - if it was an accepted INTERNAL transfer (a clone exists in the receiving
+   *    branch's In-House list), soft-delete that clone and move its lab report(s)
+   *    back to the origin branch (see {@link removeTransferCloneInTx}); then
+   *  - soft-delete the transfer itself, so it disappears from BOTH branches'
+   *    referral / outsource queues (`findTransfers` filters `deletedAt: null`).
+   * Runs inside the caller's transaction so the sample revert + the cross-branch
+   * cleanup commit atomically.
+   * @param tx the caller's (tenant-scoped) transaction
+   * @param tenantId the current tenant
+   * @param personId the acting person (for `updatedBy`)
+   * @param sample the source sample being recalled (its branch is the origin)
+   */
+  private async recallTransfersForSampleInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    personId: string | null,
+    sample: OrderSample,
+  ): Promise<void> {
+    const originBranch = sample.originBranchId ?? sample.branchId;
+    const transfers = await tx.sampleTransfer.findMany({
+      where: { sampleId: sample.id, tenantId, deletedAt: null },
+    });
+    const now = new Date();
+    for (const transfer of transfers) {
+      if (transfer.clonedSampleId) {
+        await this.removeTransferCloneInTx(
+          tx,
+          tenantId,
+          personId,
+          transfer.clonedSampleId,
+          originBranch,
+        );
+      }
+      await tx.sampleTransfer.update({
+        where: { id: transfer.id },
+        data: {
+          deletedAt: now,
+          rejectionReason: transfer.rejectionReason ?? 'Recalled via Retrieve',
+          updatedBy: personId,
+        },
+      });
+    }
+  }
+
+  /**
+   * Unwind the clone an accepted INTERNAL transfer created in the receiving branch
+   * (RULE 1): (1) recursively recall the clone's OWN outstanding transfers — so a
+   * chained transfer (A→B→C) is cleaned up all the way down, not just one hop;
+   * (2) move its lab report(s) back to the origin branch (they were re-homed to the
+   * destination on accept) so the recalled origin sample keeps its report locally;
+   * (3) soft-delete the clone + its tests so it leaves the receiving branch's
+   * In-House list. Idempotent — a no-op if the clone is already gone. Mutually
+   * recursive with {@link recallTransfersForSampleInTx}; terminates because clone
+   * links form a tree (each transfer materialises at most one, newly-created clone).
+   * @param tx the caller's transaction
+   * @param tenantId the current tenant
+   * @param personId the acting person (for `updatedBy`)
+   * @param cloneId the destination-branch clone sample id
+   * @param originBranch the TRUE origin branch to re-home the clone's report(s) to
+   *
+   * Public so `SampleTransferService` can reuse it to unwind the clone when an
+   * accepted INTERNAL transfer is Rejected (reject-after-accept, §B.10).
+   */
+  async removeTransferCloneInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    personId: string | null,
+    cloneId: string,
+    originBranch: string | null,
+  ): Promise<void> {
+    const clone = await tx.orderSample.findFirst({
+      where: { id: cloneId, tenantId, deletedAt: null },
+    });
+    if (!clone) return; // already removed / never cloned
+
+    // Chained transfer: if this clone was itself forwarded onward (B→C), recall
+    // those transfers too (recursively removing their clones). The clone carries
+    // the TRUE origin in `originBranchId` (propagated at clone time), so reports
+    // all flow back to the original origin branch.
+    await this.recallTransfersForSampleInTx(tx, tenantId, personId, clone);
+
+    // Move the clone's report(s) back to the origin before soft-deleting the tests
+    // they're resolved from (rehome reads the clone's OrderSampleTest rows).
+    if (originBranch) {
+      await this.rehomeLabReportsForSample(tx, tenantId, cloneId, originBranch);
+    }
+
+    const now = new Date();
+    await tx.orderSampleTest.updateMany({
+      where: { sampleId: cloneId, tenantId, deletedAt: null },
+      data: { deletedAt: now },
+    });
+    await tx.orderSample.update({
+      where: { id: cloneId },
+      data: { deletedAt: now, updatedBy: personId },
+    });
+  }
+
+  /**
    * Apply a validated §A.9 transition to each id inside one tenant-scoped
-   * transaction (loops `transitionInTx`). All-or-nothing across the id set.
+   * transaction (loops `transitionInTx`). Strict bulk is all-or-nothing; with
+   * `note.skipInvalid` (group / multi-select actions) a sample not in a legal
+   * state is skipped and recorded in the result's `skipped` list instead of
+   * failing the whole batch. Returns the changed rows + the skipped ids so the
+   * FE can report successes and skips separately.
+   * @param afterInTx optional batch step run once, inside the same transaction,
+   *   with the ids that actually transitioned (e.g. collect → assign a
+   *   grouping-aware barcode across the whole collected set in one shot).
    * @throws OrderSampleNotFoundException / InvalidSampleTransitionException
-   * @throws AccessionNumberConflictException on a barcode clash (collect & print)
+   * @throws AccessionNumberConflictException on a barcode clash
    */
   private async transitionIds(
     ids: string[],
@@ -1947,10 +2341,31 @@ export class OrderSampleService {
     action: SampleAction,
     build: (sample: OrderSample) => ActionPatch,
     note: ActionNote = {},
-  ): Promise<OrderSampleWithRelations[]> {
+    afterInTx?: (
+      tx: Prisma.TransactionClient,
+      changedIds: string[],
+    ) => Promise<void>,
+  ): Promise<BulkActionResult<OrderSampleWithRelations>> {
+    const skipped: BulkSkippedItem[] = [];
     let changed: string[];
     try {
       changed = await this.prisma.withTenant(tenantId, async (tx) => {
+        // Pre-read id → accession/status so a skipped sample can be named in the
+        // result (its accession number + why) without a per-skip query. Only the
+        // `skipInvalid` path ever skips (and reads this), so single / strict bulk
+        // actions don't pay for the lookup. A skipped sample is never transitioned,
+        // so its status is still accurate when the loop reaches it.
+        const metaById = new Map<
+          string,
+          { id: string; accessionNo: string; status: SampleStatus }
+        >();
+        if (note.skipInvalid) {
+          const metaRows = await tx.orderSample.findMany({
+            where: { id: { in: ids }, tenantId, deletedAt: null },
+            select: { id: true, accessionNo: true, status: true },
+          });
+          for (const r of metaRows) metaById.set(r.id, r);
+        }
         const done: string[] = [];
         for (const id of ids) {
           let updated: OrderSample;
@@ -1965,12 +2380,21 @@ export class OrderSampleService {
               note,
             );
           } catch (e) {
-            // Group actions ("send all + skip invalid"): skip a sample that is
-            // not in a legal state for this action; surface everything else.
+            // Group / multi-select actions ("skip invalid"): skip a sample that
+            // is not in a legal state for this action — recording it in `skipped`
+            // so the FE can name it — and surface everything else.
             if (
               note.skipInvalid &&
               e instanceof InvalidSampleTransitionException
             ) {
+              const meta = metaById.get(id);
+              skipped.push({
+                id,
+                accessionNo: meta?.accessionNo ?? null,
+                reason: `Action "${action}" is not allowed from status ${
+                  meta?.status ?? 'UNKNOWN'
+                }`,
+              });
               continue;
             }
             throw e;
@@ -1985,13 +2409,17 @@ export class OrderSampleService {
             );
           }
         }
+        if (afterInTx) await afterInTx(tx, done);
         return done;
       });
     } catch (e) {
       this.rethrowConflict(e);
       throw e;
     }
-    return Promise.all(changed.map((id) => this.findById(id, tenantId)));
+    const succeeded = await Promise.all(
+      changed.map((id) => this.findById(id, tenantId)),
+    );
+    return { succeeded, skipped };
   }
 
   /**
@@ -2093,7 +2521,7 @@ export class OrderSampleService {
     action: string,
     build: (sample: OrderSample) => ActionPatch,
     note: ActionNote,
-  ): Promise<OrderSampleWithRelations[]> {
+  ): Promise<BulkActionResult<OrderSampleWithRelations>> {
     let changed: string[];
     try {
       changed = await this.prisma.withTenant(tenantId, async (tx) => {
@@ -2130,7 +2558,12 @@ export class OrderSampleService {
       this.rethrowConflict(e);
       throw e;
     }
-    return Promise.all(changed.map((id) => this.findById(id, tenantId)));
+    // No-status-change mutations never skip (a missing id throws), so `skipped`
+    // is always empty — returned for a uniform bulk-result contract.
+    const succeeded = await Promise.all(
+      changed.map((id) => this.findById(id, tenantId)),
+    );
+    return { succeeded, skipped: [] };
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────────
@@ -2202,6 +2635,27 @@ export class OrderSampleService {
     if (query.isHomeCollection) {
       order.diagnostics = { is: { isHomeVisit: true } };
     }
+    if (query.internalReferralId) {
+      order.internalReferralId = query.internalReferralId;
+    }
+    if (query.externalReferralId) {
+      order.externalReferralId = query.externalReferralId;
+    }
+    if (query.internalReferralBranchId) {
+      order.internalReferral = {
+        is: { branchId: query.internalReferralBranchId },
+      };
+    }
+    if (query.externalReferralOrganisation) {
+      order.externalReferral = {
+        is: {
+          organisationName: {
+            equals: query.externalReferralOrganisation,
+            mode: 'insensitive',
+          },
+        },
+      };
+    }
 
     const and: Prisma.OrderSampleWhereInput[] = [];
     if (query.search) {
@@ -2231,6 +2685,26 @@ export class OrderSampleService {
       });
     }
     if (query.isOutsource) and.push({ status: SampleStatus.OUTSOURCED });
+    if (query.outsourceCenterId) {
+      and.push({
+        transfers: {
+          some: {
+            deletedAt: null,
+            kind: TransferKind.OUTSOURCE,
+            outsourceCenterId: query.outsourceCenterId,
+          },
+        },
+      });
+    }
+    // Send / Forward / Outsource date: the sample has a transfer of that kind
+    // dispatched on the chosen day (its `sendDate`, else when it was created).
+    for (const [kind, day] of [
+      [TransferKind.INTERNAL, query.sendDate],
+      [TransferKind.EXTERNAL, query.forwardDate],
+      [TransferKind.OUTSOURCE, query.outsourceDate],
+    ] as const) {
+      if (day) and.push(this.transferOnDay(kind, day));
+    }
     if (query.isUrgent) {
       and.push({
         OR: [
@@ -2250,6 +2724,26 @@ export class OrderSampleService {
     if (Object.keys(order).length > 0) where.order = order;
     if (and.length > 0) where.AND = and;
     return where;
+  }
+
+  /**
+   * "Has a `kind` transfer dispatched on `day`" (YYYY-MM-DD, whole day). Uses the
+   * transfer's `sendDate`, falling back to `createdAt` when no send date was set.
+   */
+  private transferOnDay(
+    kind: TransferKind,
+    day: string,
+  ): Prisma.OrderSampleWhereInput {
+    const range = timestampRange(day, day);
+    return {
+      transfers: {
+        some: {
+          deletedAt: null,
+          kind,
+          OR: [{ sendDate: range }, { sendDate: null, createdAt: range }],
+        },
+      },
+    };
   }
 
   /**
@@ -2326,11 +2820,6 @@ export class OrderSampleService {
     };
   }
 
-  /** System barcode for a sample: `ACC-00001` → `BAR-00001-A` (PDF §A.10.2). */
-  private deriveBarcode(accessionNo: string): string {
-    return `BAR-${accessionNo.replace(/^ACC-/, '')}-A`;
-  }
-
   /** Read the `samples` array from a branch lab test's config snapshot (safe). */
   private samplesOf(snapshot: Prisma.JsonValue | undefined): LabTestSample[] {
     if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
@@ -2385,6 +2874,7 @@ export class OrderSampleService {
       configSnapshot: Prisma.JsonValue;
     },
     units: SampleUnit[],
+    sampleFlow: boolean,
   ): Promise<void> {
     const departmentId = await this.resolveDepartmentId(
       tx,
@@ -2406,6 +2896,7 @@ export class OrderSampleService {
         testName: test.testName,
         departmentId,
         sample: null,
+        sampleFlow,
       });
       return;
     }
@@ -2416,6 +2907,7 @@ export class OrderSampleService {
         testName: test.testName,
         departmentId,
         sample,
+        sampleFlow,
       });
     }
   }

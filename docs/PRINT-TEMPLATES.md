@@ -222,12 +222,15 @@ from `PDF_TEMPLATE_META_DEFAULTS`, so you only set what you want to change.
   (`doc == null`).
 - **ACTIVE + not soft-deleted.** Only `isActive = true`, `deletedAt = null`
   templates are listed/resolved.
-- **Template resolution / ambiguity.** When you print without an explicit
-  `templateId`, the backend resolves the tenant's single active template of that
-  `type`. **Zero active → error** (`NoActiveLabelTemplateException` /
-  no-template). **More than one active and none configured as default → ambiguity
-  error** (`AmbiguousLabelTemplateException`). Set a Configuration default per
-  slot, or pass `templateId`.
+- **Template resolution.** When you print without an explicit `templateId`,
+  **barcode labels** (`order_label_print` / `multiple_order_label_print`) and
+  **lab reports** resolve in three tiers: (1) the Configuration default for that
+  slot (active branch, then tenant-wide), else (2) the **first active template**
+  of that `type`, else (3) **zero active → error** (`NoActiveLabelTemplateException`
+  / `NoActivePrintTemplateException`). More than one active template is fine — the
+  configured (else first) one is used. Order documents still require either a
+  single active template of the `type` or a configured default. Set a
+  Configuration default per slot, or pass `templateId`, to be explicit.
 - **Unique name per tenant** among active templates → 409
   `PDF_REPORT_TEMPLATE_NAME_CONFLICT` on collision.
 - **Tenant/branch scoped.** `branchId = null` → tenant-wide; a branch UUID → that
@@ -503,6 +506,7 @@ their tag lists are identical.
 | `{last_report_prepared_on}` | Latest approval time on the order. |
 | `{sample_collected_date}` | Sample collection time (branch-local). |
 | `{sample_received_date}` | Sample receipt time. |
+| `{sample_name}` | Sample name (e.g. "Fasting blood"); blank when the sample has none. |
 | `{sample_type}` | Sample type. |
 | `{sample_source_label}` | In-House / Supplied label. |
 | `{sample_note}` | Most recent sample-category note. |
@@ -511,9 +515,10 @@ their tag lists are identical.
 | `{report_approved_by_certifications}` | Comma-joined certs (NABL/CAP/ISO). |
 | `{report_approved_by_signature}` | Signature image URL. |
 | `{patient_image}` | Patient photo URL. |
-| `{order_id_barcode}` | Code 128 barcode **image** of the Order ID (`Order.orderIdBarcode`). |
+| `{order_id_barcode}` | Code 128 barcode **image** of the Order ID (`Order.orderCode`, e.g. `ORD-00113`). |
 | `{order_id_qr_code}` | Code 128 barcode **image** of the Sample ID (this report's `OrderSample.barcode`) — a barcode despite the name. |
 | `{test_file_attachment}` | The PDF(s) uploaded with this test's Test Entry **File +** button, drawn in place (see below). Empty when the test has none. |
+| `{test_file_attachment_without_header}` | The SAME File+ uploads, but **appended as extra pages at the end of the report** instead of drawn in place (see below). Empty when the test has none. |
 
 **Image tags** (`{{image:key}}`): `report_approved_by_signature`,
 `patient_image`, `order_id_barcode`, `order_id_qr_code`.
@@ -546,13 +551,45 @@ uploads (sheets, docs, images) are skipped.
   encrypted), the embed prints as an `Attached file: <name>` link instead, and
   the report still generates. At most 50 pages are drawn per file.
 
+**`{test_file_attachment_without_header}` — File+ attachment appended as pages.**
+Selects exactly the same File+ uploads as `{test_file_attachment}` (this test's
+PDFs **and** images, `kind = 'file'`, oldest first, test-scoped), but instead of
+drawing them inside the report it **appends their own pages to the very end of the
+finished PDF**, untouched by the template's header/footer. So a 5-page report plus
+a 3-page PDF attachment prints **8 pages**, and an image becomes one appended page.
+
+- The tag emits **no visible content** — only a hidden (`display:none`) marker per
+  file (`<div class="pdf-append-attachment" …>`). `PdfService` reads the markers
+  after layout, prints the report as usual, then merges the files onto the end
+  (`src/modules/pdf/pdf-append.util.ts`). It is inserted unescaped, so Latte
+  `lab_report` bodies use `{test_file_attachment_without_header}` or
+  `{$test_file_attachment_without_header|noescape}`.
+- **PDF** attachments are merged page-for-page as-is (vector content and selectable
+  text preserved); each keeps its own page size. **Image** attachments are rendered
+  to a new page (sized like the report's pages, fitted and centred, never enlarged
+  past native pixels) **through the same Chromium the report body uses** — so EXIF
+  orientation (phone photos), CMYK/other colour spaces and every browser-supported
+  format (png/jpeg/webp/gif) come out identical to the inline `{test_file_attachment}`
+  `<img>`.
+- Use `{test_file_attachment}` to show a file **in place**, or
+  `{test_file_attachment_without_header}` to **append** it — don't use both for the
+  same file, or it prints twice. Non-PDF/non-image File+ uploads are skipped.
+- **Failures are surfaced, not silent.** A file that can't be downloaded, parsed or
+  rendered (404/oversized/corrupt, an encrypted PDF, an undecodable image) is
+  replaced by a visible **"Attachment could not be included"** note page (and
+  logged), so the report still generates and a missing attachment is never invisible.
+- In a `lab_all_report`, it is a per-test `{$report->test_file_attachment_without_header|noescape}`
+  (blank at the top level, like `{test_file_attachment}`); every test's appended
+  files land after all report pages.
+
 **`results` section row** (parameter rows, sorted by catalogue order):
 
 | Field | Description |
 | --- | --- |
 | `{parameter_name}` | Analyte / parameter name. |
-| `{observed1}` | Primary observed value. |
-| `{observed2}` | Secondary observed value. |
+| `{observed1}` | Primary observed value. For a **Quantitative** parameter whose reading falls below the Lower Limit or above the Upper Limit of its resolved reference range, this is wrapped in the range's configured **Abnormal Flag Logic** styling (bold / red / italic / underline / highlight, from Master Data → Reference Range); in-range and qualitative readings render plain. The value is server-escaped HTML — in a Latte template print it with `|noescape` (`{$row->observed1|noescape}`) to show the styling. |
+| `{observed2}` | Secondary observed value. Styled by the same abnormal-flag logic as `{observed1}`, evaluated independently against the same range. |
+| `{is_observed_1_abnormal}` / `{is_observed_2_abnormal}` | Boolean — `true` when that reading is a **Quantitative** value outside the Lower/Upper limits of its resolved reference range, else `false`. Same evaluation that drives the abnormal styling. In a classic template it renders the literal `true`/`false`; in a Latte template it is a real boolean, so branch on it (`{if $row->is_observed_1_abnormal}…{/if}`) — e.g. to print a `H`/`L` flag or an arrow column. |
 | `{unit}` | Measurement unit. |
 | `{methodology}` / `{method_name}` | Method (aliases). |
 | `{reference_display}` | Formatted reference range. |
@@ -633,7 +670,7 @@ The context is:
 | `refer_by_name` | Referring doctor (or ` -- `). |
 | `referring_panel_name` | Referring panel (or ` -- `). |
 | `order_date_time` | Order date/time — typed order time, else the order's creation time (tenant timezone). |
-| `order_id_barcode` | Code 128 barcode image src (`data:` URI) of the Order ID (`Order.orderIdBarcode`). |
+| `order_id_barcode` | Code 128 barcode image src (`data:` URI) of the Order ID (`Order.orderCode`, e.g. `ORD-00113`). |
 
 **`report_tests.tests[]` (one per test):**
 
@@ -644,6 +681,7 @@ The context is:
 | `sample_received_date` | Receipt time. |
 | `report_prepared_on` | Approval/publish time. |
 | `test_file_attachment` | That test's File+ PDF(s) — `{$report->test_file_attachment\|noescape}`. Already inside `body_html` when that test's own `lab_report` template uses the tag. In a flat `{{#each reports}}` template it is a per-row `{test_file_attachment}`; it is blank at the top level, so one test's file never prints for the whole order. |
+| `test_file_attachment_without_header` | That test's File+ files **appended as pages** instead of drawn inline — `{$report->test_file_attachment_without_header\|noescape}`. Same test-scoping/`body_html` notes as `test_file_attachment`; every test's appended files land after all report pages. |
 | `lab_test_id` | Tenant-master test id. |
 | `tests` | `[{ display_test_sample: '1' }]` visibility gate (mostly unused). |
 
@@ -679,6 +717,7 @@ Both types share the same per-sample fields:
 | `{department_name}` | Department name(s) of the sample's tests. A sample can span multiple departments → distinct names, comma-joined (e.g. `Biochemistry, Hematology`). Blank when no department is assigned. |
 | `{order_code}` | Order code. |
 | `{test_names}` | Comma-joined test names. |
+| `{sample_name}` | Sample name (e.g. "Fasting blood"); blank when the sample has none. |
 | `{sample_type}` | Sample type. |
 | `{container_type}` | Container / tube type. |
 | `{priority}` | Priority. |

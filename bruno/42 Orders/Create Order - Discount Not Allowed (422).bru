@@ -68,6 +68,11 @@ docs {
   - `LINE_ITEM_DISCOUNT_NOT_ALLOWED` / `LINE_ITEM_DISCOUNT_OUT_OF_RANGE` — a
     per-line discount is disabled, or its % of that item's price is outside
     `[Minimum, Maximum] Line Item Discount %`.
+
+  The per-test "Allow Discounts" flag is NOT enforced server-side — it only hides
+  the per-item discount input on the frontend for a non-discountable test. An
+  order-level discount is always accepted regardless of that flag (see
+  `Create Order - Order Discount On Non-Discountable Test (201)`).
   - `TDS_NOT_APPLICABLE` / `TDS_OUT_OF_RANGE` — TDS supplied while not
     applicable, or its % of the net amount is outside `[Minimum, Maximum] TDS %`.
   - `PARTIAL_BILLING_NOT_ALLOWED_FOR_DISCOUNTED_ORDER` — the order carries a

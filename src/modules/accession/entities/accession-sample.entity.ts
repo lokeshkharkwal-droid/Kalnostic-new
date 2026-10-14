@@ -48,7 +48,10 @@ export const SAMPLE_INCLUDE = {
     },
   },
   statusHistory: { orderBy: { createdAt: 'desc' } },
-  transfers: { orderBy: { createdAt: 'desc' } },
+  // Exclude soft-deleted transfers so a recalled (Retrieve) transfer never lingers
+  // on the sample's own transfer list / Edit-Center lookup (findTransfers already
+  // filters deletedAt: null on the receiving queue).
+  transfers: { where: { deletedAt: null }, orderBy: { createdAt: 'desc' } },
   order: {
     select: {
       id: true,
@@ -80,10 +83,21 @@ export type OrderSampleWithRelations = Prisma.OrderSampleGetPayload<{
  * departments joined with ", " (null when none resolve); each test also carries
  * its own `department` name.
  */
-export type OrderSampleDetail = Omit<OrderSampleWithRelations, 'tests'> & {
+export type OrderSampleDetail = Omit<
+  OrderSampleWithRelations,
+  'tests' | 'transfers'
+> & {
   departmentLabel: string | null;
   tests: (OrderSampleWithRelations['tests'][number] & {
     department: string | null;
+  })[];
+  /**
+   * Transfers enriched with the resolved OUTSOURCE center name (`outsourceCenterId`
+   * is a logical ref — see `withDepartments`). Lets the Assign/Edit Center flow
+   * pre-fill the current center instead of opening blank.
+   */
+  transfers: (OrderSampleWithRelations['transfers'][number] & {
+    outsourceCenterName: string | null;
   })[];
 };
 

@@ -6,6 +6,7 @@ import compression from 'compression';
 import helmet from 'helmet';
 import type { NextFunction, Request, Response } from 'express';
 import { AppModule } from './app.module';
+import { REQUEST_BODY_LIMIT_MB } from './common/constants/request-limits.constant';
 import { HttpExceptionFilter } from './common/filters';
 import { ResponseInterceptor } from './common/interceptors';
 
@@ -22,13 +23,15 @@ async function bootstrap(): Promise<void> {
   // rich-text HTML payloads (e.g. a long Overall Result / Notes section
   // pasted from Word/Excel) — the body-parser rejects the request with a
   // raw (non-HttpException) PayloadTooLargeError BEFORE routing/DTO
-  // validation ever runs, which the global HttpExceptionFilter can only
-  // render as a generic 500 "An unexpected error occurred." rather than a
-  // real 413/validation message. Raise it to something generous enough for
+  // validation ever runs; the global HttpExceptionFilter turns that into a
+  // clear 413 (PAYLOAD_TOO_LARGE). Raise it to something generous enough for
   // rich-text fields (DTOs still enforce their own, tighter per-field
-  // MaxLength on top of this).
-  app.useBodyParser('json', { limit: '5mb' });
-  app.useBodyParser('urlencoded', { limit: '5mb', extended: true });
+  // limits on top of this, e.g. `NOTE_MAX_LENGTH` for notes).
+  app.useBodyParser('json', { limit: `${REQUEST_BODY_LIMIT_MB}mb` });
+  app.useBodyParser('urlencoded', {
+    limit: `${REQUEST_BODY_LIMIT_MB}mb`,
+    extended: true,
+  });
 
   // ── CORS ──
   // Allow browser-based frontends to call this API.

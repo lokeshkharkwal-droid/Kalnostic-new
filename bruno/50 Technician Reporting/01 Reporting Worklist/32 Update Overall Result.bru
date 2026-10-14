@@ -62,6 +62,12 @@ docs {
   is rejected with 400 `VALIDATION_ERROR` — exactly one of the two is
   required per call.
 
+  `content` may be rich-text HTML of up to 1,000,000 characters (the shared
+  `NOTE_MAX_LENGTH`, the same limit Master Data enforces for Overall Result
+  templates). Over the limit: 400 `VALIDATION_ERROR` — "Overall Result is too
+  long (N characters). The maximum is 1,000,000 characters." A request body
+  over 5 MB is refused with 413 `PAYLOAD_TOO_LARGE`.
+
   Gated by `TechnicianSetting.isOverallResultEditable` (default `false`,
   see "Technician Settings" module). When the toggle is off, this is a
   **silent no-op**: the request succeeds (200) but returns this parameter's

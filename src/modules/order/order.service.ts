@@ -3,6 +3,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   AppointmentStatus,
   AppointmentType,
+  BillStatus,
   DiscountMode,
   DoctorType,
   ExternalIdFormat,
@@ -60,6 +61,8 @@ import {
   formatTenantDate,
   formatTenantDateTime,
   formatOrderDateTime,
+  resolveOrderLocalDateTime,
+  classifyOrderDate,
 } from '../../common/utils';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
@@ -91,9 +94,15 @@ import {
   computeEffectivePaid,
   deriveRefundStatus,
   deriveReportStatus,
+  deriveReportStatusCounts,
+  orderItemNames,
 } from './entities/order.entity';
 import { computeBillingTotals } from './utils/billing-totals';
-import { billStatusLabel, recomputeBillStatusInTx } from './utils/bill-status';
+import {
+  billStatusLabel,
+  deriveBillStatus,
+  recomputeBillStatusInTx,
+} from './utils/bill-status';
 import { BillingGroupBy } from './dto/billing-grouped-query.dto';
 import { BillingDimension } from './dto/billing-query.dto';
 import {
@@ -210,6 +219,7 @@ import {
   AmbiguousOrderPrintTemplateException,
   NotAQuotationException,
   SourceQuotationInvalidException,
+  QuotationAlreadyConvertedException,
   QuotationNotExpiredException,
   QuotationDuplicationNotAllowedException,
   PreviousDuesNotClearedException,
@@ -241,10 +251,12 @@ import {
 } from '../payment-details/exceptions/payment-details.exceptions';
 import {
   diffOrderItems,
+  diffOrderPayments,
   isTestDeletable,
   isDisallowedOverpayment,
   type IncomingOrderItem,
 } from './utils/order-item-diff';
+import { assertQuoteTakesNoNewMoney } from './utils/quote-payment';
 
 /**
  * The minimal payment shape the discount/TDS + partial-billing validators read —
@@ -411,6 +423,19 @@ export function assertOrderPanelOwnership(
   }
 }
 
+/**
+ * The bill documents whose production is gated by the branch "print paid bills
+ * only" setting — the patient bill, the accounts/B2B bill (also rendered for the
+ * Share Bill attachment) and the referral patient bill. Keeps Print Bill and
+ * Share Bill in lock-step; other order documents (order slip / TRF / quotation /
+ * barcode) are never gated.
+ */
+const BILL_DOCUMENT_PRINT_TYPES = new Set<OrderPrintType>([
+  'bill_print',
+  'accounts_biling',
+  'referral_patient_bill_print',
+]);
+
 @Injectable()
 export class OrderService {
   constructor(
@@ -553,6 +578,9 @@ export class OrderService {
     if (payPaid > payNet) {
       throw new PaymentOverpaymentException(payNet, payPaid);
     }
+    // A quotation is an estimate, not a bill: it takes no money (collected on the
+    // order after conversion instead).
+    assertQuoteTakesNoNewMoney(dto.status, payPaid);
     // Generate Bill = No: the order records no money (the FE also disables the
     // whole Payment Details section). Reject any positive paid amount as defence
     // in depth.
@@ -582,6 +610,13 @@ export class OrderService {
       dto.items ?? [],
     );
 
+    // B2B orders bypass ONLY the branch Previous-Dues + Partial-Billing rules:
+    // when a referral panel is attached the order follows that panel's own credit/
+    // wallet terms (enforced separately below via `referralCredit`), so the retail
+    // previous-dues / partial-billing gates must not block it. Discounts, TDS, the
+    // appointment paid-only gate, and everything else stay enforced. The frontend
+    // applies the same narrow bypass on the Create screen.
+    const isB2bOrder = Boolean(dto.referralPanelId);
     // Fetch the branch's Registration settings once (only when finalizing a real
     // order at a branch) and share it across every rule below.
     const needsBillingRules =
@@ -595,25 +630,28 @@ export class OrderService {
         : null;
     const hasDiscount = this.orderHasDiscount(dto.items ?? [], dto.payments);
 
-    // Enforce the branch's Previous-Dues + Partial-Billing rules (Registration
-    // Settings → Charges & Deductions). Only bites when finalizing a real order
-    // (`status = ORDER`) at a branch; DRAFT/QUOTE/APPOINTMENT are exempt. Also
-    // skipped entirely when no bill is generated — there is nothing to bill, so
-    // the previous-dues / partial-billing / discount gates must not block it.
+    // Enforce the branch billing rules (Registration Settings → Charges &
+    // Deductions). Only bite when finalizing a real order (`status = ORDER`) at a
+    // branch; DRAFT/QUOTE/APPOINTMENT are exempt. Also skipped entirely when no
+    // bill is generated — there is nothing to bill, so the gates must not block it.
     if (!billNotGenerated) {
-      await this.assertBillingRules({
-        tenantId,
-        branchId,
-        status: dto.status,
-        patientId: dto.patientId,
-        payments: dto.payments,
-        previousDuesCleared: dto.previousDuesCleared ?? 0,
-        settings,
-        hasDiscount,
-      });
+      // Previous-Dues + Partial-Billing — skipped for B2B orders (`isB2bOrder`),
+      // whose credit terms are governed by the referral panel instead.
+      if (!isB2bOrder) {
+        await this.assertBillingRules({
+          tenantId,
+          branchId,
+          status: dto.status,
+          patientId: dto.patientId,
+          payments: dto.payments,
+          previousDuesCleared: dto.previousDuesCleared ?? 0,
+          settings,
+          hasDiscount,
+        });
+      }
 
-      // Enforce the branch's TDS & Discount rules (allow-flags, discount mode,
-      // and min/max percentages) against the server-side item prices.
+      // TDS & Discount rules (allow-flags, discount mode, and min/max percentages)
+      // against the server-side item prices — enforced for B2B orders too.
       this.assertDiscountAndTdsRules({
         status: dto.status,
         branchId,
@@ -628,7 +666,7 @@ export class OrderService {
     // The two flags are mutually exclusive (enforced on save): "check-in for
     // paid only" blocks an unpaid/partial appointment; "allow progress of
     // unpaid/partial" (or neither) permits it. Only bites when creating an
-    // APPOINTMENT-status order at a branch.
+    // APPOINTMENT-status order at a branch. Enforced for B2B orders too.
     if (dto.status === OrderStatus.APPOINTMENT && branchId) {
       const apptSettings =
         settings ??
@@ -667,6 +705,10 @@ export class OrderService {
     // supplied (NONE format) it is kept and uniqueness-checked; otherwise the
     // external id is simply left null.
     const manualExternalId = dto.externalOrderId?.trim() || null;
+
+    // Tenant timezone drives the order-date classification (CURRENT / BACKTRACKED
+    // / ADVANCE_DATED): "today" is the business's local day, not the server UTC day.
+    const { timezone } = await this.tenantService.getLocale(tenantId);
 
     let createdId: string;
     try {
@@ -745,7 +787,7 @@ export class OrderService {
             updatedBy: personId,
             status: dto.status ?? OrderStatus.DRAFT,
             orderDate: new Date(dto.orderDate),
-            orderDateType: this.classifyOrderDate(dto.orderDate),
+            orderDateType: classifyOrderDate(dto.orderDate, timezone),
             orderType: dto.orderType,
             billingType: dto.billingType,
             isUrgentBill: dto.isUrgentBill ?? false,
@@ -810,25 +852,12 @@ export class OrderService {
         // keeps status = QUOTE (so it stays on the Quotations screen) — only its
         // quotationStatus changes.
         if (dto.sourceQuotationId && dto.status !== OrderStatus.QUOTE) {
-          const sourceQuote = await tx.order.findFirst({
-            where: {
-              id: dto.sourceQuotationId,
-              tenantId,
-              deletedAt: null,
-              quotationStatus: { not: null },
-            },
-            select: { id: true },
-          });
-          if (!sourceQuote) {
-            throw new SourceQuotationInvalidException(dto.sourceQuotationId);
-          }
-          await tx.order.update({
-            where: { id: sourceQuote.id },
-            data: {
-              quotationStatus: QuotationStatus.CONVERTED,
-              updatedBy: personId,
-            },
-          });
+          await this.markSourceQuotationConvertedInTx(
+            tx,
+            tenantId,
+            dto.sourceQuotationId,
+            personId,
+          );
         }
         // Seed the create-form's single `orderNotes` string as the first entry
         // of the Order Notes history so the Order Overview tab shows it alongside
@@ -915,6 +944,11 @@ export class OrderService {
               branchId,
               orderId: order.id,
               ...p,
+              // A new order always gets its own payment rows: `OrderPaymentDto.id`
+              // is "ignored on create", and a client-supplied id (e.g. the source
+              // quote's payment id carried over on Convert to Order) would collide
+              // with the existing row's primary key.
+              id: undefined,
               // Generate Bill = No ⇒ zero every money field except the gross
               // `totalAmount` (kept for visibility): payable/net/paid = 0 so the
               // order carries no due and reads as settled.
@@ -1002,7 +1036,7 @@ export class OrderService {
         return order.id;
       });
     } catch (e) {
-      this.rethrowConflict(e);
+      this.rethrowConflict(e, dto.sourceQuotationId);
       throw e;
     }
     const created = await this.findById(createdId, tenantId);
@@ -1073,7 +1107,12 @@ export class OrderService {
 
     // Rebuild a create payload from the source. Order date = today (its fresh
     // validity is then computed at runtime); status QUOTE / quotationStatus DRAFT.
-    const todayIso = new Date().toISOString().slice(0, 10);
+    // Tenant-local "today" (not the server UTC day) so a quote duplicated between
+    // local midnight and the UTC rollover is dated the business's current day.
+    const { timezone } = await this.tenantService.getLocale(tenantId);
+    const todayIso = toBranchLocalInstant(new Date(), timezone)
+      .toISOString()
+      .slice(0, 10);
     const items: OrderItemDto[] = source.items.map((i) => ({
       branchLabTestId: i.branchLabTestId ?? undefined,
       branchLabPanelId: i.branchLabPanelId ?? undefined,
@@ -1257,7 +1296,8 @@ export class OrderService {
    *
    * Previous dues: when the patient still owes money and the branch does NOT
    * allow ordering without clearing dues, at least
-   * `min(outstanding, MinimumPreviousDuesToClear)` must be cleared on this order.
+   * `ceil(outstanding × MinimumPreviousDuesPercentToClear%)` must be cleared on
+   * this order (a configured percentage of 0 falls back to the full outstanding).
    *
    * Partial billing: when partial billing is disabled the full `netAmount` must
    * be collected; when enabled, at least `MinimumPercentOfNetAmountToProceed`%
@@ -1321,15 +1361,17 @@ export class OrderService {
         );
       }
       if (duesGateActive && outstanding > 0) {
-        const minToClear = Number(
-          settings.ChargesAndDeductions_MinimumPreviousDuesToClear,
-        );
+        const minPercent =
+          settings.ChargesAndDeductions_MinimumPreviousDuesPercentToClear;
         // Toggle OFF ⇒ the full outstanding must be cleared by default; a
-        // positive configured minimum relaxes it to just that amount (capped at
-        // what's owed). A minimum of 0 means "no explicit minimum" — not "clear
-        // nothing" — so it falls back to full clearance.
+        // positive configured percentage relaxes it to that share of the
+        // outstanding balance (e.g. 50% of ₹1000 ⇒ ₹500, rounded up and capped
+        // at what's owed). A percentage of 0 means "no explicit minimum" — not
+        // "clear nothing" — so it falls back to full clearance.
         const required =
-          minToClear > 0 ? Math.min(outstanding, minToClear) : outstanding;
+          minPercent > 0
+            ? Math.min(outstanding, Math.ceil((outstanding * minPercent) / 100))
+            : outstanding;
         if (previousDuesCleared < required) {
           throw new PreviousDuesNotClearedException(
             outstanding,
@@ -1511,6 +1553,10 @@ export class OrderService {
       const discount = item.discount ?? 0;
       lineDiscountTotal += discount;
       if (discount <= 0) continue;
+      // NOTE: the per-test "Allow Discounts" flag is enforced in the FRONTEND
+      // only (the per-item discount input is hidden for a non-discountable test).
+      // There is intentionally no server-side per-test discount gate here, so an
+      // order-level discount never trips a per-test rule.
       if (!lineDiscountEnabled) throw new LineItemDiscountNotAllowedException();
       // Effective percentage: use the typed PERCENT value directly, else derive
       // it from the amount and the line's price. A discount on a zero-price
@@ -1905,6 +1951,49 @@ export class OrderService {
   // the `type` selects the context builder. Mirrors `LabReportService.print`.
 
   /**
+   * Enforce the branch's "print paid bills only" rule for a bill document. When
+   * `BillingMenu_AllowBillCopyPrintForPaidBillingsOnly` is on, a bill copy may be
+   * produced only once the order's billing Status is `PAID` — exactly the status
+   * the Billings list shows (cancellation + refunds folded in), so a Cancelled /
+   * Require-Refund / Partially-Refunded / Fully-Refunded / unpaid order is barred
+   * identically whether the user clicks Print Bill or Share Bill. No branch → no
+   * settings → allowed.
+   * @param order the fully-composed order (carries the authoritative rollups)
+   * @param tenantId tenant scope
+   * @throws BillCopyPrintNotAllowedForUnpaidException when barred
+   */
+  private async assertBillPrintable(
+    order: OrderWithRelations,
+    tenantId: string,
+  ): Promise<void> {
+    if (!order.branchId) return;
+    const settings = await this.registrationSettingsService.getForBranch(
+      tenantId,
+      order.branchId,
+    );
+    if (!settings.BillingMenu_AllowBillCopyPrintForPaidBillingsOnly) return;
+    const refunded = order.payments.reduce(
+      (s, p) => s + toNum(p.refundAmount),
+      0,
+    );
+    const effectivePaid = computeEffectivePaid(
+      order.paidAmount,
+      toNum(order.cancellationCharge),
+      refunded,
+      order.payments.reduce((s, p) => s + toNum(p.refundCharge), 0),
+    );
+    const status = deriveBillStatus(
+      order.status,
+      order.netAmount,
+      effectivePaid,
+      refunded,
+    );
+    if (status !== BillStatus.PAID) {
+      throw new BillCopyPrintNotAllowedForUnpaidException(order.id);
+    }
+  }
+
+  /**
    * Render one of an order's documents (order slip / bill / TRF / quotation) to a
    * PDF using the selected (or the tenant's single active) template of that type.
    * @param id order id
@@ -1922,26 +2011,12 @@ export class OrderService {
     templateId?: string,
   ): Promise<Buffer> {
     const order = await this.findById(id, tenantId);
-    // Bill copies may be restricted to fully-paid orders (branch setting). Net −
-    // effective-paid ≤ 0 means the balance is settled. Only guards `bill_print`;
-    // TRF / order slip / quotation are unaffected. No branch → no settings → allow.
-    if (type === 'bill_print' && order.branchId) {
-      const settings = await this.registrationSettingsService.getForBranch(
-        tenantId,
-        order.branchId,
-      );
-      if (settings.BillingMenu_AllowBillCopyPrintForPaidBillingsOnly) {
-        const net = order.payments.reduce((s, p) => s + toNum(p.netAmount), 0);
-        const effectivePaid = computeEffectivePaid(
-          order.payments.reduce((s, p) => s + toNum(p.paidAmount), 0),
-          toNum(order.cancellationCharge),
-          order.payments.reduce((s, p) => s + toNum(p.refundAmount), 0),
-          order.payments.reduce((s, p) => s + toNum(p.refundCharge), 0),
-        );
-        if (net - effectivePaid > 0) {
-          throw new BillCopyPrintNotAllowedForUnpaidException(id);
-        }
-      }
+    // Bill copies may be restricted to fully-paid orders (branch setting). Guards
+    // every bill document — the patient bill, the accounts/B2B bill (also the
+    // Share Bill PDF) and the referral patient bill — so Print and Share obey the
+    // same rule; TRF / order slip / quotation / barcode are unaffected.
+    if (BILL_DOCUMENT_PRINT_TYPES.has(type)) {
+      await this.assertBillPrintable(order, tenantId);
     }
     const context = await this.buildPrintContext(order, type, tenantId);
     const resolvedTemplateId =
@@ -2203,24 +2278,6 @@ export class OrderService {
       .join(', ');
   }
 
-  /** Summed bill totals across the active payment ledger (minor units). */
-  private billTotals(order: OrderWithRelations): {
-    gross: number;
-    discount: number;
-    net: number;
-    paid: number;
-    balance: number;
-  } {
-    const sum = (
-      pick: (p: OrderWithRelations['payments'][number]) => Prisma.Decimal,
-    ) => order.payments.reduce((acc, p) => acc + toNum(pick(p)), 0);
-    const gross = sum((p) => p.totalAmount);
-    const discount = sum((p) => p.orderDiscount);
-    const net = sum((p) => p.netAmount);
-    const paid = sum((p) => p.paidAmount);
-    return { gross, discount, net, paid, balance: net - paid };
-  }
-
   /**
    * Authoritative billing rollups for one order — the SINGLE derivation shared
    * by the Billings list (`findAll`) and every composed get/create/update/cancel
@@ -2271,23 +2328,6 @@ export class OrderService {
     };
   }
 
-  /**
-   * Classify an order's date relative to server "today" (both compared as
-   * DATE-only, matching the `orderDate @db.Date` column). Used to stamp
-   * `Order.orderDateType` on create and whenever the order date changes:
-   * `BACKTRACKED` when the order is dated in the past, `ADVANCE_DATED` when dated
-   * in the future, `CURRENT` when it is today.
-   * @param orderDate the order date as an ISO-8601 date string (`YYYY-MM-DD…`)
-   * @returns the {@link OrderDateType} classification
-   */
-  private classifyOrderDate(orderDate: string): OrderDateType {
-    const orderDay = new Date(orderDate).toISOString().slice(0, 10);
-    const today = new Date().toISOString().slice(0, 10);
-    if (orderDay < today) return OrderDateType.BACKTRACKED;
-    if (orderDay > today) return OrderDateType.ADVANCE_DATED;
-    return OrderDateType.CURRENT;
-  }
-
   /** `order_print` — order slip: header, patient, referral, item list. */
   private async buildOrderPrintContext(
     order: OrderWithRelations,
@@ -2317,14 +2357,13 @@ export class OrderService {
     order: OrderWithRelations,
     tenantId: string,
   ): Promise<GeneratePdfDto> {
-    const totals = this.billTotals(order);
-    // Discount = per-line item discounts + the order-level discount — the
-    // authoritative rollup `findById` attaches (`computeBillingTotals`), i.e.
-    // the Discount the Billings list / Order Overview show. The ledger's
-    // `Σ orderDiscount` (`totals.discount`) omits line discounts entirely.
-    // The percentage is taken against the items' pre-discount total (the base
-    // discounts are applied to), not the ledger gross, which also carries the
-    // non-discountable sample-collection / visit charges.
+    // All money comes from the SINGLE authoritative rollup `findById` attaches
+    // (`computeBillingTotals`) — the exact gross/discount/net the Billings list
+    // and Order Overview show — so the printed bill can never disagree with the
+    // screen. The Discount is per-line + order-level; its percentage is taken
+    // against the items' pre-discount total (the base discounts apply to), not
+    // the ledger gross, which also carries the non-discountable sample-collection
+    // / visit charges.
     const itemsTotal = order.items.reduce(
       (s, it) => s + toNum(it.unitPrice),
       0,
@@ -2333,25 +2372,35 @@ export class OrderService {
       itemsTotal > 0
         ? roundToTwoDecimalPlaces((order.discountAmount / itemsTotal) * 100)
         : 0;
-    // Same Status label the Billings list shows (cancellation + refunds folded
-    // in), computed from the same inputs as that list row. Deliberately NOT the
-    // stored `order.paymentStatus`: that enum only holds NOT_PAID /
-    // PARTIALLY_PAID / PAID, and `cancel`/`refund` recompute it as a pure
-    // payment state against the retained amount — so a cancelled order kept
-    // printing PAID/PARTIALLY_PAID and a surplus refund left it PAID.
+    // Refunds, retained refund charges and the cancellation charge — exposed as
+    // their own bill tags, and folded into the retained (effective) paid amount
+    // so the printed Balance reflects money returned instead of the old
+    // `net − gross paid` that ignored them.
     const refunded = order.payments.reduce(
       (s, p) => s + toNum(p.refundAmount),
       0,
     );
+    const refundChargeTotal = order.payments.reduce(
+      (s, p) => s + toNum(p.refundCharge),
+      0,
+    );
+    const cancellationCharge = toNum(order.cancellationCharge);
+    const effectivePaid = computeEffectivePaid(
+      order.paidAmount,
+      cancellationCharge,
+      refunded,
+      refundChargeTotal,
+    );
+    const balanceAmount = roundToTwoDecimalPlaces(
+      order.netAmount - effectivePaid,
+    );
+    // Same Status label the Billings list shows (cancellation + refunds folded
+    // in). Deliberately NOT the stored `order.paymentStatus` (which only holds
+    // NOT_PAID / PARTIALLY_PAID / PAID against the retained amount).
     const billStatus = billStatusLabel(
       order.status,
       order.netAmount,
-      computeEffectivePaid(
-        order.paidAmount,
-        toNum(order.cancellationCharge),
-        refunded,
-        order.payments.reduce((s, p) => s + toNum(p.refundCharge), 0),
-      ),
+      effectivePaid,
       refunded,
     );
     const { timezone, dateFormat, timeFormat } =
@@ -2408,29 +2457,45 @@ export class OrderService {
         // pre-existing bill_print templates don't need to re-author them.
         bill_status: billStatus,
         branch_name: order.branch?.name ?? '',
-        gross_amount: totals.gross,
+        gross_amount: order.grossAmount,
         discount_amount: order.discountAmount,
         discount_percentage: discountPercentage,
         ...this.diagnosticsVariables(order),
-        net_amount: totals.net,
-        total_amount_in_words: amountInWords(totals.net),
-        paid_amount: totals.paid,
-        balance_amount: totals.balance,
+        net_amount: order.netAmount,
+        total_amount_in_words: amountInWords(order.netAmount),
+        // Gross money collected (the Billings "Paid" column); refunds/charges are
+        // their own tags below so the template can present them explicitly.
+        paid_amount: order.paidAmount,
+        balance_amount: balanceAmount,
+        refund_total: refunded,
+        refund_charge_total: refundChargeTotal,
+        cancellation_charge: cancellationCharge,
+        // Money the lab actually retained (paid − cancellation − refunds − refund
+        // charges), i.e. the base the Balance is derived from.
+        effective_paid: effectivePaid,
         ...this.patientVariables(order, dateFormat),
         ...this.referralVariables(order),
       },
       sections: {
         items: itemRows,
-        payments: order.payments.map((pd) => ({
-          date: formatTenantDateTime(
-            toBranchLocalInstant(pd.paymentDate ?? order.createdAt, timezone),
-            dateFormat,
-            timeFormat,
-          ),
-          mode: pd.paymentMode,
-          reference: pd.reference ?? '',
-          amount: pd.paidAmount,
-        })),
+        payments: order.payments.map((pd) => {
+          const isRefund = pd.entryType === PaymentEntryType.REFUND;
+          return {
+            date: formatTenantDateTime(
+              toBranchLocalInstant(pd.paymentDate ?? order.createdAt, timezone),
+              dateFormat,
+              timeFormat,
+            ),
+            mode: pd.paymentMode,
+            reference: pd.reference ?? '',
+            // `type` discriminates a collection from a refund so the template can
+            // label/style them; `amount` is the row's own money (paid for a
+            // PAYMENT, refunded for a REFUND) so a refund no longer prints as ₹0.
+            type: isRefund ? 'Refund' : 'Payment',
+            amount: isRefund ? toNum(pd.refundAmount) : toNum(pd.paidAmount),
+            refund_charge: toNum(pd.refundCharge),
+          };
+        }),
       },
     };
   }
@@ -2499,9 +2564,6 @@ export class OrderService {
     const testRows = await this.itemRowsWithPanelTests(order);
     const { dateFormat, timeFormat } =
       await this.tenantService.getLocale(tenantId);
-    // Diagnostics tags. The visit charge is a billing figure, so the TRF
-    // carries only the Home Visit flag and the sample-collection charge.
-    const { home_visit, sample_charge } = this.diagnosticsVariables(order);
     return {
       variables: {
         trf_ref: order.billId ?? order.orderCode,
@@ -2517,8 +2579,9 @@ export class OrderService {
         clinical_notes: order.orderNotes ?? '',
         branch_name: order.branch?.name ?? '',
         panel_tests_name: this.panelTestsNameFlat(testRows),
-        home_visit,
-        sample_charge,
+        // Diagnostics tags: Home Visit flag, visit charge (0 unless Home Visit
+        // is on), sample-collection charge.
+        ...this.diagnosticsVariables(order),
         ...this.patientVariables(order, dateFormat),
         ...this.referralVariables(order),
       },
@@ -2549,7 +2612,6 @@ export class OrderService {
     order: OrderWithRelations,
     tenantId: string,
   ): Promise<GeneratePdfDto> {
-    const totals = this.billTotals(order);
     const { dateFormat } = await this.tenantService.getLocale(tenantId);
     const itemRows = await this.itemRowsWithPanelTests(order);
     const patient = this.patientVariables(order, dateFormat);
@@ -2564,16 +2626,18 @@ export class OrderService {
           : '',
         status: order.quotationStatus ?? '',
         branch_name: order.branch?.name ?? '',
-        gross_amount: totals.gross,
-        discount_amount: totals.discount,
-        net_amount: totals.net,
+        // Authoritative rollups (`computeBillingTotals`, via findById) — same
+        // figures the Quotations list shows.
+        gross_amount: order.grossAmount,
+        discount_amount: order.discountAmount,
+        net_amount: order.netAmount,
         panel_tests_name: this.panelTestsNameFlat(itemRows),
         ...patient,
         ...referral,
         'patient.full_name': patient.patient_name,
         'order.referring_doctor': referral.referred_by,
         'order.referring_panel': referral.referral_panel,
-        'bill.total': totals.net,
+        'bill.total': order.netAmount,
       },
       sections: {
         items: itemRows.map((row) => ({
@@ -2883,6 +2947,13 @@ export class OrderService {
         orderId,
         dto.recipientType ?? 'PATIENT',
       );
+      // Share Bill obeys the SAME "paid bills only" branch rule as Print Bill, so
+      // the two can't diverge. Checked up front (covers text-only SMS, which
+      // never renders the gated PDF, and fails before any dispatch).
+      await this.assertBillPrintable(
+        await this.findById(orderId, tenantId),
+        tenantId,
+      );
     }
 
     const recipient = cfg.allowPanel
@@ -2934,6 +3005,11 @@ export class OrderService {
     // Referral Panel Settings — honor Send Bills to Patient / B2B on bill shares.
     if (kind === 'bill') {
       await this.assertBillRecipientAllowed(tenantId, orderId, selected);
+      // Share Bill obeys the SAME "paid bills only" branch rule as Print Bill.
+      await this.assertBillPrintable(
+        await this.findById(orderId, tenantId),
+        tenantId,
+      );
     }
 
     // Which recipient(s) each channel is sent to (and which one edits apply to).
@@ -3270,6 +3346,14 @@ export class OrderService {
           },
         },
       });
+      // Billing scope also excludes drafts and quotations outright — the Billings
+      // screen must never show them (a DRAFT/QUOTE could otherwise surface as a
+      // "Not Paid" bill with a Make Payment action). `hideUnpaidAppointments` is
+      // sent only by the Billings list, so this is scoped to that screen and
+      // leaves the Quotations/Drafts screens untouched. Enforced server-side so it
+      // holds even if the client omits the explicit status filter. Pushed to
+      // `and[]` so it composes with (never clobbers) any status filter.
+      and.push({ status: { notIn: [OrderStatus.DRAFT, OrderStatus.QUOTE] } });
     }
     if (query.orderType) where.orderType = query.orderType;
     if (query.billingType) where.billingType = query.billingType;
@@ -3444,28 +3528,56 @@ export class OrderService {
       });
     }
     if (query.sampleStatus) {
+      // Bill-only tests/panels never enter the workflow (never collected), so
+      // they must be excluded from the collection-progress filter — otherwise a
+      // fully-collected order with a bill-only item would read as PARTIAL and
+      // never as COLLECTED. Mirrors the displayed item/collected counts.
+      const workflowItem: Prisma.OrderItemWhereInput = {
+        NOT: {
+          OR: [
+            { branchLabTest: { isBillOnlyTest: true } },
+            { branchLabPanel: { isBillOnlyTest: true } },
+          ],
+        },
+      };
       switch (query.sampleStatus) {
         case 'PENDING':
-          // Has items, none collected.
-          and.push({ items: { some: { deletedAt: null } } });
+          // Has workflow items, none collected.
+          and.push({ items: { some: { deletedAt: null, ...workflowItem } } });
           and.push({
-            items: { none: { deletedAt: null, collectedAt: { not: null } } },
+            items: {
+              none: {
+                deletedAt: null,
+                collectedAt: { not: null },
+                ...workflowItem,
+              },
+            },
           });
           break;
         case 'COLLECTED':
-          // Has items, none still uncollected.
-          and.push({ items: { some: { deletedAt: null } } });
+          // Has workflow items, none still uncollected.
+          and.push({ items: { some: { deletedAt: null, ...workflowItem } } });
           and.push({
-            items: { none: { deletedAt: null, collectedAt: null } },
+            items: {
+              none: { deletedAt: null, collectedAt: null, ...workflowItem },
+            },
           });
           break;
         case 'PARTIAL':
-          // At least one collected and at least one still uncollected.
+          // At least one workflow item collected and at least one still uncollected.
           and.push({
-            items: { some: { deletedAt: null, collectedAt: { not: null } } },
+            items: {
+              some: {
+                deletedAt: null,
+                collectedAt: { not: null },
+                ...workflowItem,
+              },
+            },
           });
           and.push({
-            items: { some: { deletedAt: null, collectedAt: null } },
+            items: {
+              some: { deletedAt: null, collectedAt: null, ...workflowItem },
+            },
           });
           break;
       }
@@ -3488,7 +3600,8 @@ export class OrderService {
           items: {
             where: { deletedAt: null },
             select: {
-              branchLabPanel: { select: { id: true } },
+              branchLabTest: { select: { isBillOnlyTest: true } },
+              branchLabPanel: { select: { id: true, isBillOnlyTest: true } },
               labReports: {
                 where: { deletedAt: null },
                 select: { status: true, memberBranchLabTestId: true },
@@ -3497,10 +3610,20 @@ export class OrderService {
           },
         },
       });
+      // Match the displayed reportStatus: bill-only items have no workflow/reports
+      // and are excluded from the derivation, so exclude them from the filter too.
+      const candidateWorkflowItems = (c: (typeof candidates)[number]) =>
+        c.items.filter(
+          (it) =>
+            !it.branchLabTest?.isBillOnlyTest &&
+            !it.branchLabPanel?.isBillOnlyTest,
+        );
       const reportStatusPanelIds = [
         ...new Set(
           candidates
-            .flatMap((c) => c.items.map((it) => it.branchLabPanel?.id))
+            .flatMap((c) =>
+              candidateWorkflowItems(c).map((it) => it.branchLabPanel?.id),
+            )
             .filter((id): id is string => id != null),
         ),
       ];
@@ -3509,8 +3632,10 @@ export class OrderService {
       const matchedIds = candidates
         .filter(
           (c) =>
-            deriveReportStatus(c.items, reportStatusPanelCounts) ===
-            query.reportStatus,
+            deriveReportStatus(
+              candidateWorkflowItems(c),
+              reportStatusPanelCounts,
+            ) === query.reportStatus,
         )
         .map((c) => c.id);
       and.push({ id: { in: matchedIds } });
@@ -3673,6 +3798,15 @@ export class OrderService {
         0,
       );
       const count = counts.get(r.id);
+      // Workflow-facing item view: bill-only tests/panels are billed but never
+      // enter the lab workflow, so they're excluded from the Order Console's
+      // item names and report-status derivation (they have no samples/reports).
+      // `r.items` (all items) still feeds `billingRollups` above so they're billed.
+      const workflowItems = r.items.filter(
+        (it) =>
+          !it.branchLabTest?.isBillOnlyTest &&
+          !it.branchLabPanel?.isBillOnlyTest,
+      );
       // Runtime expiry (Quotations screen only): anchor on the order date, or
       // the quote's createdAt when no order date is set. `computedQuotationExpiryAt`
       // is the absolute expiry the FE renders as "valid till"; a DRAFT quote is
@@ -3701,7 +3835,14 @@ export class OrderService {
         itemCount: count?.total ?? 0,
         collectedItemCount: count?.collected ?? 0,
         // Order-level "Order Status": derived per-test from each item's LabReport.
-        reportStatus: deriveReportStatus(r.items, panelMemberCounts),
+        reportStatus: deriveReportStatus(workflowItems, panelMemberCounts),
+        // Per-status report counts (all nine LabReport statuses) + the item
+        // display names — drive the Order Console's "Report Status" and
+        // "Order Item" columns. Counted per report so they match the technician
+        // worklist; names resolved from the already-included test/panel refs.
+        // Bill-only items are excluded (no workflow, no reports).
+        reportStatusCounts: deriveReportStatusCounts(workflowItems),
+        itemNames: orderItemNames(workflowItems),
         grossAmount,
         discountAmount,
         netAmount,
@@ -4856,6 +4997,9 @@ export class OrderService {
   ): Promise<PaginatedResult<BillingRecordRow>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
+    // Tenant timezone drives the report's "Date & Time" column so a stored
+    // UTC/midnight value renders as the correct branch-local wall clock.
+    const { timezone } = await this.tenantService.getLocale(tenantId);
     const orders = await this.loadBillingOrders(
       tenantId,
       activeBranchId,
@@ -4900,6 +5044,7 @@ export class OrderService {
       }
       const total = rows.length;
       const data = rows.slice((page - 1) * limit, page * limit);
+      await this.enrichReportRows(report, data, timezone);
       return { data, total, page, limit };
     }
 
@@ -4969,8 +5114,10 @@ export class OrderService {
           paymentMode: p.paymentMode,
           paymentReference: p.reference,
           paymentDate: p.paymentDate ?? p.createdAt,
+          paymentCollectedById: p.collectedBy ?? null,
         };
       });
+      await this.enrichReportRows(report, data, timezone);
       return { data, total, page, limit };
     }
 
@@ -5009,7 +5156,101 @@ export class OrderService {
         invoiceCode: invoiceCodes.get(o.id) ?? null,
       };
     });
+    await this.enrichReportRows(report, data, timezone);
     return { data, total, page, limit };
+  }
+
+  /**
+   * Attach the Finance-report display fields every detailed-record row needs:
+   *  - `dateTimeDisplay` — the row's `"YYYY-MM-DD HH:mm"` moment in the tenant's
+   *    timezone. For Collection it's the payment's instant; for every other
+   *    report it's the order's date+time (operator-entered `orderTime`, else the
+   *    creation instant, resolved by {@link resolveOrderLocalDateTime}). This is
+   *    the fix for the reports showing `00:00`: the FE used the date-only
+   *    `orderDate`, which carries no time.
+   *  - `responsibleUser` — the name of the person the report holds responsible:
+   *    the order creator (Billing/Outstanding), the payment collector
+   *    (Collection), the refunder (Refund) or the canceller (Cancel). Resolved in
+   *    one batched `Person` lookup; null for historical rows with no recorded
+   *    actor (never a made-up name).
+   * @param report the active Finance report (selects the actor + date source)
+   * @param rows the page's detailed-record rows (mutated in place)
+   * @param timezone the tenant/branch IANA zone (from `TenantService.getLocale`)
+   */
+  private async enrichReportRows(
+    report: BillingReport,
+    rows: BillingRecordRow[],
+    timezone: string | null,
+  ): Promise<void> {
+    const actorIdOf = (r: BillingRecordRow): string | null => {
+      if (report === 'collection') {
+        return r.paymentCollectedById ?? r.createdBy ?? null;
+      }
+      if (report === 'refund') {
+        // The actor of the latest refund ledger entry that captured one, else
+        // the order's last editor (the refund was applied via update/cancel).
+        const refunder = [...r.payments]
+          .reverse()
+          .find(
+            (p) => p.entryType === PaymentEntryType.REFUND && p.collectedBy,
+          );
+        return refunder?.collectedBy ?? r.updatedBy ?? null;
+      }
+      if (report === 'cancel') return r.updatedBy ?? null;
+      return r.createdBy ?? null; // billing, outstanding
+    };
+
+    // One batched lookup covers BOTH the report's responsible actor AND every
+    // row's order creator (`createdBy`), so "Order Created By" is resolved for
+    // every report without a second round-trip.
+    const names = await this.resolveActorNames([
+      ...rows.map(actorIdOf),
+      ...rows.map((r) => r.createdBy),
+    ]);
+    for (const r of rows) {
+      const actorId = actorIdOf(r);
+      // `resolveActorNames` only maps ids it actually found, so an unresolved id
+      // becomes null rather than a raw UUID leaking to the client.
+      r.responsibleUser = actorId ? (names.get(actorId) ?? null) : null;
+      // The order's ORIGINAL creator — resolved for every report, not just the
+      // ones whose responsible actor happens to be the creator — so each Finance
+      // page can show a consistent "Order Created By" independent of who performed
+      // the finance action (collect / refund / cancel).
+      r.orderCreatedByName = r.createdBy
+        ? (names.get(r.createdBy) ?? null)
+        : null;
+
+      // Collection's stored `paymentDate` is operator-entered and date-only (UTC
+      // midnight), so it carries no time — resolve it the same way orders do:
+      // when the payment was recorded on its own date, its real `createdAt`
+      // instant is the true collection time; a back-dated receipt keeps the date
+      // only. Every other report resolves the order's own date+time.
+      const local =
+        report === 'collection'
+          ? resolveOrderLocalDateTime(
+              {
+                orderDate: r.paymentDate ?? r.createdAt,
+                orderTime: null,
+                createdAt: r.createdAt,
+              },
+              timezone,
+            ).local
+          : resolveOrderLocalDateTime(r, timezone).local;
+      r.dateTimeDisplay = this.formatReportMinute(local);
+    }
+  }
+
+  /**
+   * Format a tenant-local wall-clock instant (its UTC getters already hold the
+   * branch-local time, per `toBranchLocalInstant`) as `"YYYY-MM-DD HH:mm"` for a
+   * Finance report's "Date & Time" column.
+   */
+  private formatReportMinute(local: Date): string {
+    const p = (n: number): string => String(n).padStart(2, '0');
+    return (
+      `${local.getUTCFullYear()}-${p(local.getUTCMonth() + 1)}-${p(local.getUTCDate())}` +
+      ` ${p(local.getUTCHours())}:${p(local.getUTCMinutes())}`
+    );
   }
 
   /**
@@ -5396,7 +5637,14 @@ export class OrderService {
     personId: string | null,
     dto: UpdateOrderDto,
   ): Promise<OrderWithRelations> {
-    await this.findById(id, tenantId);
+    const current = await this.findById(id, tenantId);
+    // A cancelled order is terminal — reject any update. Updating one would revive
+    // it to an active state while its cancellation charge, refunds and released
+    // phlebotomist slot stay as they were, leaving the balance/status inconsistent.
+    // Mirrors the same guard in cancel().
+    if (current.status === OrderStatus.CANCELLED) {
+      throw new OrderAlreadyCancelledException(id);
+    }
     // Invoice-lock: an invoiced order is immutable — reject any update.
     await this.assertNotInvoiced(tenantId, id, 'update');
     await this.assertItems(tenantId, dto.items);
@@ -5422,6 +5670,7 @@ export class OrderService {
         branchId: true,
         status: true,
         patientId: true,
+        referralPanelId: true,
         orderCode: true,
         externalOrderId: true,
         isBillGenerated: true,
@@ -5441,6 +5690,17 @@ export class OrderService {
     });
     const branchId = existing?.branchId ?? null;
     const effectiveStatus = dto.status ?? existing?.status;
+
+    // B2B bypass (mirrors create()): when the effective order carries a referral
+    // panel — the patched value, or the stored one when the patch doesn't touch
+    // it — the branch Registration Settings do not apply, so the finalize-time
+    // Previous-Dues / Partial-Billing / Discount / TDS gates below are skipped.
+    // The frontend applies the same bypass on the Create screen.
+    const effectiveReferralPanelId =
+      dto.referralPanelId !== undefined
+        ? dto.referralPanelId
+        : (existing?.referralPanelId ?? null);
+    const isB2bOrder = Boolean(effectiveReferralPanelId);
 
     // Billing-menu permission gates (branch Registration Settings, keyed on the
     // record's original creator). Loaded once; only consulted when the order has
@@ -5559,6 +5819,10 @@ export class OrderService {
     ) {
       throw new PaymentOverpaymentException(payNet, payPaid);
     }
+    // A quote may keep what it already holds, but cannot take MORE money.
+    if (dto.payments !== undefined) {
+      assertQuoteTakesNoNewMoney(effectiveStatus, payPaid, storedPaidTotal);
+    }
     // Generate Bill = No (either set by this patch or already stored): the order
     // may not carry a positive paid amount. Only bites when the ledger is part of
     // this patch — a non-payment edit leaves the stored totals untouched.
@@ -5602,8 +5866,9 @@ export class OrderService {
     // when a draft is finalized (or an order re-saved) to `status = ORDER`. Uses
     // the incoming ledger/items when this patch replaces them, otherwise the
     // order's stored rows — so the checks run against the order's effective state.
-    // Skipped when no bill is generated — there is nothing to bill, so the
-    // previous-dues / partial-billing / discount gates must not block the order.
+    // Skipped when no bill is generated — there is nothing to bill, so the gates
+    // must not block the order. For B2B orders (`isB2bOrder`) only the Previous-Dues
+    // + Partial-Billing check below is skipped; TDS/Discount stays enforced.
     if (
       effectiveStatus === OrderStatus.ORDER &&
       branchId &&
@@ -5680,7 +5945,9 @@ export class OrderService {
         branchId,
       );
 
-      if (existing?.patientId) {
+      // Previous-Dues + Partial-Billing — skipped for B2B orders (`isB2bOrder`),
+      // whose credit terms are governed by the referral panel instead.
+      if (existing?.patientId && !isB2bOrder) {
         await this.assertBillingRules({
           tenantId,
           branchId,
@@ -5778,6 +6045,9 @@ export class OrderService {
       }
     }
 
+    // Tenant timezone for re-classifying the order date (see classifyOrderDate).
+    const { timezone } = await this.tenantService.getLocale(tenantId);
+
     await this.prisma.withTenant(tenantId, async (tx) => {
       // Collects the ids of newly-created order items so the sample reconciler
       // knows which items to add samples for when the order is already accessioned.
@@ -5851,7 +6121,7 @@ export class OrderService {
           // Re-classify (BACKTRACKED / ADVANCE_DATED / CURRENT) whenever the order
           // date changes; leave the stored value untouched otherwise.
           orderDateType: dto.orderDate
-            ? this.classifyOrderDate(dto.orderDate)
+            ? classifyOrderDate(dto.orderDate, timezone)
             : undefined,
           orderType: dto.orderType,
           billingType: dto.billingType,
@@ -5989,49 +6259,128 @@ export class OrderService {
         });
       }
 
-      // Replace the payment ledger wholesale when provided: soft-delete the
-      // current PAYMENT rows and recreate from the patch (mirrors the item-set
-      // replace). REFUND (and any other non-PAYMENT) rows are intentionally
-      // preserved so a post-refund update does not wipe the refund history.
+      // Reconcile the payment ledger when provided — WITHOUT rewriting history.
+      // Payments are immutable records: we never delete + recreate PAYMENT rows
+      // (that churned transaction ids, reset paymentDate, and re-stamped
+      // collectedBy as the editor, silently changing historical collection
+      // reports). Instead we (1) refresh the order financial snapshot on the
+      // single canonical (oldest) PAYMENT row in place — its snapshot columns
+      // only, never its amount/mode/reference/date/collector — and (2) append any
+      // genuinely-new collection as a fresh row. REFUND rows are untouched.
       if (dto.payments !== undefined) {
-        await tx.paymentDetails.updateMany({
+        const liveRows = await tx.paymentDetails.findMany({
           where: {
             orderId: id,
             tenantId,
             deletedAt: null,
             entryType: PaymentEntryType.PAYMENT,
           },
-          data: { deletedAt: now },
+          orderBy: { createdAt: 'asc' },
+          select: { id: true },
         });
-        if (dto.payments.length) {
-          await tx.paymentDetails.createMany({
-            data: dto.payments.map((p) => ({
-              tenantId,
-              branchId,
-              orderId: id,
-              ...p,
-              // Generate Bill = No ⇒ zero every money field except gross
-              // `totalAmount` so the order carries no due and reads as settled
-              // (mirrors create()).
-              ...(!effectiveBillGenerated
-                ? {
-                    orderDiscount: 0,
-                    netDiscount: 0,
-                    netAmount: 0,
-                    payableAmount: 0,
-                    paidAmount: 0,
-                    remainingBalance: 0,
-                    tdsDeduction: 0,
-                  }
-                : {}),
-              paymentDate: p.paymentDate ? new Date(p.paymentDate) : null,
-              // The whole ledger is soft-deleted + recreated on every payments
-              // patch (no per-row identity survives), so the current editor
-              // becomes the recorded collector for the resulting rows — same
-              // as every other row-replace field here (no partial-row history).
-              collectedBy: personId,
-            })),
+        const liveIds = liveRows.map((r) => r.id);
+        const { add } = diffOrderPayments(liveIds, dto.payments);
+
+        // The order-level financial snapshot rides on the first incoming row
+        // (the FE's `buildPaymentsDto` convention). Generate Bill = No ⇒ zero
+        // every money field except the gross `totalAmount`, so the order carries
+        // no due and reads as settled (mirrors create()).
+        const snapshotSrc = dto.payments[0];
+        const noBillZero = {
+          orderDiscount: 0,
+          netDiscount: 0,
+          netAmount: 0,
+          payableAmount: 0,
+          remainingBalance: 0,
+          tdsDeduction: 0,
+          visitingCharges: 0,
+          deductFromWallet: 0,
+          deductFromPoints: 0,
+        };
+        const snapshotData: Prisma.PaymentDetailsUpdateInput | null =
+          snapshotSrc
+            ? {
+                totalAmount: snapshotSrc.totalAmount ?? 0,
+                orderDiscount: snapshotSrc.orderDiscount ?? 0,
+                orderDiscountMode: snapshotSrc.orderDiscountMode ?? null,
+                orderDiscountValue: snapshotSrc.orderDiscountValue ?? null,
+                netDiscount: snapshotSrc.netDiscount ?? 0,
+                netAmount: snapshotSrc.netAmount ?? 0,
+                payableAmount: snapshotSrc.payableAmount ?? 0,
+                remainingBalance: snapshotSrc.remainingBalance ?? 0,
+                visitingCharges: snapshotSrc.visitingCharges ?? 0,
+                tdsDeduction: snapshotSrc.tdsDeduction ?? 0,
+                deductFromWallet: snapshotSrc.deductFromWallet ?? 0,
+                deductFromPoints: snapshotSrc.deductFromPoints ?? 0,
+                ...(!effectiveBillGenerated ? noBillZero : {}),
+              }
+            : null;
+
+        const canonicalId = liveIds[0] ?? null;
+
+        // (1) Snapshot update, in place, on the canonical row — snapshot columns
+        // only. Its paidAmount / paymentMode / reference / paymentDate /
+        // collectedBy / id / createdAt are deliberately left untouched.
+        if (canonicalId && snapshotData) {
+          await tx.paymentDetails.update({
+            where: { id: canonicalId },
+            data: snapshotData,
           });
+        }
+
+        // (2) Append genuinely-new collections. Only the money NOT already on the
+        // ledger is appended (`payPaid − storedPaidTotal`), so a re-sent unchanged
+        // ledger — or an older client that omits row ids — can never fabricate a
+        // duplicate receipt. The first created row carries the snapshot ONLY when
+        // the order had no canonical row to hold it (e.g. first collection on a
+        // previously-unpaid order).
+        let snapshotCarried = canonicalId !== null;
+        let remainingNew = roundToTwoDecimalPlaces(
+          Math.max(0, payPaid - storedPaidTotal),
+        );
+        const rowsToCreate: Prisma.PaymentDetailsCreateManyInput[] = [];
+        for (const p of add) {
+          const carriesSnapshot = !snapshotCarried;
+          const want = effectiveBillGenerated
+            ? roundToTwoDecimalPlaces(p.paidAmount ?? 0)
+            : 0;
+          const paid = Math.min(want, remainingNew);
+          // A new row that neither adds money nor is needed to carry the snapshot
+          // is not a payment — skip it.
+          if (!carriesSnapshot && paid <= 0) continue;
+          rowsToCreate.push({
+            tenantId,
+            branchId,
+            orderId: id,
+            entryType: PaymentEntryType.PAYMENT,
+            paidAmount: paid,
+            paymentMode: p.paymentMode,
+            reference: p.reference ?? null,
+            paymentDate: p.paymentDate ? new Date(p.paymentDate) : null,
+            collectedBy: personId,
+            ...(carriesSnapshot && snapshotData
+              ? {
+                  totalAmount: snapshotSrc?.totalAmount ?? 0,
+                  orderDiscount: snapshotSrc?.orderDiscount ?? 0,
+                  orderDiscountMode: snapshotSrc?.orderDiscountMode ?? null,
+                  orderDiscountValue: snapshotSrc?.orderDiscountValue ?? null,
+                  netDiscount: snapshotSrc?.netDiscount ?? 0,
+                  netAmount: snapshotSrc?.netAmount ?? 0,
+                  payableAmount: snapshotSrc?.payableAmount ?? 0,
+                  remainingBalance: snapshotSrc?.remainingBalance ?? 0,
+                  visitingCharges: snapshotSrc?.visitingCharges ?? 0,
+                  tdsDeduction: snapshotSrc?.tdsDeduction ?? 0,
+                  deductFromWallet: snapshotSrc?.deductFromWallet ?? 0,
+                  deductFromPoints: snapshotSrc?.deductFromPoints ?? 0,
+                  ...(!effectiveBillGenerated ? noBillZero : {}),
+                }
+              : {}),
+          });
+          remainingNew = roundToTwoDecimalPlaces(remainingNew - paid);
+          if (carriesSnapshot) snapshotCarried = true;
+        }
+        if (rowsToCreate.length) {
+          await tx.paymentDetails.createMany({ data: rowsToCreate });
         }
       }
 
@@ -6212,18 +6561,21 @@ export class OrderService {
    *
    * Beyond the order-item `collectedAt` flag, this also drives the real accession
    * sample lifecycle: the item's linked `OrderSample`(s) still in a
-   * collectable status are transitioned to `COLLECTED` (with a barcode when
-   * `opts.print` is set), and — because a sample is one physical tube shared by
-   * several tests — every sibling order item on a transitioned sample is stamped
-   * collected too (`OrderSampleService.collectForOrderItemInTx`). Both writes
-   * share one `withTenant` transaction so they commit atomically under the same
-   * RLS tenant context. Safe no-op when the order has no samples yet (e.g. a
-   * DRAFT / non-diagnostic order): only `collectedAt` is set.
+   * collectable status are transitioned to `COLLECTED` — and the sample barcode
+   * is generated at this point (sequential + grouping-aware), the barcode now
+   * being produced on collection rather than at order creation — and, because a
+   * sample is one physical tube shared by several tests, every sibling order item
+   * on a transitioned sample is stamped collected too
+   * (`OrderSampleService.collectForOrderItemInTx`). Both writes share one
+   * `withTenant` transaction so they commit atomically under the same RLS tenant
+   * context. Safe no-op when the order has no samples yet (e.g. a DRAFT /
+   * non-diagnostic order): only `collectedAt` is set.
    * @param orderId order the item belongs to
    * @param itemId order item id
    * @param tenantId tenant scope (from JWT)
    * @param actorId acting person id (recorded as `collectedBy`), may be null
-   * @param opts `print` also assigns a barcode to the collected sample(s)
+   * @param opts `print` is retained for the front-end label dialog; it no longer
+   *   gates the barcode, which is assigned on every collect
    * @returns the fully-composed order after the update
    * @throws OrderNotFoundException / OrderItemNotFoundException
    */
@@ -6270,13 +6622,15 @@ export class OrderService {
    * `sampleIds`). Every collectable sample in the set is transitioned to
    * COLLECTED and its sibling order items stamped collected, all in one
    * `withTenant` transaction (`OrderSampleService.collectSamplesInTx`). Idempotent
-   * — already-collected samples are skipped. `print` also assigns a barcode to any
-   * sample that lacks one.
+   * — already-collected samples are skipped. The sample barcode is generated here,
+   * on collection (sequential + grouping-aware, one shared barcode per group),
+   * rather than at order creation.
    * @param orderId the order the samples belong to (validated against the tenant)
    * @param sampleIds the group's accession sample ids to collect
    * @param tenantId tenant scope (from JWT)
    * @param actorId acting person id (recorded as `collectedBy`), may be null
-   * @param opts `print` also assigns a barcode to the collected sample(s)
+   * @param opts `print` is retained for the front-end label dialog; it no longer
+   *   gates the barcode, which is assigned on every collect
    * @returns the fully-composed order after the update
    * @throws OrderNotFoundException if the order is missing/soft-deleted/other tenant
    */
@@ -6635,23 +6989,29 @@ export class OrderService {
       if (refundable <= 0) {
         throw new NothingToRefundException(id);
       }
+      // Round the derived bounds to 2dp before comparing: a refundable balance
+      // or refund charge containing paise makes `refundable − refundCharge` /
+      // `amount + refundCharge` land at e.g. 666.5999… in float, which would
+      // wrongly reject an exact-to-the-paisa refund. Whole-rupee amounts are
+      // unaffected.
+      const refundableToPatient = roundToTwoDecimalPlaces(
+        refundable - refundCharge,
+      );
+      const totalOutflow = roundToTwoDecimalPlaces(dto.amount + refundCharge);
       // Partial refunds off → the full refundable-to-patient amount
       // (refundable − refund charge) must be refunded in one go.
       if (
         settings &&
         !settings.CancellationAndRefund_AllowPartialRefund &&
-        dto.amount !== refundable - refundCharge
+        dto.amount !== refundableToPatient
       ) {
         throw new PartialRefundNotAllowedException(
-          refundable - refundCharge,
+          refundableToPatient,
           dto.amount,
         );
       }
-      if (dto.amount + refundCharge > refundable) {
-        throw new RefundExceedsRefundableException(
-          refundable,
-          dto.amount + refundCharge,
-        );
+      if (totalOutflow > refundable) {
+        throw new RefundExceedsRefundableException(refundable, totalOutflow);
       }
 
       await tx.paymentDetails.create({
@@ -6723,6 +7083,7 @@ export class OrderService {
       select: {
         branchId: true,
         status: true,
+        sourceQuotationId: true,
         appointment: { select: { status: true } },
         diagnostics: {
           select: {
@@ -6762,7 +7123,54 @@ export class OrderService {
           reservation.at,
         );
       }
-      return tx.order.update({ where: { id }, data: { deletedAt: now } });
+      const deleted = await tx.order.update({
+        where: { id },
+        data: { deletedAt: now },
+      });
+      // Deleting a DRAFT order that was saved from a quote (Convert → Save as
+      // Draft) abandons the conversion: reopen the source quote so it can be
+      // converted again. A finalized/cancelled order is a real business event and
+      // leaves its quote CONVERTED.
+      if (booking?.status === OrderStatus.DRAFT && booking.sourceQuotationId) {
+        await this.reopenSourceQuotationInTx(
+          tx,
+          tenantId,
+          booking.sourceQuotationId,
+          id,
+        );
+      }
+      return deleted;
+    });
+  }
+
+  /**
+   * Put a CONVERTED source quote back to DRAFT (open, convertible again) once the
+   * draft order made from it has been deleted — but only if no other live order
+   * still points at the quote (e.g. a second conversion, or a finalized order).
+   */
+  private async reopenSourceQuotationInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sourceQuotationId: string,
+    deletedOrderId: string,
+  ): Promise<void> {
+    const otherLiveOrders = await tx.order.count({
+      where: {
+        tenantId,
+        sourceQuotationId,
+        deletedAt: null,
+        id: { not: deletedOrderId },
+      },
+    });
+    if (otherLiveOrders > 0) return;
+    await tx.order.updateMany({
+      where: {
+        id: sourceQuotationId,
+        tenantId,
+        deletedAt: null,
+        quotationStatus: QuotationStatus.CONVERTED,
+      },
+      data: { quotationStatus: QuotationStatus.DRAFT },
     });
   }
 
@@ -7355,10 +7763,28 @@ export class OrderService {
     if (!ids.length) {
       return map;
     }
+    // Exclude bill-only tests/panels — they're billed but never enter the lab
+    // workflow, so they must not inflate the Order Console's item/collected
+    // counts (or make a fully-collected order read as partially collected,
+    // since a bill-only item is never collected). Direct items (no catalogue
+    // ref) are unaffected.
+    const excludeBillOnly = {
+      NOT: {
+        OR: [
+          { branchLabTest: { isBillOnlyTest: true } },
+          { branchLabPanel: { isBillOnlyTest: true } },
+        ],
+      },
+    };
     const [grouped, collectedGrouped] = await Promise.all([
       this.prisma.orderItem.groupBy({
         by: ['orderId'],
-        where: { orderId: { in: ids }, tenantId, deletedAt: null },
+        where: {
+          orderId: { in: ids },
+          tenantId,
+          deletedAt: null,
+          ...excludeBillOnly,
+        },
         _count: { _all: true },
       }),
       this.prisma.orderItem.groupBy({
@@ -7368,6 +7794,7 @@ export class OrderService {
           tenantId,
           deletedAt: null,
           collectedAt: { not: null },
+          ...excludeBillOnly,
         },
         _count: { _all: true },
       }),
@@ -7382,13 +7809,71 @@ export class OrderService {
     return map;
   }
 
-  /** Map an order-code unique-constraint violation (P2002) to a typed 409. */
-  private rethrowConflict(e: unknown): void {
+  /**
+   * Flip the source quote of a Convert-to-Order create to CONVERTED, inside the
+   * create transaction. It is a compare-and-set (`updateMany` guarded on a
+   * not-yet-converted status), so two requests converting the same quote at once
+   * — a double submit, or the quote open in two tabs — cannot both succeed: the
+   * second matches no row, throws, and its whole create (the new order) rolls back.
+   */
+  private async markSourceQuotationConvertedInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sourceQuotationId: string,
+    personId: string | null,
+  ): Promise<void> {
+    const converted = await tx.order.updateMany({
+      where: {
+        id: sourceQuotationId,
+        tenantId,
+        deletedAt: null,
+        quotationStatus: {
+          in: [QuotationStatus.DRAFT, QuotationStatus.EXPIRED],
+        },
+      },
+      data: {
+        quotationStatus: QuotationStatus.CONVERTED,
+        updatedBy: personId,
+      },
+    });
+    if (converted.count > 0) return;
+    const alreadyConverted = await tx.order.findFirst({
+      where: {
+        id: sourceQuotationId,
+        tenantId,
+        deletedAt: null,
+        quotationStatus: QuotationStatus.CONVERTED,
+      },
+      select: { id: true },
+    });
+    throw alreadyConverted
+      ? new QuotationAlreadyConvertedException(sourceQuotationId)
+      : new SourceQuotationInvalidException(sourceQuotationId);
+  }
+
+  /**
+   * Map an order-code unique-constraint violation (P2002) to a typed 409. A
+   * violation on another table inside the same transaction (e.g. a payment row's
+   * primary key) is NOT an order-code clash, so it is left to surface as itself
+   * rather than being reported as "an order with this code already exists".
+   */
+  private rethrowConflict(e: unknown, sourceQuotationId?: string): void {
+    if (!(e instanceof Prisma.PrismaClientKnownRequestError)) return;
     if (
-      e instanceof Prisma.PrismaClientKnownRequestError &&
-      e.code === 'P2002'
+      e.code === 'P2002' &&
+      (e.meta?.modelName === undefined || e.meta.modelName === 'Order')
     ) {
       throw new OrderCodeConflictException('');
+    }
+    // A Convert-to-Order whose `sourceQuotationId` matches no order violates the
+    // self-FK at the order insert (before the conversion flip runs) — report it
+    // as the typed 422 instead of an opaque 500.
+    if (
+      e.code === 'P2003' &&
+      sourceQuotationId &&
+      e.meta?.constraint === 'orders_source_quotation_id_fkey'
+    ) {
+      throw new SourceQuotationInvalidException(sourceQuotationId);
     }
   }
 }

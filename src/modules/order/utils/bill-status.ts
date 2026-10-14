@@ -4,6 +4,28 @@ import { computeEffectivePaid } from '../entities/order.entity';
 import { computeBillingTotals } from './billing-totals';
 
 /**
+ * `GET /orders?billStatus=` filter code → the {@link billStatusLabel} label it
+ * matches (the Billings Status column), one entry per possible label.
+ */
+export const BILL_STATUS_FILTER_LABELS = {
+  PAID: 'Paid',
+  NOT_PAID: 'Not Paid',
+  PARTIALLY_PAID: 'Partially Paid',
+  CANCELLED: 'Cancelled',
+  FULLY_REFUNDED: 'Fully Refunded',
+  PARTIALLY_REFUNDED: 'Partially Refunded',
+  REQUIRE_REFUND: 'Require Refund',
+} as const;
+
+/** A `billStatus` filter code (key of {@link BILL_STATUS_FILTER_LABELS}). */
+export type BillStatusFilter = keyof typeof BILL_STATUS_FILTER_LABELS;
+
+/**
+ * Display label for a bill's status — exactly what the Registration → Billings
+ * list shows in its Status column. Used by the `{bill_status}` /
+ * `{payment_status}` print tags so a printed bill reads the same as the screen,
+ * instead of the raw stored `paymentStatus` enum (which ignores cancellation and
+ * refunds: a cancelled order would still print `PARTIALLY_PAID`).
  * The single billing Status of an order — the value the Registration/Finance →
  * Billings list renders in its Status column AND matches against its Status
  * filter, so the two can never disagree. Persisted on `Order.billStatus` by

@@ -2818,8 +2818,10 @@ model LabTest {
   isBillOnlyTest      Boolean @default(false) @map("is_bill_only_test")
   /// Whether this test participates in the sample-flow/routing pipeline.
   /// Excel "Sample Flow" column — previously a UI-only toggle with no
-  /// backing field (added 2026-09-06).
-  isSampleFlow        Boolean @default(false) @map("is_sample_flow")
+  /// backing field (added 2026-09-06). Default TRUE (2026-10-14): a test
+  /// follows the normal sample workflow (accession → collection) unless
+  /// explicitly set to No, which auto-accepts it and skips collection.
+  isSampleFlow        Boolean @default(true) @map("is_sample_flow")
   isMandatoryTest     Boolean @default(false) @map("is_mandatory_test")
 
   // Mandatory-test classification — real relations to the catalogue tables
@@ -2987,7 +2989,7 @@ model LabTestResultParam {
 
 /// A numeric reference range for a result parameter (`paramId` is a logical ref to
 /// LabTestResultParam). CHECK constraints (lower≤upper, critical bounds,
-/// age_from≤age_to) live in prisma/rls.sql.
+/// age bounds, unit-aware) live in prisma/rls.sql.
 model LabTestReferenceRange {
   id        String  @id @default(uuid())
   // NULL when the parent lab test is a SITE_ADMIN template.
@@ -3004,9 +3006,10 @@ model LabTestReferenceRange {
   // signal for that state; there is no separate type/flag field.
   labAdapterId String? @map("lab_adapter_id")
   gender       ReferenceGender @default(ALL)
-  // One default per (parameter, labAdapterId, gender, age-band) group — see
-  // ReferenceRangeMasterDialog.tsx `makeDefault` for the exact grouping rule.
-  // Not DB-enforced; the frontend owns the mutual-exclusivity.
+  // One default per (parameter, labAdapterId, method, unit, gender, age-band) group —
+  // each method has its own Default. Validated in the backend
+  // (`assertAdapterDefaultsPresent`) and the admin dialogs
+  // (`referenceRangeOverlap.ts`); not DB-enforced.
   isDefault    Boolean         @default(false) @map("is_default")
 
   ageFrom     Int     @default(0) @map("age_from")
@@ -3174,6 +3177,12 @@ model LabPanel {
   isShowOnlineBooking   Boolean @default(true) @map("is_show_online_booking")
   isHomeCollection      Boolean @default(false) @map("is_home_collection")
   isAllowPartialBilling Boolean @default(false) @map("is_allow_partial_billing")
+  // Workflow flags (mirror the lab-test flags). isBillOnlyTest: the panel is
+  // billed but never enters the lab workflow (no accession/collection/technician/
+  // report for any of its member tests). isSampleFlow: when false the panel's
+  // samples are auto-accepted and skip collection, proceeding to the technician.
+  isBillOnlyTest        Boolean @default(false) @map("is_bill_only_test")
+  isSampleFlow          Boolean @default(true) @map("is_sample_flow")
 
   // Max tests removable in a single order (0 = no limit). Only meaningful when
   // isAllowPartialBilling = true (enforced in service + CHECK in prisma/rls.sql).
@@ -3346,6 +3355,13 @@ model BranchLabTest {
   isHideInOrderScreen Boolean @default(false) @map("is_hide_in_order_screen")
   isPreferenceTest    Boolean @default(false) @map("is_preference_test")
   isMandatoryTest     Boolean @default(false) @map("is_mandatory_test")
+  // Workflow flags mirrored from the source LabTest (propagated on import/sync).
+  // isBillOnlyTest: the test is billed but never enters the lab workflow (no
+  // accession/collection/technician/report). isSampleFlow: when false the test
+  // bypasses sample collection — its sample is auto-accepted and it proceeds
+  // straight to the technician. Default TRUE = normal collection flow.
+  isBillOnlyTest      Boolean @default(false) @map("is_bill_only_test")
+  isSampleFlow        Boolean @default(true) @map("is_sample_flow")
 
   // Mandatory-test classification (logical refs)
   mandatoryDeptId             String?             @map("mandatory_dept_id")
@@ -3475,6 +3491,10 @@ model BranchLabPanel {
   isShowOnlineBooking   Boolean @default(true) @map("is_show_online_booking")
   isHomeCollection      Boolean @default(false) @map("is_home_collection")
   isAllowPartialBilling Boolean @default(false) @map("is_allow_partial_billing")
+  // Workflow flags mirrored from the source LabPanel (propagated on import/sync).
+  // See LabPanel for semantics. Default TRUE isSampleFlow = normal collection.
+  isBillOnlyTest        Boolean @default(false) @map("is_bill_only_test")
+  isSampleFlow          Boolean @default(true) @map("is_sample_flow")
 
   maxTestsRemovable Int @default(0) @map("max_tests_removable")
 
@@ -5712,7 +5732,7 @@ model RegistrationSetting {
   ChargesAndDeductions_MaximumLoyaltyPointsEquivalentAmount  Decimal @default(0) @map("charges_and_deductions_maximum_loyalty_points_equivalent_amount") @db.Decimal(10, 2)
   ChargesAndDeductions_AllowClearPreviousDues                Boolean @default(false) @map("charges_and_deductions_allow_clear_previous_dues")
   ChargesAndDeductions_AllowOrderWithoutClearingPreviousDues Boolean @default(false) @map("charges_and_deductions_allow_order_without_clearing_dues")
-  ChargesAndDeductions_MinimumPreviousDuesToClear            Decimal @default(0) @map("charges_and_deductions_minimum_previous_dues_to_clear") @db.Decimal(10, 2)
+  ChargesAndDeductions_MinimumPreviousDuesPercentToClear     Int     @default(0) @map("charges_and_deductions_minimum_previous_dues_percent_to_clear")
   ChargesAndDeductions_AllowPartialBilling                   Boolean @default(false) @map("charges_and_deductions_allow_partial_billing")
   ChargesAndDeductions_MinimumPercentOfNetAmountToProceed    Int     @default(0) @map("charges_and_deductions_minimum_percent_of_net_amount_to_proceed")
   ChargesAndDeductions_TdsApplicable                         Boolean @default(false) @map("charges_and_deductions_tds_applicable")
@@ -5766,6 +5786,11 @@ model RegistrationSetting {
 
   // ── Patients / UMID ──
   Patients_AllowMergingTwoPatients              Boolean          @default(false) @map("patients_allow_merging_two_patients")
+  // When true, the patient mobile number becomes optional while registering a
+  // B2B order (one with a referral panel attached) — the panel is the billing
+  // party, so the patient's own number may be unknown. Non-B2B orders are
+  // unaffected and still require a mobile. Default false = existing behaviour.
+  Patients_AllowB2bPatientWithoutMobile         Boolean          @default(false) @map("patients_allow_b2b_patient_without_mobile")
   // External patient-id (UMID) auto-increment format (same option set as the
   // order id; generated id is prefixed with a fixed "PAT"). NONE = operator
   // types the UMID manually (required).
@@ -6011,7 +6036,11 @@ model Patient {
   photoUrl String? @map("photo_url")
 
   // ── Contact ──
-  mobile                String // required
+  // Nullable: normally required, but may be absent for B2B patients when the
+  // `Patients_AllowB2bPatientWithoutMobile` registration setting is enabled.
+  // Store NULL (never "") when unknown — "" would collide on the per-tenant
+  // unique index (`patients_tenant_mobile_active_unique`), NULLs do not.
+  mobile                String? // optional for B2B (see registration setting)
   whatsappNumber        String? @map("whatsapp_number")
   email                 String?
   alternateEmail        String? @map("alternate_email")
@@ -6849,6 +6878,16 @@ model InvoicePayment {
   paymentDate   DateTime          @default(now()) @map("payment_date")
   notes         String?
 
+  /// Single-payment revert markers. Reverting one receipt keeps the row ACTIVE
+  /// (`deletedAt` NULL) but ZEROES `amount` and flags `revertedAt`, so the invoice's
+  /// paid/outstanding/status recompute off the remaining non-reverted receipts.
+  /// `revertedAmount` preserves the original figure for the "Reverted" tab. Kept
+  /// symmetric with `PaymentDetails` so the ledger treats both sources the same.
+  revertedAt     DateTime? @map("reverted_at")
+  revertedBy     String?   @map("reverted_by")
+  revertReason   String?   @map("revert_reason")
+  revertedAmount Int       @default(0) @map("reverted_amount")
+
   createdBy String?   @map("created_by")
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -6859,6 +6898,7 @@ model InvoicePayment {
   @@index([invoiceId])
   @@index([paymentFor])
   @@index([deletedAt])
+  @@index([revertedAt])
   @@map("invoice_payments")
 }
 
@@ -7469,6 +7509,7 @@ enum LabReportNoteCategory {
   SAMPLE
   TECH
   LOCK
+  UNLOCK
   DELTA
   CRITICAL_ALERT
   OUT_OF_RANGE
@@ -7512,6 +7553,11 @@ model LabReportAttachment {
   fileUrl  String  @map("file_url")
   fileName String  @map("file_name")
   notes    String?
+
+  /// Server-measured size in bytes (from the upload endpoint), used to enforce
+  /// the per-report total-size limit on "File +" attachments. Nullable: EMI
+  /// histogram rows and rows created before this column don't carry it.
+  fileSizeBytes Int? @map("file_size_bytes")
 
   uploadedBy String   @map("uploaded_by")
   uploadedAt DateTime @default(now()) @map("uploaded_at")
@@ -8055,6 +8101,19 @@ model PaymentDetails {
   /// 0 otherwise.
   refundCharge Decimal          @default(0) @map("refund_charge") @db.Decimal(12, 2)
 
+  /// Single-payment revert markers (distinct from a whole-order cancel). Reverting
+  /// one payment keeps the row ACTIVE (`deletedAt` stays NULL) — so its `netAmount`
+  /// snapshot still counts toward the order's net total (net is summed across the
+  /// order's payment rows, so soft-deleting would collapse it) — but ZEROES the
+  /// money fields (`paidAmount`/`refundAmount`/`refundCharge`) so the row no longer
+  /// contributes collected/refunded money. `revertedAmount` preserves the original
+  /// figure for the Finance → Payments "Reverted" tab; `revertedAt` flags the row so
+  /// every collected-money sum and display path can exclude it.
+  revertedAt     DateTime? @map("reverted_at")
+  revertedBy     String?   @map("reverted_by")
+  revertReason   String?   @map("revert_reason")
+  revertedAmount Decimal   @default(0) @map("reverted_amount") @db.Decimal(12, 2)
+
   // Settlement links that consolidated this collected payment (back-relation).
   // A payment may back multiple active links (partial re-settlement); it is
   // ineligible for a new settlement once its collected amount is fully reserved.
@@ -8068,6 +8127,7 @@ model PaymentDetails {
   @@index([branchId])
   @@index([orderId])
   @@index([deletedAt])
+  @@index([revertedAt])
   @@map("payment_details")
 }
 
@@ -8324,6 +8384,7 @@ model OrderSample {
   orderIdBarcode String? @map("order_id_barcode")
 
   // Sample identity (snapshotted from the resolved LabTestSample).
+  sampleName       String?        @map("sample_name")
   sampleType       String?        @map("sample_type")
   containerType    ContainerType? @map("container_type")
   sampleGroupLabel String?        @map("sample_group_label") // e.g. "EDTA ×2"
@@ -8485,6 +8546,13 @@ model SampleTransfer {
   rejectionReason  String?   @map("rejection_reason")
   repeatReason     String?   @map("repeat_reason")
 
+  // The destination OrderSample materialised when an INTERNAL transfer is ACCEPTED
+  // (RULE 1). Links the transfer to its clone so a later Retrieve/recall can unwind
+  // the clone (soft-delete it + move its reports back to the origin) instead of
+  // leaving a stale sample in the receiving branch's In-House list. Null until
+  // accepted / for external + outsource transfers (no local clone).
+  clonedSampleId String? @map("cloned_sample_id")
+
   // Manual outsource tracking (PDF §D.3 / CR-3 — no sync).
   outsourceStatus String? @map("outsource_status")
 
@@ -8501,6 +8569,7 @@ model SampleTransfer {
   @@index([transferStatus])
   @@index([destinationBranchId])
   @@index([outsourceCenterId])
+  @@index([clonedSampleId])
   @@index([deletedAt])
   @@map("sample_transfers")
 }

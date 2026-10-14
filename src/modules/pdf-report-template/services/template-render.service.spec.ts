@@ -409,6 +409,50 @@ describe('TemplateRenderService — renderBodyFragment (lab_all_report body)', (
     expect(html).not.toContain('FOOTER SHOULD NOT APPEAR');
   });
 
+  it('passes abnormal-flag styled {observed1}/{observed2} through unescaped', () => {
+    // buildPrintContext pre-escapes and wraps an out-of-range quantitative
+    // reading in abnormal-flag markup; observed1/observed2 are rich-text keys,
+    // so the engine must not re-escape the span.
+    const html = service.renderBodyFragment(
+      meta({
+        body_html:
+          '<table><tbody>{{#each results}}<tr><td>{observed1}</td><td>{observed2}</td></tr>{{/each}}</tbody></table>',
+      }),
+      {
+        sections: {
+          results: [
+            {
+              observed1:
+                '<span style="font-weight:bold;color:#d32f2f">21</span>',
+              observed2: '9',
+            },
+          ],
+        },
+      },
+    );
+    expect(html).toContain(
+      '<td><span style="font-weight:bold;color:#d32f2f">21</span></td>',
+    );
+    expect(html).toContain('<td>9</td>');
+  });
+
+  it('renders the {is_observed_*_abnormal} boolean tags as literal true/false', () => {
+    const html = service.renderBodyFragment(
+      meta({
+        body_html:
+          '{{#each results}}<tr><td>{is_observed_1_abnormal}</td><td>{is_observed_2_abnormal}</td></tr>{{/each}}',
+      }),
+      {
+        sections: {
+          results: [
+            { is_observed_1_abnormal: true, is_observed_2_abnormal: false },
+          ],
+        },
+      },
+    );
+    expect(html).toContain('<tr><td>true</td><td>false</td></tr>');
+  });
+
   it('prefixes the template custom_css so per-report styling survives embedding', () => {
     const html = service.renderBodyFragment(
       meta({
@@ -465,29 +509,42 @@ describe('TemplateRenderService — {test_file_attachment}', () => {
 describe('TemplateRenderService — barcode image tags', () => {
   const service = new TemplateRenderService();
   const ORDER_SRC = 'data:image/png;base64,T1JERVI=';
+  const QR_SRC = 'data:image/png;base64,UVI=';
   const SAMPLE_SRC = 'data:image/png;base64,U0FNUExF';
-  // The shape `LabReportService.buildPrintContext` emits: each barcode is an
+  // The shape `LabReportService.buildPrintContext` emits: each barcode/QR is an
   // image src in BOTH `variables` and `images`.
   const ctx: GeneratePdfDto = {
     variables: {
       order_id_barcode: ORDER_SRC,
-      order_id_qr_code: SAMPLE_SRC,
+      order_id_qr_code: QR_SRC,
+      sample_id_barcode: SAMPLE_SRC,
       patient_image: 'https://cdn/p.png',
     },
     images: {
       order_id_barcode: ORDER_SRC,
-      order_id_qr_code: SAMPLE_SRC,
+      order_id_qr_code: QR_SRC,
+      sample_id_barcode: SAMPLE_SRC,
       patient_image: 'https://cdn/p.png',
     },
   };
 
   it('renders a bare {order_id_qr_code} in text as an <img>', () => {
     const { bodyHtml } = service.render(
-      meta({ body_html: '<p>Sample: {order_id_qr_code}</p>' }),
+      meta({ body_html: '<p>Order: {order_id_qr_code}</p>' }),
       ctx,
     );
     expect(bodyHtml).toContain(
-      `<p>Sample: <img src="${SAMPLE_SRC}" alt="order_id_qr_code" /></p>`,
+      `<p>Order: <img src="${QR_SRC}" alt="order_id_qr_code" /></p>`,
+    );
+  });
+
+  it('renders a bare {sample_id_barcode} in text as an <img>', () => {
+    const { bodyHtml } = service.render(
+      meta({ body_html: '<p>Sample: {sample_id_barcode}</p>' }),
+      ctx,
+    );
+    expect(bodyHtml).toContain(
+      `<p>Sample: <img src="${SAMPLE_SRC}" alt="sample_id_barcode" /></p>`,
     );
   });
 
@@ -499,27 +556,34 @@ describe('TemplateRenderService — barcode image tags', () => {
       }),
       ctx,
     );
-    expect(bodyHtml.split(SAMPLE_SRC)).toHaveLength(4);
+    expect(bodyHtml.split(QR_SRC)).toHaveLength(4);
     expect(bodyHtml).toContain(
-      `<img src="${SAMPLE_SRC}" alt="A descriptive text of the image">`,
+      `<img src="${QR_SRC}" alt="A descriptive text of the image">`,
     );
     expect(bodyHtml).not.toContain(ORDER_SRC);
+    expect(bodyHtml).not.toContain(SAMPLE_SRC);
     expect(bodyHtml).not.toContain('{order_id_qr_code}');
   });
 
-  it('keeps the order and sample barcodes on their own tags', () => {
+  it('keeps the order barcode, order QR and sample barcode on their own tags', () => {
     const { bodyHtml } = service.render(
       meta({
         body_html:
-          '[O]{order_id_barcode}{{image:order_id_barcode}}[S]{order_id_qr_code}',
+          '[O]{order_id_barcode}{{image:order_id_barcode}}[Q]{order_id_qr_code}[S]{sample_id_barcode}{{image:sample_id_barcode}}',
       }),
       ctx,
     );
-    const [, orderPart = '', samplePart = ''] = bodyHtml.split(/\[O\]|\[S\]/);
+    const [, orderPart = '', qrPart = '', samplePart = ''] =
+      bodyHtml.split(/\[O\]|\[Q\]|\[S\]/);
     expect(orderPart.split(ORDER_SRC)).toHaveLength(3);
+    expect(orderPart).not.toContain(QR_SRC);
     expect(orderPart).not.toContain(SAMPLE_SRC);
-    expect(samplePart).toContain(SAMPLE_SRC);
+    expect(qrPart).toContain(QR_SRC);
+    expect(qrPart).not.toContain(ORDER_SRC);
+    expect(qrPart).not.toContain(SAMPLE_SRC);
+    expect(samplePart.split(SAMPLE_SRC)).toHaveLength(3);
     expect(samplePart).not.toContain(ORDER_SRC);
+    expect(samplePart).not.toContain(QR_SRC);
   });
 
   it('renders bare barcode tags in the header template too (case-insensitive)', () => {
