@@ -21,13 +21,20 @@ auth:bearer {
 }
 
 docs {
-  Lightweight `{ id, name, price, sampleName, sampleType, isFasting, …schedule/TAT }`
-  options for the Create-Order lab-test picker. Returns the active branch's **active
-  default-variant** lab tests only (one orderable row per variant group), so a selected
-  id is directly usable as an order item's `branchLabTestId`; `price` is the list price
-  (`priceMsrp`, minor units) and `sampleName` (e.g. "Blood (EDTA)"), `sampleType` (e.g.
-  "Blood") and `isFasting` (from the first sample in `configSnapshot`) populate the
-  Diagnostic Items table. Scoped to the JWT tenant + active branch (no
-  `branchId` in the query). `search` matches testName (case-insensitive). Omit
-  `page` for the full array; supply `page` for a `{ data, total, page, limit }` envelope.
+  Lightweight `{ id, name, price, sampleName, sampleType, isFasting, isAllowDiscounts,
+  isBillOnlyTest, …schedule/TAT }` options for the Create-Order lab-test picker.
+  Returns the active branch's **active default-variant** lab tests only (one orderable
+  row per variant group), so a selected id is directly usable as an order item's
+  `branchLabTestId`; `price` is the list price (`priceMsrp`, minor units) and
+  `sampleName` (e.g. "Blood (EDTA)"), `sampleType` (e.g. "Blood") and `isFasting`
+  (from the first sample in `configSnapshot`) populate the Diagnostic Items table.
+
+  `isAllowDiscounts` drives the FE per-line discount input (disabled when `false`;
+  the backend also rejects a discount on such a test with 422
+  `TEST_DISCOUNT_NOT_ALLOWED`). `isBillOnlyTest` flags a billed-only test that the
+  frontend hides from the workflow item list (it generates no accession sample).
+
+  Scoped to the JWT tenant + active branch (no `branchId` in the query). `search`
+  matches testName (case-insensitive). Omit `page` for the full array; supply `page`
+  for a `{ data, total, page, limit }` envelope.
 }

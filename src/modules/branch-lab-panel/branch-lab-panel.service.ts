@@ -41,6 +41,14 @@ export interface BranchLabPanelOption {
   price: number;
   sampleType: string | null;
   isFasting: boolean;
+  /**
+   * Whether discounts may be applied to this panel — derived from the inverted
+   * `isDisableDiscount` so the Create-Order discount input reads one uniform flag
+   * for both tests and panels.
+   */
+  isAllowDiscounts: boolean;
+  /** Billed-only panel: excluded from the lab workflow (no sample/report). */
+  isBillOnlyTest: boolean;
   tatMinValue: number | null;
   tatMinUnit: TatUnit | null;
   tatMaxValue: number | null;
@@ -828,6 +836,8 @@ export class BranchLabPanelService {
       panelName: true,
       listPrice: true,
       isFastingRequired: true,
+      isDisableDiscount: true,
+      isBillOnlyTest: true,
       tatMinValue: true,
       tatMinUnit: true,
       tatMaxValue: true,
@@ -839,6 +849,8 @@ export class BranchLabPanelService {
       panelName: string;
       listPrice: number;
       isFastingRequired: boolean;
+      isDisableDiscount: boolean;
+      isBillOnlyTest: boolean;
       tatMinValue: number | null;
       tatMinUnit: TatUnit | null;
       tatMaxValue: number | null;
@@ -849,6 +861,8 @@ export class BranchLabPanelService {
       price: r.listPrice,
       sampleType: null,
       isFasting: r.isFastingRequired,
+      isAllowDiscounts: !r.isDisableDiscount,
+      isBillOnlyTest: r.isBillOnlyTest,
       tatMinValue: r.tatMinValue,
       tatMinUnit: r.tatMinUnit,
       tatMaxValue: r.tatMaxValue,

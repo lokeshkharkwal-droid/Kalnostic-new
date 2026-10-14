@@ -216,6 +216,16 @@ export class UpdateBranchLabTestDto {
   @IsBoolean()
   isPreferenceTest?: boolean;
 
+  /** Billed but never enters the lab workflow (no accession/collection/report). */
+  @IsOptional()
+  @IsBoolean()
+  isBillOnlyTest?: boolean;
+
+  /** When false, the test's sample is auto-accepted and skips collection. */
+  @IsOptional()
+  @IsBoolean()
+  isSampleFlow?: boolean;
+
   // Notes
   @IsOptional()
   @IsString()

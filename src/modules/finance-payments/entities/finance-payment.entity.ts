@@ -54,6 +54,15 @@ export interface PaymentLedgerItem {
   /** Resolved actor display name (from `Order.createdBy` / `InvoicePayment.createdBy`). */
   user: string | null;
   userId: string | null;
+  /**
+   * The order's ORIGINAL creator for this row — `Order.createdBy` resolved to a
+   * display name. Only Direct rows map to a single order, so `orderCreatedById` /
+   * `orderCreatedByName` are populated there; an invoice receipt aggregates many
+   * orders, so both are null (the FE renders a "—" fallback). Distinct from
+   * {@link user}, which is the payment's own actor.
+   */
+  orderCreatedById: string | null;
+  orderCreatedByName: string | null;
   /** Resolved branch name. */
   branch: string | null;
   branchId: string | null;

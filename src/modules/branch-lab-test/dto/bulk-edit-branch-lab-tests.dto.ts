@@ -104,6 +104,16 @@ export class BulkEditBranchLabTestItemDto {
   @IsBoolean()
   isAllowDiscounts?: boolean;
 
+  /** Billed but never enters the lab workflow (no accession/collection/report). */
+  @IsOptional()
+  @IsBoolean()
+  isBillOnlyTest?: boolean;
+
+  /** When false, the test's sample is auto-accepted and skips collection. */
+  @IsOptional()
+  @IsBoolean()
+  isSampleFlow?: boolean;
+
   @IsOptional()
   @IsInt()
   @Min(0)

@@ -632,6 +632,9 @@ export class FinancePaymentsService {
       refId: r.reference,
       user: null,
       userId: o.createdBy,
+      // A Direct payment maps to exactly one order, so its creator is the order's.
+      orderCreatedById: o.createdBy,
+      orderCreatedByName: null,
       branch: null,
       branchId: r.branchId,
       status,
@@ -672,6 +675,10 @@ export class FinancePaymentsService {
       refId: r.reference,
       user: null,
       userId: r.createdBy,
+      // An invoice receipt aggregates many orders — there's no single order
+      // creator, so "Order Created By" is left blank (FE renders "—").
+      orderCreatedById: null,
+      orderCreatedByName: null,
       branch: null,
       branchId: r.branchId,
       status,
@@ -732,7 +739,11 @@ export class FinancePaymentsService {
   ): Promise<void> {
     const personIds = [
       ...new Set(
-        items.map((i) => i.userId).filter((x): x is string => Boolean(x)),
+        items
+          // Both the payment actor (`userId`) and the order creator
+          // (`orderCreatedById`) are Person ids — resolve them in one lookup.
+          .flatMap((i) => [i.userId, i.orderCreatedById])
+          .filter((x): x is string => Boolean(x)),
       ),
     ];
     const branchIds = [
@@ -774,6 +785,9 @@ export class FinancePaymentsService {
 
     for (const it of items) {
       it.user = it.userId ? (nameById.get(it.userId) ?? null) : null;
+      it.orderCreatedByName = it.orderCreatedById
+        ? (nameById.get(it.orderCreatedById) ?? null)
+        : null;
       it.branch = it.branchId ? (branchById.get(it.branchId) ?? null) : null;
     }
   }
