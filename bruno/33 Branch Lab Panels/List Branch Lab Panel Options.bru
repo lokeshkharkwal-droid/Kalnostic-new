@@ -29,10 +29,11 @@ docs {
   (a panel has no single specimen) and `isFasting` reflects the panel's
   `isFastingRequired`.
 
-  `isAllowDiscounts` is the inverse of the panel's `isDisableDiscount` (drives the FE
-  discount input; backend rejects a disallowed discount with 422
-  `TEST_DISCOUNT_NOT_ALLOWED`). `isBillOnlyTest` flags a billed-only panel the
-  frontend hides from the workflow item list (it generates no accession samples).
+  `isAllowDiscounts` is the inverse of the panel's `isDisableDiscount` — when
+  `false` the frontend hides the panel's per-line discount input (FE-only control;
+  the backend has no per-test discount gate, so an order-level discount is always
+  accepted). `isBillOnlyTest` flags a billed-only panel the frontend hides from the
+  workflow item list (it generates no accession samples).
 
   Scoped to the JWT tenant + active branch (no `branchId` in the query). `search`
   matches panelName (case-insensitive). Omit `page` for the full array; supply `page`

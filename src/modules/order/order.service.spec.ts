@@ -7,7 +7,6 @@ import {
   OrderDiscountOutOfRangeException,
   LineItemDiscountNotAllowedException,
   LineItemDiscountOutOfRangeException,
-  TestDiscountNotAllowedException,
   TdsNotApplicableException,
   TdsOutOfRangeException,
 } from './exceptions/order.exceptions';
@@ -55,7 +54,6 @@ describe('OrderService — TDS & Discount rules', () => {
     settings?: RegistrationSetting;
     items?: OrderItemDto[];
     payments?: OrderPaymentDto[];
-    discountAllowed?: Map<string, boolean>;
   }) =>
     (
       service as unknown as {
@@ -68,7 +66,6 @@ describe('OrderService — TDS & Discount rules', () => {
       items: opts.items ?? [{ branchLabTestId: itemKey }],
       payments: opts.payments,
       itemPrices,
-      discountAllowed: opts.discountAllowed,
     });
 
   it('passes when nothing is discounted', () => {
@@ -157,93 +154,10 @@ describe('OrderService — TDS & Discount rules', () => {
     });
   });
 
-  // Per-test "Allow Discounts = No" rule: restricts ONLY per-line item discounts
-  // on the flagged test; the order-level discount is never blocked by it, and
-  // other items remain discountable. Mirrors the clarified product requirement.
-  describe('per-test Allow Discounts (TEST_DISCOUNT_NOT_ALLOWED)', () => {
-    const disallowed = new Map<string, boolean>([[itemKey, false]]);
-    const allowed = new Map<string, boolean>([[itemKey, true]]);
-    const otherKey = 'test-2';
-    const twoItemPrices = new Map<string, number>([
-      [itemKey, 1000],
-      [otherKey, 1000],
-    ]);
-
-    it('rejects a per-line discount on a non-discountable test', () => {
-      expect(() =>
-        run({
-          discountAllowed: disallowed,
-          items: [
-            {
-              branchLabTestId: itemKey,
-              discount: 150, // in-range %, so only the per-test rule can reject it
-              discountMode: DiscountMode.AMOUNT,
-              discountValue: 150,
-            },
-          ],
-        }),
-      ).toThrow(TestDiscountNotAllowedException);
-    });
-
-    it('allows a per-line discount when the test permits it', () => {
-      expect(() =>
-        run({
-          discountAllowed: allowed,
-          items: [
-            {
-              branchLabTestId: itemKey,
-              discount: 150,
-              discountMode: DiscountMode.AMOUNT,
-              discountValue: 150,
-            },
-          ],
-        }),
-      ).not.toThrow();
-    });
-
-    it('allows an ORDER-level discount even when the test is non-discountable', () => {
-      expect(() =>
-        run({
-          settings: makeSettings({
-            ChargesAndDeductions_AllowBothOrderAndLineDiscount: true,
-          }),
-          discountAllowed: disallowed,
-          items: [{ branchLabTestId: itemKey }],
-          payments: [{ orderDiscount: 150 }], // 15% of 1000, in [5,20]
-        }),
-      ).not.toThrow();
-    });
-
-    it('blocks only the non-discountable line, not a sibling discountable item', () => {
-      const service2 = service as unknown as {
-        assertDiscountAndTdsRules: (p: unknown) => void;
-      };
-      // Sibling (test-2) is discountable and in range → the only thing that can
-      // throw is the non-discountable test-1 line.
-      expect(() =>
-        service2.assertDiscountAndTdsRules({
-          status: OrderStatus.ORDER,
-          branchId: 'b1',
-          settings: makeSettings(),
-          items: [
-            {
-              branchLabTestId: otherKey,
-              discount: 150,
-              discountMode: DiscountMode.AMOUNT,
-              discountValue: 150,
-            },
-          ],
-          payments: undefined,
-          itemPrices: twoItemPrices,
-          discountAllowed: new Map<string, boolean>([
-            [itemKey, false],
-            [otherKey, true],
-          ]),
-        }),
-      ).not.toThrow();
-    });
-  });
-
+  // The per-test "Allow Discounts" flag is enforced in the FRONTEND only (the
+  // per-item discount input is hidden for a non-discountable test). The backend
+  // has NO per-test discount gate, so an order-level discount is never blocked by
+  // it — covered by the order-level discount cases below.
   describe('order-level discount', () => {
     it('rejects an order discount when order discounts are disabled', () => {
       expect(() =>
