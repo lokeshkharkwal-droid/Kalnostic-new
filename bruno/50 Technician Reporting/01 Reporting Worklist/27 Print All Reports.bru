@@ -66,8 +66,10 @@ docs {
     (all reports flow through `tests[]`, which templates iterate identically).
   - `header_fields` — shared order/patient header block: `patient.{salutation,
     full_name}`, `client_age`, `client_gender` (M/F), `client_phone`,
-    `client_uhid`, `external_order_id`, `sample_source_label`, `refer_by_name`,
-    `referring_panel_name`, `order_date_time`, `order_id_barcode`.
+    `client_uhid`, `order_code`, `external_order_id`, `sample_source_label`,
+    `refer_by_name`, `referring_panel_name`, `order_date_time`, `order_id_barcode`.
+    `order_code` is the Order ID (`Order.orderCode`, e.g. `ORD-00114`); it is
+    also aliased at the context root so the bare `{order_code}` tag works.
     `client_age` is one unit (0-29 days → Days, under 1 year → Months, else
     Years); `order_date_time` is the typed order time, else the order's
     `createdAt` in the tenant timezone; `order_id_barcode` is a Code 128

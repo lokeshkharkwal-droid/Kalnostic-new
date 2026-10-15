@@ -3326,7 +3326,8 @@ export class LabReportService {
         // The order's real date/time: the operator-entered `orderTime` when
         // one was typed, else the order's creation instant (`createdAt`) in the
         // tenant timezone — `orderTime` is usually unset, which used to print
-        // every order at `12:00 AM`. See `resolveOrderLocalDateTime`.
+        // every order at `12:00 AM`. See `resolveOrderLocalDateTime`. Like
+        // every report date below, printed per the tenant `date_format`/`time_format`.
         order_date: formatOrderPrintDate(order, timezone, dateFormat),
         order_date_time: formatOrderPrintDateTime(
           order,
@@ -3382,16 +3383,22 @@ export class LabReportService {
         last_report_prepared_on: lastReportPreparedOn
           ? formatReportDateTime(
               toBranchLocalInstant(lastReportPreparedOn, timezone),
+              dateFormat,
+              timeFormat,
             )
           : '',
         sample_collected_date: sample?.collectedAt
           ? formatReportDateTime(
               toBranchLocalInstant(sample.collectedAt, timezone),
+              dateFormat,
+              timeFormat,
             )
           : '',
         sample_received_date: sample?.receivedAt
           ? formatReportDateTime(
               toBranchLocalInstant(sample.receivedAt, timezone),
+              dateFormat,
+              timeFormat,
             )
           : '',
         sample_name: sample?.sampleName ?? '',
@@ -3634,7 +3641,8 @@ export class LabReportService {
    *    iterate identically); the shape is preserved so a grouped template still
    *    parses. The block-page-header's `$group_name` param is unused by the
    *    reference template, so grouping has no visual effect today.
-   *  - `header_fields` — the order/patient header block shared across pages.
+   *  - `header_fields` — the order/patient header block shared across pages
+   *    (incl. `order_code`, also aliased at the root as the bare `{order_code}`).
    *
    * Reuses {@link buildPrintContext} per report so every Part-A tag fix (dates,
    * `sample_source_label`, external id, patient photo, approver) is inherited.
@@ -3717,6 +3725,10 @@ export class LabReportService {
         : '',
       client_phone: patient.mobile ?? '',
       client_uhid: patient.umId ?? '',
+      // Order ID text (`Order.orderCode`, e.g. `ORD-00114`) — the same value
+      // `order_id_barcode` encodes. Also exposed at the context root so the
+      // bare `{order_code}` tag resolves (see the return below).
+      order_code: order.orderCode,
       external_order_id: order.externalOrderId ?? '',
       sample_source_label: sampleSourceLabel(diagnostics?.sampleSource),
       // Reference templates default an absent referrer/panel to the sentinel
@@ -3760,7 +3772,11 @@ export class LabReportService {
           sample_collected_date: toText(c?.variables?.sample_collected_date),
           sample_received_date: toText(c?.variables?.sample_received_date),
           report_prepared_on: preparedOn
-            ? formatReportDateTime(toBranchLocalInstant(preparedOn, timezone))
+            ? formatReportDateTime(
+                toBranchLocalInstant(preparedOn, timezone),
+                dateFormat,
+                timeFormat,
+              )
             : '',
           // This test's own File+ PDFs (`{$report->test_file_attachment|noescape}`).
           test_file_attachment: toText(c?.variables?.test_file_attachment),
@@ -3838,6 +3854,10 @@ export class LabReportService {
       latteContext: {
         report_tests: { groups: [], tests: reports },
         header_fields: headerFields,
+        // Root alias so the flat-style bare `{order_code}` tag (the editor's
+        // "Order — order code" snippet) resolves in a Latte all-report template
+        // too; the flat fallback already carries it via `flatContext.variables`.
+        order_code: headerFields.order_code,
       },
       flatContext,
     };
@@ -3937,6 +3957,7 @@ export class LabReportService {
       useful_for: toText(v.useful_for),
       interpretation: toText(v.interpretation),
       limitations: toText(v.limitations),
+      remarks: toText(v.remarks),
       references: toText(v.references),
       rows,
     };
@@ -4005,7 +4026,7 @@ export class LabReportService {
       value
         ? `<div class="report-section"><b>${label}:</b> ${value}</div>`
         : '';
-    // interpretation/useful_for/limitations/references are rich-text HTML
+    // interpretation/useful_for/limitations/remarks/references are rich-text HTML
     // from a NotesRichTextEditor (LabReportService.buildPrintContext is the
     // source) — printed as-is. sample_note is a plain-text technician note,
     // so it keeps the usual escaping.
@@ -4013,6 +4034,7 @@ export class LabReportService {
       section('Interpretation', toText(v.interpretation)) +
       section('Useful For', toText(v.useful_for)) +
       section('Limitations', toText(v.limitations)) +
+      section('Remarks', toText(v.remarks)) +
       section('References', toText(v.references)) +
       section('Note', escapeHtml(toText(v.sample_note)));
 

@@ -214,9 +214,10 @@ export function formatOrderPrintDate(
 
 /**
  * The lab report's `{order_date_time}` — `"<date> <time>"` per the tenant
- * `dateFormat`/`timeFormat` (same layout as {@link formatOrderDateTime}),
- * resolved by {@link resolveOrderLocalDateTime}. A back/advance-dated order
- * with no entered time prints its date only rather than a made-up time.
+ * `dateFormat`/`timeFormat` ({@link formatReportDateTime}, the same layout as
+ * the report's sample/report dates), resolved by
+ * {@link resolveOrderLocalDateTime}. A back/advance-dated order with no
+ * entered time prints its date only rather than a made-up time.
  */
 export function formatOrderPrintDateTime(
   order: OrderDateTimeSource,
@@ -225,34 +226,32 @@ export function formatOrderPrintDateTime(
   timeFormat: string,
 ): string {
   const { local, hasTime } = resolveOrderLocalDateTime(order, timezone);
-  const date = formatTenantDate(local, dateFormat);
-  return hasTime ? `${date} ${formatTenantTime(local, timeFormat)}` : date;
+  return hasTime
+    ? formatReportDateTime(local, dateFormat, timeFormat)
+    : formatTenantDate(local, dateFormat);
 }
 
 /**
- * Fixed lab-report date-time stamp: `DD-MM-YYYY hh:mm AM/PM` (e.g.
- * `05-09-2026 03:30 PM`). Unlike {@link formatTenantDateTime} this ignores the
- * tenant's `date_format`/`time_format` and always emits the report layout the
- * business requires for `{order_date}`, `{sample_collection_date}`,
- * `{sample_received_date}`, `{last_report_prepared_on}` and the Latte
- * all-reports header. Reads UTC getters under the same convention as the rest
- * of this module — the caller must convert to a tenant-local wall-clock instant
- * via `toBranchLocalInstant` first. Empty string for a null/invalid instant.
+ * Lab-report date-time stamp: `"<date> <time>"` per the tenant
+ * `date_format`/`time_format` (e.g. `13/10/2026 5:03 PM` for `DD/MM/YYYY` +
+ * `12h`) — the one layout for every lab-report date (`{order_date_time}`,
+ * `{sample_collected_date}`, `{sample_received_date}`,
+ * `{last_report_prepared_on}` and the Latte all-reports `report_prepared_on`),
+ * so they all read alike and match the tenant's bills/TRFs. Space-separated
+ * like {@link formatOrderDateTime} (unlike {@link formatTenantDateTime}'s
+ * `", "`). Reads UTC getters — the caller must convert to a tenant-local
+ * wall-clock instant via `toBranchLocalInstant` first. Empty string for a
+ * null/invalid instant.
  */
 export function formatReportDateTime(
   localInstant: Date | null | undefined,
+  dateFormat: string,
+  timeFormat: string,
 ): string {
   if (!localInstant || Number.isNaN(localInstant.getTime())) {
     return '';
   }
-  const day = pad2(localInstant.getUTCDate());
-  const month = pad2(localInstant.getUTCMonth() + 1);
-  const year = localInstant.getUTCFullYear();
-  const hours24 = localInstant.getUTCHours();
-  const minutes = pad2(localInstant.getUTCMinutes());
-  const period = hours24 >= 12 ? 'PM' : 'AM';
-  const hours12 = hours24 % 12 || 12;
-  return `${day}-${month}-${year} ${pad2(hours12)}:${minutes} ${period}`;
+  return `${formatTenantDate(localInstant, dateFormat)} ${formatTenantTime(localInstant, timeFormat)}`;
 }
 
 /**
