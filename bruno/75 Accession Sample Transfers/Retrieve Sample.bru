@@ -29,6 +29,17 @@ tests {
 }
 
 docs {
+  Cancelled order: Retrieve is a wind-down and is allowed ONLY for a sample that is out at
+  another branch / partner (Sent, Forwarded, Outsourced). Any other sample of a cancelled
+  order is refused 422 SAMPLE_ORDER_CANCELLED ("This order has been cancelled, so Retrieve
+  is not allowed on this sample ..."), which wins over any other Retrieve refusal. In a
+  bulk call with `skipInvalid` that sentence is the skipped `reason`.
+
+  Bulk answer: each entry of `skipped` carries `reason` (readable) and `code` (the same
+  error code the strict call answers with, e.g. SAMPLE_RETRIEVE_BLOCKED_RESULT_DONE,
+  INVALID_SAMPLE_TRANSITION), so a screen can tell the reasons apart. The HTTP status of a
+  group call with `skipInvalid` stays 2xx: the call itself was valid.
+
   Validated result: a sample that is at this branch is NOT retrieved back to BEFORE its
   acceptance (New / Collected / Halt / Hold / Repeat ...) while any test on it has a
   validated result (Result Done, Approved or Published) - the sample would say "not

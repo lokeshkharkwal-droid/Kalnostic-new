@@ -47,12 +47,14 @@ import {
   InvalidTransferTransitionException,
   TransferOrderCancelledException,
   TransferWrongBranchException,
+  refusalMessage,
   OutsourceCenterNotFoundException,
   SampleTransferNotFoundException,
   TransferDestinationMissingException,
   TransferNotEditableException,
   SendBlockedException,
 } from './exceptions/accession.exceptions';
+import { inLockOrder, inRequestOrder } from './utils/request-order.util';
 import {
   PREVIOUS_HOLDER_MESSAGE,
   heldBranchesForCopy,
@@ -651,8 +653,10 @@ export class SampleTransferService {
         });
         for (const r of metaRows) metaById.set(r.id, r);
       }
-      const done: string[] = [];
-      for (const sampleId of sampleIds) {
+      const done: Array<{ sampleId: string; transferId: string }> = [];
+      // One fixed order (ascending id) so overlapping group sends cannot deadlock;
+      // the result is put back in the request's order below.
+      for (const sampleId of inLockOrder(sampleIds)) {
         // Group override: `force` moves every sample straight to the transfer's
         // target status regardless of its current one; `skipInvalid` skips
         // samples not in a legal state instead of failing the whole batch.
@@ -695,9 +699,8 @@ export class SampleTransferService {
             skipped.push({
               id: sampleId,
               accessionNo: meta?.accessionNo ?? null,
-              reason: `Action "${sampleAction}" is not allowed from status ${
-                meta?.status ?? 'UNKNOWN'
-              }`,
+              reason: refusalMessage(e),
+              code: e.errorCode,
             });
             continue;
           }
@@ -741,14 +744,19 @@ export class SampleTransferService {
             },
           });
         }
-        done.push(transfer.id);
+        done.push({ sampleId, transferId: transfer.id });
       }
       return done;
     });
     const succeeded = await Promise.all(
-      created.map((id) => this.findTransferById(id, tenantId)),
+      inRequestOrder(created, sampleIds, (x) => x.sampleId).map((x) =>
+        this.findTransferById(x.transferId, tenantId),
+      ),
     );
-    return { succeeded, skipped };
+    return {
+      succeeded,
+      skipped: inRequestOrder(skipped, sampleIds, (x) => x.id),
+    };
   }
 
   /**
@@ -791,7 +799,12 @@ export class SampleTransferService {
           }
         }
         const done: string[] = [];
-        for (const id of transferIds) {
+        // Always work through the transfers in the SAME order (sorted by id), not the
+        // order the user selected them in. Two overlapping group actions that picked
+        // the same rows in opposite orders would otherwise each hold a lock the other
+        // is waiting for (a deadlock -> 500); with one fixed order the second simply
+        // waits for the first. The result is put back in the request's order below.
+        for (const id of inLockOrder(transferIds)) {
           const transfer = await tx.sampleTransfer.findFirst({
             where: { id, tenantId, deletedAt: null },
           });
@@ -839,7 +852,24 @@ export class SampleTransferService {
                 transferred.orderId,
               ))
             ) {
-              throw new TransferOrderCancelledException(transfer.id, action);
+              const refusal = new TransferOrderCancelledException(
+                transfer.id,
+                action,
+              );
+              // A group "skip invalid" call must not fail as a whole because one
+              // transfer belongs to a cancelled order: skip it, say why, and carry
+              // on with the others. Nothing has been written for it yet. A single
+              // action (or a group without skip invalid) still gets the 409.
+              if (skipInvalid) {
+                skipped.push({
+                  id,
+                  accessionNo: accNoById.get(id) ?? null,
+                  reason: refusalMessage(refusal),
+                  code: refusal.errorCode,
+                });
+                continue;
+              }
+              throw refusal;
             }
           }
           // An INTERNAL transfer nobody was addressed to cannot be picked up,
@@ -861,6 +891,7 @@ export class SampleTransferService {
                 id,
                 accessionNo: accNoById.get(id) ?? null,
                 reason: `Transfer action "${action}" is not allowed from status ${transfer.transferStatus}`,
+                code: 'INVALID_TRANSFER_TRANSITION',
               });
               continue;
             }
@@ -906,6 +937,7 @@ export class SampleTransferService {
                 personId,
                 transfer,
                 reason,
+                action,
               );
               if (skipInvalid) {
                 await tx.$executeRaw`RELEASE SAVEPOINT return_to_sender`;
@@ -918,15 +950,11 @@ export class SampleTransferService {
               ) {
                 await tx.$executeRaw`ROLLBACK TO SAVEPOINT return_to_sender`;
                 await tx.$executeRaw`RELEASE SAVEPOINT return_to_sender`;
-                // `e.message` is only the class name; the user-facing sentence is in
-                // the response body (`{ error: { code, message } }`).
-                const body = e.getResponse() as {
-                  error?: { message?: string };
-                };
                 skipped.push({
                   id,
                   accessionNo: accNoById.get(id) ?? null,
-                  reason: body.error?.message ?? e.message,
+                  reason: refusalMessage(e),
+                  code: e.errorCode,
                 });
                 continue;
               }
@@ -972,10 +1000,16 @@ export class SampleTransferService {
     if (returnedSampleIds.length > 0) {
       await this.samples.notifySamplesRepeated(tenantId, returnedSampleIds);
     }
+    // The work ran in sorted-id order; report it in the order the caller asked.
     const succeeded = await Promise.all(
-      changed.map((id) => this.findTransferById(id, tenantId)),
+      inRequestOrder(changed, transferIds, (x) => x).map((id) =>
+        this.findTransferById(id, tenantId),
+      ),
     );
-    return { succeeded, skipped };
+    return {
+      succeeded,
+      skipped: inRequestOrder(skipped, transferIds, (x) => x.id),
+    };
   }
 
   /**
@@ -998,6 +1032,7 @@ export class SampleTransferService {
     personId: string | null,
     transfer: { id: string; sampleId: string; transferStatus: TransferStatus },
     reason: string | undefined,
+    action: 'repeat' | 'reject',
   ): Promise<string[]> {
     const why = reason ?? 'Returned by the receiving branch';
     if (transfer.transferStatus === TransferStatus.ACCEPTED) {
@@ -1019,6 +1054,7 @@ export class SampleTransferService {
             personId,
             copy.id,
             why,
+            action,
           ),
         );
       }

@@ -43,7 +43,7 @@ docs {
     centre - it must retrieve it first.
   The sender's referring panel (B2B) is notified once the change has committed.
   The reason is mandatory: `rejectionReason` must contain at least one non-space character
-  (max 255). Missing, empty, spaces-only or non-text values are refused with 400
+  (max 255). Missing, empty, spaces-only, invisible-characters-only (zero-width space etc.) or non-text values are refused with 400
   VALIDATION_ERROR and nothing changes. The same applies to the group call.
   Who may act (INTERNAL transfer): only the RECEIVING branch. The caller's active
   branch (the profile they switched to) must be the transfer's destination, otherwise

@@ -64,9 +64,10 @@ export class InvalidSampleTransitionException extends KaltrosException {
  * samples still skip it instead of failing the whole batch.
  */
 export class SampleSentToBranchException extends InvalidSampleTransitionException {
-  constructor(action: SampleAction, from: SampleStatus) {
+  /** `action` is the button the user pressed; `'reject'` is a transfer action, not a sample one. */
+  constructor(action: SampleAction | 'reject', from: SampleStatus) {
     super(
-      action,
+      action as SampleAction,
       from,
       `This sample has been sent to another branch, so "${action}" is not allowed. It can only be retrieved before the receiving branch receives it, or returned by the receiving branch.`,
       'SAMPLE_SENT_TO_BRANCH',
@@ -80,11 +81,18 @@ export class SampleSentToBranchException extends InvalidSampleTransitionExceptio
  * "skip invalid" samples skip it instead of failing the whole batch.
  */
 export class SampleOrderCancelledException extends InvalidSampleTransitionException {
-  constructor(action: SampleAction | 'assign-barcode', from: SampleStatus) {
+  constructor(
+    action: SampleAction | 'assign-barcode' | 'update',
+    from: SampleStatus,
+  ) {
     super(
       action as SampleAction,
       from,
-      `This order has been cancelled, so "${action}" is not allowed on its samples.`,
+      action === 'retrieve'
+        ? 'This order has been cancelled, so Retrieve is not allowed on this sample. Only a sample that is out at another branch can still be retrieved.'
+        : action === 'update'
+          ? 'This order has been cancelled, so notes can no longer be added to its samples.'
+          : `This order has been cancelled, so "${action}" is not allowed on its samples.`,
       'SAMPLE_ORDER_CANCELLED',
     );
   }
@@ -297,4 +305,16 @@ export class NoActiveLabelTemplateException extends KaltrosException {
       HttpStatus.NOT_FOUND,
     );
   }
+}
+
+/**
+ * The sentence a user reads for a refusal. `HttpException.message` is only the
+ * class name; the sentence is in the response body (`{ error: { code, message } }`).
+ * A group action that SKIPS a sample uses it as the skipped reason, so the screen
+ * shows why (e.g. "This order has been cancelled ...") instead of a generic
+ * "not allowed from status X".
+ */
+export function refusalMessage(e: KaltrosException): string {
+  const body = e.getResponse() as { error?: { message?: string } };
+  return body.error?.message ?? e.message;
 }

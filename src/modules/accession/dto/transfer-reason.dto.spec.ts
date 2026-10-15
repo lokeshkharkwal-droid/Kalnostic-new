@@ -104,7 +104,12 @@ describe.each(CASES)(
       ['a tab', '\t'],
       ['a line break', '\n'],
       ['mixed blanks', ' \t\r\n '],
-      ['non-breaking and wide spaces', '  '],
+      ['non-breaking and wide spaces', '\u00A0\u3000'],
+      ['a zero-width space', '\u200B'],
+      ['several zero-width characters', '\u200B\u200C\u200D\u2060\uFEFF'],
+      ['a soft hyphen', '\u00AD'],
+      ['a Hangul filler', '\u3164'],
+      ['spaces mixed with invisible characters', ' \u200B \t\u2060 '],
     ])('refuses %s (400), naming the field', async (_label, value) => {
       const message = await refusal(c.dto, c.body(value));
       expect(message).toContain(

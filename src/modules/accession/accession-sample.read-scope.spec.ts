@@ -40,6 +40,7 @@ function setup(
     },
     sampleTransfer: { findMany: jest.fn().mockResolvedValue(transfers) },
     orderSampleStatusHistory: { findMany: jest.fn().mockResolvedValue([]) },
+    order: { findFirst: jest.fn().mockResolvedValue(null) },
   };
   const service = new OrderSampleService(
     prisma as never,

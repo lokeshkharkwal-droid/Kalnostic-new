@@ -128,6 +128,41 @@ describe('OrderSampleService.returnCopyToOrigin - Repeat below Result Done', () 
     },
   );
 
+  it.each([
+    [undefined, 'repeat'],
+    ['repeat', 'repeat'],
+    ['reject', 'reject'],
+  ] as const)(
+    'the "already passed on" refusal names the action pressed (%s -> "%s")',
+    async (given, named) => {
+      const { service, tx } = build(true, 'SENT_INTERNAL');
+      const err = (await service
+        .returnCopyToOrigin(tx as never, 't1', 'u1', 'copy1', 'x', given)
+        .catch((e: unknown) => e)) as SampleSentToBranchException;
+      expect(err).toBeInstanceOf(SampleSentToBranchException);
+      const message = (err.getResponse() as { error: { message: string } })
+        .error.message;
+      expect(message).toContain(`"${named}" is not allowed`);
+      expect(message).not.toContain(
+        `"${named === 'repeat' ? 'reject' : 'repeat'}"`,
+      );
+      expect(err.errorCode).toBe('SAMPLE_SENT_TO_BRANCH');
+    },
+  );
+
+  it('the action word changes only the wording: a reject of a copy that can go back behaves exactly like a repeat', async () => {
+    const { service, tx, calls } = build(true);
+    await service.returnCopyToOrigin(
+      tx as never,
+      't1',
+      'u1',
+      'copy1',
+      'x',
+      'reject',
+    );
+    expect(calls).toEqual(['lock', 'check', 'reset', 'move', 'transition']);
+  });
+
   it('a copy that was passed on and then retrieved back (ACCEPTED again) can be returned as usual', async () => {
     const { service, tx, calls } = build(true, 'ACCEPTED');
     await service.returnCopyToOrigin(tx as never, 't1', 'u1', 'copy1', 'x');

@@ -756,6 +756,67 @@ describe('OrderSampleService - a cancelled order freezes its samples', () => {
       },
     );
 
+    it.each(['SENT_INTERNAL', 'FORWARD_EXTERNAL', 'OUTSOURCED'])(
+      'Retrieve of a sample that is out (%s) is not stopped',
+      async (status) => {
+        const { tx, transition } = build(true, { status });
+        await transition('retrieve').catch((e: unknown) => {
+          expect(e).not.toBeInstanceOf(SampleOrderCancelledException);
+        });
+        expect(tx.order.findFirst).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(['NEW', 'COLLECTED', 'ACCEPTED', 'HOLD', 'STORED', 'RETURNED'])(
+      'Retrieve of a sample that is NOT out (%s) is refused on a cancelled order, nothing written',
+      async (status) => {
+        const { tx, updateMany, transition } = build(true, { status });
+        await expect(transition('retrieve')).rejects.toBeInstanceOf(
+          SampleOrderCancelledException,
+        );
+        expect(updateMany).not.toHaveBeenCalled();
+        expect(tx.orderSample.update).not.toHaveBeenCalled();
+        expect(tx.orderSampleStatusHistory.create).not.toHaveBeenCalled();
+      },
+    );
+
+    it('the Retrieve refusal names Retrieve and says only a sample that is out can be retrieved', async () => {
+      const { transition } = build(true, { status: 'ACCEPTED' });
+      const e = (await transition('retrieve').catch(
+        (x: unknown) => x,
+      )) as SampleOrderCancelledException;
+      expect(e).toBeInstanceOf(InvalidSampleTransitionException);
+      expect(e.errorCode).toBe('SAMPLE_ORDER_CANCELLED');
+      expect(e.getStatus()).toBe(422);
+      const msg = (e.getResponse() as { error: { message: string } }).error
+        .message;
+      expect(msg).toContain('This order has been cancelled');
+      expect(msg).toContain('Retrieve');
+      expect(msg).toContain('out at another branch');
+    });
+
+    it('the cancelled-order reason wins over "nothing to retrieve" for a sample that was already recalled', async () => {
+      const { transition } = build(true, {
+        status: 'ACCEPTED',
+        previousStatus: 'SENT_INTERNAL' as never,
+      });
+      await expect(transition('retrieve')).rejects.toBeInstanceOf(
+        SampleOrderCancelledException,
+      );
+    });
+
+    it('the other cancelled-order refusals keep their own wording', async () => {
+      const { transition } = build(true, { status: 'ACCEPTED' });
+      const e = (await transition('hold').catch(
+        (x: unknown) => x,
+      )) as SampleOrderCancelledException;
+      const msg = (e.getResponse() as { error: { message: string } }).error
+        .message;
+      expect(msg).toBe(
+        'This order has been cancelled, so "hold" is not allowed on its samples.',
+      );
+    });
+
     it("the system-driven moves of the receiving branch's Reject / Repeat / Return are not stopped", async () => {
       const { tx, transition } = build(true, { status: 'SENT_INTERNAL' });
       await transition('repeat', { system: true, force: true }).catch(
@@ -948,6 +1009,7 @@ describe('OrderSampleService — Return of a transferred copy', () => {
           id: 'copy1',
           accessionNo: null,
           reason: 'Action "return" is not allowed from status SENT_INTERNAL',
+          code: 'INVALID_SAMPLE_TRANSITION',
         },
       ],
     });

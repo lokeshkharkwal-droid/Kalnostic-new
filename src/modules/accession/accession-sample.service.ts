@@ -85,6 +85,7 @@ import {
   SampleRepeatBlockedException,
   SampleReturnBlockedException,
   SampleRetrieveBlockedByResultException,
+  refusalMessage,
   SampleSentToBranchException,
   SendBlockedException,
   NoActiveLabelTemplateException,
@@ -98,6 +99,7 @@ import {
   branchMayRead,
   branchesWithStake,
 } from './utils/branch-read-scope.util';
+import { inLockOrder, inRequestOrder } from './utils/request-order.util';
 
 /** Resolved display fields attached to a history row for the Audit Trail UI. */
 export interface AccessionHistoryActor {
@@ -1483,7 +1485,7 @@ export class OrderSampleService {
     tenantId: string,
     branchId: string | null,
   ): Promise<Array<OrderSampleStatusHistory & AccessionHistoryActor>> {
-    await this.findById(id, tenantId, branchId);
+    const sample = await this.findById(id, tenantId, branchId);
     const rows = await this.prisma.orderSampleStatusHistory.findMany({
       where: { sampleId: id, tenantId, deletedAt: null },
       orderBy: { createdAt: 'desc' },
@@ -1491,7 +1493,60 @@ export class OrderSampleService {
     const movements = rows.filter(
       (r) => r.fromStatus !== null && r.fromStatus !== r.toStatus,
     );
-    return this.enrichHistoryActors(movements, tenantId, branchId);
+    // A cancelled order shows its cancellation in the trail too, at its place in
+    // the timeline (newest first, like every other entry).
+    const cancelled = await this.orderCancelledEntry(tenantId, sample);
+    const trail = cancelled
+      ? [...movements, cancelled].sort(
+          (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+        )
+      : movements;
+    return this.enrichHistoryActors(trail, tenantId, branchId);
+  }
+
+  /**
+   * The "Order cancelled" line of a sample's audit trail, read from the order
+   * itself (no history row is written, so orders cancelled before this existed
+   * show it too): who last changed the order and when - the cancel, unless a later
+   * change such as a refund moved it. Null when the order is not cancelled.
+   * Built in the shape of a history row so the trail renders it like the others;
+   * `action = 'order-cancelled'` marks it and its statuses are not a transition.
+   */
+  private async orderCancelledEntry(
+    tenantId: string,
+    sample: {
+      id: string;
+      orderId: string;
+      branchId: string | null;
+      status: SampleStatus;
+    },
+  ): Promise<OrderSampleStatusHistory | null> {
+    const order = await this.prisma.order.findFirst({
+      where: {
+        id: sample.orderId,
+        tenantId,
+        status: OrderStatus.CANCELLED,
+        deletedAt: null,
+      },
+      select: { id: true, updatedAt: true, updatedBy: true },
+    });
+    if (!order) return null;
+    return {
+      id: `order-cancelled:${order.id}`,
+      tenantId,
+      branchId: sample.branchId,
+      sampleId: sample.id,
+      action: 'order-cancelled',
+      fromStatus: null,
+      toStatus: sample.status,
+      reason: null,
+      notes: null,
+      attachmentUrl: null,
+      changedBy: order.updatedBy ?? null,
+      createdAt: order.updatedAt,
+      updatedAt: order.updatedAt,
+      deletedAt: null,
+    };
   }
 
   /**
@@ -1969,6 +2024,8 @@ export class OrderSampleService {
           deletedAt: null,
           sourceTransferId: { not: null },
         },
+        // one fixed order (ascending id), see `utils/request-order.util`
+        orderBy: { id: 'asc' },
         select: {
           id: true,
           status: true,
@@ -2010,7 +2067,8 @@ export class OrderSampleService {
               skippedCopies.push({
                 id: copy.id,
                 accessionNo: copy.accessionNo ?? null,
-                reason: `Action "repeat" is not allowed from status ${copy.status}`,
+                reason: refusalMessage(e),
+                code: e.errorCode,
               });
               continue;
             }
@@ -2059,9 +2117,12 @@ export class OrderSampleService {
    */
   private isCancelledOrderWindDown(
     action: SampleAction,
-    sample: { sourceTransferId: string | null },
+    sample: { sourceTransferId: string | null; status: SampleStatus },
   ): boolean {
-    if (action === 'retrieve') return true;
+    // Retrieve winds down only a sample that is OUT at another branch / partner. A
+    // sample that is back (or never left) is frozen like any other - Retrieve would
+    // otherwise keep stepping it back on a cancelled order.
+    if (action === 'retrieve') return isTransferredStatus(sample.status);
     return (
       (action === 'store' || action === 'discard') &&
       sample.sourceTransferId !== null
@@ -2194,6 +2255,8 @@ export class OrderSampleService {
    *   notify once the transaction has committed
    * @param copyId the receiving branch's copy (must carry `sourceTransferId`)
    * @param reason the receiver's repeat/reject reason, recorded on the history
+   * @param action which button the receiver pressed; only names the action in the
+   *   "already passed on" refusal (Reject and Repeat otherwise do the same thing)
    * @throws OrderSampleNotFoundException if the copy, its transfer or the
    *   original sample cannot be found
    * @throws SampleSentToBranchException if the copy has been passed on already
@@ -2205,6 +2268,7 @@ export class OrderSampleService {
     personId: string | null,
     copyId: string,
     reason: string,
+    action: 'repeat' | 'reject' = 'repeat',
   ): Promise<string> {
     const copy = await tx.orderSample.findFirst({
       where: { id: copyId, tenantId, deletedAt: null },
@@ -2216,7 +2280,7 @@ export class OrderSampleService {
     // Checked before anything is read or written: a copy this branch has already
     // passed on cannot be sent back (see the doc comment, step 0).
     if (isTransferredStatus(copy.status)) {
-      throw new SampleSentToBranchException('repeat', copy.status);
+      throw new SampleSentToBranchException(action, copy.status);
     }
     const transfer = await tx.sampleTransfer.findFirst({
       where: { id: copy.sourceTransferId, tenantId, deletedAt: null },
@@ -2401,6 +2465,8 @@ export class OrderSampleService {
           deletedAt: null,
           sourceTransferId: { not: null },
         },
+        // one fixed order (ascending id), see `utils/request-order.util`
+        orderBy: { id: 'asc' },
         select: {
           id: true,
           status: true,
@@ -2451,7 +2517,8 @@ export class OrderSampleService {
               skippedCopies.push({
                 id: copy.id,
                 accessionNo: copy.accessionNo ?? null,
-                reason: `Action "return" is not allowed from status ${copy.status}`,
+                reason: refusalMessage(e),
+                code: e.errorCode,
               });
               continue;
             }
@@ -2676,7 +2743,13 @@ export class OrderSampleService {
     return { succeeded, skipped: [] };
   }
 
-  /** Update Sample (§A.10.3) — records a note/attachment with no status change. */
+  /**
+   * Update Sample (§A.10.3) — records a note/attachment with no status change.
+   * Refused on a cancelled order (its samples are frozen; the legacy system had no
+   * way to add a sample note after a cancel either). Share & Inform is NOT refused:
+   * telling the patient about a cancelled order is a real use, as in legacy.
+   * @throws SampleOrderCancelledException if a sample's order is cancelled
+   */
   async updateNotes(
     ids: string[],
     tenantId: string,
@@ -2690,6 +2763,11 @@ export class OrderSampleService {
       'update',
       () => ({ data: {} }),
       dto,
+      async (tx, sample) => {
+        if (await this.isOrderCancelled(tx, tenantId, sample.orderId)) {
+          throw new SampleOrderCancelledException('update', sample.status);
+        }
+      },
     );
   }
 
@@ -3229,7 +3307,9 @@ export class OrderSampleService {
           for (const r of metaRows) metaById.set(r.id, r);
         }
         const done: string[] = [];
-        for (const id of ids) {
+        // One fixed order (ascending id) so overlapping group requests cannot deadlock;
+        // `done` and `skipped` are put back in the request's order below.
+        for (const id of inLockOrder(ids)) {
           let updated: OrderSample;
           try {
             updated = await this.transitionInTx(
@@ -3253,14 +3333,13 @@ export class OrderSampleService {
               skipped.push({
                 id,
                 accessionNo: meta?.accessionNo ?? null,
+                code: e.errorCode,
                 // A refusal that carries its own explanation (a validated result)
                 // is shown as such, not as the generic "not allowed from status".
-                reason:
-                  e instanceof SampleRetrieveBlockedByResultException
-                    ? e.message
-                    : `Action "${action}" is not allowed from status ${
-                        meta?.status ?? 'UNKNOWN'
-                      }`,
+                // The refusal's own sentence (cancelled order, nothing to retrieve,
+                // result already done ...); a plain refusal's sentence is the
+                // generic "not allowed from status X".
+                reason: refusalMessage(e),
               });
               continue;
             }
@@ -3276,8 +3355,9 @@ export class OrderSampleService {
             );
           }
         }
-        if (afterInTx) await afterInTx(tx, done);
-        return done;
+        const inAskedOrder = inRequestOrder(done, ids, (x) => x);
+        if (afterInTx) await afterInTx(tx, inAskedOrder);
+        return inAskedOrder;
       });
     } catch (e) {
       this.rethrowConflict(e);
@@ -3286,7 +3366,7 @@ export class OrderSampleService {
     const succeeded = await Promise.all(
       changed.map((id) => this.findById(id, tenantId)),
     );
-    return { succeeded, skipped };
+    return { succeeded, skipped: inRequestOrder(skipped, ids, (x) => x.id) };
   }
 
   /**
@@ -3380,8 +3460,9 @@ export class OrderSampleService {
   }
 
   /**
-   * Apply a no-status-change mutation (assign-barcode / update notes) to each id
-   * in one transaction, appending a history row that keeps the current status.
+   * Apply a no-status-change mutation (update notes / share) to each id in one
+   * transaction, appending a history row that keeps the current status.
+   * @param guard optional per-sample refusal, run before anything is written
    * @throws OrderSampleNotFoundException / AccessionNumberConflictException
    */
   private async mutateIds(
@@ -3391,16 +3472,24 @@ export class OrderSampleService {
     action: string,
     build: (sample: OrderSample) => ActionPatch,
     note: ActionNote,
+    guard?: (
+      tx: Prisma.TransactionClient,
+      sample: OrderSample,
+    ) => Promise<void>,
   ): Promise<BulkActionResult<OrderSampleWithRelations>> {
     let changed: string[];
     try {
       changed = await this.prisma.withTenant(tenantId, async (tx) => {
         const done: string[] = [];
-        for (const id of ids) {
+        // One fixed order (ascending id): see `transitionIds`.
+        for (const id of inLockOrder(ids)) {
           const sample = await tx.orderSample.findFirst({
             where: { id, tenantId, deletedAt: null },
           });
           if (!sample) throw new OrderSampleNotFoundException(id);
+          // A caller's refusal (e.g. a cancelled order), before anything is written;
+          // it aborts the whole transaction, so a group is all-or-nothing.
+          if (guard) await guard(tx, sample);
           const built = build(sample);
           await tx.orderSample.update({
             where: { id: sample.id },
@@ -3422,7 +3511,7 @@ export class OrderSampleService {
           });
           done.push(sample.id);
         }
-        return done;
+        return inRequestOrder(done, ids, (x) => x);
       });
     } catch (e) {
       this.rethrowConflict(e);

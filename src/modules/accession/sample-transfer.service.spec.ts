@@ -115,6 +115,7 @@ describe('SampleTransferService — return to sender', () => {
       PERSON,
       'copy1',
       'Clotted',
+      'repeat',
     );
     expect(samples.transitionInTx).not.toHaveBeenCalled();
     expect(samples.notifySamplesRepeated).toHaveBeenCalledWith(TENANT, ['sA']);
@@ -151,6 +152,7 @@ describe('SampleTransferService — return to sender', () => {
       PERSON,
       'copy1',
       'Leaked',
+      'reject',
     );
     expect(samples.transitionInTx).not.toHaveBeenCalled();
     expect(samples.notifySamplesRepeated).toHaveBeenCalledWith(TENANT, ['sA']);
@@ -195,6 +197,7 @@ describe('SampleTransferService — return to sender', () => {
     expect(result.skipped).toHaveLength(1);
     expect(result.skipped[0]).toMatchObject({ id: 'tr1' });
     expect(result.skipped[0]!.reason).toContain('"reject"');
+    expect(result.skipped[0]!.code).toBe('INVALID_TRANSFER_TRANSITION');
   });
 
   describe('a group "skip invalid" Reject/Repeat does not fail as a whole', () => {
@@ -224,6 +227,7 @@ describe('SampleTransferService — return to sender', () => {
       expect(result.skipped).toHaveLength(1);
       expect(result.skipped[0]).toMatchObject({ id: 'tr1' });
       expect(result.skipped[0]!.reason).toContain('already done');
+      expect(result.skipped[0]!.code).toBe('SAMPLE_RETURN_BLOCKED');
       expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
       expect(samples.notifySamplesRepeated).not.toHaveBeenCalled();
       expect(sqlOf(tx)).toEqual([
@@ -251,8 +255,56 @@ describe('SampleTransferService — return to sender', () => {
       );
       expect(result.succeeded).toEqual([]);
       expect(result.skipped[0]!.reason).toContain('sent to another branch');
+      expect(result.skipped[0]!.code).toBe('SAMPLE_SENT_TO_BRANCH');
       expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
     });
+
+    it.each(['reject', 'repeat'] as const)(
+      'a group %s of a copy passed on tells the real action to the sample step, and names it in the skipped reason',
+      async (action) => {
+        const { svc, samples } = setup(
+          { transferStatus: TransferStatus.ACCEPTED, clonedSampleId: 'copy1' },
+          { copies: [{ id: 'copy1' }] },
+        );
+        // the real sample step builds its refusal from the action it is given
+        samples.returnCopyToOrigin.mockImplementation((...args: unknown[]) =>
+          Promise.reject(
+            new SampleSentToBranchException(
+              args[5] as 'reject' | 'repeat',
+              SampleStatus.SENT_INTERNAL,
+            ),
+          ),
+        );
+        const result =
+          action === 'reject'
+            ? await svc.reject(
+                ['tr1'],
+                TENANT,
+                PERSON,
+                'B',
+                { rejectionReason: 'x' },
+                true,
+              )
+            : await svc.repeatTransfer(
+                ['tr1'],
+                TENANT,
+                PERSON,
+                'B',
+                { repeatReason: 'x' },
+                true,
+              );
+        const passed = (
+          samples.returnCopyToOrigin.mock.calls[0] as unknown[]
+        )[5];
+        expect(passed).toBe(action);
+        expect(result.skipped).toHaveLength(1);
+        expect(result.skipped[0]!.reason).toContain(
+          `"${action}" is not allowed`,
+        );
+        const other = action === 'reject' ? 'repeat' : 'reject';
+        expect(result.skipped[0]!.reason).not.toContain(`"${other}"`);
+      },
+    );
 
     it('the other transfers of the group still go through', async () => {
       const { svc, samples, tx } = setup(

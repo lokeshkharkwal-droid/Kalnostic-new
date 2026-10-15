@@ -47,4 +47,12 @@ docs {
   held at the time of the action, since that isn't captured anywhere in this
   codebase today). Both are `null` if unresolved, e.g. a person with no
   active profile at this branch.
+
+  Cancelled order: when the sample's order is CANCELLED, the trail also carries ONE
+  extra line `action: "order-cancelled"` (id `order-cancelled:<orderId>`) - who
+  cancelled (`changedBy`, the order's last editor) and when (`createdAt`, the order's
+  last update). It is read from the order at display time; no history row is stored.
+  `fromStatus` is null and `toStatus` is just the sample's current status - they are
+  not a transition. The line is placed by time among the other rows. Visible to every
+  branch that can open the history.
 }

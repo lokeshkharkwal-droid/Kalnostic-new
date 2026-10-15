@@ -3,6 +3,7 @@ import { OrderSampleService } from './accession-sample.service';
 import {
   InvalidSampleTransitionException,
   SampleRetrieveBlockedByResultException,
+  refusalMessage,
 } from './exceptions/accession.exceptions';
 
 /**
@@ -145,7 +146,9 @@ describe('Retrieve - a validated result stops an undo back to before acceptance'
     const err = e as SampleRetrieveBlockedByResultException;
     expect(err.getStatus()).toBe(422);
     expect(err.errorCode).toBe('SAMPLE_RETRIEVE_BLOCKED_RESULT_DONE');
-    expect(err.message).toContain('Re-run');
+    // the sentence lives in the response body (`e.message` is only the class name)
+    expect(refusalMessage(err)).toContain('Re-run');
+    expect(err.message).not.toContain('Re-run');
   });
 
   it('the reports are locked BEFORE the check, so a validation in flight cannot slip in', async () => {
@@ -309,7 +312,12 @@ describe('Retrieve in a group action', () => {
         note: Record<string, unknown>,
       ) => Promise<{
         succeeded: unknown[];
-        skipped: { id: string; accessionNo: string | null; reason: string }[];
+        skipped: {
+          id: string;
+          accessionNo: string | null;
+          reason: string;
+          code?: string;
+        }[];
       }>;
     };
     internals.transitionInTx = jest
@@ -344,6 +352,8 @@ describe('Retrieve in a group action', () => {
     expect(r.skipped).toHaveLength(1);
     expect(r.skipped[0]).toMatchObject({ id: 'done', accessionNo: 'ACC-2' });
     expect(r.skipped[0]!.reason).toContain('Re-run');
+    // the machine-readable reason: the strict call's own code
+    expect(r.skipped[0]!.code).toBe('SAMPLE_RETRIEVE_BLOCKED_RESULT_DONE');
     expect(r.skipped[0]!.reason).not.toContain('is not allowed from status');
   });
 
@@ -371,6 +381,7 @@ describe('Retrieve in a group action', () => {
     expect(r.skipped[0]!.reason).toBe(
       'Action "retrieve" is not allowed from status ACCEPTED',
     );
+    expect(r.skipped[0]!.code).toBe('INVALID_SAMPLE_TRANSITION');
   });
 
   it('without "skip invalid" the refusal stops the whole group', async () => {
