@@ -26,6 +26,7 @@ import {
   TransferKind,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { paymentModeLabel } from '../finance-payments/entities/finance-payment.entity';
 import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
 import { getReferralPanelId } from '../../prisma/tenant-context';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
@@ -2486,7 +2487,9 @@ export class OrderService {
               dateFormat,
               timeFormat,
             ),
-            mode: pd.paymentMode,
+            // Canonical label (CARD → Debit Card, CREDIT → Credit Card) so the
+            // printed bill matches the Finance Collection report and the UI.
+            mode: paymentModeLabel(pd.paymentMode),
             reference: pd.reference ?? '',
             // `type` discriminates a collection from a refund so the template can
             // label/style them; `amount` is the row's own money (paid for a
@@ -3744,12 +3747,18 @@ export class OrderService {
   ): Promise<PaginatedResult<OrderListRow>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
+    // A single patient's order history (Patient Detail) is business-wide, like
+    // their dues: patients are tenant-scoped, so orders placed at any branch are
+    // shown. An explicit `branchId` still narrows it; quotations keep the active
+    // branch (their expiry comes from that branch's settings).
+    const scopeBranchId =
+      query.patientId && !query.isQuotation ? null : activeBranchId;
     const {
       where,
       quotationValidityValue,
       quotationValidityUnit,
       quotationExpiryCutoff,
-    } = await this.buildOrderWhere(query, tenantId, activeBranchId);
+    } = await this.buildOrderWhere(query, tenantId, scopeBranchId);
 
     const [rows, total] = await Promise.all([
       this.prisma.order.findMany({

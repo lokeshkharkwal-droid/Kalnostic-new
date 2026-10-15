@@ -6,7 +6,7 @@ import {
   InternalReferralStatus,
   PaymentCycle,
   Prisma,
-  ReferralPaymentMode,
+  PaymentMode,
   ReferralType,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -294,7 +294,7 @@ export class InternalReferralService {
       // Payroll & payment
       isIncludedInPayroll: dto.isIncludedInPayroll ?? false,
       paymentCycle: dto.paymentCycle ?? PaymentCycle.MONTHLY,
-      paymentMode: dto.paymentMode ?? ReferralPaymentMode.BANK_TRANSFER,
+      paymentMode: dto.paymentMode ?? PaymentMode.BANK_TRANSFER,
       commissionMode: dto.commissionMode ?? CommissionMode.INCLUDED_IN_SALARY,
       monthlyTargetAmount: dto.monthlyTargetAmount ?? 0,
       isIncentiveBonusApplicable: incentive,

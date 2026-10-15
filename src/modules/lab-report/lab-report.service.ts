@@ -63,9 +63,9 @@ import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-temp
 import { PdfTemplateConfigService } from '../pdf-report-template/pdf-template-config.service';
 import {
   escapeHtml,
-  escapeHtmlKeepLineBreaks,
   toText,
 } from '../pdf-report-template/services/pdf-document.util';
+import { observedValueHtml } from './utils/print-value.util';
 import type { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
 import { TechnicianSettingsService } from '../technician-settings/technician-settings.service';
 import { UpdateContentSectionsDto } from './dto/update-content-sections.dto';
@@ -77,6 +77,7 @@ import {
 } from '../pdf-report-template/dto/generate-pdf.dto';
 import {
   LAB_REPORT_ALLOWED_FROM,
+  LAB_REPORT_RESULT_EDIT_STATUSES,
   LAB_REPORT_DETAIL_INCLUDE,
   LAB_REPORT_LIST_INCLUDE,
   LabReportContentSections,
@@ -109,6 +110,7 @@ import {
   LabReportLockedException,
   LabReportSampleMissingException,
   LabReportResultsRequiredException,
+  LabReportResultsNotEditableException,
   LabReportNotesRequiredException,
   LabReportNotFoundException,
   LabReportValueChangedException,
@@ -1955,10 +1957,13 @@ export class LabReportService {
         groupName: true,
         overallResultGroups: true,
       },
-      // Test Entry orders parameters within a group by creation time, not
-      // result-type or the admin-configurable `sortOrder` — see
-      // `LabReportResultParam.createdAt`.
-      orderBy: { createdAt: 'asc' },
+      // Test Entry must list parameters in the SAME order the admin configured
+      // them in Master Data's "Add Result" section — i.e. the catalogue's
+      // `sortOrder` (persisted from that grid's row order, and also what the
+      // Master Data read and Print/Download both use). `createdAt` is only a
+      // deterministic tie-breaker for grandfathered rows whose `sortOrder` is
+      // still the default 0.
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
     });
   }
 
@@ -2159,6 +2164,16 @@ export class LabReportService {
   ) {
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.requireReport(id, tenantId, activeBranchId);
+
+    // Values are only editable before the report is submitted: a stale screen (or any other client) must not change
+    // the result of a report that has already moved on. Refused before anything is read or written.
+    if (
+      !(LAB_REPORT_RESULT_EDIT_STATUSES as readonly string[]).includes(
+        report.status,
+      )
+    ) {
+      throw new LabReportResultsNotEditableException(id, report.status);
+    }
 
     // Reject any submitted resultParamId that isn't actually one of this
     // report's own parameters (e.g. a stray/mistaken id from a different lab
@@ -3252,7 +3267,8 @@ export class LabReportService {
       resultParamId: string,
       referenceRangeId: string | null,
     ): { html: string; abnormal: boolean } => {
-      const safe = escapeHtml(raw);
+      // Escaped, and a value written over several lines (or with spaces / tabs) keeps its whitespace exactly as typed.
+      const safe = observedValueHtml(raw);
       const range = referenceRangeId
         ? rangeById.get(referenceRangeId)
         : undefined;
@@ -3326,7 +3342,8 @@ export class LabReportService {
         // The order's real date/time: the operator-entered `orderTime` when
         // one was typed, else the order's creation instant (`createdAt`) in the
         // tenant timezone — `orderTime` is usually unset, which used to print
-        // every order at `12:00 AM`. See `resolveOrderLocalDateTime`.
+        // every order at `12:00 AM`. See `resolveOrderLocalDateTime`. Like
+        // every report date below, printed per the tenant `date_format`/`time_format`.
         order_date: formatOrderPrintDate(order, timezone, dateFormat),
         order_date_time: formatOrderPrintDateTime(
           order,
@@ -3382,16 +3399,22 @@ export class LabReportService {
         last_report_prepared_on: lastReportPreparedOn
           ? formatReportDateTime(
               toBranchLocalInstant(lastReportPreparedOn, timezone),
+              dateFormat,
+              timeFormat,
             )
           : '',
         sample_collected_date: sample?.collectedAt
           ? formatReportDateTime(
               toBranchLocalInstant(sample.collectedAt, timezone),
+              dateFormat,
+              timeFormat,
             )
           : '',
         sample_received_date: sample?.receivedAt
           ? formatReportDateTime(
               toBranchLocalInstant(sample.receivedAt, timezone),
+              dateFormat,
+              timeFormat,
             )
           : '',
         sample_name: sample?.sampleName ?? '',
@@ -3634,7 +3657,8 @@ export class LabReportService {
    *    iterate identically); the shape is preserved so a grouped template still
    *    parses. The block-page-header's `$group_name` param is unused by the
    *    reference template, so grouping has no visual effect today.
-   *  - `header_fields` — the order/patient header block shared across pages.
+   *  - `header_fields` — the order/patient header block shared across pages
+   *    (incl. `order_code`, also aliased at the root as the bare `{order_code}`).
    *
    * Reuses {@link buildPrintContext} per report so every Part-A tag fix (dates,
    * `sample_source_label`, external id, patient photo, approver) is inherited.
@@ -3717,6 +3741,10 @@ export class LabReportService {
         : '',
       client_phone: patient.mobile ?? '',
       client_uhid: patient.umId ?? '',
+      // Order ID text (`Order.orderCode`, e.g. `ORD-00114`) — the same value
+      // `order_id_barcode` encodes. Also exposed at the context root so the
+      // bare `{order_code}` tag resolves (see the return below).
+      order_code: order.orderCode,
       external_order_id: order.externalOrderId ?? '',
       sample_source_label: sampleSourceLabel(diagnostics?.sampleSource),
       // Reference templates default an absent referrer/panel to the sentinel
@@ -3760,7 +3788,11 @@ export class LabReportService {
           sample_collected_date: toText(c?.variables?.sample_collected_date),
           sample_received_date: toText(c?.variables?.sample_received_date),
           report_prepared_on: preparedOn
-            ? formatReportDateTime(toBranchLocalInstant(preparedOn, timezone))
+            ? formatReportDateTime(
+                toBranchLocalInstant(preparedOn, timezone),
+                dateFormat,
+                timeFormat,
+              )
             : '',
           // This test's own File+ PDFs (`{$report->test_file_attachment|noescape}`).
           test_file_attachment: toText(c?.variables?.test_file_attachment),
@@ -3838,6 +3870,10 @@ export class LabReportService {
       latteContext: {
         report_tests: { groups: [], tests: reports },
         header_fields: headerFields,
+        // Root alias so the flat-style bare `{order_code}` tag (the editor's
+        // "Order — order code" snippet) resolves in a Latte all-report template
+        // too; the flat fallback already carries it via `flatContext.variables`.
+        order_code: headerFields.order_code,
       },
       flatContext,
     };
@@ -3937,6 +3973,7 @@ export class LabReportService {
       useful_for: toText(v.useful_for),
       interpretation: toText(v.interpretation),
       limitations: toText(v.limitations),
+      remarks: toText(v.remarks),
       references: toText(v.references),
       rows,
     };
@@ -3981,8 +4018,8 @@ export class LabReportService {
       .map((row) => {
         const name = escapeHtml(toText(row.parameter_name));
         const method = escapeHtml(toText(row.methodology));
-        // A Qualitative result can be written over several lines: keep them.
-        const value = escapeHtmlKeepLineBreaks(toText(row.observed1));
+        // `observed1` is already safe HTML from buildPrintContext (escaped, whitespace kept, abnormal styling): as-is.
+        const value = toText(row.observed1);
         const unit = escapeHtml(toText(row.unit));
         const ref = escapeHtml(toText(row.reference_display));
         const methodHtml = method
@@ -4005,7 +4042,7 @@ export class LabReportService {
       value
         ? `<div class="report-section"><b>${label}:</b> ${value}</div>`
         : '';
-    // interpretation/useful_for/limitations/references are rich-text HTML
+    // interpretation/useful_for/limitations/remarks/references are rich-text HTML
     // from a NotesRichTextEditor (LabReportService.buildPrintContext is the
     // source) — printed as-is. sample_note is a plain-text technician note,
     // so it keeps the usual escaping.
@@ -4013,6 +4050,7 @@ export class LabReportService {
       section('Interpretation', toText(v.interpretation)) +
       section('Useful For', toText(v.useful_for)) +
       section('Limitations', toText(v.limitations)) +
+      section('Remarks', toText(v.remarks)) +
       section('References', toText(v.references)) +
       section('Note', escapeHtml(toText(v.sample_note)));
 

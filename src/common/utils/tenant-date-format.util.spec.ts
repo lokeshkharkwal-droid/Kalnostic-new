@@ -4,6 +4,7 @@ import {
   formatOrderDateTime,
   formatOrderPrintDate,
   formatOrderPrintDateTime,
+  formatReportDateTime,
   resolveOrderLocalDateTime,
 } from './tenant-date-format.util';
 
@@ -95,6 +96,25 @@ describe('formatOrderPrintDateTime / formatOrderPrintDate', () => {
     expect(formatOrderPrintDateTime(order, null, FMT, '12h')).toBe(
       '01/10/2026 8:54 AM',
     );
+  });
+});
+
+describe('formatReportDateTime — every lab-report date follows the tenant setting', () => {
+  // 2026-10-13 17:03, already a tenant-local wall-clock instant.
+  const local = new Date('2026-10-13T17:03:00Z');
+
+  it('uses the tenant date format and 12h/24h time', () => {
+    expect(formatReportDateTime(local, 'DD/MM/YYYY', '12h')).toBe(
+      '13/10/2026 5:03 PM',
+    );
+    expect(formatReportDateTime(local, 'DD-MM-YYYY', '24h')).toBe(
+      '13-10-2026 17:03',
+    );
+  });
+
+  it('is blank for a missing or invalid instant', () => {
+    expect(formatReportDateTime(null, FMT, '12h')).toBe('');
+    expect(formatReportDateTime(new Date('nope'), FMT, '12h')).toBe('');
   });
 });
 

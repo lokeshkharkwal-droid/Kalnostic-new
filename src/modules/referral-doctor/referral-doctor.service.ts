@@ -5,7 +5,7 @@ import {
   PaymentCycle,
   Prisma,
   ReferralDoctorStatus,
-  ReferralPaymentMode,
+  PaymentMode,
   ReferralType,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -274,7 +274,7 @@ export class ReferralDoctorService {
       tds: dto.isTdsApplicable ? (dto.tds ?? null) : null,
       // Payment & incentive
       paymentCycle: dto.paymentCycle ?? PaymentCycle.NA,
-      paymentMode: dto.paymentMode ?? ReferralPaymentMode.BANK_TRANSFER,
+      paymentMode: dto.paymentMode ?? PaymentMode.BANK_TRANSFER,
       monthlyTargetAmount: dto.monthlyTargetAmount ?? 0,
       isIncentiveBonusApplicable: incentive,
       bonusSlabs: incentive ? bonusSlabs : [],

@@ -1,4 +1,4 @@
-import { SettlementPayoutMode } from '@prisma/client';
+import { PaymentMode } from '@prisma/client';
 import {
   IsDateString,
   IsEnum,
@@ -22,8 +22,8 @@ export class SettleSettlementDto {
   amount: number;
 
   /** Payout mode (Bank Transfer / UPI / Cheque / Cash / Card). */
-  @IsEnum(SettlementPayoutMode)
-  payoutMode: SettlementPayoutMode;
+  @IsEnum(PaymentMode)
+  payoutMode: PaymentMode;
 
   /** Transaction ID / payment reference. */
   @IsString()

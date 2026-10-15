@@ -2054,6 +2054,44 @@ export class OrderSampleService {
     return { succeeded, skipped: [] };
   }
 
+  /**
+   * Append a no-status-change history row (note + optional attachment) to a
+   * sample inside an existing, already tenant-scoped transaction. Used by
+   * transfer-side actions that carry the shared optional notes/attachment but
+   * perform no sample status transition (e.g. Assign Center §A.7), mirroring how
+   * `dispatch` records them on the sample via `transitionInTx`. No-ops when
+   * neither a note nor an attachment was supplied so an empty modal leaves no
+   * history noise.
+   * @throws OrderSampleNotFoundException if the sample is missing/soft-deleted
+   */
+  async recordNoteInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    personId: string | null,
+    sampleId: string,
+    action: string,
+    note: { notes?: string; attachmentUrl?: string },
+  ): Promise<void> {
+    if (!note.notes && !note.attachmentUrl) return;
+    const sample = await tx.orderSample.findFirst({
+      where: { id: sampleId, tenantId, deletedAt: null },
+    });
+    if (!sample) throw new OrderSampleNotFoundException(sampleId);
+    await tx.orderSampleStatusHistory.create({
+      data: {
+        tenantId,
+        branchId: sample.branchId,
+        sampleId: sample.id,
+        action,
+        toStatus: sample.status,
+        fromStatus: sample.status,
+        notes: note.notes ?? null,
+        attachmentUrl: note.attachmentUrl ?? null,
+        changedBy: personId,
+      },
+    });
+  }
+
   /** Update Sample (§A.10.3) — records a note/attachment with no status change. */
   async updateNotes(
     ids: string[],

@@ -22,7 +22,7 @@ import {
   ExternalReferralStatus,
   FixedCommissionCycle,
   PaymentCycle,
-  ReferralPaymentMode,
+  PaymentMode,
 } from '@prisma/client';
 import { CommissionSlabDto } from './commission-slab.dto';
 import { BonusSlabDto } from './bonus-slab.dto';
@@ -217,9 +217,9 @@ export class UpdateExternalReferralDto {
   @IsOptional()
   paymentCycle?: PaymentCycle;
 
-  @IsEnum(ReferralPaymentMode)
+  @IsEnum(PaymentMode)
   @IsOptional()
-  paymentMode?: ReferralPaymentMode;
+  paymentMode?: PaymentMode;
 
   @IsInt()
   @Min(0)
