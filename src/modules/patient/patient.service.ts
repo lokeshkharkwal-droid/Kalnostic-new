@@ -44,6 +44,7 @@ import {
   PatientDocumentNotFoundException,
   PatientMobileConflictException,
   PatientNotFoundException,
+  PatientOtherBranchException,
   PatientUmIdConflictException,
   PatientUmIdRequiredException,
   PatientWriteConflictException,
@@ -322,6 +323,33 @@ export class PatientService {
       return;
     }
     await this.ptCategoryService.findById(ptCategoryId, tenantId, branchId);
+  }
+
+  /**
+   * Patients are tenant-wide (listed and searchable from every branch), but
+   * their details may only be changed from the branch they are registered at,
+   * so one branch can't overwrite another's data (e.g. its per-branch PT
+   * category). Tenant-level profiles (no active branch) and patients with no
+   * registration branch may be changed from anywhere.
+   * @param patient the patient as currently stored
+   * @param activeBranchId the caller's active branch
+   * @throws PatientOtherBranchException if registered at a different branch
+   */
+  private assertEditableFromBranch(
+    patient: Patient,
+    activeBranchId: string | null,
+  ): void {
+    if (
+      activeBranchId &&
+      patient.branchId &&
+      patient.branchId !== activeBranchId
+    ) {
+      throw new PatientOtherBranchException(
+        patient.id,
+        patient.branchId,
+        activeBranchId,
+      );
+    }
   }
 
   /**
@@ -840,12 +868,19 @@ export class PatientService {
     }
     const search = filters.search?.trim();
     if (search) {
-      where.OR = [
-        { firstName: { contains: search, mode: 'insensitive' } },
-        { middleName: { contains: search, mode: 'insensitive' } },
-        { lastName: { contains: search, mode: 'insensitive' } },
-        { mobile: { contains: search, mode: 'insensitive' } },
-      ];
+      // Split into whitespace tokens and require EACH to match some name part
+      // or the mobile — so "Rajesh Dega" matches first name "Rajesh" + last
+      // name "Dega" (in any order), while a single token behaves as before.
+      // Matching the whole string against each field alone never matched a
+      // full name, since no single field contains "rajesh dega".
+      where.AND = search.split(/\s+/).map((token) => ({
+        OR: [
+          { firstName: { contains: token, mode: 'insensitive' } },
+          { middleName: { contains: token, mode: 'insensitive' } },
+          { lastName: { contains: token, mode: 'insensitive' } },
+          { mobile: { contains: token, mode: 'insensitive' } },
+        ],
+      }));
       if (filters.includeFamily) {
         return this.findFamilyGroupedForTenant(tenantId, page, limit, where);
       }
@@ -1079,23 +1114,18 @@ export class PatientService {
 
   /**
    * Aggregate patient counts for the dashboard summary cards. Scoped to the
-   * caller's tenant (RLS + explicit `tenantId`) and, when provided, the active
-   * branch; excludes soft-deleted rows. "Active" means `isActive = true`.
+   * caller's tenant (RLS + explicit `tenantId`) — tenant-wide like the patient
+   * list; excludes soft-deleted rows. "Active" means `isActive = true`.
    * @param tenantId tenant scope (from the JWT)
-   * @param branchId optional active-branch scope (from the JWT profile)
    * @returns totals: all / active / male / female patients
    */
-  async getStats(
-    tenantId: string,
-    branchId?: string | null,
-  ): Promise<{
+  async getStats(tenantId: string): Promise<{
     totalPatients: number;
     totalActivePatients: number;
     totalMalePatients: number;
     totalFemalePatients: number;
   }> {
     const base: Prisma.PatientWhereInput = { tenantId, deletedAt: null };
-    if (branchId) base.branchId = branchId;
 
     const [
       totalPatients,
@@ -1152,6 +1182,8 @@ export class PatientService {
    * @throws PatientNotFoundException if missing
    * @throws PatientMobileConflictException on a duplicate active mobile
    * @throws PtCategoryNotFoundException if `ptCategoryId` isn't valid for the branch
+   * @throws PatientOtherBranchException if registered at a different branch
+   *   than the caller's active branch (tenant-level profiles are exempt)
    */
   async update(
     id: string,
@@ -1160,8 +1192,20 @@ export class PatientService {
     ctx: PatientWriteContext = { branchId: null },
   ): Promise<Patient> {
     const existing = await this.ensurePatient(id, tenantId);
-    await this.validatePtCategory(tenantId, ctx.branchId, dto.ptCategoryId);
-    const { dateOfBirth, ...rest } = dto;
+    this.assertEditableFromBranch(existing, ctx.branchId);
+    const patch: UpdatePatientDto = { ...dto };
+    // The saved category sent back unchanged is kept as-is without
+    // re-validation (it may since have been soft-deleted); any change is
+    // validated against the active branch.
+    if (
+      dto.ptCategoryId !== undefined &&
+      dto.ptCategoryId === existing.ptCategoryId
+    ) {
+      delete patch.ptCategoryId;
+    } else {
+      await this.validatePtCategory(tenantId, ctx.branchId, dto.ptCategoryId);
+    }
+    const { dateOfBirth, ...rest } = patch;
     const actorId = ctx.actorId;
     // An age that is NEW or CHANGED, with no date of birth sent along, was just told:
     // turn it into a date of birth. The same age sent back unchanged (Create Order re-saves
@@ -1305,10 +1349,17 @@ export class PatientService {
    * records, atomically.
    * @param id patient id
    * @param tenantId tenant scope
+   * @param activeBranchId the caller's active branch (`null` = tenant-level)
    * @throws PatientNotFoundException if missing
+   * @throws PatientOtherBranchException if registered at a different branch
    */
-  async remove(id: string, tenantId: string): Promise<Patient> {
-    await this.ensurePatient(id, tenantId);
+  async remove(
+    id: string,
+    tenantId: string,
+    activeBranchId: string | null = null,
+  ): Promise<Patient> {
+    const existing = await this.ensurePatient(id, tenantId);
+    this.assertEditableFromBranch(existing, activeBranchId);
     const now = new Date();
     return this.prisma.withTenant(tenantId, async (tx) => {
       await tx.medicalHistory.updateMany({

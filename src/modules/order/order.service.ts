@@ -3744,12 +3744,18 @@ export class OrderService {
   ): Promise<PaginatedResult<OrderListRow>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
+    // A single patient's order history (Patient Detail) is business-wide, like
+    // their dues: patients are tenant-scoped, so orders placed at any branch are
+    // shown. An explicit `branchId` still narrows it; quotations keep the active
+    // branch (their expiry comes from that branch's settings).
+    const scopeBranchId =
+      query.patientId && !query.isQuotation ? null : activeBranchId;
     const {
       where,
       quotationValidityValue,
       quotationValidityUnit,
       quotationExpiryCutoff,
-    } = await this.buildOrderWhere(query, tenantId, activeBranchId);
+    } = await this.buildOrderWhere(query, tenantId, scopeBranchId);
 
     const [rows, total] = await Promise.all([
       this.prisma.order.findMany({
