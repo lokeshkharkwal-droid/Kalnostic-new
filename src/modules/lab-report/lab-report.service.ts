@@ -63,9 +63,9 @@ import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-temp
 import { PdfTemplateConfigService } from '../pdf-report-template/pdf-template-config.service';
 import {
   escapeHtml,
-  escapeHtmlKeepLineBreaks,
   toText,
 } from '../pdf-report-template/services/pdf-document.util';
+import { observedValueHtml } from './utils/print-value.util';
 import type { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
 import { TechnicianSettingsService } from '../technician-settings/technician-settings.service';
 import { UpdateContentSectionsDto } from './dto/update-content-sections.dto';
@@ -77,6 +77,7 @@ import {
 } from '../pdf-report-template/dto/generate-pdf.dto';
 import {
   LAB_REPORT_ALLOWED_FROM,
+  LAB_REPORT_RESULT_EDIT_STATUSES,
   LAB_REPORT_DETAIL_INCLUDE,
   LAB_REPORT_LIST_INCLUDE,
   LabReportContentSections,
@@ -109,6 +110,7 @@ import {
   LabReportLockedException,
   LabReportSampleMissingException,
   LabReportResultsRequiredException,
+  LabReportResultsNotEditableException,
   LabReportNotesRequiredException,
   LabReportNotFoundException,
   LabReportValueChangedException,
@@ -2160,6 +2162,16 @@ export class LabReportService {
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.requireReport(id, tenantId, activeBranchId);
 
+    // Values are only editable before the report is submitted: a stale screen (or any other client) must not change
+    // the result of a report that has already moved on. Refused before anything is read or written.
+    if (
+      !(LAB_REPORT_RESULT_EDIT_STATUSES as readonly string[]).includes(
+        report.status,
+      )
+    ) {
+      throw new LabReportResultsNotEditableException(id, report.status);
+    }
+
     // Reject any submitted resultParamId that isn't actually one of this
     // report's own parameters (e.g. a stray/mistaken id from a different lab
     // test) — without this, the upsert below would silently create a
@@ -3252,7 +3264,8 @@ export class LabReportService {
       resultParamId: string,
       referenceRangeId: string | null,
     ): { html: string; abnormal: boolean } => {
-      const safe = escapeHtml(raw);
+      // Escaped, and a value written over several lines (or with spaces / tabs) keeps its whitespace exactly as typed.
+      const safe = observedValueHtml(raw);
       const range = referenceRangeId
         ? rangeById.get(referenceRangeId)
         : undefined;
@@ -4002,8 +4015,8 @@ export class LabReportService {
       .map((row) => {
         const name = escapeHtml(toText(row.parameter_name));
         const method = escapeHtml(toText(row.methodology));
-        // A Qualitative result can be written over several lines: keep them.
-        const value = escapeHtmlKeepLineBreaks(toText(row.observed1));
+        // `observed1` is already safe HTML from buildPrintContext (escaped, whitespace kept, abnormal styling): as-is.
+        const value = toText(row.observed1);
         const unit = escapeHtml(toText(row.unit));
         const ref = escapeHtml(toText(row.reference_display));
         const methodHtml = method

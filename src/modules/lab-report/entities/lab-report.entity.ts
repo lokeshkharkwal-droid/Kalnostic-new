@@ -613,3 +613,14 @@ export const LAB_REPORT_ALLOWED_FROM = {
 } as const satisfies Record<string, readonly LabReportStatus[]>;
 
 export type LabReportTransitionAction = keyof typeof LAB_REPORT_ALLOWED_FROM;
+
+/**
+ * The only statuses in which a report's result values may be changed (`PATCH /lab-reports/:id/results`). Once a report
+ * is submitted and moves on, its values are fixed: a correction goes through Edit Report (back to Saved) or Re-Run
+ * (back to Pending), both of which land in this list again.
+ */
+export const LAB_REPORT_RESULT_EDIT_STATUSES = [
+  'PENDING',
+  'PARTIAL_PENDING',
+  'SAVED',
+] as const satisfies readonly LabReportStatus[];
