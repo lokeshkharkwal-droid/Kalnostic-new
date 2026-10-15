@@ -388,7 +388,10 @@ export class LabTestService {
       }),
       this.prisma.labTestResultParam.findMany({
         where: { labTestId, tenantId, deletedAt: null },
-        orderBy: { sortOrder: 'asc' },
+        // `createdAt` tie-breaks grandfathered rows that still share the
+        // default `sortOrder` 0 — so this (the Master Data editor's source)
+        // stays deterministic and identical to Test Entry's own ordering.
+        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
       }),
     ]);
     const [ranges, values] = await Promise.all([
@@ -1148,7 +1151,10 @@ export class LabTestService {
   ): Promise<Map<string, LabTestResultParam[]>> {
     const rows = await this.prisma.labTestResultParam.findMany({
       where: { labTestId: { in: ids }, tenantId, deletedAt: null },
-      orderBy: { sortOrder: 'asc' },
+      // `createdAt` tie-breaks grandfathered rows sharing the default
+      // `sortOrder` 0, keeping the list view deterministic and consistent
+      // with the Master Data editor and Test Entry.
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
     });
     return this.groupByKey(rows, (r) => r.labTestId);
   }

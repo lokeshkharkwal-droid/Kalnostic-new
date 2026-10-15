@@ -709,13 +709,6 @@ enum Relationship {
   OTHER
 }
 
-/// How a doctor is paid out.
-enum DoctorPaymentMode {
-  BANK_TRANSFER
-  CASH
-  CHEQUE
-}
-
 /// Active/inactive lifecycle for a doctor record (distinct from soft delete;
 /// NULL deletedAt = not deleted).
 enum DoctorStatus {
@@ -780,14 +773,6 @@ enum PaymentCycle {
   QUARTERLY
   HALF_YEARLY
   ANNUALLY
-}
-
-/// How a referring panel is paid out. Mirrors DoctorPaymentMode but kept separate
-/// so the referral module can evolve independently (CLAUDE.md rule #3 spirit).
-enum ReferralPaymentMode {
-  BANK_TRANSFER
-  CASH
-  CHEQUE
 }
 
 /// Active/inactive lifecycle for a referral panel settings template (distinct from
@@ -4194,7 +4179,7 @@ model ReferralPanel {
 
   // ── Payment & incentive ──
   paymentCycle               PaymentCycle        @default(NA) @map("payment_cycle")
-  paymentMode                ReferralPaymentMode @default(BANK_TRANSFER) @map("payment_mode")
+  paymentMode                PaymentMode @default(BANK_TRANSFER) @map("payment_mode")
   monthlyTargetAmount        Int                 @default(0) @map("monthly_target_amount")
   isIncentiveBonusApplicable Boolean             @default(false) @map("is_incentive_bonus_applicable")
   bonusSlabs                 Json                @default("[]") @map("bonus_slabs")
@@ -4290,7 +4275,7 @@ model Doctor {
   bankName          String?           @map("bank_name")
   accountNumber     String?           @map("account_number")
   ifscCode          String?           @map("ifsc_code")
-  paymentMode       DoctorPaymentMode @default(BANK_TRANSFER) @map("payment_mode")
+  paymentMode       PaymentMode @default(BANK_TRANSFER) @map("payment_mode")
 
   // Charges
   consultationFee Decimal @default(0) @map("consultation_fee") @db.Decimal(10, 2)
@@ -4849,7 +4834,7 @@ model ReferralDoctor {
   // Payment & incentive (bonus slabs as JSON of
   // { monthlyBusinessFrom, monthlyBusinessTo, bonusPct }).
   paymentCycle               PaymentCycle        @default(NA) @map("payment_cycle")
-  paymentMode                ReferralPaymentMode @default(BANK_TRANSFER) @map("payment_mode")
+  paymentMode                PaymentMode @default(BANK_TRANSFER) @map("payment_mode")
   monthlyTargetAmount        Int                 @default(0) @map("monthly_target_amount")
   isIncentiveBonusApplicable Boolean             @default(false) @map("is_incentive_bonus_applicable")
   bonusSlabs                 Json                @default("[]") @map("bonus_slabs")
@@ -4990,7 +4975,7 @@ model ExternalReferral {
   // Payment & incentive (bonus slabs as JSON of
   // { monthlyBusinessFrom, monthlyBusinessTo, bonusPct }).
   paymentCycle               PaymentCycle        @default(NA) @map("payment_cycle")
-  paymentMode                ReferralPaymentMode @default(BANK_TRANSFER) @map("payment_mode")
+  paymentMode                PaymentMode @default(BANK_TRANSFER) @map("payment_mode")
   monthlyTargetAmount        Int                 @default(0) @map("monthly_target_amount")
   isIncentiveBonusApplicable Boolean             @default(false) @map("is_incentive_bonus_applicable")
   bonusSlabs                 Json                @default("[]") @map("bonus_slabs")
@@ -5068,7 +5053,7 @@ model InternalReferral {
   // { monthlyBusinessFrom, monthlyBusinessTo, bonusPct }).
   isIncludedInPayroll        Boolean             @default(false) @map("is_included_in_payroll")
   paymentCycle               PaymentCycle        @default(MONTHLY) @map("payment_cycle")
-  paymentMode                ReferralPaymentMode @default(BANK_TRANSFER) @map("payment_mode")
+  paymentMode                PaymentMode @default(BANK_TRANSFER) @map("payment_mode")
   commissionMode             CommissionMode      @default(INCLUDED_IN_SALARY) @map("commission_mode")
   monthlyTargetAmount        Int                 @default(0) @map("monthly_target_amount")
   isIncentiveBonusApplicable Boolean             @default(false) @map("is_incentive_bonus_applicable")
@@ -6926,17 +6911,6 @@ enum SettlementStatus {
   SETTLED
 }
 
-/// Payout mode captured per settlement-payment transaction (doc §8). Distinct from
-/// the order-level PaymentMode (which lacks CHEQUE) and ReferralPaymentMode (which
-/// lacks UPI/CARD).
-enum SettlementPayoutMode {
-  BANK_TRANSFER
-  UPI
-  CHEQUE
-  CASH
-  CARD
-}
-
 // ── Settlement models ────────────────────────────────────────────────────────────
 
 /// A consolidation of selected collection order records for one referral party,
@@ -7056,7 +7030,7 @@ model SettlementPayment {
   settlement   Settlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
 
   amount        Int
-  payoutMode    SettlementPayoutMode @map("payout_mode")
+  payoutMode    PaymentMode @map("payout_mode")
   reference     String
   attachmentUrl String?              @map("attachment_url")
   paymentDate   DateTime             @default(now()) @map("payment_date")

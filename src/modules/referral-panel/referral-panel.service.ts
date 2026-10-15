@@ -6,7 +6,7 @@ import {
   Prisma,
   ReferralClientType,
   ReferralPanel,
-  ReferralPaymentMode,
+  PaymentMode,
   ReferralType,
 } from '@prisma/client';
 import { plainToInstance } from 'class-transformer';
@@ -497,7 +497,7 @@ export class ReferralPanelService {
           tds: dto.isTdsApplicable ? (dto.tds ?? null) : null,
           // Payment & incentive
           paymentCycle: dto.paymentCycle ?? PaymentCycle.NA,
-          paymentMode: dto.paymentMode ?? ReferralPaymentMode.BANK_TRANSFER,
+          paymentMode: dto.paymentMode ?? PaymentMode.BANK_TRANSFER,
           monthlyTargetAmount: dto.monthlyTargetAmount ?? 0,
           isIncentiveBonusApplicable: incentive,
           bonusSlabs: incentive ? bonusSlabs : [],
@@ -806,8 +806,19 @@ export class ReferralPanelService {
         return this.matchEnum(str, FixedCommissionCycle);
       case 'paymentCycle':
         return this.matchEnum(str, PaymentCycle);
-      case 'paymentMode':
-        return this.matchEnum(str, ReferralPaymentMode);
+      case 'paymentMode': {
+        // Accept the UI display labels ("Debit Card"/"Credit Card") in addition to
+        // the raw enum tokens, and remap the retired CHEQUE → BANK_TRANSFER (a
+        // cheque is a bank instrument) so both canonical-label and legacy sheets load.
+        const key = str
+          .trim()
+          .toUpperCase()
+          .replace(/[^A-Z0-9]+/g, '_');
+        if (key === 'CHEQUE') return PaymentMode.BANK_TRANSFER;
+        if (key === 'DEBIT_CARD') return PaymentMode.CARD;
+        if (key === 'CREDIT_CARD') return PaymentMode.CREDIT;
+        return this.matchEnum(str, PaymentMode);
+      }
     }
   }
 

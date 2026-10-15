@@ -1955,10 +1955,13 @@ export class LabReportService {
         groupName: true,
         overallResultGroups: true,
       },
-      // Test Entry orders parameters within a group by creation time, not
-      // result-type or the admin-configurable `sortOrder` — see
-      // `LabReportResultParam.createdAt`.
-      orderBy: { createdAt: 'asc' },
+      // Test Entry must list parameters in the SAME order the admin configured
+      // them in Master Data's "Add Result" section — i.e. the catalogue's
+      // `sortOrder` (persisted from that grid's row order, and also what the
+      // Master Data read and Print/Download both use). `createdAt` is only a
+      // deterministic tie-breaker for grandfathered rows whose `sortOrder` is
+      // still the default 0.
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
     });
   }
 
