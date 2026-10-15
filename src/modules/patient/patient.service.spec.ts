@@ -14,7 +14,9 @@ import { PatientUmIdRequiredException } from './exceptions/patient.exceptions';
  * locks the tenant-scoped (not branch-scoped) behaviour the frontend relies on.
  */
 /** The shape of the `findMany` argument we assert against. */
-type FindManyArg = { where: Record<string, unknown> & { OR?: unknown[] } };
+type FindManyArg = {
+  where: Record<string, unknown> & { AND?: Array<{ OR: unknown[] }> };
+};
 
 describe('PatientService.findAllForTenant scoping', () => {
   let prismaMock: {
@@ -50,7 +52,7 @@ describe('PatientService.findAllForTenant scoping', () => {
     expect(arg.where).toMatchObject({ tenantId: 't1', deletedAt: null });
     expect(arg.where).not.toHaveProperty('branchId');
     // Search matches name OR mobile across the whole tenant.
-    expect(arg.where.OR).toEqual(
+    expect(arg.where.AND?.[0]?.OR).toEqual(
       expect.arrayContaining([
         { mobile: { contains: '9876543210', mode: 'insensitive' } },
       ]),
@@ -72,8 +74,27 @@ describe('PatientService.findAllForTenant scoping', () => {
     await service.findAllForTenant('t1', 1, 10, { search: '8919441487' });
 
     const arg = firstFindManyArg();
-    expect(arg.where).not.toHaveProperty('AND');
-    expect(arg.where.OR).toHaveLength(4);
+    expect(arg.where.AND).toHaveLength(1);
+    expect(arg.where.AND?.[0]?.OR).toHaveLength(4);
+  });
+
+  it('splits a full-name search into tokens that must ALL match some field', async () => {
+    await service.findAllForTenant('t1', 1, 20, { search: '  Rajesh   Dega ' });
+
+    const fields = (t: string) => [
+      { firstName: { contains: t, mode: 'insensitive' } },
+      { middleName: { contains: t, mode: 'insensitive' } },
+      { lastName: { contains: t, mode: 'insensitive' } },
+      { mobile: { contains: t, mode: 'insensitive' } },
+    ];
+    expect(firstFindManyArg().where.AND).toEqual([
+      { OR: fields('Rajesh') },
+      { OR: fields('Dega') },
+    ]);
+    // count uses the same filter, so pagination totals stay consistent.
+    expect(prismaMock.patient.count).toHaveBeenCalledWith({
+      where: firstFindManyArg().where,
+    });
   });
 });
 
@@ -113,7 +134,7 @@ describe('PatientService.findAllForTenant — family-aware search', () => {
       tenantId: string;
       id?: { in: string[] };
       memberId?: { in: string[] };
-      OR?: Array<Record<string, { contains: string }>>;
+      AND?: Array<{ OR: Array<Record<string, { contains: string }>> }>;
     };
     take?: number;
     include?: unknown;
@@ -184,13 +205,15 @@ describe('PatientService.findAllForTenant — family-aware search', () => {
             (p) => p.tenantId === w.tenantId && p.deletedAt === null,
           );
           if (w.id) rows = rows.filter((p) => w.id?.in.includes(p.id));
-          if (w.OR) {
+          if (w.AND) {
             rows = rows.filter((p) =>
-              (w.OR ?? []).some((c) =>
-                Object.entries(c).some(([k, v]) =>
-                  String(p[k as keyof Row] ?? '')
-                    .toLowerCase()
-                    .includes(v.contains.toLowerCase()),
+              (w.AND ?? []).every(({ OR }) =>
+                OR.some((c) =>
+                  Object.entries(c).some(([k, v]) =>
+                    String(p[k as keyof Row] ?? '')
+                      .toLowerCase()
+                      .includes(v.contains.toLowerCase()),
+                  ),
                 ),
               ),
             );
@@ -270,6 +293,20 @@ describe('PatientService.findAllForTenant — family-aware search', () => {
     ]);
     expect([...(a?.matchedMemberIds ?? [])].sort()).toEqual(['B', 'C']);
     expect(a?.indirectMatches).toEqual([]);
+  });
+
+  it('matches a full-name search across first + last name (any case/order/spacing)', async () => {
+    add('R', '9000000007', { name: 'Rajesh' });
+    add('X', '9000000008', { name: 'Rajeshwar' });
+    (byId('R') as Row).lastName = 'Dega';
+    (byId('X') as Row).lastName = 'Rao';
+
+    expect(ids((await search('rajesh dega')).data)).toEqual(['R']);
+    expect(ids((await search('  Rajesh   DEGA ')).data)).toEqual(['R']);
+    expect(ids((await search('dega rajesh')).data)).toEqual(['R']);
+    expect(ids((await search('dega')).data)).toEqual(['R']);
+    expect(ids((await search('rajesh')).data)).toEqual(['R', 'X']);
+    expect((await search('rajesh smith')).data).toEqual([]);
   });
 
   it('surfaces the main patient when only a member matches (by name)', async () => {

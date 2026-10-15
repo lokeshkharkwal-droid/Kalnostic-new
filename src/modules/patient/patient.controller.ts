@@ -92,15 +92,13 @@ export class PatientController {
 
   /**
    * Aggregate patient counts for the dashboard summary cards, scoped to the
-   * caller's tenant and active branch. Declared before `:id` so `stats` is not
-   * captured as a patient id.
+   * caller's tenant (patients are tenant-scoped, matching the tenant-wide
+   * patient list). Declared before `:id` so `stats` is not captured as a
+   * patient id.
    */
   @Get('stats')
-  getStats(
-    @CurrentTenant() tenantId: string,
-    @CurrentProfile() profile: ActiveProfile,
-  ) {
-    return this.patientService.getStats(tenantId, profile.branchId);
+  getStats(@CurrentTenant() tenantId: string) {
+    return this.patientService.getStats(tenantId);
   }
 
   /**
@@ -184,7 +182,10 @@ export class PatientController {
     return this.patientService.findPatientLabDocuments(tenantId, id);
   }
 
-  /** Update a patient's details. */
+  /**
+   * Update a patient's details. Only from the patient's registration branch
+   * (or a tenant-level profile); other branches get `PATIENT_OTHER_BRANCH` (403).
+   */
   @Patch(':id')
   @RequirePermission(PERMISSION_KEYS.REG_UPDATE_PATIENT_DETAILS)
   @Audit({
@@ -240,14 +241,21 @@ export class PatientController {
     );
   }
 
-  /** Soft-delete a patient (and its medical-history records). */
+  /**
+   * Soft-delete a patient (and its medical-history records). Only from the
+   * patient's registration branch (or a tenant-level profile).
+   */
   @Delete(':id')
   @Audit({
     module: AuditModule.PATIENT,
     action: AuditAction.DELETE,
     description: 'Deleted a patient',
   })
-  remove(@CurrentTenant() tenantId: string, @Param('id') id: string) {
-    return this.patientService.remove(id, tenantId);
+  remove(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+  ) {
+    return this.patientService.remove(id, tenantId, profile.branchId);
   }
 }

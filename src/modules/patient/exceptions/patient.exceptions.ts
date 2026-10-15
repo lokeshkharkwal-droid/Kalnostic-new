@@ -140,3 +140,19 @@ export class PatientDocumentNotFoundException extends KaltrosException {
     );
   }
 }
+
+/**
+ * 403 — the patient is registered at a different branch than the caller's
+ * active branch. Patient details may only be edited or deleted from the
+ * patient's own registration branch (or by a tenant-level profile).
+ */
+export class PatientOtherBranchException extends KaltrosException {
+  constructor(id: string, patientBranchId: string, activeBranchId: string) {
+    super(
+      'PATIENT_OTHER_BRANCH',
+      'This patient is registered at another branch — edit them there',
+      { id, patientBranchId, activeBranchId },
+      HttpStatus.FORBIDDEN,
+    );
+  }
+}
