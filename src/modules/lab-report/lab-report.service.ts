@@ -63,6 +63,7 @@ import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-temp
 import { PdfTemplateConfigService } from '../pdf-report-template/pdf-template-config.service';
 import {
   escapeHtml,
+  escapeHtmlKeepLines,
   toText,
 } from '../pdf-report-template/services/pdf-document.util';
 import { observedValueHtml } from './utils/print-value.util';
@@ -138,6 +139,7 @@ import {
 import {
   classifyResultValueSave,
   describeAnalyzerOverwrite,
+  formatMomentForAudit,
 } from './utils/result-value-save.util';
 import {
   buildTestFileAttachmentAppendHtml,
@@ -216,6 +218,13 @@ export class LabReportService {
   ) {}
 
   private readonly logger = new Logger(LabReportService.name);
+
+  /** A lab's time zone changes almost never, so it is remembered for a few minutes instead of being read on every save. */
+  private readonly timezoneCache = new Map<
+    string,
+    { timezone: string; readAt: number }
+  >();
+  private static readonly TIMEZONE_CACHE_MS = 5 * 60 * 1000;
 
   /** The messaging feature key the Order Console "Share" flow resolves templates by. */
   private static readonly SHARE_FEATURE = 'console_lab_report_as_attachment';
@@ -1599,6 +1608,41 @@ export class LabReportService {
   }
 
   /**
+   * Add `analyzerName` to each value an analyzer filled (`enteredBy` is then the analyzer's
+   * id): one batched lookup, none when no value came from an analyzer. The screen shows the
+   * name when it asks whether to overwrite the analyzer's result. A name that cannot be
+   * found is `null`.
+   */
+  private async attachAnalyzerNames<
+    T extends { source: ResultValueSource; enteredBy: string | null },
+  >(
+    tenantId: string,
+    values: T[],
+  ): Promise<Array<T & { analyzerName: string | null }>> {
+    const ids = [
+      ...new Set(
+        values
+          .filter((v) => v.source === ResultValueSource.ADAPTER && v.enteredBy)
+          .map((v) => v.enteredBy as string),
+      ),
+    ];
+    const adapters = ids.length
+      ? await this.prisma.labAdapter.findMany({
+          where: { id: { in: ids }, tenantId },
+          select: { id: true, name: true },
+        })
+      : [];
+    const nameById = new Map(adapters.map((a) => [a.id, a.name]));
+    return values.map((v) => ({
+      ...v,
+      analyzerName:
+        v.source === ResultValueSource.ADAPTER && v.enteredBy
+          ? (nameById.get(v.enteredBy) ?? null)
+          : null,
+    }));
+  }
+
+  /**
    * Flattens `findById`'s raw nested tree into the same flat branch/
    * department/order/patient/referredByDoctor/referralPanel/test shape the
    * list endpoint (`findAll` -> `toWorklistRow` + attach* resolvers) already
@@ -1634,7 +1678,10 @@ export class LabReportService {
 
     return {
       ...worklistRow,
-      resultValues: report.resultValues,
+      resultValues: await this.attachAnalyzerNames(
+        tenantId,
+        report.resultValues,
+      ),
       notes: report.notes,
       attachments: report.attachments,
       multiStepProcess: report.multiStepProcess,
@@ -2054,7 +2101,9 @@ export class LabReportService {
     id: string,
     tenantId: string,
   ): Promise<void> {
-    const hasRealValue = await this.prisma.labReportResultValue.findFirst({
+    // A reading made only of spaces, tabs or line breaks is not a result (an analyzer can send one):
+    // the screen already treats it as empty, so the server must too.
+    const readings = await this.prisma.labReportResultValue.findMany({
       where: {
         labReportId: id,
         tenantId,
@@ -2062,15 +2111,32 @@ export class LabReportService {
         observed1: { not: null },
         NOT: { observed1: '' },
       },
-      select: { id: true },
+      select: { observed1: true },
     });
-    if (hasRealValue) return;
+    if (readings.some((r) => (r.observed1 ?? '').trim() !== '')) return;
 
     const hasAttachment = await this.prisma.labReportAttachment.findFirst({
       where: { labReportId: id, tenantId },
       select: { id: true },
     });
     if (!hasAttachment) throw new LabReportResultsRequiredException(id);
+  }
+
+  /**
+   * The lab's IANA time zone (for example `Asia/Kolkata`), remembered per tenant for
+   * {@link LabReportService.TIMEZONE_CACHE_MS} so a save does not read the tenant every time.
+   *
+   * @param tenantId the lab's tenant
+   */
+  private async labTimezone(tenantId: string): Promise<string> {
+    const now = Date.now();
+    const hit = this.timezoneCache.get(tenantId);
+    if (hit && now - hit.readAt < LabReportService.TIMEZONE_CACHE_MS) {
+      return hit.timezone;
+    }
+    const { timezone } = await this.tenantService.getLocale(tenantId);
+    this.timezoneCache.set(tenantId, { timezone, readAt: now });
+    return timezone;
   }
 
   private assertTransition(
@@ -2197,6 +2263,10 @@ export class LabReportService {
       }
     }
 
+    // The lab's time zone, to write "when the analyzer sent it" in the Audit Trail. Read here,
+    // outside the transaction below: a query made from inside it would not carry the tenant.
+    const timezone = await this.labTimezone(tenantId);
+
     await this.prisma.withTenant(tenantId, async (tx) => {
       const now = new Date();
 
@@ -2228,16 +2298,29 @@ export class LabReportService {
       }
 
       for (const { value, stored, mode } of plan) {
-        if (mode === 'keep-analyzer') {
-          // The analyzer's value was not touched: it stays the analyzer's (source, analyzer id
-          // and time unchanged). Only the range, method and display text may be updated, and
-          // the unit only when the analyzer sent none.
-          const data = {
-            methodology: value.methodology,
-            referenceRangeId: value.referenceRangeId,
-            referenceDisplay: value.referenceDisplay,
-            ...(stored?.unit == null ? { unit: value.unit } : {}),
-          };
+        if (mode === 'keep-analyzer' || mode === 'overwrite-analyzer') {
+          // A value an analyzer filled always stays the analyzer's record: source, analyzer id
+          // (`enteredBy`) and time are never changed, whoever edits it. When the technician
+          // left the number alone only the range, method and display text may be updated (and
+          // the unit only when the analyzer sent none). When the technician changed the
+          // number, the new number, unit and range are stored and the change (who, when, old
+          // and new value) is written to the Audit Trail below.
+          const data =
+            mode === 'overwrite-analyzer'
+              ? {
+                  observed1: value.observed1,
+                  observed2: value.observed2,
+                  unit: value.unit,
+                  methodology: value.methodology,
+                  referenceRangeId: value.referenceRangeId,
+                  referenceDisplay: value.referenceDisplay,
+                }
+              : {
+                  methodology: value.methodology,
+                  referenceRangeId: value.referenceRangeId,
+                  referenceDisplay: value.referenceDisplay,
+                  ...(stored?.unit == null ? { unit: value.unit } : {}),
+                };
           if (Object.values(data).some((v) => v !== undefined)) {
             await tx.labReportResultValue.update({
               where: {
@@ -2293,8 +2376,9 @@ export class LabReportService {
         });
       }
 
-      // Every analyzer value a technician overwrote leaves an Audit Trail entry (who, the
-      // analyzer's old value, the new one): the analyzer's original is otherwise lost.
+      // Every analyzer value a technician edited leaves an Audit Trail entry: who (the entry's
+      // actor), when (the entry's time), the old value, the new one, and when the analyzer sent
+      // the value (the row's own `enteredAt`, which an edit never changes).
       const overwritten = plan.filter(
         (p) => p.mode === 'overwrite-analyzer' && p.stored,
       );
@@ -2330,6 +2414,9 @@ export class LabReportService {
                 : undefined,
               stored,
               value,
+              stored.enteredAt
+                ? formatMomentForAudit(stored.enteredAt, timezone)
+                : undefined,
             ),
           );
         }
@@ -4021,7 +4108,8 @@ export class LabReportService {
         // `observed1` is already safe HTML from buildPrintContext (escaped, whitespace kept, abnormal styling): as-is.
         const value = toText(row.observed1);
         const unit = escapeHtml(toText(row.unit));
-        const ref = escapeHtml(toText(row.reference_display));
+        // A reference range typed over several lines keeps its lines (see `escapeHtmlKeepLines`).
+        const ref = escapeHtmlKeepLines(toText(row.reference_display));
         const methodHtml = method
           ? `<div class="rr-method">${method}</div>`
           : '';
