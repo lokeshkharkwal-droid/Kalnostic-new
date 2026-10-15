@@ -41,8 +41,13 @@ function build(status: string) {
     },
     withTenant: jest.fn((_t: string, fn: (t: typeof tx) => unknown) => fn(tx)),
   };
+  // The lab's time zone is read once per save (for the "when the analyzer sent it" text of the Audit Trail), after the status check.
+  const tenantService = {
+    getLocale: jest.fn().mockResolvedValue({ timezone: 'UTC' }),
+  };
   const deps = Array(11).fill(undefined) as unknown[];
   deps[0] = prisma;
+  deps[7] = tenantService;
   const service = new LabReportService(
     ...(deps as ConstructorParameters<typeof LabReportService>),
   );
@@ -52,7 +57,7 @@ function build(status: string) {
     .mockResolvedValue([{ id: P1, parameterName: 'Hemoglobin' }]);
   internals.recomputeCalculatedValues = jest.fn().mockResolvedValue(undefined);
   internals.findByIdForApi = jest.fn().mockResolvedValue({ id: 'r1' });
-  return { service, prisma, labReportResultValue, internals };
+  return { service, prisma, labReportResultValue, internals, tenantService };
 }
 
 const save = (m: ReturnType<typeof build>) =>
@@ -111,6 +116,7 @@ describe('upsertResultValues — which report statuses allow a value change', ()
       expect(m.labReportResultValue.update).not.toHaveBeenCalled();
       expect(m.labReportResultValue.findMany).not.toHaveBeenCalled();
       expect(m.internals.getResultParams).not.toHaveBeenCalled();
+      expect(m.tenantService.getLocale).not.toHaveBeenCalled();
     },
   );
 

@@ -1,5 +1,5 @@
 import {
-  DoctorPaymentMode,
+  PaymentMode,
   DoctorStatus,
   DoctorType,
   Gender,
@@ -182,9 +182,9 @@ export class UpdateDoctorDto {
   @MaxLength(20)
   ifscCode?: string;
 
-  @IsEnum(DoctorPaymentMode)
+  @IsEnum(PaymentMode)
   @IsOptional()
-  paymentMode?: DoctorPaymentMode;
+  paymentMode?: PaymentMode;
 
   // ── Charges (default 0; up to 2 decimal places) ──
   @IsNumber({ maxDecimalPlaces: 2 })

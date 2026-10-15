@@ -1,10 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import {
-  DoctorPaymentMode,
-  DoctorStatus,
-  DoctorType,
-  Prisma,
-} from '@prisma/client';
+import { PaymentMode, DoctorStatus, DoctorType, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { BranchService } from '../branch/branch.service';
@@ -184,7 +179,7 @@ export class DoctorsService {
       bankName: dto.bankName ?? null,
       accountNumber: dto.accountNumber ?? null,
       ifscCode: dto.ifscCode ?? null,
-      paymentMode: dto.paymentMode ?? DoctorPaymentMode.BANK_TRANSFER,
+      paymentMode: dto.paymentMode ?? PaymentMode.BANK_TRANSFER,
       consultationFee: dto.consultationFee ?? 0,
       emergencyFee: dto.emergencyFee ?? 0,
       followUpFee: dto.followUpFee ?? 0,

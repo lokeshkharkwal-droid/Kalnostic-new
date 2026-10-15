@@ -20,7 +20,13 @@ auth:bearer {
 
 body:json {
   {
-    "destinationBranchId": "{{branchId}}"
+    "destinationBranchId": "{{branchId}}",
+    "sendDate": "2026-07-20T10:00:00.000Z",
+    "sendTime": "10:00",
+    "sampleForm": "Whole blood, 1 tube",
+    "logisticsType": "Lab Vehicle",
+    "logisticsPerson": "Amit Driver",
+    "notes": "Center assigned after dispatch"
   }
 }
 
@@ -38,4 +44,11 @@ docs {
   `destinationBranchId`; OUTSOURCE → `outsourceCenterId`; EXTERNAL →
   `externalPartnerName`. Missing the matching field → 422
   `TRANSFER_DESTINATION_MISSING`.
+
+  The modal also carries the shared **Logistics Information** (same base DTO as
+  Send/Forward/Outsource): `sendDate`, `sendTime`, `sampleForm`, `logisticsType`,
+  `logisticsPerson`, plus optional `notes` / `attachmentUrl`. The logistics
+  fields are persisted on the transfer row (only when supplied — an omitted field
+  never clobbers the value recorded at send time); `notes`/`attachmentUrl` are
+  recorded on the sample's history (the transfer row has no history table).
 }

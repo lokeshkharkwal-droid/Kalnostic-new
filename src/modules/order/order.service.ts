@@ -26,6 +26,7 @@ import {
   TransferKind,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { paymentModeLabel } from '../finance-payments/entities/finance-payment.entity';
 import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
 import { getReferralPanelId } from '../../prisma/tenant-context';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
@@ -2486,7 +2487,9 @@ export class OrderService {
               dateFormat,
               timeFormat,
             ),
-            mode: pd.paymentMode,
+            // Canonical label (CARD → Debit Card, CREDIT → Credit Card) so the
+            // printed bill matches the Finance Collection report and the UI.
+            mode: paymentModeLabel(pd.paymentMode),
             reference: pd.reference ?? '',
             // `type` discriminates a collection from a refund so the template can
             // label/style them; `amount` is the row's own money (paid for a
