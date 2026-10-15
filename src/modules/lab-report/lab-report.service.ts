@@ -3326,7 +3326,8 @@ export class LabReportService {
         // The order's real date/time: the operator-entered `orderTime` when
         // one was typed, else the order's creation instant (`createdAt`) in the
         // tenant timezone — `orderTime` is usually unset, which used to print
-        // every order at `12:00 AM`. See `resolveOrderLocalDateTime`.
+        // every order at `12:00 AM`. See `resolveOrderLocalDateTime`. Like
+        // every report date below, printed per the tenant `date_format`/`time_format`.
         order_date: formatOrderPrintDate(order, timezone, dateFormat),
         order_date_time: formatOrderPrintDateTime(
           order,
@@ -3382,16 +3383,22 @@ export class LabReportService {
         last_report_prepared_on: lastReportPreparedOn
           ? formatReportDateTime(
               toBranchLocalInstant(lastReportPreparedOn, timezone),
+              dateFormat,
+              timeFormat,
             )
           : '',
         sample_collected_date: sample?.collectedAt
           ? formatReportDateTime(
               toBranchLocalInstant(sample.collectedAt, timezone),
+              dateFormat,
+              timeFormat,
             )
           : '',
         sample_received_date: sample?.receivedAt
           ? formatReportDateTime(
               toBranchLocalInstant(sample.receivedAt, timezone),
+              dateFormat,
+              timeFormat,
             )
           : '',
         sample_name: sample?.sampleName ?? '',
@@ -3765,7 +3772,11 @@ export class LabReportService {
           sample_collected_date: toText(c?.variables?.sample_collected_date),
           sample_received_date: toText(c?.variables?.sample_received_date),
           report_prepared_on: preparedOn
-            ? formatReportDateTime(toBranchLocalInstant(preparedOn, timezone))
+            ? formatReportDateTime(
+                toBranchLocalInstant(preparedOn, timezone),
+                dateFormat,
+                timeFormat,
+              )
             : '',
           // This test's own File+ PDFs (`{$report->test_file_attachment|noescape}`).
           test_file_attachment: toText(c?.variables?.test_file_attachment),
