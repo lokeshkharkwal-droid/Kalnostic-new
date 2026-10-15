@@ -6,13 +6,12 @@ import { LabTestService } from './lab-test.service';
 
 /**
  * The "one Default per group" rule for reference ranges. The group key is
- * (parameter, analyzer, UNIT, gender, age band). The METHOD is not part of it:
- * an analyzer sends a value and its unit but never the method, so the analyzer
- * plus the unit it sent decides which ranges apply, and the Default breaks the
- * tie between several methods in that unit. A group of two or more needs exactly
- * one Default; a lone range needs none (it is chosen as the only candidate).
+ * (parameter, analyzer, METHOD, UNIT, gender, age band): each method has its own
+ * Default. A group of two or more needs exactly one Default; a lone range needs none
+ * (it is chosen as the only candidate). The method is compared trimmed and otherwise
+ * exactly (like the overlap check); a missing method equals ''.
  */
-describe('LabTestService — one Default per analyzer + unit + gender + age band (method not in the key)', () => {
+describe('LabTestService — one Default per analyzer + method + unit + gender + age band', () => {
   const service = new LabTestService(
     {} as unknown as PrismaService,
     {} as unknown as MasterDataService,
@@ -68,7 +67,7 @@ describe('LabTestService — one Default per analyzer + unit + gender + age band
   describe('the group key (assertAdapterDefaultsPresent on its own)', () => {
     it('two ranges of the same analyzer, unit, gender and age with no Default are rejected', () => {
       expect(viaDefaultsOnly([range(cobas), range(cobas)])).toMatch(
-        /Mark a Default range .*analyzer \+ unit/,
+        /Mark a Default range .*analyzer \+ method \+ unit/,
       );
     });
 
@@ -79,7 +78,7 @@ describe('LabTestService — one Default per analyzer + unit + gender + age band
           range({ ...cobas, isDefault: true }),
         ]),
       ).toMatch(
-        /Only one range can be Default per analyzer\/unit\/gender\/age/,
+        /Only one range can be Default per analyzer\/method\/unit\/gender\/age/,
       );
     });
 
@@ -89,16 +88,53 @@ describe('LabTestService — one Default per analyzer + unit + gender + age band
       ).toBe('ACCEPTED');
     });
 
-    it('a different METHOD is the SAME group: two methods in one unit need exactly one Default', () => {
+    it('a different METHOD is a SEPARATE group: each method has its own Default', () => {
       const m = (method: string, isDefault?: boolean) =>
         range({ ...cobas, method, isDefault });
-      expect(viaDefaultsOnly([m('SLS'), m('Cyan')])).toMatch(
-        /Mark a Default range/,
-      );
-      expect(viaDefaultsOnly([m('SLS', true), m('Cyan', true)])).toMatch(
-        /Only one range can be Default/,
+      // one range per method: each is the only candidate, no Default needed
+      expect(viaDefaultsOnly([m('SLS'), m('Cyan')])).toBe('ACCEPTED');
+      // both methods may have their own Default
+      expect(viaDefaultsOnly([m('SLS', true), m('Cyan', true)])).toBe(
+        'ACCEPTED',
       );
       expect(viaDefaultsOnly([m('SLS', true), m('Cyan')])).toBe('ACCEPTED');
+    });
+
+    it('inside ONE method the rule still applies: two ranges need exactly one Default', () => {
+      const m = (method: string, isDefault?: boolean) =>
+        range({ ...cobas, method, isDefault });
+      expect(viaDefaultsOnly([m('SLS'), m('SLS')])).toMatch(
+        /Mark a Default range/,
+      );
+      expect(viaDefaultsOnly([m('SLS', true), m('SLS', true)])).toMatch(
+        /Only one range can be Default/,
+      );
+      expect(
+        viaDefaultsOnly([m('SLS', true), m('SLS'), m('Cyan'), m('Cyan')]),
+      ).toMatch(/Mark a Default range/); // the Cyan group has two ranges and no Default
+      expect(
+        viaDefaultsOnly([m('SLS', true), m('SLS'), m('Cyan', true), m('Cyan')]),
+      ).toBe('ACCEPTED');
+    });
+
+    it('the method is compared trimmed, but letter case counts', () => {
+      const m = (method: string, isDefault?: boolean) =>
+        range({ ...cobas, method, isDefault });
+      expect(viaDefaultsOnly([m('SLS', true), m('SLS ', true)])).toMatch(
+        /Only one range can be Default/,
+      );
+      expect(viaDefaultsOnly([m('SLS', true), m('sls', true)])).toBe(
+        'ACCEPTED',
+      );
+    });
+
+    it('a missing method equals an empty one (same group)', () => {
+      expect(
+        viaDefaultsOnly([
+          range({ ...cobas, isDefault: true }),
+          range({ ...cobas, method: '', isDefault: true }),
+        ]),
+      ).toMatch(/Only one range can be Default/);
     });
 
     it('a different UNIT is a separate group: a lone range in each needs no Default', () => {
@@ -111,24 +147,14 @@ describe('LabTestService — one Default per analyzer + unit + gender + age band
     });
 
     it('each unit group has its own Default', () => {
-      const u = (unit: string, method: string, isDefault?: boolean) =>
-        range({ labAdapterId: 'cobas', unit, method, isDefault });
+      const u = (unit: string, isDefault?: boolean) =>
+        range({ labAdapterId: 'cobas', unit, method: 'SLS', isDefault });
       expect(
-        viaDefaultsOnly([
-          u('g/dL', 'SLS', true),
-          u('g/dL', 'Cyan'),
-          u('g/L', 'SLS', true),
-          u('g/L', 'Cyan'),
-        ]),
+        viaDefaultsOnly([u('g/dL', true), u('g/dL'), u('g/L', true), u('g/L')]),
       ).toBe('ACCEPTED');
       // the g/L group has two ranges and no Default
       expect(
-        viaDefaultsOnly([
-          u('g/dL', 'SLS', true),
-          u('g/dL', 'Cyan'),
-          u('g/L', 'SLS'),
-          u('g/L', 'Cyan'),
-        ]),
+        viaDefaultsOnly([u('g/dL', true), u('g/dL'), u('g/L'), u('g/L')]),
       ).toMatch(/Mark a Default range/);
     });
 
@@ -172,39 +198,45 @@ describe('LabTestService — one Default per analyzer + unit + gender + age band
       ).toMatch(/Only one range can be Default/);
     });
 
-    it('ranges without an analyzer are grouped by unit too (method ignored)', () => {
+    it('ranges without an analyzer are grouped by method and unit too', () => {
       expect(
         viaDefaultsOnly([
           range({ method: 'M1', unit: 'g/dL', isDefault: true }),
-          range({ method: 'M2', unit: 'g/dL', isDefault: true }),
+          range({ method: 'M1', unit: 'g/dL', isDefault: true }),
         ]),
       ).toMatch(/Only one range can be Default/);
       expect(
         viaDefaultsOnly([
           range({ method: 'M1', unit: 'g/dL', isDefault: true }),
-          range({ method: 'M2', unit: 'g/L', isDefault: true }),
+          range({ method: 'M2', unit: 'g/dL', isDefault: true }),
+        ]),
+      ).toBe('ACCEPTED');
+      expect(
+        viaDefaultsOnly([
+          range({ method: 'M1', unit: 'g/dL', isDefault: true }),
+          range({ method: 'M1', unit: 'g/L', isDefault: true }),
         ]),
       ).toBe('ACCEPTED');
     });
   });
 
   describe('through assertParam, as a real save: the rule now fires', () => {
-    it('one analyzer, two METHODS in the same unit and age band, no Default: rejected', () => {
+    it('one analyzer, two METHODS in the same unit and age band, no Default: accepted (each method is its own group)', () => {
       expect(
         viaAssertParam([
           range({ ...cobas, method: 'SLS' }),
           range({ ...cobas, method: 'Cyan' }),
         ]),
-      ).toMatch(/Mark a Default range/);
+      ).toBe('ACCEPTED');
     });
 
-    it('... both marked Default: rejected', () => {
+    it('... both marked Default: accepted (one Default per method)', () => {
       expect(
         viaAssertParam([
           range({ ...cobas, method: 'SLS', isDefault: true }),
           range({ ...cobas, method: 'Cyan', isDefault: true }),
         ]),
-      ).toMatch(/Only one range can be Default/);
+      ).toBe('ACCEPTED');
     });
 
     it('... exactly one Default: accepted', () => {
@@ -232,11 +264,20 @@ describe('LabTestService — one Default per analyzer + unit + gender + age band
       );
     });
 
-    it('analyzer-less ranges for different methods but the same gender/age are still rejected as similar', () => {
+    it('analyzer-less ranges for different methods and the same gender/age are separate groups: each may have its own Default', () => {
       expect(
         viaAssertParam([
           range({ method: 'M1', isDefault: true }),
           range({ method: 'M2', isDefault: true }),
+        ]),
+      ).toBe('ACCEPTED');
+    });
+
+    it('analyzer-less ranges for the same method, unit, gender and age are still rejected as similar', () => {
+      expect(
+        viaAssertParam([
+          range({ method: 'M1', isDefault: true }),
+          range({ method: 'M1' }),
         ]),
       ).toMatch(/similar reference range already exists/);
     });
@@ -252,11 +293,11 @@ describe('LabTestService — one Default per analyzer + unit + gender + age band
   });
 
   describe('matches an independent description of the rule (randomised check)', () => {
-    /** The rule restated simply: group by analyzer + normalised unit + gender + band. */
+    /** The rule restated simply: group by analyzer + trimmed method + normalised unit + gender + band. */
     const expectedOk = (ranges: ReturnType<typeof range>[]): boolean => {
       const groups = new Map<string, ReturnType<typeof range>[]>();
       for (const r of ranges) {
-        const key = `${r.labAdapterId ?? ''}|${(r.unit ?? '').trim().toLowerCase()}|${r.gender}|${r.ageFrom}|${r.ageTo}`;
+        const key = `${r.labAdapterId ?? ''}|${(r.method ?? '').trim()}|${(r.unit ?? '').trim().toLowerCase()}|${r.gender}|${r.ageFrom}|${r.ageTo}`;
         groups.set(key, [...(groups.get(key) ?? []), r]);
       }
       return [...groups.values()].every((g) => {
@@ -291,9 +332,10 @@ describe('LabTestService — one Default per analyzer + unit + gender + age band
         if (ok) accepted++;
         expect(viaDefaultsOnly(ranges) === 'ACCEPTED').toBe(ok);
       }
-      // the sample really exercises both outcomes (most random sets are valid, a few hundred are not)
+      // the sample really exercises both outcomes (most random sets are valid; with the method in the key
+      // the groups are finer, so only some dozens are rejected)
       expect(accepted).toBeGreaterThan(400);
-      expect(4000 - accepted).toBeGreaterThan(100);
+      expect(4000 - accepted).toBeGreaterThan(30);
     });
   });
 });

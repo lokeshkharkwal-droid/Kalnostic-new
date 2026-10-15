@@ -58,7 +58,17 @@ function reportIn(status: LabReportStatus, branchId = 'A') {
       remarks: 'R-text',
       references: 'F-text',
     },
-    attachments: [{ id: 'att1', fileName: 'x.pdf', fileUrl: 'http://f/x.pdf' }],
+    // a real "File +" upload (kind 'file'): without `kind`/`uploadedAt` neither
+    // attachment tag would render anything, and the masking checks would be vacuous
+    attachments: [
+      {
+        id: 'att1',
+        kind: 'file',
+        uploadedAt: new Date('2026-10-01T04:00:00.000Z'),
+        fileName: 'x.pdf',
+        fileUrl: 'http://f/x.pdf',
+      },
+    ],
     resultValues: [
       {
         resultParamId: 'p1',
@@ -161,12 +171,22 @@ describe('printing: unfinished results print as "Result pending"', () => {
         'remarks',
         'references',
         'test_file_attachment',
+        // the same uploads as appended pages: masked exactly like the inline one
+        'test_file_attachment_without_header',
       ]) {
         expect(ctx.variables[k]).toBe('');
       }
       expect(ctx.variables.report_status).toBe('PENDING');
     },
   );
+
+  it('a finished report still gets its File+ uploads, inline and as appended pages', async () => {
+    const ctx = await ctxFor(reportIn(LabReportStatus.RESULT_DONE), {
+      maskUnfinished: true,
+    });
+    expect(ctx.variables.test_file_attachment).not.toBe('');
+    expect(ctx.variables.test_file_attachment_without_header).not.toBe('');
+  });
 
   it('after an internal transfer the print uses the original sample of the sending branch (oldest first), so a transferred test keeps its dates', async () => {
     let query: { where?: Record<string, unknown>; orderBy?: unknown } = {};

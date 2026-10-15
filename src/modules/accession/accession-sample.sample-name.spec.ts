@@ -44,6 +44,9 @@ describe('OrderSampleService — generateForOrderInTx sample name', () => {
             departmentId: 'dep-1',
             sourceLabTestId: 'src-glu',
             configSnapshot: {},
+            // Normal sample flow (default) — generated as NEW, not auto-accepted.
+            isSampleFlow: true,
+            isBillOnlyTest: false,
           },
         },
       ]),

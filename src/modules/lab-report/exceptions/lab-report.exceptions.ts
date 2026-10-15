@@ -61,6 +61,26 @@ export class InvalidLabReportTransitionException extends KaltrosException {
   }
 }
 
+/**
+ * 409 — the report's result values can only be changed while it is Pending, Partial Pending or Saved. A report that was
+ * submitted (Validation Pending) or has moved further is refused, and nothing is written.
+ */
+export class LabReportResultsNotEditableException extends KaltrosException {
+  constructor(id: string, currentStatus: string) {
+    const label = currentStatus
+      .toLowerCase()
+      .split('_')
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ');
+    super(
+      'LAB_REPORT_RESULTS_NOT_EDITABLE',
+      `Results can no longer be changed: this report is ${label}. Results can only be changed while the report is Pending, Partial Pending or Saved.`,
+      { id, currentStatus },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
 /** 409 — a locked report cannot be edited (results, save, submit, etc.). */
 export class LabReportLockedException extends KaltrosException {
   constructor(id: string) {

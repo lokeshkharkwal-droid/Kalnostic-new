@@ -85,9 +85,11 @@ interface TransferDestination {
  * Internal/External Order Status column (CR-1). Outsource is manual (CR-3):
  * `outsourceStatus` is set by staff, no sync.
  *
- * NOTE: optional per-action notes/attachments on the transfer modals are accepted
- * but not persisted (SampleTransfer has no history table); the mandatory fields
- * (receiveCondition/repeatReason/rejectionReason) are stored as columns.
+ * NOTE: the SampleTransfer row has no history table, so the mandatory fields
+ * (receiveCondition/repeatReason/rejectionReason) are stored as columns. The
+ * optional per-action notes/attachments are recorded on the *sample's* history
+ * instead — dispatch (send/forward/outsource) does so via the sample transition,
+ * and Assign Center via `OrderSampleService.recordNoteInTx`.
  */
 @Injectable()
 export class SampleTransferService {
@@ -360,7 +362,18 @@ export class SampleTransferService {
           : [...ACCESSION_TRANSFER_KEY_GROUPS.ASSIGN_CENTER],
       );
     }
+    // Persist the modal's Logistics Information alongside the destination, the
+    // same columns the Send/Forward/Outsource dispatch writes (§B.9). Only set a
+    // field when the caller supplied it so an Assign that omits logistics never
+    // clobbers values recorded at send time.
     const data: Prisma.SampleTransferUpdateInput = { updatedBy: personId };
+    if (dto.sendDate !== undefined) data.sendDate = new Date(dto.sendDate);
+    if (dto.sendTime !== undefined) data.sendTime = dto.sendTime;
+    if (dto.sampleForm !== undefined) data.sampleForm = dto.sampleForm;
+    if (dto.logisticsType !== undefined) data.logisticsType = dto.logisticsType;
+    if (dto.logisticsPerson !== undefined) {
+      data.logisticsPerson = dto.logisticsPerson;
+    }
     if (transfer.kind === TransferKind.INTERNAL) {
       if (!dto.destinationBranchId) {
         throw new TransferDestinationMissingException(transferId);
@@ -400,6 +413,17 @@ export class SampleTransferService {
           },
         });
       }
+      // Record the modal's optional note/attachment on the sample history (no
+      // status change), exactly as dispatch does — SampleTransfer has no history
+      // table, so the note lives on the sample's audit trail.
+      await this.samples.recordNoteInTx(
+        tx,
+        tenantId,
+        personId,
+        transfer.sampleId,
+        'assign-center',
+        { notes: dto.notes, attachmentUrl: dto.attachmentUrl },
+      );
     });
     return this.findTransferById(transferId, tenantId);
   }

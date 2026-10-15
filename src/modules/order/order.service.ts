@@ -26,6 +26,7 @@ import {
   TransferKind,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { paymentModeLabel } from '../finance-payments/entities/finance-payment.entity';
 import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
 import { getReferralPanelId } from '../../prisma/tenant-context';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
@@ -62,6 +63,7 @@ import {
   formatTenantDateTime,
   formatOrderDateTime,
   resolveOrderLocalDateTime,
+  classifyOrderDate,
 } from '../../common/utils';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
@@ -708,6 +710,10 @@ export class OrderService {
     // external id is simply left null.
     const manualExternalId = dto.externalOrderId?.trim() || null;
 
+    // Tenant timezone drives the order-date classification (CURRENT / BACKTRACKED
+    // / ADVANCE_DATED): "today" is the business's local day, not the server UTC day.
+    const { timezone } = await this.tenantService.getLocale(tenantId);
+
     let createdId: string;
     try {
       createdId = await this.prisma.withTenant(tenantId, async (tx) => {
@@ -785,7 +791,7 @@ export class OrderService {
             updatedBy: personId,
             status: dto.status ?? OrderStatus.DRAFT,
             orderDate: new Date(dto.orderDate),
-            orderDateType: this.classifyOrderDate(dto.orderDate),
+            orderDateType: classifyOrderDate(dto.orderDate, timezone),
             orderType: dto.orderType,
             billingType: dto.billingType,
             isUrgentBill: dto.isUrgentBill ?? false,
@@ -1105,7 +1111,12 @@ export class OrderService {
 
     // Rebuild a create payload from the source. Order date = today (its fresh
     // validity is then computed at runtime); status QUOTE / quotationStatus DRAFT.
-    const todayIso = new Date().toISOString().slice(0, 10);
+    // Tenant-local "today" (not the server UTC day) so a quote duplicated between
+    // local midnight and the UTC rollover is dated the business's current day.
+    const { timezone } = await this.tenantService.getLocale(tenantId);
+    const todayIso = toBranchLocalInstant(new Date(), timezone)
+      .toISOString()
+      .slice(0, 10);
     const items: OrderItemDto[] = source.items.map((i) => ({
       branchLabTestId: i.branchLabTestId ?? undefined,
       branchLabPanelId: i.branchLabPanelId ?? undefined,
@@ -1546,6 +1557,10 @@ export class OrderService {
       const discount = item.discount ?? 0;
       lineDiscountTotal += discount;
       if (discount <= 0) continue;
+      // NOTE: the per-test "Allow Discounts" flag is enforced in the FRONTEND
+      // only (the per-item discount input is hidden for a non-discountable test).
+      // There is intentionally no server-side per-test discount gate here, so an
+      // order-level discount never trips a per-test rule.
       if (!lineDiscountEnabled) throw new LineItemDiscountNotAllowedException();
       // Effective percentage: use the typed PERCENT value directly, else derive
       // it from the amount and the line's price. A discount on a zero-price
@@ -2319,23 +2334,6 @@ export class OrderService {
     };
   }
 
-  /**
-   * Classify an order's date relative to server "today" (both compared as
-   * DATE-only, matching the `orderDate @db.Date` column). Used to stamp
-   * `Order.orderDateType` on create and whenever the order date changes:
-   * `BACKTRACKED` when the order is dated in the past, `ADVANCE_DATED` when dated
-   * in the future, `CURRENT` when it is today.
-   * @param orderDate the order date as an ISO-8601 date string (`YYYY-MM-DD…`)
-   * @returns the {@link OrderDateType} classification
-   */
-  private classifyOrderDate(orderDate: string): OrderDateType {
-    const orderDay = new Date(orderDate).toISOString().slice(0, 10);
-    const today = new Date().toISOString().slice(0, 10);
-    if (orderDay < today) return OrderDateType.BACKTRACKED;
-    if (orderDay > today) return OrderDateType.ADVANCE_DATED;
-    return OrderDateType.CURRENT;
-  }
-
   /** `order_print` — order slip: header, patient, referral, item list. */
   private async buildOrderPrintContext(
     order: OrderWithRelations,
@@ -2494,7 +2492,9 @@ export class OrderService {
               dateFormat,
               timeFormat,
             ),
-            mode: pd.paymentMode,
+            // Canonical label (CARD → Debit Card, CREDIT → Credit Card) so the
+            // printed bill matches the Finance Collection report and the UI.
+            mode: paymentModeLabel(pd.paymentMode),
             reference: pd.reference ?? '',
             // `type` discriminates a collection from a refund so the template can
             // label/style them; `amount` is the row's own money (paid for a
@@ -3536,28 +3536,56 @@ export class OrderService {
       });
     }
     if (query.sampleStatus) {
+      // Bill-only tests/panels never enter the workflow (never collected), so
+      // they must be excluded from the collection-progress filter — otherwise a
+      // fully-collected order with a bill-only item would read as PARTIAL and
+      // never as COLLECTED. Mirrors the displayed item/collected counts.
+      const workflowItem: Prisma.OrderItemWhereInput = {
+        NOT: {
+          OR: [
+            { branchLabTest: { isBillOnlyTest: true } },
+            { branchLabPanel: { isBillOnlyTest: true } },
+          ],
+        },
+      };
       switch (query.sampleStatus) {
         case 'PENDING':
-          // Has items, none collected.
-          and.push({ items: { some: { deletedAt: null } } });
+          // Has workflow items, none collected.
+          and.push({ items: { some: { deletedAt: null, ...workflowItem } } });
           and.push({
-            items: { none: { deletedAt: null, collectedAt: { not: null } } },
+            items: {
+              none: {
+                deletedAt: null,
+                collectedAt: { not: null },
+                ...workflowItem,
+              },
+            },
           });
           break;
         case 'COLLECTED':
-          // Has items, none still uncollected.
-          and.push({ items: { some: { deletedAt: null } } });
+          // Has workflow items, none still uncollected.
+          and.push({ items: { some: { deletedAt: null, ...workflowItem } } });
           and.push({
-            items: { none: { deletedAt: null, collectedAt: null } },
+            items: {
+              none: { deletedAt: null, collectedAt: null, ...workflowItem },
+            },
           });
           break;
         case 'PARTIAL':
-          // At least one collected and at least one still uncollected.
+          // At least one workflow item collected and at least one still uncollected.
           and.push({
-            items: { some: { deletedAt: null, collectedAt: { not: null } } },
+            items: {
+              some: {
+                deletedAt: null,
+                collectedAt: { not: null },
+                ...workflowItem,
+              },
+            },
           });
           and.push({
-            items: { some: { deletedAt: null, collectedAt: null } },
+            items: {
+              some: { deletedAt: null, collectedAt: null, ...workflowItem },
+            },
           });
           break;
       }
@@ -3580,7 +3608,8 @@ export class OrderService {
           items: {
             where: { deletedAt: null },
             select: {
-              branchLabPanel: { select: { id: true } },
+              branchLabTest: { select: { isBillOnlyTest: true } },
+              branchLabPanel: { select: { id: true, isBillOnlyTest: true } },
               labReports: {
                 where: { deletedAt: null },
                 select: { status: true, memberBranchLabTestId: true },
@@ -3589,10 +3618,20 @@ export class OrderService {
           },
         },
       });
+      // Match the displayed reportStatus: bill-only items have no workflow/reports
+      // and are excluded from the derivation, so exclude them from the filter too.
+      const candidateWorkflowItems = (c: (typeof candidates)[number]) =>
+        c.items.filter(
+          (it) =>
+            !it.branchLabTest?.isBillOnlyTest &&
+            !it.branchLabPanel?.isBillOnlyTest,
+        );
       const reportStatusPanelIds = [
         ...new Set(
           candidates
-            .flatMap((c) => c.items.map((it) => it.branchLabPanel?.id))
+            .flatMap((c) =>
+              candidateWorkflowItems(c).map((it) => it.branchLabPanel?.id),
+            )
             .filter((id): id is string => id != null),
         ),
       ];
@@ -3601,8 +3640,10 @@ export class OrderService {
       const matchedIds = candidates
         .filter(
           (c) =>
-            deriveReportStatus(c.items, reportStatusPanelCounts) ===
-            query.reportStatus,
+            deriveReportStatus(
+              candidateWorkflowItems(c),
+              reportStatusPanelCounts,
+            ) === query.reportStatus,
         )
         .map((c) => c.id);
       and.push({ id: { in: matchedIds } });
@@ -3711,12 +3752,18 @@ export class OrderService {
   ): Promise<PaginatedResult<OrderListRow>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
+    // A single patient's order history (Patient Detail) is business-wide, like
+    // their dues: patients are tenant-scoped, so orders placed at any branch are
+    // shown. An explicit `branchId` still narrows it; quotations keep the active
+    // branch (their expiry comes from that branch's settings).
+    const scopeBranchId =
+      query.patientId && !query.isQuotation ? null : activeBranchId;
     const {
       where,
       quotationValidityValue,
       quotationValidityUnit,
       quotationExpiryCutoff,
-    } = await this.buildOrderWhere(query, tenantId, activeBranchId);
+    } = await this.buildOrderWhere(query, tenantId, scopeBranchId);
 
     const [rows, total] = await Promise.all([
       this.prisma.order.findMany({
@@ -3766,6 +3813,15 @@ export class OrderService {
         0,
       );
       const count = counts.get(r.id);
+      // Workflow-facing item view: bill-only tests/panels are billed but never
+      // enter the lab workflow, so they're excluded from the Order Console's
+      // item names and report-status derivation (they have no samples/reports).
+      // `r.items` (all items) still feeds `billingRollups` above so they're billed.
+      const workflowItems = r.items.filter(
+        (it) =>
+          !it.branchLabTest?.isBillOnlyTest &&
+          !it.branchLabPanel?.isBillOnlyTest,
+      );
       // Runtime expiry (Quotations screen only): anchor on the order date, or
       // the quote's createdAt when no order date is set. `computedQuotationExpiryAt`
       // is the absolute expiry the FE renders as "valid till"; a DRAFT quote is
@@ -3794,13 +3850,14 @@ export class OrderService {
         itemCount: count?.total ?? 0,
         collectedItemCount: count?.collected ?? 0,
         // Order-level "Order Status": derived per-test from each item's LabReport.
-        reportStatus: deriveReportStatus(r.items, panelMemberCounts),
+        reportStatus: deriveReportStatus(workflowItems, panelMemberCounts),
         // Per-status report counts (all nine LabReport statuses) + the item
         // display names — drive the Order Console's "Report Status" and
         // "Order Item" columns. Counted per report so they match the technician
         // worklist; names resolved from the already-included test/panel refs.
-        reportStatusCounts: deriveReportStatusCounts(r.items),
-        itemNames: orderItemNames(r.items),
+        // Bill-only items are excluded (no workflow, no reports).
+        reportStatusCounts: deriveReportStatusCounts(workflowItems),
+        itemNames: orderItemNames(workflowItems),
         grossAmount,
         discountAmount,
         netAmount,
@@ -5188,12 +5245,25 @@ export class OrderService {
       return r.createdBy ?? null; // billing, outstanding
     };
 
-    const names = await this.resolveActorNames(rows.map(actorIdOf));
+    // One batched lookup covers BOTH the report's responsible actor AND every
+    // row's order creator (`createdBy`), so "Order Created By" is resolved for
+    // every report without a second round-trip.
+    const names = await this.resolveActorNames([
+      ...rows.map(actorIdOf),
+      ...rows.map((r) => r.createdBy),
+    ]);
     for (const r of rows) {
       const actorId = actorIdOf(r);
       // `resolveActorNames` only maps ids it actually found, so an unresolved id
       // becomes null rather than a raw UUID leaking to the client.
       r.responsibleUser = actorId ? (names.get(actorId) ?? null) : null;
+      // The order's ORIGINAL creator — resolved for every report, not just the
+      // ones whose responsible actor happens to be the creator — so each Finance
+      // page can show a consistent "Order Created By" independent of who performed
+      // the finance action (collect / refund / cancel).
+      r.orderCreatedByName = r.createdBy
+        ? (names.get(r.createdBy) ?? null)
+        : null;
 
       // Collection's stored `paymentDate` is operator-entered and date-only (UTC
       // midnight), so it carries no time — resolve it the same way orders do:
@@ -6021,6 +6091,9 @@ export class OrderService {
       }
     }
 
+    // Tenant timezone for re-classifying the order date (see classifyOrderDate).
+    const { timezone } = await this.tenantService.getLocale(tenantId);
+
     await this.prisma.withTenant(tenantId, async (tx) => {
       // Collects the ids of newly-created order items so the sample reconciler
       // knows which items to add samples for when the order is already accessioned.
@@ -6094,7 +6167,7 @@ export class OrderService {
           // Re-classify (BACKTRACKED / ADVANCE_DATED / CURRENT) whenever the order
           // date changes; leave the stored value untouched otherwise.
           orderDateType: dto.orderDate
-            ? this.classifyOrderDate(dto.orderDate)
+            ? classifyOrderDate(dto.orderDate, timezone)
             : undefined,
           orderType: dto.orderType,
           billingType: dto.billingType,
@@ -7788,10 +7861,28 @@ export class OrderService {
     if (!ids.length) {
       return map;
     }
+    // Exclude bill-only tests/panels — they're billed but never enter the lab
+    // workflow, so they must not inflate the Order Console's item/collected
+    // counts (or make a fully-collected order read as partially collected,
+    // since a bill-only item is never collected). Direct items (no catalogue
+    // ref) are unaffected.
+    const excludeBillOnly = {
+      NOT: {
+        OR: [
+          { branchLabTest: { isBillOnlyTest: true } },
+          { branchLabPanel: { isBillOnlyTest: true } },
+        ],
+      },
+    };
     const [grouped, collectedGrouped] = await Promise.all([
       this.prisma.orderItem.groupBy({
         by: ['orderId'],
-        where: { orderId: { in: ids }, tenantId, deletedAt: null },
+        where: {
+          orderId: { in: ids },
+          tenantId,
+          deletedAt: null,
+          ...excludeBillOnly,
+        },
         _count: { _all: true },
       }),
       this.prisma.orderItem.groupBy({
@@ -7801,6 +7892,7 @@ export class OrderService {
           tenantId,
           deletedAt: null,
           collectedAt: { not: null },
+          ...excludeBillOnly,
         },
         _count: { _all: true },
       }),

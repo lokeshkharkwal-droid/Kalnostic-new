@@ -44,6 +44,7 @@ import {
   PatientDocumentNotFoundException,
   PatientMobileConflictException,
   PatientNotFoundException,
+  PatientOtherBranchException,
   PatientUmIdConflictException,
   PatientUmIdRequiredException,
   PatientWriteConflictException,
@@ -115,6 +116,40 @@ const FAMILY_LINK_PERSON_SELECT = {
   ...FAMILY_MEMBER_SELECT,
   gender: true,
 } as const;
+
+/**
+ * `include` that loads a patient's active family in BOTH directions:
+ * `familyLinks` (patient is the anchor) and `familyMemberOf` (patient is the
+ * member). Links are stored once (anchor → member), see findFamilyMembers.
+ * Links whose other side is soft-deleted are skipped — deleting a patient must
+ * not leave an unloadable relative in the list.
+ */
+const FAMILY_INCLUDE = {
+  familyLinks: {
+    where: { deletedAt: null, member: { deletedAt: null } },
+    orderBy: { createdAt: 'desc' },
+    include: { member: { select: FAMILY_LINK_PERSON_SELECT } },
+  },
+  familyMemberOf: {
+    where: { deletedAt: null, patient: { deletedAt: null } },
+    orderBy: { createdAt: 'desc' },
+    include: { patient: { select: FAMILY_LINK_PERSON_SELECT } },
+  },
+} satisfies Prisma.PatientInclude;
+
+/** A patient row loaded with {@link FAMILY_INCLUDE}. */
+type PatientWithFamilyLinks = Prisma.PatientGetPayload<{
+  include: typeof FAMILY_INCLUDE;
+}>;
+
+/**
+ * Family-aware search: max matched patients considered before grouping them
+ * under their main patients (the Create Order dropdown shows 10 groups).
+ */
+const FAMILY_SEARCH_MATCH_CAP = 200;
+
+/** Family-aware search: max link levels walked up from a match to its main patient. */
+const FAMILY_ROOT_MAX_DEPTH = 5;
 
 /** A related person as loaded for a family link (member summary + `gender`). */
 type FamilyLinkPerson = FamilyMemberSummary['member'] & {
@@ -288,6 +323,33 @@ export class PatientService {
       return;
     }
     await this.ptCategoryService.findById(ptCategoryId, tenantId, branchId);
+  }
+
+  /**
+   * Patients are tenant-wide (listed and searchable from every branch), but
+   * their details may only be changed from the branch they are registered at,
+   * so one branch can't overwrite another's data (e.g. its per-branch PT
+   * category). Tenant-level profiles (no active branch) and patients with no
+   * registration branch may be changed from anywhere.
+   * @param patient the patient as currently stored
+   * @param activeBranchId the caller's active branch
+   * @throws PatientOtherBranchException if registered at a different branch
+   */
+  private assertEditableFromBranch(
+    patient: Patient,
+    activeBranchId: string | null,
+  ): void {
+    if (
+      activeBranchId &&
+      patient.branchId &&
+      patient.branchId !== activeBranchId
+    ) {
+      throw new PatientOtherBranchException(
+        patient.id,
+        patient.branchId,
+        activeBranchId,
+      );
+    }
   }
 
   /**
@@ -758,7 +820,10 @@ export class PatientService {
    * @param page 1-based page number
    * @param limit page size
    * @param filters optional search + category/status/isActive/gender/bloodGroup
-   *   + registration-date range + branch filters
+   *   + registration-date range + branch filters. With `includeFamily`, each
+   *   result carries its `familyMembers`, and a `search` is family-aware (see
+   *   {@link findFamilyGroupedForTenant}): matches are grouped under their main
+   *   patient instead of listing every household member as its own row.
    */
   async findAllForTenant(
     tenantId: string,
@@ -803,93 +868,264 @@ export class PatientService {
     }
     const search = filters.search?.trim();
     if (search) {
-      where.OR = [
-        { firstName: { contains: search, mode: 'insensitive' } },
-        { middleName: { contains: search, mode: 'insensitive' } },
-        { lastName: { contains: search, mode: 'insensitive' } },
-        { mobile: { contains: search, mode: 'insensitive' } },
-      ];
+      // Split into whitespace tokens and require EACH to match some name part
+      // or the mobile — so "Rajesh Dega" matches first name "Rajesh" + last
+      // name "Dega" (in any order), while a single token behaves as before.
+      // Matching the whole string against each field alone never matched a
+      // full name, since no single field contains "rajesh dega".
+      where.AND = search.split(/\s+/).map((token) => ({
+        OR: [
+          { firstName: { contains: token, mode: 'insensitive' } },
+          { middleName: { contains: token, mode: 'insensitive' } },
+          { lastName: { contains: token, mode: 'insensitive' } },
+          { mobile: { contains: token, mode: 'insensitive' } },
+        ],
+      }));
+      if (filters.includeFamily) {
+        return this.findFamilyGroupedForTenant(tenantId, page, limit, where);
+      }
+    }
+    if (!filters.includeFamily) {
+      const data = await this.prisma.patient.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      });
+      const total = await this.prisma.patient.count({ where });
+      return { data, total, page, limit };
     }
     const data = await this.prisma.patient.findMany({
       where,
       skip: (page - 1) * limit,
       take: limit,
       orderBy: { createdAt: 'desc' },
-      ...(filters.includeFamily
-        ? {
-            // Links are stored once (anchor → member), so load BOTH directions:
-            // `familyLinks` (patient is the anchor) and `familyMemberOf`
-            // (patient is the member). See findFamilyMembers for the rationale.
-            include: {
-              familyLinks: {
-                where: { deletedAt: null },
-                orderBy: { createdAt: 'desc' },
-                include: { member: { select: FAMILY_LINK_PERSON_SELECT } },
-              },
-              familyMemberOf: {
-                where: { deletedAt: null },
-                orderBy: { createdAt: 'desc' },
-                include: { patient: { select: FAMILY_LINK_PERSON_SELECT } },
-              },
-            },
-          }
-        : {}),
+      include: FAMILY_INCLUDE,
     });
     const total = await this.prisma.patient.count({ where });
-    if (!filters.includeFamily) {
-      return { data, total, page, limit };
-    }
-    const withFamily: PatientWithFamily[] = data.map((p) => {
-      const { familyLinks, familyMemberOf, ...patient } = p as Patient & {
-        familyLinks: Array<{
-          id: string;
-          relationship: Relationship;
-          member: FamilyLinkPerson;
-        }>;
-        familyMemberOf: Array<{
-          id: string;
-          relationship: Relationship;
-          patient: FamilyLinkPerson;
-        }>;
-      };
-      // Anchor side: relationship as stored. Member side: inverted relationship
-      // using the anchor's gender (see inverseRelationship).
-      const familyMembers: FamilyMemberSummary[] = [
-        ...familyLinks.map((l) =>
-          summarizeFamilyPerson(l.id, l.relationship, l.member),
-        ),
-        ...familyMemberOf.map((l) =>
-          summarizeFamilyPerson(
-            l.id,
-            inverseRelationship(l.relationship, l.patient.gender),
-            l.patient,
-          ),
-        ),
-      ];
-      return { ...patient, familyMembers };
+    return {
+      data: data.map((p) => this.toPatientWithFamily(p)),
+      total,
+      page,
+      limit,
+    };
+  }
+
+  /**
+   * Family-aware patient search (Create Order). Household members are
+   * independent patients that share the anchor's mobile, so a plain match lists
+   * the anchor AND every member as separate rows. Instead:
+   *   1. find the matching patients (capped at {@link FAMILY_SEARCH_MATCH_CAP});
+   *   2. walk each match up its ACTIVE family links (anchor not soft-deleted)
+   *      to its main patient(s) — a patient with no active anchor. The walk is
+   *      cycle-safe and bounded by {@link FAMILY_ROOT_MAX_DEPTH}; if every
+   *      reachable patient sits in a link cycle, one is chosen deterministically
+   *      (not flagged as a family member first, then oldest);
+   *   3. return each main patient ONCE (ordered by its first match), with its
+   *      family nested plus which members matched (`matchedMemberIds`) and any
+   *      matched members deeper than a direct link (`indirectMatches`).
+   * `total` counts the main patients found among the capped matches.
+   * @param tenantId tenant scope
+   * @param page 1-based page number (over main patients)
+   * @param limit page size (main patients per page)
+   * @param where the plain match filter (tenant, filters and search `OR`)
+   * @returns a page of main patients with their family and match info
+   */
+  private async findFamilyGroupedForTenant(
+    tenantId: string,
+    page: number,
+    limit: number,
+    where: Prisma.PatientWhereInput,
+  ): Promise<PaginatedResult<PatientWithFamily>> {
+    const matches = await this.prisma.patient.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: FAMILY_SEARCH_MATCH_CAP,
+      select: { id: true },
     });
-    return { data: withFamily, total, page, limit };
+    const matchIds = matches.map((m) => m.id);
+
+    // Walk up active anchor links level by level (batched per level).
+    const parents = new Map<string, string[]>();
+    const expanded = new Set<string>();
+    const visited = new Set<string>(matchIds);
+    let frontier = [...matchIds];
+    for (
+      let depth = 0;
+      depth < FAMILY_ROOT_MAX_DEPTH && frontier.length > 0;
+      depth++
+    ) {
+      const links = await this.prisma.patientFamilyLink.findMany({
+        where: {
+          tenantId,
+          deletedAt: null,
+          memberId: { in: frontier },
+          patient: { deletedAt: null },
+        },
+        select: { patientId: true, memberId: true },
+      });
+      frontier.forEach((id) => expanded.add(id));
+      const next: string[] = [];
+      for (const l of links) {
+        if (l.patientId === l.memberId) continue; // self-link: not an anchor
+        parents.set(l.memberId, [
+          ...(parents.get(l.memberId) ?? []),
+          l.patientId,
+        ]);
+        if (!visited.has(l.patientId)) {
+          visited.add(l.patientId);
+          next.push(l.patientId);
+        }
+      }
+      frontier = next;
+    }
+
+    // Each match → the main patients reachable above it (or itself).
+    const reachableFrom = (id: string): string[] => {
+      const seen = new Set<string>([id]);
+      const stack = [id];
+      while (stack.length > 0) {
+        const cur = stack.pop() as string;
+        for (const p of parents.get(cur) ?? []) {
+          if (!seen.has(p)) {
+            seen.add(p);
+            stack.push(p);
+          }
+        }
+      }
+      return [...seen];
+    };
+    // A patient is a main patient when it has no active anchor — or when the
+    // depth cap stopped the walk before its anchors were loaded.
+    const isRoot = (id: string): boolean =>
+      !expanded.has(id) || (parents.get(id)?.length ?? 0) === 0;
+
+    const rootsByMatch = new Map<string, string[]>();
+    const cyclic = new Map<string, string[]>();
+    for (const id of matchIds) {
+      const reachable = reachableFrom(id);
+      const roots = reachable.filter(isRoot);
+      if (roots.length > 0) rootsByMatch.set(id, roots.sort());
+      else cyclic.set(id, reachable);
+    }
+    if (cyclic.size > 0) {
+      const candidates = await this.prisma.patient.findMany({
+        where: {
+          tenantId,
+          deletedAt: null,
+          id: { in: [...new Set([...cyclic.values()].flat())] },
+        },
+        select: { id: true, isFamilyMember: true, createdAt: true },
+      });
+      const rank = (a: (typeof candidates)[number], b: typeof a): number =>
+        Number(a.isFamilyMember) - Number(b.isFamilyMember) ||
+        a.createdAt.getTime() - b.createdAt.getTime() ||
+        a.id.localeCompare(b.id);
+      for (const [id, reachable] of cyclic) {
+        const [pick] = candidates
+          .filter((c) => reachable.includes(c.id))
+          .sort(rank);
+        rootsByMatch.set(id, [pick?.id ?? id]);
+      }
+    }
+
+    // Main patients in first-match order, with the members that matched.
+    const rootOrder: string[] = [];
+    const matchedBy = new Map<string, Set<string>>();
+    for (const id of matchIds) {
+      for (const root of rootsByMatch.get(id) ?? [id]) {
+        if (!matchedBy.has(root)) {
+          matchedBy.set(root, new Set());
+          rootOrder.push(root);
+        }
+        if (root !== id) matchedBy.get(root)?.add(id);
+      }
+    }
+    const pageIds = rootOrder.slice((page - 1) * limit, page * limit);
+    if (pageIds.length === 0) {
+      return { data: [], total: rootOrder.length, page, limit };
+    }
+
+    const rows = await this.prisma.patient.findMany({
+      where: { tenantId, deletedAt: null, id: { in: pageIds } },
+      include: FAMILY_INCLUDE,
+    });
+    const groups = pageIds
+      .map((id) => rows.find((r) => r.id === id))
+      .filter((r): r is PatientWithFamilyLinks => r !== undefined)
+      .map((r) => this.toPatientWithFamily(r));
+
+    // Matched members not directly linked to their main patient (deep chains).
+    const indirectIds = new Map<string, string[]>();
+    for (const g of groups) {
+      const direct = new Set((g.familyMembers ?? []).map((f) => f.member.id));
+      indirectIds.set(
+        g.id,
+        [...(matchedBy.get(g.id) ?? [])].filter((m) => !direct.has(m)),
+      );
+    }
+    const allIndirect = [...new Set([...indirectIds.values()].flat())];
+    const indirectPeople =
+      allIndirect.length > 0
+        ? await this.prisma.patient.findMany({
+            where: { tenantId, deletedAt: null, id: { in: allIndirect } },
+            select: FAMILY_MEMBER_SELECT,
+          })
+        : [];
+
+    const data: PatientWithFamily[] = groups.map((g) => ({
+      ...g,
+      matchedMemberIds: [...(matchedBy.get(g.id) ?? [])],
+      indirectMatches: indirectPeople.filter((p) =>
+        (indirectIds.get(g.id) ?? []).includes(p.id),
+      ),
+    }));
+    return { data, total: rootOrder.length, page, limit };
+  }
+
+  /**
+   * Flatten a patient loaded with {@link FAMILY_INCLUDE} into the list shape:
+   * `familyMembers` from both link directions — anchor side with the stored
+   * relationship, member side inverted using the anchor's gender (see
+   * inverseRelationship). A relative linked in both directions is listed once.
+   * @param row the patient with its `familyLinks` / `familyMemberOf`
+   * @returns the patient with `familyMembers` (relations stripped)
+   */
+  private toPatientWithFamily(row: PatientWithFamilyLinks): PatientWithFamily {
+    const { familyLinks, familyMemberOf, ...patient } = row;
+    const familyMembers: FamilyMemberSummary[] = [
+      ...familyLinks.map((l) =>
+        summarizeFamilyPerson(l.id, l.relationship, l.member),
+      ),
+      ...familyMemberOf.map((l) =>
+        summarizeFamilyPerson(
+          l.id,
+          inverseRelationship(l.relationship, l.patient.gender),
+          l.patient,
+        ),
+      ),
+    ].filter(
+      (f, i, all) =>
+        f.member.id !== patient.id &&
+        all.findIndex((o) => o.member.id === f.member.id) === i,
+    );
+    return { ...patient, familyMembers };
   }
 
   /**
    * Aggregate patient counts for the dashboard summary cards. Scoped to the
-   * caller's tenant (RLS + explicit `tenantId`) and, when provided, the active
-   * branch; excludes soft-deleted rows. "Active" means `isActive = true`.
+   * caller's tenant (RLS + explicit `tenantId`) — tenant-wide like the patient
+   * list; excludes soft-deleted rows. "Active" means `isActive = true`.
    * @param tenantId tenant scope (from the JWT)
-   * @param branchId optional active-branch scope (from the JWT profile)
    * @returns totals: all / active / male / female patients
    */
-  async getStats(
-    tenantId: string,
-    branchId?: string | null,
-  ): Promise<{
+  async getStats(tenantId: string): Promise<{
     totalPatients: number;
     totalActivePatients: number;
     totalMalePatients: number;
     totalFemalePatients: number;
   }> {
     const base: Prisma.PatientWhereInput = { tenantId, deletedAt: null };
-    if (branchId) base.branchId = branchId;
 
     const [
       totalPatients,
@@ -946,6 +1182,8 @@ export class PatientService {
    * @throws PatientNotFoundException if missing
    * @throws PatientMobileConflictException on a duplicate active mobile
    * @throws PtCategoryNotFoundException if `ptCategoryId` isn't valid for the branch
+   * @throws PatientOtherBranchException if registered at a different branch
+   *   than the caller's active branch (tenant-level profiles are exempt)
    */
   async update(
     id: string,
@@ -954,8 +1192,20 @@ export class PatientService {
     ctx: PatientWriteContext = { branchId: null },
   ): Promise<Patient> {
     const existing = await this.ensurePatient(id, tenantId);
-    await this.validatePtCategory(tenantId, ctx.branchId, dto.ptCategoryId);
-    const { dateOfBirth, ...rest } = dto;
+    this.assertEditableFromBranch(existing, ctx.branchId);
+    const patch: UpdatePatientDto = { ...dto };
+    // The saved category sent back unchanged is kept as-is without
+    // re-validation (it may since have been soft-deleted); any change is
+    // validated against the active branch.
+    if (
+      dto.ptCategoryId !== undefined &&
+      dto.ptCategoryId === existing.ptCategoryId
+    ) {
+      delete patch.ptCategoryId;
+    } else {
+      await this.validatePtCategory(tenantId, ctx.branchId, dto.ptCategoryId);
+    }
+    const { dateOfBirth, ...rest } = patch;
     const actorId = ctx.actorId;
     // An age that is NEW or CHANGED, with no date of birth sent along, was just told:
     // turn it into a date of birth. The same age sent back unchanged (Create Order re-saves
@@ -1099,14 +1349,31 @@ export class PatientService {
    * records, atomically.
    * @param id patient id
    * @param tenantId tenant scope
+   * @param activeBranchId the caller's active branch (`null` = tenant-level)
    * @throws PatientNotFoundException if missing
+   * @throws PatientOtherBranchException if registered at a different branch
    */
-  async remove(id: string, tenantId: string): Promise<Patient> {
-    await this.ensurePatient(id, tenantId);
+  async remove(
+    id: string,
+    tenantId: string,
+    activeBranchId: string | null = null,
+  ): Promise<Patient> {
+    const existing = await this.ensurePatient(id, tenantId);
+    this.assertEditableFromBranch(existing, activeBranchId);
     const now = new Date();
     return this.prisma.withTenant(tenantId, async (tx) => {
       await tx.medicalHistory.updateMany({
         where: { patientId: id, tenantId, deletedAt: null },
+        data: { deletedAt: now },
+      });
+      // Unlink the patient's family on both sides: an active link to a deleted
+      // anchor would otherwise keep its members out of family-aware search.
+      await tx.patientFamilyLink.updateMany({
+        where: {
+          tenantId,
+          deletedAt: null,
+          OR: [{ patientId: id }, { memberId: id }],
+        },
         data: { deletedAt: now },
       });
       return tx.patient.update({
@@ -1736,6 +2003,9 @@ export class PatientService {
         tenantId,
         deletedAt: null,
         OR: [{ patientId }, { memberId: patientId }],
+        // Skip links whose other side was soft-deleted (not loadable).
+        patient: { deletedAt: null },
+        member: { deletedAt: null },
       },
       orderBy: { createdAt: 'desc' },
       include: {

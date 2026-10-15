@@ -388,7 +388,10 @@ export class LabTestService {
       }),
       this.prisma.labTestResultParam.findMany({
         where: { labTestId, tenantId, deletedAt: null },
-        orderBy: { sortOrder: 'asc' },
+        // `createdAt` tie-breaks grandfathered rows that still share the
+        // default `sortOrder` 0 — so this (the Master Data editor's source)
+        // stays deterministic and identical to Test Entry's own ordering.
+        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
       }),
     ]);
     const [ranges, values] = await Promise.all([
@@ -1148,7 +1151,10 @@ export class LabTestService {
   ): Promise<Map<string, LabTestResultParam[]>> {
     const rows = await this.prisma.labTestResultParam.findMany({
       where: { labTestId: { in: ids }, tenantId, deletedAt: null },
-      orderBy: { sortOrder: 'asc' },
+      // `createdAt` tie-breaks grandfathered rows sharing the default
+      // `sortOrder` 0, keeping the list view deterministic and consistent
+      // with the Master Data editor and Test Entry.
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
     });
     return this.groupByKey(rows, (r) => r.labTestId);
   }
@@ -5184,7 +5190,7 @@ export class LabTestService {
   }
 
   /**
-   * Every (labAdapterId, unit, gender, age-band) group of TWO OR MORE ranges
+   * Every (labAdapterId, method, unit, gender, age-band) group of TWO OR MORE ranges
    * must carry exactly one `isDefault` range — an ambiguous group with none
    * would leave the technician screen unable to choose a range for an
    * analyzer's value. A group with only one range is exempt: there's no
@@ -5193,18 +5199,21 @@ export class LabTestService {
    * null (a range not scoped to any analyzer) — null is just another group
    * value.
    *
-   * The METHOD is deliberately NOT part of the key: an analyzer sends a value
-   * and its unit but never the method, so "which range does this analyzer's
-   * value get" is decided by analyzer + unit (+ the patient's gender/age), and
-   * the Default breaks the tie between several methods in the same unit. The
-   * unit ignores letter case and surrounding spaces ("g/dL" = "g/dl"),
-   * identical to the overlap check (a missing / null unit is the same as '').
+   * The METHOD is part of the key: each method has its own Default (the same rule
+   * as in Master Data's "Make Default", which only un-defaults ranges of the SAME
+   * parameter, analyzer, method, unit, gender and age band). The method is compared
+   * trimmed (the form sends it trimmed) and otherwise exactly, like the overlap check; a
+   * missing method is the same as ''. An analyzer does not send the method, so when
+   * several methods each have a Default for one analyzer + unit, the technician
+   * screen still decides by analyzer + unit and takes the first Default in its fixed
+   * candidate order (see `compareRangeCandidates`). The unit ignores letter case and
+   * surrounding spaces ("g/dL" = "g/dl"), identical to the overlap check (a missing /
+   * null unit is the same as '').
    *
-   * Because the overlap check partitions by (analyzer, method, unit), two
-   * ranges of one analyzer with the same unit and age band but DIFFERENT methods
-   * pass it and meet here as one group: exactly one of them must be the
-   * Default. (Two with the same method as well are already rejected by the
-   * overlap check, which runs first.) See
+   * Note: the overlap check (partition: analyzer, method, unit) runs first and already
+   * rejects two ranges that share this whole key, so this rule only fires for spellings
+   * the overlap check treats as different but this key treats as the same ("SLS" vs
+   * "SLS ", or a unit differing only in case). See
    * lab-test.service.default-grouping.spec.ts.
    */
   private assertAdapterDefaultsPresent(
@@ -5224,7 +5233,7 @@ export class LabTestService {
     const groups = new Map<string, typeof ranges>();
     for (const r of ranges) {
       const { from, to } = this.ageBoundsOf(r);
-      const key = `${r.labAdapterId ?? ''}\u0000${normalizeUnit(r.unit)}\u0000${r.gender ?? ReferenceGender.ALL}\u0000${ageRangeKey(from, to)}`;
+      const key = `${r.labAdapterId ?? ''}\u0000${(r.method ?? '').trim()}\u0000${normalizeUnit(r.unit)}\u0000${r.gender ?? ReferenceGender.ALL}\u0000${ageRangeKey(from, to)}`;
       const group = groups.get(key);
       if (group) group.push(r);
       else groups.set(key, [r]);
@@ -5233,13 +5242,13 @@ export class LabTestService {
       const defaultCount = group.filter((r) => r.isDefault).length;
       if (group.length > 1 && defaultCount === 0) {
         throw new ValidationException(
-          `Mark a Default range for parameter '${parameterCode}' (each analyzer + unit, or no analyzer, requires one Default per gender/age when more than one range applies)`,
+          `Mark a Default range for parameter '${parameterCode}' (each analyzer + method + unit, or no analyzer, requires one Default per gender/age when more than one range applies)`,
           { parameterCode },
         );
       }
       if (defaultCount > 1) {
         throw new ValidationException(
-          `Only one range can be Default per analyzer/unit/gender/age for parameter '${parameterCode}' (found ${defaultCount})`,
+          `Only one range can be Default per analyzer/method/unit/gender/age for parameter '${parameterCode}' (found ${defaultCount})`,
           { parameterCode },
         );
       }
@@ -5406,19 +5415,14 @@ export class LabTestService {
    * conditions overlap (or are identical), so a technician resolving a result
    * never finds two ranges that both apply.
    *
-   * Ranges with no analyzer (`labAdapterId` null): Method is deliberately NOT
-   * part of the overlap key — two such ranges for the same Gender/Age but
-   * different Method are still a real conflict for an unqualified result
-   * lookup, since nothing today resolves "which method" before applying a
-   * range. They're partitioned together as one group (the null `labAdapterId`
-   * value), separate from every real adapter's group.
-   *
-   * Ranges scoped to a real adapter: an adapter can report via more than one
-   * Method, and one Method can have more than one Unit, so two such rows only
-   * genuinely conflict when they share the exact same (labAdapterId, method,
-   * unit) AND their Gender/Age overlaps — checked as a separate partition per
-   * (labAdapterId, method, unit) group, never against the no-analyzer group or
-   * a different adapter's group.
+   * Two ranges only genuinely conflict when they share the exact same
+   * (labAdapterId, method, unit) AND their Gender/Age overlaps — checked as a
+   * separate partition per (labAdapterId, method, unit) group. A parameter can be
+   * measured by more than one Method, and one Method can have more than one Unit,
+   * so a different Method, or the same Method with a different Unit, is a different
+   * group. This holds for a range with an analyzer AND for a range without one (its
+   * `labAdapterId` is then null, which is its own value): a range without an
+   * analyzer is never compared against a real adapter's group.
    */
   private assertNoRangeOverlap(
     ranges: Array<{
@@ -5433,12 +5437,8 @@ export class LabTestService {
     }>,
     parameterCode: string,
   ): void {
-    const noAnalyzer = ranges.filter((r) => !r.labAdapterId);
-    this.assertNoRangeOverlapWithinGroup(noAnalyzer, parameterCode);
-
-    const adapterWise = ranges.filter((r) => !!r.labAdapterId);
-    const groups = new Map<string, typeof adapterWise>();
-    for (const r of adapterWise) {
+    const groups = new Map<string, typeof ranges>();
+    for (const r of ranges) {
       // The unit is compared ignoring letter case and surrounding spaces ("g/dL" = "g/dl").
       const key = `${r.labAdapterId ?? ''}\u0000${r.method ?? ''}\u0000${normalizeUnit(r.unit)}`;
       const group = groups.get(key);
@@ -5451,8 +5451,8 @@ export class LabTestService {
   }
 
   /** Shared O(n²) Gender/Age overlap check for one already-partitioned group
-   * of ranges (either all DEFAULT rows, or all ADAPTER rows sharing the same
-   * adapter+method+unit) — see {@link assertNoRangeOverlap}. */
+   * of ranges (all sharing the same analyzer (or none) + method + unit) — see
+   * {@link assertNoRangeOverlap}. */
   private assertNoRangeOverlapWithinGroup(
     group: Array<{
       gender?: ReferenceGender;

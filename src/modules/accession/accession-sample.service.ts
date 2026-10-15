@@ -119,6 +119,12 @@ interface SampleUnit {
   testName: string | null;
   departmentId: string | null;
   sample: LabTestSample | null;
+  /**
+   * Whether this unit's governing test/panel follows the normal sample workflow.
+   * `false` (Sample Flow = No) means the sample is auto-accepted at generation —
+   * collection is skipped and the test proceeds straight to the technician.
+   */
+  sampleFlow: boolean;
 }
 
 /**
@@ -286,6 +292,24 @@ export class OrderSampleService {
     // Flatten the order into (test × sample) units — panels expanded to tests.
     const units: SampleUnit[] = [];
     for (const item of items) {
+      // Bill Only Test/Panel: billed but never enters the lab workflow — generate
+      // no samples at all (so it never appears in accession/collection/technician/
+      // reporting). The item still counts toward the order's bill. Auto-mark it
+      // collected — there is physically nothing to collect — so the Order Overview
+      // shows it as Collected rather than stuck Pending. Idempotent (only stamps
+      // a not-yet-collected item).
+      if (
+        item.branchLabTest?.isBillOnlyTest ||
+        item.branchLabPanel?.isBillOnlyTest
+      ) {
+        if (!item.collectedAt) {
+          await tx.orderItem.update({
+            where: { id: item.id },
+            data: { collectedAt: new Date(), collectedBy: personId },
+          });
+        }
+        continue;
+      }
       if (item.branchLabTest) {
         await this.collectTestUnits(
           tx,
@@ -293,15 +317,25 @@ export class OrderSampleService {
           item.id,
           item.branchLabTest,
           units,
+          item.branchLabTest.isSampleFlow,
         );
       } else if (item.branchLabPanel) {
+        // The panel's own Sample Flow governs all its member-test samples.
+        const panelSampleFlow = item.branchLabPanel.isSampleFlow;
         const tests = await this.panelConstituentTests(
           tx,
           tenantId,
           item.branchLabPanel.id,
         );
         for (const test of tests) {
-          await this.collectTestUnits(tx, tenantId, item.id, test, units);
+          await this.collectTestUnits(
+            tx,
+            tenantId,
+            item.id,
+            test,
+            units,
+            panelSampleFlow,
+          );
         }
       }
       // `direct` free-text items resolve no LabTestSample and are skipped.
@@ -315,7 +349,16 @@ export class OrderSampleService {
         select: { accessionCounter: true },
       });
       const accessionNo = `ACC-${String(tenant.accessionCounter).padStart(5, '0')}`;
-      await tx.orderSample.create({
+      // Sample Flow = No: skip collection entirely — the sample is born ACCEPTED
+      // so the test proceeds straight to the technician (LabReports created below).
+      // Sample Flow = Yes (default): born NEW and follows the normal collect →
+      // accept workflow. A barcode is still assigned only on collect, so an
+      // auto-accepted sample keeps `barcode = null`.
+      const autoAccept = !unit.sampleFlow;
+      // Single timestamp for the auto-accept received+accepted pair (mirrors the
+      // normal `accept` transition, which stamps both receivedAt and acceptedAt).
+      const acceptedNow = autoAccept ? new Date() : null;
+      const created = await tx.orderSample.create({
         data: {
           tenantId,
           branchId,
@@ -332,7 +375,9 @@ export class OrderSampleService {
             unit.sample.sampleType ??
             unit.sample.containerType ??
             'General',
-          status: SampleStatus.NEW,
+          status: autoAccept ? SampleStatus.ACCEPTED : SampleStatus.NEW,
+          receivedAt: acceptedNow,
+          acceptedAt: acceptedNow,
           originBranchId: branchId,
           processingBranchId: branchId,
           createdBy: personId,
@@ -351,19 +396,36 @@ export class OrderSampleService {
               tenantId,
               branchId,
               action: 'generate',
-              toStatus: SampleStatus.NEW,
+              toStatus: autoAccept ? SampleStatus.ACCEPTED : SampleStatus.NEW,
+              reason: autoAccept
+                ? 'Sample Flow = No: auto-accepted at generation; sample collection skipped'
+                : undefined,
               changedBy: personId,
             },
           },
         },
+        select: { id: true },
       });
+      // Create the LabReport(s) for an auto-accepted sample so it surfaces in the
+      // technician worklist — the same path a normal accept takes. The nested
+      // `tests.create` above is already persisted, so the OrderSampleTest row
+      // this reads exists.
+      if (autoAccept) {
+        await this.ensureLabReportsForAcceptedSample(
+          tx,
+          tenantId,
+          created.id,
+          personId,
+        );
+      }
     }
 
     // Barcodes are no longer assigned at order creation — a sample is barcoded
     // only when it is actually collected (see `assignBarcodesOnCollectInTx`,
     // wired into every collect path). Samples are created here with
     // `barcode = null` and get their sequential, grouping-aware barcode at the
-    // moment of collection.
+    // moment of collection. Sample Flow = No samples skip collection, so they
+    // stay `barcode = null`.
   }
 
   /**
@@ -2744,6 +2806,44 @@ export class OrderSampleService {
   }
 
   /**
+   * Append a no-status-change history row (note + optional attachment) to a
+   * sample inside an existing, already tenant-scoped transaction. Used by
+   * transfer-side actions that carry the shared optional notes/attachment but
+   * perform no sample status transition (e.g. Assign Center §A.7), mirroring how
+   * `dispatch` records them on the sample via `transitionInTx`. No-ops when
+   * neither a note nor an attachment was supplied so an empty modal leaves no
+   * history noise.
+   * @throws OrderSampleNotFoundException if the sample is missing/soft-deleted
+   */
+  async recordNoteInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    personId: string | null,
+    sampleId: string,
+    action: string,
+    note: { notes?: string; attachmentUrl?: string },
+  ): Promise<void> {
+    if (!note.notes && !note.attachmentUrl) return;
+    const sample = await tx.orderSample.findFirst({
+      where: { id: sampleId, tenantId, deletedAt: null },
+    });
+    if (!sample) throw new OrderSampleNotFoundException(sampleId);
+    await tx.orderSampleStatusHistory.create({
+      data: {
+        tenantId,
+        branchId: sample.branchId,
+        sampleId: sample.id,
+        action,
+        toStatus: sample.status,
+        fromStatus: sample.status,
+        notes: note.notes ?? null,
+        attachmentUrl: note.attachmentUrl ?? null,
+        changedBy: personId,
+      },
+    });
+  }
+
+  /**
    * Update Sample (§A.10.3) — records a note/attachment with no status change.
    * Refused on a cancelled order (its samples are frozen; the legacy system had no
    * way to add a sample note after a cancel either). Share & Inform is NOT refused:
@@ -3833,6 +3933,7 @@ export class OrderSampleService {
       configSnapshot: Prisma.JsonValue;
     },
     units: SampleUnit[],
+    sampleFlow: boolean,
   ): Promise<void> {
     const departmentId = await this.resolveDepartmentId(
       tx,
@@ -3854,6 +3955,7 @@ export class OrderSampleService {
         testName: test.testName,
         departmentId,
         sample: null,
+        sampleFlow,
       });
       return;
     }
@@ -3864,6 +3966,7 @@ export class OrderSampleService {
         testName: test.testName,
         departmentId,
         sample,
+        sampleFlow,
       });
     }
   }

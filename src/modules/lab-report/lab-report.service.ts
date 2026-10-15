@@ -65,8 +65,10 @@ import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-temp
 import { PdfTemplateConfigService } from '../pdf-report-template/pdf-template-config.service';
 import {
   escapeHtml,
+  escapeHtmlKeepLines,
   toText,
 } from '../pdf-report-template/services/pdf-document.util';
+import { observedValueHtml } from './utils/print-value.util';
 import type { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
 import { TechnicianSettingsService } from '../technician-settings/technician-settings.service';
 import { UpdateContentSectionsDto } from './dto/update-content-sections.dto';
@@ -78,6 +80,7 @@ import {
 } from '../pdf-report-template/dto/generate-pdf.dto';
 import {
   LAB_REPORT_ALLOWED_FROM,
+  LAB_REPORT_RESULT_EDIT_STATUSES,
   LAB_REPORT_DETAIL_INCLUDE,
   LAB_REPORT_LIST_INCLUDE,
   LabReportContentSections,
@@ -91,6 +94,9 @@ import {
   LabReportStatusCounts,
   LabReportTransitionAction,
   LabReportWorklistRow,
+  SIGNING_DOCTOR_SELECT,
+  doctorCertifications,
+  doctorQualification,
   WorklistTat,
   fullName,
   toWorklistRow,
@@ -109,6 +115,7 @@ import {
   LabReportPrintOrderCancelledException,
   LabReportSampleMissingException,
   LabReportResultsRequiredException,
+  LabReportResultsNotEditableException,
   LabReportNotesRequiredException,
   LabReportNotFoundException,
   LabReportValueChangedException,
@@ -121,6 +128,7 @@ import {
   ReportingWindowClosedException,
 } from './exceptions/lab-report.exceptions';
 import {
+  abnormalFlagStyle,
   candidateAgeMatch,
   candidateAgeRank,
   compareRangeCandidates,
@@ -128,14 +136,19 @@ import {
   type ExactAge,
   genderMatches,
   isExactAgeMatch,
+  isObservedAbnormal,
   rangeAgeMatch,
   sortRangesByAgeSpecificity,
 } from './utils/reference-range.util';
 import {
   classifyResultValueSave,
   describeAnalyzerOverwrite,
+  formatMomentForAudit,
 } from './utils/result-value-save.util';
-import { buildTestFileAttachmentHtml } from './utils/test-file-attachment.util';
+import {
+  buildTestFileAttachmentAppendHtml,
+  buildTestFileAttachmentHtml,
+} from './utils/test-file-attachment.util';
 import {
   assertReportWritable,
   findSentOutReportIds,
@@ -256,6 +269,13 @@ export class LabReportService {
   ) {}
 
   private readonly logger = new Logger(LabReportService.name);
+
+  /** A lab's time zone changes almost never, so it is remembered for a few minutes instead of being read on every save. */
+  private readonly timezoneCache = new Map<
+    string,
+    { timezone: string; readAt: number }
+  >();
+  private static readonly TIMEZONE_CACHE_MS = 5 * 60 * 1000;
 
   /** The messaging feature key the Order Console "Share" flow resolves templates by. */
   private static readonly SHARE_FEATURE = 'console_lab_report_as_attachment';
@@ -2221,6 +2241,41 @@ export class LabReportService {
   }
 
   /**
+   * Add `analyzerName` to each value an analyzer filled (`enteredBy` is then the analyzer's
+   * id): one batched lookup, none when no value came from an analyzer. The screen shows the
+   * name when it asks whether to overwrite the analyzer's result. A name that cannot be
+   * found is `null`.
+   */
+  private async attachAnalyzerNames<
+    T extends { source: ResultValueSource; enteredBy: string | null },
+  >(
+    tenantId: string,
+    values: T[],
+  ): Promise<Array<T & { analyzerName: string | null }>> {
+    const ids = [
+      ...new Set(
+        values
+          .filter((v) => v.source === ResultValueSource.ADAPTER && v.enteredBy)
+          .map((v) => v.enteredBy as string),
+      ),
+    ];
+    const adapters = ids.length
+      ? await this.prisma.labAdapter.findMany({
+          where: { id: { in: ids }, tenantId },
+          select: { id: true, name: true },
+        })
+      : [];
+    const nameById = new Map(adapters.map((a) => [a.id, a.name]));
+    return values.map((v) => ({
+      ...v,
+      analyzerName:
+        v.source === ResultValueSource.ADAPTER && v.enteredBy
+          ? (nameById.get(v.enteredBy) ?? null)
+          : null,
+    }));
+  }
+
+  /**
    * Flattens `findById`'s raw nested tree into the same flat branch/
    * department/order/patient/referredByDoctor/referralPanel/test shape the
    * list endpoint (`findAll` -> `toWorklistRow` + attach* resolvers) already
@@ -2256,7 +2311,10 @@ export class LabReportService {
 
     return {
       ...worklistRow,
-      resultValues: report.resultValues,
+      resultValues: await this.attachAnalyzerNames(
+        tenantId,
+        report.resultValues,
+      ),
       notes: report.notes,
       attachments: report.attachments,
       multiStepProcess: report.multiStepProcess,
@@ -2581,10 +2639,13 @@ export class LabReportService {
         groupName: true,
         overallResultGroups: true,
       },
-      // Test Entry orders parameters within a group by creation time, not
-      // result-type or the admin-configurable `sortOrder` — see
-      // `LabReportResultParam.createdAt`.
-      orderBy: { createdAt: 'asc' },
+      // Test Entry must list parameters in the SAME order the admin configured
+      // them in Master Data's "Add Result" section — i.e. the catalogue's
+      // `sortOrder` (persisted from that grid's row order, and also what the
+      // Master Data read and Print/Download both use). `createdAt` is only a
+      // deterministic tie-breaker for grandfathered rows whose `sortOrder` is
+      // still the default 0.
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
     });
   }
 
@@ -2708,7 +2769,9 @@ export class LabReportService {
     id: string,
     tenantId: string,
   ): Promise<void> {
-    const hasRealValue = await this.prisma.labReportResultValue.findFirst({
+    // A reading made only of spaces, tabs or line breaks is not a result (an analyzer can send one):
+    // the screen already treats it as empty, so the server must too.
+    const readings = await this.prisma.labReportResultValue.findMany({
       where: {
         labReportId: id,
         tenantId,
@@ -2716,15 +2779,32 @@ export class LabReportService {
         observed1: { not: null },
         NOT: { observed1: '' },
       },
-      select: { id: true },
+      select: { observed1: true },
     });
-    if (hasRealValue) return;
+    if (readings.some((r) => (r.observed1 ?? '').trim() !== '')) return;
 
     const hasAttachment = await this.prisma.labReportAttachment.findFirst({
       where: { labReportId: id, tenantId, deletedAt: null },
       select: { id: true },
     });
     if (!hasAttachment) throw new LabReportResultsRequiredException(id);
+  }
+
+  /**
+   * The lab's IANA time zone (for example `Asia/Kolkata`), remembered per tenant for
+   * {@link LabReportService.TIMEZONE_CACHE_MS} so a save does not read the tenant every time.
+   *
+   * @param tenantId the lab's tenant
+   */
+  private async labTimezone(tenantId: string): Promise<string> {
+    const now = Date.now();
+    const hit = this.timezoneCache.get(tenantId);
+    if (hit && now - hit.readAt < LabReportService.TIMEZONE_CACHE_MS) {
+      return hit.timezone;
+    }
+    const { timezone } = await this.tenantService.getLocale(tenantId);
+    this.timezoneCache.set(tenantId, { timezone, readAt: now });
+    return timezone;
   }
 
   private assertTransition(
@@ -2819,6 +2899,16 @@ export class LabReportService {
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.requireReport(id, tenantId, activeBranchId);
 
+    // Values are only editable before the report is submitted: a stale screen (or any other client) must not change
+    // the result of a report that has already moved on. Refused before anything is read or written.
+    if (
+      !(LAB_REPORT_RESULT_EDIT_STATUSES as readonly string[]).includes(
+        report.status,
+      )
+    ) {
+      throw new LabReportResultsNotEditableException(id, report.status);
+    }
+
     // Reject any submitted resultParamId that isn't actually one of this
     // report's own parameters (e.g. a stray/mistaken id from a different lab
     // test) — without this, the upsert below would silently create a
@@ -2840,6 +2930,10 @@ export class LabReportService {
         throw new InvalidResultParamException(id, value.resultParamId);
       }
     }
+
+    // The lab's time zone, to write "when the analyzer sent it" in the Audit Trail. Read here,
+    // outside the transaction below: a query made from inside it would not carry the tenant.
+    const timezone = await this.labTimezone(tenantId);
 
     await this.prisma.withTenant(tenantId, async (tx) => {
       await this.lockReportForWrite(tx, tenantId, id);
@@ -2873,16 +2967,29 @@ export class LabReportService {
       }
 
       for (const { value, stored, mode } of plan) {
-        if (mode === 'keep-analyzer') {
-          // The analyzer's value was not touched: it stays the analyzer's (source, analyzer id
-          // and time unchanged). Only the range, method and display text may be updated, and
-          // the unit only when the analyzer sent none.
-          const data = {
-            methodology: value.methodology,
-            referenceRangeId: value.referenceRangeId,
-            referenceDisplay: value.referenceDisplay,
-            ...(stored?.unit == null ? { unit: value.unit } : {}),
-          };
+        if (mode === 'keep-analyzer' || mode === 'overwrite-analyzer') {
+          // A value an analyzer filled always stays the analyzer's record: source, analyzer id
+          // (`enteredBy`) and time are never changed, whoever edits it. When the technician
+          // left the number alone only the range, method and display text may be updated (and
+          // the unit only when the analyzer sent none). When the technician changed the
+          // number, the new number, unit and range are stored and the change (who, when, old
+          // and new value) is written to the Audit Trail below.
+          const data =
+            mode === 'overwrite-analyzer'
+              ? {
+                  observed1: value.observed1,
+                  observed2: value.observed2,
+                  unit: value.unit,
+                  methodology: value.methodology,
+                  referenceRangeId: value.referenceRangeId,
+                  referenceDisplay: value.referenceDisplay,
+                }
+              : {
+                  methodology: value.methodology,
+                  referenceRangeId: value.referenceRangeId,
+                  referenceDisplay: value.referenceDisplay,
+                  ...(stored?.unit == null ? { unit: value.unit } : {}),
+                };
           if (Object.values(data).some((v) => v !== undefined)) {
             await tx.labReportResultValue.update({
               where: {
@@ -2938,8 +3045,9 @@ export class LabReportService {
         });
       }
 
-      // Every analyzer value a technician overwrote leaves an Audit Trail entry (who, the
-      // analyzer's old value, the new one): the analyzer's original is otherwise lost.
+      // Every analyzer value a technician edited leaves an Audit Trail entry: who (the entry's
+      // actor), when (the entry's time), the old value, the new one, and when the analyzer sent
+      // the value (the row's own `enteredAt`, which an edit never changes).
       const overwritten = plan.filter(
         (p) => p.mode === 'overwrite-analyzer' && p.stored,
       );
@@ -2975,6 +3083,9 @@ export class LabReportService {
                 : undefined,
               stored,
               value,
+              stored.enteredAt
+                ? formatMomentForAudit(stored.enteredAt, timezone)
+                : undefined,
             ),
           );
         }
@@ -3599,17 +3710,7 @@ export class LabReportService {
       doctorIds.length
         ? this.prisma.doctor.findMany({
             where: { id: { in: doctorIds }, tenantId, deletedAt: null },
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              signatoryDesignation: true,
-              registrationCouncil: true,
-              signatureImagePath: true,
-              isNablAuthorized: true,
-              isCapCertified: true,
-              isIsoCertified: true,
-            },
+            select: SIGNING_DOCTOR_SELECT,
           })
         : Promise.resolve([]),
     ]);
@@ -3629,18 +3730,13 @@ export class LabReportService {
       } else {
         const d = doctorById.get(slot.id);
         if (d) {
-          const certifications = [
-            d.isNablAuthorized ? 'NABL Authorized' : null,
-            d.isCapCertified ? 'CAP Certified' : null,
-            d.isIsoCertified ? 'ISO Certified' : null,
-          ]
-            .filter((c): c is string => c !== null)
-            .join(', ');
           signatories.push({
             name: fullName([d.firstName, d.lastName]),
             designation:
               d.signatoryDesignation ?? d.registrationCouncil ?? undefined,
-            certifications: certifications || undefined,
+            registrationNumber: d.registrationNo || undefined,
+            qualification: doctorQualification(d.qualifications) || undefined,
+            certifications: doctorCertifications(d) || undefined,
             signatureImage: d.signatureImagePath ?? undefined,
           });
         }
@@ -3651,8 +3747,11 @@ export class LabReportService {
 
   /**
    * Resolve the report's approving **Doctor** for the flat
-   * `{report_approved_by_*}` tags — name, designation, certifications and
-   * signature image. Per the product decision these tags are Doctor-only, so we
+   * `{report_approved_by_*}` tags — name, designation, certifications,
+   * qualification (the Doctor's active qualification degrees), registration
+   * no. and signature image. Every one of those tags reads this single Doctor,
+   * so they always describe the same approver. Per the product decision these
+   * tags are Doctor-only, so we
    * take the first signatory slot whose stored type is a Doctor
    * (`CONSULTANT_DOCTOR`/`REPORTING_DOCTOR`), ignoring `USER` slots (which have
    * no certifications/signature). Reads the report's own frozen signatory
@@ -3675,6 +3774,8 @@ export class LabReportService {
     name: string;
     designation: string;
     certifications: string;
+    qualification: string;
+    registrationNo: string;
     signatureImage: string;
   } | null> {
     const doctorSlot = [
@@ -3699,31 +3800,16 @@ export class LabReportService {
 
     const d = await this.prisma.doctor.findFirst({
       where: { id: doctorSlot.id, tenantId, deletedAt: null },
-      select: {
-        firstName: true,
-        lastName: true,
-        signatoryDesignation: true,
-        registrationCouncil: true,
-        isNablAuthorized: true,
-        isCapCertified: true,
-        isIsoCertified: true,
-        signatureImagePath: true,
-      },
+      select: SIGNING_DOCTOR_SELECT,
     });
     if (!d) return null;
-
-    const certifications = [
-      d.isNablAuthorized ? 'NABL Authorized' : null,
-      d.isCapCertified ? 'CAP Certified' : null,
-      d.isIsoCertified ? 'ISO Certified' : null,
-    ]
-      .filter((c): c is string => c !== null)
-      .join(', ');
 
     return {
       name: fullName([d.firstName, d.lastName]),
       designation: d.signatoryDesignation ?? d.registrationCouncil ?? '',
-      certifications,
+      certifications: doctorCertifications(d),
+      qualification: doctorQualification(d.qualifications),
+      registrationNo: d.registrationNo ?? '',
       signatureImage: d.signatureImagePath ?? '',
     };
   }
@@ -3876,10 +3962,17 @@ export class LabReportService {
               groupName: true,
               sortOrder: true,
               notes: true,
+              resultType: true,
             },
           });
     const paramNameById = new Map(
       resultParams.map((p) => [p.id, p.parameterName]),
+    );
+    // Only QUANTITATIVE parameters get the out-of-range abnormal-flag styling
+    // (requirement): a qualitative/semi-quantitative reading has no numeric
+    // lower/upper limit to compare against.
+    const resultTypeByParamId = new Map(
+      resultParams.map((p) => [p.id, p.resultType]),
     );
     const groupNameByParamId = new Map(
       resultParams.map((p) => [p.id, p.groupName ?? '']),
@@ -3913,6 +4006,66 @@ export class LabReportService {
       overallResultRows.map((r) => [r.resultParamId, r.content ?? '']),
     );
 
+    // Each saved reading carries the `referenceRangeId` resolved for it at entry
+    // time (by age/gender/method). Join those back to their numeric
+    // `lowerLimit`/`upperLimit` + configured `abnormalFlagLogic` so an
+    // out-of-range QUANTITATIVE reading can be rendered in its configured
+    // abnormal styling (Master Data → Reference Range). Same join as
+    // `findTrend`, plus `abnormalFlagLogic`.
+    const referenceRangeIds = [
+      ...new Set(
+        report.resultValues
+          .map((v) => v.referenceRangeId)
+          .filter((rid): rid is string => rid != null),
+      ),
+    ];
+    const referenceRanges =
+      referenceRangeIds.length === 0
+        ? []
+        : await this.prisma.labTestReferenceRange.findMany({
+            where: { id: { in: referenceRangeIds } },
+            select: {
+              id: true,
+              lowerLimit: true,
+              upperLimit: true,
+              abnormalFlagLogic: true,
+            },
+          });
+    const rangeById = new Map(referenceRanges.map((r) => [r.id, r]));
+
+    // Classify one observed reading: is it out of its resolved reference range
+    // (QUANTITATIVE only), and what is the display HTML? `abnormal` is the
+    // single source of truth for both the `{is_observed_*_abnormal}` tags and
+    // the styling — `html` is the escaped value, wrapped in the configured
+    // abnormal-flag markup only when abnormal, so `observed1`/`observed2` render
+    // as rich text downstream (see `RICH_TEXT_KEYS` in `template-render.service`
+    // and `buildTestBodyHtml`). `observed1` and `observed2` are classified
+    // independently against the same range — unlike the trend chart
+    // (`findTrend`), which flags `observed1` only.
+    const classifyObserved = (
+      raw: string,
+      resultParamId: string,
+      referenceRangeId: string | null,
+    ): { html: string; abnormal: boolean } => {
+      // Escaped, and a value written over several lines (or with spaces / tabs) keeps its whitespace exactly as typed.
+      const safe = observedValueHtml(raw);
+      const range = referenceRangeId
+        ? rangeById.get(referenceRangeId)
+        : undefined;
+      const abnormal = isObservedAbnormal(
+        raw,
+        resultTypeByParamId.get(resultParamId),
+        range,
+      );
+      if (!abnormal) {
+        return { html: safe, abnormal: false };
+      }
+      return {
+        html: `<span style="${abnormalFlagStyle(range!.abnormalFlagLogic)}">${safe}</span>`,
+        abnormal: true,
+      };
+    };
+
     // `resultValues` (the include on `LAB_REPORT_DETAIL_INCLUDE`) carries no
     // `orderBy` — rows come back in whatever order Postgres returns them,
     // not necessarily insertion or entry order. A multi-parameter test (e.g.
@@ -3924,21 +4077,44 @@ export class LabReportService {
         (sortOrderByParamId.get(b.resultParamId) ?? 0),
     );
 
-    const realResults = sortedResultValues.map((v) => ({
-      parameter_name: paramNameById.get(v.resultParamId) ?? '',
-      observed1: v.observed1 ?? '',
-      observed2: v.observed2 ?? '',
-      unit: v.unit ?? '',
-      methodology: v.methodology ?? '',
-      // Alias for the classic old-template tag name (`{method_name}`) — same
-      // value as `methodology`, kept separate so pre-existing lab_report
-      // templates authored against that tag don't need to be re-authored.
-      method_name: v.methodology ?? '',
-      reference_display: v.referenceDisplay ?? '',
-      group_name: groupNameByParamId.get(v.resultParamId) ?? '',
-      result_note: notesByParamId.get(v.resultParamId) ?? '',
-      overall_result: overallResultByParamId.get(v.resultParamId) ?? '',
-    }));
+    const realResults = sortedResultValues.map((v) => {
+      const o1 = classifyObserved(
+        v.observed1 ?? '',
+        v.resultParamId,
+        v.referenceRangeId,
+      );
+      const o2 = classifyObserved(
+        v.observed2 ?? '',
+        v.resultParamId,
+        v.referenceRangeId,
+      );
+      return {
+        parameter_name: paramNameById.get(v.resultParamId) ?? '',
+        // `observed1`/`observed2` are rich HTML (escaped, optionally wrapped in
+        // the configured abnormal-flag styling when out of range) so the
+        // `{observed1}`/`{observed2}` tags carry styling automatically.
+        // `*_raw` keeps the plain reading for internal, plain-text consumers
+        // (the Latte "has-a-result?" gate and the results summary).
+        // `is_observed_*_abnormal` is a boolean a template can branch on (e.g.
+        // a Latte `{if $row->is_observed_1_abnormal}` flag column).
+        observed1: o1.html,
+        observed2: o2.html,
+        observed1_raw: v.observed1 ?? '',
+        observed2_raw: v.observed2 ?? '',
+        is_observed_1_abnormal: o1.abnormal,
+        is_observed_2_abnormal: o2.abnormal,
+        unit: v.unit ?? '',
+        methodology: v.methodology ?? '',
+        // Alias for the classic old-template tag name (`{method_name}`) — same
+        // value as `methodology`, kept separate so pre-existing lab_report
+        // templates authored against that tag don't need to be re-authored.
+        method_name: v.methodology ?? '',
+        reference_display: v.referenceDisplay ?? '',
+        group_name: groupNameByParamId.get(v.resultParamId) ?? '',
+        result_note: notesByParamId.get(v.resultParamId) ?? '',
+        overall_result: overallResultByParamId.get(v.resultParamId) ?? '',
+      };
+    });
     const printedTestName =
       (testOrPanel && 'testName' in testOrPanel
         ? testOrPanel.testName
@@ -3961,7 +4137,8 @@ export class LabReportService {
         // The order's real date/time: the operator-entered `orderTime` when
         // one was typed, else the order's creation instant (`createdAt`) in the
         // tenant timezone — `orderTime` is usually unset, which used to print
-        // every order at `12:00 AM`. See `resolveOrderLocalDateTime`.
+        // every order at `12:00 AM`. See `resolveOrderLocalDateTime`. Like
+        // every report date below, printed per the tenant `date_format`/`time_format`.
         order_date: formatOrderPrintDate(order, timezone, dateFormat),
         order_date_time: formatOrderPrintDateTime(
           order,
@@ -4009,16 +4186,22 @@ export class LabReportService {
         last_report_prepared_on: lastReportPreparedOn
           ? formatReportDateTime(
               toBranchLocalInstant(lastReportPreparedOn, timezone),
+              dateFormat,
+              timeFormat,
             )
           : '',
         sample_collected_date: sample?.collectedAt
           ? formatReportDateTime(
               toBranchLocalInstant(sample.collectedAt, timezone),
+              dateFormat,
+              timeFormat,
             )
           : '',
         sample_received_date: sample?.receivedAt
           ? formatReportDateTime(
               toBranchLocalInstant(sample.receivedAt, timezone),
+              dateFormat,
+              timeFormat,
             )
           : '',
         sample_name: sample?.sampleName ?? '',
@@ -4030,6 +4213,8 @@ export class LabReportService {
         report_approved_by_name: approver?.name ?? '',
         report_approved_by_designation: approver?.designation ?? '',
         report_approved_by_certifications: approver?.certifications ?? '',
+        report_approved_by_qualification: approver?.qualification ?? '',
+        report_approved_by_registration_no: approver?.registrationNo ?? '',
         report_approved_by_signature: approver?.signatureImage ?? '',
         // Patient photo (persisted on `Patient.photoUrl`, set at registration).
         // Flat `{patient_image}` prints the URL; `{{image:patient_image}}`
@@ -4052,6 +4237,15 @@ export class LabReportService {
         test_file_attachment: hideResults
           ? ''
           : buildTestFileAttachmentHtml(report.attachments),
+        // `{test_file_attachment_without_header}` — the SAME File+ uploads, but
+        // as hidden markers the PDF pipeline turns into APPENDED pages at the end
+        // of the finished report (PDF merged as-is, image → one page) instead of
+        // drawing them inline. Printed unescaped (see `RICH_TEXT_KEYS`). Masked
+        // like `{test_file_attachment}`: an unfinished report must not append its
+        // uploaded files either (they can hold unsigned findings).
+        test_file_attachment_without_header: hideResults
+          ? ''
+          : buildTestFileAttachmentAppendHtml(report.attachments),
       },
       // Backs the `{{image:ID}}` tokens (and the bare barcode tags) for the
       // image-valued fields above — `TemplateRenderService.interpolateImages`
@@ -4268,7 +4462,8 @@ export class LabReportService {
    *    iterate identically); the shape is preserved so a grouped template still
    *    parses. The block-page-header's `$group_name` param is unused by the
    *    reference template, so grouping has no visual effect today.
-   *  - `header_fields` — the order/patient header block shared across pages.
+   *  - `header_fields` — the order/patient header block shared across pages
+   *    (incl. `order_code`, also aliased at the root as the bare `{order_code}`).
    *
    * Reuses {@link buildPrintContext} per report so every Part-A tag fix (dates,
    * `sample_source_label`, external id, patient photo, approver) is inherited.
@@ -4367,6 +4562,10 @@ export class LabReportService {
         : '',
       client_phone: patient.mobile ?? '',
       client_uhid: patient.umId ?? '',
+      // Order ID text (`Order.orderCode`, e.g. `ORD-00114`) — the same value
+      // `order_id_barcode` encodes. Also exposed at the context root so the
+      // bare `{order_code}` tag resolves (see the return below).
+      order_code: order.orderCode,
       external_order_id: order.externalOrderId ?? '',
       sample_source_label: sampleSourceLabel(diagnostics?.sampleSource),
       // Reference templates default an absent referrer/panel to the sentinel
@@ -4420,10 +4619,19 @@ export class LabReportService {
           sample_collected_date: toText(c?.variables?.sample_collected_date),
           sample_received_date: toText(c?.variables?.sample_received_date),
           report_prepared_on: preparedOn
-            ? formatReportDateTime(toBranchLocalInstant(preparedOn, timezone))
+            ? formatReportDateTime(
+                toBranchLocalInstant(preparedOn, timezone),
+                dateFormat,
+                timeFormat,
+              )
             : '',
           // This test's own File+ PDFs (`{$report->test_file_attachment|noescape}`).
           test_file_attachment: toText(c?.variables?.test_file_attachment),
+          // Same test's File+ files, but APPENDED at the report's end instead of
+          // drawn inline (`{$report->test_file_attachment_without_header|noescape}`).
+          test_file_attachment_without_header: toText(
+            c?.variables?.test_file_attachment_without_header,
+          ),
           // One visible test entry per report (a panel's sub-tests are already
           // flattened into `body_html`); drives the templates' display gate/count.
           tests: [{ display_test_sample: '1' }],
@@ -4446,6 +4654,9 @@ export class LabReportService {
         // Test-scoped: the first report's files must not print as the whole
         // order's. Use `{test_file_attachment}` inside `{{#each reports}}`.
         test_file_attachment: '',
+        // Same reasoning for the append variant — blank at the top level; use
+        // `{test_file_attachment_without_header}` inside `{{#each reports}}`.
+        test_file_attachment_without_header: '',
       },
       images: firstCtx?.images ?? {},
       sections: {
@@ -4459,12 +4670,17 @@ export class LabReportService {
             sample_received_date: rep.sample_received_date,
             report_prepared_on: rep.report_prepared_on,
             test_file_attachment: rep.test_file_attachment,
+            test_file_attachment_without_header:
+              rep.test_file_attachment_without_header,
             results_summary: rows
               .map((r) => {
                 const unit = toText(r.unit);
-                return `${toText(r.parameter_name)}: ${toText(r.observed1)}${
-                  unit ? ` ${unit}` : ''
-                }`.trim();
+                // Plain-text summary — use the raw reading, not the
+                // styled-HTML `observed1` (falling back to `observed1` for a
+                // context not built by `buildPrintContext`).
+                return `${toText(r.parameter_name)}: ${toText(
+                  r.observed1_raw ?? r.observed1,
+                )}${unit ? ` ${unit}` : ''}`.trim();
               })
               .filter((s) => s !== ':')
               .join('; '),
@@ -4485,6 +4701,10 @@ export class LabReportService {
       latteContext: {
         report_tests: { groups: [], tests: reports },
         header_fields: headerFields,
+        // Root alias so the flat-style bare `{order_code}` tag (the editor's
+        // "Order — order code" snippet) resolves in a Latte all-report template
+        // too; the flat fallback already carries it via `flatContext.variables`.
+        order_code: headerFields.order_code,
       },
       flatContext,
     };
@@ -4557,10 +4777,18 @@ export class LabReportService {
     const rows = (context?.sections?.results ?? []).map((r) => ({
       parameter_name: toText(r.parameter_name),
       method_name: toText(r.method_name ?? r.methodology),
-      // `value` is the ezHealthTrack "has a result?" gate; mirror observed1.
-      value: toText(r.observed1),
+      // `value` is the ezHealthTrack "has a result?" gate — mirror the raw
+      // reading (not the styled HTML, which would never be empty/falsey).
+      value: toText(r.observed1_raw ?? r.observed1),
+      // `observed1`/`observed2` carry the escaped + optionally abnormal-styled
+      // HTML; a Latte single-report template must print them with `|noescape`
+      // (e.g. `{$row->observed1|noescape}`) to show the styling.
       observed1: toText(r.observed1),
       observed2: toText(r.observed2),
+      // Real booleans (not stringified) so a Latte `{if $row->...}` branches
+      // correctly — e.g. a custom flag/arrow column.
+      is_observed_1_abnormal: r.is_observed_1_abnormal === true,
+      is_observed_2_abnormal: r.is_observed_2_abnormal === true,
       unit: toText(r.unit),
       reference_display: toText(r.reference_display),
       group_name: toText(r.group_name),
@@ -4576,6 +4804,7 @@ export class LabReportService {
       useful_for: toText(v.useful_for),
       interpretation: toText(v.interpretation),
       limitations: toText(v.limitations),
+      remarks: toText(v.remarks),
       references: toText(v.references),
       rows,
     };
@@ -4591,6 +4820,12 @@ export class LabReportService {
       report_approved_by_designation: toText(v.report_approved_by_designation),
       report_approved_by_certifications: toText(
         v.report_approved_by_certifications,
+      ),
+      report_approved_by_qualification: toText(
+        v.report_approved_by_qualification,
+      ),
+      report_approved_by_registration_no: toText(
+        v.report_approved_by_registration_no,
       ),
       report_approved_by_signature: toText(v.report_approved_by_signature),
     };
@@ -4614,9 +4849,11 @@ export class LabReportService {
       .map((row) => {
         const name = escapeHtml(toText(row.parameter_name));
         const method = escapeHtml(toText(row.methodology));
-        const value = escapeHtml(toText(row.observed1));
+        // `observed1` is already safe HTML from buildPrintContext (escaped, whitespace kept, abnormal styling): as-is.
+        const value = toText(row.observed1);
         const unit = escapeHtml(toText(row.unit));
-        const ref = escapeHtml(toText(row.reference_display));
+        // A reference range typed over several lines keeps its lines (see `escapeHtmlKeepLines`).
+        const ref = escapeHtmlKeepLines(toText(row.reference_display));
         const methodHtml = method
           ? `<div class="rr-method">${method}</div>`
           : '';
@@ -4637,7 +4874,7 @@ export class LabReportService {
       value
         ? `<div class="report-section"><b>${label}:</b> ${value}</div>`
         : '';
-    // interpretation/useful_for/limitations/references are rich-text HTML
+    // interpretation/useful_for/limitations/remarks/references are rich-text HTML
     // from a NotesRichTextEditor (LabReportService.buildPrintContext is the
     // source) — printed as-is. sample_note is a plain-text technician note,
     // so it keeps the usual escaping.
@@ -4645,6 +4882,7 @@ export class LabReportService {
       section('Interpretation', toText(v.interpretation)) +
       section('Useful For', toText(v.useful_for)) +
       section('Limitations', toText(v.limitations)) +
+      section('Remarks', toText(v.remarks)) +
       section('References', toText(v.references)) +
       section('Note', escapeHtml(toText(v.sample_note)));
 

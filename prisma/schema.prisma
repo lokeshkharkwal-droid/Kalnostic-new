@@ -709,13 +709,6 @@ enum Relationship {
   OTHER
 }
 
-/// How a doctor is paid out.
-enum DoctorPaymentMode {
-  BANK_TRANSFER
-  CASH
-  CHEQUE
-}
-
 /// Active/inactive lifecycle for a doctor record (distinct from soft delete;
 /// NULL deletedAt = not deleted).
 enum DoctorStatus {
@@ -780,14 +773,6 @@ enum PaymentCycle {
   QUARTERLY
   HALF_YEARLY
   ANNUALLY
-}
-
-/// How a referring panel is paid out. Mirrors DoctorPaymentMode but kept separate
-/// so the referral module can evolve independently (CLAUDE.md rule #3 spirit).
-enum ReferralPaymentMode {
-  BANK_TRANSFER
-  CASH
-  CHEQUE
 }
 
 /// Active/inactive lifecycle for a referral panel settings template (distinct from
@@ -2818,8 +2803,10 @@ model LabTest {
   isBillOnlyTest      Boolean @default(false) @map("is_bill_only_test")
   /// Whether this test participates in the sample-flow/routing pipeline.
   /// Excel "Sample Flow" column — previously a UI-only toggle with no
-  /// backing field (added 2026-09-06).
-  isSampleFlow        Boolean @default(false) @map("is_sample_flow")
+  /// backing field (added 2026-09-06). Default TRUE (2026-10-14): a test
+  /// follows the normal sample workflow (accession → collection) unless
+  /// explicitly set to No, which auto-accepts it and skips collection.
+  isSampleFlow        Boolean @default(true) @map("is_sample_flow")
   isMandatoryTest     Boolean @default(false) @map("is_mandatory_test")
 
   // Mandatory-test classification — real relations to the catalogue tables
@@ -3004,9 +2991,9 @@ model LabTestReferenceRange {
   // signal for that state; there is no separate type/flag field.
   labAdapterId String? @map("lab_adapter_id")
   gender       ReferenceGender @default(ALL)
-  // One default per (parameter, labAdapterId, unit, gender, age-band) group — the
-  // method is NOT part of the key (an analyzer never sends it). Validated in the
-  // backend (`assertAdapterDefaultsPresent`) and the admin dialogs
+  // One default per (parameter, labAdapterId, method, unit, gender, age-band) group —
+  // each method has its own Default. Validated in the backend
+  // (`assertAdapterDefaultsPresent`) and the admin dialogs
   // (`referenceRangeOverlap.ts`); not DB-enforced.
   isDefault    Boolean         @default(false) @map("is_default")
 
@@ -3175,6 +3162,12 @@ model LabPanel {
   isShowOnlineBooking   Boolean @default(true) @map("is_show_online_booking")
   isHomeCollection      Boolean @default(false) @map("is_home_collection")
   isAllowPartialBilling Boolean @default(false) @map("is_allow_partial_billing")
+  // Workflow flags (mirror the lab-test flags). isBillOnlyTest: the panel is
+  // billed but never enters the lab workflow (no accession/collection/technician/
+  // report for any of its member tests). isSampleFlow: when false the panel's
+  // samples are auto-accepted and skip collection, proceeding to the technician.
+  isBillOnlyTest        Boolean @default(false) @map("is_bill_only_test")
+  isSampleFlow          Boolean @default(true) @map("is_sample_flow")
 
   // Max tests removable in a single order (0 = no limit). Only meaningful when
   // isAllowPartialBilling = true (enforced in service + CHECK in prisma/rls.sql).
@@ -3347,6 +3340,13 @@ model BranchLabTest {
   isHideInOrderScreen Boolean @default(false) @map("is_hide_in_order_screen")
   isPreferenceTest    Boolean @default(false) @map("is_preference_test")
   isMandatoryTest     Boolean @default(false) @map("is_mandatory_test")
+  // Workflow flags mirrored from the source LabTest (propagated on import/sync).
+  // isBillOnlyTest: the test is billed but never enters the lab workflow (no
+  // accession/collection/technician/report). isSampleFlow: when false the test
+  // bypasses sample collection — its sample is auto-accepted and it proceeds
+  // straight to the technician. Default TRUE = normal collection flow.
+  isBillOnlyTest      Boolean @default(false) @map("is_bill_only_test")
+  isSampleFlow        Boolean @default(true) @map("is_sample_flow")
 
   // Mandatory-test classification (logical refs)
   mandatoryDeptId             String?             @map("mandatory_dept_id")
@@ -3476,6 +3476,10 @@ model BranchLabPanel {
   isShowOnlineBooking   Boolean @default(true) @map("is_show_online_booking")
   isHomeCollection      Boolean @default(false) @map("is_home_collection")
   isAllowPartialBilling Boolean @default(false) @map("is_allow_partial_billing")
+  // Workflow flags mirrored from the source LabPanel (propagated on import/sync).
+  // See LabPanel for semantics. Default TRUE isSampleFlow = normal collection.
+  isBillOnlyTest        Boolean @default(false) @map("is_bill_only_test")
+  isSampleFlow          Boolean @default(true) @map("is_sample_flow")
 
   maxTestsRemovable Int @default(0) @map("max_tests_removable")
 
@@ -4175,7 +4179,7 @@ model ReferralPanel {
 
   // ── Payment & incentive ──
   paymentCycle               PaymentCycle        @default(NA) @map("payment_cycle")
-  paymentMode                ReferralPaymentMode @default(BANK_TRANSFER) @map("payment_mode")
+  paymentMode                PaymentMode @default(BANK_TRANSFER) @map("payment_mode")
   monthlyTargetAmount        Int                 @default(0) @map("monthly_target_amount")
   isIncentiveBonusApplicable Boolean             @default(false) @map("is_incentive_bonus_applicable")
   bonusSlabs                 Json                @default("[]") @map("bonus_slabs")
@@ -4271,7 +4275,7 @@ model Doctor {
   bankName          String?           @map("bank_name")
   accountNumber     String?           @map("account_number")
   ifscCode          String?           @map("ifsc_code")
-  paymentMode       DoctorPaymentMode @default(BANK_TRANSFER) @map("payment_mode")
+  paymentMode       PaymentMode @default(BANK_TRANSFER) @map("payment_mode")
 
   // Charges
   consultationFee Decimal @default(0) @map("consultation_fee") @db.Decimal(10, 2)
@@ -4830,7 +4834,7 @@ model ReferralDoctor {
   // Payment & incentive (bonus slabs as JSON of
   // { monthlyBusinessFrom, monthlyBusinessTo, bonusPct }).
   paymentCycle               PaymentCycle        @default(NA) @map("payment_cycle")
-  paymentMode                ReferralPaymentMode @default(BANK_TRANSFER) @map("payment_mode")
+  paymentMode                PaymentMode @default(BANK_TRANSFER) @map("payment_mode")
   monthlyTargetAmount        Int                 @default(0) @map("monthly_target_amount")
   isIncentiveBonusApplicable Boolean             @default(false) @map("is_incentive_bonus_applicable")
   bonusSlabs                 Json                @default("[]") @map("bonus_slabs")
@@ -4971,7 +4975,7 @@ model ExternalReferral {
   // Payment & incentive (bonus slabs as JSON of
   // { monthlyBusinessFrom, monthlyBusinessTo, bonusPct }).
   paymentCycle               PaymentCycle        @default(NA) @map("payment_cycle")
-  paymentMode                ReferralPaymentMode @default(BANK_TRANSFER) @map("payment_mode")
+  paymentMode                PaymentMode @default(BANK_TRANSFER) @map("payment_mode")
   monthlyTargetAmount        Int                 @default(0) @map("monthly_target_amount")
   isIncentiveBonusApplicable Boolean             @default(false) @map("is_incentive_bonus_applicable")
   bonusSlabs                 Json                @default("[]") @map("bonus_slabs")
@@ -5049,7 +5053,7 @@ model InternalReferral {
   // { monthlyBusinessFrom, monthlyBusinessTo, bonusPct }).
   isIncludedInPayroll        Boolean             @default(false) @map("is_included_in_payroll")
   paymentCycle               PaymentCycle        @default(MONTHLY) @map("payment_cycle")
-  paymentMode                ReferralPaymentMode @default(BANK_TRANSFER) @map("payment_mode")
+  paymentMode                PaymentMode @default(BANK_TRANSFER) @map("payment_mode")
   commissionMode             CommissionMode      @default(INCLUDED_IN_SALARY) @map("commission_mode")
   monthlyTargetAmount        Int                 @default(0) @map("monthly_target_amount")
   isIncentiveBonusApplicable Boolean             @default(false) @map("is_incentive_bonus_applicable")
@@ -6907,17 +6911,6 @@ enum SettlementStatus {
   SETTLED
 }
 
-/// Payout mode captured per settlement-payment transaction (doc §8). Distinct from
-/// the order-level PaymentMode (which lacks CHEQUE) and ReferralPaymentMode (which
-/// lacks UPI/CARD).
-enum SettlementPayoutMode {
-  BANK_TRANSFER
-  UPI
-  CHEQUE
-  CASH
-  CARD
-}
-
 // ── Settlement models ────────────────────────────────────────────────────────────
 
 /// A consolidation of selected collection order records for one referral party,
@@ -7037,7 +7030,7 @@ model SettlementPayment {
   settlement   Settlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
 
   amount        Int
-  payoutMode    SettlementPayoutMode @map("payout_mode")
+  payoutMode    PaymentMode @map("payout_mode")
   reference     String
   attachmentUrl String?              @map("attachment_url")
   paymentDate   DateTime             @default(now()) @map("payment_date")

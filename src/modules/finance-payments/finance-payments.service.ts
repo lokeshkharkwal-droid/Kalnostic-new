@@ -178,8 +178,16 @@ export class FinancePaymentsService {
     // Sorting on the coarser display value reintroduces the tie instability the
     // DB `orderBy` fixes, so the merged page prefix must key off `createdAt`/`id`.
     const merged = [
-      ...directRows.map((r) => ({ item: this.mapDirect(r), at: r.createdAt.getTime(), id: r.id })),
-      ...invoiceRows.map((r) => ({ item: this.mapInvoice(r), at: r.createdAt.getTime(), id: r.id })),
+      ...directRows.map((r) => ({
+        item: this.mapDirect(r),
+        at: r.createdAt.getTime(),
+        id: r.id,
+      })),
+      ...invoiceRows.map((r) => ({
+        item: this.mapInvoice(r),
+        at: r.createdAt.getTime(),
+        id: r.id,
+      })),
     ].sort((a, b) => b.at - a.at || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
     const pageItems = merged.slice((page - 1) * limit, take).map((m) => m.item);
     await this.resolveNamesInPlace(tenantId, pageItems);
@@ -632,6 +640,9 @@ export class FinancePaymentsService {
       refId: r.reference,
       user: null,
       userId: o.createdBy,
+      // A Direct payment maps to exactly one order, so its creator is the order's.
+      orderCreatedById: o.createdBy,
+      orderCreatedByName: null,
       branch: null,
       branchId: r.branchId,
       status,
@@ -672,6 +683,10 @@ export class FinancePaymentsService {
       refId: r.reference,
       user: null,
       userId: r.createdBy,
+      // An invoice receipt aggregates many orders — there's no single order
+      // creator, so "Order Created By" is left blank (FE renders "—").
+      orderCreatedById: null,
+      orderCreatedByName: null,
       branch: null,
       branchId: r.branchId,
       status,
@@ -732,7 +747,11 @@ export class FinancePaymentsService {
   ): Promise<void> {
     const personIds = [
       ...new Set(
-        items.map((i) => i.userId).filter((x): x is string => Boolean(x)),
+        items
+          // Both the payment actor (`userId`) and the order creator
+          // (`orderCreatedById`) are Person ids — resolve them in one lookup.
+          .flatMap((i) => [i.userId, i.orderCreatedById])
+          .filter((x): x is string => Boolean(x)),
       ),
     ];
     const branchIds = [
@@ -774,6 +793,9 @@ export class FinancePaymentsService {
 
     for (const it of items) {
       it.user = it.userId ? (nameById.get(it.userId) ?? null) : null;
+      it.orderCreatedByName = it.orderCreatedById
+        ? (nameById.get(it.orderCreatedById) ?? null)
+        : null;
       it.branch = it.branchId ? (branchById.get(it.branchId) ?? null) : null;
     }
   }
