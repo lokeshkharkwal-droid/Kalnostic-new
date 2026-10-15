@@ -284,6 +284,45 @@ describe('upsertResultValues — ordinary saves are unchanged', () => {
   });
 });
 
+describe('upsertResultValues — a result is stored exactly as typed', () => {
+  // A Qualitative result is free text the user lays out by hand: nothing may trim, collapse or re-flow it.
+  const TYPED = [
+    '  leading spaces',
+    '',
+    '',
+    'tab\there',
+    '    - indented',
+    'two  spaces  inside',
+    'trailing spaces  ',
+    '',
+  ].join('\n');
+
+  it.each([
+    ['a layout with blank lines, tabs and indentation', TYPED],
+    ['Windows line endings', 'line one\r\nline two\r\n'],
+    ['only whitespace', '   \n  \n'],
+    ['markup and symbols', '<b>x</b> & y \u00b1 5 \u2192 \u201cquote\u201d'],
+  ])('%s', async (_label, typed) => {
+    const m = build([]);
+    await save(m, [{ resultParamId: P1, observed1: typed }]);
+    const up = m.labReportResultValue.upsert.mock.calls[0]![0];
+    expect(up.create?.observed1).toBe(typed);
+    expect(up.update?.observed1).toBe(typed);
+  });
+
+  it('a long text (5 000 lines) is stored whole', async () => {
+    const long = Array.from(
+      { length: 5000 },
+      (_, i) => 'line ' + i + ' ' + 'x'.repeat(10),
+    ).join('\n');
+    const m = build([]);
+    await save(m, [{ resultParamId: P1, observed1: long }]);
+    expect(
+      m.labReportResultValue.upsert.mock.calls[0]![0].create?.observed1,
+    ).toBe(long);
+  });
+});
+
 describe('upsertResultValues — a screen that is out of date', () => {
   it('is refused with nothing written when the analyzer re-sent after the screen loaded', async () => {
     const m = build([machine(P1), machine(P2, { observed1: '7.2' })]);

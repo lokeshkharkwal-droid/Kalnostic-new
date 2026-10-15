@@ -47,7 +47,9 @@ docs {
 
     Only the single-report template's BODY is rendered per test (not its header),
     so the patient/order header is not duplicated — the shared header comes from
-    the all-report template's own header block + `{$header_fields->...}`. This
+    the all-report template's own header block + `{$header_fields->...}` (the
+    Order ID is `{$header_fields->order_code}`, also available as the bare
+    `{order_code}` tag in both Latte and flat all-report templates). This
     mirrors the legacy ezHealthTrack "Body HTML" behaviour. When a test has no
     single-report template configured, its `body_html` falls back to a built-in
     minimal results table so the combined PDF still renders.

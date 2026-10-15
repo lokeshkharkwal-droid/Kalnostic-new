@@ -264,11 +264,20 @@ describe('LabTestService — one Default per analyzer + method + unit + gender +
       );
     });
 
-    it('analyzer-less ranges for different methods but the same gender/age are still rejected as similar', () => {
+    it('analyzer-less ranges for different methods and the same gender/age are separate groups: each may have its own Default', () => {
       expect(
         viaAssertParam([
           range({ method: 'M1', isDefault: true }),
           range({ method: 'M2', isDefault: true }),
+        ]),
+      ).toBe('ACCEPTED');
+    });
+
+    it('analyzer-less ranges for the same method, unit, gender and age are still rejected as similar', () => {
+      expect(
+        viaAssertParam([
+          range({ method: 'M1', isDefault: true }),
+          range({ method: 'M1' }),
         ]),
       ).toMatch(/similar reference range already exists/);
     });

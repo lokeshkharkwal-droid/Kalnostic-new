@@ -5409,19 +5409,14 @@ export class LabTestService {
    * conditions overlap (or are identical), so a technician resolving a result
    * never finds two ranges that both apply.
    *
-   * Ranges with no analyzer (`labAdapterId` null): Method is deliberately NOT
-   * part of the overlap key — two such ranges for the same Gender/Age but
-   * different Method are still a real conflict for an unqualified result
-   * lookup, since nothing today resolves "which method" before applying a
-   * range. They're partitioned together as one group (the null `labAdapterId`
-   * value), separate from every real adapter's group.
-   *
-   * Ranges scoped to a real adapter: an adapter can report via more than one
-   * Method, and one Method can have more than one Unit, so two such rows only
-   * genuinely conflict when they share the exact same (labAdapterId, method,
-   * unit) AND their Gender/Age overlaps — checked as a separate partition per
-   * (labAdapterId, method, unit) group, never against the no-analyzer group or
-   * a different adapter's group.
+   * Two ranges only genuinely conflict when they share the exact same
+   * (labAdapterId, method, unit) AND their Gender/Age overlaps — checked as a
+   * separate partition per (labAdapterId, method, unit) group. A parameter can be
+   * measured by more than one Method, and one Method can have more than one Unit,
+   * so a different Method, or the same Method with a different Unit, is a different
+   * group. This holds for a range with an analyzer AND for a range without one (its
+   * `labAdapterId` is then null, which is its own value): a range without an
+   * analyzer is never compared against a real adapter's group.
    */
   private assertNoRangeOverlap(
     ranges: Array<{
@@ -5436,12 +5431,8 @@ export class LabTestService {
     }>,
     parameterCode: string,
   ): void {
-    const noAnalyzer = ranges.filter((r) => !r.labAdapterId);
-    this.assertNoRangeOverlapWithinGroup(noAnalyzer, parameterCode);
-
-    const adapterWise = ranges.filter((r) => !!r.labAdapterId);
-    const groups = new Map<string, typeof adapterWise>();
-    for (const r of adapterWise) {
+    const groups = new Map<string, typeof ranges>();
+    for (const r of ranges) {
       // The unit is compared ignoring letter case and surrounding spaces ("g/dL" = "g/dl").
       const key = `${r.labAdapterId ?? ''}\u0000${r.method ?? ''}\u0000${normalizeUnit(r.unit)}`;
       const group = groups.get(key);
@@ -5454,8 +5445,8 @@ export class LabTestService {
   }
 
   /** Shared O(n²) Gender/Age overlap check for one already-partitioned group
-   * of ranges (either all DEFAULT rows, or all ADAPTER rows sharing the same
-   * adapter+method+unit) — see {@link assertNoRangeOverlap}. */
+   * of ranges (all sharing the same analyzer (or none) + method + unit) — see
+   * {@link assertNoRangeOverlap}. */
   private assertNoRangeOverlapWithinGroup(
     group: Array<{
       gender?: ReferenceGender;
