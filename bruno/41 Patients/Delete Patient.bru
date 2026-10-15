@@ -23,6 +23,11 @@ docs {
   medical-history records, in one transaction. Scoped to the caller's tenant.
   The patient's `mobile` is freed for reuse among active rows afterward.
   
+  Only from the patient's registration branch: a caller whose active branch
+  differs from the patient's `branchId` → 403 `PATIENT_OTHER_BRANCH` (nothing
+  is deleted). Exempt: tenant-level profiles (no active branch) and patients
+  with no registration branch.
+
   404 `PATIENT_NOT_FOUND` if missing/other tenant. A subsequent **Get Patient**
   returns 404.
 }

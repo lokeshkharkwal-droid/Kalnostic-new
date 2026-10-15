@@ -37,9 +37,16 @@ docs {
   optional — send only what changes; same field rules as **Create Patient**.
   This includes `status` (`DRAFT`/`CREATED`) — e.g. promote a `DRAFT` patient to
   `CREATED`, and `ptCategoryId` (a Registration Settings PT Category, validated
-  against the active branch; `null` clears it). Medical-history records are
-  managed via their own nested endpoints, NOT here.
-  
+  against the active branch; `null` clears it; the patient's current category
+  sent back unchanged is accepted without re-validation). Medical-history
+  records are managed via their own nested endpoints, NOT here.
+
+  **Branch rule:** patients are listed/searched tenant-wide, but only the
+  patient's registration branch may edit them. A caller whose active branch
+  differs from the patient's `branchId` → 403 `PATIENT_OTHER_BRANCH` (nothing
+  is changed). Exempt: tenant-level profiles (no active branch) and patients
+  with no registration branch.
+
   `tenantId`/`branchId` are never accepted. A duplicate active `mobile` in the
   tenant → 409 `PATIENT_MOBILE_CONFLICT`. 404 `PATIENT_NOT_FOUND` if
   missing/other tenant.
