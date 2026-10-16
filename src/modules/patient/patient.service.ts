@@ -326,11 +326,12 @@ export class PatientService {
   }
 
   /**
-   * Patients are tenant-wide (listed and searchable from every branch), but
-   * their details may only be changed from the branch they are registered at,
-   * so one branch can't overwrite another's data (e.g. its per-branch PT
-   * category). Tenant-level profiles (no active branch) and patients with no
-   * registration branch may be changed from anywhere.
+   * Patients are tenant-wide (listed, searchable and editable from every
+   * branch), but a patient may only be **deleted** from the branch they are
+   * registered at, so one branch can't remove another's record. Tenant-level
+   * profiles (no active branch) and patients with no registration branch may be
+   * deleted from anywhere. (Edits are allowed cross-branch — only the per-branch
+   * PT category is protected there; see `update`.)
    * @param patient the patient as currently stored
    * @param activeBranchId the caller's active branch
    * @throws PatientOtherBranchException if registered at a different branch
@@ -1182,8 +1183,10 @@ export class PatientService {
    * @throws PatientNotFoundException if missing
    * @throws PatientMobileConflictException on a duplicate active mobile
    * @throws PtCategoryNotFoundException if `ptCategoryId` isn't valid for the branch
-   * @throws PatientOtherBranchException if registered at a different branch
-   *   than the caller's active branch (tenant-level profiles are exempt)
+   * @remarks Details are editable from any branch in the tenant, but the
+   *   per-branch PT Category is owned by the patient's registration branch — a
+   *   cross-branch caller's `ptCategoryId` is ignored so one branch can't
+   *   overwrite another's category.
    */
   async update(
     id: string,
@@ -1192,12 +1195,19 @@ export class PatientService {
     ctx: PatientWriteContext = { branchId: null },
   ): Promise<Patient> {
     const existing = await this.ensurePatient(id, tenantId);
-    this.assertEditableFromBranch(existing, ctx.branchId);
     const patch: UpdatePatientDto = { ...dto };
-    // The saved category sent back unchanged is kept as-is without
-    // re-validation (it may since have been soft-deleted); any change is
+    // Patient details are editable tenant-wide, but PT Category is a per-branch
+    // field owned by the registration branch — never let another branch change
+    // it. Same branch: the saved category sent back unchanged is kept as-is
+    // without re-validation (it may since have been soft-deleted); any change is
     // validated against the active branch.
-    if (
+    const isOtherBranch =
+      !!ctx.branchId &&
+      !!existing.branchId &&
+      existing.branchId !== ctx.branchId;
+    if (isOtherBranch) {
+      delete patch.ptCategoryId;
+    } else if (
       dto.ptCategoryId !== undefined &&
       dto.ptCategoryId === existing.ptCategoryId
     ) {

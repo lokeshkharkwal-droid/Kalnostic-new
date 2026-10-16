@@ -183,8 +183,9 @@ export class PatientController {
   }
 
   /**
-   * Update a patient's details. Only from the patient's registration branch
-   * (or a tenant-level profile); other branches get `PATIENT_OTHER_BRANCH` (403).
+   * Update a patient's details. Editable from any branch in the tenant; only the
+   * per-branch PT Category is restricted to the patient's registration branch
+   * (a cross-branch caller's `ptCategoryId` is ignored, not rejected).
    */
   @Patch(':id')
   @RequirePermission(PERMISSION_KEYS.REG_UPDATE_PATIENT_DETAILS)

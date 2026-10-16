@@ -41,11 +41,14 @@ docs {
   sent back unchanged is accepted without re-validation). Medical-history
   records are managed via their own nested endpoints, NOT here.
 
-  **Branch rule:** patients are listed/searched tenant-wide, but only the
-  patient's registration branch may edit them. A caller whose active branch
-  differs from the patient's `branchId` → 403 `PATIENT_OTHER_BRANCH` (nothing
-  is changed). Exempt: tenant-level profiles (no active branch) and patients
-  with no registration branch.
+  **Branch rule:** patients are editable tenant-wide, but the per-branch
+  `ptCategoryId` is owned by the patient's registration branch. A caller whose
+  active branch differs from the patient's `branchId` can edit every other field,
+  but any `ptCategoryId` they send is silently ignored (the patient keeps its
+  current category) — no 403. Tenant-level profiles (no active branch), the
+  patient's own branch, and patients with no registration branch may change the
+  category too. (Deletes remain restricted to the registration branch — see
+  **Delete Patient**.)
 
   `tenantId`/`branchId` are never accepted. A duplicate active `mobile` in the
   tenant → 409 `PATIENT_MOBILE_CONFLICT`. 404 `PATIENT_NOT_FOUND` if
