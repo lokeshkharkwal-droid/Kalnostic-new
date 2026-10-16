@@ -58,9 +58,11 @@ export class ResultValueItemDto {
   isManualOverride?: boolean;
 
   /**
-   * The technician confirmed (in the "Overwrite the analyzer's value?" dialog) that they are
-   * changing an analyzer-filled value or its range. Forces the row to be saved as a human entry
-   * even when the number itself is unchanged (e.g. only the range was changed).
+   * The technician confirmed (in the "Overwrite the analyzer's result?" dialog) that they are
+   * changing an analyzer-filled value or its range. The edit is then written to the Audit Trail
+   * (who, when, old and new value) even when the number itself is unchanged (e.g. only the range
+   * was changed). The row itself stays the analyzer's record: its source, analyzer id and time
+   * are never changed by an edit.
    */
   @IsOptional()
   @IsBoolean()

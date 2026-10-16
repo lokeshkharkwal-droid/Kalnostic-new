@@ -174,10 +174,11 @@ export type LabReportDetailWithContent = LabReportDetail & {
  * See `LabReportService.findByIdForApi`'s doc comment for why this is
  * flattened rather than reusing `LabReportDetailWithContent` as-is. */
 export type LabReportDetailApiResponse = LabReportWorklistRow &
-  Pick<
-    LabReportDetail,
-    'resultValues' | 'notes' | 'attachments' | 'multiStepProcess'
-  > & {
+  Pick<LabReportDetail, 'notes' | 'attachments' | 'multiStepProcess'> & {
+    /** Each stored value; one an analyzer filled also carries that analyzer's name. */
+    resultValues: Array<
+      LabReportDetail['resultValues'][number] & { analyzerName?: string | null }
+    >;
     contentSections: LabReportContentSections;
     overallResults: LabReportOverallResult[];
     resultParams: LabReportResultParam[];
