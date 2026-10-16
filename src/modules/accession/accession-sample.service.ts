@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   AccessionGroupingMode,
@@ -204,6 +204,8 @@ function isTransferredStatus(status: SampleStatus): boolean {
  */
 @Injectable()
 export class OrderSampleService {
+  private readonly logger = new Logger(OrderSampleService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly settings: AccessionSettingsService,
@@ -341,6 +343,9 @@ export class OrderSampleService {
       // `direct` free-text items resolve no LabTestSample and are skipped.
     }
 
+    // Sample-Flow-No samples are auto-collected + auto-accepted below; collect their
+    // ids so their grouping-aware barcodes are assigned in one batch after the loop.
+    const autoCollectedIds: string[] = [];
     for (const unit of units) {
       if (!unit.sample) continue; // labTestSampleId is mandatory
       const tenant = await tx.tenant.update({
@@ -349,15 +354,16 @@ export class OrderSampleService {
         select: { accessionCounter: true },
       });
       const accessionNo = `ACC-${String(tenant.accessionCounter).padStart(5, '0')}`;
-      // Sample Flow = No: skip collection entirely — the sample is born ACCEPTED
-      // so the test proceeds straight to the technician (LabReports created below).
-      // Sample Flow = Yes (default): born NEW and follows the normal collect →
-      // accept workflow. A barcode is still assigned only on collect, so an
-      // auto-accepted sample keeps `barcode = null`.
+      // Sample Flow = No: the sample does NOT bypass the lab workflow — the full
+      // collect → accept lifecycle is run automatically here, at order creation, so
+      // the sample is born ACCEPTED with a real Collection + Acceptance time (and a
+      // barcode, assigned after this loop) and proceeds straight to the technician.
+      // Sample Flow = Yes (default): born NEW and follows the normal MANUAL collect →
+      // accept workflow (barcode assigned when the sample is actually collected).
       const autoAccept = !unit.sampleFlow;
-      // Single timestamp for the auto-accept received+accepted pair (mirrors the
-      // normal `accept` transition, which stamps both receivedAt and acceptedAt).
-      const acceptedNow = autoAccept ? new Date() : null;
+      // One timestamp for the auto collect + accept pair (collectedAt / receivedAt /
+      // acceptedAt), mirroring the manual `collect` then `accept` transitions.
+      const stampNow = autoAccept ? new Date() : null;
       const created = await tx.orderSample.create({
         data: {
           tenantId,
@@ -376,8 +382,13 @@ export class OrderSampleService {
             unit.sample.containerType ??
             'General',
           status: autoAccept ? SampleStatus.ACCEPTED : SampleStatus.NEW,
-          receivedAt: acceptedNow,
-          acceptedAt: acceptedNow,
+          // The status just before the final (accept) step, so a later Retrieve
+          // reverts an auto-accepted sample to COLLECTED (not NEW).
+          previousStatus: autoAccept ? SampleStatus.COLLECTED : null,
+          collectedAt: stampNow,
+          collectedBy: autoAccept ? personId : null,
+          receivedAt: stampNow,
+          acceptedAt: stampNow,
           originBranchId: branchId,
           processingBranchId: branchId,
           createdBy: personId,
@@ -391,17 +402,47 @@ export class OrderSampleService {
               testName: unit.testName,
             },
           },
+          // Record the real lifecycle so the Sample History reads coherently:
+          // generate → collect → accept for a Sample-Flow-No sample; just generate
+          // for a normal sample still awaiting manual collection.
           statusHistory: {
-            create: {
-              tenantId,
-              branchId,
-              action: 'generate',
-              toStatus: autoAccept ? SampleStatus.ACCEPTED : SampleStatus.NEW,
-              reason: autoAccept
-                ? 'Sample Flow = No: auto-accepted at generation; sample collection skipped'
-                : undefined,
-              changedBy: personId,
-            },
+            create: autoAccept
+              ? [
+                  {
+                    tenantId,
+                    branchId,
+                    action: 'generate',
+                    toStatus: SampleStatus.NEW,
+                    changedBy: personId,
+                  },
+                  {
+                    tenantId,
+                    branchId,
+                    action: 'collect',
+                    fromStatus: SampleStatus.NEW,
+                    toStatus: SampleStatus.COLLECTED,
+                    reason: 'Sample Flow = No: auto-collected at order creation',
+                    changedBy: personId,
+                  },
+                  {
+                    tenantId,
+                    branchId,
+                    action: 'accept',
+                    fromStatus: SampleStatus.COLLECTED,
+                    toStatus: SampleStatus.ACCEPTED,
+                    reason: 'Sample Flow = No: auto-accepted at order creation',
+                    changedBy: personId,
+                  },
+                ]
+              : [
+                  {
+                    tenantId,
+                    branchId,
+                    action: 'generate',
+                    toStatus: SampleStatus.NEW,
+                    changedBy: personId,
+                  },
+                ],
           },
         },
         select: { id: true },
@@ -411,6 +452,7 @@ export class OrderSampleService {
       // `tests.create` above is already persisted, so the OrderSampleTest row
       // this reads exists.
       if (autoAccept) {
+        autoCollectedIds.push(created.id);
         await this.ensureLabReportsForAcceptedSample(
           tx,
           tenantId,
@@ -420,12 +462,31 @@ export class OrderSampleService {
       }
     }
 
-    // Barcodes are no longer assigned at order creation — a sample is barcoded
-    // only when it is actually collected (see `assignBarcodesOnCollectInTx`,
-    // wired into every collect path). Samples are created here with
-    // `barcode = null` and get their sequential, grouping-aware barcode at the
-    // moment of collection. Sample Flow = No samples skip collection, so they
-    // stay `barcode = null`.
+    // Assign the sequential, grouping-aware barcodes to the Sample-Flow-No samples
+    // auto-collected above — the SAME collect-time logic the manual collect path
+    // uses (members of one grouping bucket share one barcode). A branchless order
+    // has no barcode counter, so those samples stay unbarcoded for a later manual
+    // Assign Barcode. This runs INSIDE the order-creation transaction, so it is
+    // wrapped: a barcode-IMAGE upload failure (e.g. S3 down/unconfigured) must NEVER
+    // roll back the order — the samples' collect/accept timestamps are already
+    // persisted and the barcode can be assigned later. Sample Flow = Yes samples
+    // stay `barcode = null` until they are actually collected.
+    if (autoCollectedIds.length > 0) {
+      try {
+        await this.assignBarcodesOnCollectInTx(
+          tx,
+          tenantId,
+          personId,
+          autoCollectedIds,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Auto-barcode for Sample-Flow-No samples failed on order ${orderId}; left unbarcoded for manual Assign Barcode: ${String(
+            err,
+          )}`,
+        );
+      }
+    }
   }
 
   /**
@@ -730,9 +791,10 @@ export class OrderSampleService {
    * the §A.9 `collect` transition → `COLLECTED` (stamping `collectedAt`/
    * `collectedBy`/`tubeType`, and — at collection time — a sequential,
    * grouping-aware barcode via `assignBarcodesOnCollectInTx`, regardless of
-   * `print`) and appends a history row. Because a sample is
-   * one physical tube shared by several tests, all sibling order items on a
-   * transitioned sample are stamped collected too (a tube is drawn once).
+   * `print`) and appends a history row. Because a sample is one physical tube
+   * shared by several tests, the tests it carries are collected with it; an
+   * order item is stamped collected once all of its own samples are collected
+   * (a multi-tube panel only after its last tube).
    * Idempotent: samples already past `NEW`/`HOLD`/`REPEAT` are skipped, so a
    * repeat click is a no-op. Safe no-op when the order has no samples yet (e.g.
    * a DRAFT / non-diagnostic order): nothing to transition.
@@ -826,10 +888,10 @@ export class OrderSampleService {
    * Collect one accession sample inside an existing (already tenant-scoped)
    * transaction: apply the §A.9 `collect` transition → `COLLECTED` (stamping
    * `collectedAt`/`collectedBy`/`tubeType`; the barcode is assigned separately,
-   * grouping-aware, by the batch caller `collectSamplesInTx`), then — because a
-   * sample is one
-   * physical tube shared by several tests — stamp every sibling order item on
-   * the sample collected too (a tube is drawn once). The caller must have already
+   * grouping-aware, by the batch caller `collectSamplesInTx`), then stamp each
+   * order item the sample carries as collected — but only once that item has no
+   * OTHER sample still awaiting collection, so a multi-sample panel is not marked
+   * collected after just its first tube. The caller must have already
    * confirmed the sample is in a collectable status. Shared by
    * {@link collectSamplesInTx} (group / per-item collect bridges).
    * @param now the shared collection timestamp for the batch
@@ -872,22 +934,32 @@ export class OrderSampleService {
       { notes: opts.notes, attachmentUrl: opts.attachmentUrl },
     );
 
-    // A tube is drawn once → every test it carries is collected together.
-    // Stamp all sibling order items on this sample (preserve already-set
-    // timestamps via `collectedAt: null`).
+    // A tube is drawn once → the tests it carries are collected with it. But an
+    // order item (notably a panel) can span SEVERAL tubes, so it is only truly
+    // collected once none of its samples remain to be drawn. Stamp each order
+    // item this sample carries only when it has no OTHER sample still awaiting
+    // collection — otherwise a multi-sample panel would read as collected after
+    // just its first tube. The just-collected sample is already `COLLECTED` (and
+    // carries `collectedAt`) at this point, so it is excluded from the pending
+    // count. (`collectedAt: null` in the update guard preserves an existing stamp.)
     const siblings = await tx.orderSampleTest.findMany({
       where: { sampleId, tenantId, deletedAt: null },
       select: { orderItemId: true },
     });
-    const siblingIds = siblings.map((t) => t.orderItemId);
-    if (siblingIds.length > 0) {
-      await tx.orderItem.updateMany({
+    const siblingItemIds = [...new Set(siblings.map((t) => t.orderItemId))];
+    for (const orderItemId of siblingItemIds) {
+      const pendingSamples = await tx.orderSample.count({
         where: {
-          id: { in: siblingIds },
           tenantId,
           deletedAt: null,
           collectedAt: null,
+          status: { in: [...COLLECTABLE_SAMPLE_STATUSES] },
+          tests: { some: { orderItemId, tenantId, deletedAt: null } },
         },
+      });
+      if (pendingSamples > 0) continue;
+      await tx.orderItem.updateMany({
+        where: { id: orderItemId, tenantId, deletedAt: null, collectedAt: null },
         data: { collectedAt: now, collectedBy: personId },
       });
     }

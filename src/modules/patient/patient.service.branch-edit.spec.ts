@@ -6,12 +6,13 @@ import { PatientService } from './patient.service';
 import { PatientOtherBranchException } from './exceptions/patient.exceptions';
 
 /**
- * Patients are tenant-wide (listed and searchable from every branch), but their
- * details may only be edited or deleted from their registration branch — so one
- * branch can't overwrite another's data, e.g. its per-branch PT category.
- * Tenant-level profiles (no active branch) and unassigned patients are exempt.
+ * Patients are tenant-wide (listed, searchable and editable from every branch),
+ * but the per-branch PT category is owned by the registration branch — a
+ * cross-branch edit silently keeps it rather than overwriting. Deletes are still
+ * restricted to the registration branch. Tenant-level profiles (no active
+ * branch) and unassigned patients are exempt.
  */
-describe('PatientService — edits only from the registration branch', () => {
+describe('PatientService — cross-branch edits keep the PT category', () => {
   let prisma: {
     patient: { findFirst: jest.Mock; update: jest.Mock };
     medicalHistory: { updateMany: jest.Mock };
@@ -57,17 +58,18 @@ describe('PatientService — edits only from the registration branch', () => {
   const fromBranch = (branchId: string | null) => ({ branchId, actorId: 'u1' });
 
   describe('update', () => {
-    it('rejects an edit from another branch and changes nothing', async () => {
-      await expect(
-        service.update(
-          'p1',
-          't1',
-          { firstName: 'Rajesh', ptCategoryId: 'cat-B' },
-          fromBranch('branch-B'),
-        ),
-      ).rejects.toBeInstanceOf(PatientOtherBranchException);
-      expect(prisma.patient.update).not.toHaveBeenCalled();
+    it("edits other fields from another branch but keeps the patient's PT category", async () => {
+      await service.update(
+        'p1',
+        't1',
+        { firstName: 'Rajesh', ptCategoryId: 'cat-B' },
+        fromBranch('branch-B'),
+      );
+      // The cross-branch PT category is ignored (not validated, not written),
+      // while the rest of the edit is applied.
       expect(findCategory).not.toHaveBeenCalled();
+      expect(updatedData()).toMatchObject({ firstName: 'Rajesh' });
+      expect(updatedData()).not.toHaveProperty('ptCategoryId');
     });
 
     it("changes the category from the patient's own branch", async () => {
