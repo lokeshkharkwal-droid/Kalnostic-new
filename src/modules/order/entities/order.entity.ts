@@ -400,10 +400,12 @@ export const ORDER_INCLUDE = {
       // an accession sample's `OrderSampleTest.labTestId` carries — so the Order
       // Console overview can join each EXPANDED panel-member row to its OWN
       // LabReport (status/approvedAt differ per member), not to a single
-      // per-order-item value.
+      // per-order-item value. `id` lets the Order Console print that one report
+      // directly (`POST /lab-reports/:id/print`), mirroring Technician Reporting.
       labReports: {
         where: { deletedAt: null },
         select: {
+          id: true,
           status: true,
           approvedAt: true,
           memberBranchLabTestId: true,

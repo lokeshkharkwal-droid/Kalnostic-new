@@ -741,9 +741,10 @@ export class OrderSampleService {
    * the §A.9 `collect` transition → `COLLECTED` (stamping `collectedAt`/
    * `collectedBy`/`tubeType`, and — at collection time — a sequential,
    * grouping-aware barcode via `assignBarcodesOnCollectInTx`, regardless of
-   * `print`) and appends a history row. Because a sample is
-   * one physical tube shared by several tests, all sibling order items on a
-   * transitioned sample are stamped collected too (a tube is drawn once).
+   * `print`) and appends a history row. Because a sample is one physical tube
+   * shared by several tests, the tests it carries are collected with it; an
+   * order item is stamped collected once all of its own samples are collected
+   * (a multi-tube panel only after its last tube).
    * Idempotent: samples already past `NEW`/`HOLD`/`REPEAT` are skipped, so a
    * repeat click is a no-op. Safe no-op when the order has no samples yet (e.g.
    * a DRAFT / non-diagnostic order): nothing to transition.
@@ -837,10 +838,10 @@ export class OrderSampleService {
    * Collect one accession sample inside an existing (already tenant-scoped)
    * transaction: apply the §A.9 `collect` transition → `COLLECTED` (stamping
    * `collectedAt`/`collectedBy`/`tubeType`; the barcode is assigned separately,
-   * grouping-aware, by the batch caller `collectSamplesInTx`), then — because a
-   * sample is one
-   * physical tube shared by several tests — stamp every sibling order item on
-   * the sample collected too (a tube is drawn once). The caller must have already
+   * grouping-aware, by the batch caller `collectSamplesInTx`), then stamp each
+   * order item the sample carries as collected — but only once that item has no
+   * OTHER sample still awaiting collection, so a multi-sample panel is not marked
+   * collected after just its first tube. The caller must have already
    * confirmed the sample is in a collectable status. Shared by
    * {@link collectSamplesInTx} (group / per-item collect bridges).
    * @param now the shared collection timestamp for the batch
@@ -883,22 +884,32 @@ export class OrderSampleService {
       { notes: opts.notes, attachmentUrl: opts.attachmentUrl },
     );
 
-    // A tube is drawn once → every test it carries is collected together.
-    // Stamp all sibling order items on this sample (preserve already-set
-    // timestamps via `collectedAt: null`).
+    // A tube is drawn once → the tests it carries are collected with it. But an
+    // order item (notably a panel) can span SEVERAL tubes, so it is only truly
+    // collected once none of its samples remain to be drawn. Stamp each order
+    // item this sample carries only when it has no OTHER sample still awaiting
+    // collection — otherwise a multi-sample panel would read as collected after
+    // just its first tube. The just-collected sample is already `COLLECTED` (and
+    // carries `collectedAt`) at this point, so it is excluded from the pending
+    // count. (`collectedAt: null` in the update guard preserves an existing stamp.)
     const siblings = await tx.orderSampleTest.findMany({
       where: { sampleId, tenantId, deletedAt: null },
       select: { orderItemId: true },
     });
-    const siblingIds = siblings.map((t) => t.orderItemId);
-    if (siblingIds.length > 0) {
-      await tx.orderItem.updateMany({
+    const siblingItemIds = [...new Set(siblings.map((t) => t.orderItemId))];
+    for (const orderItemId of siblingItemIds) {
+      const pendingSamples = await tx.orderSample.count({
         where: {
-          id: { in: siblingIds },
           tenantId,
           deletedAt: null,
           collectedAt: null,
+          status: { in: [...COLLECTABLE_SAMPLE_STATUSES] },
+          tests: { some: { orderItemId, tenantId, deletedAt: null } },
         },
+      });
+      if (pendingSamples > 0) continue;
+      await tx.orderItem.updateMany({
+        where: { id: orderItemId, tenantId, deletedAt: null, collectedAt: null },
         data: { collectedAt: now, collectedBy: personId },
       });
     }
