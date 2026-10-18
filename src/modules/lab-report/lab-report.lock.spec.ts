@@ -10,9 +10,24 @@ import {
   LabReportLockedException,
   LabReportNotFoundException,
   LabReportNotLockedException,
+  LabReportSentOutException,
 } from './exceptions/lab-report.exceptions';
+import { assertReportWritable } from './utils/sent-out-report.util';
 import { BUSINESS_PERMISSIONS_KEY } from '../permissions/decorators/require-permission.decorator';
 import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
+
+// The write locks (sent out / cancelled order / awaiting sample) have their own
+// spec; here the helper is a stub so this spec is about the technician's Lock.
+jest.mock('./utils/sent-out-report.util', () => ({
+  ...jest.requireActual<typeof import('./utils/sent-out-report.util')>(
+    './utils/sent-out-report.util',
+  ),
+  assertReportWritable: jest.fn(),
+}));
+const writable = jest.mocked(assertReportWritable);
+beforeEach(() => {
+  writable.mockReset().mockResolvedValue(undefined);
+});
 
 /**
  * Technician Reporting — Lock Test / Unlock Test.
@@ -51,7 +66,8 @@ function build(
       .mockResolvedValue({}),
     deleteMany: jest.fn(),
   };
-  const tx = { labReport, labReportNote };
+  const queryRaw = jest.fn().mockResolvedValue([]);
+  const tx = { labReport, labReportNote, $queryRaw: queryRaw };
   const person = { findMany: jest.fn().mockResolvedValue([]) };
   const prisma = {
     labReport,
@@ -64,7 +80,7 @@ function build(
   const service = new LabReportService(
     ...(deps as ConstructorParameters<typeof LabReportService>),
   );
-  return { service, prisma, labReport, labReportNote, person };
+  return { service, prisma, labReport, labReportNote, person, tx, queryRaw };
 }
 
 const noteBody = (n: ReturnType<typeof build>) =>
@@ -147,6 +163,41 @@ describe('LabReportService.lock', () => {
     expect(m.labReport.updateMany).not.toHaveBeenCalled();
   });
 
+  it('refuses a sent-out report (a write lock) and writes nothing', async () => {
+    const m = build();
+    writable.mockRejectedValue(new LabReportSentOutException('r1'));
+    await expect(m.service.lock('r1', T, B, ACTOR)).rejects.toBeInstanceOf(
+      LabReportSentOutException,
+    );
+    expect(m.prisma.withTenant).not.toHaveBeenCalled();
+    expect(m.labReport.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('takes the row lock and re-checks the write locks inside the transaction, before the compare-and-set', async () => {
+    const m = build();
+    await m.service.lock('r1', T, B, ACTOR, 'why');
+    expect(m.queryRaw).toHaveBeenCalledTimes(1);
+    // checked once up front (outside) and once again inside the transaction
+    expect(writable).toHaveBeenCalledTimes(2);
+    expect(writable.mock.calls[0]![0]).toBe(m.prisma);
+    expect(writable.mock.calls[1]![0]).toBe(m.tx);
+    expect(m.queryRaw.mock.invocationCallOrder[0]!).toBeLessThan(
+      m.labReport.updateMany.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('a sent out between the up-front check and the transaction is still refused, and nothing is locked', async () => {
+    const m = build();
+    writable
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new LabReportSentOutException('r1'));
+    await expect(m.service.lock('r1', T, B, ACTOR)).rejects.toBeInstanceOf(
+      LabReportSentOutException,
+    );
+    expect(m.labReport.updateMany).not.toHaveBeenCalled();
+    expect(m.labReportNote.create).not.toHaveBeenCalled();
+  });
+
   it('needs an active branch', async () => {
     const m = build();
     await expect(m.service.lock('r1', T, null, ACTOR)).rejects.toBeInstanceOf(
@@ -209,6 +260,16 @@ describe('LabReportService.unlock', () => {
     );
   });
 
+  it('refuses a sent-out report (a write lock) and writes nothing', async () => {
+    const m = build({ locked: true });
+    writable.mockRejectedValue(new LabReportSentOutException('r1'));
+    await expect(m.service.unlock('r1', T, B, ACTOR)).rejects.toBeInstanceOf(
+      LabReportSentOutException,
+    );
+    expect(m.labReport.updateMany).not.toHaveBeenCalled();
+    expect(m.labReportNote.create).not.toHaveBeenCalled();
+  });
+
   it('is not refused outright any more (the old hard-coded denial is gone)', async () => {
     const m = build({ locked: true });
     await expect(m.service.unlock('r1', T, B, ACTOR)).resolves.toBeDefined();
@@ -221,6 +282,15 @@ describe('LabReportService.resetForRerun on a locked report', () => {
     await expect(
       m.service.resetForRerun('r1', T, B, ACTOR),
     ).rejects.toBeInstanceOf(LabReportLockedException);
+    expect(m.prisma.withTenant).not.toHaveBeenCalled();
+  });
+
+  it('a sent-out report is refused by the write lock before anything changes', async () => {
+    const m = build({ locked: false });
+    writable.mockRejectedValue(new LabReportSentOutException('r1'));
+    await expect(
+      m.service.resetForRerun('r1', T, B, ACTOR),
+    ).rejects.toBeInstanceOf(LabReportSentOutException);
     expect(m.prisma.withTenant).not.toHaveBeenCalled();
   });
 
@@ -390,6 +460,13 @@ describe('notes on a locked test', () => {
     );
     return { service, prisma };
   }
+
+  it('reading skips the write locks (a sent-out or cancelled test can still be read)', async () => {
+    const m = buildNotes({ locked: true });
+    writable.mockRejectedValue(new LabReportSentOutException('r1'));
+    await expect(m.service.findNotes('r1', T, B, {})).resolves.toHaveLength(1);
+    expect(writable).not.toHaveBeenCalled();
+  });
 
   it('can be read while the test is locked', async () => {
     const m = buildNotes({ locked: true });

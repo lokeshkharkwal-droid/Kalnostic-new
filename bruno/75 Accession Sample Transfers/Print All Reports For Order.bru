@@ -1,0 +1,39 @@
+meta {
+  name: Print All Reports For Order
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/lab-reports/order/{{orderId}}/print-all
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {}
+}
+
+tests {
+  test("PDF returned", function () { expect(res.getStatus()).to.equal(201); expect(res.getHeader("content-type")).to.contain("application/pdf"); });
+}
+
+docs {
+  Merged PDF of the order's lab reports (optional body: `templateId`, `orderItemIds`).
+
+  Scope: the branch that OWNS the order (orders.branch_id) prints EVERY report on the
+  order, whichever branch currently holds it (e.g. tests done at a receiving branch
+  after an internal transfer). Every other branch prints only the reports it holds
+  itself, exactly as before. An order the caller's branch has nothing to do with gives
+  404 ORDER_REPORTS_NOT_FOUND. Pending / partly filled tests print as they are.
+  B2B referral-panel ownership is still enforced per report.
+  Note: this route has no permission decorator (any authenticated user) - unchanged.
+}

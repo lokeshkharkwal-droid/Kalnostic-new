@@ -395,10 +395,22 @@ export const ORDER_INCLUDE = {
       // post-breakdown panel item; created lazily once a linked sample is
       // accepted, empty until then. `approvedAt` is null until the report is
       // approved in Technician Reporting. Lets the Order Overview's Test Details
-      // surface each sample's report Approved Date & Time.
+      // surface each sample's report Approved Date & Time + Report Status. We
+      // also select `labTestId` (the member's source `LabTest` id) — the same id
+      // an accession sample's `OrderSampleTest.labTestId` carries — so the Order
+      // Console overview can join each EXPANDED panel-member row to its OWN
+      // LabReport (status/approvedAt differ per member), not to a single
+      // per-order-item value. `id` lets the Order Console print that one report
+      // directly (`POST /lab-reports/:id/print`), mirroring Technician Reporting.
       labReports: {
         where: { deletedAt: null },
-        select: { status: true, approvedAt: true, memberBranchLabTestId: true },
+        select: {
+          id: true,
+          status: true,
+          approvedAt: true,
+          memberBranchLabTestId: true,
+          labTestId: true,
+        },
       },
     },
   },
@@ -471,6 +483,13 @@ export type OrderWithRelations = Prisma.OrderGetPayload<{
   hasInvoice: boolean;
   /** The invoice number of the active invoice linked to this order, if any. */
   invoiceCode: string | null;
+  /**
+   * Why the lab side stops this order being cancelled right now: `RESULT_DONE`
+   * (a test, at any branch, is Result Done / Approved / Published); null when
+   * cancelling is allowed. Drives the disabled Cancel action;
+   * `OrderService.cancel` enforces the same rule.
+   */
+  cancelBlockedReason: 'RESULT_DONE' | null;
   /**
    * Authoritative billing rollups (minor units) — the SAME derivation the
    * Billings list exposes (`findAll` → `billingRollups` → `computeBillingTotals`):
@@ -876,4 +895,11 @@ export type OrderListRow = Prisma.OrderGetPayload<{
   hasInvoice: boolean;
   /** The invoice number of the active invoice linked to this order, if any. */
   invoiceCode: string | null;
+  /**
+   * Why the lab side stops this order being cancelled right now: `RESULT_DONE`
+   * (a test, at any branch, is Result Done / Approved / Published); null when
+   * cancelling is allowed. Drives the disabled Cancel action;
+   * `OrderService.cancel` enforces the same rule.
+   */
+  cancelBlockedReason: 'RESULT_DONE' | null;
 };

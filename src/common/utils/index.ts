@@ -10,5 +10,6 @@ export * from './amount-in-words.util';
 export * from './gender-label.util';
 export * from './patient-label.util';
 export * from './sample-source-label.util';
+export * from './collection-progress.util';
 export * from './tenant-date-format.util';
 export * from './formula';

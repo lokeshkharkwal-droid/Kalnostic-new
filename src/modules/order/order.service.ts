@@ -26,6 +26,7 @@ import {
   TransferKind,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { paymentModeLabel } from '../finance-payments/entities/finance-payment.entity';
 import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
 import { getReferralPanelId } from '../../prisma/tenant-context';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
@@ -63,6 +64,7 @@ import {
   formatOrderDateTime,
   resolveOrderLocalDateTime,
   classifyOrderDate,
+  buildCollectionProgressWhere,
 } from '../../common/utils';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
@@ -103,6 +105,7 @@ import {
   deriveBillStatus,
   recomputeBillStatusInTx,
 } from './utils/bill-status';
+import { CANCEL_BLOCKING_REPORT_STATUSES } from './utils/cancel-rules.util';
 import { BillingGroupBy } from './dto/billing-grouped-query.dto';
 import { BillingDimension } from './dto/billing-query.dto';
 import {
@@ -201,6 +204,8 @@ import {
   OrderExternalReferralNotFoundException,
   OrderAlreadyCancelledException,
   OrderAlreadyInvoicedException,
+  OrderCancelBlockedByResultException,
+  OrderNotDeletableException,
   CancellationChargeExceedsPaidException,
   RefundExceedsRefundableException,
   NothingToRefundException,
@@ -1745,6 +1750,7 @@ export class OrderService {
     // Invoice-lock status: exposed on every composed-order response (get-one,
     // create, update, cancel, …), all of which funnel through here.
     const invoiceCodes = await this.invoicedOrderCodes(tenantId, [id]);
+    const cancelBlocked = await this.cancelBlockedReasons(tenantId, [id]);
     // Authoritative billing rollups — the SAME derivation the Billings list uses
     // (`findAll` → `billingRollups`), so the detail response (and thus the Order
     // Overview) always matches the list. Without these, consumers fall back to a
@@ -1760,6 +1766,7 @@ export class OrderService {
       paidAmount,
       hasInvoice: invoiceCodes.has(id),
       invoiceCode: invoiceCodes.get(id) ?? null,
+      cancelBlockedReason: cancelBlocked.get(id) ?? null,
     };
   }
 
@@ -2486,7 +2493,9 @@ export class OrderService {
               dateFormat,
               timeFormat,
             ),
-            mode: pd.paymentMode,
+            // Canonical label (CARD → Debit Card, CREDIT → Credit Card) so the
+            // printed bill matches the Finance Collection report and the UI.
+            mode: paymentModeLabel(pd.paymentMode),
             reference: pd.reference ?? '',
             // `type` discriminates a collection from a refund so the template can
             // label/style them; `amount` is the row's own money (paid for a
@@ -3528,59 +3537,11 @@ export class OrderService {
       });
     }
     if (query.sampleStatus) {
-      // Bill-only tests/panels never enter the workflow (never collected), so
-      // they must be excluded from the collection-progress filter — otherwise a
-      // fully-collected order with a bill-only item would read as PARTIAL and
-      // never as COLLECTED. Mirrors the displayed item/collected counts.
-      const workflowItem: Prisma.OrderItemWhereInput = {
-        NOT: {
-          OR: [
-            { branchLabTest: { isBillOnlyTest: true } },
-            { branchLabPanel: { isBillOnlyTest: true } },
-          ],
-        },
-      };
-      switch (query.sampleStatus) {
-        case 'PENDING':
-          // Has workflow items, none collected.
-          and.push({ items: { some: { deletedAt: null, ...workflowItem } } });
-          and.push({
-            items: {
-              none: {
-                deletedAt: null,
-                collectedAt: { not: null },
-                ...workflowItem,
-              },
-            },
-          });
-          break;
-        case 'COLLECTED':
-          // Has workflow items, none still uncollected.
-          and.push({ items: { some: { deletedAt: null, ...workflowItem } } });
-          and.push({
-            items: {
-              none: { deletedAt: null, collectedAt: null, ...workflowItem },
-            },
-          });
-          break;
-        case 'PARTIAL':
-          // At least one workflow item collected and at least one still uncollected.
-          and.push({
-            items: {
-              some: {
-                deletedAt: null,
-                collectedAt: { not: null },
-                ...workflowItem,
-              },
-            },
-          });
-          and.push({
-            items: {
-              some: { deletedAt: null, collectedAt: null, ...workflowItem },
-            },
-          });
-          break;
-      }
+      // Order-level collection progress (PENDING/PARTIAL/COLLECTED), derived
+      // from the workflow items' `collectedAt` — shared with the Accession
+      // "Collection Status" filter via `buildCollectionProgressWhere` so the two
+      // can never drift (bill-only items are excluded there).
+      and.push(buildCollectionProgressWhere(query.sampleStatus));
     }
     if (query.reportStatus) {
       // Reuses `deriveReportStatus` — the same function that computes the
@@ -3777,9 +3738,10 @@ export class OrderService {
       ),
     ];
     const panelMemberCounts = await this.panelMemberCounts(panelIds);
-    const [counts, invoiceCodes] = await Promise.all([
+    const [counts, invoiceCodes, cancelBlocked] = await Promise.all([
       this.countItemsByOrder(tenantId, orderIds),
       this.invoicedOrderCodes(tenantId, orderIds),
+      this.cancelBlockedReasons(tenantId, orderIds),
     ]);
     const data: OrderListRow[] = rows.map((r) => {
       // Authoritative gross/discount/net/paid via the shared rollup helper —
@@ -3868,6 +3830,7 @@ export class OrderService {
         // update/cancel guards).
         hasInvoice: invoiceCodes.has(r.id),
         invoiceCode: invoiceCodes.get(r.id) ?? null,
+        cancelBlockedReason: cancelBlocked.get(r.id) ?? null,
       };
     });
     return { data, total, page, limit };
@@ -4946,6 +4909,35 @@ export class OrderService {
   }
 
   /**
+   * Which of these orders the lab side currently stops from being cancelled - the
+   * rule {@link assertLabAllowsCancel} enforces (a validated result at any
+   * branch), read without locking for the Billings screen.
+   * @param tenantId tenant scope
+   * @param orderIds the page's orders
+   * @returns order id → reason (orders that can be cancelled are absent)
+   */
+  private async cancelBlockedReasons(
+    tenantId: string,
+    orderIds: string[],
+  ): Promise<Map<string, 'RESULT_DONE'>> {
+    const reasons = new Map<string, 'RESULT_DONE'>();
+    if (orderIds.length === 0) return reasons;
+    const validated = await this.prisma.labReport.findMany({
+      where: {
+        tenantId,
+        deletedAt: null,
+        status: { in: CANCEL_BLOCKING_REPORT_STATUSES },
+        orderItem: { orderId: { in: orderIds } },
+      },
+      select: { orderItem: { select: { orderId: true } } },
+    });
+    for (const r of validated) {
+      reasons.set(r.orderItem.orderId, 'RESULT_DONE');
+    }
+    return reasons;
+  }
+
+  /**
    * Guard: throw if an invoice has already been generated for this order. Invoice
    * generation is the definitive point at which an order becomes immutable — an
    * invoiced order can be neither updated nor cancelled, regardless of payment
@@ -5634,6 +5626,7 @@ export class OrderService {
    * @param tenantId tenant scope
    * @param dto partial update
    * @throws OrderNotFoundException / reference 422s
+   * @throws OrderAlreadyCancelledException (409) if the order is cancelled
    * @throws OrderAlreadyInvoicedException (409) if an invoice exists for the order
    * @throws TestNotDeletableAfterReportException (422) removing a test whose report is filled/generated
    */
@@ -6680,6 +6673,7 @@ export class OrderService {
    * @throws OrderNotFoundException if missing/soft-deleted/other tenant
    * @throws OrderAlreadyCancelledException if already cancelled
    * @throws OrderAlreadyInvoicedException (409) if an invoice exists for the order
+   * @throws OrderCancelBlockedByResultException (409) if any report is Result Done / Approved / Published
    * @throws CancellationChargeExceedsPaidException if the charge exceeds paid
    * @throws RefundExceedsRefundableException if the refund exceeds the refundable balance
    */
@@ -6765,6 +6759,15 @@ export class OrderService {
             booking?.diagnostics,
           );
     await this.prisma.withTenant(tenantId, async (tx) => {
+      // Take the order row first (FOR UPDATE). A receiving branch's Accept takes it
+      // FOR SHARE before it re-checks the status, so the two are serialised: whichever
+      // lands second sees the other's final answer (an accept can no longer create a
+      // copy on an order that was cancelled a moment earlier). The lock order is
+      // always order row, then its reports, so the two paths cannot deadlock.
+      await tx.$queryRaw`SELECT id FROM orders WHERE id = ${id} AND tenant_id = ${tenantId} FOR UPDATE`;
+      // Lab rule next, with the order's reports locked, so nothing can be
+      // validated between this check and the status flip below.
+      await this.assertLabAllowsCancel(tx, tenantId, id);
       // Ledger sums drive the charge/refund guards + the paymentStatus recompute.
       const agg = await tx.paymentDetails.aggregate({
         where: { orderId: id, tenantId, deletedAt: null },
@@ -6910,6 +6913,37 @@ export class OrderService {
       refundAmount: dto.refund?.amount ?? null,
     });
     return this.findById(id, tenantId);
+  }
+
+  /**
+   * The lab's say in whether an order may be cancelled, run inside the cancel
+   * transaction: refused when any live report of the order - at ANY branch - is
+   * CURRENTLY Result Done, Approved or Published (one validated test among many is
+   * enough; Validation Pending, Error Reported and Result Rejected do not count).
+   * A sample that is out at another branch does NOT block the cancel: the work is
+   * frozen and the sent sample is wound down (Retrieve / Reject / Repeat / Return /
+   * Discard stay allowed on a cancelled order).
+   * The order's live reports are locked first (`FOR UPDATE`, the same row lock a
+   * technician's validate takes), so a concurrent validate waits and then fails
+   * its own cancelled-order check instead of finishing a cancelled order.
+   * @throws OrderCancelBlockedByResultException a report is already validated
+   */
+  private async assertLabAllowsCancel(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    orderId: string,
+  ): Promise<void> {
+    await tx.$queryRaw`SELECT lr.id FROM lab_reports lr JOIN order_items oi ON oi.id = lr.order_item_id WHERE oi.order_id = ${orderId} AND lr.tenant_id = ${tenantId} AND lr.deleted_at IS NULL FOR UPDATE OF lr`;
+    const validated = await tx.labReport.findFirst({
+      where: {
+        tenantId,
+        deletedAt: null,
+        status: { in: CANCEL_BLOCKING_REPORT_STATUSES },
+        orderItem: { orderId },
+      },
+      select: { id: true },
+    });
+    if (validated) throw new OrderCancelBlockedByResultException(orderId);
   }
 
   /**
@@ -7074,14 +7108,22 @@ export class OrderService {
   }
 
   /**
-   * Soft-delete an order and cascade soft-delete its items, sections, and
-   * payments, in one transaction.
+   * Soft-delete a DRAFT order and cascade soft-delete its items, sections, and
+   * payments, in one transaction. Only a draft can be deleted: every other status
+   * is part of the lab's record and is cancelled instead. The status is checked up
+   * front AND claimed atomically inside the transaction (`status = DRAFT` in the
+   * update's own filter), so a draft that someone finalized a moment earlier (a
+   * stale Drafts list) is refused rather than deleted.
    * @param id order id
    * @param tenantId tenant scope
    * @throws OrderNotFoundException if missing/soft-deleted/other tenant
+   * @throws OrderNotDeletableException (409) if the order is not a draft
    */
   async remove(id: string, tenantId: string): Promise<Order> {
-    await this.findById(id, tenantId);
+    const current = await this.findById(id, tenantId);
+    if (current.status !== OrderStatus.DRAFT) {
+      throw new OrderNotDeletableException(id, current.status);
+    }
     // Booking context so a soft-deleted order releases the phlebotomist slot it
     // held (unless its appointment was already cancelled — that already released).
     const booking = await this.prisma.order.findFirst({
@@ -7111,6 +7153,13 @@ export class OrderService {
           );
     const now = new Date();
     return this.prisma.withTenant(tenantId, async (tx) => {
+      // Claim the order while it is STILL a draft. If it was finalized between the
+      // check above and now, nothing matches and the whole delete is refused.
+      const claimed = await tx.order.updateMany({
+        where: { id, tenantId, status: OrderStatus.DRAFT, deletedAt: null },
+        data: { deletedAt: now },
+      });
+      if (claimed.count !== 1) throw new OrderNotDeletableException(id);
       const where = { orderId: id, tenantId, deletedAt: null };
       await Promise.all([
         tx.orderItem.updateMany({ where, data: { deletedAt: now } }),
@@ -7129,10 +7178,6 @@ export class OrderService {
           reservation.at,
         );
       }
-      const deleted = await tx.order.update({
-        where: { id },
-        data: { deletedAt: now },
-      });
       // Deleting a DRAFT order that was saved from a quote (Convert → Save as
       // Draft) abandons the conversion: reopen the source quote so it can be
       // converted again. A finalized/cancelled order is a real business event and
@@ -7145,7 +7190,7 @@ export class OrderService {
           id,
         );
       }
-      return deleted;
+      return tx.order.findUniqueOrThrow({ where: { id } });
     });
   }
 

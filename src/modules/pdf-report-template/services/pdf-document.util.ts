@@ -46,11 +46,23 @@ export function escapeHtml(value: string): string {
 }
 
 /**
- * Escape HTML text content and keep its line breaks: each one becomes `<br />`. For a plain-text value the
- * user wrote over several lines (a Qualitative result), which HTML would otherwise run together on one line.
+ * Escape HTML text content, keeping the line breaks the user typed. HTML would otherwise squash them into one line
+ * ("a\nb\nc" printed as "a b c"), so a value written over several lines is wrapped in a `white-space:pre-wrap` span:
+ * every line break, blank line in the middle and indentation stays as typed, and the span follows the cell's own
+ * alignment. Blank lines at the start and the end are dropped. A value with no line break is only escaped, exactly as
+ * `escapeHtml` does.
+ *
+ * @param value the plain text as saved (e.g. a reference range's "Display" text typed over several lines)
+ * @returns safe HTML
  */
-export function escapeHtmlKeepLineBreaks(value: string): string {
-  return escapeHtml(value).replace(/\r\n|\r|\n/g, '<br />');
+export function escapeHtmlKeepLines(value: string): string {
+  const text = value.replace(/\r\n?/g, '\n');
+  if (!text.includes('\n')) return escapeHtml(value);
+  const trimmed = text
+    .replace(/^(?:[ \t]*\n)+/, '')
+    .replace(/(?:\n[ \t]*)+$/, '');
+  if (!trimmed.includes('\n')) return escapeHtml(trimmed);
+  return `<span style="white-space:pre-wrap">${escapeHtml(trimmed)}</span>`;
 }
 
 /** Escape a value for use inside a double-quoted HTML attribute. */

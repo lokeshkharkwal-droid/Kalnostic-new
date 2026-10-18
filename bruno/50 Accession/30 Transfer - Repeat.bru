@@ -35,4 +35,10 @@ docs {
   Repeat (§B.11.4) — **Received / Accepted → Repeat**. `repeatReason` is
   **required**. Origin branch is notified to re-collect. Bulk:
   `POST /accession/transfers/bulk/repeat`.
+
+  **Cancelled order:** once the receiving branch has ACCEPTED its copy, the copy
+  holds typed results, so it can no longer be sent back to the sender - refused
+  with 422 `SAMPLE_ORDER_CANCELLED` (a group call with `skipInvalid` skips it with
+  that reason) and nothing changes; Store then Discard stay open. Before Accept
+  (transfer only Received) the receiving branch can still Reject / Repeat.
 }

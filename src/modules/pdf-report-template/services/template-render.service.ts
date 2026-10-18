@@ -5,7 +5,7 @@ import {
   PreparedPdfHtml,
   buildPdfDocuments,
   escapeHtml,
-  escapeHtmlKeepLineBreaks,
+  escapeHtmlKeepLines,
   escapeAttr,
   imageSizeStyleAttr,
   resolveBareImageTags,
@@ -61,20 +61,21 @@ const RICH_TEXT_KEYS = new Set([
 ]);
 
 /**
- * Plain-text keys whose line breaks must survive printing: a result value (`observed1`) can be written over
- * several lines (a Qualitative result). Still escaped, but each line break prints as `<br />`.
+ * Plain-text fields whose line breaks must survive printing: the value is escaped, and when it was typed over several
+ * lines it keeps them (HTML would otherwise print "a\nb\nc" as "a b c"). `reference_display` is a reference range's
+ * "Display of Reference Range", written one value per line in Master Data.
  */
-const LINE_BREAK_KEYS = new Set(['observed1']);
+const KEEP_LINE_BREAK_KEYS = new Set(['reference_display']);
 
 /**
- * `escapeHtml`, except for a known rich-text field — see {@link RICH_TEXT_KEYS} — and a field that keeps its
- * line breaks — see {@link LINE_BREAK_KEYS}.
+ * `escapeHtml`, except for a known rich-text field — see {@link RICH_TEXT_KEYS} — and a plain-text field that keeps its
+ * line breaks — see {@link KEEP_LINE_BREAK_KEYS}.
  */
 function escapeUnlessRichText(key: string, value: string): string {
   const k = key.toLowerCase();
   if (RICH_TEXT_KEYS.has(k)) return value;
-  return LINE_BREAK_KEYS.has(k)
-    ? escapeHtmlKeepLineBreaks(value)
+  return KEEP_LINE_BREAK_KEYS.has(k)
+    ? escapeHtmlKeepLines(value)
     : escapeHtml(value);
 }
 

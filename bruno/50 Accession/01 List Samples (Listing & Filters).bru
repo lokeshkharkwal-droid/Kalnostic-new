@@ -16,6 +16,7 @@ params:query {
   ~search: ACC-00001
   ~status: NEW
   ~priority: ROUTINE
+  ~collectionStatus: PENDING
   ~tatStatus: WITHIN
   ~orderId: {{orderId}}
   ~originBranchId: {{branchId}}
@@ -71,8 +72,11 @@ docs {
   ## Filters (toggle the `~` to enable a query param)
 
   - `search` — matches accession number **or** barcode (case-insensitive).
-  - `status` — the §A.5 status tab (a `SampleStatus`).
+  - `status` — the §A.5 status tab (a `SampleStatus` — the 15-stage lifecycle).
   - `priority` — `ROUTINE` | `URGENT` | `STAT`.
+  - `collectionStatus` — order-level **collection progress** `PENDING` | `PARTIAL`
+    | `COLLECTED` (derived from the order's workflow items' `collectedAt`; distinct
+    from `status`). Same rule as the Order Console's `sampleStatus`.
   - `tatStatus` — derived TAT band (translated to a `createdAt` range server-side).
   - `orderId` / `originBranchId` / `processingBranchId` — scoping filters.
   - `patientId` / `referredByDoctorId` / `referralPanelId` — via the linked order.

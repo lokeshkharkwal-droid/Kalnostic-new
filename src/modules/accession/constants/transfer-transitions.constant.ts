@@ -37,8 +37,10 @@ export const TRANSFER_TRANSITIONS: Readonly<
     [TransferStatus.ACCEPTED]: TransferStatus.REPEAT,
   },
   // Reject — sample rejected; origin branch notified. Allowed from Received, and
-  // also from Accepted (reject after acceptance): for an INTERNAL transfer the
-  // accept-time clone is unwound in `transferAction` before the status change.
+  // also from Accepted (reject after acceptance). For an INTERNAL transfer the
+  // receiving branch's copy is then voided and the report handed back by
+  // `SampleTransferService.returnToSender` (refused when a report at the receiver
+  // has a validated result, or when the copy was passed on to another branch).
   reject: {
     [TransferStatus.RECEIVED]: TransferStatus.REJECTED,
     [TransferStatus.ACCEPTED]: TransferStatus.REJECTED,

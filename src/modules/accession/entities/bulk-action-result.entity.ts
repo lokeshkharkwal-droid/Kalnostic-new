@@ -21,6 +21,13 @@ export interface BulkSkippedItem {
   accessionNo: string | null;
   /** Human-readable reason the id was skipped (mirrors the §A.9 transition rule). */
   reason: string;
+  /**
+   * Machine-readable reason: the same error code the strict (non-skipping) call
+   * would answer with for this id, e.g. `SAMPLE_RETRIEVE_BLOCKED_RESULT_DONE`,
+   * `SAMPLE_RETURN_BLOCKED`, `INVALID_SAMPLE_TRANSITION`. Lets a screen tell the
+   * reasons apart without parsing `reason`. Optional: absent when unknown.
+   */
+  code?: string;
 }
 
 export interface BulkActionResult<T> {

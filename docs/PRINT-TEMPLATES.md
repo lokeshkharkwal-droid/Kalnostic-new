@@ -592,7 +592,7 @@ a 3-page PDF attachment prints **8 pages**, and an image becomes one appended pa
 | `{is_observed_1_abnormal}` / `{is_observed_2_abnormal}` | Boolean — `true` when that reading is a **Quantitative** value outside the Lower/Upper limits of its resolved reference range, else `false`. Same evaluation that drives the abnormal styling. In a classic template it renders the literal `true`/`false`; in a Latte template it is a real boolean, so branch on it (`{if $row->is_observed_1_abnormal}…{/if}`) — e.g. to print a `H`/`L` flag or an arrow column. |
 | `{unit}` | Measurement unit. |
 | `{methodology}` / `{method_name}` | Method (aliases). |
-| `{reference_display}` | Formatted reference range. |
+| `{reference_display}` | Formatted reference range. When it was typed over several lines in Master Data ("Display of Reference Range"), the lines print one under another, as typed. (Latte templates get the plain text in `$row->reference_display`; Latte escapes it and HTML joins the lines, so a Latte template that needs the lines should add `style="white-space:pre-line"` to that cell.) |
 | `{group_name}` | Parameter group heading. |
 | `{result_note}` | Per-parameter note. |
 

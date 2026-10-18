@@ -132,7 +132,8 @@ docs {
     `signatoryDepartmentIds` / `signatoryCategoryIds` / `signatorySubCategoryIds`
     — optional arrays of UUIDs stored as JSON (format-validated only).
   - Banking: `accountHolderName`, `bankName`, `accountNumber`, `ifscCode`
-    (strings); `paymentMode` — `BANK_TRANSFER` (default) / `CASH` / `CHEQUE`.
+    (strings); `paymentMode` — `BANK_TRANSFER` (default) / `CASH` / `CREDIT` /
+    `UPI` / `CARD` / `WALLET`.
   - Charges (on the doctor):
     - `consultationFee`, `emergencyFee`, `followUpFee` — optional decimals
       (≥ 0, up to 2 dp), default 0.

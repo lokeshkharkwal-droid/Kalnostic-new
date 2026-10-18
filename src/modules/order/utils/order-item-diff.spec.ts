@@ -69,25 +69,26 @@ describe('diffOrderPayments', () => {
 });
 
 describe('isTestDeletable', () => {
-  it('allows removal when no report or only pending reports', () => {
+  it('allows removal when no report or the report is not yet finalised', () => {
     expect(isTestDeletable([])).toBe(true);
-    expect(
-      isTestDeletable([
-        LabReportStatus.PENDING,
-        LabReportStatus.PARTIAL_PENDING,
-      ]),
-    ).toBe(true);
+    for (const status of [
+      LabReportStatus.PENDING,
+      LabReportStatus.PARTIAL_PENDING,
+      LabReportStatus.SAVED,
+      LabReportStatus.VALIDATION_PENDING,
+      LabReportStatus.RESULT_REJECTED,
+    ]) {
+      expect(isTestDeletable([status])).toBe(true);
+    }
   });
-  it('blocks removal once any report is SAVED or beyond', () => {
+  it('blocks removal once any report is RESULT_DONE or beyond', () => {
     expect(
-      isTestDeletable([LabReportStatus.PENDING, LabReportStatus.SAVED]),
+      isTestDeletable([LabReportStatus.PENDING, LabReportStatus.RESULT_DONE]),
     ).toBe(false);
-    expect(isTestDeletable([LabReportStatus.VALIDATION_PENDING])).toBe(false);
     expect(isTestDeletable([LabReportStatus.RESULT_DONE])).toBe(false);
     expect(isTestDeletable([LabReportStatus.APPROVED])).toBe(false);
     expect(isTestDeletable([LabReportStatus.PUBLISHED])).toBe(false);
     expect(isTestDeletable([LabReportStatus.ERROR_REPORTED])).toBe(false);
-    expect(isTestDeletable([LabReportStatus.RESULT_REJECTED])).toBe(false);
   });
 });
 

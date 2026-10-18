@@ -37,4 +37,11 @@ docs {
   further processing happens on that In-House copy. An INTERNAL transfer with no
   destination assigned → 422 `TRANSFER_DESTINATION_MISSING`. Bulk:
   `POST /accession/transfers/bulk/accept`.
+
+  Cancelled order: a single call on a transfer whose order was cancelled is refused
+  (409 `TRANSFER_ORDER_CANCELLED`). In a bulk call with `skipInvalid: true` that transfer is
+  SKIPPED instead (listed in `skipped` with `code: TRANSFER_ORDER_CANCELLED` and the reason);
+  the other transfers are done. Bulk calls work through the ids in sorted order (so two
+  overlapping bulk calls cannot deadlock); `succeeded` / `skipped` come back in the order
+  the ids were sent.
 }
