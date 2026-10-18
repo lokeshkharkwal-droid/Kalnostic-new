@@ -515,6 +515,7 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>POST /branch-lab-tests/:id/duplicate</td><td>Business JWT</td><td>create an independent variant in the same group (non-default duplicate)</td></tr>
   <tr><td>PATCH /branch-lab-tests/:id/default</td><td>Business JWT</td><td>mark this row the variant group's default (used for order creation)</td></tr>
   <tr><td>GET /branch-lab-tests</td><td>Business JWT</td><td>list a pricing-list tab's rows (search + status + <code>listId</code>; each row carries <code>listPrice</code>; omitted listId = Walk-in)</td></tr>
+  <tr><td>GET /branch-lab-tests/options</td><td>Business JWT</td><td>lightweight orderable options (active default variants) for pickers; <code>search</code> on testName, <code>listId</code>, opt-in <code>preferredOnly</code> (unsearched view → preference tests) and <code>includeAka</code> (search also matches the AKA name — Create-Order picker)</td></tr>
   <tr><td>GET /branch-lab-tests/:id</td><td>Business JWT</td><td>get one branch lab test (with configSnapshot)</td></tr>
   <tr><td>PUT /branch-lab-tests/:id</td><td>Business JWT</td><td>edit branch-tunable fields (pricing/flags/TAT/notes/active)</td></tr>
   <tr><td>PATCH /branch-lab-tests/:id/active</td><td>Business JWT</td><td>enable/disable a branch lab test</td></tr>

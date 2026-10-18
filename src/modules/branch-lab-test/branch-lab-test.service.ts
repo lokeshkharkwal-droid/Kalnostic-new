@@ -678,6 +678,10 @@ export class BranchLabTestService {
    * that must keep seeing the full catalogue, so the narrowing is opt-in, not
    * a change in the default — omitting `preferredOnly` reproduces the prior
    * unfiltered behaviour exactly.
+   *
+   * `includeAka` widens `search` to also match the test's AKA ("also known as")
+   * name, so the Create-Order picker finds a test by either name. Opt-in like
+   * `preferredOnly`, so the other pickers keep their name-only search.
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT profile)
    * @param filters optional search + offset pagination
@@ -692,6 +696,7 @@ export class BranchLabTestService {
       limit?: number;
       listId?: string;
       preferredOnly?: boolean;
+      includeAka?: boolean;
     } = {},
   ): Promise<
     Array<BranchLabTestOption> | PaginatedResult<BranchLabTestOption>
@@ -706,7 +711,12 @@ export class BranchLabTestService {
       listId: filters.listId ?? (await this.resolveListId(tenantId, branchId)),
     };
     const term = filters.search?.trim();
-    if (term) {
+    if (term && filters.includeAka) {
+      where.OR = [
+        { testName: { contains: term, mode: 'insensitive' } },
+        { aka: { contains: term, mode: 'insensitive' } },
+      ];
+    } else if (term) {
       where.testName = { contains: term, mode: 'insensitive' };
     } else if (filters.preferredOnly) {
       where.isPreferenceTest = true;

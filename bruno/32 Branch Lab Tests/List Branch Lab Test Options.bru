@@ -14,6 +14,8 @@ params:query {
   page: 1
   limit: 10
   ~search: Vitamin
+  ~preferredOnly: true
+  ~includeAka: true
 }
 
 auth:bearer {
@@ -39,4 +41,12 @@ docs {
   Scoped to the JWT tenant + active branch (no `branchId` in the query). `search`
   matches testName (case-insensitive). Omit `page` for the full array; supply `page`
   for a `{ data, total, page, limit }` envelope.
+
+  Optional query flags (both default false, so other pickers are unaffected):
+  - `preferredOnly=true` — when `search` is empty, narrow to `isPreferenceTest`
+    tests (Create-Order picker's unsearched view). Ignored once `search` is set.
+  - `includeAka=true` — `search` also matches the test's AKA ("also known as")
+    name, case-insensitive partial match, e.g. `search=CBC` finds
+    "Complete Blood Count" when its AKA is "CBC". Sent by the Create-Order picker.
+  Booleans accept `true`/`1`; any other value is treated as false.
 }
