@@ -2,12 +2,14 @@ import { SampleStatus, TransferKind, TransferStatus } from '@prisma/client';
 import { SampleTransferService } from './sample-transfer.service';
 import {
   SampleReturnBlockedException,
+  SampleReturnOrderCancelledException,
   SampleSentToBranchException,
   InvalidTransferTransitionException,
   TransferOrderCancelledException,
   TransferDestinationMissingException,
   SendBlockedException,
   TransferNotEditableException,
+  TransferNotOutsourceException,
   TransferWrongBranchException,
 } from './exceptions/accession.exceptions';
 
@@ -51,11 +53,15 @@ function setup(
       findMany: jest.fn().mockResolvedValue(opts.copies ?? []),
       findFirst: jest.fn().mockResolvedValue({ orderId: 'o1' }),
     },
+    // the "test removed from the order" probe: no removed test
+    orderSampleTest: { findMany: jest.fn().mockResolvedValue([]) },
   };
   const prisma = {
     withTenant: jest.fn((_t: string, fn: (t: typeof tx) => unknown) => fn(tx)),
     sampleTransfer: { findFirst: jest.fn().mockResolvedValue(transfer) },
     orderSample: { findFirst: jest.fn().mockResolvedValue({ orderId: 'o1' }) },
+    // the "test removed from the order" probe: no removed test
+    orderSampleTest: { findMany: jest.fn().mockResolvedValue([]) },
   };
   const samples = {
     isOrderCancelled: jest.fn().mockResolvedValue(false),
@@ -235,6 +241,73 @@ describe('SampleTransferService — return to sender', () => {
         'ROLLBACK TO SAVEPOINT return_to_sender',
         'RELEASE SAVEPOINT return_to_sender',
       ]);
+    });
+
+    it('skips a transfer whose ORDER WAS CANCELLED after the receiver accepted: nothing changes, the sentence and code are given (N-5)', async () => {
+      const { svc, samples, tx } = setup(
+        { transferStatus: TransferStatus.ACCEPTED, clonedSampleId: 'copy1' },
+        { copies: [{ id: 'copy1' }] },
+      );
+      samples.returnCopyToOrigin.mockRejectedValue(
+        new SampleReturnOrderCancelledException(
+          'repeat',
+          SampleStatus.ACCEPTED,
+        ),
+      );
+      for (const run of [
+        () =>
+          svc.reject(
+            ['tr1'],
+            TENANT,
+            PERSON,
+            'B',
+            { rejectionReason: 'x' },
+            true,
+          ),
+        () =>
+          svc.repeatTransfer(
+            ['tr1'],
+            TENANT,
+            PERSON,
+            'B',
+            { repeatReason: 'x' },
+            true,
+          ),
+      ]) {
+        const result = await run();
+        expect(result.succeeded).toEqual([]);
+        expect(result.skipped).toHaveLength(1);
+        expect(result.skipped[0]).toMatchObject({
+          id: 'tr1',
+          code: 'SAMPLE_ORDER_CANCELLED',
+        });
+        expect(result.skipped[0]!.reason).toContain('cancelled');
+        expect(result.skipped[0]!.reason).toContain('Store and discard');
+      }
+      expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
+      expect(samples.notifySamplesRepeated).not.toHaveBeenCalled();
+    });
+
+    it('without skip invalid the same refusal is thrown as a 422 SAMPLE_ORDER_CANCELLED and nothing is changed (N-5)', async () => {
+      const { svc, samples, tx } = setup(
+        { transferStatus: TransferStatus.ACCEPTED, clonedSampleId: 'copy1' },
+        { copies: [{ id: 'copy1' }] },
+      );
+      samples.returnCopyToOrigin.mockRejectedValue(
+        new SampleReturnOrderCancelledException(
+          'reject',
+          SampleStatus.ACCEPTED,
+        ),
+      );
+      const err: unknown = await svc
+        .reject(['tr1'], TENANT, PERSON, 'B', { rejectionReason: 'x' })
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(SampleReturnOrderCancelledException);
+      expect((err as SampleReturnOrderCancelledException).errorCode).toBe(
+        'SAMPLE_ORDER_CANCELLED',
+      );
+      expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
+      expect(samples.notifySamplesRepeated).not.toHaveBeenCalled();
     });
 
     it('also skips a transfer whose copy has already been passed on to another branch', async () => {
@@ -633,6 +706,9 @@ describe('SampleTransferService — accept clones the sample into the receiving 
       priority: 'NORMAL',
       barcode: 'BC-1',
       orderIdBarcode: 'OB-1',
+      collectedAt: new Date('2026-10-10T08:15:00.000Z'),
+      collectedBy: 'collector-1',
+      tubeType: 'EDTA',
       heldBranchIds: [],
       tests: [{ orderItemId: 'i1', labTestId: 'lt1', testName: 'CBC' }],
     };
@@ -682,6 +758,19 @@ describe('SampleTransferService — accept clones the sample into the receiving 
       barcode: 'BC-1',
       orderIdBarcode: 'OB-1',
       sourceTransferId: 'tr1',
+    });
+  });
+
+  it('the copy keeps when, by whom and in which tube the sample was collected (so its label shows the collection time)', async () => {
+    const { done, create } = accept();
+    await done;
+    const data = (
+      create.mock.calls[0] as [{ data: Record<string, unknown> }]
+    )[0].data;
+    expect(data).toMatchObject({
+      collectedAt: new Date('2026-10-10T08:15:00.000Z'),
+      collectedBy: 'collector-1',
+      tubeType: 'EDTA',
     });
   });
 
@@ -872,6 +961,7 @@ describe('SampleTransferService - the origin of a transfer is the branch sending
       sampleTransfer: {
         findFirst: jest.fn().mockResolvedValue({ id: 'tNew' }),
       },
+      orderSampleTest: { findMany: jest.fn().mockResolvedValue([]) },
     };
     const samples = {
       assertInternalSendable: jest.fn().mockResolvedValue(undefined),
@@ -979,6 +1069,7 @@ describe('SampleTransferService - the origin of a transfer is the branch sending
         },
         department: { findMany: jest.fn().mockResolvedValue([]) },
         outsourceCenter: { findMany: jest.fn().mockResolvedValue([]) },
+        orderSampleTest: { findMany: jest.fn().mockResolvedValue([]) },
       };
       const prisma = {
         withTenant: jest.fn((_t: string, fn: (t: typeof tx) => unknown) =>
@@ -1010,6 +1101,51 @@ describe('SampleTransferService - the origin of a transfer is the branch sending
       await svc.findTransfers(TENANT, 'C', { direction: 'incoming' });
       const [args] = findMany.mock.calls[0] as [{ where: object }];
       expect(args.where).toMatchObject({ destinationBranchId: 'C' });
+    });
+  });
+});
+
+describe('SampleTransferService — manual outsource status', () => {
+  function build(kind: TransferKind) {
+    const { svc, prisma } = setup({ kind });
+    const update = jest.fn().mockResolvedValue({});
+    (prisma.withTenant as jest.Mock).mockImplementation(
+      (_t: string, fn: (t: unknown) => unknown) =>
+        fn({ sampleTransfer: { update } }),
+    );
+    jest
+      .spyOn(
+        svc as unknown as {
+          findTransferById: (...a: unknown[]) => Promise<unknown>;
+        },
+        'findTransferById',
+      )
+      .mockResolvedValue({ id: 'tr1', kind });
+    return { svc, prisma, update };
+  }
+
+  it.each([TransferKind.INTERNAL, TransferKind.EXTERNAL])(
+    'refuses a %s transfer and writes nothing',
+    async (kind) => {
+      const { svc, prisma, update } = build(kind);
+      await expect(
+        svc.updateOutsourceStatus('tr1', TENANT, PERSON, {
+          outsourceStatus: 'Results Ready',
+        }),
+      ).rejects.toBeInstanceOf(TransferNotOutsourceException);
+      expect(prisma.withTenant).not.toHaveBeenCalled();
+      expect(update).not.toHaveBeenCalled();
+    },
+  );
+
+  it('still sets the status on an OUTSOURCE transfer', async () => {
+    const { svc, update } = build(TransferKind.OUTSOURCE);
+    await svc.updateOutsourceStatus('tr1', TENANT, PERSON, {
+      outsourceStatus: 'Results Ready',
+    });
+    expect(update).toHaveBeenCalledWith({
+      where: { id: 'tr1' },
+      data: { outsourceStatus: 'Results Ready', updatedBy: PERSON },
     });
   });
 });

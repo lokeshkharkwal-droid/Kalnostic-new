@@ -6,6 +6,7 @@ import {
   INACTIVE_ORDER_STATUSES,
   TERMINAL_LAB_REPORT_STATUS,
 } from './constants/active-order.constant';
+import { SAMPLE_NOT_ITEM_REMOVED } from '../accession/utils/item-removed.util';
 
 /**
  * The four `Order` foreign-key columns that point at a referral entity. Kept as
@@ -46,13 +47,22 @@ export class ReferralUsageService {
       status: { notIn: [...INACTIVE_ORDER_STATUSES] },
       OR: [
         {
+          // A sample whose test was removed from the order is kept (frozen) but is
+          // no longer active work: skip a sample whose every live test link belongs
+          // to a removed item. (A sample with no live link at all still counts, as
+          // before.)
           orderSamples: {
-            some: { status: { in: [...ACTIVE_SAMPLE_STATUSES] } },
+            some: {
+              status: { in: [...ACTIVE_SAMPLE_STATUSES] },
+              ...SAMPLE_NOT_ITEM_REMOVED,
+            },
           },
         },
         {
           items: {
             some: {
+              // A removed test's kept (frozen) report is not active work either.
+              deletedAt: null,
               labReports: {
                 some: { status: { not: TERMINAL_LAB_REPORT_STATUS } },
               },

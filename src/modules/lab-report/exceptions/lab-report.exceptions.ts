@@ -160,6 +160,37 @@ export class LabReportPrintOrderCancelledException extends KaltrosException {
 }
 
 /**
+ * 409 — the test behind this report was removed from its order, so the report is
+ * kept (visible, tagged "Test removed from order") but frozen: every write path
+ * refuses (reads are unaffected). Raised by `assertReportWritable`.
+ */
+export class LabReportItemRemovedException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'LAB_REPORT_ITEM_REMOVED',
+      'This test was removed from the order, so no further work is allowed on it.',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
+ * 409 — the test behind this report was removed from its order, so the report
+ * cannot be printed. Whole-order prints silently leave such a report out instead.
+ */
+export class LabReportPrintItemRemovedException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'LAB_REPORT_PRINT_ITEM_REMOVED',
+      'This test was removed from the order, so its report cannot be printed.',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
  * 409 — an analyzer-filled value changed after the technician's screen loaded it (the analyzer
  * re-sent a result). Saving that screen would silently replace the newer result, so nothing is
  * written; the screen reloads and the technician reviews the new value.

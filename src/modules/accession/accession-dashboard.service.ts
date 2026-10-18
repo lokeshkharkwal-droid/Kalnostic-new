@@ -9,6 +9,8 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AccessionSettingsService } from './accession-settings.service';
+import { SAMPLE_NOT_ITEM_REMOVED } from './utils/item-removed.util';
+import { SYSTEM_TRANSFER_CLOSE_REASONS } from './constants/transfer-close-reasons.constant';
 import {
   TatStatus,
   TatThresholds,
@@ -130,13 +132,20 @@ const STATUS_DISPLAY_ORDER: SampleStatus[] = [
 /**
  * Cancelled orders are not live work: the dashboard leaves their samples (and
  * internal transfers) out of every count, so a cancelled order cannot look
- * overdue. The list itself still shows them, tagged "Order cancelled".
+ * overdue. The same goes for a sample whose test was removed from the order (kept
+ * but frozen, nobody can work it, so it must not age into "TAT Breached"). The
+ * list itself still shows them, tagged "Order cancelled" / "Test removed from
+ * order".
  */
 const LIVE_ORDER_SAMPLES = {
   order: { status: { not: OrderStatus.CANCELLED } },
+  ...SAMPLE_NOT_ITEM_REMOVED,
 } satisfies Prisma.OrderSampleWhereInput;
 const LIVE_ORDER_TRANSFERS = {
-  sample: { order: { status: { not: OrderStatus.CANCELLED } } },
+  sample: {
+    order: { status: { not: OrderStatus.CANCELLED } },
+    ...SAMPLE_NOT_ITEM_REMOVED,
+  },
 } satisfies Prisma.SampleTransferWhereInput;
 
 @Injectable()
@@ -356,6 +365,13 @@ export class AccessionDashboardService {
           deletedAt: null,
           ...LIVE_ORDER_TRANSFERS,
           transferStatus: TransferStatus.REJECTED,
+          // Only the receiving branch's OWN rejections: a transfer the system closed
+          // (the sender's Retrieve, a removed test) is not a rejection decision. A
+          // row with no reason still counts, as before.
+          OR: [
+            { rejectionReason: null },
+            { rejectionReason: { notIn: [...SYSTEM_TRANSFER_CLOSE_REASONS] } },
+          ],
           ...(createdAt && { createdAt }),
         },
       }),

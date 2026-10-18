@@ -23,6 +23,8 @@ function setup(
         .fn()
         .mockImplementation(() => Promise.resolve(exists ? transfer : null)),
     },
+    // the "test removed from the order" probe: no removed test
+    orderSampleTest: { findMany: jest.fn().mockResolvedValue([]) },
   };
   const samples = {
     branchMayReadSample: jest.fn().mockResolvedValue(sampleReadable),
@@ -42,9 +44,9 @@ describe('SampleTransferService - a transfer can only be opened by a branch with
     ['the receiver', 'B'],
   ])('opens for %s without looking at the sample', async (_who, branch) => {
     const { svc, samples, transfer } = setup();
-    await expect(svc.findTransferById('tr1', TENANT, branch)).resolves.toBe(
-      transfer,
-    );
+    await expect(
+      svc.findTransferById('tr1', TENANT, branch),
+    ).resolves.toMatchObject(transfer);
     expect(samples.branchMayReadSample).not.toHaveBeenCalled();
   });
 
@@ -54,9 +56,9 @@ describe('SampleTransferService - a transfer can only be opened by a branch with
       originBranchId: 'S',
       destinationBranchId: 'R',
     });
-    await expect(svc.findTransferById('tr1', TENANT, 'H')).resolves.toBe(
-      transfer,
-    );
+    await expect(
+      svc.findTransferById('tr1', TENANT, 'H'),
+    ).resolves.toMatchObject(transfer);
   });
 
   it('opens for a branch that is none of the three but has a stake in the sample (e.g. the chain origin)', async () => {
@@ -65,9 +67,9 @@ describe('SampleTransferService - a transfer can only be opened by a branch with
       true,
       true,
     );
-    await expect(svc.findTransferById('tr1', TENANT, 'A')).resolves.toBe(
-      transfer,
-    );
+    await expect(
+      svc.findTransferById('tr1', TENANT, 'A'),
+    ).resolves.toMatchObject(transfer);
     expect(samples.branchMayReadSample).toHaveBeenCalledWith('s1', TENANT, 'A');
   });
 
@@ -88,7 +90,9 @@ describe('SampleTransferService - a transfer can only be opened by a branch with
       originBranchId: 'B',
       destinationBranchId: 'C',
     });
-    await expect(svc.findTransferById('tr1', TENANT)).resolves.toBe(transfer);
+    await expect(svc.findTransferById('tr1', TENANT)).resolves.toMatchObject(
+      transfer,
+    );
     expect(samples.branchMayReadSample).not.toHaveBeenCalled();
   });
 
@@ -98,9 +102,9 @@ describe('SampleTransferService - a transfer can only be opened by a branch with
       originBranchId: 'B',
       destinationBranchId: 'C',
     });
-    await expect(svc.findTransferById('tr1', TENANT, null)).resolves.toBe(
-      transfer,
-    );
+    await expect(
+      svc.findTransferById('tr1', TENANT, null),
+    ).resolves.toMatchObject(transfer);
   });
 
   it('a missing transfer is still "not found"', async () => {
@@ -115,8 +119,8 @@ describe('SampleTransferService - a transfer can only be opened by a branch with
       destinationBranchId: null,
       kind: 'EXTERNAL',
     });
-    await expect(svc.findTransferById('tr1', TENANT, 'A')).resolves.toBe(
-      transfer,
-    );
+    await expect(
+      svc.findTransferById('tr1', TENANT, 'A'),
+    ).resolves.toMatchObject(transfer);
   });
 });

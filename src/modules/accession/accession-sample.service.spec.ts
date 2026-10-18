@@ -1,6 +1,7 @@
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   InvalidSampleTransitionException,
+  SampleBarcodeLockedException,
   SampleOrderCancelledException,
 } from './exceptions/accession.exceptions';
 import { AccessionSettingsService } from './accession-settings.service';
@@ -241,7 +242,11 @@ describe('OrderSampleService — reconcileForOrderInTx (remove path)', () => {
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
-      labReport: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+      // the extra "does a removed item have a report?" read: none here
+      labReport: {
+        findMany: jest.fn().mockResolvedValue([]),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
       sampleTransfer: { updateMany: transferUpdateMany },
       orderItem: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as import('@prisma/client').Prisma.TransactionClient;
@@ -271,16 +276,20 @@ describe('OrderSampleService — reconcileForOrderInTx (remove path)', () => {
         data: expect.objectContaining({ deletedAt: now, status: 'CANCELLED' }),
       }),
     );
-    // S1's transfer still on its way is closed (not left dangling for the receiver)
+    // S1's open transfer (on its way, or already ACCEPTED with a copy at the receiver)
+    // is closed - not left dangling for the receiver - and its copy link is cleared
     expect(transferUpdateMany).toHaveBeenCalledTimes(1);
     expect(firstCallArg(transferUpdateMany)).toMatchObject({
       where: {
         sampleId: 'S1',
-        transferStatus: { in: ['IN_TRANSIT', 'PICKED_UP', 'RECEIVED'] },
+        transferStatus: {
+          in: ['IN_TRANSIT', 'PICKED_UP', 'RECEIVED', 'ACCEPTED'],
+        },
       },
       data: {
         transferStatus: 'REJECTED',
         rejectionReason: 'Order item removed',
+        clonedSampleId: null,
       },
     });
     // S2 shared -> NOT voided
@@ -618,6 +627,8 @@ describe('OrderSampleService — transitionInTx concurrency claim', () => {
       orderSampleStatusHistory: { create: history },
       // the "is the order cancelled?" probe: not cancelled
       order: { findFirst: jest.fn().mockResolvedValue(null) },
+      // the "test removed from the order" probe: no removed test
+      orderSampleTest: { findMany: jest.fn().mockResolvedValue([]) },
     };
     const service = new OrderSampleService(
       {} as unknown as PrismaService,
@@ -683,6 +694,8 @@ describe('OrderSampleService - a cancelled order freezes its samples', () => {
       order: {
         findFirst: jest.fn().mockResolvedValue(cancelled ? { id: 'o1' } : null),
       },
+      // the "test removed from the order" probe: no removed test
+      orderSampleTest: { findMany: jest.fn().mockResolvedValue([]) },
     };
     const service = new OrderSampleService(
       {} as unknown as PrismaService,
@@ -860,6 +873,53 @@ describe('OrderSampleService - a cancelled order freezes its samples', () => {
     await expect(
       service.assignBarcode(['s1'], 't1', 'p1', { barcode: 'X1' }),
     ).rejects.toBeInstanceOf(SampleOrderCancelledException);
+  });
+
+  // The barcode belongs to the tube that travels: no edit while the sample is out,
+  // nor on a copy received from another branch.
+  const assignOn = (over: Partial<typeof baseSample>) => {
+    const { tx, service } = build(false, over);
+    const prisma = {
+      withTenant: (_t: string, fn: (x: typeof tx) => unknown) => fn(tx),
+    };
+    (service as unknown as { prisma: unknown }).prisma = prisma;
+    return { tx, service };
+  };
+
+  it.each(['SENT_INTERNAL', 'FORWARD_EXTERNAL', 'OUTSOURCED'])(
+    'assign barcode is refused on a %s sample and writes nothing',
+    async (status) => {
+      const { tx, service } = assignOn({ status });
+      await expect(
+        service.assignBarcode(['s1'], 't1', 'p1', { barcode: 'X1' }),
+      ).rejects.toBeInstanceOf(SampleBarcodeLockedException);
+      expect(tx.orderSample.updateMany).not.toHaveBeenCalled();
+      expect(tx.orderSampleStatusHistory.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it('assign barcode is refused on a copy received from another branch, even to re-save the same value', async () => {
+    const { tx, service } = assignOn({ status: 'ACCEPTED', sourceTransferId: 'tr1' });
+    await expect(
+      service.assignBarcode(['s1'], 't1', 'p1', {}),
+    ).rejects.toBeInstanceOf(SampleBarcodeLockedException);
+    expect(tx.orderSample.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('a normal in-house sample is not locked: it goes on to assign the barcode', async () => {
+    const { tx, service } = assignOn({ status: 'ACCEPTED' });
+    (service as unknown as { barcodeService: unknown }).barcodeService = {
+      allocateNumberInTx: jest.fn().mockResolvedValue('10001'),
+      generateAndUpload: jest.fn().mockResolvedValue('https://img/10001.png'),
+    };
+    jest
+      .spyOn(
+        service as unknown as { findById: (...a: unknown[]) => Promise<unknown> },
+        'findById',
+      )
+      .mockResolvedValue({ id: 's1' });
+    await service.assignBarcode(['s1'], 't1', 'p1', {});
+    expect(tx.orderSample.updateMany).toHaveBeenCalledTimes(1);
   });
 });
 

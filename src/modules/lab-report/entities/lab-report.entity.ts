@@ -315,6 +315,12 @@ export interface LabReportWorklistRow {
     resultType: ResultType | null;
   } | null;
 
+  /** True when this report's test was removed from the order: the report is kept
+   * (visible, tagged "Test removed from order") but frozen - every write is refused
+   * (409 `LAB_REPORT_ITEM_REMOVED`) and it never prints. Derived from the order
+   * item's `deletedAt`, not stored. */
+  itemRemoved: boolean;
+
   /** `LabReport.orderItemId` — the lookup key `attachSampleStatuses` uses to
    * find this row's `OrderSampleTest`(s). Not itself a display field. */
   orderItemId: string;
@@ -583,6 +589,7 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
             : null,
 
     orderItemId: row.orderItemId,
+    itemRemoved: row.orderItem?.deletedAt != null,
     sampleStatuses: [],
     sampleIds: [],
     sampleBarcodes: [],

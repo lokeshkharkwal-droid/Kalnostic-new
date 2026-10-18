@@ -47,6 +47,8 @@ export const SAMPLE_INCLUDE = {
     include: {
       orderItem: {
         select: {
+          // Set when the test was removed from the order (see `itemRemoved`).
+          deletedAt: true,
           branchLabTest: { select: { departmentId: true } },
           branchLabPanel: { select: { departmentId: true } },
           // The center this order line was assigned to at order create/edit
@@ -101,6 +103,12 @@ export type OrderSampleDetail = Omit<
   'tests' | 'transfers'
 > & {
   departmentLabel: string | null;
+  /**
+   * True when the test(s) this sample carries were removed from the order: the
+   * sample is kept but frozen (only Store / Discard stay open), tagged "Test
+   * removed from order". Derived from the order items' `deletedAt`, not stored.
+   */
+  itemRemoved: boolean;
   tests: (OrderSampleWithRelations['tests'][number] & {
     department: string | null;
   })[];
@@ -117,6 +125,8 @@ export type OrderSampleDetail = Omit<
 /** A list row enriched with its derived TAT band (§A.4 — not stored). */
 export type OrderSampleListItem = OrderSampleListRow & {
   tatStatus: TatStatus | null;
+  /** True when the test(s) on this sample were removed from the order (frozen, kept for wind-down). */
+  itemRemoved: boolean;
 };
 
 /**

@@ -62,6 +62,8 @@ function group(
           Promise.resolve({ orderId: `o-${where.id}` }),
         ),
     },
+    // the "test removed from the order" probe: no removed test
+    orderSampleTest: { findMany: jest.fn().mockResolvedValue([]) },
   };
   const prisma = {
     withTenant: jest.fn((_t: string, fn: (t: typeof tx) => unknown) => fn(tx)),
@@ -72,6 +74,7 @@ function group(
           Promise.resolve({ id: where.id }),
         ),
     },
+    orderSampleTest: { findMany: jest.fn().mockResolvedValue([]) },
   };
   const samples = {
     isOrderCancelled: jest

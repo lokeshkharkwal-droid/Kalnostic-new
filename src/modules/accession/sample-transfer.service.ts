@@ -35,6 +35,7 @@ import {
   SampleTransferDeptRow,
   SampleTransferListRow,
   SampleTransferWithRelations,
+  SampleTransferWithFlag,
 } from './entities/sample-transfer.entity';
 import {
   BulkActionResult,
@@ -46,15 +47,21 @@ import {
   InvalidSampleTransitionException,
   InvalidTransferTransitionException,
   TransferOrderCancelledException,
+  TransferItemRemovedException,
   TransferWrongBranchException,
   refusalMessage,
   OutsourceCenterNotFoundException,
   SampleTransferNotFoundException,
   TransferDestinationMissingException,
+  TransferNotOutsourceException,
   TransferNotEditableException,
   SendBlockedException,
 } from './exceptions/accession.exceptions';
 import { inLockOrder, inRequestOrder } from './utils/request-order.util';
+import {
+  findItemRemovedSampleIds,
+  isSampleItemRemoved,
+} from './utils/item-removed.util';
 import {
   PREVIOUS_HOLDER_MESSAGE,
   heldBranchesForCopy,
@@ -328,6 +335,11 @@ export class SampleTransferService {
     ) {
       throw new TransferOrderCancelledException(transferId, 'assign-center');
     }
+    // A transfer whose test was removed from the order is frozen, destination
+    // included.
+    if (await isSampleItemRemoved(this.prisma, tenantId, transfer.sampleId)) {
+      throw new TransferItemRemovedException(transferId, 'assign-center');
+    }
     // An INTERNAL transfer's destination can only change until the receiving
     // branch has received it (same window as Retrieve).
     if (
@@ -435,7 +447,12 @@ export class SampleTransferService {
     personId: string | null,
     dto: OutsourceStatusDto,
   ): Promise<SampleTransferWithRelations> {
-    await this.findTransferById(transferId, tenantId);
+    const transfer = await this.findTransferById(transferId, tenantId);
+    // Only a transfer to a third-party lab carries this manual status; refuse an
+    // internal / external-partner one instead of writing text onto it.
+    if (transfer.kind !== TransferKind.OUTSOURCE) {
+      throw new TransferNotOutsourceException(transferId);
+    }
     await this.prisma.withTenant(tenantId, (tx) =>
       tx.sampleTransfer.update({
         where: { id: transferId },
@@ -500,11 +517,12 @@ export class SampleTransferService {
       });
       const count = await tx.sampleTransfer.count({ where });
       const deptRows = await this.withDepartmentLabels(tx, tenantId, rows);
-      const fullRows = await this.withOutsourceCenterNames(
+      const centerRows = await this.withOutsourceCenterNames(
         tx,
         tenantId,
         deptRows,
       );
+      const fullRows = await this.withItemRemoved(tx, tenantId, centerRows);
       return [fullRows, count] as const;
     });
     return paginated(data, total, page, limit);
@@ -579,7 +597,9 @@ export class SampleTransferService {
     tx: Prisma.TransactionClient,
     tenantId: string,
     rows: SampleTransferDeptRow[],
-  ): Promise<SampleTransferListRow[]> {
+  ): Promise<
+    Array<SampleTransferDeptRow & { outsourceCenterName: string | null }>
+  > {
     const centerIds = [
       ...new Set(
         rows.map((r) => r.outsourceCenterId).filter((v): v is string => !!v),
@@ -602,7 +622,39 @@ export class SampleTransferService {
   }
 
   /**
-   * Fetch one transfer with its sample + order context.
+   * Attach each transfer's `itemRemoved` flag: true when the test(s) on its sample
+   * - or, once accepted, on the receiving branch's copy - were removed from the
+   * order (the row is kept but frozen, tagged "Test removed from order"). One
+   * query for the whole page (see {@link findItemRemovedSampleIds}).
+   * @param tx the tenant-scoped transaction client (RLS GUC already set)
+   * @param tenantId tenant scope
+   * @param rows the page of transfers
+   */
+  private async withItemRemoved<
+    T extends { sampleId: string; clonedSampleId: string | null },
+  >(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    rows: T[],
+  ): Promise<Array<T & { itemRemoved: boolean }>> {
+    const removed = await findItemRemovedSampleIds(
+      tx,
+      tenantId,
+      rows.flatMap((r) =>
+        r.clonedSampleId ? [r.sampleId, r.clonedSampleId] : [r.sampleId],
+      ),
+    );
+    return rows.map((r) => ({
+      ...r,
+      itemRemoved:
+        removed.has(r.sampleId) ||
+        (r.clonedSampleId !== null && removed.has(r.clonedSampleId)),
+    }));
+  }
+
+  /**
+   * Fetch one transfer with its sample + order context, plus its `itemRemoved`
+   * flag (see {@link withItemRemoved}).
    * @param actingBranchId the caller's ACTIVE branch. When given, the branch must
    *   be the transfer's sender / holder / receiver, or have a stake in its sample
    *   (see {@link OrderSampleService.branchMayReadSample}); otherwise the transfer
@@ -616,7 +668,7 @@ export class SampleTransferService {
     id: string,
     tenantId: string,
     actingBranchId?: string | null,
-  ): Promise<SampleTransferWithRelations> {
+  ): Promise<SampleTransferWithFlag> {
     const transfer = await this.prisma.sampleTransfer.findFirst({
       where: { id, tenantId, deletedAt: null },
       include: TRANSFER_INCLUDE,
@@ -640,7 +692,10 @@ export class SampleTransferService {
         throw new SampleTransferNotFoundException(id);
       }
     }
-    return transfer;
+    const [flagged] = await this.withItemRemoved(this.prisma, tenantId, [
+      transfer,
+    ]);
+    return flagged!;
   }
 
   // ── Engine ───────────────────────────────────────────────────────────────
@@ -850,8 +905,10 @@ export class SampleTransferService {
             );
           }
           // A cancelled order's transfers are frozen - the forward steps (pick up,
-          // receive, accept) are refused. Reject and Repeat stay open so the
-          // receiving branch can send the sample back and wind it down.
+          // receive, accept) are refused. Reject and Repeat stay open while the
+          // transfer is only RECEIVED (the receiving branch has no copy or report yet,
+          // so it can send the sample back and wind it down); once ACCEPTED the copy
+          // holds typed results and `returnCopyToOrigin` refuses (Store / Discard only).
           if (
             action === 'pick-up' ||
             action === 'receive' ||
@@ -895,6 +952,27 @@ export class SampleTransferService {
               }
               throw refusal;
             }
+          }
+          // A transfer whose test was removed from the order is frozen entirely:
+          // all five actions are refused (the sample and report were kept only so
+          // the physical tube can be wound down, see `isSampleItemRemoved`). Like
+          // the cancelled-order case, a group "skip invalid" call skips it with its
+          // reason and carries on; a single action gets the 409.
+          if (await isSampleItemRemoved(tx, tenantId, transfer.sampleId)) {
+            const refusal = new TransferItemRemovedException(
+              transfer.id,
+              action,
+            );
+            if (skipInvalid) {
+              skipped.push({
+                id,
+                accessionNo: accNoById.get(id) ?? null,
+                reason: refusalMessage(refusal),
+                code: refusal.errorCode,
+              });
+              continue;
+            }
+            throw refusal;
           }
           // An INTERNAL transfer nobody was addressed to cannot be picked up,
           // received or accepted — the sender must assign a branch first (Assign
@@ -1163,6 +1241,12 @@ export class SampleTransferService {
         // ignored by the barcode-uniqueness checks).
         barcode: source.barcode,
         orderIdBarcode: source.orderIdBarcode,
+        // It is the same physical tube: it was drawn at the sending branch, so the
+        // copy keeps when, by whom and in which tube - otherwise the receiving
+        // branch's label prints a blank collection time.
+        collectedAt: source.collectedAt,
+        collectedBy: source.collectedBy,
+        tubeType: source.tubeType,
         receivedAt: now,
         acceptedAt: now,
         sampleCondition: transfer.receiveCondition,

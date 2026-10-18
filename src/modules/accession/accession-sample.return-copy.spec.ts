@@ -1,6 +1,7 @@
 import { OrderSampleService } from './accession-sample.service';
 import {
   SampleReturnBlockedException,
+  SampleReturnOrderCancelledException,
   SampleSentToBranchException,
 } from './exceptions/accession.exceptions';
 
@@ -9,7 +10,7 @@ import {
  * report is still work in progress (it is reset on the way back), refused only
  * once the result is validated.
  */
-function build(canReturn: boolean, copyStatus = 'ACCEPTED') {
+function build(canReturn: boolean, copyStatus = 'ACCEPTED', cancelled = false) {
   const calls: string[] = [];
   const labReportService = {
     findReportIdsForSampleTests: jest.fn().mockResolvedValue(['r1', 'r2']),
@@ -38,6 +39,7 @@ function build(canReturn: boolean, copyStatus = 'ACCEPTED') {
           id: 'copy1',
           branchId: 'B',
           status: copyStatus,
+          orderId: 'o1',
           sourceTransferId: 'tr1',
           tests: [{ orderItemId: 'i1', labTestId: 'lt1' }],
         })
@@ -47,7 +49,15 @@ function build(canReturn: boolean, copyStatus = 'ACCEPTED') {
     sampleTransfer: {
       findFirst: jest.fn().mockResolvedValue({ id: 'tr1', sampleId: 'orig1' }),
     },
-    orderSampleTest: { updateMany: jest.fn().mockResolvedValue({}) },
+    // the "order cancelled" probe
+    order: {
+      findFirst: jest.fn().mockResolvedValue(cancelled ? { id: 'o1' } : null),
+    },
+    orderSampleTest: {
+      updateMany: jest.fn().mockResolvedValue({}),
+      // the "test removed from the order" probe: no removed test
+      findMany: jest.fn().mockResolvedValue([]),
+    },
   };
   const service = new OrderSampleService(
     {} as never,
@@ -105,6 +115,36 @@ describe('OrderSampleService.returnCopyToOrigin - Repeat below Result Done', () 
     expect(tx.orderSample.update).not.toHaveBeenCalled();
     expect(tx.orderSampleTest.updateMany).not.toHaveBeenCalled();
     expect(labReportService.resetReportsForReturn).not.toHaveBeenCalled();
+  });
+
+  it('on a CANCELLED order an accepted copy cannot be sent back (its results are kept): refused before anything is read or changed', async () => {
+    const { service, tx, labReportService, calls, transition } = build(
+      true,
+      'ACCEPTED',
+      true,
+    );
+    const err = await service
+      .returnCopyToOrigin(tx as never, 't1', 'u1', 'copy1', 'x')
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SampleReturnOrderCancelledException);
+    expect((err as { errorCode: string }).errorCode).toBe(
+      'SAMPLE_ORDER_CANCELLED',
+    );
+    expect(calls).toEqual([]);
+    expect(tx.sampleTransfer.findFirst).not.toHaveBeenCalled();
+    expect(labReportService.lockReports).not.toHaveBeenCalled();
+    expect(tx.orderSample.update).not.toHaveBeenCalled();
+    expect(tx.orderSampleTest.updateMany).not.toHaveBeenCalled();
+    expect(labReportService.resetReportsForReturn).not.toHaveBeenCalled();
+    expect(labReportService.moveReportsToBranch).not.toHaveBeenCalled();
+    expect(transition).not.toHaveBeenCalled();
+  });
+
+  it('a normal (not cancelled) order still lets the copy go back', async () => {
+    const { service, tx } = build(true, 'ACCEPTED', false);
+    await expect(
+      service.returnCopyToOrigin(tx as never, 't1', 'u1', 'copy1', 'x'),
+    ).resolves.toBe('orig1');
   });
 
   it.each(['SENT_INTERNAL', 'FORWARD_EXTERNAL', 'OUTSOURCED'])(

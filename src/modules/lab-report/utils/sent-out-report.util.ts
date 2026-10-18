@@ -1,5 +1,6 @@
 import { OrderStatus, Prisma, SampleStatus } from '@prisma/client';
 import {
+  LabReportItemRemovedException,
   LabReportNotFoundException,
   LabReportOrderCancelledException,
   LabReportSampleAwaitingException,
@@ -157,8 +158,9 @@ export async function assertReportNotSentOut(
 
 /**
  * The single write-lock every report write path calls: refuse when the report's
- * order is CANCELLED (the lab may not work on a cancelled order), then when the
- * report is sent out (see {@link assertReportNotSentOut}), then when its sample is
+ * order is CANCELLED (the lab may not work on a cancelled order), then when its
+ * test was REMOVED from the order (the report is kept but frozen; the removal is
+ * derived from the order item's `deletedAt`), then when the report is sent out (see {@link assertReportNotSentOut}), then when its sample is
  * back on Repeat awaiting re-acceptance (see {@link isReportAwaitingSample}).
  * Reads must not call it. A missing report is still a plain not-found.
  *
@@ -167,6 +169,7 @@ export async function assertReportNotSentOut(
  * re-collected ("hemolysed, please recollect"). A cancelled or sent-out report
  * still refuses everything.
  * @throws LabReportOrderCancelledException if the report's order is cancelled
+ * @throws LabReportItemRemovedException if the report's test was removed from the order
  * @throws LabReportNotFoundException if the report is missing
  * @throws LabReportSentOutException if the report is sent out
  * @throws LabReportSampleAwaitingException if its sample awaits re-acceptance
@@ -194,9 +197,14 @@ export async function assertReportWritable(
       orderItemId: true,
       memberBranchLabTestId: true,
       labTestId: true,
+      orderItem: { select: { deletedAt: true } },
     },
   });
   if (!report) throw new LabReportNotFoundException(reportId);
+  // The test was removed from the order: the report is kept but frozen.
+  if (report.orderItem?.deletedAt) {
+    throw new LabReportItemRemovedException(reportId);
+  }
   if (await isReportSentOut(db, tenantId, report)) {
     throw new LabReportSentOutException(reportId);
   }

@@ -113,6 +113,7 @@ import {
   InvalidSignatoryAuthorityException,
   LabReportLockedException,
   LabReportPrintOrderCancelledException,
+  LabReportPrintItemRemovedException,
   LabReportSampleMissingException,
   LabReportResultsRequiredException,
   LabReportResultsNotEditableException,
@@ -2141,6 +2142,28 @@ export class LabReportService {
   }
 
   /**
+   * Printing the report of a test that was removed from its order is refused (see
+   * {@link LabReportPrintItemRemovedException}). Whole-order prints leave such
+   * reports out instead (see {@link printAllForOrder}).
+   * @throws LabReportPrintItemRemovedException if the report's test was removed
+   */
+  private async assertReportItemNotRemovedForPrint(
+    tenantId: string,
+    reportId: string,
+  ): Promise<void> {
+    const removed = await this.prisma.labReport.findFirst({
+      where: {
+        id: reportId,
+        tenantId,
+        deletedAt: null,
+        orderItem: { deletedAt: { not: null } },
+      },
+      select: { id: true },
+    });
+    if (removed) throw new LabReportPrintItemRemovedException(reportId);
+  }
+
+  /**
    * Same refusal for the whole-order print.
    * @throws LabReportPrintOrderCancelledException if the order is cancelled
    */
@@ -2670,8 +2693,9 @@ export class LabReportService {
    * The report as seen by the active branch, ready to be worked on. Two separate
    * gates apply to writes (the default):
    *  - the write locks: refused while the report's sample is sent to another
-   *    branch (view-only until received or returned), its order is cancelled, or
-   *    its sample is not accepted yet. `forRead` skips only these.
+   *    branch (view-only until received or returned), its order is cancelled,
+   *    its test was removed from the order, or its sample is not accepted yet.
+   *    `forRead` skips only these.
    *  - the technician's own Lock: a locked report is refused (409) unless
    *    `allowLocked` is set - which only READ paths use (e.g. the notes tabs, which
    *    the Test Entry popup loads when it opens a locked test so it can be unlocked).
@@ -4289,6 +4313,7 @@ export class LabReportService {
     // Referral Panel Settings — Restrict Report Access (Credit Limit/Days).
     await this.referralCredit.assertReportAccessAllowedByReportId(tenantId, id);
     await this.assertReportOrderNotCancelledForPrint(tenantId, id);
+    await this.assertReportItemNotRemovedForPrint(tenantId, id);
     // The order's own branch may print any report on its order, held anywhere —
     // the same rule Print All applies — so the two buttons never disagree.
     const wholeOrder =
@@ -4490,7 +4515,8 @@ export class LabReportService {
     const reportWhere: Prisma.LabReportWhereInput = {
       tenantId,
       deletedAt: null,
-      orderItem: { orderId },
+      // A test removed from the order has a kept-but-frozen report: it never prints.
+      orderItem: { orderId, deletedAt: null },
       ...(orderItemIds && orderItemIds.length > 0
         ? { orderItemId: { in: orderItemIds } }
         : {}),
@@ -4974,7 +5000,8 @@ export class LabReportService {
     const reportWhere: Prisma.LabReportWhereInput = {
       tenantId,
       deletedAt: null,
-      orderItem: { orderId },
+      // A test removed from the order has a kept-but-frozen report: it never prints.
+      orderItem: { orderId, deletedAt: null },
       ...(orderItemIds && orderItemIds.length > 0
         ? { orderItemId: { in: orderItemIds } }
         : {}),
@@ -5433,16 +5460,21 @@ export class LabReportService {
       contactFor,
     );
     // Tests whose results are not signed off yet print as "Result pending" — count
-    // them over the whole order (every branch), so the sender can be warned.
+    // them over the whole order (every branch), so the sender can be warned. A test
+    // removed from the order is not counted (its frozen report never prints).
     const [totalReportCount, readyReportCount] = await Promise.all([
       this.prisma.labReport.count({
-        where: { tenantId, deletedAt: null, orderItem: { orderId } },
+        where: {
+          tenantId,
+          deletedAt: null,
+          orderItem: { orderId, deletedAt: null },
+        },
       }),
       this.prisma.labReport.count({
         where: {
           tenantId,
           deletedAt: null,
-          orderItem: { orderId },
+          orderItem: { orderId, deletedAt: null },
           status: { in: [...PRINTABLE_REPORT_STATUSES] },
         },
       }),

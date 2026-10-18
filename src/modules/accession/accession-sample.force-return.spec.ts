@@ -43,6 +43,8 @@ describe('OrderSampleService — forced Return respects the allowed statuses', (
       ),
     },
     orderSampleStatusHistory: { create: jest.fn().mockResolvedValue({}) },
+    // the "test removed from the order" probe: no removed test
+    orderSampleTest: { findMany: jest.fn().mockResolvedValue([]) },
   };
 
   const prisma = {

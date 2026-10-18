@@ -240,3 +240,43 @@ describe('the branch limit on the history still comes first', () => {
     expect(m.internals.findById).toHaveBeenCalledWith('s1', 't1', 'B');
   });
 });
+
+describe('Sample History of a copy created by an accepted transfer', () => {
+  it('keeps the copy\'s single "transfer-accept" row (born Accepted, so no from-status) while other rows without a movement stay hidden', async () => {
+    const m = build({
+      rows: [
+        history({
+          id: 'barcode',
+          action: 'assign-barcode',
+          fromStatus: SampleStatus.ACCEPTED,
+          toStatus: SampleStatus.ACCEPTED,
+          createdAt: at(20),
+        }),
+        history({
+          id: 'accepted',
+          action: 'transfer-accept',
+          fromStatus: null,
+          toStatus: SampleStatus.ACCEPTED,
+          createdAt: at(10),
+        }),
+        history({
+          id: 'generated',
+          action: 'generate',
+          fromStatus: null,
+          toStatus: SampleStatus.NEW,
+          createdAt: at(0),
+        }),
+      ],
+    });
+    const trail = (await m.service.findHistory(
+      's1',
+      't1',
+      'B',
+    )) as unknown as Row[];
+    expect(trail.map((r) => r.action)).toEqual(['transfer-accept']);
+    expect(trail[0]).toMatchObject({
+      fromStatus: null,
+      toStatus: SampleStatus.ACCEPTED,
+    });
+  });
+});

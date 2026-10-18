@@ -299,4 +299,43 @@ describe('Retrieve of a sample that is not transferred', () => {
     await m.run('retrieve');
     expect(m.updatedData().status).toBe(SampleStatus.ACCEPTED);
   });
+
+  // The receiving branch returned the sample (Sent → Repeat) and the sender collected
+  // it again: stepping back must never land on "Sent" with no open transfer.
+  it.each([
+    SampleStatus.SENT_INTERNAL,
+    SampleStatus.FORWARD_EXTERNAL,
+    SampleStatus.OUTSOURCED,
+  ])(
+    'never walks back into %s: it stops with "nothing to retrieve" and changes nothing',
+    async (transferred) => {
+      const m = build(
+        { status: SampleStatus.REPEAT, previousStatus: SampleStatus.COLLECTED },
+        { history: { fromStatus: transferred } },
+      );
+      // the same "nothing to retrieve" refusal the immediate-Repeat case gives
+      await expect(m.run('retrieve')).rejects.toBeInstanceOf(
+        RetrieveBlockedException,
+      );
+      expect(m.tx.orderSample.update).not.toHaveBeenCalled();
+      expect(m.tx.orderSample.updateMany).not.toHaveBeenCalled();
+      expect(m.recall).not.toHaveBeenCalled();
+    },
+  );
+
+  it('still walks back normally past a returned cycle (Collected goes back to Repeat, Repeat to Accepted when the sender repeated it)', async () => {
+    const collected = build(
+      { status: SampleStatus.COLLECTED, previousStatus: SampleStatus.REPEAT },
+      { history: { fromStatus: SampleStatus.REPEAT } },
+    );
+    await collected.run('retrieve');
+    expect(collected.updatedData().status).toBe(SampleStatus.REPEAT);
+
+    const repeated = build(
+      { status: SampleStatus.REPEAT, previousStatus: SampleStatus.ACCEPTED },
+      { history: { fromStatus: SampleStatus.ACCEPTED } },
+    );
+    await repeated.run('retrieve');
+    expect(repeated.updatedData().status).toBe(SampleStatus.ACCEPTED);
+  });
 });

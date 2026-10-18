@@ -45,6 +45,10 @@ import {
   tatCreatedAtRange,
 } from './constants/tat.constant';
 import { CONTAINER_TYPE_LABELS } from './constants/container-type.constants';
+import {
+  ORDER_ITEM_REMOVED_REASON,
+  RECALLED_VIA_RETRIEVE_REASON,
+} from './constants/transfer-close-reasons.constant';
 import { AccessionSettingsService } from './accession-settings.service';
 import { BarcodeService } from './barcode.service';
 import { ListSamplesDto, OrderMode } from './dto/list-samples.dto';
@@ -82,6 +86,9 @@ import {
   RetrieveBlockedException,
   TransferWrongBranchException,
   SampleOrderCancelledException,
+  SampleBarcodeLockedException,
+  SampleItemRemovedException,
+  SampleReturnOrderCancelledException,
   SampleRepeatBlockedException,
   SampleReturnBlockedException,
   SampleRetrieveBlockedByResultException,
@@ -100,6 +107,11 @@ import {
   branchesWithStake,
 } from './utils/branch-read-scope.util';
 import { inLockOrder, inRequestOrder } from './utils/request-order.util';
+import {
+  findItemRemovedSampleIds,
+  isAllItemsRemoved,
+  isSampleItemRemoved,
+} from './utils/item-removed.util';
 
 /** Resolved display fields attached to a history row for the Audit Trail UI. */
 export interface AccessionHistoryActor {
@@ -186,6 +198,25 @@ const TRANSFERRED_STATUSES: ReadonlySet<SampleStatus> = new Set([
 /** True while the sample lives at another branch/partner/center (see above). */
 function isTransferredStatus(status: SampleStatus): boolean {
   return TRANSFERRED_STATUSES.has(status);
+}
+
+/**
+ * The kind of hand-off a sample in a transferred status is out on (Sent → INTERNAL,
+ * Forwarded → EXTERNAL, Outsourced → OUTSOURCE); `null` for any other status.
+ * A recall unwinds ONLY this kind, so an older, already-closed transfer of another
+ * kind (e.g. an internal A→B rejection) stays on record as history.
+ */
+function transferKindOutFor(status: SampleStatus): TransferKind | null {
+  switch (status) {
+    case SampleStatus.SENT_INTERNAL:
+      return TransferKind.INTERNAL;
+    case SampleStatus.FORWARD_EXTERNAL:
+      return TransferKind.EXTERNAL;
+    case SampleStatus.OUTSOURCED:
+      return TransferKind.OUTSOURCE;
+    default:
+      return null;
+  }
 }
 
 /**
@@ -421,7 +452,8 @@ export class OrderSampleService {
                     action: 'collect',
                     fromStatus: SampleStatus.NEW,
                     toStatus: SampleStatus.COLLECTED,
-                    reason: 'Sample Flow = No: auto-collected at order creation',
+                    reason:
+                      'Sample Flow = No: auto-collected at order creation',
                     changedBy: personId,
                   },
                   {
@@ -649,9 +681,16 @@ export class OrderSampleService {
    * Reconcile an order's accession samples with an item-set change made during an
    * order update, inside an existing tenant-scoped transaction. Added items get
    * fresh samples; removed items have their exclusively-linked samples voided
-   * (soft-deleted + CANCELLED) while samples shared with a surviving test keep the
-   * sample and drop only the removed test's OrderSampleTest link (soft-delete);
-   * the removed items' LabReports are soft-deleted. Kept items are untouched.
+   * (soft-deleted + CANCELLED, open transfers closed as REJECTED "Order item
+   * removed") while samples shared with a surviving test keep the sample and drop
+   * only the removed test's OrderSampleTest link (soft-delete); the removed items'
+   * LabReports are soft-deleted. EXCEPTION: a removed item with a report whose
+   * work sits at the holder (an in-house accepted sample, or a transfer already
+   * ACCEPTED at the receiving branch) is KEPT - samples, links, transfers and
+   * reports untouched - and frozen by the "test removed from order" guards (the
+   * removal is derived from the item's `deletedAt`). A sample still out in an
+   * IN_TRANSIT / PICKED_UP / RECEIVED transfer is always cleaned up as above.
+   * Kept items are untouched.
    * @param tx active Prisma transaction client (already tenant-scoped)
    * @param tenantId tenant scope
    * @param branchId active branch (from JWT profile; may be null)
@@ -687,12 +726,64 @@ export class OrderSampleService {
         },
         select: {
           id: true,
+          branchId: true,
+          status: true,
+          previousStatus: true,
+          sourceTransferId: true,
           tests: {
             where: { deletedAt: null },
             select: { id: true, orderItemId: true },
           },
         },
       });
+
+      // A removed item with at least one live report (any branch) has work behind
+      // it. Where that work actually sits at the holder - an in-house accepted
+      // sample, or a transfer already ACCEPTED (copy + report at the receiving
+      // branch) - the sample, links, transfers and reports are KEPT, frozen (the
+      // removal is derived from the item's `deletedAt`). A sample still out in a
+      // transfer that the receiver has not accepted (IN_TRANSIT / PICKED_UP /
+      // RECEIVED) has no work at the receiver: it takes the clean-up path below,
+      // report or not, exactly as before. Only an INTERNAL transfer can be "out" in
+      // that sense: an outsourced / forwarded tube never reaches a branch of ours,
+      // its report stays with the sender and is worked there, so its tracking status
+      // (which nobody may ever click through) must not decide anything - it is kept
+      // and frozen like any in-house tube.
+      const reported =
+        samples.length > 0
+          ? await tx.labReport.findMany({
+              where: {
+                orderItemId: { in: removedItemIds },
+                tenantId,
+                deletedAt: null,
+              },
+              select: { orderItemId: true },
+              distinct: ['orderItemId'],
+            })
+          : [];
+      const reportedItemIds = new Set(reported.map((r) => r.orderItemId));
+      const outSampleIds = new Set<string>();
+      if (reportedItemIds.size > 0) {
+        const out = await tx.sampleTransfer.findMany({
+          where: {
+            sampleId: { in: samples.map((s) => s.id) },
+            tenantId,
+            deletedAt: null,
+            kind: TransferKind.INTERNAL,
+            transferStatus: {
+              in: [
+                TransferStatus.IN_TRANSIT,
+                TransferStatus.PICKED_UP,
+                TransferStatus.RECEIVED,
+              ],
+            },
+          },
+          select: { sampleId: true },
+        });
+        for (const t of out) outSampleIds.add(t.sampleId);
+      }
+      // Removed items whose report is kept (so it must not be soft-deleted below).
+      const keptItemIds = new Set<string>();
 
       for (const sample of samples) {
         const removedLinks = sample.tests.filter((l) =>
@@ -702,16 +793,26 @@ export class OrderSampleService {
           (l) => !removedSet.has(l.orderItemId),
         );
 
-        if (survivingLinks.length === 0) {
-          // Sample is exclusively tied to removed items — void it. Any transfer
-          // of it still on its way (not yet accepted) is closed too: otherwise the
-          // receiving branch keeps a transfer for a sample that no longer exists
-          // and its Accept fails with "sample not found".
+        // A RECEIVED COPY (the receiving branch accepted it, so its report and any
+        // typed results sit with that branch) that the branch has passed on to a
+        // third branch which has not accepted it yet: the work is still HERE, at the
+        // branch holding the copy - not at the branch it is travelling to. So the
+        // copy and its report are kept and frozen like any accepted copy; only the
+        // onward hop is called off (that transfer is closed as "Order item
+        // removed") and the copy goes back from Sent to the status it had before,
+        // since nothing is travelling any more. Voiding the copy here would leave
+        // the sender's A -> B transfer "Accepted" with no live copy.
+        if (
+          outSampleIds.has(sample.id) &&
+          !!sample.sourceTransferId &&
+          removedLinks.some((l) => reportedItemIds.has(l.orderItemId))
+        ) {
           await tx.sampleTransfer.updateMany({
             where: {
               sampleId: sample.id,
               tenantId,
               deletedAt: null,
+              kind: TransferKind.INTERNAL,
               transferStatus: {
                 in: [
                   TransferStatus.IN_TRANSIT,
@@ -722,7 +823,84 @@ export class OrderSampleService {
             },
             data: {
               transferStatus: TransferStatus.REJECTED,
-              rejectionReason: 'Order item removed',
+              rejectionReason: ORDER_ITEM_REMOVED_REASON,
+              clonedSampleId: null,
+              updatedBy: personId,
+            },
+          });
+          if (sample.status === SampleStatus.SENT_INTERNAL) {
+            const back =
+              sample.previousStatus &&
+              !isTransferredStatus(sample.previousStatus) &&
+              sample.previousStatus !== SampleStatus.CANCELLED &&
+              sample.previousStatus !== SampleStatus.DISCARDED
+                ? sample.previousStatus
+                : SampleStatus.ACCEPTED;
+            await tx.orderSample.update({
+              where: { id: sample.id },
+              data: {
+                status: back,
+                previousStatus: SampleStatus.SENT_INTERNAL,
+                processingBranchId: sample.branchId,
+                dispatchedAt: null,
+                logisticsType: null,
+                logisticsPerson: null,
+                updatedBy: personId,
+                statusHistory: {
+                  create: {
+                    tenantId,
+                    branchId: sample.branchId,
+                    action: 'order-item-removed',
+                    fromStatus: SampleStatus.SENT_INTERNAL,
+                    toStatus: back,
+                    reason: ORDER_ITEM_REMOVED_REASON,
+                    changedBy: personId,
+                  },
+                },
+              },
+            });
+          }
+          for (const l of removedLinks) keptItemIds.add(l.orderItemId);
+          continue;
+        }
+
+        // Work sits here (see above): the tube stays whole, with every removed
+        // link on it (a report-less one too - it is frozen with the rest).
+        if (
+          !outSampleIds.has(sample.id) &&
+          removedLinks.some((l) => reportedItemIds.has(l.orderItemId))
+        ) {
+          for (const l of removedLinks) keptItemIds.add(l.orderItemId);
+          continue;
+        }
+
+        if (survivingLinks.length === 0) {
+          // Sample is exclusively tied to removed items — void it. Any transfer
+          // of it still open is closed too: otherwise the receiving branch keeps a
+          // transfer for a sample that no longer exists (its Accept fails with
+          // "sample not found", or - once ACCEPTED - it stays "Accepted" for ever
+          // with no live copy and its Repeat / Reject fail). An ACCEPTED transfer's
+          // copy at the receiving branch is voided by this same loop (it is linked
+          // to the removed item too), so its link is cleared, as Reject-after-Accept
+          // does.
+          await tx.sampleTransfer.updateMany({
+            where: {
+              sampleId: sample.id,
+              tenantId,
+              deletedAt: null,
+              transferStatus: {
+                in: [
+                  TransferStatus.IN_TRANSIT,
+                  TransferStatus.PICKED_UP,
+                  TransferStatus.RECEIVED,
+                  TransferStatus.ACCEPTED,
+                ],
+              },
+            },
+            data: {
+              transferStatus: TransferStatus.REJECTED,
+              rejectionReason: ORDER_ITEM_REMOVED_REASON,
+              clonedSampleId: null,
               updatedBy: personId,
             },
           });
@@ -752,11 +930,14 @@ export class OrderSampleService {
         }
       }
 
-      // Soft-delete all LabReports belonging to the removed order items.
-      // A deletion guard upstream ensures none are past PENDING/PARTIAL_PENDING.
+      // Soft-delete the LabReports of the removed order items whose work was not
+      // kept above (a report-less item has none; one that was still out in an
+      // unaccepted transfer has its untouched, view-only report removed as before).
       await tx.labReport.updateMany({
         where: {
-          orderItemId: { in: removedItemIds },
+          orderItemId: {
+            in: removedItemIds.filter((id) => !keptItemIds.has(id)),
+          },
           tenantId,
           deletedAt: null,
         },
@@ -862,8 +1043,16 @@ export class OrderSampleService {
       where: { id: { in: sampleIds }, tenantId, deletedAt: null },
       select: { id: true, status: true },
     });
-    const collectable = samples.filter((s) =>
-      COLLECTABLE_SAMPLE_STATUSES.includes(s.status),
+    // A sample whose test was removed from the order is frozen (kept only for the
+    // tube's wind-down), so a group / order collect passes it by instead of failing.
+    const removed = await findItemRemovedSampleIds(
+      tx,
+      tenantId,
+      samples.map((s) => s.id),
+    );
+    const collectable = samples.filter(
+      (s) =>
+        COLLECTABLE_SAMPLE_STATUSES.includes(s.status) && !removed.has(s.id),
     );
     if (collectable.length === 0) return;
 
@@ -959,7 +1148,12 @@ export class OrderSampleService {
       });
       if (pendingSamples > 0) continue;
       await tx.orderItem.updateMany({
-        where: { id: orderItemId, tenantId, deletedAt: null, collectedAt: null },
+        where: {
+          id: orderItemId,
+          tenantId,
+          deletedAt: null,
+          collectedAt: null,
+        },
         data: { collectedAt: now, collectedBy: personId },
       });
     }
@@ -1014,9 +1208,15 @@ export class OrderSampleService {
       const count = await tx.orderSample.count({ where });
       return [rows, count] as const;
     });
+    const removedIds = await findItemRemovedSampleIds(
+      this.prisma,
+      tenantId,
+      data.map((r) => r.id),
+    );
     const items: OrderSampleListItem[] = data.map((row) => ({
       ...row,
       tatStatus: deriveTatStatus(row.createdAt, row.status, tat, nowMs),
+      itemRemoved: removedIds.has(row.id),
     }));
     return paginated(items, total, page, limit);
   }
@@ -1109,6 +1309,12 @@ export class OrderSampleService {
       );
       depts.forEach((d) => deptNameById.set(d.id, d.name));
     }
+    // Samples whose test was removed from the order (one query for the page).
+    const removedIds = await findItemRemovedSampleIds(
+      this.prisma,
+      tenantId,
+      rows.map((r) => r.id),
+    );
 
     // Assemble one InHouseOrderGroup per paged order id (order-first).
     const groups: InHouseOrderGroup[] = [];
@@ -1123,6 +1329,7 @@ export class OrderSampleService {
           deptNameById,
           tat,
           nowMs,
+          removedIds,
         ),
       );
     }
@@ -1204,7 +1411,21 @@ export class OrderSampleService {
       depts.forEach((d) => deptNameById.set(d.id, d.name));
     }
 
-    return this.buildOrderGroup(orderId, rows, mode, deptNameById, tat, nowMs);
+    const removedIds = await findItemRemovedSampleIds(
+      this.prisma,
+      tenantId,
+      rows.map((r) => r.id),
+    );
+
+    return this.buildOrderGroup(
+      orderId,
+      rows,
+      mode,
+      deptNameById,
+      tat,
+      nowMs,
+      removedIds,
+    );
   }
 
   /**
@@ -1272,7 +1493,8 @@ export class OrderSampleService {
    * barcode grouping and the action scope always agree with the tenant's current
    * Group Settings — even after the mode is changed, a sample is missing a
    * barcode, or a barcode was edited. Shared by {@link findAllGrouped} (list)
-   * and {@link findOrderGrouped} (single order).
+   * and {@link findOrderGrouped} (single order). `itemRemovedIds` are the samples
+   * whose test was removed from the order (each row's `itemRemoved` flag).
    */
   private buildOrderGroup(
     orderId: string,
@@ -1281,10 +1503,12 @@ export class OrderSampleService {
     deptNameById: Map<string, string>,
     tat: TatThresholds,
     nowMs: number,
+    itemRemovedIds: ReadonlySet<string> = new Set(),
   ): InHouseOrderGroup {
     const toItem = (row: OrderSampleListRow): GroupedSampleItem => ({
       ...row,
       tatStatus: deriveTatStatus(row.createdAt, row.status, tat, nowMs),
+      itemRemoved: itemRemovedIds.has(row.id),
       departmentName: row.departmentId
         ? (deptNameById.get(row.departmentId) ?? null)
         : null,
@@ -1593,6 +1817,9 @@ export class OrderSampleService {
       tests,
       transfers,
       departmentLabel: distinct.length > 0 ? distinct.join(', ') : null,
+      // Derived from the sample's own test links (already loaded): the test was
+      // removed from the order when every live link belongs to a removed item.
+      itemRemoved: isAllItemsRemoved(sample.tests),
     };
   }
 
@@ -1624,8 +1851,13 @@ export class OrderSampleService {
       where: { sampleId: id, tenantId, deletedAt: null },
       orderBy: { createdAt: 'desc' },
     });
+    // A copy created by an accepted transfer is born ACCEPTED, so its single
+    // `transfer-accept` row has no `fromStatus` - but it is the one fact the
+    // receiving branch's trail has ("accepted from another branch"), so it is kept.
     const movements = rows.filter(
-      (r) => r.fromStatus !== null && r.fromStatus !== r.toStatus,
+      (r) =>
+        (r.fromStatus !== null && r.fromStatus !== r.toStatus) ||
+        r.action === 'transfer-accept',
     );
     // A cancelled order shows its cancellation in the trail too, at its place in
     // the timeline (newest first, like every other entry).
@@ -2411,6 +2643,19 @@ export class OrderSampleService {
     if (!copy || !copy.sourceTransferId) {
       throw new OrderSampleNotFoundException(copyId);
     }
+    // A copy whose test was removed from the order is frozen: it cannot be sent
+    // back (its report stays where it is).
+    if (await isSampleItemRemoved(tx, tenantId, copy.id)) {
+      throw new SampleItemRemovedException(action, copy.status);
+    }
+    // An order that was cancelled is frozen: the accepted copy (and the results
+    // typed on it) stays where it is, so it cannot be sent back - sending it back
+    // resets the report. Store then Discard remain the way to wind the tube down.
+    // This is the one place every road back goes through (the transfer's Reject /
+    // Repeat, the sample's own Repeat and Return).
+    if (await this.isOrderCancelled(tx, tenantId, copy.orderId)) {
+      throw new SampleReturnOrderCancelledException(action, copy.status);
+    }
     // Checked before anything is read or written: a copy this branch has already
     // passed on cannot be sent back (see the doc comment, step 0).
     if (isTransferredStatus(copy.status)) {
@@ -2778,6 +3023,9 @@ export class OrderSampleService {
    * transaction (all-or-none). A failed render/upload rolls the whole assignment
    * back (fail-together).
    * @throws OrderSampleNotFoundException if any id is missing / other-tenant
+   * @throws SampleOrderCancelledException if a sample's order is cancelled
+   * @throws SampleBarcodeLockedException if a sample is out at another
+   *   branch / partner / centre, or is a copy received from another branch
    * @throws ValidationException if a manual barcode is already in use
    */
   async assignBarcode(
@@ -2796,6 +3044,7 @@ export class OrderSampleService {
           branchId: true,
           barcode: true,
           orderId: true,
+          sourceTransferId: true,
         },
       });
       const found = new Set(samples.map((s) => s.id));
@@ -2805,6 +3054,15 @@ export class OrderSampleService {
       for (const s of samples) {
         if (await this.isOrderCancelled(tx, tenantId, s.orderId)) {
           throw new SampleOrderCancelledException('assign-barcode', s.status);
+        }
+      }
+      // The barcode belongs to the physical tube that travels: a sample that is out
+      // at another branch / partner / centre, and a copy received from another
+      // branch, keep the number they have (editing one side would leave the tube
+      // with two numbers). All-or-nothing, like the rest of this action.
+      for (const s of samples) {
+        if (isTransferredStatus(s.status) || s.sourceTransferId) {
+          throw new SampleBarcodeLockedException(s.status);
         }
       }
 
@@ -3007,6 +3265,23 @@ export class OrderSampleService {
       throw new SampleOrderCancelledException(action, sample.status);
     }
 
+    // A sample whose test was removed from the order is kept for the physical
+    // tube's wind-down only: Store and Discard stay open, and so does the sender's
+    // Retrieve of a sample that is OUT at another branch / partner (otherwise it
+    // could never be pulled back; Retrieve keeps its own guards below). Every other
+    // user action (Send, Return, Repeat, Forward, Outsource, collect, accept, ...)
+    // is refused. The system-driven moves (`note.system`) are not user actions and
+    // pass.
+    if (
+      !note.system &&
+      action !== 'store' &&
+      action !== 'discard' &&
+      !(action === 'retrieve' && isTransferredStatus(sample.status)) &&
+      (await isSampleItemRemoved(tx, tenantId, sample.id))
+    ) {
+      throw new SampleItemRemovedException(action, sample.status);
+    }
+
     // A sample sent to another branch of the tenant is out of this branch's
     // hands: the ONLY user action that may touch it is Retrieve (and only before
     // the receiving branch has received it — checked below). This guard runs
@@ -3075,8 +3350,19 @@ export class OrderSampleService {
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         select: { fromStatus: true },
       });
-      toStatus =
+      const walkedTo =
         prevRow?.fromStatus ?? nextSampleStatus('retrieve', sample.status);
+      // A sample is in Sent / Forwarded / Outsourced only through a real, open
+      // transfer. Once it has come back (the receiving branch returned it) and been
+      // collected again, the history still says "Sent → Repeat": stepping back must
+      // stop there. Landing on a transferred status with no open transfer is an
+      // impossible state (the report would turn view-only and the sample could not be
+      // repeated or re-sent). A sample that really is out is retrieved by the branch
+      // above (`retrieveTarget`), never by this walk-back.
+      if (walkedTo && isTransferredStatus(walkedTo)) {
+        throw new RetrieveBlockedException(sample.status, 'RETURNED');
+      }
+      toStatus = walkedTo;
     } else {
       toStatus = nextSampleStatus(action, sample.status);
     }
@@ -3139,7 +3425,7 @@ export class OrderSampleService {
         },
         data: {
           transferStatus: TransferStatus.REJECTED,
-          rejectionReason: 'Recalled via Retrieve',
+          rejectionReason: RECALLED_VIA_RETRIEVE_REASON,
           updatedBy: personId,
         },
       });
@@ -3333,8 +3619,13 @@ export class OrderSampleService {
   }
 
   /**
-   * Recall every outstanding transfer of a sample that is being pulled back from a
-   * transferred status (Retrieve / Repeat). For each non-deleted transfer:
+   * Recall the hand-off a sample is being pulled back from (Retrieve / Repeat).
+   * Only transfers of the kind the sample is out on are recalled (see
+   * {@link transferKindOutFor}): an older transfer of another kind that is already
+   * closed (e.g. an internal A→B rejection before the sample was Forwarded) is
+   * history and is left untouched. A sample whose status maps to no kind (a passed-on
+   * clone being unwound) keeps the old behaviour and recalls all its transfers.
+   * For each matching non-deleted transfer:
    *  - if it was an accepted INTERNAL transfer (a clone exists in the receiving
    *    branch's In-House list), soft-delete that clone and move its lab report(s)
    *    back to the origin branch (see {@link removeTransferCloneInTx}); then
@@ -3354,8 +3645,14 @@ export class OrderSampleService {
     sample: OrderSample,
   ): Promise<void> {
     const originBranch = sample.originBranchId ?? sample.branchId;
+    const kindOut = transferKindOutFor(sample.status);
     const transfers = await tx.sampleTransfer.findMany({
-      where: { sampleId: sample.id, tenantId, deletedAt: null },
+      where: {
+        sampleId: sample.id,
+        tenantId,
+        deletedAt: null,
+        ...(kindOut ? { kind: kindOut } : {}),
+      },
     });
     const now = new Date();
     for (const transfer of transfers) {
@@ -3372,7 +3669,8 @@ export class OrderSampleService {
         where: { id: transfer.id },
         data: {
           deletedAt: now,
-          rejectionReason: transfer.rejectionReason ?? 'Recalled via Retrieve',
+          rejectionReason:
+            transfer.rejectionReason ?? RECALLED_VIA_RETRIEVE_REASON,
           updatedBy: personId,
         },
       });

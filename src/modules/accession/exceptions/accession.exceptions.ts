@@ -99,6 +99,24 @@ export class SampleOrderCancelledException extends InvalidSampleTransitionExcept
 }
 
 /**
+ * 422 — the order was cancelled and the receiving branch has already ACCEPTED its
+ * copy, so the copy cannot be sent back to the sender (Repeat / Reject / Return):
+ * that would wipe the results typed on it. Only Store then Discard stay open. Extends
+ * {@link InvalidSampleTransitionException} so a group "skip invalid" call skips it
+ * with this sentence; it carries the same code as the other cancelled-order refusals.
+ */
+export class SampleReturnOrderCancelledException extends InvalidSampleTransitionException {
+  constructor(action: SampleAction | 'reject', from: SampleStatus) {
+    super(
+      action as SampleAction,
+      from,
+      'This order has been cancelled, so this accepted sample cannot be sent back to the sending branch (its results are kept). Store and discard it instead.',
+      'SAMPLE_ORDER_CANCELLED',
+    );
+  }
+}
+
+/**
  * 409 — the order behind this transfer was cancelled, so the transfer can no
  * longer be picked up, received, accepted, rejected or repeated.
  */
@@ -107,6 +125,39 @@ export class TransferOrderCancelledException extends KaltrosException {
     super(
       'TRANSFER_ORDER_CANCELLED',
       `This order has been cancelled, so "${action}" is not allowed on its transfer.`,
+      { id: transferId, action },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
+ * 422 — the test this sample carries was removed from its order, so only the
+ * physical-tube wind-down (`store` / `discard`) is still allowed. Extends
+ * {@link InvalidSampleTransitionException} so group actions that "skip invalid"
+ * samples skip it with this sentence instead of failing the whole batch.
+ */
+export class SampleItemRemovedException extends InvalidSampleTransitionException {
+  constructor(action: SampleAction | 'reject', from: SampleStatus) {
+    super(
+      action as SampleAction,
+      from,
+      'This test was removed from the order, so no further work is allowed on it.',
+      'SAMPLE_ITEM_REMOVED',
+    );
+  }
+}
+
+/**
+ * 409 — the test behind this transfer's sample was removed from its order, so the
+ * transfer can no longer be picked up, received, accepted, rejected or repeated
+ * (nor have its center assigned).
+ */
+export class TransferItemRemovedException extends KaltrosException {
+  constructor(transferId: string, action: TransferAction | 'assign-center') {
+    super(
+      'TRANSFER_ITEM_REMOVED',
+      'This test was removed from the order, so no further work is allowed on it.',
       { id: transferId, action },
       HttpStatus.CONFLICT,
     );
@@ -283,6 +334,40 @@ export class TransferDestinationMissingException extends KaltrosException {
     super(
       'TRANSFER_DESTINATION_MISSING',
       'This transfer has no destination assigned yet; assign a center first',
+      { id },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — Assign / Edit Barcode is refused for a sample that is out at another branch,
+ * partner or centre (Sent / Forwarded / Outsourced), and for a copy received from
+ * another branch: the barcode belongs to the physical tube that travels, and editing
+ * one side would leave the tube with two numbers. It becomes editable again once the
+ * sample is back in-house (Retrieve). Group "assign barcode" is all-or-nothing, so a
+ * selection that includes such a sample is refused as a whole.
+ */
+export class SampleBarcodeLockedException extends InvalidSampleTransitionException {
+  constructor(from: SampleStatus) {
+    super(
+      'assign-barcode' as SampleAction,
+      from,
+      "This sample is out at another branch or was received from another branch, so its barcode can't be changed: the barcode belongs to the tube that travelled.",
+      'SAMPLE_BARCODE_LOCKED',
+    );
+  }
+}
+
+/**
+ * 422 — the manual "outsource status" is only kept for transfers to a third-party
+ * lab (kind OUTSOURCE); an internal or external-partner transfer has no such status.
+ */
+export class TransferNotOutsourceException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'TRANSFER_NOT_OUTSOURCE',
+      'The outsource status can only be set on a transfer to a third-party lab',
       { id },
       HttpStatus.UNPROCESSABLE_ENTITY,
     );

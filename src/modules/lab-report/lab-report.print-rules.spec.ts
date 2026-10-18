@@ -100,6 +100,8 @@ function ctxFor(
       .fn()
       .mockResolvedValue(undefined),
     assertOrderNotCancelledForPrint: jest.fn().mockResolvedValue(undefined),
+    // the removed-test print check has its own spec (print-item-removed)
+    assertReportItemNotRemovedForPrint: jest.fn().mockResolvedValue(undefined),
     loadReportDetail: jest.fn().mockResolvedValue(report),
     findById: jest.fn().mockResolvedValue(report),
     resolveStoredSignatories: jest.fn().mockResolvedValue([]),
@@ -268,6 +270,10 @@ describe('LabReportService.print - single print follows the same order-owner rul
         .fn()
         .mockResolvedValue(undefined),
       assertOrderNotCancelledForPrint: jest.fn().mockResolvedValue(undefined),
+      // the removed-test print check has its own spec (print-item-removed)
+      assertReportItemNotRemovedForPrint: jest
+        .fn()
+        .mockResolvedValue(undefined),
       referralCredit: {
         assertReportAccessAllowedByReportId: jest
           .fn()
@@ -323,6 +329,10 @@ describe('LabReportService.printAllForOrder - skips what it cannot show, masks w
         .fn()
         .mockResolvedValue(undefined),
       assertOrderNotCancelledForPrint: jest.fn().mockResolvedValue(undefined),
+      // the removed-test print check has its own spec (print-item-removed)
+      assertReportItemNotRemovedForPrint: jest
+        .fn()
+        .mockResolvedValue(undefined),
       prisma: {
         labReport: { findMany: jest.fn().mockResolvedValue(rows) },
         order: {
@@ -379,6 +389,10 @@ describe('LabReportService.getShareInfo - how many tests are still pending', () 
         .fn()
         .mockResolvedValue(undefined),
       assertOrderNotCancelledForPrint: jest.fn().mockResolvedValue(undefined),
+      // the removed-test print check has its own spec (print-item-removed)
+      assertReportItemNotRemovedForPrint: jest
+        .fn()
+        .mockResolvedValue(undefined),
       prisma: {
         order: {
           findFirst: jest.fn().mockResolvedValue({
