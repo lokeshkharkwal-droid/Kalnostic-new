@@ -1,4 +1,6 @@
 import { IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { HasVisibleText } from '../../../common/decorators/has-visible-text.decorator';
+import { RawString } from '../../../common/decorators/raw-string.decorator';
 import { TransferDispatchDto } from './transfer-dispatch.dto';
 
 /**
@@ -25,9 +27,11 @@ export class AssignCenterDto extends TransferDispatchDto {
   @IsUUID()
   outsourceCenterId?: string;
 
-  /** Partner lab name for an EXTERNAL transfer. */
+  /** Partner lab name for an EXTERNAL transfer (when given: at least one visible character). */
   @IsOptional()
+  @RawString()
   @IsString()
+  @HasVisibleText()
   @MaxLength(200)
   externalPartnerName?: string;
 }

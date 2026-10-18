@@ -1,11 +1,14 @@
 import { OrderStatus, QuotationStatus } from '@prisma/client';
 import { OrderService } from './order.service';
+import { OrderNotDeletableException } from './exceptions/order.exceptions';
 
 /**
  * Convert → Save as Draft marks the source quote CONVERTED. Deleting that DRAFT
  * order abandons the conversion, so the quote is reopened (CONVERTED → DRAFT) —
- * unless another live order still points at it, and never when the deleted order
- * was a real (non-draft) order.
+ * unless another live order still points at it. Only a DRAFT order can be deleted
+ * at all (a finalized order is a real business event and is refused), and the
+ * delete claims the row while it is still a draft, so a quote is never reopened
+ * for an order that was finalized in the meantime.
  */
 /** The shape of the `updateMany` call the code under test makes. */
 interface UpdateManyArg {
@@ -22,10 +25,11 @@ describe('OrderService — reopen the source quote when its draft order is delet
 
   const count = jest.fn();
   const updateMany = jest.fn<Promise<{ count: number }>, [UpdateManyArg]>();
-  const txOrderUpdate = jest.fn();
+  const findUniqueOrThrow = jest.fn();
+  const withTenant = jest.fn();
   const noop = { updateMany: jest.fn().mockResolvedValue({ count: 0 }) };
   const tx = {
-    order: { count, updateMany, update: txOrderUpdate },
+    order: { count, updateMany, findUniqueOrThrow },
     orderItem: noop,
     orderDiagnostics: noop,
     orderOpd: noop,
@@ -34,6 +38,7 @@ describe('OrderService — reopen the source quote when its draft order is delet
     homeVisitCollection: noop,
   };
   const findFirst = jest.fn();
+  let claimCount = 1;
 
   const remove = () =>
     (
@@ -42,22 +47,16 @@ describe('OrderService — reopen the source quote when its draft order is delet
       }
     ).remove('draft-1', 'tenant-1');
 
-  beforeEach(() => {
-    [count, updateMany, txOrderUpdate, findFirst].forEach((m) => m.mockReset());
-    txOrderUpdate.mockResolvedValue({ id: 'draft-1' });
-    updateMany.mockResolvedValue({ count: 1 });
-    const internals = service as unknown as Record<string, unknown>;
-    internals.findById = jest.fn().mockResolvedValue({ id: 'draft-1' });
-    internals.prisma = {
-      order: { findFirst },
-      withTenant: (_t: string, cb: (t: unknown) => unknown) => cb(tx),
-    };
-  });
+  /** The two kinds of `updateMany` on `orders`: the draft claim and the quote reopen. */
+  const claimCalls = () =>
+    updateMany.mock.calls.filter(([a]) => a.where.status === OrderStatus.DRAFT);
+  const reopenCalls = () =>
+    updateMany.mock.calls.filter(([a]) => 'quotationStatus' in a.where);
 
-  const deletedOrder = (
-    status: OrderStatus,
-    sourceQuotationId: string | null,
-  ) =>
+  const setup = (status: OrderStatus, sourceQuotationId: string | null) => {
+    (service as unknown as Record<string, unknown>).findById = jest
+      .fn()
+      .mockResolvedValue({ id: 'draft-1', status });
     findFirst.mockResolvedValue({
       branchId: 'b1',
       status,
@@ -65,9 +64,33 @@ describe('OrderService — reopen the source quote when its draft order is delet
       appointment: null,
       diagnostics: null,
     });
+  };
+
+  beforeEach(() => {
+    [count, updateMany, findUniqueOrThrow, withTenant, findFirst].forEach((m) =>
+      m.mockReset(),
+    );
+    claimCount = 1;
+    withTenant.mockImplementation((_t: string, cb: (t: unknown) => unknown) =>
+      cb(tx),
+    );
+    updateMany.mockImplementation((a) =>
+      Promise.resolve({
+        count: a.where.status === OrderStatus.DRAFT ? claimCount : 1,
+      }),
+    );
+    findUniqueOrThrow.mockResolvedValue({
+      id: 'draft-1',
+      deletedAt: new Date(),
+    });
+    (service as unknown as Record<string, unknown>).prisma = {
+      order: { findFirst },
+      withTenant,
+    };
+  });
 
   it('reopens the quote when its DRAFT order is deleted and nothing else points at it', async () => {
-    deletedOrder(OrderStatus.DRAFT, 'quote-1');
+    setup(OrderStatus.DRAFT, 'quote-1');
     count.mockResolvedValue(0);
     await remove();
     expect(count).toHaveBeenCalledWith({
@@ -78,7 +101,8 @@ describe('OrderService — reopen the source quote when its draft order is delet
         id: { not: 'draft-1' },
       },
     });
-    expect(updateMany).toHaveBeenCalledWith({
+    expect(reopenCalls()).toHaveLength(1);
+    expect(reopenCalls()[0]![0]).toEqual({
       where: {
         id: 'quote-1',
         tenantId: 'tenant-1',
@@ -90,43 +114,65 @@ describe('OrderService — reopen the source quote when its draft order is delet
   });
 
   it('leaves the quote CONVERTED when another live order still comes from it', async () => {
-    deletedOrder(OrderStatus.DRAFT, 'quote-1');
+    setup(OrderStatus.DRAFT, 'quote-1');
     count.mockResolvedValue(1);
     await remove();
-    expect(updateMany).not.toHaveBeenCalled();
+    expect(reopenCalls()).toHaveLength(0);
   });
 
-  it('does not reopen the quote when a finalized ORDER is deleted', async () => {
-    deletedOrder(OrderStatus.ORDER, 'quote-1');
-    await remove();
+  it('a finalized ORDER cannot be deleted at all, so its quote is never touched', async () => {
+    setup(OrderStatus.ORDER, 'quote-1');
+    await expect(remove()).rejects.toBeInstanceOf(OrderNotDeletableException);
+    expect(withTenant).not.toHaveBeenCalled();
     expect(count).not.toHaveBeenCalled();
     expect(updateMany).not.toHaveBeenCalled();
   });
 
-  it('does nothing for a draft that did not come from a quote', async () => {
-    deletedOrder(OrderStatus.DRAFT, null);
+  it('a draft finalized between the check and the claim is refused and its quote is not reopened', async () => {
+    setup(OrderStatus.DRAFT, 'quote-1');
+    claimCount = 0;
+    await expect(remove()).rejects.toBeInstanceOf(OrderNotDeletableException);
+    expect(reopenCalls()).toHaveLength(0);
+    expect(count).not.toHaveBeenCalled();
+  });
+
+  it('does nothing to any quote for a draft that did not come from one', async () => {
+    setup(OrderStatus.DRAFT, null);
     await remove();
     expect(count).not.toHaveBeenCalled();
-    expect(updateMany).not.toHaveBeenCalled();
+    expect(reopenCalls()).toHaveLength(0);
   });
 
   it('only ever touches a CONVERTED quote (never rewrites another status)', async () => {
-    deletedOrder(OrderStatus.DRAFT, 'quote-1');
+    setup(OrderStatus.DRAFT, 'quote-1');
     count.mockResolvedValue(0);
     await remove();
-    expect(updateMany.mock.calls[0]?.[0].where.quotationStatus).toBe(
+    expect(reopenCalls()[0]![0].where.quotationStatus).toBe(
       QuotationStatus.CONVERTED,
     );
   });
 
-  it('still soft-deletes the draft order itself', async () => {
-    deletedOrder(OrderStatus.DRAFT, 'quote-1');
+  it('soft-deletes the draft order itself by claiming it while it is still a draft, then reopens the quote', async () => {
+    setup(OrderStatus.DRAFT, 'quote-1');
     count.mockResolvedValue(0);
-    await remove();
-    expect(txOrderUpdate).toHaveBeenCalledWith({
-      where: { id: 'draft-1' },
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      data: { deletedAt: expect.any(Date) },
+    const out = await remove();
+    expect(claimCalls()).toHaveLength(1);
+    const claim = claimCalls()[0]![0];
+    expect(claim.where).toEqual({
+      id: 'draft-1',
+      tenantId: 'tenant-1',
+      status: OrderStatus.DRAFT,
+      deletedAt: null,
     });
+    expect(claim.data.deletedAt).toBeInstanceOf(Date);
+    // the claim happens before the quote is reopened
+    const order = updateMany.mock.calls.map(([a]) => a);
+    expect(order.indexOf(claim)).toBeLessThan(
+      order.indexOf(reopenCalls()[0]![0]),
+    );
+    expect(findUniqueOrThrow).toHaveBeenCalledWith({
+      where: { id: 'draft-1' },
+    });
+    expect(out).toMatchObject({ id: 'draft-1' });
   });
 });

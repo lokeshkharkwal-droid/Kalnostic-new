@@ -1,0 +1,75 @@
+meta {
+  name: Retrieve Sample
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/accession/order-samples/{{sampleId}}/retrieve
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "notes": "Sent to the wrong branch"
+  }
+}
+
+tests {
+  test("200 OK", function () { expect(res.getStatus()).to.equal(200); });
+}
+
+docs {
+  Cancelled order: Retrieve is a wind-down and is allowed ONLY for a sample that is out at
+  another branch / partner (Sent, Forwarded, Outsourced). Any other sample of a cancelled
+  order is refused 422 SAMPLE_ORDER_CANCELLED ("This order has been cancelled, so Retrieve
+  is not allowed on this sample ..."), which wins over any other Retrieve refusal. In a
+  bulk call with `skipInvalid` that sentence is the skipped `reason`.
+
+  Bulk answer: each entry of `skipped` carries `reason` (readable) and `code` (the same
+  error code the strict call answers with, e.g. SAMPLE_RETRIEVE_BLOCKED_RESULT_DONE,
+  INVALID_SAMPLE_TRANSITION), so a screen can tell the reasons apart. The HTTP status of a
+  group call with `skipInvalid` stays 2xx: the call itself was valid.
+
+  Validated result: a sample that is at this branch is NOT retrieved back to BEFORE its
+  acceptance (New / Collected / Halt / Hold / Repeat ...) while any test on it has a
+  validated result (Result Done, Approved or Published) - the sample would say "not
+  accepted yet" next to a done result. Refused 422 SAMPLE_RETRIEVE_BLOCKED_RESULT_DONE
+  (skipped with that reason in a bulk call with `skipInvalid`); use Re-run to redo a
+  validated result. An undo that stays at / after acceptance (Stored -> Accepted ...),
+  a result that is not validated yet (it stays saved) and a sample that is out at
+  another branch (its transfer rules apply) are not affected. Nothing is deleted.
+
+  Universal undo. For an internal transfer the sender can retrieve the sample only
+  while the transfer is IN_TRANSIT or PICKED_UP: the transfer is recalled (REJECTED,
+  reason "Recalled via Retrieve") and the sample returns to ACCEPTED.
+
+  Refused (422 SAMPLE_RETRIEVE_BLOCKED) once the receiving branch has received or
+  accepted it, and for a sample that already came back from the receiving branch
+  (status REPEAT with previous status SENT_INTERNAL) - collect it again instead.
+  Any other action on a SENT_INTERNAL sample (repeat, store, return, send... even
+  with `force`) is refused with 422 SAMPLE_SENT_TO_BRANCH.
+  Who may act (INTERNAL transfer): only the SENDING branch. The caller's active branch
+  (the profile they switched to) must be the branch that sent the sample, otherwise
+  403 TRANSFER_WRONG_BRANCH and nothing changes. A caller with no active branch
+  (business admin) is refused too. A group Retrieve is refused as a whole, never
+  skipped, when any sent sample belongs to another branch.
+  Internal branch transfer rules:
+  - Once a sample is SENT_INTERNAL to another branch, the SENDER still sees its
+    report in the Technician worklist but it is VIEW-ONLY: every write (results,
+    status, notes, attachments, ...) is refused with 409 LAB_REPORT_SENT_OUT until the
+    transfer is received or returned. Reads and prints are unaffected.
+  - A sent sample accepts ONLY Retrieve from the sender, and only until the
+    receiving branch has received it (transfer IN_TRANSIT / PICKED_UP).
+  - The receiving branch's Reject / Repeat returns the test to the sender: the
+    sender's original sample goes SENT_INTERNAL -> REPEAT automatically.
+}

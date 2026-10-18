@@ -35,4 +35,10 @@ docs {
   third-party lab doesn't use Kalnostic, staff set this free-text status from
   communications received (e.g. `Picked Up`, `In Progress`, `Results Ready`). No
   sync.
+
+  Only a transfer of kind OUTSOURCE accepts this status: an INTERNAL or EXTERNAL
+  transfer is refused with 422 `TRANSFER_NOT_OUTSOURCE` and nothing is written.
+
+  `outsourceStatus` must contain at least one visible character (an empty or
+  spaces-only value is refused with 400 `VALIDATION_ERROR`).
 }

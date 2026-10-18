@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { LabReportAttachment } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { assertReportWritable } from './utils/sent-out-report.util';
 import { CreateLabReportAttachmentDto } from './dto/create-lab-report-attachment.dto';
 import {
   LabReportNotFoundException,
@@ -51,7 +52,14 @@ export class LabReportAttachmentService {
     return this.prisma.withTenant(tenantId, async (tx) => {
       if (dto.kind === FILE_KIND) {
         const existing = await tx.labReportAttachment.findMany({
-          where: { labReportId: reportId, tenantId, kind: FILE_KIND },
+          // Not-deleted only: a Repeat/return hides (soft-deletes) the old attachments,
+          // and files nobody can see must not count toward the limits.
+          where: {
+            labReportId: reportId,
+            tenantId,
+            kind: FILE_KIND,
+            deletedAt: null,
+          },
           select: { fileSizeBytes: true },
         });
         if (existing.length >= MAX_FILE_ATTACHMENTS) {
@@ -94,15 +102,16 @@ export class LabReportAttachmentService {
     tenantId: string,
     branchId: string | null,
   ): Promise<LabReportAttachment[]> {
-    await this.requireReport(reportId, tenantId, branchId);
+    await this.requireReport(reportId, tenantId, branchId, { forRead: true });
     return this.prisma.labReportAttachment.findMany({
-      where: { labReportId: reportId, tenantId },
+      where: { labReportId: reportId, tenantId, deletedAt: null },
       orderBy: { uploadedAt: 'desc' },
     });
   }
 
   /**
-   * Remove one attachment (hard delete — the model has no soft-delete column).
+   * Remove one attachment (a user's explicit delete is a hard delete; a repeat's
+   * reset soft-deletes via `deletedAt`).
    * @throws LabReportNotFoundException if the report is missing/other tenant/branch
    */
   async remove(
@@ -114,7 +123,12 @@ export class LabReportAttachmentService {
     await this.requireReport(reportId, tenantId, branchId);
     return this.prisma.withTenant(tenantId, async (tx) => {
       const existing = await tx.labReportAttachment.findFirst({
-        where: { id: attachmentId, labReportId: reportId, tenantId },
+        where: {
+          id: attachmentId,
+          labReportId: reportId,
+          tenantId,
+          deletedAt: null,
+        },
         select: { id: true },
       });
       if (!existing) {
@@ -126,13 +140,17 @@ export class LabReportAttachmentService {
   }
 
   /**
-   * Ensure the report exists within the caller's tenant + active branch.
-   * @throws LabReportNotFoundException otherwise
+   * Ensure the report exists within the caller's tenant + active branch. Writes
+   * are also refused while the report's sample is sent to another branch
+   * (view-only); `forRead` skips only that lock.
+   * @throws LabReportNotFoundException if the report is not in this branch
+   * @throws LabReportSentOutException for a write on a sent-out report
    */
   private async requireReport(
     reportId: string,
     tenantId: string,
     branchId: string | null,
+    opts: { forRead?: boolean } = {},
   ): Promise<void> {
     const report = await this.prisma.labReport.findFirst({
       where: { id: reportId, tenantId, branchId, deletedAt: null },
@@ -140,6 +158,9 @@ export class LabReportAttachmentService {
     });
     if (!report) {
       throw new LabReportNotFoundException(reportId);
+    }
+    if (!opts.forRead) {
+      await assertReportWritable(this.prisma, tenantId, reportId);
     }
   }
 }

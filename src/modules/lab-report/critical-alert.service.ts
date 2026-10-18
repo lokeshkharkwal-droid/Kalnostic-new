@@ -1,6 +1,11 @@
+import {
+  worklistRowBranchWhere,
+  type WorklistBranchScope,
+} from './access/worklist-branch-scope';
 import { Injectable } from '@nestjs/common';
 import { AlertReviewStatus, WorklistTrigger } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { assertReportWritable } from './utils/sent-out-report.util';
 import { LabReportService } from './lab-report.service';
 import { RaiseWorklistEntryDto } from './dto/raise-worklist-entry.dto';
 import { UpdateAlertReviewStatusDto } from './dto/update-worklist-status.dto';
@@ -58,6 +63,9 @@ export class CriticalAlertService {
       },
     });
     if (!report) throw new LabReportNotFoundException(labReportId);
+    // Write locks first (a sent-out sample is view-only; a cancelled order or a
+    // not-yet-accepted sample is closed), then the technician's own Lock.
+    await assertReportWritable(this.prisma, tenantId, labReportId);
     // A locked test is frozen: the screen disables "Inform Critical Alert" on it,
     // so the server must refuse it too (a direct API call would otherwise slip by).
     if (report.isLocked) throw new LabReportLockedException(labReportId);
@@ -99,10 +107,14 @@ export class CriticalAlertService {
       });
   }
 
-  async findAll(tenantId: string, branchId: string | null) {
-    const activeBranchId = this.requireBranch(branchId);
+  /**
+   * The worklist's entries for the branches in `scope` (the caller's own branch by
+   * default; several branches for "All Branches" — see
+   * `TechnicianBranchAccessService.resolveScope`).
+   */
+  async findAll(tenantId: string, scope: WorklistBranchScope) {
     const rows = await this.prisma.criticalAlert.findMany({
-      where: { tenantId, branchId: activeBranchId, deletedAt: null },
+      where: { tenantId, ...worklistRowBranchWhere(scope), deletedAt: null },
       include: CRITICAL_ALERT_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
@@ -129,9 +141,17 @@ export class CriticalAlertService {
   ) {
     const activeBranchId = this.requireBranch(branchId);
     const entry = await this.prisma.criticalAlert.findFirst({
-      where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
+      where: {
+        id,
+        tenantId,
+        deletedAt: null,
+        // Tied to the REPORT's branch, not the branch stamped on this row when it
+        // was raised: the row keeps that branch after the report is re-homed.
+        labReport: { is: { branchId: activeBranchId, deletedAt: null } },
+      },
     });
     if (!entry) throw new WorklistEntryNotFoundException('critical_alert', id);
+    await assertReportWritable(this.prisma, tenantId, entry.labReportId);
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const updatedEntry = await tx.criticalAlert.update({

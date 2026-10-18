@@ -6,6 +6,7 @@ import {
   MultiStepProcessType,
   MultiStepStage,
   ParameterType,
+  OrderStatus,
   PaymentStatus,
   Prisma,
   ResultType,
@@ -32,9 +33,9 @@ export interface WorklistTat {
 /** Relations eager-loaded when fetching a report's full detail (Test Entry screen). */
 export const LAB_REPORT_DETAIL_INCLUDE = {
   resultValues: { where: { deletedAt: null } },
-  notes: { orderBy: { createdAt: 'desc' } },
-  attachments: { orderBy: { uploadedAt: 'desc' } },
-  multiStepProcess: true,
+  notes: { where: { deletedAt: null }, orderBy: { createdAt: 'desc' } },
+  attachments: { where: { deletedAt: null }, orderBy: { uploadedAt: 'desc' } },
+  multiStepProcess: { where: { deletedAt: null } },
   orderItem: {
     include: {
       order: {
@@ -279,6 +280,9 @@ export interface LabReportWorklistRow {
     createdAt: Date;
     billingType: BillingType;
     paymentStatus: PaymentStatus;
+    /** CANCELLED freezes the report: the worklist shows an "Order cancelled" tag
+     * and every action on the row is refused. */
+    status: OrderStatus;
   } | null;
 
   patient: {
@@ -310,6 +314,12 @@ export interface LabReportWorklistRow {
      * since `resultType` only exists on `LabTest`'s own result params. */
     resultType: ResultType | null;
   } | null;
+
+  /** True when this report's test was removed from the order: the report is kept
+   * (visible, tagged "Test removed from order") but frozen - every write is refused
+   * (409 `LAB_REPORT_ITEM_REMOVED`) and it never prints. Derived from the order
+   * item's `deletedAt`, not stored. */
+  itemRemoved: boolean;
 
   /** `LabReport.orderItemId` — the lookup key `attachSampleStatuses` uses to
    * find this row's `OrderSampleTest`(s). Not itself a display field. */
@@ -349,6 +359,14 @@ export interface LabReportWorklistRow {
    * Barcode" step). Empty array under the same (rare/defensive) condition as
    * `sampleStatuses`. */
   sampleBarcodes: (string | null)[];
+  /** Index-paired with `sampleIds` — the branch each linked sample belongs to.
+   * After an internal transfer an item has the sender's original and the
+   * receiver's copy; this lets each viewer see the status of ITS OWN sample. */
+  sampleBranchIds: (string | null)[];
+  /** `full` when a branch of the caller holds the report; `view` when it is only
+   * listed because the caller's branch sent it, or its sample is sent out and
+   * waiting for the receiver (view and print only). */
+  accessMode?: 'full' | 'view';
 
   /** Whether this test has been assigned to a multi-step process
    * (LABORATORY.docx §5.7 — Histopathology/Bone Marrow/Cytology/IHC, tracked
@@ -495,6 +513,7 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
           createdAt: order.createdAt,
           billingType: order.billingType,
           paymentStatus: order.paymentStatus,
+          status: order.status,
         }
       : null,
 
@@ -570,9 +589,11 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
             : null,
 
     orderItemId: row.orderItemId,
+    itemRemoved: row.orderItem?.deletedAt != null,
     sampleStatuses: [],
     sampleIds: [],
     sampleBarcodes: [],
+    sampleBranchIds: [],
     tat: null,
 
     multiStepProcessType: null,

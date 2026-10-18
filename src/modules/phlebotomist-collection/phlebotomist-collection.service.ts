@@ -31,6 +31,7 @@ import {
   IN_PROGRESS_COLLECTION_STATUSES,
 } from './constants/collection-transitions.constant';
 import { CollectionNotFoundException } from './exceptions/phlebotomist-collection.exceptions';
+import { findItemRemovedSampleIds } from '../accession/utils/item-removed.util';
 
 /**
  * Phlebotomist / home sample-collection lifecycle. Tenant-scoped (RLS) +
@@ -294,7 +295,14 @@ export class PhlebotomistCollectionService {
         });
         // Accession samples → COLLECTED via the accession state machine (only where
         // the `collect` action is legal from the sample's current status).
+        // A sample whose test was removed from the order is frozen: skipped here.
+        const removedSamples = await findItemRemovedSampleIds(
+          tx,
+          tenantId,
+          order.orderSamples.map((s) => s.id),
+        );
         for (const s of order.orderSamples) {
+          if (removedSamples.has(s.id)) continue;
           if (!nextSampleStatus('collect', s.status)) continue;
           await this.orderSamples.transitionInTx(
             tx,
@@ -315,7 +323,13 @@ export class PhlebotomistCollectionService {
       }
 
       if (target === CollectionStatus.ACCEPTED_BY_LAB && order) {
+        const removedSamples = await findItemRemovedSampleIds(
+          tx,
+          tenantId,
+          order.orderSamples.map((s) => s.id),
+        );
         for (const s of order.orderSamples) {
+          if (removedSamples.has(s.id)) continue;
           if (!nextSampleStatus('accept', s.status)) continue;
           await this.orderSamples.transitionInTx(
             tx,

@@ -23,7 +23,12 @@ describe('OrderSampleService — forced Return respects the allowed statuses', (
   const samples = new Map<string, { id: string; status: SampleStatus }>();
 
   const tx = {
+    order: { findFirst: jest.fn().mockResolvedValue(null) },
     orderSample: {
+      // No receiving-branch copies in these groups (returnSample looks them up first).
+      findMany: jest.fn().mockResolvedValue([]),
+      // The row claim transitionInTx takes before it moves a sample.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       findFirst: jest.fn(({ where }: { where: { id: string } }) =>
         Promise.resolve(samples.get(where.id) ?? null),
       ),
@@ -38,6 +43,8 @@ describe('OrderSampleService — forced Return respects the allowed statuses', (
       ),
     },
     orderSampleStatusHistory: { create: jest.fn().mockResolvedValue({}) },
+    // the "test removed from the order" probe: no removed test
+    orderSampleTest: { findMany: jest.fn().mockResolvedValue([]) },
   };
 
   const prisma = {
