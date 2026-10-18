@@ -64,6 +64,7 @@ import {
   formatOrderDateTime,
   resolveOrderLocalDateTime,
   classifyOrderDate,
+  buildCollectionProgressWhere,
 } from '../../common/utils';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
@@ -3531,59 +3532,11 @@ export class OrderService {
       });
     }
     if (query.sampleStatus) {
-      // Bill-only tests/panels never enter the workflow (never collected), so
-      // they must be excluded from the collection-progress filter — otherwise a
-      // fully-collected order with a bill-only item would read as PARTIAL and
-      // never as COLLECTED. Mirrors the displayed item/collected counts.
-      const workflowItem: Prisma.OrderItemWhereInput = {
-        NOT: {
-          OR: [
-            { branchLabTest: { isBillOnlyTest: true } },
-            { branchLabPanel: { isBillOnlyTest: true } },
-          ],
-        },
-      };
-      switch (query.sampleStatus) {
-        case 'PENDING':
-          // Has workflow items, none collected.
-          and.push({ items: { some: { deletedAt: null, ...workflowItem } } });
-          and.push({
-            items: {
-              none: {
-                deletedAt: null,
-                collectedAt: { not: null },
-                ...workflowItem,
-              },
-            },
-          });
-          break;
-        case 'COLLECTED':
-          // Has workflow items, none still uncollected.
-          and.push({ items: { some: { deletedAt: null, ...workflowItem } } });
-          and.push({
-            items: {
-              none: { deletedAt: null, collectedAt: null, ...workflowItem },
-            },
-          });
-          break;
-        case 'PARTIAL':
-          // At least one workflow item collected and at least one still uncollected.
-          and.push({
-            items: {
-              some: {
-                deletedAt: null,
-                collectedAt: { not: null },
-                ...workflowItem,
-              },
-            },
-          });
-          and.push({
-            items: {
-              some: { deletedAt: null, collectedAt: null, ...workflowItem },
-            },
-          });
-          break;
-      }
+      // Order-level collection progress (PENDING/PARTIAL/COLLECTED), derived
+      // from the workflow items' `collectedAt` — shared with the Accession
+      // "Collection Status" filter via `buildCollectionProgressWhere` so the two
+      // can never drift (bill-only items are excluded there).
+      and.push(buildCollectionProgressWhere(query.sampleStatus));
     }
     if (query.reportStatus) {
       // Reuses `deriveReportStatus` — the same function that computes the

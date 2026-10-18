@@ -13,6 +13,7 @@ get {
 params:query {
   page: 1
   ~status: NEW
+  ~collectionStatus: PENDING
   ~search: ACC-00001
   ~tatStatus: WITHIN
   ~dateFrom: 2026-07-01
@@ -60,10 +61,17 @@ docs {
   - `DEPARTMENT_SAMPLE_NAME` (Department + Sample-wise) — one per
     Order + Department + Sample (default).
 
+  Supports the same filters as `01 List Samples`, including `collectionStatus`
+  (`PENDING` | `PARTIAL` | `COLLECTED`) — order-level collection progress derived
+  from the order's workflow items' `collectedAt`, independent of the 15-stage
+  `status` lifecycle.
+
   ## Each order (top-level) carries
 
   - `orderId` + `order` — the order id and its header context (patient, referral).
   - `groupingMode` — the tenant's current mode (FE layout hint).
+  - `collectionStatus` — order-level collection progress (`PENDING` | `PARTIAL` |
+    `COLLECTED`), powering the §A.6 "Collection Status" column.
   - `sampleIds[]` — all sample ids in the order.
   - `groups[]` — the final (barcode) groups within the order.
 
