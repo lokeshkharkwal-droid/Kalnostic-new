@@ -1,5 +1,6 @@
 import { AccessionGroupingMode, Prisma, SampleStatus } from '@prisma/client';
 import { TatStatus } from '../constants/tat.constant';
+import type { CollectionProgress } from '../../../common/utils/collection-progress.util';
 
 /**
  * Lightweight relations included on every accession sample list row — mirrors the
@@ -178,4 +179,11 @@ export interface InHouseOrderGroup {
   groupingMode: AccessionGroupingMode;
   sampleIds: string[];
   groups: InHouseSampleGroup[];
+  /**
+   * Order-level sample **collection progress** (`PENDING`/`PARTIAL`/`COLLECTED`),
+   * derived from the order's workflow items' `collectedAt` — the §A.6 "Collection
+   * Status" column. Set by the paged in-house list (`findAllGrouped`); omitted by
+   * the single-order grouped view (Product Overview), which doesn't show it.
+   */
+  collectionStatus?: CollectionProgress;
 }

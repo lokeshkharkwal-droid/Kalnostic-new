@@ -17,6 +17,12 @@ import { ValidationException } from '../../common/exceptions/kaltros.exception';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
 import { timestampRange } from '../../common/utils/date-range.util';
 import {
+  buildCollectionProgressWhere,
+  deriveCollectionProgress,
+  COLLECTION_WORKFLOW_ITEM_WHERE,
+} from '../../common/utils/collection-progress.util';
+import type { CollectionProgress } from '../../common/utils/collection-progress.util';
+import {
   toBranchLocalInstant,
   formatTenantDate,
   formatTenantTime,
@@ -1260,9 +1266,8 @@ export class OrderSampleService {
       scopeIds,
     );
 
-    const { orderIds, total, rows, mode } = await this.prisma.withTenant(
-      tenantId,
-      async (tx) => {
+    const { orderIds, total, rows, mode, collectionByOrderId } =
+      await this.prisma.withTenant(tenantId, async (tx) => {
         const tenant = await tx.tenant.findUnique({
           where: { id: tenantId },
           select: { groupingMode: true },
@@ -1289,9 +1294,45 @@ export class OrderSampleService {
           include: SAMPLE_LIST_INCLUDE,
           orderBy: { createdAt: 'desc' },
         });
-        return { orderIds, total: allGroups.length, rows, mode };
-      },
-    );
+
+        // Order-level collection progress for the page's orders — one bounded
+        // query over the workflow items' `collectedAt` (bill-only items excluded),
+        // folded into collected/total per order (§A.6 "Collection Status" column).
+        const itemRows =
+          orderIds.length > 0
+            ? await tx.orderItem.findMany({
+                where: {
+                  orderId: { in: orderIds },
+                  tenantId,
+                  deletedAt: null,
+                  ...COLLECTION_WORKFLOW_ITEM_WHERE,
+                },
+                select: { orderId: true, collectedAt: true },
+              })
+            : [];
+        const counts = new Map<string, { collected: number; total: number }>();
+        for (const it of itemRows) {
+          const c = counts.get(it.orderId) ?? { collected: 0, total: 0 };
+          c.total += 1;
+          if (it.collectedAt) c.collected += 1;
+          counts.set(it.orderId, c);
+        }
+        const collectionByOrderId = new Map<string, CollectionProgress>();
+        for (const [orderId, c] of counts) {
+          collectionByOrderId.set(
+            orderId,
+            deriveCollectionProgress(c.collected, c.total),
+          );
+        }
+
+        return {
+          orderIds,
+          total: allGroups.length,
+          rows,
+          mode,
+          collectionByOrderId,
+        };
+      });
 
     // Batch-resolve department names for the rows in view.
     const deptIds = [
@@ -1321,8 +1362,8 @@ export class OrderSampleService {
     for (const orderId of orderIds) {
       const orderRows = rows.filter((r) => r.orderId === orderId);
       if (orderRows.length === 0) continue;
-      groups.push(
-        this.buildOrderGroup(
+      groups.push({
+        ...this.buildOrderGroup(
           orderId,
           orderRows,
           mode,
@@ -1331,7 +1372,8 @@ export class OrderSampleService {
           nowMs,
           removedIds,
         ),
-      );
+        collectionStatus: collectionByOrderId.get(orderId) ?? 'PENDING',
+      });
     }
 
     return paginated(groups, total, page, limit);
@@ -4084,6 +4126,19 @@ export class OrderSampleService {
           },
         },
       };
+    }
+    if (query.collectionStatus) {
+      // Order-level collection progress (PENDING/PARTIAL/COLLECTED), derived from
+      // the order's workflow items — the same rule as the Order Console's
+      // `sampleStatus`, applied here through the sample's to-one `order` relation.
+      order.AND = [
+        ...(Array.isArray(order.AND)
+          ? order.AND
+          : order.AND
+            ? [order.AND]
+            : []),
+        buildCollectionProgressWhere(query.collectionStatus),
+      ];
     }
 
     const and: Prisma.OrderSampleWhereInput[] = [];
