@@ -61,4 +61,12 @@ export interface ShareInfo {
   patientName: string;
   patientId: string | null;
   channels: ShareChannelInfo[];
+  /**
+   * How many tests on the order still have results nobody has signed off. They
+   * go out as "Result pending", so the popup warns before sending when this is
+   * above zero.
+   */
+  pendingReportCount: number;
+  /** Total number of tests (reports) on the order. */
+  totalReportCount: number;
 }

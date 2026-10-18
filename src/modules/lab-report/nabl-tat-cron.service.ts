@@ -150,6 +150,9 @@ export class NablTatCronService {
           : undefined;
         if (!branch) continue;
         for (const t of sample.tests) {
+          // A test removed from the order keeps a frozen report: nobody can work
+          // it, so its stopwatch must not keep running into a breach.
+          if (t.orderItem?.deletedAt) continue;
           const cfg = t.orderItem?.branchLabTest;
           // `cfg` (branchLabTest) is only ever set for a non-panel item — a
           // panel OrderItem has branchLabTest null, so this loop already only

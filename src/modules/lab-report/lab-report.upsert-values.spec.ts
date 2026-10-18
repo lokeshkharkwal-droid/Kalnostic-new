@@ -70,17 +70,29 @@ function build(stored: StoredRow[] = []) {
   const labAdapter = {
     findMany: jest.fn().mockResolvedValue([{ id: 'adapter-1', name: 'Cobas' }]),
   };
-  const tx = { labReportResultValue, labReportHistory, labAdapter };
+  // `findFirst` answers two questions: the write lock's "is this report's order
+  // cancelled?" probe (it is not) and the report lookup itself.
+  const reportRow = {
+    id: 'r1',
+    orderItemId: 'oi1',
+    labTestId: 'lt1',
+    isLocked: false,
+    status: 'SAVED',
+  };
+  const labReportFindFirst = jest.fn(
+    ({ where }: { where?: { orderItem?: unknown } }) =>
+      Promise.resolve(where?.orderItem ? null : reportRow),
+  );
+  const tx = {
+    labReportResultValue,
+    labReportHistory,
+    labAdapter,
+    // The write lock locks the report row first, then re-checks it is writable.
+    $queryRaw: jest.fn().mockResolvedValue([]),
+    labReport: { findFirst: labReportFindFirst },
+  };
   const prisma = {
-    labReport: {
-      findFirst: jest.fn().mockResolvedValue({
-        id: 'r1',
-        orderItemId: 'oi1',
-        labTestId: 'lt1',
-        isLocked: false,
-        status: 'SAVED',
-      }),
-    },
+    labReport: { findFirst: labReportFindFirst },
     orderSampleTest: { findFirst: jest.fn().mockResolvedValue({ id: 's' }) },
     orderItem: {
       findUnique: jest.fn().mockResolvedValue({ branchLabPanelId: null }),

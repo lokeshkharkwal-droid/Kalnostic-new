@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   DayOfWeek,
+  OrderStatus,
   Prisma,
   ScheduleStatus,
   TatBand,
@@ -703,9 +704,13 @@ export class TatService {
     // B2B Referral Panel isolation: constrain the analytics to the panel's own
     // reports (nested via orderItem.order), same as the worklist.
     const panelId = getReferralPanelId();
-    if (panelId) {
-      where.orderItem = { order: { referralPanelId: panelId } };
-    }
+    // Cancelled orders are not live work: left out of the analytics.
+    where.orderItem = {
+      order: {
+        status: { not: OrderStatus.CANCELLED },
+        ...(panelId ? { referralPanelId: panelId } : {}),
+      },
+    };
 
     const grouped = await this.prisma.labReport.groupBy({
       by: ['tatBand'],

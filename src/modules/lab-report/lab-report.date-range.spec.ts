@@ -1,6 +1,12 @@
 import { Prisma } from '@prisma/client';
 import { LabReportService, applyB2bLabReportScope } from './lab-report.service';
 import { ListLabReportsDto } from './dto/list-lab-reports.dto';
+import type { WorklistBranchScope } from './access/worklist-branch-scope';
+
+/** One branch granting every status: the same `branchId: 'b1'` condition as a plain single-branch request. */
+const SINGLE_BRANCH: WorklistBranchScope = {
+  rules: [{ branchId: 'b1', statuses: 'ALL' }],
+};
 
 /**
  * Technician → Reporting date filter. It compares the ORDER's date
@@ -23,12 +29,12 @@ describe('LabReportService — date range filter', () => {
       service as unknown as {
         buildListWhere: (
           tenantId: string,
-          branchId: string,
+          scope: WorklistBranchScope,
           f: ListLabReportsDto,
           scopeIds: string[],
         ) => Prisma.LabReportWhereInput;
       }
-    ).buildListWhere('t1', 'b1', filters, []);
+    ).buildListWhere('t1', SINGLE_BRANCH, filters, []);
 
   const orderOf = (where: Prisma.LabReportWhereInput) => where.orderItem?.order;
 

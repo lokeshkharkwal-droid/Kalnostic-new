@@ -39,4 +39,8 @@ docs {
   Phase 3 builds the **sending side only** — cross-tenant receiving is an open
   decision; the transfer's `transferStatus` is the sending row's "External Order
   Status" column. Bulk: `POST /accession/order-samples/bulk/forward`.
+
+  `externalPartnerName` must contain at least one visible character: an empty,
+  spaces-only or invisible-characters-only name is refused with 400
+  `VALIDATION_ERROR` (the screen already requires a name).
 }

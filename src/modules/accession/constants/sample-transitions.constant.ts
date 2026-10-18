@@ -76,10 +76,12 @@ export const SAMPLE_TRANSITIONS: Readonly<
     [SampleStatus.ACQUIRED]: SampleStatus.REPEAT,
     [SampleStatus.HALT]: SampleStatus.REPEAT,
     [SampleStatus.ERROR]: SampleStatus.REPEAT,
-    // A sample rejected at the receiving/partner/outsource station can be
-    // flagged for re-collection without first being retrieved back to
-    // ACCEPTED (manager correction, 2026-09-18).
-    [SampleStatus.SENT_INTERNAL]: SampleStatus.REPEAT,
+    // A sample rejected at the partner/outsource station can be flagged for
+    // re-collection without first being retrieved back to ACCEPTED (manager
+    // correction, 2026-09-18). NOT for SENT_INTERNAL: once a sample is sent to
+    // another branch of the tenant the sender cannot repeat it — only the
+    // receiving branch's Reject/Repeat returns it to REPEAT (system-driven,
+    // see `transitionInTx`'s `system` flag), per the 2026-09-29 manager flow.
     [SampleStatus.FORWARD_EXTERNAL]: SampleStatus.REPEAT,
     [SampleStatus.OUTSOURCED]: SampleStatus.REPEAT,
   },
@@ -150,11 +152,14 @@ export const COLLECTABLE_SAMPLE_STATUSES: readonly SampleStatus[] = Object.keys(
  * This is an **allowlist** (a status not listed here is treated as non-reportable,
  * so a future `SampleStatus` fails closed):
  * - `ACCEPTED` / `ACQUIRED` — accepted and being worked on.
- * - `STORED`, `SENT_INTERNAL`, `FORWARD_EXTERNAL`, `OUTSOURCED` — accepted and
- *   still live in the workflow (stored for later, or handed to another
- *   branch/partner that reports against it).
+ * - `STORED`, `FORWARD_EXTERNAL`, `OUTSOURCED` — accepted and still live in
+ *   the workflow (stored for later, or handed to an external partner /
+ *   outsource centre that the sending branch still reports against).
  *
  * Deliberately **excluded** even though the sample was once accepted:
+ * `SENT_INTERNAL` (handed to another branch of the tenant — the report belongs
+ * to the receiving branch, so the sending branch's analyser must not fill it;
+ * the receiving branch reports against its own copy),
  * `HALT` (paused), `ERROR` (flagged erroneous), `REPEAT` (needs re-collection),
  * `DISCARDED` / `RETURNED` (terminal — the specimen is gone). Also excluded (never
  * accepted): `NEW`, `COLLECTED`, `HOLD`, `CANCELLED`.
@@ -163,7 +168,6 @@ export const REPORTABLE_SAMPLE_STATUSES: ReadonlySet<SampleStatus> = new Set([
   SampleStatus.ACCEPTED,
   SampleStatus.ACQUIRED,
   SampleStatus.STORED,
-  SampleStatus.SENT_INTERNAL,
   SampleStatus.FORWARD_EXTERNAL,
   SampleStatus.OUTSOURCED,
 ]);

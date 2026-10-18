@@ -1,4 +1,6 @@
 import { IsOptional, IsString, MaxLength } from 'class-validator';
+import { HasVisibleText } from '../../../common/decorators/has-visible-text.decorator';
+import { RawString } from '../../../common/decorators/raw-string.decorator';
 import { TransferDispatchDto } from './transfer-dispatch.dto';
 
 /**
@@ -9,8 +11,14 @@ import { TransferDispatchDto } from './transfer-dispatch.dto';
  * is captured as a name/reference on the transfer.
  */
 export class ForwardSampleDto extends TransferDispatchDto {
-  /** Partner lab name (e.g. "Pathkind - Gurgaon"). */
+  /**
+   * Partner lab name (e.g. "Pathkind - Gurgaon"): text with at least one visible
+   * character, so a direct API call cannot forward to a blank partner (the screen
+   * already requires a name).
+   */
+  @RawString()
   @IsString()
+  @HasVisibleText()
   @MaxLength(200)
   externalPartnerName: string;
 

@@ -27,6 +27,8 @@ export const TRANSFER_INCLUDE = {
           orderDate: true,
           orderTime: true,
           createdAt: true,
+          // CANCELLED here tags the row "Order cancelled" and hides the forward steps.
+          status: true,
           billId: true,
           patient: true,
           referredByDoctor: true,
@@ -65,4 +67,16 @@ export type SampleTransferDeptRow = Omit<
  */
 export type SampleTransferListRow = SampleTransferDeptRow & {
   outsourceCenterName: string | null;
+  /** True when the test(s) on this transfer's sample were removed from the order (frozen). */
+  itemRemoved: boolean;
+};
+
+/**
+ * A transfer with its sample + order context and the `itemRemoved` flag: true
+ * when the test(s) on its sample (or on the receiving branch's copy) were removed
+ * from the order. Such a transfer is kept but frozen (all five receiving actions
+ * and Assign Center are refused) and shown tagged "Test removed from order".
+ */
+export type SampleTransferWithFlag = SampleTransferWithRelations & {
+  itemRemoved: boolean;
 };

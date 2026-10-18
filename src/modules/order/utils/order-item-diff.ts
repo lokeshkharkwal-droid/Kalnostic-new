@@ -101,17 +101,16 @@ export function diffOrderPayments<T extends IncomingOrderPayment>(
 
 /**
  * Report statuses at which a test can no longer be removed from an order — the
- * result has been filled/generated. Deletable only while a test has no report or
- * its reports are still PENDING / PARTIAL_PENDING.
+ * result has been finalised (same window as order cancel: Result Done onward).
+ * Removal stays allowed while a report is PENDING / PARTIAL_PENDING / SAVED /
+ * VALIDATION_PENDING / RESULT_REJECTED; a removed test's report is then kept but
+ * frozen (see `isItemRemovedReport`-style guards), not deleted.
  */
 export const BLOCKING_REPORT_STATUSES: readonly LabReportStatus[] = [
-  LabReportStatus.SAVED,
-  LabReportStatus.VALIDATION_PENDING,
   LabReportStatus.RESULT_DONE,
   LabReportStatus.APPROVED,
   LabReportStatus.PUBLISHED,
   LabReportStatus.ERROR_REPORTED,
-  LabReportStatus.RESULT_REJECTED,
 ];
 
 /**
