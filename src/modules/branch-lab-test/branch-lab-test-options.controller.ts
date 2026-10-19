@@ -46,6 +46,7 @@ export class BranchLabTestOptionsController {
         limit: query.limit,
         listId: query.listId,
         preferredOnly: query.preferredOnly,
+        includeAka: query.includeAka,
       },
     );
   }
