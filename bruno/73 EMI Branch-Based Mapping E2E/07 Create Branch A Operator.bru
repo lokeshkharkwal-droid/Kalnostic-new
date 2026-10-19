@@ -1,0 +1,59 @@
+meta {
+  name: 07 Create Branch A Operator
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/users/manage
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "employeeName": "Bina Branch-A Operator",
+    "username": "emi.ba.operator.{{tatRunId}}",
+    "dateOfBirth": "1991-07-22",
+    "gender": "FEMALE",
+    "email": "emi.ba.operator.{{tatRunId}}@acme.test",
+    "mobileNumber": "{{baOperatorMobile}}",
+    "password": "{{operatorPassword}}",
+    "roleKey": "receptionist",
+    "userType": "INTERNAL",
+    "status": "ACTIVE",
+    "branches": [
+      {
+        "branchId": "{{baBranchId}}",
+        "role": "receptionist",
+        "modules": ["registration"],
+        "defaultModule": "registration",
+        "defaultBranch": true,
+        "status": "ACTIVE"
+      }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data) {
+    if (data.person && data.person.id) bru.setVar("baOperatorUserId", data.person.id);
+    if (data.loginIdentifier) bru.setVar("baOperatorLoginIdentifier", data.loginIdentifier);
+  }
+}
+
+docs {
+  **Setup - Branch A operator.** A branch-level `receptionist` at Branch A, so when
+  they log in (step 11) the token is scoped to `baBranchId`. This user receives the
+  internal transfer (pick-up / receive / accept) and reads the rehomed report.
+  Captures **`baOperatorUserId`** and **`baOperatorLoginIdentifier`**.
+}

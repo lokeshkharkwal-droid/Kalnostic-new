@@ -1,0 +1,66 @@
+meta {
+  name: 44 Case 2 AFTER - Submit Result (BA adapter) FILLS
+  type: http
+  seq: 44
+}
+
+post {
+  url: {{emiBaseUrl}}/emi/submitResult
+  body: text
+  auth: none
+}
+
+headers {
+  TOKEN: {{adapterTokenBa}}
+  Content-Type: text/plain
+}
+
+body:text {
+  {
+    "specimen_type": "",
+    "tube_information_id": "e9b6927a-f2e0-4898-910b-d892b45d8de1",
+    "equipment_id": "11111112",
+    "tube_no": "{{sampleBarcode}}",
+    "original_tube_no": "{{sampleBarcode}}",
+    "result_date": "1668583670356",
+    "sent": "",
+    "sent_date": "",
+    "status": "-1",
+    "local_db_status": "1",
+    "test_results": [
+      {
+        "test_result_id": "b0a69d67-4434-44f0-b1e5-cf43f83bc536",
+        "test_result": "{{emiResultValueBa}}",
+        "test_name": "Hemoglobin",
+        "display_name": "Hemoglobin",
+        "universal_test_id": "{{emiParamCode}}",
+        "unit": "{{emiParamUnit}}",
+        "result_type": "",
+        "specimen_types": []
+      }
+    ],
+    "comment": "Case 2 after transfer (BA adapter)",
+    "token_id": "{{adapterTokenBa}}",
+    "adapter_id": "14",
+    "adapter_code": "erba-map"
+  }
+}
+
+tests {
+  test("result accepted (legacy s=200)", function () {
+    expect(res.body.s).to.equal("200");
+  });
+  test("CASE 2 (report at Branch A, adapter linked to BA): report FILLED", function () {
+    expect(res.body.m).to.equal("Result updated successfully");
+    expect(res.body.test_status).to.match(/test updated/);
+    expect(res.body.report_log.log[0].fill_status).to.equal("Report filled");
+  });
+}
+
+docs {
+  **Case 2, AFTER transfer - submit with the Branch-A-only adapter.** The report is at
+  Branch A (linked) and the test matches by name/code, so the `HGB` value
+  (`emiResultValueBa` = 14.2) is written with `source = ADAPTER`, overwriting the
+  earlier Collection Center value. This is the exact scenario the fix enables:
+  processing moved to a linked branch, so the LIS now works there. Verified in step 47.
+}

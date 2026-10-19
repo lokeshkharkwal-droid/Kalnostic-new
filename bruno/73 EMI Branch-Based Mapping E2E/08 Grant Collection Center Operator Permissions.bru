@@ -1,0 +1,38 @@
+meta {
+  name: 08 Grant Collection Center Operator Permissions
+  type: http
+  seq: 8
+}
+
+put {
+  url: {{baseUrl}}/users/manage/{{ccOperatorUserId}}/branch-permissions
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "branchId": "{{ccBranchId}}",
+    "items": [
+      { "moduleKey": "accession", "permissionKey": "accession:in_house_order__collect_the_sample", "allowed": true },
+      { "moduleKey": "accession", "permissionKey": "accession:in_house_order__accept_the_sample", "allowed": true },
+      { "moduleKey": "accession", "permissionKey": "accession:in_house_order__send_the_sample", "allowed": true }
+    ]
+  }
+}
+
+docs {
+  **Setup - grant the Collection Center operator the three accession permissions the
+  flow uses there:** Collect, Accept (In-House sample lifecycle) and **Send** (the
+  internal transfer to Branch A). All three transitions are RBAC-enforced
+  (`@RequirePermission`), and only modules enabled on the branch are accepted -
+  `accession` was enabled in step 04.
+}

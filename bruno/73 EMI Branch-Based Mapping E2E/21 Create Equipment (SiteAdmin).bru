@@ -1,0 +1,45 @@
+meta {
+  name: 21 Create Equipment (SiteAdmin)
+  type: http
+  seq: 21
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/equipment
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "name": "EMI Mapping Analyzer {{tatRunId}}",
+    "code": "erba-map-{{tatRunId}}",
+    "description": "Auto-created by the EMI Branch-Based Mapping E2E"
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.id) bru.setVar("equipmentId", data.id);
+}
+
+tests {
+  test("equipment created", function () {
+    expect([200, 201]).to.include(res.getStatus());
+    expect(res.body.data).to.have.property("id");
+  });
+}
+
+docs {
+  **Register the machine (1/4) - global equipment.** The lab adapters reference a
+  platform-level (SiteAdmin) `Equipment`. All three adapters share this one.
+  Captures **`equipmentId`**.
+}

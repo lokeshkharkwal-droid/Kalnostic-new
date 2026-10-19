@@ -1,0 +1,31 @@
+meta {
+  name: 17 Import Lab Test into Collection Center
+  type: http
+  seq: 17
+}
+
+post {
+  url: {{baseUrl}}/branch-lab-tests/import
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{ccOperatorToken}}
+}
+
+body:json {
+  {
+    "labTestIds": ["{{labTestIdCc}}"]
+  }
+}
+
+docs {
+  **Catalogue - import the test into the Collection Center's list.** Imports into the
+  caller's active branch (the Collection Center, via `ccOperatorToken`) from its own
+  Master Data, creating the branch-owned `BranchLabTest`. Resolved in step 19.
+}

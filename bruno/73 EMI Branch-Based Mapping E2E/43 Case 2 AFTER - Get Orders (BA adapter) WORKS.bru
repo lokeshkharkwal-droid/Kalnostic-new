@@ -1,0 +1,37 @@
+meta {
+  name: 43 Case 2 AFTER - Get Orders (BA adapter) WORKS
+  type: http
+  seq: 43
+}
+
+get {
+  url: {{emiBaseUrl}}/emi/orders?specimen_id={{sampleBarcode}}
+  body: none
+  auth: none
+}
+
+params:query {
+  specimen_id: {{sampleBarcode}}
+}
+
+headers {
+  TOKEN: {{adapterTokenBa}}
+}
+
+tests {
+  test("legacy s=200 envelope", function () {
+    expect(res.body.s).to.equal("200");
+    expect(res.body.orders).to.be.an("array").with.length.of.at.least(1);
+  });
+  test("CASE 2 (report now at Branch A, adapter linked to BA): ut_ids POPULATED", function () {
+    expect(res.body.orders[0].ut_ids).to.be.an("array").with.length.of.at.least(1);
+  });
+}
+
+docs {
+  **Case 2, AFTER transfer - scan with the Branch-A-only adapter.** The report is now
+  at Branch A, which this adapter IS linked to, so the test becomes visible: `ut_ids`
+  is populated - even though the order was created at the (unlinked) Collection Center
+  and carries the Collection Center's branch-lab-test. The cross-branch match is by
+  test name/code; the branch gate passes because the processing branch is now Branch A.
+}
