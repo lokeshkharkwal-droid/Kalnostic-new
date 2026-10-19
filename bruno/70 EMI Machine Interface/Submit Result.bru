@@ -119,12 +119,15 @@ docs {
   transfer *rehomes* to follow the specimen, NOT the branch the order was created
   at. A report whose processing branch is not one the adapter is linked to is
   skipped with `fill_status: "<test> not processed at a branch linked to this
-  adapter"`. The test is matched to the adapter **branch-agnostically** (by its
-  tenant-level source `LabTest` identity), so an order created at one branch but
-  transferred to another still matches the adapter mapped at the processing branch.
-  Net effect: an order created at a linked collection center then transferred to an
-  unlinked Branch A stops filling at Branch A — and the reverse (created at an
-  unlinked branch, transferred to a linked one) starts filling once it arrives.
+  adapter"`. The test is matched to the adapter **branch-agnostically**: same-branch
+  by `BranchLabTest` id / per-branch `sourceLabTestId`, and CROSS-branch by the shared
+  Tenant Master Data provenance (`sourceMasterLabTestId`), falling back to test
+  name/code — so an order created at one branch but processed at another still matches
+  the adapter mapped at the processing branch (which must have the same test in its
+  catalogue, mapped to the adapter). Net effect: an order created at a linked
+  collection center then transferred to an unlinked Branch A stops filling at Branch A
+  — and the reverse (created at an unlinked branch, transferred to a linked one) starts
+  filling once it arrives.
 
   ## Fill behaviour (mirrors legacy `processAdapterResult`)
   - Order resolved from `tube_no` (the sample **barcode**) → its sample group →

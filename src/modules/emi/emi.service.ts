@@ -129,12 +129,23 @@ interface AdapterContext {
   /** Set of `BranchLabTest.id` the adapter is configured to report (exact rows). */
   mappedTestIds: Set<string>;
   /**
-   * Branch-agnostic test identity: the `sourceLabTestId` (tenant `LabTest.id`) of
-   * every mapped `BranchLabTest`. A report records this same id as `labTestId`, so
-   * it matches across branches.
+   * Same-branch test identity: the `sourceLabTestId` (branch Master Data
+   * `LabTest.id`) of every mapped `BranchLabTest`. A report records this same id as
+   * `labTestId`. NOTE: Master Data is **per-branch**, so a report created at branch
+   * X carries X's MD test id while an adapter mapped at branch Y carries Y's — these
+   * differ, so this set only matches same-branch. Cross-branch identity rides on
+   * {@link mappedMasterTestIds} / {@link mappedTestKeys} below.
    */
   mappedSourceLabTestIds: Set<string>;
-  /** Defensive fallback identity: normalised `testName`/`testCode` keys of the mapped tests. */
+  /**
+   * **Cross-branch** test identity: the `sourceMasterLabTestId` (the shared Tenant
+   * Master Data `LabTest.id`) of every mapped test. Both branches' per-branch MD
+   * copies, synced from the same Tenant MD test, carry the same
+   * `sourceMasterLabTestId` — so this matches a test across branches independently
+   * of its (possibly renamed) per-branch name. The reliable cross-branch key.
+   */
+  mappedMasterTestIds: Set<string>;
+  /** Final fallback identity: normalised `testName`/`testCode` keys of the mapped tests. */
   mappedTestKeys: Set<string>;
   /** `{ branchLabTestId: testName }` — the legacy `prefered_test` map. */
   preferedTest: Record<string, string>;
@@ -302,6 +313,14 @@ export class EmiService {
             select: { name: true },
           });
 
+          // Shared Tenant-MD provenance of every test on the order, so a test
+          // processed at a different branch than the adapter is mapped on still
+          // matches by its `sourceMasterLabTestId` (see `testMapped` tier 3).
+          const masterByLabTestId = await this.resolveMasterTestIds(
+            tx,
+            this.collectOrderLabTestIds(order),
+          );
+
           // ut_ids: for each mapped + still-fillable test on this order, the test's
           // display NAME plus each of its result-parameter NAMES (deduped) — the
           // legacy `getFormattedOrder` shape the analyzers are calibrated against
@@ -344,6 +363,9 @@ export class EmiService {
                 !this.testMapped(ctx, {
                   branchLabTestId: mappedTestId,
                   sourceLabTestId,
+                  masterLabTestId: sourceLabTestId
+                    ? masterByLabTestId.get(sourceLabTestId)
+                    : null,
                   testName: item.branchLabTest?.testName,
                   testCode: item.branchLabTest?.testCode,
                 })
@@ -588,6 +610,14 @@ export class EmiService {
         const log: EmiReportLog[] = [];
         let updatedCount = 0;
 
+        // Shared Tenant-MD provenance of every test on the order, so a test
+        // processed at a different branch than the adapter is mapped on still
+        // matches by its `sourceMasterLabTestId` (see `testMapped` tier 3).
+        const masterByLabTestId = await this.resolveMasterTestIds(
+          tx,
+          this.collectOrderLabTestIds(order),
+        );
+
         // Each item now carries one report (non-panel/grandfathered-panel) or
         // several (one per member test, for a panel created after the
         // per-member-test breakdown shipped) — loop every report, not just
@@ -658,6 +688,9 @@ export class EmiService {
               !this.testMapped(ctx, {
                 branchLabTestId: mappedTestId,
                 sourceLabTestId,
+                masterLabTestId: sourceLabTestId
+                  ? masterByLabTestId.get(sourceLabTestId)
+                  : null,
                 testName: item.branchLabTest?.testName,
                 testCode: item.branchLabTest?.testCode,
               }) ||
@@ -899,6 +932,7 @@ export class EmiService {
 
     const mappedTestIds = new Set(testRows.map((t) => t.branchLabTestId));
     const mappedSourceLabTestIds = new Set<string>();
+    const mappedMasterTestIds = new Set<string>();
     const mappedTestKeys = new Set<string>();
     const preferedTest: Record<string, string> = {};
     const preferedBySource: Record<string, string> = {};
@@ -927,12 +961,22 @@ export class EmiService {
         const codeKey = matchKey(t.testCode);
         if (codeKey) mappedTestKeys.add(codeKey);
       }
+      // Resolve the shared Tenant-MD provenance of each mapped test so a test
+      // transferred to (and processed at) a DIFFERENT branch still matches: both
+      // branches' per-branch MD copies share `sourceMasterLabTestId`.
+      const masterIds = await this.resolveMasterTestIds(tx, [
+        ...mappedSourceLabTestIds,
+      ]);
+      for (const id of masterIds.values()) {
+        if (id) mappedMasterTestIds.add(id);
+      }
     }
 
     return {
       branchIds: branchRows.map((b) => b.branchId),
       mappedTestIds,
       mappedSourceLabTestIds,
+      mappedMasterTestIds,
       mappedTestKeys,
       preferedTest,
       preferedBySource,
@@ -963,14 +1007,19 @@ export class EmiService {
   /**
    * Whether a report's test is one the adapter is configured to report, matched
    * **branch-agnostically**. An order created at branch X carries X's
-   * `BranchLabTest` id, while an adapter mapped at branch Y carries Y's — different
-   * rows for the same logical test — so an exact id match alone breaks the moment a
-   * specimen is transferred across branches. Matching precedence:
+   * `BranchLabTest` id (and X's per-branch Master Data `sourceLabTestId`), while an
+   * adapter mapped at branch Y carries Y's — different rows for the same logical
+   * test — so those ids only match same-branch. The moment a specimen is transferred
+   * to another branch for processing, the match must fall back to a shared identity.
+   * Matching precedence (any hit = mapped):
    * 1. exact `BranchLabTest.id` (same-branch fast path, unchanged behaviour);
-   * 2. tenant-level source `LabTest` id (`report.labTestId` ↔
-   *    `BranchLabTest.sourceLabTestId`) — the reliable cross-branch identity;
-   * 3. normalised test name / code key (defensive fallback for rows with no shared
-   *    source id).
+   * 2. per-branch source `LabTest` id (`report.labTestId` ↔
+   *    `BranchLabTest.sourceLabTestId`) — same-branch only (MD is per-branch);
+   * 3. **shared Tenant-MD provenance** (`sourceMasterLabTestId`) — the reliable
+   *    CROSS-branch identity: both branches' MD copies synced from one Tenant MD
+   *    test share it, independent of any per-branch rename;
+   * 4. normalised test name / code key — final fallback for tests with no shared
+   *    provenance (e.g. independently hand-created at each branch with the same name).
    * @param ctx the adapter context (its mapped-test identity sets)
    * @param t the candidate test's ids/labels pulled from the report + order item
    */
@@ -979,6 +1028,7 @@ export class EmiService {
     t: {
       branchLabTestId: string | null;
       sourceLabTestId: string | null;
+      masterLabTestId?: string | null;
       testName?: string | null;
       testCode?: string | null;
     },
@@ -992,12 +1042,67 @@ export class EmiService {
     ) {
       return true;
     }
+    if (
+      t.masterLabTestId != null &&
+      ctx.mappedMasterTestIds.has(t.masterLabTestId)
+    ) {
+      return true;
+    }
     const nameKey = matchKey(t.testName);
     if (nameKey && ctx.mappedTestKeys.has(nameKey)) {
       return true;
     }
     const codeKey = matchKey(t.testCode);
     return !!codeKey && ctx.mappedTestKeys.has(codeKey);
+  }
+
+  /**
+   * Batch-resolve per-branch Master Data `LabTest` ids to their shared Tenant-MD
+   * provenance (`sourceMasterLabTestId`). Used to match a report's test to the
+   * adapter's mapped tests across branches (see {@link testMapped}, tier 3). Returns
+   * a `Map<labTestId, sourceMasterLabTestId | null>` — `null` for a hand-created MD
+   * test with no Tenant-MD source. An empty input yields an empty map (no query).
+   * @param tx tenant-scoped transaction client
+   * @param labTestIds the per-branch MD `LabTest` ids to resolve
+   */
+  private async resolveMasterTestIds(
+    tx: Prisma.TransactionClient,
+    labTestIds: string[],
+  ): Promise<Map<string, string | null>> {
+    const out = new Map<string, string | null>();
+    const ids = [...new Set(labTestIds.filter((id): id is string => !!id))];
+    if (ids.length === 0) {
+      return out;
+    }
+    const rows = await tx.labTest.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, sourceMasterLabTestId: true },
+    });
+    for (const r of rows) {
+      out.set(r.id, r.sourceMasterLabTestId);
+    }
+    return out;
+  }
+
+  /**
+   * Every per-branch Master Data `LabTest` id referenced by an order's items — each
+   * report's `labTestId` plus each standalone item's `branchLabTest.sourceLabTestId`
+   * (the reportless-fallback source). Fed to {@link resolveMasterTestIds} so the
+   * shared Tenant-MD provenance can be resolved in one batch per EMI call.
+   */
+  private collectOrderLabTestIds(order: EmiOrder): string[] {
+    const ids: string[] = [];
+    for (const item of order.items) {
+      if (item.branchLabTest?.sourceLabTestId) {
+        ids.push(item.branchLabTest.sourceLabTestId);
+      }
+      for (const report of item.labReports) {
+        if (report.labTestId) {
+          ids.push(report.labTestId);
+        }
+      }
+    }
+    return ids;
   }
 
   /**

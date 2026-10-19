@@ -79,9 +79,14 @@ docs {
   - Each test is only listed in `ut_ids` when the branch **currently processing it**
     — `LabReport.branchId`, which an internal transfer *rehomes* to follow the
     specimen — is one the adapter is linked to.
-  - A test is matched to the adapter **branch-agnostically** (by its tenant-level
-    source `LabTest` identity), so an order created at one branch but transferred to
-    another still matches the adapter mapped at the processing branch.
+  - A test is matched to the adapter **branch-agnostically**: an order carries its
+    creation branch's `BranchLabTest` id + per-branch Master Data `sourceLabTestId`
+    (same-branch keys), so cross-branch it matches on the **shared Tenant Master Data
+    provenance** (`sourceMasterLabTestId` — both branches' MD copies synced from one
+    Tenant-MD test share it), falling back to test name/code. So an order created at
+    one branch but processed at another still matches the adapter mapped at the
+    processing branch (requires the processing branch to have the same test in its
+    catalogue and the adapter mapped to it).
 
   So when a specimen is processed at a branch the adapter is **not** linked to, the
   order still resolves but `ut_ids` is an **empty array** (`[]`) — e.g. an order

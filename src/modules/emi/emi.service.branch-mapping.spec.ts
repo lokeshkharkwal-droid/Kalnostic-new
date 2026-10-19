@@ -157,6 +157,7 @@ describe('EmiService — branch-based adapter mapping', () => {
       ]),
     },
     branchLabPanelTest: { findMany: jest.fn().mockResolvedValue([]) },
+    labTest: { findMany: jest.fn().mockResolvedValue([]) },
     adapterResult: { create: jest.fn().mockResolvedValue({}) },
     labReportResultValue: { upsert: jest.fn().mockResolvedValue({}) },
     labReport: { update: jest.fn().mockResolvedValue({}) },
