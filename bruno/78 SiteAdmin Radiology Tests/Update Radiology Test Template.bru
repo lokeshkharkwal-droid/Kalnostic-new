@@ -1,0 +1,41 @@
+meta {
+  name: Update Radiology Test Template
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/siteadmin/radiology-tests/{{siteAdminRadiologyTestId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "testDisplayName": "CT Chest (revised)",
+    "isContrast": true,
+    "priceMsrp": 4800,
+    "priceMaximum": 4500,
+    "isActive": true
+  }
+}
+
+docs {
+  Update a SITE_ADMIN radiology-test template. Auth: SiteAdmin token, requires
+  `master-data:write`. Partial update of the flat scalar fields — omitted fields
+  are left unchanged.
+
+  Classification refs stay NULL (templates can't reference tenant catalogue).
+  Conflicts/cross-field rules match Create Radiology Test Template
+  (`RADIOLOGY_TEST_NAME_CONFLICT` / `RADIOLOGY_TEST_CODE_CONFLICT` on clash;
+  price ordering 422). 404 `RADIOLOGY_TEST_NOT_FOUND` if the id isn't a live
+  template.
+}

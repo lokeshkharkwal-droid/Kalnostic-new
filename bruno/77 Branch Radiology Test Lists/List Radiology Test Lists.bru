@@ -1,0 +1,22 @@
+meta {
+  name: List Radiology Test Lists
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/branch-radiology-test-lists
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  List all of the active branch's **Radiology Test Lists** (the tabs). Business
+  JWT. The default Walk-in list is returned first (auto-created on the first
+  Master-Data import). Scoped to the JWT tenant + active branch. 400
+  `ACTIVE_BRANCH_REQUIRED` if the JWT has no active branch.
+}

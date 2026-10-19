@@ -1,0 +1,32 @@
+meta {
+  name: Publish Radiology Study
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/radiology/studies/{{radiologyStudyId}}/publish
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  radiologyStudyId: 00000000-0000-0000-0000-000000000000
+}
+
+body:json {
+  {}
+}
+
+docs {
+  Publish an approved report (APPROVED → PUBLISHED) — it's now printable/shareable.
+  Business JWT. 409 INVALID_RADIOLOGY_STUDY_TRANSITION if illegal from the current status.
+}

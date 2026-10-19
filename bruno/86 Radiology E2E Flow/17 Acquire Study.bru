@@ -1,0 +1,40 @@
+meta {
+  name: 17 Acquire Study
+  type: http
+  seq: 17
+}
+
+post {
+  url: {{baseUrl}}/radiology/studies/{{studyId}}/acquire
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "notes": "Images acquired on the X-ray modality (E2E)."
+  }
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("status is ACQUIRED", function () {
+    expect(res.getBody().data.status).to.equal("ACQUIRED");
+  });
+}
+
+docs {
+  Processing 2 - acquire the study (imaging done). Legal straight from `NEW`
+  (scheduling is optional), moving `NEW -> ACQUIRED`. Every transition writes a
+  `RadiologyStudyStatusHistory` row (see step 21).
+}

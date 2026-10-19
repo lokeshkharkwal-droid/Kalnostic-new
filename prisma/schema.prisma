@@ -868,6 +868,8 @@ model Tenant {
   appointmentCounter     Int                   @default(0) @map("appointment_counter") // per-tenant sequential appointment code (APT-00001)
   diagnosticBillCounter  Int                   @default(0) @map("diagnostic_bill_counter") // per-tenant sequential diagnostic bill id (DIG-001)
   accessionCounter       Int                   @default(0) @map("accession_counter") // per-tenant sequential accession number (ACC-00001)
+  radiologyStudyCounter  Int                   @default(0) @map("radiology_study_counter") // per-tenant sequential radiology study number (RAD-00001)
+  radiologyOutsourceCenterCounter Int          @default(0) @map("radiology_outsource_center_counter") // per-tenant sequential radiology outsource-center code (ROC-00001)
   leadCounter            Int                   @default(0) @map("lead_counter") // per-tenant sequential sales lead code (LD-YYYY-00001)
   tripCounter            Int                   @default(0) @map("trip_counter") // per-tenant sequential sales trip code (TRP-00001)
   followUpCounter        Int                   @default(0) @map("follow_up_counter") // per-tenant sequential sales follow-up code (FU-00001)
@@ -6661,6 +6663,10 @@ model Order {
   // Order samples generated for this order (one per test × required sample).
   orderSamples OrderSample[]
 
+  // Radiology processing worklist rows generated for this order's radiology items
+  // (parallel to orderSamples for the diagnostic/accession pipeline).
+  radiologyStudies RadiologyStudy[]
+
   // Append-only note history surfaced on the Order Overview page's
   // Order / Sample / Tech tabs (one row per note, never overwritten).
   notes OrderNote[]
@@ -7100,6 +7106,14 @@ model OrderItem {
   branchLabPanelId String?         @map("branch_lab_panel_id")
   branchLabPanel   BranchLabPanel? @relation(fields: [branchLabPanelId], references: [id])
 
+  // Radiology catalogue refs (parallel to the lab test/panel refs above). When a
+  // radiology test/panel is ordered, exactly one of these is set instead of the
+  // lab refs. Drives RadiologyStudy generation (OrderService → RadiologyStudyService).
+  branchRadiologyTestId  String?              @map("branch_radiology_test_id")
+  branchRadiologyTest    BranchRadiologyTest? @relation(fields: [branchRadiologyTestId], references: [id])
+  branchRadiologyPanelId String?               @map("branch_radiology_panel_id")
+  branchRadiologyPanel   BranchRadiologyPanel? @relation(fields: [branchRadiologyPanelId], references: [id])
+
   /// Free-text catalogue entry passed directly from the frontend (mutually
   /// exclusive with the test/panel refs).
   direct String?
@@ -7169,6 +7183,8 @@ model OrderItem {
   @@index([orderId])
   @@index([branchLabTestId])
   @@index([branchLabPanelId])
+  @@index([branchRadiologyTestId])
+  @@index([branchRadiologyPanelId])
   @@index([outsourceCenterId])
   @@index([deletedAt])
   @@map("order_items")
@@ -9298,4 +9314,773 @@ model SalesSetting {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("sales_settings")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RADIOLOGY — parallel catalogue + processing tree (New Radiology Flow).
+// Mirrors the lab catalogue (LabTest/LabPanel/BranchLab*) + accession pipeline
+// (OrderSample/AccessionSetting) as SEPARATE models. Classification ids
+// (department/category/sub-category) and masterDataId are nullable logical refs
+// (no Prisma relation), like BranchLabTest. All tenant-scoped + branch-level with
+// RLS policies in prisma/rls.sql.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Imaging modality for a radiology test (X-ray, CT, MRI, …).
+enum RadiologyModality {
+  XRAY
+  CT
+  MRI
+  ULTRASOUND
+  MAMMOGRAPHY
+  PET
+  FLUOROSCOPY
+  DEXA
+  OTHER
+}
+
+/// Lifecycle status of a RadiologyStudy (the processing worklist row). Mirrors the
+/// shape of SampleStatus but models the imaging/report lifecycle:
+/// NEW → SCHEDULED → ACQUIRED → REPORTED → VALIDATED → APPROVED → PUBLISHED, with
+/// HOLD/CANCELLED side states and a universal retrieve/undo via previousStatus.
+enum RadiologyStudyStatus {
+  NEW
+  SCHEDULED
+  ACQUIRED
+  REPORTED
+  VALIDATED
+  APPROVED
+  PUBLISHED
+  HOLD
+  CANCELLED
+}
+
+/// Kind of radiology reporting doctor (mirrors DoctorType).
+enum RadiologyReportingDoctorType {
+  REPORTING
+  CONSULTANT
+}
+
+/// A radiology-test configuration inside a master data (tenant-scoped + branch-level).
+/// Parallel to LabTest: identity, modality/body-part/view, classification, pricing,
+/// TAT/schedule, flags and notes. `testName`/`testCode` unique per master data among
+/// active rows (partial unique indexes in prisma/rls.sql). Classification ids +
+/// masterDataId are nullable logical refs (no relation). RLS policy in rls.sql.
+model RadiologyTest {
+  id           String  @id @default(uuid())
+  // NULL for SITE_ADMIN global templates; set for TENANT rows (CLAUDE.md §4.2).
+  tenantId     String? @map("tenant_id")
+  branchId     String? @map("branch_id")
+  masterDataId String? @map("master_data_id")
+
+  source DataSource @default(TENANT)
+
+  // Provenance (SITE_ADMIN import + Tenant→Branch master-data sync), mirroring LabTest.
+  clonedFromId                String?   @map("cloned_from_id")
+  templateSyncedAt            DateTime? @map("template_synced_at")
+  sourceMasterRadiologyTestId String?   @map("source_master_radiology_test_id")
+
+  // Identity
+  testName        String  @map("test_name")
+  testDisplayName String? @map("test_display_name")
+  testCode        String  @map("test_code")
+  aka             String?
+
+  // Radiology-specific classification
+  modality   RadiologyModality @default(OTHER)
+  bodyPart   String?           @map("body_part")
+  view       String?
+  isContrast Boolean           @default(false) @map("is_contrast")
+
+  // Classification (logical refs)
+  departmentId  String? @map("department_id")
+  categoryId    String? @map("category_id")
+  subCategoryId String? @map("sub_category_id")
+
+  // Basic config
+  icdCode            String?           @map("icd_code")
+  loincCode          String?           @map("loinc_code")
+  clinicalTags       String[]          @map("clinical_tags")
+  reportTemplateId   String?           @map("report_template_id")
+  samplePriorityType SamplePriority    @default(ROUTINE) @map("sample_priority_type")
+  isEnableCms        Boolean           @default(true) @map("is_enable_cms")
+  approvalWorkflow   ApprovalWorkflow? @map("approval_workflow")
+
+  // Pricing (integer minor units)
+  priceMsrp            Int     @default(0) @map("price_msrp")
+  priceMaximum         Int     @default(0) @map("price_maximum")
+  priceMinimum         Int     @default(0) @map("price_minimum")
+  priceOriginal        Int     @default(0) @map("price_original")
+  franchisePrice       Int     @default(0) @map("franchise_price")
+  emergencyPrice       Int     @default(0) @map("emergency_price")
+  commissionPrice      Int?    @map("commission_price")
+  discountCapPct       Int     @default(0) @map("discount_cap_pct")
+  isAllowPriceOverride Boolean @default(false) @map("is_allow_price_override")
+  isAllowDiscounts     Boolean @default(true) @map("is_allow_discounts")
+
+  // TAT
+  tatMinValue Int?     @map("tat_min_value")
+  tatMinUnit  TatUnit? @map("tat_min_unit")
+  tatMaxValue Int?     @map("tat_max_value")
+  tatMaxUnit  TatUnit? @map("tat_max_unit")
+
+  // Schedule (times stored as "HH:mm" strings)
+  scheduleDays DayOfWeek[] @map("schedule_days")
+  scheduleFrom String?     @map("schedule_from")
+  scheduleTo   String?     @map("schedule_to")
+
+  // Flags
+  isHideInOrderScreen Boolean @default(false) @map("is_hide_in_order_screen")
+  isPreferenceTest    Boolean @default(false) @map("is_preference_test")
+  isOutsource         Boolean @default(false) @map("is_outsource")
+  isBillOnlyTest      Boolean @default(false) @map("is_bill_only_test")
+
+  isActive Boolean @default(true) @map("is_active")
+
+  // Notes
+  usefulFor               String? @map("useful_for")
+  interpretationOfResults String? @map("interpretation_of_results")
+  limitations             String?
+  remarks                 String?
+  references              String?
+  preparationInstructions String? @map("preparation_instructions")
+
+  versionHistory Json @default("[]") @map("version_history")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([masterDataId])
+  @@index([departmentId])
+  @@index([categoryId])
+  @@index([subCategoryId])
+  @@index([modality])
+  @@index([isActive])
+  @@index([source])
+  @@index([clonedFromId])
+  @@index([sourceMasterRadiologyTestId])
+  @@index([deletedAt])
+  @@map("radiology_tests")
+}
+
+/// A radiology-panel configuration inside a master data (tenant-scoped + branch-level).
+/// Parallel to LabPanel: groups several radiology tests (via RadiologyPanelTest) with
+/// its own classification, applicability, pricing, TAT, flags and instructions.
+model RadiologyPanel {
+  id           String  @id @default(uuid())
+  tenantId     String? @map("tenant_id")
+  branchId     String? @map("branch_id")
+  masterDataId String? @map("master_data_id")
+
+  source DataSource @default(TENANT)
+
+  clonedFromId                 String?   @map("cloned_from_id")
+  templateSyncedAt             DateTime? @map("template_synced_at")
+  sourceMasterRadiologyPanelId String?   @map("source_master_radiology_panel_id")
+
+  // Identity
+  bannerImage String? @map("banner_image")
+  panelName   String  @map("panel_name")
+  panelCode   String  @map("panel_code")
+
+  // Classification (logical refs)
+  categoryId   String? @map("category_id")
+  departmentId String? @map("department_id")
+
+  // Applicability + reporting
+  applicableGender   ReferenceGender @default(ALL) @map("applicable_gender")
+  applicableAgeGroup AgeGroup        @default(ALL) @map("applicable_age_group")
+  reportType         ReportType      @default(COMBINED) @map("report_type")
+  turnaroundPriority SamplePriority  @default(ROUTINE) @map("turnaround_priority")
+
+  isActive Boolean @default(true) @map("is_active")
+
+  // Pricing (integer minor units)
+  priceMsrp       Int  @default(0) @map("price_msrp")
+  priceMinimum    Int  @default(0) @map("price_minimum")
+  priceMaximum    Int  @default(0) @map("price_maximum")
+  priceOriginal   Int  @default(0) @map("price_original")
+  franchisePrice  Int  @default(0) @map("franchise_price")
+  commissionPrice Int? @map("commission_price")
+
+  // TAT
+  tatMinValue Int?     @map("tat_min_value")
+  tatMinUnit  TatUnit? @default(HOURS) @map("tat_min_unit")
+  tatMaxValue Int?     @map("tat_max_value")
+  tatMaxUnit  TatUnit? @default(HOURS) @map("tat_max_unit")
+
+  panelInstructions String? @map("panel_instructions")
+
+  // Flags
+  isDisableDiscount   Boolean @default(false) @map("is_disable_discount")
+  isEnableCms         Boolean @default(true) @map("is_enable_cms")
+  isPreference        Boolean @default(false) @map("is_preference")
+  isShowOnlineBooking Boolean @default(true) @map("is_show_online_booking")
+  isBillOnlyTest      Boolean @default(false) @map("is_bill_only_test")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([masterDataId])
+  @@index([departmentId])
+  @@index([categoryId])
+  @@index([isActive])
+  @@index([source])
+  @@index([sourceMasterRadiologyPanelId])
+  @@index([deletedAt])
+  @@map("radiology_panels")
+}
+
+/// A test included in a radiology panel. `radiologyTestId` is a logical ref to an
+/// active RadiologyTest in the same tenant (validated in RadiologyPanelService).
+model RadiologyPanelTest {
+  id              String  @id @default(uuid())
+  tenantId        String? @map("tenant_id")
+  branchId        String? @map("branch_id")
+  radiologyPanelId String @map("radiology_panel_id")
+  radiologyTestId  String @map("radiology_test_id")
+
+  sortOrder       Int     @default(0) @map("sort_order")
+  isRemovable     Boolean @default(true) @map("is_removable")
+  discountPercent Int?    @map("discount_percent")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([radiologyPanelId])
+  @@index([radiologyPanelId, sortOrder])
+  @@index([radiologyTestId])
+  @@index([deletedAt])
+  @@map("radiology_panel_tests")
+}
+
+/// A branch's operational Radiology Test List entry — a materialized, independent
+/// snapshot copied from a Master Data RadiologyTest via import. Parallel to
+/// BranchLabTest. Edits here NEVER propagate back to Master Data.
+model BranchRadiologyTest {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  sourceRadiologyTestId String? @map("source_radiology_test_id")
+  sourceMasterDataId    String? @map("source_master_data_id")
+
+  listId String?                  @map("list_id")
+  list   BranchRadiologyTestList? @relation(fields: [listId], references: [id])
+
+  // Identity
+  testName        String  @map("test_name")
+  testDisplayName String? @map("test_display_name")
+  testCode        String  @map("test_code")
+  aka             String?
+
+  // Radiology-specific classification
+  modality   RadiologyModality @default(OTHER)
+  bodyPart   String?           @map("body_part")
+  view       String?
+  isContrast Boolean           @default(false) @map("is_contrast")
+
+  // Classification (logical refs)
+  departmentId  String? @map("department_id")
+  categoryId    String? @map("category_id")
+  subCategoryId String? @map("sub_category_id")
+
+  // Basic config
+  icdCode            String?        @map("icd_code")
+  loincCode          String?        @map("loinc_code")
+  clinicalTags       String[]       @map("clinical_tags")
+  reportTemplateId   String?        @map("report_template_id")
+  samplePriorityType SamplePriority @default(ROUTINE) @map("sample_priority_type")
+  isEnableCms        Boolean        @default(true) @map("is_enable_cms")
+
+  // Pricing (integer minor units)
+  priceMsrp            Int     @default(0) @map("price_msrp")
+  priceMaximum         Int     @default(0) @map("price_maximum")
+  priceMinimum         Int     @default(0) @map("price_minimum")
+  priceOriginal        Int     @default(0) @map("price_original")
+  franchisePrice       Int     @default(0) @map("franchise_price")
+  emergencyPrice       Int     @default(0) @map("emergency_price")
+  commissionPrice      Int?    @map("commission_price")
+  discountCapPct       Int     @default(0) @map("discount_cap_pct")
+  isAllowPriceOverride Boolean @default(false) @map("is_allow_price_override")
+  isAllowDiscounts     Boolean @default(true) @map("is_allow_discounts")
+
+  // Effective selling price for this list (minor units).
+  listPrice Int @default(0) @map("list_price")
+
+  // TAT
+  tatMinValue Int?     @map("tat_min_value")
+  tatMinUnit  TatUnit? @map("tat_min_unit")
+  tatMaxValue Int?     @map("tat_max_value")
+  tatMaxUnit  TatUnit? @map("tat_max_unit")
+
+  // Schedule (times stored as "HH:mm" strings)
+  scheduleDays DayOfWeek[] @map("schedule_days")
+  scheduleFrom String?     @map("schedule_from")
+  scheduleTo   String?     @map("schedule_to")
+
+  // Flags
+  isHideInOrderScreen Boolean @default(false) @map("is_hide_in_order_screen")
+  isPreferenceTest    Boolean @default(false) @map("is_preference_test")
+  isBillOnlyTest      Boolean @default(false) @map("is_bill_only_test")
+
+  isActive Boolean @default(true) @map("is_active")
+
+  // Variant model (mirrors BranchLabTest).
+  isDefault   Boolean @default(true) @map("is_default")
+  isDuplicate Boolean @default(false) @map("is_duplicate")
+
+  // Notes
+  usefulFor               String? @map("useful_for")
+  interpretationOfResults String? @map("interpretation_of_results")
+  limitations             String?
+  remarks                 String?
+  references              String?
+  preparationInstructions String? @map("preparation_instructions")
+
+  // Point-in-time snapshot of any source-test children (future-proofing).
+  configSnapshot Json @default("{}") @map("config_snapshot")
+
+  orderItems OrderItem[]
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([sourceRadiologyTestId])
+  @@index([listId])
+  @@index([modality])
+  @@index([isActive])
+  @@index([isDefault])
+  @@index([deletedAt])
+  @@map("branch_radiology_tests")
+}
+
+/// A branch's named pricing Radiology Test List (Walk-in, …). Mirrors BranchLabTestList.
+model BranchRadiologyTestList {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  name      String
+  isDefault Boolean @default(false) @map("is_default")
+
+  priceType      ListPriceType    @default(CUSTOMIZED) @map("price_type")
+  copyPriceFrom  ListPriceSource? @map("copy_price_from")
+  copyPercentage Int?             @map("copy_percentage")
+
+  tests BranchRadiologyTest[]
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([deletedAt])
+  @@map("branch_radiology_test_lists")
+}
+
+/// A branch's operational Radiology Panel List entry — snapshot of a Master Data
+/// RadiologyPanel. Mirrors BranchLabPanel.
+model BranchRadiologyPanel {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  sourceRadiologyPanelId String? @map("source_radiology_panel_id")
+  sourceMasterDataId     String? @map("source_master_data_id")
+
+  listId String?                   @map("list_id")
+  list   BranchRadiologyPanelList? @relation(fields: [listId], references: [id])
+
+  // Identity
+  bannerImage String? @map("banner_image")
+  panelName   String  @map("panel_name")
+  panelCode   String  @map("panel_code")
+
+  // Classification (logical refs)
+  categoryId   String? @map("category_id")
+  departmentId String? @map("department_id")
+
+  // Applicability + reporting
+  applicableGender   ReferenceGender @default(ALL) @map("applicable_gender")
+  applicableAgeGroup AgeGroup        @default(ALL) @map("applicable_age_group")
+  reportType         ReportType      @default(COMBINED) @map("report_type")
+  turnaroundPriority SamplePriority  @default(ROUTINE) @map("turnaround_priority")
+
+  isActive Boolean @default(true) @map("is_active")
+
+  // Variant model
+  isDefault   Boolean @default(true) @map("is_default")
+  isDuplicate Boolean @default(false) @map("is_duplicate")
+
+  // Pricing (integer minor units)
+  priceMsrp       Int  @default(0) @map("price_msrp")
+  priceMinimum    Int  @default(0) @map("price_minimum")
+  priceMaximum    Int  @default(0) @map("price_maximum")
+  priceOriginal   Int  @default(0) @map("price_original")
+  franchisePrice  Int  @default(0) @map("franchise_price")
+  commissionPrice Int? @map("commission_price")
+
+  listPrice Int @default(0) @map("list_price")
+
+  // TAT
+  tatMinValue Int?     @map("tat_min_value")
+  tatMinUnit  TatUnit? @default(HOURS) @map("tat_min_unit")
+  tatMaxValue Int?     @map("tat_max_value")
+  tatMaxUnit  TatUnit? @default(HOURS) @map("tat_max_unit")
+
+  panelInstructions String? @map("panel_instructions")
+
+  // Flags
+  isDisableDiscount   Boolean @default(false) @map("is_disable_discount")
+  isEnableCms         Boolean @default(true) @map("is_enable_cms")
+  isPreference        Boolean @default(false) @map("is_preference")
+  isShowOnlineBooking Boolean @default(true) @map("is_show_online_booking")
+  isBillOnlyTest      Boolean @default(false) @map("is_bill_only_test")
+
+  orderItems OrderItem[]
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([sourceRadiologyPanelId])
+  @@index([listId])
+  @@index([isActive])
+  @@index([isDefault])
+  @@index([deletedAt])
+  @@map("branch_radiology_panels")
+}
+
+/// A test included in a branch's Radiology Panel List entry. `branchRadiologyTestId`
+/// points at a BranchRadiologyTest copy in the same branch. Mirrors BranchLabPanelTest.
+model BranchRadiologyPanelTest {
+  id                     String @id @default(uuid())
+  tenantId               String @map("tenant_id")
+  branchId               String @map("branch_id")
+  branchRadiologyPanelId String @map("branch_radiology_panel_id")
+  branchRadiologyTestId  String @map("branch_radiology_test_id")
+
+  sortOrder       Int     @default(0) @map("sort_order")
+  isRemovable     Boolean @default(true) @map("is_removable")
+  discountPercent Int?    @map("discount_percent")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([branchRadiologyPanelId])
+  @@index([branchRadiologyPanelId, sortOrder])
+  @@index([branchRadiologyTestId])
+  @@index([deletedAt])
+  @@map("branch_radiology_panel_tests")
+}
+
+/// A branch's named pricing Radiology Panel List. Mirrors BranchLabPanelList.
+model BranchRadiologyPanelList {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  name      String
+  isDefault Boolean @default(false) @map("is_default")
+
+  priceType      ListPriceType    @default(CUSTOMIZED) @map("price_type")
+  copyPriceFrom  ListPriceSource? @map("copy_price_from")
+  copyPercentage Int?             @map("copy_percentage")
+
+  panels BranchRadiologyPanel[]
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([deletedAt])
+  @@map("branch_radiology_panel_lists")
+}
+
+/// A radiology reporting/consultant doctor (the "Reporting Doctors" master under
+/// Radiology Configuration). Parallel to Doctor; classification + branch are nullable
+/// logical refs (validated in service). Tenant-scoped + branch-level.
+model RadiologyReportingDoctor {
+  id         String                       @id @default(uuid())
+  tenantId   String                       @map("tenant_id")
+  branchId   String?                      @map("branch_id")
+  doctorType RadiologyReportingDoctorType @default(REPORTING) @map("doctor_type")
+
+  // Identity
+  salutation     Salutation?
+  firstName      String      @map("first_name")
+  lastName       String      @map("last_name")
+  dateOfBirth    DateTime?   @map("date_of_birth") @db.Date
+  gender         Gender?
+  phone          String
+  alternatePhone String?     @map("alternate_phone")
+  email          String?
+  address        String?
+
+  // Registration
+  registrationNo      String    @map("registration_no")
+  registrationCouncil String?   @map("registration_council")
+  registrationExpiry  DateTime? @map("registration_expiry") @db.Date
+
+  // Classification (logical refs)
+  categoryId    String? @map("category_id")
+  subCategoryId String? @map("sub_category_id")
+  departmentId  String? @map("department_id")
+
+  // Accreditation & signatory authority
+  isNablAuthorized        Boolean @default(false) @map("is_nabl_authorized")
+  isCapCertified          Boolean @default(false) @map("is_cap_certified")
+  isIsoCertified          Boolean @default(false) @map("is_iso_certified")
+  isReportSignatory       Boolean @default(false) @map("is_report_signatory")
+  signatoryName           String? @map("signatory_name")
+  signatoryDesignation    String? @map("signatory_designation")
+  signatureImagePath      String? @map("signature_image_path")
+  signatoryDepartmentIds  Json?   @map("signatory_department_ids")
+  signatoryCategoryIds    Json?   @map("signatory_category_ids")
+  signatorySubCategoryIds Json?   @map("signatory_sub_category_ids")
+
+  // Banking
+  accountHolderName String?     @map("account_holder_name")
+  bankName          String?     @map("bank_name")
+  accountNumber     String?     @map("account_number")
+  ifscCode          String?     @map("ifsc_code")
+  paymentMode       PaymentMode @default(BANK_TRANSFER) @map("payment_mode")
+
+  // Charges
+  consultationFee Decimal @default(0) @map("consultation_fee") @db.Decimal(10, 2)
+  emergencyFee    Decimal @default(0) @map("emergency_fee") @db.Decimal(10, 2)
+  followUpFee     Decimal @default(0) @map("follow_up_fee") @db.Decimal(10, 2)
+  isAllowDiscount Boolean @default(false) @map("is_allow_discount")
+
+  // Status & misc
+  status      DoctorStatus @default(ACTIVE)
+  joiningDate DateTime?    @map("joining_date") @db.Date
+  remarks     String?
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([categoryId])
+  @@index([subCategoryId])
+  @@index([departmentId])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("radiology_reporting_doctors")
+}
+
+/// An external reference center a tenant sends radiology studies to. Parallel to
+/// OutsourceCenter. `code` is system-generated & immutable (ROC-00001…, from
+/// Tenant.radiologyOutsourceCenterCounter). Tenant-scoped, tenant-level.
+model RadiologyOutsourceCenter {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  code     String
+
+  // Basic details
+  name      String  @map("center_name")
+  shortName String? @map("short_name")
+  address   String?
+  country   String?
+  city      String
+  state     String?
+  pincode   String?
+
+  // Legal & financial (all optional)
+  gstNumber         String? @map("gst_number")
+  panNumber         String? @map("pan_number")
+  accountHolderName String? @map("account_holder_name")
+  bankName          String? @map("bank_name")
+  bankAccountNumber String? @map("bank_account_number")
+  ifscCode          String? @map("ifsc_code")
+
+  isActive         Boolean @default(true) @map("is_active")
+  isNablAccredited Boolean @default(false) @map("is_nabl_accredited")
+
+  // Single selected radiology test / panel the center handles (logical refs).
+  radiologyTestId  String? @map("radiology_test_id")
+  radiologyPanelId String? @map("radiology_panel_id")
+
+  // Single assigned Radiology Test List / Panel List (logical refs to the branch's
+  // named pricing lists), validated tenant+branch-scoped in service.
+  branchRadiologyTestListId  String? @map("branch_radiology_test_list_id")
+  branchRadiologyPanelListId String? @map("branch_radiology_panel_list_id")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([radiologyTestId])
+  @@index([radiologyPanelId])
+  @@index([branchRadiologyTestListId])
+  @@index([branchRadiologyPanelListId])
+  @@index([deletedAt])
+  @@map("radiology_outsource_centers")
+}
+
+/// The core radiology processing entity — one row per ordered radiology test/panel
+/// item. Tenant-scoped (RLS) + branch-level. Generated when a radiology order reaches
+/// `status ∈ {ORDER, APPOINTMENT}` (RadiologyStudyService.generateStudiesForOrderInTx),
+/// parallel to OrderSample for diagnostics but SKIPPING the specimen/accession flow.
+/// `studyNo` (`RAD-00001`…) is a per-tenant sequential value from
+/// `Tenant.radiologyStudyCounter`, unique per tenant among active rows (partial unique
+/// index in prisma/rls.sql). `status` holds the CURRENT lifecycle stage;
+/// `previousStatus` backs the universal retrieve/undo. Narrative `findings`/
+/// `impression`/`recommendation` are filled at REPORTED. RLS policy in prisma/rls.sql.
+model RadiologyStudy {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  orderId String @map("order_id")
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  // The ordered item + resolved catalogue test/panel (logical refs).
+  orderItemId         String? @map("order_item_id")
+  branchRadiologyTestId  String? @map("branch_radiology_test_id")
+  branchRadiologyPanelId String? @map("branch_radiology_panel_id")
+  radiologyTestId     String? @map("radiology_test_id")
+  departmentId        String? @map("department_id")
+
+  // Snapshot of the catalogue test (stable even if the catalogue is re-priced/edited).
+  radiologyTestName String?            @map("radiology_test_name")
+  modality          RadiologyModality? @map("modality")
+  bodyPart          String?            @map("body_part")
+  view              String?
+
+  studyNo String @map("study_no")
+
+  // People (logical refs — Person for radiologist/technician; reporting doctor master).
+  radiologistId   String? @map("radiologist_id")
+  technicianId    String? @map("technician_id")
+  reportingDoctorId String? @map("reporting_doctor_id")
+
+  status         RadiologyStudyStatus  @default(NEW)
+  previousStatus RadiologyStudyStatus? @map("previous_status")
+  priority       SamplePriority        @default(ROUTINE)
+
+  // Narrative report content (filled at REPORTED; locked after APPROVED).
+  findings       String?
+  impression     String?
+  recommendation String?
+
+  reportTemplateId String? @map("report_template_id")
+
+  // Lifecycle stamps
+  scheduledAt DateTime? @map("scheduled_at")
+  acquiredAt  DateTime? @map("acquired_at")
+  reportedAt  DateTime? @map("reported_at")
+  validatedAt DateTime? @map("validated_at")
+  approvedAt  DateTime? @map("approved_at")
+  publishedAt DateTime? @map("published_at")
+
+  // Notes / holds
+  notes      String?
+  holdReason String? @map("hold_reason")
+
+  statusHistory RadiologyStudyStatusHistory[]
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([orderId])
+  @@index([orderItemId])
+  @@index([radiologistId])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("radiology_studies")
+}
+
+/// Append-only history of radiology-study status changes — one row per action, never
+/// mutated. Mirrors OrderSampleStatusHistory. Tenant-scoped (RLS) + branch-level.
+model RadiologyStudyStatusHistory {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  studyId String         @map("study_id")
+  study   RadiologyStudy @relation(fields: [studyId], references: [id], onDelete: Cascade)
+
+  action     String
+  toStatus   RadiologyStudyStatus  @map("to_status")
+  fromStatus RadiologyStudyStatus? @map("from_status")
+
+  reason        String?
+  notes         String?
+  attachmentUrl String? @map("attachment_url")
+  changedBy     String? @map("changed_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([studyId])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@map("radiology_study_status_history")
+}
+
+/// Per-branch Radiology settings (master-data lists + TAT thresholds). Mirrors
+/// AccessionSetting: one row per branch (`@@unique([tenantId, branchId])`), variable
+/// lists held as JSON (`config`), typed TAT columns. RLS policy in prisma/rls.sql.
+model RadiologySetting {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  /// `MasterData_*` string[] lists (modalities, body parts, hold/cancel reasons, …).
+  config Json @default("{}")
+
+  // ── Radiology (TAT / threshold toggles) ──
+  Radiology_WarningThresholdMinutes  Int @default(60) @map("radiology_warning_threshold_minutes")
+  Radiology_CriticalThresholdMinutes Int @default(30) @map("radiology_critical_threshold_minutes")
+  Radiology_AutoPublishOnApprove     Boolean @default(false) @map("radiology_auto_publish_on_approve")
+  Radiology_RequireValidation        Boolean @default(true) @map("radiology_require_validation")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([tenantId, branchId])
+  @@index([tenantId])
+  @@index([branchId])
+  @@map("radiology_settings")
 }

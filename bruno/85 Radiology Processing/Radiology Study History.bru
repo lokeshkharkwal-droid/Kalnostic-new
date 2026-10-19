@@ -1,0 +1,24 @@
+meta {
+  name: Radiology Study History
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/radiology/studies/{{radiologyStudyId}}/history
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  radiologyStudyId: 00000000-0000-0000-0000-000000000000
+}
+
+docs {
+  The study's append-only status-change history (audit trail), oldest first.
+  Business JWT, tenant-scoped.
+}

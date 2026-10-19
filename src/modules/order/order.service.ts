@@ -38,6 +38,7 @@ import {
 import { OrderPrintType } from './dto/print-order.dto';
 import { AppointmentService } from '../appointment/appointment.service';
 import { OrderSampleService } from '../accession/accession-sample.service';
+import { RadiologyStudyService } from '../radiology/radiology-study.service';
 import { BarcodeService } from '../accession/barcode.service';
 import { SlotReservationService } from '../phlebotomist-schedule/slot-reservation.service';
 import { PhlebotomistCollectionService } from '../phlebotomist-collection/phlebotomist-collection.service';
@@ -195,6 +196,8 @@ import {
   OrderItemNotFoundException,
   OrderBranchLabPanelNotFoundException,
   OrderBranchLabTestNotFoundException,
+  OrderBranchRadiologyTestNotFoundException,
+  OrderBranchRadiologyPanelNotFoundException,
   OrderCodeConflictException,
   OrderConsultantDoctorNotFoundException,
   OrderDepartmentNotFoundException,
@@ -444,6 +447,7 @@ export class OrderService {
     private readonly prisma: PrismaService,
     private readonly appointmentService: AppointmentService,
     private readonly orderSamples: OrderSampleService,
+    private readonly radiologyStudies: RadiologyStudyService,
     private readonly barcodeService: BarcodeService,
     private readonly slotReservation: SlotReservationService,
     private readonly homeVisitCollections: PhlebotomistCollectionService,
@@ -470,6 +474,23 @@ export class OrderService {
     return (
       hasDiagnostics &&
       (status === OrderStatus.ORDER || status === OrderStatus.APPOINTMENT)
+    );
+  }
+
+  /**
+   * True when any of the order's items is a radiology test/panel — the signal
+   * that a confirmed order should spawn RadiologyStudy worklist rows (the
+   * radiology pipeline, which skips accession/specimen collection).
+   */
+  private hasRadiologyItems(
+    items?: Array<{
+      branchRadiologyTestId?: string;
+      branchRadiologyPanelId?: string;
+    }>,
+  ): boolean {
+    return (items ?? []).some(
+      (i) =>
+        Boolean(i.branchRadiologyTestId) || Boolean(i.branchRadiologyPanelId),
     );
   }
 
@@ -884,11 +905,17 @@ export class OrderService {
               orderId: order.id,
               branchLabTestId: i.branchLabTestId ?? null,
               branchLabPanelId: i.branchLabPanelId ?? null,
+              branchRadiologyTestId: i.branchRadiologyTestId ?? null,
+              branchRadiologyPanelId: i.branchRadiologyPanelId ?? null,
               direct: i.direct ?? null,
               unitPrice: i.direct
                 ? (i.unitPrice ?? 0)
                 : (itemPrices.get(
-                    i.branchLabTestId ?? i.branchLabPanelId ?? '',
+                    i.branchLabTestId ??
+                      i.branchLabPanelId ??
+                      i.branchRadiologyTestId ??
+                      i.branchRadiologyPanelId ??
+                      '',
                   ) ?? 0),
               discount: i.discount ?? 0,
               discountMode: i.discountMode ?? null,
@@ -1016,6 +1043,22 @@ export class OrderService {
         // (status NEW) from the ordered items. Idempotent per order.
         if (this.shouldGenerateSamples(dto.status, Boolean(dto.diagnostics))) {
           await this.orderSamples.generateForOrderInTx(
+            tx,
+            tenantId,
+            branchId,
+            personId,
+            order.id,
+          );
+        }
+        // A confirmed order with radiology items enters the radiology worklist
+        // (parallel to accession, but SKIPPING specimen collection): generate its
+        // RadiologyStudy rows (status NEW). Idempotent per order.
+        if (
+          this.hasRadiologyItems(dto.items) &&
+          (dto.status === OrderStatus.ORDER ||
+            dto.status === OrderStatus.APPOINTMENT)
+        ) {
+          await this.radiologyStudies.generateStudiesForOrderInTx(
             tx,
             tenantId,
             branchId,
@@ -1192,7 +1235,12 @@ export class OrderService {
   private async loadItemUnitPrices(
     tenantId: string,
     branchId: string | null,
-    items: Array<{ branchLabTestId?: string; branchLabPanelId?: string }>,
+    items: Array<{
+      branchLabTestId?: string;
+      branchLabPanelId?: string;
+      branchRadiologyTestId?: string;
+      branchRadiologyPanelId?: string;
+    }>,
   ): Promise<Map<string, number>> {
     const prices = new Map<string, number>();
     if (!branchId || !items.length) {
@@ -1204,7 +1252,13 @@ export class OrderService {
     const panelIds = items
       .map((i) => i.branchLabPanelId)
       .filter((v): v is string => Boolean(v));
-    const [tests, panels] = await Promise.all([
+    const radTestIds = items
+      .map((i) => i.branchRadiologyTestId)
+      .filter((v): v is string => Boolean(v));
+    const radPanelIds = items
+      .map((i) => i.branchRadiologyPanelId)
+      .filter((v): v is string => Boolean(v));
+    const [tests, panels, radTests, radPanels] = await Promise.all([
       testIds.length
         ? this.prisma.branchLabTest.findMany({
             where: { id: { in: testIds }, tenantId, branchId, deletedAt: null },
@@ -1222,11 +1276,39 @@ export class OrderService {
             select: { id: true, listPrice: true },
           })
         : Promise.resolve([]),
+      radTestIds.length
+        ? this.prisma.branchRadiologyTest.findMany({
+            where: {
+              id: { in: radTestIds },
+              tenantId,
+              branchId,
+              deletedAt: null,
+            },
+            select: { id: true, listPrice: true },
+          })
+        : Promise.resolve([]),
+      radPanelIds.length
+        ? this.prisma.branchRadiologyPanel.findMany({
+            where: {
+              id: { in: radPanelIds },
+              tenantId,
+              branchId,
+              deletedAt: null,
+            },
+            select: { id: true, listPrice: true },
+          })
+        : Promise.resolve([]),
     ]);
     for (const t of tests) {
       prices.set(t.id, t.listPrice);
     }
     for (const p of panels) {
+      prices.set(p.id, p.listPrice);
+    }
+    for (const t of radTests) {
+      prices.set(t.id, t.listPrice);
+    }
+    for (const p of radPanels) {
       prices.set(p.id, p.listPrice);
     }
     return prices;
@@ -7171,21 +7253,29 @@ export class OrderService {
     }
     const testIds: string[] = [];
     const panelIds: string[] = [];
+    const radTestIds: string[] = [];
+    const radPanelIds: string[] = [];
     for (const item of items) {
       const sources = [
         Boolean(item.branchLabTestId),
         Boolean(item.branchLabPanelId),
+        Boolean(item.branchRadiologyTestId),
+        Boolean(item.branchRadiologyPanelId),
         Boolean(item.direct),
       ].filter(Boolean).length;
       if (sources !== 1) {
         throw new InvalidOrderItemException(
           sources === 0
-            ? 'none of branchLabTestId, branchLabPanelId or direct was provided'
-            : 'more than one of branchLabTestId, branchLabPanelId or direct was provided',
+            ? 'none of branchLabTestId, branchLabPanelId, branchRadiologyTestId, branchRadiologyPanelId or direct was provided'
+            : 'more than one of branchLabTestId, branchLabPanelId, branchRadiologyTestId, branchRadiologyPanelId or direct was provided',
         );
       }
       if (item.branchLabTestId) testIds.push(item.branchLabTestId);
       if (item.branchLabPanelId) panelIds.push(item.branchLabPanelId);
+      if (item.branchRadiologyTestId)
+        radTestIds.push(item.branchRadiologyTestId);
+      if (item.branchRadiologyPanelId)
+        radPanelIds.push(item.branchRadiologyPanelId);
 
       // `unitPrice` is only meaningful for a free-text direct line — a
       // catalogue line's price is always resolved server-side from the
@@ -7221,6 +7311,8 @@ export class OrderService {
     await Promise.all([
       this.assertBranchLabTests(tenantId, testIds),
       this.assertBranchLabPanels(tenantId, panelIds),
+      this.assertBranchRadiologyTests(tenantId, radTestIds),
+      this.assertBranchRadiologyPanels(tenantId, radPanelIds),
     ]);
     await Promise.all(
       items
@@ -7418,6 +7510,48 @@ export class OrderService {
     if (found.length !== unique.length) {
       const foundIds = new Set(found.map((r) => r.id));
       throw new OrderBranchLabPanelNotFoundException(
+        unique.filter((id) => !foundIds.has(id)),
+      );
+    }
+  }
+
+  /** @throws OrderBranchRadiologyTestNotFoundException if any id is missing/foreign. */
+  private async assertBranchRadiologyTests(
+    tenantId: string,
+    ids: string[],
+  ): Promise<void> {
+    const unique = [...new Set(ids)];
+    if (!unique.length) {
+      return;
+    }
+    const found = await this.prisma.branchRadiologyTest.findMany({
+      where: { id: { in: unique }, tenantId, deletedAt: null },
+      select: { id: true },
+    });
+    if (found.length !== unique.length) {
+      const foundIds = new Set(found.map((r) => r.id));
+      throw new OrderBranchRadiologyTestNotFoundException(
+        unique.filter((id) => !foundIds.has(id)),
+      );
+    }
+  }
+
+  /** @throws OrderBranchRadiologyPanelNotFoundException if any id is missing/foreign. */
+  private async assertBranchRadiologyPanels(
+    tenantId: string,
+    ids: string[],
+  ): Promise<void> {
+    const unique = [...new Set(ids)];
+    if (!unique.length) {
+      return;
+    }
+    const found = await this.prisma.branchRadiologyPanel.findMany({
+      where: { id: { in: unique }, tenantId, deletedAt: null },
+      select: { id: true },
+    });
+    if (found.length !== unique.length) {
+      const foundIds = new Set(found.map((r) => r.id));
+      throw new OrderBranchRadiologyPanelNotFoundException(
         unique.filter((id) => !foundIds.has(id)),
       );
     }

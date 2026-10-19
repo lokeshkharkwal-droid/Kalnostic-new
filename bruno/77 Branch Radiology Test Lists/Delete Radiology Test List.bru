@@ -1,0 +1,26 @@
+meta {
+  name: Delete Radiology Test List
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/branch-radiology-test-lists/{{branchRadiologyTestListId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  🔒 **RBAC:** requires `branch_admin:lab_test_list__delete_test_list` — enforced
+  by `PermissionGuard`; admins bypass, so `{{businessAccessToken}}` succeeds.
+
+  Soft-delete a branch Radiology Test List and all of its test rows. Business JWT.
+  The default Walk-in list cannot be deleted (400
+  `DEFAULT_RADIOLOGY_TEST_LIST_NOT_DELETABLE`). 404
+  `BRANCH_RADIOLOGY_TEST_LIST_NOT_FOUND` if the id isn't a live list in the active
+  branch.
+}

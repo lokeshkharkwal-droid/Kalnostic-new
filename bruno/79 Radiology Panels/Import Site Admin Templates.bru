@@ -1,0 +1,46 @@
+meta {
+  name: Import Site Admin Templates
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/radiology-panels/import
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "masterDataId": "{{masterDataId}}",
+    "templateIds": ["{{siteAdminRadiologyPanelId}}"]
+  }
+}
+
+docs {
+  Bulk-import SITE_ADMIN radiology-panel templates into the caller's master data.
+  Business JWT. `tenantId`/`branchId` come from the JWT + the target master data;
+  the body carries only `masterDataId` and `templateIds` (1..500, unique UUIDs).
+
+  Each template is imported in its own transaction (one failure never aborts the
+  batch) and deep-copied like Clone (fresh UUID, `source = "TENANT"`,
+  `clonedFromId = template.id`; the template's tests cloned into the tenant and the
+  member rows rewired). Returns a summary:
+
+  `{ "imported": [{templateId,radiologyPanelId,panelName}],
+     "skipped":  [{templateId,panelName,reason}],   // already imported here
+     "failed":   [{templateId,panelName,reason}] }`  // e.g. name/code conflict
+
+  - `masterDataId` must belong to the caller's tenant → else 404
+    `MASTER_DATA_NOT_FOUND`.
+  - Templates already imported into this master data (`clonedFromId`) are skipped
+    (idempotent re-import).
+}

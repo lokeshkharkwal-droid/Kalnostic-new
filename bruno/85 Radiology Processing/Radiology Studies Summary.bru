@@ -1,0 +1,21 @@
+meta {
+  name: Radiology Studies Summary
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/radiology/studies/summary
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Per-status counts for the worklist summary tabs, plus a grand `total`. Business
+  JWT, scoped to the tenant + active branch. Returns `{ total, NEW, SCHEDULED,
+  ACQUIRED, REPORTED, VALIDATED, APPROVED, PUBLISHED, HOLD, CANCELLED }`.
+}

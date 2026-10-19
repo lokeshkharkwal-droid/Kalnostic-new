@@ -1,0 +1,22 @@
+meta {
+  name: List Radiology Test List Options
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/branch-radiology-test-lists/options
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Lightweight `{ id, name, isDefault }[]` options for the referral/registration
+  list selectors — never individual tests. Business JWT. Scoped to the JWT tenant
+  + active branch. Declared before the `:id` route so `options` isn't matched as
+  an id. 400 `ACTIVE_BRANCH_REQUIRED` if the JWT has no active branch.
+}

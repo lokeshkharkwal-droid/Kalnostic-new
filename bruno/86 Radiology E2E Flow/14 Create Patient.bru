@@ -1,0 +1,54 @@
+meta {
+  name: 14 Create Patient
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/patients
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "salutation": "MR",
+    "firstName": "Arjun",
+    "lastName": "Patient {{radRunId}}",
+    "gender": "MALE",
+    "mobile": "{{patientMobile}}",
+    "umId": "RAD{{radRunId}}",
+    "addressLine1": "17 Senapati Bapat Road",
+    "city": "Pune",
+    "state": "Maharashtra",
+    "pincode": "411016"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().success && res.getBody().data;
+  if (data && data.id) bru.setVar("patientId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("captured patientId", function () {
+    expect(bru.getVar("patientId")).to.be.a("string").and.not.equal("");
+  });
+}
+
+docs {
+  Order prep - create the patient the radiology order is for (branch-scoped
+  operator token). `mobile` is a globally-unique de-dup key; `umId` is unique per
+  tenant - both are per-run unique via `radRunId`. Captures `patientId`.
+}

@@ -1,0 +1,47 @@
+meta {
+  name: 03 Business Admin Login
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "identifier": "{{adminIdentifier}}",
+    "password": "{{adminPassword}}"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().success && res.getBody().data;
+  if (data && data.accessToken) {
+    bru.setVar("businessAdminToken", data.accessToken);
+    if (data.refreshToken) bru.setVar("businessAdminRefreshToken", data.refreshToken);
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("captured businessAdminToken", function () {
+    expect(bru.getVar("businessAdminToken")).to.be.a("string").and.not.equal("");
+  });
+}
+
+docs {
+  Bootstrap 3 - log in as the `business_admin` created in step 02 (identifier +
+  password wired automatically). This is a tenant-level token (`active_branch_id`
+  null) that BYPASSES per-permission RBAC (`business_admin` is in
+  `ADMIN_BYPASS_ROLES`), so it drives the tenant-level setup (branch, operator)
+  and the RBAC-gated catalogue creates (09 test, 12 doctor, 13 outsource center).
+}

@@ -1,0 +1,43 @@
+meta {
+  name: Clone Site Admin Template
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/radiology-panels/{{siteAdminRadiologyPanelId}}/clone
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "masterDataId": "{{masterDataId}}"
+  }
+}
+
+docs {
+  Clone a single SITE_ADMIN radiology-panel template into the caller's tenant.
+  Business JWT. **Only `masterDataId` is in the body** — `tenantId` comes from the
+  JWT and `branchId` from the target master data (CLAUDE.md §4.7), never the body.
+
+  Deep-copies the template panel with a fresh id, `source = "TENANT"`,
+  `clonedFromId = template.id`; the template's referenced SITE_ADMIN tests are
+  cloned into the tenant too and the member join rows are rewired — all as TENANT
+  records. Returns the new TENANT radiology panel with its tests.
+
+  - `masterDataId` must belong to the caller's tenant → else 404
+    `MASTER_DATA_NOT_FOUND`.
+  - Name/code conflicts in the target master data → 409
+    `RADIOLOGY_PANEL_NAME_CONFLICT` / `RADIOLOGY_PANEL_CODE_CONFLICT`.
+  - Set `siteAdminRadiologyPanelId` from "82 SiteAdmin Radiology Panels → Create
+    Radiology Panel Template" (its post-response captures it).
+}

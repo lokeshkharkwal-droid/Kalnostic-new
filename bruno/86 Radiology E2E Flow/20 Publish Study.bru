@@ -1,0 +1,38 @@
+meta {
+  name: 20 Publish Study
+  type: http
+  seq: 20
+}
+
+post {
+  url: {{baseUrl}}/radiology/studies/{{studyId}}/publish
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {}
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("status is PUBLISHED", function () {
+    expect(res.getBody().data.status).to.equal("PUBLISHED");
+  });
+}
+
+docs {
+  Processing 5 - publish the study (report released to the patient/portal). Moves
+  `APPROVED -> PUBLISHED`, the terminal success state. The report PDF can now be
+  generated (step 22).
+}

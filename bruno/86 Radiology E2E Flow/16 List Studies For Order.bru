@@ -1,0 +1,48 @@
+meta {
+  name: 16 List Studies For Order
+  type: http
+  seq: 16
+}
+
+get {
+  url: {{baseUrl}}/radiology/studies?orderId={{orderId}}&page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  orderId: {{orderId}}
+  page: 1
+  limit: 20
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.length && data[0].id) bru.setVar("studyId", data[0].id);
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("exactly one study was generated for the order", function () {
+    expect(res.getBody().data.length).to.equal(1);
+  });
+  test("the study was born NEW", function () {
+    expect(res.getBody().data[0].status).to.equal("NEW");
+  });
+  test("captured studyId", function () {
+    expect(bru.getVar("studyId")).to.be.a("string").and.not.equal("");
+  });
+}
+
+docs {
+  Processing 1 - list the radiology worklist filtered to this order and capture the
+  generated `studyId`. Proves the order -> study handoff: exactly one
+  `RadiologyStudy` exists for the order, born `NEW`, and (unlike a diagnostic order)
+  there is no accession sample.
+}

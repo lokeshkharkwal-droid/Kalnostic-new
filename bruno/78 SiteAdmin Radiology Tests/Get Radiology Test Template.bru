@@ -1,0 +1,22 @@
+meta {
+  name: Get Radiology Test Template
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/radiology-tests/{{siteAdminRadiologyTestId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Fetch one SITE_ADMIN radiology-test template (the flat row + its
+  `versionHistory`). Auth: SiteAdmin token, requires `master-data:read`. 404
+  `RADIOLOGY_TEST_NOT_FOUND` if the id isn't a live template. Uses
+  `siteAdminRadiologyTestId` from Create Radiology Test Template.
+}

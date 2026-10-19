@@ -1,0 +1,25 @@
+meta {
+  name: Get Radiology Study
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/radiology/studies/{{radiologyStudyId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  radiologyStudyId: 00000000-0000-0000-0000-000000000000
+}
+
+docs {
+  Fetch one radiology study with its append-only `statusHistory`. Business JWT,
+  tenant-scoped. 404 `RADIOLOGY_STUDY_NOT_FOUND` if missing/soft-deleted/other
+  tenant.
+}

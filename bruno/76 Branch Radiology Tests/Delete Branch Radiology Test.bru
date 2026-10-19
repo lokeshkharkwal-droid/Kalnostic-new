@@ -1,0 +1,26 @@
+meta {
+  name: Delete Branch Radiology Test
+  type: http
+  seq: 11
+}
+
+delete {
+  url: {{baseUrl}}/branch-radiology-tests/{{branchRadiologyTestId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchRadiologyTestId: 00000000-0000-0000-0000-000000000000
+}
+
+docs {
+  Soft-delete a branch radiology test (remove it from the branch's Radiology Test
+  List). Business JWT. A soft-deleted testName/testCode is freed for re-import.
+  404 `BRANCH_RADIOLOGY_TEST_NOT_FOUND` if the id isn't a live row in the active
+  branch.
+}

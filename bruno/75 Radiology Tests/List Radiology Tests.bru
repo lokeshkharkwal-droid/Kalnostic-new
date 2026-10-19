@@ -1,0 +1,46 @@
+meta {
+  name: List Radiology Tests
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/radiology-tests?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: CT Chest
+  ~modality: CT
+  ~departmentId:
+  ~categoryId:
+  ~subCategoryId:
+  ~status: ACTIVE
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  masterDataId: 2db13b5e-4a25-412f-bcd9-68bcbeea9d59
+}
+
+docs {
+  List a master data's radiology tests (paginated, **full rows**). Business JWT.
+  Scoped to the JWT tenant + the path master data; soft-deleted rows are excluded.
+  404 `MASTER_DATA_NOT_FOUND` if the parent master data is missing/other tenant.
+
+  Supports the same server-side filters as `/listing` (below), minus the column
+  `view` projection:
+  - `search` — case-insensitive match against `testName` OR `testCode`.
+  - `modality` — XRAY|CT|MRI|ULTRASOUND|MAMMOGRAPHY|PET|FLUOROSCOPY|DEXA|OTHER.
+  - `departmentId` / `categoryId` / `subCategoryId` — filter by id.
+  - `status` — `ACTIVE` | `INACTIVE` (maps to `isActive`). Don't send an empty
+    `status` (an empty enum value → 400 `VALIDATION_ERROR`); omit it instead.
+
+  > The disabled (`~`) query params above are examples — enable the ones you want.
+}

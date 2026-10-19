@@ -1,0 +1,35 @@
+meta {
+  name: Bulk Radiology Action
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/radiology/studies/bulk
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "action": "approve",
+    "ids": ["{{radiologyStudyId}}"],
+    "notes": "Bulk approved"
+  }
+}
+
+docs {
+  Apply one status action to several studies at once. Business JWT. `action` is
+  one of schedule / acquire / validate / approve / publish / hold / cancel /
+  retrieve (NOT report — that's single-study). Each study is attempted
+  independently; the response is `{ succeeded: string[], failed: { id, reason }[] }`
+  so one invalid transition never aborts the batch.
+}

@@ -1,0 +1,73 @@
+meta {
+  name: 04 Create Branch
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/branches
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "name": "Radiology Flow Center {{radRunId}}",
+    "branchType": "DIAGNOSTIC",
+    "shortName": "RADC",
+    "status": "ACTIVE",
+    "addressLine": "42 MG Road",
+    "city": "Pune",
+    "state": "Maharashtra",
+    "pincode": "411001",
+    "phone": "+919822000070",
+    "email": "radflow.{{radRunId}}@acme.test",
+    "openingTime": "00:00",
+    "closingTime": "23:59",
+    "dailyCapacity": 200,
+    "operationalDays": ["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"],
+    "modules": [
+      { "moduleKey": "registration", "isEnabled": true },
+      { "moduleKey": "accession", "isEnabled": true },
+      { "moduleKey": "lab_operations", "isEnabled": true },
+      { "moduleKey": "branch_admin", "isEnabled": true }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().success && res.getBody().data;
+  if (data && data.id) {
+    bru.setVar("branchId", data.id);
+    if (data.code) bru.setVar("branchCode", data.code);
+  }
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("captured branchId", function () {
+    expect(bru.getVar("branchId")).to.be.a("string").and.not.equal("");
+  });
+}
+
+docs {
+  Bootstrap 4 - create the branch. The first branch in a tenant is auto-set as the
+  main branch and auto-provisions one Master Data (resolved in step 08). `tenantId`
+  comes from the JWT; `code` (`BR-00001`...) is system-generated and must NOT be
+  sent. Captures `branchId`.
+
+  Branch type is `DIAGNOSTIC` with the proven module set enabled inline. The
+  radiology study + catalogue routes are not gated on branch type or module
+  enablement (no per-permission RBAC), so this branch fully exercises the
+  radiology pipeline.
+}

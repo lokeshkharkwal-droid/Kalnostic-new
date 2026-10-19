@@ -1,0 +1,27 @@
+meta {
+  name: Get Radiology Test
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/radiology-tests/{{radiologyTestId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  masterDataId: 2db13b5e-4a25-412f-bcd9-68bcbeea9d59
+}
+
+docs {
+  Fetch one radiology test (the flat scalar row + its `versionHistory`). Business
+  JWT. Scoped to the JWT tenant + the path master data. Uses `radiologyTestId`
+  from Create Radiology Test. 404 `RADIOLOGY_TEST_NOT_FOUND` if the id is
+  missing/soft-deleted/in another master data, or 404 `MASTER_DATA_NOT_FOUND` if
+  the parent master data is missing/other tenant.
+}

@@ -1,0 +1,53 @@
+meta {
+  name: Sync Branch Radiology Panels
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/branch-radiology-panels/sync
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "listId": "{{branchRadiologyPanelListId}}"
+  }
+}
+
+tests {
+  test("201/200", function () {
+    expect([200, 201]).to.include(res.getStatus());
+  });
+  test("reports synced/skipped", function () {
+    const data = res.getBody() && res.getBody().data;
+    expect(data).to.have.property("synced");
+    expect(data).to.have.property("skipped");
+  });
+}
+
+docs {
+  Re-snapshot branch radiology panels from their source Master Data panels, scoped
+  to one pricing list. Send `{}` to sync **all** copies in the target list, or add
+  `"branchRadiologyPanelIds": ["<id>", ...]` to sync a subset (max 500 unique).
+
+  `listId` (optional) targets a specific `BranchRadiologyPanelList` — must belong to
+  the caller's branch (404 `BRANCH_RADIOLOGY_PANEL_LIST_NOT_FOUND` otherwise). Omit
+  it to sync the branch's default **Walk-in** list (always ensured to exist first).
+
+  **Overwrite semantics:** each copy's fields are replaced with the current Master
+  Data values (via `sourceRadiologyPanelId`) and its member tests are rebuilt from
+  the source composition — any branch-level edits are discarded. Copies whose source
+  is missing/soft-deleted are left untouched and counted in `skipped`.
+
+  400 `ACTIVE_BRANCH_REQUIRED` if the JWT has no active branch.
+}

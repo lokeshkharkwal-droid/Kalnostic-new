@@ -1,0 +1,37 @@
+meta {
+  name: List Radiology Test Options
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/radiology-tests/options?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: CT
+  ~branchId: 9fcbf225-7f94-4b57-b3b4-2127b7f5be78
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Lightweight `{ id, name }` options for the searchable radiology-test selector.
+  Business JWT. Flat route — NOT nested under a master data — so it searches the
+  tenant's active radiology tests across a branch.
+
+  All query params optional:
+  - `branchId` — restrict to active radiology tests on this branch.
+  - `search` — case-insensitive match against the radiology test `testName`.
+  - `page` / `limit` — **opt-in** offset pagination. Omit `page` to get the full
+    `{ id, name }[]` array; supply `page` to get a `{ data, total, page, limit }`
+    envelope for the "Load More" selector.
+
+  Only active, non-deleted radiology tests are returned. `name` is the `testName`.
+}

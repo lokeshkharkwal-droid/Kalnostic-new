@@ -1,0 +1,109 @@
+meta {
+  name: Create Radiology Test Template
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/radiology-tests
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "testName": "Global CT Chest Template",
+    "testDisplayName": "CT Chest",
+    "testCode": "CT-CHEST-TPL",
+    "aka": "Computed Tomography Thorax",
+    "modality": "CT",
+    "bodyPart": "Chest",
+    "view": "Axial",
+    "isContrast": false,
+    "icdCode": "R91.8",
+    "loincCode": "24627-2",
+    "clinicalTags": ["thorax", "routine"],
+    "samplePriorityType": "ROUTINE",
+    "isEnableCms": true,
+    "approvalWorkflow": "SINGLE_APPROVAL",
+    "priceMsrp": 4500,
+    "priceMaximum": 4200,
+    "priceMinimum": 3000,
+    "priceOriginal": 4400,
+    "franchisePrice": 3500,
+    "emergencyPrice": 5500,
+    "commissionPrice": 300,
+    "discountCapPct": 15,
+    "isAllowPriceOverride": false,
+    "isAllowDiscounts": true,
+    "tatMinValue": 2,
+    "tatMinUnit": "HOURS",
+    "tatMaxValue": 24,
+    "tatMaxUnit": "HOURS",
+    "isHideInOrderScreen": false,
+    "isPreferenceTest": true,
+    "isOutsource": false,
+    "isBillOnlyTest": false,
+    "isActive": true,
+    "usefulFor": "Evaluation of lung parenchyma, mediastinum and pleura",
+    "interpretationOfResults": "Reported by the radiologist on the images",
+    "limitations": "Limited soft-tissue contrast without IV contrast",
+    "remarks": "Remove metallic objects before the scan",
+    "references": "ACR Appropriateness Criteria",
+    "preparationInstructions": "No special preparation required for a plain study"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("siteAdminRadiologyTestId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  Create a **global SITE_ADMIN radiology-test template** (no tenant/branch/master
+  data). Auth: SiteAdmin token (`jwt-siteadmin`), requires `master-data:write`
+  (content_admin and above). Captures `siteAdminRadiologyTestId`.
+
+  The persisted row has `source = "SITE_ADMIN"` and `tenantId = branchId =
+  masterDataId = null`, with a seeded `versionHistory` v1. The radiology model is
+  **FLAT** (no samples/result params).
+
+  ## Not accepted on a template
+
+  Classification refs are **real logical refs to tenant-scoped catalogue tables**,
+  so a global template cannot reference them — `departmentId`, `categoryId`,
+  `subCategoryId` are forced NULL by the service (omit them, as above). Everything
+  else mirrors the tenant "Create Radiology Test" body.
+
+  ## Enums (UPPERCASE)
+
+  `modality` (XRAY|CT|MRI|ULTRASOUND|MAMMOGRAPHY|PET|FLUOROSCOPY|DEXA|OTHER),
+  `samplePriorityType` (ROUTINE|URGENT|STAT),
+  `approvalWorkflow` (SINGLE_APPROVAL|DUAL_APPROVAL|AUTO_APPROVE|PATHOLOGIST_REVIEW),
+  `tat*Unit` (MINUTES|HOURS|DAYS).
+
+  ## Conflicts & cross-field rules
+
+  - `testName` / `testCode` unique **across the SITE_ADMIN template catalogue**
+    among active rows → 409 `RADIOLOGY_TEST_NAME_CONFLICT` /
+    `RADIOLOGY_TEST_CODE_CONFLICT`.
+  - `priceMaximum ≤ priceMsrp`, `priceMinimum ≤ priceMaximum` → 422
+    `VALIDATION_ERROR`.
+
+  Businesses adopt this template via "75 Radiology Tests → Clone Site Admin
+  Template" (or bulk "Import Site Admin Templates").
+}

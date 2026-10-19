@@ -163,6 +163,24 @@
   <a href="#blp-update">PUT /branch-lab-panels/:id</a>
   <a href="#blp-active">PATCH /branch-lab-panels/:id/active</a>
   <a href="#blp-delete">DELETE /branch-lab-panels/:id</a>
+  <h3>Radiology Catalogue <span style="text-transform:none;letter-spacing:0">(flat; no samples/params)</span></h3>
+  <a href="#rt-create">POST .../radiology-tests</a>
+  <a href="#rt-list">GET .../radiology-tests</a>
+  <a href="#rt-listing">GET .../radiology-tests/listing</a>
+  <a href="#rt-clone">POST .../radiology-tests/clone</a>
+  <a href="#rt-get">GET .../radiology-tests/:id</a>
+  <a href="#rt-update">PATCH .../radiology-tests/:id</a>
+  <a href="#rt-delete">DELETE .../radiology-tests/:id</a>
+  <a href="#rt-options">GET /radiology-tests/options</a>
+  <a href="#rt-templates">GET /radiology-tests/templates</a>
+  <a href="#rt-template-clone">POST /radiology-tests/:id/clone</a>
+  <a href="#rt-import">POST /radiology-tests/import</a>
+  <a href="#rt-sync">POST /radiology-tests/sync</a>
+  <a href="#brt-import">POST /branch-radiology-tests/import</a>
+  <a href="#brt-sync">POST /branch-radiology-tests/sync</a>
+  <a href="#brt-list">GET /branch-radiology-tests</a>
+  <a href="#brt-options">GET /branch-radiology-tests/options</a>
+  <a href="#brtl-list">GET /branch-radiology-test-lists</a>
   <h3>Documents</h3>
   <a href="#doc-create">POST /documents</a>
   <a href="#doc-list">GET /documents</a>
@@ -541,6 +559,44 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>PATCH /branch-lab-panel-lists/:id</td><td>Business JWT</td><td>rename a panel list</td></tr>
   <tr><td>DELETE /branch-lab-panel-lists/:id</td><td>Business JWT</td><td>soft-delete a panel list + rows/members (blocked for default Walk-in)</td></tr>
   <tr><td>GET /referral-lists/resolve</td><td>Business JWT</td><td>resolve an order's pricing lists from referrals + PT category (priority PANEL→PT_CATEGORY→DOCTOR→INTERNAL→EXTERNAL→Walk-in)</td></tr>
+  <tr><td>POST /siteadmin/radiology-tests</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global radiology template, flat)</td></tr>
+  <tr><td>GET /siteadmin/radiology-tests</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global radiology templates)</td></tr>
+  <tr><td>GET /siteadmin/radiology-tests/options</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ ({id,name}[] template options)</td></tr>
+  <tr><td>GET /siteadmin/radiology-tests/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global radiology template)</td></tr>
+  <tr><td>PATCH /siteadmin/radiology-tests/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global radiology template)</td></tr>
+  <tr><td>DELETE /siteadmin/radiology-tests/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global radiology template)</td></tr>
+  <tr><td>POST /master-data/:masterDataId/radiology-tests</td><td>Business JWT</td><td><b>required</b> <code>business_admin:master_data__add_test</code> (reuses the master-data test keys; admins bypass)</td></tr>
+  <tr><td>GET /master-data/:masterDataId/radiology-tests</td><td>Business JWT</td><td>master-data management (no per-route guard)</td></tr>
+  <tr><td>GET /master-data/:masterDataId/radiology-tests/listing</td><td>Business JWT</td><td>master-data management (no per-route guard)</td></tr>
+  <tr><td>POST /master-data/:masterDataId/radiology-tests/clone</td><td>Business JWT</td><td><b>required</b> <code>business_admin:master_data__duplicate_test</code> (clone all into a target master data → {copied,skipped})</td></tr>
+  <tr><td>GET /master-data/:masterDataId/radiology-tests/:radiologyTestId</td><td>Business JWT</td><td>master-data management (no per-route guard)</td></tr>
+  <tr><td>PATCH /master-data/:masterDataId/radiology-tests/:radiologyTestId</td><td>Business JWT</td><td><b>required</b> <code>business_admin:master_data__update_test</code></td></tr>
+  <tr><td>DELETE /master-data/:masterDataId/radiology-tests/:radiologyTestId</td><td>Business JWT</td><td><b>required</b> <code>business_admin:master_data__delete_test</code></td></tr>
+  <tr><td>GET /radiology-tests/options</td><td>Business JWT</td><td>{id,name}[] selector across a branch (optional branchId, search; opt-in pagination)</td></tr>
+  <tr><td>GET /radiology-tests/templates</td><td>Business JWT</td><td>browse Site Admin radiology templates (read-only; optional masterDataId annotates isImported)</td></tr>
+  <tr><td>GET /radiology-tests/templates/:id</td><td>Business JWT</td><td>browse one Site Admin radiology template (read-only)</td></tr>
+  <tr><td>POST /radiology-tests/:id/clone</td><td>Business JWT</td><td>clone a Site Admin radiology template into the tenant (body: masterDataId)</td></tr>
+  <tr><td>POST /radiology-tests/import</td><td>Business JWT</td><td>bulk-import Site Admin radiology templates into a master data (body: masterDataId, templateIds[] → {imported,skipped,failed})</td></tr>
+  <tr><td>POST /radiology-tests/sync</td><td>Business JWT</td><td>re-pull previously-imported radiology tests from Site Admin (full overwrite; body: masterDataId, radiologyTestIds?)</td></tr>
+  <tr><td>POST /branch-radiology-tests/import</td><td>Business JWT</td><td>materialize selected master-data radiology tests into a branch Radiology Test List (default Walk-in; body: radiologyTestIds[], listId? → {copied,updated,skipped})</td></tr>
+  <tr><td>POST /branch-radiology-tests/import-by-filter</td><td>Business JWT</td><td>"select all" import of every matching master-data radiology test (body: search/department/category/subCategory/listId)</td></tr>
+  <tr><td>POST /branch-radiology-tests/sync</td><td>Business JWT</td><td>re-snapshot branch radiology tests from master data (all or selected ids; body: branchRadiologyTestIds?, listId? → {synced,deleted,skipped})</td></tr>
+  <tr><td>POST /branch-radiology-tests/:id/duplicate</td><td>Business JWT</td><td>create an independent variant in the same group (non-default duplicate)</td></tr>
+  <tr><td>PATCH /branch-radiology-tests/:id/default</td><td>Business JWT</td><td>mark this row the variant group's default (used for order creation)</td></tr>
+  <tr><td>GET /branch-radiology-tests</td><td>Business JWT</td><td>list a pricing-list tab's rows (search + modality + status + <code>listId</code>; each row carries <code>listPrice</code>; omitted listId = Walk-in)</td></tr>
+  <tr><td>GET /branch-radiology-tests/by-branch</td><td>Business JWT</td><td>list a specific branch's rows for a caller with no active branch (required <code>branchId</code>, verified against tenant)</td></tr>
+  <tr><td>GET /branch-radiology-tests/options</td><td>Business JWT</td><td>Create-Order picker options (active default-variant rows; search/listId/preferredOnly)</td></tr>
+  <tr><td>GET /branch-radiology-tests/:id</td><td>Business JWT</td><td>get one branch radiology test</td></tr>
+  <tr><td>PUT /branch-radiology-tests/:id</td><td>Business JWT</td><td>edit branch-tunable fields (pricing/flags/TAT/schedule/notes/active)</td></tr>
+  <tr><td>PATCH /branch-radiology-tests/:id/active</td><td>Business JWT</td><td>enable/disable a branch radiology test</td></tr>
+  <tr><td>DELETE /branch-radiology-tests/:id</td><td>Business JWT</td><td>soft-delete a branch radiology test</td></tr>
+  <tr><td>GET /branch-radiology-test-lists</td><td>Business JWT</td><td>list the branch's Radiology Test Lists (pricing-list tabs; default Walk-in first)</td></tr>
+  <tr><td>GET /branch-radiology-test-lists/by-branch</td><td>Business JWT</td><td>list a specific branch's Radiology Test Lists (required <code>branchId</code>, verified against tenant)</td></tr>
+  <tr><td>GET /branch-radiology-test-lists/options</td><td>Business JWT</td><td>{id,name,isDefault}[] for the list selectors</td></tr>
+  <tr><td>POST /branch-radiology-test-lists</td><td>Business JWT</td><td><b>required</b> <code>branch_admin:lab_test_list__add_lab_test_list</code> (reuses the lab test-list keys; seeded from Walk-in: copyPriceFrom + priceType + copyPercentage)</td></tr>
+  <tr><td>POST /branch-radiology-test-lists/:id/clone</td><td>Business JWT</td><td><b>required</b> <code>branch_admin:lab_test_list__clone_list</code> (deep-copy a list + rows/prices)</td></tr>
+  <tr><td>PATCH /branch-radiology-test-lists/:id</td><td>Business JWT</td><td><b>required</b> <code>branch_admin:lab_test_list__rename_list</code> (rename; unique per branch)</td></tr>
+  <tr><td>DELETE /branch-radiology-test-lists/:id</td><td>Business JWT</td><td><b>required</b> <code>branch_admin:lab_test_list__delete_test_list</code> (soft-delete a list + rows; blocked for default Walk-in)</td></tr>
   <tr><td>POST /siteadmin/departments</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template, code SA-Dep-{n})</td></tr>
   <tr><td>GET /siteadmin/departments</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global templates)</td></tr>
   <tr><td>GET /siteadmin/departments/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global template)</td></tr>
@@ -1758,6 +1814,188 @@ independently). Exactly one row per group is the <code>isDefault</code> (used fo
   <div><span class="m delete">DELETE</span><span class="path">/api/v1/branch-lab-panels/:id</span></div>
   <div class="tags"><span class="tag biz">business JWT</span></div>
   <p>Soft-delete a branch lab panel and its member join rows (frees its panelName/panelCode for re-import).</p>
+</div>
+
+<h2 id="radiology-catalogue">Radiology Catalogue <span style="font-size:13px;color:var(--muted)">(flat imaging tests — mirrors the lab catalogue)</span></h2>
+<div class="note">The radiology catalogue mirrors the lab catalogue one-for-one, but the model is
+<b>FLAT</b>: a radiology test carries <b>no nested samples or result parameters</b> (imaging has no
+specimens/analytes) — the whole payload is a single scalar object. It adds imaging-specific fields
+<code>modality</code> (XRAY·CT·MRI·ULTRASOUND·MAMMOGRAPHY·PET·FLUOROSCOPY·DEXA·OTHER), <code>bodyPart</code>,
+<code>view</code> and <code>isContrast</code>. Tenant radiology tests live inside a <b>master data</b>
+(<code>/master-data/:masterDataId/radiology-tests</code>, tenant/branch from the JWT + parent master data);
+a branch's operational list is <code>/branch-radiology-tests</code> with pricing-list tabs under
+<code>/branch-radiology-test-lists</code>. SiteAdmin keeps global templates at
+<code>/siteadmin/radiology-tests</code> that tenants adopt by clone/import/sync. Because there are no
+radiology-specific RBAC keys, tenant CRUD reuses the master-data test permission keys and branch lists
+reuse the lab test-list keys; audit rows use <code>AuditModule.LAB_TEST</code>.
+<code>testName</code>/<code>testCode</code> are unique <b>per master data</b> among active rows; <code>isActive</code>
+is separate from soft delete (<code>deletedAt</code>).</div>
+
+<div class="ep" id="rt-create">
+  <div><span class="m post">POST</span><span class="path">/api/v1/master-data/:masterDataId/radiology-tests</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Create a flat radiology test; seeds <code>versionHistory</code> v1. RBAC
+  <code>business_admin:master_data__add_test</code> (admins bypass). Conflicts:
+  <span class="pill">409 RADIOLOGY_TEST_NAME_CONFLICT</span> / <span class="pill">409 RADIOLOGY_TEST_CODE_CONFLICT</span>.
+  Price ordering (<code>priceMinimum ≤ priceMaximum ≤ priceMsrp</code>) → <span class="pill">422 VALIDATION_ERROR</span>.
+  <span class="pill">404 MASTER_DATA_NOT_FOUND</span> if the parent master data is missing/other tenant.
+  <code>code</code> is system-set — never send it.</p>
+  <pre>{ "testName":"CT Chest Plain", "testCode":"CT-CHEST-01",
+  "modality":"CT", "bodyPart":"Chest", "view":"Axial", "isContrast":false,
+  "priceMsrp":4500, "priceMaximum":4200, "priceMinimum":3000,
+  "tatMaxValue":24, "tatMaxUnit":"HOURS",
+  "scheduleDays":["MONDAY","TUESDAY"], "scheduleFrom":"08:00", "scheduleTo":"18:00",
+  "isActive":true }</pre>
+</div>
+
+<div class="ep" id="rt-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/master-data/:masterDataId/radiology-tests?page=1&amp;limit=20</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Paginated list of the master data's radiology tests (full rows). Optional <code>search</code>
+  (testName/testCode), <code>modality</code>, <code>departmentId</code>/<code>categoryId</code>/<code>subCategoryId</code>,
+  <code>status</code> (<code>ACTIVE</code>|<code>INACTIVE</code>). <span class="pill">404 MASTER_DATA_NOT_FOUND</span>.</p>
+</div>
+
+<div class="ep" id="rt-listing">
+  <div><span class="m get">GET</span><span class="path">/api/v1/master-data/:masterDataId/radiology-tests/listing?view=DEFAULT&amp;page=1&amp;limit=20</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Configurable listing screen. <code>view</code> ∈ <code>DEFAULT</code> · <code>BASIC_DETAILS</code> ·
+  <code>PRICING</code> · <code>TAT</code> · <code>FLAGS</code> · <code>NOTES</code> · <code>OVERVIEW</code> (no
+  child-centric views — the flat model has no samples/params). Same <code>search</code>/<code>modality</code>/
+  classification/<code>status</code> filters as the list, plus <code>sortBy</code> (allowlisted) + <code>sortOrder</code>
+  (<code>1</code>|<code>-1</code>). <code>departmentName</code> is resolved in-memory and is not sortable.
+  Invalid <code>view</code>/<code>status</code> → <span class="pill">400 VALIDATION_ERROR</span>.</p>
+</div>
+
+<div class="ep" id="rt-clone">
+  <div><span class="m post">POST</span><span class="path">/api/v1/master-data/:masterDataId/radiology-tests/clone</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Deep-clone all active radiology tests from this master data (the <i>source</i>) into a target master data.
+  RBAC <code>business_admin:master_data__duplicate_test</code>. A source is <b>skipped</b> if its name/code already
+  exists (active) in the target → <code>{ copied, skipped }</code>. Both master data must belong to the caller's
+  tenant (<span class="pill">404 MASTER_DATA_NOT_FOUND</span>).</p>
+  <pre>{ "targetMasterDataId":"md-uuid" }</pre>
+</div>
+
+<div class="ep" id="rt-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/master-data/:masterDataId/radiology-tests/:radiologyTestId</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>One radiology test (flat row + <code>versionHistory</code>). <span class="pill">404 RADIOLOGY_TEST_NOT_FOUND</span>.</p>
+</div>
+
+<div class="ep" id="rt-update">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/master-data/:masterDataId/radiology-tests/:radiologyTestId</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Partial update of scalar fields (all optional; omitted left unchanged). RBAC
+  <code>business_admin:master_data__update_test</code>. Price ordering is validated against the merged values
+  → <span class="pill">422 VALIDATION_ERROR</span>; name/code stay unique per master data
+  (<span class="pill">409</span>). <span class="pill">404 RADIOLOGY_TEST_NOT_FOUND</span>.</p>
+</div>
+
+<div class="ep" id="rt-delete">
+  <div><span class="m delete">DELETE</span><span class="path">/api/v1/master-data/:masterDataId/radiology-tests/:radiologyTestId</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Soft-delete a radiology test (sets <code>deletedAt</code>). RBAC
+  <code>business_admin:master_data__delete_test</code>. A soft-deleted name/code is freed for re-use.
+  <span class="pill">404 RADIOLOGY_TEST_NOT_FOUND</span>.</p>
+</div>
+
+<div class="ep" id="rt-options">
+  <div><span class="m get">GET</span><span class="path">/api/v1/radiology-tests/options?page=1&amp;limit=20</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Lightweight <code>{ id, name }</code> selector across the tenant's active radiology tests. Flat route (not
+  nested under a master data). Optional <code>branchId</code>, <code>search</code>; <b>opt-in</b> pagination — omit
+  <code>page</code> for the full array, supply it for a <code>{ data, total, page, limit }</code> envelope.</p>
+</div>
+
+<div class="ep" id="rt-templates">
+  <div><span class="m get">GET</span><span class="path">/api/v1/radiology-tests/templates?page=1&amp;limit=20</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Browse SITE_ADMIN global radiology templates (read-only; <code>source = SITE_ADMIN</code> only). Optional
+  <code>search</code>, <code>modality</code>, <code>status</code>, <code>sortBy</code>/<code>sortOrder</code>, and
+  <code>masterDataId</code> (annotates each row with <code>isImported</code>; with <code>notImportedOnly=true</code>
+  hides already-imported templates). <code>GET /radiology-tests/templates/:id</code> fetches one.</p>
+</div>
+
+<div class="ep" id="rt-template-clone">
+  <div><span class="m post">POST</span><span class="path">/api/v1/radiology-tests/:id/clone</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Clone a SITE_ADMIN radiology template into the tenant. <b>Only <code>masterDataId</code> is in the body</b> —
+  tenant/branch come from the JWT + target master data. Sets <code>source="TENANT"</code>,
+  <code>clonedFromId</code>, fresh <code>versionHistory</code> v1. Conflicts <span class="pill">409</span>;
+  <span class="pill">404 RADIOLOGY_TEST_NOT_FOUND</span> / <span class="pill">404 MASTER_DATA_NOT_FOUND</span>.</p>
+  <pre>{ "masterDataId":"md-uuid" }</pre>
+</div>
+
+<div class="ep" id="rt-import">
+  <div><span class="m post">POST</span><span class="path">/api/v1/radiology-tests/import</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Bulk-import SITE_ADMIN radiology templates into a master data. Body: <code>masterDataId</code> +
+  <code>templateIds</code> (1..500, unique). Each imports in its own transaction (already-imported skipped) →
+  <code>{ imported, skipped, failed }</code>.</p>
+  <pre>{ "masterDataId":"md-uuid", "templateIds":["tpl-uuid"] }</pre>
+</div>
+
+<div class="ep" id="rt-sync">
+  <div><span class="m post">POST</span><span class="path">/api/v1/radiology-tests/sync</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Re-pull previously-imported radiology tests from their SITE_ADMIN templates (full overwrite of the tenant
+  copy; hand-created tests untouched). Body: <code>masterDataId</code> + optional <code>radiologyTestIds</code>
+  (subset) → <code>{ synced, skipped, failed }</code>.</p>
+</div>
+
+<div class="ep" id="brt-import">
+  <div><span class="m post">POST</span><span class="path">/api/v1/branch-radiology-tests/import</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Materialize selected Master Data radiology tests into a branch pricing list (independent snapshots with
+  <code>sourceRadiologyTestId</code> provenance, <code>listPrice</code> = MSRP). <code>listId</code> optional
+  (omit = default <b>Walk-in</b> list, auto-created). Re-import updates existing / adds new →
+  <code>{ copied, updated, skipped }</code>. <span class="pill">400 ACTIVE_BRANCH_REQUIRED</span> /
+  <span class="pill">404 MASTER_DATA_NOT_MAPPED_TO_BRANCH</span> /
+  <span class="pill">404 BRANCH_RADIOLOGY_TEST_LIST_NOT_FOUND</span>. A sibling
+  <code>POST /branch-radiology-tests/import-by-filter</code> imports every match by filter ("select all").</p>
+  <pre>{ "radiologyTestIds":["rt-uuid"], "listId":"list-uuid" }</pre>
+</div>
+
+<div class="ep" id="brt-sync">
+  <div><span class="m post">POST</span><span class="path">/api/v1/branch-radiology-tests/sync</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Re-snapshot branch radiology tests from their source Master Data tests, scoped to one list. Send
+  <code>{}</code> for all, or <code>{ "branchRadiologyTestIds":[…] }</code> for a subset. <b>Overwrite</b>: fields
+  are replaced with current Master Data values (branch edits discarded). Rows whose source is missing are left
+  untouched and counted → <code>{ synced, deleted, skipped }</code>. <code>/branch-radiology-tests/:id/duplicate</code>
+  and <code>/:id/default</code> manage the variant group exactly like branch lab tests.</p>
+</div>
+
+<div class="ep" id="brt-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/branch-radiology-tests?page=1&amp;limit=20</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Paginated Radiology Test List for the active branch. Optional <code>search</code>, <code>modality</code>,
+  <code>status</code>, <code>listId</code> (tab; omitted = Walk-in); each row carries <code>listPrice</code>.
+  <code>GET /branch-radiology-tests/:id</code> fetches one; <code>PUT /:id</code> edits branch-tunable fields;
+  <code>PATCH /:id/active</code> toggles enable; <code>DELETE /:id</code> soft-deletes.
+  <code>GET /branch-radiology-tests/by-branch?branchId=…</code> serves a Business Admin with no active branch.</p>
+</div>
+
+<div class="ep" id="brt-options">
+  <div><span class="m get">GET</span><span class="path">/api/v1/branch-radiology-tests/options?page=1&amp;limit=10</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Create-Order picker options — the active branch's active default-variant radiology tests only (one orderable
+  row per group). Optional <code>search</code>, <code>listId</code>, <code>preferredOnly</code> (preference tests
+  only when search is empty). <span class="pill">400 ACTIVE_BRANCH_REQUIRED</span>.</p>
+</div>
+
+<div class="ep" id="brtl-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/branch-radiology-test-lists</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>The branch's Radiology Test Lists (pricing-list tabs; default Walk-in first). Mirror of Lab Test Lists,
+  reusing the <code>branch_admin:lab_test_list__*</code> keys: <code>POST</code> creates (seeded from Walk-in with
+  <code>copyPriceFrom</code> + <code>priceType</code> PERCENTAGE/CUSTOMIZED + <code>copyPercentage</code>),
+  <code>POST /:id/clone</code> deep-copies, <code>PATCH /:id</code> renames, <code>DELETE /:id</code> soft-deletes
+  (blocked for the default Walk-in → <span class="pill">400 DEFAULT_RADIOLOGY_TEST_LIST_NOT_DELETABLE</span>).
+  <code>GET /options</code> returns <code>{id,name,isDefault}[]</code>; <code>GET /by-branch?branchId=…</code>
+  serves a Business Admin with no active branch. Name unique per branch
+  (<span class="pill">409 BRANCH_RADIOLOGY_TEST_LIST_NAME_CONFLICT</span>).</p>
 </div>
 
 <h2 id="documents">Documents</h2>

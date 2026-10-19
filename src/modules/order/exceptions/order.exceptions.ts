@@ -72,6 +72,30 @@ export class OrderBranchLabPanelNotFoundException extends KaltrosException {
   }
 }
 
+/** 422 — one or more branch radiology tests do not exist in the caller's tenant. */
+export class OrderBranchRadiologyTestNotFoundException extends KaltrosException {
+  constructor(ids: string[]) {
+    super(
+      'ORDER_BRANCH_RADIOLOGY_TEST_NOT_FOUND',
+      'One or more branch radiology tests do not exist in this tenant',
+      { ids },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/** 422 — one or more branch radiology panels do not exist in the caller's tenant. */
+export class OrderBranchRadiologyPanelNotFoundException extends KaltrosException {
+  constructor(ids: string[]) {
+    super(
+      'ORDER_BRANCH_RADIOLOGY_PANEL_NOT_FOUND',
+      'One or more branch radiology panels do not exist in this tenant',
+      { ids },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
 /** 422 — the referenced diagnostic panel does not exist in the caller's tenant. */
 export class OrderDiagnosticPanelNotFoundException extends KaltrosException {
   constructor(diagnosticPanelId: string) {

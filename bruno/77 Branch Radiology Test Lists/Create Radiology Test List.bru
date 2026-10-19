@@ -1,0 +1,61 @@
+meta {
+  name: Create Radiology Test List
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/branch-radiology-test-lists
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "B2B Corporate",
+    "copyPriceFrom": "MAXIMUM",
+    "priceType": "PERCENTAGE",
+    "copyPercentage": 20
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("branchRadiologyTestListId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  🔒 **RBAC:** requires `branch_admin:lab_test_list__add_lab_test_list` — enforced
+  by `PermissionGuard`; admins bypass, so `{{businessAccessToken}}` succeeds. (The
+  radiology list module reuses the lab test-list permission keys — there are no
+  radiology-specific ones.)
+
+  Create a new (non-default) branch **Radiology Test List**. Business JWT. Captures
+  `branchRadiologyTestListId`. Seeded by cloning the default (Walk-in) list's
+  tests; each row's `listPrice` is computed from `copyPriceFrom` per `priceType`:
+  - PERCENTAGE → source column × `copyPercentage` ÷ 100 (percentage required, 0–100)
+  - CUSTOMIZED → source column copied as-is (percentage ignored)
+
+  Fields:
+  - `name` (**required**, ≤120) — unique per branch among active lists (409
+    `BRANCH_RADIOLOGY_TEST_LIST_NAME_CONFLICT` on clash).
+  - `copyPriceFrom` (**required**) — MSRP | MAXIMUM | MINIMUM | ORIGINAL | FRANCHISE.
+  - `priceType` (**required**) — PERCENTAGE | CUSTOMIZED.
+  - `copyPercentage` (0–100) — **required only when** `priceType = PERCENTAGE`.
+
+  400 `ACTIVE_BRANCH_REQUIRED` if the JWT has no active branch.
+}

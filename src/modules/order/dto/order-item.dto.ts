@@ -39,6 +39,16 @@ export class OrderItemDto {
   @IsUUID()
   branchLabPanelId?: string;
 
+  /** The branch radiology test this line represents (mutually exclusive with the others). */
+  @IsOptional()
+  @IsUUID()
+  branchRadiologyTestId?: string;
+
+  /** The branch radiology panel this line represents (mutually exclusive with the others). */
+  @IsOptional()
+  @IsUUID()
+  branchRadiologyPanelId?: string;
+
   /**
    * A free-text catalogue entry passed directly from the frontend (mutually
    * exclusive with the test/panel refs).

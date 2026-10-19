@@ -1,0 +1,48 @@
+meta {
+  name: List Radiology Test Templates
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/radiology-tests?view=DEFAULT&page=1&limit=20&search=
+  body: none
+  auth: bearer
+}
+
+params:query {
+  view: DEFAULT
+  page: 1
+  limit: 20
+  search:
+  ~modality: CT
+  ~status: ACTIVE
+  ~sortBy: testName
+  ~sortOrder: asc
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  List SITE_ADMIN radiology-test templates (paginated, view-projected). Auth:
+  SiteAdmin token, requires `master-data:read`. Same `view` projection as the
+  tenant `GET /master-data/:id/radiology-tests/listing`.
+
+  Query params:
+  - `view` — which projection to return (default `DEFAULT`). One of: `DEFAULT`,
+    `BASIC_DETAILS`, `PRICING`, `TAT`, `FLAGS`, `NOTES`, `OVERVIEW` (the flat
+    radiology model has no child-centric views).
+  - `page` / `limit` — offset pagination (defaults 1 / 20).
+  - `search` — case-insensitive match on `testName` / `testCode` (optional).
+  - `modality` — XRAY|CT|MRI|ULTRASOUND|MAMMOGRAPHY|PET|FLUOROSCOPY|DEXA|OTHER.
+  - `sortBy` (`testName`|`testCode`|`priceMsrp`|`createdAt`) + `sortOrder`
+    (`asc`|`desc`); defaults to `createdAt desc`.
+  - `status` — `ACTIVE` | `INACTIVE` (maps to `isActive`, optional).
+
+  Returns only `source = SITE_ADMIN` rows; pagination lands in `meta`. Templates
+  have no tenant classification, so the department/category/sub-category name
+  columns come back `null`. Classification-id filters don't apply to templates and
+  are ignored.
+}

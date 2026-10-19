@@ -1,0 +1,43 @@
+meta {
+  name: 01 SiteAdmin Login
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "email": "{{siteAdminEmail}}",
+    "password": "{{siteAdminPassword}}"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().success && res.getBody().data;
+  if (data && data.accessToken) bru.setVar("siteAdminToken", data.accessToken);
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("captured a SiteAdmin token", function () {
+    expect(bru.getVar("siteAdminToken")).to.be.a("string").and.not.equal("");
+  });
+}
+
+docs {
+  Bootstrap 1 - authenticate as the seeded platform SiteAdmin
+  (`admin@kalnostics.com` / `SuperSecret1`, role SUPER_OWNER). Email-only login
+  (8h token). Captures `siteAdminToken`, used to create the tenant (02) and the
+  global radiology template (07).
+}

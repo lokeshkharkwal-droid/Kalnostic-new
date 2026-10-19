@@ -1,0 +1,70 @@
+meta {
+  name: 05 Create Operator User
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/users/manage
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "employeeName": "Rhea Operator",
+    "username": "rad.operator.{{radRunId}}",
+    "dateOfBirth": "1992-03-15",
+    "gender": "FEMALE",
+    "email": "rad.operator.{{radRunId}}@acme.test",
+    "mobileNumber": "{{operatorMobile}}",
+    "password": "{{operatorPassword}}",
+    "roleKey": "receptionist",
+    "userType": "INTERNAL",
+    "status": "ACTIVE",
+    "branches": [
+      {
+        "branchId": "{{branchId}}",
+        "role": "receptionist",
+        "modules": ["registration"],
+        "defaultModule": "registration",
+        "defaultBranch": true,
+        "status": "ACTIVE"
+      }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().success && res.getBody().data;
+  if (data) {
+    if (data.person && data.person.id) bru.setVar("operatorUserId", data.person.id);
+    if (data.userCode) bru.setVar("operatorUserCode", data.userCode);
+    if (data.loginIdentifier) bru.setVar("operatorLoginIdentifier", data.loginIdentifier);
+  }
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("captured operator login identifier", function () {
+    expect(bru.getVar("operatorLoginIdentifier")).to.be.a("string").and.not.equal("");
+  });
+}
+
+docs {
+  Bootstrap 5 - create a branch-level `receptionist` at the new branch, with a
+  known password (folder var `operatorPassword`) so we can log in as them in step
+  06. `defaultBranch: true` makes their login token branch-scoped (carries
+  `active_branch_id`), which the branch-level steps below require. Captures
+  `operatorUserId` and the server-resolved `operatorLoginIdentifier`.
+}

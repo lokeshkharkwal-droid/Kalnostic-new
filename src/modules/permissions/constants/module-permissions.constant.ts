@@ -321,6 +321,42 @@ const PERMISSION_SPEC: Record<string, SectionSpec[]> = {
     { label: 'Incident Reports', permissions: INCIDENT },
   ],
 
+  // Radiology — the imaging worklist + study lifecycle (New Radiology Flow).
+  // Parallel to lab_operations' Reporting, but models the radiology study states
+  // (NEW→SCHEDULED→ACQUIRED→REPORTED→VALIDATED→APPROVED→PUBLISHED) and their
+  // transitions. Backs the built `/radiology` role module.
+  radiology: [
+    {
+      label: 'Worklist',
+      permissions: [
+        'Access to new',
+        'Access to scheduled',
+        'Access to acquired',
+        'Access to reported',
+        'Access to validation pending',
+        'Access to approved',
+        'Access to published',
+        'Schedule study',
+        'Acquire study',
+        'Report study',
+        'Validate study',
+        'Approve study',
+        'Publish study',
+        'Hold study',
+        'Cancel study',
+        'Retrieve study',
+        'Edit report',
+        'Do bulk action',
+      ],
+    },
+    { label: 'Reports', permissions: ['View reports'] },
+    {
+      label: 'Radiology Settings',
+      permissions: ['View radiology settings', 'Update radiology settings'],
+    },
+    { label: 'Incident Reports', permissions: INCIDENT },
+  ],
+
   business_admin: [
     {
       label: 'Master Data',

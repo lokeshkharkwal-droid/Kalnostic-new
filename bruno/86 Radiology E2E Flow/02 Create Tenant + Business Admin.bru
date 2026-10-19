@@ -1,0 +1,70 @@
+meta {
+  name: 02 Create Tenant + Business Admin
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/tenants
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "name": "Radiology Flow Business {{radRunId}}",
+    "adminFirstName": "Rad",
+    "adminLastName": "Admin {{radRunId}}",
+    "adminPhone": "{{adminBootstrapPhone}}",
+    "adminPassword": "{{bootstrapAdminPassword}}",
+    "adminEmail": "rad.bizadmin.{{radRunId}}@acme.test",
+    "email": "rad.contact.{{radRunId}}@acme.test",
+    "shortName": "RadDx",
+    "mrnPrefix": "RA",
+    "settings": {
+      "timezone": "Asia/Kolkata",
+      "currency": "INR",
+      "date_format": "DD/MM/YYYY",
+      "language": "en"
+    }
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().success && res.getBody().data;
+  if (data) {
+    // The create returns { tenant, adminPhone } - the tenant is nested.
+    const t = data.tenant || data;
+    if (t.id) bru.setVar("tenantId", t.id);
+    if (t.slug) bru.setVar("tenantSlug", t.slug);
+  }
+  // Password is CHOSEN by us at create time; the phone we sent is the login
+  // identifier - wire both into step 03 so login is fully automated.
+  bru.setVar("adminIdentifier", bru.getVar("adminBootstrapPhone"));
+  bru.setVar("adminPassword", bru.getVar("bootstrapAdminPassword"));
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("captured tenantId", function () {
+    expect(bru.getVar("tenantId")).to.be.a("string").and.not.equal("");
+  });
+}
+
+docs {
+  Bootstrap 2 - create the tenant AND its first `business_admin` (as SiteAdmin;
+  requires `business:create`). `adminPhone` must be a 10-digit national mobile (it
+  is also the login identifier); `adminPassword` is chosen here (min 8, >=1 upper,
+  >=1 digit) - not a returned temp. Captures `tenantId` / `tenantSlug` and wires
+  `adminIdentifier` + `adminPassword` into step 03. Unique per run via `radRunId`.
+}

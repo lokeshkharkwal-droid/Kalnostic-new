@@ -1,0 +1,67 @@
+meta {
+  name: 07 SiteAdmin Create Radiology Template
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/radiology-tests
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "testName": "E2E Chest X-Ray Template {{radRunId}}",
+    "testDisplayName": "Chest X-Ray PA View",
+    "testCode": "E2E-SA-CXR-{{radRunId}}",
+    "aka": "CXR",
+    "modality": "XRAY",
+    "bodyPart": "Chest",
+    "view": "PA",
+    "isContrast": false,
+    "samplePriorityType": "ROUTINE",
+    "priceMsrp": 50000,
+    "priceMaximum": 50000,
+    "priceMinimum": 30000,
+    "priceOriginal": 40000,
+    "isAllowDiscounts": true,
+    "tatMinValue": 1,
+    "tatMinUnit": "HOURS",
+    "tatMaxValue": 24,
+    "tatMaxUnit": "HOURS",
+    "isActive": true,
+    "usefulFor": "Screening for pulmonary and cardiac abnormalities"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().success && res.getBody().data;
+  if (data && data.id) bru.setVar("siteAdminRadiologyTestId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("is a SITE_ADMIN template", function () {
+    expect(res.getBody().data.source).to.equal("SITE_ADMIN");
+  });
+}
+
+docs {
+  Radiology catalogue 1 - create a GLOBAL radiology test template as SiteAdmin
+  (`source = SITE_ADMIN`, no tenant, no master data). This is the platform
+  catalogue tenants can later import/clone from. Needs `master_data__write`
+  (SUPER_OWNER has it). Captured as `siteAdminRadiologyTestId` to prove the global
+  catalogue; the orderable branch test is built fresh in steps 09-10 (mirrors the
+  proven lab flow, which creates the orderable test in the branch master data).
+}

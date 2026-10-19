@@ -50,14 +50,16 @@ export const SYSTEM_MODULES: SystemModule[] = [
   // and enableable per branch. Keys are aligned to the frontend module routes
   // (e.g. `lab_operations` → /technician).
   //
-  // `registration` and `lab_operations` back **built** FE pages that are gated by
-  // module visibility (`GET /users/manage/me/permissions` → `moduleAllowed`).
-  // Because the FE only reveals a module when it is permission-allowed, these two
-  // MUST be permission-bearing — otherwise their tab/route can never appear for
-  // any user. They therefore mint the four standard actions like any operational
-  // module. The remaining three (`patient_management`/`radiology`/`pharmacy`) are
-  // still enablement-only: their FE pages are placeholders (Coming Soon), so they
-  // stay out of the permission catalogue until a real page ships.
+  // `registration`, `lab_operations` and `radiology` back **built** FE pages that
+  // are gated by module visibility (`GET /users/manage/me/permissions` →
+  // `moduleAllowed`). Because the FE only reveals a module when it is
+  // permission-allowed, these MUST be permission-bearing — otherwise their
+  // tab/route can never appear for any user. They therefore mint their permission
+  // keys (radiology's are the imaging worklist + study lifecycle; see
+  // module-permissions.constant.ts). The remaining two
+  // (`patient_management`/`pharmacy`) are still enablement-only: their FE pages are
+  // placeholders (Coming Soon), so they stay out of the permission catalogue until
+  // a real page ships.
   { key: 'registration', label: 'Registration', order: 10 },
   { key: 'lab_operations', label: 'Laboratory', order: 11 },
   {
@@ -66,7 +68,7 @@ export const SYSTEM_MODULES: SystemModule[] = [
     order: 12,
     hasPermissions: false,
   },
-  { key: 'radiology', label: 'Radiology', order: 13, hasPermissions: false },
+  { key: 'radiology', label: 'Radiology', order: 13 },
   { key: 'pharmacy', label: 'Pharmacy', order: 14, hasPermissions: false },
 ];
 

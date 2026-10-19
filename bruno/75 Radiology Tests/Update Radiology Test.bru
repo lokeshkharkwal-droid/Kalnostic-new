@@ -1,0 +1,54 @@
+meta {
+  name: Update Radiology Test
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/radiology-tests/{{radiologyTestId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  masterDataId: 2db13b5e-4a25-412f-bcd9-68bcbeea9d59
+}
+
+body:json {
+  {
+    "testDisplayName": "CT Chest (revised)",
+    "isContrast": true,
+    "priceMsrp": 4800,
+    "priceMaximum": 4500,
+    "priceMinimum": 3200,
+    "isActive": true,
+    "remarks": "Updated protocol note"
+  }
+}
+
+docs {
+  🔒 **RBAC:** requires `business_admin:master_data__update_test` — enforced by
+  `PermissionGuard`; admins bypass, so `{{businessAccessToken}}` succeeds.
+
+  Update a radiology test's scalar fields. Every field is **optional** — omitted
+  fields are left unchanged (partial update). Scope (`tenantId`/`branchId`/
+  `masterDataId`) is never in the body. The full editable field set mirrors Create
+  Radiology Test (identity, radiology classification, logical refs, pricing, TAT,
+  schedule, flags, status, notes).
+
+  Price ordering (`priceMinimum ≤ priceMaximum ≤ priceMsrp`) is validated against
+  the **merged** values → 422 `VALIDATION_ERROR` on violation. `testName` /
+  `testCode` stay unique per master data among active rows → 409
+  `RADIOLOGY_TEST_NAME_CONFLICT` / `RADIOLOGY_TEST_CODE_CONFLICT`. 404
+  `RADIOLOGY_TEST_NOT_FOUND` if the id isn't a live test here.
+
+  > `code` and any list price are system-set — never send them.
+}

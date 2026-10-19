@@ -1,0 +1,153 @@
+meta {
+  name: Create Radiology Test
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/radiology-tests
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "testName": "CT Chest Plain",
+    "testDisplayName": "CT Chest",
+    "testCode": "CT-CHEST-01",
+    "aka": "Computed Tomography Thorax",
+    "modality": "CT",
+    "bodyPart": "Chest",
+    "view": "Axial",
+    "isContrast": false,
+    "departmentId": "b94e2bc2-37e7-41b8-8ad3-5725b99f02c9",
+    "categoryId": "fd0c238e-9724-4084-83f8-f83b32e60096",
+    "subCategoryId": "b422e711-e269-455d-8c74-aaa1632946a3",
+    "icdCode": "R91.8",
+    "loincCode": "24627-2",
+    "clinicalTags": [
+      "thorax",
+      "routine"
+    ],
+    "samplePriorityType": "ROUTINE",
+    "isEnableCms": true,
+    "approvalWorkflow": "SINGLE_APPROVAL",
+    "priceMsrp": 4500,
+    "priceMaximum": 4200,
+    "priceMinimum": 3000,
+    "priceOriginal": 4400,
+    "franchisePrice": 3500,
+    "emergencyPrice": 5500,
+    "commissionPrice": 300,
+    "discountCapPct": 15,
+    "isAllowPriceOverride": false,
+    "isAllowDiscounts": true,
+    "tatMinValue": 2,
+    "tatMinUnit": "HOURS",
+    "tatMaxValue": 24,
+    "tatMaxUnit": "HOURS",
+    "scheduleDays": [
+      "MONDAY",
+      "TUESDAY",
+      "WEDNESDAY",
+      "THURSDAY",
+      "FRIDAY"
+    ],
+    "scheduleFrom": "08:00",
+    "scheduleTo": "18:00",
+    "isHideInOrderScreen": false,
+    "isPreferenceTest": true,
+    "isOutsource": false,
+    "isBillOnlyTest": false,
+    "isActive": true,
+    "usefulFor": "Evaluation of lung parenchyma, mediastinum and pleura",
+    "interpretationOfResults": "Reported by the radiologist on the images",
+    "limitations": "Limited soft-tissue contrast without IV contrast",
+    "remarks": "Remove metallic objects before the scan",
+    "references": "ACR Appropriateness Criteria",
+    "preparationInstructions": "No special preparation required for a plain study"
+  }
+}
+
+vars:pre-request {
+  masterDataId: 2db13b5e-4a25-412f-bcd9-68bcbeea9d59
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("radiologyTestId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  🔒 **RBAC:** requires `business_admin:master_data__add_test` — enforced by
+  `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions
+  (user override ?? branch-role override ?? role baseline) lack this get **403
+  `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all
+  checks, so `{{businessAccessToken}}` (an admin) still succeeds here.
+
+  Create a radiology test inside a master data (`tenantId`/`branchId` from the JWT
+  + the path's master data). Captures `radiologyTestId`. The radiology model is
+  **FLAT** — the parallel of a lab test but with **no nested samples or result
+  parameters** (imaging has no specimens/analytes), so the whole payload is a
+  single scalar object. A `versionHistory` v1 is seeded on the row.
+
+  This body is the **full field set the Add Radiology Test form (kaltros-fe) can
+  send**, so it doubles as the FE↔BE contract reference.
+
+  ## Field groups (form section → payload)
+
+  - **Identity:** `testName` (2–255, **required**), `testDisplayName` (≤255),
+    `testCode` (1–50, **required**), `aka` (≤255).
+  - **Radiology classification:** `modality` (enum, see below), `bodyPart`
+    (≤255), `view` (≤255), `isContrast` (bool).
+  - **Classification (logical refs):** `departmentId`, `categoryId`,
+    `subCategoryId` — optional UUIDs validated as UUIDs but **not FK-checked**
+    here. Replace the placeholders with real ids from `GET /departments` ·
+    `/categories` · `/sub-categories`.
+  - **Basic config:** `icdCode` (≤50), `loincCode` (≤50), `clinicalTags[]`
+    (string[]), `samplePriorityType` (enum), `isEnableCms` (bool),
+    `approvalWorkflow` (enum), `reportTemplateId` (optional UUID logical ref).
+  - **Pricing (integer minor units, ≥0):** `priceMsrp`, `priceMaximum`,
+    `priceMinimum`, `priceOriginal`, `franchisePrice`, `emergencyPrice`,
+    `commissionPrice`, `discountCapPct` (0–100), `isAllowPriceOverride`,
+    `isAllowDiscounts`.
+  - **TAT:** `tatMinValue`/`tatMinUnit`, `tatMaxValue`/`tatMaxUnit`.
+  - **Schedule:** `scheduleDays[]` (MONDAY…SUNDAY, unique),
+    `scheduleFrom`/`scheduleTo` ("HH:mm", 24h).
+  - **Flags:** `isHideInOrderScreen`, `isPreferenceTest`, `isOutsource`,
+    `isBillOnlyTest`.
+  - **Status:** `isActive` (Active/Inactive).
+  - **Notes:** `usefulFor`, `interpretationOfResults`, `limitations`, `remarks`,
+    `references`, `preparationInstructions`.
+
+  ## Enums (UPPERCASE)
+
+  `modality` (XRAY|CT|MRI|ULTRASOUND|MAMMOGRAPHY|PET|FLUOROSCOPY|DEXA|OTHER),
+  `samplePriorityType` (ROUTINE|URGENT|STAT),
+  `approvalWorkflow` (SINGLE_APPROVAL|DUAL_APPROVAL|AUTO_APPROVE|PATHOLOGIST_REVIEW),
+  `tat*Unit` (MINUTES|HOURS|DAYS), `scheduleDays` (MONDAY…SUNDAY).
+
+  ## Conflicts & cross-field rules
+
+  - `testName` / `testCode` unique **per master data** among active rows → 409
+    `RADIOLOGY_TEST_NAME_CONFLICT` / `RADIOLOGY_TEST_CODE_CONFLICT`.
+  - `priceMaximum ≤ priceMsrp`, `priceMinimum ≤ priceMaximum` → 422
+    `VALIDATION_ERROR`.
+  - 404 `MASTER_DATA_NOT_FOUND` if the parent master data is missing/other tenant.
+
+  > `code` and any list price are system-set — never send them.
+}

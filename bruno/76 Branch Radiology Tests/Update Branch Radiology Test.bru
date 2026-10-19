@@ -1,0 +1,51 @@
+meta {
+  name: Update Branch Radiology Test
+  type: http
+  seq: 7
+}
+
+put {
+  url: {{baseUrl}}/branch-radiology-tests/{{branchRadiologyTestId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchRadiologyTestId: 00000000-0000-0000-0000-000000000000
+}
+
+body:json {
+  {
+    "listPrice": 4800,
+    "priceMsrp": 4800,
+    "priceMaximum": 4500,
+    "priceMinimum": 3200,
+    "isContrast": true,
+    "isHideInOrderScreen": false,
+    "scheduleDays": ["MONDAY", "TUESDAY", "WEDNESDAY"],
+    "scheduleFrom": "08:00",
+    "scheduleTo": "18:00",
+    "remarks": "Branch-specific pricing"
+  }
+}
+
+docs {
+  Edit a branch radiology test's **branch-tunable** fields (display name, aka,
+  bodyPart, view, isContrast, priority, pricing incl. `listPrice`, TAT, schedule,
+  flags, notes, active). Business JWT. Identity (`testName`/`testCode`) is fixed at
+  import (it is the branch-unique key and the copy's link to its source);
+  classification is managed via re-import/sync. Prices are integer minor units;
+  cross-field price ordering is enforced by the DB CHECK constraints → 422 on
+  violation. Note: a later **sync** overwrites these edits.
+
+  404 `BRANCH_RADIOLOGY_TEST_NOT_FOUND` if the id isn't a live row in the active
+  branch. 400 `ACTIVE_BRANCH_REQUIRED` if the JWT has no active branch.
+}

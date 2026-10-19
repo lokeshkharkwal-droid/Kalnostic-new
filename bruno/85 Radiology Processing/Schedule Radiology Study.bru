@@ -1,0 +1,35 @@
+meta {
+  name: Schedule Radiology Study
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/radiology/studies/{{radiologyStudyId}}/schedule
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  radiologyStudyId: 00000000-0000-0000-0000-000000000000
+}
+
+body:json {
+  {
+    "notes": "Scheduled for imaging"
+  }
+}
+
+docs {
+  Schedule a study (NEW/HOLD → SCHEDULED). Business JWT. Optional reason/notes/
+  attachmentUrl recorded on the history row. 409 INVALID_RADIOLOGY_STUDY_TRANSITION
+  if illegal from the current status.
+}

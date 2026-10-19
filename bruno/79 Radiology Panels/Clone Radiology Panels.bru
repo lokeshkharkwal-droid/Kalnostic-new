@@ -1,0 +1,47 @@
+meta {
+  name: Clone Radiology Panels
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/radiology-panels/clone
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "targetMasterDataId": "{{targetMasterDataId}}"
+  }
+}
+
+vars:pre-request {
+  masterDataId: 2db13b5e-4a25-412f-bcd9-68bcbeea9d59
+  targetMasterDataId: 00000000-0000-0000-0000-000000000000
+}
+
+docs {
+  🔒 **RBAC:** requires `business_admin:master_data__duplicate_test` — enforced by
+  `PermissionGuard`; admins bypass, so `{{businessAccessToken}}` succeeds.
+
+  Clone **all active** radiology panels from this master data (the `:masterDataId`
+  in the URL, the *source*) into a target master data. Each panel is copied with a
+  fresh id and the target's `branchId`, and its member-test rows are remapped onto
+  the target's matching radiology tests. Returns `{ "copied": <n>, "skipped": <n> }`.
+
+  A source panel is **skipped** if its `panelName` or `panelCode` already exists
+  (active) in the target. Both master data must belong to the caller's tenant (404
+  `MASTER_DATA_NOT_FOUND` otherwise).
+
+  Set `targetMasterDataId` to a second (usually different-branch) master data's id.
+  The placeholder default will 404 until you set a real id.
+}

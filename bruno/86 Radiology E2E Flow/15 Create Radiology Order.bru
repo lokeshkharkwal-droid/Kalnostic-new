@@ -1,0 +1,63 @@
+meta {
+  name: 15 Create Radiology Order
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "orderDate": "{{orderDate}}",
+    "orderType": "WALK_IN",
+    "billingType": "CASH_CLIENT",
+    "patientId": "{{patientId}}",
+    "status": "ORDER",
+    "isBillGenerated": false,
+    "items": [
+      { "branchRadiologyTestId": "{{branchRadiologyTestId}}" }
+    ]
+  }
+}
+
+script:pre-request {
+  bru.setVar("orderDate", new Date().toISOString().slice(0, 10));
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().success && res.getBody().data;
+  if (data) {
+    if (data.id) bru.setVar("orderId", data.id);
+    if (data.orderCode) bru.setVar("orderCode", data.orderCode);
+  }
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("captured orderId", function () {
+    expect(bru.getVar("orderId")).to.be.a("string").and.not.equal("");
+  });
+}
+
+docs {
+  The radiology order - a confirmed (`status: ORDER`) order with the imported
+  branch radiology test as its single item, created by the branch-scoped operator.
+  No `diagnostics` section is sent, so it does NOT enter accession (no
+  `OrderSample`). Instead, because it has a radiology item and is confirmed, the
+  backend spawns exactly one `RadiologyStudy` (status `NEW`, `studyNo` `RAD-#####`)
+  in the same transaction. Captures `orderId` + `orderCode`.
+}

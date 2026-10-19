@@ -1,0 +1,26 @@
+meta {
+  name: Get Radiology Panel
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/radiology-panels/{{radiologyPanelId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  masterDataId: 2db13b5e-4a25-412f-bcd9-68bcbeea9d59
+}
+
+docs {
+  Fetch one radiology panel composed with its included tests. Business JWT. Scoped
+  to the JWT tenant + the path master data. 404 `RADIOLOGY_PANEL_NOT_FOUND` if the
+  id is missing/soft-deleted/in another master data; 404 `MASTER_DATA_NOT_FOUND` if
+  the parent master data is missing/other tenant.
+}

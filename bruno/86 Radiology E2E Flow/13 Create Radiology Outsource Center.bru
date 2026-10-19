@@ -1,0 +1,53 @@
+meta {
+  name: 13 Create Radiology Outsource Center
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/radiology-outsource-centers
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "name": "City Imaging Center {{radRunId}}",
+    "shortName": "CIC",
+    "address": "7 Diagnostic Avenue",
+    "country": "India",
+    "city": "Pune",
+    "state": "Maharashtra",
+    "pincode": "411004"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().success && res.getBody().data;
+  if (data && data.id) bru.setVar("outsourceCenterId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("captured outsourceCenterId", function () {
+    expect(bru.getVar("outsourceCenterId")).to.be.a("string").and.not.equal("");
+  });
+}
+
+docs {
+  Config twin 2 - create a Radiology Outsource Center (a partner imaging facility
+  studies can be referred to). `POST /radiology-outsource-centers` is RBAC-gated
+  (`outsource__add`) and takes `branchId` from context, so the Business Admin
+  creates it (bypass; tenant-level, `branchId` null). Only `name` is required.
+  Captured as `outsourceCenterId`.
+}

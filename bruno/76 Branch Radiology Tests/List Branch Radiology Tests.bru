@@ -1,0 +1,37 @@
+meta {
+  name: List Branch Radiology Tests
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/branch-radiology-tests?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: CT Chest
+  ~modality: CT
+  ~status: ACTIVE
+  ~listId: {{branchRadiologyTestListId}}
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  List the active branch's Radiology Test List (paginated). Business JWT. Optional
+  `search` (case-insensitive on testName/testCode), `modality`
+  (XRAY|CT|MRI|ULTRASOUND|MAMMOGRAPHY|PET|FLUOROSCOPY|DEXA|OTHER), `status`
+  (ACTIVE | INACTIVE), and `listId` (which pricing-list tab; omitted = the
+  branch's default Walk-in list). Each row carries a `listPrice` (the effective
+  selling price for its list). Scoped to the JWT tenant + active branch;
+  soft-deleted rows are excluded.
+
+  400 `ACTIVE_BRANCH_REQUIRED` if the JWT has no active branch (a Business Admin
+  with no active branch should use "List Branch Radiology Tests By Branch").
+}

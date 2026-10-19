@@ -1,0 +1,36 @@
+meta {
+  name: Rename Radiology Test List
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{baseUrl}}/branch-radiology-test-lists/{{branchRadiologyTestListId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "B2B Corporate (2026)"
+  }
+}
+
+docs {
+  🔒 **RBAC:** requires `branch_admin:lab_test_list__rename_list` — enforced by
+  `PermissionGuard`; admins bypass, so `{{businessAccessToken}}` succeeds.
+
+  Rename a branch Radiology Test List. Business JWT. `name` (**required**, ≤120) is
+  unique per branch among active lists (409
+  `BRANCH_RADIOLOGY_TEST_LIST_NAME_CONFLICT` on clash). 404
+  `BRANCH_RADIOLOGY_TEST_LIST_NOT_FOUND` if the id isn't a live list in the active
+  branch.
+}

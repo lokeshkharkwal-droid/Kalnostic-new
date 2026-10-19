@@ -1,0 +1,35 @@
+meta {
+  name: List Radiology Studies
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/radiology/studies?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search:
+  ~status: NEW
+  ~modality: XRAY
+  ~radiologistId:
+  ~orderId:
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  The radiology processing worklist for the JWT tenant + active branch, newest
+  first. Business JWT. Filters (all optional): `search` (studyNo / test name /
+  body part), `status` (RadiologyStudyStatus), `modality` (RadiologyModality),
+  `radiologistId` (a staff Person id), `orderId`. Paginated — the envelope
+  carries `meta.total` / `meta.totalPages`. Rows are generated when a confirmed
+  order carries radiology items (OrderService → RadiologyStudyService), one per
+  radiology order item, born `NEW`.
+}

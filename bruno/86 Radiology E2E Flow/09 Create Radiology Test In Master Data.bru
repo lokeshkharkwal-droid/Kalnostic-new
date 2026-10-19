@@ -1,0 +1,67 @@
+meta {
+  name: 09 Create Radiology Test In Master Data
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/radiology-tests
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "testName": "E2E Chest X-Ray {{radRunId}}",
+    "testDisplayName": "Chest X-Ray PA",
+    "testCode": "E2E-BR-CXR-{{radRunId}}",
+    "aka": "CXR",
+    "modality": "XRAY",
+    "bodyPart": "Chest",
+    "view": "PA",
+    "isContrast": false,
+    "samplePriorityType": "ROUTINE",
+    "priceMsrp": 50000,
+    "priceMaximum": 50000,
+    "priceMinimum": 30000,
+    "priceOriginal": 40000,
+    "isAllowDiscounts": true,
+    "tatMinValue": 1,
+    "tatMinUnit": "HOURS",
+    "tatMaxValue": 24,
+    "tatMaxUnit": "HOURS",
+    "isActive": true,
+    "usefulFor": "Screening for pulmonary and cardiac abnormalities"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().success && res.getBody().data;
+  if (data && data.id) bru.setVar("radiologyTestId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("captured radiologyTestId", function () {
+    expect(bru.getVar("radiologyTestId")).to.be.a("string").and.not.equal("");
+  });
+}
+
+docs {
+  Radiology catalogue 3 - create a TENANT radiology test inside the branch master
+  data. Done by the Business Admin because `POST /master-data/:id/radiology-tests`
+  requires `business_admin:master_data__add_test` (the admin bypasses RBAC).
+  `testCode` is unique per master data among active rows. `tenantId`/`branchId`/
+  `masterDataId` come from context/path, never the body. Captures `radiologyTestId`
+  - the row imported into the branch next.
+}

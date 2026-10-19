@@ -1,0 +1,37 @@
+meta {
+  name: List Branch Radiology Tests By Branch
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/branch-radiology-tests/by-branch?branchId={{branchId}}&page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  branchId: {{branchId}}
+  page: 1
+  limit: 20
+  ~search: CT Chest
+  ~modality: CT
+  ~status: ACTIVE
+  ~listId: {{branchRadiologyTestListId}}
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  List a **specific** branch's Radiology Test List rows for a caller with no
+  active branch of their own (Business Admin, viewing a branch they picked).
+  Business JWT. `branchId` is **required** here (unlike the branch-admin route,
+  which resolves it from the JWT) and is verified to belong to the caller's tenant
+  first (404 `BRANCH_NOT_FOUND` otherwise).
+
+  Same optional filters as "List Branch Radiology Tests": `search`, `modality`,
+  `status`, `listId`, `page`, `limit`. Declared before the `:id` route so
+  `by-branch` isn't matched as an id.
+}

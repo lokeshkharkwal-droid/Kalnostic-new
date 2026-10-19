@@ -1,0 +1,38 @@
+meta {
+  name: 19 Approve Study
+  type: http
+  seq: 19
+}
+
+post {
+  url: {{baseUrl}}/radiology/studies/{{studyId}}/approve
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {}
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("status is APPROVED", function () {
+    expect(res.getBody().data.status).to.equal("APPROVED");
+  });
+}
+
+docs {
+  Processing 4 - approve the study. Legal from `VALIDATED` or directly from
+  `REPORTED` when validation is skipped, moving `REPORTED -> APPROVED`. After
+  approval the narrative is locked.
+}

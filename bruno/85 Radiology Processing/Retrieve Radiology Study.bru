@@ -1,0 +1,32 @@
+meta {
+  name: Retrieve Radiology Study
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/radiology/studies/{{radiologyStudyId}}/retrieve
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  radiologyStudyId: 00000000-0000-0000-0000-000000000000
+}
+
+body:json {
+  {}
+}
+
+docs {
+  Universal undo — revert a study to its `previousStatus` (e.g. resume a HOLD).
+  Business JWT.
+}

@@ -1,0 +1,55 @@
+meta {
+  name: 12 Create Radiology Reporting Doctor
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/radiology-reporting-doctors
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "salutation": "DR",
+    "firstName": "Vikram",
+    "lastName": "Radiologist {{radRunId}}",
+    "gender": "MALE",
+    "phone": "{{doctorPhone}}",
+    "email": "vikram.rad.{{radRunId}}@acme.test",
+    "registrationNo": "RAD-REG-{{radRunId}}",
+    "registrationCouncil": "Maharashtra Medical Council",
+    "doctorType": "REPORTING",
+    "isReportSignatory": true
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().success && res.getBody().data;
+  if (data && data.id) bru.setVar("reportingDoctorId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("captured reportingDoctorId", function () {
+    expect(bru.getVar("reportingDoctorId")).to.be.a("string").and.not.equal("");
+  });
+}
+
+docs {
+  Config twin 1 - create a Radiology Reporting Doctor (the signatory on radiology
+  reports). `POST /radiology-reporting-doctors` is RBAC-gated (`doctor__add`), so
+  the Business Admin creates it (bypass). Only `firstName`/`lastName`/`phone` are
+  required. Captured as `reportingDoctorId`.
+}

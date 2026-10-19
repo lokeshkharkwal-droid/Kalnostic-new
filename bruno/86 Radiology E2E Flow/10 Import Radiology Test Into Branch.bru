@@ -1,0 +1,50 @@
+meta {
+  name: 10 Import Radiology Test Into Branch
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/branch-radiology-tests/import
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "radiologyTestIds": ["{{radiologyTestId}}"]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.copied === 0 && data.skipped > 0) {
+    console.log(
+      "Import skipped (copied:0). Either the radiology test is ALREADY in this " +
+      "branch (idempotent - fine, step 11 still captures it), OR radiologyTestId " +
+      "is not in the ACTIVE branch's master data (the operator token's " +
+      "active_branch_id must match the branch the test was created under)."
+    );
+  }
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  Radiology catalogue 4 - import the master-data radiology test into the ACTIVE
+  branch's catalogue, creating a `BranchRadiologyTest` (its orderable copy, with a
+  snapshot price). Done with the branch-scoped operator token so the service reads
+  the right active branch. Idempotent per branch (re-runs skip, which is fine).
+}

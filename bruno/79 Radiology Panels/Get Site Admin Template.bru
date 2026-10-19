@@ -1,0 +1,22 @@
+meta {
+  name: Get Site Admin Template
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/radiology-panels/templates/{{siteAdminRadiologyPanelId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Fetch one SITE_ADMIN global radiology-panel template with its included tests
+  (read-only). Business JWT. Returns only `source = SITE_ADMIN` data. Useful for
+  previewing a template before cloning/importing it. 404 `RADIOLOGY_PANEL_NOT_FOUND`
+  if the id is missing/soft-deleted/not a template.
+}

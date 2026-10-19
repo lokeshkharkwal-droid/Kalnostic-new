@@ -1,0 +1,45 @@
+meta {
+  name: Sync Site Admin Templates
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/radiology-panels/sync
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "masterDataId": "{{masterDataId}}"
+  }
+}
+
+docs {
+  Re-pull previously-imported radiology panels from their SITE_ADMIN templates.
+  Business JWT. Body: `masterDataId` (required) + optional `radiologyPanelIds`
+  (subset, max 500 unique; omit to sync every imported panel in the master data).
+
+  **Full overwrite:** each tenant copy's scalars are replaced from its template and
+  its member tests are rebuilt from the template composition. Identity + provenance
+  (`id`, `tenantId`, `branchId`, `masterDataId`, `source`, `clonedFromId`) are
+  preserved, `versionHistory` is bumped and `templateSyncedAt` is stamped.
+  Hand-created panels (`clonedFromId = null`) are never touched. Each panel syncs in
+  its own transaction. Returns:
+
+  `{ "synced":  [{radiologyPanelId,panelName,templateId}],
+     "skipped": [{radiologyPanelId,panelName,templateId,reason}],  // template removed
+     "failed":  [{radiologyPanelId,panelName,templateId,reason}] }`
+
+  - `masterDataId` must belong to the caller's tenant → else 404
+    `MASTER_DATA_NOT_FOUND`.
+}

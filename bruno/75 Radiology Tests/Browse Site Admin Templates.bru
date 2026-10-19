@@ -1,0 +1,45 @@
+meta {
+  name: Browse Site Admin Templates
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/radiology-tests/templates?page=1&limit=20&search=&sortBy=testName&sortOrder=asc&masterDataId={{masterDataId}}&notImportedOnly=false
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  search:
+  sortBy: testName
+  sortOrder: asc
+  masterDataId: {{masterDataId}}
+  notImportedOnly: false
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Browse SITE_ADMIN global radiology-test templates (read-only) so a business can
+  pick one to import/clone. Business JWT. Returns only `source = SITE_ADMIN` rows
+  — never tenant data.
+
+  Query:
+  - `page` / `limit`, `search` (testName/testCode), `modality`, `status`
+    (`ACTIVE` | `INACTIVE`).
+  - `sortBy` (`testName` | `testCode` | `priceMsrp` | `createdAt`) + `sortOrder`
+    (`asc` | `desc`); defaults to `createdAt desc`.
+  - `masterDataId` (optional, must belong to the caller's tenant): annotates each
+    row with `isImported` (an active tenant test in that master data already has
+    `clonedFromId = template.id`).
+  - `notImportedOnly=true` (with `masterDataId`): hides already-imported templates.
+
+  Declared before the `:id` routes so `templates` isn't matched as an id. Import
+  chosen templates in bulk with "Import Site Admin Templates", or one at a time
+  with "Clone Site Admin Template".
+}

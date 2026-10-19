@@ -1,0 +1,29 @@
+meta {
+  name: Delete Radiology Panel
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/radiology-panels/{{radiologyPanelId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  masterDataId: 2db13b5e-4a25-412f-bcd9-68bcbeea9d59
+}
+
+docs {
+  🔒 **RBAC:** requires `business_admin:master_data__delete_the_panel` — enforced
+  by `PermissionGuard`; admins bypass, so `{{businessAccessToken}}` succeeds.
+
+  Soft-delete a radiology panel (sets `deletedAt`); cascade soft-deletes its
+  included-test rows. Business JWT. Scoped to the JWT tenant + the path master data.
+  404 `RADIOLOGY_PANEL_NOT_FOUND` if the id isn't a live row; 404
+  `MASTER_DATA_NOT_FOUND` if the parent master data is missing/other tenant.
+}

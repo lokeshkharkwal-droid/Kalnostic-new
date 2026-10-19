@@ -1,0 +1,47 @@
+meta {
+  name: 18 Report Study
+  type: http
+  seq: 18
+}
+
+post {
+  url: {{baseUrl}}/radiology/studies/{{studyId}}/report
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "findings": "Lungs are clear. No focal consolidation, effusion or pneumothorax. Cardiac silhouette is normal in size.",
+    "impression": "Normal chest radiograph.",
+    "recommendation": "No further imaging required.",
+    "reportingDoctorId": "{{reportingDoctorId}}"
+  }
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("status is REPORTED", function () {
+    expect(res.getBody().data.status).to.equal("REPORTED");
+  });
+  test("impression was saved", function () {
+    expect(res.getBody().data.impression).to.equal("Normal chest radiograph.");
+  });
+}
+
+docs {
+  Processing 3 - fill the narrative report (findings / impression / recommendation,
+  rich text) and assign the reporting doctor from step 12. Moves
+  `ACQUIRED -> REPORTED`. `report` may re-fire while `REPORTED` to revise the text
+  before approval.
+}

@@ -1,0 +1,42 @@
+meta {
+  name: List Branch Radiology Test Options
+  type: http
+  seq: 12
+}
+
+get {
+  url: {{baseUrl}}/branch-radiology-tests/options?page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 10
+  ~search: CT
+  ~listId: {{branchRadiologyTestListId}}
+  ~preferredOnly: true
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Lightweight options for the Create-Order radiology-test picker. Business JWT.
+  Returns the active branch's **active default-variant** radiology tests only (one
+  orderable row per variant group), so a selected id is directly usable as an
+  order item's branch radiology test id. Scoped to the JWT tenant + active branch
+  (no `branchId` in the query).
+
+  Query params (all optional):
+  - `search` — case-insensitive match against the branch radiology test `testName`.
+  - `listId` — which pricing list to load options from. Omitted = the branch's
+    Walk-in list.
+  - `preferredOnly` — when true AND `search` is empty, narrows results to
+    `isPreferenceTest: true` (opt-in; defaults to false).
+  - `page` / `limit` — omit `page` for the full array; supply `page` for a
+    `{ data, total, page, limit }` envelope.
+
+  400 `ACTIVE_BRANCH_REQUIRED` if the JWT has no active branch.
+}

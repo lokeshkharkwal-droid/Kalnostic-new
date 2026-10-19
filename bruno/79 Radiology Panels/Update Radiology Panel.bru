@@ -1,0 +1,64 @@
+meta {
+  name: Update Radiology Panel
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/radiology-panels/{{radiologyPanelId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "panelName": "CT Chest + Abdomen Combo (2026)",
+    "priceMsrp": 9500,
+    "priceMaximum": 9000,
+    "priceMinimum": 6500,
+    "turnaroundPriority": "URGENT",
+    "isPreference": true,
+    "panelInstructions": "Fast for 6 hours before the contrast study",
+    "tests": [
+      {
+        "radiologyTestId": "{{radiologyTestId}}",
+        "sortOrder": 1,
+        "isRemovable": true,
+        "discountPercent": 5
+      }
+    ]
+  }
+}
+
+vars:pre-request {
+  masterDataId: 2db13b5e-4a25-412f-bcd9-68bcbeea9d59
+}
+
+docs {
+  🔒 **RBAC:** requires **any of** `business_admin:master_data__update_lab_panel`
+  OR `business_admin:master_data__edit_the_panel` (`@RequireAnyPermission`) —
+  enforced by `PermissionGuard`; admins bypass, so `{{businessAccessToken}}`
+  succeeds. (Reuses the master-data lab-panel permission keys.)
+
+  Update a radiology panel's scalar fields. Business JWT. Partial update (explicit
+  optionals, not `PartialType`) — send only what changes. Same field set and enums
+  as "Create Radiology Panel" (all optional here).
+
+  **When `tests` is provided the whole member-test set is REPLACED** — the old
+  active rows are soft-deleted and the supplied set is created. Omit `tests` to
+  leave the composition untouched. Each supplied `radiologyTestId` must reference an
+  active RadiologyTest in the same master data (404 `RADIOLOGY_PANEL_TEST_NOT_FOUND`
+  otherwise) and `discountPercent` is re-checked against that test's `discountCapPct`.
+
+  Conflicts: 409 `RADIOLOGY_PANEL_NAME_CONFLICT` / `RADIOLOGY_PANEL_CODE_CONFLICT`
+  (unique per master data among active rows). 404 `RADIOLOGY_PANEL_NOT_FOUND` /
+  `MASTER_DATA_NOT_FOUND`.
+}

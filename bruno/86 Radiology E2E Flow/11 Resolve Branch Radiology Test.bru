@@ -1,0 +1,47 @@
+meta {
+  name: 11 Resolve Branch Radiology Test
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/branch-radiology-tests?status=ACTIVE&page=1&limit=50
+  body: none
+  auth: bearer
+}
+
+params:query {
+  status: ACTIVE
+  page: 1
+  limit: 50
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.length) {
+    const bySource = data.filter(function (t) { return t.sourceRadiologyTestId === bru.getVar("radiologyTestId"); });
+    const pool = bySource.length ? bySource : data;
+    const pick = pool.find(function (t) { return t.isDefault; }) || pool[0];
+    if (pick && pick.id) bru.setVar("branchRadiologyTestId", pick.id);
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("captured branchRadiologyTestId", function () {
+    expect(bru.getVar("branchRadiologyTestId")).to.be.a("string").and.not.equal("");
+  });
+}
+
+docs {
+  Radiology catalogue 5 - list the active branch's Radiology Test List and capture
+  `branchRadiologyTestId` (used as the order item in step 15). Prefers the copy
+  whose `sourceRadiologyTestId` matches the test imported in step 10. This doubles
+  as the verify-import check for step 10.
+}

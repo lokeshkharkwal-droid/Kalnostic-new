@@ -1,0 +1,26 @@
+meta {
+  name: Get Branch Radiology Test
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/branch-radiology-tests/{{branchRadiologyTestId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchRadiologyTestId: 00000000-0000-0000-0000-000000000000
+}
+
+docs {
+  Fetch one branch radiology test (the flat row + its `listPrice`). Business JWT.
+  Scoped to the JWT tenant + active branch. 404 `BRANCH_RADIOLOGY_TEST_NOT_FOUND`
+  if the id is missing/soft-deleted/in another branch. 400 `ACTIVE_BRANCH_REQUIRED`
+  if the JWT has no active branch.
+}

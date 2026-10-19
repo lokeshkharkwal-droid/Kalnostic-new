@@ -1,0 +1,39 @@
+meta {
+  name: Clone Radiology Test List
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/branch-radiology-test-lists/{{branchRadiologyTestListId}}/clone
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "name": "Franchise Pricing"
+  }
+}
+
+docs {
+  🔒 **RBAC:** requires `branch_admin:lab_test_list__clone_list` — enforced by
+  `PermissionGuard`; admins bypass, so `{{businessAccessToken}}` succeeds.
+
+  Deep-copy an existing list (and all its test rows, preserving each row's
+  `listPrice` and variant flags) into a new independent list. Business JWT. Editing
+  the clone never affects the original.
+
+  Fields: `name` (**required**, ≤120) — unique per branch among active lists (409
+  `BRANCH_RADIOLOGY_TEST_LIST_NAME_CONFLICT` on clash). 404
+  `BRANCH_RADIOLOGY_TEST_LIST_NOT_FOUND` if the source list isn't a live list in
+  the active branch.
+}

@@ -1,0 +1,28 @@
+meta {
+  name: Duplicate Branch Radiology Test
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/branch-radiology-tests/{{branchRadiologyTestId}}/duplicate
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchRadiologyTestId: 00000000-0000-0000-0000-000000000000
+}
+
+docs {
+  Create an independent variant of a branch radiology test in the same group (same
+  `sourceRadiologyTestId`). Business JWT. The copy is a non-default duplicate
+  (isDuplicate=true, isDefault=false, name suffixed " (Copy)"), editable
+  independently and untouched by sync. No body. Returns the new row. 404
+  `BRANCH_RADIOLOGY_TEST_NOT_FOUND` if the source id isn't a live row in the active
+  branch.
+}

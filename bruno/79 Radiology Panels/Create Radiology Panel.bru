@@ -1,0 +1,127 @@
+meta {
+  name: Create Radiology Panel
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/radiology-panels
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "panelName": "CT Chest + Abdomen Combo",
+    "panelCode": "RPNL-CTCA-01",
+    "bannerImage": "https://files.example.com/panels/ct-combo.png",
+    "categoryId": "fd0c238e-9724-4084-83f8-f83b32e60096",
+    "departmentId": "b94e2bc2-37e7-41b8-8ad3-5725b99f02c9",
+    "applicableGender": "ALL",
+    "applicableAgeGroup": "ADULT",
+    "reportType": "COMBINED",
+    "turnaroundPriority": "ROUTINE",
+    "isActive": true,
+    "priceMsrp": 9000,
+    "priceMaximum": 8500,
+    "priceMinimum": 6000,
+    "priceOriginal": 8800,
+    "franchisePrice": 7000,
+    "commissionPrice": 500,
+    "tatMinValue": 2,
+    "tatMinUnit": "HOURS",
+    "tatMaxValue": 24,
+    "tatMaxUnit": "HOURS",
+    "panelInstructions": "Fast for 4 hours before the contrast study",
+    "isDisableDiscount": false,
+    "isBillOnlyTest": false,
+    "isEnableCms": true,
+    "isPreference": true,
+    "isShowOnlineBooking": true,
+    "tests": [
+      {
+        "radiologyTestId": "{{radiologyTestId}}",
+        "sortOrder": 1,
+        "isRemovable": true,
+        "discountPercent": 10
+      }
+    ]
+  }
+}
+
+vars:pre-request {
+  masterDataId: 2db13b5e-4a25-412f-bcd9-68bcbeea9d59
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("radiologyPanelId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  🔒 **RBAC:** requires `business_admin:master_data__add_lab_panel` — enforced by
+  `PermissionGuard` (`@RequirePermission`). A caller whose effective permissions
+  (user override ?? branch-role override ?? role baseline) lack this get **403
+  `PERMISSION_DENIED`**; the `business_admin` / `administrator` roles bypass all
+  checks, so `{{businessAccessToken}}` (an admin) still succeeds here. (The
+  radiology-panel module reuses the master-data lab-panel permission keys — there
+  are no radiology-specific ones.)
+
+  Create a radiology panel inside a master data (`tenantId`/`branchId` from the JWT
+  + the path's master data). Captures `radiologyPanelId`. A radiology panel is a
+  bundle of radiology **tests** in the same master data: unlike a lab panel it has
+  **no result parameters** (the flat radiology model has none), only member tests.
+  The whole panel + its `tests[]` are created in one transaction.
+
+  ## Field groups (form section → payload)
+
+  - **Identity:** `panelName` (2–255, **required**), `panelCode` (1–50,
+    **required**, unique per master data among active rows), `bannerImage` (≤1024
+    URL/path).
+  - **Classification (logical refs):** `categoryId`, `departmentId` — optional
+    UUIDs validated as UUIDs; replace the placeholders with real ids from
+    `GET /categories` · `/departments`.
+  - **Applicability + reporting:** `applicableGender` (enum), `applicableAgeGroup`
+    (enum), `reportType` (enum), `turnaroundPriority` (enum).
+  - **Status:** `isActive`.
+  - **Pricing (integer minor units, ≥0):** `priceMsrp`, `priceMinimum`,
+    `priceMaximum`, `priceOriginal`, `franchisePrice`, `commissionPrice`.
+  - **TAT:** `tatMinValue`/`tatMinUnit`, `tatMaxValue`/`tatMaxUnit`.
+  - **Instructions:** `panelInstructions`.
+  - **Flags:** `isDisableDiscount`, `isBillOnlyTest`, `isEnableCms`, `isPreference`,
+    `isShowOnlineBooking`.
+  - **Member tests:** `tests[]` — each `{ radiologyTestId (required UUID),
+    sortOrder?, isRemovable?, discountPercent? (0–100) }`. `radiologyTestId` must
+    reference an active RadiologyTest in the **same** master data; `discountPercent`
+    is additionally checked against that test's own `discountCapPct`.
+
+  ## Enums (UPPERCASE)
+
+  `applicableGender` (ALL|MALE|FEMALE), `applicableAgeGroup`
+  (ALL|ADULT|PEDIATRIC|SENIOR), `reportType` (COMBINED|SEPARATE),
+  `turnaroundPriority` (ROUTINE|URGENT|STAT), `tat*Unit` (MINUTES|HOURS|DAYS).
+
+  ## Conflicts & cross-field rules
+
+  - `panelName` / `panelCode` unique **per master data** among active rows → 409
+    `RADIOLOGY_PANEL_NAME_CONFLICT` / `RADIOLOGY_PANEL_CODE_CONFLICT`.
+  - A bad member-test id → 404 `RADIOLOGY_PANEL_TEST_NOT_FOUND`.
+  - 404 `MASTER_DATA_NOT_FOUND` if the parent master data is missing/other tenant.
+
+  > No list price is sent here — list pricing is set when the panel is imported
+  > into a branch Radiology Panel List.
+}

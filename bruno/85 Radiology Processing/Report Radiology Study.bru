@@ -1,0 +1,39 @@
+meta {
+  name: Report Radiology Study
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/radiology/studies/{{radiologyStudyId}}/report
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  radiologyStudyId: 00000000-0000-0000-0000-000000000000
+}
+
+body:json {
+  {
+    "findings": "Lungs are clear. No focal consolidation, effusion or pneumothorax.",
+    "impression": "Normal chest radiograph.",
+    "recommendation": "No further imaging required."
+  }
+}
+
+docs {
+  Fill or edit the narrative report. Business JWT. Moves the study ACQUIRED →
+  REPORTED (and may re-fire while REPORTED to edit before approval). Optional:
+  `reportTemplateId` (the PDF template this study prints with), `radiologistId`,
+  `reportingDoctorId`, plus the shared `reason`/`notes`/`attachmentUrl`.
+  409 `INVALID_RADIOLOGY_STUDY_TRANSITION` if not reportable from the current status.
+}

@@ -1,0 +1,22 @@
+meta {
+  name: Get Site Admin Template
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/radiology-tests/templates/{{siteAdminRadiologyTestId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Fetch one SITE_ADMIN template radiology test (read-only) so the tenant can
+  preview it before importing. Business JWT. Uses `siteAdminRadiologyTestId` from
+  "78 SiteAdmin Radiology Tests → Create Radiology Test Template". 404
+  `RADIOLOGY_TEST_NOT_FOUND` if the id isn't a live template.
+}

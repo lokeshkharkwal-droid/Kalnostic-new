@@ -1,0 +1,35 @@
+meta {
+  name: Hold Radiology Study
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/radiology/studies/{{radiologyStudyId}}/hold
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  radiologyStudyId: 00000000-0000-0000-0000-000000000000
+}
+
+body:json {
+  {
+    "reason": "Awaiting patient preparation"
+  }
+}
+
+docs {
+  Put a study on hold (NEW/SCHEDULED/ACQUIRED → HOLD); `reason` is stored on the
+  study's holdReason + history. Business JWT. Resume via Acquire/Schedule or undo
+  via Retrieve. 409 INVALID_RADIOLOGY_STUDY_TRANSITION if illegal from the current status.
+}

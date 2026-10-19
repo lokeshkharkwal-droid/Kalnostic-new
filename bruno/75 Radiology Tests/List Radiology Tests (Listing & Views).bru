@@ -1,0 +1,74 @@
+meta {
+  name: List Radiology Tests (Listing & Views)
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/radiology-tests/listing?view=DEFAULT&page=1&limit=20&search=CT
+  body: none
+  auth: bearer
+}
+
+params:query {
+  view: DEFAULT
+  page: 1
+  limit: 20
+  search: CT
+  ~modality: CT
+  ~departmentId:
+  ~categoryId:
+  ~subCategoryId:
+  ~status: ACTIVE
+  ~sortBy: priceMsrp
+  ~sortOrder: -1
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  masterDataId: 2db13b5e-4a25-412f-bcd9-68bcbeea9d59
+}
+
+docs {
+  Configurable listing screen for a master data's radiology tests. One endpoint;
+  the `view` query param selects which columns are projected. Paginated **by
+  radiology test**. Business JWT. 404 `MASTER_DATA_NOT_FOUND` if the parent master
+  data is missing/other tenant.
+
+  ## Search & filters (all optional)
+
+  - `search` — matches `testName` OR `testCode` only (case-insensitive).
+  - `modality` — XRAY|CT|MRI|ULTRASOUND|MAMMOGRAPHY|PET|FLUOROSCOPY|DEXA|OTHER.
+  - `departmentId` / `categoryId` / `subCategoryId` — filter by id (the matching
+    **names** are resolved server-side for the views that show them; the flat
+    model has no Prisma relation, so `departmentName` is an in-memory resolve and
+    is intentionally **not** sortable).
+  - `status` — `ACTIVE` | `INACTIVE` (maps to `isActive`). Soft-deleted tests are
+    always excluded.
+  - `page` / `limit` — standard pagination (limit capped at 100).
+
+  ## Sorting (applied before pagination)
+
+  - `sortBy` + `sortOrder` — `sortOrder` is `1` (asc) or `-1` (desc). Omit both
+    for the default (`createdAt desc`). An unsupported `sortBy` → 400
+    `VALIDATION_ERROR` (allowlisted server-side).
+  - Allowed `sortBy` keys: `testName`, `testCode`, `aka`, `modality`, `bodyPart`,
+    `icdCode`, `loincCode`, `samplePriorityType`, `priceMsrp`, `priceMinimum`,
+    `priceMaximum`, `priceOriginal`, `franchisePrice`, `emergencyPrice`,
+    `discountCapPct`, `tatMinValue`, `tatMaxValue`, `isAllowPriceOverride`,
+    `isAllowDiscounts`, `isHideInOrderScreen`, `isEnableCms`, `isPreferenceTest`,
+    `usefulFor`, `isActive`.
+
+  ## Views (`view`)
+
+  `DEFAULT` (default), `BASIC_DETAILS`, `PRICING`, `TAT`, `FLAGS`, `NOTES`,
+  `OVERVIEW`. Unlike lab tests the flat radiology model has **no child-centric
+  views** (`SAMPLE`/`RESULTS`/`REFERENCE_*`) — radiology tests carry no samples or
+  result parameters. Don't send an empty `view` (an empty enum → 400
+  `VALIDATION_ERROR`); omit it to get `DEFAULT`.
+
+  > The disabled (`~`) query params above are examples — enable the ones you want.
+}

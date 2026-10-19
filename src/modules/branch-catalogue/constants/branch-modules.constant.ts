@@ -40,6 +40,7 @@ export const BRANCH_MODULES: Readonly<Record<string, readonly string[]>> = {
   RADIOLOGY: [
     'registration',
     'patient_management',
+    'radiology',
     'finance',
     'inventory',
     'sales',

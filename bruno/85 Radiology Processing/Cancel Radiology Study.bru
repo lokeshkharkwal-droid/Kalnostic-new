@@ -1,0 +1,34 @@
+meta {
+  name: Cancel Radiology Study
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/radiology/studies/{{radiologyStudyId}}/cancel
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  radiologyStudyId: 00000000-0000-0000-0000-000000000000
+}
+
+body:json {
+  {
+    "reason": "Order cancelled"
+  }
+}
+
+docs {
+  Cancel a study (NEW/SCHEDULED/ACQUIRED/HOLD → CANCELLED, terminal). Business JWT.
+  409 INVALID_RADIOLOGY_STUDY_TRANSITION if illegal from the current status.
+}

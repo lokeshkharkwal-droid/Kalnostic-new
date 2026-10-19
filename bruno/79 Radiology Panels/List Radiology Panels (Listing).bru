@@ -1,0 +1,52 @@
+meta {
+  name: List Radiology Panels (Listing)
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/radiology-panels/listing?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: CT Chest
+  ~categoryId:
+  ~departmentId:
+  ~status: ACTIVE
+  ~sortBy: panelName
+  ~sortOrder: 1
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  masterDataId: 2db13b5e-4a25-412f-bcd9-68bcbeea9d59
+}
+
+docs {
+  Listing screen for a master data's radiology panels (paginated by panel, sorted
+  server-side before pagination). Business JWT. Scoped to the JWT tenant + the path
+  master data. Declared before the `:panelId` routes so `listing` isn't matched as
+  an id.
+
+  Query params (all optional):
+  - `search` — case-insensitive match against `panelName` OR `panelCode`.
+  - `categoryId` / `departmentId` — filter by parent category / department.
+  - `status` — `ACTIVE` | `INACTIVE` (maps to `isActive`). Don't send an empty
+    `status` (an empty enum value → 400 `VALIDATION_ERROR`); omit it instead.
+  - `sortBy` — one of `panelName`, `panelCode`, `panelCategory`, `priceOriginal`,
+    `priceMinimum`, `priceMaximum`, `priceMsrp`, `franchisePrice`,
+    `applicableAgeGroup`, `testsCount`, `isActive` (`panelCategory` and
+    `testsCount` are derived sorts).
+  - `sortOrder` — `1` (ascending) or `-1` (descending).
+
+  404 `MASTER_DATA_NOT_FOUND` if the parent master data is missing/other tenant.
+
+  > The disabled (`~`) query params above are examples — enable the ones you want.
+}

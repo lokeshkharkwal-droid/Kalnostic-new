@@ -1,0 +1,33 @@
+meta {
+  name: 22 Print Study
+  type: http
+  seq: 22
+}
+
+get {
+  url: {{baseUrl}}/radiology/studies/{{studyId}}/print
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+tests {
+  // The study is PUBLISHED; the PDF streams when a `radiology_report` template is
+  // configured, otherwise the resolver returns 422 NO_RADIOLOGY_REPORT_TEMPLATE.
+  // Both are a correct outcome here (template authoring is a separate flow).
+  test("print returns a PDF (200) or asks for a template (422)", function () {
+    expect([200, 422]).to.include(res.getStatus());
+  });
+}
+
+docs {
+  Processing 7 - stream the published study's report PDF. The template is resolved
+  by a 4-step fallback (study override -> Configuration default `radiology_report`
+  slot -> first active). With no `radiology_report` PdfReportTemplate configured
+  for this fresh tenant the resolver returns 422 `NO_RADIOLOGY_REPORT_TEMPLATE` -
+  accepted here since template authoring is out of scope for this flow; wiring a
+  template makes it a 200 PDF stream.
+}

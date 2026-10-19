@@ -23,9 +23,18 @@ import { SubCategoryModule } from './modules/sub-category/sub-category.module';
 import { MasterDataModule } from './modules/master-data/master-data.module';
 import { LabTestModule } from './modules/lab-test/lab-test.module';
 import { LabPanelModule } from './modules/lab-panel/lab-panel.module';
+import { RadiologyTestModule } from './modules/radiology-test/radiology-test.module';
+import { RadiologyPanelModule } from './modules/radiology-panel/radiology-panel.module';
 import { BranchLabTestModule } from './modules/branch-lab-test/branch-lab-test.module';
 import { BranchLabPanelModule } from './modules/branch-lab-panel/branch-lab-panel.module';
 import { BranchLabTestListModule } from './modules/branch-lab-test-list/branch-lab-test-list.module';
+import { BranchRadiologyTestModule } from './modules/branch-radiology-test/branch-radiology-test.module';
+import { BranchRadiologyTestListModule } from './modules/branch-radiology-test-list/branch-radiology-test-list.module';
+import { BranchRadiologyPanelModule } from './modules/branch-radiology-panel/branch-radiology-panel.module';
+import { BranchRadiologyPanelListModule } from './modules/branch-radiology-panel-list/branch-radiology-panel-list.module';
+import { RadiologyReportingDoctorModule } from './modules/radiology-reporting-doctor/radiology-reporting-doctor.module';
+import { RadiologyOutsourceCenterModule } from './modules/radiology-outsource-center/radiology-outsource-center.module';
+import { RadiologyModule } from './modules/radiology/radiology.module';
 import { BranchLabPanelListModule } from './modules/branch-lab-panel-list/branch-lab-panel-list.module';
 import { ReferralListModule } from './modules/referral-list/referral-list.module';
 import { TestGroupModule } from './modules/test-group/test-group.module';
@@ -136,10 +145,19 @@ import { B2bModuleGuard } from './common/guards/b2b-module.guard';
     MasterDataModule,
     LabTestModule,
     LabPanelModule,
+    RadiologyTestModule,
+    RadiologyPanelModule,
     BranchLabTestModule,
     BranchLabPanelModule,
     BranchLabTestListModule,
     BranchLabPanelListModule,
+    BranchRadiologyTestModule,
+    BranchRadiologyTestListModule,
+    BranchRadiologyPanelModule,
+    BranchRadiologyPanelListModule,
+    RadiologyReportingDoctorModule,
+    RadiologyOutsourceCenterModule,
+    RadiologyModule,
     ReferralListModule,
     TestGroupModule,
     EquipmentModule,

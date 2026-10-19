@@ -1,0 +1,44 @@
+meta {
+  name: 06 Operator Login
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "identifier": "{{operatorLoginIdentifier}}",
+    "password": "{{operatorPassword}}"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().success && res.getBody().data;
+  if (data && data.accessToken) bru.setVar("operatorToken", data.accessToken);
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("captured branch-scoped operatorToken", function () {
+    expect(bru.getVar("operatorToken")).to.be.a("string").and.not.equal("");
+  });
+}
+
+docs {
+  Bootstrap 6 - log in as the operator created in step 05. Their default profile is
+  a branch-level `receptionist` at the new branch, so the token carries
+  `active_branch_id = branchId` - a branch-scoped token. Captures `operatorToken`,
+  used for every branch-level request below (import, patient, order, study
+  processing).
+}

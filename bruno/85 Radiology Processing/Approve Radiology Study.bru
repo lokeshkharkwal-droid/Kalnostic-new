@@ -1,0 +1,32 @@
+meta {
+  name: Approve Radiology Study
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/radiology/studies/{{radiologyStudyId}}/approve
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  radiologyStudyId: 00000000-0000-0000-0000-000000000000
+}
+
+body:json {
+  {}
+}
+
+docs {
+  Approve a report (REPORTED or VALIDATED → APPROVED); the study locks after this.
+  Business JWT. 409 INVALID_RADIOLOGY_STUDY_TRANSITION if illegal from the current status.
+}

@@ -1,0 +1,49 @@
+meta {
+  name: Import Branch Radiology Panels By Filter
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/branch-radiology-panels/import-by-filter
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "search": "",
+    "department": "",
+    "category": "",
+    "listId": "{{branchRadiologyPanelListId}}"
+  }
+}
+
+docs {
+  "Select all" import: materializes **every** Master Data radiology panel matching
+  the given filters (the same search/classification filters as the import-picker's
+  "Available to Add" listing) into the branch pricing list — no client-supplied id
+  list. The backend re-resolves the matching set (excluding ids already in the
+  target list) and imports all of them. Returns `{ copied, updated, skipped }`
+  (`skipped` is always 0 for this route).
+
+  Body (all optional):
+  - `search` — case-insensitive match against name/code.
+  - `department` / `category` — case-insensitive match against the respective
+    classification **name**. (Panels have no sub-category, unlike radiology tests.)
+  - `listId` — target `BranchRadiologyPanelList`; must belong to the caller's branch
+    (404 `BRANCH_RADIOLOGY_PANEL_LIST_NOT_FOUND`). Omit to import into the branch's
+    default **Walk-in** list (always ensured to exist first).
+
+  Tenant + active branch come from the JWT (never the body). 400
+  `ACTIVE_BRANCH_REQUIRED` if the JWT has no active branch. 404
+  `MASTER_DATA_NOT_MAPPED_TO_BRANCH` if the branch has no master data.
+}

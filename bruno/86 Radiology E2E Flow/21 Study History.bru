@@ -1,0 +1,31 @@
+meta {
+  name: 21 Study History
+  type: http
+  seq: 21
+}
+
+get {
+  url: {{baseUrl}}/radiology/studies/{{studyId}}/history
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("history records the full lifecycle", function () {
+    // NEW (on generate) -> ACQUIRED -> REPORTED -> APPROVED -> PUBLISHED = 5 rows.
+    expect(res.getBody().data.length).to.be.at.least(5);
+  });
+}
+
+docs {
+  Processing 6 - read the study's status-history trail. Every transition (and the
+  initial `NEW` on generation) writes a `RadiologyStudyStatusHistory` row, so the
+  full audit chain NEW -> ACQUIRED -> REPORTED -> APPROVED -> PUBLISHED is visible.
+}

@@ -1,0 +1,37 @@
+meta {
+  name: Radiology Test Options
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/radiology-tests/options?page=1&limit=10&search=
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 10
+  search:
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Lightweight `{ id, name }` options for SITE_ADMIN radiology-test templates. Auth:
+  SiteAdmin token, requires `master-data:read`. Declared before the `:id` route so
+  `options` isn't matched as an id.
+
+  Filters active, non-deleted templates (`source = SITE_ADMIN`, `tenantId = null`);
+  `name` is the template's `testName`. Any `branchId` on the query is ignored
+  (templates have no branch).
+
+  Query params:
+  - `page` / `limit` — **opt-in** offset pagination. Omit `page` to get the full
+    `{ id, name }[]` array; supply `page` to get a paginated envelope (pagination
+    info in `meta`, incl. `totalPages`).
+  - `search` — case-insensitive match on `testName` (optional).
+}
