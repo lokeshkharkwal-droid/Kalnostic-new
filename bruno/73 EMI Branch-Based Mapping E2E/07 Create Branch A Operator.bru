@@ -20,7 +20,7 @@ auth:bearer {
 
 body:json {
   {
-    "employeeName": "Bina Branch-A Operator",
+    "employeeName": "Bina Branch A Operator",
     "username": "emi.ba.operator.{{tatRunId}}",
     "dateOfBirth": "1991-07-22",
     "gender": "FEMALE",
@@ -34,7 +34,7 @@ body:json {
       {
         "branchId": "{{baBranchId}}",
         "role": "receptionist",
-        "modules": ["registration"],
+        "modules": ["registration", "accession"],
         "defaultModule": "registration",
         "defaultBranch": true,
         "status": "ACTIVE"
@@ -54,6 +54,9 @@ script:post-response {
 docs {
   **Setup - Branch A operator.** A branch-level `receptionist` at Branch A, so when
   they log in (step 11) the token is scoped to `baBranchId`. This user receives the
-  internal transfer (pick-up / receive / accept) and reads the rehomed report.
-  Captures **`baOperatorUserId`** and **`baOperatorLoginIdentifier`**.
+  internal transfer (pick-up / receive / accept) and reads the rehomed report. The
+  branch profile is assigned **`registration` + `accession`** so the internal-referral
+  permission grant in step 09 is accepted (the module must be assigned to the user,
+  not just enabled on the branch). Captures **`baOperatorUserId`** and
+  **`baOperatorLoginIdentifier`**.
 }

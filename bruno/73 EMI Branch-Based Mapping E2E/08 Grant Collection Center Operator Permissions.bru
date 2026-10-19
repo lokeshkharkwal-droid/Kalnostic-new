@@ -33,6 +33,8 @@ docs {
   **Setup - grant the Collection Center operator the three accession permissions the
   flow uses there:** Collect, Accept (In-House sample lifecycle) and **Send** (the
   internal transfer to Branch A). All three transitions are RBAC-enforced
-  (`@RequirePermission`), and only modules enabled on the branch are accepted -
-  `accession` was enabled in step 04.
+  (`@RequirePermission`). The grant requires each permission's module to be both
+  **enabled on the branch** (step 04) AND **assigned to the user** (step 06 put
+  `accession` on the operator's profile) - otherwise it fails with "Module
+  'accession' is not assigned to this user at this branch".
 }

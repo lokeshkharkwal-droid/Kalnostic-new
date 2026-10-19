@@ -34,7 +34,7 @@ body:json {
       {
         "branchId": "{{ccBranchId}}",
         "role": "receptionist",
-        "modules": ["registration"],
+        "modules": ["registration", "accession"],
         "defaultModule": "registration",
         "defaultBranch": true,
         "status": "ACTIVE"
@@ -55,5 +55,9 @@ docs {
   **Setup - Collection Center operator.** A branch-level `receptionist` at the
   Collection Center with a known password, so we can log in as them (step 10) with a
   token scoped to `ccBranchId`. Order creation, collect, accept and send all run as
-  this user. Captures **`ccOperatorUserId`** and **`ccOperatorLoginIdentifier`**.
+  this user. The branch profile is assigned **both `registration` and `accession`**
+  modules: a branch-permission grant (step 08) only accepts a permission whose module
+  is both enabled on the branch AND **assigned to the user** - without `accession`
+  here the grant fails with "Module 'accession' is not assigned to this user at this
+  branch". Captures **`ccOperatorUserId`** and **`ccOperatorLoginIdentifier`**.
 }
