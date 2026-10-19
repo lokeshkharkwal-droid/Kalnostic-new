@@ -113,12 +113,26 @@ docs {
   The `AdapterResult` audit row records `update_test_status = "4"` (NOT_ACCEPTED).
   A reportable sample proceeds normally through the fill behaviour below.
 
+  ## Branch-based mapping gate (backend-enforced)
+  Results may only be filled onto a test the adapter is authorised for **at the
+  branch currently processing it** — `LabReport.branchId`, which an internal
+  transfer *rehomes* to follow the specimen, NOT the branch the order was created
+  at. A report whose processing branch is not one the adapter is linked to is
+  skipped with `fill_status: "<test> not processed at a branch linked to this
+  adapter"`. The test is matched to the adapter **branch-agnostically** (by its
+  tenant-level source `LabTest` identity), so an order created at one branch but
+  transferred to another still matches the adapter mapped at the processing branch.
+  Net effect: an order created at a linked collection center then transferred to an
+  unlinked Branch A stops filling at Branch A — and the reverse (created at an
+  unlinked branch, transferred to a linked one) starts filling once it arrives.
+
   ## Fill behaviour (mirrors legacy `processAdapterResult`)
   - Order resolved from `tube_no` (the sample **barcode**) → its sample group →
-    the parent order, within the adapter's tenant + branches. Only reports that are
-    **fillable** (status PENDING / PARTIAL_PENDING / SAVED and not locked), belong
-    to the adapter's **prefered** (mapped) tests, **and are part of the scanned
-    sample group** are filled (a test outside the group falls into the same
+    the parent order (tenant-wide; branch authorisation is enforced per report as
+    above). Only reports that are **fillable** (status PENDING / PARTIAL_PENDING /
+    SAVED and not locked), belong to the adapter's **prefered** (mapped) tests,
+    **are processed at a branch the adapter is linked to**, **and are part of the
+    scanned sample group** are filled (a test outside the group falls into the same
     "Not in prefered test list" skip, matching the legacy group-narrowed
     `preferedTest`). Filled values are stored with `source = ADAPTER`; the report
     moves to `SAVED`. Reports are **never auto-approved/published** — human
@@ -153,8 +167,10 @@ docs {
   - `test_status: "No test result submitted"` — empty `test_results`.
   - `test_status: "no test match found for requested token"` — nothing fillable
     matched; each skipped report carries a `fill_status` such as
-    `"Not filled due to report status is not pending."` or
-    `"... Not in prefered test list"`.
+    `"Not filled due to report status is not pending."`,
+    `"... not processed at a branch linked to this adapter"` (branch gate), or
+    `"... Not in prefered test list"`. `report_log.branch_id` is the branch
+    currently processing that report.
 
   ## Auth errors
   - `{ "s": "400", "m": "Missing Auth token" }` / `{ "s": "403", "m": "Invalid authorization" }`.

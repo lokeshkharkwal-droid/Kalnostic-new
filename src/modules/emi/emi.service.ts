@@ -103,18 +103,43 @@ interface ResolvedSampleOrder {
    * Accession → Technician Reporting gate). See §A.9.
    */
   sampleReportable: boolean;
+  /**
+   * The branch of the sample that physically carries the scanned barcode. Used
+   * only as the branch-gate fallback for a not-yet-accepted (reportless) item —
+   * an accepted test is gated on its `LabReport.branchId` (the branch currently
+   * processing it), which an internal transfer rehomes to follow the specimen.
+   */
+  scannedBranchId: string | null;
 }
 
 /**
  * The adapter's resolved integration context: which branches it serves and which
  * branch lab tests it reports (its "prefered tests").
+ *
+ * An adapter is mapped on **branch-scoped** `BranchLabTest` ids, but an order is
+ * processed with the `BranchLabTest` id of the branch it was *created* at. After
+ * an internal transfer those two branches differ, so the exact id never matches.
+ * The context therefore also carries the **branch-agnostic** identity of the
+ * mapped tests — the tenant-level source `LabTest` ids and normalised name/code
+ * keys — so the same logical test is recognised whichever branch's row an order
+ * happens to reference. See {@link EmiService.testMapped}.
  */
 interface AdapterContext {
   branchIds: string[];
-  /** Set of `BranchLabTest.id` the adapter is configured to report. */
+  /** Set of `BranchLabTest.id` the adapter is configured to report (exact rows). */
   mappedTestIds: Set<string>;
+  /**
+   * Branch-agnostic test identity: the `sourceLabTestId` (tenant `LabTest.id`) of
+   * every mapped `BranchLabTest`. A report records this same id as `labTestId`, so
+   * it matches across branches.
+   */
+  mappedSourceLabTestIds: Set<string>;
+  /** Defensive fallback identity: normalised `testName`/`testCode` keys of the mapped tests. */
+  mappedTestKeys: Set<string>;
   /** `{ branchLabTestId: testName }` — the legacy `prefered_test` map. */
   preferedTest: Record<string, string>;
+  /** `{ sourceLabTestId: testName }` — the mapped tests' display names, keyed branch-agnostically. */
+  preferedBySource: Record<string, string>;
   /** Equipment.code, echoed back as `adapter_code`. */
   equipmentCode: string | null;
 }
@@ -257,12 +282,11 @@ export class EmiService {
             tx,
             adapter.tenantId,
             code,
-            ctx,
           );
           if (!resolved) {
             return { s: EMI.BAD_REQUEST, m: 'Specimen id not found' };
           }
-          const { order, selectedItems } = resolved;
+          const { order, selectedItems, scannedBranchId } = resolved;
           branchId = order.branchId;
 
           // Accession gate: don't expose the order/tests for result entry unless
@@ -307,9 +331,38 @@ export class EmiService {
             for (const report of reports) {
               const mappedTestId =
                 report?.memberBranchLabTestId ?? item.branchLabTestId;
-              if (!mappedTestId || !ctx.mappedTestIds.has(mappedTestId)) {
+              const sourceLabTestId =
+                report?.labTestId ??
+                item.branchLabTest?.sourceLabTestId ??
+                null;
+
+              // Test gate (branch-agnostic): is this one of the adapter's
+              // prefered tests, matched by its tenant-level identity (so an order
+              // created at a different branch than the adapter is mapped on still
+              // matches)?
+              if (
+                !this.testMapped(ctx, {
+                  branchLabTestId: mappedTestId,
+                  sourceLabTestId,
+                  testName: item.branchLabTest?.testName,
+                  testCode: item.branchLabTest?.testCode,
+                })
+              ) {
                 continue;
               }
+
+              // Branch gate: only expose the test when the branch CURRENTLY
+              // PROCESSING it is one this adapter serves. A report's branch is
+              // rehomed to follow the specimen on an internal transfer, so it is
+              // the processing branch — not the order-creation branch. A reportless
+              // (not-yet-accepted) unit falls back to the scanned sample's branch.
+              const processingBranchId = report
+                ? report.branchId
+                : scannedBranchId;
+              if (!this.branchLinked(ctx, processingBranchId)) {
+                continue;
+              }
+
               if (report && !this.reportInScannedGroup(members, report)) {
                 continue;
               }
@@ -320,15 +373,20 @@ export class EmiService {
                 continue;
               }
               // Panel member has no `item.branchLabTest`; its display name is the
-              // mapped test's name (`preferedTest`, keyed by BranchLabTest.id).
+              // mapped test's name, resolved branch-agnostically by source id
+              // (`preferedBySource`) and finally by the exact BranchLabTest id.
               pushUnique(
-                item.branchLabTest?.testName ?? ctx.preferedTest[mappedTestId],
+                item.branchLabTest?.testName ??
+                  (sourceLabTestId
+                    ? ctx.preferedBySource[sourceLabTestId]
+                    : undefined) ??
+                  (mappedTestId ? ctx.preferedTest[mappedTestId] : undefined),
               );
-              const labTestId =
-                report?.labTestId ??
-                item.branchLabTest?.sourceLabTestId ??
-                null;
-              const params = await this.resolveParams(tx, labTestId, item);
+              const params = await this.resolveParams(
+                tx,
+                sourceLabTestId,
+                item,
+              );
               for (const p of params) {
                 pushUnique(p.parameterName);
               }
@@ -411,7 +469,7 @@ export class EmiService {
         // same specimen id it received from `/emi/orders`).
         const code = body.tube_no?.trim() ?? '';
         const resolved = code
-          ? await this.findOrderByBarcode(tx, adapter.tenantId, code, ctx)
+          ? await this.findOrderByBarcode(tx, adapter.tenantId, code)
           : null;
         const order = resolved?.order ?? null;
         const selectedItems =
@@ -541,11 +599,18 @@ export class EmiService {
           for (const report of item.labReports) {
             // For a panel member report, `memberBranchLabTestId` is the mapped
             // BranchLabTest id; for a standalone report it's null and the item's
-            // own `branchLabTestId` applies.
+            // own `branchLabTestId` applies. `labTestId` is the branch-agnostic
+            // tenant source identity recorded on the report.
             const mappedTestId =
               report.memberBranchLabTestId ?? item.branchLabTestId;
+            const sourceLabTestId = report.labTestId;
             const memberName =
-              mappedTestId != null ? ctx.preferedTest[mappedTestId] : undefined;
+              (mappedTestId != null
+                ? ctx.preferedTest[mappedTestId]
+                : undefined) ??
+              (sourceLabTestId != null
+                ? ctx.preferedBySource[sourceLabTestId]
+                : undefined);
             const reportName =
               item.branchLabTest?.testName ??
               memberName ??
@@ -556,9 +621,10 @@ export class EmiService {
               report_name: reportName,
               status: report.status,
               before_report_status: report.status,
-              fill_status: '',
               available_branches: ctx.branchIds,
-              branch_id: order.branchId,
+              // The branch CURRENTLY processing this report (rehomed on transfer).
+              branch_id: report.branchId,
+              fill_status: '',
             };
 
             // Not fillable (terminal status / locked).
@@ -570,13 +636,31 @@ export class EmiService {
               continue;
             }
 
+            // Branch gate: results may only be filled onto a test the adapter is
+            // authorised for AT THE BRANCH CURRENTLY PROCESSING IT. `report.branchId`
+            // follows the specimen on an internal transfer (rehomed), so an order
+            // created at a linked branch but transferred to an UNLINKED one — and
+            // the reverse — is handled here, not by the order-creation branch.
+            if (!this.branchLinked(ctx, report.branchId)) {
+              log.push({
+                ...base,
+                fill_status: `${reportName} not processed at a branch linked to this adapter`,
+              });
+              continue;
+            }
+
             // Not one of the adapter's prefered (mapped) tests, or not part of
-            // the scanned specimen group. (Legacy narrows `preferedTest` to the
-            // scanned group's tests, so a non-group test lands in this same
-            // "Not in prefered test list" branch.)
+            // the scanned specimen group. The test gate is branch-agnostic (by
+            // tenant source identity) so a transferred test still matches. (Legacy
+            // narrows `preferedTest` to the scanned group's tests, so a non-group
+            // test lands in this same "Not in prefered test list" branch.)
             if (
-              !mappedTestId ||
-              !ctx.mappedTestIds.has(mappedTestId) ||
+              !this.testMapped(ctx, {
+                branchLabTestId: mappedTestId,
+                sourceLabTestId,
+                testName: item.branchLabTest?.testName,
+                testCode: item.branchLabTest?.testCode,
+              }) ||
               !members ||
               !this.reportInScannedGroup(members, report)
             ) {
@@ -814,7 +898,10 @@ export class EmiService {
     ]);
 
     const mappedTestIds = new Set(testRows.map((t) => t.branchLabTestId));
+    const mappedSourceLabTestIds = new Set<string>();
+    const mappedTestKeys = new Set<string>();
     const preferedTest: Record<string, string> = {};
+    const preferedBySource: Record<string, string> = {};
     if (mappedTestIds.size > 0) {
       const tests = await tx.branchLabTest.findMany({
         where: {
@@ -822,24 +909,101 @@ export class EmiService {
           tenantId: adapter.tenantId,
           deletedAt: null,
         },
-        select: { id: true, testName: true },
+        select: {
+          id: true,
+          testName: true,
+          testCode: true,
+          sourceLabTestId: true,
+        },
       });
       for (const t of tests) {
         preferedTest[t.id] = t.testName;
+        if (t.sourceLabTestId) {
+          mappedSourceLabTestIds.add(t.sourceLabTestId);
+          preferedBySource[t.sourceLabTestId] = t.testName;
+        }
+        const nameKey = matchKey(t.testName);
+        if (nameKey) mappedTestKeys.add(nameKey);
+        const codeKey = matchKey(t.testCode);
+        if (codeKey) mappedTestKeys.add(codeKey);
       }
     }
 
     return {
       branchIds: branchRows.map((b) => b.branchId),
       mappedTestIds,
+      mappedSourceLabTestIds,
+      mappedTestKeys,
       preferedTest,
+      preferedBySource,
       equipmentCode: equipment?.code ?? null,
     };
   }
 
   /**
+   * Whether a branch is one the adapter serves — the core authorisation check for
+   * requirement "LIS access depends on the branch currently processing the test".
+   * An adapter with **no** branch mapping is treated as unrestricted (legacy
+   * semantics — the old sample lookup only filtered when `branchIds.length > 0`),
+   * and a `null` (tenant-level, branch-less) report is universally visible, as the
+   * old lookup explicitly included null-branch samples.
+   * @param ctx the adapter context (its mapped branch ids)
+   * @param branchId the branch currently processing the test (`LabReport.branchId`)
+   */
+  private branchLinked(ctx: AdapterContext, branchId: string | null): boolean {
+    if (ctx.branchIds.length === 0) {
+      return true;
+    }
+    if (branchId === null) {
+      return true;
+    }
+    return ctx.branchIds.includes(branchId);
+  }
+
+  /**
+   * Whether a report's test is one the adapter is configured to report, matched
+   * **branch-agnostically**. An order created at branch X carries X's
+   * `BranchLabTest` id, while an adapter mapped at branch Y carries Y's — different
+   * rows for the same logical test — so an exact id match alone breaks the moment a
+   * specimen is transferred across branches. Matching precedence:
+   * 1. exact `BranchLabTest.id` (same-branch fast path, unchanged behaviour);
+   * 2. tenant-level source `LabTest` id (`report.labTestId` ↔
+   *    `BranchLabTest.sourceLabTestId`) — the reliable cross-branch identity;
+   * 3. normalised test name / code key (defensive fallback for rows with no shared
+   *    source id).
+   * @param ctx the adapter context (its mapped-test identity sets)
+   * @param t the candidate test's ids/labels pulled from the report + order item
+   */
+  private testMapped(
+    ctx: AdapterContext,
+    t: {
+      branchLabTestId: string | null;
+      sourceLabTestId: string | null;
+      testName?: string | null;
+      testCode?: string | null;
+    },
+  ): boolean {
+    if (t.branchLabTestId != null && ctx.mappedTestIds.has(t.branchLabTestId)) {
+      return true;
+    }
+    if (
+      t.sourceLabTestId != null &&
+      ctx.mappedSourceLabTestIds.has(t.sourceLabTestId)
+    ) {
+      return true;
+    }
+    const nameKey = matchKey(t.testName);
+    if (nameKey && ctx.mappedTestKeys.has(nameKey)) {
+      return true;
+    }
+    const codeKey = matchKey(t.testCode);
+    return !!codeKey && ctx.mappedTestKeys.has(codeKey);
+  }
+
+  /**
    * Resolve an order from a scanned **sample barcode** (the specimen id the
-   * analyzer sends), tenant-scoped and within the adapter's branches. Mirrors the
+   * analyzer sends), tenant-scoped (branch authorisation is enforced per test by
+   * the callers, not here — see the doc below). Mirrors the
    * legacy `OrderSpecimenGroup::getFranchiseLatestGroupBySpecimenId`: the barcode
    * identifies a sample group — one-or-more `OrderSample` rows sharing that
    * `barcode` (Accession assigns one shared barcode per grouping bucket) — from
@@ -849,31 +1013,27 @@ export class EmiService {
    * @param tx active Prisma transaction client (already tenant-scoped)
    * @param tenantId tenant scope
    * @param barcode the scanned sample barcode (= `OrderSample.barcode`)
-   * @param ctx the adapter's resolved branch scope
    * @returns the order + the per-item member `labTestId` sets carried by the
    *   scanned group (see {@link ResolvedSampleOrder}), or `null` when no active
-   *   sample carries the barcode in the adapter's scope
+   *   sample carries the barcode in the tenant
+   *
+   * The order is resolved **tenant-wide**, deliberately NOT filtered by the
+   * adapter's branches: the barcode only ever lives on the origin sample (the
+   * internal-transfer clone is created barcode-less), so filtering here would hide
+   * a specimen the moment it was transferred to another branch — the exact bug
+   * being fixed. Adapter-branch authorisation is instead enforced per test, on the
+   * branch **currently processing** it (`LabReport.branchId`), in the callers.
    */
   private async findOrderByBarcode(
     tx: Prisma.TransactionClient,
     tenantId: string,
     barcode: string,
-    ctx: AdapterContext,
   ): Promise<ResolvedSampleOrder | null> {
-    const where: Prisma.OrderSampleWhereInput = {
-      barcode,
-      tenantId,
-      deletedAt: null,
-    };
-    if (ctx.branchIds.length > 0) {
-      // Include tenant-level (null-branch) samples too, but restrict located
-      // samples to the adapter's branches.
-      where.OR = [{ branchId: { in: ctx.branchIds } }, { branchId: null }];
-    }
     const samples = await tx.orderSample.findMany({
-      where,
+      where: { barcode, tenantId, deletedAt: null },
       select: {
         orderId: true,
+        branchId: true,
         // `status` drives the LIS result gate — only an accepted-and-still-active
         // sample is reportable (see `sampleReportable` below).
         status: true,
@@ -894,6 +1054,7 @@ export class EmiService {
     // that order sharing this barcode. The per-item member set is what narrows a
     // panel (one OrderItem, many member-test reports) to just the scanned tests.
     const orderId = samples[0]!.orderId;
+    const scannedBranchId = samples[0]!.branchId;
     const selectedItems = new Map<string, Set<string | null>>();
     // The scanned group is reportable when any of its samples is accepted AND
     // still active (a REPORTABLE_SAMPLE_STATUSES status). Collected-only samples,
@@ -922,7 +1083,7 @@ export class EmiService {
     if (!order) {
       return null;
     }
-    return { order, selectedItems, sampleReportable };
+    return { order, selectedItems, sampleReportable, scannedBranchId };
   }
 
   /**
