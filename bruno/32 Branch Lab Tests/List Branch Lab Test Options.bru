@@ -14,6 +14,7 @@ params:query {
   page: 1
   limit: 10
   ~search: Vitamin
+  ~listId:
   ~preferredOnly: true
   ~includeAka: true
 }
@@ -39,8 +40,9 @@ docs {
   generates no accession sample).
 
   Scoped to the JWT tenant + active branch (no `branchId` in the query). `search`
-  matches testName (case-insensitive). Omit `page` for the full array; supply `page`
-  for a `{ data, total, page, limit }` envelope.
+  matches testName (case-insensitive). `listId` scopes options (+ `listPrice`) to a
+  named pricing list (omitted = Walk-in). Omit `page` for the full array; supply
+  `page` for a `{ data, total, page, limit }` envelope.
 
   Optional query flags (both default false, so other pickers are unaffected):
   - `preferredOnly=true` — when `search` is empty, narrow to `isPreferenceTest`

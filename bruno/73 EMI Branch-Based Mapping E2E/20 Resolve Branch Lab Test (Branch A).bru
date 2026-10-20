@@ -1,0 +1,40 @@
+meta {
+  name: 20 Resolve Branch Lab Test (Branch A)
+  type: http
+  seq: 20
+}
+
+get {
+  url: {{baseUrl}}/branch-lab-tests/options?search=EMI Branch Mapping CBC {{tatRunId}}&page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  search: EMI Branch Mapping CBC {{tatRunId}}
+  page: 1
+  limit: 10
+}
+
+auth:bearer {
+  token: {{baOperatorToken}}
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.length && data[0].id) bru.setVar("branchLabTestIdBa", data[0].id);
+}
+
+tests {
+  test("branch A branch lab test resolved", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.body.data).to.be.an("array").with.length.of.at.least(1);
+  });
+}
+
+docs {
+  **Catalogue - resolve Branch A's `BranchLabTest` id** (via `baOperatorToken`).
+  Captures **`branchLabTestIdBa`** - mapped onto the Branch A adapter. This is a
+  DIFFERENT row from `branchLabTestIdCc` (per-branch), which is exactly why the
+  cross-branch match uses name/code, not the branch-lab-test id.
+}

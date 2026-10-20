@@ -1,0 +1,71 @@
+meta {
+  name: 33 Case 2 BEFORE - Submit Result (BA adapter) BLOCKED
+  type: http
+  seq: 33
+}
+
+post {
+  url: {{emiBaseUrl}}/emi/submitResult
+  body: text
+  auth: none
+}
+
+headers {
+  TOKEN: {{adapterTokenBa}}
+  Content-Type: text/plain
+}
+
+body:text {
+  {
+    "specimen_type": "",
+    "tube_information_id": "e9b6927a-f2e0-4898-910b-d892b45d8de1",
+    "equipment_id": "11111112",
+    "tube_no": "{{sampleBarcode}}",
+    "original_tube_no": "{{sampleBarcode}}",
+    "result_date": "1668583670356",
+    "sent": "",
+    "sent_date": "",
+    "status": "-1",
+    "local_db_status": "1",
+    "test_results": [
+      {
+        "test_result_id": "b0a69d67-4434-44f0-b1e5-cf43f83bc536",
+        "test_result": "99.9",
+        "test_name": "Hemoglobin",
+        "display_name": "Hemoglobin",
+        "universal_test_id": "{{emiParamCode}}",
+        "unit": "{{emiParamUnit}}",
+        "result_type": "",
+        "specimen_types": []
+      }
+    ],
+    "comment": "Case 2 before transfer (BA adapter) - should be blocked",
+    "token_id": "{{adapterTokenBa}}",
+    "adapter_id": "14",
+    "adapter_code": "erba-map"
+  }
+}
+
+vars:pre-request {
+  sampleBarcode: 10001
+}
+
+tests {
+  test("legacy s=200 envelope", function () {
+    expect(res.body.s).to.equal("200");
+  });
+  test("CASE 2 (report at CC, adapter linked to BA only): NOTHING filled", function () {
+    expect(res.body.test_status).to.equal("no test match found for requested token");
+  });
+  test("skip reason names the branch gate", function () {
+    expect(res.body.report_log.log[0].fill_status).to.match(/not processed at a branch linked to this adapter/);
+  });
+}
+
+docs {
+  **Case 2, BEFORE transfer - submit with the Branch-A-only adapter.** The report is
+  at the Collection Center (unlinked for this adapter), so the branch gate blocks the
+  fill: `test_status = "no test match found for requested token"` and the per-report
+  `fill_status` is "... not processed at a branch linked to this adapter". The `99.9`
+  value is deliberately wrong and is never written.
+}

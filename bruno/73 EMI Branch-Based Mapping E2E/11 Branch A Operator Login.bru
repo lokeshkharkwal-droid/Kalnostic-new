@@ -1,0 +1,33 @@
+meta {
+  name: 11 Branch A Operator Login
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "identifier": "{{baOperatorLoginIdentifier}}",
+    "password": "{{operatorPassword}}"
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.accessToken) bru.setVar("baOperatorToken", data.accessToken);
+}
+
+docs {
+  **Setup - Branch A operator login.** Token scoped to `baBranchId`. Captures
+  **`baOperatorToken`** - used to import/resolve Branch A's lab test, receive the
+  transfer, and read the rehomed report at Branch A.
+}

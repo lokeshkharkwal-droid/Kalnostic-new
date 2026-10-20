@@ -1,0 +1,43 @@
+meta {
+  name: 47 Verify Report at Branch A (Adapter-Filled)
+  type: http
+  seq: 47
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/{{reportId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{baOperatorToken}}
+}
+
+tests {
+  test("the same report now reads at Branch A (rehomed)", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.body.data).to.have.property("resultValues");
+  });
+  test("Branch A machine value landed (source = ADAPTER, value = emiResultValueBa)", function () {
+    const values = res.body.data.resultValues || [];
+    const adapterValue = values.find(function (v) { return v.source === "ADAPTER"; });
+    expect(adapterValue, "a resultValue with source ADAPTER").to.exist;
+    expect(String(adapterValue.observed1)).to.equal(bru.getVar("emiResultValueBa"));
+  });
+  test("report is SAVED, not auto-approved", function () {
+    expect(res.body.data.status).to.equal("SAVED");
+  });
+}
+
+docs {
+  **Verify (after-phase) - the result is on the SAME report, now at Branch A.** The
+  report (`reportId`, captured in step 30) was rehomed to Branch A by the transfer
+  accept, so it is read here with `baOperatorToken`. It confirms the Branch-A machine
+  value (`emiResultValueBa` = 14.2, `source: ADAPTER`) overwrote the earlier Collection
+  Center value, and the status is still `SAVED` (never auto-approved).
+
+  This closes the loop for all three cases: LIS access tracked the branch **currently
+  processing** the test - works at the Collection Center before the transfer and at
+  Branch A after it, exactly where each adapter is linked.
+}

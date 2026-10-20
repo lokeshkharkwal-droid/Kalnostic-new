@@ -1,0 +1,30 @@
+meta {
+  name: 38 Pick Up Transfer (Branch A)
+  type: http
+  seq: 38
+}
+
+post {
+  url: {{baseUrl}}/accession/transfers/{{transferId}}/pick-up
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{baOperatorToken}}
+}
+
+body:json {
+  {
+    "pickedUpBy": "Branch A desk"
+  }
+}
+
+docs {
+  **Transfer - pick up** (In-Transit -> Picked Up) at Branch A. Requires the
+  internal-referral pick-up permission granted in step 09.
+}
