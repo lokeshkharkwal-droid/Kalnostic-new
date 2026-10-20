@@ -13,6 +13,21 @@ export class LabReportNotFoundException extends KaltrosException {
   }
 }
 
+/**
+ * 403 — the requested branch is not one the caller may reach through the
+ * Technician module (no branch access, or no Technician-module access there).
+ */
+export class BranchNotAccessibleException extends KaltrosException {
+  constructor(branchId: string) {
+    super(
+      'BRANCH_NOT_ACCESSIBLE',
+      'You do not have Technician access to that branch',
+      { branchId },
+      HttpStatus.FORBIDDEN,
+    );
+  }
+}
+
 /** 422 — the caller has no active branch context (required for all routes). */
 export class ActiveBranchRequiredException extends KaltrosException {
   constructor() {
@@ -72,6 +87,103 @@ export class LabReportLockedException extends KaltrosException {
     super(
       'LAB_REPORT_LOCKED',
       'This report is locked and cannot be edited. Ask a supervisor to unlock it.',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
+ * 409 — the report's sample has been sent to another branch and has not been
+ * received or returned yet, so the report is view-only until then. Every
+ * write (results, status changes, notes, attachments, ...) is refused; reads
+ * and prints are unaffected.
+ */
+export class LabReportSentOutException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'LAB_REPORT_SENT_OUT',
+      'This sample has been sent to another branch, so its report is view-only until the transfer is received or returned.',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
+ * 409 — the report's sample is on Repeat, or has been re-collected but not
+ * accepted again, so there is no accepted tube to enter results for yet. Every
+ * write is refused (reads and prints are unaffected) until the Accession user
+ * accepts the sample again.
+ */
+export class LabReportSampleAwaitingException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'LAB_REPORT_SAMPLE_AWAITING',
+      'This test’s sample is on Repeat or waiting to be accepted again, so the report is view-only until the sample is accepted.',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
+ * 409 — the report's order was cancelled, so the report can no longer be worked
+ * on: every write path refuses (reads and prints are unaffected). Raised by
+ * `assertReportWritable`, together with the sent-out lock.
+ */
+export class LabReportOrderCancelledException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'LAB_REPORT_ORDER_CANCELLED',
+      'This order has been cancelled, so its report can no longer be worked on.',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
+ * 409 — the order was cancelled, so its reports cannot be printed (single or
+ * whole-order). Printing is read-only, but a cancelled order has no report to
+ * hand to a patient, so every print route refuses.
+ */
+export class LabReportPrintOrderCancelledException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'LAB_REPORT_PRINT_ORDER_CANCELLED',
+      'This order has been cancelled, so its reports cannot be printed.',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
+ * 409 — the test behind this report was removed from its order, so the report is
+ * kept (visible, tagged "Test removed from order") but frozen: every write path
+ * refuses (reads are unaffected). Raised by `assertReportWritable`.
+ */
+export class LabReportItemRemovedException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'LAB_REPORT_ITEM_REMOVED',
+      'This test was removed from the order, so no further work is allowed on it.',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
+ * 409 — the test behind this report was removed from its order, so the report
+ * cannot be printed. Whole-order prints silently leave such a report out instead.
+ */
+export class LabReportPrintItemRemovedException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'LAB_REPORT_PRINT_ITEM_REMOVED',
+      'This test was removed from the order, so its report cannot be printed.',
       { id },
       HttpStatus.CONFLICT,
     );

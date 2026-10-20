@@ -166,12 +166,14 @@ export class SampleTransferController {
   bulkPickUp(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Body() dto: BulkPickUpDto,
   ) {
     return this.transfers.pickUp(
       dto.ids,
       tenantId,
       personId,
+      profile.branchId,
       dto,
       dto.skipInvalid,
     );
@@ -184,12 +186,14 @@ export class SampleTransferController {
   bulkReceive(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Body() dto: BulkReceiveDto,
   ) {
     return this.transfers.receive(
       dto.ids,
       tenantId,
       personId,
+      profile.branchId,
       dto,
       dto.skipInvalid,
     );
@@ -202,12 +206,14 @@ export class SampleTransferController {
   bulkAccept(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Body() dto: BulkTransferAcceptDto,
   ) {
     return this.transfers.accept(
       dto.ids,
       tenantId,
       personId,
+      profile.branchId,
       dto,
       dto.skipInvalid,
     );
@@ -220,12 +226,14 @@ export class SampleTransferController {
   bulkRepeat(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Body() dto: BulkTransferRepeatDto,
   ) {
     return this.transfers.repeatTransfer(
       dto.ids,
       tenantId,
       personId,
+      profile.branchId,
       dto,
       dto.skipInvalid,
     );
@@ -238,21 +246,30 @@ export class SampleTransferController {
   bulkReject(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Body() dto: BulkTransferRejectDto,
   ) {
     return this.transfers.reject(
       dto.ids,
       tenantId,
       personId,
+      profile.branchId,
       dto,
       dto.skipInvalid,
     );
   }
 
-  /** Fetch one transfer (with sample + order context). */
+  /**
+   * Fetch one transfer (with sample + order context). Limited to the branches with
+   * a stake in it (404 otherwise); a tenant-wide caller is not limited.
+   */
   @Get('transfers/:id')
-  findTransfer(@CurrentTenant() tenantId: string, @Param('id') id: string) {
-    return this.transfers.findTransferById(id, tenantId);
+  findTransfer(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+  ) {
+    return this.transfers.findTransferById(id, tenantId, profile.branchId);
   }
 
   /** Picked Up (§B.11.1). */
@@ -262,11 +279,19 @@ export class SampleTransferController {
   async pickUp(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Param('id') id: string,
     @Body() dto: TransferPickUpDto,
   ) {
-    return (await this.transfers.pickUp([id], tenantId, personId, dto))
-      .succeeded[0];
+    return (
+      await this.transfers.pickUp(
+        [id],
+        tenantId,
+        personId,
+        profile.branchId,
+        dto,
+      )
+    ).succeeded[0];
   }
 
   /** Receive (§B.11.2). */
@@ -276,11 +301,19 @@ export class SampleTransferController {
   async receive(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Param('id') id: string,
     @Body() dto: TransferReceiveDto,
   ) {
-    return (await this.transfers.receive([id], tenantId, personId, dto))
-      .succeeded[0];
+    return (
+      await this.transfers.receive(
+        [id],
+        tenantId,
+        personId,
+        profile.branchId,
+        dto,
+      )
+    ).succeeded[0];
   }
 
   /** Accept (§B.11.3) — INTERNAL clones into In-House (RULE 1). */
@@ -290,11 +323,19 @@ export class SampleTransferController {
   async accept(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Param('id') id: string,
     @Body() dto: SampleNoteDto,
   ) {
-    return (await this.transfers.accept([id], tenantId, personId, dto))
-      .succeeded[0];
+    return (
+      await this.transfers.accept(
+        [id],
+        tenantId,
+        personId,
+        profile.branchId,
+        dto,
+      )
+    ).succeeded[0];
   }
 
   /** Repeat (§B.11.4). */
@@ -304,11 +345,19 @@ export class SampleTransferController {
   async repeat(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Param('id') id: string,
     @Body() dto: TransferRepeatDto,
   ) {
-    return (await this.transfers.repeatTransfer([id], tenantId, personId, dto))
-      .succeeded[0];
+    return (
+      await this.transfers.repeatTransfer(
+        [id],
+        tenantId,
+        personId,
+        profile.branchId,
+        dto,
+      )
+    ).succeeded[0];
   }
 
   /** Reject (§B.11.5). */
@@ -318,11 +367,19 @@ export class SampleTransferController {
   async reject(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Param('id') id: string,
     @Body() dto: TransferRejectDto,
   ) {
-    return (await this.transfers.reject([id], tenantId, personId, dto))
-      .succeeded[0];
+    return (
+      await this.transfers.reject(
+        [id],
+        tenantId,
+        personId,
+        profile.branchId,
+        dto,
+      )
+    ).succeeded[0];
   }
 
   /**

@@ -35,6 +35,7 @@ import {
   toEpochSeconds,
 } from './util/emi-format';
 import { REPORTABLE_SAMPLE_STATUSES } from '../accession/constants/sample-transitions.constant';
+import { isReportSentOut } from '../lab-report/utils/sent-out-report.util';
 
 /** Report statuses that may still be (re)filled by a machine. */
 const FILLABLE_STATUSES: ReadonlySet<LabReportStatus> = new Set([
@@ -566,6 +567,18 @@ export class EmiService {
               log.push({
                 ...base,
                 fill_status: 'Not filled due to report status is not pending.',
+              });
+              continue;
+            }
+
+            // View-only: this report's sample was sent to another branch and has
+            // not been received yet. The scanned barcode group can still hold a
+            // reportable sibling sample, so check the report itself.
+            if (await isReportSentOut(tx, adapter.tenantId, report)) {
+              log.push({
+                ...base,
+                fill_status:
+                  'Not filled because the sample was sent to another branch.',
               });
               continue;
             }

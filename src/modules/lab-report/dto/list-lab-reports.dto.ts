@@ -9,8 +9,13 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   Min,
 } from 'class-validator';
+import {
+  BRANCH_OR_ALL_MESSAGE,
+  BRANCH_OR_ALL_PATTERN,
+} from './worklist-branch-query.dto';
 
 /** Source pill (LABORATORY.docx §1.1 element 2, §3.2). */
 export type ReportSource = 'ALL' | 'IN_HOUSE' | 'OUTSOURCE';
@@ -18,9 +23,9 @@ export type ReportSource = 'ALL' | 'IN_HOUSE' | 'OUTSOURCE';
 /**
  * Query params for the Reporting Worklist (`GET /lab-reports`) and its live
  * counts sibling (`GET /lab-reports/counts`, same filters minus `status`).
- * `branchId` defaults to the caller's active branch (never trusts the query
- * value across branches — resolved in the controller, mirroring
- * PhlebotomistScheduleController.requireBranch).
+ * `branchId` defaults to the caller's active branch; an explicit value is
+ * validated against the branches the caller is authorised for (see
+ * `TechnicianBranchAccessService.resolveScope`).
  */
 export class ListLabReportsDto {
   @IsOptional()
@@ -28,13 +33,14 @@ export class ListLabReportsDto {
   status?: LabReportStatus;
 
   /**
-   * "All Branches" filter (LABORATORY.docx §3.1). Overrides the caller's
-   * active branch when supplied — same permissive pattern as
-   * `ListOrdersDto.branchId` (any branch in the tenant, no ownership check).
-   * Omit to default to the caller's own active branch.
+   * Branch selection (LABORATORY.docx §3.1): omitted = the caller's own branch
+   * (the default); a branch id = that branch only; `all` = "All Branches", i.e.
+   * every branch the caller is authorised for through branch access +
+   * Technician-module access — never the whole tenant. A branch outside that set
+   * is refused. Resolved in the controller (see `TechnicianBranchAccessService`).
    */
   @IsOptional()
-  @IsUUID()
+  @Matches(BRANCH_OR_ALL_PATTERN, { message: BRANCH_OR_ALL_MESSAGE })
   branchId?: string;
 
   @IsOptional()

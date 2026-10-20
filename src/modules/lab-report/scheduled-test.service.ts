@@ -1,6 +1,11 @@
+import {
+  worklistRowBranchWhere,
+  type WorklistBranchScope,
+} from './access/worklist-branch-scope';
 import { Injectable } from '@nestjs/common';
 import { ScheduledTestStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { assertReportWritable } from './utils/sent-out-report.util';
 import { LabReportDirectoryService } from './lab-report-directory.service';
 import { LabReportService } from './lab-report.service';
 import { ScheduleTestDto } from './dto/schedule-test.dto';
@@ -55,6 +60,7 @@ export class ScheduledTestService {
       },
     });
     if (!report) throw new LabReportNotFoundException(labReportId);
+    await assertReportWritable(this.prisma, tenantId, labReportId);
 
     if (dto.assignedToId) {
       await this.directory.assertActiveTechnician(
@@ -109,10 +115,14 @@ export class ScheduledTestService {
       });
   }
 
-  async findAll(tenantId: string, branchId: string | null) {
-    const activeBranchId = this.requireBranch(branchId);
+  /**
+   * The worklist's entries for the branches in `scope` (the caller's own branch by
+   * default; several branches for "All Branches" — see
+   * `TechnicianBranchAccessService.resolveScope`).
+   */
+  async findAll(tenantId: string, scope: WorklistBranchScope) {
     const rows = await this.prisma.scheduledTest.findMany({
-      where: { tenantId, branchId: activeBranchId, deletedAt: null },
+      where: { tenantId, ...worklistRowBranchWhere(scope), deletedAt: null },
       include: SCHEDULED_TEST_INCLUDE,
       orderBy: { scheduledAt: 'asc' },
     });
@@ -141,9 +151,17 @@ export class ScheduledTestService {
   ) {
     const activeBranchId = this.requireBranch(branchId);
     const entry = await this.prisma.scheduledTest.findFirst({
-      where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
+      where: {
+        id,
+        tenantId,
+        deletedAt: null,
+        // Tied to the REPORT's branch, not the branch stamped on this row when it
+        // was raised: the row keeps that branch after the report is re-homed.
+        labReport: { is: { branchId: activeBranchId, deletedAt: null } },
+      },
     });
     if (!entry) throw new WorklistEntryNotFoundException('scheduled_test', id);
+    await assertReportWritable(this.prisma, tenantId, entry.labReportId);
 
     if (dto.assignedToId) {
       await this.directory.assertActiveTechnician(
@@ -202,9 +220,17 @@ export class ScheduledTestService {
   ) {
     const activeBranchId = this.requireBranch(branchId);
     const entry = await this.prisma.scheduledTest.findFirst({
-      where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
+      where: {
+        id,
+        tenantId,
+        deletedAt: null,
+        // Tied to the REPORT's branch, not the branch stamped on this row when it
+        // was raised: the row keeps that branch after the report is re-homed.
+        labReport: { is: { branchId: activeBranchId, deletedAt: null } },
+      },
     });
     if (!entry) throw new WorklistEntryNotFoundException('scheduled_test', id);
+    await assertReportWritable(this.prisma, tenantId, entry.labReportId);
 
     const updated = await this.prisma.withTenant(tenantId, async (tx) => {
       const updatedEntry = await tx.scheduledTest.update({

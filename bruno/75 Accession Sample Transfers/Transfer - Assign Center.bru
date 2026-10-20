@@ -1,0 +1,50 @@
+meta {
+  name: Transfer - Assign Center
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/accession/transfers/{{transferId}}/assign-center
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "destinationBranchId": "{{destinationBranchId}}"
+  }
+}
+
+tests {
+  test("201 Created", function () { expect(res.getStatus()).to.equal(201); });
+}
+
+docs {
+  Set or change the destination of a transfer created without one.
+
+  For an INTERNAL transfer this is allowed only while it is IN_TRANSIT or PICKED_UP;
+  from RECEIVED onward (or once closed) it is refused with 422 TRANSFER_NOT_EDITABLE.
+  Who may act (INTERNAL transfer): only the SENDING branch. The caller's active branch
+  (the profile they switched to) must be the branch that sent the sample, otherwise
+  403 TRANSFER_WRONG_BRANCH and nothing changes. A caller with no active branch
+  (business admin) is refused too. A group Retrieve is refused as a whole, never
+  skipped, when any sent sample belongs to another branch.
+  Internal branch transfer rules (manager flow 2026-09-29):
+  - Once a sample is SENT_INTERNAL to another branch, the SENDER's Technician
+    worklist hides its report (list, counts, detail, history, every write, the five
+    secondary worklists, attachments, inventory usage, analyser results). It behaves
+    as "Lab report not found" (404 LAB_REPORT_NOT_FOUND) for the sender.
+  - A sent sample accepts ONLY Retrieve from the sender, and only until the
+    receiving branch has received it (transfer IN_TRANSIT / PICKED_UP).
+  - The receiving branch's Reject / Repeat returns the test to the sender: the
+    sender's original sample goes SENT_INTERNAL -> REPEAT automatically.
+}

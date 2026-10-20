@@ -51,4 +51,7 @@ docs {
   fields are persisted on the transfer row (only when supplied — an omitted field
   never clobbers the value recorded at send time); `notes`/`attachmentUrl` are
   recorded on the sample's history (the transfer row has no history table).
+
+  `externalPartnerName`, when given, must contain at least one visible character
+  (400 `VALIDATION_ERROR` otherwise).
 }

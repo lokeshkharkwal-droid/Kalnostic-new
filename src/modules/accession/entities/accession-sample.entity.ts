@@ -9,6 +9,15 @@ import type { CollectionProgress } from '../../../common/utils/collection-progre
  */
 export const SAMPLE_LIST_INCLUDE = {
   tests: { where: { deletedAt: null } },
+  // Latest transfer only (id/kind/status): lets the in-house list tell whether a
+  // sent sample can still be retrieved / re-addressed (only until the receiving
+  // branch has received it) without fetching the full detail per row.
+  transfers: {
+    where: { deletedAt: null },
+    orderBy: { createdAt: 'desc' },
+    take: 1,
+    select: { id: true, kind: true, transferStatus: true },
+  },
   order: {
     select: {
       id: true,
@@ -16,6 +25,8 @@ export const SAMPLE_LIST_INCLUDE = {
       orderDate: true,
       orderTime: true,
       createdAt: true,
+      // CANCELLED here freezes the sample: the list shows an "Order cancelled" tag.
+      status: true,
       billId: true,
       patient: true,
       referredByDoctor: true,
@@ -37,6 +48,8 @@ export const SAMPLE_INCLUDE = {
     include: {
       orderItem: {
         select: {
+          // Set when the test was removed from the order (see `itemRemoved`).
+          deletedAt: true,
           branchLabTest: { select: { departmentId: true } },
           branchLabPanel: { select: { departmentId: true } },
           // The center this order line was assigned to at order create/edit
@@ -60,6 +73,8 @@ export const SAMPLE_INCLUDE = {
       orderDate: true,
       orderTime: true,
       createdAt: true,
+      // CANCELLED here freezes the sample: the list shows an "Order cancelled" tag.
+      status: true,
       billId: true,
       patient: true,
       referredByDoctor: true,
@@ -89,6 +104,12 @@ export type OrderSampleDetail = Omit<
   'tests' | 'transfers'
 > & {
   departmentLabel: string | null;
+  /**
+   * True when the test(s) this sample carries were removed from the order: the
+   * sample is kept but frozen (only Store / Discard stay open), tagged "Test
+   * removed from order". Derived from the order items' `deletedAt`, not stored.
+   */
+  itemRemoved: boolean;
   tests: (OrderSampleWithRelations['tests'][number] & {
     department: string | null;
   })[];
@@ -105,6 +126,8 @@ export type OrderSampleDetail = Omit<
 /** A list row enriched with its derived TAT band (§A.4 — not stored). */
 export type OrderSampleListItem = OrderSampleListRow & {
   tatStatus: TatStatus | null;
+  /** True when the test(s) on this sample were removed from the order (frozen, kept for wind-down). */
+  itemRemoved: boolean;
 };
 
 /**
