@@ -1,0 +1,39 @@
+meta {
+  name: 19 Resolve Branch Lab Test (Collection Center)
+  type: http
+  seq: 19
+}
+
+get {
+  url: {{baseUrl}}/branch-lab-tests/options?search=EMI Branch Mapping CBC {{tatRunId}}&page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  search: EMI Branch Mapping CBC {{tatRunId}}
+  page: 1
+  limit: 10
+}
+
+auth:bearer {
+  token: {{ccOperatorToken}}
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.length && data[0].id) bru.setVar("branchLabTestIdCc", data[0].id);
+}
+
+tests {
+  test("collection center branch lab test resolved", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.body.data).to.be.an("array").with.length.of.at.least(1);
+  });
+}
+
+docs {
+  **Catalogue - resolve the Collection Center's `BranchLabTest` id.** Options are
+  branch-scoped, so `ccOperatorToken` returns the Collection Center's copy. Captures
+  **`branchLabTestIdCc`** - used on the order (step 25) and mapped onto the CC adapter.
+}

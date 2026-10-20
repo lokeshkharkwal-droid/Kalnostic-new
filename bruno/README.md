@@ -62,6 +62,19 @@ environment and no manual edits:
   *as the new user*. Proves a freshly-provisioned account can do front-desk work
   end-to-end. Prereq: the branch has an imported catalogue (run 47 once first if
   empty).
+- **71 EMI Machine Flow (E2E)** — the full lab-analyzer path: accept an order into
+  the lab → register a machine (equipment + lab adapter → token) → the machine
+  scans (`/emi/orders`) and submits (`/emi/submitResult`) → verify the value lands
+  on the report (`source = ADAPTER`, `SAVED`). (Standalone requests: **70 EMI
+  Machine Interface**; panel variant: **72 EMI Panel Flow**.)
+- **73 EMI Branch-Based Mapping (E2E)** — proves LIS access follows the branch
+  **currently processing** each test. SiteAdmin → two branches (a Collection Center
+  + Branch A) → the same test in each → **three adapters** (CC-only / BA-only /
+  both) → one order at the Collection Center, scanned **before and after an internal
+  transfer** to Branch A. Asserts all three cases: works only where the adapter is
+  linked to the processing branch; a blocked `GET /emi/orders` returns an empty
+  `ut_ids`, a blocked submit fills nothing. Closes with report verifies at both
+  branches (`source = ADAPTER`).
 
 ## How it's wired
 

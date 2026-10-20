@@ -1,0 +1,62 @@
+meta {
+  name: 16 Create Lab Test (Branch A MD)
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{baseUrl}}/master-data/{{baMasterDataId}}/lab-tests
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "testName": "EMI Branch Mapping CBC {{tatRunId}}",
+    "testDisplayName": "CBC",
+    "testCode": "EMIMAP-{{tatRunId}}-BA",
+    "processMethod": "SINGLE_STEP",
+    "samplePriorityType": "ROUTINE",
+    "priceMsrp": 500,
+    "priceMaximum": 500,
+    "priceMinimum": 300,
+    "isActive": true,
+    "scheduleDays": ["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"],
+    "scheduleFrom": "00:00",
+    "scheduleTo": "23:59",
+    "samples": [
+      { "sampleType": "Blood", "containerType": "EDTA_TUBE_PURPLE_TOP", "isDefault": true }
+    ],
+    "resultParams": [
+      {
+        "parameterName": "Hemoglobin",
+        "parameterCode": "HGB",
+        "resultType": "QUANTITATIVE",
+        "reportingUnit": "g/dL",
+        "sortOrder": 0
+      }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.id) bru.setVar("labTestIdBa", data.id);
+}
+
+docs {
+  **Catalogue - create the SAME lab test in Branch A's Master Data** - identical
+  `testName` (+ `HGB` parameter); the `testCode` carries a `-BA` suffix just to avoid
+  any chance of a duplicate-code rejection across the two Master Datas. Because
+  `BranchLabTest.sourceLabTestId` is per-branch, the cross-branch match relies on the
+  **test name** (the robust key), which is identical across both branches. Captures
+  **`labTestIdBa`**.
+}

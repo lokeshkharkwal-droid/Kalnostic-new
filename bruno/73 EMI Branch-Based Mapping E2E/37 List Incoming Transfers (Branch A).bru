@@ -1,0 +1,43 @@
+meta {
+  name: 37 List Incoming Transfers (Branch A)
+  type: http
+  seq: 37
+}
+
+get {
+  url: {{baseUrl}}/accession/transfers?direction=incoming&kind=INTERNAL&page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  direction: incoming
+  kind: INTERNAL
+  page: 1
+  limit: 20
+}
+
+auth:bearer {
+  token: {{baOperatorToken}}
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (Array.isArray(data)) {
+    const row = data.find(function (r) { return r.id === bru.getVar("transferId"); }) || data[0];
+    if (row && row.id) bru.setVar("transferId", row.id);
+  }
+}
+
+tests {
+  test("Branch A sees the incoming transfer", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.body.data).to.be.an("array").with.length.of.at.least(1);
+  });
+}
+
+docs {
+  **Transfer - Branch A's incoming referral queue.** Read with `baOperatorToken`
+  (scoped to Branch A), the backend filters `destinationBranchId = baBranchId`, so the
+  transfer from step 36 appears here. Re-captures/confirms **`transferId`**.
+}

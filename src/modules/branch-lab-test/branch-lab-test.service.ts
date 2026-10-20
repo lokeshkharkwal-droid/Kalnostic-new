@@ -711,13 +711,14 @@ export class BranchLabTestService {
       listId: filters.listId ?? (await this.resolveListId(tenantId, branchId)),
     };
     const term = filters.search?.trim();
-    if (term && filters.includeAka) {
-      where.OR = [
-        { testName: { contains: term, mode: 'insensitive' } },
-        { aka: { contains: term, mode: 'insensitive' } },
-      ];
-    } else if (term) {
-      where.testName = { contains: term, mode: 'insensitive' };
+    if (term) {
+      // Match `testName`, and the `aka` name too when `includeAka` is set.
+      where.OR = filters.includeAka
+        ? [
+            { testName: { contains: term, mode: 'insensitive' } },
+            { aka: { contains: term, mode: 'insensitive' } },
+          ]
+        : [{ testName: { contains: term, mode: 'insensitive' } }];
     } else if (filters.preferredOnly) {
       where.isPreferenceTest = true;
     }

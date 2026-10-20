@@ -1,0 +1,41 @@
+meta {
+  name: 41 Case 1 AFTER - Get Orders (CC adapter) EMPTY
+  type: http
+  seq: 41
+}
+
+get {
+  url: {{emiBaseUrl}}/emi/orders?specimen_id={{sampleBarcode}}
+  body: none
+  auth: none
+}
+
+params:query {
+  specimen_id: {{sampleBarcode}}
+}
+
+headers {
+  TOKEN: {{adapterTokenCc}}
+}
+
+vars:pre-request {
+  sampleBarcode: 10001
+}
+
+tests {
+  test("legacy s=200 envelope (order still resolves)", function () {
+    expect(res.body.s).to.equal("200");
+    expect(res.body.orders).to.be.an("array").with.length.of.at.least(1);
+  });
+  test("CASE 1 (report now at Branch A, adapter linked to CC only): ut_ids EMPTY", function () {
+    expect(res.body.orders[0].ut_ids).to.be.an("array").that.is.empty;
+  });
+}
+
+docs {
+  **Case 1, AFTER transfer - scan with the CC-only adapter.** The report is now being
+  processed at Branch A, which this adapter is NOT linked to, so the test disappears:
+  `ut_ids` is an **empty array** even though the same barcode previously returned it
+  (step 29). This is the "LIS flow for Branch A must not work" requirement - the
+  adapter follows the test's processing branch, not the order-creation branch.
+}

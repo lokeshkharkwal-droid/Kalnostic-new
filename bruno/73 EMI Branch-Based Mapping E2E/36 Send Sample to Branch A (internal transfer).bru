@@ -1,0 +1,47 @@
+meta {
+  name: 36 Send Sample to Branch A (internal transfer)
+  type: http
+  seq: 36
+}
+
+post {
+  url: {{baseUrl}}/accession/order-samples/{{sampleId}}/send
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{ccOperatorToken}}
+}
+
+body:json {
+  {
+    "destinationBranchId": "{{baBranchId}}",
+    "logisticsType": "Hand Delivery",
+    "logisticsPerson": "Internal courier"
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.id) bru.setVar("transferId", data.id);
+}
+
+tests {
+  test("sample sent (internal transfer created)", function () {
+    expect([200, 201]).to.include(res.getStatus());
+    expect(res.body.data).to.have.property("id");
+  });
+}
+
+docs {
+  **Transfer - send the sample internally to Branch A** (ACCEPTED -> SENT_INTERNAL),
+  as the Collection Center operator (requires the `send` permission from step 08).
+  Creates an INTERNAL `SampleTransfer` at `IN_TRANSIT` destined for `baBranchId`.
+  Captures **`transferId`**. The origin sample stays at the Collection Center with
+  status SENT_INTERNAL (still reportable), so the barcode keeps resolving the order.
+}
