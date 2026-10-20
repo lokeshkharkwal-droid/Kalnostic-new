@@ -692,6 +692,7 @@ export class BranchLabTestService {
       limit?: number;
       listId?: string;
       preferredOnly?: boolean;
+      includeAka?: boolean;
     } = {},
   ): Promise<
     Array<BranchLabTestOption> | PaginatedResult<BranchLabTestOption>
@@ -707,7 +708,13 @@ export class BranchLabTestService {
     };
     const term = filters.search?.trim();
     if (term) {
-      where.testName = { contains: term, mode: 'insensitive' };
+      // Match `testName`, and the `aka` name too when `includeAka` is set.
+      where.OR = filters.includeAka
+        ? [
+            { testName: { contains: term, mode: 'insensitive' } },
+            { aka: { contains: term, mode: 'insensitive' } },
+          ]
+        : [{ testName: { contains: term, mode: 'insensitive' } }];
     } else if (filters.preferredOnly) {
       where.isPreferenceTest = true;
     }

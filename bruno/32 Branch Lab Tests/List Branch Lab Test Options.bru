@@ -14,6 +14,9 @@ params:query {
   page: 1
   limit: 10
   ~search: Vitamin
+  ~listId:
+  ~preferredOnly: true
+  ~includeAka: true
 }
 
 auth:bearer {
@@ -37,6 +40,9 @@ docs {
   generates no accession sample).
 
   Scoped to the JWT tenant + active branch (no `branchId` in the query). `search`
-  matches testName (case-insensitive). Omit `page` for the full array; supply `page`
-  for a `{ data, total, page, limit }` envelope.
+  matches testName (case-insensitive); pass `includeAka=true` to also match the
+  test's `aka` name. `preferredOnly=true` narrows the unsearched view to preference
+  tests, and `listId` scopes options (+ `listPrice`) to a named pricing list
+  (omitted = Walk-in). Omit `page` for the full array; supply `page` for a
+  `{ data, total, page, limit }` envelope.
 }

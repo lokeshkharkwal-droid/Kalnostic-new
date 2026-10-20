@@ -13,6 +13,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
+import { barcodeGroupKey } from './utils/barcode-group-key';
 import { timestampRange } from '../../common/utils/date-range.util';
 import {
   buildCollectionProgressWhere,
@@ -112,15 +113,6 @@ interface SampleUnit {
   sampleFlow: boolean;
 }
 
-/**
- * The minimal shape needed to bucket a sample for grouping-aware barcode
- * assignment: its id plus the department + sample-name it belongs to.
- */
-interface BarcodeGroupable {
-  id: string;
-  departmentId: string | null;
-  sampleGroupLabel: string | null;
-}
 
 /** The scalar field writes + optional history reason an action applies. */
 interface ActionPatch {
@@ -469,32 +461,6 @@ export class OrderSampleService {
   }
 
   /**
-   * The barcode-grouping key for a sample under the tenant's grouping mode —
-   * samples sharing a key share one barcode. Mirrors the accession list's
-   * `actionScope`: Sample-wise = unique per row; Order-wise = whole order;
-   * Department-wise = per department; Dept+Sample = per department + sample name.
-   */
-  private barcodeGroupKey(
-    sample: BarcodeGroupable,
-    mode: AccessionGroupingMode,
-  ): string {
-    switch (mode) {
-      case AccessionGroupingMode.ORDER:
-        return 'ORDER';
-      case AccessionGroupingMode.DEPARTMENT:
-        return `DEPT::${sample.departmentId ?? 'none'}`;
-      case AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME:
-        return `DEPT_SAMPLE::${sample.departmentId ?? 'none'}::${
-          sample.sampleGroupLabel ?? 'General'
-        }`;
-      case AccessionGroupingMode.SAMPLE_NAME:
-      default:
-        // Sample-wise = a unique barcode per individual sample row.
-        return `SAMPLE::${sample.id}`;
-    }
-  }
-
-  /**
    * Assign a proper sequential sample barcode to each just-collected sample that
    * lacks one, bucketed by the tenant's live grouping mode — the collect-time
    * counterpart of the former creation-time auto-assignment. Samples in the same
@@ -566,7 +532,7 @@ export class OrderSampleService {
     const existing = new Map<string, { barcode: string; url: string | null }>();
     for (const s of barcoded) {
       if (!s.barcode) continue;
-      const key = `${s.orderId}::${this.barcodeGroupKey(s, mode)}`;
+      const key = `${s.orderId}::${barcodeGroupKey(s, mode)}`;
       if (!existing.has(key)) {
         existing.set(key, { barcode: s.barcode, url: s.orderIdBarcode });
       }
@@ -578,7 +544,7 @@ export class OrderSampleService {
       { branchId: string | null; ids: string[] }
     >();
     for (const t of targets) {
-      const key = `${t.orderId}::${this.barcodeGroupKey(t, mode)}`;
+      const key = `${t.orderId}::${barcodeGroupKey(t, mode)}`;
       const bucket = buckets.get(key);
       if (bucket) bucket.ids.push(t.id);
       else buckets.set(key, { branchId: t.branchId, ids: [t.id] });
@@ -1231,7 +1197,7 @@ export class OrderSampleService {
 
     const buckets = new Map<string, GroupedSampleItem[]>();
     for (const it of items) {
-      const bucketKey = this.barcodeGroupKey(it, mode);
+      const bucketKey = barcodeGroupKey(it, mode);
       const arr = buckets.get(bucketKey);
       if (arr) arr.push(it);
       else buckets.set(bucketKey, [it]);

@@ -23,6 +23,9 @@ import { ToBoolean } from '../../../common/decorators/to-boolean.decorator';
  *   `isPreferenceTest: true`. Opt-in and defaults to false so every existing
  *   caller keeps seeing the full catalogue unchanged; only the Create-Order
  *   picker's unsearched view should pass this.
+ * - `includeAka` — when true, `search` also matches the branch lab test's `aka`
+ *   name (OR'd with `testName`). Opt-in; defaults to false so other callers keep
+ *   matching on `testName` alone.
  */
 export class BranchLabTestOptionsQueryDto extends PaginationQueryDto {
   @IsOptional()
@@ -40,4 +43,10 @@ export class BranchLabTestOptionsQueryDto extends PaginationQueryDto {
   @ToBoolean()
   @IsBoolean()
   preferredOnly?: boolean;
+
+  /** Let `search` also match the test's AKA name (Create-Order picker). */
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  includeAka?: boolean;
 }

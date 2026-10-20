@@ -46,6 +46,10 @@ body:text {
   }
 }
 
+vars:pre-request {
+  sampleBarcode: 10001
+}
+
 script:post-response {
   const b = res.body;
   if (b && b.report_log && b.report_log.log && b.report_log.log.length) {

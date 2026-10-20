@@ -18,6 +18,10 @@ headers {
   TOKEN: {{adapterTokenCc}}
 }
 
+vars:pre-request {
+  sampleBarcode: 10001
+}
+
 tests {
   test("legacy s=200 envelope (order still resolves)", function () {
     expect(res.body.s).to.equal("200");

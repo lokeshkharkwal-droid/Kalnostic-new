@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { timestampRange } from '../../common/utils/date-range.util';
 import {
+  AccessionGroupingMode,
   OrderSample,
   Prisma,
   SampleStatus,
@@ -31,10 +32,12 @@ import { OutsourceStatusDto } from './dto/outsource-status.dto';
 import { ListTransfersDto } from './dto/list-transfers.dto';
 import {
   TRANSFER_INCLUDE,
+  SampleTransferCenterRow,
   SampleTransferDeptRow,
   SampleTransferListRow,
   SampleTransferWithRelations,
 } from './entities/sample-transfer.entity';
+import { barcodeGroupKey } from './utils/barcode-group-key';
 import {
   BulkActionResult,
   BulkSkippedItem,
@@ -420,6 +423,16 @@ export class SampleTransferService {
     // both queries — array-form bypasses the per-op RLS extension and returns
     // zero rows under enforced RLS (see PrismaService).
     const [data, total] = await this.prisma.withTenant(tenantId, async (tx) => {
+      // The tenant's live grouping mode — the SAME source the in-house grouped
+      // list reads — so the referral queue buckets transfers into identical
+      // Order → final-group groups (and re-grouping follows a mode change).
+      const tenant = await tx.tenant.findUnique({
+        where: { id: tenantId },
+        select: { groupingMode: true },
+      });
+      const mode =
+        tenant?.groupingMode ?? AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME;
+
       const rows = await tx.sampleTransfer.findMany({
         where,
         skip: (page - 1) * limit,
@@ -429,11 +442,12 @@ export class SampleTransferService {
       });
       const count = await tx.sampleTransfer.count({ where });
       const deptRows = await this.withDepartmentLabels(tx, tenantId, rows);
-      const fullRows = await this.withOutsourceCenterNames(
+      const centerRows = await this.withOutsourceCenterNames(
         tx,
         tenantId,
         deptRows,
       );
+      const fullRows = this.withGroupKeys(centerRows, mode);
       return [fullRows, count] as const;
     });
     return paginated(data, total, page, limit);
@@ -508,7 +522,7 @@ export class SampleTransferService {
     tx: Prisma.TransactionClient,
     tenantId: string,
     rows: SampleTransferDeptRow[],
-  ): Promise<SampleTransferListRow[]> {
+  ): Promise<SampleTransferCenterRow[]> {
     const centerIds = [
       ...new Set(
         rows.map((r) => r.outsourceCenterId).filter((v): v is string => !!v),
@@ -527,6 +541,27 @@ export class SampleTransferService {
       outsourceCenterName: row.outsourceCenterId
         ? (nameById.get(row.outsourceCenterId) ?? null)
         : null,
+    }));
+  }
+
+  /**
+   * Attach each transfer's final-group key + the active grouping mode, so the
+   * referral queue groups transfers into the SAME Order → final-group buckets
+   * the In-House list uses. The key is scoped to the sample's order
+   * (`${orderId}::${barcodeGroupKey}`) and computed by the one shared
+   * {@link barcodeGroupKey} rule — the sample carries its own persisted
+   * `departmentId` / `sampleGroupLabel`, so no extra query is needed.
+   * @param rows the page of center-labelled transfers
+   * @param mode the tenant's live grouping mode
+   */
+  private withGroupKeys(
+    rows: SampleTransferCenterRow[],
+    mode: AccessionGroupingMode,
+  ): SampleTransferListRow[] {
+    return rows.map((row) => ({
+      ...row,
+      groupingMode: mode,
+      groupKey: `${row.sample.orderId}::${barcodeGroupKey(row.sample, mode)}`,
     }));
   }
 
