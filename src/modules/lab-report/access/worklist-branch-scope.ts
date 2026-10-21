@@ -35,6 +35,14 @@ export interface BranchRule {
  */
 export interface WorklistBranchScope {
   rules: BranchRule[];
+  /**
+   * The caller's own (home / active) branch. Set only when a rule is
+   * `senderLinked`. A sender-linked report sits at a branch OUTSIDE `rules`; it
+   * stays workable when that branch is the caller's OWN one (see
+   * {@link canWorkAtHolder}) — nothing is granted by this field, every write is
+   * still judged at the report's branch with the caller's role there.
+   */
+  ownBranchId?: string;
 }
 
 /**
@@ -127,6 +135,29 @@ export function ruleWhere(rule: BranchRule): Prisma.LabReportWhereInput {
     where.status = { in: [...rule.statuses] };
   }
   return where;
+}
+
+/**
+ * Whether the caller can WORK on a listed report held by `holderBranchId`, as far
+ * as the worklist is concerned (`accessMode: 'full'`):
+ *  - the holder is one of the selected branches (that rule already limited the
+ *    list to the statuses it grants), or
+ *  - the holder is the caller's OWN branch: the report was sent by the branch
+ *    selected in the dropdown and now sits at the caller's home branch, so
+ *    looking at the sender's view must not take away the work they do at home.
+ * Anyone else keeps the look-only view of a report their selected branch SENT —
+ * including a user whose own branch is the SENDER, who works on it by selecting
+ * the receiving branch (or All Branches). The write itself is judged at the
+ * holder branch, with the caller's role there (`ReportBranchScopeGuard` +
+ * `PermissionGuard`).
+ */
+export function canWorkAtHolder(
+  scope: WorklistBranchScope,
+  holderBranchId: string | null,
+): boolean {
+  if (!holderBranchId) return false;
+  if (scope.rules.some((r) => r.branchId === holderBranchId)) return true;
+  return scope.ownBranchId === holderBranchId;
 }
 
 /** Rules that can match anything: a branch granting no statuses contributes nothing. */
