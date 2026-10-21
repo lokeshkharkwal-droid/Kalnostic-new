@@ -52,8 +52,13 @@ export class BranchLabPanelListController {
   findAll(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
   ) {
-    return this.service.findAll(tenantId, this.requireBranch(profile));
+    return this.service.findAll(
+      tenantId,
+      this.requireBranch(profile),
+      personId,
+    );
   }
 
   /**
@@ -64,10 +69,11 @@ export class BranchLabPanelListController {
   @Get('by-branch')
   async findAllForBranch(
     @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
     @Query() query: ByBranchQueryDto,
   ) {
     await this.branchService.findById(query.branchId, tenantId);
-    return this.service.findAll(tenantId, query.branchId);
+    return this.service.findAll(tenantId, query.branchId, personId);
   }
 
   /** `{ id, name, isDefault }[]` options for the list selectors. */

@@ -23,7 +23,8 @@ describe('CriticalAlertService.raise — locked reports', () => {
   const recordWorklistHistory = jest.fn();
   const writable = jest.mocked(assertReportWritable);
   const service = new CriticalAlertService(
-    { labReport: { findFirst }, $transaction: transaction } as never,
+    // `withTenant` (not a bare `$transaction`): the write must run with the tenant set, or row-level security refuses it.
+    { labReport: { findFirst }, withTenant: transaction } as never,
     { recordWorklistHistory } as never,
   );
   const raise = () =>
@@ -58,6 +59,7 @@ describe('CriticalAlertService.raise — locked reports', () => {
     });
     await expect(raise()).resolves.toEqual({ id: 'alert-1' });
     expect(transaction).toHaveBeenCalledTimes(1);
+    expect(transaction).toHaveBeenCalledWith('tenant-1', expect.any(Function));
     expect(recordWorklistHistory).toHaveBeenCalledWith(
       'tenant-1',
       'r1',

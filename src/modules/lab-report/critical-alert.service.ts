@@ -71,7 +71,7 @@ export class CriticalAlertService {
     if (report.isLocked) throw new LabReportLockedException(labReportId);
 
     return this.prisma
-      .$transaction(async (tx) => {
+      .withTenant(tenantId, async (tx) => {
         const alert = await tx.criticalAlert.create({
           data: {
             tenantId,
@@ -153,7 +153,7 @@ export class CriticalAlertService {
     if (!entry) throw new WorklistEntryNotFoundException('critical_alert', id);
     await assertReportWritable(this.prisma, tenantId, entry.labReportId);
 
-    const updated = await this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.withTenant(tenantId, async (tx) => {
       const updatedEntry = await tx.criticalAlert.update({
         where: { id },
         data: { status: dto.status },
