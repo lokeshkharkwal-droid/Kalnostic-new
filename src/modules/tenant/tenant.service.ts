@@ -20,6 +20,7 @@ import { StateService } from '../location/state.service';
 import { CityService } from '../location/city.service';
 import { AreaService } from '../location/area.service';
 import { LocationHierarchyMismatchException } from '../location/exceptions/location.exceptions';
+import { formatTenantAddress } from './utils/tenant-address.util';
 import {
   InternalException,
   ValidationException,
@@ -375,13 +376,15 @@ export class TenantService {
    * over `DEFAULT_SETTINGS`, so a legacy tenant without settings still gets a
    * usable value. An unsupported stored time zone or time format is logged and
    * falls back to the platform default (§7 fallback) rather than being returned
-   * to the client.
+   * to the client. Also carries the business identity (name + one-line
+   * registered address, e.g. for exported report headers).
    * @param tenantId caller's tenant (from the business JWT)
-   * @returns `{ businessName, timezone, currency, dateFormat, timeFormat, language }`
+   * @returns `{ businessName, businessAddress, timezone, currency, dateFormat, timeFormat, language }`
    * @throws TenantNotFoundException if the tenant is missing/soft-deleted
    */
   async getLocale(tenantId: string): Promise<{
     businessName: string;
+    businessAddress: string;
     timezone: string;
     currency: string;
     dateFormat: string;
@@ -413,6 +416,7 @@ export class TenantService {
 
     return {
       businessName: tenant.name,
+      businessAddress: formatTenantAddress(tenant),
       timezone: merged.timezone,
       currency: merged.currency,
       dateFormat: merged.date_format,
