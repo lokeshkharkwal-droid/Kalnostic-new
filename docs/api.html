@@ -892,14 +892,19 @@ coherent example: SiteAdmin <i>owner@kalnostics.com</i> created tenant <b>City D
 <div class="ep" id="tenant-locale">
   <div><span class="m get">GET</span><span class="path">/api/v1/tenant/locale</span></div>
   <div class="tags"><span class="tag biz">business JWT</span></div>
-  <p>Return the caller tenant's locale so the frontend can convert UTC timestamps
-  into business-local time and format money with the configured currency. Scoped
-  to the caller's own tenant from the token. Storage stays UTC — this only drives
-  display. An unsupported stored time zone falls back to <code>Asia/Kolkata</code>.</p>
+  <p>Return the caller tenant's identity + locale so the frontend can label the
+  business, convert UTC timestamps into business-local time and format money with
+  the configured currency. Scoped to the caller's own tenant from the token.
+  Storage stays UTC — this only drives display. An unsupported stored time zone
+  falls back to <code>Asia/Kolkata</code>. <code>businessAddress</code> is the
+  registered address as one line (address line → area → city → state → pincode →
+  country, blanks skipped; falls back to the legacy <code>address</code> JSON;
+  <code>""</code> when none is stored).</p>
   <p class="lbl">200 response</p>
   <pre>{ "success": true, "data": {
+  "businessName": "Flow Lab", "businessAddress": "12 MG Road, Pune, Maharashtra, 411001, India",
   "timezone": "Asia/Kolkata", "currency": "INR",
-  "dateFormat": "DD/MM/YYYY", "language": "en"
+  "dateFormat": "DD/MM/YYYY", "timeFormat": "12h", "language": "en"
 }, "meta": { "timestamp": "…" } }</pre>
 </div>
 
