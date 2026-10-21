@@ -294,6 +294,10 @@ docs {
     `criticalMax`, `reflexTests[]`, `overallResultGroups[]`, `notes`, `isNabl`,
     `isCap`, `sortOrder`, `referenceRanges[]`, `referenceValues[]`. Per-parameter settings refs
     `groupSettingsId`, `iconSettingsId`, `imageSettingsId` are optional UUIDs.
+    A parameter `id` is accepted (the Update endpoint uses it) but IGNORED on create — a new
+    parameter always gets its own generated id. Two ranges with the same analyzer, method, unit,
+    gender and age band are accepted when their lower or upper limit differs and exactly one is
+    the Default (see Update Lab Test).
   
   ## Logical-reference ids (no existence check on create)
   

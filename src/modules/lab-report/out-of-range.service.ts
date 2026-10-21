@@ -59,7 +59,7 @@ export class OutOfRangeService {
     await assertReportWritable(this.prisma, tenantId, labReportId);
 
     return this.prisma
-      .$transaction(async (tx) => {
+      .withTenant(tenantId, async (tx) => {
         const flag = await tx.outOfRangeFlag.create({
           data: {
             tenantId,
@@ -142,7 +142,7 @@ export class OutOfRangeService {
       throw new WorklistEntryNotFoundException('out_of_range_flag', id);
     await assertReportWritable(this.prisma, tenantId, entry.labReportId);
 
-    const updated = await this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.withTenant(tenantId, async (tx) => {
       const updatedEntry = await tx.outOfRangeFlag.update({
         where: { id },
         data: { status: dto.status },
