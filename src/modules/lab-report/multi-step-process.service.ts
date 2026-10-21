@@ -71,7 +71,7 @@ export class MultiStepProcessService {
     if (!report) throw new LabReportNotFoundException(labReportId);
     await assertReportWritable(this.prisma, tenantId, labReportId);
 
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.withTenant(tenantId, async (tx) => {
       const existing = await tx.multiStepTestProcess.findUnique({
         where: { labReportId },
       });
@@ -174,7 +174,7 @@ export class MultiStepProcessService {
       );
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.withTenant(tenantId, async (tx) => {
       const existingHistory = Array.isArray(process.stageHistory)
         ? (process.stageHistory as unknown as StageHistoryEntry[])
         : [];

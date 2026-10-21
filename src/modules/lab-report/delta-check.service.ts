@@ -100,7 +100,7 @@ export class DeltaCheckService {
     }
 
     return this.prisma
-      .$transaction(async (tx) => {
+      .withTenant(tenantId, async (tx) => {
         const delta = await tx.deltaCheck.create({
           data: {
             tenantId,
@@ -182,7 +182,7 @@ export class DeltaCheckService {
     if (!entry) throw new WorklistEntryNotFoundException('delta_check', id);
     await assertReportWritable(this.prisma, tenantId, entry.labReportId);
 
-    const updated = await this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.withTenant(tenantId, async (tx) => {
       const updatedEntry = await tx.deltaCheck.update({
         where: { id },
         data: { status: dto.status },

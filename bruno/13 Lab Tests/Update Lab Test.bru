@@ -53,9 +53,32 @@ docs {
   
   Child sets are REPLACED when provided: include a full `samples` array and/or
   `resultParams` array (each param with its `referenceRanges`/`referenceValues`)
-  to swap the whole set — the old active rows are soft-deleted and the new set
-  created in one transaction. Omit a child array to leave it untouched.
-  
+  to swap the whole set, in one transaction. Omit a child array to leave it untouched.
+
+  **Parameters keep their identity.** Send each existing parameter's `id` (the one
+  `Get Lab Test` returned): the server updates THAT parameter, so renaming its
+  `parameterCode` keeps every result already entered for it. Without an `id` a
+  parameter is matched by `parameterCode` (case-insensitive), as before; an `id` that
+  is not a live parameter of this test is ignored, and the same `id` twice is a 422.
+  A parameter that nothing matches is created (a client `id` is never used as the new
+  row's id); an existing parameter that is not sent is soft-deleted.
+
+  **Reference ranges keep their rows when unchanged.** A range with the same analyzer,
+  method, unit, gender, age band, lower/upper limit, critical limits and abnormal-flag
+  style as a live one keeps that row and its id (a report that picked it still points at
+  a live range); only the Default flag and the Display text are patched in place. A
+  changed or removed range is soft-deleted (its old row stays, frozen, for the reports
+  that used it) and a changed or added one is created. Reference values are still fully
+  replaced.
+
+  **Same key, different limits is allowed** (Copy a range and change only its limits):
+  two ranges with the same analyzer, method, unit, gender and age band are accepted when
+  their lower or upper limit differs (compared to 4 decimals). Such a set needs exactly
+  one `isDefault: true` among them (422 "Mark a Default range…" / "Only one range can be
+  Default…"). Identical limits are 422 "A similar reference range already exists…", and a
+  partial Gender/Age overlap is still 422 "Overlapping reference range…". The Excel import
+  keeps refusing a same-key pair.
+
   Same cross-field rules and conflicts as Create (422 `VALIDATION_ERROR`, 409 on
   name/code/parameterCode). 404 `LAB_TEST_NOT_FOUND` if missing/other tenant.
 

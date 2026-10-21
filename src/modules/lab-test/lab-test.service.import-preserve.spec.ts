@@ -97,8 +97,8 @@ const param = (over: Fields = {}) => ({
 const created = (m: ReturnType<typeof build>) =>
   m.labTestReferenceRange.createMany.mock.calls[0]![0].data;
 
-describe('upsertParamsByCode — the edit form path is unchanged', () => {
-  it("soft-deletes ALL of the parameter's ranges (including analyzer ones) and creates the sent ones as they are", async () => {
+describe('upsertParamsByCode — the edit form path', () => {
+  it("looks at ALL of the parameter's live ranges (analyzer ones included) and creates the sent ones that no live range matches, as they are", async () => {
     const m = build();
     await m.run([
       param({
@@ -107,12 +107,12 @@ describe('upsertParamsByCode — the edit form path is unchanged', () => {
         ],
       }),
     ]);
-    expect(m.labTestReferenceRange.updateMany.mock.calls[0]![0].where).toEqual({
+    expect(m.labTestReferenceRange.findMany.mock.calls[0]![0].where).toEqual({
       paramId: 'p1',
       tenantId: 't1',
       deletedAt: null,
     });
-    expect(m.labTestReferenceRange.findMany).not.toHaveBeenCalled();
+    expect(m.labTestReferenceRange.updateMany).not.toHaveBeenCalled();
     expect(created(m)[0]).toMatchObject({
       unit: 'g/L',
       isDefault: false,

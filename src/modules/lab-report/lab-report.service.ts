@@ -141,6 +141,7 @@ import {
   rangeAgeMatch,
   sortRangesByAgeSpecificity,
 } from './utils/reference-range.util';
+import { pickDisplayBranchId } from './utils/display-branch.util';
 import {
   classifyResultValueSave,
   describeAnalyzerOverwrite,
@@ -1131,6 +1132,11 @@ export class LabReportService {
     worklistRows = await this.attachMemberTestNames(worklistRows);
     worklistRows = await this.attachResultTypes(worklistRows);
     worklistRows = await this.attachSampleStatuses(tenantId, worklistRows);
+    worklistRows = await this.attachDisplayBranch(
+      tenantId,
+      scope,
+      worklistRows,
+    );
     worklistRows = await this.attachAccessMode(tenantId, scope, worklistRows);
     worklistRows = await this.attachLockedByNames(worklistRows);
 
@@ -1788,6 +1794,93 @@ export class LabReportService {
         sampleBarcodes: entries.map(([, info]) => info.barcode),
         sampleBranchIds: entries.map(([, info]) => info.branchId),
       };
+    });
+  }
+
+  /**
+   * Resolves the Branch column for the CALLER (see {@link pickDisplayBranchId}). The
+   * report is one row held by one branch (`branch`), but after an internal transfer
+   * each branch has its own sample: the sender its original, each receiver a copy made
+   * by the transfer. The column shows where the caller's own sample came from — the
+   * branch that SENT the copy, or the caller's own branch for an original — so a branch
+   * that received the report sees who sent it (A -> B -> C: B sees A, C sees B). Needs
+   * the sample columns, so it runs after {@link attachSampleStatuses}. Two batched
+   * lookups per page (the linked samples, then the transfers that created the copies)
+   * and one for the names; a row whose samples none of the caller's branches holds
+   * keeps `displayBranch` null and the screen shows `branch`.
+   * @param scope the branches this request covers (the caller's "own" branches)
+   * @param rows the page's rows, with `sampleIds` already attached
+   */
+  private async attachDisplayBranch(
+    tenantId: string,
+    scope: WorklistBranchScope,
+    rows: LabReportWorklistRow[],
+  ): Promise<LabReportWorklistRow[]> {
+    const sampleIds = [...new Set(rows.flatMap((r) => r.sampleIds))];
+    if (sampleIds.length === 0) return rows;
+
+    const samples = await this.prisma.orderSample.findMany({
+      where: { id: { in: sampleIds }, tenantId, deletedAt: null },
+      select: {
+        id: true,
+        branchId: true,
+        createdAt: true,
+        sourceTransferId: true,
+      },
+    });
+    const transferIds = [
+      ...new Set(
+        samples
+          .map((s) => s.sourceTransferId)
+          .filter((id): id is string => id !== null),
+      ),
+    ];
+    const transfers =
+      transferIds.length === 0
+        ? []
+        : await this.prisma.sampleTransfer.findMany({
+            where: { id: { in: transferIds }, tenantId },
+            select: { id: true, branchId: true },
+          });
+    const senderByTransfer = new Map(transfers.map((t) => [t.id, t.branchId]));
+    const infoBySample = new Map(
+      samples.map((s) => [
+        s.id,
+        {
+          branchId: s.branchId,
+          createdAt: s.createdAt,
+          senderBranchId: s.sourceTransferId
+            ? (senderByTransfer.get(s.sourceTransferId) ?? null)
+            : null,
+        },
+      ]),
+    );
+
+    const viewerBranchIds = new Set(scope.rules.map((r) => r.branchId));
+    const idByRow = rows.map((row) =>
+      pickDisplayBranchId(
+        row.sampleIds.flatMap((id) => {
+          const info = infoBySample.get(id);
+          return info ? [info] : [];
+        }),
+        viewerBranchIds,
+        row.branchId,
+      ),
+    );
+    const branchIds = [
+      ...new Set(idByRow.filter((id): id is string => id !== null)),
+    ];
+    if (branchIds.length === 0) return rows;
+
+    const branches = await this.prisma.branch.findMany({
+      where: { id: { in: branchIds }, tenantId, deletedAt: null },
+      select: { id: true, name: true },
+    });
+    const nameById = new Map(branches.map((b) => [b.id, b.name]));
+    return rows.map((row, i) => {
+      const id = idByRow[i] ?? null;
+      const name = id ? nameById.get(id) : undefined;
+      return { ...row, displayBranch: id && name ? { id, name } : null };
     });
   }
 

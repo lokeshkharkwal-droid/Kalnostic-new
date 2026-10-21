@@ -79,6 +79,18 @@ docs {
   TAT alert pills (Warning/Critical/Imminent/Breached) are explicitly out of
   scope per LABORATORY.docx — not a filter here.
 
+  **Branch columns (per row).** `branch` / `branchId` are the branch that
+  HOLDS the report — after an internal transfer (Sent Internal) the one report
+  row moves to the receiving branch, and every caller sees the same `branch`.
+  `displayBranch` (`{ id, name }`, or `null`) is what the Branch column shows for
+  THIS caller: where the caller's own sample came from — the branch that SENT the
+  caller's copy of the sample, or the caller's own branch when it holds the
+  original. For a report that goes A → B → C: A's row shows A, B's row shows A,
+  C's row shows B (while `branch` is C for all three). It is `null` when none of
+  the caller's branches holds a linked sample (the screen then shows `branch`);
+  with "All Branches", the sample held by the report's holder decides. Permissions
+  and scoping always use `branchId`, never `displayBranch`.
+
   Returns `{ rows, total, page, limit }`. Captures `labReportId` from the
   first row for the requests below. 422 `ACTIVE_BRANCH_REQUIRED` if the
   caller has no active branch.
