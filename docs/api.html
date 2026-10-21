@@ -529,7 +529,7 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>PUT /branch-lab-panels/:id</td><td>Business JWT</td><td>edit branch-tunable fields (pricing/applicability/flags/TAT/active)</td></tr>
   <tr><td>PATCH /branch-lab-panels/:id/active</td><td>Business JWT</td><td>enable/disable a branch lab panel</td></tr>
   <tr><td>DELETE /branch-lab-panels/:id</td><td>Business JWT</td><td>soft-delete a branch lab panel</td></tr>
-  <tr><td>GET /branch-lab-test-lists</td><td>Business JWT</td><td>list the branch's Lab Test Lists (pricing-list tabs; default Walk-in first)</td></tr>
+  <tr><td>GET /branch-lab-test-lists</td><td>Business JWT</td><td>list the branch's Lab Test Lists (pricing-list tabs; default Walk-in first, auto-created if missing)</td></tr>
   <tr><td>GET /branch-lab-test-lists/options</td><td>Business JWT</td><td>{id,name,isDefault}[] for the referral/registration list selectors</td></tr>
   <tr><td>POST /branch-lab-test-lists</td><td>Business JWT</td><td>create a list seeded from Walk-in (copyPriceFrom + priceType PERCENTAGE/CUSTOMIZED + copyPercentage)</td></tr>
   <tr><td>POST /branch-lab-test-lists/:id/clone</td><td>Business JWT</td><td>deep-copy a list (rows + prices) into a new independent list</td></tr>
@@ -1461,8 +1461,17 @@ tests never appear regardless of status.</div>
   <div><span class="m patch">PATCH</span><span class="path">/api/v1/master-data/:masterDataId/lab-tests/:labTestId</span></div>
   <div class="tags"><span class="tag biz">business JWT</span></div>
   <p>Patch core fields (send only what changes). When <code>samples</code> or <code>resultParams</code> is
-  provided, that whole child set is <b>replaced</b> (old active rows soft-deleted, new set created) in one
-  transaction. Same conflicts/cross-field rules as create. Toggle Active/Inactive via <code>isActive</code>.</p>
+  provided, that whole child set is <b>replaced</b> in one transaction. Same conflicts/cross-field rules as
+  create. Toggle Active/Inactive via <code>isActive</code>.</p>
+  <p><b>Parameters:</b> send each existing parameter's <code>id</code> so a rename of its <code>parameterCode</code>
+  keeps the parameter and the results entered for it; without an <code>id</code> it is matched by
+  <code>parameterCode</code>. A parameter nothing matches is created (a client <code>id</code> is never used for the new
+  row); one that is not sent is soft-deleted. <b>Ranges:</b> a range unchanged in analyzer, method, unit, gender, age band,
+  limits, critical limits and flag style keeps its row and id (only Default and Display are patched in place); a changed or
+  removed range is soft-deleted and a changed or added one created. Two ranges with the same analyzer, method, unit,
+  gender and age band are accepted when their lower or upper limit differs, provided exactly one of them is the
+  Default; identical limits are <span class="pill">422</span> "similar reference range", a partial overlap is still refused.
+  The Excel import keeps refusing a same-key pair.</p>
   <pre>{ "priceMaximum":600, "isActive":false }</pre>
 </div>
 

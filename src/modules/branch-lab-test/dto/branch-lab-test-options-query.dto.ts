@@ -44,7 +44,6 @@ export class BranchLabTestOptionsQueryDto extends PaginationQueryDto {
   @IsBoolean()
   preferredOnly?: boolean;
 
-  /** Let `search` also match the AKA name (Create-Order picker). */
   @IsOptional()
   @ToBoolean()
   @IsBoolean()

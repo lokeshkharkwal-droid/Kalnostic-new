@@ -1,0 +1,40 @@
+meta {
+  name: 09 Grant Branch A Operator Permissions
+  type: http
+  seq: 9
+}
+
+put {
+  url: {{baseUrl}}/users/manage/{{baOperatorUserId}}/branch-permissions
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "branchId": "{{baBranchId}}",
+    "items": [
+      { "moduleKey": "accession", "permissionKey": "accession:internal_referral_order__pick_up_the_sample", "allowed": true },
+      { "moduleKey": "accession", "permissionKey": "accession:internal_referral_order__receive_the_sample", "allowed": true },
+      { "moduleKey": "accession", "permissionKey": "accession:internal_referral_order__accept_the_sample", "allowed": true }
+    ]
+  }
+}
+
+docs {
+  **Setup - grant the Branch A operator the internal-referral receiving permissions:**
+  Pick Up, Receive and Accept. The receiving side of an internal transfer is
+  RBAC-enforced by these keys; on Accept, RULE 1 clones the sample into Branch A's
+  In-House list and **rehomes the report's branch to Branch A** - which is what makes
+  Branch A the "processing branch" for the LIS gate. As in step 08, the grant needs
+  the `accession` module both enabled on Branch A (step 05) and assigned to this user
+  (step 07).
+}

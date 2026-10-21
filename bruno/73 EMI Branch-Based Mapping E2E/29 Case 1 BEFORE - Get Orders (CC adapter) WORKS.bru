@@ -1,0 +1,40 @@
+meta {
+  name: 29 Case 1 BEFORE - Get Orders (CC adapter) WORKS
+  type: http
+  seq: 29
+}
+
+get {
+  url: {{emiBaseUrl}}/emi/orders?specimen_id={{sampleBarcode}}
+  body: none
+  auth: none
+}
+
+params:query {
+  specimen_id: {{sampleBarcode}}
+}
+
+headers {
+  TOKEN: {{adapterTokenCc}}
+}
+
+vars:pre-request {
+  sampleBarcode: 10001
+}
+
+tests {
+  test("legacy s=200 envelope", function () {
+    expect(res.body.s).to.equal("200");
+    expect(res.body.orders).to.be.an("array").with.length.of.at.least(1);
+  });
+  test("CASE 1 (report at CC, adapter linked to CC): ut_ids POPULATED", function () {
+    expect(res.body.orders[0].ut_ids).to.be.an("array").with.length.of.at.least(1);
+  });
+}
+
+docs {
+  **Case 1, BEFORE transfer - scan with the CC-only adapter.** The report is being
+  processed at the Collection Center, and this adapter is linked to the Collection
+  Center, so the test is visible: `ut_ids` is populated. Auth is the `TOKEN` header
+  (`adapterTokenCc`); `specimen_id` is the origin `sampleBarcode`.
+}

@@ -1,0 +1,62 @@
+meta {
+  name: 25 Create Order (Collection Center)
+  type: http
+  seq: 25
+}
+
+post {
+  url: {{baseUrl}}/orders
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{ccOperatorToken}}
+}
+
+body:json {
+  {
+    "orderDate": "{{orderDate}}",
+    "orderType": "WALK_IN",
+    "billingType": "CASH_CLIENT",
+    "patientId": "{{patientId}}",
+    "status": "ORDER",
+    "items": [
+      { "branchLabTestId": "{{branchLabTestIdCc}}" }
+    ],
+    "diagnostics": {
+      "isHomeVisit": false
+    }
+  }
+}
+
+script:pre-request {
+  bru.setVar("orderDate", new Date().toISOString().slice(0, 10));
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data) {
+    if (data.id) bru.setVar("orderId", data.id);
+    if (data.orderCode) bru.setVar("orderCode", data.orderCode);
+  }
+}
+
+tests {
+  test("order created at the collection center", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  **Order - create the in-center order at the Collection Center** (via
+  `ccOperatorToken`), with the Collection Center's `branchLabTestIdCc` as its single
+  item. `status: ORDER` + a `diagnostics` section generates one accession sample in
+  the same transaction. The order's branch is the Collection Center - this is the
+  "branch where the order was created" that the OLD (buggy) logic keyed off.
+  Captures **`orderId`** and **`orderCode`**.
+}

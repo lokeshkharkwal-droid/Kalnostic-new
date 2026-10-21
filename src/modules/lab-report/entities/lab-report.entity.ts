@@ -363,6 +363,12 @@ export interface LabReportWorklistRow {
    * After an internal transfer an item has the sender's original and the
    * receiver's copy; this lets each viewer see the status of ITS OWN sample. */
   sampleBranchIds: (string | null)[];
+  /** The branch the Branch column shows for THIS caller (set by `attachDisplayBranch`,
+   * see `pickDisplayBranchId`): the branch that sent the caller's own copy of the
+   * sample, or the caller's own branch when it holds the original. `branch` is always
+   * the branch that holds the report. Null when none of the caller's branches holds a
+   * linked sample — the screen then shows `branch`. */
+  displayBranch?: { id: string; name: string } | null;
   /** `full` when a branch of the caller holds the report; `view` when it is only
    * listed because the caller's branch sent it, or its sample is sent out and
    * waiting for the receiver (view and print only). */
@@ -594,6 +600,7 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
     sampleIds: [],
     sampleBarcodes: [],
     sampleBranchIds: [],
+    displayBranch: null,
     tat: null,
 
     multiStepProcessType: null,

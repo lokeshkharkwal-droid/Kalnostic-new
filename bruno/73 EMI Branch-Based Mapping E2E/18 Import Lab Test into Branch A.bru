@@ -1,0 +1,31 @@
+meta {
+  name: 18 Import Lab Test into Branch A
+  type: http
+  seq: 18
+}
+
+post {
+  url: {{baseUrl}}/branch-lab-tests/import
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{baOperatorToken}}
+}
+
+body:json {
+  {
+    "labTestIds": ["{{labTestIdBa}}"]
+  }
+}
+
+docs {
+  **Catalogue - import the test into Branch A's list** (via `baOperatorToken`, so it
+  lands in Branch A). Creates Branch A's `BranchLabTest` for the same logical test.
+  Resolved in step 20.
+}

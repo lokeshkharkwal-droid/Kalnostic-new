@@ -1,0 +1,61 @@
+meta {
+  name: 15 Create Lab Test (Collection Center MD)
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{baseUrl}}/master-data/{{ccMasterDataId}}/lab-tests
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "testName": "EMI Branch Mapping CBC {{tatRunId}}",
+    "testDisplayName": "CBC",
+    "testCode": "EMIMAP-{{tatRunId}}",
+    "processMethod": "SINGLE_STEP",
+    "samplePriorityType": "ROUTINE",
+    "priceMsrp": 500,
+    "priceMaximum": 500,
+    "priceMinimum": 300,
+    "isActive": true,
+    "scheduleDays": ["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"],
+    "scheduleFrom": "00:00",
+    "scheduleTo": "23:59",
+    "samples": [
+      { "sampleType": "Blood", "containerType": "EDTA_TUBE_PURPLE_TOP", "isDefault": true }
+    ],
+    "resultParams": [
+      {
+        "parameterName": "Hemoglobin",
+        "parameterCode": "HGB",
+        "resultType": "QUANTITATIVE",
+        "reportingUnit": "g/dL",
+        "sortOrder": 0
+      }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.id) bru.setVar("labTestIdCc", data.id);
+}
+
+docs {
+  **Catalogue - create the lab test in the Collection Center's Master Data.**
+  Includes one blood sample (so the order generates an accession sample) and the
+  `HGB` result parameter (so the report is fillable). Captures **`labTestIdCc`**.
+  Step 16 creates the SAME test (same name + code) in Branch A's Master Data; the two
+  are matched as the same logical test cross-branch by name/code.
+}

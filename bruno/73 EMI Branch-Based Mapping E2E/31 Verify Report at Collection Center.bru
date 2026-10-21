@@ -1,0 +1,38 @@
+meta {
+  name: 31 Verify Report at Collection Center
+  type: http
+  seq: 31
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/{{reportId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{ccOperatorToken}}
+}
+
+tests {
+  test("report detail loads at the Collection Center", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.body.data).to.have.property("resultValues");
+  });
+  test("machine value landed with source = ADAPTER (value = emiResultValueCc)", function () {
+    const values = res.body.data.resultValues || [];
+    const adapterValue = values.find(function (v) { return v.source === "ADAPTER"; });
+    expect(adapterValue, "a resultValue with source ADAPTER").to.exist;
+    expect(String(adapterValue.observed1)).to.equal(bru.getVar("emiResultValueCc"));
+  });
+  test("report is SAVED, not auto-approved", function () {
+    expect(res.body.data.status).to.equal("SAVED");
+  });
+}
+
+docs {
+  **Verify (before-phase) - the result landed on the report at the Collection Center.**
+  Read with `ccOperatorToken` (the report's current branch is the Collection Center),
+  confirming `source: ADAPTER`, `observed1 = emiResultValueCc` (13.5), and
+  `status: SAVED` - the machine filled it, with no human entry and no auto-approval.
+}

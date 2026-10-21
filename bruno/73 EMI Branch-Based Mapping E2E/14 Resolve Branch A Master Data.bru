@@ -1,0 +1,31 @@
+meta {
+  name: 14 Resolve Branch A Master Data
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{baseUrl}}/master-data?branchId={{baBranchId}}&page=1&limit=1
+  body: none
+  auth: bearer
+}
+
+params:query {
+  branchId: {{baBranchId}}
+  page: 1
+  limit: 1
+}
+
+auth:bearer {
+  token: {{baOperatorToken}}
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.length && data[0].id) bru.setVar("baMasterDataId", data[0].id);
+}
+
+docs {
+  **Catalogue - resolve Branch A's Master Data.** Captures **`baMasterDataId`** - the
+  container the same lab test is created in for Branch A.
+}

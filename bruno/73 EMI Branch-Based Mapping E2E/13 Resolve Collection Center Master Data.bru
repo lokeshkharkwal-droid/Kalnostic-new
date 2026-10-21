@@ -1,0 +1,32 @@
+meta {
+  name: 13 Resolve Collection Center Master Data
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/master-data?branchId={{ccBranchId}}&page=1&limit=1
+  body: none
+  auth: bearer
+}
+
+params:query {
+  branchId: {{ccBranchId}}
+  page: 1
+  limit: 1
+}
+
+auth:bearer {
+  token: {{ccOperatorToken}}
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.length && data[0].id) bru.setVar("ccMasterDataId", data[0].id);
+}
+
+docs {
+  **Catalogue - resolve the Collection Center's Master Data.** Each branch is
+  auto-provisioned a default Master Data on creation; the branch lab-test import
+  reads from it. Captures **`ccMasterDataId`**.
+}
