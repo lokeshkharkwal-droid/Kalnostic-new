@@ -1312,7 +1312,8 @@ CREATE POLICY order_items_tenant_isolation ON order_items
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
--- Exactly one of branch_lab_test_id / branch_lab_panel_id / direct must be set
+-- Exactly one of branch_lab_test_id / branch_lab_panel_id / branch_radiology_test_id /
+-- branch_radiology_panel_id / direct must be set
 -- per row (an order item is a catalogue test, a catalogue panel, or a free-text
 -- direct entry). Prisma can't express this, so it lives here. Defence in front
 -- of the same check in OrderService.
@@ -1322,6 +1323,8 @@ ALTER TABLE order_items ADD CONSTRAINT order_items_source_exactly_one
   CHECK (
       (CASE WHEN branch_lab_test_id  IS NOT NULL THEN 1 ELSE 0 END)
     + (CASE WHEN branch_lab_panel_id IS NOT NULL THEN 1 ELSE 0 END)
+    + (CASE WHEN branch_radiology_test_id  IS NOT NULL THEN 1 ELSE 0 END)
+    + (CASE WHEN branch_radiology_panel_id IS NOT NULL THEN 1 ELSE 0 END)
     + (CASE WHEN direct              IS NOT NULL THEN 1 ELSE 0 END) = 1
   );
 
