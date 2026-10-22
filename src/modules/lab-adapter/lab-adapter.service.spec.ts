@@ -405,6 +405,18 @@ describe('LabAdapterService — saving picked lab tests', () => {
     expect(withTenant).not.toHaveBeenCalled();
   });
 
+  it('update that adds a branch and resends the saved pick links the copy at the new branch too (what the edit form sends)', async () => {
+    const { service, tx } = makeWriteService();
+
+    // the adapter was saved with the pick at b1 only; b2 is added in this edit
+    await service.update('a1', TENANT, null, {
+      branchIds: ['b1', 'b2'],
+      labTestIds: ['cbc-1'],
+    });
+
+    expect(savedIds(tx)).toEqual(['cbc-1', 'cbc-2']);
+  });
+
   it("update with only branchIds drops the removed branch's tests and adds none", async () => {
     const { service, tx } = makeWriteService();
 
