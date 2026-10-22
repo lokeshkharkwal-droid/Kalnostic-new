@@ -5,6 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { BranchService } from '../branch/branch.service';
 import { EquipmentService } from '../equipment/equipment.service';
+import { coverageHint, labTestGroupKey } from './utils/lab-test-group.util';
 import { CreateLabAdapterDto } from './dto/create-lab-adapter.dto';
 import { UpdateLabAdapterDto } from './dto/update-lab-adapter.dto';
 import { ListLabAdapterQueryDto } from './dto/list-lab-adapter-query.dto';
@@ -402,8 +403,10 @@ export class LabAdapterService {
    * branch, i.e. the same row set the auto-map draws from. Scoped by the
    * client-supplied `branchIds` rather than the JWT's active branch, because an
    * adapter is tenant-level and a Business Admin has no active branch. Each id is
-   * verified against the tenant first. When several branches are selected the
-   * label carries the branch name, since each branch has its own copy of a test.
+   * verified against the tenant first. Each branch keeps its own copy of a test, but
+   * the picker lists every test **once**: copies are grouped (Test Name + Test Code),
+   * and a `hint` says which selected branches have it. Picking a test links all of
+   * its copies when the adapter is saved (see `expandManualTestIds`).
    * @param tenantId tenant scope (from JWT)
    * @param filters selected branches + optional search + pagination
    * @throws LabAdapterBranchNotFoundException if any branch ref is invalid
@@ -436,6 +439,73 @@ export class LabAdapterService {
       throw new LabAdapterBranchNotFoundException(missing);
     }
 
+    const rows = await this.findOrderableCopies(
+      tenantId,
+      branchIds,
+      filters.search?.trim(),
+    );
+
+    // One option per TEST: its copies at the selected branches share a group key.
+    // `id` is the copy at the first selected branch that has it (any copy works —
+    // saving expands a pick to every copy, see `expandManualTestIds`).
+    const branchOrder = new Map(branchIds.map((b, i) => [b, i]));
+    const groups = new Map<string, typeof rows>();
+    for (const row of rows) {
+      const key = labTestGroupKey(row);
+      const group = groups.get(key);
+      if (group) group.push(row);
+      else groups.set(key, [row]);
+    }
+    const options: LabAdapterLabTestOption[] = [...groups.values()].map(
+      (copies) => {
+        copies.sort(
+          (x, y) =>
+            (branchOrder.get(x.branchId) ?? 0) -
+              (branchOrder.get(y.branchId) ?? 0) || x.id.localeCompare(y.id),
+        );
+        const rep = copies[0]!;
+        const code = rep.testCode ? ` (${rep.testCode})` : '';
+        const copyBranchIds = [...new Set(copies.map((c) => c.branchId))];
+        return {
+          id: rep.id,
+          name: `${rep.testName}${code}`,
+          branchId: rep.branchId,
+          branchIds: copyBranchIds,
+          hint: coverageHint(copyBranchIds, branchIds, branchNames),
+        };
+      },
+    );
+
+    if (filters.page === undefined) {
+      return options;
+    }
+    const page = filters.page;
+    const limit = filters.limit ?? 20;
+    return {
+      data: options.slice((page - 1) * limit, page * limit),
+      total: options.length,
+      page,
+      limit,
+    };
+  }
+
+  /**
+   * The orderable copies of tests at the given branches: active default-variant
+   * rows of each branch's default (Walk-in) list — the same row set the
+   * equipment auto-map draws from. Optionally filtered by a test-name search.
+   */
+  private async findOrderableCopies(
+    tenantId: string,
+    branchIds: string[],
+    search?: string,
+  ): Promise<
+    {
+      id: string;
+      branchId: string;
+      testName: string;
+      testCode: string | null;
+    }[]
+  > {
     const defaultLists = await this.prisma.branchLabTestList.findMany({
       where: {
         tenantId,
@@ -453,58 +523,14 @@ export class LabAdapterService {
       isDefault: true,
       deletedAt: null,
     };
-    const term = filters.search?.trim();
-    if (term) {
-      where.testName = { contains: term, mode: 'insensitive' };
+    if (search) {
+      where.testName = { contains: search, mode: 'insensitive' };
     }
-
-    const select = {
-      id: true,
-      branchId: true,
-      testName: true,
-      testCode: true,
-    } as const;
-    const orderBy = [{ testName: 'asc' }, { branchId: 'asc' }] as const;
-    const multiBranch = branchIds.length > 1;
-    const toOption = (r: {
-      id: string;
-      branchId: string;
-      testName: string;
-      testCode: string | null;
-    }): LabAdapterLabTestOption => {
-      const code = r.testCode ? ` (${r.testCode})` : '';
-      const branch = multiBranch
-        ? ` · ${branchNames.get(r.branchId) ?? ''}`
-        : '';
-      return {
-        id: r.id,
-        name: `${r.testName}${code}${branch}`,
-        branchId: r.branchId,
-      };
-    };
-
-    if (filters.page === undefined) {
-      const rows = await this.prisma.branchLabTest.findMany({
-        where,
-        select,
-        orderBy: [...orderBy],
-      });
-      return rows.map(toOption);
-    }
-
-    const page = filters.page;
-    const limit = filters.limit ?? 20;
-    const [rows, total] = await Promise.all([
-      this.prisma.branchLabTest.findMany({
-        where,
-        select,
-        orderBy: [...orderBy],
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      this.prisma.branchLabTest.count({ where }),
-    ]);
-    return { data: rows.map(toOption), total, page, limit };
+    return this.prisma.branchLabTest.findMany({
+      where,
+      select: { id: true, branchId: true, testName: true, testCode: true },
+      orderBy: [{ testName: 'asc' }, { branchId: 'asc' }],
+    });
   }
 
   /**
@@ -533,36 +559,61 @@ export class LabAdapterService {
   }
 
   /**
-   * Validate that every id references an active branch lab test of the caller's
-   * tenant **and** belongs to one of the adapter's branches — so a test picked
-   * for a branch that was later removed can't be saved. One query covers both
-   * checks.
+   * Turn the lab tests the user picked into the rows to save. A pick stands for the
+   * **test**, not one branch's copy of it: every copy of the same test (same Test
+   * Name + Test Code) at the adapter's branches is linked, so picking "CBC" once
+   * links it at each branch that has it. A pick that exists at only some branches
+   * links just those. The picked row itself is always kept when its branch is one
+   * of the adapter's. Rows stay one per branch copy, exactly what the LIS reads.
    * @throws LabAdapterLabTestNotFoundException listing ids that don't exist
-   * @throws LabAdapterLabTestBranchMismatchException listing ids at other branches
+   * @throws LabAdapterLabTestBranchMismatchException listing picks with no copy at
+   *   any of the adapter's branches
    */
-  private async assertBranchLabTestRefs(
+  private async expandManualTestIds(
     tenantId: string,
     labTestIds: string[],
     branchIds: string[],
-  ): Promise<void> {
-    if (!labTestIds.length) {
-      return;
-    }
+  ): Promise<string[]> {
     const unique = [...new Set(labTestIds)];
     const found = await this.prisma.branchLabTest.findMany({
       where: { id: { in: unique }, tenantId, deletedAt: null },
-      select: { id: true, branchId: true },
+      select: { id: true, branchId: true, testName: true, testCode: true },
     });
-    const branchOf = new Map(found.map((t) => [t.id, t.branchId]));
-    const missing = unique.filter((id) => !branchOf.has(id));
+    const byId = new Map(found.map((t) => [t.id, t]));
+    const missing = unique.filter((id) => !byId.has(id));
     if (missing.length) {
       throw new LabAdapterLabTestNotFoundException(missing);
     }
+
+    const copiesByKey = new Map<string, string[]>();
+    for (const c of await this.findOrderableCopies(tenantId, branchIds)) {
+      const key = labTestGroupKey(c);
+      const ids = copiesByKey.get(key);
+      if (ids) ids.push(c.id);
+      else copiesByKey.set(key, [c.id]);
+    }
+
     const allowed = new Set(branchIds);
-    const outside = unique.filter((id) => !allowed.has(branchOf.get(id)!));
+    const result: string[] = [];
+    const add = (id: string): void => {
+      if (!result.includes(id)) result.push(id);
+    };
+    const outside: string[] = [];
+    for (const id of unique) {
+      const picked = byId.get(id)!;
+      const copies = copiesByKey.get(labTestGroupKey(picked)) ?? [];
+      if (allowed.has(picked.branchId)) {
+        add(id);
+      } else if (!copies.length) {
+        outside.push(id);
+        continue;
+      }
+      copies.forEach(add);
+    }
     if (outside.length) {
       throw new LabAdapterLabTestBranchMismatchException(outside);
     }
+    return result;
   }
 
   /**
@@ -587,8 +638,7 @@ export class LabAdapterService {
     manualIds: string[],
   ): Promise<string[]> {
     if (manualIds.length) {
-      await this.assertBranchLabTestRefs(tenantId, manualIds, branchIds);
-      return manualIds;
+      return this.expandManualTestIds(tenantId, manualIds, branchIds);
     }
     return this.resolveEquipmentTestsForBranches(
       tenantId,

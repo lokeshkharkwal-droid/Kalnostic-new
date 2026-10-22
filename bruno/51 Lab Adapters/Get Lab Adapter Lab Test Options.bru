@@ -1,0 +1,89 @@
+meta {
+  name: Get Lab Adapter Lab Test Options
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/lab-adapters/lab-test-options?branchIds={{branchId}}&search=
+  body: none
+  auth: bearer
+}
+
+params:query {
+  branchIds: {{branchId}}
+  search:
+  ~page: 1
+  ~limit: 20
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  const body = res.getBody();
+  const rows = body && body.data && (body.data.data || body.data);
+  if (Array.isArray(rows) && rows.length && rows[0].id) bru.setEnvVar("labAdapterLabTestOptionId", rows[0].id);
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Options for the **Add / Edit Lab Adapter** form's manual **Lab Tests** picker.
+
+  Every branch keeps its own copy of a test, but the picker lists each test
+  **once**: copies of the same test (same **Test Name + Test Code**, compared
+  case-insensitively and trimmed — the same rule the equipment auto-map uses)
+  are folded into one option. Saving the adapter with that option links **every
+  copy** at the adapter's branches (see Create / Update Lab Adapter), so the
+  stored rows are still one per branch copy.
+
+  The tests offered are the active, default-variant tests of each selected
+  branch's default (Walk-in) list — the same row set the equipment auto-map
+  draws from.
+
+  **Query**
+  - `branchIds` (required, 1–100) — the branches selected in the form, as a
+    comma-separated list (`a,b`) or repeated (`branchIds=a&branchIds=b`); each a
+    UUID v4. Taken from the query, not the JWT's active branch, because an
+    adapter is tenant-level and a Business Admin has no active branch. Missing,
+    empty or a non-UUID value → `400 VALIDATION_ERROR`. Every id is verified
+    against the caller's tenant → `422 LAB_ADAPTER_BRANCH_NOT_FOUND` when one is
+    not an active branch of it.
+  - `search` (optional) — case-insensitive match on the test name.
+  - `page` / `limit` (optional, `limit` ≤ 100) — omit `page` for the full array
+    in `data`; supply it for a page in `data` plus `meta { total, page, limit,
+    totalPages }` (the standard envelope). The
+    frontend's shared `optionFetcher` always supplies both. Grouping happens
+    before paging, so `total` counts tests, not branch copies.
+
+  **Response row**
+  ```json
+  {
+    "id": "5f0c…",
+    "name": "Complete Blood Count (CBC)",
+    "branchId": "a3eca72a-…",
+    "branchIds": ["a3eca72a-…", "65a6800d-…"],
+    "hint": "All selected branches"
+  }
+  ```
+  - `id` — one copy's id: the copy at the first selected branch that has the test
+    (any copy works; saving expands the pick to all copies).
+  - `name` — `Test Name (CODE)`; the code part is omitted when the test has none.
+    The label no longer carries a branch name.
+  - `branchId` — the branch of the copy that `id` belongs to.
+  - `branchIds` — every selected branch that has a copy of the test.
+  - `hint` — only when two or more branches are selected: `All selected
+    branches` when every selected branch has the test, otherwise the names of the
+    branches that do. Absent for a single branch.
+
+  Rows are ordered by test name.
+
+  **Used by:** the Lab Adapter form's Lab Tests picker (`PaginatedSelect`, shown
+  once per test with the `hint` beside it).
+}
