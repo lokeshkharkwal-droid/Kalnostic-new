@@ -172,6 +172,7 @@ import {
 import { code128DataUri } from '../../common/utils/barcode-image.util';
 import { TatService } from './tat.service';
 import {
+  canWorkAtHolder,
   ruleWhere,
   usableRules,
   type WorklistBranchScope,
@@ -1698,11 +1699,15 @@ export class LabReportService {
    * legitimately "this row's", same as before this change).
    */
   /**
-   * Marks each row `full` (a branch in the caller's scope holds the report and it
-   * is not locked) or `view` (the report sits at another branch and is only
-   * listed because the caller's branch sent it, or its sample is sent out and
-   * waiting for the receiver). The frontend renders `view` rows without actions;
-   * the server refuses their writes either way.
+   * Marks each row `full` (the caller can work on it at the branch holding it, and
+   * it is not locked) or `view` (look and print only). The holder is workable when
+   * it is one of the selected branches, or the caller's OWN branch (a report sent
+   * by the selected branch that now sits at the caller's home branch — see
+   * {@link canWorkAtHolder}). A report listed only because the caller's branch
+   * SENT it stays `view` for a user whose own branch is the sender, and a report
+   * the holder has sent on is `view` for everyone. The frontend renders `view`
+   * rows without actions; every write is still judged by the server at the
+   * report's own branch, so this flag grants nothing.
    */
   private async attachAccessMode<
     T extends { id: string; branchId: string | null },
@@ -1711,12 +1716,13 @@ export class LabReportService {
     scope: WorklistBranchScope,
     rows: T[],
   ): Promise<Array<T & { accessMode: 'full' | 'view' }>> {
-    const scopeBranches = new Set(scope.rules.map((r) => r.branchId));
+    const workable = (r: T): boolean => canWorkAtHolder(scope, r.branchId);
     const heldBranches = [
       ...new Set(
         rows
+          .filter(workable)
           .map((r) => r.branchId)
-          .filter((b): b is string => !!b && scopeBranches.has(b)),
+          .filter((b): b is string => !!b),
       ),
     ];
     const lockedIds = new Set<string>();
@@ -1726,10 +1732,7 @@ export class LabReportService {
     }
     return rows.map((r) => ({
       ...r,
-      accessMode:
-        r.branchId && scopeBranches.has(r.branchId) && !lockedIds.has(r.id)
-          ? 'full'
-          : 'view',
+      accessMode: workable(r) && !lockedIds.has(r.id) ? 'full' : 'view',
     }));
   }
 

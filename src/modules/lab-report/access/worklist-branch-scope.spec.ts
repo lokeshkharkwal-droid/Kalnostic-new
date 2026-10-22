@@ -2,6 +2,7 @@ import { LabReportStatus } from '@prisma/client';
 import { PERMISSION_KEYS } from '../../permissions/constants/module-permissions.constant';
 import {
   STATUS_ACCESS_KEYS,
+  canWorkAtHolder,
   isStatusVisible,
   ruleWhere,
   senderLinkWhere,
@@ -183,5 +184,54 @@ describe('usableRules', () => {
         ],
       }).map((r) => r.branchId),
     ).toEqual(['A']);
+  });
+});
+
+describe('canWorkAtHolder (a report sent by the selected branch)', () => {
+  // The selected branch is A and it has sent samples that were accepted elsewhere.
+  const scope = (over: { ownBranchId?: string } = {}) => ({
+    rules: [{ branchId: 'A', statuses: 'ALL' as const, senderLinked: true }],
+    ...over,
+  });
+
+  it('a holder that is one of the selected branches is workable', () => {
+    expect(canWorkAtHolder(scope(), 'A')).toBe(true);
+  });
+
+  it("a report sent by the selected branch that now sits at the caller's OWN branch is workable", () => {
+    // e.g. the user belongs to the receiver B and has selected the sender A
+    expect(canWorkAtHolder(scope({ ownBranchId: 'B' }), 'B')).toBe(true);
+  });
+
+  it('a user whose own branch is the SENDER keeps the look-only view of what it sent', () => {
+    // the caller belongs to A, A is selected, the report sits at B: selecting B (or
+    // All Branches) is how they work on it
+    expect(canWorkAtHolder(scope({ ownBranchId: 'A' }), 'B')).toBe(false);
+  });
+
+  it("another branch that is neither selected nor the caller's own stays look-only", () => {
+    expect(canWorkAtHolder(scope({ ownBranchId: 'B' }), 'S')).toBe(false);
+  });
+
+  it('with no own branch recorded (nothing was sent) an outside holder is look-only', () => {
+    expect(canWorkAtHolder(scope(), 'B')).toBe(false);
+  });
+
+  it('a report with no holder branch is never workable', () => {
+    expect(canWorkAtHolder(scope({ ownBranchId: 'B' }), null)).toBe(false);
+  });
+
+  it('a selected branch is workable whether or not it is also the own branch', () => {
+    expect(
+      canWorkAtHolder(
+        {
+          rules: [
+            { branchId: 'B', statuses: new Set([LabReportStatus.SAVED]) },
+          ],
+          ownBranchId: 'A',
+        },
+        'B',
+      ),
+    ).toBe(true);
   });
 });

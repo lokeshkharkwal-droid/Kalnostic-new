@@ -210,14 +210,18 @@ export class TechnicianBranchAccessService {
       const linked = await this.branchesWithSenderLinks(tenantId, [
         active.branchId,
       ]);
+      const senderLinked = linked.has(active.branchId);
       return {
         rules: [
           {
             branchId: active.branchId,
             statuses: 'ALL',
-            senderLinked: linked.has(active.branchId),
+            senderLinked,
           },
         ],
+        // Only a branch that sent samples lists reports held elsewhere (see
+        // WorklistBranchScope.ownBranchId); every other scope is exactly as before.
+        ...(senderLinked ? { ownBranchId: active.branchId } : {}),
       };
     }
     const access = await this.resolve(tenantId, personId, active);
@@ -239,16 +243,22 @@ export class TechnicianBranchAccessService {
       statuses: a.visibleStatuses,
       senderLinked: linked.has(a.branchId),
     });
+    // `ownBranchId` rides along only when a rule lists sender-linked reports (see
+    // WorklistBranchScope.ownBranchId); every other scope is exactly as before.
+    const scopeOf = (rules: BranchRule[]): WorklistBranchScope =>
+      rules.some((r) => r.senderLinked) && active.branchId
+        ? { rules, ownBranchId: active.branchId }
+        : { rules };
     if (requested.toLowerCase() === 'all') {
       const rules = access.filter(usable).map(toRule);
       if (rules.length === 0) throw new ActiveBranchRequiredException();
-      return { rules };
+      return scopeOf(rules);
     }
     const match = access.find((a) => a.branchId === requested);
     if (!match || !usable(match)) {
       throw new BranchNotAccessibleException(requested);
     }
-    return { rules: [toRule(match)] };
+    return scopeOf([toRule(match)]);
   }
 
   /**

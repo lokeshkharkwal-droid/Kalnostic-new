@@ -634,3 +634,122 @@ describe('TechnicianBranchAccessService - sender link', () => {
     expect(forA?.status).toBeUndefined();
   });
 });
+
+describe('TechnicianBranchAccessService - own branch for sender-linked reports', () => {
+  // The caller belongs to B (active) and works at A, which sent a sample B accepted.
+  const ACTIVE_B = { branchId: B, profileKey: 'lab_technician' };
+
+  it('default scope of a sending branch records the caller own branch, with no extra lookups', async () => {
+    const { svc, prisma, users } = build({
+      profiles: [{ branchId: B }],
+      activeBranches: [A, B],
+      moduleOn: [A, B],
+      permissions: { [B]: FULL },
+      sentBy: [A],
+    });
+    const scope = await svc.resolveScope(TENANT, PERSON, ACTIVE, undefined);
+    expect(scope.rules).toEqual([
+      { branchId: A, statuses: 'ALL', senderLinked: true },
+    ]);
+    expect(scope.ownBranchId).toBe(A);
+    // nothing about other branches is read just to mark rows full / view
+    expect(prisma.userBranchProfile.findMany).not.toHaveBeenCalled();
+    expect(users.getEffectivePermissionKeys).not.toHaveBeenCalled();
+  });
+
+  it('default scope of a branch that sent nothing has no own-branch field', async () => {
+    const { svc } = build({
+      profiles: [{ branchId: B }],
+      activeBranches: [A, B],
+      moduleOn: [A, B],
+      permissions: { [B]: FULL },
+    });
+    const scope = await svc.resolveScope(TENANT, PERSON, ACTIVE, undefined);
+    expect(scope.ownBranchId).toBeUndefined();
+  });
+
+  it('a user of the receiver B who selects the sender A carries B as the own branch', async () => {
+    const { svc } = build({
+      profiles: [{ branchId: A }],
+      activeBranches: [A, B],
+      moduleOn: [A, B],
+      permissions: { [A]: FULL },
+      sentBy: [A],
+    });
+    const scope = await svc.resolveScope(TENANT, PERSON, ACTIVE_B, A);
+    expect(scope.rules.map((r) => r.branchId)).toEqual([A]);
+    expect(scope.rules[0]?.senderLinked).toBe(true);
+    expect(scope.ownBranchId).toBe(B);
+  });
+
+  it('a user of the sender A who selects the sender A carries A (so the sent report at B stays look-only)', async () => {
+    const { svc } = build({
+      profiles: [{ branchId: B }],
+      activeBranches: [A, B],
+      moduleOn: [A, B],
+      permissions: { [B]: FULL },
+      sentBy: [A],
+    });
+    const scope = await svc.resolveScope(TENANT, PERSON, ACTIVE, A);
+    expect(scope.ownBranchId).toBe(A);
+  });
+
+  it('All Branches: the own branch is recorded only when some selected branch is sender-linked', async () => {
+    const linked = build({
+      profiles: [{ branchId: B }],
+      activeBranches: [A, B],
+      moduleOn: [A, B],
+      permissions: { [B]: FULL },
+      sentBy: [B],
+    });
+    expect(
+      (await linked.svc.resolveScope(TENANT, PERSON, ACTIVE, 'all'))
+        .ownBranchId,
+    ).toBe(A);
+
+    const none = build({
+      profiles: [{ branchId: B }],
+      activeBranches: [A, B],
+      moduleOn: [A, B],
+      permissions: { [B]: FULL },
+    });
+    expect(
+      (await none.svc.resolveScope(TENANT, PERSON, ACTIVE, 'all')).ownBranchId,
+    ).toBeUndefined();
+  });
+
+  it('special tabs never carry it (they have no sender link)', async () => {
+    const { svc } = build({
+      profiles: [{ branchId: B }],
+      activeBranches: [A, B],
+      moduleOn: [A, B],
+      permissions: { [B]: [K.LAB_ACCESS_CRITICAL_LIST] },
+      sentBy: [A, B],
+    });
+    const scope = await svc.resolveScope(
+      TENANT,
+      PERSON,
+      ACTIVE,
+      'all',
+      K.LAB_ACCESS_CRITICAL_LIST,
+    );
+    expect(scope.ownBranchId).toBeUndefined();
+  });
+
+  it('a caller with no active branch gets no own branch', async () => {
+    const { svc } = build({
+      profiles: [{ branchId: A }, { branchId: B }],
+      activeBranches: [A, B],
+      moduleOn: [A, B],
+      permissions: { [A]: FULL, [B]: FULL },
+      sentBy: [A],
+    });
+    const scope = await svc.resolveScope(
+      TENANT,
+      PERSON,
+      { branchId: null, profileKey: null },
+      A,
+    );
+    expect(scope.ownBranchId).toBeUndefined();
+  });
+});
